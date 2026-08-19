@@ -376,6 +376,76 @@ describe('ReleaseNoteGitHubService', () => {
     });
   });
 
+  it('paginates release comparisons beyond 300 commits', async () => {
+    const commits = Array.from({ length: 1023 }, (_, index) => ({
+      sha: `commit-${index + 1}`,
+      commit: { message: `Commit ${index + 1}` }
+    }));
+    (fetch as unknown as jest.Mock).mockImplementation((url: string) => {
+      if (url.includes('/compare/previous-sha...abc123')) {
+        const page = Number(new URL(url).searchParams.get('page'));
+        const start = (page - 1) * 100;
+        return Promise.resolve(
+          response({
+            commits: commits.slice(start, start + 100),
+            total_commits: commits.length,
+            status: 'ahead'
+          })
+        );
+      }
+      throw new Error(`Unexpected GitHub request: ${url}`);
+    });
+
+    const service = new ReleaseNoteGitHubService() as unknown as {
+      getComparedCommits(
+        repository: string,
+        previousSha: string,
+        currentSha: string
+      ): Promise<Array<{ readonly sha: string }>>;
+    };
+    const comparedCommits = await service.getComparedCommits(
+      '6529-Collections/6529seize-frontend',
+      'previous-sha',
+      'abc123'
+    );
+
+    expect(comparedCommits).toHaveLength(1023);
+    expect(comparedCommits[0].sha).toBe('commit-1');
+    expect(comparedCommits[1022].sha).toBe('commit-1023');
+    const compareCalls = (fetch as unknown as jest.Mock).mock.calls.filter(
+      ([url]) => String(url).includes('/compare/previous-sha...abc123')
+    );
+    expect(compareCalls).toHaveLength(11);
+    expect(compareCalls[10][0]).toContain('per_page=100&page=11');
+  });
+
+  it('stops malformed comparison pagination after 100 full pages', async () => {
+    const fullPage = Array.from({ length: 100 }, (_, index) => ({
+      sha: `commit-${index + 1}`
+    }));
+    (fetch as unknown as jest.Mock).mockResolvedValue(
+      response({ commits: fullPage, status: 'ahead' })
+    );
+    const service = new ReleaseNoteGitHubService() as unknown as {
+      getComparedCommits(
+        repository: string,
+        previousSha: string,
+        currentSha: string
+      ): Promise<Array<{ readonly sha: string }>>;
+    };
+
+    await expect(
+      service.getComparedCommits(
+        '6529-Collections/6529seize-frontend',
+        'previous-sha',
+        'abc123'
+      )
+    ).rejects.toThrow(
+      'Release comparison did not complete within 10000 commits'
+    );
+    expect(fetch).toHaveBeenCalledTimes(100);
+  });
+
   it.each([
     [
       'another workflow path',

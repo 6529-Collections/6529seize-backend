@@ -321,6 +321,14 @@ Important API responsibilities:
 
 Wave rows can be top-level waves or subwaves through the nullable `parent_wave_id` column. Top-level wave discovery endpoints exclude subwaves, while `/waves/{id}/subwaves` lists child wave overviews. Subwave read access also requires the parent wave to be visible, and deleting a parent wave cascades through the API service to delete its subwaves.
 
+Wave writes enforce that every active Drop, Vote, Chat, and Admin membership is
+contained by the Wave View membership. The generated
+`POST /wave-group-validation` boundary exposes the same privacy-preserving
+preflight result to clients as failing scope names only. Dynamic group
+membership is evaluated with one batched anti-join query, group-version swaps
+are checked before replacing a Wave-referenced group, and runtime privilege
+flags remain intersected with View eligibility if group criteria later drift.
+
 The waves v2 read boundary keeps timeline, reply-thread, and curation feeds as separate contracts. `/v2/waves/{id}/drops` returns the wave timeline feed, `/v2/drops/{id}/replies` returns the reply thread for a root drop after resolving its owning visible wave, and `/v2/waves/{id}/curations/{curation_id}/drops` returns drops for one wave curation.
 
 For the wave configured by `MAIN_STAGE_WAVE_ID`, v2 winning-drop responses can
@@ -637,6 +645,14 @@ backend DAG frontiers run concurrently; only shared environment mutation plus
 E2E ownership is serialized. Operation keys, workflow titles, workflow
 authorization, SHA/artifact checks, row versions, and callback identity make
 retries and duplicate reconciliation idempotent.
+Automatic staging E2E reaches the baseline-adoption decision through an API
+callback dispatched by `workflow_dispatch`. When an exact adoption intent is
+active, the API reads both workflow identities from GitHub: the staging E2E
+run must be owned by `github-actions[bot]`, use the frontend repository for
+both the run and head repository, and execute `.github/workflows/staging-e2e.yml`;
+the associated deploy run remains subject to the generic trusted-actor reader.
+Only this dedicated staging E2E reader admits the GitHub Actions bot, and every
+metadata mismatch fails closed before baseline evidence is recorded.
 Operation reads normally use the read pool. When reconciliation has just
 CAS-written a dispatch reservation and must decide whether it may call GitHub,
 it rereads that immutable operation from the writer pool. An explicit

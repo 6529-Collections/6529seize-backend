@@ -217,6 +217,11 @@ const TRUSTED_PR_CI_WORKFLOW_TRANSITIONS: Readonly<
       from: '926a915a4b9c62b76f169de4e4b6b6eaa4196d35',
       to: 'af4314e0eff6b4110edddf8da8747216b2014b10',
       expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
+    },
+    {
+      from: 'af4314e0eff6b4110edddf8da8747216b2014b10',
+      to: '7440432d304f16f13d6569f621c65af561f69f93',
+      expiresAt: Date.UTC(2026, 7, 31, 23, 59, 59)
     }
   ],
   frontend: [
@@ -808,8 +813,20 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
       '64f90c5cddab580e9354d2ecaa43d143ca9084cc799e22b83d20e8c3469abe5b'
     ),
     trustedGatePolicyBundleRollout(
+      '5534e0b3439e510777321b7426507bb469c7b7b57a465c3fac8792cdd94e4cc4',
+      '0ec035e86a65cd69ee6d7e00bcac73504e3652f06e7d7be0a91ba92f431122e1'
+    ),
+    trustedGatePolicyBundleRollout(
       '7656eb831c652059fcd141bf6c71ec54f68e14a83fa7a7b500ca09195f1727d4',
       '64f90c5cddab580e9354d2ecaa43d143ca9084cc799e22b83d20e8c3469abe5b'
+    ),
+    trustedGatePolicyBundleRollout(
+      '0ec035e86a65cd69ee6d7e00bcac73504e3652f06e7d7be0a91ba92f431122e1',
+      'a6fd7ecbd2533a7235f7aa6262aaedf6eac6be8acf7ee7fdf5a6eef1ab636712'
+    ),
+    trustedGatePolicyBundleRollout(
+      '64f90c5cddab580e9354d2ecaa43d143ca9084cc799e22b83d20e8c3469abe5b',
+      'a6fd7ecbd2533a7235f7aa6262aaedf6eac6be8acf7ee7fdf5a6eef1ab636712'
     )
   ],
   frontend: [
@@ -2217,6 +2234,29 @@ export class ReleaseBusGitHubApp {
       identity.headRepository !== expectedRepository
     )
       throw new Error('GitHub workflow run is not a Production E2E qualifier');
+    return identity;
+  }
+
+  public async getStagingE2EWorkflowRunIdentity(
+    repository: ReleaseBusV2Repository,
+    workflowRunId: string
+  ): Promise<ReleaseBusWorkflowRunIdentity> {
+    if (repository !== 'frontend')
+      throw new Error('Staging E2E identity must use the frontend repository');
+    const identity = await this.readWorkflowRunIdentity(
+      repository,
+      workflowRunId,
+      (actor) => actor === 'github-actions[bot]'
+    );
+    const expectedRepository = `${this.owner}/${REPOSITORIES.frontend}`;
+    if (
+      identity.actor !== 'github-actions[bot]' ||
+      identity.event !== 'workflow_dispatch' ||
+      identity.path !== '.github/workflows/staging-e2e.yml' ||
+      identity.repository !== expectedRepository ||
+      identity.headRepository !== expectedRepository
+    )
+      throw new Error('GitHub workflow run is not a Staging E2E qualifier');
     return identity;
   }
 

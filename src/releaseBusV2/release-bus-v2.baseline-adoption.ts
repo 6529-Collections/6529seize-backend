@@ -260,6 +260,10 @@ type BaselineAdoptionDependencies = {
     repository: ReleaseBusV2Repository,
     workflowRunId: string
   ) => Promise<ReleaseBusWorkflowRunIdentity>;
+  readonly getStagingE2EWorkflowRunIdentity: (
+    repository: ReleaseBusV2Repository,
+    workflowRunId: string
+  ) => Promise<ReleaseBusWorkflowRunIdentity>;
 };
 
 export class ReleaseBusV2BaselineAdoptionError extends Error {
@@ -434,7 +438,12 @@ const dependencies: BaselineAdoptionDependencies = {
   refContainsCommit: (repository, ref, sha) =>
     releaseBusGitHubApp.refContainsCommit(repository, ref, sha),
   getWorkflowRunIdentity: (repository, workflowRunId) =>
-    releaseBusGitHubApp.getWorkflowRunIdentity(repository, workflowRunId)
+    releaseBusGitHubApp.getWorkflowRunIdentity(repository, workflowRunId),
+  getStagingE2EWorkflowRunIdentity: (repository, workflowRunId) =>
+    releaseBusGitHubApp.getStagingE2EWorkflowRunIdentity(
+      repository,
+      workflowRunId
+    )
 };
 
 function normalizedCandidateInput(
@@ -730,7 +739,7 @@ function assertFrontendWorkflowIdentities(
   if (
     e2e.status !== 'in_progress' ||
     e2e.conclusion !== null ||
-    e2e.event !== 'workflow_run' ||
+    e2e.event !== 'workflow_dispatch' ||
     e2e.path !== '.github/workflows/staging-e2e.yml' ||
     !isTrustedStagingE2EWorkflowName(e2e.name) ||
     deploy.status !== 'completed' ||
@@ -989,7 +998,7 @@ export class ReleaseBusV2BaselineAdoptionService {
       this.assertUnexpired(intent);
       const [e2eIdentity, deployIdentity, currentRef, runtimeSha] =
         await Promise.all([
-          this.deps.getWorkflowRunIdentity(
+          this.deps.getStagingE2EWorkflowRunIdentity(
             'frontend',
             input.e2e_workflow_run_id
           ),

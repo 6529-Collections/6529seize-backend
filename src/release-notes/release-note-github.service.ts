@@ -127,7 +127,7 @@ interface BoundedGitHubCollection<T> {
   readonly incomplete: boolean;
 }
 
-const MAX_COMPARE_PAGES = 3;
+const MAX_COMPARE_PAGES = 100;
 const MAX_PULL_REQUEST_COMMIT_PAGES = 3;
 const MAX_FILE_PAGES = 3;
 const MAX_WORKFLOW_RUN_PAGES = 10;
@@ -146,7 +146,6 @@ const CORE_REPO = '6529-core';
 const CORE_PRODUCTION_WORKFLOW_PATH =
   '.github/workflows/build-all-platforms.yml';
 const CORE_PRODUCTION_RUN_PREFIX = 'FLOW: Publish / ENV: Production - v';
-const MAX_COMMITS = MAX_COMPARE_PAGES * PAGE_SIZE;
 const MAX_PULL_REQUESTS = 100;
 const MAX_PROMPT_LENGTH = 20000;
 const MAX_GITHUB_RESPONSE_BYTES = 5 * 1024 * 1024;
@@ -782,17 +781,7 @@ export class ReleaseNoteGitHubService {
       }
       const pageCommits = payload.commits ?? [];
       const totalCommits = payload.total_commits;
-      if (typeof totalCommits === 'number' && totalCommits > MAX_COMMITS) {
-        throw new Error(
-          `Release range contains ${totalCommits} commits; maximum is ${MAX_COMMITS}`
-        );
-      }
       commits.push(...pageCommits);
-      if (commits.length > MAX_COMMITS) {
-        throw new Error(
-          `Release range exceeds maximum of ${MAX_COMMITS} commits`
-        );
-      }
       if (
         pageCommits.length < PAGE_SIZE ||
         (typeof totalCommits === 'number' &&
@@ -801,14 +790,11 @@ export class ReleaseNoteGitHubService {
       ) {
         return commits;
       }
-      if (page === MAX_COMPARE_PAGES) {
-        throw new Error(
-          `Release range exceeds pagination maximum of ${MAX_COMMITS} commits`
-        );
-      }
     }
 
-    return commits;
+    throw new Error(
+      `Release comparison did not complete within ${MAX_COMPARE_PAGES * PAGE_SIZE} commits`
+    );
   }
 
   private async getPullRequests(
