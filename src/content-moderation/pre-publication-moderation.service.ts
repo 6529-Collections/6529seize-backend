@@ -22,6 +22,7 @@ import {
 export const PRE_PUBLICATION_GATE_VERSION = 'deterministic-gate-2026-08-1';
 const DUPLICATE_WINDOW = Time.minutes(10);
 const DUPLICATE_SIGNAL_THRESHOLD = 4;
+const URL_EDGE_PUNCTUATION = new Set(['.', '!', '?', ';', ':']);
 
 export interface PrePublicationDropInput {
   readonly dropId: string;
@@ -230,7 +231,7 @@ export class PrePublicationModerationService {
     const candidates = content
       .split(/\s+/)
       .flatMap((token) => token.split(/[()[\]{}<>"',]+/))
-      .map((token) => token.replace(/^[.!?;:]+|[.!?;:]+$/g, ''))
+      .map((token) => this.trimUrlPunctuation(token))
       .filter((token) => token.includes('.'));
     for (const candidate of candidates) {
       try {
@@ -261,7 +262,7 @@ export class PrePublicationModerationService {
     }
     let hostname = trimmed;
     try {
-      if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
+      if (trimmed.indexOf('://') > 0) {
         hostname = new URL(trimmed).hostname;
       }
     } catch {
@@ -274,6 +275,18 @@ export class PrePublicationModerationService {
         .replace(/^www\./, '')
     );
     return ascii || null;
+  }
+
+  private trimUrlPunctuation(value: string): string {
+    let start = 0;
+    let end = value.length;
+    while (start < end && URL_EDGE_PUNCTUATION.has(value[start] ?? '')) {
+      start += 1;
+    }
+    while (end > start && URL_EDGE_PUNCTUATION.has(value[end - 1] ?? '')) {
+      end -= 1;
+    }
+    return value.slice(start, end);
   }
 
   private toParseableUrl(candidate: string): string {

@@ -33,6 +33,8 @@ export interface SubmitContentReportInput {
   readonly blockAuthor: boolean;
 }
 
+type DropModerationDecision = 'ALLOW' | 'QUARANTINE' | 'REMOVE';
+
 export class ContentModerationService {
   private readonly logger = Logger.get(ContentModerationService.name);
 
@@ -151,7 +153,7 @@ export class ContentModerationService {
     moderatorProfileId: string,
     input: {
       dropId: string;
-      decision: 'ALLOW' | 'QUARANTINE' | 'REMOVE';
+      decision: DropModerationDecision;
       reason: string;
     },
     ctx: RequestContext
@@ -262,7 +264,7 @@ export class ContentModerationService {
   }
 
   private getDropDecisionStatus(
-    decision: 'ALLOW' | 'QUARANTINE' | 'REMOVE'
+    decision: DropModerationDecision
   ): DropModerationStatus {
     if (decision === 'ALLOW') {
       return DropModerationStatus.VISIBLE;
@@ -273,9 +275,7 @@ export class ContentModerationService {
     return DropModerationStatus.MODERATOR_REMOVED;
   }
 
-  private getDropDecisionAction(
-    decision: 'ALLOW' | 'QUARANTINE' | 'REMOVE'
-  ): string {
+  private getDropDecisionAction(decision: DropModerationDecision): string {
     if (decision === 'ALLOW') {
       return 'MODERATOR_ALLOWED_OR_RESTORED';
     }
@@ -286,7 +286,7 @@ export class ContentModerationService {
   }
 
   private getResolvedReportStatus(
-    decision: 'ALLOW' | 'QUARANTINE' | 'REMOVE'
+    decision: DropModerationDecision
   ): ContentReportStatus | null {
     if (decision === 'QUARANTINE') {
       return null;
