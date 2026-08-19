@@ -18,7 +18,11 @@ describe('ContentModerationAiService', () => {
   const originalModelId = process.env.CONTENT_MODERATION_BEDROCK_MODEL_ID;
 
   afterEach(() => {
-    process.env.CONTENT_MODERATION_BEDROCK_MODEL_ID = originalModelId;
+    if (originalModelId === undefined) {
+      delete process.env.CONTENT_MODERATION_BEDROCK_MODEL_ID;
+    } else {
+      process.env.CONTENT_MODERATION_BEDROCK_MODEL_ID = originalModelId;
+    }
   });
 
   it('accepts only policy-defined categories from the model', async () => {

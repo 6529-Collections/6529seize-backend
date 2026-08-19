@@ -1082,13 +1082,16 @@ describe('WaveApiService subwave creation authorization', () => {
     const userGroupsService = {
       getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(eligibleGroups)
     };
+    const createOrUpdateDrop = {
+      preparePrePublication: jest.fn()
+    };
     const service = new WaveApiService(
       wavesApiDb as any,
       userGroupsService as any,
       {} as any,
       {} as any,
       {} as any,
-      {} as any,
+      createOrUpdateDrop as any,
       {} as any,
       {} as any,
       {} as any,
@@ -1099,7 +1102,12 @@ describe('WaveApiService subwave creation authorization', () => {
       {} as any,
       {} as any
     );
-    return { service, wavesApiDb, userGroupsService };
+    return {
+      service,
+      wavesApiDb,
+      userGroupsService,
+      createOrUpdateDrop
+    };
   }
 
   const request = {
@@ -1247,6 +1255,47 @@ describe('WaveApiService subwave creation authorization', () => {
     ).rejects.toThrow(
       `You can't create a subwave for a wave you didn't create and are not an admin of`
     );
+  });
+
+  it('rejects unauthorized subwaves before moderating their description', async () => {
+    const parentWave = aWave(
+      {
+        created_by: 'creator-profile',
+        admin_group_id: 'admin-group'
+      },
+      {
+        id: 'parent-wave',
+        name: 'Parent Wave',
+        serial_no: 1
+      }
+    );
+    const { service, createOrUpdateDrop } = createService({
+      parentWave,
+      eligibleGroups: []
+    });
+    jest
+      .spyOn(service as any, 'validateWaveRelations')
+      .mockResolvedValue(undefined);
+
+    await expect(
+      service.createWave(
+        {
+          ...request,
+          wave: { type: ApiWaveType.Chat },
+          outcomes: []
+        } as unknown as ApiCreateNewWave,
+        false,
+        {
+          authenticationContext:
+            AuthenticationContext.fromProfileId('other-profile'),
+          timer: { start: jest.fn(), stop: jest.fn() }
+        } as any
+      )
+    ).rejects.toThrow(
+      `You can't create a subwave for a wave you didn't create and are not an admin of`
+    );
+
+    expect(createOrUpdateDrop.preparePrePublication).not.toHaveBeenCalled();
   });
 
   it('rejects subwaves as parent waves', async () => {

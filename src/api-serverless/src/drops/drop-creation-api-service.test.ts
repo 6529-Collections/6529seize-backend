@@ -150,6 +150,50 @@ describe('DropCreationApiService.toggleHideLinkPreview', () => {
   });
 });
 
+describe('DropCreationApiService.updateDrop', () => {
+  it('rejects a non-author before preparing or moderating the update', async () => {
+    const dropsDb = {
+      findDropById: jest.fn().mockResolvedValue({
+        id: 'drop-1',
+        author_id: 'original-author'
+      })
+    };
+    const dropsMappers = {
+      updateDropApiToUseCaseModel: jest.fn()
+    };
+    const createOrUpdateDrop = {
+      preResolveIdentityNomination: jest.fn(),
+      preparePrePublication: jest.fn()
+    };
+    const service = new DropCreationApiService(
+      {} as never,
+      dropsDb as never,
+      dropsMappers as never,
+      createOrUpdateDrop as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+
+    await expect(
+      service.updateDrop(
+        {
+          dropId: 'drop-1',
+          request: {} as never,
+          authorId: 'different-author',
+          representativeId: 'different-author'
+        },
+        {} as never
+      )
+    ).rejects.toThrow('Only the author can update drop drop-1');
+
+    expect(dropsMappers.updateDropApiToUseCaseModel).not.toHaveBeenCalled();
+    expect(createOrUpdateDrop.preparePrePublication).not.toHaveBeenCalled();
+  });
+});
+
 describe('DropCreationApiService.createDrop', () => {
   beforeEach(() => {
     (sendIdentityPushNotifications as jest.Mock).mockResolvedValue(undefined);

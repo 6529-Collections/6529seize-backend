@@ -227,12 +227,75 @@ describe('CreateOrUpdateDropUseCase', () => {
       { connection: { transaction: true } as any }
     );
 
-    expect(preparation).toMatchObject({ operation: 'CREATE' });
+    expect(preparation).toMatchObject({
+      operation: 'CREATE',
+      authorProfileId: 'author-1',
+      contentFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/)
+    });
     expect(moderationService.evaluate).toHaveBeenCalledWith(
       expect.objectContaining({ authorProfileId: 'author-1' }),
       expect.objectContaining({ connection: undefined })
     );
   });
+
+  it.each([
+    {
+      description: 'author',
+      mutate: (model: ReturnType<typeof createChatDropModel>) => ({
+        ...model,
+        author_id: 'different-author',
+        author_identity: 'different-author'
+      })
+    },
+    {
+      description: 'content',
+      mutate: (model: ReturnType<typeof createChatDropModel>) => ({
+        ...model,
+        parts: [
+          {
+            content: 'changed after moderation',
+            quoted_drop: null,
+            media: []
+          }
+        ]
+      })
+    }
+  ])(
+    'rejects a write when its $description differs from the moderated preparation',
+    async ({ mutate }) => {
+      const wavesApiDb = {
+        findById: jest.fn().mockResolvedValue(
+          createSlowModeWave({
+            type: WaveType.CHAT,
+            chat_slow_mode_cooldown_ms: null
+          })
+        )
+      };
+      const useCase = createUseCaseWithMocks({ wavesApiDb });
+      const originalModel = createChatDropModel();
+      const preparation = await useCase.preparePrePublication(
+        originalModel,
+        {}
+      );
+      const persistedModel = mutate(originalModel);
+      jest.spyOn(useCase as any, 'validateReferences').mockResolvedValue({
+        validatedModel: persistedModel,
+        groupIdsUserIsEligibleFor: []
+      });
+      jest
+        .spyOn(useCase as any, 'verifyChatLinksAreAllowed')
+        .mockReturnValue(undefined);
+
+      await expect(
+        (useCase as any).createOrUpdateDrop(originalModel, false, {
+          connection: {} as any,
+          prePublication: preparation
+        })
+      ).rejects.toThrow(
+        'Pre-publication preparation does not match drop write'
+      );
+    }
+  );
 
   it('does not increment inserted-drop metrics when editing a drop', async () => {
     const dropsDb = {

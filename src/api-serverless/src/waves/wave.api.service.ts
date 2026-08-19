@@ -547,6 +547,11 @@ export class WaveApiService {
     timer.start(`${this.constructor.name}->createWave`);
     await this.validateWaveRelations(createWaveRequest, ctx);
     this.validateOutcomes(createWaveRequest);
+    await this.validateSubwaveCreationParent({
+      request: createWaveRequest,
+      actingAsId,
+      ctx: { ...ctx, connection: undefined }
+    });
     const id = randomUUID();
     const descriptionDropModel = this.dropsMappers.createDropApiToUseCaseModel({
       request: {

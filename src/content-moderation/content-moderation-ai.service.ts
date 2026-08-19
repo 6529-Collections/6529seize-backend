@@ -2,7 +2,6 @@ import {
   DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID,
   getConfiguredBedrockAnthropicModelId
 } from '@/bedrock.config';
-import { getBedrockClient } from '@/bedrock';
 import {
   BedrockRuntimeClient,
   InvokeModelCommand,
@@ -24,6 +23,17 @@ export const CONTENT_MODERATION_BEDROCK_MODEL_ID_ENV =
   'CONTENT_MODERATION_BEDROCK_MODEL_ID';
 
 const BEDROCK_REQUEST_TIMEOUT_MS = 15_000;
+let contentModerationBedrockClient: BedrockRuntimeClient | undefined;
+
+function getContentModerationBedrockClient(): BedrockRuntimeClient {
+  if (!contentModerationBedrockClient) {
+    contentModerationBedrockClient = new BedrockRuntimeClient({
+      region: process.env.BEDROCK_AWS_REGION ?? 'us-east-1',
+      maxAttempts: 1
+    });
+  }
+  return contentModerationBedrockClient;
+}
 
 interface StructuredAssessment {
   readonly recommendation: ContentModerationRecommendation;
@@ -218,5 +228,5 @@ Untrusted submission: ${JSON.stringify(input.content)}
 }
 
 export const contentModerationAiService = new ContentModerationAiService(
-  getBedrockClient
+  getContentModerationBedrockClient
 );

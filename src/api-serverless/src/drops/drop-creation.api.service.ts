@@ -312,6 +312,9 @@ export class DropCreationApiService {
     if (!drop) {
       throw new NotFoundException(`Drop ${dropId} not found`);
     }
+    if (drop.author_id !== authorId) {
+      throw new ForbiddenException(`Only the author can update drop ${dropId}`);
+    }
     const waveId = drop.wave_id;
     const replyTo: DropPartIdentifierModel | null =
       drop.reply_to_drop_id !== null

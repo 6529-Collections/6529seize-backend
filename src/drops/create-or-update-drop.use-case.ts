@@ -114,6 +114,7 @@ import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import {
+  getPrePublicationContentFingerprint,
   prePublicationModerationService,
   PrePublicationModerationService
 } from '@/content-moderation/pre-publication-moderation.service';
@@ -132,6 +133,8 @@ export type PrePublicationPreparation =
   | {
       readonly dropId: string;
       readonly operation: 'CREATE' | 'UPDATE';
+      readonly authorProfileId: string;
+      readonly contentFingerprint: string;
     }
   | { readonly trustedSystem: true };
 
@@ -398,21 +401,30 @@ export class CreateOrUpdateDropUseCase {
     model: CreateOrUpdateDropModel,
     ctx: RequestContext
   ): Promise<PrePublicationPreparation> {
-    const operation = model.drop_id === null ? 'CREATE' : 'UPDATE';
-    const dropId = model.drop_id ?? randomUUID();
-    await this.moderationService.evaluate(
-      {
-        dropId,
-        authorProfileId: this.getRequiredAuthorId(model),
-        operation,
-        title: model.title,
-        // File attachment contents intentionally remain in their existing
-        // asynchronous validation pipeline and are not inspected here.
-        parts: model.parts.map((part) => ({ content: part.content }))
-      },
-      { ...ctx, connection: undefined }
-    );
-    return { dropId, operation };
+    const sanitizedModel = sanitizeDropStructuredFields(model);
+    const operation: 'CREATE' | 'UPDATE' =
+      sanitizedModel.drop_id === null ? 'CREATE' : 'UPDATE';
+    const dropId = sanitizedModel.drop_id ?? randomUUID();
+    const authorProfileId = this.getRequiredAuthorId(sanitizedModel);
+    const moderationInput = {
+      dropId,
+      authorProfileId,
+      operation,
+      title: sanitizedModel.title,
+      // File attachment contents intentionally remain in their existing
+      // asynchronous validation pipeline and are not inspected here.
+      parts: sanitizedModel.parts.map((part) => ({ content: part.content }))
+    };
+    await this.moderationService.evaluate(moderationInput, {
+      ...ctx,
+      connection: undefined
+    });
+    return {
+      dropId,
+      operation,
+      authorProfileId,
+      contentFingerprint: getPrePublicationContentFingerprint(moderationInput)
+    };
   }
 
   public async preResolveIdentityNomination(
@@ -548,7 +560,13 @@ export class CreateOrUpdateDropUseCase {
     if (
       !('trustedSystem' in prePublication) &&
       (prePublication.operation !== operation ||
-        (preExistingDropId !== null && candidateDropId !== preExistingDropId))
+        (preExistingDropId !== null && candidateDropId !== preExistingDropId) ||
+        prePublication.authorProfileId !== authorId ||
+        prePublication.contentFingerprint !==
+          getPrePublicationContentFingerprint({
+            title: validatedModel.title,
+            parts: validatedModel.parts
+          }))
     ) {
       throw new Error('Pre-publication preparation does not match drop write');
     }

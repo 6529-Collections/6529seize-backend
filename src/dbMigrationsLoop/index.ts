@@ -11,11 +11,23 @@ const DBMigrate = require('db-migrate');
 
 const logger = Logger.get('DB_MIGRATIONS_LOOP');
 
-export const handler = sentryContext.wrapLambdaHandler(async () => {
+export function isScheduledInvocation(event: unknown): boolean {
+  if (!event || typeof event !== 'object') {
+    return false;
+  }
+  const record = event as Record<string, unknown>;
+  return (
+    record.source === 'aws.events' &&
+    record['detail-type'] === 'Scheduled Event'
+  );
+}
+
+export const handler = sentryContext.wrapLambdaHandler(async (event) => {
+  const scheduledInvocation = isScheduledInvocation(event);
   logger.info(`[RUNNING]`);
   await doInDbContext(
     async () => {
-      if (!appFeatures.isDbMigrateDisabled()) {
+      if (!scheduledInvocation && !appFeatures.isDbMigrateDisabled()) {
         const dbmigrate = await DBMigrate.getInstance(true, {
           config: './database.json',
           env: 'main'
@@ -35,7 +47,11 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         `Deleted ${deletedModerationChecks} expired content moderation pre-publication checks`
       );
     },
-    { logger, entities: Object.values(Entities), syncEntities: true }
+    {
+      logger,
+      entities: Object.values(Entities),
+      syncEntities: !scheduledInvocation
+    }
   );
 
   logger.info(`[FINISHED]`);

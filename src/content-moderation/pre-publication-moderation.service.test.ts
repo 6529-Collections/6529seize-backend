@@ -45,7 +45,11 @@ describe('PrePublicationModerationService', () => {
   const originalBlockedHosts = process.env.CONTENT_MODERATION_BLOCKED_HOSTS;
 
   afterEach(() => {
-    process.env.CONTENT_MODERATION_BLOCKED_HOSTS = originalBlockedHosts;
+    if (originalBlockedHosts === undefined) {
+      delete process.env.CONTENT_MODERATION_BLOCKED_HOSTS;
+    } else {
+      process.env.CONTENT_MODERATION_BLOCKED_HOSTS = originalBlockedHosts;
+    }
     jest.restoreAllMocks();
   });
 

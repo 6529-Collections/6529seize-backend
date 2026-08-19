@@ -32,6 +32,26 @@ export interface PrePublicationDropInput {
   readonly parts: ReadonlyArray<{ readonly content: string | null }>;
 }
 
+function getPrePublicationTextContent(
+  input: Pick<PrePublicationDropInput, 'title' | 'parts'>
+): string {
+  return [input.title, ...input.parts.map((part) => part.content)]
+    .filter((part): part is string => typeof part === 'string')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+export function getPrePublicationContentFingerprint(
+  input: Pick<PrePublicationDropInput, 'title' | 'parts'>
+): string {
+  const normalized = getPrePublicationTextContent(input)
+    .toLocaleLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+  return createHash('sha256').update(normalized).digest('hex');
+}
+
 interface DeterministicScreenResult {
   readonly signal: string | null;
   readonly directRejectionReason: string | null;
@@ -59,8 +79,8 @@ export class PrePublicationModerationService {
       );
     }
 
-    const content = this.getTextContent(input);
-    const contentFingerprint = this.getContentFingerprint(content);
+    const content = getPrePublicationTextContent(input);
+    const contentFingerprint = getPrePublicationContentFingerprint(input);
     const screen = await this.runDeterministicScreen(
       input,
       content,
@@ -203,19 +223,6 @@ export class PrePublicationModerationService {
       };
     }
     return { signal: null, directRejectionReason: null };
-  }
-
-  private getTextContent(input: PrePublicationDropInput): string {
-    return [input.title, ...input.parts.map((part) => part.content)]
-      .filter((part): part is string => typeof part === 'string')
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .join('\n');
-  }
-
-  private getContentFingerprint(content: string): string {
-    const normalized = content.toLocaleLowerCase().replace(/\s+/g, ' ').trim();
-    return createHash('sha256').update(normalized).digest('hex');
   }
 
   private findKnownMaliciousHost(content: string): string | null {
