@@ -2613,13 +2613,26 @@ export class WaveApiService {
       return;
     }
     try {
+      const recipients =
+        await this.wsListenersNotifier.findConnectedNotificationRecipients(
+          identityIds
+        );
+      const connectedIdentityIds = Array.from(
+        new Set(recipients.map((recipient) => recipient.identityId))
+      );
+      if (!connectedIdentityIds.length) {
+        return;
+      }
       const states =
         await this.wavesApiDb.findDmUnreadConversationStatesForIdentities(
-          { identityIds, waveIds: [waveId] },
+          { identityIds: connectedIdentityIds, waveIds: [waveId] },
           ctx,
           DbPoolName.WRITE
         );
-      await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged(states);
+      await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged(
+        states,
+        recipients
+      );
     } catch (error) {
       this.logger.error(
         `Failed to broadcast DM unread state for wave ${waveId}`,

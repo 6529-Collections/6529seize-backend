@@ -306,6 +306,11 @@ describe('DropCreationApiService.createDrop', () => {
       notifyAboutDropUpdate: jest.fn().mockImplementation(async () => {
         order.push('drop-broadcast');
       }),
+      findConnectedNotificationRecipients: jest
+        .fn()
+        .mockResolvedValue([
+          { connectionId: 'connection-1', identityId: 'reader-profile' }
+        ]),
       notifyAboutDmUnreadStateChanged: jest
         .fn()
         .mockImplementation(async () => {
@@ -354,7 +359,10 @@ describe('DropCreationApiService.createDrop', () => {
     );
     expect(
       wsListenersNotifier.notifyAboutDmUnreadStateChanged
-    ).toHaveBeenCalledWith([dmUnreadState]);
+    ).toHaveBeenCalledWith(
+      [dmUnreadState],
+      [{ connectionId: 'connection-1', identityId: 'reader-profile' }]
+    );
     expect(order).toEqual([
       'drop-written',
       'committed',
@@ -482,6 +490,11 @@ describe('DropCreationApiService.deleteDropById', () => {
     };
     const wsListenersNotifier = {
       notifyAboutDropDelete: jest.fn().mockResolvedValue(undefined),
+      findConnectedNotificationRecipients: jest
+        .fn()
+        .mockResolvedValue([
+          { connectionId: 'connection-1', identityId: 'reader-1' }
+        ]),
       notifyAboutDmUnreadStateChanged: jest.fn().mockResolvedValue(undefined)
     };
     const dmUnreadState = {
@@ -581,6 +594,9 @@ describe('DropCreationApiService.deleteDropById', () => {
     );
     expect(
       wsListenersNotifier.notifyAboutDmUnreadStateChanged
-    ).toHaveBeenCalledWith([dmUnreadState]);
+    ).toHaveBeenCalledWith(
+      [dmUnreadState],
+      [{ connectionId: 'connection-1', identityId: 'reader-1' }]
+    );
   });
 });

@@ -704,6 +704,10 @@ router.post(
     });
     const ctx = { timer };
     if (wave?.is_direct_message) {
+      const dmRecipients =
+        await wsListenersNotifier.findConnectedNotificationRecipients([
+          identityId
+        ]);
       const dmUnreadState = (
         await wavesApiDb.findDmUnreadConversationStates(
           { identityId, waveIds: [waveId] },
@@ -711,10 +715,11 @@ router.post(
           DbPoolName.WRITE
         )
       )[0];
-      if (dmUnreadState) {
-        await wsListenersNotifier.notifyAboutDmUnreadStateChanged([
-          dmUnreadState
-        ]);
+      if (dmUnreadState && dmRecipients.length) {
+        await wsListenersNotifier.notifyAboutDmUnreadStateChanged(
+          [dmUnreadState],
+          dmRecipients
+        );
       }
       return res.send({
         your_unread_drops_count: dmUnreadState?.unread_count ?? 0,

@@ -806,6 +806,11 @@ describe('NotificationsApiService realtime invalidation', () => {
           .mockResolvedValue([dmUnreadState])
       };
       const wsListenersNotifier = {
+        findConnectedNotificationRecipients: jest
+          .fn()
+          .mockResolvedValue([
+            { connectionId: 'connection-1', identityId: 'profile-1' }
+          ]),
         notifyAboutDmUnreadStateChanged: jest.fn().mockResolvedValue(undefined),
         notifyAboutIdentityNotificationsChanged: jest
           .fn()
@@ -859,7 +864,10 @@ describe('NotificationsApiService realtime invalidation', () => {
       );
       expect(
         wsListenersNotifier.notifyAboutDmUnreadStateChanged
-      ).toHaveBeenCalledWith([dmUnreadState]);
+      ).toHaveBeenCalledWith(
+        [dmUnreadState],
+        [{ connectionId: 'connection-1', identityId: 'profile-1' }]
+      );
       expect(
         wsListenersNotifier.notifyAboutIdentityNotificationsChanged
       ).toHaveBeenCalledWith(['profile-1']);

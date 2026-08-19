@@ -72,6 +72,10 @@ export class IdentityMutesApiService {
     ctx: RequestContext
   ): Promise<void> {
     try {
+      const recipients =
+        await this.wsListenersNotifier.findConnectedNotificationRecipients([
+          pair.muter_id
+        ]);
       const eligibleGroups =
         await this.userGroupsService.getGroupsUserIsEligibleFor(
           pair.muter_id,
@@ -98,12 +102,20 @@ export class IdentityMutesApiService {
           { readerId: pair.muter_id, waveIds },
           ctx
         );
+        if (!recipients.length) {
+          afterWaveId = waveIds.at(-1);
+          hasMore = waveIds.length === DM_UNREAD_SYNC_PAGE_SIZE;
+          continue;
+        }
         const states = await this.wavesApiDb.findDmUnreadConversationStates(
           { identityId: pair.muter_id, eligibleGroups, waveIds },
           ctx,
           DbPoolName.WRITE
         );
-        await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged(states);
+        await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged(
+          states,
+          recipients
+        );
         afterWaveId = waveIds.at(-1);
         hasMore = waveIds.length === DM_UNREAD_SYNC_PAGE_SIZE;
       }

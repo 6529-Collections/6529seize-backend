@@ -47,6 +47,11 @@ const dropNotificationIdentityForLog = (drop: ApiDrop): string =>
     drop.wave?.id
   )} serial_no=${scalarForLog(drop.serial_no)}`;
 
+export interface NotificationConnectionRecipient {
+  readonly connectionId: string;
+  readonly identityId: string;
+}
+
 const normalizedErrorForLog = (error: unknown): string => {
   if (error instanceof Error) {
     return `${error.name}: ${error.message}`;
@@ -251,7 +256,8 @@ export class WsListenersNotifier {
   }
 
   async notifyAboutDmUnreadStateChanged(
-    states: ApiDmUnreadConversationState[]
+    states: ApiDmUnreadConversationState[],
+    resolvedRecipients?: readonly NotificationConnectionRecipient[]
   ): Promise<void> {
     const statesByProfileId = states.reduce((acc, state) => {
       const profileStates = acc.get(state.profile_id) ?? [];
@@ -265,9 +271,10 @@ export class WsListenersNotifier {
     const profileIds = Array.from(statesByProfileId.keys());
     try {
       const recipients =
-        await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
+        resolvedRecipients ??
+        (await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
           profileIds
-        );
+        ));
       await Promise.all(
         recipients.flatMap(({ connectionId, identityId }) =>
           (statesByProfileId.get(identityId) ?? []).map((state) =>
@@ -283,6 +290,28 @@ export class WsListenersNotifier {
         `Sending DM unread states to websockets failed. Profile ids: ${profileIds.join(',')}`,
         error
       );
+    }
+  }
+
+  async findConnectedNotificationRecipients(
+    inputProfileIds: string[]
+  ): Promise<NotificationConnectionRecipient[]> {
+    const profileIds = Array.from(
+      new Set(inputProfileIds.filter((profileId) => !!profileId))
+    );
+    if (!profileIds.length) {
+      return [];
+    }
+    try {
+      return await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
+        profileIds
+      );
+    } catch (error) {
+      this.logger.error(
+        `Resolving DM unread websocket recipients failed. Profile ids: ${profileIds.join(',')}`,
+        error
+      );
+      return [];
     }
   }
 

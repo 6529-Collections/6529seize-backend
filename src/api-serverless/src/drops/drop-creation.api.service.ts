@@ -215,13 +215,26 @@ export class DropCreationApiService {
       return;
     }
     try {
+      const recipients =
+        await this.wsListenersNotifier.findConnectedNotificationRecipients(
+          recipientIds
+        );
+      const connectedRecipientIds = Array.from(
+        new Set(recipients.map((recipient) => recipient.identityId))
+      );
+      if (!connectedRecipientIds.length) {
+        return;
+      }
       const states =
         await this.wavesApiDb.findDmUnreadConversationStatesForIdentities(
-          { identityIds: recipientIds, waveIds: [waveId] },
+          { identityIds: connectedRecipientIds, waveIds: [waveId] },
           ctx,
           DbPoolName.WRITE
         );
-      await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged(states);
+      await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged(
+        states,
+        recipients
+      );
     } catch (error) {
       this.logger.error(
         `Failed to broadcast DM unread state for wave ${waveId}`,

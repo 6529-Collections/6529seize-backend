@@ -29,6 +29,11 @@ function createService() {
     findDmUnreadConversationStates: jest.fn().mockResolvedValue([dmUnreadState])
   };
   const wsListenersNotifier = {
+    findConnectedNotificationRecipients: jest
+      .fn()
+      .mockResolvedValue([
+        { connectionId: 'connection-1', identityId: 'muter-1' }
+      ]),
     notifyAboutDmUnreadStateChanged: jest.fn().mockResolvedValue(undefined)
   };
   const userGroupsService = {
@@ -101,7 +106,10 @@ describe('IdentityMutesApiService DM unread synchronization', () => {
       );
       expect(
         wsListenersNotifier.notifyAboutDmUnreadStateChanged
-      ).toHaveBeenCalledWith([dmUnreadState]);
+      ).toHaveBeenCalledWith(
+        [dmUnreadState],
+        [{ connectionId: 'connection-1', identityId: 'muter-1' }]
+      );
     }
   );
 
@@ -136,6 +144,23 @@ describe('IdentityMutesApiService DM unread synchronization', () => {
     expect(
       wsListenersNotifier.notifyAboutDmUnreadStateChanged
     ).toHaveBeenCalledTimes(2);
+  });
+
+  it('versions affected conversations without aggregating unread state when the reader is offline', async () => {
+    const { ctx, service, wavesApiDb, wsListenersNotifier } = createService();
+    wsListenersNotifier.findConnectedNotificationRecipients.mockResolvedValue(
+      []
+    );
+
+    await service.muteIdentity('muted-handle', ctx as never);
+
+    expect(
+      wavesApiDb.incrementDmUnreadStateVersionsForReaderWaves
+    ).toHaveBeenCalledWith({ readerId: 'muter-1', waveIds: ['wave-1'] }, ctx);
+    expect(wavesApiDb.findDmUnreadConversationStates).not.toHaveBeenCalled();
+    expect(
+      wsListenersNotifier.notifyAboutDmUnreadStateChanged
+    ).not.toHaveBeenCalled();
   });
 
   it('does not version or broadcast inaccessible conversations', async () => {

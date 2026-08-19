@@ -175,6 +175,11 @@ describe('WaveApiService direct-message creation unread synchronization', () => 
         .mockResolvedValue(undefined)
     };
     const wsListenersNotifier = {
+      findConnectedNotificationRecipients: jest
+        .fn()
+        .mockResolvedValue([
+          { connectionId: 'connection-1', identityId: 'recipient-1' }
+        ]),
       notifyAboutDmUnreadStateChanged: jest.fn(async () => {
         expect(transactionCommitted).toBe(true);
       })
@@ -222,6 +227,9 @@ describe('WaveApiService direct-message creation unread synchronization', () => 
     );
     expect(
       wsListenersNotifier.notifyAboutDmUnreadStateChanged
-    ).toHaveBeenCalledWith([dmUnreadState]);
+    ).toHaveBeenCalledWith(
+      [dmUnreadState],
+      [{ connectionId: 'connection-1', identityId: 'recipient-1' }]
+    );
   });
 });

@@ -197,7 +197,15 @@ export class NotificationsApiService {
       identityId,
       waveId
     });
-    const dmUnreadState = wave?.is_direct_message
+    const dmRecipients = wave?.is_direct_message
+      ? await this.wsListenersNotifier.findConnectedNotificationRecipients([
+          identityId
+        ])
+      : [];
+    const shouldLoadDmUnreadState =
+      wave?.is_direct_message === true &&
+      (requestDmUnreadState || dmRecipients.length > 0);
+    const dmUnreadState = shouldLoadDmUnreadState
       ? ((
           await this.wavesApiDb.findDmUnreadConversationStates(
             {
@@ -210,10 +218,11 @@ export class NotificationsApiService {
           )
         )[0] ?? null)
       : null;
-    if (dmUnreadState) {
-      await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged([
-        dmUnreadState
-      ]);
+    if (dmUnreadState && dmRecipients.length) {
+      await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged(
+        [dmUnreadState],
+        dmRecipients
+      );
     }
     await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
       identityId
