@@ -418,7 +418,7 @@ function queueQualificationResponses(input: {
           state: 'open',
           mergeable: true,
           mergeable_state: 'blocked',
-          user: { login: 'PR-Author' },
+          user: { login: 'PR-Author', type: 'User' },
           head: { sha: input.headSha, ref: 'agent/test' },
           base: { sha: input.baseSha, ref: 'main' },
           merge_commit_sha: input.mergeSha
@@ -543,8 +543,14 @@ function queueQualificationResponses(input: {
   fetchMock.mockResolvedValueOnce(
     new Response(
       JSON.stringify([
-        { author: { login: 'Commit-Author' } },
-        { author: { login: '6529-release-bus[bot]' } }
+        {
+          author: { login: 'Commit-Author', type: 'User' },
+          committer: { login: 'Commit-Committer', type: 'User' }
+        },
+        {
+          author: { login: '6529-release-bus[bot]', type: 'Bot' },
+          committer: { login: 'github-actions', type: 'Bot' }
+        }
       ])
     )
   );
@@ -742,7 +748,11 @@ describe('GitHub pull request qualification evidence', () => {
         artifactRunId: String(runId),
         artifactName: `release-bus-v2-pr-${mergeSha}`,
         artifactDigest: 'd'.repeat(64),
-        contributorGithubLogins: ['PR-Author', 'Commit-Author']
+        contributorGithubLogins: [
+          'PR-Author',
+          'Commit-Author',
+          'Commit-Committer'
+        ]
       });
       expect(String(fetchMock.mock.calls[3]?.[0])).toContain(
         `/actions/runs/${runId}`
@@ -1129,13 +1139,51 @@ describe('GitHub pull request qualification evidence', () => {
             getPullRequestContributorGithubLogins(
               repository: 'backend',
               pullNumber: number,
-              pull: { user: { login: string } }
+              pull: { user: { login: string; type: string } }
             ): Promise<readonly string[]>;
           }
         ).getPullRequestContributorGithubLogins('backend', 42, {
-          user: { login: 'PR-Author' }
+          user: { login: 'PR-Author', type: 'User' }
         })
       ).resolves.toEqual(['PR-Author']);
+    } finally {
+      fetchMock.mockReset();
+    }
+  });
+
+  it('accepts only identities explicitly classified as users', async () => {
+    const app = appWithCachedToken();
+    const fetchMock = fetch as jest.MockedFunction<typeof fetch>;
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          {
+            author: { login: 'Human-Author', type: 'User' },
+            committer: {
+              login: 'Organization-Committer',
+              type: 'Organization'
+            }
+          }
+        ])
+      )
+    );
+
+    try {
+      await expect(
+        (
+          app as unknown as {
+            getPullRequestContributorGithubLogins(
+              repository: 'backend',
+              pullNumber: number,
+              pull: {
+                user: { login: string; type?: string };
+              }
+            ): Promise<readonly string[]>;
+          }
+        ).getPullRequestContributorGithubLogins('backend', 42, {
+          user: { login: 'Legacy-User' }
+        })
+      ).resolves.toEqual(['Human-Author']);
     } finally {
       fetchMock.mockReset();
     }

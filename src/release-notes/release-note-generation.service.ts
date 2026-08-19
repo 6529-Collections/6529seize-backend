@@ -15,7 +15,9 @@ import { createHash } from 'node:crypto';
 import { GITHUB_TO_6529_HANDLES } from './release-note-contributors.config';
 import { releaseNotesBedrockPrompter } from './release-notes-bedrock.prompter';
 import {
+  AlreadyDeployedReleaseShaError,
   GitHubReleaseContext,
+  NonForwardReleaseRangeError,
   releaseNoteGitHubService,
   ReleaseNoteGitHubService,
   ReleasePullRequestContext
@@ -74,6 +76,8 @@ const HISTORICAL_FRONTEND_HEADING_PATTERN =
 export type ReleaseNoteGenerationOutcome =
   | 'published'
   | 'already-published'
+  | 'already-deployed'
+  | 'invalid-range'
   | 'no-baseline'
   | 'no-pull-requests';
 
@@ -464,7 +468,24 @@ export class ReleaseNoteGenerationService {
         publicationId
       });
     }
-    const context = await this.githubService.getReleaseContext(request);
+    let context: GitHubReleaseContext | null;
+    try {
+      context = await this.githubService.getReleaseContext(request);
+    } catch (error) {
+      if (error instanceof AlreadyDeployedReleaseShaError) {
+        this.logger.info(
+          `Skipping release notes for ${request.repo} run ${request.run_id}; ${error.message}`
+        );
+        return 'already-deployed';
+      }
+      if (error instanceof NonForwardReleaseRangeError) {
+        this.logger.warn(
+          `Skipping release notes for ${request.repo} run ${request.run_id}; ${error.message}`
+        );
+        return 'invalid-range';
+      }
+      throw error;
+    }
     if (!context) {
       this.logger.info(
         `Skipping release notes for ${request.repo} run ${request.run_id}; no previous successful production run was found`

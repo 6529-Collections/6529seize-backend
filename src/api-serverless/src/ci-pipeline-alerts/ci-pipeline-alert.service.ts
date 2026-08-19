@@ -16,7 +16,7 @@ import {
 } from '@/release-notes/release-note-generation-queue';
 import {
   GITHUB_TO_6529_HANDLES,
-  isGithubContributorLogin
+  isHumanGithubContributorLogin
 } from '@/release-notes/release-note-contributors.config';
 import { isAllowedReleaseNotesPrompt } from '@/release-notes/release-note-prompts.config';
 import { DEVS_6529_MENTION } from '@/constants/mentions';
@@ -56,7 +56,13 @@ export interface CiPipelineAlertRequest {
   readonly parent_release_train_id?: string | null;
   readonly validation_pack?: string | null;
   readonly release_train_id?: string | null;
+  readonly release_operation_key?: string | null;
   readonly contributor_github_logins?: string[];
+  readonly contributor_evidence?:
+    | 'release-bus-operation'
+    | 'manual-pr'
+    | 'manual-range'
+    | null;
   readonly release_notes_prompt_path?: string | null;
   readonly release_group_id?: string | null;
   readonly release_group_services?: string[];
@@ -82,8 +88,18 @@ interface MentionedProfile {
 
 interface AlertMentions {
   readonly triggeredBy: MentionedProfile | null;
+  readonly contributors: ReadonlyArray<{
+    readonly githubLogin: string;
+    readonly profile: MentionedProfile | null;
+  }>;
   readonly deployInitiator: MentionedProfile | null;
   readonly all: MentionedProfile[];
+}
+
+export interface CiPipelineAlertOutcome {
+  readonly ci_drop: 'accepted';
+  readonly release_note: 'ineligible' | 'skipped' | 'enqueued' | 'queue-failed';
+  readonly release_note_reason?: string;
 }
 
 interface ReleaseNoteEnqueueContext {
@@ -183,13 +199,96 @@ export function normalizeContributorGithubLogins(
   for (const value of values ?? []) {
     const login = value.trim();
     if (
-      !isGithubContributorLogin(login) ||
+      !isHumanGithubContributorLogin(login) ||
       logins.some((existing) => existing.toLowerCase() === login.toLowerCase())
     )
       continue;
     logins.push(login);
   }
   return logins;
+}
+
+function expectedReleaseBusWorkflow(
+  repo: string | undefined,
+  environment: 'staging' | 'prod'
+): string | null {
+  if (repo === '6529seize-frontend') {
+    return environment === 'staging'
+      ? 'Release Bus - Deploy Frontend Staging'
+      : 'Release Bus - Deploy Frontend Production';
+  }
+  if (repo === '6529seize-backend') {
+    return 'Deploy a service';
+  }
+  return null;
+}
+
+export function isVerifiedReleaseBusAlert(
+  request: CiPipelineAlertRequest
+): boolean {
+  const trainId = normalizeOptionalValue(request.release_train_id);
+  const operationKey = normalizeOptionalValue(request.release_operation_key);
+  const environment = normalizeTargetEnvironment(request.environment);
+  if (
+    !trainId ||
+    !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(
+      trainId
+    ) ||
+    !operationKey ||
+    !environment ||
+    !isReleaseBusGitHubAppActor(request.triggered_by_github_login)
+  ) {
+    return false;
+  }
+  const repo = request.repo.split('/').pop();
+  const expectedWorkflow = expectedReleaseBusWorkflow(repo, environment);
+  if (request.workflow !== expectedWorkflow) return false;
+  const parts = operationKey.split(':');
+  const attempt = parts.at(-1);
+  if (!attempt || !/^a[1-9]\d{0,8}$/.test(attempt)) return false;
+  if (repo === '6529seize-frontend') {
+    return (
+      parts.length === 6 &&
+      parts[0] === 'rb2' &&
+      parts[1] === trainId &&
+      parts[2] === 'deploy' &&
+      parts[3] === environment &&
+      parts[4] === 'frontend'
+    );
+  }
+  const service = normalizeOptionalValue(request.service);
+  return (
+    repo === '6529seize-backend' &&
+    !!service &&
+    parts.length === 7 &&
+    parts[0] === 'rb2' &&
+    parts[1] === trainId &&
+    parts[2] === 'deploy' &&
+    parts[3] === environment &&
+    parts[4] === 'backend' &&
+    parts[5] === service
+  );
+}
+
+export function verifiedContributorGithubLogins(
+  request: CiPipelineAlertRequest
+): string[] {
+  const evidence = request.contributor_evidence;
+  if (
+    evidence === 'release-bus-operation' &&
+    isVerifiedReleaseBusAlert(request)
+  ) {
+    return normalizeContributorGithubLogins(request.contributor_github_logins);
+  }
+  if (
+    (evidence === 'manual-pr' || evidence === 'manual-range') &&
+    !normalizeOptionalValue(request.release_train_id) &&
+    !normalizeOptionalValue(request.release_operation_key) &&
+    !isReleaseBusGitHubAppActor(request.triggered_by_github_login)
+  ) {
+    return normalizeContributorGithubLogins(request.contributor_github_logins);
+  }
+  return [];
 }
 
 function getReleaseNoteEnqueueContext(
@@ -293,11 +392,15 @@ function formatInitiator(
   request: CiPipelineAlertRequest,
   mentions: AlertMentions
 ): string {
-  if (isReleaseBusGitHubAppActor(request.triggered_by_github_login)) {
+  if (isVerifiedReleaseBusAlert(request)) {
     return 'Release Train';
   }
-  return mentions.triggeredBy
-    ? '@[' + mentions.triggeredBy.handle + ']'
+  if (mentions.triggeredBy) {
+    return '@[' + mentions.triggeredBy.handle + ']';
+  }
+  const githubLogin = normalizeOptionalValue(request.triggered_by_github_login);
+  return githubLogin && isHumanGithubContributorLogin(githubLogin)
+    ? formatMarkdownLink(githubLogin, `https://github.com/${githubLogin}`)
     : 'unknown';
 }
 
@@ -411,7 +514,7 @@ export class CiPipelineAlertService {
   public async postAlert(
     request: CiPipelineAlertRequest,
     ctx: RequestContext
-  ): Promise<void> {
+  ): Promise<CiPipelineAlertOutcome> {
     const waveId = this.resolveWaveId(request);
     const botProfileId = env.getStringOrThrow('CI_PIPELINES_BOT_PROFILE_ID');
     const deployTarget = isWebE2EAlert(request)
@@ -472,7 +575,10 @@ export class CiPipelineAlertService {
       }
     }
 
-    await this.enqueueReleaseNotesIfEligible(request, ctx);
+    return {
+      ci_drop: 'accepted',
+      ...(await this.enqueueReleaseNotesIfEligible(request, ctx))
+    };
   }
 
   private async resolveDeployTarget(
@@ -491,37 +597,82 @@ export class CiPipelineAlertService {
   private async enqueueReleaseNotesIfEligible(
     request: CiPipelineAlertRequest,
     ctx: RequestContext
-  ): Promise<void> {
+  ): Promise<
+    Pick<CiPipelineAlertOutcome, 'release_note' | 'release_note_reason'>
+  > {
     const enqueueContext = getReleaseNoteEnqueueContext(request);
     if (!enqueueContext) {
-      return;
+      return {
+        release_note: 'ineligible',
+        release_note_reason: 'not-a-successful-production-release'
+      };
     }
-    const { promptPath, isBackendRelease } = enqueueContext;
+    const { promptPath } = enqueueContext;
     if (!isAllowedReleaseNotesPrompt(request.repo, promptPath)) {
       this.logger.warn(
         `Skipping release notes for unsupported prompt path ${promptPath} in ${request.repo}`
       );
-      return;
+      return {
+        release_note: 'skipped',
+        release_note_reason: 'unsupported-prompt-path'
+      };
     }
 
     const structuredGroups = request.release_note_groups !== undefined;
+    const { enqueued, queueFailures } = await this.enqueueReleaseNoteGroups({
+      request,
+      enqueueContext,
+      structuredGroups,
+      ctx
+    });
+    if (queueFailures > 0) {
+      return {
+        release_note: 'queue-failed',
+        release_note_reason: `${queueFailures}-of-${enqueued + queueFailures}-requests`
+      };
+    }
+    if (enqueued > 0) return { release_note: 'enqueued' };
+    return {
+      release_note: 'skipped',
+      release_note_reason: structuredGroups
+        ? 'no-valid-release-note-groups'
+        : 'release-note-group-metadata-missing'
+    };
+  }
+
+  private async enqueueReleaseNoteGroups({
+    request,
+    enqueueContext,
+    structuredGroups,
+    ctx
+  }: {
+    readonly request: CiPipelineAlertRequest;
+    readonly enqueueContext: ReleaseNoteEnqueueContext;
+    readonly structuredGroups: boolean;
+    readonly ctx: RequestContext;
+  }): Promise<{ enqueued: number; queueFailures: number }> {
+    let enqueued = 0;
+    let queueFailures = 0;
     for (const group of requestedReleaseNoteGroups(request)) {
       const normalizedGroup = this.getNormalizedReleaseNoteGroup(
         request,
         group,
-        isBackendRelease,
+        enqueueContext.isBackendRelease,
         structuredGroups
       );
       if (!normalizedGroup) {
         continue;
       }
-      await this.enqueueReleaseNoteGroup(
+      const queueOutcome = await this.enqueueReleaseNoteGroup(
         request,
         enqueueContext,
         normalizedGroup,
         ctx
       );
+      if (queueOutcome === 'enqueued') enqueued += 1;
+      else queueFailures += 1;
     }
+    return { enqueued, queueFailures };
   }
 
   private getNormalizedReleaseNoteGroup(
@@ -555,14 +706,14 @@ export class CiPipelineAlertService {
     enqueueContext: ReleaseNoteEnqueueContext,
     normalizedGroup: NormalizedReleaseNoteGroup,
     ctx: RequestContext
-  ): Promise<void> {
-    const contributorGithubLogins = this.getReleaseTrainContributors(request);
+  ): Promise<'enqueued' | 'failed'> {
+    const contributorGithubLogins = verifiedContributorGithubLogins(request);
     const triggeredByGithubLogin = normalizeOptionalValue(
       request.triggered_by_github_login
     );
     const releaseVersion = normalizeOptionalValue(request.release_version);
     const frontendSha = normalizeOptionalValue(request.frontend_sha);
-    const enqueued = await this.releaseNotesQueue.enqueueBestEffort({
+    const queueOutcome = await this.releaseNotesQueue.enqueueBestEffort({
       repo: request.repo,
       workflow: request.workflow,
       run_id: request.run_id,
@@ -575,6 +726,16 @@ export class CiPipelineAlertService {
       branch: request.branch,
       environment: 'prod',
       service: request.service,
+      ...(normalizeOptionalValue(request.release_train_id)
+        ? { release_train_id: normalizeOptionalValue(request.release_train_id) }
+        : {}),
+      ...(normalizeOptionalValue(request.release_operation_key)
+        ? {
+            release_operation_key: normalizeOptionalValue(
+              request.release_operation_key
+            )
+          }
+        : {}),
       prompt_path: enqueueContext.promptPath,
       release_group_id: normalizedGroup.releaseGroupId,
       release_group_services: normalizedGroup.releaseGroupServices,
@@ -587,9 +748,13 @@ export class CiPipelineAlertService {
       ...(frontendSha ? { frontend_sha: frontendSha } : {}),
       deployed_at: enqueueContext.deployedAt
     });
-    if (!enqueued && request.repo.split('/').pop() === '6529-core') {
+    if (
+      queueOutcome === 'failed' &&
+      request.repo.split('/').pop() === '6529-core'
+    ) {
       await this.postDesktopReleaseNoteEnqueueFailure(request, ctx);
     }
+    return queueOutcome;
   }
 
   private async postDesktopReleaseNoteEnqueueFailure(
@@ -620,18 +785,6 @@ export class CiPipelineAlertService {
     );
   }
 
-  private getReleaseTrainContributors(
-    request: CiPipelineAlertRequest
-  ): string[] {
-    const triggeredByGithubLogin = normalizeOptionalValue(
-      request.triggered_by_github_login
-    );
-    return isReleaseBusGitHubAppActor(triggeredByGithubLogin) &&
-      normalizeOptionalValue(request.release_train_id)
-      ? normalizeContributorGithubLogins(request.contributor_github_logins)
-      : [];
-  }
-
   private async resolveAlertMentions(
     request: CiPipelineAlertRequest,
     deployTarget: CiPipelineDeployAlertTarget | null
@@ -639,6 +792,7 @@ export class CiPipelineAlertService {
     if (isWebE2EAlert(request) && request.status === 'success') {
       return {
         triggeredBy: null,
+        contributors: [],
         deployInitiator: null,
         all: []
       };
@@ -646,36 +800,43 @@ export class CiPipelineAlertService {
     const triggeredByGithubLogin = normalizeOptionalValue(
       request.triggered_by_github_login
     );
+    const isReleaseTrain = isVerifiedReleaseBusAlert(request);
+    const triggeredByHandle =
+      triggeredByGithubLogin && !isReleaseTrain
+        ? getMappedProfileHandle(triggeredByGithubLogin)
+        : null;
     const deployInitiatorGithubLogin = normalizeOptionalValue(
       deployTarget?.triggeredByGithubLogin
     );
-    const triggeredByHandle = getMappedProfileHandle(triggeredByGithubLogin);
     const deployInitiatorHandle = getMappedProfileHandle(
       deployInitiatorGithubLogin
     );
-    if (!triggeredByGithubLogin) {
-      this.logger.warn(
-        'Unable to resolve CI workflow initiator: GitHub login is missing'
-      );
-    } else if (
-      !isAutomationActor(triggeredByGithubLogin) &&
-      !triggeredByHandle
-    ) {
-      this.logger.warn(
-        `Unable to resolve CI workflow initiator ${triggeredByGithubLogin}: 6529 profile mapping is missing`
-      );
-    }
+    this.logWorkflowInitiatorMappingFailure(
+      triggeredByGithubLogin,
+      triggeredByHandle
+    );
 
-    const handlesToResolve = Array.from(
-      new Set(
-        [triggeredByHandle, deployInitiatorHandle].filter(
-          (handle): handle is string => Boolean(handle)
-        )
-      )
+    const contributorGithubLogins = verifiedContributorGithubLogins(request);
+    const contributorHandles = contributorGithubLogins
+      .map((login) => GITHUB_TO_6529_HANDLES[login.toLowerCase()])
+      .filter((handle): handle is string => Boolean(handle));
+    const handlesToResolve = [
+      ...(triggeredByHandle ? [triggeredByHandle] : []),
+      ...(deployInitiatorHandle ? [deployInitiatorHandle] : []),
+      ...contributorHandles
+    ].filter(
+      (handle, index, handles) =>
+        handles.findIndex(
+          (candidate) => candidate.toLowerCase() === handle.toLowerCase()
+        ) === index
     );
     if (!handlesToResolve.length) {
       return {
         triggeredBy: null,
+        contributors: contributorGithubLogins.map((githubLogin) => ({
+          githubLogin,
+          profile: null
+        })),
         deployInitiator: null,
         all: []
       };
@@ -700,6 +861,71 @@ export class CiPipelineAlertService {
       ? (mentionsByNormalizedHandle.get(deployInitiatorHandle.toLowerCase()) ??
         null)
       : null;
+    this.logMissingMentionProfiles({
+      triggeredByGithubLogin,
+      triggeredByHandle,
+      triggeredBy,
+      deployInitiatorGithubLogin,
+      deployInitiatorHandle,
+      deployInitiator
+    });
+
+    const contributors = contributorGithubLogins.map((githubLogin) => {
+      const mappedHandle = GITHUB_TO_6529_HANDLES[githubLogin.toLowerCase()];
+      return {
+        githubLogin,
+        profile: mappedHandle
+          ? (mentionsByNormalizedHandle.get(mappedHandle.toLowerCase()) ?? null)
+          : null
+      };
+    });
+    // Profile IDs collapse handle aliases while preserving initiator-first order.
+    const all = [
+      ...(triggeredBy ? [triggeredBy] : []),
+      ...(deployInitiator ? [deployInitiator] : []),
+      ...contributors
+        .map(({ profile }) => profile)
+        .filter((profile): profile is MentionedProfile => !!profile)
+    ].filter(
+      (mention, index, mentions) =>
+        mentions.findIndex(
+          (candidate) => candidate.profileId === mention.profileId
+        ) === index
+    );
+
+    return { triggeredBy, contributors, deployInitiator, all };
+  }
+
+  private logWorkflowInitiatorMappingFailure(
+    githubLogin: string | null,
+    mappedHandle: string | null
+  ): void {
+    if (!githubLogin) {
+      this.logger.warn(
+        'Unable to resolve CI workflow initiator: GitHub login is missing'
+      );
+    } else if (!isAutomationActor(githubLogin) && !mappedHandle) {
+      this.logger.warn(
+        `Unable to resolve CI workflow initiator ${githubLogin}: 6529 profile mapping is missing`
+      );
+    }
+  }
+
+  private logMissingMentionProfiles({
+    triggeredByGithubLogin,
+    triggeredByHandle,
+    triggeredBy,
+    deployInitiatorGithubLogin,
+    deployInitiatorHandle,
+    deployInitiator
+  }: {
+    readonly triggeredByGithubLogin: string | null;
+    readonly triggeredByHandle: string | null;
+    readonly triggeredBy: MentionedProfile | null;
+    readonly deployInitiatorGithubLogin: string | null;
+    readonly deployInitiatorHandle: string | null;
+    readonly deployInitiator: MentionedProfile | null;
+  }): void {
     if (triggeredByHandle && !triggeredBy) {
       this.logger.warn(
         `Unable to resolve CI workflow initiator ${triggeredByGithubLogin}: 6529 profile ${triggeredByHandle} is missing`
@@ -710,20 +936,6 @@ export class CiPipelineAlertService {
         `Unable to resolve CI deploy initiator ${deployInitiatorGithubLogin}: 6529 profile ${deployInitiatorHandle} is missing`
       );
     }
-
-    const all = [triggeredBy, deployInitiator].filter(
-      (mention, index, mentions): mention is MentionedProfile =>
-        mention !== null &&
-        mentions.findIndex(
-          (candidate) => candidate?.profileId === mention.profileId
-        ) === index
-    );
-
-    return {
-      triggeredBy,
-      deployInitiator,
-      all
-    };
   }
 
   private resolveWaveId(request: CiPipelineAlertRequest): string {
@@ -800,6 +1012,16 @@ export class CiPipelineAlertService {
       ? truncate(sanitizeAlertText(description), MAX_ALERT_DESCRIPTION_LENGTH)
       : null;
     const triggeredBy = formatInitiator(request, mentions);
+    const contributors = mentions.contributors
+      .map(({ githubLogin, profile }) =>
+        profile
+          ? `@[${profile.handle}]`
+          : formatMarkdownLink(
+              githubLogin,
+              `https://github.com/${encodeURIComponent(githubLogin)}`
+            )
+      )
+      .join(', ');
     const lines = [
       formatAlertHeading(request),
       '',
@@ -809,6 +1031,7 @@ export class CiPipelineAlertService {
       ...(branch ? [`Branch: ${branch}`] : []),
       ...(commit ? [`Commit: ${commit}`] : []),
       `Initiated by: ${triggeredBy}`,
+      ...(contributors ? [`Contributors: ${contributors}`] : []),
       `Run: ${formatRun(request, false)}`,
       ...failureMentionLines
     ];

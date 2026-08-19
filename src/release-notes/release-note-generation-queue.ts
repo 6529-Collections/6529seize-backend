@@ -23,6 +23,8 @@ export interface ReleaseNoteGenerationRequest {
   readonly branch?: string | null;
   readonly environment: string;
   readonly service?: string | null;
+  readonly release_train_id?: string | null;
+  readonly release_operation_key?: string | null;
   readonly prompt_path: string;
   readonly release_group_id: string;
   readonly release_group_services: string[];
@@ -42,18 +44,18 @@ export class ReleaseNoteGenerationQueue {
 
   public async enqueueBestEffort(
     request: ReleaseNoteGenerationRequest
-  ): Promise<boolean> {
+  ): Promise<'enqueued' | 'failed'> {
     try {
       await this.sqsClient.sendToQueueName({
         queueName: RELEASE_NOTE_GENERATION_QUEUE_NAME,
         message: request
       });
-      return true;
+      return 'enqueued';
     } catch (error) {
       this.logger.error(
         `Failed to enqueue release notes for ${request.repo} run ${request.run_id}: ${error}`
       );
-      return false;
+      return 'failed';
     }
   }
 }

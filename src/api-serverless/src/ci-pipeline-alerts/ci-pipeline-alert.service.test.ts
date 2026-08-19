@@ -16,6 +16,7 @@ import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription'
 import {
   CiPipelineAlertService,
   formatMarkdownLink,
+  isVerifiedReleaseBusAlert,
   normalizeContributorGithubLogins,
   normalizeTargetEnvironment,
   truncate
@@ -70,7 +71,7 @@ describe('CiPipelineAlertService', () => {
       })
     };
     releaseNotesQueue = {
-      enqueueBestEffort: jest.fn().mockResolvedValue(true)
+      enqueueBestEffort: jest.fn().mockResolvedValue('enqueued')
     };
     alertTargetStore = {
       rememberDeployTarget: jest.fn().mockResolvedValue(undefined),
@@ -152,8 +153,32 @@ describe('CiPipelineAlertService', () => {
         'double--hyphen',
         'invalid login'
       ])
-    ).toEqual(['GelatoGenesis', 'ragnep', 'dependabot[bot]']);
+    ).toEqual(['GelatoGenesis', 'ragnep']);
   });
+
+  it.each(['staging', 'prod'] as const)(
+    'verifies exact backend %s Release Bus operation identity',
+    (environment) => {
+      const request = {
+        ...baseRequest,
+        repo: '6529seize-backend',
+        workflow: 'Deploy a service',
+        environment,
+        service: 'api',
+        triggered_by_github_login: '6529-release-bus[bot]',
+        release_train_id: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
+        release_operation_key: `rb2:a7d3433d-e145-4578-bc78-e96fbd34f591:deploy:${environment}:backend:api:a1`
+      };
+
+      expect(isVerifiedReleaseBusAlert(request)).toBe(true);
+      expect(
+        isVerifiedReleaseBusAlert({
+          ...request,
+          release_operation_key: `${request.release_operation_key}:spoofed`
+        })
+      ).toBe(false);
+    }
+  );
 
   it('posts failures with the global developer mention and preserves initiator attribution', async () => {
     const service = new CiPipelineAlertService(
@@ -539,9 +564,15 @@ describe('CiPipelineAlertService', () => {
       await service.postAlert(
         {
           ...baseRequest,
+          workflow:
+            environment === 'staging'
+              ? 'Release Bus - Deploy Frontend Staging'
+              : 'Release Bus - Deploy Frontend Production',
           status: 'success',
           environment,
-          triggered_by_github_login: '6529-release-bus[bot]'
+          triggered_by_github_login: '6529-release-bus[bot]',
+          release_train_id: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
+          release_operation_key: `rb2:a7d3433d-e145-4578-bc78-e96fbd34f591:deploy:${environment}:frontend:a1`
         },
         {}
       );
@@ -563,7 +594,7 @@ describe('CiPipelineAlertService', () => {
     }
   );
 
-  it('does not render or notify train-wide contributors on each deployment', async () => {
+  it('renders only verified operation-scoped Release Bus contributors', async () => {
     identitiesRepository.getIdsByHandles.mockResolvedValue({
       GelatoGenesis: 'profile-gelato',
       ragne: 'profile-ragne'
@@ -576,10 +607,14 @@ describe('CiPipelineAlertService', () => {
     await service.postAlert(
       {
         ...baseRequest,
+        workflow: 'Release Bus - Deploy Frontend Staging',
         status: 'success',
         environment: 'staging',
         triggered_by_github_login: '6529-release-bus[bot]',
-        release_train_id: 'train-123',
+        release_train_id: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
+        release_operation_key:
+          'rb2:a7d3433d-e145-4578-bc78-e96fbd34f591:deploy:staging:frontend:a1',
+        contributor_evidence: 'release-bus-operation',
         contributor_github_logins: [
           'GelatoGenesis',
           'ragnep',
@@ -590,14 +625,28 @@ describe('CiPipelineAlertService', () => {
       {}
     );
 
-    expect(identitiesRepository.getIdsByHandles).not.toHaveBeenCalled();
+    expect(identitiesRepository.getIdsByHandles).toHaveBeenCalledWith([
+      'GelatoGenesis',
+      'ragne'
+    ]);
     const createDropRequest =
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest;
-    expect(createDropRequest.mentioned_users).toEqual([]);
+    expect(createDropRequest.mentioned_users).toEqual([
+      {
+        mentioned_profile_id: 'profile-gelato',
+        handle_in_content: 'GelatoGenesis'
+      },
+      {
+        mentioned_profile_id: 'profile-ragne',
+        handle_in_content: 'ragne'
+      }
+    ]);
     expect(createDropRequest.parts[0].content).toContain(
       'Initiated by: Release Train'
     );
-    expect(createDropRequest.parts[0].content).not.toContain('Contributors:');
+    expect(createDropRequest.parts[0].content).toContain(
+      'Contributors: @[GelatoGenesis], @[ragne], [external-user](https://github.com/external-user)'
+    );
   });
 
   it('ignores contributor metadata for a manually initiated deployment', async () => {
@@ -610,7 +659,8 @@ describe('CiPipelineAlertService', () => {
       {
         ...baseRequest,
         status: 'success',
-        release_train_id: 'train-123',
+        release_train_id: 'train-shaped-input',
+        contributor_evidence: 'manual-pr',
         contributor_github_logins: ['GelatoGenesis']
       },
       {}
@@ -623,7 +673,104 @@ describe('CiPipelineAlertService', () => {
     expect(content).not.toContain('Contributors:');
   });
 
-  it('posts with an unknown initiator when the 6529 mapping is missing', async () => {
+  it('does not let train-shaped workflow metadata relabel a manual initiator', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        workflow: 'Web Deploy - PROD',
+        status: 'success',
+        triggered_by_github_login: '6529-release-bus[bot]',
+        release_train_id: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
+        release_operation_key:
+          'rb2:a7d3433d-e145-4578-bc78-e96fbd34f591:deploy:prod:frontend:a1',
+        contributor_evidence: 'release-bus-operation',
+        contributor_github_logins: ['GelatoGenesis']
+      },
+      {}
+    );
+
+    const content =
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content;
+    expect(content).toContain('Initiated by: unknown');
+    expect(content).not.toContain('Initiated by: Release Train');
+    expect(content).not.toContain('Contributors:');
+  });
+
+  it('keeps manual initiator and verified contributor roles independent', async () => {
+    identitiesRepository.getIdsByHandles.mockResolvedValue({
+      prxt0: 'profile-initiator',
+      GelatoGenesis: 'profile-gelato'
+    });
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        status: 'success',
+        contributor_evidence: 'manual-pr',
+        contributor_github_logins: ['prxt6529', 'GelatoGenesis']
+      },
+      {}
+    );
+
+    const createDropRequest =
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest;
+    expect(createDropRequest.parts[0].content).toContain(
+      'Initiated by: @[prxt0]'
+    );
+    expect(createDropRequest.parts[0].content).toContain(
+      'Contributors: @[prxt0], @[GelatoGenesis]'
+    );
+    expect(createDropRequest.mentioned_users).toEqual([
+      {
+        mentioned_profile_id: 'profile-initiator',
+        handle_in_content: 'prxt0'
+      },
+      {
+        mentioned_profile_id: 'profile-gelato',
+        handle_in_content: 'GelatoGenesis'
+      }
+    ]);
+  });
+
+  it('does not add a manual initiator to the contributor list', async () => {
+    identitiesRepository.getIdsByHandles.mockResolvedValue({
+      prxt0: 'profile-initiator',
+      GelatoGenesis: 'profile-gelato'
+    });
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        status: 'success',
+        contributor_evidence: 'manual-pr',
+        contributor_github_logins: ['GelatoGenesis']
+      },
+      {}
+    );
+
+    const content =
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content;
+    expect(content).toContain('Initiated by: @[prxt0]');
+    expect(content).toContain('Contributors: @[GelatoGenesis]');
+    expect(content).not.toContain('Contributors: @[prxt0]');
+  });
+
+  it('links the actual GitHub initiator when the 6529 mapping is missing', async () => {
     const service = new CiPipelineAlertService(
       dropCreationApiService as any,
       identitiesRepository as any
@@ -642,14 +789,16 @@ describe('CiPipelineAlertService', () => {
     expect(
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .parts[0].content
-    ).toContain('Initiated by: unknown');
+    ).toContain(
+      'Initiated by: [unknown-user](https://github.com/unknown-user)'
+    );
     expect(
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .mentioned_users
     ).toEqual([]);
   });
 
-  it('posts with an unknown initiator when the mapped profile is missing', async () => {
+  it('links the actual GitHub initiator when its mapped profile is missing', async () => {
     identitiesRepository.getIdsByHandles.mockResolvedValue({});
     const service = new CiPipelineAlertService(
       dropCreationApiService as any,
@@ -661,7 +810,7 @@ describe('CiPipelineAlertService', () => {
     expect(
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .parts[0].content
-    ).toContain('Initiated by: unknown');
+    ).toContain('Initiated by: [prxt6529](https://github.com/prxt6529)');
     expect(
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .mentioned_users
@@ -679,6 +828,28 @@ describe('CiPipelineAlertService', () => {
         ...baseRequest,
         status: 'success',
         triggered_by_github_login: null
+      },
+      {}
+    );
+
+    expect(identitiesRepository.getIdsByHandles).not.toHaveBeenCalled();
+    expect(
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content
+    ).toContain('Initiated by: unknown');
+  });
+
+  it('posts with an unknown initiator when actor metadata is invalid', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        status: 'success',
+        triggered_by_github_login: 'not a github login'
       },
       {}
     );
@@ -709,24 +880,25 @@ describe('CiPipelineAlertService', () => {
       {}
     );
 
-    expect(releaseNotesQueue.enqueueBestEffort).toHaveBeenCalledWith({
-      repo: baseRequest.repo,
-      workflow: baseRequest.workflow,
-      run_id: baseRequest.run_id,
-      run_number: baseRequest.run_number,
-      run_url: baseRequest.run_url,
-      triggered_by_github_login: baseRequest.triggered_by_github_login,
-      sha: baseRequest.sha,
-      branch: baseRequest.branch,
-      environment: 'prod',
-      service: baseRequest.service,
-      prompt_path: 'ops/release-notes/release-notes.prompt.md',
-      release_group_id: 'frontend-release',
-      release_group_services: ['web'],
-      pull_request_number: null,
-      publish_release_note: false,
-      deployed_at: '2026-07-13T11:38:00.000Z'
-    });
+    expect(releaseNotesQueue.enqueueBestEffort).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repo: baseRequest.repo,
+        workflow: baseRequest.workflow,
+        run_id: baseRequest.run_id,
+        run_number: baseRequest.run_number,
+        run_url: baseRequest.run_url,
+        sha: baseRequest.sha,
+        branch: baseRequest.branch,
+        environment: 'prod',
+        service: baseRequest.service,
+        prompt_path: 'ops/release-notes/release-notes.prompt.md',
+        release_group_id: 'frontend-release',
+        release_group_services: ['web'],
+        pull_request_number: null,
+        publish_release_note: false,
+        deployed_at: '2026-07-13T11:38:00.000Z'
+      })
+    );
     expect(
       dropCreationApiService.createDrop.mock.invocationCallOrder[0]
     ).toBeLessThan(
@@ -734,83 +906,104 @@ describe('CiPipelineAlertService', () => {
     );
   });
 
-  it('enqueues exact Desktop release metadata from the production S3 milestone', async () => {
+  it('accepts and enqueues the run #15 Release Bus frontend release-note request', async () => {
     const service = new CiPipelineAlertService(
       dropCreationApiService as any,
       identitiesRepository as any,
       releaseNotesQueue as any
     );
-    const frontendSha = '63630a3e27c37296bbe39d9813b014a824265a56';
 
-    await service.postAlert(
+    const outcome = await service.postAlert(
       {
         ...baseRequest,
-        repo: '6529-core',
-        workflow: 'Publish',
-        service: 'desktop',
+        workflow: 'Release Bus - Deploy Frontend Production',
         status: 'success',
-        release_notes_prompt_path:
-          'ops/release-notes/desktop-release-notes.prompt.md',
-        release_group_id: 'desktop-v0.3.13',
-        release_group_services: ['desktop'],
-        release_version: '0.3.13',
-        frontend_sha: frontendSha,
-        deployed_at: '2026-08-14T10:00:00.000Z'
+        run_id: '30379747148',
+        run_number: '15',
+        run_url:
+          'https://github.com/6529-Collections/6529seize-frontend/actions/runs/30379747148',
+        sha: '9d85844ca9c63274083612f211463d31588ae954',
+        triggered_by_github_login: '6529-release-bus[bot]',
+        release_train_id: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
+        release_operation_key:
+          'rb2:a7d3433d-e145-4578-bc78-e96fbd34f591:deploy:prod:frontend:a1',
+        contributor_evidence: 'release-bus-operation',
+        contributor_github_logins: ['prxt6529'],
+        release_notes_prompt_path: 'ops/release-notes/release-notes.prompt.md',
+        release_group_id: 'frontend:run-15',
+        release_group_services: ['web'],
+        deployed_at: '2026-07-23T11:38:00.000Z'
       },
       {}
     );
 
+    expect(outcome).toEqual({
+      ci_drop: 'accepted',
+      release_note: 'enqueued'
+    });
     expect(releaseNotesQueue.enqueueBestEffort).toHaveBeenCalledWith(
       expect.objectContaining({
-        repo: '6529-core',
-        workflow: 'Publish',
-        service: 'desktop',
-        release_version: '0.3.13',
-        frontend_sha: frontendSha,
-        release_group_id: 'desktop-v0.3.13',
-        release_group_services: ['desktop']
+        run_id: '30379747148',
+        sha: '9d85844ca9c63274083612f211463d31588ae954',
+        release_train_id: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
+        release_operation_key:
+          'rb2:a7d3433d-e145-4578-bc78-e96fbd34f591:deploy:prod:frontend:a1'
       })
     );
   });
 
-  it('posts a production failure alert when Desktop release-note enqueueing fails', async () => {
-    releaseNotesQueue.enqueueBestEffort.mockResolvedValue(false);
+  it('keeps a release-note queue failure observable without failing the CI drop', async () => {
+    releaseNotesQueue.enqueueBestEffort.mockResolvedValue('failed');
     const service = new CiPipelineAlertService(
       dropCreationApiService as any,
       identitiesRepository as any,
       releaseNotesQueue as any
     );
 
-    await service.postAlert(
-      {
-        ...baseRequest,
-        repo: '6529-core',
-        workflow: 'Publish',
-        service: 'desktop',
-        status: 'success',
-        release_notes_prompt_path:
-          'ops/release-notes/desktop-release-notes.prompt.md',
-        release_group_id: 'desktop-v0.3.13',
-        release_group_services: ['desktop'],
-        release_version: '0.3.13',
-        frontend_sha: '63630a3e27c37296bbe39d9813b014a824265a56',
-        deployed_at: '2026-08-14T10:00:00.000Z'
-      },
-      {}
+    await expect(
+      service.postAlert(
+        {
+          ...baseRequest,
+          status: 'success',
+          release_notes_prompt_path:
+            'ops/release-notes/release-notes.prompt.md',
+          release_group_id: 'frontend-release',
+          release_group_services: ['web'],
+          deployed_at: '2026-07-13T11:38:00.000Z'
+        },
+        {}
+      )
+    ).resolves.toEqual({
+      ci_drop: 'accepted',
+      release_note: 'queue-failed',
+      release_note_reason: '1-of-1-requests'
+    });
+  });
+
+  it('distinguishes missing release-note metadata from an unrequested release', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any
     );
 
-    expect(releaseNotesQueue.enqueueBestEffort).toHaveBeenCalledTimes(1);
-    expect(dropCreationApiService.createDrop).toHaveBeenCalledTimes(2);
-    const failureContent =
-      dropCreationApiService.createDrop.mock.calls[1][0].createDropRequest
-        .parts[0].content;
-    expect(failureContent).toContain(
-      '[🚀 PRODUCTION] Desktop release note failed 🚨'
-    );
-    expect(failureContent).toContain(
-      'Production v0.3.13 release note could not be queued. Frontend commit 63630a3e.'
-    );
-    expect(failureContent).toContain('cc @devs6529');
+    await expect(
+      service.postAlert(
+        {
+          ...baseRequest,
+          status: 'success',
+          release_notes_prompt_path:
+            'ops/release-notes/release-notes.prompt.md',
+          deployed_at: '2026-07-13T11:38:00.000Z'
+        },
+        {}
+      )
+    ).resolves.toEqual({
+      ci_drop: 'accepted',
+      release_note: 'skipped',
+      release_note_reason: 'release-note-group-metadata-missing'
+    });
+    expect(releaseNotesQueue.enqueueBestEffort).not.toHaveBeenCalled();
   });
 
   it('does not enqueue an unreviewed repository prompt path', async () => {
@@ -891,7 +1084,10 @@ describe('CiPipelineAlertService', () => {
         service: 'api',
         status: 'success',
         triggered_by_github_login: '6529-release-bus[bot]',
-        release_train_id: 'train-123',
+        release_train_id: 'a7d3433d-e145-4578-bc78-e96fbd34f591',
+        release_operation_key:
+          'rb2:a7d3433d-e145-4578-bc78-e96fbd34f591:deploy:prod:backend:api:a1',
+        contributor_evidence: 'release-bus-operation',
         contributor_github_logins: ['Alice', 'BOB', 'alice'],
         release_notes_prompt_path: 'ops/release-notes/release-notes.prompt.md',
         release_note_groups: [
@@ -1063,5 +1259,84 @@ describe('CiPipelineAlertService', () => {
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .parts[0].content
     ).toContain('Service: Core - desktop-canary');
+  });
+
+  it('enqueues exact Desktop release metadata from the production S3 milestone', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any
+    );
+    const frontendSha = '63630a3e27c37296bbe39d9813b014a824265a56';
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        repo: '6529-core',
+        workflow: 'Publish',
+        service: 'desktop',
+        status: 'success',
+        release_notes_prompt_path:
+          'ops/release-notes/desktop-release-notes.prompt.md',
+        release_group_id: 'desktop-v0.3.13',
+        release_group_services: ['desktop'],
+        release_version: '0.3.13',
+        frontend_sha: frontendSha,
+        deployed_at: '2026-08-14T10:00:00.000Z'
+      },
+      {}
+    );
+
+    expect(releaseNotesQueue.enqueueBestEffort).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repo: '6529-core',
+        workflow: 'Publish',
+        service: 'desktop',
+        release_version: '0.3.13',
+        frontend_sha: frontendSha,
+        release_group_id: 'desktop-v0.3.13',
+        release_group_services: ['desktop']
+      })
+    );
+  });
+
+  it('posts a production failure alert when Desktop release-note enqueueing fails', async () => {
+    releaseNotesQueue.enqueueBestEffort.mockResolvedValue('failed');
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        repo: '6529-core',
+        workflow: 'Publish',
+        service: 'desktop',
+        status: 'success',
+        release_notes_prompt_path:
+          'ops/release-notes/desktop-release-notes.prompt.md',
+        release_group_id: 'desktop-v0.3.13',
+        release_group_services: ['desktop'],
+        release_version: '0.3.13',
+        frontend_sha: '63630a3e27c37296bbe39d9813b014a824265a56',
+        deployed_at: '2026-08-14T10:00:00.000Z'
+      },
+      {}
+    );
+
+    expect(releaseNotesQueue.enqueueBestEffort).toHaveBeenCalledTimes(1);
+    expect(dropCreationApiService.createDrop).toHaveBeenCalledTimes(2);
+    const failureContent =
+      dropCreationApiService.createDrop.mock.calls[1][0].createDropRequest
+        .parts[0].content;
+    expect(failureContent).toContain(
+      '[🚀 PRODUCTION] Desktop release note failed 🚨'
+    );
+    expect(failureContent).toContain(
+      'Production v0.3.13 release note could not be queued. Frontend commit 63630a3e.'
+    );
+    expect(failureContent).toContain('cc @devs6529');
   });
 });

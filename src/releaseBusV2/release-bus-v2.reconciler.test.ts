@@ -10,6 +10,7 @@ import {
   candidateExclusionClosure,
   dagLayers,
   e2eWorkflowInputs,
+  operationContributorCandidates,
   releaseTrainContributorGithubLogins,
   releaseBusV2Branch,
   ReleaseBusV2Reconciler,
@@ -231,6 +232,104 @@ describe('Release Bus v2 deterministic orchestration', () => {
 
     expect(relevantCandidates(context)).toEqual([carried]);
     expect(stagingDeploymentCandidates(context, 'backend')).toEqual([removed]);
+    expect(operationContributorCandidates(context, 'backend')).toEqual([]);
+  });
+
+  it('scopes cumulative staging contributors by repository, service, and NEW membership', () => {
+    const api = {
+      ...candidate('api-new', 'a'.repeat(40)),
+      deploy_plan_json: { units: ['api'], edges: [] }
+    };
+    const worker = {
+      ...candidate('worker-new', 'b'.repeat(40)),
+      deploy_plan_json: { units: ['claimsBuilder'], edges: [] }
+    };
+    const carried = candidate('carried', 'c'.repeat(40));
+    const frontend = {
+      ...candidate('frontend-new', 'd'.repeat(40)),
+      repository: 'frontend' as const,
+      deploy_plan_json: null
+    };
+    const train = {
+      id: 'train-scoped',
+      lane: 'STAGING',
+      status: 'CLAIMED',
+      staging_policy: 'CUMULATIVE_ADMITTED_SET_V1'
+    } as ReleaseBusV2TrainRecord;
+    const membership = (
+      candidateId: string,
+      role: 'NEW' | 'CARRY_FORWARD',
+      sequence: number
+    ) => ({
+      id: `membership-${candidateId}`,
+      train_id: train.id,
+      candidate_id: candidateId,
+      sequence,
+      disposition: 'INCLUDED' as const,
+      candidate_role: role,
+      created_at: 1
+    });
+    const context = {
+      train,
+      memberships: [
+        membership(api.id, 'NEW', 1),
+        membership(worker.id, 'NEW', 2),
+        membership(carried.id, 'CARRY_FORWARD', 3),
+        membership(frontend.id, 'NEW', 4)
+      ],
+      candidates: [api, worker, carried, frontend],
+      dependencies: []
+    };
+
+    expect(operationContributorCandidates(context, 'backend', 'api')).toEqual([
+      api
+    ]);
+    expect(
+      operationContributorCandidates(context, 'backend', 'claimsBuilder')
+    ).toEqual([worker]);
+    expect(operationContributorCandidates(context, 'frontend')).toEqual([
+      frontend
+    ]);
+  });
+
+  it('uses only the explicit included production subset for contributor scope', () => {
+    const selected = candidate('selected', 'a'.repeat(40));
+    const unrelated = candidate('unrelated', 'b'.repeat(40));
+    const train = {
+      id: 'train-production-subset',
+      lane: 'PRODUCTION',
+      status: 'CLAIMED',
+      staging_policy: null
+    } as ReleaseBusV2TrainRecord;
+    const context = {
+      train,
+      memberships: [
+        {
+          id: 'membership-selected',
+          train_id: train.id,
+          candidate_id: selected.id,
+          sequence: 1,
+          disposition: 'INCLUDED' as const,
+          candidate_role: 'NEW' as const,
+          created_at: 1
+        },
+        {
+          id: 'membership-unrelated',
+          train_id: train.id,
+          candidate_id: unrelated.id,
+          sequence: 2,
+          disposition: 'AUDIT_ONLY' as const,
+          candidate_role: 'CARRY_FORWARD' as const,
+          created_at: 1
+        }
+      ],
+      candidates: [selected, unrelated],
+      dependencies: []
+    };
+
+    expect(operationContributorCandidates(context, 'backend', 'api')).toEqual([
+      selected
+    ]);
   });
 
   it('uses the bounded legacy preparation bridge when transition-only work has no source candidate', () => {
@@ -571,8 +670,7 @@ describe('Release Bus v2 deterministic orchestration', () => {
     expect(releaseTrainContributorGithubLogins([first, second])).toEqual([
       'GelatoGenesis',
       'ragnep',
-      'external-user',
-      'dependabot[bot]'
+      'external-user'
     ]);
   });
 

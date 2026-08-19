@@ -3,6 +3,7 @@ import fetch, { type RequestInit, type Response } from 'node-fetch';
 import AdmZip from 'adm-zip';
 import { Logger } from '@/logging';
 import { isReleaseBusGitHubAppActor } from '@/releaseBusV2/release-bus-v2.constants';
+import { isHumanGithubContributorLogin } from '@/release-notes/release-note-contributors.config';
 import type { ReleaseBusV2Repository } from '@/releaseBusV2/release-bus-v2.types';
 
 // The helper owns the abort signal so every request has one authoritative
@@ -59,8 +60,8 @@ export function workflowRunMatchesOperation(
 
 export function isValidGitHubWorkflowActor(actor: string): boolean {
   // The shared parser admits only operators and the Release Bus App. The
-  // GitHub Actions actor is accepted through dedicated E2E readers, whose
-  // workflow and repository boundaries are narrower than this one.
+  // GitHub Actions actor is accepted through the dedicated Production E2E
+  // reader, whose workflow and repository boundary is narrower than this one.
   return (
     /^[A-Za-z0-9-]{1,39}$/.test(actor) || isReleaseBusGitHubAppActor(actor)
   );
@@ -123,13 +124,17 @@ type GitHubPullRequestDetails = {
   readonly state?: string;
   readonly mergeable?: boolean | null;
   readonly mergeable_state?: string;
-  readonly user?: { readonly login?: string } | null;
+  readonly user?: { readonly login?: string; readonly type?: string } | null;
   readonly head?: { readonly sha?: string; readonly ref?: string };
   readonly base?: { readonly sha?: string; readonly ref?: string };
   readonly merge_commit_sha?: string | null;
 };
 type GitHubPullRequestCommit = {
-  readonly author?: { readonly login?: string } | null;
+  readonly author?: { readonly login?: string; readonly type?: string } | null;
+  readonly committer?: {
+    readonly login?: string;
+    readonly type?: string;
+  } | null;
 };
 type GitHubCheckRun = {
   readonly id?: number;
@@ -793,9 +798,36 @@ const TRUSTED_PR_CI_GATE_POLICY_BUNDLE_TRANSITIONS: Readonly<
       '71ce7c1b557c45fe9096fda2b0e6ddb19d78f7c50f6b6ee12f8b56487547f296',
       '286fb53b44defe2958b8f0d97baa8d090f4992e521b3aa78d6b787da7890cb16',
       'b563ed89a7edc5c70031503f74946ba5fa664ed1cecd401a456ed9190dafb0c4',
+      '5534e0b3439e510777321b7426507bb469c7b7b57a465c3fac8792cdd94e4cc4'
+    ]),
+    trustedGatePolicyBundleRollout(
+      'b563ed89a7edc5c70031503f74946ba5fa664ed1cecd401a456ed9190dafb0c4',
+      '7656eb831c652059fcd141bf6c71ec54f68e14a83fa7a7b500ca09195f1727d4'
+    ),
+    trustedGatePolicyBundleRollout(
+      'f0e2b3e1736f4011b05c82e292eeec57a43ecebc12d2822d0409822d9936daf6',
+      '7656eb831c652059fcd141bf6c71ec54f68e14a83fa7a7b500ca09195f1727d4'
+    ),
+    trustedGatePolicyBundleRollout(
+      '5534e0b3439e510777321b7426507bb469c7b7b57a465c3fac8792cdd94e4cc4',
+      '64f90c5cddab580e9354d2ecaa43d143ca9084cc799e22b83d20e8c3469abe5b'
+    ),
+    trustedGatePolicyBundleRollout(
       '5534e0b3439e510777321b7426507bb469c7b7b57a465c3fac8792cdd94e4cc4',
       '0ec035e86a65cd69ee6d7e00bcac73504e3652f06e7d7be0a91ba92f431122e1'
-    ])
+    ),
+    trustedGatePolicyBundleRollout(
+      '7656eb831c652059fcd141bf6c71ec54f68e14a83fa7a7b500ca09195f1727d4',
+      '64f90c5cddab580e9354d2ecaa43d143ca9084cc799e22b83d20e8c3469abe5b'
+    ),
+    trustedGatePolicyBundleRollout(
+      '0ec035e86a65cd69ee6d7e00bcac73504e3652f06e7d7be0a91ba92f431122e1',
+      'a6fd7ecbd2533a7235f7aa6262aaedf6eac6be8acf7ee7fdf5a6eef1ab636712'
+    ),
+    trustedGatePolicyBundleRollout(
+      '64f90c5cddab580e9354d2ecaa43d143ca9084cc799e22b83d20e8c3469abe5b',
+      'a6fd7ecbd2533a7235f7aa6262aaedf6eac6be8acf7ee7fdf5a6eef1ab636712'
+    )
   ],
   frontend: [
     trustedGatePolicyBundleRollout(
@@ -1932,9 +1964,21 @@ export class ReleaseBusGitHubApp {
     pull: GitHubPullRequestDetails
   ): Promise<readonly string[]> {
     const logins: string[] = [];
-    const addLogin = (value: string | undefined) => {
-      const login = value?.trim();
-      if (!login || isReleaseBusGitHubAppActor(login)) return;
+    const addUser = (
+      value:
+        | { readonly login?: string; readonly type?: string }
+        | null
+        | undefined
+    ) => {
+      const login = value?.login?.trim();
+      const type = value?.type?.trim().toLowerCase();
+      if (
+        !login ||
+        type !== 'user' ||
+        !isHumanGithubContributorLogin(login) ||
+        isReleaseBusGitHubAppActor(login)
+      )
+        return;
       if (
         logins.some(
           (candidate) => candidate.toLowerCase() === login.toLowerCase()
@@ -1943,7 +1987,7 @@ export class ReleaseBusGitHubApp {
         return;
       logins.push(login);
     };
-    addLogin(pull.user?.login);
+    addUser(pull.user);
     try {
       for (let page = 1; page <= MAX_PULL_REQUEST_COMMIT_PAGES; page += 1) {
         const response = await this.request(
@@ -1960,7 +2004,8 @@ export class ReleaseBusGitHubApp {
             `Invalid ${repository} pull request ${pullNumber} commits response`
           );
         for (const commit of commits) {
-          addLogin(commit.author?.login);
+          addUser(commit.author);
+          addUser(commit.committer);
         }
         if (commits.length < GITHUB_PAGE_SIZE) break;
         if (page === MAX_PULL_REQUEST_COMMIT_PAGES) {

@@ -11,6 +11,22 @@ export function isGithubContributorLogin(value: string): boolean {
   return value.length <= 39 && GITHUB_CONTRIBUTOR_LOGIN_PATTERN.test(value);
 }
 
+const NON_HUMAN_GITHUB_LOGINS = new Set([
+  'dependabot',
+  'github-actions',
+  'renovate',
+  'web-flow'
+]);
+
+export function isHumanGithubContributorLogin(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return (
+    isGithubContributorLogin(value.trim()) &&
+    !normalized.endsWith('[bot]') &&
+    !NON_HUMAN_GITHUB_LOGINS.has(normalized)
+  );
+}
+
 export const GITHUB_TO_6529_HANDLES: Readonly<Record<string, string>> =
   Object.freeze({
     brookr: 'brookr',

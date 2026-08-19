@@ -38,7 +38,7 @@ import {
   topologicalOrder,
   type ReleaseBusV2Service
 } from '@/releaseBusV2/release-bus-v2.service';
-import { isGithubContributorLogin } from '@/release-notes/release-note-contributors.config';
+import { isHumanGithubContributorLogin } from '@/release-notes/release-note-contributors.config';
 import type {
   ReleaseBusV2CandidateRecord,
   ReleaseBusV2CandidateStagingEvidence,
@@ -340,7 +340,7 @@ export function releaseTrainContributorGithubLogins(
       []) {
       const login = value.trim();
       if (
-        !isGithubContributorLogin(login) ||
+        !isHumanGithubContributorLogin(login) ||
         logins.some(
           (existing) => existing.toLowerCase() === login.toLowerCase()
         )
@@ -350,6 +350,38 @@ export function releaseTrainContributorGithubLogins(
     }
   }
   return logins;
+}
+
+export function operationContributorCandidates(
+  context: TrainContext,
+  repository: ReleaseBusV2Repository,
+  service?: string
+): ReleaseBusV2CandidateRecord[] {
+  let candidates: ReleaseBusV2CandidateRecord[];
+  if (
+    context.train.lane === 'STAGING' &&
+    context.train.staging_policy === 'CUMULATIVE_ADMITTED_SET_V1'
+  ) {
+    const introduced = new Set(
+      context.memberships
+        .filter(
+          (membership) =>
+            membership.disposition === 'INCLUDED' &&
+            membership.candidate_role === 'NEW'
+        )
+        .map((membership) => membership.candidate_id)
+    );
+    candidates = context.candidates.filter(
+      (candidate) =>
+        candidate.repository === repository && introduced.has(candidate.id)
+    );
+  } else {
+    candidates = relevantCandidates(context, repository);
+  }
+  if (repository !== 'backend' || !service) return candidates;
+  return candidates.filter(
+    (candidate) => storedDeployPlan(candidate)?.units.includes(service) === true
+  );
 }
 
 export function canUseSingleCandidateFastPath(
@@ -5964,9 +5996,6 @@ export class ReleaseBusV2Reconciler {
       artifactSourceTrainId,
       environment
     );
-    const releaseContributors = JSON.stringify(
-      releaseTrainContributorGithubLogins(relevantCandidates(context))
-    );
     const backendCandidates = stagingDeploymentCandidates(context, 'backend');
     const graph = backendGraph(backendCandidates, environment);
     const operations: ReleaseBusV2OperationRecord[] = [];
@@ -5991,13 +6020,13 @@ export class ReleaseBusV2Reconciler {
       const layerResults = await Promise.all(
         layer.map((unit) =>
           this.reconcileBackendDeploy(
+            context,
             train,
             environment,
             artifactSourceTrainId,
             source.backend,
             unit,
-            backendCandidates,
-            releaseContributors
+            backendCandidates
           )
         )
       );
@@ -6016,11 +6045,11 @@ export class ReleaseBusV2Reconciler {
       (!frontendDependsOnBackend(context) || backendComplete)
     ) {
       const frontend = await this.reconcileFrontendDeploy(
+        context,
         train,
         environment,
         artifactSourceTrainId,
-        source.frontend,
-        releaseContributors
+        source.frontend
       );
       operations.push(frontend);
       if (frontend.status === 'FAILED')
@@ -6035,13 +6064,13 @@ export class ReleaseBusV2Reconciler {
   }
 
   private async reconcileBackendDeploy(
+    context: TrainContext,
     train: ReleaseBusV2TrainRecord,
     environment: 'staging' | 'prod',
     artifactTrainId: string,
     artifactSource: PreparedArtifactSource | null,
     service: string,
-    candidates: readonly ReleaseBusV2CandidateRecord[],
-    releaseContributors: string
+    candidates: readonly ReleaseBusV2CandidateRecord[]
   ): Promise<ReleaseBusV2OperationRecord> {
     if (!artifactSource)
       throw new Error('Missing backend artifact workflow run');
@@ -6058,6 +6087,11 @@ export class ReleaseBusV2Reconciler {
       candidates,
       service,
       environment
+    );
+    const releaseContributors = JSON.stringify(
+      releaseTrainContributorGithubLogins(
+        operationContributorCandidates(context, 'backend', service)
+      )
     );
     return releaseBusV2Operations.reconcileWorkflow({
       idempotencyKey: operationKey(
@@ -6091,11 +6125,11 @@ export class ReleaseBusV2Reconciler {
   }
 
   private async reconcileFrontendDeploy(
+    context: TrainContext,
     train: ReleaseBusV2TrainRecord,
     environment: 'staging' | 'prod',
     artifactTrainId: string,
-    artifactSource: PreparedArtifactSource | null,
-    releaseContributors: string
+    artifactSource: PreparedArtifactSource | null
   ): Promise<ReleaseBusV2OperationRecord> {
     if (!artifactSource)
       throw new Error('Missing frontend artifact workflow run');
@@ -6112,6 +6146,11 @@ export class ReleaseBusV2Reconciler {
       environment === 'staging'
         ? 'release-bus-deploy-staging.yml'
         : 'release-bus-deploy-production.yml';
+    const releaseContributors = JSON.stringify(
+      releaseTrainContributorGithubLogins(
+        operationContributorCandidates(context, 'frontend')
+      )
+    );
     return releaseBusV2Operations.reconcileWorkflow({
       idempotencyKey: operationKey(train.id, `deploy:${environment}:frontend`),
       trainId: train.id,
