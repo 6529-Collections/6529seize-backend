@@ -14,6 +14,9 @@ const creator = {
   primary_wallet: '0xcreator'
 } as unknown as ApiIdentity;
 const context: RequestContext = {};
+const transactionConnection: ConnectionWrapper<unknown> = {
+  connection: { id: 'transaction' }
+};
 
 type UserGroupsDbDependency = ConstructorParameters<
   typeof UserGroupsService
@@ -47,6 +50,21 @@ function createService({
     profilePreferences as unknown as PreferencesDependency
   );
   return { service, userGroupsDb, profilePreferences };
+}
+
+function mockTransactionalSave(
+  service: UserGroupsService,
+  onPreparedName?: (preparedName: string) => void
+) {
+  return jest
+    .spyOn(service, 'save')
+    .mockImplementation(
+      async (_group, _createdBy, _ctx, _visible, prepareName) => {
+        const preparedName = await prepareName!(transactionConnection);
+        onPreparedName?.(preparedName);
+        return { id: 'new-group' } as unknown as ApiGroupFull;
+      }
+    );
 }
 
 describe('direct message profile preferences', () => {
@@ -96,6 +114,7 @@ describe('direct message profile preferences', () => {
           }
         ]
       });
+      mockTransactionalSave(service);
 
       const result = service.findOrCreateDirectMessageGroup(
         creator,
@@ -164,17 +183,7 @@ describe('direct message profile preferences', () => {
     profilePreferences.getDirectMessageRecipientsForAdmission.mockResolvedValue(
       [blockedRecipient]
     );
-    const transactionConnection: ConnectionWrapper<unknown> = {
-      connection: { id: 'transaction' }
-    };
-    jest
-      .spyOn(service, 'save')
-      .mockImplementation(
-        async (_group, _createdBy, _ctx, _visible, validate) => {
-          await validate!(transactionConnection);
-          return { id: 'new-group' } as unknown as ApiGroupFull;
-        }
-      );
+    mockTransactionalSave(service);
 
     await expect(
       service.findOrCreateDirectMessageGroup(creator, ['0xrecipient'], context)
@@ -197,18 +206,10 @@ describe('direct message profile preferences', () => {
         }
       ]
     });
-    const transactionConnection: ConnectionWrapper<unknown> = {
-      connection: { id: 'transaction' }
-    };
     let preparedName: string | undefined;
-    jest
-      .spyOn(service, 'save')
-      .mockImplementation(
-        async (_group, _createdBy, _ctx, _visible, prepareName) => {
-          preparedName = await prepareName!(transactionConnection);
-          return { id: 'new-group' } as unknown as ApiGroupFull;
-        }
-      );
+    mockTransactionalSave(service, (name) => {
+      preparedName = name;
+    });
 
     await service.findOrCreateDirectMessageGroup(
       creator,
@@ -241,6 +242,7 @@ describe('direct message profile preferences', () => {
         }
       ]
     });
+    mockTransactionalSave(service);
 
     await expect(
       service.findOrCreateDirectMessageGroup(

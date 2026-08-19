@@ -204,7 +204,7 @@ export class UserGroupsService {
     isVisible = false,
     prepareNameBeforeSave?: (
       connection: ConnectionWrapper<unknown>
-    ) => Promise<string | void>
+    ) => Promise<string>
   ): Promise<ApiGroupFull> {
     const savedEntity =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
