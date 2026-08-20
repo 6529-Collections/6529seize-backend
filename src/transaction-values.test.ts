@@ -540,6 +540,64 @@ describe('reconcileTransactionTokenCounts', () => {
     expect(secondResult.primary_proceeds).toBe(0.18);
   });
 
+  it('does not double-count nested gross mint payments', async () => {
+    const row = makeTransaction(537, 1, MEMES_CONTRACT);
+    row.from_address = ZERO_ADDRESS;
+    const receipt = {
+      gasUsed: BigInt(0),
+      logs: [
+        makeLog(
+          'TransferSingle',
+          [FROM, ZERO_ADDRESS, TO, BigInt(537), BigInt(1)],
+          MEMES_CONTRACT
+        )
+      ]
+    };
+    mockTransactionValueRpc(receipt, [
+      {
+        transactionHash: HASH,
+        traceAddress: [0],
+        action: {
+          from: TO,
+          to: CLAIM_CONTRACT,
+          value: ethers.parseEther('1')
+        }
+      },
+      {
+        transactionHash: HASH,
+        traceAddress: [0, 1],
+        action: {
+          from: TO,
+          to: CLAIM_CONTRACT,
+          value: ethers.parseEther('0.7')
+        }
+      },
+      {
+        transactionHash: HASH,
+        traceAddress: [0, 1, 0],
+        action: {
+          from: CLAIM_CONTRACT,
+          to: MEMES_DEPLOYER,
+          value: ethers.parseEther('0.6')
+        }
+      },
+      {
+        transactionHash: HASH,
+        traceAddress: [0, 2, 0],
+        action: {
+          from: CLAIM_CONTRACT,
+          to: MEMES_DEPLOYER,
+          value: ethers.parseEther('0.4')
+        }
+      }
+    ]);
+
+    const [result] = await findDiscoveredTransactionValues([row]);
+
+    expect(result.value).toBe(1);
+    expect(result.primary_proceeds).toBe(1);
+  });
+
   it('rejects an internal gross payment below primary proceeds', async () => {
     const row = makeTransaction(537, 1, MEMES_CONTRACT);
     row.from_address = ZERO_ADDRESS;

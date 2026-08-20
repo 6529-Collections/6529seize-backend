@@ -730,6 +730,13 @@ function sumInternalTransferValues(
   return transfers.reduce((acc, transfer) => acc + (transfer.value ?? 0), 0);
 }
 
+function isTraceAncestor(ancestor: number[], descendant: number[]): boolean {
+  return (
+    ancestor.length < descendant.length &&
+    ancestor.every((part, index) => descendant[index] === part)
+  );
+}
+
 function findGrossMintValueFromInternalTransfers(
   txInternalTransfers: RpcInternalTransfersResponse['transfers'],
   proceedsTransfers: RpcInternalTransfersResponse['transfers']
@@ -748,9 +755,9 @@ function findGrossMintValueFromInternalTransfers(
         (transfer) =>
           transfer.to &&
           equalIgnoreCase(transfer.to, proceedsTransfer.from) &&
-          transfer.traceAddress.length < proceedsTransfer.traceAddress.length &&
-          transfer.traceAddress.every(
-            (part, index) => proceedsTransfer.traceAddress[index] === part
+          isTraceAncestor(
+            transfer.traceAddress,
+            proceedsTransfer.traceAddress
           ) &&
           (transfer.value ?? 0) >= (proceedsTransfer.value ?? 0)
       )
@@ -764,9 +771,14 @@ function findGrossMintValueFromInternalTransfers(
     grossPayments.set(grossPayment.traceAddress.join('.'), grossPayment);
   }
 
-  const grossValue = sumInternalTransferValues(
-    Array.from(grossPayments.values())
+  const uniqueGrossPayments = Array.from(grossPayments.values());
+  const outermostGrossPayments = uniqueGrossPayments.filter(
+    (payment) =>
+      !uniqueGrossPayments.some((otherPayment) =>
+        isTraceAncestor(otherPayment.traceAddress, payment.traceAddress)
+      )
   );
+  const grossValue = sumInternalTransferValues(outermostGrossPayments);
   const primaryProceeds = sumInternalTransferValues(proceedsTransfers);
 
   return grossValue >= primaryProceeds ? grossValue : 0;
