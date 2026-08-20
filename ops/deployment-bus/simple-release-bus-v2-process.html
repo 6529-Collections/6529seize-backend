@@ -293,7 +293,7 @@
               aria-controls="step-6-info"
               tabindex="-1"
             >
-              Agent checks the staging deployment route
+              Agent prepares the final deployment plan
             </button>
           </li>
           <li>
@@ -304,7 +304,7 @@
               aria-controls="step-7-info"
               tabindex="-1"
             >
-              Exact PR versions and deployment details are saved in Release Bus
+              Agent checks the staging deployment route
             </button>
           </li>
           <li>
@@ -315,7 +315,7 @@
               aria-controls="step-8-info"
               tabindex="-1"
             >
-              Release Bus creates a staging train
+              Agent sends exact PRs to Release Bus for checks
             </button>
           </li>
           <li>
@@ -326,7 +326,8 @@
               aria-controls="step-9-info"
               tabindex="-1"
             >
-              GitHub Actions build and deploy staging
+              Release Bus checks waiting PRs and prepares the next staging
+              deployment
             </button>
           </li>
           <li>
@@ -337,7 +338,7 @@
               aria-controls="step-10-info"
               tabindex="-1"
             >
-              Staging E2E tests pass
+              GitHub Actions combine the selected PRs and check for conflicts
             </button>
           </li>
           <li>
@@ -348,7 +349,7 @@
               aria-controls="step-11-info"
               tabindex="-1"
             >
-              Agent checks the production deployment route
+              GitHub Actions build and deploy staging
             </button>
           </li>
           <li>
@@ -359,7 +360,7 @@
               aria-controls="step-12-info"
               tabindex="-1"
             >
-              Production is selected explicitly
+              Staging E2E tests pass
             </button>
           </li>
           <li>
@@ -370,7 +371,7 @@
               aria-controls="step-13-info"
               tabindex="-1"
             >
-              A fresh production build is deployed
+              Agent checks the production deployment route
             </button>
           </li>
           <li>
@@ -379,6 +380,28 @@
               type="button"
               aria-expanded="false"
               aria-controls="step-14-info"
+              tabindex="-1"
+            >
+              Production is selected explicitly
+            </button>
+          </li>
+          <li>
+            <button
+              class="step-button"
+              type="button"
+              aria-expanded="false"
+              aria-controls="step-15-info"
+              tabindex="-1"
+            >
+              A fresh production build is deployed
+            </button>
+          </li>
+          <li>
+            <button
+              class="step-button"
+              type="button"
+              aria-expanded="false"
+              aria-controls="step-16-info"
               tabindex="-1"
             >
               Production E2E tests pass
@@ -405,8 +428,9 @@
           >
             <strong>Someone tells the agent what to deploy and where</strong>
             <p>
-              The request names the feature. It also says whether the frontend,
-              backend, or both are included.
+              Tell the agent what feature to deploy. Say whether it includes
+              the frontend, backend, or both. Then say how far to go: open PRs
+              only, staging, or production.
             </p>
             <strong class="detail-heading">For example</strong>
             <ul>
@@ -455,7 +479,9 @@
               <li>Loop code &rarr; deploy that loop</li>
               <li>Shared code &rarr; deploy every service that uses it</li>
             </ul>
-            <p>The result becomes the deployment plan.</p>
+            <p>
+              This gives the agent a first list of what may need to be deployed.
+            </p>
           </div>
           <div
             class="step-info"
@@ -519,6 +545,24 @@
             aria-label="Step 6 information"
             hidden
           >
+            <strong>The agent makes the final plan from the reviewed PRs</strong>
+            <ul>
+              <li>Which backend services to deploy</li>
+              <li>Which services must go first</li>
+              <li>Which services can deploy together</li>
+            </ul>
+            <p>
+              Review fixes may change the plan, so it is finalized after
+              review. Frontend PRs do not need a backend service plan.
+            </p>
+          </div>
+          <div
+            class="step-info"
+            id="step-7-info"
+            role="region"
+            aria-label="Step 7 information"
+            hidden
+          >
             <strong>The staging lane is checked before deployment</strong>
             <p>The status check reports both lanes. This step uses staging.</p>
             <ul>
@@ -536,12 +580,23 @@
           </div>
           <div
             class="step-info"
-            id="step-7-info"
+            id="step-8-info"
             role="region"
-            aria-label="Step 7 information"
+            aria-label="Step 8 information"
             hidden
           >
-            <strong>Release Bus saves each PR as a candidate</strong>
+            <strong>Release Bus checks each PR before accepting it</strong>
+            <ul>
+              <li>The PR is open and its exact SHA still matches</li>
+              <li>The required CI passed for that exact code</li>
+              <li>The PR can be merged into its current base</li>
+              <li>The deployment plan and related PR links are valid</li>
+            </ul>
+            <p>
+              If every check passes, Release Bus saves the PR as waiting for
+              staging. If a check fails, the PR is not added.
+            </p>
+            <strong class="detail-heading">What is saved</strong>
             <ul>
               <li>Repository and PR number</li>
               <li>Exact SHA</li>
@@ -579,30 +634,69 @@
           </div>
           <div
             class="step-info"
-            id="step-8-info"
-            role="region"
-            aria-label="Step 8 information"
-            hidden
-          ></div>
-          <div
-            class="step-info"
             id="step-9-info"
             role="region"
             aria-label="Step 9 information"
             hidden
-          ></div>
+          >
+            <strong>A scheduled worker prepares the next staging list</strong>
+            <p>
+              AWS starts the worker once every minute. It looks at PRs accepted
+              in step 8.
+            </p>
+            <ul>
+              <li>The exact branch SHA has not changed</li>
+              <li>Staging is enabled, free, and safe</li>
+              <li>All required related PRs are present</li>
+              <li>The saved deployment order is complete</li>
+            </ul>
+            <p>
+              The worker uses the CI result saved in step 8. When all checks
+              pass, it creates one exact list for the next staging deployment.
+              Waiting PRs are checked again on the next run.
+            </p>
+            <p>
+              The finished list goes to GitHub Actions. In the next step, the
+              selected PRs are combined and checked together.
+            </p>
+          </div>
           <div
             class="step-info"
             id="step-10-info"
             role="region"
             aria-label="Step 10 information"
             hidden
-          ></div>
+          >
+            <strong>GitHub Actions combine the exact selected versions</strong>
+            <p>
+              For each repository, GitHub Actions starts from the current base
+              and adds the selected PRs one by one at their exact SHAs.
+            </p>
+            <p>
+              This checks that PRs from the same repository work together. A
+              clean combined version moves to the build. A PR that conflicts
+              needs to be rebased, and PRs that depend on it wait.
+            </p>
+          </div>
           <div
             class="step-info"
             id="step-11-info"
             role="region"
             aria-label="Step 11 information"
+            hidden
+          ></div>
+          <div
+            class="step-info"
+            id="step-12-info"
+            role="region"
+            aria-label="Step 12 information"
+            hidden
+          ></div>
+          <div
+            class="step-info"
+            id="step-13-info"
+            role="region"
+            aria-label="Step 13 information"
             hidden
           >
             <strong>The production lane is checked before production</strong>
@@ -625,23 +719,23 @@
           </div>
           <div
             class="step-info"
-            id="step-12-info"
-            role="region"
-            aria-label="Step 12 information"
-            hidden
-          ></div>
-          <div
-            class="step-info"
-            id="step-13-info"
-            role="region"
-            aria-label="Step 13 information"
-            hidden
-          ></div>
-          <div
-            class="step-info"
             id="step-14-info"
             role="region"
             aria-label="Step 14 information"
+            hidden
+          ></div>
+          <div
+            class="step-info"
+            id="step-15-info"
+            role="region"
+            aria-label="Step 15 information"
+            hidden
+          ></div>
+          <div
+            class="step-info"
+            id="step-16-info"
+            role="region"
+            aria-label="Step 16 information"
             hidden
           ></div>
           <section class="gap-panel" aria-label="Issues and gaps">
@@ -658,20 +752,26 @@
             </div>
             <div class="step-gap" id="step-5-gap" hidden></div>
             <div class="step-gap" id="step-6-gap" hidden>
+              The <code>write-prs</code> skill asks for a service list and
+              order. The <code>deploy-6529</code> skill asks for a Release Bus
+              plan. It does not say exactly how the first becomes the second.
+            </div>
+            <div class="step-gap" id="step-7-gap" hidden>
               This diagram currently shows only the Release Bus ON path for
               staging. The safe manual staging path is not shown.
             </div>
-            <div class="step-gap" id="step-7-gap" hidden></div>
             <div class="step-gap" id="step-8-gap" hidden></div>
             <div class="step-gap" id="step-9-gap" hidden></div>
             <div class="step-gap" id="step-10-gap" hidden></div>
-            <div class="step-gap" id="step-11-gap" hidden>
+            <div class="step-gap" id="step-11-gap" hidden></div>
+            <div class="step-gap" id="step-12-gap" hidden></div>
+            <div class="step-gap" id="step-13-gap" hidden>
               This diagram currently shows only the Release Bus ON path for
               production. The safe manual production path is not shown.
             </div>
-            <div class="step-gap" id="step-12-gap" hidden></div>
-            <div class="step-gap" id="step-13-gap" hidden></div>
             <div class="step-gap" id="step-14-gap" hidden></div>
+            <div class="step-gap" id="step-15-gap" hidden></div>
+            <div class="step-gap" id="step-16-gap" hidden></div>
           </section>
         </aside>
       </div>
