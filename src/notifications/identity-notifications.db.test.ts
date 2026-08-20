@@ -2,6 +2,10 @@ import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import { SqlExecutor } from '@/sql-executor';
 import { IdentityNotificationsDb } from './identity-notifications.db';
 import { sendIdentityPushNotification } from '../api-serverless/src/push-notifications/push-notifications.service';
+import {
+  DEFAULT_PROFILE_PREFERENCES,
+  ProfileNotificationLevel
+} from '@/entities/IProfilePreferences';
 
 jest.mock(
   '../api-serverless/src/push-notifications/push-notifications.service',
@@ -44,10 +48,18 @@ function createRepo({
         : () => Promise.resolve(filteredNotifications)
     )
   };
+  const profilePreferencesDb = {
+    getMany: jest.fn().mockResolvedValue(new Map())
+  };
   return {
     db,
     identityMutesDb,
-    repo: new IdentityNotificationsDb(() => db as any, identityMutesDb as any)
+    profilePreferencesDb,
+    repo: new IdentityNotificationsDb(
+      () => db as any,
+      identityMutesDb as any,
+      profilePreferencesDb as any
+    )
   };
 }
 
@@ -194,6 +206,57 @@ describe('IdentityNotificationsDb', () => {
       }),
       { wrappedConnection: {} }
     );
+  });
+
+  it('does not create in-app or push notifications disabled by profile preferences', async () => {
+    const row = notification({
+      cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE
+    });
+    const { db, profilePreferencesDb, repo } = createRepo({
+      filteredNotifications: [row]
+    });
+    profilePreferencesDb.getMany.mockResolvedValue(
+      new Map([
+        [
+          'recipient-1',
+          {
+            ...DEFAULT_PROFILE_PREFERENCES,
+            notifications: {
+              ...DEFAULT_PROFILE_PREFERENCES.notifications,
+              subscription_coverage: false
+            }
+          }
+        ]
+      ])
+    );
+
+    await repo.insertNotification(row as any, {} as any);
+
+    expect(db.execute).not.toHaveBeenCalled();
+    expect(sendIdentityPushNotification).not.toHaveBeenCalled();
+  });
+
+  it('pauses optional notifications at the essential-only level without erasing category choices', async () => {
+    const row = notification();
+    const { db, profilePreferencesDb, repo } = createRepo({
+      filteredNotifications: [row]
+    });
+    profilePreferencesDb.getMany.mockResolvedValue(
+      new Map([
+        [
+          'recipient-1',
+          {
+            ...DEFAULT_PROFILE_PREFERENCES,
+            notification_level: ProfileNotificationLevel.ESSENTIAL_ONLY
+          }
+        ]
+      ])
+    );
+
+    await repo.insertNotification(row as any, {} as any);
+
+    expect(db.execute).not.toHaveBeenCalled();
+    expect(sendIdentityPushNotification).not.toHaveBeenCalled();
   });
 
   it('includes actorless notifications while suppressing orphaned actors', async () => {
