@@ -371,7 +371,7 @@ export class PrePublicationModerationService {
         operation: input.operation,
         deterministicGateVersion: PRE_PUBLICATION_GATE_VERSION,
         contentFingerprint: result.contentFingerprint,
-        signal: result.signal,
+        deterministicSignal: result.signal,
         outcome: result.outcome,
         evaluatorVersion: result.aiInvoked
           ? PRE_PUBLICATION_EVALUATOR_VERSION

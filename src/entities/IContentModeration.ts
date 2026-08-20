@@ -265,7 +265,7 @@ export class ContentModerationPrePublicationCheckEntity {
   readonly content_fingerprint!: string;
 
   @Column({ type: 'varchar', length: 64, nullable: true })
-  readonly signal!: string | null;
+  readonly deterministic_signal!: string | null;
 
   @Column({ type: 'varchar', length: 16, nullable: false })
   readonly outcome!: PrePublicationCheckOutcome;

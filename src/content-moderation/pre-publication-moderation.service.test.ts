@@ -64,7 +64,7 @@ describe('PrePublicationModerationService', () => {
     expect(moderationDb.recordPrePublicationCheck).toHaveBeenCalledWith(
       expect.objectContaining({
         outcome: PrePublicationCheckOutcome.ALLOW,
-        signal: null,
+        deterministicSignal: null,
         evaluatorVersion: null,
         contentFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/)
       }),
@@ -89,7 +89,7 @@ describe('PrePublicationModerationService', () => {
     expect(moderationDb.recordPrePublicationCheck).toHaveBeenCalledWith(
       expect.objectContaining({
         outcome: PrePublicationCheckOutcome.REJECT,
-        signal: 'KNOWN_MALICIOUS_DESTINATION',
+        deterministicSignal: 'KNOWN_MALICIOUS_DESTINATION',
         evaluatorVersion: null
       }),
       undefined
@@ -113,7 +113,7 @@ describe('PrePublicationModerationService', () => {
     expect(moderationDb.recordPrePublicationCheck).toHaveBeenCalledWith(
       expect.objectContaining({
         outcome: PrePublicationCheckOutcome.ALLOW,
-        signal: 'EXPLICIT_THREAT_PATTERN',
+        deterministicSignal: 'EXPLICIT_THREAT_PATTERN',
         evaluatorVersion: expect.any(String)
       }),
       undefined
