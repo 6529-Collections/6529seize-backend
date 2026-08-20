@@ -33,7 +33,7 @@ import { Time } from '@/time';
 import { randomUUID } from 'node:crypto';
 import { env } from '@/env';
 
-const REPORT_RATE_LIMIT_WINDOW = Time.hours(1);
+const REPORT_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 const DEFAULT_REPORTS_PER_HOUR = 100;
 
 export interface DropViewerModerationContext {
@@ -1175,7 +1175,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       `,
       {
         reporterProfileId: input.reporterProfileId,
-        since: Time.currentMillis() - REPORT_RATE_LIMIT_WINDOW.toMillis()
+        since: Time.currentMillis() - REPORT_RATE_LIMIT_WINDOW_MS
       },
       this.connectionOptions(connection)
     );
