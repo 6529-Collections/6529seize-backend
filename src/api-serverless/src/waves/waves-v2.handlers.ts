@@ -291,7 +291,13 @@ type SearchWaveAuthorsV2Query = {
 
 const SearchWaveAuthorsV2QuerySchema: Joi.ObjectSchema<SearchWaveAuthorsV2Query> =
   Joi.object<SearchWaveAuthorsV2Query>({
-    handle: Joi.string().trim().max(100).optional().default(''),
+    handle: Joi.string()
+      .trim()
+      .allow('')
+      .max(15)
+      .pattern(/^\w*$/)
+      .optional()
+      .default(''),
     limit: Joi.number().integer().min(1).max(20).optional().default(10)
   });
 

@@ -3632,21 +3632,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return this.searchDropsInWave(param, ctx);
   }
 
-  async waveHasAuthor(
-    param: { wave_id: string; author_id: string },
-    ctx: RequestContext
-  ): Promise<boolean> {
-    const rows = await this.db.execute<{ present: number }>(
-      `SELECT 1 AS present
-       FROM ${DROPS_TABLE}
-       WHERE wave_id = :wave_id AND author_id = :author_id
-       LIMIT 1`,
-      param,
-      { wrappedConnection: ctx.connection }
-    );
-    return rows.length > 0;
-  }
-
   async searchWaveAuthors(
     param: { wave_id: string; handle: string; limit: number },
     ctx: RequestContext

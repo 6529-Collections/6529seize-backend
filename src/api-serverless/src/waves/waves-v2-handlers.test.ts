@@ -785,5 +785,27 @@ describe('waves v2 handlers', () => {
         { authenticationContext, timer }
       );
     });
+
+    it('allows the empty roster prefix and rejects invalid handle characters', async () => {
+      mockSearchWaveAuthors.mockResolvedValue([]);
+
+      await expect(
+        handleSearchWaveAuthorsV2({
+          params: { waveId: 'wave-1' },
+          query: {}
+        } as any)
+      ).resolves.toEqual([]);
+      expect(mockSearchWaveAuthors).toHaveBeenLastCalledWith(
+        { wave_id: 'wave-1', handle: '', limit: 10 },
+        { authenticationContext, timer }
+      );
+
+      await expect(
+        handleSearchWaveAuthorsV2({
+          params: { waveId: 'wave-1' },
+          query: { handle: 'not-valid!' }
+        } as any)
+      ).rejects.toThrow();
+    });
   });
 });

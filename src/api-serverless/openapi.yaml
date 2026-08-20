@@ -12326,10 +12326,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiDropV2PageWithoutCount"
-        "404":
-          description: Wave not found
         "400":
           description: Invalid search criteria
+        "404":
+          description: Wave not found
   /v2/waves/{waveId}/search-authors:
     get:
       tags:
@@ -12350,10 +12350,14 @@ paths:
             type: string
         - name: handle
           in: query
+          description: >-
+            Case-insensitive handle prefix. Empty returns the first authors in
+            the readable wave.
           required: false
           schema:
             type: string
-            maxLength: 100
+            maxLength: 15
+            pattern: ^\w{0,15}$
             default: ""
         - name: limit
           in: query
@@ -23494,20 +23498,6 @@ components:
         pfp:
           type: string
           nullable: true
-    ApiWaveSearchAuthor:
-      type: object
-      required:
-        - id
-        - handle
-        - pfp
-      properties:
-        id:
-          type: string
-        handle:
-          type: string
-        pfp:
-          type: string
-          nullable: true
     ApiWaveMetadata:
       type: object
       required:
@@ -24425,6 +24415,20 @@ components:
         gated_hotness_score:
           type: number
           format: double
+    ApiWaveSearchAuthor:
+      type: object
+      required:
+        - id
+        - handle
+        - pfp
+      properties:
+        id:
+          type: string
+        handle:
+          type: string
+        pfp:
+          type: string
+          nullable: true
     ApiWavesOverviewType:
       type: string
       enum:

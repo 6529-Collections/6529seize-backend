@@ -416,12 +416,6 @@ export class ApiWaveV2Service {
         wavesApiDb: this.wavesApiDb,
         ctx
       });
-      if (
-        author_id &&
-        !(await this.dropsDb.waveHasAuthor({ wave_id, author_id }, ctx))
-      ) {
-        throw new BadRequestException('Author has no messages in this wave');
-      }
       const offset = size * (page - 1);
       const dropEntities = await this.dropsDb.searchDropsInWave(
         {

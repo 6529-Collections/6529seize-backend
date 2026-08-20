@@ -6,7 +6,7 @@ import {
   WaveEntity,
   WaveType
 } from '@/entities/IWave';
-import { BadRequestException, NotFoundException } from '@/exceptions';
+import { NotFoundException } from '@/exceptions';
 import { ApiDropSearchStrategy } from '@/api/generated/models/ApiDropSearchStrategy';
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { ApiWavesOverviewType } from '@/api/generated/models/ApiWavesOverviewType';
@@ -112,7 +112,6 @@ function createService() {
         makeDrop({ id: 'search-drop-2' }),
         makeDrop({ id: 'search-drop-3' })
       ]),
-    waveHasAuthor: jest.fn().mockResolvedValue(true),
     searchWaveAuthors: jest
       .fn()
       .mockResolvedValue([{ id: 'author-1', handle: 'alice', pfp: null }])
@@ -746,9 +745,10 @@ describe('ApiWaveV2Service', () => {
     });
   });
 
-  it('rejects an author filter for a profile that never authored in the wave', async () => {
+  it('returns no results without revealing whether an author posted in the wave', async () => {
     const { service, deps } = createService();
-    deps.dropsDb.waveHasAuthor.mockResolvedValue(false);
+    deps.dropsDb.searchDropsInWave.mockResolvedValue([]);
+    deps.apiDropMapper.mapDrops.mockResolvedValue({});
 
     await expect(
       service.searchDropsInWave(
@@ -760,8 +760,11 @@ describe('ApiWaveV2Service', () => {
         },
         { authenticationContext: AuthenticationContext.notAuthenticated() }
       )
-    ).rejects.toThrow(BadRequestException);
-    expect(deps.dropsDb.searchDropsInWave).not.toHaveBeenCalled();
+    ).resolves.toEqual({ data: [], next: false, page: 1 });
+    expect(deps.dropsDb.searchDropsInWave).toHaveBeenCalledWith(
+      expect.objectContaining({ author_id: 'outsider' }),
+      expect.any(Object)
+    );
   });
 
   it('returns author candidates only after applying wave visibility', async () => {
