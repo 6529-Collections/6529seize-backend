@@ -524,9 +524,7 @@ describe('ReleaseNoteGitHubService', () => {
 
     await expect(
       new ReleaseNoteGitHubService().getReleaseContext(request)
-    ).rejects.toThrow(
-      'GitHub release run 123 does not match the queued release metadata'
-    );
+    ).rejects.toBeInstanceOf(UntrustedReleaseNoteMetadataError);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
@@ -540,9 +538,7 @@ describe('ReleaseNoteGitHubService', () => {
 
     await expect(
       new ReleaseNoteGitHubService().getReleaseContext(request)
-    ).rejects.toThrow(
-      'GitHub release run 123 does not match the queued release metadata'
-    );
+    ).rejects.toBeInstanceOf(UntrustedReleaseNoteMetadataError);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
