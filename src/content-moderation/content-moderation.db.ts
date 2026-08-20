@@ -99,7 +99,7 @@ export interface PrePublicationCheckRecord {
   readonly operation: 'CREATE' | 'UPDATE';
   readonly deterministicGateVersion: string;
   readonly contentFingerprint: string;
-  readonly signal: string | null;
+  readonly deterministicSignal: string | null;
   readonly outcome: PrePublicationCheckOutcome;
   readonly evaluatorVersion: string | null;
   readonly evaluatorResult: Record<string, unknown> | null;
@@ -1070,7 +1070,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
           operation,
           deterministic_gate_version,
           content_fingerprint,
-          signal,
+          deterministic_signal,
           outcome,
           evaluator_version,
           evaluator_result,
@@ -1082,7 +1082,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
           :operation,
           :deterministicGateVersion,
           :contentFingerprint,
-          :signal,
+          :deterministicSignal,
           :outcome,
           :evaluatorVersion,
           cast(:evaluatorResult as json),

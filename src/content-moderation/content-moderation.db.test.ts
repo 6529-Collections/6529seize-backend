@@ -136,7 +136,7 @@ describe('ContentModerationDb', () => {
         operation: 'CREATE',
         deterministicGateVersion: 'gate-1',
         contentFingerprint: 'fingerprint',
-        signal: null,
+        deterministicSignal: null,
         outcome: PrePublicationCheckOutcome.ALLOW,
         evaluatorVersion: null,
         evaluatorResult: null
@@ -149,6 +149,8 @@ describe('ContentModerationDb', () => {
       expect.any(Object),
       { wrappedConnection: connection }
     );
+    const [sql] = executor.execute.mock.calls[0];
+    expect(sql).toContain('deterministic_signal');
   });
 
   it('commits report and requested viewer actions in one transaction', async () => {
