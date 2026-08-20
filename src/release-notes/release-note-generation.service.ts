@@ -45,6 +45,11 @@ interface ContributorResolution {
   readonly mentionedProfiles: MentionedProfile[];
 }
 
+interface ReleaseNoteBatch {
+  readonly number: number;
+  readonly total: number;
+}
+
 const MAX_BODY_LENGTH = 12000;
 const MAX_COMMIT_MESSAGES = 25;
 const MAX_COMMIT_MESSAGE_LENGTH = 500;
@@ -57,6 +62,7 @@ const MAX_DESKTOP_BULLETS = 5;
 const MAX_DESKTOP_BULLET_LENGTH = 240;
 const MAX_DESKTOP_BULLET_WORDS = 30;
 const MAX_RELEASE_CONTEXT_LENGTH = 200000;
+const MAX_PULL_REQUESTS_PER_RELEASE_NOTE = 20;
 const RELEASE_NOTE_ID_METADATA_KEY = 'release_note_id';
 const RELEASE_NOTE_REPOSITORY_METADATA_KEY = 'release_note_repository';
 const RELEASE_NOTE_SHA_METADATA_KEY = 'release_note_sha';
@@ -140,7 +146,9 @@ function normalizeRepository(repo: string): string {
   return repo.includes('/') ? repo : `6529-Collections/${repo}`;
 }
 
-function isFrontendRelease(request: ReleaseNoteGenerationRequest): boolean {
+export function isFrontendRelease(
+  request: ReleaseNoteGenerationRequest
+): boolean {
   return getRepoName(request.repo) === '6529seize-frontend';
 }
 
@@ -179,6 +187,38 @@ function buildReleaseNotePublicationId(
     .digest('hex');
 }
 
+function buildReleaseNoteBatchPublicationId(
+  publicationId: string,
+  batch: ReleaseNoteBatch
+): string {
+  if (batch.total === 1) {
+    return publicationId;
+  }
+  return createHash('sha256')
+    .update(publicationId)
+    .update(`\0batch:${batch.number}:${batch.total}`)
+    .digest('hex');
+}
+
+function buildReleaseNoteBatches(context: GitHubReleaseContext): Array<{
+  readonly batch: ReleaseNoteBatch;
+  readonly context: GitHubReleaseContext;
+}> {
+  const total = Math.ceil(
+    context.pull_requests.length / MAX_PULL_REQUESTS_PER_RELEASE_NOTE
+  );
+  return Array.from({ length: total }, (_, index) => ({
+    batch: { number: index + 1, total },
+    context: {
+      ...context,
+      pull_requests: context.pull_requests.slice(
+        index * MAX_PULL_REQUESTS_PER_RELEASE_NOTE,
+        (index + 1) * MAX_PULL_REQUESTS_PER_RELEASE_NOTE
+      )
+    }
+  }));
+}
+
 function formatDeployedAt(value: string): string {
   const deployedAt = new Date(value);
   if (Number.isNaN(deployedAt.getTime())) {
@@ -194,7 +234,10 @@ function formatDeployedAt(value: string): string {
   }).format(deployedAt);
 }
 
-function getReleaseHeading(request: ReleaseNoteGenerationRequest): string {
+function getReleaseHeading(
+  request: ReleaseNoteGenerationRequest,
+  batch: ReleaseNoteBatch
+): string {
   const repository = request.repo.includes('/')
     ? request.repo
     : `6529-Collections/${request.repo}`;
@@ -205,12 +248,14 @@ function getReleaseHeading(request: ReleaseNoteGenerationRequest): string {
     `https://github.com/${repository}/commit/${request.sha}`
   );
   const formattedDate = formatDeployedAt(request.deployed_at);
+  const batchSuffix =
+    batch.total > 1 ? ` · part ${batch.number}/${batch.total}` : '';
   if (surface === 'Frontend' && request.release_group_services.length === 1) {
     const runNumber = request.run_number || request.run_id;
     const run = formatMarkdownLink(`#${runNumber}`, request.run_url);
-    return `### ${surface} Deploy ${run} · commit ${commit} — ${formattedDate}`;
+    return `### ${surface} Deploy ${run} · commit ${commit}${batchSuffix} — ${formattedDate}`;
   }
-  return `### ${surface} Deploy · commit ${commit} — ${formattedDate}`;
+  return `### ${surface} Deploy · commit ${commit}${batchSuffix} — ${formattedDate}`;
 }
 
 export function getFrontendReleaseNoteLabel(
@@ -441,17 +486,18 @@ export class ReleaseNoteGenerationService {
     const botProfileId = env.getStringOrThrow('CI_PIPELINES_BOT_PROFILE_ID');
     const waveId = env.getStringOrThrow('CI_RELEASES_WAVE_ID');
     const publicationId = buildReleaseNotePublicationId(request);
-    const existingDropId = await this.dropsRepository.findDropIdByMetadata(
-      {
-        waveId,
-        dataKey: RELEASE_NOTE_ID_METADATA_KEY,
-        dataValue: publicationId
-      },
-      ctx
-    );
-    if (existingDropId) {
+    const existingReleaseDropId =
+      await this.dropsRepository.findDropIdByMetadata(
+        {
+          waveId,
+          dataKey: RELEASE_NOTE_ID_METADATA_KEY,
+          dataValue: publicationId
+        },
+        ctx
+      );
+    if (existingReleaseDropId) {
       this.logger.info(
-        `Skipping release note ${publicationId}; drop ${existingDropId} already exists`
+        `Skipping release note ${publicationId}; drop ${existingReleaseDropId} already exists`
       );
       return 'already-published';
     }
@@ -477,18 +523,55 @@ export class ReleaseNoteGenerationService {
       );
       return 'no-pull-requests';
     }
-    const generatedNotes = await this.generateReleaseNotes(request, context);
-    const contributors = await this.resolveContributors(context.pull_requests);
-    const createDropRequest = this.buildCreateDropRequest({
-      request,
-      context,
-      generatedNotes,
-      contributors,
-      publicationId,
-      waveId
-    });
+    const batches = buildReleaseNoteBatches(context);
+    for (const { batch, context: batchContext } of batches) {
+      const batchPublicationId = buildReleaseNoteBatchPublicationId(
+        publicationId,
+        batch
+      );
+      if (batch.total > 1) {
+        const existingBatchDropId =
+          await this.dropsRepository.findDropIdByMetadata(
+            {
+              waveId,
+              dataKey: RELEASE_NOTE_ID_METADATA_KEY,
+              dataValue: batchPublicationId
+            },
+            ctx
+          );
+        if (existingBatchDropId) {
+          this.logger.info(
+            `Skipping release note batch ${batch.number}/${batch.total}; drop ${existingBatchDropId} already exists`
+          );
+          continue;
+        }
+      }
+      const generatedNotes = await this.generateReleaseNotes(
+        request,
+        batchContext
+      );
+      const contributors = await this.resolveContributors(
+        batchContext.pull_requests
+      );
+      const createDropRequest = this.buildCreateDropRequest({
+        request,
+        context: batchContext,
+        generatedNotes,
+        contributors,
+        publicationId: batchPublicationId,
+        waveId,
+        batch
+      });
 
-    await this.postDrop(createDropRequest, botProfileId, ctx);
+      await this.postDrop(createDropRequest, botProfileId, ctx);
+      this.logger.info('Published release-note batch', {
+        repo: request.repo,
+        run_id: request.run_id,
+        batch_number: batch.number,
+        batch_count: batch.total,
+        pull_request_count: batchContext.pull_requests.length
+      });
+    }
     return 'published';
   }
 
@@ -823,7 +906,8 @@ export class ReleaseNoteGenerationService {
     generatedNotes,
     contributors,
     publicationId,
-    waveId
+    waveId,
+    batch
   }: {
     readonly request: ReleaseNoteGenerationRequest;
     readonly context: GitHubReleaseContext;
@@ -831,6 +915,7 @@ export class ReleaseNoteGenerationService {
     readonly contributors: ContributorResolution;
     readonly publicationId: string;
     readonly waveId: string;
+    readonly batch: ReleaseNoteBatch;
   }): ApiCreateDropRequest {
     const contextsByNumber = new Map(
       context.pull_requests.map((pullRequest) => [
@@ -870,7 +955,7 @@ export class ReleaseNoteGenerationService {
       );
     });
     const content = [
-      getReleaseHeading(request),
+      getReleaseHeading(request, batch),
       '',
       releaseNoteBlocks.join(frontendRelease ? '\n' : '\n\n')
     ].join('\n');
