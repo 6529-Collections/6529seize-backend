@@ -189,7 +189,7 @@ function buildReleaseNoteBatchPublicationId(
   publicationId: string,
   batch: ReleaseNoteBatch
 ): string {
-  if (batch.total === 1 || batch.number === batch.total) {
+  if (batch.total === 1) {
     return publicationId;
   }
   return createHash('sha256')
@@ -527,7 +527,7 @@ export class ReleaseNoteGenerationService {
         publicationId,
         batch
       );
-      if (batchPublicationId !== publicationId) {
+      if (batch.total > 1) {
         const existingBatchDropId =
           await this.dropsRepository.findDropIdByMetadata(
             {

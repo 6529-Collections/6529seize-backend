@@ -46,6 +46,7 @@ resources:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: release-note-generation
+        # Keep retries responsive; publication ids make late duplicate delivery safe.
         VisibilityTimeout: 300
         RedrivePolicy:
           deadLetterTargetArn:

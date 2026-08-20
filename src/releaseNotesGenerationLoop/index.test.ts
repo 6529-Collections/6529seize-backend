@@ -1,6 +1,7 @@
 import { ReleaseNoteGenerationRequest } from '@/release-notes/release-note-generation-queue';
 import { NonRetryableReleaseNoteError } from '@/release-notes/release-note-errors';
 import {
+  buildReleaseNoteFailureAlert,
   parseReleaseNoteMessage,
   prepareReleaseNoteErrorForRetry,
   processRequest,
@@ -180,7 +181,22 @@ describe('Desktop retry policy', () => {
         postFailure
       })
     ).resolves.toBeUndefined();
-    expect(postFailure).toHaveBeenCalledWith(desktopRequest, error);
+    expect(postFailure).toHaveBeenCalledWith(desktopRequest, error, 4);
+  });
+
+  it('posts deterministic Desktop failures immediately without retrying', async () => {
+    const error = new NonRetryableReleaseNoteError(
+      'Desktop release history is malformed'
+    );
+    const postFailure = jest.fn().mockResolvedValue(undefined);
+
+    await expect(
+      processRequestWithRetryPolicy(desktopRequest, 1, {
+        process: jest.fn().mockRejectedValue(error),
+        postFailure
+      })
+    ).resolves.toBeUndefined();
+    expect(postFailure).toHaveBeenCalledWith(desktopRequest, error, 1);
   });
 
   it('does not duplicate the terminal alert before moving to the DLQ', async () => {
@@ -195,6 +211,116 @@ describe('Desktop retry policy', () => {
     ).rejects.toThrow('terminal alert failed and must move to the DLQ');
     expect(process).not.toHaveBeenCalled();
     expect(postFailure).not.toHaveBeenCalled();
+  });
+});
+
+describe('Frontend and Backend terminal failure policy', () => {
+  it('rethrows transient failures before the fifth attempt', async () => {
+    const error = new Error('Temporary GitHub comparison failure');
+    const postFailure = jest.fn();
+
+    await expect(
+      processRequestWithRetryPolicy(request, 4, {
+        process: jest.fn().mockRejectedValue(error),
+        postFailure
+      })
+    ).rejects.toThrow(error);
+    expect(postFailure).not.toHaveBeenCalled();
+  });
+
+  it('posts the production alert and preserves DLQ failure on attempt five', async () => {
+    const error = new Error('Persistent GitHub comparison failure');
+    const postFailure = jest.fn().mockResolvedValue(undefined);
+
+    await expect(
+      processRequestWithRetryPolicy(request, 5, {
+        process: jest.fn().mockRejectedValue(error),
+        postFailure
+      })
+    ).rejects.toThrow(error);
+    expect(postFailure).toHaveBeenCalledWith(request, error, 5);
+  });
+
+  it('alerts and drains a deterministic failure on its first attempt', async () => {
+    const error = new NonRetryableReleaseNoteError(
+      'Release history does not reach the production baseline'
+    );
+    const postFailure = jest.fn().mockResolvedValue(undefined);
+
+    await expect(
+      processRequestWithRetryPolicy(request, 1, {
+        process: jest.fn().mockRejectedValue(error),
+        postFailure
+      })
+    ).resolves.toBeUndefined();
+    expect(postFailure).toHaveBeenCalledWith(request, error, 1);
+  });
+
+  it('retries when a deterministic failure alert cannot be delivered', async () => {
+    const error = new NonRetryableReleaseNoteError(
+      'Release history does not reach the production baseline'
+    );
+    const alertError = new Error('Production CI alert failed');
+
+    await expect(
+      processRequestWithRetryPolicy(request, 1, {
+        process: jest.fn().mockRejectedValue(error),
+        postFailure: jest.fn().mockRejectedValue(alertError)
+      })
+    ).rejects.toThrow(alertError);
+  });
+
+  it('targets deterministic Frontend failures at the production CI wave', () => {
+    const error = new NonRetryableReleaseNoteError(
+      'Release history does not reach the production baseline'
+    );
+
+    expect(
+      buildReleaseNoteFailureAlert(
+        {
+          ...request,
+          repo: '6529seize-frontend',
+          workflow: 'Web Deploy - PROD',
+          service: 'web'
+        },
+        error,
+        1
+      )
+    ).toEqual(
+      expect.objectContaining({
+        repo: '6529seize-frontend',
+        status: 'failure',
+        title: 'Frontend release note failed',
+        environment: 'prod',
+        service: 'web',
+        description: expect.stringContaining(
+          'could not be published because the failure is not retryable'
+        )
+      })
+    );
+  });
+
+  it('describes the fifth Frontend attempt as four exhausted retries', () => {
+    expect(
+      buildReleaseNoteFailureAlert(
+        {
+          ...request,
+          repo: '6529seize-frontend',
+          workflow: 'Web Deploy - PROD',
+          service: 'web'
+        },
+        new Error('Persistent GitHub comparison failure'),
+        5
+      )
+    ).toEqual(
+      expect.objectContaining({
+        title: 'Frontend release note failed',
+        environment: 'prod',
+        description: expect.stringContaining(
+          'could not be published after 4 retries'
+        )
+      })
+    );
   });
 });
 
@@ -223,21 +349,8 @@ describe('release-note Sentry retry policy', () => {
     );
 
     expect(prepareReleaseNoteErrorForRetry(error, 1)).toBe(error);
-    expect(shouldRetryReleaseNoteError(error, request)).toBe(false);
+    expect(shouldRetryReleaseNoteError(error)).toBe(false);
     expect(shouldCaptureReleaseNoteError(error)).toBe(true);
-  });
-
-  it('preserves the Desktop terminal-alert retry policy', () => {
-    const error = new NonRetryableReleaseNoteError(
-      'Desktop release history is malformed'
-    );
-
-    expect(
-      shouldRetryReleaseNoteError(error, {
-        ...request,
-        repo: '6529-core'
-      })
-    ).toBe(true);
   });
 });
 

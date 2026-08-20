@@ -712,8 +712,7 @@ describe('ReleaseNoteGenerationService', () => {
         ).data_value as string
     );
     expect(new Set(publicationIds)).toHaveProperty('size', 6);
-    expect(publicationIds.slice(0, 5)).not.toContain(basePublicationId);
-    expect(publicationIds[5]).toBe(basePublicationId);
+    expect(publicationIds).not.toContain(basePublicationId);
   });
 
   it('resumes a partially published batched release without duplicating completed batches', async () => {
@@ -727,7 +726,8 @@ describe('ReleaseNoteGenerationService', () => {
     const findDropIdByMetadata = jest
       .fn()
       .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce('completed-first-batch');
+      .mockResolvedValueOnce('completed-first-batch')
+      .mockResolvedValueOnce(null);
     const promptAndGetReply = jest.fn().mockResolvedValue(
       JSON.stringify({
         pull_requests: pullRequests.slice(20).map(({ number }) => ({
@@ -768,6 +768,66 @@ describe('ReleaseNoteGenerationService', () => {
     expect(content).toContain('part 2/2');
     expect(content).toContain('[PR #21]');
     expect(content).not.toContain('[PR #1]');
+  });
+
+  it('regenerates a missing earlier batch when later batches already exist', async () => {
+    const pullRequests = Array.from({ length: 45 }, (_, index) => ({
+      ...context.pull_requests[0],
+      number: index + 1,
+      url: `https://github.com/example/pull/${index + 1}`,
+      title: `Release change ${index + 1}`,
+      contributors: []
+    }));
+    const findDropIdByMetadata = jest
+      .fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce('completed-second-batch')
+      .mockResolvedValueOnce('completed-final-batch');
+    const promptAndGetReply = jest.fn().mockResolvedValue(
+      JSON.stringify({
+        pull_requests: pullRequests.slice(0, 20).map(({ number }) => ({
+          number,
+          summary: `Summarized change ${number}.`
+        }))
+      })
+    );
+    const createDrop = jest.fn().mockResolvedValue({});
+    const service = new ReleaseNoteGenerationService(
+      {
+        getReleaseContext: jest.fn().mockResolvedValue({
+          ...context,
+          pull_requests: pullRequests
+        }),
+        getReleasePrompt: jest.fn().mockResolvedValue('Repository prompt.')
+      } as unknown as ReleaseNoteGitHubService,
+      { promptAndGetReply } as AiPrompter,
+      { createDrop } as unknown as DropCreationApiService,
+      {
+        getIdsByHandles: jest.fn().mockResolvedValue({})
+      } as unknown as IdentitiesDb,
+      {},
+      {
+        findDropIdByMetadata,
+        findReleaseNoteDropBySourceSha: jest.fn()
+      } as unknown as DropsDb
+    );
+
+    await expect(
+      service.generateAndPost({ ...request, pull_request_number: null }, {})
+    ).resolves.toBe('published');
+
+    expect(promptAndGetReply).toHaveBeenCalledTimes(1);
+    expect(createDrop).toHaveBeenCalledTimes(1);
+    const content =
+      createDrop.mock.calls[0][0].createDropRequest.parts[0].content;
+    expect(content).toContain('part 1/3');
+    expect(content).toContain('[PR #1]');
+    expect(content).not.toContain('[PR #21]');
+    const queriedBatchIds = findDropIdByMetadata.mock.calls
+      .slice(1)
+      .map(([query]) => query.dataValue);
+    expect(new Set(queriedBatchIds)).toHaveProperty('size', 3);
   });
 
   it('skips generation when the release drop already exists', async () => {

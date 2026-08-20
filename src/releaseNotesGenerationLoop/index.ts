@@ -15,7 +15,10 @@ import {
 } from '@/release-notes/release-note-errors';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
-import { ciPipelineAlertService } from '@/api-serverless/src/ci-pipeline-alerts/ci-pipeline-alert.service';
+import {
+  CiPipelineAlertRequest,
+  ciPipelineAlertService
+} from '@/api-serverless/src/ci-pipeline-alerts/ci-pipeline-alert.service';
 import type { SQSHandler } from 'aws-lambda';
 
 const logger = Logger.get('RELEASE_NOTES_GENERATION_LOOP');
@@ -53,14 +56,8 @@ export function prepareReleaseNoteErrorForRetry(
     : error;
 }
 
-export function shouldRetryReleaseNoteError(
-  error: unknown,
-  request: ReleaseNoteGenerationRequest | null
-): boolean {
-  return (
-    !isNonRetryableReleaseNoteError(error) ||
-    (request !== null && isDesktopRelease(request))
-  );
+export function shouldRetryReleaseNoteError(error: unknown): boolean {
+  return !isNonRetryableReleaseNoteError(error);
 }
 
 function requireString(
@@ -519,28 +516,53 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown release-note error';
 }
 
-async function postDesktopReleaseNoteFailure(
+function getReleaseNoteSurface(request: ReleaseNoteGenerationRequest): string {
+  const repoName = request.repo.split('/').pop();
+  if (repoName === '6529-core') return 'Desktop';
+  if (repoName === '6529seize-frontend') return 'Frontend';
+  if (repoName === '6529seize-backend') return 'Backend';
+  return 'Production';
+}
+
+export function buildReleaseNoteFailureAlert(
   request: ReleaseNoteGenerationRequest,
-  error: unknown
+  error: unknown,
+  receiveCount: number
+): CiPipelineAlertRequest {
+  const surface = getReleaseNoteSurface(request);
+  const retryDescription = isNonRetryableReleaseNoteError(error)
+    ? 'because the failure is not retryable'
+    : `after ${Math.max(0, receiveCount - 1)} retries`;
+  const desktopContext = isDesktopRelease(request)
+    ? ` Frontend commit ${request.frontend_sha?.slice(0, 8) ?? 'unknown'}.`
+    : '';
+  const releaseContext = isDesktopRelease(request)
+    ? `v${request.release_version ?? 'unknown'}`
+    : surface;
+  return {
+    repo: request.repo,
+    workflow: request.workflow,
+    status: 'failure',
+    title: `${surface} release note failed`,
+    description: `Production ${releaseContext} release note could not be published ${retryDescription}.${desktopContext} ${getErrorMessage(error)}`,
+    triggered_by_github_login: request.triggered_by_github_login,
+    run_id: request.run_id,
+    run_number: request.run_number,
+    run_url: request.run_url,
+    sha: request.sha,
+    branch: request.branch,
+    environment: 'prod',
+    service: request.service
+  };
+}
+
+async function postReleaseNoteFailure(
+  request: ReleaseNoteGenerationRequest,
+  error: unknown,
+  receiveCount: number
 ): Promise<void> {
-  const version = request.release_version ?? 'unknown';
-  const frontendSha = request.frontend_sha?.slice(0, 8) ?? 'unknown';
   await ciPipelineAlertService.postAlert(
-    {
-      repo: request.repo,
-      workflow: request.workflow,
-      status: 'failure',
-      title: 'Desktop release note failed',
-      description: `Production v${version} release note could not be published after three retries. Frontend commit ${frontendSha}. ${getErrorMessage(error)}`,
-      triggered_by_github_login: request.triggered_by_github_login,
-      run_id: request.run_id,
-      run_number: request.run_number,
-      run_url: request.run_url,
-      sha: request.sha,
-      branch: request.branch,
-      environment: 'prod',
-      service: 'desktop'
-    },
+    buildReleaseNoteFailureAlert(request, error, receiveCount),
     {}
   );
 }
@@ -550,12 +572,11 @@ export async function processRequestWithRetryPolicy(
   receiveCount: number,
   dependencies?: {
     readonly process?: typeof processRequest;
-    readonly postFailure?: typeof postDesktopReleaseNoteFailure;
+    readonly postFailure?: typeof postReleaseNoteFailure;
   }
 ): Promise<void> {
   const process = dependencies?.process ?? processRequest;
-  const postFailure =
-    dependencies?.postFailure ?? postDesktopReleaseNoteFailure;
+  const postFailure = dependencies?.postFailure ?? postReleaseNoteFailure;
   if (
     isDesktopRelease(request) &&
     receiveCount > DESKTOP_RELEASE_NOTE_FINAL_ATTEMPT
@@ -567,13 +588,21 @@ export async function processRequestWithRetryPolicy(
   try {
     await process(request);
   } catch (error) {
-    if (
-      !isDesktopRelease(request) ||
-      receiveCount < DESKTOP_RELEASE_NOTE_FINAL_ATTEMPT
-    ) {
+    if (isNonRetryableReleaseNoteError(error)) {
+      sentryContext.captureException(error);
+      await postFailure(request, error, receiveCount);
+      return;
+    }
+    const finalAttempt = isDesktopRelease(request)
+      ? DESKTOP_RELEASE_NOTE_FINAL_ATTEMPT
+      : RELEASE_NOTE_FINAL_ATTEMPT;
+    if (receiveCount < finalAttempt) {
       throw error;
     }
-    await postFailure(request, error);
+    await postFailure(request, error, receiveCount);
+    if (!isDesktopRelease(request)) {
+      throw error;
+    }
   }
 }
 
@@ -586,13 +615,11 @@ const sqsHandler: SQSHandler = async (event) => {
     Number.isSafeInteger(firstReceiveCount) && firstReceiveCount > 0
       ? firstReceiveCount
       : 1;
-  let invocationRequest: ReleaseNoteGenerationRequest | null = null;
   try {
     await doInDbContext(
       async () => {
         for (const record of event.Records) {
           const request = parseReleaseNoteMessage(record.body);
-          invocationRequest = request;
           logger.info(
             `Generating release notes for ${request.repo} run ${request.run_id}`
           );
@@ -610,7 +637,7 @@ const sqsHandler: SQSHandler = async (event) => {
       { logger }
     );
   } catch (error) {
-    if (!shouldRetryReleaseNoteError(error, invocationRequest)) {
+    if (!shouldRetryReleaseNoteError(error)) {
       logger.error(
         `Release note failed permanently and will not retry: ${getErrorMessage(error)}`,
         error

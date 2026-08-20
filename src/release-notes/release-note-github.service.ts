@@ -116,6 +116,7 @@ const MAX_GITHUB_RESPONSE_BYTES = 5 * 1024 * 1024;
 const GITHUB_REQUEST_TIMEOUT_MS = 15000;
 const MAX_GITHUB_ATTEMPTS = 2;
 const MAX_GITHUB_CONCURRENCY = 5;
+const MAX_LOGGED_PULL_REQUEST_NUMBERS = 100;
 const NON_HUMAN_GITHUB_LOGINS = new Set([
   'dependabot',
   'github-actions',
@@ -470,15 +471,12 @@ export class ReleaseNoteGitHubService {
     this.logger.info('Resolved GitHub release-note context', {
       repository,
       run_id: request.run_id,
-      previous_sha: previousRun.head_sha,
-      current_sha: request.sha,
-      compared_commit_count: comparedCommits.length,
-      discovery_commit_count: commits.length,
       pull_request_count: pullRequests.length,
       pull_request_numbers: pullRequests
-        .slice(0, PAGE_SIZE)
+        .slice(0, MAX_LOGGED_PULL_REQUEST_NUMBERS)
         .map((pullRequest) => pullRequest.number),
-      pull_request_numbers_truncated: pullRequests.length > PAGE_SIZE
+      pull_request_numbers_truncated:
+        pullRequests.length > MAX_LOGGED_PULL_REQUEST_NUMBERS
     });
 
     return {
