@@ -1,5 +1,8 @@
 import * as Sentry from '@sentry/serverless';
+import { Logger } from '@/logging';
 import type { Handler } from 'aws-lambda';
+
+const logger = Logger.get('SENTRY_CONTEXT');
 
 interface LambdaSentryOptions {
   readonly shouldCaptureException?: (error: unknown) => boolean;
@@ -7,6 +10,17 @@ interface LambdaSentryOptions {
 
 export function isConfigured() {
   return !!process.env.SENTRY_DSN;
+}
+
+export function captureException(error: unknown): void {
+  if (!isConfigured()) {
+    return;
+  }
+  try {
+    Sentry.captureException(error);
+  } catch (captureError) {
+    logger.error('Failed to capture exception in Sentry', captureError);
+  }
 }
 
 export function wrapLambdaHandler(
