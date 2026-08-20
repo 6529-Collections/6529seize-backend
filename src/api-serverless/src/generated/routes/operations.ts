@@ -2,6 +2,7 @@
 import { Request } from 'express';
 import { ApiResponse } from '@/api/api-response';
 import { ApiArchiveProfileCmsPackageRequest } from '@/api/generated/models/ApiArchiveProfileCmsPackageRequest';
+import { ApiCommunityMembersPage } from '@/api/generated/models/ApiCommunityMembersPage';
 import { ApiCompetition } from '@/api/generated/models/ApiCompetition';
 import { ApiCompetitionConfigVersionPage } from '@/api/generated/models/ApiCompetitionConfigVersionPage';
 import { ApiCompetitionDecisionPage } from '@/api/generated/models/ApiCompetitionDecisionPage';
@@ -38,6 +39,7 @@ import { ApiGlobalRepCategoryRecipientsPage } from '@/api/generated/models/ApiGl
 import { ApiGlobalRepCategoryWaveContributorsPage } from '@/api/generated/models/ApiGlobalRepCategoryWaveContributorsPage';
 import { ApiGlobalRepCategoryWaveOverview } from '@/api/generated/models/ApiGlobalRepCategoryWaveOverview';
 import { ApiGlobalRepCategoryWavesPage } from '@/api/generated/models/ApiGlobalRepCategoryWavesPage';
+import { ApiGroupMembersPreviewRequest } from '@/api/generated/models/ApiGroupMembersPreviewRequest';
 import { ApiMediaResolveRequest } from '@/api/generated/models/ApiMediaResolveRequest';
 import { ApiMediaResolveResponse } from '@/api/generated/models/ApiMediaResolveResponse';
 import { ApiMemeCardDropMapping } from '@/api/generated/models/ApiMemeCardDropMapping';
@@ -100,6 +102,26 @@ export type GetDmDropsUnreadRequest = Request<
   ApiResponse<GetDmDropsUnreadResponse>,
   never,
   GetDmDropsUnreadQuery,
+  Record<string, never>
+>;
+
+export type PreviewGroupMembersPathParams = Record<string, never>;
+
+export interface PreviewGroupMembersQuery {
+  "page_size"?: number;
+  "page"?: number;
+  "sort_direction"?: "ASC" | "DESC";
+  "sort"?: string;
+  "param"?: string;
+}
+
+export type PreviewGroupMembersResponse = ApiCommunityMembersPage;
+
+export type PreviewGroupMembersRequest = Request<
+  PreviewGroupMembersPathParams,
+  ApiResponse<PreviewGroupMembersResponse>,
+  ApiGroupMembersPreviewRequest,
+  PreviewGroupMembersQuery,
   Record<string, never>
 >;
 
