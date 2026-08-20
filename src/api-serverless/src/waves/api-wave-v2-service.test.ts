@@ -6,7 +6,7 @@ import {
   WaveEntity,
   WaveType
 } from '@/entities/IWave';
-import { NotFoundException } from '@/exceptions';
+import { BadRequestException, NotFoundException } from '@/exceptions';
 import { ApiDropSearchStrategy } from '@/api/generated/models/ApiDropSearchStrategy';
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { ApiWavesOverviewType } from '@/api/generated/models/ApiWavesOverviewType';
@@ -105,13 +105,17 @@ function createService() {
       ]),
     findWaveCompetitionDropsByAuthor: jest.fn().mockResolvedValue([]),
     findDropsByCurationPriorityOrder: jest.fn().mockResolvedValue([]),
-    searchDropsContainingPhraseInWave: jest
+    searchDropsInWave: jest
       .fn()
       .mockResolvedValue([
         makeDrop({ id: 'search-drop-1' }),
         makeDrop({ id: 'search-drop-2' }),
         makeDrop({ id: 'search-drop-3' })
-      ])
+      ]),
+    waveHasAuthor: jest.fn().mockResolvedValue(true),
+    searchWaveAuthors: jest
+      .fn()
+      .mockResolvedValue([{ id: 'author-1', handle: 'alice', pfp: null }])
   };
   const curationsDb = {
     findWaveCurationById: jest.fn().mockResolvedValue({
@@ -708,7 +712,7 @@ describe('ApiWaveV2Service', () => {
       authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
     };
 
-    const result = await service.searchDropsContainingPhraseInWave(
+    const result = await service.searchDropsInWave(
       {
         wave_id: 'wave-1',
         term: 'matching text',
@@ -718,10 +722,13 @@ describe('ApiWaveV2Service', () => {
       ctx
     );
 
-    expect(deps.dropsDb.searchDropsContainingPhraseInWave).toHaveBeenCalledWith(
+    expect(deps.dropsDb.searchDropsInWave).toHaveBeenCalledWith(
       {
         wave_id: 'wave-1',
         term: 'matching text',
+        author_id: undefined,
+        after: undefined,
+        before: undefined,
         limit: 3,
         offset: 2
       },
@@ -737,5 +744,56 @@ describe('ApiWaveV2Service', () => {
       next: true,
       page: 2
     });
+  });
+
+  it('rejects an author filter for a profile that never authored in the wave', async () => {
+    const { service, deps } = createService();
+    deps.dropsDb.waveHasAuthor.mockResolvedValue(false);
+
+    await expect(
+      service.searchDropsInWave(
+        {
+          wave_id: 'wave-1',
+          author_id: 'outsider',
+          page: 1,
+          size: 20
+        },
+        { authenticationContext: AuthenticationContext.notAuthenticated() }
+      )
+    ).rejects.toThrow(BadRequestException);
+    expect(deps.dropsDb.searchDropsInWave).not.toHaveBeenCalled();
+  });
+
+  it('returns author candidates only after applying wave visibility', async () => {
+    const { service, deps } = createService();
+    const ctx = {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    };
+
+    await expect(
+      service.searchWaveAuthors(
+        { wave_id: 'wave-1', handle: 'ali', limit: 10 },
+        ctx
+      )
+    ).resolves.toEqual([{ id: 'author-1', handle: 'alice', pfp: null }]);
+    expect(deps.dropsDb.searchWaveAuthors).toHaveBeenCalledWith(
+      { wave_id: 'wave-1', handle: 'ali', limit: 10 },
+      ctx
+    );
+  });
+
+  it('does not expose author candidates when the wave is not visible', async () => {
+    const { service, deps } = createService();
+    deps.dropsDb.findWaveByIdOrNull.mockResolvedValue(
+      makeWave({ visibility_group_id: 'private-group' })
+    );
+
+    await expect(
+      service.searchWaveAuthors(
+        { wave_id: 'wave-1', handle: '', limit: 10 },
+        { authenticationContext: AuthenticationContext.notAuthenticated() }
+      )
+    ).rejects.toThrow(NotFoundException);
+    expect(deps.dropsDb.searchWaveAuthors).not.toHaveBeenCalled();
   });
 });

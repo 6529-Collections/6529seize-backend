@@ -6,7 +6,7 @@ import { enums } from '@/enums';
 import { BadRequestException, NotFoundException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
 import { Time } from '@/time';
-import { dropsDb, DropsDb } from '@/drops/drops.db';
+import { dropsDb, DropsDb, WaveSearchAuthor } from '@/drops/drops.db';
 import { curationsDb, CurationsDb } from '@/api/curations/curations.db';
 import {
   userGroupsService,
@@ -370,16 +370,27 @@ export class ApiWaveV2Service {
     }
   }
 
-  public async searchDropsContainingPhraseInWave(
+  public async searchDropsInWave(
     {
       wave_id,
       term,
+      author_id,
+      after,
+      before,
       size,
       page
-    }: { term: string; page: number; size: number; wave_id: string },
+    }: {
+      term?: string;
+      author_id?: string;
+      after?: number;
+      before?: number;
+      page: number;
+      size: number;
+      wave_id: string;
+    },
     ctx: RequestContext
   ): Promise<ApiDropV2PageWithoutCount> {
-    const timerKey = `${this.constructor.name}->searchDropsContainingPhraseInWave`;
+    const timerKey = `${this.constructor.name}->searchDropsInWave`;
     ctx.timer?.start(timerKey);
     try {
       const wave = await this.dropsDb.findWaveByIdOrNull(
@@ -405,9 +416,23 @@ export class ApiWaveV2Service {
         wavesApiDb: this.wavesApiDb,
         ctx
       });
+      if (
+        author_id &&
+        !(await this.dropsDb.waveHasAuthor({ wave_id, author_id }, ctx))
+      ) {
+        throw new BadRequestException('Author has no messages in this wave');
+      }
       const offset = size * (page - 1);
-      const dropEntities = await this.dropsDb.searchDropsContainingPhraseInWave(
-        { wave_id, term, limit: size + 1, offset },
+      const dropEntities = await this.dropsDb.searchDropsInWave(
+        {
+          wave_id,
+          term,
+          author_id,
+          after,
+          before,
+          limit: size + 1,
+          offset
+        },
         ctx
       );
       const pageDropEntities = dropEntities.slice(0, size);
@@ -419,6 +444,38 @@ export class ApiWaveV2Service {
         next: dropEntities.length > size,
         page
       };
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  public async searchWaveAuthors(
+    request: { wave_id: string; handle: string; limit: number },
+    ctx: RequestContext
+  ): Promise<WaveSearchAuthor[]> {
+    const timerKey = `${this.constructor.name}->searchWaveAuthors`;
+    ctx.timer?.start(timerKey);
+    try {
+      const wave = await this.dropsDb.findWaveByIdOrNull(
+        request.wave_id,
+        ctx.connection
+      );
+      if (!wave) {
+        throw new NotFoundException(`Wave ${request.wave_id} not found`);
+      }
+      const groupIdsUserIsEligibleFor =
+        await getGroupsUserIsEligibleForReadContext(
+          this.userGroupsService,
+          ctx
+        );
+      await assertWaveAndParentVisibleOrThrow({
+        wave,
+        groupsUserIsEligibleFor: groupIdsUserIsEligibleFor,
+        message: `Wave ${request.wave_id} not found`,
+        wavesApiDb: this.wavesApiDb,
+        ctx
+      });
+      return this.dropsDb.searchWaveAuthors(request, ctx);
     } finally {
       ctx.timer?.stop(timerKey);
     }
