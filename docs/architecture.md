@@ -281,6 +281,13 @@ Important API responsibilities:
   authentication because distribution plans are public and the home page must
   render before wallet authentication. Responses use a 60-second route cache
   to limit repeated database reads while keeping publication changes timely.
+- Paginated group-member inspection uses `GET /community-members/top` for a
+  saved group and supports parameterized handle or wallet search. Authenticated
+  `POST /groups/preview-members` evaluates an unsaved group description through
+  the same membership SQL without creating a group, identity group, or other
+  persistent record. Draft identity-address and NFT-token criteria remain bind
+  parameters, and results reflect the current indexed metrics and ownership
+  state.
 - Wave mention autocomplete under `/v2/waves/{waveId}/mention-search`, which
   derives visibility eligibility from a persisted wave, and the authenticated
   `/v2/waves/mention-search` draft endpoint, which applies the selected

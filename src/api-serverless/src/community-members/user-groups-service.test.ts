@@ -22,6 +22,33 @@ import { AbusivenessCheckService } from '@/profiles/abusiveness-check.service';
 import { MetricsRecorder } from '@/metrics/MetricsRecorder';
 import fc from 'fast-check';
 import { xTdhRepository } from '@/xtdh/xtdh.repository';
+import { ApiCreateGroupDescription } from '@/api/generated/models/ApiCreateGroupDescription';
+import { ApiGroupOwnsNftNameEnum } from '@/api/generated/models/ApiGroupOwnsNft';
+
+function buildPreviewGroup(
+  overrides: Partial<ApiCreateGroupDescription> = {}
+): ApiCreateGroupDescription {
+  return {
+    cic: { min: null, max: null, user_identity: null, direction: null },
+    rep: {
+      min: null,
+      max: null,
+      user_identity: null,
+      direction: null,
+      category: null
+    },
+    level: { min: null, max: null },
+    tdh: {
+      min: null,
+      max: null,
+      inclusion_strategy: GroupTdhInclusionStrategy.TDH as never
+    },
+    owns_nfts: [],
+    identity_addresses: [],
+    excluded_identity_addresses: [],
+    ...overrides
+  };
+}
 
 jest.mock('@/redis', () => ({
   ...jest.requireActual('@/redis'),
@@ -830,5 +857,56 @@ describe('UserGroupsDb getAllProfileOwnedTokensByProfileIdGroupedByContract', ()
       { profileId: PROFILE_ID },
       { wrappedConnection: undefined }
     );
+  });
+});
+
+describe('UserGroupsService draft membership SQL', () => {
+  it('binds included and excluded draft addresses without persisting a group', async () => {
+    const service = buildService();
+    const includedAddress = '0x1111111111111111111111111111111111111111';
+    const excludedAddress = '0x2222222222222222222222222222222222222222';
+
+    const result = await service.getSqlAndParamsForPreview(
+      buildPreviewGroup({
+        identity_addresses: [includedAddress],
+        excluded_identity_addresses: [excludedAddress]
+      }),
+      {}
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.sql).toContain(':preview_included_addresses');
+    expect(result!.sql).toContain(':preview_excluded_addresses');
+    expect(result!.sql).not.toContain('community_groups');
+    expect(result!.params).toMatchObject({
+      preview_included_addresses: [includedAddress],
+      preview_excluded_addresses: [excludedAddress]
+    });
+  });
+
+  it('binds draft NFT token criteria for all-token matching', async () => {
+    const service = buildService();
+
+    const result = await service.getSqlAndParamsForPreview(
+      buildPreviewGroup({
+        owns_nfts: [
+          {
+            name: ApiGroupOwnsNftNameEnum.Memes,
+            tokens: ['1', '2', '2'],
+            match_mode: GroupNftOwnershipMatchMode.ALL_TOKENS as never
+          }
+        ]
+      }),
+      {}
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.sql).toContain('token_id in (:meme_token_ids)');
+    expect(result!.sql).toContain(':meme_token_ids_count');
+    expect(result!.sql).not.toContain('JSON_TABLE');
+    expect(result!.params).toMatchObject({
+      meme_token_ids: ['1', '2'],
+      meme_token_ids_count: 2
+    });
   });
 });
