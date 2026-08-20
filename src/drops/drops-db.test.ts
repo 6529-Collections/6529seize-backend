@@ -70,19 +70,20 @@ describe('DropsDb', () => {
     });
   });
 
-  it('searches only profiles that authored a drop in the wave', async () => {
-    const authors = [{ id: 'author-1', handle: 'Alice', pfp: null }];
+  it('matches mixed-case handles using profile external ids in the wave join', async () => {
+    const authors = [{ id: 'profile-external-1', handle: 'Alice', pfp: null }];
     const execute = jest.fn().mockResolvedValue(authors);
     const repo = new DropsDb(() => ({ execute }) as any);
 
     await expect(
       repo.searchWaveAuthors(
-        { wave_id: 'wave-1', handle: 'Ali', limit: 10 },
+        { wave_id: 'wave-1', handle: 'ALi', limit: 10 },
         { connection: { connection: {} } as any }
       )
     ).resolves.toBe(authors);
     const [sql, params] = execute.mock.calls[0];
     expect(sql).toContain('INNER JOIN drops d ON d.author_id = p.external_id');
+    expect(sql).toContain("p.normalised_handle LIKE CONCAT(:handle, '%')");
     expect(sql).toContain('d.wave_id = :wave_id');
     expect(params).toEqual({ wave_id: 'wave-1', handle: 'ali', limit: 10 });
   });

@@ -3579,12 +3579,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           return [];
         }
         const likeTerm = normalizedTerm.replace(/[\\%_]/g, '\\$&');
-        filters.push(`EXISTS (
+        filters.push(String.raw`EXISTS (
           SELECT 1
           FROM ${DROPS_PARTS_TABLE} p
           WHERE p.drop_id = d.id
             AND MATCH(p.content) AGAINST (:term IN BOOLEAN MODE) > 0
-            AND LOWER(p.content) LIKE LOWER(CONCAT('%', :likeTerm, '%')) ESCAPE '\\\\'
+            AND LOWER(p.content) LIKE LOWER(CONCAT('%', :likeTerm, '%')) ESCAPE '\\'
         )`);
         queryParams.term = booleanPrefixQuery;
         queryParams.likeTerm = likeTerm;
