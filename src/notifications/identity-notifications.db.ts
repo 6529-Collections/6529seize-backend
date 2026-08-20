@@ -30,6 +30,12 @@ import {
   ContentModerationDb
 } from '@/content-moderation/content-moderation.db';
 import { DropModerationStatus } from '@/entities/IContentModeration';
+import {
+  profilePreferencesDb as defaultProfilePreferencesDb,
+  ProfilePreferencesDb
+} from '@/profile-preferences/profile-preferences.db';
+import { isNotificationEnabled } from '@/profile-preferences/profile-notification-policy';
+import { DEFAULT_PROFILE_PREFERENCES } from '@/entities/IProfilePreferences';
 
 type SerializableNotificationInsertRow = Record<string, string | number | null>;
 
@@ -53,7 +59,8 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
   constructor(
     dbSupplier: () => SqlExecutor,
     private readonly identityMutesDb: IdentityMutesDb = defaultIdentityMutesDb,
-    private readonly contentModerationDb: ContentModerationDb = defaultContentModerationDb
+    private readonly contentModerationDb: ContentModerationDb = defaultContentModerationDb,
+    private readonly profilePreferencesDb: ProfilePreferencesDb = defaultProfilePreferencesDb
   ) {
     super(dbSupplier);
   }
@@ -67,11 +74,10 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     connection?: ConnectionWrapper<any>
   ) {
     if (this.isNotifierActivated()) {
-      const [filteredNotification] =
-        await this.filterMutedNotificationRowsForWrite(
-          [notification],
-          connection
-        );
+      const [filteredNotification] = await this.filterNotificationRowsForWrite(
+        [notification],
+        connection
+      );
       if (!filteredNotification) {
         return;
       }
@@ -119,7 +125,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     notifications: NewIdentityNotification[],
     connection: ConnectionWrapper<any>
   ): Promise<number[]> {
-    const unmutedNotifications = await this.filterMutedNotificationRowsForWrite(
+    const unmutedNotifications = await this.filterNotificationRowsForWrite(
       notifications,
       connection
     );
@@ -159,13 +165,10 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     T extends {
       readonly identity_id: string;
       readonly additional_identity_id: string | null;
-      readonly related_drop_id: string | null;
-      readonly related_drop_2_id: string | null;
     }
   >(notifications: T[], connection?: ConnectionWrapper<any>): Promise<T[]> {
-    let unmuted: T[];
     try {
-      unmuted = await this.identityMutesDb.filterMutedNotificationRows(
+      return await this.identityMutesDb.filterMutedNotificationRows(
         notifications,
         connection
       );
@@ -176,22 +179,56 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       );
       return notifications;
     }
+  }
+
+  private async filterNotificationRowsForWrite<
+    T extends NewIdentityNotification
+  >(notifications: T[], connection?: ConnectionWrapper<any>): Promise<T[]> {
+    const unmuted = await this.filterMutedNotificationRowsForWrite(
+      notifications,
+      connection
+    );
+    if (!unmuted.length) return [];
+    let available: T[];
     try {
       const unblocked =
         await this.contentModerationDb.filterBlockedNotificationRows(
           unmuted,
           connection
         );
-      return await this.contentModerationDb.filterUnavailableDropNotificationRows(
-        unblocked,
-        connection
-      );
+      available =
+        await this.contentModerationDb.filterUnavailableDropNotificationRows(
+          unblocked,
+          connection
+        );
     } catch (error) {
       this.logger.error(
         'Failed to apply content moderation on notification write',
         error
       );
       throw error;
+    }
+    if (!available.length) return [];
+    try {
+      const preferences = await this.profilePreferencesDb.getMany(
+        Array.from(
+          new Set(available.map((notification) => notification.identity_id))
+        ),
+        connection
+      );
+      return available.filter((notification) =>
+        isNotificationEnabled(
+          notification.cause,
+          preferences.get(notification.identity_id) ??
+            DEFAULT_PROFILE_PREFERENCES
+        )
+      );
+    } catch (error) {
+      this.logger.error(
+        'Failed to filter notification rows by profile preferences; inserting unfiltered notifications',
+        error
+      );
+      return available;
     }
   }
 

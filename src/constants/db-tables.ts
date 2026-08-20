@@ -210,6 +210,7 @@ export const CONTENT_MODERATION_PROFILE_STATES_TABLE =
 export const CONTENT_MODERATION_PRE_PUBLICATION_CHECKS_TABLE =
   'content_moderation_pre_publication_checks';
 export const IDENTITY_NOTIFICATIONS_TABLE = 'identity_notifications';
+export const PROFILE_PREFERENCES_TABLE = 'profile_preferences';
 export const WAVE_GROUP_NOTIFICATION_SUBSCRIPTIONS_TABLE =
   'wave_group_notification_subscriptions';
 export const MENTION_ALIASES_TABLE = 'mention_aliases';
