@@ -5,7 +5,29 @@ import {
   DropModerationStatus
 } from '@/entities/IContentModeration';
 import { ForbiddenException } from '@/exceptions';
+import { ContentModerationAiService } from './content-moderation-ai.service';
+import { ContentModerationDb } from './content-moderation.db';
 import { ContentModerationService } from './content-moderation.service';
+
+type ContentModerationDbMock = jest.Mocked<
+  Pick<
+    ContentModerationDb,
+    | 'applyModeratorDropDecision'
+    | 'createReportWithViewerActions'
+    | 'getAuditHistoryForDrops'
+    | 'getDropSnapshot'
+    | 'getModerationQueue'
+    | 'getPresentations'
+    | 'isModerator'
+    | 'saveReportAssessment'
+    | 'setProfileStatus'
+    | 'tryAiQuarantineForOpenReport'
+  >
+>;
+
+type ContentModerationAiServiceMock = jest.Mocked<
+  Pick<ContentModerationAiService, 'assessReportedContent'>
+>;
 
 function reportRow() {
   return {
@@ -37,10 +59,17 @@ function createService() {
     author_profile_id: 'author-1',
     wave_id: 'wave-1',
     title: null,
-    parts: [{ part_no: 1, content: 'reported content' }],
+    parts: [
+      {
+        part_no: 1,
+        content: 'reported content',
+        media: [],
+        attachments: []
+      }
+    ],
     reply_to_drop_id: null
   };
-  const db = {
+  const db: ContentModerationDbMock = {
     getDropSnapshot: jest.fn().mockResolvedValue(snapshot),
     createReportWithViewerActions: jest.fn().mockResolvedValue(reportRow()),
     saveReportAssessment: jest.fn().mockResolvedValue(undefined),
@@ -58,10 +87,9 @@ function createService() {
       }
     }),
     getAuditHistoryForDrops: jest.fn().mockResolvedValue({}),
-    resolveOpenReportsForDrop: jest.fn().mockResolvedValue(undefined),
     setProfileStatus: jest.fn().mockResolvedValue(undefined)
   };
-  const aiService = {
+  const aiService: ContentModerationAiServiceMock = {
     assessReportedContent: jest.fn().mockResolvedValue({
       recommendation: ContentModerationRecommendation.NO_VIOLATION_DETECTED,
       category: 'NONE',
@@ -71,7 +99,7 @@ function createService() {
     })
   };
   return {
-    service: new ContentModerationService(db as any, aiService as any),
+    service: new ContentModerationService(db, aiService),
     db,
     aiService,
     snapshot
@@ -122,7 +150,14 @@ describe('ContentModerationService', () => {
     const parentSnapshot = {
       ...snapshot,
       drop_id: 'parent-drop',
-      parts: [{ part_no: 1, content: 'parent context' }]
+      parts: [
+        {
+          part_no: 1,
+          content: 'parent context',
+          media: [],
+          attachments: []
+        }
+      ]
     };
     db.getDropSnapshot
       .mockReset()

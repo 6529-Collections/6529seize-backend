@@ -35,12 +35,31 @@ export interface SubmitContentReportInput {
 
 type DropModerationDecision = 'ALLOW' | 'QUARANTINE' | 'REMOVE';
 
+type ContentModerationDbDependency = Pick<
+  ContentModerationDb,
+  | 'applyModeratorDropDecision'
+  | 'createReportWithViewerActions'
+  | 'getAuditHistoryForDrops'
+  | 'getDropSnapshot'
+  | 'getModerationQueue'
+  | 'getPresentations'
+  | 'isModerator'
+  | 'saveReportAssessment'
+  | 'setProfileStatus'
+  | 'tryAiQuarantineForOpenReport'
+>;
+
+type ContentModerationAiDependency = Pick<
+  ContentModerationAiService,
+  'assessReportedContent'
+>;
+
 export class ContentModerationService {
   private readonly logger = Logger.get(ContentModerationService.name);
 
   constructor(
-    private readonly db: ContentModerationDb,
-    private readonly aiService: ContentModerationAiService
+    private readonly db: ContentModerationDbDependency,
+    private readonly aiService: ContentModerationAiDependency
   ) {}
 
   async submitReport(

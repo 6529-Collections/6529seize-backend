@@ -288,7 +288,10 @@ export class CreateOrUpdateDropUseCase {
     private readonly artCurationTokenWatchService: ArtCurationTokenWatchService,
     private readonly attachmentsDb: AttachmentsDb,
     private readonly dropMediaUploadsDb: DropMediaUploadsDb,
-    private readonly moderationService: PrePublicationModerationService = prePublicationModerationService
+    private readonly moderationService: Pick<
+      PrePublicationModerationService,
+      'evaluate'
+    > = prePublicationModerationService
   ) {}
 
   private assertDropContentLimits(

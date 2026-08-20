@@ -24,6 +24,15 @@ import {
   sanitizeDropStructuredFields,
   validateDropMediaAttachment
 } from './create-or-update-drop.use-case';
+import { PrePublicationModerationService } from '@/content-moderation/pre-publication-moderation.service';
+
+type ModerationServiceMock = jest.Mocked<
+  Pick<PrePublicationModerationService, 'evaluate'>
+>;
+
+function createModerationServiceMock(): ModerationServiceMock {
+  return { evaluate: jest.fn().mockResolvedValue(undefined) };
+}
 
 describe('CreateOrUpdateDropUseCase', () => {
   afterEach(() => {
@@ -55,7 +64,7 @@ describe('CreateOrUpdateDropUseCase', () => {
       {} as any,
       {} as any,
       {} as any,
-      { evaluate: jest.fn().mockResolvedValue(undefined) } as any
+      createModerationServiceMock()
     );
   }
 
@@ -69,7 +78,7 @@ describe('CreateOrUpdateDropUseCase', () => {
       deleteDropUseCase?: any;
       artCurationTokenWatchService?: any;
       attachmentsDb?: any;
-      moderationService?: any;
+      moderationService?: ModerationServiceMock;
     } = {}
   ) {
     return new CreateOrUpdateDropUseCase(
@@ -87,8 +96,7 @@ describe('CreateOrUpdateDropUseCase', () => {
       overrides.artCurationTokenWatchService ?? ({} as any),
       overrides.attachmentsDb ?? ({} as any),
       {} as any,
-      overrides.moderationService ??
-        ({ evaluate: jest.fn().mockResolvedValue(undefined) } as any)
+      overrides.moderationService ?? createModerationServiceMock()
     );
   }
 
