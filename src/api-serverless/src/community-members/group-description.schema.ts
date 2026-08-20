@@ -112,16 +112,20 @@ export const GroupDescriptionSchema: Joi.ObjectSchema<ApiCreateGroupDescription>
   });
 
 export const PreviewGroupDescriptionSchema = GroupDescriptionSchema.fork(
-  [
-    'tdh',
-    'rep',
-    'cic',
-    'level',
-    'owns_nfts',
-    'identity_addresses',
-    'excluded_identity_addresses'
-  ],
+  ['tdh', 'rep', 'cic', 'level', 'owns_nfts'],
   (schema) => schema.required()
 ).keys({
+  // Preview requests require both keys, while null remains a supported value
+  // in the generated ApiCreateGroupDescription contract.
+  identity_addresses: Joi.array()
+    .required()
+    .items(Joi.string().regex(WALLET_REGEX).lowercase())
+    .allow(null)
+    .max(20000),
+  excluded_identity_addresses: Joi.array()
+    .required()
+    .items(Joi.string().regex(WALLET_REGEX).lowercase())
+    .allow(null)
+    .max(20000),
   is_beneficiary_of_grant_id: Joi.string().optional().allow(null)
 });

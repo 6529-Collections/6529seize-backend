@@ -85,4 +85,19 @@ describe('handlePreviewGroupMembers', () => {
       communityMembersService.getCommunityMembersPage
     ).not.toHaveBeenCalled();
   });
+
+  it('requires both identity membership keys while accepting null values', async () => {
+    const { excluded_identity_addresses: _excluded, ...missingExcluded } =
+      group;
+
+    await expect(
+      handlePreviewGroupMembers({
+        body: { group: missingExcluded },
+        query: {}
+      } as never)
+    ).rejects.toThrow();
+    expect(
+      communityMembersService.getCommunityMembersPage
+    ).not.toHaveBeenCalled();
+  });
 });

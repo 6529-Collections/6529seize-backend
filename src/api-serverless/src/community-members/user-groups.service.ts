@@ -230,35 +230,11 @@ export class UserGroupsService {
           const beneficiaryGrantMatchMode =
             group.is_beneficiary_of_grant_match_mode ??
             DEFAULT_BENEFICIARY_GRANT_MATCH_MODE;
-          if (
-            !beneficiaryOfGrantId &&
-            beneficiaryGrantMatchMode ===
-              GroupBeneficiaryGrantMatchMode.ALL_TOKENS
-          ) {
-            throw new BadRequestException(
-              `Beneficiary grant match mode ALL_TOKENS requires an xTDH grant`
-            );
-          }
-          if (beneficiaryOfGrantId) {
-            const grantEntity = await xTdhRepository.getGrantById(
-              beneficiaryOfGrantId,
-              ctxWithConnection
-            );
-            if (!grantEntity) {
-              throw new NotFoundException(
-                `Can't create group based on grant ${beneficiaryOfGrantId} as it doesn't exist`
-              );
-            }
-            if (
-              beneficiaryGrantMatchMode ===
-                GroupBeneficiaryGrantMatchMode.ALL_TOKENS &&
-              grantEntity.token_mode !== XTdhGrantTokenMode.INCLUDE
-            ) {
-              throw new BadRequestException(
-                `Beneficiary grant match mode ALL_TOKENS can only be used with grants that specify target tokens`
-              );
-            }
-          }
+          await this.validateBeneficiaryGrantCriteria(
+            beneficiaryOfGrantId,
+            beneficiaryGrantMatchMode,
+            ctxWithConnection
+          );
           const inclusionGroups = group.addresses.length
             ? await this.userGroupsDb.insertGroupEntriesAndGetGroupIds(
                 group.addresses,
@@ -1725,6 +1701,16 @@ export class UserGroupsService {
     sql: string;
     params: Record<string, any>;
   } | null> {
+    const beneficiaryGrantMatchMode =
+      enums.resolve(
+        GroupBeneficiaryGrantMatchMode,
+        description.is_beneficiary_of_grant_match_mode
+      ) ?? DEFAULT_BENEFICIARY_GRANT_MATCH_MODE;
+    await this.validateBeneficiaryGrantCriteria(
+      description.is_beneficiary_of_grant_id ?? null,
+      beneficiaryGrantMatchMode,
+      ctx
+    );
     const group: GClean = {
       tdh: structuredClone(description.tdh),
       rep: structuredClone(description.rep),
@@ -1852,12 +1838,14 @@ export class UserGroupsService {
     group.rep.user_identity = group.rep.user_identity
       ? usersToUserIds[group.rep.user_identity]
       : null;
-    group.level.min = group.level.min
-      ? getLevelComponentsBorderByLevel(group.level.min)
-      : null;
-    group.level.max = group.level.max
-      ? getLevelComponentsBorderByLevel(group.level.max)
-      : null;
+    group.level.min =
+      group.level.min !== null
+        ? getLevelComponentsBorderByLevel(group.level.min)
+        : null;
+    group.level.max =
+      group.level.max !== null
+        ? getLevelComponentsBorderByLevel(group.level.max)
+        : null;
 
     const params: Record<string, any> = {};
     const beneficiaryOwnersPart = this.getBeneficiaryOwnersPart(
@@ -1940,24 +1928,6 @@ export class UserGroupsService {
     ) {
       return ` ${UserGroupsService.GENERATED_VIEW} as (select * from cm_view)`;
     }
-    const includedSources: string[] = [];
-    if (anyOtherDescriptionButInclusion) {
-      includedSources.push(`select i.profile_id from cm_view i`);
-    } else if (!hasIncludedIdentities) {
-      includedSources.push(`select i.profile_id from ${IDENTITIES_TABLE} i`);
-    }
-    if (group.identity_group_id !== null) {
-      includedSources.push(
-        `select profile_id from ${PROFILE_GROUPS_TABLE} where profile_group_id = :profile_group_id`
-      );
-      params['profile_group_id'] = group.identity_group_id;
-    }
-    if (includedAddresses.length > 0) {
-      includedSources.push(
-        `select i.profile_id from ${ADDRESS_CONSOLIDATION_KEY} a join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key where a.address in (:preview_included_addresses)`
-      );
-      params['preview_included_addresses'] = includedAddresses;
-    }
     const excludedSources: string[] = [];
     if (group.excluded_identity_group_id !== null) {
       excludedSources.push(
@@ -1970,6 +1940,29 @@ export class UserGroupsService {
         `select i.profile_id from ${ADDRESS_CONSOLIDATION_KEY} a join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key where a.address in (:preview_excluded_addresses)`
       );
       params['preview_excluded_addresses'] = excludedAddresses;
+    }
+    if (!anyOtherDescriptionButInclusion && !hasIncludedIdentities) {
+      return ` ${
+        UserGroupsService.GENERATED_VIEW
+      } as (select i.* from ${IDENTITIES_TABLE} i where not exists (select 1 from (${excludedSources.join(
+        ' union '
+      )}) excluded_profile_ids where excluded_profile_ids.profile_id = i.profile_id))`;
+    }
+    const includedSources: string[] = [];
+    if (anyOtherDescriptionButInclusion) {
+      includedSources.push(`select i.profile_id from cm_view i`);
+    }
+    if (group.identity_group_id !== null) {
+      includedSources.push(
+        `select profile_id from ${PROFILE_GROUPS_TABLE} where profile_group_id = :profile_group_id`
+      );
+      params['profile_group_id'] = group.identity_group_id;
+    }
+    if (includedAddresses.length > 0) {
+      includedSources.push(
+        `select i.profile_id from ${ADDRESS_CONSOLIDATION_KEY} a join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key where a.address in (:preview_included_addresses)`
+      );
+      params['preview_included_addresses'] = includedAddresses;
     }
     const exclusionClause = excludedSources.length
       ? `where included_profile_ids.profile_id not in (${excludedSources.join(
@@ -2015,8 +2008,45 @@ export class UserGroupsService {
         ? `where included_profile_ids.profile_id not in (select exc.profile_id from ${PROFILE_GROUPS_TABLE} exc where exc.profile_group_id = :excluded_profile_group_id)`
         : ``
     }) `;
-    params['excluded_profile_group_id'] = group.excluded_identity_group_id;
+    if (group.excluded_identity_group_id !== null) {
+      params['excluded_profile_group_id'] = group.excluded_identity_group_id;
+    }
     return sql;
+  }
+
+  private async validateBeneficiaryGrantCriteria(
+    beneficiaryGrantId: string | null,
+    beneficiaryGrantMatchMode: GroupBeneficiaryGrantMatchMode,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (
+      !beneficiaryGrantId &&
+      beneficiaryGrantMatchMode === GroupBeneficiaryGrantMatchMode.ALL_TOKENS
+    ) {
+      throw new BadRequestException(
+        `Beneficiary grant match mode ALL_TOKENS requires an xTDH grant`
+      );
+    }
+    if (!beneficiaryGrantId) {
+      return;
+    }
+    const grantEntity = await xTdhRepository.getGrantById(
+      beneficiaryGrantId,
+      ctx
+    );
+    if (!grantEntity) {
+      throw new NotFoundException(
+        `Can't create group based on grant ${beneficiaryGrantId} as it doesn't exist`
+      );
+    }
+    if (
+      beneficiaryGrantMatchMode === GroupBeneficiaryGrantMatchMode.ALL_TOKENS &&
+      grantEntity.token_mode !== XTdhGrantTokenMode.INCLUDE
+    ) {
+      throw new BadRequestException(
+        `Beneficiary grant match mode ALL_TOKENS can only be used with grants that specify target tokens`
+      );
+    }
   }
 
   private getTypeOfNftPart({

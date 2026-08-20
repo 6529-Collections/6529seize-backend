@@ -30,6 +30,21 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
     super(dbSupplier);
   }
 
+  private getMemberSearch(memberSearchInput: string | null | undefined): {
+    clause: string;
+    params: Record<string, string>;
+  } {
+    const memberSearch = memberSearchInput?.trim().toLowerCase();
+    if (!memberSearch) {
+      return { clause: '', params: {} };
+    }
+    return {
+      clause:
+        'where (instr(lower(ifnull(cm.handle, cm.primary_address)), :member_search) > 0 or instr(lower(cm.primary_address), :member_search) > 0)',
+      params: { member_search: memberSearch }
+    };
+  }
+
   async getCommunityMembers(
     query: CommunityMembersQuery,
     ctx: RequestContext,
@@ -69,10 +84,7 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
       '(cm.xtdh - (cm.produced_xtdh - cm.granted_xtdh))'
     ];
     const orderByClause = expressionSorts.includes(sort) ? sort : `cm.${sort}`;
-    const memberSearch = query.param?.trim().toLowerCase();
-    const searchClause = memberSearch
-      ? `where (lower(ifnull(cm.handle, cm.primary_address)) like :member_search or lower(cm.primary_address) like :member_search)`
-      : '';
+    const memberSearch = this.getMemberSearch(query.param);
     const sql = `
       ${viewResult.sql} 
       select
@@ -92,11 +104,11 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
         cm.rep as rep,
         cm.pfp as pfp,
         cm.consolidation_key as consolidation_key
-      from ${UserGroupsService.GENERATED_VIEW} cm ${searchClause} order by ${orderByClause} ${query.sort_direction} limit ${query.page_size} offset ${offset}
+      from ${UserGroupsService.GENERATED_VIEW} cm ${memberSearch.clause} order by ${orderByClause} ${query.sort_direction} limit ${query.page_size} offset ${offset}
     `;
     const params = {
       ...viewResult.params,
-      ...(memberSearch ? { member_search: `%${memberSearch}%` } : {})
+      ...memberSearch.params
     };
     ctx.timer?.start(`${this.constructor.name}->getCommunityMembers`);
     const result = await this.db.execute<CommunityMemberFromDb>(sql, params);
@@ -121,22 +133,19 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
     if (viewResult === null) {
       return 0;
     }
-    const memberSearch = query.param?.trim().toLowerCase();
-    const searchClause = memberSearch
-      ? `where (lower(ifnull(cm.handle, cm.primary_address)) like :member_search or lower(cm.primary_address) like :member_search)`
-      : '';
+    const memberSearch = this.getMemberSearch(query.param);
     return this.db
       .execute(
         `
       ${viewResult.sql} 
-      select count(*) as cnt from ${UserGroupsService.GENERATED_VIEW} cm ${searchClause}
+      select count(*) as cnt from ${UserGroupsService.GENERATED_VIEW} cm ${memberSearch.clause}
     `,
         {
           ...viewResult.params,
-          ...(memberSearch ? { member_search: `%${memberSearch}%` } : {})
+          ...memberSearch.params
         }
       )
-      .then((rows) => rows[0].cnt as number);
+      .then((rows) => (rows[0]?.cnt as number | undefined) ?? 0);
   }
 
   async getCommunityMembersLastActivitiesByConsolidationKeys(
