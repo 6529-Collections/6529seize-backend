@@ -196,6 +196,7 @@ export const PUSH_NOTIFICATION_SETTINGS_TABLE = 'push_notification_settings';
 export const IDENTITY_SUBSCRIPTIONS_TABLE = 'identity_subscriptions';
 export const IDENTITY_MUTES_TABLE = 'identity_mutes';
 export const IDENTITY_NOTIFICATIONS_TABLE = 'identity_notifications';
+export const PROFILE_PREFERENCES_TABLE = 'profile_preferences';
 export const WAVE_GROUP_NOTIFICATION_SUBSCRIPTIONS_TABLE =
   'wave_group_notification_subscriptions';
 export const MENTION_ALIASES_TABLE = 'mention_aliases';
