@@ -435,6 +435,94 @@ describe('reconcileTransactionTokenCounts', () => {
     expect(result.value_usd).toBe(0.06529);
   });
 
+  it('supports an explicitly known root trace path', async () => {
+    const row = makeTransaction(537, 1, MEMES_CONTRACT);
+    row.from_address = ZERO_ADDRESS;
+    const receipt = {
+      gasUsed: BigInt(0),
+      logs: [
+        makeLog(
+          'TransferSingle',
+          [FROM, ZERO_ADDRESS, TO, BigInt(537), BigInt(1)],
+          MEMES_CONTRACT
+        )
+      ]
+    };
+    mockTransactionValueRpc(receipt, [
+      {
+        transactionHash: HASH,
+        traceAddress: [],
+        action: {
+          from: TO,
+          to: CLAIM_CONTRACT,
+          value: ethers.parseEther('0.06579')
+        }
+      },
+      {
+        transactionHash: HASH,
+        traceAddress: [0],
+        action: {
+          from: CLAIM_CONTRACT,
+          to: MEMES_DEPLOYER,
+          value: ethers.parseEther('0.06529')
+        }
+      }
+    ]);
+
+    const [result] = await findDiscoveredTransactionValues([row]);
+
+    expect(result.value).toBe(0.06579);
+    expect(result.primary_proceeds).toBe(0.06529);
+  });
+
+  it('rejects gross payments without a valid trace path', async () => {
+    const row = makeTransaction(537, 1, MEMES_CONTRACT);
+    row.from_address = ZERO_ADDRESS;
+    const receipt = {
+      gasUsed: BigInt(0),
+      logs: [
+        makeLog(
+          'TransferSingle',
+          [FROM, ZERO_ADDRESS, TO, BigInt(537), BigInt(1)],
+          MEMES_CONTRACT
+        )
+      ]
+    };
+    mockTransactionValueRpc(receipt, [
+      {
+        transactionHash: HASH,
+        action: {
+          from: TO,
+          to: CLAIM_CONTRACT,
+          value: ethers.parseEther('0.06579')
+        }
+      },
+      {
+        transactionHash: HASH,
+        traceAddress: ['invalid'],
+        action: {
+          from: TO,
+          to: CLAIM_CONTRACT,
+          value: ethers.parseEther('0.1')
+        }
+      },
+      {
+        transactionHash: HASH,
+        traceAddress: [0],
+        action: {
+          from: CLAIM_CONTRACT,
+          to: MEMES_DEPLOYER,
+          value: ethers.parseEther('0.06529')
+        }
+      }
+    ]);
+
+    const [result] = await findDiscoveredTransactionValues([row]);
+
+    expect(result.value).toBe(0.06529);
+    expect(result.primary_proceeds).toBe(0.06529);
+  });
+
   it('does not replace nonzero on-chain value with internal transfers', async () => {
     const row = makeTransaction(537, 1, MEMES_CONTRACT);
     row.from_address = ZERO_ADDRESS;

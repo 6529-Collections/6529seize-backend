@@ -60,7 +60,7 @@ type RpcInternalTransfersResponse = {
     from: string;
     to?: string;
     value?: number;
-    traceAddress: number[];
+    traceAddress?: number[];
   }>;
 };
 
@@ -114,6 +114,16 @@ function resolveLogValue(data: string) {
     return 0;
   }
   return Number.parseFloat(ethers.formatEther(data));
+}
+
+function normalizeTraceAddress(value: unknown): number[] | undefined {
+  if (
+    !Array.isArray(value) ||
+    !value.every((part) => Number.isInteger(part) && part >= 0)
+  ) {
+    return undefined;
+  }
+  return value;
 }
 
 function getHashKey(hash: string): string {
@@ -376,9 +386,7 @@ function normalizeTraceInternalTransfers(
         from: trace?.action?.from ?? '',
         to: trace?.action?.to ?? undefined,
         value: weiToEth(valueWei),
-        traceAddress: Array.isArray(trace?.traceAddress)
-          ? trace.traceAddress
-          : []
+        traceAddress: normalizeTraceAddress(trace?.traceAddress)
       };
     })
     .filter((transfer): transfer is NonNullable<typeof transfer> => !!transfer)
@@ -730,7 +738,13 @@ function sumInternalTransferValues(
   return transfers.reduce((acc, transfer) => acc + (transfer.value ?? 0), 0);
 }
 
-function isTraceAncestor(ancestor: number[], descendant: number[]): boolean {
+function isTraceAncestor(
+  ancestor: number[] | undefined,
+  descendant: number[] | undefined
+): boolean {
+  if (!ancestor || !descendant) {
+    return false;
+  }
   return (
     ancestor.length < descendant.length &&
     ancestor.every((part, index) => descendant[index] === part)
@@ -763,9 +777,10 @@ function findGrossMintValueFromInternalTransfers(
       )
       .sort(
         (first, second) =>
-          second.traceAddress.length - first.traceAddress.length
+          (second.traceAddress?.length ?? -1) -
+          (first.traceAddress?.length ?? -1)
       )[0];
-    if (!grossPayment) {
+    if (!grossPayment?.traceAddress) {
       return 0;
     }
     grossPayments.set(grossPayment.traceAddress.join('.'), grossPayment);
