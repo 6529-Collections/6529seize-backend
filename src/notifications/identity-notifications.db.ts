@@ -58,9 +58,18 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
 
   constructor(
     dbSupplier: () => SqlExecutor,
-    private readonly identityMutesDb: IdentityMutesDb = defaultIdentityMutesDb,
-    private readonly contentModerationDb: ContentModerationDb = defaultContentModerationDb,
-    private readonly profilePreferencesDb: ProfilePreferencesDb = defaultProfilePreferencesDb
+    private readonly identityMutesDb: Pick<
+      IdentityMutesDb,
+      'filterMutedNotificationRows'
+    > = defaultIdentityMutesDb,
+    private readonly contentModerationDb: Pick<
+      ContentModerationDb,
+      'filterBlockedNotificationRows' | 'filterUnavailableDropNotificationRows'
+    > = defaultContentModerationDb,
+    private readonly profilePreferencesDb: Pick<
+      ProfilePreferencesDb,
+      'getMany'
+    > = defaultProfilePreferencesDb
   ) {
     super(dbSupplier);
   }

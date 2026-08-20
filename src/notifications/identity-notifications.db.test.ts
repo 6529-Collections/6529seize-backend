@@ -1,11 +1,32 @@
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
-import { SqlExecutor } from '@/sql-executor';
-import { IdentityNotificationsDb } from './identity-notifications.db';
+import { ConnectionWrapper, SqlExecutor } from '@/sql-executor';
+import {
+  IdentityNotificationsDb,
+  NewIdentityNotification
+} from './identity-notifications.db';
 import { sendIdentityPushNotification } from '../api-serverless/src/push-notifications/push-notifications.service';
 import {
   DEFAULT_PROFILE_PREFERENCES,
   ProfileNotificationLevel
 } from '@/entities/IProfilePreferences';
+import { IdentityMutesDb } from '@/api-serverless/src/identity-mutes/identity-mutes.db';
+import { ContentModerationDb } from '@/content-moderation/content-moderation.db';
+import { ProfilePreferencesDb } from '@/profile-preferences/profile-preferences.db';
+
+type IdentityMutesDbDouble = jest.Mocked<
+  Pick<IdentityMutesDb, 'filterMutedNotificationRows'>
+>;
+type ContentModerationDbDouble = jest.Mocked<
+  Pick<
+    ContentModerationDb,
+    'filterBlockedNotificationRows' | 'filterUnavailableDropNotificationRows'
+  >
+>;
+type ProfilePreferencesDbDouble = jest.Mocked<
+  Pick<ProfilePreferencesDb, 'getMany'>
+>;
+
+const connection: ConnectionWrapper<null> = { connection: null };
 
 jest.mock(
   '../api-serverless/src/push-notifications/push-notifications.service',
@@ -14,7 +35,9 @@ jest.mock(
   })
 );
 
-function notification(overrides: Record<string, unknown> = {}) {
+function notification(
+  overrides: Partial<NewIdentityNotification> = {}
+): NewIdentityNotification {
   return {
     identity_id: 'recipient-1',
     additional_identity_id: 'actor-1',
@@ -42,14 +65,14 @@ function createRepo({
   const db = {
     execute: jest.fn().mockResolvedValue([undefined, undefined, 101]),
     bulkInsert: jest.fn()
-  };
+  } as unknown as jest.Mocked<SqlExecutor>;
   const identityMutesDb = {
     filterMutedNotificationRows: jest.fn(
       filterError
         ? () => Promise.reject(filterError)
         : () => Promise.resolve(filteredNotifications)
     )
-  };
+  } as unknown as IdentityMutesDbDouble;
   const contentModerationDb = {
     filterBlockedNotificationRows: jest
       .fn()
@@ -61,20 +84,20 @@ function createRepo({
     filterUnavailableDropNotificationRows: jest
       .fn()
       .mockImplementation((rows) => Promise.resolve(rows))
-  };
+  } as unknown as ContentModerationDbDouble;
   const profilePreferencesDb = {
     getMany: jest.fn().mockResolvedValue(new Map())
-  };
+  } as unknown as ProfilePreferencesDbDouble;
   return {
     db,
     identityMutesDb,
     contentModerationDb,
     profilePreferencesDb,
     repo: new IdentityNotificationsDb(
-      () => db as any,
-      identityMutesDb as any,
-      contentModerationDb as any,
-      profilePreferencesDb as any
+      () => db,
+      identityMutesDb,
+      contentModerationDb,
+      profilePreferencesDb
     )
   };
 }
@@ -98,11 +121,11 @@ describe('IdentityNotificationsDb', () => {
       filteredNotifications: []
     });
 
-    await repo.insertNotification(row as any, {} as any);
+    await repo.insertNotification(row, connection);
 
     expect(identityMutesDb.filterMutedNotificationRows).toHaveBeenCalledWith(
       [row],
-      {}
+      connection
     );
     expect(db.execute).not.toHaveBeenCalled();
     expect(sendIdentityPushNotification).not.toHaveBeenCalled();
@@ -119,11 +142,11 @@ describe('IdentityNotificationsDb', () => {
         filteredNotifications: []
       });
 
-      await repo.insertNotification(row as any, {} as any);
+      await repo.insertNotification(row, connection);
 
       expect(identityMutesDb.filterMutedNotificationRows).toHaveBeenCalledWith(
         [row],
-        {}
+        connection
       );
       expect(db.execute).not.toHaveBeenCalled();
       expect(sendIdentityPushNotification).not.toHaveBeenCalled();
@@ -140,7 +163,7 @@ describe('IdentityNotificationsDb', () => {
     db.execute.mockResolvedValueOnce([{ id: 301 }]);
 
     await expect(
-      repo.insertManyNotifications([mutedRow, unmutedRow] as any, {} as any)
+      repo.insertManyNotifications([mutedRow, unmutedRow], connection)
     ).resolves.toEqual([301]);
 
     expect(db.bulkInsert).toHaveBeenCalledWith(
@@ -154,13 +177,13 @@ describe('IdentityNotificationsDb', () => {
       ],
       expect.any(Array),
       undefined,
-      { connection: {} }
+      { connection }
     );
     expect(db.execute).toHaveBeenNthCalledWith(
       1,
       'select last_insert_id() as id',
       undefined,
-      { wrappedConnection: {} }
+      { wrappedConnection: connection }
     );
     expect(db.execute).toHaveBeenNthCalledWith(
       2,
@@ -173,7 +196,7 @@ describe('IdentityNotificationsDb', () => {
         additional_identity_id_0: 'actor-1',
         additional_data_0: '{}'
       }),
-      { wrappedConnection: {} }
+      { wrappedConnection: connection }
     );
   });
 
@@ -185,7 +208,7 @@ describe('IdentityNotificationsDb', () => {
     });
     db.execute.mockResolvedValueOnce([undefined, undefined, 401]);
 
-    await repo.insertNotification(row as any, {} as any);
+    await repo.insertNotification(row, connection);
 
     expect(db.execute).toHaveBeenCalledWith(
       expect.stringContaining('insert into identity_notifications'),
@@ -194,7 +217,7 @@ describe('IdentityNotificationsDb', () => {
         additional_identity_id: 'actor-1',
         additional_data: '{}'
       }),
-      { wrappedConnection: {} }
+      { wrappedConnection: connection }
     );
     expect(sendIdentityPushNotification).toHaveBeenCalledWith(401);
   });
@@ -206,9 +229,9 @@ describe('IdentityNotificationsDb', () => {
       moderationFilterError: new Error('moderation tables unavailable')
     });
 
-    await expect(
-      repo.insertNotification(row as any, {} as any)
-    ).rejects.toThrow('moderation tables unavailable');
+    await expect(repo.insertNotification(row, connection)).rejects.toThrow(
+      'moderation tables unavailable'
+    );
 
     expect(db.execute).not.toHaveBeenCalled();
     expect(sendIdentityPushNotification).not.toHaveBeenCalled();
@@ -223,11 +246,11 @@ describe('IdentityNotificationsDb', () => {
       filteredNotifications: [row]
     });
 
-    await repo.insertNotification(row as any, {} as any);
+    await repo.insertNotification(row, connection);
 
     expect(identityMutesDb.filterMutedNotificationRows).toHaveBeenCalledWith(
       [row],
-      {}
+      connection
     );
     expect(db.execute).toHaveBeenCalledWith(
       expect.stringContaining('insert into identity_notifications'),
@@ -235,7 +258,7 @@ describe('IdentityNotificationsDb', () => {
         additional_identity_id: null,
         cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE
       }),
-      { wrappedConnection: {} }
+      { wrappedConnection: connection }
     );
   });
 
@@ -261,7 +284,7 @@ describe('IdentityNotificationsDb', () => {
       ])
     );
 
-    await repo.insertNotification(row as any, {} as any);
+    await repo.insertNotification(row, connection);
 
     expect(db.execute).not.toHaveBeenCalled();
     expect(sendIdentityPushNotification).not.toHaveBeenCalled();
@@ -284,7 +307,7 @@ describe('IdentityNotificationsDb', () => {
       ])
     );
 
-    await repo.insertNotification(row as any, {} as any);
+    await repo.insertNotification(row, connection);
 
     expect(db.execute).not.toHaveBeenCalled();
     expect(sendIdentityPushNotification).not.toHaveBeenCalled();
@@ -294,7 +317,9 @@ describe('IdentityNotificationsDb', () => {
     const db = {
       execute: jest.fn().mockResolvedValue([])
     };
-    const repo = new IdentityNotificationsDb(() => db as any);
+    const repo = new IdentityNotificationsDb(
+      () => db as unknown as SqlExecutor
+    );
 
     await repo.findNotifications({
       identity_id: 'recipient-1',
@@ -323,7 +348,9 @@ describe('IdentityNotificationsDb', () => {
     const db = {
       oneOrNull: jest.fn().mockResolvedValue({ cnt: 2 })
     };
-    const repo = new IdentityNotificationsDb(() => db as any);
+    const repo = new IdentityNotificationsDb(
+      () => db as unknown as SqlExecutor
+    );
 
     await expect(
       repo.countUnreadNotificationsForIdentity(
@@ -382,10 +409,12 @@ describe('IdentityNotificationsDb', () => {
           { identity_id: 'recipient-2' }
         ])
     };
-    const repo = new IdentityNotificationsDb(() => db as any);
+    const repo = new IdentityNotificationsDb(
+      () => db as unknown as SqlExecutor
+    );
 
     await expect(
-      repo.findIdentitiesNotifiedForDropCreation('wave-1', 'drop-1', {} as any)
+      repo.findIdentitiesNotifiedForDropCreation('wave-1', 'drop-1', connection)
     ).resolves.toEqual(['recipient-1', 'recipient-2']);
 
     expect(db.execute).toHaveBeenCalledWith(
@@ -400,7 +429,7 @@ describe('IdentityNotificationsDb', () => {
           IdentityNotificationCause.ALL_DROPS
         ]
       },
-      { wrappedConnection: {} }
+      { wrappedConnection: connection }
     );
     expect(db.execute.mock.calls[0][0]).not.toContain('related_drop_2_id');
   });
