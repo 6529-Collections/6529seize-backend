@@ -2,6 +2,7 @@ import { Logger } from '@/logging';
 import { getRedisClient } from '@/redis';
 import {
   isDesktopRelease,
+  isFrontendRelease,
   releaseNoteGenerationService
 } from '@/release-notes/release-note-generation.service';
 import {
@@ -11,7 +12,8 @@ import {
 } from '@/release-notes/release-note-generation-queue';
 import {
   isNonRetryableReleaseNoteError,
-  NonRetryableReleaseNoteError
+  NonRetryableReleaseNoteError,
+  UntrustedReleaseNoteMetadataError
 } from '@/release-notes/release-note-errors';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
@@ -517,11 +519,9 @@ function getErrorMessage(error: unknown): string {
 }
 
 function getReleaseNoteSurface(request: ReleaseNoteGenerationRequest): string {
-  const repoName = request.repo.split('/').pop();
-  if (repoName === '6529-core') return 'Desktop';
-  if (repoName === '6529seize-frontend') return 'Frontend';
-  if (repoName === '6529seize-backend') return 'Backend';
-  return 'Production';
+  if (isDesktopRelease(request)) return 'Desktop';
+  if (isFrontendRelease(request)) return 'Frontend';
+  return 'Backend';
 }
 
 export function buildReleaseNoteFailureAlert(
@@ -590,7 +590,9 @@ export async function processRequestWithRetryPolicy(
   } catch (error) {
     if (isNonRetryableReleaseNoteError(error)) {
       sentryContext.captureException(error);
-      await postFailure(request, error, receiveCount);
+      if (!(error instanceof UntrustedReleaseNoteMetadataError)) {
+        await postFailure(request, error, receiveCount);
+      }
       return;
     }
     const finalAttempt = isDesktopRelease(request)

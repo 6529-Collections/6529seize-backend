@@ -146,7 +146,9 @@ function normalizeRepository(repo: string): string {
   return repo.includes('/') ? repo : `6529-Collections/${repo}`;
 }
 
-function isFrontendRelease(request: ReleaseNoteGenerationRequest): boolean {
+export function isFrontendRelease(
+  request: ReleaseNoteGenerationRequest
+): boolean {
   return getRepoName(request.repo) === '6529seize-frontend';
 }
 

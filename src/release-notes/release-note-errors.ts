@@ -9,6 +9,14 @@ export class NonRetryableReleaseNoteError extends Error {
   }
 }
 
+export class UntrustedReleaseNoteMetadataError extends NonRetryableReleaseNoteError {
+  public constructor(message: string, cause?: unknown) {
+    super(message, cause);
+    this.name = 'UntrustedReleaseNoteMetadataError';
+    Object.setPrototypeOf(this, UntrustedReleaseNoteMetadataError.prototype);
+  }
+}
+
 export function isNonRetryableReleaseNoteError(
   error: unknown
 ): error is NonRetryableReleaseNoteError {

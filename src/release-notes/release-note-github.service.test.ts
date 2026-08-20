@@ -4,6 +4,7 @@ jest.mock('node-fetch', () => ({
 }));
 
 import fetch from 'node-fetch';
+import { UntrustedReleaseNoteMetadataError } from './release-note-errors';
 import { ReleaseNoteGenerationRequest } from './release-note-generation-queue';
 import { ReleaseNoteGitHubService } from './release-note-github.service';
 
@@ -512,9 +513,7 @@ describe('ReleaseNoteGitHubService', () => {
 
     await expect(
       new ReleaseNoteGitHubService().getReleaseContext(request)
-    ).rejects.toThrow(
-      'GitHub release run 123 does not match the queued release metadata'
-    );
+    ).rejects.toBeInstanceOf(UntrustedReleaseNoteMetadataError);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 

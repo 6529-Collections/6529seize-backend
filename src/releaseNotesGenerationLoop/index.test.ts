@@ -1,5 +1,8 @@
 import { ReleaseNoteGenerationRequest } from '@/release-notes/release-note-generation-queue';
-import { NonRetryableReleaseNoteError } from '@/release-notes/release-note-errors';
+import {
+  NonRetryableReleaseNoteError,
+  UntrustedReleaseNoteMetadataError
+} from '@/release-notes/release-note-errors';
 import {
   buildReleaseNoteFailureAlert,
   parseReleaseNoteMessage,
@@ -199,6 +202,19 @@ describe('Desktop retry policy', () => {
     expect(postFailure).toHaveBeenCalledWith(desktopRequest, error, 1);
   });
 
+  it('describes deterministic Desktop failures without a zero-retry count', () => {
+    const alert = buildReleaseNoteFailureAlert(
+      desktopRequest,
+      new NonRetryableReleaseNoteError('Desktop release history is malformed'),
+      1
+    );
+
+    expect(alert.description).toContain(
+      'could not be published because the failure is not retryable'
+    );
+    expect(alert.description).not.toContain('after 0 retries');
+  });
+
   it('does not duplicate the terminal alert before moving to the DLQ', async () => {
     const process = jest.fn();
     const postFailure = jest.fn();
@@ -254,6 +270,21 @@ describe('Frontend and Backend terminal failure policy', () => {
       })
     ).resolves.toBeUndefined();
     expect(postFailure).toHaveBeenCalledWith(request, error, 1);
+  });
+
+  it('reports untrusted run metadata without posting an alert', async () => {
+    const error = new UntrustedReleaseNoteMetadataError(
+      'GitHub release run 123 does not match the queued release metadata'
+    );
+    const postFailure = jest.fn();
+
+    await expect(
+      processRequestWithRetryPolicy(request, 1, {
+        process: jest.fn().mockRejectedValue(error),
+        postFailure
+      })
+    ).resolves.toBeUndefined();
+    expect(postFailure).not.toHaveBeenCalled();
   });
 
   it('retries when a deterministic failure alert cannot be delivered', async () => {

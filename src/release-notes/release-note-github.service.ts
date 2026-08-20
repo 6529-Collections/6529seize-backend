@@ -3,7 +3,10 @@ import deployConfig from '@/config/deploy-services.json';
 import { env } from '@/env';
 import { Logger } from '@/logging';
 import { ReleaseNoteGenerationRequest } from './release-note-generation-queue';
-import { NonRetryableReleaseNoteError } from './release-note-errors';
+import {
+  NonRetryableReleaseNoteError,
+  UntrustedReleaseNoteMetadataError
+} from './release-note-errors';
 import { isAllowedReleaseNotesPrompt } from './release-note-prompts.config';
 
 interface GitHubWorkflowRun {
@@ -572,7 +575,7 @@ export class ReleaseNoteGitHubService {
         getRepoName(request.repo) === CORE_REPO) &&
         !isMatchingProductionRun(currentRun, request))
     ) {
-      throw new NonRetryableReleaseNoteError(
+      throw new UntrustedReleaseNoteMetadataError(
         `GitHub release run ${request.run_id} does not match the queued release metadata`
       );
     }
