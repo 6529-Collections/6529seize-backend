@@ -173,6 +173,18 @@
         padding-left: 20px;
       }
 
+      .review-loop {
+        display: grid;
+        gap: 4px;
+        margin-top: 10px;
+        text-align: center;
+      }
+
+      .review-loop .loop-arrow {
+        color: #a1a1aa;
+        font-size: 18px;
+      }
+
       ol > li:not(:last-child)::after {
         position: absolute;
         top: calc(100% + 5px);
@@ -237,7 +249,7 @@
               aria-controls="step-2-info"
               tabindex="-1"
             >
-              Changes are chosen for deployment
+              Agent is told what to deploy and where
             </button>
           </li>
           <li>
@@ -270,7 +282,7 @@
               aria-controls="step-5-info"
               tabindex="-1"
             >
-              PR review and CI pass
+              Every PR goes through review, fixes, and re-checks
             </button>
           </li>
           <li>
@@ -281,7 +293,7 @@
               aria-controls="step-6-info"
               tabindex="-1"
             >
-              Agent checks whether Release Bus is available
+              Agent checks the staging deployment route
             </button>
           </li>
           <li>
@@ -336,7 +348,7 @@
               aria-controls="step-11-info"
               tabindex="-1"
             >
-              Production is selected explicitly
+              Agent checks the production deployment route
             </button>
           </li>
           <li>
@@ -347,7 +359,7 @@
               aria-controls="step-12-info"
               tabindex="-1"
             >
-              A fresh production build is deployed
+              Production is selected explicitly
             </button>
           </li>
           <li>
@@ -356,6 +368,17 @@
               type="button"
               aria-expanded="false"
               aria-controls="step-13-info"
+              tabindex="-1"
+            >
+              A fresh production build is deployed
+            </button>
+          </li>
+          <li>
+            <button
+              class="step-button"
+              type="button"
+              aria-expanded="false"
+              aria-controls="step-14-info"
               tabindex="-1"
             >
               Production E2E tests pass
@@ -380,19 +403,38 @@
             aria-label="Step 2 information"
             hidden
           >
-            <strong>Someone tells the agent what to ship</strong>
+            <strong>Someone tells the agent what to deploy and where</strong>
             <p>
-              For example: “Hey agent, please ship the new search feature.”
+              The request names the feature. It also says whether the frontend,
+              backend, or both are included.
             </p>
-            <strong class="detail-heading">The request may include</strong>
+            <strong class="detail-heading">For example</strong>
             <ul>
-              <li>One backend change</li>
-              <li>One frontend change</li>
-              <li>Related backend and frontend changes</li>
-              <li>Several related changes</li>
+              <li>
+                <strong>Review only:</strong> “Open PRs for the new search page
+                and API. Do not deploy them.”
+              </li>
+              <li>
+                <strong>Frontend only:</strong> “Deploy the new search page to
+                staging.”
+              </li>
+              <li>
+                <strong>Backend only:</strong> “Deploy the new search API to
+                staging.”
+              </li>
+              <li>
+                <strong>Frontend and backend:</strong> “Deploy the new search
+                page and API to staging.”
+              </li>
+              <li>
+                <strong>Staging and production:</strong> “Deploy the new search
+                page and API to staging, then production.”
+              </li>
             </ul>
             <p>
-              This tells the agent which completed work to inspect next.
+              Frontend and backend can be handled separately or together.
+              Production needs a version that passed staging. It starts as a
+              separate action.
             </p>
           </div>
           <div
@@ -444,14 +486,54 @@
             role="region"
             aria-label="Step 5 information"
             hidden
-          ></div>
+          >
+            <strong>The agent works through a review loop</strong>
+            <div class="review-loop">
+              <span>CI and reviewers check the latest PR version</span>
+              <span class="loop-arrow" aria-hidden="true">&darr;</span>
+              <span>The agent handles valid findings</span>
+              <span class="loop-arrow" aria-hidden="true">&darr;</span>
+              <span>The agent runs checks and pushes the fixes</span>
+              <span class="loop-arrow" aria-hidden="true">&darr;</span>
+              <span>CI and reviewers check the new version</span>
+              <span class="loop-arrow" aria-hidden="true">&darr;</span>
+              <span>Repeat until the PR is ready</span>
+            </div>
+            <p>
+              The PR is ready when required CI passes, required approval is
+              present, and no blocking findings remain.
+            </p>
+            <p>
+              Invalid review suggestions can be explained instead of
+              implemented.
+            </p>
+            <p>
+              If a blocker remains, the PR stays in this review loop. The agent
+              reports the exact reason and asks for help when needed.
+            </p>
+          </div>
           <div
             class="step-info"
             id="step-6-info"
             role="region"
             aria-label="Step 6 information"
             hidden
-          ></div>
+          >
+            <strong>The staging lane is checked before deployment</strong>
+            <p>The status check reports both lanes. This step uses staging.</p>
+            <ul>
+              <li>Staging ON &rarr; use Release Bus</li>
+              <li>
+                Staging OFF and manual fallback allowed &rarr; use the safe
+                manual deployment process
+              </li>
+              <li>
+                Status missing, unclear, or unsafe &rarr; stop and report the
+                problem
+              </li>
+            </ul>
+            <p>The result decides how staging may be deployed.</p>
+          </div>
           <div
             class="step-info"
             id="step-7-info"
@@ -522,7 +604,25 @@
             role="region"
             aria-label="Step 11 information"
             hidden
-          ></div>
+          >
+            <strong>The production lane is checked before production</strong>
+            <p>The status check reports both lanes. This step uses production.</p>
+            <ul>
+              <li>
+                Production ON &rarr; select the validated candidates in Release
+                Bus
+              </li>
+              <li>
+                Production OFF and manual fallback allowed &rarr; use the safe
+                manual production process with owner approval
+              </li>
+              <li>
+                Status missing, unclear, or unsafe &rarr; stop and report the
+                problem
+              </li>
+            </ul>
+            <p>The result decides how production may be deployed.</p>
+          </div>
           <div
             class="step-info"
             id="step-12-info"
@@ -535,6 +635,13 @@
             id="step-13-info"
             role="region"
             aria-label="Step 13 information"
+            hidden
+          ></div>
+          <div
+            class="step-info"
+            id="step-14-info"
+            role="region"
+            aria-label="Step 14 information"
             hidden
           ></div>
           <section class="gap-panel" aria-label="Issues and gaps">
@@ -550,14 +657,21 @@
               numbers or cross-PR dependency links in this step.
             </div>
             <div class="step-gap" id="step-5-gap" hidden></div>
-            <div class="step-gap" id="step-6-gap" hidden></div>
+            <div class="step-gap" id="step-6-gap" hidden>
+              This diagram currently shows only the Release Bus ON path for
+              staging. The safe manual staging path is not shown.
+            </div>
             <div class="step-gap" id="step-7-gap" hidden></div>
             <div class="step-gap" id="step-8-gap" hidden></div>
             <div class="step-gap" id="step-9-gap" hidden></div>
             <div class="step-gap" id="step-10-gap" hidden></div>
-            <div class="step-gap" id="step-11-gap" hidden></div>
+            <div class="step-gap" id="step-11-gap" hidden>
+              This diagram currently shows only the Release Bus ON path for
+              production. The safe manual production path is not shown.
+            </div>
             <div class="step-gap" id="step-12-gap" hidden></div>
             <div class="step-gap" id="step-13-gap" hidden></div>
+            <div class="step-gap" id="step-14-gap" hidden></div>
           </section>
         </aside>
       </div>
