@@ -1,6 +1,8 @@
 import { sendIdentityPushNotification } from '../api-serverless/src/push-notifications/push-notifications.service';
 import {
   IDENTITIES_TABLE,
+  CONTENT_MODERATION_DROP_STATES_TABLE,
+  CONTENT_MODERATION_PROFILE_BLOCKS_TABLE,
   IDENTITY_MUTES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   WAVE_READER_METRICS_TABLE
@@ -23,6 +25,11 @@ import {
   identityMutesDb as defaultIdentityMutesDb,
   IdentityMutesDb
 } from '@/api/identity-mutes/identity-mutes.db';
+import {
+  contentModerationDb as defaultContentModerationDb,
+  ContentModerationDb
+} from '@/content-moderation/content-moderation.db';
+import { DropModerationStatus } from '@/entities/IContentModeration';
 import {
   profilePreferencesDb as defaultProfilePreferencesDb,
   ProfilePreferencesDb
@@ -51,8 +58,18 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
 
   constructor(
     dbSupplier: () => SqlExecutor,
-    private readonly identityMutesDb: IdentityMutesDb = defaultIdentityMutesDb,
-    private readonly profilePreferencesDb: ProfilePreferencesDb = defaultProfilePreferencesDb
+    private readonly identityMutesDb: Pick<
+      IdentityMutesDb,
+      'filterMutedNotificationRows'
+    > = defaultIdentityMutesDb,
+    private readonly contentModerationDb: Pick<
+      ContentModerationDb,
+      'filterBlockedNotificationRows' | 'filterUnavailableDropNotificationRows'
+    > = defaultContentModerationDb,
+    private readonly profilePreferencesDb: Pick<
+      ProfilePreferencesDb,
+      'getMany'
+    > = defaultProfilePreferencesDb
   ) {
     super(dbSupplier);
   }
@@ -181,14 +198,34 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       connection
     );
     if (!unmuted.length) return [];
+    let available: T[];
+    try {
+      const unblocked =
+        await this.contentModerationDb.filterBlockedNotificationRows(
+          unmuted,
+          connection
+        );
+      available =
+        await this.contentModerationDb.filterUnavailableDropNotificationRows(
+          unblocked,
+          connection
+        );
+    } catch (error) {
+      this.logger.error(
+        'Failed to apply content moderation on notification write',
+        error
+      );
+      throw error;
+    }
+    if (!available.length) return [];
     try {
       const preferences = await this.profilePreferencesDb.getMany(
         Array.from(
-          new Set(unmuted.map((notification) => notification.identity_id))
+          new Set(available.map((notification) => notification.identity_id))
         ),
         connection
       );
-      return unmuted.filter((notification) =>
+      return available.filter((notification) =>
         isNotificationEnabled(
           notification.cause,
           preferences.get(notification.identity_id) ??
@@ -200,7 +237,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         'Failed to filter notification rows by profile preferences; inserting unfiltered notifications',
         error
       );
-      return unmuted;
+      return available;
     }
   }
 
@@ -385,6 +422,13 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         LEFT JOIN ${IDENTITY_MUTES_TABLE} m
           ON m.muter_id = n.identity_id
           AND m.muted_identity_id = n.additional_identity_id
+        LEFT JOIN ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} b
+          ON b.blocker_profile_id = n.identity_id
+          AND b.blocked_profile_id = n.additional_identity_id
+        LEFT JOIN ${CONTENT_MODERATION_DROP_STATES_TABLE} d1
+          ON d1.drop_id = n.related_drop_id
+        LEFT JOIN ${CONTENT_MODERATION_DROP_STATES_TABLE} d2
+          ON d2.drop_id = n.related_drop_2_id
         WHERE n.identity_id = :identity_id ${
           param.id_less_than === null ? `` : `AND n.id < :id_less_than`
         }
@@ -406,6 +450,9 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         ${param.unread_only ? ` AND n.read_at IS NULL` : ``}
         AND COALESCE(r.muted, FALSE) = FALSE
         AND m.id IS NULL
+        AND b.id IS NULL
+        AND (d1.status IS NULL OR d1.status = '${DropModerationStatus.VISIBLE}')
+        AND (d2.status IS NULL OR d2.status = '${DropModerationStatus.VISIBLE}')
         ORDER BY n.id DESC LIMIT :limit
       `,
         { ...param, causes, causesExclude },
@@ -466,6 +513,13 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         LEFT JOIN ${IDENTITY_MUTES_TABLE} m
           ON m.muter_id = n.identity_id
           AND m.muted_identity_id = n.additional_identity_id
+        LEFT JOIN ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} b
+          ON b.blocker_profile_id = n.identity_id
+          AND b.blocked_profile_id = n.additional_identity_id
+        LEFT JOIN ${CONTENT_MODERATION_DROP_STATES_TABLE} d1
+          ON d1.drop_id = n.related_drop_id
+        LEFT JOIN ${CONTENT_MODERATION_DROP_STATES_TABLE} d2
+          ON d2.drop_id = n.related_drop_2_id
         WHERE (
           (
             n.identity_id = :identity_id
@@ -477,6 +531,9 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
             })
             AND COALESCE(r.muted, FALSE) = FALSE
             AND m.id IS NULL
+            AND b.id IS NULL
+            AND (d1.status IS NULL OR d1.status = '${DropModerationStatus.VISIBLE}')
+            AND (d2.status IS NULL OR d2.status = '${DropModerationStatus.VISIBLE}')
           )
         )${causeClause}
       `,
