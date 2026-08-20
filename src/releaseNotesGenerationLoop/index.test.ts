@@ -1,10 +1,12 @@
 import { ReleaseNoteGenerationRequest } from '@/release-notes/release-note-generation-queue';
+import { NonRetryableReleaseNoteError } from '@/release-notes/release-note-errors';
 import {
   parseReleaseNoteMessage,
   prepareReleaseNoteErrorForRetry,
   processRequest,
   processRequestWithRetryPolicy,
-  shouldCaptureReleaseNoteError
+  shouldCaptureReleaseNoteError,
+  shouldRetryReleaseNoteError
 } from './index';
 
 const request: ReleaseNoteGenerationRequest = {
@@ -67,7 +69,8 @@ describe('parseReleaseNoteMessage', () => {
   });
 
   it('rejects a missing prompt path', () => {
-    expect(() =>
+    let error: unknown;
+    try {
       parseReleaseNoteMessage(
         JSON.stringify({
           repo: '6529-Collections/6529seize-frontend',
@@ -77,8 +80,16 @@ describe('parseReleaseNoteMessage', () => {
           sha: 'abc123',
           environment: 'prod'
         })
-      )
-    ).toThrow('prompt_path is required');
+      );
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(NonRetryableReleaseNoteError);
+    expect(error).toHaveProperty(
+      'message',
+      expect.stringContaining('prompt_path is required')
+    );
   });
 
   it('rejects deployment dates without a full timestamp', () => {
@@ -204,6 +215,29 @@ describe('release-note Sentry retry policy', () => {
 
     expect(thrown).toBe(error);
     expect(shouldCaptureReleaseNoteError(thrown)).toBe(true);
+  });
+
+  it('does not retry deterministic frontend failures', () => {
+    const error = new NonRetryableReleaseNoteError(
+      'Release history does not reach the production baseline'
+    );
+
+    expect(prepareReleaseNoteErrorForRetry(error, 1)).toBe(error);
+    expect(shouldRetryReleaseNoteError(error, request)).toBe(false);
+    expect(shouldCaptureReleaseNoteError(error)).toBe(true);
+  });
+
+  it('preserves the Desktop terminal-alert retry policy', () => {
+    const error = new NonRetryableReleaseNoteError(
+      'Desktop release history is malformed'
+    );
+
+    expect(
+      shouldRetryReleaseNoteError(error, {
+        ...request,
+        repo: '6529-core'
+      })
+    ).toBe(true);
   });
 });
 

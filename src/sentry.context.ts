@@ -9,6 +9,12 @@ export function isConfigured() {
   return !!process.env.SENTRY_DSN;
 }
 
+export function captureException(error: unknown): void {
+  if (isConfigured()) {
+    Sentry.captureException(error);
+  }
+}
+
 export function wrapLambdaHandler(
   handler: Handler,
   options: LambdaSentryOptions = {}

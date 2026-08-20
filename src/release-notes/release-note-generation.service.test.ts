@@ -622,6 +622,154 @@ describe('ReleaseNoteGenerationService', () => {
     expect(createDrop).toHaveBeenCalledTimes(1);
   });
 
+  it('publishes more than 100 pull requests in bounded batches without losing contributors', async () => {
+    const pullRequests = Array.from({ length: 101 }, (_, index) => {
+      const number = index + 1;
+      return {
+        ...context.pull_requests[0],
+        number,
+        url: `https://github.com/6529-Collections/6529seize-frontend/pull/${number}`,
+        title: `Frontend change ${number}`,
+        body: null,
+        contributors: [`Contributor${number}`],
+        commit_messages: [`Frontend change ${number}`],
+        changed_files: [],
+        candidate_services: []
+      };
+    });
+    const promptAndGetReply = jest.fn().mockImplementation((prompt: string) => {
+      const serializedContext =
+        /<release_context>\n([\s\S]+)\n<\/release_context>/.exec(prompt)?.[1];
+      if (!serializedContext) {
+        throw new Error('Missing release context');
+      }
+      const batchContext = JSON.parse(serializedContext) as {
+        pull_requests: Array<{ number: number }>;
+      };
+      return Promise.resolve(
+        JSON.stringify({
+          pull_requests: batchContext.pull_requests.map(({ number }) => ({
+            number,
+            summary: `Summarized frontend change ${number}.`
+          }))
+        })
+      );
+    });
+    const createDrop = jest.fn().mockResolvedValue({});
+    const findDropIdByMetadata = jest.fn().mockResolvedValue(null);
+    const service = new ReleaseNoteGenerationService(
+      {
+        getReleaseContext: jest.fn().mockResolvedValue({
+          ...context,
+          pull_requests: pullRequests
+        }),
+        getReleasePrompt: jest.fn().mockResolvedValue('Repository prompt.')
+      } as unknown as ReleaseNoteGitHubService,
+      { promptAndGetReply } as AiPrompter,
+      { createDrop } as unknown as DropCreationApiService,
+      {
+        getIdsByHandles: jest.fn().mockResolvedValue({})
+      } as unknown as IdentitiesDb,
+      {},
+      {
+        findDropIdByMetadata,
+        findReleaseNoteDropBySourceSha: jest.fn()
+      } as unknown as DropsDb
+    );
+
+    const outcome = await service.generateAndPost(
+      {
+        ...request,
+        repo: '6529-Collections/6529seize-frontend',
+        service: 'web',
+        release_group_id: 'frontend-release',
+        release_group_services: ['web'],
+        pull_request_number: null,
+        release_group_runs: undefined
+      },
+      {}
+    );
+
+    expect(outcome).toBe('published');
+    expect(promptAndGetReply).toHaveBeenCalledTimes(6);
+    expect(createDrop).toHaveBeenCalledTimes(6);
+    const contents = createDrop.mock.calls.map(
+      ([{ createDropRequest }]) => createDropRequest.parts[0].content as string
+    );
+    expect(contents[0]).toContain('part 1/6');
+    expect(contents[5]).toContain('part 6/6');
+    const combinedContent = contents.join('\n');
+    expect(combinedContent.match(/\[PR #/g)).toHaveLength(101);
+    expect(
+      combinedContent.match(/https:\/\/github\.com\/Contributor/g)
+    ).toHaveLength(101);
+
+    const basePublicationId = findDropIdByMetadata.mock.calls[0][0].dataValue;
+    const publicationIds = createDrop.mock.calls.map(
+      ([{ createDropRequest }]) =>
+        createDropRequest.metadata.find(
+          ({ data_key }: { data_key: string }) => data_key === 'release_note_id'
+        ).data_value as string
+    );
+    expect(new Set(publicationIds)).toHaveProperty('size', 6);
+    expect(publicationIds.slice(0, 5)).not.toContain(basePublicationId);
+    expect(publicationIds[5]).toBe(basePublicationId);
+  });
+
+  it('resumes a partially published batched release without duplicating completed batches', async () => {
+    const pullRequests = Array.from({ length: 25 }, (_, index) => ({
+      ...context.pull_requests[0],
+      number: index + 1,
+      url: `https://github.com/example/pull/${index + 1}`,
+      title: `Release change ${index + 1}`,
+      contributors: []
+    }));
+    const findDropIdByMetadata = jest
+      .fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce('completed-first-batch');
+    const promptAndGetReply = jest.fn().mockResolvedValue(
+      JSON.stringify({
+        pull_requests: pullRequests.slice(20).map(({ number }) => ({
+          number,
+          summary: `Summarized change ${number}.`
+        }))
+      })
+    );
+    const createDrop = jest.fn().mockResolvedValue({});
+    const service = new ReleaseNoteGenerationService(
+      {
+        getReleaseContext: jest.fn().mockResolvedValue({
+          ...context,
+          pull_requests: pullRequests
+        }),
+        getReleasePrompt: jest.fn().mockResolvedValue('Repository prompt.')
+      } as unknown as ReleaseNoteGitHubService,
+      { promptAndGetReply } as AiPrompter,
+      { createDrop } as unknown as DropCreationApiService,
+      {
+        getIdsByHandles: jest.fn().mockResolvedValue({})
+      } as unknown as IdentitiesDb,
+      {},
+      {
+        findDropIdByMetadata,
+        findReleaseNoteDropBySourceSha: jest.fn()
+      } as unknown as DropsDb
+    );
+
+    await expect(
+      service.generateAndPost({ ...request, pull_request_number: null }, {})
+    ).resolves.toBe('published');
+
+    expect(promptAndGetReply).toHaveBeenCalledTimes(1);
+    expect(createDrop).toHaveBeenCalledTimes(1);
+    const content =
+      createDrop.mock.calls[0][0].createDropRequest.parts[0].content;
+    expect(content).toContain('part 2/2');
+    expect(content).toContain('[PR #21]');
+    expect(content).not.toContain('[PR #1]');
+  });
+
   it('skips generation when the release drop already exists', async () => {
     const getReleaseContext = jest.fn();
     const promptAndGetReply = jest.fn();

@@ -854,6 +854,143 @@ describe('ReleaseNoteGitHubService', () => {
     ]);
   });
 
+  it('discovers frontend PRs from mainline commits and keeps every PR contributor', async () => {
+    (fetch as unknown as jest.Mock).mockImplementation((url: string) => {
+      if (url.endsWith('/actions/runs/123')) {
+        return Promise.resolve(response(currentRun));
+      }
+      if (url.includes('/actions/workflows/7/runs?')) {
+        return Promise.resolve(
+          response({
+            workflow_runs: [
+              {
+                ...currentRun,
+                id: 122,
+                head_sha: 'previous-sha',
+                run_number: 44
+              }
+            ]
+          })
+        );
+      }
+      if (url.includes('/compare/previous-sha...abc123')) {
+        return Promise.resolve(
+          response({
+            commits: [
+              {
+                sha: 'side-branch-a',
+                parents: [{ sha: 'previous-sha' }],
+                commit: { message: 'Side branch work A' }
+              },
+              {
+                sha: 'mainline-merge-a',
+                parents: [{ sha: 'previous-sha' }, { sha: 'side-branch-a' }],
+                commit: { message: 'Merge pull request #10' }
+              },
+              {
+                sha: 'side-branch-b',
+                parents: [{ sha: 'mainline-merge-a' }],
+                commit: { message: 'Side branch work B' }
+              },
+              {
+                sha: 'abc123',
+                parents: [
+                  { sha: 'mainline-merge-a' },
+                  { sha: 'side-branch-b' }
+                ],
+                commit: { message: 'Merge pull request #11' }
+              }
+            ],
+            total_commits: 4
+          })
+        );
+      }
+      if (url.includes('/commits/mainline-merge-a/pulls')) {
+        return Promise.resolve(
+          response([
+            {
+              number: 10,
+              html_url: 'https://github.com/example/pull/10',
+              title: 'Ship frontend change A',
+              body: null,
+              merged_at: '2026-08-20T08:00:00Z',
+              user: { login: 'author-a', type: 'User' },
+              base: { ref: 'main' }
+            }
+          ])
+        );
+      }
+      if (url.includes('/commits/abc123/pulls')) {
+        return Promise.resolve(
+          response([
+            {
+              number: 11,
+              html_url: 'https://github.com/example/pull/11',
+              title: 'Ship frontend change B',
+              body: null,
+              merged_at: '2026-08-20T08:05:00Z',
+              user: { login: 'author-b', type: 'User' },
+              base: { ref: 'main' }
+            }
+          ])
+        );
+      }
+      if (
+        url.includes('/pulls/10/files?') ||
+        url.includes('/pulls/11/files?')
+      ) {
+        return Promise.resolve(response([]));
+      }
+      if (url.includes('/pulls/10/commits?')) {
+        return Promise.resolve(
+          response([
+            {
+              sha: 'pr-10-a',
+              author: { login: 'committer-a', type: 'User' },
+              committer: { login: 'coauthor-a', type: 'User' }
+            }
+          ])
+        );
+      }
+      if (url.includes('/pulls/11/commits?')) {
+        return Promise.resolve(
+          response([
+            {
+              sha: 'pr-11-a',
+              author: { login: 'committer-b', type: 'User' },
+              committer: { login: 'coauthor-b', type: 'User' }
+            }
+          ])
+        );
+      }
+      throw new Error(`Unexpected GitHub URL ${url}`);
+    });
+
+    const releaseContext =
+      await new ReleaseNoteGitHubService().getReleaseContext(request);
+
+    expect(releaseContext?.pull_requests).toEqual([
+      expect.objectContaining({
+        number: 10,
+        contributors: ['author-a', 'committer-a', 'coauthor-a']
+      }),
+      expect.objectContaining({
+        number: 11,
+        contributors: ['author-b', 'committer-b', 'coauthor-b']
+      })
+    ]);
+    const associationCalls = (fetch as unknown as jest.Mock).mock.calls.filter(
+      ([url]) => /\/commits\/[^/]+\/pulls$/.test(String(url))
+    );
+    expect(associationCalls.map(([url]) => url)).toEqual([
+      expect.stringContaining('/commits/mainline-merge-a/pulls'),
+      expect.stringContaining('/commits/abc123/pulls')
+    ]);
+    expect(
+      associationCalls.some(([url]) => String(url).includes('side-branch'))
+    ).toBe(false);
+  });
+
   it('keeps every PR when one changed-file list exceeds the enrichment cap', async () => {
     (fetch as unknown as jest.Mock).mockImplementation((url: string) => {
       if (url.endsWith('/actions/runs/123')) {
@@ -879,10 +1016,12 @@ describe('ReleaseNoteGitHubService', () => {
             commits: [
               {
                 sha: 'large-merge',
+                parents: [{ sha: 'previous-sha' }],
                 commit: { message: 'Add exact Stream public review snapshot' }
               },
               {
-                sha: 'normal-merge',
+                sha: 'abc123',
+                parents: [{ sha: 'large-merge' }],
                 commit: { message: 'Improve navigation' }
               }
             ],
@@ -906,7 +1045,7 @@ describe('ReleaseNoteGitHubService', () => {
           ])
         );
       }
-      if (url.includes('/commits/normal-merge/pulls')) {
+      if (url.includes('/commits/abc123/pulls')) {
         return Promise.resolve(
           response([
             {

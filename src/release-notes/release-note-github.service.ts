@@ -3,6 +3,7 @@ import deployConfig from '@/config/deploy-services.json';
 import { env } from '@/env';
 import { Logger } from '@/logging';
 import { ReleaseNoteGenerationRequest } from './release-note-generation-queue';
+import { NonRetryableReleaseNoteError } from './release-note-errors';
 import { isAllowedReleaseNotesPrompt } from './release-note-prompts.config';
 
 interface GitHubWorkflowRun {
@@ -110,7 +111,6 @@ const FRONTEND_PRODUCTION_WORKFLOW_PATH =
 const CORE_PRODUCTION_WORKFLOW_PATH =
   '.github/workflows/build-all-platforms.yml';
 const CORE_PRODUCTION_RUN_PREFIX = 'FLOW: Publish / ENV: Production - v';
-const MAX_PULL_REQUESTS = 100;
 const MAX_PROMPT_LENGTH = 20000;
 const MAX_GITHUB_RESPONSE_BYTES = 5 * 1024 * 1024;
 const GITHUB_REQUEST_TIMEOUT_MS = 15000;
@@ -215,8 +215,12 @@ function isMatchingProductionRun(
 function getFirstParentReleaseCommits(
   commits: GitHubCommit[],
   previousSha: string,
-  currentSha: string
+  currentSha: string,
+  repository: string
 ): GitHubCommit[] {
+  if (!commits.length) {
+    return [];
+  }
   const commitsBySha = new Map(commits.map((commit) => [commit.sha, commit]));
   const releaseCommits: GitHubCommit[] = [];
   const visited = new Set<string>();
@@ -224,13 +228,15 @@ function getFirstParentReleaseCommits(
 
   while (cursor !== previousSha) {
     if (visited.has(cursor)) {
-      throw new Error('Desktop release first-parent history contains a cycle');
+      throw new NonRetryableReleaseNoteError(
+        `Release first-parent history for ${repository} contains a cycle`
+      );
     }
     visited.add(cursor);
     const commit = commitsBySha.get(cursor);
     if (!commit) {
-      throw new Error(
-        `Desktop release first-parent commit ${cursor} is missing from the GitHub comparison`
+      throw new NonRetryableReleaseNoteError(
+        `Release first-parent commit ${cursor} for ${repository} is missing from the GitHub comparison`
       );
     }
     const parents = commit.parents ?? [];
@@ -244,8 +250,8 @@ function getFirstParentReleaseCommits(
     releaseCommits.push(commit);
     const firstParent = parents[0]?.sha;
     if (!firstParent) {
-      throw new Error(
-        `Desktop release history did not reach previous production commit ${previousSha}`
+      throw new NonRetryableReleaseNoteError(
+        `Release history for ${repository} did not reach previous production commit ${previousSha}`
       );
     }
     cursor = firstParent;
@@ -273,11 +279,6 @@ function mergeAssociatedPullRequests(
       existing.commitMessages.add(message);
     }
     pullRequests.set(pullRequest.number, existing);
-    if (pullRequests.size > MAX_PULL_REQUESTS) {
-      throw new Error(
-        `Release range exceeds maximum of ${MAX_PULL_REQUESTS} pull requests`
-      );
-    }
   }
 }
 
@@ -384,7 +385,7 @@ export class ReleaseNoteGitHubService {
     request: ReleaseNoteGenerationRequest
   ): Promise<string> {
     if (!isAllowedReleaseNotesPrompt(request.repo, request.prompt_path)) {
-      throw new Error(
+      throw new NonRetryableReleaseNoteError(
         `Unsupported release notes prompt ${request.prompt_path} for ${request.repo}`
       );
     }
@@ -401,7 +402,7 @@ export class ReleaseNoteGitHubService {
       payload.encoding !== 'base64' ||
       !payload.content
     ) {
-      throw new Error(
+      throw new NonRetryableReleaseNoteError(
         `Invalid release notes prompt response for ${repository}`
       );
     }
@@ -410,7 +411,7 @@ export class ReleaseNoteGitHubService {
       'base64'
     ).toString('utf8');
     if (!prompt.trim() || prompt.length > MAX_PROMPT_LENGTH) {
-      throw new Error(
+      throw new NonRetryableReleaseNoteError(
         `Release notes prompt for ${repository} must be 1-${MAX_PROMPT_LENGTH} characters`
       );
     }
@@ -440,20 +441,45 @@ export class ReleaseNoteGitHubService {
       previousRun.head_sha,
       request.sha
     );
-    const desktopRelease = getRepoName(request.repo) === CORE_REPO;
-    const commits = desktopRelease
+    const repoName = getRepoName(request.repo);
+    const desktopRelease = repoName === CORE_REPO;
+    const mainlineRelease = desktopRelease || repoName === FRONTEND_REPO;
+    const commits = mainlineRelease
       ? getFirstParentReleaseCommits(
           comparedCommits,
           previousRun.head_sha,
-          request.sha
+          request.sha,
+          repository
         )
       : comparedCommits;
+    this.logger.info('Resolved GitHub release-note commit range', {
+      repository,
+      run_id: request.run_id,
+      previous_sha: previousRun.head_sha,
+      current_sha: request.sha,
+      compared_commit_count: comparedCommits.length,
+      discovery_commit_count: commits.length,
+      mainline_discovery: mainlineRelease
+    });
     const pullRequests = await this.getPullRequests(
       repository,
       desktopRelease ? 'main' : normalizeBranch(request.branch),
       commits,
       request.release_group_services
     );
+    this.logger.info('Resolved GitHub release-note context', {
+      repository,
+      run_id: request.run_id,
+      previous_sha: previousRun.head_sha,
+      current_sha: request.sha,
+      compared_commit_count: comparedCommits.length,
+      discovery_commit_count: commits.length,
+      pull_request_count: pullRequests.length,
+      pull_request_numbers: pullRequests
+        .slice(0, PAGE_SIZE)
+        .map((pullRequest) => pullRequest.number),
+      pull_request_numbers_truncated: pullRequests.length > PAGE_SIZE
+    });
 
     return {
       previous_sha: previousRun.head_sha,
@@ -486,7 +512,7 @@ export class ReleaseNoteGitHubService {
       pullRequest.base?.ref !== branch ||
       !mergeCommitSha
     ) {
-      throw new Error(
+      throw new NonRetryableReleaseNoteError(
         `Pull request ${pullRequestNumber} is not merged into ${branch}`
       );
     }
@@ -495,7 +521,7 @@ export class ReleaseNoteGitHubService {
         `/repos/${repository}/compare/${encodeURIComponent(mergeCommitSha)}...${encodeURIComponent(request.sha)}`
       );
       if (comparison.status !== 'ahead' && comparison.status !== 'identical') {
-        throw new Error(
+        throw new NonRetryableReleaseNoteError(
           `Deployed commit ${request.sha} does not contain pull request ${pullRequestNumber}`
         );
       }
@@ -548,7 +574,7 @@ export class ReleaseNoteGitHubService {
         getRepoName(request.repo) === CORE_REPO) &&
         !isMatchingProductionRun(currentRun, request))
     ) {
-      throw new Error(
+      throw new NonRetryableReleaseNoteError(
         `GitHub release run ${request.run_id} does not match the queued release metadata`
       );
     }
@@ -586,7 +612,7 @@ export class ReleaseNoteGitHubService {
         return null;
       }
     }
-    throw new Error(
+    throw new NonRetryableReleaseNoteError(
       `Previous successful production run was not found within ${MAX_WORKFLOW_RUN_PAGES * PAGE_SIZE} workflow runs`
     );
   }
@@ -615,7 +641,7 @@ export class ReleaseNoteGitHubService {
       }
     }
 
-    throw new Error(
+    throw new NonRetryableReleaseNoteError(
       `Release comparison did not complete within ${MAX_COMPARE_PAGES * PAGE_SIZE} commits`
     );
   }

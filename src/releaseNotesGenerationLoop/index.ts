@@ -9,6 +9,10 @@ import {
   ReleaseNoteGenerationRequest,
   ReleaseNoteRunReference
 } from '@/release-notes/release-note-generation-queue';
+import {
+  isNonRetryableReleaseNoteError,
+  NonRetryableReleaseNoteError
+} from '@/release-notes/release-note-errors';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
 import { ciPipelineAlertService } from '@/api-serverless/src/ci-pipeline-alerts/ci-pipeline-alert.service';
@@ -41,9 +45,22 @@ export function prepareReleaseNoteErrorForRetry(
   error: unknown,
   receiveCount: number
 ): unknown {
+  if (isNonRetryableReleaseNoteError(error)) {
+    return error;
+  }
   return receiveCount < RELEASE_NOTE_FINAL_ATTEMPT
     ? new RetryableReleaseNoteError(error)
     : error;
+}
+
+export function shouldRetryReleaseNoteError(
+  error: unknown,
+  request: ReleaseNoteGenerationRequest | null
+): boolean {
+  return (
+    !isNonRetryableReleaseNoteError(error) ||
+    (request !== null && isDesktopRelease(request))
+  );
 }
 
 function requireString(
@@ -127,7 +144,7 @@ function parseContributorGithubLogins(value: unknown): string[] | undefined {
   return contributors;
 }
 
-export function parseReleaseNoteMessage(
+function parseReleaseNoteMessagePayload(
   body: string
 ): ReleaseNoteGenerationRequest {
   const parsed = JSON.parse(body) as unknown;
@@ -185,6 +202,19 @@ export function parseReleaseNoteMessage(
     );
   }
   return request;
+}
+
+export function parseReleaseNoteMessage(
+  body: string
+): ReleaseNoteGenerationRequest {
+  try {
+    return parseReleaseNoteMessagePayload(body);
+  } catch (error) {
+    if (isNonRetryableReleaseNoteError(error)) {
+      throw error;
+    }
+    throw new NonRetryableReleaseNoteError(getErrorMessage(error), error);
+  }
 }
 
 function parseServices(value: unknown): string[] {
@@ -556,11 +586,13 @@ const sqsHandler: SQSHandler = async (event) => {
     Number.isSafeInteger(firstReceiveCount) && firstReceiveCount > 0
       ? firstReceiveCount
       : 1;
+  let invocationRequest: ReleaseNoteGenerationRequest | null = null;
   try {
     await doInDbContext(
       async () => {
         for (const record of event.Records) {
           const request = parseReleaseNoteMessage(record.body);
+          invocationRequest = request;
           logger.info(
             `Generating release notes for ${request.repo} run ${request.run_id}`
           );
@@ -578,6 +610,14 @@ const sqsHandler: SQSHandler = async (event) => {
       { logger }
     );
   } catch (error) {
+    if (!shouldRetryReleaseNoteError(error, invocationRequest)) {
+      logger.error(
+        `Release note failed permanently and will not retry: ${getErrorMessage(error)}`,
+        error
+      );
+      sentryContext.captureException(error);
+      return;
+    }
     if (invocationReceiveCount < RELEASE_NOTE_FINAL_ATTEMPT) {
       logger.warn(
         `Release note attempt ${invocationReceiveCount} failed and will retry: ${getErrorMessage(error)}`
