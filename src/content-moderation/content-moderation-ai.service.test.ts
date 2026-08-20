@@ -42,6 +42,22 @@ describe('ContentModerationAiService', () => {
     ).rejects.toThrow('AI response category is invalid');
   });
 
+  it('applies the category allowlist to pre-publication assessments', async () => {
+    const { service } = createService({
+      outcome: 'REJECT',
+      category: 'MODEL_INVENTED_CATEGORY',
+      confidence: 0.99,
+      rationale: 'Model supplied text'
+    });
+
+    await expect(
+      service.assessPrePublication({
+        signal: 'EXPLICIT_THREAT_PATTERN',
+        content: 'submitted content'
+      })
+    ).rejects.toThrow('AI response category is invalid');
+  });
+
   it('accepts a defined category with a valid recommendation', async () => {
     const { service } = createService({
       recommendation: 'NEEDS_HUMAN_REVIEW',
