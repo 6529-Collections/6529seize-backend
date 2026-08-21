@@ -117,23 +117,44 @@
         top: 24px;
       }
 
-      .gap-panel {
-        min-height: 110px;
+      .secondary-panels {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
         margin-top: 14px;
+      }
+
+      .gap-panel,
+      .failure-panel {
+        min-height: 110px;
         padding: 14px;
-        border: 1px dashed #52525b;
         border-radius: 8px;
-        background: #101012;
         color: #f4f4f5;
         font-size: 13px;
       }
 
-      .gap-panel > strong {
+      .gap-panel {
+        border: 1px dashed #52525b;
+        background: #101012;
+      }
+
+      .failure-panel {
+        border: 1px dashed #b45309;
+        background: #24180d;
+      }
+
+      .failure-panel > strong {
+        color: #fed7aa;
+      }
+
+      .gap-panel > strong,
+      .failure-panel > strong {
         display: block;
         margin-bottom: 8px;
       }
 
-      .step-gap[hidden] {
+      .step-gap[hidden],
+      .step-failure[hidden] {
         display: none;
       }
 
@@ -208,6 +229,10 @@
 
         .step-info {
           min-height: 64px;
+        }
+
+        .secondary-panels {
+          grid-template-columns: 1fr;
         }
       }
 
@@ -338,7 +363,7 @@
               aria-controls="step-10-info"
               tabindex="-1"
             >
-              GitHub Actions combine the selected PRs and check for conflicts
+              GitHub Actions combine the selected PRs
             </button>
           </li>
           <li>
@@ -382,7 +407,7 @@
               aria-controls="step-14-info"
               tabindex="-1"
             >
-              Production is selected explicitly
+              Agent selects the exact PRs for production
             </button>
           </li>
           <li>
@@ -393,7 +418,7 @@
               aria-controls="step-15-info"
               tabindex="-1"
             >
-              A fresh production build is deployed
+              Selected PRs are combined on temporary production branches
             </button>
           </li>
           <li>
@@ -404,7 +429,51 @@
               aria-controls="step-16-info"
               tabindex="-1"
             >
-              Production E2E tests pass
+              Fresh production builds are created
+            </button>
+          </li>
+          <li>
+            <button
+              class="step-button"
+              type="button"
+              aria-expanded="false"
+              aria-controls="step-17-info"
+              tabindex="-1"
+            >
+              Release Bus reserves production
+            </button>
+          </li>
+          <li>
+            <button
+              class="step-button"
+              type="button"
+              aria-expanded="false"
+              aria-controls="step-18-info"
+              tabindex="-1"
+            >
+              The prepared commits become main
+            </button>
+          </li>
+          <li>
+            <button
+              class="step-button"
+              type="button"
+              aria-expanded="false"
+              aria-controls="step-19-info"
+              tabindex="-1"
+            >
+              GitHub Actions deploy production
+            </button>
+          </li>
+          <li>
+            <button
+              class="step-button"
+              type="button"
+              aria-expanded="false"
+              aria-controls="step-20-info"
+              tabindex="-1"
+            >
+              Production E2E tests run
             </button>
           </li>
         </ol>
@@ -639,25 +708,18 @@
             aria-label="Step 9 information"
             hidden
           >
-            <strong>A scheduled worker prepares the next staging list</strong>
+            <strong>Release Bus prepares the next staging round</strong>
             <p>
-              AWS starts the worker once every minute. It looks at PRs accepted
-              in step 8.
-            </p>
-            <ul>
-              <li>The exact branch SHA has not changed</li>
-              <li>Staging is enabled, free, and safe</li>
-              <li>All required related PRs are present</li>
-              <li>The saved deployment order is complete</li>
-            </ul>
-            <p>
-              The worker uses the CI result saved in step 8. When all checks
-              pass, it creates one exact list for the next staging deployment.
-              Waiting PRs are checked again on the next run.
+              Release Bus looks at the PRs waiting for staging.
             </p>
             <p>
-              The finished list goes to GitHub Actions. In the next step, the
-              selected PRs are combined and checked together.
+              It chooses the PRs that can move forward together. If one PR
+              needs another PR first, it puts them in the correct order.
+              Blocked PRs and the PRs that depend on them wait for a later
+              round.
+            </p>
+            <p>
+              The chosen PRs become one exact staging round.
             </p>
           </div>
           <div
@@ -667,15 +729,20 @@
             aria-label="Step 10 information"
             hidden
           >
-            <strong>GitHub Actions combine the exact selected versions</strong>
+            <strong>GitHub Actions combine the selected PRs</strong>
             <p>
-              For each repository, GitHub Actions starts from the current base
-              and adds the selected PRs one by one at their exact SHAs.
+              GitHub Actions handles the frontend and backend separately. For
+              each repository, it starts from the current base version and adds
+              the selected PRs in the order chosen by Release Bus.
             </p>
             <p>
-              This checks that PRs from the same repository work together. A
-              clean combined version moves to the build. A PR that conflicts
-              needs to be rebased, and PRs that depend on it wait.
+              If the PRs fit together, the result is one combined version that
+              is ready to build and deploy.
+            </p>
+            <p>
+              If a PR causes a conflict, this staging round stops. That PR is
+              marked as needing an update. PRs that depend on it wait.
+              Independent PRs can be tried again in a later round.
             </p>
           </div>
           <div
@@ -684,14 +751,69 @@
             role="region"
             aria-label="Step 11 information"
             hidden
-          ></div>
+          >
+            <strong>The selected code is built and deployed to staging</strong>
+            <p>
+              GitHub Actions creates fresh builds for the code being released.
+              Release Bus reserves the shared staging environment so only this
+              release can change it.
+            </p>
+            <p>
+              Backend services are deployed in the required order. A frontend
+              change waits for any backend change it needs. When everything
+              succeeds, Release Bus saves the exact versions running in staging
+              as <strong>STAGING_DEPLOYED</strong>.
+            </p>
+            <p>
+              If a code build fails, staging stays unchanged. PRs from the
+              failed repository group are marked as failed. Dependent PRs wait,
+              while independent PRs can return to the queue.
+            </p>
+            <p>
+              If a deployment fails, Release Bus retries only that deployment.
+              If it keeps failing, Release Bus restores the last working
+              frontend-and-backend combination.
+            </p>
+            <p>
+              Release Bus records the failed job and affected PRs. It identifies
+              one PR as the cause only when the logs prove it.
+            </p>
+          </div>
           <div
             class="step-info"
             id="step-12-info"
             role="region"
             aria-label="Step 12 information"
             hidden
-          ></div>
+          >
+            <strong>The exact staging version is tested as one system</strong>
+            <p>
+              The E2E tests use the running staging system. They test important
+              flows across the whole application, not just one small piece of
+              code.
+            </p>
+            <p>
+              Release Bus keeps staging reserved during these tests. This makes
+              sure nobody changes the tested version while the tests are
+              running.
+            </p>
+            <p>If all tests pass, Release Bus confirms that:</p>
+            <ul>
+              <li>The expected frontend is running</li>
+              <li>The expected backend is running</li>
+              <li>The test results belong to those exact versions</li>
+            </ul>
+            <p>
+              The release is then marked <strong>STAGING_VALIDATED</strong>.
+            </p>
+            <p>
+              If a test fails, the release is not validated. Release Bus
+              records the failed test and restores the last working
+              frontend-and-backend combination. The logs may show the exact PR
+              responsible, but an E2E failure can also come from several
+              changes working badly together.
+            </p>
+          </div>
           <div
             class="step-info"
             id="step-13-info"
@@ -699,23 +821,29 @@
             aria-label="Step 13 information"
             hidden
           >
-            <strong>The production lane is checked before production</strong>
-            <p>The status check reports both lanes. This step uses production.</p>
+            <strong>The agent chooses the safe production route</strong>
+            <p>
+              The agent reads the current production lane status. It uses live
+              information because the status can change.
+            </p>
             <ul>
               <li>
-                Production ON &rarr; select the validated candidates in Release
-                Bus
+                Production is ON &rarr; use Release Bus with exact code versions
+                that passed staging
               </li>
               <li>
-                Production OFF and manual fallback allowed &rarr; use the safe
-                manual production process with owner approval
+                Production is OFF &rarr; use the manual process only when
+                fallback is allowed, production is idle, and the owner approves
               </li>
               <li>
-                Status missing, unclear, or unsafe &rarr; stop and report the
-                problem
+                The status is missing or unsafe &rarr; stop without changing
+                production
               </li>
             </ul>
-            <p>The result decides how production may be deployed.</p>
+            <p>
+              The result is one allowed route: Release Bus, safe manual
+              fallback, or stop. Staging has its own separate lane status.
+            </p>
           </div>
           <div
             class="step-info"
@@ -723,56 +851,245 @@
             role="region"
             aria-label="Step 14 information"
             hidden
-          ></div>
+          >
+            <strong>Only chosen, staging-validated PRs enter production</strong>
+            <p>
+              The agent sends Release Bus an exact list of candidates. Each
+              candidate is one PR at one exact SHA that passed staging.
+            </p>
+            <p>
+              Release Bus checks that every selected SHA is unchanged and that
+              the list includes all required PRs. If a frontend PR needs a
+              backend PR, both are selected unless that exact backend version is
+              already in production.
+            </p>
+            <p>
+              Unselected candidates keep their staging validation and stay out
+              of production. The selected set is saved as one production
+              request. Its source is the current <code>main</code> versions plus
+              only those exact PR versions.
+            </p>
+          </div>
           <div
             class="step-info"
             id="step-15-info"
             role="region"
             aria-label="Step 15 information"
             hidden
-          ></div>
+          >
+            <strong>
+              The selected PRs are combined with the current production code
+            </strong>
+            <p>
+              Release Bus starts from the current frontend and backend
+              <code>main</code> branches. It adds only the selected exact PR
+              versions.
+            </p>
+            <p>
+              Frontend PRs are combined in a temporary frontend production
+              branch. Backend PRs are combined in a separate temporary backend
+              production branch. These branches hold the exact code being
+              prepared for production.
+            </p>
+            <p>
+              Release Bus checks that every selected SHA is unchanged, its
+              staging proof still matches, and all required PRs are included.
+              Only PRs that combine cleanly are included in this exact
+              production version.
+            </p>
+            <p>
+              If <code>main</code> changes while the temporary branches are
+              being prepared, Release Bus prepares them again from the new
+              <code>main</code>.
+            </p>
+          </div>
           <div
             class="step-info"
             id="step-16-info"
             role="region"
             aria-label="Step 16 information"
             hidden
-          ></div>
-          <section class="gap-panel" aria-label="Issues and gaps">
-            <strong>Issues / gaps</strong>
-            <div class="step-gap" id="step-1-gap"></div>
-            <div class="step-gap" id="step-2-gap" hidden></div>
-            <div class="step-gap" id="step-3-gap" hidden>
-              There is no automatic tool that guarantees every affected service
-              is found. The agent follows the skill rules and uses judgment.
-            </div>
-            <div class="step-gap" id="step-4-gap" hidden>
-              The <code>write-prs</code> skill does not require exact related PR
-              numbers or cross-PR dependency links in this step.
-            </div>
-            <div class="step-gap" id="step-5-gap" hidden></div>
-            <div class="step-gap" id="step-6-gap" hidden>
-              The <code>write-prs</code> skill asks for a service list and
-              order. The <code>deploy-6529</code> skill asks for a Release Bus
-              plan. It does not say exactly how the first becomes the second.
-            </div>
-            <div class="step-gap" id="step-7-gap" hidden>
-              This diagram currently shows only the Release Bus ON path for
-              staging. The safe manual staging path is not shown.
-            </div>
-            <div class="step-gap" id="step-8-gap" hidden></div>
-            <div class="step-gap" id="step-9-gap" hidden></div>
-            <div class="step-gap" id="step-10-gap" hidden></div>
-            <div class="step-gap" id="step-11-gap" hidden></div>
-            <div class="step-gap" id="step-12-gap" hidden></div>
-            <div class="step-gap" id="step-13-gap" hidden>
-              This diagram currently shows only the Release Bus ON path for
-              production. The safe manual production path is not shown.
-            </div>
-            <div class="step-gap" id="step-14-gap" hidden></div>
-            <div class="step-gap" id="step-15-gap" hidden></div>
-            <div class="step-gap" id="step-16-gap" hidden></div>
-          </section>
+          >
+            <strong>The exact production code is built from scratch</strong>
+            <p>
+              GitHub Actions builds the exact commits on the temporary
+              production branches. Staging build files are not reused.
+            </p>
+            <p>
+              The frontend gets a fresh production build. The backend builds
+              the selected services and packages the exact code they need.
+            </p>
+            <p>
+              If either build fails, the production attempt stops.
+              <code>main</code> and the running production system stay
+              unchanged.
+            </p>
+          </div>
+          <div
+            class="step-info"
+            id="step-17-info"
+            role="region"
+            aria-label="Step 17 information"
+            hidden
+          >
+            <strong>Release Bus gets sole access to production</strong>
+            <p>
+              Release Bus reserves the production environment for this release.
+              This prevents two releases from changing production at the same
+              time.
+            </p>
+            <p>
+              It checks that production is idle and that the frontend and
+              backend <code>main</code> branches still match the versions used
+              to prepare the release.
+            </p>
+            <p>
+              If production is busy or a <code>main</code> branch has changed,
+              Release Bus waits or prepares a new exact production version.
+            </p>
+          </div>
+          <div
+            class="step-info"
+            id="step-18-info"
+            role="region"
+            aria-label="Step 18 information"
+            hidden
+          >
+            <strong>The prepared commits become the official source</strong>
+            <p>
+              Release Bus moves each affected <code>main</code> branch to the
+              exact commit that was combined and built on its temporary
+              production branch.
+            </p>
+            <p>
+              <code>main</code> points directly to the already-prepared commit.
+              This keeps the official source exactly the same as the version
+              that passed preparation.
+            </p>
+            <p>
+              If frontend and backend are both included, both
+              <code>main</code> branches must reach their recorded commits. A
+              partial update pauses production for exact recovery.
+            </p>
+          </div>
+          <div
+            class="step-info"
+            id="step-19-info"
+            role="region"
+            aria-label="Step 19 information"
+            hidden
+          >
+            <strong>The prepared code is deployed to production</strong>
+            <p>
+              GitHub Actions deploys the fresh production builds. Backend
+              services are deployed in the required order. A frontend change
+              waits for any backend change it needs.
+            </p>
+            <p>
+              Release Bus retries a failed deployment without repeating work
+              that already succeeded.
+            </p>
+            <p>
+              If deployment still fails, <code>main</code> stays on the new
+              commits and the running system may be only partly updated.
+              Release Bus pauses production until the exact running state is
+              repaired or an explicit rollback is completed.
+            </p>
+          </div>
+          <div
+            class="step-info"
+            id="step-20-info"
+            role="region"
+            aria-label="Step 20 information"
+            hidden
+          >
+            <strong>The running production system is checked</strong>
+            <p>
+              Read-only E2E tests check important user flows against the exact
+              frontend and backend versions running in production.
+            </p>
+            <p>
+              Release Bus confirms that the test results belong to those exact
+              deployed versions. A successful release is marked
+              <strong>PRODUCTION_DEPLOYED</strong>.
+            </p>
+            <p>
+              If the tests fail, Release Bus pauses production. The recorded
+              <code>main</code> commits and running versions must be checked,
+              repaired, or explicitly rolled back before production releases
+              resume.
+            </p>
+          </div>
+          <div class="secondary-panels">
+            <section class="gap-panel" aria-label="Issues and gaps">
+              <strong>Issues / gaps</strong>
+              <div class="step-gap" id="step-1-gap"></div>
+              <div class="step-gap" id="step-2-gap" hidden></div>
+              <div class="step-gap" id="step-3-gap" hidden>
+                There is no automatic tool that guarantees every affected
+                service is found. The agent follows the skill rules and uses
+                judgment.
+              </div>
+              <div class="step-gap" id="step-4-gap" hidden>
+                The <code>write-prs</code> skill does not require exact related
+                PR numbers or cross-PR dependency links in this step.
+              </div>
+              <div class="step-gap" id="step-5-gap" hidden></div>
+              <div class="step-gap" id="step-6-gap" hidden>
+                The <code>write-prs</code> skill asks for a service list and
+                order. The <code>deploy-6529</code> skill asks for a Release Bus
+                plan. It does not say exactly how the first becomes the second.
+              </div>
+              <div class="step-gap" id="step-7-gap" hidden>
+                This diagram currently shows only the Release Bus ON path for
+                staging. The safe manual staging path is not shown.
+              </div>
+              <div class="step-gap" id="step-8-gap" hidden></div>
+              <div class="step-gap" id="step-9-gap" hidden></div>
+              <div class="step-gap" id="step-10-gap" hidden></div>
+              <div class="step-gap" id="step-11-gap" hidden></div>
+              <div class="step-gap" id="step-12-gap" hidden></div>
+              <div class="step-gap" id="step-13-gap" hidden>
+                This diagram currently shows only the Release Bus ON path for
+                production. The safe manual production path is not shown.
+              </div>
+              <div class="step-gap" id="step-14-gap" hidden>
+                A selected PR may have passed E2E only as part of a larger
+                staging combination. Production can choose a smaller set that
+                has all its required PRs, but that exact smaller combination is
+                not tested in staging first.
+              </div>
+              <div class="step-gap" id="step-15-gap" hidden></div>
+              <div class="step-gap" id="step-16-gap" hidden></div>
+              <div class="step-gap" id="step-17-gap" hidden></div>
+              <div class="step-gap" id="step-18-gap" hidden></div>
+              <div class="step-gap" id="step-19-gap" hidden></div>
+              <div class="step-gap" id="step-20-gap" hidden></div>
+            </section>
+            <section class="failure-panel" aria-label="Step failure result">
+              <strong>What happens if this step fails</strong>
+              <div class="step-failure" id="step-1-failure"></div>
+              <div class="step-failure" id="step-2-failure" hidden></div>
+              <div class="step-failure" id="step-3-failure" hidden></div>
+              <div class="step-failure" id="step-4-failure" hidden></div>
+              <div class="step-failure" id="step-5-failure" hidden></div>
+              <div class="step-failure" id="step-6-failure" hidden></div>
+              <div class="step-failure" id="step-7-failure" hidden></div>
+              <div class="step-failure" id="step-8-failure" hidden></div>
+              <div class="step-failure" id="step-9-failure" hidden></div>
+              <div class="step-failure" id="step-10-failure" hidden></div>
+              <div class="step-failure" id="step-11-failure" hidden></div>
+              <div class="step-failure" id="step-12-failure" hidden></div>
+              <div class="step-failure" id="step-13-failure" hidden></div>
+              <div class="step-failure" id="step-14-failure" hidden></div>
+              <div class="step-failure" id="step-15-failure" hidden></div>
+              <div class="step-failure" id="step-16-failure" hidden></div>
+              <div class="step-failure" id="step-17-failure" hidden></div>
+              <div class="step-failure" id="step-18-failure" hidden></div>
+              <div class="step-failure" id="step-19-failure" hidden></div>
+              <div class="step-failure" id="step-20-failure" hidden></div>
+            </section>
+          </div>
         </aside>
       </div>
     </main>
@@ -814,12 +1131,16 @@
             button.getAttribute("aria-controls")
           );
           const gap = document.getElementById(`step-${index + 1}-gap`);
+          const failure = document.getElementById(
+            `step-${index + 1}-failure`
+          );
 
           item.classList.toggle("is-active", isActive);
           button.setAttribute("aria-expanded", String(isActive));
           button.tabIndex = isActive ? 0 : -1;
           info.hidden = !isActive;
           gap.hidden = !isActive;
+          failure.hidden = !isActive;
         });
 
         placeDetailsPanel();
