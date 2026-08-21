@@ -32,6 +32,7 @@ import {
   IDENTITY_SUBSCRIPTIONS_TABLE,
   NFT_LINKS_TABLE,
   PROFILE_WAVES_TABLE,
+  PROFILES_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE,
   RATINGS_TABLE,
   TDH_NFT_TABLE,
@@ -102,6 +103,12 @@ export interface ReleaseNoteDropReference {
   readonly content: string | null;
   readonly run_number: string | null;
   readonly deployed_at: string | null;
+}
+
+export interface WaveSearchAuthor {
+  readonly id: string;
+  readonly handle: string;
+  readonly pfp: string | null;
 }
 
 export type AuthorWaveParticipationByWave = Record<
@@ -3539,6 +3546,80 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  async searchDropsInWave(
+    param: {
+      wave_id: string;
+      term?: string;
+      author_id?: string;
+      after?: number;
+      before?: number;
+      limit: number;
+      offset: number;
+    },
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->searchDropsInWave`);
+      const normalizedTerm = param.term?.trim().replace(/\s+/g, ' ');
+      const filters = ['d.wave_id = :wave_id'];
+      const queryParams: Record<string, string | number> = {
+        wave_id: param.wave_id,
+        limit: param.limit,
+        offset: param.offset
+      };
+
+      if (normalizedTerm) {
+        const booleanPrefixQuery = normalizedTerm
+          .replace(/[+\-><()~*:"@]/g, ' ')
+          .split(/\s+/)
+          .filter(Boolean)
+          .map((token) => `+${token}*`)
+          .join(' ');
+        if (!booleanPrefixQuery) {
+          return [];
+        }
+        const likeTerm = normalizedTerm.replace(/[\\%_]/g, '\\$&');
+        filters.push(String.raw`EXISTS (
+          SELECT 1
+          FROM ${DROPS_PARTS_TABLE} p
+          WHERE p.drop_id = d.id
+            AND MATCH(p.content) AGAINST (:term IN BOOLEAN MODE) > 0
+            AND LOWER(p.content) LIKE LOWER(CONCAT('%', :likeTerm, '%')) ESCAPE '\\'
+        )`);
+        queryParams.term = booleanPrefixQuery;
+        queryParams.likeTerm = likeTerm;
+      }
+
+      if (param.author_id) {
+        filters.push('d.author_id = :author_id');
+        queryParams.author_id = param.author_id;
+      }
+      if (param.after !== undefined) {
+        filters.push('d.created_at >= :after');
+        queryParams.after = param.after;
+      }
+      if (param.before !== undefined) {
+        filters.push('d.created_at < :before');
+        queryParams.before = param.before;
+      }
+
+      return this.db.execute<DropEntity>(
+        `
+        SELECT
+            d.*
+        FROM ${DROPS_TABLE} d
+        WHERE ${filters.join('\n          AND ')}
+        ORDER BY d.created_at DESC
+        LIMIT :limit OFFSET :offset
+      `,
+        queryParams,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->searchDropsInWave`);
+    }
+  }
+
   async searchDropsContainingPhraseInWave(
     param: {
       wave_id: string;
@@ -3548,36 +3629,35 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
-    try {
-      ctx.timer?.start(
-        `${this.constructor.name}->searchDropsContainingPhraseInWave`
-      );
-      const normalizedTerm = param.term.trim().replace(/\s+/g, ' ');
-      if (!normalizedTerm.length) {
-        return [];
-      }
-      const booleanPhrase = `"${normalizedTerm}"`;
-      const likeTerm = normalizedTerm.replace(/[\\%_]/g, '\\$&');
-      return this.db.execute<DropEntity>(
-        `
-        SELECT
-            d.*
-        FROM ${DROPS_PARTS_TABLE} p
-        JOIN ${DROPS_TABLE} d on p.drop_id = d.id
-        WHERE d.wave_id = :wave_id AND
-              MATCH(p.content) AGAINST (:term IN BOOLEAN MODE) > 0 AND
-              LOWER(p.content) LIKE LOWER(CONCAT('%', :likeTerm, '%')) ESCAPE '\\\\'
-        ORDER BY d.created_at DESC
-        LIMIT :limit OFFSET :offset
-      `,
-        { ...param, term: booleanPhrase, likeTerm },
-        { wrappedConnection: ctx.connection }
-      );
-    } finally {
-      ctx.timer?.stop(
-        `${this.constructor.name}->searchDropsContainingPhraseInWave`
-      );
-    }
+    return this.searchDropsInWave(param, ctx);
+  }
+
+  async searchWaveAuthors(
+    param: { wave_id: string; handle: string; limit: number },
+    ctx: RequestContext
+  ): Promise<WaveSearchAuthor[]> {
+    const normalizedHandle = param.handle
+      .trim()
+      .toLowerCase()
+      .replace(/[\\%_]/g, String.raw`\$&`);
+    return this.db.execute<WaveSearchAuthor>(
+      String.raw`SELECT DISTINCT
+          p.external_id AS id,
+          p.handle,
+          p.pfp_url AS pfp
+       FROM ${PROFILES_TABLE} p
+       INNER JOIN ${DROPS_TABLE} d ON d.author_id = p.external_id
+       WHERE d.wave_id = :wave_id
+         AND p.normalised_handle LIKE CONCAT(:handle, '%') ESCAPE '\\'
+       ORDER BY handle ASC
+       LIMIT :limit`,
+      {
+        wave_id: param.wave_id,
+        handle: normalizedHandle,
+        limit: param.limit
+      },
+      { wrappedConnection: ctx.connection }
+    );
   }
 
   public async countBoostsOfGivenDrops(
