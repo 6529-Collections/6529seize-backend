@@ -70,7 +70,8 @@ function createMapper(mainStageWaveId: string | null = 'main-stage-wave') {
     whichOfGivenDropsAreBoostedByIdentity: jest
       .fn()
       .mockResolvedValue(new Set<string>()),
-    getReplyPreviewsByDropIds: jest.fn().mockResolvedValue({})
+    getReplyPreviewsByDropIds: jest.fn().mockResolvedValue({}),
+    getDropsByIds: jest.fn().mockResolvedValue([])
   };
   const attachmentsDb = {
     getDropPartOneAttachments: jest.fn().mockResolvedValue({}),
@@ -116,6 +117,22 @@ function createMapper(mainStageWaveId: string | null = 'main-stage-wave') {
   const memeCardDropMappingsDb = {
     findMemeCardIdsByDropIds: jest.fn().mockResolvedValue({})
   };
+  const moderationDb = {
+    getPresentations: jest.fn().mockImplementation((drops: DropEntity[]) =>
+      Promise.resolve(
+        drops.reduce(
+          (acc, drop) => {
+            acc[drop.id] = {
+              viewer: { author_blocked: false, drop_hidden: false },
+              moderation: { status: 'VISIBLE', can_view: true }
+            };
+            return acc;
+          },
+          {} as Record<string, any>
+        )
+      )
+    )
+  };
 
   return {
     mapper: new ApiDropMapper(
@@ -136,7 +153,8 @@ function createMapper(mainStageWaveId: string | null = 'main-stage-wave') {
       nftLinksDb as any,
       nftLinkResolvingService as any,
       memeCardDropMappingsDb as any,
-      () => configuredMainStageWaveId
+      () => configuredMainStageWaveId,
+      moderationDb as any
     ),
     setMainStageWaveId: (waveId: string | null) => {
       configuredMainStageWaveId = waveId;
@@ -158,7 +176,8 @@ function createMapper(mainStageWaveId: string | null = 'main-stage-wave') {
       dropNftLinksDb,
       nftLinksDb,
       nftLinkResolvingService,
-      memeCardDropMappingsDb
+      memeCardDropMappingsDb,
+      moderationDb
     }
   };
 }
@@ -770,5 +789,70 @@ describe('ApiDropMapper', () => {
         }
       ]
     });
+  });
+
+  it('returns a structural tombstone without content for a globally unavailable drop', async () => {
+    const { mapper, deps } = createMapper();
+    const drop = makeDrop({ title: 'private title' });
+    deps.dropsDb.getDropPartOnes.mockResolvedValue({
+      'drop-1': {
+        drop_id: 'drop-1',
+        drop_part_id: 1,
+        content: 'private content',
+        quoted_drop_id: null,
+        quoted_drop_part_id: null,
+        wave_id: 'wave-1'
+      }
+    });
+    deps.moderationDb.getPresentations.mockResolvedValue({
+      'drop-1': {
+        viewer: { author_blocked: false, drop_hidden: false },
+        moderation: { status: 'MODERATOR_REMOVED', can_view: false }
+      }
+    });
+
+    const result = await mapper.mapDrops([drop], {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    });
+
+    expect(result['drop-1']).toMatchObject({
+      id: 'drop-1',
+      viewer_context: { author_blocked: false, drop_hidden: false },
+      moderation: { status: 'MODERATOR_REMOVED', can_view: false }
+    });
+    expect(result['drop-1'].title).toBeUndefined();
+    expect(result['drop-1'].content).toBeUndefined();
+  });
+
+  it('keeps content available with viewer context for a personally blocked author', async () => {
+    const { mapper, deps } = createMapper();
+    deps.dropsDb.getDropPartOnes.mockResolvedValue({
+      'drop-1': {
+        drop_id: 'drop-1',
+        drop_part_id: 1,
+        content: 'content can be revealed by the viewer',
+        quoted_drop_id: null,
+        quoted_drop_part_id: null,
+        wave_id: 'wave-1'
+      }
+    });
+    deps.moderationDb.getPresentations.mockResolvedValue({
+      'drop-1': {
+        viewer: { author_blocked: true, drop_hidden: false },
+        moderation: { status: 'VISIBLE', can_view: true }
+      }
+    });
+
+    const result = await mapper.mapDrops([makeDrop()], {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    });
+
+    expect(result['drop-1'].viewer_context).toEqual({
+      author_blocked: true,
+      drop_hidden: false
+    });
+    expect(result['drop-1'].content).toBe(
+      'content can be revealed by the viewer'
+    );
   });
 });

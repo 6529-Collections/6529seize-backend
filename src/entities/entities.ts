@@ -85,6 +85,16 @@ export { ExternalIndexedOwnership721HistoryEntity } from './IExternalIndexedOwne
 export { ExternalIndexedTransfersEntity } from './IExternalIndexedTransfer';
 export { IdentityEntity } from './IIdentity';
 export { IdentityMuteEntity } from './IIdentityMute';
+export {
+  ContentModerationAuditLogEntity,
+  ContentModerationDropStateEntity,
+  ContentModerationHiddenDropEntity,
+  ContentModerationPrePublicationCheckEntity,
+  ContentModerationProfileBlockEntity,
+  ContentModerationProfileStateEntity,
+  ContentModerationReportEntity,
+  ContentModerationRoleEntity
+} from './IContentModeration';
 export { IdentityNotificationEntity } from './IIdentityNotification';
 export { IdentitySubscriptionEntity } from './IIdentitySubscription';
 export { ProfilePreferencesEntity } from './IProfilePreferences';

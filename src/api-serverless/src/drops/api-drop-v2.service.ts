@@ -12,7 +12,10 @@ import {
   apiWaveOverviewMapper,
   ApiWaveOverviewMapper
 } from '@/api/waves/api-wave-overview.mapper';
-import { getGroupsUserIsEligibleForReadContext } from '@/api/waves/wave-access.helpers';
+import {
+  getGroupsUserIsEligibleForReadContext,
+  getWaveReadContextProfileId
+} from '@/api/waves/wave-access.helpers';
 import {
   identityFetcher,
   IdentityFetcher
@@ -34,6 +37,11 @@ import { ApiDropReactionV2 } from '@/api/generated/models/ApiDropReactionV2';
 import { reactionsDb, ReactionsDb } from '@/api/drops/reactions.db';
 import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
+import {
+  contentModerationDb,
+  ContentModerationDb
+} from '@/content-moderation/content-moderation.db';
+import { ApiDropModerationStatus } from '@/api/generated/models/ApiDropModerationStatus';
 
 export type ApiDropWithWave = ApiDropAndWave;
 export type DropVotersSearchParams = {
@@ -89,7 +97,8 @@ export class ApiDropV2Service {
     private readonly apiWaveOverviewMapper: ApiWaveOverviewMapper,
     private readonly identityFetcher: IdentityFetcher,
     private readonly attachmentsDb: AttachmentsDb,
-    private readonly reactionsDb: ReactionsDb
+    private readonly reactionsDb: ReactionsDb,
+    private readonly moderationDb: ContentModerationDb = contentModerationDb
   ) {}
 
   public async findDrops(
@@ -235,7 +244,14 @@ export class ApiDropV2Service {
     const timerKey = `${this.constructor.name}->findMetadataByDropIdOrThrow`;
     ctx.timer?.start(timerKey);
     try {
-      await this.findVisibleDropByIdOrThrow(id, ctx);
+      const dropEntity = await this.findVisibleDropByIdOrThrow(id, ctx);
+      const presentation = await this.getModerationPresentation(
+        dropEntity,
+        ctx
+      );
+      if (!presentation.moderation.can_view) {
+        return [];
+      }
 
       const metadata = await this.dropsDb.findMetadataByDropId(id, ctx);
       const identityProfileIds = metadata
@@ -285,6 +301,21 @@ export class ApiDropV2Service {
       if (partNo > dropEntity.parts_count) {
         throw new NotFoundException(`Drop ${id} part ${partNo} not found`);
       }
+      const presentation = await this.getModerationPresentation(
+        dropEntity,
+        ctx
+      );
+      const moderationContext = {
+        viewer_context: presentation.viewer,
+        moderation: {
+          status: presentation.moderation
+            .status as unknown as ApiDropModerationStatus,
+          can_view: presentation.moderation.can_view
+        }
+      };
+      if (!presentation.moderation.can_view) {
+        return { part_no: partNo, ...moderationContext };
+      }
 
       const dropAttachmentsPromise = this.attachmentsDb.getDropPartAttachments(
         id,
@@ -308,7 +339,8 @@ export class ApiDropV2Service {
       }
 
       const apiPart: ApiDropPartV2 = {
-        part_no: part.drop_part_id
+        part_no: part.drop_part_id,
+        ...moderationContext
       };
       if (part.content !== null) {
         apiPart.content = part.content;
@@ -741,6 +773,18 @@ export class ApiDropV2Service {
         return apiAttachment;
       });
   }
+
+  private async getModerationPresentation(
+    drop: DropEntity,
+    ctx: RequestContext
+  ) {
+    const presentations = await this.moderationDb.getPresentations(
+      [drop],
+      getWaveReadContextProfileId(ctx.authenticationContext),
+      ctx.connection
+    );
+    return presentations[drop.id];
+  }
 }
 
 export const apiDropV2Service = new ApiDropV2Service(
@@ -751,5 +795,6 @@ export const apiDropV2Service = new ApiDropV2Service(
   apiWaveOverviewMapper,
   identityFetcher,
   attachmentsDb,
-  reactionsDb
+  reactionsDb,
+  contentModerationDb
 );

@@ -112,6 +112,12 @@ import {
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-media';
 import { Logger } from '@/logging';
+import { RequestContext } from '@/request.context';
+import {
+  getPrePublicationContentFingerprint,
+  prePublicationModerationService,
+  PrePublicationModerationService
+} from '@/content-moderation/pre-publication-moderation.service';
 
 const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
 const GIPHY_CHAT_LINK_HOST_REGEX = /^media\d*\.giphy\.com$/;
@@ -122,6 +128,15 @@ interface DropRelationshipNotifications {
   readonly replyNotification: DropReplyNotificationData | null;
   readonly quoteNotifications: DropQuoteNotificationData[];
 }
+
+export type PrePublicationPreparation =
+  | {
+      readonly dropId: string;
+      readonly operation: 'CREATE' | 'UPDATE';
+      readonly authorProfileId: string;
+      readonly contentFingerprint: string;
+    }
+  | { readonly trustedSystem: true };
 
 const GROUP_MENTION_TOKENS: Readonly<Record<DropGroupMention, string>> = {
   [DropGroupMention.ALL]: 'all',
@@ -272,7 +287,11 @@ export class CreateOrUpdateDropUseCase {
     private readonly dropNftLinksDb: DropNftLinksDb,
     private readonly artCurationTokenWatchService: ArtCurationTokenWatchService,
     private readonly attachmentsDb: AttachmentsDb,
-    private readonly dropMediaUploadsDb: DropMediaUploadsDb
+    private readonly dropMediaUploadsDb: DropMediaUploadsDb,
+    private readonly moderationService: Pick<
+      PrePublicationModerationService,
+      'evaluate'
+    > = prePublicationModerationService
   ) {}
 
   private assertDropContentLimits(
@@ -322,13 +341,15 @@ export class CreateOrUpdateDropUseCase {
       connection,
       preResolvedIdentityNomination,
       bypassChatLinkRestrictions,
-      bypassChatSlowModeRestrictions
+      bypassChatSlowModeRestrictions,
+      prePublication
     }: {
       timer?: Timer;
       connection: ConnectionWrapper<any>;
       preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
       bypassChatLinkRestrictions?: boolean;
       bypassChatSlowModeRestrictions?: boolean;
+      prePublication: PrePublicationPreparation;
     }
   ): Promise<{
     drop_id: string;
@@ -378,8 +399,39 @@ export class CreateOrUpdateDropUseCase {
       connection,
       preResolvedIdentityNomination,
       bypassChatLinkRestrictions,
-      bypassChatSlowModeRestrictions
+      bypassChatSlowModeRestrictions,
+      prePublication
     });
+  }
+
+  public async preparePrePublication(
+    model: CreateOrUpdateDropModel,
+    ctx: RequestContext
+  ): Promise<PrePublicationPreparation> {
+    const sanitizedModel = sanitizeDropStructuredFields(model);
+    const operation: 'CREATE' | 'UPDATE' =
+      sanitizedModel.drop_id === null ? 'CREATE' : 'UPDATE';
+    const dropId = sanitizedModel.drop_id ?? randomUUID();
+    const authorProfileId = this.getRequiredAuthorId(sanitizedModel);
+    const moderationInput = {
+      dropId,
+      authorProfileId,
+      operation,
+      title: sanitizedModel.title,
+      // File attachment contents intentionally remain in their existing
+      // asynchronous validation pipeline and are not inspected here.
+      parts: sanitizedModel.parts.map((part) => ({ content: part.content }))
+    };
+    await this.moderationService.evaluate(moderationInput, {
+      ...ctx,
+      connection: undefined
+    });
+    return {
+      dropId,
+      operation,
+      authorProfileId,
+      contentFingerprint: getPrePublicationContentFingerprint(moderationInput)
+    };
   }
 
   public async preResolveIdentityNomination(
@@ -446,13 +498,15 @@ export class CreateOrUpdateDropUseCase {
       connection,
       preResolvedIdentityNomination,
       bypassChatLinkRestrictions,
-      bypassChatSlowModeRestrictions
+      bypassChatSlowModeRestrictions,
+      prePublication
     }: {
       timer?: Timer;
       connection: ConnectionWrapper<any>;
       preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
       bypassChatLinkRestrictions?: boolean;
       bypassChatSlowModeRestrictions?: boolean;
+      prePublication: PrePublicationPreparation;
     }
   ): Promise<{
     drop_id: string;
@@ -508,6 +562,24 @@ export class CreateOrUpdateDropUseCase {
         },
         { timer, connection }
       );
+    }
+    const operation = preExistingDropId === null ? 'CREATE' : 'UPDATE';
+    const candidateDropId =
+      'trustedSystem' in prePublication
+        ? (preExistingDropId ?? randomUUID())
+        : prePublication.dropId;
+    if (
+      !('trustedSystem' in prePublication) &&
+      (prePublication.operation !== operation ||
+        (preExistingDropId !== null && candidateDropId !== preExistingDropId) ||
+        prePublication.authorProfileId !== authorId ||
+        prePublication.contentFingerprint !==
+          getPrePublicationContentFingerprint({
+            title: validatedModel.title,
+            parts: validatedModel.parts
+          }))
+    ) {
+      throw new Error('Pre-publication preparation does not match drop write');
     }
     let dropId: string;
     let pendingPushNotificationIds: number[] = [];
@@ -566,7 +638,7 @@ export class CreateOrUpdateDropUseCase {
         { connection, timer }
       );
     } else {
-      dropId = randomUUID();
+      dropId = candidateDropId;
       const createdAt = Time.currentMillis();
       pendingPushNotificationIds = await this.insertAllDropComponents(
         {
@@ -2437,5 +2509,6 @@ export const createOrUpdateDrop = new CreateOrUpdateDropUseCase(
   dropNftLinksDb,
   artCurationTokenWatchService,
   attachmentsDb,
-  dropMediaUploadsDb
+  dropMediaUploadsDb,
+  prePublicationModerationService
 );
