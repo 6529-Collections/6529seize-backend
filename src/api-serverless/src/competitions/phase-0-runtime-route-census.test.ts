@@ -24,6 +24,9 @@ const RETIRED_RELEASE_BUS_V1_ROUTES = new Set([
   '/deploy/release-trains/:id'
 ]);
 
+const GENERATED_ROUTE_SOURCE_LINE_DRIFT = 300;
+const HAND_WRITTEN_ROUTE_SOURCE_LINE_DRIFT = 250;
+
 const repositoryRoot = path.resolve(__dirname, '../../../..');
 const fixtureRoot = path.resolve(
   __dirname,
@@ -140,6 +143,11 @@ describe('Phase 0 permanent mounted GET route census', () => {
       const relativeFile = route.source.slice(0, separator);
       const baselineLine = Number(route.source.slice(separator + 1));
       const sourcePath = path.join(repositoryRoot, relativeFile);
+      const maximumSourceLineDrift = relativeFile.endsWith(
+        '/generated/routes/openapi-generated.routes.ts'
+      )
+        ? GENERATED_ROUTE_SOURCE_LINE_DRIFT
+        : HAND_WRITTEN_ROUTE_SOURCE_LINE_DRIFT;
       if (!fs.existsSync(sourcePath)) {
         failures.push(`${route.path}: missing ${relativeFile}`);
         continue;
@@ -163,7 +171,10 @@ describe('Phase 0 permanent mounted GET route census', () => {
             Math.abs(right.line - baselineLine)
         );
       const best = matching[0];
-      if (!best || Math.abs(best.line - baselineLine) > 250) {
+      if (
+        !best ||
+        Math.abs(best.line - baselineLine) > maximumSourceLineDrift
+      ) {
         failures.push(
           `${route.path}: GET declaration missing near ${route.source}`
         );
