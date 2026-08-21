@@ -30,6 +30,9 @@ import { ApiChangeProfileCicRating } from '../generated/models/ApiChangeProfileC
 import { ApiCicContributorsPage } from '../generated/models/ApiCicContributorsPage';
 import { ApiCicOverview } from '../generated/models/ApiCicOverview';
 import { ApiRepDirection } from '../generated/models/ApiRepDirection';
+import { ApiCicStatement } from '@/api/generated/models/ApiCicStatement';
+import { ApiCicStatementGroup } from '@/api/generated/models/ApiCicStatementGroup';
+import { ApiCreateProfileCicStatement } from '@/api/generated/models/ApiCreateProfileCicStatement';
 import { ApiRatingWithProfileInfoAndLevelPage } from '../generated/models/ApiRatingWithProfileInfoAndLevelPage';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { Timer } from '../../../time';
@@ -40,6 +43,16 @@ import { RequestContext } from '@/request.context';
 import { profileCicOverviewApiService } from './profile-cic-overview.api.service';
 
 const router = asyncRouter({ mergeParams: true });
+
+function toApiCicStatement(statement: CicStatement): ApiCicStatement {
+  return {
+    ...statement,
+    statement_group: enums.resolveOrThrow(
+      ApiCicStatementGroup,
+      statement.statement_group
+    )
+  };
+}
 
 function isAuthenticatedWalletProfileOwner(
   req: Request,
@@ -213,7 +226,7 @@ router.get(
       any,
       any
     >,
-    res: Response<ApiResponse<CicStatement[]>>
+    res: Response<ApiResponse<ApiCicStatement[]>>
   ) {
     const identity = req.params.identity.toLowerCase();
     const resolvedProfileId = await identityFetcher.getProfileIdByIdentityKey(
@@ -223,7 +236,7 @@ router.get(
     if (resolvedProfileId) {
       const statements =
         await cicService.getCicStatementsByProfileId(resolvedProfileId);
-      res.status(200).send(statements);
+      res.status(200).send(statements.map(toApiCicStatement));
     } else {
       res.status(200).send([]);
     }
@@ -243,7 +256,7 @@ router.get(
       any,
       any
     >,
-    res: Response<ApiResponse<CicStatement>>
+    res: Response<ApiResponse<ApiCicStatement>>
   ) {
     const identity = req.params.identity.toLowerCase();
     const statementId = req.params.statementId;
@@ -256,7 +269,7 @@ router.get(
       id: statementId,
       profile_id: resolvedProfileId
     });
-    res.status(200).send(statement);
+    res.status(200).send(toApiCicStatement(statement));
   }
 );
 
@@ -310,7 +323,7 @@ router.post(
         identity: string;
       },
       any,
-      ApiCreateOrUpdateProfileCicStatement,
+      ApiCreateProfileCicStatement,
       any,
       any
     >,
@@ -347,11 +360,15 @@ router.post(
       },
       statement: {
         profile_id: profileId,
-        ...requestPayload
+        ...requestPayload,
+        statement_group: enums.resolveOrThrow(
+          CicStatementGroup,
+          requestPayload.statement_group
+        )
       }
     });
     await giveReadReplicaTimeToCatchUp();
-    res.status(201).send(updatedStatement);
+    res.status(201).send(toApiCicStatement(updatedStatement));
   }
 );
 
@@ -380,19 +397,14 @@ const ApiCicContributorsQuerySchema: Joi.ObjectSchema<ApiCicContributorsQueryPar
     page_size: Joi.number().integer().min(1).max(200).optional().default(50)
   });
 
-type ApiCreateOrUpdateProfileCicStatement = Omit<
-  CicStatement,
-  'id' | 'crated_at' | 'updated_at' | 'profile_id'
->;
-
-const ApiCreateOrUpdateProfileCicStatementSchema: Joi.ObjectSchema<ApiCreateOrUpdateProfileCicStatement> =
+const ApiCreateOrUpdateProfileCicStatementSchema: Joi.ObjectSchema<ApiCreateProfileCicStatement> =
   Joi.object({
     statement_group: Joi.string()
-      .valid(...Object.values(CicStatementGroup))
+      .valid(...Object.values(ApiCicStatementGroup))
       .required(),
     statement_type: Joi.string().required().min(1).max(250),
-    statement_comment: Joi.optional().default(null),
-    statement_value: Joi.string().min(1).required()
+    statement_comment: Joi.string().allow(null).optional().default(null),
+    statement_value: Joi.string().min(1).max(2048).required()
   });
 
 interface ApiProfileRaterCicState {
