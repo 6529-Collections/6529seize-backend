@@ -60,6 +60,7 @@ type RpcInternalTransfersResponse = {
     from: string;
     to?: string;
     value?: number;
+    traceAddress?: number[];
   }>;
 };
 
@@ -113,6 +114,16 @@ function resolveLogValue(data: string) {
     return 0;
   }
   return Number.parseFloat(ethers.formatEther(data));
+}
+
+function normalizeTraceAddress(value: unknown): number[] | undefined {
+  if (
+    !Array.isArray(value) ||
+    !value.every((part) => Number.isInteger(part) && part >= 0)
+  ) {
+    return undefined;
+  }
+  return value;
 }
 
 function getHashKey(hash: string): string {
@@ -374,7 +385,8 @@ function normalizeTraceInternalTransfers(
         hash: trace?.transactionHash ?? '',
         from: trace?.action?.from ?? '',
         to: trace?.action?.to ?? undefined,
-        value: weiToEth(valueWei)
+        value: weiToEth(valueWei),
+        traceAddress: normalizeTraceAddress(trace?.traceAddress)
       };
     })
     .filter((transfer): transfer is NonNullable<typeof transfer> => !!transfer)
@@ -720,7 +732,74 @@ async function applyReceiptValueAndRoyalties(
   }
 }
 
-async function applyMintPrimaryProceeds(
+function sumInternalTransferValues(
+  transfers: RpcInternalTransfersResponse['transfers']
+): number {
+  return transfers.reduce((acc, transfer) => acc + (transfer.value ?? 0), 0);
+}
+
+function isTraceAncestor(
+  ancestor: number[] | undefined,
+  descendant: number[] | undefined
+): boolean {
+  if (!ancestor || !descendant) {
+    return false;
+  }
+  return (
+    ancestor.length < descendant.length &&
+    ancestor.every((part, index) => descendant[index] === part)
+  );
+}
+
+function findGrossMintValueFromInternalTransfers(
+  txInternalTransfers: RpcInternalTransfersResponse['transfers'],
+  proceedsTransfers: RpcInternalTransfersResponse['transfers']
+): number {
+  if (proceedsTransfers.length === 0) {
+    return 0;
+  }
+
+  const grossPayments = new Map<
+    string,
+    RpcInternalTransfersResponse['transfers'][number]
+  >();
+  for (const proceedsTransfer of proceedsTransfers) {
+    const grossPayment = txInternalTransfers
+      .filter(
+        (transfer) =>
+          transfer.to &&
+          equalIgnoreCase(transfer.to, proceedsTransfer.from) &&
+          isTraceAncestor(
+            transfer.traceAddress,
+            proceedsTransfer.traceAddress
+          ) &&
+          (transfer.value ?? 0) >= (proceedsTransfer.value ?? 0)
+      )
+      .sort(
+        (first, second) =>
+          (second.traceAddress?.length ?? -1) -
+          (first.traceAddress?.length ?? -1)
+      )[0];
+    if (!grossPayment?.traceAddress) {
+      return 0;
+    }
+    grossPayments.set(grossPayment.traceAddress.join('.'), grossPayment);
+  }
+
+  const uniqueGrossPayments = Array.from(grossPayments.values());
+  const outermostGrossPayments = uniqueGrossPayments.filter(
+    (payment) =>
+      !uniqueGrossPayments.some((otherPayment) =>
+        isTraceAncestor(otherPayment.traceAddress, payment.traceAddress)
+      )
+  );
+  const grossValue = sumInternalTransferValues(outermostGrossPayments);
+  const primaryProceeds = sumInternalTransferValues(proceedsTransfers);
+
+  return grossValue >= primaryProceeds ? grossValue : 0;
+}
+
+async function applyMintInternalValues(
   t: Transaction,
   context: ResolveValueContext,
   rowUnits: bigint,
@@ -750,10 +829,17 @@ async function applyMintPrimaryProceeds(
               (transfer.to && equalIgnoreCase(transfer.to, MEMES_DEPLOYER))
           );
 
-    const primaryProceedsTxTotal = primaryTransfers.reduce(
-      (acc, transfer) => acc + (transfer.value ?? 0),
-      0
+    const primaryProceedsTxTotal = sumInternalTransferValues(primaryTransfers);
+    const grossMintTxTotal = findGrossMintValueFromInternalTransfers(
+      txInternalTransfers,
+      proceedsToMemesDeployer
     );
+
+    if (t.value === 0 && grossMintTxTotal > 0) {
+      const attributedGrossValue =
+        (grossMintTxTotal * Number(rowUnits)) / Number(mintUnits);
+      t.value = attributedGrossValue;
+    }
 
     if (primaryProceedsTxTotal > 0) {
       t.primary_proceeds =
@@ -825,7 +911,7 @@ async function resolveValue(t: Transaction, context: ResolveValueContext) {
       t.value = weiToEth(grossMintWei);
     }
 
-    await applyMintPrimaryProceeds(
+    await applyMintInternalValues(
       t,
       context,
       groups.rowUnits,
@@ -838,6 +924,12 @@ async function resolveValue(t: Transaction, context: ResolveValueContext) {
   }
 
   roundTransactionValues(t);
+  if (isMintLikeTransaction(t) && t.primary_proceeds > t.value) {
+    logger.warn(
+      `[MINT VALUE FALLBACK] [TRANSACTION=${t.transaction}] [TOKEN=${t.contract}:${t.token_id}] [VALUE=${t.value}] [PRIMARY_PROCEEDS=${t.primary_proceeds}]`
+    );
+    t.value = t.primary_proceeds;
+  }
   await applyUsdValues(t);
   return t;
 }

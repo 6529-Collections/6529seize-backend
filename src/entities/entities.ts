@@ -87,6 +87,7 @@ export { IdentityEntity } from './IIdentity';
 export { IdentityMuteEntity } from './IIdentityMute';
 export { IdentityNotificationEntity } from './IIdentityNotification';
 export { IdentitySubscriptionEntity } from './IIdentitySubscription';
+export { ProfilePreferencesEntity } from './IProfilePreferences';
 export { MentionAliasEntity, MentionAliasMemberEntity } from './IMentionAlias';
 export { MintingClaimEntity } from './IMintingClaim';
 export { MetricRollupHourEntity } from './IMetricRollupHour';

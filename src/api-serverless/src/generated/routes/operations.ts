@@ -2,6 +2,7 @@
 import { Request } from 'express';
 import { ApiResponse } from '@/api/api-response';
 import { ApiArchiveProfileCmsPackageRequest } from '@/api/generated/models/ApiArchiveProfileCmsPackageRequest';
+import { ApiCommunityMembersPage } from '@/api/generated/models/ApiCommunityMembersPage';
 import { ApiCompetition } from '@/api/generated/models/ApiCompetition';
 import { ApiCompetitionConfigVersionPage } from '@/api/generated/models/ApiCompetitionConfigVersionPage';
 import { ApiCompetitionDecisionPage } from '@/api/generated/models/ApiCompetitionDecisionPage';
@@ -38,6 +39,7 @@ import { ApiGlobalRepCategoryRecipientsPage } from '@/api/generated/models/ApiGl
 import { ApiGlobalRepCategoryWaveContributorsPage } from '@/api/generated/models/ApiGlobalRepCategoryWaveContributorsPage';
 import { ApiGlobalRepCategoryWaveOverview } from '@/api/generated/models/ApiGlobalRepCategoryWaveOverview';
 import { ApiGlobalRepCategoryWavesPage } from '@/api/generated/models/ApiGlobalRepCategoryWavesPage';
+import { ApiGroupMembersPreviewRequest } from '@/api/generated/models/ApiGroupMembersPreviewRequest';
 import { ApiMediaResolveRequest } from '@/api/generated/models/ApiMediaResolveRequest';
 import { ApiMediaResolveResponse } from '@/api/generated/models/ApiMediaResolveResponse';
 import { ApiMemeCardDropMapping } from '@/api/generated/models/ApiMemeCardDropMapping';
@@ -51,10 +53,12 @@ import { ApiProfileCmsPackageExport } from '@/api/generated/models/ApiProfileCms
 import { ApiProfileCmsPrimaryPackage } from '@/api/generated/models/ApiProfileCmsPrimaryPackage';
 import { ApiProfileCmsValidationResult } from '@/api/generated/models/ApiProfileCmsValidationResult';
 import { ApiProfileCmsWalletGallerySnapshot } from '@/api/generated/models/ApiProfileCmsWalletGallerySnapshot';
+import { ApiProfilePreferences } from '@/api/generated/models/ApiProfilePreferences';
 import { ApiPublishProfileCmsPackageRequest } from '@/api/generated/models/ApiPublishProfileCmsPackageRequest';
 import { ApiRollbackProfileCmsPackageRequest } from '@/api/generated/models/ApiRollbackProfileCmsPackageRequest';
 import { ApiSaveProfileCmsPackageDraftRequest } from '@/api/generated/models/ApiSaveProfileCmsPackageDraftRequest';
 import { ApiSubscriptionCoverage } from '@/api/generated/models/ApiSubscriptionCoverage';
+import { ApiUpdateProfilePreferences } from '@/api/generated/models/ApiUpdateProfilePreferences';
 import { ApiValidateProfileCmsAgentPatchRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentPatchRequest';
 import { ApiValidateProfileCmsPackageRequest } from '@/api/generated/models/ApiValidateProfileCmsPackageRequest';
 import { ApiWalletDistributionAllocations } from '@/api/generated/models/ApiWalletDistributionAllocations';
@@ -98,6 +102,26 @@ export type GetDmDropsUnreadRequest = Request<
   ApiResponse<GetDmDropsUnreadResponse>,
   never,
   GetDmDropsUnreadQuery,
+  Record<string, never>
+>;
+
+export type PreviewGroupMembersPathParams = Record<string, never>;
+
+export interface PreviewGroupMembersQuery {
+  "page_size"?: number;
+  "page"?: number;
+  "sort_direction"?: "ASC" | "DESC";
+  "sort"?: string;
+  "param"?: string;
+}
+
+export type PreviewGroupMembersResponse = ApiCommunityMembersPage;
+
+export type PreviewGroupMembersRequest = Request<
+  PreviewGroupMembersPathParams,
+  ApiResponse<PreviewGroupMembersResponse>,
+  ApiGroupMembersPreviewRequest,
+  PreviewGroupMembersQuery,
   Record<string, never>
 >;
 
@@ -410,6 +434,34 @@ export type CreateProfileCmsWalletGallerySnapshotRequest = Request<
   ApiResponse<CreateProfileCmsWalletGallerySnapshotResponse>,
   ApiCreateProfileCmsWalletGallerySnapshotRequest,
   CreateProfileCmsWalletGallerySnapshotQuery,
+  Record<string, never>
+>;
+
+export type GetProfilePreferencesPathParams = Record<string, never>;
+
+export type GetProfilePreferencesQuery = Record<string, never>;
+
+export type GetProfilePreferencesResponse = ApiProfilePreferences;
+
+export type GetProfilePreferencesRequest = Request<
+  GetProfilePreferencesPathParams,
+  ApiResponse<GetProfilePreferencesResponse>,
+  never,
+  GetProfilePreferencesQuery,
+  Record<string, never>
+>;
+
+export type PutProfilePreferencesPathParams = Record<string, never>;
+
+export type PutProfilePreferencesQuery = Record<string, never>;
+
+export type PutProfilePreferencesResponse = ApiProfilePreferences;
+
+export type PutProfilePreferencesRequest = Request<
+  PutProfilePreferencesPathParams,
+  ApiResponse<PutProfilePreferencesResponse>,
+  ApiUpdateProfilePreferences,
+  PutProfilePreferencesQuery,
   Record<string, never>
 >;
 

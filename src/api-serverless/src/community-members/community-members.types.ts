@@ -3,5 +3,6 @@ import { FullPageRequest } from '../page-request';
 
 export interface CommunityMembersQuery extends FullPageRequest<ApiCommunityMembersSortOption> {
   readonly group_id: string | null;
+  readonly param: string | null;
   readonly joinWithOnlineWebsocketListeners?: boolean;
 }
