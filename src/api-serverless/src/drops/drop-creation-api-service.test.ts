@@ -338,6 +338,10 @@ describe('DropCreationApiService.createDrop', () => {
     };
     const createOrUpdateDrop = {
       preResolveIdentityNomination: jest.fn().mockResolvedValue(null),
+      preparePrePublication: jest.fn().mockResolvedValue({
+        dropId: 'drop-1',
+        operation: 'CREATE'
+      }),
       execute: jest.fn().mockImplementation(async () => {
         order.push('drop-written');
         return {

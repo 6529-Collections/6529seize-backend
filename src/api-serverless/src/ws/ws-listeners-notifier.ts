@@ -33,12 +33,12 @@ import { ApiProfileClassification } from '../generated/models/ApiProfileClassifi
 import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 import { ApiAttachment } from '@/api/generated/models/ApiAttachment';
-import { ApiDmUnreadConversationState } from '@/api/generated/models/ApiDmUnreadConversationState';
 import { ApiDropModerationStatus } from '@/api/generated/models/ApiDropModerationStatus';
 import {
   contentModerationDb,
   ContentModerationDb
 } from '@/content-moderation/content-moderation.db';
+import { ApiDmUnreadConversationState } from '@/api/generated/models/ApiDmUnreadConversationState';
 
 const scalarForLog = (value: unknown): string =>
   typeof value === 'string' ||

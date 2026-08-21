@@ -154,6 +154,12 @@ describe('WaveApiService direct-message creation unread synchronization', () => 
       addIdentitySubscription: jest.fn().mockResolvedValue(undefined)
     };
     const createOrUpdateDrop = {
+      preparePrePublication: jest.fn().mockResolvedValue({
+        dropId: 'description-drop-1',
+        operation: 'CREATE',
+        authorProfileId: 'creator-1',
+        contentFingerprint: 'content-fingerprint'
+      }),
       execute: jest.fn().mockResolvedValue({
         drop_id: 'description-drop-1',
         pending_push_notification_ids: [],
