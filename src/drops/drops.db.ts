@@ -3639,7 +3639,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const normalizedHandle = param.handle
       .trim()
       .toLowerCase()
-      .replace(/[\\%_]/g, '\\$&');
+      .replace(/[\\%_]/g, String.raw`\$&`);
     return this.db.execute<WaveSearchAuthor>(
       String.raw`SELECT DISTINCT
           p.external_id AS id,
