@@ -638,7 +638,10 @@ function requestLogMiddleware() {
 function customErrorMiddleware() {
   return (err: Error, _: Request, res: Response, next: NextFunction) => {
     if (err instanceof ApiCompliantException) {
-      res.status(err.getStatusCode()).send({ error: err.message });
+      res.status(err.getStatusCode()).send({
+        error: err.message,
+        ...(err.code ? { code: err.code } : {})
+      });
       next();
     } else {
       res.status(500).send({ error: 'Something went wrong...' });

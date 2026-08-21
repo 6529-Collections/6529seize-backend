@@ -3,7 +3,10 @@ import {
   PrePublicationCheckOutcome
 } from '@/entities/IContentModeration';
 import { CustomApiCompliantException, ForbiddenException } from '@/exceptions';
-import { PrePublicationModerationService } from './pre-publication-moderation.service';
+import {
+  CONTENT_MODERATION_REJECTION_CODE,
+  PrePublicationModerationService
+} from './pre-publication-moderation.service';
 
 function createService() {
   const moderationDb = {
@@ -83,6 +86,7 @@ describe('PrePublicationModerationService', () => {
 
     await expect(result).rejects.toBeInstanceOf(CustomApiCompliantException);
     await expect(result).rejects.toMatchObject({
+      code: CONTENT_MODERATION_REJECTION_CODE,
       message: expect.stringContaining('known unsafe destination')
     });
     expect(aiService.assessPrePublication).not.toHaveBeenCalled();
@@ -133,6 +137,7 @@ describe('PrePublicationModerationService', () => {
 
     await expect(result).rejects.toBeInstanceOf(CustomApiCompliantException);
     await expect(result).rejects.toMatchObject({
+      code: CONTENT_MODERATION_REJECTION_CODE,
       message: expect.stringContaining("platform's safety rules")
     });
   });

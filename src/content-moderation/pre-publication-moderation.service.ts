@@ -20,6 +20,7 @@ import {
 } from './content-moderation.db';
 
 export const PRE_PUBLICATION_GATE_VERSION = 'deterministic-gate-2026-08-1';
+export const CONTENT_MODERATION_REJECTION_CODE = 'CONTENT_MODERATION_REJECTED';
 const DUPLICATE_WINDOW = Time.minutes(10);
 const DUPLICATE_SIGNAL_THRESHOLD = 4;
 const URL_EDGE_PUNCTUATION = new Set(['.', '!', '?', ';', ':']);
@@ -102,7 +103,11 @@ export class PrePublicationModerationService {
         },
         ctx
       );
-      throw new CustomApiCompliantException(422, screen.directRejectionReason);
+      throw new CustomApiCompliantException(
+        422,
+        screen.directRejectionReason,
+        CONTENT_MODERATION_REJECTION_CODE
+      );
     }
     if (!screen.signal) {
       await this.record(
@@ -168,7 +173,8 @@ export class PrePublicationModerationService {
     if (outcome === PrePublicationCheckOutcome.REJECT) {
       throw new CustomApiCompliantException(
         422,
-        `This post couldn't be submitted because it appears to conflict with the platform's safety rules. You can edit and try again, or contact support if you believe this is a mistake.`
+        `This post couldn't be submitted because it appears to conflict with the platform's safety rules. You can edit and try again, or contact support if you believe this is a mistake.`,
+        CONTENT_MODERATION_REJECTION_CODE
       );
     }
   }

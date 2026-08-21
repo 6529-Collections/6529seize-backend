@@ -473,6 +473,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
 
   async filterUnavailableDropNotificationRows<
     T extends {
+      readonly identity_id: string;
       readonly related_drop_id: string | null;
       readonly related_drop_2_id: string | null;
     }
@@ -487,21 +488,33 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     if (!dropIds.length) {
       return notifications;
     }
-    const rows = await this.db.execute<{ drop_id: string }>(
+    const rows = await this.db.execute<{
+      drop_id: string;
+      author_id: string | null;
+    }>(
       `
-        select drop_id
-        from ${CONTENT_MODERATION_DROP_STATES_TABLE}
-        where drop_id in (:dropIds)
-          and status <> '${DropModerationStatus.VISIBLE}'
+        select s.drop_id, d.author_id
+        from ${CONTENT_MODERATION_DROP_STATES_TABLE} s
+        left join ${DROPS_TABLE} d on d.id = s.drop_id
+        where s.drop_id in (:dropIds)
+          and s.status <> '${DropModerationStatus.VISIBLE}'
       `,
       { dropIds },
       this.connectionOptions(connection)
     );
-    const unavailable = new Set(rows.map((row) => row.drop_id));
+    const unavailableAuthors = new Map(
+      rows.map((row) => [row.drop_id, row.author_id])
+    );
+    const canAccess = (dropId: string | null, viewerProfileId: string) => {
+      if (dropId === null || !unavailableAuthors.has(dropId)) {
+        return true;
+      }
+      return unavailableAuthors.get(dropId) === viewerProfileId;
+    };
     return notifications.filter(
       (row) =>
-        !unavailable.has(row.related_drop_id ?? '') &&
-        !unavailable.has(row.related_drop_2_id ?? '')
+        canAccess(row.related_drop_id, row.identity_id) &&
+        canAccess(row.related_drop_2_id, row.identity_id)
     );
   }
 
