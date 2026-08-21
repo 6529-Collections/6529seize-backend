@@ -281,7 +281,7 @@ describe('ReleaseNoteGitHubService', () => {
     expect(fetch).toHaveBeenCalledTimes(3);
     expect(fetch).toHaveBeenNthCalledWith(
       2,
-      'https://api.github.com/repos/6529-Collections/6529seize-frontend/actions/workflows/7/runs?branch=main&per_page=20&page=1',
+      'https://api.github.com/repos/6529-Collections/6529seize-frontend/actions/workflows/7/runs?branch=main&per_page=100&page=1',
       expect.any(Object)
     );
   });
@@ -317,7 +317,7 @@ describe('ReleaseNoteGitHubService', () => {
     expect(context?.previous_sha).toBe('previous-sha');
     expect(fetch).toHaveBeenNthCalledWith(
       2,
-      'https://api.github.com/repos/6529-Collections/6529seize-frontend/actions/workflows/7/runs?branch=main&per_page=20&page=1',
+      'https://api.github.com/repos/6529-Collections/6529seize-frontend/actions/workflows/7/runs?branch=main&per_page=100&page=1',
       expect.any(Object)
     );
   });
@@ -584,7 +584,7 @@ describe('ReleaseNoteGitHubService', () => {
     });
     expect(fetch).toHaveBeenNthCalledWith(
       2,
-      'https://api.github.com/repos/6529-Collections/6529-core/actions/workflows/99/runs?per_page=20&page=1',
+      'https://api.github.com/repos/6529-Collections/6529-core/actions/workflows/99/runs?per_page=100&page=1',
       expect.any(Object)
     );
     expect(
@@ -872,7 +872,7 @@ describe('ReleaseNoteGitHubService', () => {
     ]);
     expect(fetch).toHaveBeenNthCalledWith(
       2,
-      'https://api.github.com/repos/6529-Collections/6529seize-backend/actions/workflows/82013288/runs?branch=main&per_page=20&page=1',
+      'https://api.github.com/repos/6529-Collections/6529seize-backend/actions/workflows/82013288/runs?branch=main&per_page=100&page=1',
       expect.any(Object)
     );
   });
@@ -1304,7 +1304,7 @@ describe('ReleaseNoteGitHubService', () => {
   });
 
   it('paginates past successful runs from the current backend SHA', async () => {
-    const sameShaRuns = Array.from({ length: 20 }, (_, index) => ({
+    const sameShaRuns = Array.from({ length: 100 }, (_, index) => ({
       id: 1000 + index,
       name: `Deploy service${index} to prod`,
       display_title: `Deploy service${index} to prod`,
@@ -1361,8 +1361,39 @@ describe('ReleaseNoteGitHubService', () => {
     expect(context?.previous_sha).toBe('previous-sha');
     expect(fetch).toHaveBeenNthCalledWith(
       3,
-      'https://api.github.com/repos/6529-Collections/6529seize-backend/actions/workflows/82013288/runs?branch=main&per_page=20&page=2',
+      'https://api.github.com/repos/6529-Collections/6529seize-backend/actions/workflows/82013288/runs?branch=main&per_page=100&page=2',
       expect.any(Object)
     );
+  });
+
+  it('caps bootstrap workflow history at 1000 unfiltered runs', async () => {
+    const bootstrapRequest = { ...request, run_number: '1001' };
+    const sameShaRuns = Array.from({ length: 100 }, (_, index) => ({
+      id: 2000 + index,
+      name: `Deploy service${index} to prod`,
+      display_title: `Deploy service${index} to prod`,
+      head_sha: 'abc123',
+      run_number: 1000 - index,
+      workflow_id: 7,
+      status: 'completed',
+      conclusion: 'success'
+    }));
+    (fetch as unknown as jest.Mock).mockResolvedValueOnce(
+      response({ ...currentRun, run_number: 1001 })
+    );
+    for (let page = 0; page < 10; page++) {
+      (fetch as unknown as jest.Mock).mockResolvedValueOnce(
+        response({ workflow_runs: sameShaRuns })
+      );
+    }
+
+    await expect(
+      new ReleaseNoteGitHubService().getPreviousSuccessfulReleaseRun(
+        bootstrapRequest
+      )
+    ).rejects.toThrow(
+      'Previous successful production run was not found within 1000 workflow runs'
+    );
+    expect(fetch).toHaveBeenCalledTimes(11);
   });
 });
