@@ -81,6 +81,39 @@ describe('ContentModerationDb', () => {
     expect(otherPresentation['drop-1']?.moderation.can_view).toBe(false);
   });
 
+  it('keeps moderated drop notifications available only to the author', async () => {
+    const { db, executor } = createDb();
+    executor.execute.mockResolvedValue([
+      { drop_id: 'drop-1', author_id: 'author-1' }
+    ]);
+
+    await expect(
+      db.filterUnavailableDropNotificationRows([
+        {
+          identity_id: 'author-1',
+          related_drop_id: 'drop-1',
+          related_drop_2_id: null
+        },
+        {
+          identity_id: 'viewer-1',
+          related_drop_id: 'drop-1',
+          related_drop_2_id: null
+        }
+      ])
+    ).resolves.toEqual([
+      {
+        identity_id: 'author-1',
+        related_drop_id: 'drop-1',
+        related_drop_2_id: null
+      }
+    ]);
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.stringContaining(`left join drops d on d.id = s.drop_id`),
+      { dropIds: ['drop-1'] },
+      undefined
+    );
+  });
+
   it('does not persist environment-seeded moderator access during a read', async () => {
     const { db, executor } = createDb();
 

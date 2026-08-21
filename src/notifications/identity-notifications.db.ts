@@ -3,6 +3,7 @@ import {
   IDENTITIES_TABLE,
   CONTENT_MODERATION_DROP_STATES_TABLE,
   CONTENT_MODERATION_PROFILE_BLOCKS_TABLE,
+  DROPS_TABLE,
   IDENTITY_MUTES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   WAVE_READER_METRICS_TABLE
@@ -429,6 +430,10 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
           ON d1.drop_id = n.related_drop_id
         LEFT JOIN ${CONTENT_MODERATION_DROP_STATES_TABLE} d2
           ON d2.drop_id = n.related_drop_2_id
+        LEFT JOIN ${DROPS_TABLE} rd1
+          ON rd1.id = n.related_drop_id
+        LEFT JOIN ${DROPS_TABLE} rd2
+          ON rd2.id = n.related_drop_2_id
         WHERE n.identity_id = :identity_id ${
           param.id_less_than === null ? `` : `AND n.id < :id_less_than`
         }
@@ -451,8 +456,16 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         AND COALESCE(r.muted, FALSE) = FALSE
         AND m.id IS NULL
         AND b.id IS NULL
-        AND (d1.status IS NULL OR d1.status = '${DropModerationStatus.VISIBLE}')
-        AND (d2.status IS NULL OR d2.status = '${DropModerationStatus.VISIBLE}')
+        AND (
+          d1.status IS NULL
+          OR d1.status = '${DropModerationStatus.VISIBLE}'
+          OR rd1.author_id = n.identity_id
+        )
+        AND (
+          d2.status IS NULL
+          OR d2.status = '${DropModerationStatus.VISIBLE}'
+          OR rd2.author_id = n.identity_id
+        )
         ORDER BY n.id DESC LIMIT :limit
       `,
         { ...param, causes, causesExclude },
@@ -520,6 +533,10 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
           ON d1.drop_id = n.related_drop_id
         LEFT JOIN ${CONTENT_MODERATION_DROP_STATES_TABLE} d2
           ON d2.drop_id = n.related_drop_2_id
+        LEFT JOIN ${DROPS_TABLE} rd1
+          ON rd1.id = n.related_drop_id
+        LEFT JOIN ${DROPS_TABLE} rd2
+          ON rd2.id = n.related_drop_2_id
         WHERE (
           (
             n.identity_id = :identity_id
@@ -532,8 +549,16 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
             AND COALESCE(r.muted, FALSE) = FALSE
             AND m.id IS NULL
             AND b.id IS NULL
-            AND (d1.status IS NULL OR d1.status = '${DropModerationStatus.VISIBLE}')
-            AND (d2.status IS NULL OR d2.status = '${DropModerationStatus.VISIBLE}')
+            AND (
+              d1.status IS NULL
+              OR d1.status = '${DropModerationStatus.VISIBLE}'
+              OR rd1.author_id = n.identity_id
+            )
+            AND (
+              d2.status IS NULL
+              OR d2.status = '${DropModerationStatus.VISIBLE}'
+              OR rd2.author_id = n.identity_id
+            )
           )
         )${causeClause}
       `,

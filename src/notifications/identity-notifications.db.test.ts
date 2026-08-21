@@ -56,11 +56,13 @@ function notification(
 function createRepo({
   filteredNotifications,
   filterError,
-  moderationFilterError
+  moderationFilterError,
+  unavailableDropFilterError
 }: {
   readonly filteredNotifications: ReturnType<typeof notification>[];
   readonly filterError?: Error;
   readonly moderationFilterError?: Error;
+  readonly unavailableDropFilterError?: Error;
 }) {
   const db = {
     execute: jest.fn().mockResolvedValue([undefined, undefined, 101]),
@@ -83,7 +85,11 @@ function createRepo({
       ),
     filterUnavailableDropNotificationRows: jest
       .fn()
-      .mockImplementation((rows) => Promise.resolve(rows))
+      .mockImplementation((rows) =>
+        unavailableDropFilterError
+          ? Promise.reject(unavailableDropFilterError)
+          : Promise.resolve(rows)
+      )
   } as unknown as ContentModerationDbDouble;
   const profilePreferencesDb = {
     getMany: jest.fn().mockResolvedValue(new Map())
@@ -237,6 +243,23 @@ describe('IdentityNotificationsDb', () => {
     expect(sendIdentityPushNotification).not.toHaveBeenCalled();
   });
 
+  it('retries the write when moderated drop filtering fails', async () => {
+    const row = notification({ related_drop_id: 'drop-1' });
+    const { db, repo } = createRepo({
+      filteredNotifications: [row],
+      unavailableDropFilterError: new Error(
+        'drop moderation states unavailable'
+      )
+    });
+
+    await expect(repo.insertNotification(row, connection)).rejects.toThrow(
+      'drop moderation states unavailable'
+    );
+
+    expect(db.execute).not.toHaveBeenCalled();
+    expect(sendIdentityPushNotification).not.toHaveBeenCalled();
+  });
+
   it('keeps actorless system notifications on the write path', async () => {
     const row = notification({
       additional_identity_id: null,
@@ -342,6 +365,12 @@ describe('IdentityNotificationsDb', () => {
     expect(db.execute.mock.calls[0][0]).not.toContain(
       'JOIN identities i ON n.additional_identity_id'
     );
+    expect(db.execute.mock.calls[0][0]).toContain(
+      'OR rd1.author_id = n.identity_id'
+    );
+    expect(db.execute.mock.calls[0][0]).toContain(
+      'OR rd2.author_id = n.identity_id'
+    );
   });
 
   it('counts only unread notifications visible to the recipient', async () => {
@@ -368,6 +397,12 @@ describe('IdentityNotificationsDb', () => {
         eligibleGroupIds: ['private-group']
       }),
       undefined
+    );
+    expect(db.oneOrNull.mock.calls[0][0]).toContain(
+      'OR rd1.author_id = n.identity_id'
+    );
+    expect(db.oneOrNull.mock.calls[0][0]).toContain(
+      'OR rd2.author_id = n.identity_id'
     );
   });
 
