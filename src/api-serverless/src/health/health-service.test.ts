@@ -60,19 +60,23 @@ describe('IPFS health', () => {
 
   it('reports degraded when the request times out', async () => {
     jest.useFakeTimers();
-    fetchMock.mockImplementation(
-      (_url, init) =>
-        new Promise((_resolve, reject) => {
-          init?.signal?.addEventListener('abort', () => {
-            reject(new Error('aborted'));
-          });
-        })
-    );
+    try {
+      fetchMock.mockImplementation(
+        (_url, init) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              reject(new Error('aborted'));
+            });
+          })
+      );
 
-    const healthPromise = getIpfsHealth();
-    jest.advanceTimersByTime(5_000);
+      const healthPromise = getIpfsHealth();
+      await jest.advanceTimersByTimeAsync(5_000);
 
-    await expect(healthPromise).resolves.toEqual({ healthy: false });
-    expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(true);
+      await expect(healthPromise).resolves.toEqual({ healthy: false });
+      expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
