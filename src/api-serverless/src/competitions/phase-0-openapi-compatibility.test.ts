@@ -183,6 +183,19 @@ describe('Phase 0 permanent OpenAPI GET compatibility', () => {
     expect(operationCount).toBe(183);
   });
 
+  it('retains the unread count contract in the extended DM unread snapshot', () => {
+    const baselineCountSchema =
+      baseline.components.schemas.ApiDmDropsUnreadCount;
+    const currentSnapshotSchema =
+      current.components.schemas.ApiDmUnreadSnapshot;
+    expect(currentSnapshotSchema.required).toContain('count');
+    assertSchemaCompatible(
+      baselineCountSchema.properties.count,
+      currentSnapshotSchema.properties.count,
+      'accepted DM unread snapshot extension.properties.count'
+    );
+  });
+
   it('retains every schema reachable from the accepted snapshot', () => {
     const baselineSchemas = baseline.components.schemas as JsonObject;
     const currentSchemas = current.components.schemas as JsonObject;

@@ -44,6 +44,10 @@ import {
   waveDropMetricsRefreshService,
   WaveDropMetricsDirtyRefreshReason
 } from '@/drops/wave-drop-metrics-refresh.service';
+import {
+  wavesApiDb,
+  WavesApiDb
+} from '@/api-serverless/src/waves/waves.api.db';
 
 export class DeleteDropUseCase {
   public constructor(
@@ -54,7 +58,8 @@ export class DeleteDropUseCase {
     private readonly curationsDb: CurationsDb,
     private readonly artCurationTokenWatchService: ArtCurationTokenWatchService,
     private readonly attachmentsDb: AttachmentsDb,
-    private readonly dropPollsDb: DropPollsDb
+    private readonly dropPollsDb: DropPollsDb,
+    private readonly wavesApiDb: WavesApiDb
   ) {}
 
   private async resolveDeleterId(
@@ -83,6 +88,48 @@ export class DeleteDropUseCase {
     return resolvedDeleterIdentity;
   }
 
+  private async findCurrentDmReaderIds(
+    wave: WaveEntity,
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+  ): Promise<string[]> {
+    if (!wave.chat_group_id) {
+      return [];
+    }
+    const readerIds = await userGroupsService.findIdentitiesInGroups(
+      [wave.chat_group_id],
+      { timer, connection }
+    );
+    const visibilityGroupIds = [wave.visibility_group_id].filter(
+      (groupId): groupId is string => groupId !== null
+    );
+    if (wave.parent_wave_id) {
+      const parentWave = await this.wavesApiDb.findWaveById(
+        wave.parent_wave_id,
+        connection
+      );
+      if (!parentWave) {
+        return [];
+      }
+      if (parentWave.visibility_group_id) {
+        visibilityGroupIds.push(parentWave.visibility_group_id);
+      }
+    }
+    let eligibleReaderIds = new Set(readerIds);
+    for (const groupId of Array.from(new Set(visibilityGroupIds))) {
+      const groupReaderIds = await userGroupsService.findIdentitiesInGroups(
+        [groupId],
+        { timer, connection }
+      );
+      const groupReaderIdSet = new Set(groupReaderIds);
+      eligibleReaderIds = new Set(
+        Array.from(eligibleReaderIds).filter((readerId) =>
+          groupReaderIdSet.has(readerId)
+        )
+      );
+    }
+    return Array.from(eligibleReaderIds);
+  }
+
   public async execute(
     model: DeleteDropModel,
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
@@ -91,6 +138,7 @@ export class DeleteDropUseCase {
     visibility_group_id: string | null;
     serial_no: number;
     wave_id: string;
+    dm_unread_recipient_ids: string[];
   } | null> {
     const isBackendDelete = model.deletion_purpose === 'SYSTEM_DELETE';
     const isPermanentDelete = model.deletion_purpose !== 'UPDATE';
@@ -187,11 +235,24 @@ export class DeleteDropUseCase {
           { timer, connection }
         );
       }
+      let dmUnreadRecipientIds: string[] = [];
+      if (isPermanentDelete && wave?.is_direct_message === true) {
+        const currentReaderIds = await this.findCurrentDmReaderIds(wave, {
+          timer,
+          connection
+        });
+        dmUnreadRecipientIds =
+          await this.wavesApiDb.incrementDmUnreadStateVersionsForWaveReaders(
+            { waveId, readerIds: currentReaderIds },
+            { timer, connection }
+          );
+      }
       return {
         id: dropId,
         serial_no: drop.serial_no,
         visibility_group_id: wave?.visibility_group_id ?? null,
-        wave_id: drop.wave_id
+        wave_id: drop.wave_id,
+        dm_unread_recipient_ids: dmUnreadRecipientIds
       };
     }
     return null;
@@ -241,5 +302,6 @@ export const deleteDrop = new DeleteDropUseCase(
   curationsDb,
   artCurationTokenWatchService,
   attachmentsDb,
-  dropPollsDb
+  dropPollsDb,
+  wavesApiDb
 );

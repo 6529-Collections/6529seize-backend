@@ -1,5 +1,6 @@
 const mockGetAuthenticationContext = jest.fn();
 const mockGetFromRequest = jest.fn();
+const mockFindDmUnreadConversationStates = jest.fn();
 const mockCountIdentityUnreadDmDrops = jest.fn();
 const mockGetGroupsUserIsEligibleForReadContext = jest.fn();
 const mockUserGroupsService = { marker: 'user-groups-service' };
@@ -19,6 +20,7 @@ jest.mock('@/api/waves/wave-access.helpers', () => ({
 
 jest.mock('@/api/waves/waves.api.db', () => ({
   wavesApiDb: {
+    findDmUnreadConversationStates: mockFindDmUnreadConversationStates,
     countIdentityUnreadDmDrops: mockCountIdentityUnreadDmDrops
   }
 }));
@@ -29,7 +31,11 @@ jest.mock('@/time', () => ({
   }
 }));
 
-import { handleGetDmDropsUnread } from './dm-drops.handlers';
+import {
+  handleGetDmDropsUnread,
+  handleGetDmUnreadSnapshot
+} from './dm-drops.handlers';
+import { DbPoolName } from '@/db-query.options';
 
 describe('handleGetDmDropsUnread', () => {
   const timer = { marker: 'timer' } as any;
@@ -44,12 +50,51 @@ describe('handleGetDmDropsUnread', () => {
     mockGetFromRequest.mockReturnValue(timer);
     mockGetGroupsUserIsEligibleForReadContext.mockResolvedValue(['group-1']);
     mockCountIdentityUnreadDmDrops.mockResolvedValue(7);
+    mockFindDmUnreadConversationStates.mockResolvedValue([
+      {
+        profile_id: 'profile-1',
+        wave_id: 'wave-1',
+        unread_count: 4,
+        first_unread_drop_serial_no: 10,
+        latest_drop_serial_no: 13,
+        latest_read_serial_no: 9,
+        version: 3
+      },
+      {
+        profile_id: 'profile-1',
+        wave_id: 'wave-2',
+        unread_count: 3,
+        first_unread_drop_serial_no: 20,
+        latest_drop_serial_no: 22,
+        latest_read_serial_no: 19,
+        version: 5
+      }
+    ]);
   });
 
-  it('returns the authenticated profile unread DM drop count', async () => {
+  it('keeps the legacy endpoint on the lightweight unread count query', async () => {
     const req = { query: {} } as any;
 
     await expect(handleGetDmDropsUnread(req)).resolves.toEqual({ count: 7 });
+
+    expect(mockCountIdentityUnreadDmDrops).toHaveBeenCalledWith(
+      { identityId: 'profile-1', eligibleGroups: ['group-1'] },
+      { timer, authenticationContext }
+    );
+    expect(mockFindDmUnreadConversationStates).not.toHaveBeenCalled();
+  });
+
+  it('returns the authenticated profile conversation snapshot from the explicit endpoint', async () => {
+    const req = { query: {} } as any;
+
+    await expect(handleGetDmUnreadSnapshot(req)).resolves.toEqual({
+      profile_id: 'profile-1',
+      count: 7,
+      conversations: [
+        expect.objectContaining({ wave_id: 'wave-1', unread_count: 4 }),
+        expect.objectContaining({ wave_id: 'wave-2', unread_count: 3 })
+      ]
+    });
 
     expect(mockGetFromRequest).toHaveBeenCalledWith(req);
     expect(mockGetAuthenticationContext).toHaveBeenCalledWith(req, timer);
@@ -57,9 +102,10 @@ describe('handleGetDmDropsUnread', () => {
       mockUserGroupsService,
       { timer, authenticationContext }
     );
-    expect(mockCountIdentityUnreadDmDrops).toHaveBeenCalledWith(
+    expect(mockFindDmUnreadConversationStates).toHaveBeenCalledWith(
       { identityId: 'profile-1', eligibleGroups: ['group-1'] },
-      { timer, authenticationContext }
+      { timer, authenticationContext },
+      DbPoolName.WRITE
     );
   });
 
@@ -71,6 +117,7 @@ describe('handleGetDmDropsUnread', () => {
     );
     expect(mockGetAuthenticationContext).not.toHaveBeenCalled();
     expect(mockGetGroupsUserIsEligibleForReadContext).not.toHaveBeenCalled();
+    expect(mockFindDmUnreadConversationStates).not.toHaveBeenCalled();
     expect(mockCountIdentityUnreadDmDrops).not.toHaveBeenCalled();
   });
 
@@ -82,6 +129,7 @@ describe('handleGetDmDropsUnread', () => {
       'You need to create a profile before you can access direct messages'
     );
     expect(mockGetGroupsUserIsEligibleForReadContext).not.toHaveBeenCalled();
+    expect(mockFindDmUnreadConversationStates).not.toHaveBeenCalled();
     expect(mockCountIdentityUnreadDmDrops).not.toHaveBeenCalled();
   });
 });
