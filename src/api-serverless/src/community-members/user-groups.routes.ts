@@ -13,11 +13,6 @@ import { NewUserGroupEntity, userGroupsService } from './user-groups.service';
 import { ApiChangeGroupVisibility } from '../generated/models/ApiChangeGroupVisibility';
 import { ApiGroupFull } from '../generated/models/ApiGroupFull';
 import { ApiCreateGroup } from '../generated/models/ApiCreateGroup';
-import { ApiGroupCicFilter } from '../generated/models/ApiGroupCicFilter';
-import { ApiGroupFilterDirection } from '../generated/models/ApiGroupFilterDirection';
-import { ApiGroupRepFilter } from '../generated/models/ApiGroupRepFilter';
-import { ApiGroupLevelFilter } from '../generated/models/ApiGroupLevelFilter';
-import { ApiGroupTdhFilter } from '../generated/models/ApiGroupTdhFilter';
 import {
   FilterDirection,
   GroupBeneficiaryGrantMatchMode,
@@ -28,17 +23,15 @@ import {
   ApiGroupOwnsNft,
   ApiGroupOwnsNftNameEnum
 } from '../generated/models/ApiGroupOwnsNft';
-import { ApiCreateGroupDescription } from '../generated/models/ApiCreateGroupDescription';
 import { Timer } from '../../../time';
 import { RequestContext } from '../../../request.context';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
 import { collections } from '../../../collections';
-import { WALLET_REGEX } from '@/constants';
-import { ApiGroupTdhInclusionStrategy } from '../generated/models/ApiGroupTdhInclusionStrategy';
 import { ApiGroupBeneficiaryGrantMatchMode } from '../generated/models/ApiGroupBeneficiaryGrantMatchMode';
 import { ApiGroupNftOwnershipMatchMode } from '../generated/models/ApiGroupNftOwnershipMatchMode';
 import { waveApiService } from '../waves/wave.api.service';
+import { GroupDescriptionSchema } from './group-description.schema';
 
 const router = asyncRouter();
 
@@ -316,30 +309,6 @@ router.post(
   }
 );
 
-const GroupFilterDirectionSchema: Joi.StringSchema = Joi.string()
-  .valid(...Object.values(ApiGroupFilterDirection))
-  .optional()
-  .allow(null)
-  .default(null);
-
-const NullablePositiveIntegerSchema: Joi.NumberSchema = Joi.number()
-  .integer()
-  .min(0)
-  .optional()
-  .allow(null)
-  .default(null);
-
-const NullableIntegerSchema: Joi.NumberSchema = Joi.number()
-  .integer()
-  .optional()
-  .allow(null)
-  .default(null);
-
-const NullableStringSchema: Joi.StringSchema = Joi.string()
-  .optional()
-  .allow(null)
-  .default(null);
-
 const SearchNullableStringSchema: Joi.StringSchema = Joi.string()
   .empty('')
   .optional()
@@ -359,79 +328,6 @@ export const SearchUserGroupsQuerySchema: Joi.ObjectSchema<SearchUserGroupsQuery
     author_identity: SearchNullableStringSchema,
     created_at_less_than: SearchNullableIntegerSchema,
     include_profile_groups: Joi.boolean().empty('').optional().default(false)
-  });
-
-const GroupTdhFilterSchema: Joi.ObjectSchema<ApiGroupTdhFilter> =
-  Joi.object<ApiGroupTdhFilter>({
-    min: NullablePositiveIntegerSchema,
-    max: NullablePositiveIntegerSchema,
-    inclusion_strategy: Joi.string()
-      .allow(...Object.values(ApiGroupTdhInclusionStrategy))
-      .default(ApiGroupTdhInclusionStrategy.Tdh)
-  });
-
-const GroupLevelFilterSchema: Joi.ObjectSchema<ApiGroupLevelFilter> =
-  Joi.object<ApiGroupLevelFilter>({
-    min: NullableIntegerSchema.min(-100).max(100),
-    max: NullableIntegerSchema.min(-100).max(100)
-  });
-
-const GroupRepFilterSchema: Joi.ObjectSchema<ApiGroupRepFilter> =
-  Joi.object<ApiGroupRepFilter>({
-    min: NullableIntegerSchema,
-    max: NullableIntegerSchema,
-    direction: GroupFilterDirectionSchema,
-    user_identity: NullableStringSchema,
-    category: NullableStringSchema
-  });
-
-const GroupCicFilterSchema: Joi.ObjectSchema<ApiGroupCicFilter> =
-  Joi.object<ApiGroupCicFilter>({
-    min: NullableIntegerSchema,
-    max: NullableIntegerSchema,
-    direction: GroupFilterDirectionSchema,
-    user_identity: NullableStringSchema
-  });
-
-const GroupBeneficiaryGrantMatchModeSchema: Joi.StringSchema = Joi.string()
-  .valid(...Object.values(ApiGroupBeneficiaryGrantMatchMode))
-  .optional()
-  .default(ApiGroupBeneficiaryGrantMatchMode.AnyToken);
-
-const GroupNftOwnershipMatchModeSchema: Joi.StringSchema = Joi.string()
-  .valid(...Object.values(ApiGroupNftOwnershipMatchMode))
-  .optional()
-  .default(DEFAULT_NFT_OWNERSHIP_MATCH_MODE);
-
-const GroupOwnsNftSchema: Joi.ObjectSchema<ApiGroupOwnsNft> =
-  Joi.object<ApiGroupOwnsNft>({
-    name: Joi.string()
-      .valid(...Object.values(ApiGroupOwnsNftNameEnum))
-      .required(),
-    tokens: Joi.array().required().items(Joi.string()).allow(null),
-    match_mode: GroupNftOwnershipMatchModeSchema
-  });
-
-const GroupDescriptionSchema: Joi.ObjectSchema<ApiCreateGroupDescription> =
-  Joi.object<ApiCreateGroupDescription>({
-    tdh: GroupTdhFilterSchema,
-    rep: GroupRepFilterSchema,
-    cic: GroupCicFilterSchema,
-    level: GroupLevelFilterSchema,
-    owns_nfts: Joi.array().required().items(GroupOwnsNftSchema),
-    identity_addresses: Joi.array()
-      .required()
-      .items(Joi.string().regex(WALLET_REGEX).lowercase())
-      .allow(null)
-      .max(20000),
-    excluded_identity_addresses: Joi.array()
-      .optional()
-      .items(Joi.string().regex(WALLET_REGEX).lowercase())
-      .allow(null)
-      .default([])
-      .max(20000),
-    is_beneficiary_of_grant_id: Joi.string().optional(),
-    is_beneficiary_of_grant_match_mode: GroupBeneficiaryGrantMatchModeSchema
   });
 
 const NewUserGroupSchema = Joi.object<ApiCreateGroup>({
