@@ -556,6 +556,7 @@ export class ReleaseNoteGenerationService {
       return 'no-baseline';
     }
     if (!context.pull_requests.length) {
+      await options?.onPlan?.(0);
       this.logger.info(
         `Skipping release notes for ${request.repo} run ${request.run_id}; no merged pull requests were found`
       );
@@ -819,7 +820,10 @@ export class ReleaseNoteGenerationService {
         authenticationContext: AuthenticationContext.fromProfileId(botProfileId)
       }
     );
-    return drop?.id ?? '';
+    if (!drop?.id) {
+      throw new Error('Release-note drop creation returned no drop id');
+    }
+    return drop.id;
   }
 
   private async generateReleaseNotes(

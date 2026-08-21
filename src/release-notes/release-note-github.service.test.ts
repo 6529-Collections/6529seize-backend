@@ -281,7 +281,7 @@ describe('ReleaseNoteGitHubService', () => {
     expect(fetch).toHaveBeenCalledTimes(3);
     expect(fetch).toHaveBeenNthCalledWith(
       2,
-      'https://api.github.com/repos/6529-Collections/6529seize-frontend/actions/workflows/7/runs?status=completed&branch=main&per_page=20&page=1',
+      'https://api.github.com/repos/6529-Collections/6529seize-frontend/actions/workflows/7/runs?branch=main&per_page=20&page=1',
       expect.any(Object)
     );
   });
@@ -317,7 +317,7 @@ describe('ReleaseNoteGitHubService', () => {
     expect(context?.previous_sha).toBe('previous-sha');
     expect(fetch).toHaveBeenNthCalledWith(
       2,
-      'https://api.github.com/repos/6529-Collections/6529seize-frontend/actions/workflows/7/runs?status=completed&branch=main&per_page=20&page=1',
+      'https://api.github.com/repos/6529-Collections/6529seize-frontend/actions/workflows/7/runs?branch=main&per_page=20&page=1',
       expect.any(Object)
     );
   });
@@ -584,7 +584,7 @@ describe('ReleaseNoteGitHubService', () => {
     });
     expect(fetch).toHaveBeenNthCalledWith(
       2,
-      'https://api.github.com/repos/6529-Collections/6529-core/actions/workflows/99/runs?status=completed&per_page=20&page=1',
+      'https://api.github.com/repos/6529-Collections/6529-core/actions/workflows/99/runs?per_page=20&page=1',
       expect.any(Object)
     );
     expect(
@@ -872,7 +872,7 @@ describe('ReleaseNoteGitHubService', () => {
     ]);
     expect(fetch).toHaveBeenNthCalledWith(
       2,
-      'https://api.github.com/repos/6529-Collections/6529seize-backend/actions/workflows/82013288/runs?status=completed&branch=main&per_page=20&page=1',
+      'https://api.github.com/repos/6529-Collections/6529seize-backend/actions/workflows/82013288/runs?branch=main&per_page=20&page=1',
       expect.any(Object)
     );
   });
@@ -1361,7 +1361,7 @@ describe('ReleaseNoteGitHubService', () => {
     expect(context?.previous_sha).toBe('previous-sha');
     expect(fetch).toHaveBeenNthCalledWith(
       3,
-      'https://api.github.com/repos/6529-Collections/6529seize-backend/actions/workflows/82013288/runs?status=completed&branch=main&per_page=20&page=2',
+      'https://api.github.com/repos/6529-Collections/6529seize-backend/actions/workflows/82013288/runs?branch=main&per_page=20&page=2',
       expect.any(Object)
     );
   });

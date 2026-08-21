@@ -173,7 +173,7 @@ describe('ReleaseNoteGenerationService', () => {
         ]
       })}\n\`\`\``
     );
-    const createDrop = jest.fn().mockResolvedValue({});
+    const createDrop = jest.fn().mockResolvedValue({ id: 'created-drop' });
     const getIdsByHandles = jest
       .fn()
       .mockResolvedValue({ alice6529: 'alice-profile' });
@@ -241,7 +241,7 @@ describe('ReleaseNoteGenerationService', () => {
   });
 
   it('renders mapped and unmapped contributors once with correct mention metadata', async () => {
-    const createDrop = jest.fn().mockResolvedValue({});
+    const createDrop = jest.fn().mockResolvedValue({ id: 'created-drop' });
     const service = new ReleaseNoteGenerationService(
       {
         getReleaseContext: jest.fn().mockResolvedValue({
@@ -294,7 +294,7 @@ describe('ReleaseNoteGenerationService', () => {
   });
 
   it('renders repository-specific single-service run links', async () => {
-    const createDrop = jest.fn().mockResolvedValue({});
+    const createDrop = jest.fn().mockResolvedValue({ id: 'created-drop' });
     const service = new ReleaseNoteGenerationService(
       {
         getReleaseContext: jest.fn().mockResolvedValue(context),
@@ -374,7 +374,7 @@ describe('ReleaseNoteGenerationService', () => {
         }
       ]
     };
-    const createDrop = jest.fn().mockResolvedValue({});
+    const createDrop = jest.fn().mockResolvedValue({ id: 'created-drop' });
     const service = new ReleaseNoteGenerationService(
       {
         getReleaseContext: jest.fn().mockResolvedValue(multiPullRequestContext),
@@ -414,7 +414,7 @@ describe('ReleaseNoteGenerationService', () => {
   });
 
   it('falls back to grouped service run links when service candidates are empty', async () => {
-    const createDrop = jest.fn().mockResolvedValue({});
+    const createDrop = jest.fn().mockResolvedValue({ id: 'created-drop' });
     const service = new ReleaseNoteGenerationService(
       {
         getReleaseContext: jest.fn().mockResolvedValue({
@@ -458,7 +458,7 @@ describe('ReleaseNoteGenerationService', () => {
   });
 
   it('falls back to sanitized PR titles when generated notes are invalid', async () => {
-    const createDrop = jest.fn().mockResolvedValue({});
+    const createDrop = jest.fn().mockResolvedValue({ id: 'created-drop' });
     const service = new ReleaseNoteGenerationService(
       {
         getReleaseContext: jest.fn().mockResolvedValue(context),
@@ -488,7 +488,7 @@ describe('ReleaseNoteGenerationService', () => {
   });
 
   it('renders sorted unique service labels for a multi-service pull request', async () => {
-    const createDrop = jest.fn().mockResolvedValue({});
+    const createDrop = jest.fn().mockResolvedValue({ id: 'created-drop' });
     const multiServiceContext: GitHubReleaseContext = {
       ...context,
       pull_requests: [
@@ -540,7 +540,7 @@ describe('ReleaseNoteGenerationService', () => {
   });
 
   it('neutralizes model-supplied markdown and mention syntax', async () => {
-    const createDrop = jest.fn().mockResolvedValue({});
+    const createDrop = jest.fn().mockResolvedValue({ id: 'created-drop' });
     const service = new ReleaseNoteGenerationService(
       {
         getReleaseContext: jest.fn().mockResolvedValue(context),
@@ -594,7 +594,7 @@ describe('ReleaseNoteGenerationService', () => {
         }))
       })
     );
-    const createDrop = jest.fn().mockResolvedValue({});
+    const createDrop = jest.fn().mockResolvedValue({ id: 'created-drop' });
     const getReleaseContext = jest.fn().mockResolvedValue({
       ...context,
       pull_requests: pullRequests
@@ -656,7 +656,7 @@ describe('ReleaseNoteGenerationService', () => {
         })
       );
     });
-    const createDrop = jest.fn().mockResolvedValue({});
+    const createDrop = jest.fn().mockResolvedValue({ id: 'created-drop' });
     const findDropIdByMetadata = jest.fn().mockResolvedValue(null);
     const service = new ReleaseNoteGenerationService(
       {
@@ -823,7 +823,7 @@ describe('ReleaseNoteGenerationService', () => {
         }))
       })
     );
-    const createDrop = jest.fn().mockResolvedValue({});
+    const createDrop = jest.fn().mockResolvedValue({ id: 'created-drop' });
     const service = new ReleaseNoteGenerationService(
       {
         getReleaseContext: jest.fn().mockResolvedValue({
@@ -933,6 +933,28 @@ describe('ReleaseNoteGenerationService', () => {
     expect(createDrop).not.toHaveBeenCalled();
   });
 
+  it('records an empty durable plan when the range has no pull requests', async () => {
+    const onPlan = jest.fn().mockResolvedValue(undefined);
+    const service = new ReleaseNoteGenerationService(
+      {
+        getReleaseContext: jest.fn().mockResolvedValue({
+          ...context,
+          pull_requests: []
+        })
+      } as unknown as ReleaseNoteGitHubService,
+      {} as AiPrompter,
+      {} as DropCreationApiService,
+      {} as IdentitiesDb,
+      undefined,
+      createDropsRepository()
+    );
+
+    await expect(
+      service.generateAndPost(request, {}, { onPlan })
+    ).resolves.toBe('no-pull-requests');
+    expect(onPlan).toHaveBeenCalledWith(0);
+  });
+
   it('publishes deterministic compact Desktop notes linked to the exact Frontend release', async () => {
     const frontendSha = '63630a3e27c37296bbe39d9813b014a824265a56';
     const coreSha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -968,7 +990,7 @@ describe('ReleaseNoteGenerationService', () => {
         ]
       })
     );
-    const createDrop = jest.fn().mockResolvedValue({});
+    const createDrop = jest.fn().mockResolvedValue({ id: 'created-drop' });
     const service = new ReleaseNoteGenerationService(
       {
         getReleaseContext: jest.fn().mockResolvedValue({

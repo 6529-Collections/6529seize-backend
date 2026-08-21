@@ -644,6 +644,28 @@ describe('processRequest', () => {
     });
   });
 
+  it('preserves the generation error when lock cleanup fails', async () => {
+    const redis = buildRedis();
+    const generationError = new NonRetryableReleaseNoteError(
+      'invalid release range'
+    );
+    redis.eval.mockRejectedValue(new Error('Redis cleanup failed'));
+
+    await expect(
+      processRequest(
+        {
+          ...request,
+          release_group_services: ['api'],
+          publish_release_note: true
+        },
+        {
+          redis: redis as any,
+          generateAndPost: jest.fn().mockRejectedValue(generationError)
+        }
+      )
+    ).rejects.toBe(generationError);
+  });
+
   it('keeps the latest successful run for a service before publication', async () => {
     const runKey = 'release-note-group:6529seize-backend:pr-1749:run:api';
     const originalRun = JSON.stringify({

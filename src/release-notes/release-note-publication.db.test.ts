@@ -54,17 +54,33 @@ describeWithSeed(
 
       await repository.recordPlan('publication-id', 11, {});
       await expect(
+        repository.recordPlan('publication-id', 12, {})
+      ).rejects.toThrow('changed its total part count');
+      await expect(
         repository.completePublication('publication-id', {})
       ).rejects.toThrow('has unfinished parts');
-      await repository.recordPart(
-        {
-          publicationId: 'publication-id',
-          partNumber: 6,
-          totalParts: 11,
-          dropId: 'part-six-drop'
-        },
-        {}
-      );
+      await expect(
+        repository.recordPart(
+          {
+            publicationId: 'publication-id',
+            partNumber: 2,
+            totalParts: 11,
+            dropId: 'out-of-order-part-drop'
+          },
+          {}
+        )
+      ).rejects.toThrow('cannot record out-of-order part 2');
+      for (let partNumber = 1; partNumber <= 6; partNumber++) {
+        await repository.recordPart(
+          {
+            publicationId: 'publication-id',
+            partNumber,
+            totalParts: 11,
+            dropId: `part-${partNumber}-drop`
+          },
+          {}
+        );
+      }
 
       const publishing = await sqlExecutor.oneOrNull<{
         readonly status: string;
@@ -81,9 +97,23 @@ describeWithSeed(
         status: ReleaseNotePublicationStatus.Publishing,
         total_parts: 11,
         next_part: 7,
-        last_drop_id: 'part-six-drop'
+        last_drop_id: 'part-6-drop'
       });
 
+      await expect(
+        repository.completePublication('publication-id', {})
+      ).rejects.toThrow('has unfinished parts');
+      for (let partNumber = 7; partNumber <= 11; partNumber++) {
+        await repository.recordPart(
+          {
+            publicationId: 'publication-id',
+            partNumber,
+            totalParts: 11,
+            dropId: `part-${partNumber}-drop`
+          },
+          {}
+        );
+      }
       await repository.completePublication('publication-id', {});
 
       const completed = await sqlExecutor.oneOrNull<{
@@ -116,6 +146,96 @@ describeWithSeed(
         last_completed_run_number: currentRun.number,
         last_completed_sha: currentRun.sha,
         version: 1
+      });
+      await expect(
+        repository.recordPart(
+          {
+            publicationId: 'publication-id',
+            partNumber: 11,
+            totalParts: 11,
+            dropId: 'late-part-eleven-drop'
+          },
+          {}
+        )
+      ).rejects.toThrow('is already completed');
+    });
+
+    it('advances the cursor when the release range has no pull requests', async () => {
+      await repository.preparePublication(
+        {
+          publicationId: 'empty-publication-id',
+          stream,
+          currentRun,
+          bootstrapPreviousRun: previousRun
+        },
+        {}
+      );
+
+      await repository.recordPlan('empty-publication-id', 0, {});
+      await repository.completePublication('empty-publication-id', {});
+
+      const publication = await sqlExecutor.oneOrNull<{
+        readonly status: string;
+        readonly total_parts: number | null;
+        readonly next_part: number;
+      }>(
+        `select status, total_parts, next_part
+         from ${RELEASE_NOTE_PUBLICATIONS_TABLE}
+         where publication_id = :publicationId`,
+        { publicationId: 'empty-publication-id' }
+      );
+      const cursor = await sqlExecutor.oneOrNull<{
+        readonly last_completed_run_number: number;
+        readonly last_completed_sha: string;
+      }>(
+        `select last_completed_run_number, last_completed_sha
+         from ${RELEASE_NOTE_STREAM_STATES_TABLE}
+         where stream_key = :streamKey`,
+        { streamKey: stream.key }
+      );
+      expect(publication).toEqual({
+        status: ReleaseNotePublicationStatus.Completed,
+        total_parts: 0,
+        next_part: 1
+      });
+      expect(cursor).toEqual({
+        last_completed_run_number: currentRun.number,
+        last_completed_sha: currentRun.sha
+      });
+    });
+
+    it('supersedes a publication when its frozen stream baseline no longer matches', async () => {
+      await repository.preparePublication(
+        {
+          publicationId: 'mismatched-publication-id',
+          stream,
+          currentRun,
+          bootstrapPreviousRun: previousRun
+        },
+        {}
+      );
+      await sqlExecutor.execute(
+        `update ${RELEASE_NOTE_STREAM_STATES_TABLE}
+         set last_completed_sha = :sha
+         where stream_key = :streamKey`,
+        {
+          streamKey: stream.key,
+          sha: 'dddddddddddddddddddddddddddddddddddddddd'
+        }
+      );
+
+      await repository.completePublication('mismatched-publication-id', {});
+
+      const publication = await sqlExecutor.oneOrNull<{
+        readonly status: string;
+      }>(
+        `select status
+         from ${RELEASE_NOTE_PUBLICATIONS_TABLE}
+         where publication_id = :publicationId`,
+        { publicationId: 'mismatched-publication-id' }
+      );
+      expect(publication).toEqual({
+        status: ReleaseNotePublicationStatus.Superseded
       });
     });
 

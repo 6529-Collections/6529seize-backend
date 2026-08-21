@@ -645,7 +645,7 @@ export class ReleaseNoteGitHubService {
         : `&branch=${encodeURIComponent(normalizeBranch(request.branch))}`;
     for (let page = 1; page <= MAX_WORKFLOW_RUN_PAGES; page++) {
       const payload = await this.api<GitHubWorkflowRunsResponse>(
-        `/repos/${repository}/actions/workflows/${currentRun.workflow_id}/runs?status=completed${branchQuery}&per_page=${WORKFLOW_RUN_PAGE_SIZE}&page=${page}`
+        `/repos/${repository}/actions/workflows/${currentRun.workflow_id}/runs?${branchQuery.slice(1)}${branchQuery ? '&' : ''}per_page=${WORKFLOW_RUN_PAGE_SIZE}&page=${page}`
       );
       const runs = payload.workflow_runs ?? [];
       const previousRun = runs

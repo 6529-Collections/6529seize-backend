@@ -4,6 +4,7 @@ import {
   buildReleaseNotePublicationId,
   isDesktopRelease,
   isFrontendRelease,
+  ReleaseNoteGenerationOptions,
   releaseNoteGenerationService
 } from '@/release-notes/release-note-generation.service';
 import {
@@ -43,6 +44,13 @@ type ReleaseNotePublicationState = Pick<
   ReleaseNotePublicationService,
   'prepare' | 'recordPlan' | 'recordPart' | 'complete'
 >;
+
+interface ProcessRequestDependencies {
+  readonly redis?: ReleaseNotesRedis | null;
+  readonly generateAndPost?: typeof releaseNoteGenerationService.generateAndPost;
+  readonly publicationState?: ReleaseNotePublicationState;
+  readonly getRemainingTimeInMillis?: () => number;
+}
 
 class RetryableReleaseNoteError extends Error {
   public readonly cause: unknown;
@@ -466,19 +474,117 @@ async function getReleaseGroupState(
   };
 }
 
+function resolveReleaseNotesRedis(
+  dependencies?: ProcessRequestDependencies
+): ReleaseNotesRedis | null {
+  if (Object.prototype.hasOwnProperty.call(dependencies ?? {}, 'redis')) {
+    return dependencies?.redis ?? null;
+  }
+  return getRedisClient();
+}
+
+async function prepareDurablePublication(
+  request: ReleaseNoteGenerationRequest,
+  publicationState: ReleaseNotePublicationState
+): Promise<PreparedReleaseNotePublication | null> {
+  if (request.pull_request_number) {
+    return null;
+  }
+  const prepared = await publicationState.prepare(
+    request,
+    buildReleaseNotePublicationId(request),
+    {}
+  );
+  if (!prepared) {
+    throw new NonRetryableReleaseNoteError(
+      `No previous successful production run was found for ${request.repo} run ${request.run_id}`
+    );
+  }
+  return prepared;
+}
+
+function buildGenerationOptions({
+  publication,
+  publicationState,
+  getRemainingTimeInMillis
+}: {
+  readonly publication: PreparedReleaseNotePublication | null;
+  readonly publicationState: ReleaseNotePublicationState;
+  readonly getRemainingTimeInMillis?: () => number;
+}): ReleaseNoteGenerationOptions | undefined {
+  if (!publication && !getRemainingTimeInMillis) {
+    return undefined;
+  }
+  const assertCanStartPart = (partNumber: number, totalParts: number) => {
+    const remaining = getRemainingTimeInMillis?.();
+    if (
+      remaining !== undefined &&
+      remaining < RELEASE_NOTE_MINIMUM_PART_TIME_MS
+    ) {
+      throw new Error(
+        `Deferring release-note part ${partNumber}/${totalParts} with ${remaining}ms remaining`
+      );
+    }
+  };
+  if (!publication) {
+    return { assertCanStartPart };
+  }
+  return {
+    previousSha: publication.previousSha,
+    assertCanStartPart,
+    onPlan: async (totalParts: number) => {
+      await publicationState.recordPlan(
+        publication.publicationId,
+        totalParts,
+        {}
+      );
+    },
+    onPartCompleted: async ({ partNumber, totalParts, dropId }) => {
+      if (!dropId) {
+        throw new Error(
+          `Release-note part ${partNumber}/${totalParts} did not return a drop id`
+        );
+      }
+      await publicationState.recordPart(
+        {
+          publicationId: publication.publicationId,
+          partNumber,
+          totalParts,
+          dropId
+        },
+        {}
+      );
+    }
+  };
+}
+
+async function releaseProcessingLock(
+  redis: ReleaseNotesRedis,
+  processingKey: string,
+  lockToken: string
+): Promise<void> {
+  try {
+    await redis.eval(
+      `
+        if redis.call('GET', KEYS[1]) == ARGV[1] then
+          return redis.call('DEL', KEYS[1])
+        end
+        return 0
+      `,
+      { keys: [processingKey], arguments: [lockToken] }
+    );
+  } catch (cleanupError) {
+    logger.warn(
+      `Failed to release release-note processing lock ${processingKey}: ${getErrorMessage(cleanupError)}`
+    );
+  }
+}
+
 export async function processRequest(
   request: ReleaseNoteGenerationRequest,
-  dependencies?: {
-    readonly redis?: ReleaseNotesRedis | null;
-    readonly generateAndPost?: typeof releaseNoteGenerationService.generateAndPost;
-    readonly publicationState?: ReleaseNotePublicationState;
-    readonly getRemainingTimeInMillis?: () => number;
-  }
+  dependencies?: ProcessRequestDependencies
 ) {
-  const redis =
-    dependencies && Object.prototype.hasOwnProperty.call(dependencies, 'redis')
-      ? dependencies.redis
-      : getRedisClient();
+  const redis = resolveReleaseNotesRedis(dependencies);
   if (!redis) {
     throw new Error(
       `Redis is required to deduplicate release ${request.release_group_id}`
@@ -497,7 +603,6 @@ export async function processRequest(
   const releaseGroup = await getReleaseGroupState(request, redis);
   const publicationState =
     dependencies?.publicationState ?? releaseNotePublicationService;
-  let preparedPublication: PreparedReleaseNotePublication | null = null;
   const lockToken = randomUUID();
   const lockAcquired =
     (await redis.set(processingKey, lockToken, {
@@ -509,23 +614,15 @@ export async function processRequest(
   }
 
   try {
-    if (!request.pull_request_number) {
-      preparedPublication = await publicationState.prepare(
-        request,
-        buildReleaseNotePublicationId(request),
-        {}
-      );
-      if (!preparedPublication) {
-        throw new NonRetryableReleaseNoteError(
-          `No previous successful production run was found for ${request.repo} run ${request.run_id}`
-        );
-      }
-      if (preparedPublication.completed) {
-        await redis.set(dedupeKey, '1', {
-          EX: RELEASE_NOTE_DEDUPE_TTL_SECONDS
-        });
-        return;
-      }
+    const preparedPublication = await prepareDurablePublication(
+      request,
+      publicationState
+    );
+    if (preparedPublication?.completed) {
+      await redis.set(dedupeKey, '1', {
+        EX: RELEASE_NOTE_DEDUPE_TTL_SECONDS
+      });
+      return;
     }
     const generateAndPost =
       dependencies?.generateAndPost ??
@@ -537,61 +634,11 @@ export async function processRequest(
       release_group_services: releaseGroup.services,
       release_group_runs: releaseGroup.runs
     };
-    const activePublication = preparedPublication;
-    const generationOptions =
-      activePublication || dependencies?.getRemainingTimeInMillis
-        ? {
-            ...(activePublication
-              ? { previousSha: activePublication.previousSha }
-              : {}),
-            assertCanStartPart: (partNumber: number, totalParts: number) => {
-              const remaining = dependencies?.getRemainingTimeInMillis?.();
-              if (
-                remaining !== undefined &&
-                remaining < RELEASE_NOTE_MINIMUM_PART_TIME_MS
-              ) {
-                throw new Error(
-                  `Deferring release-note part ${partNumber}/${totalParts} with ${remaining}ms remaining`
-                );
-              }
-            },
-            ...(activePublication
-              ? {
-                  onPlan: async (totalParts: number) => {
-                    await publicationState.recordPlan(
-                      activePublication.publicationId,
-                      totalParts,
-                      {}
-                    );
-                  },
-                  onPartCompleted: async ({
-                    partNumber,
-                    totalParts,
-                    dropId
-                  }: {
-                    readonly partNumber: number;
-                    readonly totalParts: number;
-                    readonly dropId: string;
-                  }) => {
-                    if (!dropId) {
-                      throw new Error(
-                        `Release-note part ${partNumber}/${totalParts} did not return a drop id`
-                      );
-                    }
-                    await publicationState.recordPart(
-                      {
-                        publicationId: activePublication.publicationId,
-                        partNumber,
-                        totalParts,
-                        dropId
-                      },
-                      {}
-                    );
-                  }
-                }
-              : {})
-          }
-        : undefined;
+    const generationOptions = buildGenerationOptions({
+      publication: preparedPublication,
+      publicationState,
+      getRemainingTimeInMillis: dependencies?.getRemainingTimeInMillis
+    });
     const outcome = generationOptions
       ? await generateAndPost(generationRequest, {}, generationOptions)
       : await generateAndPost(generationRequest, {});
@@ -604,15 +651,7 @@ export async function processRequest(
       });
     }
   } finally {
-    await redis.eval(
-      `
-        if redis.call('GET', KEYS[1]) == ARGV[1] then
-          return redis.call('DEL', KEYS[1])
-        end
-        return 0
-      `,
-      { keys: [processingKey], arguments: [lockToken] }
-    );
+    await releaseProcessingLock(redis, processingKey, lockToken);
   }
 }
 

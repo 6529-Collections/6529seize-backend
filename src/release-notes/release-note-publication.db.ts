@@ -146,30 +146,35 @@ export class ReleaseNotePublicationDb extends LazyDbAccessCompatibleService {
     const timerName = `${this.constructor.name}->recordPlan`;
     ctx.timer?.start(timerName);
     try {
-      await this.db.execute(
-        `update ${RELEASE_NOTE_PUBLICATIONS_TABLE}
-         set total_parts = coalesce(total_parts, :totalParts),
-             status = case
-               when status = :pending then :publishing
-               else status
-             end,
-             updated_at = :updatedAt
-         where publication_id = :publicationId`,
-        {
+      await this.executeNativeQueriesInTransaction(async (connection) => {
+        const txCtx = { ...ctx, connection };
+        const publication = await this.requireActivePublicationForUpdate(
           publicationId,
-          totalParts,
-          pending: ReleaseNotePublicationStatus.Pending,
-          publishing: ReleaseNotePublicationStatus.Publishing,
-          updatedAt: Date.now()
-        },
-        queryOptions(ctx)
-      );
-      const publication = await this.findPublication(publicationId, ctx);
-      if (!publication || publication.total_parts !== totalParts) {
-        throw new Error(
-          `Release-note publication ${publicationId} changed its total part count`
+          txCtx
         );
-      }
+        if (
+          publication.total_parts !== null &&
+          publication.total_parts !== totalParts
+        ) {
+          throw new Error(
+            `Release-note publication ${publicationId} changed its total part count`
+          );
+        }
+        await this.db.execute(
+          `update ${RELEASE_NOTE_PUBLICATIONS_TABLE}
+           set total_parts = :totalParts,
+               status = :publishing,
+               updated_at = :updatedAt
+           where publication_id = :publicationId`,
+          {
+            publicationId,
+            totalParts,
+            publishing: ReleaseNotePublicationStatus.Publishing,
+            updatedAt: Date.now()
+          },
+          queryOptions(txCtx)
+        );
+      });
     } finally {
       ctx.timer?.stop(timerName);
     }
@@ -192,26 +197,47 @@ export class ReleaseNotePublicationDb extends LazyDbAccessCompatibleService {
     const timerName = `${this.constructor.name}->recordPart`;
     ctx.timer?.start(timerName);
     try {
-      await this.db.execute(
-        `update ${RELEASE_NOTE_PUBLICATIONS_TABLE}
-         set total_parts = coalesce(total_parts, :totalParts),
-             next_part = greatest(next_part, :nextPart),
-             last_drop_id = :dropId,
-             status = :publishing,
-             updated_at = :updatedAt
-         where publication_id = :publicationId
-           and status in (:pending, :publishing)`,
-        {
+      await this.executeNativeQueriesInTransaction(async (connection) => {
+        const txCtx = { ...ctx, connection };
+        const publication = await this.requireActivePublicationForUpdate(
           publicationId,
-          totalParts,
-          nextPart: partNumber + 1,
-          dropId,
-          pending: ReleaseNotePublicationStatus.Pending,
-          publishing: ReleaseNotePublicationStatus.Publishing,
-          updatedAt: Date.now()
-        },
-        queryOptions(ctx)
-      );
+          txCtx
+        );
+        if (
+          publication.total_parts !== null &&
+          publication.total_parts !== totalParts
+        ) {
+          throw new Error(
+            `Release-note publication ${publicationId} changed its total part count`
+          );
+        }
+        if (publication.next_part > partNumber) {
+          return;
+        }
+        if (publication.next_part < partNumber) {
+          throw new Error(
+            `Release-note publication ${publicationId} cannot record out-of-order part ${partNumber}`
+          );
+        }
+        await this.db.execute(
+          `update ${RELEASE_NOTE_PUBLICATIONS_TABLE}
+           set total_parts = :totalParts,
+               next_part = :nextPart,
+               last_drop_id = :dropId,
+               status = :publishing,
+               updated_at = :updatedAt
+           where publication_id = :publicationId`,
+          {
+            publicationId,
+            totalParts,
+            nextPart: partNumber + 1,
+            dropId,
+            publishing: ReleaseNotePublicationStatus.Publishing,
+            updatedAt: Date.now()
+          },
+          queryOptions(txCtx)
+        );
+      });
     } finally {
       ctx.timer?.stop(timerName);
     }
@@ -241,14 +267,6 @@ export class ReleaseNotePublicationDb extends LazyDbAccessCompatibleService {
         ) {
           return;
         }
-        if (
-          publication.total_parts !== null &&
-          publication.next_part <= publication.total_parts
-        ) {
-          throw new Error(
-            `Release-note publication ${publicationId} has unfinished parts`
-          );
-        }
         const stream = await this.findStreamForUpdate(
           publication.stream_key,
           txCtx
@@ -271,8 +289,21 @@ export class ReleaseNotePublicationDb extends LazyDbAccessCompatibleService {
             publication.previous_run_number ||
           stream.last_completed_sha !== publication.previous_sha
         ) {
+          await this.updatePublicationStatus(
+            publication,
+            ReleaseNotePublicationStatus.Superseded,
+            txCtx
+          );
+          return;
+        }
+        if (publication.total_parts === null) {
           throw new Error(
-            `Release-note stream ${publication.stream_key} moved while publication ${publicationId} was active`
+            `Release-note publication ${publicationId} has no durable plan`
+          );
+        }
+        if (publication.next_part <= publication.total_parts) {
+          throw new Error(
+            `Release-note publication ${publicationId} has unfinished parts`
           );
         }
 
@@ -317,18 +348,6 @@ export class ReleaseNotePublicationDb extends LazyDbAccessCompatibleService {
     }
   }
 
-  private async findPublication(
-    publicationId: string,
-    ctx: RequestContext
-  ): Promise<ReleaseNotePublicationEntity | null> {
-    return await this.db.oneOrNull<ReleaseNotePublicationEntity>(
-      `select * from ${RELEASE_NOTE_PUBLICATIONS_TABLE}
-       where publication_id = :publicationId`,
-      { publicationId },
-      queryOptions(ctx)
-    );
-  }
-
   private async findPublicationForUpdate(
     publicationId: string,
     ctx: RequestContext
@@ -340,6 +359,27 @@ export class ReleaseNotePublicationDb extends LazyDbAccessCompatibleService {
       { publicationId },
       queryOptions(ctx)
     );
+  }
+
+  private async requireActivePublicationForUpdate(
+    publicationId: string,
+    ctx: RequestContext
+  ): Promise<ReleaseNotePublicationEntity> {
+    const publication = await this.findPublicationForUpdate(publicationId, ctx);
+    if (!publication) {
+      throw new Error(
+        `Release-note publication ${publicationId} does not exist`
+      );
+    }
+    if (
+      publication.status !== ReleaseNotePublicationStatus.Pending &&
+      publication.status !== ReleaseNotePublicationStatus.Publishing
+    ) {
+      throw new Error(
+        `Release-note publication ${publicationId} is already ${publication.status.toLowerCase()}`
+      );
+    }
+    return publication;
   }
 
   private async findStreamForUpdate(
