@@ -15,6 +15,84 @@ import { DropType } from '@/entities/IDrop';
 import { DropsDb, LeaderboardSort } from './drops.db';
 
 describe('DropsDb', () => {
+  it('uses prefix-aware content matching and all structured filters', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new DropsDb(() => ({ execute }) as any);
+    const ctx = { connection: { connection: {} } as any };
+
+    await repo.searchDropsInWave(
+      {
+        wave_id: 'wave-1',
+        term: 'loo good',
+        author_id: 'author-1',
+        after: 100,
+        before: 200,
+        limit: 21,
+        offset: 20
+      },
+      ctx
+    );
+
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain('EXISTS');
+    expect(sql).toContain('d.author_id = :author_id');
+    expect(sql).toContain('d.created_at >= :after');
+    expect(sql).toContain('d.created_at < :before');
+    expect(params).toEqual({
+      wave_id: 'wave-1',
+      term: '+loo* +good*',
+      likeTerm: 'loo good',
+      author_id: 'author-1',
+      after: 100,
+      before: 200,
+      limit: 21,
+      offset: 20
+    });
+  });
+
+  it('supports filter-only searches without joining drop content', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new DropsDb(() => ({ execute }) as any);
+
+    await repo.searchDropsInWave(
+      { wave_id: 'wave-1', author_id: 'author-1', limit: 20, offset: 0 },
+      { connection: { connection: {} } as any }
+    );
+
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).not.toContain('MATCH(');
+    expect(sql).toContain('d.author_id = :author_id');
+    expect(params).toEqual({
+      wave_id: 'wave-1',
+      author_id: 'author-1',
+      limit: 20,
+      offset: 0
+    });
+  });
+
+  it('matches mixed-case handles literally using profile external ids in the wave join', async () => {
+    const authors = [{ id: 'profile-external-1', handle: 'Alice', pfp: null }];
+    const execute = jest.fn().mockResolvedValue(authors);
+    const repo = new DropsDb(() => ({ execute }) as any);
+
+    await expect(
+      repo.searchWaveAuthors(
+        { wave_id: 'wave-1', handle: 'A_Li', limit: 10 },
+        { connection: { connection: {} } as any }
+      )
+    ).resolves.toBe(authors);
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain('INNER JOIN drops d ON d.author_id = p.external_id');
+    expect(sql).toContain("p.normalised_handle LIKE CONCAT(:handle, '%')");
+    expect(sql).toContain("ESCAPE '\\\\'");
+    expect(sql).toContain('d.wave_id = :wave_id');
+    expect(params).toEqual({
+      wave_id: 'wave-1',
+      handle: 'a\\_li',
+      limit: 10
+    });
+  });
+
   it('groups active and winning submissions by author and wave', async () => {
     const connection = {};
     const execute = jest.fn().mockResolvedValue([
