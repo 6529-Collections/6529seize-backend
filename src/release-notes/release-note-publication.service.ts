@@ -83,7 +83,10 @@ export class ReleaseNotePublicationService {
     );
     const bootstrapPreviousRun = existingStream
       ? null
-      : await this.githubService.getPreviousSuccessfulReleaseRun(request);
+      : await this.githubService.getPreviousSuccessfulReleaseRun(
+          request,
+          currentRun
+        );
     const publication = await this.publicationDb.preparePublication(
       {
         publicationId,

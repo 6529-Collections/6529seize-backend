@@ -1367,7 +1367,12 @@ describe('ReleaseNoteGitHubService', () => {
   });
 
   it('caps bootstrap workflow history at 1000 unfiltered runs', async () => {
-    const bootstrapRequest = { ...request, run_number: '1001' };
+    const bootstrapCurrentRun = {
+      id: request.run_id,
+      run_number: 1001,
+      workflow_id: '7',
+      sha: request.sha
+    };
     const sameShaRuns = Array.from({ length: 100 }, (_, index) => ({
       id: 2000 + index,
       name: `Deploy service${index} to prod`,
@@ -1378,9 +1383,6 @@ describe('ReleaseNoteGitHubService', () => {
       status: 'completed',
       conclusion: 'success'
     }));
-    (fetch as unknown as jest.Mock).mockResolvedValueOnce(
-      response({ ...currentRun, run_number: 1001 })
-    );
     for (let page = 0; page < 10; page++) {
       (fetch as unknown as jest.Mock).mockResolvedValueOnce(
         response({ workflow_runs: sameShaRuns })
@@ -1389,11 +1391,12 @@ describe('ReleaseNoteGitHubService', () => {
 
     await expect(
       new ReleaseNoteGitHubService().getPreviousSuccessfulReleaseRun(
-        bootstrapRequest
+        { ...request, run_number: '1001' },
+        bootstrapCurrentRun
       )
     ).rejects.toThrow(
       'Previous successful production run was not found within 1000 workflow runs'
     );
-    expect(fetch).toHaveBeenCalledTimes(11);
+    expect(fetch).toHaveBeenCalledTimes(10);
   });
 });

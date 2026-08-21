@@ -83,7 +83,10 @@ describe('ReleaseNotePublicationService', () => {
       previousSha: previousRun.sha,
       completed: false
     });
-    expect(getPreviousSuccessfulReleaseRun).toHaveBeenCalledWith(request);
+    expect(getPreviousSuccessfulReleaseRun).toHaveBeenCalledWith(
+      request,
+      currentRun
+    );
     expect(preparePublication).toHaveBeenCalledWith(
       expect.objectContaining({
         publicationId: 'publication-id',

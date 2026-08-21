@@ -25,6 +25,11 @@ interface GitHubWorkflowRunsResponse {
   readonly workflow_runs?: GitHubWorkflowRun[];
 }
 
+type GitHubWorkflowRunAnchor = Pick<
+  GitHubWorkflowRun,
+  'run_number' | 'workflow_id'
+>;
+
 interface GitHubUser {
   readonly login?: string;
   readonly type?: string;
@@ -621,14 +626,20 @@ export class ReleaseNoteGitHubService {
   }
 
   public async getPreviousSuccessfulReleaseRun(
-    request: ReleaseNoteGenerationRequest
+    request: ReleaseNoteGenerationRequest,
+    currentRun: GitHubReleaseRun
   ): Promise<GitHubReleaseRun | null> {
     const repository = normalizeRepository(request.repo);
-    const currentRun = await this.getValidatedCurrentRun(repository, request);
+    const workflowId = Number(currentRun.workflow_id);
+    if (!Number.isSafeInteger(workflowId)) {
+      throw new UntrustedReleaseNoteMetadataError(
+        `GitHub release run ${currentRun.id} has an invalid workflow id`
+      );
+    }
     const previousRun = await this.findPreviousSuccessfulRun(
       repository,
       request,
-      currentRun
+      { run_number: currentRun.run_number, workflow_id: workflowId }
     );
     return previousRun ? toReleaseRun(previousRun) : null;
   }
@@ -636,16 +647,18 @@ export class ReleaseNoteGitHubService {
   private async findPreviousSuccessfulRun(
     repository: string,
     request: ReleaseNoteGenerationRequest,
-    currentRun: GitHubWorkflowRun
+    currentRun: GitHubWorkflowRunAnchor
   ): Promise<GitHubWorkflowRun | null> {
     const repoName = getRepoName(request.repo);
-    const branchQuery =
-      repoName === CORE_REPO
-        ? ''
-        : `&branch=${encodeURIComponent(normalizeBranch(request.branch))}`;
     for (let page = 1; page <= MAX_WORKFLOW_RUN_PAGES; page++) {
+      const query = new URLSearchParams();
+      if (repoName !== CORE_REPO) {
+        query.set('branch', normalizeBranch(request.branch));
+      }
+      query.set('per_page', String(WORKFLOW_RUN_PAGE_SIZE));
+      query.set('page', String(page));
       const payload = await this.api<GitHubWorkflowRunsResponse>(
-        `/repos/${repository}/actions/workflows/${currentRun.workflow_id}/runs?${branchQuery.slice(1)}${branchQuery ? '&' : ''}per_page=${WORKFLOW_RUN_PAGE_SIZE}&page=${page}`
+        `/repos/${repository}/actions/workflows/${currentRun.workflow_id}/runs?${query.toString()}`
       );
       const runs = payload.workflow_runs ?? [];
       const previousRun = runs
