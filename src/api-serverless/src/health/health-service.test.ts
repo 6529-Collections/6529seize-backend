@@ -37,7 +37,8 @@ describe('IPFS health', () => {
       headers: {
         Accept: 'application/json',
         'User-Agent': '6529-api-health/1.0'
-      }
+      },
+      signal: expect.any(AbortSignal)
     });
   });
 
@@ -59,11 +60,19 @@ describe('IPFS health', () => {
 
   it('reports degraded when the request times out', async () => {
     jest.useFakeTimers();
-    fetchMock.mockImplementation(() => new Promise(() => undefined));
+    fetchMock.mockImplementation(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new Error('aborted'));
+          });
+        })
+    );
 
     const healthPromise = getIpfsHealth();
     jest.advanceTimersByTime(5_000);
 
     await expect(healthPromise).resolves.toEqual({ healthy: false });
+    expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(true);
   });
 });

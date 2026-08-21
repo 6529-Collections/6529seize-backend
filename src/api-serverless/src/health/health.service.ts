@@ -202,17 +202,23 @@ async function getArweaveHealthSafe(): Promise<HealthData['arweave']> {
   }
 }
 
-async function fetchIpfsHealth(): Promise<HealthData['ipfs']> {
+async function fetchIpfsHealth(
+  signal: AbortSignal
+): Promise<HealthData['ipfs']> {
   const apiEndpoint = process.env.IPFS_API_ENDPOINT;
   if (!apiEndpoint) {
     throw new Error('IPFS_API_ENDPOINT not configured');
   }
 
-  const response = await fetch(`${apiEndpoint.replace(/\/+$/, '')}/health`, {
+  const normalizedApiEndpoint = apiEndpoint.endsWith('/')
+    ? apiEndpoint.slice(0, -1)
+    : apiEndpoint;
+  const response = await fetch(`${normalizedApiEndpoint}/health`, {
     headers: {
       Accept: 'application/json',
       'User-Agent': IPFS_HEALTH_USER_AGENT
-    }
+    },
+    signal
   });
   if (!response.ok) {
     throw new Error(`IPFS health check returned status ${response.status}`);
@@ -222,15 +228,19 @@ async function fetchIpfsHealth(): Promise<HealthData['ipfs']> {
 }
 
 export async function getIpfsHealth(): Promise<HealthData['ipfs']> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    IPFS_HEALTH_TIMEOUT_MS
+  );
+
   try {
-    return await withTimeout(
-      fetchIpfsHealth(),
-      IPFS_HEALTH_TIMEOUT_MS,
-      'IPFS health check timed out'
-    );
+    return await fetchIpfsHealth(controller.signal);
   } catch (err) {
     logger.warn('IPFS health check failed', err);
     return { healthy: false };
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -313,10 +323,17 @@ export interface HealthData {
 }
 
 export async function getHealthData(): Promise<HealthData> {
-  const isDbHealthy = await checkDbHealth();
-  const { response: redisResponse, isOk: isRedisOk } = await getRedisHealth();
-  const arweaveResponse = await getArweaveHealthSafe();
-  const ipfsResponse = await getIpfsHealth();
+  const [
+    isDbHealthy,
+    { response: redisResponse, isOk: isRedisOk },
+    arweaveResponse,
+    ipfsResponse
+  ] = await Promise.all([
+    checkDbHealth(),
+    getRedisHealth(),
+    getArweaveHealthSafe(),
+    getIpfsHealth()
+  ]);
   const rateLimitResponse = getRateLimitHealth();
   const overallStatus =
     isDbHealthy && isRedisOk && arweaveResponse.healthy && ipfsResponse.healthy
