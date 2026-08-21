@@ -32,6 +32,10 @@ const ACCEPTED_REMOVED_RESPONSE_MAX_LENGTHS = new Set([
   'schema ApiDropPartV2.properties.content.maxLength'
 ]);
 
+const ACCEPTED_RELAXED_REQUIRED_FLAGS = new Set([
+  'GET /v2/waves/{waveId}/search.parameters.query:term.required'
+]);
+
 const fixtureRoot = path.resolve(
   __dirname,
   '../../../competitions/contract-fixtures/phase-0'
@@ -65,6 +69,13 @@ function assertSchemaCompatible(
     return;
   }
   if (baseline === null || typeof baseline !== 'object') {
+    if (
+      baseline === true &&
+      current === false &&
+      ACCEPTED_RELAXED_REQUIRED_FLAGS.has(location)
+    ) {
+      return;
+    }
     expect(current).toEqual(baseline);
     return;
   }

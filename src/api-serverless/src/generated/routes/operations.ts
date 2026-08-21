@@ -71,6 +71,7 @@ import { ApiWaveMentionSearchResult } from '@/api/generated/models/ApiWaveMentio
 import { ApiWaveMetadata } from '@/api/generated/models/ApiWaveMetadata';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
+import { ApiWaveSearchAuthor } from '@/api/generated/models/ApiWaveSearchAuthor';
 import { ApiWaveV3 } from '@/api/generated/models/ApiWaveV3';
 
 export interface GetWalletDistributionAllocationsPathParams {
@@ -1160,12 +1161,34 @@ export type SearchWaveMentionsRequest = Request<
   Record<string, never>
 >;
 
+export interface SearchWaveAuthorsV2PathParams {
+  "waveId": string;
+}
+
+export interface SearchWaveAuthorsV2Query {
+  "handle"?: string;
+  "limit"?: number;
+}
+
+export type SearchWaveAuthorsV2Response = ApiWaveSearchAuthor[];
+
+export type SearchWaveAuthorsV2Request = Request<
+  SearchWaveAuthorsV2PathParams,
+  ApiResponse<SearchWaveAuthorsV2Response>,
+  never,
+  SearchWaveAuthorsV2Query,
+  Record<string, never>
+>;
+
 export interface SearchDropsInWaveV2PathParams {
   "waveId": string;
 }
 
 export interface SearchDropsInWaveV2Query {
-  "term": string;
+  "term"?: string;
+  "author_id"?: string;
+  "after"?: number;
+  "before"?: number;
   "page"?: number;
   "size"?: number;
 }
