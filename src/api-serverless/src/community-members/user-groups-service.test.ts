@@ -22,6 +22,33 @@ import { AbusivenessCheckService } from '@/profiles/abusiveness-check.service';
 import { MetricsRecorder } from '@/metrics/MetricsRecorder';
 import fc from 'fast-check';
 import { xTdhRepository } from '@/xtdh/xtdh.repository';
+import { ApiCreateGroupDescription } from '@/api/generated/models/ApiCreateGroupDescription';
+import { ApiGroupOwnsNftNameEnum } from '@/api/generated/models/ApiGroupOwnsNft';
+
+function buildPreviewGroup(
+  overrides: Partial<ApiCreateGroupDescription> = {}
+): ApiCreateGroupDescription {
+  return {
+    cic: { min: null, max: null, user_identity: null, direction: null },
+    rep: {
+      min: null,
+      max: null,
+      user_identity: null,
+      direction: null,
+      category: null
+    },
+    level: { min: null, max: null },
+    tdh: {
+      min: null,
+      max: null,
+      inclusion_strategy: GroupTdhInclusionStrategy.TDH as never
+    },
+    owns_nfts: [],
+    identity_addresses: [],
+    excluded_identity_addresses: [],
+    ...overrides
+  };
+}
 
 jest.mock('@/redis', () => ({
   ...jest.requireActual('@/redis'),
@@ -830,5 +857,149 @@ describe('UserGroupsDb getAllProfileOwnedTokensByProfileIdGroupedByContract', ()
       { profileId: PROFILE_ID },
       { wrappedConnection: undefined }
     );
+  });
+});
+
+describe('UserGroupsService draft membership SQL', () => {
+  it('binds included and excluded draft addresses without persisting a group', async () => {
+    const service = buildService();
+    const includedAddress = '0x1111111111111111111111111111111111111111';
+    const excludedAddress = '0x2222222222222222222222222222222222222222';
+
+    const result = await service.getSqlAndParamsForPreview(
+      buildPreviewGroup({
+        identity_addresses: [includedAddress],
+        excluded_identity_addresses: [excludedAddress]
+      }),
+      {}
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.sql).toContain(':preview_included_addresses');
+    expect(result!.sql).toContain(':preview_excluded_addresses');
+    expect(result!.sql).not.toContain('community_groups');
+    expect(result!.params).toMatchObject({
+      preview_included_addresses: [includedAddress],
+      preview_excluded_addresses: [excludedAddress]
+    });
+    expect(result!.sql).toContain(
+      'user_groups_view as (select i.* from identities i join included_profile_ids'
+    );
+  });
+
+  it('uses a single anti-membership scan for an exclusion-only draft', async () => {
+    const service = buildService();
+    const excludedAddress = '0x2222222222222222222222222222222222222222';
+
+    const result = await service.getSqlAndParamsForPreview(
+      buildPreviewGroup({
+        excluded_identity_addresses: [excludedAddress]
+      }),
+      {}
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.sql).toContain(
+      'select i.* from identities i where not exists'
+    );
+    expect(result!.sql).not.toContain('included_profile_ids as');
+    expect(result!.params).toMatchObject({
+      preview_excluded_addresses: [excludedAddress]
+    });
+  });
+
+  it('uses the base community view for an empty draft', async () => {
+    const service = buildService();
+
+    const result = await service.getSqlAndParamsForPreview(
+      buildPreviewGroup(),
+      {}
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.sql).toContain(
+      'user_groups_view as (select * from cm_view)'
+    );
+    expect(result!.params).not.toHaveProperty('preview_included_addresses');
+    expect(result!.params).not.toHaveProperty('preview_excluded_addresses');
+  });
+
+  it('binds draft NFT token criteria for all-token matching', async () => {
+    const service = buildService();
+
+    const result = await service.getSqlAndParamsForPreview(
+      buildPreviewGroup({
+        owns_nfts: [
+          {
+            name: ApiGroupOwnsNftNameEnum.Memes,
+            tokens: ['1', '2', '2'],
+            match_mode: GroupNftOwnershipMatchMode.ALL_TOKENS as never
+          }
+        ]
+      }),
+      {}
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.sql).toContain('token_id in (:meme_token_ids)');
+    expect(result!.sql).toContain(':meme_token_ids_count');
+    expect(result!.sql).not.toContain('JSON_TABLE');
+    expect(result!.params).toMatchObject({
+      meme_token_ids: ['1', '2'],
+      meme_token_ids_count: 2
+    });
+  });
+
+  it('binds draft NFT token criteria for any-token matching', async () => {
+    const service = buildService();
+
+    const result = await service.getSqlAndParamsForPreview(
+      buildPreviewGroup({
+        owns_nfts: [
+          {
+            name: ApiGroupOwnsNftNameEnum.Memes,
+            tokens: ['1', '2'],
+            match_mode: GroupNftOwnershipMatchMode.ANY_TOKEN as never
+          }
+        ]
+      }),
+      {}
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.sql).toContain('token_id in (:meme_token_ids)');
+    expect(result!.sql).not.toContain(':meme_token_ids_count');
+    expect(result!.params).toMatchObject({ meme_token_ids: ['1', '2'] });
+    expect(result!.params).not.toHaveProperty('meme_token_ids_count');
+  });
+
+  it('keeps zero as an explicit draft level boundary', async () => {
+    const service = buildService();
+
+    const result = await service.getSqlAndParamsForPreview(
+      buildPreviewGroup({ level: { min: 0, max: 0 } }),
+      {}
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.sql).toContain('i.level_raw >= :level_min');
+    expect(result!.sql).toContain('i.level_raw <= :level_max');
+    expect(result!.params).toMatchObject({ level_min: 0, level_max: 0 });
+  });
+
+  it('rejects an unknown beneficiary grant before evaluating a draft', async () => {
+    const service = buildService();
+    const getGrantById = jest
+      .spyOn(xTdhRepository, 'getGrantById')
+      .mockResolvedValueOnce(null);
+
+    await expect(
+      service.getSqlAndParamsForPreview(
+        buildPreviewGroup({ is_beneficiary_of_grant_id: 'missing-grant' }),
+        {}
+      )
+    ).rejects.toThrow("Can't create group based on grant missing-grant");
+    expect(getGrantById).toHaveBeenCalledWith('missing-grant', {});
+    getGrantById.mockRestore();
   });
 });

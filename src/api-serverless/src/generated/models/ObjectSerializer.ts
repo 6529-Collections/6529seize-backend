@@ -241,6 +241,7 @@ export * from '../models/ApiGroupDescription';
 export * from '../models/ApiGroupFilterDirection';
 export * from '../models/ApiGroupFull';
 export * from '../models/ApiGroupLevelFilter';
+export * from '../models/ApiGroupMembersPreviewRequest';
 export * from '../models/ApiGroupNftOwnershipMatchMode';
 export * from '../models/ApiGroupOwnsNft';
 export * from '../models/ApiGroupRepFilter';
@@ -901,6 +902,7 @@ import { ApiGroupDescription             } from '../models/ApiGroupDescription';
 import { ApiGroupFilterDirection } from '../models/ApiGroupFilterDirection';
 import { ApiGroupFull } from '../models/ApiGroupFull';
 import { ApiGroupLevelFilter } from '../models/ApiGroupLevelFilter';
+import { ApiGroupMembersPreviewRequest } from '../models/ApiGroupMembersPreviewRequest';
 import { ApiGroupNftOwnershipMatchMode } from '../models/ApiGroupNftOwnershipMatchMode';
 import { ApiGroupOwnsNft, ApiGroupOwnsNftNameEnum     } from '../models/ApiGroupOwnsNft';
 import { ApiGroupRepFilter      } from '../models/ApiGroupRepFilter';
@@ -1761,6 +1763,7 @@ let typeMap: {[index: string]: any} = {
     "ApiGroupDescription": ApiGroupDescription,
     "ApiGroupFull": ApiGroupFull,
     "ApiGroupLevelFilter": ApiGroupLevelFilter,
+    "ApiGroupMembersPreviewRequest": ApiGroupMembersPreviewRequest,
     "ApiGroupOwnsNft": ApiGroupOwnsNft,
     "ApiGroupRepFilter": ApiGroupRepFilter,
     "ApiGroupTdhFilter": ApiGroupTdhFilter,
