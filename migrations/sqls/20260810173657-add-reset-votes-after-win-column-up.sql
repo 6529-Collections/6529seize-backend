@@ -1,0 +1,9 @@
+ALTER TABLE waves
+  ADD COLUMN reset_votes_after_win tinyint(1) NOT NULL DEFAULT 0,
+  ALGORITHM=INPLACE,
+  LOCK=NONE;
+
+ALTER TABLE waves_archive
+  ADD COLUMN reset_votes_after_win tinyint(1) NOT NULL DEFAULT 0,
+  ALGORITHM=INPLACE,
+  LOCK=NONE;

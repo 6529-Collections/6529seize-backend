@@ -253,6 +253,7 @@ export class WavesMappers {
       participation_terms: request.participation.terms,
       admin_drop_deletion_enabled: request.wave.admin_drop_deletion_enabled,
       forbid_negative_votes: request.voting.forbid_negative_votes,
+      reset_votes_after_win: request.wave.reset_votes_after_win ?? existingWaveSettings?.reset_votes_after_win ?? false,
       is_direct_message: isDirectMessage
     };
   }
@@ -502,6 +503,7 @@ export class WavesMappers {
       decisions_strategy: waveEntity.decisions_strategy,
       next_decision_time: waveEntity.next_decision_time,
       admin_drop_deletion_enabled: waveEntity.admin_drop_deletion_enabled,
+      reset_votes_after_win: waveEntity.reset_votes_after_win,
       ...approveDecisionCounts
     };
     const waveMetrics = metrics[waveEntity.id];
