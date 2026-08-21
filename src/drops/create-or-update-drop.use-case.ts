@@ -351,7 +351,11 @@ export class CreateOrUpdateDropUseCase {
       bypassChatSlowModeRestrictions?: boolean;
       prePublication: PrePublicationPreparation;
     }
-  ): Promise<{ drop_id: string; pending_push_notification_ids: number[] }> {
+  ): Promise<{
+    drop_id: string;
+    pending_push_notification_ids: number[];
+    dm_unread_recipient_ids: string[];
+  }> {
     let resolvedModel = sanitizeDropStructuredFields(model);
     this.assertDropContentLimits(resolvedModel.parts);
     timer?.start(`${CreateOrUpdateDropUseCase.name}->execute`);
@@ -504,7 +508,11 @@ export class CreateOrUpdateDropUseCase {
       bypassChatSlowModeRestrictions?: boolean;
       prePublication: PrePublicationPreparation;
     }
-  ): Promise<{ drop_id: string; pending_push_notification_ids: number[] }> {
+  ): Promise<{
+    drop_id: string;
+    pending_push_notification_ids: number[];
+    dm_unread_recipient_ids: string[];
+  }> {
     this.assertDropContentLimits(model.parts);
     if (model.drop_type === DropType.WINNER) {
       throw new BadRequestException(`Can't modify a winner drop`);
@@ -575,6 +583,7 @@ export class CreateOrUpdateDropUseCase {
     }
     let dropId: string;
     let pendingPushNotificationIds: number[] = [];
+    let dmUnreadRecipientIds: string[] = [];
     if (preExistingDropId) {
       dropId = preExistingDropId;
       const dropBeforeUpdate = await this.dropsDb.findDropById(
@@ -641,14 +650,24 @@ export class CreateOrUpdateDropUseCase {
         },
         { connection, timer }
       );
-      await this.ensureDirectMessageReaderMetricsForNewDrop(
-        {
-          wave,
-          authorId,
-          createdAt
-        },
-        { connection, timer }
-      );
+      if (wave.is_direct_message === true) {
+        const insertedDrop = await this.dropsDb.findDropById(
+          dropId,
+          connection
+        );
+        if (!insertedDrop) {
+          throw new NotFoundException(`Drop ${dropId} not found after insert`);
+        }
+        dmUnreadRecipientIds = await this.recordDirectMessageUnreadForNewDrop(
+          {
+            wave,
+            authorId,
+            createdAt,
+            serialNo: insertedDrop.serial_no
+          },
+          { connection, timer }
+        );
+      }
       await Promise.all([
         this.metricsRecorder.recordDrop(
           {
@@ -686,58 +705,108 @@ export class CreateOrUpdateDropUseCase {
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->execute`);
     return {
       drop_id: dropId,
-      pending_push_notification_ids: pendingPushNotificationIds
+      pending_push_notification_ids: pendingPushNotificationIds,
+      dm_unread_recipient_ids: dmUnreadRecipientIds
     };
   }
 
-  private async ensureDirectMessageReaderMetricsForNewDrop(
+  private async recordDirectMessageUnreadForNewDrop(
     {
       wave,
       authorId,
-      createdAt
+      createdAt,
+      serialNo
     }: {
       wave: WaveEntity;
       authorId: string;
       createdAt: number;
+      serialNo: number;
     },
     { connection, timer }: { connection: ConnectionWrapper<any>; timer?: Timer }
-  ) {
+  ): Promise<string[]> {
     if (wave.is_direct_message !== true) {
-      return;
+      return [];
     }
     const directMessageGroupId = wave.chat_group_id;
     if (!directMessageGroupId) {
-      return;
+      return [];
     }
     const readerIds = await this.userGroupsService.findIdentitiesInGroups(
       [directMessageGroupId],
       { timer, connection }
     );
-    const recipientIds = readerIds.filter((readerId) => readerId !== authorId);
-    const existingReaderMetricIds =
-      await this.wavesApiDb.findExistingWaveReaderMetricReaderIds(
+    const candidateRecipientIds = collections.distinct(
+      readerIds.filter((readerId) => readerId !== authorId)
+    );
+    const recipientIds =
+      await this.filterDirectMessageUnreadRecipientsByVisibility(
+        wave,
+        candidateRecipientIds,
+        { timer, connection }
+      );
+    await this.wavesApiDb.recordDirectMessageUnreadDrop(
+      {
+        waveId: wave.id,
+        recipientIds,
+        dropSerialNo: serialNo,
+        dropCreatedAt: createdAt
+      },
+      { timer, connection }
+    );
+    return recipientIds;
+  }
+
+  private async filterDirectMessageUnreadRecipientsByVisibility(
+    wave: WaveEntity,
+    candidateRecipientIds: string[],
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+  ): Promise<string[]> {
+    const visibilityGroupIds = [wave.visibility_group_id].filter(
+      (groupId): groupId is string =>
+        groupId !== null && groupId !== wave.chat_group_id
+    );
+    if (wave.parent_wave_id) {
+      const parentWave = await this.wavesApiDb.findWaveById(
+        wave.parent_wave_id,
+        connection
+      );
+      if (!parentWave) {
+        this.logger.warn(
+          `Cannot resolve parent wave ${wave.parent_wave_id} while recording DM unread state for wave ${wave.id}`
+        );
+        return [];
+      }
+      if (
+        parentWave.visibility_group_id &&
+        parentWave.visibility_group_id !== wave.chat_group_id
+      ) {
+        visibilityGroupIds.push(parentWave.visibility_group_id);
+      }
+    }
+    const requiredVisibilityGroupIds = collections.distinct(visibilityGroupIds);
+    if (!candidateRecipientIds.length || !requiredVisibilityGroupIds.length) {
+      return candidateRecipientIds;
+    }
+
+    const visibilityMemberships =
+      await this.userGroupsService.findIdentityGroupMemberships(
         {
-          waveId: wave.id,
-          readerIds: recipientIds
+          groupIds: requiredVisibilityGroupIds,
+          profileIds: candidateRecipientIds
         },
         { timer, connection }
       );
-    const existingReaderMetricIdSet = new Set(existingReaderMetricIds);
-    const missingReaderMetricIds = recipientIds.filter(
-      (readerId) => !existingReaderMetricIdSet.has(readerId)
-    );
-    if (!missingReaderMetricIds.length) {
-      return;
+    const visibleGroupsByProfileId = new Map<string, Set<string>>();
+    for (const membership of visibilityMemberships) {
+      const visibleGroupIds =
+        visibleGroupsByProfileId.get(membership.profileId) ?? new Set<string>();
+      visibleGroupIds.add(membership.groupId);
+      visibleGroupsByProfileId.set(membership.profileId, visibleGroupIds);
     }
-    // Reader metrics are part of DM write consistency: without this row the
-    // unread summary cannot distinguish current unread activity from old history.
-    await this.wavesApiDb.insertMissingWaveReaderMetrics(
-      {
-        waveId: wave.id,
-        readerIds: missingReaderMetricIds,
-        latestReadTimestamp: Math.max(0, createdAt - 1)
-      },
-      { timer, connection }
+    return candidateRecipientIds.filter((profileId) =>
+      requiredVisibilityGroupIds.every((groupId) =>
+        visibleGroupsByProfileId.get(profileId)?.has(groupId)
+      )
     );
   }
 

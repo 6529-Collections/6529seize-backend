@@ -11,6 +11,7 @@ import {
   dropRatingUpdateMessage,
   dropReactionUpdateMessage,
   dropUpdateMessage,
+  dmUnreadStateChangedMessage,
   dropUpdateRefMessage,
   DROP_UPDATE_MAX_UTF8_BYTES,
   DropUpdateRefType,
@@ -37,6 +38,7 @@ import {
   contentModerationDb,
   ContentModerationDb
 } from '@/content-moderation/content-moderation.db';
+import { ApiDmUnreadConversationState } from '@/api/generated/models/ApiDmUnreadConversationState';
 
 const scalarForLog = (value: unknown): string =>
   typeof value === 'string' ||
@@ -49,6 +51,11 @@ const dropNotificationIdentityForLog = (drop: ApiDrop): string =>
   `drop_id=${scalarForLog(drop.id)} wave_id=${scalarForLog(
     drop.wave?.id
   )} serial_no=${scalarForLog(drop.serial_no)}`;
+
+export interface NotificationConnectionRecipient {
+  readonly connectionId: string;
+  readonly identityId: string;
+}
 
 const normalizedErrorForLog = (error: unknown): string => {
   if (error instanceof Error) {
@@ -302,6 +309,66 @@ export class WsListenersNotifier {
         `Sending notification invalidations to websockets failed. Profile ids: ${profileIds.join(',')}`,
         error
       );
+    }
+  }
+
+  async notifyAboutDmUnreadStateChanged(
+    states: ApiDmUnreadConversationState[],
+    resolvedRecipients?: readonly NotificationConnectionRecipient[]
+  ): Promise<void> {
+    const statesByProfileId = states.reduce((acc, state) => {
+      const profileStates = acc.get(state.profile_id) ?? [];
+      profileStates.push(state);
+      acc.set(state.profile_id, profileStates);
+      return acc;
+    }, new Map<string, ApiDmUnreadConversationState[]>());
+    if (!statesByProfileId.size) {
+      return;
+    }
+    const profileIds = Array.from(statesByProfileId.keys());
+    try {
+      const recipients =
+        resolvedRecipients ??
+        (await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
+          profileIds
+        ));
+      await Promise.all(
+        recipients.flatMap(({ connectionId, identityId }) =>
+          (statesByProfileId.get(identityId) ?? []).map((state) =>
+            this.appWebSockets.send({
+              connectionId,
+              message: JSON.stringify(dmUnreadStateChangedMessage(state))
+            })
+          )
+        )
+      );
+    } catch (error) {
+      this.logger.error(
+        `Sending DM unread states to websockets failed. Profile ids: ${profileIds.join(',')}`,
+        error
+      );
+    }
+  }
+
+  async findConnectedNotificationRecipients(
+    inputProfileIds: string[]
+  ): Promise<NotificationConnectionRecipient[]> {
+    const profileIds = Array.from(
+      new Set(inputProfileIds.filter((profileId) => !!profileId))
+    );
+    if (!profileIds.length) {
+      return [];
+    }
+    try {
+      return await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
+        profileIds
+      );
+    } catch (error) {
+      this.logger.error(
+        `Resolving DM unread websocket recipients failed. Profile ids: ${profileIds.join(',')}`,
+        error
+      );
+      return [];
     }
   }
 
