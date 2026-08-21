@@ -17,6 +17,8 @@ interface GitHubWorkflowRun {
   readonly head_sha: string;
   readonly run_number: number;
   readonly workflow_id: number;
+  readonly status?: string | null;
+  readonly conclusion?: string | null;
 }
 
 interface GitHubWorkflowRunsResponse {
@@ -90,6 +92,13 @@ export interface GitHubReleaseContext {
   readonly commit_messages?: string[];
 }
 
+export interface GitHubReleaseRun {
+  readonly id: string;
+  readonly run_number: number;
+  readonly workflow_id: string;
+  readonly sha: string;
+}
+
 interface AggregatedPullRequest {
   readonly pullRequest: GitHubPullRequest;
   readonly commitMessages: Set<string>;
@@ -101,9 +110,11 @@ interface BoundedGitHubCollection<T> {
 }
 
 const MAX_COMPARE_PAGES = 100;
+const MAX_RELEASE_COMMITS = 1200;
 const MAX_PULL_REQUEST_COMMIT_PAGES = 3;
 const MAX_FILE_PAGES = 3;
-const MAX_WORKFLOW_RUN_PAGES = 10;
+const MAX_WORKFLOW_RUN_PAGES = 5;
+const WORKFLOW_RUN_PAGE_SIZE = 20;
 const PAGE_SIZE = 100;
 const BACKEND_REPO = '6529seize-backend';
 const FRONTEND_REPO = '6529seize-frontend';
@@ -214,6 +225,19 @@ function isMatchingProductionRun(
     );
   }
   return false;
+}
+
+function isSuccessfulCompletedRun(run: GitHubWorkflowRun): boolean {
+  return run.status === 'completed' && run.conclusion === 'success';
+}
+
+function toReleaseRun(run: GitHubWorkflowRun): GitHubReleaseRun {
+  return {
+    id: String(run.id),
+    run_number: run.run_number,
+    workflow_id: String(run.workflow_id),
+    sha: run.head_sha
+  };
 }
 
 function getFirstParentReleaseCommits(
@@ -423,7 +447,8 @@ export class ReleaseNoteGitHubService {
   }
 
   public async getReleaseContext(
-    request: ReleaseNoteGenerationRequest
+    request: ReleaseNoteGenerationRequest,
+    previousSha?: string
   ): Promise<GitHubReleaseContext | null> {
     const repository = normalizeRepository(request.repo);
     if (
@@ -432,17 +457,18 @@ export class ReleaseNoteGitHubService {
     ) {
       return this.getPullRequestReleaseContext(repository, request);
     }
-    const previousRun = await this.findPreviousSuccessfulRun(
-      repository,
-      request
-    );
-    if (!previousRun) {
+    const currentRun = await this.getValidatedCurrentRun(repository, request);
+    const previousRun = previousSha
+      ? null
+      : await this.findPreviousSuccessfulRun(repository, request, currentRun);
+    const resolvedPreviousSha = previousSha ?? previousRun?.head_sha;
+    if (!resolvedPreviousSha) {
       return null;
     }
 
     const comparedCommits = await this.getComparedCommits(
       repository,
-      previousRun.head_sha,
+      resolvedPreviousSha,
       request.sha
     );
     const repoName = getRepoName(request.repo);
@@ -451,7 +477,7 @@ export class ReleaseNoteGitHubService {
     const commits = mainlineRelease
       ? getFirstParentReleaseCommits(
           comparedCommits,
-          previousRun.head_sha,
+          resolvedPreviousSha,
           request.sha,
           repository
         )
@@ -459,7 +485,7 @@ export class ReleaseNoteGitHubService {
     this.logger.info('Resolved GitHub release-note commit range', {
       repository,
       run_id: request.run_id,
-      previous_sha: previousRun.head_sha,
+      previous_sha: resolvedPreviousSha,
       current_sha: request.sha,
       compared_commit_count: comparedCommits.length,
       discovery_commit_count: commits.length,
@@ -483,7 +509,7 @@ export class ReleaseNoteGitHubService {
     });
 
     return {
-      previous_sha: previousRun.head_sha,
+      previous_sha: resolvedPreviousSha,
       current_sha: request.sha,
       pull_requests: pullRequests,
       ...(desktopRelease
@@ -570,6 +596,7 @@ export class ReleaseNoteGitHubService {
       currentRun.head_sha !== request.sha ||
       !Number.isSafeInteger(currentRun.workflow_id) ||
       !Number.isSafeInteger(currentRun.run_number) ||
+      !isSuccessfulCompletedRun(currentRun) ||
       (((getRepoName(request.repo) === FRONTEND_REPO &&
         request.workflow === FRONTEND_PRODUCTION_WORKFLOW) ||
         getRepoName(request.repo) === CORE_REPO) &&
@@ -582,12 +609,35 @@ export class ReleaseNoteGitHubService {
     return currentRun;
   }
 
+  public async getValidatedReleaseRun(
+    request: ReleaseNoteGenerationRequest
+  ): Promise<GitHubReleaseRun> {
+    return toReleaseRun(
+      await this.getValidatedCurrentRun(
+        normalizeRepository(request.repo),
+        request
+      )
+    );
+  }
+
+  public async getPreviousSuccessfulReleaseRun(
+    request: ReleaseNoteGenerationRequest
+  ): Promise<GitHubReleaseRun | null> {
+    const repository = normalizeRepository(request.repo);
+    const currentRun = await this.getValidatedCurrentRun(repository, request);
+    const previousRun = await this.findPreviousSuccessfulRun(
+      repository,
+      request,
+      currentRun
+    );
+    return previousRun ? toReleaseRun(previousRun) : null;
+  }
+
   private async findPreviousSuccessfulRun(
     repository: string,
-    request: ReleaseNoteGenerationRequest
+    request: ReleaseNoteGenerationRequest,
+    currentRun: GitHubWorkflowRun
   ): Promise<GitHubWorkflowRun | null> {
-    const currentRun = await this.getValidatedCurrentRun(repository, request);
-
     const repoName = getRepoName(request.repo);
     const branchQuery =
       repoName === CORE_REPO
@@ -595,26 +645,29 @@ export class ReleaseNoteGitHubService {
         : `&branch=${encodeURIComponent(normalizeBranch(request.branch))}`;
     for (let page = 1; page <= MAX_WORKFLOW_RUN_PAGES; page++) {
       const payload = await this.api<GitHubWorkflowRunsResponse>(
-        `/repos/${repository}/actions/workflows/${currentRun.workflow_id}/runs?status=success${branchQuery}&per_page=${PAGE_SIZE}&page=${page}`
+        `/repos/${repository}/actions/workflows/${currentRun.workflow_id}/runs?status=completed${branchQuery}&per_page=${WORKFLOW_RUN_PAGE_SIZE}&page=${page}`
       );
       const runs = payload.workflow_runs ?? [];
-      const previousRun = runs.find(
-        (run) =>
-          String(run.id) !== request.run_id &&
-          run.head_sha !== request.sha &&
-          run.workflow_id === currentRun.workflow_id &&
-          run.run_number < currentRun.run_number &&
-          isMatchingProductionRun(run, request)
-      );
+      const previousRun = runs
+        .filter(
+          (run) =>
+            String(run.id) !== request.run_id &&
+            run.head_sha !== request.sha &&
+            run.workflow_id === currentRun.workflow_id &&
+            run.run_number < currentRun.run_number &&
+            isSuccessfulCompletedRun(run) &&
+            isMatchingProductionRun(run, request)
+        )
+        .sort((left, right) => right.run_number - left.run_number)[0];
       if (previousRun) {
         return previousRun;
       }
-      if (runs.length < PAGE_SIZE) {
+      if (runs.length < WORKFLOW_RUN_PAGE_SIZE) {
         return null;
       }
     }
     throw new NonRetryableReleaseNoteError(
-      `Previous successful production run was not found within ${MAX_WORKFLOW_RUN_PAGES * PAGE_SIZE} workflow runs`
+      `Previous successful production run was not found within ${MAX_WORKFLOW_RUN_PAGES * WORKFLOW_RUN_PAGE_SIZE} workflow runs`
     );
   }
 
@@ -631,6 +684,15 @@ export class ReleaseNoteGitHubService {
       );
       const pageCommits = payload.commits ?? [];
       const totalCommits = payload.total_commits;
+      if (
+        (typeof totalCommits === 'number' &&
+          totalCommits > MAX_RELEASE_COMMITS) ||
+        commits.length + pageCommits.length > MAX_RELEASE_COMMITS
+      ) {
+        throw new NonRetryableReleaseNoteError(
+          `Release-note commit range exceeds ${MAX_RELEASE_COMMITS} commits`
+        );
+      }
       commits.push(...pageCommits);
       if (
         pageCommits.length < PAGE_SIZE ||

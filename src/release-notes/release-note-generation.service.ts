@@ -24,6 +24,7 @@ import {
   ReleaseNoteGenerationRequest,
   ReleaseNoteRunReference
 } from './release-note-generation-queue';
+import { NonRetryableReleaseNoteError } from './release-note-errors';
 
 interface GeneratedReleaseNote {
   readonly number: number;
@@ -50,6 +51,20 @@ interface ReleaseNoteBatch {
   readonly total: number;
 }
 
+export interface ReleaseNoteGenerationOptions {
+  readonly previousSha?: string;
+  readonly assertCanStartPart?: (
+    partNumber: number,
+    totalParts: number
+  ) => void;
+  readonly onPlan?: (totalParts: number) => Promise<void>;
+  readonly onPartCompleted?: (input: {
+    readonly partNumber: number;
+    readonly totalParts: number;
+    readonly dropId: string;
+  }) => Promise<void>;
+}
+
 const MAX_BODY_LENGTH = 12000;
 const MAX_COMMIT_MESSAGES = 25;
 const MAX_COMMIT_MESSAGE_LENGTH = 500;
@@ -63,6 +78,7 @@ const MAX_DESKTOP_BULLET_LENGTH = 240;
 const MAX_DESKTOP_BULLET_WORDS = 30;
 const MAX_RELEASE_CONTEXT_LENGTH = 200000;
 const MAX_PULL_REQUESTS_PER_RELEASE_NOTE = 20;
+const MAX_PULL_REQUESTS_PER_PUBLICATION = 500;
 const RELEASE_NOTE_ID_METADATA_KEY = 'release_note_id';
 const RELEASE_NOTE_REPOSITORY_METADATA_KEY = 'release_note_repository';
 const RELEASE_NOTE_SHA_METADATA_KEY = 'release_note_sha';
@@ -174,7 +190,7 @@ function requireDesktopReleaseMetadata(request: ReleaseNoteGenerationRequest) {
   return { version, frontendSha };
 }
 
-function buildReleaseNotePublicationId(
+export function buildReleaseNotePublicationId(
   request: ReleaseNoteGenerationRequest
 ): string {
   const identity = request.pull_request_number
@@ -204,6 +220,17 @@ function buildReleaseNoteBatches(context: GitHubReleaseContext): Array<{
   readonly batch: ReleaseNoteBatch;
   readonly context: GitHubReleaseContext;
 }> {
+  const pullRequestNumbers = context.pull_requests.map(
+    (pullRequest) => pullRequest.number
+  );
+  if (
+    pullRequestNumbers.length > MAX_PULL_REQUESTS_PER_PUBLICATION ||
+    new Set(pullRequestNumbers).size !== pullRequestNumbers.length
+  ) {
+    throw new NonRetryableReleaseNoteError(
+      `Release-note publication must contain unique pull requests and no more than ${MAX_PULL_REQUESTS_PER_PUBLICATION} entries`
+    );
+  }
   const total = Math.ceil(
     context.pull_requests.length / MAX_PULL_REQUESTS_PER_RELEASE_NOTE
   );
@@ -481,7 +508,8 @@ export class ReleaseNoteGenerationService {
 
   public async generateAndPost(
     request: ReleaseNoteGenerationRequest,
-    ctx: RequestContext
+    ctx: RequestContext,
+    options?: ReleaseNoteGenerationOptions
   ): Promise<ReleaseNoteGenerationOutcome> {
     const botProfileId = env.getStringOrThrow('CI_PIPELINES_BOT_PROFILE_ID');
     const waveId = env.getStringOrThrow('CI_RELEASES_WAVE_ID');
@@ -496,6 +524,12 @@ export class ReleaseNoteGenerationService {
         ctx
       );
     if (existingReleaseDropId) {
+      await options?.onPlan?.(1);
+      await options?.onPartCompleted?.({
+        partNumber: 1,
+        totalParts: 1,
+        dropId: existingReleaseDropId
+      });
       this.logger.info(
         `Skipping release note ${publicationId}; drop ${existingReleaseDropId} already exists`
       );
@@ -507,10 +541,14 @@ export class ReleaseNoteGenerationService {
         ctx,
         botProfileId,
         waveId,
-        publicationId
+        publicationId,
+        options
       });
     }
-    const context = await this.githubService.getReleaseContext(request);
+    const context = await this.githubService.getReleaseContext(
+      request,
+      options?.previousSha
+    );
     if (!context) {
       this.logger.info(
         `Skipping release notes for ${request.repo} run ${request.run_id}; no previous successful production run was found`
@@ -524,6 +562,7 @@ export class ReleaseNoteGenerationService {
       return 'no-pull-requests';
     }
     const batches = buildReleaseNoteBatches(context);
+    await options?.onPlan?.(batches.length);
     for (const { batch, context: batchContext } of batches) {
       const batchPublicationId = buildReleaseNoteBatchPublicationId(
         publicationId,
@@ -540,12 +579,18 @@ export class ReleaseNoteGenerationService {
             ctx
           );
         if (existingBatchDropId) {
+          await options?.onPartCompleted?.({
+            partNumber: batch.number,
+            totalParts: batch.total,
+            dropId: existingBatchDropId
+          });
           this.logger.info(
             `Skipping release note batch ${batch.number}/${batch.total}; drop ${existingBatchDropId} already exists`
           );
           continue;
         }
       }
+      options?.assertCanStartPart?.(batch.number, batch.total);
       const generatedNotes = await this.generateReleaseNotes(
         request,
         batchContext
@@ -563,7 +608,12 @@ export class ReleaseNoteGenerationService {
         batch
       });
 
-      await this.postDrop(createDropRequest, botProfileId, ctx);
+      const dropId = await this.postDrop(createDropRequest, botProfileId, ctx);
+      await options?.onPartCompleted?.({
+        partNumber: batch.number,
+        totalParts: batch.total,
+        dropId
+      });
       this.logger.info('Published release-note batch', {
         repo: request.repo,
         run_id: request.run_id,
@@ -580,22 +630,29 @@ export class ReleaseNoteGenerationService {
     ctx,
     botProfileId,
     waveId,
-    publicationId
+    publicationId,
+    options
   }: {
     readonly request: ReleaseNoteGenerationRequest;
     readonly ctx: RequestContext;
     readonly botProfileId: string;
     readonly waveId: string;
     readonly publicationId: string;
+    readonly options?: ReleaseNoteGenerationOptions;
   }): Promise<ReleaseNoteGenerationOutcome> {
     const { version, frontendSha } = requireDesktopReleaseMetadata(request);
+    await options?.onPlan?.(1);
+    options?.assertCanStartPart?.(1, 1);
     const frontendRelease = await this.getFrontendReleaseNoteReference({
       frontendSha,
       botProfileId,
       waveId,
       ctx
     });
-    const context = await this.githubService.getReleaseContext(request);
+    const context = await this.githubService.getReleaseContext(
+      request,
+      options?.previousSha
+    );
     if (!context) {
       throw new Error(
         `No previous successful production Desktop Publish run was found for v${version}`
@@ -613,7 +670,12 @@ export class ReleaseNoteGenerationService {
       publicationId,
       waveId
     });
-    await this.postDrop(createDropRequest, botProfileId, ctx);
+    const dropId = await this.postDrop(createDropRequest, botProfileId, ctx);
+    await options?.onPartCompleted?.({
+      partNumber: 1,
+      totalParts: 1,
+      dropId
+    });
     return 'published';
   }
 
@@ -744,8 +806,8 @@ export class ReleaseNoteGenerationService {
     createDropRequest: ApiCreateDropRequest,
     botProfileId: string,
     ctx: RequestContext
-  ): Promise<void> {
-    await this.dropCreationApiService.createDrop(
+  ): Promise<string> {
+    const drop = await this.dropCreationApiService.createDrop(
       {
         createDropRequest,
         authorId: botProfileId,
@@ -757,6 +819,7 @@ export class ReleaseNoteGenerationService {
         authenticationContext: AuthenticationContext.fromProfileId(botProfileId)
       }
     );
+    return drop?.id ?? '';
   }
 
   private async generateReleaseNotes(

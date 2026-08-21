@@ -595,12 +595,13 @@ describe('ReleaseNoteGenerationService', () => {
       })
     );
     const createDrop = jest.fn().mockResolvedValue({});
+    const getReleaseContext = jest.fn().mockResolvedValue({
+      ...context,
+      pull_requests: pullRequests
+    });
     const service = new ReleaseNoteGenerationService(
       {
-        getReleaseContext: jest.fn().mockResolvedValue({
-          ...context,
-          pull_requests: pullRequests
-        }),
+        getReleaseContext,
         getReleasePrompt: jest.fn().mockResolvedValue('Repository prompt.')
       } as unknown as ReleaseNoteGitHubService,
       { promptAndGetReply } as AiPrompter,
@@ -736,13 +737,17 @@ describe('ReleaseNoteGenerationService', () => {
         }))
       })
     );
-    const createDrop = jest.fn().mockResolvedValue({});
+    const createDrop = jest.fn().mockResolvedValue({ id: 'new-second-batch' });
+    const onPlan = jest.fn().mockResolvedValue(undefined);
+    const onPartCompleted = jest.fn().mockResolvedValue(undefined);
+    const assertCanStartPart = jest.fn();
+    const getReleaseContext = jest.fn().mockResolvedValue({
+      ...context,
+      pull_requests: pullRequests
+    });
     const service = new ReleaseNoteGenerationService(
       {
-        getReleaseContext: jest.fn().mockResolvedValue({
-          ...context,
-          pull_requests: pullRequests
-        }),
+        getReleaseContext,
         getReleasePrompt: jest.fn().mockResolvedValue('Repository prompt.')
       } as unknown as ReleaseNoteGitHubService,
       { promptAndGetReply } as AiPrompter,
@@ -758,9 +763,35 @@ describe('ReleaseNoteGenerationService', () => {
     );
 
     await expect(
-      service.generateAndPost({ ...request, pull_request_number: null }, {})
+      service.generateAndPost(
+        { ...request, pull_request_number: null },
+        {},
+        {
+          previousSha: 'persisted-previous-sha',
+          onPlan,
+          onPartCompleted,
+          assertCanStartPart
+        }
+      )
     ).resolves.toBe('published');
 
+    expect(getReleaseContext).toHaveBeenCalledWith(
+      expect.any(Object),
+      'persisted-previous-sha'
+    );
+    expect(onPlan).toHaveBeenCalledWith(2);
+    expect(onPartCompleted).toHaveBeenNthCalledWith(1, {
+      partNumber: 1,
+      totalParts: 2,
+      dropId: 'completed-first-batch'
+    });
+    expect(onPartCompleted).toHaveBeenNthCalledWith(2, {
+      partNumber: 2,
+      totalParts: 2,
+      dropId: 'new-second-batch'
+    });
+    expect(assertCanStartPart).toHaveBeenCalledTimes(1);
+    expect(assertCanStartPart).toHaveBeenCalledWith(2, 2);
     expect(promptAndGetReply).toHaveBeenCalledTimes(1);
     expect(createDrop).toHaveBeenCalledTimes(1);
     const content =

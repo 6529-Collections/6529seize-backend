@@ -407,6 +407,22 @@ describe('processRequest', () => {
           }
         ),
       del: jest.fn().mockResolvedValue(1),
+      eval: jest
+        .fn()
+        .mockImplementation(
+          (
+            _script: string,
+            options: { keys: string[]; arguments: string[] }
+          ) => {
+            const [key] = options.keys;
+            const [token] = options.arguments;
+            if (values.get(key) !== token) {
+              return Promise.resolve(0);
+            }
+            values.delete(key);
+            return Promise.resolve(1);
+          }
+        ),
       sAdd: jest.fn().mockImplementation((key: string, value: string) => {
         const members = sets.get(key) ?? new Set<string>();
         members.add(value);
@@ -535,20 +551,21 @@ describe('processRequest', () => {
     );
     expect(redis.set).toHaveBeenCalledWith(
       'release-note:6529seize-backend:pr-1749:processing',
-      '1',
-      { NX: true, EX: 1200 }
+      expect.any(String),
+      { NX: true, EX: 240 }
     );
     expect(redis.set).toHaveBeenCalledWith(
       'release-note:6529seize-backend:pr-1749',
       '1',
       { EX: 7776000 }
     );
-    expect(redis.del).toHaveBeenCalledWith(
-      'release-note:6529seize-backend:pr-1749:processing'
-    );
+    expect(redis.eval).toHaveBeenCalledWith(expect.any(String), {
+      keys: ['release-note:6529seize-backend:pr-1749:processing'],
+      arguments: [expect.any(String)]
+    });
   });
 
-  it('uses the processing lock as the sole winner for concurrent completion', async () => {
+  it('keeps the losing concurrent delivery retryable', async () => {
     const redis = buildRedis();
     const generateAndPost = jest.fn().mockResolvedValue(undefined);
     const completedRequest = {
@@ -557,7 +574,7 @@ describe('processRequest', () => {
       publish_release_note: true
     };
 
-    await Promise.all([
+    const results = await Promise.allSettled([
       processRequest(completedRequest, {
         redis: redis as any,
         generateAndPost
@@ -569,10 +586,13 @@ describe('processRequest', () => {
     ]);
 
     expect(generateAndPost).toHaveBeenCalledTimes(1);
+    expect(
+      results.filter((result) => result.status === 'rejected')
+    ).toHaveLength(1);
     expect(redis.set).toHaveBeenCalledWith(
       'release-note:6529seize-backend:pr-1749:processing',
-      '1',
-      { NX: true, EX: 1200 }
+      expect.any(String),
+      { NX: true, EX: 240 }
     );
   });
 
@@ -618,9 +638,10 @@ describe('processRequest', () => {
       '1',
       { EX: 7776000 }
     );
-    expect(redis.del).toHaveBeenCalledWith(
-      'release-note:6529seize-backend:pr-1749:processing'
-    );
+    expect(redis.eval).toHaveBeenCalledWith(expect.any(String), {
+      keys: ['release-note:6529seize-backend:pr-1749:processing'],
+      arguments: [expect.any(String)]
+    });
   });
 
   it('keeps the latest successful run for a service before publication', async () => {
@@ -642,5 +663,110 @@ describe('processRequest', () => {
       EX: 7776000
     });
     await expect(redis.get(runKey)).resolves.toContain('"run_id":"123"');
+  });
+
+  it('persists publication progress and completes the durable cursor', async () => {
+    const redis = buildRedis();
+    const frontendRequest: ReleaseNoteGenerationRequest = {
+      ...request,
+      repo: '6529seize-frontend',
+      workflow: 'Web Deploy - PROD',
+      run_id: '32471443637',
+      run_number: '1660',
+      sha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      service: 'web',
+      release_group_id: 'frontend-production',
+      release_group_services: ['web'],
+      pull_request_number: null,
+      publish_release_note: true
+    };
+    const publicationState = {
+      prepare: jest.fn().mockResolvedValue({
+        publicationId: 'publication-id',
+        previousSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        completed: false
+      }),
+      recordPlan: jest.fn().mockResolvedValue(undefined),
+      recordPart: jest.fn().mockResolvedValue(undefined),
+      complete: jest.fn().mockResolvedValue(undefined)
+    };
+    const generateAndPost = jest
+      .fn()
+      .mockImplementation(async (_request, _ctx, options) => {
+        expect(options.previousSha).toBe(
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+        );
+        await options.onPlan(11);
+        await options.onPartCompleted({
+          partNumber: 7,
+          totalParts: 11,
+          dropId: 'part-seven-drop'
+        });
+        return 'published';
+      });
+
+    await processRequest(frontendRequest, {
+      redis: redis as any,
+      publicationState: publicationState as any,
+      generateAndPost
+    });
+
+    expect(publicationState.recordPlan).toHaveBeenCalledWith(
+      'publication-id',
+      11,
+      {}
+    );
+    expect(publicationState.recordPart).toHaveBeenCalledWith(
+      {
+        publicationId: 'publication-id',
+        partNumber: 7,
+        totalParts: 11,
+        dropId: 'part-seven-drop'
+      },
+      {}
+    );
+    expect(publicationState.complete).toHaveBeenCalledWith(
+      'publication-id',
+      {}
+    );
+  });
+
+  it('retries cleanly before starting a part without enough Lambda time', async () => {
+    const redis = buildRedis();
+    const frontendRequest: ReleaseNoteGenerationRequest = {
+      ...request,
+      repo: '6529seize-frontend',
+      workflow: 'Web Deploy - PROD',
+      service: 'web',
+      release_group_id: 'frontend-production',
+      release_group_services: ['web'],
+      pull_request_number: null
+    };
+    const publicationState = {
+      prepare: jest.fn().mockResolvedValue({
+        publicationId: 'publication-id',
+        previousSha: 'previous-sha',
+        completed: false
+      }),
+      recordPlan: jest.fn(),
+      recordPart: jest.fn(),
+      complete: jest.fn()
+    };
+    const generateAndPost = jest
+      .fn()
+      .mockImplementation(async (_request, _ctx, options) => {
+        options.assertCanStartPart(7, 11);
+      });
+
+    await expect(
+      processRequest(frontendRequest, {
+        redis: redis as any,
+        publicationState: publicationState as any,
+        generateAndPost,
+        getRemainingTimeInMillis: () => 30_000
+      })
+    ).rejects.toThrow('Deferring release-note part 7/11');
+    expect(publicationState.complete).not.toHaveBeenCalled();
+    expect(redis.eval).toHaveBeenCalled();
   });
 });
