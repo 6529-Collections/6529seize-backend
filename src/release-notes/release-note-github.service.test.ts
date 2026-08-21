@@ -4,7 +4,10 @@ jest.mock('node-fetch', () => ({
 }));
 
 import fetch from 'node-fetch';
-import { UntrustedReleaseNoteMetadataError } from './release-note-errors';
+import {
+  NonRetryableReleaseNoteError,
+  UntrustedReleaseNoteMetadataError
+} from './release-note-errors';
 import { ReleaseNoteGenerationRequest } from './release-note-generation-queue';
 import { ReleaseNoteGitHubService } from './release-note-github.service';
 
@@ -38,7 +41,9 @@ const currentRun = {
   head_branch: 'main',
   head_sha: 'abc123',
   run_number: 45,
-  workflow_id: 7
+  workflow_id: 7,
+  status: 'completed',
+  conclusion: 'success'
 };
 
 describe('ReleaseNoteGitHubService', () => {
@@ -216,7 +221,9 @@ describe('ReleaseNoteGitHubService', () => {
               display_title: 'Deploy Staging',
               head_sha: 'previous-sha',
               run_number: 44,
-              workflow_id: 7
+              workflow_id: 7,
+              status: 'completed',
+              conclusion: 'success'
             }
           ]
         })
@@ -253,7 +260,9 @@ describe('ReleaseNoteGitHubService', () => {
               head_branch: 'main',
               head_sha: 'previous-sha',
               run_number: 44,
-              workflow_id: 7
+              workflow_id: 7,
+              status: 'completed',
+              conclusion: 'success'
             }
           ]
         })
@@ -272,7 +281,62 @@ describe('ReleaseNoteGitHubService', () => {
     expect(fetch).toHaveBeenCalledTimes(3);
     expect(fetch).toHaveBeenNthCalledWith(
       2,
-      'https://api.github.com/repos/6529-Collections/6529seize-frontend/actions/workflows/7/runs?status=success&branch=main&per_page=100&page=1',
+      'https://api.github.com/repos/6529-Collections/6529seize-frontend/actions/workflows/7/runs?branch=main&per_page=100&page=1',
+      expect.any(Object)
+    );
+  });
+
+  it('filters recent workflow conclusions locally without the GitHub status query', async () => {
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(response(currentRun))
+      .mockResolvedValueOnce(
+        response({
+          workflow_runs: [
+            {
+              ...currentRun,
+              id: 122,
+              head_sha: 'failed-sha',
+              run_number: 44,
+              conclusion: 'failure'
+            },
+            {
+              ...currentRun,
+              id: 121,
+              head_sha: 'previous-sha',
+              run_number: 43
+            }
+          ]
+        })
+      )
+      .mockResolvedValueOnce(response({ commits: [], total_commits: 0 }));
+
+    const context = await new ReleaseNoteGitHubService().getReleaseContext(
+      request
+    );
+
+    expect(context?.previous_sha).toBe('previous-sha');
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      'https://api.github.com/repos/6529-Collections/6529seize-frontend/actions/workflows/7/runs?branch=main&per_page=100&page=1',
+      expect.any(Object)
+    );
+  });
+
+  it('uses a persisted baseline without scanning workflow history', async () => {
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(response(currentRun))
+      .mockResolvedValueOnce(response({ commits: [], total_commits: 0 }));
+
+    const context = await new ReleaseNoteGitHubService().getReleaseContext(
+      request,
+      'persisted-previous-sha'
+    );
+
+    expect(context?.previous_sha).toBe('persisted-previous-sha');
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('/compare/persisted-previous-sha...abc123'),
       expect.any(Object)
     );
   });
@@ -319,7 +383,30 @@ describe('ReleaseNoteGitHubService', () => {
     expect(compareCalls[10][0]).toContain('per_page=100&page=11');
   });
 
-  it('stops malformed comparison pagination after 100 full pages', async () => {
+  it('rejects an implausibly large commit range before PR discovery', async () => {
+    (fetch as unknown as jest.Mock)
+      .mockResolvedValueOnce(response(currentRun))
+      .mockResolvedValueOnce(
+        response({
+          workflow_runs: [
+            {
+              ...currentRun,
+              id: 122,
+              head_sha: 'previous-sha',
+              run_number: 44
+            }
+          ]
+        })
+      )
+      .mockResolvedValueOnce(response({ commits: [], total_commits: 1201 }));
+
+    await expect(
+      new ReleaseNoteGitHubService().getReleaseContext(request)
+    ).rejects.toBeInstanceOf(NonRetryableReleaseNoteError);
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('stops malformed comparison pagination at the release safety cap', async () => {
     const fullPage = Array.from({ length: 100 }, (_, index) => ({
       sha: `commit-${index + 1}`
     }));
@@ -340,10 +427,8 @@ describe('ReleaseNoteGitHubService', () => {
         'previous-sha',
         'abc123'
       )
-    ).rejects.toThrow(
-      'Release comparison did not complete within 10000 commits'
-    );
-    expect(fetch).toHaveBeenCalledTimes(100);
+    ).rejects.toThrow('Release-note commit range exceeds 1200 commits');
+    expect(fetch).toHaveBeenCalledTimes(13);
   });
 
   it('uses the previous production Publish across version branches and excludes imported renderer history', async () => {
@@ -361,7 +446,9 @@ describe('ReleaseNoteGitHubService', () => {
             head_branch: 'v0.3.13',
             head_sha: currentSha,
             run_number: 328,
-            workflow_id: 99
+            workflow_id: 99,
+            status: 'completed',
+            conclusion: 'success'
           })
         );
       }
@@ -376,7 +463,9 @@ describe('ReleaseNoteGitHubService', () => {
                 head_branch: 'v0.3.13',
                 head_sha: 'ignored-build-all',
                 run_number: 327,
-                workflow_id: 99
+                workflow_id: 99,
+                status: 'completed',
+                conclusion: 'success'
               },
               {
                 id: 850,
@@ -385,7 +474,9 @@ describe('ReleaseNoteGitHubService', () => {
                 head_branch: 'v0.3.12',
                 head_sha: previousSha,
                 run_number: 326,
-                workflow_id: 99
+                workflow_id: 99,
+                status: 'completed',
+                conclusion: 'success'
               }
             ]
           })
@@ -493,7 +584,7 @@ describe('ReleaseNoteGitHubService', () => {
     });
     expect(fetch).toHaveBeenNthCalledWith(
       2,
-      'https://api.github.com/repos/6529-Collections/6529-core/actions/workflows/99/runs?status=success&per_page=100&page=1',
+      'https://api.github.com/repos/6529-Collections/6529-core/actions/workflows/99/runs?per_page=100&page=1',
       expect.any(Object)
     );
     expect(
@@ -557,7 +648,9 @@ describe('ReleaseNoteGitHubService', () => {
               head_branch: 'main',
               head_sha: 'previous-sha',
               run_number: 44,
-              workflow_id: 7
+              workflow_id: 7,
+              status: 'completed',
+              conclusion: 'success'
             }
           ]
         })
@@ -585,7 +678,9 @@ describe('ReleaseNoteGitHubService', () => {
               head_branch: 'main',
               head_sha: 'previous-sha',
               run_number: 44,
-              workflow_id: 7
+              workflow_id: 7,
+              status: 'completed',
+              conclusion: 'success'
             }
           ]
         })
@@ -614,7 +709,9 @@ describe('ReleaseNoteGitHubService', () => {
               head_branch: '1a-staging',
               head_sha: 'previous-sha',
               run_number: 44,
-              workflow_id: 7
+              workflow_id: 7,
+              status: 'completed',
+              conclusion: 'success'
             }
           ]
         })
@@ -637,7 +734,9 @@ describe('ReleaseNoteGitHubService', () => {
           display_title: 'Deploy claimsBuilder to prod',
           head_sha: 'current-sha',
           run_number: 45,
-          workflow_id: 82013288
+          workflow_id: 82013288,
+          status: 'completed',
+          conclusion: 'success'
         })
       )
       .mockResolvedValueOnce(
@@ -649,7 +748,9 @@ describe('ReleaseNoteGitHubService', () => {
               display_title: 'Deploy api to prod',
               head_sha: 'previous-sha',
               run_number: 44,
-              workflow_id: 82013288
+              workflow_id: 82013288,
+              status: 'completed',
+              conclusion: 'success'
             }
           ]
         })
@@ -771,7 +872,7 @@ describe('ReleaseNoteGitHubService', () => {
     ]);
     expect(fetch).toHaveBeenNthCalledWith(
       2,
-      'https://api.github.com/repos/6529-Collections/6529seize-backend/actions/workflows/82013288/runs?status=success&branch=main&per_page=100&page=1',
+      'https://api.github.com/repos/6529-Collections/6529seize-backend/actions/workflows/82013288/runs?branch=main&per_page=100&page=1',
       expect.any(Object)
     );
   });
@@ -785,7 +886,9 @@ describe('ReleaseNoteGitHubService', () => {
           display_title: 'Deploy api to prod',
           head_sha: 'current-sha',
           run_number: 45,
-          workflow_id: 82013288
+          workflow_id: 82013288,
+          status: 'completed',
+          conclusion: 'success'
         })
       )
       .mockResolvedValueOnce(
@@ -797,7 +900,9 @@ describe('ReleaseNoteGitHubService', () => {
               display_title: 'Deploy api to prod',
               head_sha: 'previous-sha',
               run_number: 44,
-              workflow_id: 82013288
+              workflow_id: 82013288,
+              status: 'completed',
+              conclusion: 'success'
             }
           ]
         })
@@ -1205,7 +1310,9 @@ describe('ReleaseNoteGitHubService', () => {
       display_title: `Deploy service${index} to prod`,
       head_sha: 'current-sha',
       run_number: 199 - index,
-      workflow_id: 82013288
+      workflow_id: 82013288,
+      status: 'completed',
+      conclusion: 'success'
     }));
     (fetch as unknown as jest.Mock)
       .mockResolvedValueOnce(
@@ -1215,7 +1322,9 @@ describe('ReleaseNoteGitHubService', () => {
           display_title: 'Deploy s3Uploader to prod',
           head_sha: 'current-sha',
           run_number: 200,
-          workflow_id: 82013288
+          workflow_id: 82013288,
+          status: 'completed',
+          conclusion: 'success'
         })
       )
       .mockResolvedValueOnce(response({ workflow_runs: sameShaRuns }))
@@ -1228,7 +1337,9 @@ describe('ReleaseNoteGitHubService', () => {
               display_title: 'Deploy api to prod',
               head_sha: 'previous-sha',
               run_number: 99,
-              workflow_id: 82013288
+              workflow_id: 82013288,
+              status: 'completed',
+              conclusion: 'success'
             }
           ]
         })
@@ -1250,8 +1361,42 @@ describe('ReleaseNoteGitHubService', () => {
     expect(context?.previous_sha).toBe('previous-sha');
     expect(fetch).toHaveBeenNthCalledWith(
       3,
-      'https://api.github.com/repos/6529-Collections/6529seize-backend/actions/workflows/82013288/runs?status=success&branch=main&per_page=100&page=2',
+      'https://api.github.com/repos/6529-Collections/6529seize-backend/actions/workflows/82013288/runs?branch=main&per_page=100&page=2',
       expect.any(Object)
     );
+  });
+
+  it('caps bootstrap workflow history at 1000 unfiltered runs', async () => {
+    const bootstrapCurrentRun = {
+      id: request.run_id,
+      run_number: 1001,
+      workflow_id: '7',
+      sha: request.sha
+    };
+    const sameShaRuns = Array.from({ length: 100 }, (_, index) => ({
+      id: 2000 + index,
+      name: `Deploy service${index} to prod`,
+      display_title: `Deploy service${index} to prod`,
+      head_sha: 'abc123',
+      run_number: 1000 - index,
+      workflow_id: 7,
+      status: 'completed',
+      conclusion: 'success'
+    }));
+    for (let page = 0; page < 10; page++) {
+      (fetch as unknown as jest.Mock).mockResolvedValueOnce(
+        response({ workflow_runs: sameShaRuns })
+      );
+    }
+
+    await expect(
+      new ReleaseNoteGitHubService().getPreviousSuccessfulReleaseRun(
+        { ...request, run_number: '1001' },
+        bootstrapCurrentRun
+      )
+    ).rejects.toThrow(
+      'Previous successful production run was not found within 1000 workflow runs'
+    );
+    expect(fetch).toHaveBeenCalledTimes(10);
   });
 });

@@ -1,10 +1,17 @@
 import { Logger } from '@/logging';
 import { getRedisClient } from '@/redis';
 import {
+  buildReleaseNotePublicationId,
   isDesktopRelease,
   isFrontendRelease,
+  ReleaseNoteGenerationOptions,
   releaseNoteGenerationService
 } from '@/release-notes/release-note-generation.service';
+import {
+  PreparedReleaseNotePublication,
+  releaseNotePublicationService,
+  ReleaseNotePublicationService
+} from '@/release-notes/release-note-publication.service';
 import {
   RELEASE_NOTE_DEPLOYED_AT_PATTERN,
   ReleaseNoteGenerationRequest,
@@ -22,14 +29,28 @@ import {
   ciPipelineAlertService
 } from '@/api-serverless/src/ci-pipeline-alerts/ci-pipeline-alert.service';
 import type { SQSHandler } from 'aws-lambda';
+import { randomUUID } from 'node:crypto';
 
 const logger = Logger.get('RELEASE_NOTES_GENERATION_LOOP');
 const RELEASE_NOTE_DEDUPE_TTL_SECONDS = 90 * 24 * 60 * 60;
-const RELEASE_NOTE_PROCESSING_TTL_SECONDS = 20 * 60;
+const RELEASE_NOTE_PROCESSING_TTL_SECONDS = 4 * 60;
+const RELEASE_NOTE_MINIMUM_PART_TIME_MS = 45_000;
 const RELEASE_GROUP_TTL_SECONDS = RELEASE_NOTE_DEDUPE_TTL_SECONDS;
 const DESKTOP_RELEASE_NOTE_FINAL_ATTEMPT = 4;
 const RELEASE_NOTE_FINAL_ATTEMPT = 5;
 type ReleaseNotesRedis = NonNullable<ReturnType<typeof getRedisClient>>;
+
+type ReleaseNotePublicationState = Pick<
+  ReleaseNotePublicationService,
+  'prepare' | 'recordPlan' | 'recordPart' | 'complete'
+>;
+
+interface ProcessRequestDependencies {
+  readonly redis?: ReleaseNotesRedis | null;
+  readonly generateAndPost?: typeof releaseNoteGenerationService.generateAndPost;
+  readonly publicationState?: ReleaseNotePublicationState;
+  readonly getRemainingTimeInMillis?: () => number;
+}
 
 class RetryableReleaseNoteError extends Error {
   public readonly cause: unknown;
@@ -453,17 +474,117 @@ async function getReleaseGroupState(
   };
 }
 
+function resolveReleaseNotesRedis(
+  dependencies?: ProcessRequestDependencies
+): ReleaseNotesRedis | null {
+  if (Object.prototype.hasOwnProperty.call(dependencies ?? {}, 'redis')) {
+    return dependencies?.redis ?? null;
+  }
+  return getRedisClient();
+}
+
+async function prepareDurablePublication(
+  request: ReleaseNoteGenerationRequest,
+  publicationState: ReleaseNotePublicationState
+): Promise<PreparedReleaseNotePublication | null> {
+  if (request.pull_request_number) {
+    return null;
+  }
+  const prepared = await publicationState.prepare(
+    request,
+    buildReleaseNotePublicationId(request),
+    {}
+  );
+  if (!prepared) {
+    throw new NonRetryableReleaseNoteError(
+      `No previous successful production run was found for ${request.repo} run ${request.run_id}`
+    );
+  }
+  return prepared;
+}
+
+function buildGenerationOptions({
+  publication,
+  publicationState,
+  getRemainingTimeInMillis
+}: {
+  readonly publication: PreparedReleaseNotePublication | null;
+  readonly publicationState: ReleaseNotePublicationState;
+  readonly getRemainingTimeInMillis?: () => number;
+}): ReleaseNoteGenerationOptions | undefined {
+  if (!publication && !getRemainingTimeInMillis) {
+    return undefined;
+  }
+  const assertCanStartPart = (partNumber: number, totalParts: number) => {
+    const remaining = getRemainingTimeInMillis?.();
+    if (
+      remaining !== undefined &&
+      remaining < RELEASE_NOTE_MINIMUM_PART_TIME_MS
+    ) {
+      throw new Error(
+        `Deferring release-note part ${partNumber}/${totalParts} with ${remaining}ms remaining`
+      );
+    }
+  };
+  if (!publication) {
+    return { assertCanStartPart };
+  }
+  return {
+    previousSha: publication.previousSha,
+    assertCanStartPart,
+    onPlan: async (totalParts: number) => {
+      await publicationState.recordPlan(
+        publication.publicationId,
+        totalParts,
+        {}
+      );
+    },
+    onPartCompleted: async ({ partNumber, totalParts, dropId }) => {
+      if (!dropId) {
+        throw new Error(
+          `Release-note part ${partNumber}/${totalParts} did not return a drop id`
+        );
+      }
+      await publicationState.recordPart(
+        {
+          publicationId: publication.publicationId,
+          partNumber,
+          totalParts,
+          dropId
+        },
+        {}
+      );
+    }
+  };
+}
+
+async function releaseProcessingLock(
+  redis: ReleaseNotesRedis,
+  processingKey: string,
+  lockToken: string
+): Promise<void> {
+  try {
+    await redis.eval(
+      `
+        if redis.call('GET', KEYS[1]) == ARGV[1] then
+          return redis.call('DEL', KEYS[1])
+        end
+        return 0
+      `,
+      { keys: [processingKey], arguments: [lockToken] }
+    );
+  } catch (cleanupError) {
+    logger.warn(
+      `Failed to release release-note processing lock ${processingKey}: ${getErrorMessage(cleanupError)}`
+    );
+  }
+}
+
 export async function processRequest(
   request: ReleaseNoteGenerationRequest,
-  dependencies?: {
-    readonly redis?: ReleaseNotesRedis | null;
-    readonly generateAndPost?: typeof releaseNoteGenerationService.generateAndPost;
-  }
+  dependencies?: ProcessRequestDependencies
 ) {
-  const redis =
-    dependencies && Object.prototype.hasOwnProperty.call(dependencies, 'redis')
-      ? dependencies.redis
-      : getRedisClient();
+  const redis = resolveReleaseNotesRedis(dependencies);
   if (!redis) {
     throw new Error(
       `Redis is required to deduplicate release ${request.release_group_id}`
@@ -480,37 +601,57 @@ export async function processRequest(
     return;
   }
   const releaseGroup = await getReleaseGroupState(request, redis);
+  const publicationState =
+    dependencies?.publicationState ?? releaseNotePublicationService;
+  const lockToken = randomUUID();
   const lockAcquired =
-    (await redis.set(processingKey, '1', {
+    (await redis.set(processingKey, lockToken, {
       NX: true,
       EX: RELEASE_NOTE_PROCESSING_TTL_SECONDS
     })) !== null;
   if (!lockAcquired) {
-    logger.info(`Release note ${dedupeKey} is already processing`);
-    return;
+    throw new Error(`Release note ${dedupeKey} is already processing`);
   }
 
   try {
+    const preparedPublication = await prepareDurablePublication(
+      request,
+      publicationState
+    );
+    if (preparedPublication?.completed) {
+      await redis.set(dedupeKey, '1', {
+        EX: RELEASE_NOTE_DEDUPE_TTL_SECONDS
+      });
+      return;
+    }
     const generateAndPost =
       dependencies?.generateAndPost ??
       releaseNoteGenerationService.generateAndPost.bind(
         releaseNoteGenerationService
       );
-    const outcome = await generateAndPost(
-      {
-        ...request,
-        release_group_services: releaseGroup.services,
-        release_group_runs: releaseGroup.runs
-      },
-      {}
-    );
+    const generationRequest = {
+      ...request,
+      release_group_services: releaseGroup.services,
+      release_group_runs: releaseGroup.runs
+    };
+    const generationOptions = buildGenerationOptions({
+      publication: preparedPublication,
+      publicationState,
+      getRemainingTimeInMillis: dependencies?.getRemainingTimeInMillis
+    });
+    const outcome = generationOptions
+      ? await generateAndPost(generationRequest, {}, generationOptions)
+      : await generateAndPost(generationRequest, {});
     if (outcome !== 'no-baseline') {
+      if (preparedPublication) {
+        await publicationState.complete(preparedPublication.publicationId, {});
+      }
       await redis.set(dedupeKey, '1', {
         EX: RELEASE_NOTE_DEDUPE_TTL_SECONDS
       });
     }
   } finally {
-    await redis.del(processingKey);
+    await releaseProcessingLock(redis, processingKey, lockToken);
   }
 }
 
@@ -608,7 +749,7 @@ export async function processRequestWithRetryPolicy(
   }
 }
 
-const sqsHandler: SQSHandler = async (event) => {
+const sqsHandler: SQSHandler = async (event, context) => {
   // serverless.yaml fixes this event source at batchSize: 1.
   const firstReceiveCount = Number(
     event.Records[0]?.attributes.ApproximateReceiveCount
@@ -632,7 +773,14 @@ const sqsHandler: SQSHandler = async (event) => {
             request,
             Number.isSafeInteger(receiveCount) && receiveCount > 0
               ? receiveCount
-              : 1
+              : 1,
+            {
+              process: (queuedRequest) =>
+                processRequest(queuedRequest, {
+                  getRemainingTimeInMillis: () =>
+                    context.getRemainingTimeInMillis()
+                })
+            }
           );
         }
       },

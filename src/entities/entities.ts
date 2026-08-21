@@ -143,6 +143,11 @@ export { PushNotificationDevice } from './IPushNotification';
 export { PushNotificationSettingsEntity } from './IPushNotificationSettings';
 export { Rating } from './IRating';
 export { RefreshToken } from './IRefreshToken';
+export {
+  ReleaseNotePublicationEntity,
+  ReleaseNotePublicationStatus
+} from './IReleaseNotePublication';
+export { ReleaseNoteStreamStateEntity } from './IReleaseNoteStreamState';
 export { Rememe, RememeUpload } from './IRememe';
 export { ProfileTotalRepScoreAggregation } from './IRepScoreAggregations';
 export { RoyaltiesUpload } from './IRoyalties';
