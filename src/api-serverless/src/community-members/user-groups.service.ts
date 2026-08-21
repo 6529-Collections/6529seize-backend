@@ -44,6 +44,7 @@ import { ApiChangeGroupVisibility } from '@/api/generated/models/ApiChangeGroupV
 import { ApiGroupFull } from '@/api/generated/models/ApiGroupFull';
 import { ApiGroupFilterDirection } from '@/api/generated/models/ApiGroupFilterDirection';
 import { ApiGroupDescription } from '@/api/generated/models/ApiGroupDescription';
+import { ApiCreateGroupDescription } from '@/api/generated/models/ApiCreateGroupDescription';
 import { ApiGroupBeneficiaryGrantMatchMode } from '@/api/generated/models/ApiGroupBeneficiaryGrantMatchMode';
 import { ApiGroupNftOwnershipMatchMode } from '@/api/generated/models/ApiGroupNftOwnershipMatchMode';
 import {
@@ -109,6 +110,11 @@ type GClean = Omit<
   | 'excluded_identity_group_identities_count'
   | 'is_beneficiary_of_grant'
 >;
+
+type PreviewIdentityMembership = {
+  readonly includedAddresses: readonly string[];
+  readonly excludedAddresses: readonly string[];
+};
 
 type EligibleGroupsCacheEntry = {
   readonly eligibleGroupIds: string[];
@@ -224,35 +230,11 @@ export class UserGroupsService {
           const beneficiaryGrantMatchMode =
             group.is_beneficiary_of_grant_match_mode ??
             DEFAULT_BENEFICIARY_GRANT_MATCH_MODE;
-          if (
-            !beneficiaryOfGrantId &&
-            beneficiaryGrantMatchMode ===
-              GroupBeneficiaryGrantMatchMode.ALL_TOKENS
-          ) {
-            throw new BadRequestException(
-              `Beneficiary grant match mode ALL_TOKENS requires an xTDH grant`
-            );
-          }
-          if (beneficiaryOfGrantId) {
-            const grantEntity = await xTdhRepository.getGrantById(
-              beneficiaryOfGrantId,
-              ctxWithConnection
-            );
-            if (!grantEntity) {
-              throw new NotFoundException(
-                `Can't create group based on grant ${beneficiaryOfGrantId} as it doesn't exist`
-              );
-            }
-            if (
-              beneficiaryGrantMatchMode ===
-                GroupBeneficiaryGrantMatchMode.ALL_TOKENS &&
-              grantEntity.token_mode !== XTdhGrantTokenMode.INCLUDE
-            ) {
-              throw new BadRequestException(
-                `Beneficiary grant match mode ALL_TOKENS can only be used with grants that specify target tokens`
-              );
-            }
-          }
+          await this.validateBeneficiaryGrantCriteria(
+            beneficiaryOfGrantId,
+            beneficiaryGrantMatchMode,
+            ctxWithConnection
+          );
           const inclusionGroups = group.addresses.length
             ? await this.userGroupsDb.insertGroupEntriesAndGetGroupIds(
                 group.addresses,
@@ -1712,6 +1694,43 @@ export class UserGroupsService {
     }
   }
 
+  public async getSqlAndParamsForPreview(
+    description: ApiCreateGroupDescription,
+    ctx: RequestContext
+  ): Promise<{
+    sql: string;
+    params: Record<string, any>;
+  } | null> {
+    const beneficiaryGrantMatchMode =
+      enums.resolve(
+        GroupBeneficiaryGrantMatchMode,
+        description.is_beneficiary_of_grant_match_mode
+      ) ?? DEFAULT_BENEFICIARY_GRANT_MATCH_MODE;
+    await this.validateBeneficiaryGrantCriteria(
+      description.is_beneficiary_of_grant_id ?? null,
+      beneficiaryGrantMatchMode,
+      ctx
+    );
+    const group: GClean = {
+      tdh: structuredClone(description.tdh),
+      rep: structuredClone(description.rep),
+      cic: structuredClone(description.cic),
+      level: structuredClone(description.level),
+      owns_nfts: structuredClone(description.owns_nfts),
+      identity_group_id: null,
+      excluded_identity_group_id: null,
+      is_beneficiary_of_grant_id:
+        description.is_beneficiary_of_grant_id ?? null,
+      is_beneficiary_of_grant_match_mode:
+        description.is_beneficiary_of_grant_match_mode ??
+        ApiGroupBeneficiaryGrantMatchMode.AnyToken
+    };
+    return await this.getSqlAndParams(group, null, ctx, {
+      includedAddresses: description.identity_addresses ?? [],
+      excludedAddresses: description.excluded_identity_addresses ?? []
+    });
+  }
+
   public async getSqlAndParamsByGroupIdForSystemBroadcast(
     groupId: string | null,
     ctx: RequestContext
@@ -1785,7 +1804,8 @@ export class UserGroupsService {
   private async getSqlAndParams(
     group: GClean,
     group_id: string | null,
-    ctx: RequestContext
+    ctx: RequestContext,
+    previewIdentityMembership?: PreviewIdentityMembership
   ): Promise<{
     sql: string;
     params: Record<string, any>;
@@ -1818,12 +1838,14 @@ export class UserGroupsService {
     group.rep.user_identity = group.rep.user_identity
       ? usersToUserIds[group.rep.user_identity]
       : null;
-    group.level.min = group.level.min
-      ? getLevelComponentsBorderByLevel(group.level.min)
-      : null;
-    group.level.max = group.level.max
-      ? getLevelComponentsBorderByLevel(group.level.max)
-      : null;
+    group.level.min =
+      group.level.min !== null
+        ? getLevelComponentsBorderByLevel(group.level.min)
+        : null;
+    group.level.max =
+      group.level.max !== null
+        ? getLevelComponentsBorderByLevel(group.level.max)
+        : null;
 
     const params: Record<string, any> = {};
     const beneficiaryOwnersPart = this.getBeneficiaryOwnersPart(
@@ -1853,7 +1875,8 @@ export class UserGroupsService {
     );
     const inclusionExclusionPart = this.getInclusionExclusionPart(
       group,
-      params
+      params,
+      previewIdentityMembership
     );
     const sql = `with ${repPart ?? ''} ${cicPart ?? ''} ${
       nftsPart ?? ''
@@ -1867,7 +1890,8 @@ export class UserGroupsService {
 
   private getInclusionExclusionPart(
     group: GClean,
-    params: Record<string, any>
+    params: Record<string, any>,
+    previewIdentityMembership?: PreviewIdentityMembership
   ): string {
     const anyOtherDescriptionButInclusion = !!(
       group.level.max !== null ||
@@ -1884,6 +1908,79 @@ export class UserGroupsService {
       group.cic.user_identity ||
       group.is_beneficiary_of_grant_id !== null
     );
+    if (previewIdentityMembership === undefined) {
+      return this.getPersistedInclusionExclusionPart(
+        group,
+        params,
+        anyOtherDescriptionButInclusion
+      );
+    }
+    const includedAddresses = previewIdentityMembership.includedAddresses;
+    const excludedAddresses = previewIdentityMembership.excludedAddresses;
+    const hasIncludedIdentities =
+      group.identity_group_id !== null || includedAddresses.length > 0;
+    const hasExcludedIdentities =
+      group.excluded_identity_group_id !== null || excludedAddresses.length > 0;
+    if (
+      !anyOtherDescriptionButInclusion &&
+      !hasIncludedIdentities &&
+      !hasExcludedIdentities
+    ) {
+      return ` ${UserGroupsService.GENERATED_VIEW} as (select * from cm_view)`;
+    }
+    const excludedSources: string[] = [];
+    if (group.excluded_identity_group_id !== null) {
+      excludedSources.push(
+        `select exc.profile_id from ${PROFILE_GROUPS_TABLE} exc where exc.profile_group_id = :excluded_profile_group_id`
+      );
+      params['excluded_profile_group_id'] = group.excluded_identity_group_id;
+    }
+    if (excludedAddresses.length > 0) {
+      excludedSources.push(
+        `select i.profile_id from ${ADDRESS_CONSOLIDATION_KEY} a join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key where a.address in (:preview_excluded_addresses)`
+      );
+      params['preview_excluded_addresses'] = excludedAddresses;
+    }
+    if (!anyOtherDescriptionButInclusion && !hasIncludedIdentities) {
+      return ` ${
+        UserGroupsService.GENERATED_VIEW
+      } as (select i.* from ${IDENTITIES_TABLE} i where not exists (select 1 from (${excludedSources.join(
+        ' union '
+      )}) excluded_profile_ids where excluded_profile_ids.profile_id = i.profile_id))`;
+    }
+    const includedSources: string[] = [];
+    if (anyOtherDescriptionButInclusion) {
+      includedSources.push(`select i.profile_id from cm_view i`);
+    }
+    if (group.identity_group_id !== null) {
+      includedSources.push(
+        `select profile_id from ${PROFILE_GROUPS_TABLE} where profile_group_id = :profile_group_id`
+      );
+      params['profile_group_id'] = group.identity_group_id;
+    }
+    if (includedAddresses.length > 0) {
+      includedSources.push(
+        `select i.profile_id from ${ADDRESS_CONSOLIDATION_KEY} a join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key where a.address in (:preview_included_addresses)`
+      );
+      params['preview_included_addresses'] = includedAddresses;
+    }
+    const exclusionClause = excludedSources.length
+      ? `where included_profile_ids.profile_id not in (${excludedSources.join(
+          ' union '
+        )})`
+      : '';
+    return ` included_profile_ids as (select distinct profile_id from (${includedSources.join(
+      ' union all '
+    )}) idxs), ${
+      UserGroupsService.GENERATED_VIEW
+    } as (select i.* from ${IDENTITIES_TABLE} i join included_profile_ids on i.profile_id = included_profile_ids.profile_id ${exclusionClause}) `;
+  }
+
+  private getPersistedInclusionExclusionPart(
+    group: GClean,
+    params: Record<string, any>,
+    anyOtherDescriptionButInclusion: boolean
+  ): string {
     if (
       !anyOtherDescriptionButInclusion &&
       group.identity_group_id === null &&
@@ -1911,20 +2008,63 @@ export class UserGroupsService {
         ? `where included_profile_ids.profile_id not in (select exc.profile_id from ${PROFILE_GROUPS_TABLE} exc where exc.profile_group_id = :excluded_profile_group_id)`
         : ``
     }) `;
-    params['excluded_profile_group_id'] = group.excluded_identity_group_id;
+    if (group.excluded_identity_group_id !== null) {
+      params['excluded_profile_group_id'] = group.excluded_identity_group_id;
+    }
     return sql;
+  }
+
+  private async validateBeneficiaryGrantCriteria(
+    beneficiaryGrantId: string | null,
+    beneficiaryGrantMatchMode: GroupBeneficiaryGrantMatchMode,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (
+      !beneficiaryGrantId &&
+      beneficiaryGrantMatchMode === GroupBeneficiaryGrantMatchMode.ALL_TOKENS
+    ) {
+      throw new BadRequestException(
+        `Beneficiary grant match mode ALL_TOKENS requires an xTDH grant`
+      );
+    }
+    if (!beneficiaryGrantId) {
+      return;
+    }
+    const grantEntity = await xTdhRepository.getGrantById(
+      beneficiaryGrantId,
+      ctx
+    );
+    if (!grantEntity) {
+      throw new NotFoundException(
+        `Can't create group based on grant ${beneficiaryGrantId} as it doesn't exist`
+      );
+    }
+    if (
+      beneficiaryGrantMatchMode === GroupBeneficiaryGrantMatchMode.ALL_TOKENS &&
+      grantEntity.token_mode !== XTdhGrantTokenMode.INCLUDE
+    ) {
+      throw new BadRequestException(
+        `Beneficiary grant match mode ALL_TOKENS can only be used with grants that specify target tokens`
+      );
+    }
   }
 
   private getTypeOfNftPart({
     viewName,
     comGroupFieldName,
+    tokenParamName,
     tokenOwnerships,
-    contract
+    contract,
+    groupId,
+    params
   }: {
     viewName: string;
     comGroupFieldName: string;
+    tokenParamName: string;
     tokenOwnerships: ApiGroupOwnsNft[];
     contract: string;
+    groupId: string | null;
+    params: Record<string, any>;
   }): string | null {
     let nftPart: string | null = null;
     if (tokenOwnerships.length) {
@@ -1934,41 +2074,63 @@ export class UserGroupsService {
                               join ${ADDRESS_CONSOLIDATION_KEY} ac on ac.address = lower(wallet)
                               join ${IDENTITIES_TABLE} i on i.consolidation_key = ac.consolidation_key
                      where contract = '${contract}'), `;
-      const ownsSpecificTokens =
-        tokenOwnerships.map((it) => it.tokens).flat().length > 0;
+      const specificTokens = tokenOwnerships
+        .flatMap((it) => it.tokens ?? [])
+        .map(String);
+      const ownsSpecificTokens = specificTokens.length > 0;
       if (ownsSpecificTokens) {
-        const criteriaTokensSql = `(SELECT token_id
-                                             FROM community_groups,
-                                                  JSON_TABLE(community_groups.${comGroupFieldName}, '$[*]'
-                                                             COLUMNS (token_id VARCHAR(255) PATH '$')) AS tokens
-                                             WHERE community_groups.id =
-                                                   :user_group_id)`;
         const matchMode =
           enums.resolve(
             GroupNftOwnershipMatchMode,
-            tokenOwnerships.find((it) => it.tokens.length > 0)?.match_mode
+            tokenOwnerships.find((it) => (it.tokens?.length ?? 0) > 0)
+              ?.match_mode
           ) ?? DEFAULT_NFT_OWNERSHIP_MATCH_MODE;
-        if (matchMode === GroupNftOwnershipMatchMode.ANY_TOKEN) {
+        if (groupId !== null) {
+          const criteriaTokensSql = `(SELECT token_id
+                                       FROM community_groups,
+                                            JSON_TABLE(community_groups.${comGroupFieldName}, '$[*]'
+                                                       COLUMNS (token_id VARCHAR(255) PATH '$')) AS tokens
+                                       WHERE community_groups.id =
+                                             :user_group_id)`;
+          if (matchMode === GroupNftOwnershipMatchMode.ANY_TOKEN) {
+            nftPart += `
+              ${viewName} as (SELECT distinct ${viewName}_s1.profile_id
+                                FROM ${viewName}_s1
+                                         JOIN ${criteriaTokensSql} AS criteria_tokens
+                                              ON ${viewName}_s1.token_id = criteria_tokens.token_id)
+         `;
+          } else {
+            nftPart += `
+              ${viewName} as (SELECT profile_id
+                                FROM ${viewName}_s1
+                                         JOIN ${criteriaTokensSql} AS criteria_tokens
+                                              ON ${viewName}_s1.token_id = criteria_tokens.token_id
+                                GROUP BY profile_id
+                                HAVING COUNT(DISTINCT ${viewName}_s1.token_id) = (SELECT COUNT(*)
+                                                                               FROM community_groups,
+                                                                                    JSON_TABLE(
+                                                                                            community_groups.${comGroupFieldName},
+                                                                                            '$[*]'
+                                                                                            COLUMNS (token_id VARCHAR(255) PATH '$')) AS tokens
+                                                                               WHERE community_groups.id = :user_group_id))
+         `;
+          }
+        } else if (matchMode === GroupNftOwnershipMatchMode.ANY_TOKEN) {
+          params[tokenParamName] = collections.distinct(specificTokens);
           nftPart += `
-            ${viewName} as (SELECT distinct ${viewName}_s1.profile_id
+            ${viewName} as (SELECT distinct profile_id
                               FROM ${viewName}_s1
-                                       JOIN ${criteriaTokensSql} AS criteria_tokens
-                                            ON ${viewName}_s1.token_id = criteria_tokens.token_id)
+                             WHERE token_id in (:${tokenParamName}))
        `;
         } else {
+          params[tokenParamName] = collections.distinct(specificTokens);
+          params[`${tokenParamName}_count`] = params[tokenParamName].length;
           nftPart += `
             ${viewName} as (SELECT profile_id
                               FROM ${viewName}_s1
-                                       JOIN ${criteriaTokensSql} AS criteria_tokens
-                                            ON ${viewName}_s1.token_id = criteria_tokens.token_id
+                             WHERE token_id in (:${tokenParamName})
                               GROUP BY profile_id
-                              HAVING COUNT(DISTINCT ${viewName}_s1.token_id) = (SELECT COUNT(*)
-                                                                             FROM community_groups,
-                                                                                  JSON_TABLE(
-                                                                                          community_groups.${comGroupFieldName},
-                                                                                          '$[*]'
-                                                                                          COLUMNS (token_id VARCHAR(255) PATH '$')) AS tokens
-                                                                             WHERE community_groups.id = :user_group_id))
+                              HAVING COUNT(DISTINCT token_id) = :${tokenParamName}_count)
        `;
         }
       } else {
@@ -1990,34 +2152,46 @@ export class UserGroupsService {
     const memesPart = this.getTypeOfNftPart({
       viewName: 'meme_owners_of_group',
       comGroupFieldName: 'owns_meme_tokens',
+      tokenParamName: 'meme_token_ids',
       tokenOwnerships: group.owns_nfts.filter(
         (it) => it.name === ApiGroupOwnsNftNameEnum.Memes
       ),
-      contract: MEMES_CONTRACT
+      contract: MEMES_CONTRACT,
+      groupId: group_id,
+      params
     });
     const labsPart = this.getTypeOfNftPart({
       viewName: 'labs_owners_of_group',
       comGroupFieldName: 'owns_lab_tokens',
+      tokenParamName: 'lab_token_ids',
       tokenOwnerships: group.owns_nfts.filter(
         (it) => it.name === ApiGroupOwnsNftNameEnum.Memelab
       ),
-      contract: MEMELAB_CONTRACT
+      contract: MEMELAB_CONTRACT,
+      groupId: group_id,
+      params
     });
     const gradientsPart = this.getTypeOfNftPart({
       viewName: 'gradients_owners_of_group',
       comGroupFieldName: 'owns_gradient_tokens',
+      tokenParamName: 'gradient_token_ids',
       tokenOwnerships: group.owns_nfts.filter(
         (it) => it.name === ApiGroupOwnsNftNameEnum.Gradients
       ),
-      contract: GRADIENT_CONTRACT
+      contract: GRADIENT_CONTRACT,
+      groupId: group_id,
+      params
     });
     const nextgensPart = this.getTypeOfNftPart({
       viewName: 'nextgens_owners_of_group',
       comGroupFieldName: 'owns_nextgen_tokens',
+      tokenParamName: 'nextgen_token_ids',
       tokenOwnerships: group.owns_nfts.filter(
         (it) => it.name === ApiGroupOwnsNftNameEnum.Nextgen
       ),
-      contract: NEXTGEN_CORE_CONTRACT[Network.ETH_MAINNET]
+      contract: NEXTGEN_CORE_CONTRACT[Network.ETH_MAINNET],
+      groupId: group_id,
+      params
     });
     const nftsParts = [memesPart, labsPart, gradientsPart, nextgensPart].filter(
       (it) => it !== null
@@ -2025,7 +2199,9 @@ export class UserGroupsService {
     if (nftsParts.length === 0) {
       return null;
     }
-    params['user_group_id'] = group_id;
+    if (group_id !== null) {
+      params['user_group_id'] = group_id;
+    }
     const nftsPart = nftsParts.join(', ');
 
     return ` ${repPart || cicPart ? ',' : ''} ${nftsPart}`;
