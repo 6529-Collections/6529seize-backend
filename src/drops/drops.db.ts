@@ -3636,16 +3636,19 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     param: { wave_id: string; handle: string; limit: number },
     ctx: RequestContext
   ): Promise<WaveSearchAuthor[]> {
-    const normalizedHandle = param.handle.trim().toLowerCase();
+    const normalizedHandle = param.handle
+      .trim()
+      .toLowerCase()
+      .replace(/[\\%_]/g, '\\$&');
     return this.db.execute<WaveSearchAuthor>(
-      `SELECT DISTINCT
+      String.raw`SELECT DISTINCT
           p.external_id AS id,
           p.handle,
           p.pfp_url AS pfp
        FROM ${PROFILES_TABLE} p
        INNER JOIN ${DROPS_TABLE} d ON d.author_id = p.external_id
        WHERE d.wave_id = :wave_id
-         AND p.normalised_handle LIKE CONCAT(:handle, '%')
+         AND p.normalised_handle LIKE CONCAT(:handle, '%') ESCAPE '\\'
        ORDER BY handle ASC
        LIMIT :limit`,
       {
