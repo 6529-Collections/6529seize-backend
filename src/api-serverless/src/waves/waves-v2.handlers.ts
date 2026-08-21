@@ -6,6 +6,7 @@ import { ApiDropV2PageWithoutCount } from '@/api/generated/models/ApiDropV2PageW
 import { ApiCreateWaveMetadataRequest } from '@/api/generated/models/ApiCreateWaveMetadataRequest';
 import { ApiWaveDecisionsPageV2 } from '@/api/generated/models/ApiWaveDecisionsPageV2';
 import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
+import { ApiWaveSearchAuthor } from '@/api/generated/models/ApiWaveSearchAuthor';
 import { ApiWaveMetadata } from '@/api/generated/models/ApiWaveMetadata';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
@@ -28,7 +29,8 @@ import {
   ListWaveCurationDropsV2Request,
   GetDropRepliesV2Request,
   GetWaveCompetitionDropsV2Request,
-  SearchDropsInWaveV2Request
+  SearchDropsInWaveV2Request,
+  SearchWaveAuthorsV2Request
 } from '@/api/generated/routes/operations';
 import { dropsService } from '@/api/drops/drops.api.service';
 import { PageSortDirection } from '@/api/page-request';
@@ -248,7 +250,10 @@ type SearchDropsInWaveV2PathParams = {
 };
 
 type SearchDropsInWaveV2Query = {
-  term: string;
+  term?: string;
+  author_id?: string;
+  after?: number;
+  before?: number;
   page: number;
   size: number;
 };
@@ -260,9 +265,40 @@ const SearchDropsInWaveV2PathParamsSchema: Joi.ObjectSchema<SearchDropsInWaveV2P
 
 const SearchDropsInWaveV2QuerySchema: Joi.ObjectSchema<SearchDropsInWaveV2Query> =
   Joi.object<SearchDropsInWaveV2Query>({
-    term: Joi.string().min(1).required(),
+    term: Joi.string().trim().min(3).max(200).optional(),
+    author_id: Joi.string().trim().min(1).max(100).optional(),
+    after: Joi.number().integer().min(0).optional(),
+    before: Joi.number().integer().min(0).optional(),
     size: Joi.number().integer().min(1).max(100).optional().default(20),
     page: Joi.number().integer().min(1).optional().default(1)
+  })
+    .or('term', 'author_id', 'after', 'before')
+    .custom((value, helpers) => {
+      if (
+        value.after !== undefined &&
+        value.before !== undefined &&
+        value.after >= value.before
+      ) {
+        return helpers.error('any.invalid');
+      }
+      return value;
+    }, 'date range validation');
+
+type SearchWaveAuthorsV2Query = {
+  handle: string;
+  limit: number;
+};
+
+const SearchWaveAuthorsV2QuerySchema: Joi.ObjectSchema<SearchWaveAuthorsV2Query> =
+  Joi.object<SearchWaveAuthorsV2Query>({
+    handle: Joi.string()
+      .trim()
+      .allow('')
+      .max(15)
+      .pattern(/^\w*$/)
+      .optional()
+      .default(''),
+    limit: Joi.number().integer().min(1).max(20).optional().default(10)
   });
 
 export async function handleGetWavesV2(
@@ -523,16 +559,33 @@ export async function handleSearchDropsInWaveV2(
   );
   const timer = Timer.getFromRequest(req);
   const authenticationContext = await getAuthenticationContext(req, timer);
-  const { term, page, size } = getValidatedByJoiOrThrow(
-    req.query,
-    SearchDropsInWaveV2QuerySchema
-  );
-  return apiWaveV2Service.searchDropsContainingPhraseInWave(
-    { term, page, size, wave_id: waveId },
+  const { term, author_id, after, before, page, size } =
+    getValidatedByJoiOrThrow(req.query, SearchDropsInWaveV2QuerySchema);
+  return apiWaveV2Service.searchDropsInWave(
+    { term, author_id, after, before, page, size, wave_id: waveId },
     {
       authenticationContext,
       timer
     }
+  );
+}
+
+export async function handleSearchWaveAuthorsV2(
+  req: SearchWaveAuthorsV2Request
+): Promise<ApiWaveSearchAuthor[]> {
+  const { waveId } = getValidatedByJoiOrThrow(
+    req.params,
+    SearchDropsInWaveV2PathParamsSchema
+  );
+  const timer = Timer.getFromRequest(req);
+  const authenticationContext = await getAuthenticationContext(req, timer);
+  const { handle, limit } = getValidatedByJoiOrThrow(
+    req.query,
+    SearchWaveAuthorsV2QuerySchema
+  );
+  return apiWaveV2Service.searchWaveAuthors(
+    { wave_id: waveId, handle, limit },
+    { authenticationContext, timer }
   );
 }
 

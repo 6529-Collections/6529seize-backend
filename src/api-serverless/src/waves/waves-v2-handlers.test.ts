@@ -4,7 +4,8 @@ const mockFindDropsFeed = jest.fn();
 const mockFindWaveCompetitionDrops = jest.fn();
 const mockFindDropRepliesFeed = jest.fn();
 const mockFindWaveCurationDrops = jest.fn();
-const mockSearchDropsContainingPhraseInWave = jest.fn();
+const mockSearchDropsInWave = jest.fn();
+const mockSearchWaveAuthors = jest.fn();
 const mockSearchConcludedWaveDecisionsV2 = jest.fn();
 const mockFindLeaderboardV2 = jest.fn();
 const mockGetAuthenticationContext = jest.fn();
@@ -28,7 +29,8 @@ jest.mock('@/api/waves/api-wave-v2.service', () => ({
     findWaveCompetitionDrops: mockFindWaveCompetitionDrops,
     findDropRepliesFeed: mockFindDropRepliesFeed,
     findWaveCurationDrops: mockFindWaveCurationDrops,
-    searchDropsContainingPhraseInWave: mockSearchDropsContainingPhraseInWave
+    searchDropsInWave: mockSearchDropsInWave,
+    searchWaveAuthors: mockSearchWaveAuthors
   }
 }));
 
@@ -84,7 +86,8 @@ import {
   handleGetOfficialWaves,
   handleGetWavesV2,
   handleListWaveCurationDropsV2,
-  handleSearchDropsInWaveV2
+  handleSearchDropsInWaveV2,
+  handleSearchWaveAuthorsV2
 } from './waves-v2.handlers';
 
 describe('waves v2 handlers', () => {
@@ -657,7 +660,7 @@ describe('waves v2 handlers', () => {
     const result = { data: [], page: 1, next: false } as any;
 
     beforeEach(() => {
-      mockSearchDropsContainingPhraseInWave.mockResolvedValue(result);
+      mockSearchDropsInWave.mockResolvedValue(result);
     });
 
     it('applies query defaults before calling the service', async () => {
@@ -670,9 +673,12 @@ describe('waves v2 handlers', () => {
 
       expect(mockGetFromRequest).toHaveBeenCalledWith(req);
       expect(mockGetAuthenticationContext).toHaveBeenCalledWith(req, timer);
-      expect(mockSearchDropsContainingPhraseInWave).toHaveBeenCalledWith(
+      expect(mockSearchDropsInWave).toHaveBeenCalledWith(
         {
           term: 'hello',
+          author_id: undefined,
+          after: undefined,
+          before: undefined,
           page: 1,
           size: 20,
           wave_id: 'wave-1'
@@ -692,9 +698,12 @@ describe('waves v2 handlers', () => {
 
       await handleSearchDropsInWaveV2(req);
 
-      expect(mockSearchDropsContainingPhraseInWave).toHaveBeenCalledWith(
+      expect(mockSearchDropsInWave).toHaveBeenCalledWith(
         {
           term: 'hello',
+          author_id: undefined,
+          after: undefined,
+          before: undefined,
           page: 2,
           size: 50,
           wave_id: 'wave-1'
@@ -706,16 +715,109 @@ describe('waves v2 handlers', () => {
       );
     });
 
-    it('rejects invalid query params', async () => {
+    it('accepts valid filter-only criteria', async () => {
       const req = {
         params: { waveId: 'wave-1' },
-        query: { term: '', size: '101' }
+        query: {
+          author_id: 'author-1',
+          after: '1767225600000',
+          before: '1767312000000'
+        }
+      } as any;
+
+      await handleSearchDropsInWaveV2(req);
+
+      expect(mockSearchDropsInWave).toHaveBeenCalledWith(
+        {
+          term: undefined,
+          author_id: 'author-1',
+          after: 1767225600000,
+          before: 1767312000000,
+          page: 1,
+          size: 20,
+          wave_id: 'wave-1'
+        },
+        { authenticationContext, timer }
+      );
+    });
+
+    it('rejects text shorter than three characters', async () => {
+      const req = {
+        params: { waveId: 'wave-1' },
+        query: { term: 'lo' }
       } as any;
 
       await expect(handleSearchDropsInWaveV2(req)).rejects.toThrow(
-        '"term" is not allowed to be empty'
+        '"term" length must be at least 3 characters long'
       );
-      expect(mockSearchDropsContainingPhraseInWave).not.toHaveBeenCalled();
+      expect(mockSearchDropsInWave).not.toHaveBeenCalled();
+    });
+
+    it('rejects text longer than 200 characters', async () => {
+      const req = {
+        params: { waveId: 'wave-1' },
+        query: { term: 'a'.repeat(201) }
+      } as any;
+
+      await expect(handleSearchDropsInWaveV2(req)).rejects.toThrow(
+        '"term" length must be less than or equal to 200 characters long'
+      );
+      expect(mockSearchDropsInWave).not.toHaveBeenCalled();
+    });
+
+    it('rejects searches without criteria and inverted date ranges', async () => {
+      await expect(
+        handleSearchDropsInWaveV2({
+          params: { waveId: 'wave-1' },
+          query: {}
+        } as any)
+      ).rejects.toThrow();
+      await expect(
+        handleSearchDropsInWaveV2({
+          params: { waveId: 'wave-1' },
+          query: { after: '200', before: '100' }
+        } as any)
+      ).rejects.toThrow();
+      expect(mockSearchDropsInWave).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('handleSearchWaveAuthorsV2', () => {
+    it('applies defaults and searches only authors in the requested wave', async () => {
+      const result = [{ id: 'author-1', handle: 'alice', pfp: null }];
+      mockSearchWaveAuthors.mockResolvedValue(result);
+      const req = {
+        params: { waveId: 'wave-1' },
+        query: { handle: 'ali' }
+      } as any;
+
+      await expect(handleSearchWaveAuthorsV2(req)).resolves.toBe(result);
+      expect(mockSearchWaveAuthors).toHaveBeenCalledWith(
+        { wave_id: 'wave-1', handle: 'ali', limit: 10 },
+        { authenticationContext, timer }
+      );
+    });
+
+    it('allows the empty roster prefix and rejects invalid handle characters', async () => {
+      mockSearchWaveAuthors.mockResolvedValue([]);
+
+      await expect(
+        handleSearchWaveAuthorsV2({
+          params: { waveId: 'wave-1' },
+          query: {}
+        } as any)
+      ).resolves.toEqual([]);
+      expect(mockSearchWaveAuthors).toHaveBeenLastCalledWith(
+        { wave_id: 'wave-1', handle: '', limit: 10 },
+        { authenticationContext, timer }
+      );
+
+      await expect(
+        handleSearchWaveAuthorsV2({
+          params: { waveId: 'wave-1' },
+          query: { handle: 'not-valid!' }
+        } as any)
+      ).rejects.toThrow();
     });
   });
 });
