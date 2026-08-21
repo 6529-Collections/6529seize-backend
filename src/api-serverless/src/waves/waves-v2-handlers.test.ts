@@ -753,6 +753,18 @@ describe('waves v2 handlers', () => {
       expect(mockSearchDropsInWave).not.toHaveBeenCalled();
     });
 
+    it('rejects text longer than 200 characters', async () => {
+      const req = {
+        params: { waveId: 'wave-1' },
+        query: { term: 'a'.repeat(201) }
+      } as any;
+
+      await expect(handleSearchDropsInWaveV2(req)).rejects.toThrow(
+        '"term" length must be less than or equal to 200 characters long'
+      );
+      expect(mockSearchDropsInWave).not.toHaveBeenCalled();
+    });
+
     it('rejects searches without criteria and inverted date ranges', async () => {
       await expect(
         handleSearchDropsInWaveV2({

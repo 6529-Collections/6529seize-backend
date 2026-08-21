@@ -265,7 +265,7 @@ const SearchDropsInWaveV2PathParamsSchema: Joi.ObjectSchema<SearchDropsInWaveV2P
 
 const SearchDropsInWaveV2QuerySchema: Joi.ObjectSchema<SearchDropsInWaveV2Query> =
   Joi.object<SearchDropsInWaveV2Query>({
-    term: Joi.string().trim().min(3).optional(),
+    term: Joi.string().trim().min(3).max(200).optional(),
     author_id: Joi.string().trim().min(1).max(100).optional(),
     after: Joi.number().integer().min(0).optional(),
     before: Joi.number().integer().min(0).optional(),
