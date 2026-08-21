@@ -25,6 +25,7 @@ import { ApiDropRatingRequest } from '../generated/models/ApiDropRatingRequest';
 import { ApiDropSubscriptionActions } from '../generated/models/ApiDropSubscriptionActions';
 import { ApiDropSubscriptionTargetAction } from '../generated/models/ApiDropSubscriptionTargetAction';
 import { ApiDropType } from '../generated/models/ApiDropType';
+import { ApiMarkDropUnreadResponse } from '../generated/models/ApiMarkDropUnreadResponse';
 import { ApiToggleHideLinkPreviewRequest } from '../generated/models/ApiToggleHideLinkPreviewRequest';
 import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
 import { identityFetcher } from '../identities/identity.fetcher';
@@ -54,6 +55,9 @@ import { ApiDropCurationRequest } from '@/api/generated/models/ApiDropCurationRe
 import { helpBotCreditsService } from '@/help-bot/help-bot-credits.service';
 import { helpBotTriggerService } from '@/help-bot/help-bot-trigger.service';
 import { Logger } from '@/logging';
+import { wsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
+import { DbPoolName } from '@/db-query.options';
+import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
 
 const router = asyncRouter();
 const logger = Logger.get('DropsRoutes');
@@ -648,7 +652,7 @@ router.post(
   needsAuthenticatedUser(),
   async (
     req: Request<{ drop_id: string }, any, any, any, any>,
-    res: Response<ApiResponse<any>>
+    res: Response<ApiResponse<ApiMarkDropUnreadResponse>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -666,17 +670,64 @@ router.post(
     const drop = drops[0];
     const waveId = drop.wave_id;
     const newTimestamp = drop.created_at - 1;
-    await wavesApiDb.setWaveReaderMetricLatestReadTimestamp(
-      waveId,
-      identityId,
-      newTimestamp,
-      { timer }
-    );
+    const wave = await wavesApiDb.findById(waveId, undefined, DbPoolName.WRITE);
+    if (wave?.is_direct_message) {
+      const groupsUserIsEligibleFor =
+        await userGroupsService.getGroupsUserIsEligibleFor(identityId, timer);
+      await assertWaveAndParentVisibleOrThrow({
+        wave,
+        groupsUserIsEligibleFor,
+        message: `Wave ${waveId} not found.`,
+        wavesApiDb,
+        ctx: { timer, authenticationContext }
+      });
+      await wavesApiDb.setDirectMessageUnreadFromSerial(
+        {
+          waveId,
+          readerId: identityId,
+          firstUnreadSerialNo: drop.serial_no,
+          latestReadTimestamp: newTimestamp
+        },
+        { timer }
+      );
+    } else {
+      await wavesApiDb.setWaveReaderMetricLatestReadTimestamp(
+        waveId,
+        identityId,
+        newTimestamp,
+        { timer }
+      );
+    }
     await invalidateWaveUnreadCacheForReaderWave({
       identityId,
       waveId
     });
     const ctx = { timer };
+    if (wave?.is_direct_message) {
+      const dmRecipients =
+        await wsListenersNotifier.findConnectedNotificationRecipients([
+          identityId
+        ]);
+      const dmUnreadState = (
+        await wavesApiDb.findDmUnreadConversationStates(
+          { identityId, waveIds: [waveId] },
+          ctx,
+          DbPoolName.WRITE
+        )
+      )[0];
+      if (dmUnreadState && dmRecipients.length) {
+        await wsListenersNotifier.notifyAboutDmUnreadStateChanged(
+          [dmUnreadState],
+          dmRecipients
+        );
+      }
+      return res.send({
+        your_unread_drops_count: dmUnreadState?.unread_count ?? 0,
+        first_unread_drop_serial_no:
+          dmUnreadState?.first_unread_drop_serial_no ?? null,
+        dm_unread_state: dmUnreadState ?? null
+      });
+    }
     const unreadSummaries =
       await wavesApiDb.findIdentityUnreadDropsSummaryByWaveId(
         { identityId, waveIds: [waveId] },
@@ -686,7 +737,8 @@ router.post(
     res.send({
       your_unread_drops_count: unreadSummary?.unread_drops_count ?? 0,
       first_unread_drop_serial_no:
-        unreadSummary?.first_unread_drop_serial_no ?? null
+        unreadSummary?.first_unread_drop_serial_no ?? null,
+      dm_unread_state: null
     });
   }
 );

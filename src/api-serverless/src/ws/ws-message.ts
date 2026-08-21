@@ -2,6 +2,7 @@ import { ApiDrop } from '../generated/models/ApiDrop';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 import { ApiAttachment } from '@/api/generated/models/ApiAttachment';
+import { ApiDmUnreadConversationState } from '@/api/generated/models/ApiDmUnreadConversationState';
 
 export enum WsMessageType {
   DROP_UPDATE = 'DROP_UPDATE',
@@ -17,6 +18,7 @@ export enum WsMessageType {
   SYNC_NOTIFICATION_IDENTITIES = 'SYNC_NOTIFICATION_IDENTITIES',
   NOTIFICATION_IDENTITIES_SYNCED = 'NOTIFICATION_IDENTITIES_SYNCED',
   IDENTITY_NOTIFICATIONS_CHANGED = 'IDENTITY_NOTIFICATIONS_CHANGED',
+  DM_UNREAD_STATE_CHANGED = 'DM_UNREAD_STATE_CHANGED',
   MEDIA_LINK_UPDATED = 'MEDIA_LINK_UPDATED',
   ATTACHMENT_STATUS_UPDATE = 'ATTACHMENT_STATUS_UPDATE'
 }
@@ -142,6 +144,15 @@ export function identityNotificationsChangedMessage(
   return {
     type: WsMessageType.IDENTITY_NOTIFICATIONS_CHANGED,
     data: { profile_id: profileId }
+  };
+}
+
+export function dmUnreadStateChangedMessage(
+  state: ApiDmUnreadConversationState
+): WsMessage<ApiDmUnreadConversationState> {
+  return {
+    type: WsMessageType.DM_UNREAD_STATE_CHANGED,
+    data: state
   };
 }
 

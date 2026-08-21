@@ -64,6 +64,112 @@ function findMaximumSafeAsciiContentLength(
 }
 
 describe('WsListenersNotifier', () => {
+  it('sends each direct-message unread state only to sessions synced for that profile', async () => {
+    const appWebSockets = {
+      send: jest.fn().mockResolvedValue(undefined)
+    };
+    const wsConnectionRepository = {
+      findNotificationConnectionIdsByIdentityIds: jest.fn().mockResolvedValue([
+        { connectionId: 'shared-connection', identityId: 'profile-1' },
+        { connectionId: 'shared-connection', identityId: 'profile-2' },
+        { connectionId: 'profile-1-device-2', identityId: 'profile-1' }
+      ])
+    };
+    const notifier = new WsListenersNotifier(
+      appWebSockets as any,
+      wsConnectionRepository as any
+    );
+    const profileOneState = {
+      profile_id: 'profile-1',
+      wave_id: 'wave-1',
+      unread_count: 2,
+      first_unread_drop_serial_no: 10,
+      latest_drop_serial_no: 11,
+      latest_read_serial_no: 9,
+      version: 3
+    };
+    const profileTwoState = {
+      ...profileOneState,
+      profile_id: 'profile-2',
+      unread_count: 1
+    };
+
+    await notifier.notifyAboutDmUnreadStateChanged([
+      profileOneState,
+      profileTwoState
+    ]);
+
+    expect(
+      wsConnectionRepository.findNotificationConnectionIdsByIdentityIds
+    ).toHaveBeenCalledWith(['profile-1', 'profile-2']);
+    expect(appWebSockets.send).toHaveBeenCalledTimes(3);
+    const sends = appWebSockets.send.mock.calls.map(([call]) => ({
+      connectionId: call.connectionId,
+      message: JSON.parse(call.message)
+    }));
+    expect(sends).toEqual([
+      {
+        connectionId: 'shared-connection',
+        message: {
+          type: 'DM_UNREAD_STATE_CHANGED',
+          data: profileOneState
+        }
+      },
+      {
+        connectionId: 'shared-connection',
+        message: {
+          type: 'DM_UNREAD_STATE_CHANGED',
+          data: profileTwoState
+        }
+      },
+      {
+        connectionId: 'profile-1-device-2',
+        message: {
+          type: 'DM_UNREAD_STATE_CHANGED',
+          data: profileOneState
+        }
+      }
+    ]);
+  });
+
+  it('uses pre-resolved direct-message recipients without repeating the connection lookup', async () => {
+    const appWebSockets = {
+      send: jest.fn().mockResolvedValue(undefined)
+    };
+    const wsConnectionRepository = {
+      findNotificationConnectionIdsByIdentityIds: jest.fn()
+    };
+    const notifier = new WsListenersNotifier(
+      appWebSockets as any,
+      wsConnectionRepository as any
+    );
+    const unreadState = {
+      profile_id: 'profile-1',
+      wave_id: 'wave-1',
+      unread_count: 2,
+      first_unread_drop_serial_no: 10,
+      latest_drop_serial_no: 11,
+      latest_read_serial_no: 9,
+      version: 3
+    };
+
+    await notifier.notifyAboutDmUnreadStateChanged(
+      [unreadState],
+      [{ connectionId: 'connection-1', identityId: 'profile-1' }]
+    );
+
+    expect(
+      wsConnectionRepository.findNotificationConnectionIdsByIdentityIds
+    ).not.toHaveBeenCalled();
+    expect(appWebSockets.send).toHaveBeenCalledWith({
+      connectionId: 'connection-1',
+      message: JSON.stringify({
+        type: 'DM_UNREAD_STATE_CHANGED',
+        data: unreadState
+      })
+    });
+  });
+
   it('sends notification invalidations only to subscribed recipient connections', async () => {
     const appWebSockets = {
       send: jest.fn().mockResolvedValue(undefined)

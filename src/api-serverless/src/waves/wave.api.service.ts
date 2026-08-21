@@ -1,5 +1,7 @@
 import { randomUUID } from 'crypto';
 import { GRADIENT_CONTRACT, MEMES_CONTRACT } from '@/constants';
+import { DbPoolName } from '@/db-query.options';
+import { Logger } from '@/logging';
 import {
   activityRecorder,
   ActivityRecorder
@@ -113,6 +115,10 @@ import {
   waveScoreService,
   WaveScoreDirtyRefreshReason
 } from '@/api/waves/wave-score.service';
+import {
+  wsListenersNotifier as defaultWsListenersNotifier,
+  WsListenersNotifier
+} from '@/api/ws/ws-listeners-notifier';
 
 const CARD_SET_TDH_SUPPORTED_CONTRACTS = new Set(
   [MEMES_CONTRACT, GRADIENT_CONTRACT].map((contract) => contract.toLowerCase())
@@ -142,6 +148,8 @@ const WAVE_GROUP_ROLE_ORDER: readonly ApiWaveGroupRole[] = [
 ];
 
 export class WaveApiService {
+  private readonly logger = Logger.get(this.constructor.name);
+
   constructor(
     private readonly wavesApiDb: WavesApiDb,
     private readonly userGroupsService: UserGroupsService,
@@ -157,7 +165,8 @@ export class WaveApiService {
     private readonly metricsRecorder: MetricsRecorder,
     private readonly curationsDb: CurationsDb,
     private readonly dropsDb: DropsDb,
-    private readonly waveGroupNotificationSubscriptionsDb: WaveGroupNotificationSubscriptionsDb
+    private readonly waveGroupNotificationSubscriptionsDb: WaveGroupNotificationSubscriptionsDb,
+    private readonly wsListenersNotifier: WsListenersNotifier = defaultWsListenersNotifier
   ) {}
 
   private getRequiredTimer(
@@ -547,7 +556,7 @@ export class WaveApiService {
     timer.start(`${this.constructor.name}->createWave`);
     await this.validateWaveRelations(createWaveRequest, ctx);
     this.validateOutcomes(createWaveRequest);
-    const { createdWave, pendingPushNotificationIds } =
+    const { createdWave, pendingPushNotificationIds, dmUnreadRecipientIds } =
       await this.wavesApiDb.executeNativeQueriesInTransaction(
         async (connection) => {
           const ctxWithConnection = { ...ctx, connection };
@@ -638,11 +647,18 @@ export class WaveApiService {
               },
               authorId: actingAsId
             });
-          const { drop_id: descriptionDropId, pending_push_notification_ids } =
-            await this.createOrUpdateDrop.execute(descriptionDropModel, true, {
+          const {
+            drop_id: descriptionDropId,
+            pending_push_notification_ids,
+            dm_unread_recipient_ids
+          } = await this.createOrUpdateDrop.execute(
+            descriptionDropModel,
+            true,
+            {
               timer: ctxWithConnection.timer,
               connection: ctxWithConnection.connection
-            });
+            }
+          );
           await this.wavesApiDb.updateDescriptionDropId(
             {
               waveId: id,
@@ -744,7 +760,8 @@ export class WaveApiService {
               },
               ctxWithConnection
             ),
-            pendingPushNotificationIds: pending_push_notification_ids
+            pendingPushNotificationIds: pending_push_notification_ids,
+            dmUnreadRecipientIds: dm_unread_recipient_ids ?? []
           };
         }
       );
@@ -754,6 +771,11 @@ export class WaveApiService {
       ctx
     );
     await invalidateWaveUnreadCacheForWave(createdWave.id);
+    await this.broadcastDmUnreadStates(
+      dmUnreadRecipientIds,
+      createdWave.id,
+      ctx
+    );
     await giveReadReplicaTimeToCatchUp();
     await this.userGroupsService.onWaveRelatedGroupsChanged(
       [
@@ -2490,13 +2512,15 @@ export class WaveApiService {
 
   async muteWave({ waveId }: { waveId: string }, ctx: RequestContext) {
     let readerId: string | null = null;
+    let isDirectMessage = false;
     await this.wavesApiDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
-        await this.assertWaveExistsForAuthenticatedUser(
+        const wave = await this.assertWaveExistsForAuthenticatedUser(
           waveId,
           ctxWithConnection
         );
+        isDirectMessage = wave.is_direct_message === true;
         const actingAsId = ctx.authenticationContext?.getActingAsId();
         if (!actingAsId) {
           throw new ForbiddenException(`Please create a profile first`);
@@ -2523,18 +2547,23 @@ export class WaveApiService {
         identityId: readerId,
         waveId
       });
+      if (isDirectMessage) {
+        await this.broadcastDmUnreadState(readerId, waveId, ctx);
+      }
     }
   }
 
   async unmuteWave({ waveId }: { waveId: string }, ctx: RequestContext) {
     let readerId: string | null = null;
+    let isDirectMessage = false;
     await this.wavesApiDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
-        await this.assertWaveExistsForAuthenticatedUser(
+        const wave = await this.assertWaveExistsForAuthenticatedUser(
           waveId,
           ctxWithConnection
         );
+        isDirectMessage = wave.is_direct_message === true;
         const actingAsId = ctx.authenticationContext?.getActingAsId();
         if (!actingAsId) {
           throw new ForbiddenException(`Please create a profile first`);
@@ -2561,13 +2590,61 @@ export class WaveApiService {
         identityId: readerId,
         waveId
       });
+      if (isDirectMessage) {
+        await this.broadcastDmUnreadState(readerId, waveId, ctx);
+      }
+    }
+  }
+
+  private async broadcastDmUnreadState(
+    identityId: string,
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.broadcastDmUnreadStates([identityId], waveId, ctx);
+  }
+
+  private async broadcastDmUnreadStates(
+    identityIds: string[],
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (!identityIds.length) {
+      return;
+    }
+    try {
+      const recipients =
+        await this.wsListenersNotifier.findConnectedNotificationRecipients(
+          identityIds
+        );
+      const connectedIdentityIds = Array.from(
+        new Set(recipients.map((recipient) => recipient.identityId))
+      );
+      if (!connectedIdentityIds.length) {
+        return;
+      }
+      const states =
+        await this.wavesApiDb.findDmUnreadConversationStatesForIdentities(
+          { identityIds: connectedIdentityIds, waveIds: [waveId] },
+          ctx,
+          DbPoolName.WRITE
+        );
+      await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged(
+        states,
+        recipients
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to broadcast DM unread state for wave ${waveId}`,
+        error
+      );
     }
   }
 
   private async assertWaveExistsForAuthenticatedUser(
     waveId: string,
     ctx: RequestContext
-  ) {
+  ): Promise<WaveEntity> {
     const waveEntity = await this.wavesApiDb.findWaveById(
       waveId,
       ctx.connection
@@ -2591,6 +2668,7 @@ export class WaveApiService {
       wavesApiDb: this.wavesApiDb,
       ctx
     });
+    return waveEntity;
   }
 }
 

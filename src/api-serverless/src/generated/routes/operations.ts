@@ -18,6 +18,7 @@ import { ApiCompetitionVoterPage } from '@/api/generated/models/ApiCompetitionVo
 import { ApiCreateProfileCmsWalletGallerySnapshotRequest } from '@/api/generated/models/ApiCreateProfileCmsWalletGallerySnapshotRequest';
 import { ApiCreateWaveMetadataRequest } from '@/api/generated/models/ApiCreateWaveMetadataRequest';
 import { ApiDmDropsUnreadCount } from '@/api/generated/models/ApiDmDropsUnreadCount';
+import { ApiDmUnreadSnapshot } from '@/api/generated/models/ApiDmUnreadSnapshot';
 import { ApiDropAndWave } from '@/api/generated/models/ApiDropAndWave';
 import { ApiDropBoostV2 } from '@/api/generated/models/ApiDropBoostV2';
 import { ApiDropMetadataV2 } from '@/api/generated/models/ApiDropMetadataV2';
@@ -103,6 +104,20 @@ export type GetDmDropsUnreadRequest = Request<
   ApiResponse<GetDmDropsUnreadResponse>,
   never,
   GetDmDropsUnreadQuery,
+  Record<string, never>
+>;
+
+export type GetDmUnreadSnapshotPathParams = Record<string, never>;
+
+export type GetDmUnreadSnapshotQuery = Record<string, never>;
+
+export type GetDmUnreadSnapshotResponse = ApiDmUnreadSnapshot;
+
+export type GetDmUnreadSnapshotRequest = Request<
+  GetDmUnreadSnapshotPathParams,
+  ApiResponse<GetDmUnreadSnapshotResponse>,
+  never,
+  GetDmUnreadSnapshotQuery,
   Record<string, never>
 >;
 
