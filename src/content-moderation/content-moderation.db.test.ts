@@ -31,6 +31,8 @@ function reportRow() {
     drop_id: 'drop-1',
     reporter_profile_id: 'reporter-1',
     author_profile_id: 'author-1',
+    author_handle: 'author-handle',
+    author_pfp: 'https://example.com/author.png',
     reason: ContentReportReason.SCAM_OR_PHISHING,
     notes: null,
     content_snapshot: {},
@@ -132,6 +134,15 @@ describe('ContentModerationDb', () => {
     expect(firstPage[0]?.cursor).toBe(`0.200.${REPORT_ID}`);
     expect(executor.execute.mock.calls[0]?.[0]).toContain(
       `where status = '${ContentReportStatus.OPEN}'`
+    );
+    expect(executor.execute.mock.calls[0]?.[0]).toContain(
+      `p.external_id = r.author_profile_id`
+    );
+    expect(firstPage[0]).toEqual(
+      expect.objectContaining({
+        author_handle: 'author-handle',
+        author_pfp: 'https://example.com/author.png'
+      })
     );
 
     await db.getModerationQueue({

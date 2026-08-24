@@ -74,8 +74,17 @@ export interface ModerationReportRow {
 }
 
 type ModerationQueueReportRow = ModerationReportRow & {
+  readonly author_handle: string | null;
+  readonly author_pfp: string | null;
   readonly report_count: number;
   readonly recommendation_rank: number;
+};
+
+export type ModerationQueueItemRow = ModerationReportRow & {
+  readonly author_handle: string | null;
+  readonly author_pfp: string | null;
+  readonly report_count: number;
+  readonly cursor: string;
 };
 
 type ModerationQueueCursor = {
@@ -665,9 +674,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
   async getModerationQueue(
     { limit, before }: { limit: number; before?: string | null },
     connection?: ConnectionWrapper<any>
-  ): Promise<
-    Array<ModerationReportRow & { report_count: number; cursor: string }>
-  > {
+  ): Promise<ModerationQueueItemRow[]> {
     const cursor = before ? this.decodeModerationQueueCursor(before) : null;
     const recommendationRankSql = `
       case r.ai_recommendation
@@ -680,9 +687,13 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       `
         select
           r.*,
+          p.handle as author_handle,
+          p.pfp_url as author_pfp,
           counts.report_count,
           ${recommendationRankSql} as recommendation_rank
         from ${CONTENT_MODERATION_REPORTS_TABLE} r
+        left join ${PROFILES_TABLE} p
+          on p.external_id = r.author_profile_id
         join (
           select drop_id, count(*) as report_count
           from ${CONTENT_MODERATION_REPORTS_TABLE}
