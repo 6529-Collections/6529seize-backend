@@ -224,6 +224,10 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 
 ### Content moderation
 
+See [Content moderation](./content-moderation.md) for the complete feature
+policy, publication decision flow, API surface, posting-suspension lifecycle,
+data ownership, retention, and rollout contract.
+
 Drop text passes a permissive pre-publication gate for new posts and edits. It
 checks profile suspension and narrow deterministic signals first; only
 signaled, ambiguous text is sent to a dedicated Bedrock evaluator. Known
@@ -246,7 +250,8 @@ state.
 MySQL stores viewer blocks and hides, reports, global drop and profile states,
 moderator roles, pre-publication decisions, and an append-only audit history.
 Pre-publication decision records are retained for 30 days and pruned daily by
-`dbMigrationsLoop`; this exceeds the ten-minute duplicate-detection window.
+`dbMigrationsLoop` in bounded batches of 1,000 rows, capped at ten batches per
+invocation; this exceeds the ten-minute duplicate-detection window.
 Drop API mappers retain structural graph metadata but redact globally
 unavailable content across V1, V2, light-drop, reply, quote, and WebSocket
 surfaces. Notification writes, reads, badge counts, and push delivery suppress

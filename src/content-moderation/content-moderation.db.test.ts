@@ -31,6 +31,8 @@ function reportRow() {
     drop_id: 'drop-1',
     reporter_profile_id: 'reporter-1',
     author_profile_id: 'author-1',
+    author_handle: 'author-handle',
+    author_pfp: 'https://example.com/author.png',
     reason: ContentReportReason.SCAM_OR_PHISHING,
     notes: null,
     content_snapshot: {},
@@ -126,19 +128,41 @@ describe('ContentModerationDb', () => {
 
   it('returns and consumes a stable queue cursor matching its priority order', async () => {
     const { db, executor } = createDb();
-    executor.execute.mockResolvedValue([reportRow()]);
+    executor.execute.mockImplementation((sql: string) => {
+      if (sql.includes('count(*) as report_count')) {
+        return Promise.resolve([{ drop_id: 'drop-1', report_count: 2 }]);
+      }
+      return Promise.resolve([reportRow()]);
+    });
 
     const firstPage = await db.getModerationQueue({ limit: 1 });
     expect(firstPage[0]?.cursor).toBe(`0.200.${REPORT_ID}`);
     expect(executor.execute.mock.calls[0]?.[0]).toContain(
-      `where status = '${ContentReportStatus.OPEN}'`
+      `where r.status = '${ContentReportStatus.OPEN}'`
     );
+    expect(executor.execute.mock.calls[0]?.[0]).toContain(
+      `p.external_id = r.author_profile_id`
+    );
+    expect(firstPage[0]).toEqual(
+      expect.objectContaining({
+        author_handle: 'author-handle',
+        author_pfp: 'https://example.com/author.png',
+        report_count: 2
+      })
+    );
+    expect(executor.execute.mock.calls[1]?.[0]).toContain(
+      'and drop_id in (:dropIds)'
+    );
+    expect(executor.execute.mock.calls[1]?.[1]).toEqual({
+      dropIds: ['drop-1']
+    });
 
     await db.getModerationQueue({
       limit: 1,
       before: firstPage[0]!.cursor
     });
-    expect(executor.execute).toHaveBeenLastCalledWith(
+    expect(executor.execute).toHaveBeenNthCalledWith(
+      3,
       expect.stringContaining('r.id < :beforeReportId'),
       expect.objectContaining({
         beforeRank: 0,
@@ -147,6 +171,14 @@ describe('ContentModerationDb', () => {
       }),
       undefined
     );
+  });
+
+  it('does not query report counts for an empty moderation queue page', async () => {
+    const { db, executor } = createDb();
+    executor.execute.mockResolvedValue([]);
+
+    await expect(db.getModerationQueue({ limit: 10 })).resolves.toEqual([]);
+    expect(executor.execute).toHaveBeenCalledTimes(1);
   });
 
   it('rejects malformed moderation queue cursors', async () => {
@@ -293,10 +325,14 @@ describe('ContentModerationDb', () => {
     const { db, executor } = createDb();
     executor.execute.mockResolvedValue({ affectedRows: 3 });
 
-    await expect(db.deleteExpiredPrePublicationChecks(1234)).resolves.toBe(3);
+    await expect(db.deleteExpiredPrePublicationChecks(1234, 500)).resolves.toBe(
+      3
+    );
     expect(executor.execute).toHaveBeenCalledWith(
-      expect.stringContaining('where created_at < :olderThan'),
-      { olderThan: 1234 },
+      expect.stringMatching(
+        /where created_at < :olderThan\s+order by created_at asc\s+limit :batchSize/
+      ),
+      { olderThan: 1234, batchSize: 500 },
       undefined
     );
   });

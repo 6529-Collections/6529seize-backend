@@ -74,8 +74,16 @@ export interface ModerationReportRow {
 }
 
 type ModerationQueueReportRow = ModerationReportRow & {
-  readonly report_count: number;
+  readonly author_handle: string | null;
+  readonly author_pfp: string | null;
   readonly recommendation_rank: number;
+};
+
+export type ModerationQueueItemRow = ModerationReportRow & {
+  readonly author_handle: string | null;
+  readonly author_pfp: string | null;
+  readonly report_count: number;
+  readonly cursor: string;
 };
 
 type ModerationQueueCursor = {
@@ -665,9 +673,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
   async getModerationQueue(
     { limit, before }: { limit: number; before?: string | null },
     connection?: ConnectionWrapper<any>
-  ): Promise<
-    Array<ModerationReportRow & { report_count: number; cursor: string }>
-  > {
+  ): Promise<ModerationQueueItemRow[]> {
     const cursor = before ? this.decodeModerationQueueCursor(before) : null;
     const recommendationRankSql = `
       case r.ai_recommendation
@@ -680,15 +686,12 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       `
         select
           r.*,
-          counts.report_count,
+          p.handle as author_handle,
+          p.pfp_url as author_pfp,
           ${recommendationRankSql} as recommendation_rank
         from ${CONTENT_MODERATION_REPORTS_TABLE} r
-        join (
-          select drop_id, count(*) as report_count
-          from ${CONTENT_MODERATION_REPORTS_TABLE}
-          where status = '${ContentReportStatus.OPEN}'
-          group by drop_id
-        ) counts on counts.drop_id = r.drop_id
+        left join ${PROFILES_TABLE} p
+          on p.external_id = r.author_profile_id
         where r.status = '${ContentReportStatus.OPEN}'
           and (
             :beforeRank is null
@@ -717,11 +720,33 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       },
       this.connectionOptions(connection)
     );
+    if (!rows.length) {
+      return [];
+    }
+    const dropIds = Array.from(new Set(rows.map((row) => row.drop_id)));
+    const countRows = await this.db.execute<{
+      drop_id: string;
+      report_count: number;
+    }>(
+      `
+        select drop_id, count(*) as report_count
+        from ${CONTENT_MODERATION_REPORTS_TABLE}
+        where status = '${ContentReportStatus.OPEN}'
+          and drop_id in (:dropIds)
+        group by drop_id
+      `,
+      { dropIds },
+      this.connectionOptions(connection)
+    );
+    const reportCounts = new Map(
+      countRows.map((row) => [row.drop_id, Number(row.report_count)])
+    );
     return rows.map((row) => {
       const parsed = this.parseReportJson(row);
       const { recommendation_rank: recommendationRank, ...report } = parsed;
       return {
         ...report,
+        report_count: reportCounts.get(report.drop_id) ?? 0,
         cursor: this.encodeModerationQueueCursor({
           recommendationRank,
           createdAt: report.created_at,
@@ -1116,14 +1141,17 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
 
   async deleteExpiredPrePublicationChecks(
     olderThan: number,
+    batchSize: number,
     connection?: ConnectionWrapper<any>
   ): Promise<number> {
     const result = await this.db.execute(
       `
         delete from ${CONTENT_MODERATION_PRE_PUBLICATION_CHECKS_TABLE}
         where created_at < :olderThan
+        order by created_at asc
+        limit :batchSize
       `,
-      { olderThan },
+      { olderThan, batchSize },
       this.connectionOptions(connection)
     );
     const affectedRows =

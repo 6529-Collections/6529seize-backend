@@ -10,6 +10,35 @@ import { Time } from '../time';
 const DBMigrate = require('db-migrate');
 
 const logger = Logger.get('DB_MIGRATIONS_LOOP');
+export const CONTENT_MODERATION_RETENTION_BATCH_SIZE = 1000;
+export const CONTENT_MODERATION_RETENTION_MAX_BATCHES = 10;
+
+type ContentModerationRetentionDb = Pick<
+  typeof contentModerationDb,
+  'deleteExpiredPrePublicationChecks'
+>;
+
+export async function deleteExpiredContentModerationChecksInBatches(
+  olderThan: number,
+  moderationDb: ContentModerationRetentionDb = contentModerationDb
+): Promise<number> {
+  let totalDeleted = 0;
+  for (
+    let batch = 0;
+    batch < CONTENT_MODERATION_RETENTION_MAX_BATCHES;
+    batch++
+  ) {
+    const deleted = await moderationDb.deleteExpiredPrePublicationChecks(
+      olderThan,
+      CONTENT_MODERATION_RETENTION_BATCH_SIZE
+    );
+    totalDeleted += deleted;
+    if (deleted < CONTENT_MODERATION_RETENTION_BATCH_SIZE) {
+      break;
+    }
+  }
+  return totalDeleted;
+}
 
 export function isScheduledInvocation(event: unknown): boolean {
   if (!event || typeof event !== 'object') {
@@ -40,7 +69,7 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
         `Ensured immutable legacy competition mappings; inserted ${insertedLegacyCompetitions}`
       );
       const deletedModerationChecks =
-        await contentModerationDb.deleteExpiredPrePublicationChecks(
+        await deleteExpiredContentModerationChecksInBatches(
           Time.currentMillis() - Time.days(30).toMillis()
         );
       logger.info(
