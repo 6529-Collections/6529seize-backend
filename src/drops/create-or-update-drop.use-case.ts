@@ -2126,6 +2126,8 @@ export class CreateOrUpdateDropUseCase {
   private getBroadcastPreferenceGroups(
     mentionedGroups: readonly DropGroupMention[]
   ): DropGroupMention[] {
+    // The existing ALL follower preference is the persisted key for both
+    // broadcast mention types, including @contributors-only drops.
     return ADMIN_ONLY_GROUP_MENTIONS.some((group) =>
       mentionedGroups.includes(group)
     )
@@ -2180,7 +2182,9 @@ export class CreateOrUpdateDropUseCase {
     const broadcastPreferenceIdentityIds = new Set(
       // has_group_mention reflects the persisted ALL key. Product semantics
       // intentionally reuse it for both @all and @contributors broadcasts;
-      // contributor recipients must therefore be joined followers too.
+      // contributor recipients must therefore be joined followers with the
+      // shared broadcast preference enabled too, even when the Chat audience
+      // comes from an explicit chat_group_id.
       followerRecipients
         .filter((recipient) => recipient.has_group_mention)
         .map((recipient) => recipient.identity_id)

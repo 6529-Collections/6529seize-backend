@@ -2045,7 +2045,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     );
   });
 
-  it('gates contributors without gating admin escalation mentions', async () => {
+  it('requires contributor group members to opt into broadcasts without gating admin mentions', async () => {
     const identitySubscriptionsDb = {
       findWaveFollowersEligibleForDropNotifications: jest
         .fn()
@@ -2127,6 +2127,15 @@ describe('CreateOrUpdateDropUseCase', () => {
         mentionedGroups: [DropGroupMention.ALL]
       },
       {}
+    );
+
+    const notificationPayload =
+      userNotifier.notifyWaveDropCreatedRecipients.mock.calls[0][0];
+    expect(notificationPayload.mentionedIdentityIds).not.toContain(
+      'contributor-disabled'
+    );
+    expect(notificationPayload.mentionedIdentityIds).not.toContain(
+      'contributor-not-following'
     );
 
     expect(userNotifier.notifyWaveDropCreatedRecipients).toHaveBeenCalledWith(
