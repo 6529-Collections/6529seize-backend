@@ -133,6 +133,10 @@ const ADMIN_ONLY_GROUP_MENTIONS = [
   DropGroupMention.ALL,
   DropGroupMention.CONTRIBUTORS
 ] as const;
+const ESCALATION_GROUP_MENTIONS: readonly DropGroupMention[] = [
+  DropGroupMention.ADMINS,
+  DropGroupMention.DEVS_6529
+];
 
 function createGroupMentionPattern(token: string): RegExp {
   return new RegExp(`(^|[^a-z0-9_@])@${token}(?![a-z0-9_@])`, 'i');
@@ -2091,6 +2095,73 @@ export class CreateOrUpdateDropUseCase {
     return candidates.filter((profileId) => visibleRecipientIds.has(profileId));
   }
 
+  private getBroadcastPreferenceGroups(
+    mentionedGroups: readonly DropGroupMention[]
+  ): DropGroupMention[] {
+    return ADMIN_ONLY_GROUP_MENTIONS.some((group) =>
+      mentionedGroups.includes(group)
+    )
+      ? [DropGroupMention.ALL]
+      : [];
+  }
+
+  private async resolvePreferenceAwarePermissionGroupMentionRecipients(
+    {
+      model,
+      wave,
+      followerRecipients
+    }: {
+      model: CreateOrUpdateDropModel;
+      wave: WaveEntity;
+      followerRecipients: readonly {
+        identity_id: string;
+        has_group_mention: boolean;
+      }[];
+    },
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+  ): Promise<string[]> {
+    const contributorGroups = model.mentioned_groups.includes(
+      DropGroupMention.CONTRIBUTORS
+    )
+      ? [DropGroupMention.CONTRIBUTORS]
+      : [];
+    const escalationGroups = model.mentioned_groups.filter((group) =>
+      ESCALATION_GROUP_MENTIONS.includes(group)
+    );
+    const followerIdentityIds = followerRecipients.map(
+      (recipient) => recipient.identity_id
+    );
+    const [contributorIdentityIds, escalationIdentityIds] = await Promise.all([
+      this.resolvePermissionGroupMentionRecipients(
+        {
+          model: { ...model, mentioned_groups: contributorGroups },
+          wave,
+          followerIdentityIds
+        },
+        { timer, connection }
+      ),
+      this.resolvePermissionGroupMentionRecipients(
+        {
+          model: { ...model, mentioned_groups: escalationGroups },
+          wave,
+          followerIdentityIds
+        },
+        { timer, connection }
+      )
+    ]);
+    const broadcastPreferenceIdentityIds = new Set(
+      followerRecipients
+        .filter((recipient) => recipient.has_group_mention)
+        .map((recipient) => recipient.identity_id)
+    );
+    return collections.distinct([
+      ...contributorIdentityIds.filter((identityId) =>
+        broadcastPreferenceIdentityIds.has(identityId)
+      ),
+      ...escalationIdentityIds
+    ]);
+  }
+
   private warnIfDeveloperMentionHasNoRecipients({
     model,
     configuredDeveloperIds
@@ -2288,12 +2359,15 @@ export class CreateOrUpdateDropUseCase {
     const notificationMentionedGroups = groupMentionNotificationsEnabled
       ? model.mentioned_groups
       : [];
+    const broadcastPreferenceGroups = this.getBroadcastPreferenceGroups(
+      notificationMentionedGroups
+    );
     const [followerRecipients, relationshipNotifications] = await Promise.all([
       this.identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications(
         {
           waveId: wave.id,
           authorId,
-          mentionedGroups: notificationMentionedGroups
+          mentionedGroups: broadcastPreferenceGroups
         },
         connection
       ),
@@ -2303,13 +2377,11 @@ export class CreateOrUpdateDropUseCase {
       )
     ]);
     const permissionGroupMentionIdentityIds =
-      await this.resolvePermissionGroupMentionRecipients(
+      await this.resolvePreferenceAwarePermissionGroupMentionRecipients(
         {
           model: { ...model, mentioned_groups: notificationMentionedGroups },
           wave,
-          followerIdentityIds: followerRecipients.map(
-            (recipient) => recipient.identity_id
-          )
+          followerRecipients
         },
         { timer, connection }
       );
@@ -2349,9 +2421,11 @@ export class CreateOrUpdateDropUseCase {
     );
     const mentionedIdentityIds = collections.distinct([
       ...directMentionIdentityIds,
-      ...eligibleFollowerRecipients
-        .filter((recipient) => recipient.has_group_mention)
-        .map((recipient) => recipient.identity_id)
+      ...(notificationMentionedGroups.includes(DropGroupMention.ALL)
+        ? eligibleFollowerRecipients
+            .filter((recipient) => recipient.has_group_mention)
+            .map((recipient) => recipient.identity_id)
+        : [])
     ]);
     const mentionedIdentityIdsSet = new Set(mentionedIdentityIds);
     const allDropsSubscriberIds = eligibleFollowerRecipients
