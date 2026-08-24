@@ -281,12 +281,12 @@ describe('ReleaseNoteGitHubService', () => {
     expect(fetch).toHaveBeenCalledTimes(3);
     expect(fetch).toHaveBeenNthCalledWith(
       2,
-      'https://api.github.com/repos/6529-Collections/6529seize-frontend/actions/workflows/7/runs?branch=main&per_page=100&page=1',
+      'https://api.github.com/repos/6529-Collections/6529seize-frontend/actions/workflows/7/runs?per_page=100&page=1',
       expect.any(Object)
     );
   });
 
-  it('filters recent workflow conclusions locally without the GitHub status query', async () => {
+  it('filters workflow conclusions and branches locally without GitHub run filters', async () => {
     (fetch as unknown as jest.Mock)
       .mockResolvedValueOnce(response(currentRun))
       .mockResolvedValueOnce(
@@ -302,8 +302,15 @@ describe('ReleaseNoteGitHubService', () => {
             {
               ...currentRun,
               id: 121,
-              head_sha: 'previous-sha',
+              head_branch: '1a-staging',
+              head_sha: 'wrong-branch-sha',
               run_number: 43
+            },
+            {
+              ...currentRun,
+              id: 120,
+              head_sha: 'previous-sha',
+              run_number: 42
             }
           ]
         })
@@ -317,7 +324,7 @@ describe('ReleaseNoteGitHubService', () => {
     expect(context?.previous_sha).toBe('previous-sha');
     expect(fetch).toHaveBeenNthCalledWith(
       2,
-      'https://api.github.com/repos/6529-Collections/6529seize-frontend/actions/workflows/7/runs?branch=main&per_page=100&page=1',
+      'https://api.github.com/repos/6529-Collections/6529seize-frontend/actions/workflows/7/runs?per_page=100&page=1',
       expect.any(Object)
     );
   });
@@ -872,7 +879,7 @@ describe('ReleaseNoteGitHubService', () => {
     ]);
     expect(fetch).toHaveBeenNthCalledWith(
       2,
-      'https://api.github.com/repos/6529-Collections/6529seize-backend/actions/workflows/82013288/runs?branch=main&per_page=100&page=1',
+      'https://api.github.com/repos/6529-Collections/6529seize-backend/actions/workflows/82013288/runs?per_page=100&page=1',
       expect.any(Object)
     );
   });
@@ -1361,9 +1368,21 @@ describe('ReleaseNoteGitHubService', () => {
     expect(context?.previous_sha).toBe('previous-sha');
     expect(fetch).toHaveBeenNthCalledWith(
       3,
-      'https://api.github.com/repos/6529-Collections/6529seize-backend/actions/workflows/82013288/runs?branch=main&per_page=100&page=2',
+      'https://api.github.com/repos/6529-Collections/6529seize-backend/actions/workflows/82013288/runs?per_page=100&page=2',
       expect.any(Object)
     );
+  });
+
+  it('rejects a bootstrap run that was not validated for the queued request', async () => {
+    await expect(
+      new ReleaseNoteGitHubService().getPreviousSuccessfulReleaseRun(request, {
+        id: 'different-run',
+        run_number: 45,
+        workflow_id: '7',
+        sha: request.sha
+      })
+    ).rejects.toBeInstanceOf(UntrustedReleaseNoteMetadataError);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('caps bootstrap workflow history at 1000 unfiltered runs', async () => {

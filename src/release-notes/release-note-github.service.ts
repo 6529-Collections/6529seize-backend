@@ -625,15 +625,25 @@ export class ReleaseNoteGitHubService {
     );
   }
 
+  /**
+   * `currentRun` must be the result of `getValidatedReleaseRun` for the same
+   * request. The immutable queued run id and SHA are checked again here before
+   * the value is used to select a workflow-history baseline.
+   */
   public async getPreviousSuccessfulReleaseRun(
     request: ReleaseNoteGenerationRequest,
     currentRun: GitHubReleaseRun
   ): Promise<GitHubReleaseRun | null> {
     const repository = normalizeRepository(request.repo);
     const workflowId = Number(currentRun.workflow_id);
-    if (!Number.isSafeInteger(workflowId)) {
+    if (
+      currentRun.id !== request.run_id ||
+      currentRun.sha !== request.sha ||
+      !Number.isSafeInteger(currentRun.run_number) ||
+      !Number.isSafeInteger(workflowId)
+    ) {
       throw new UntrustedReleaseNoteMetadataError(
-        `GitHub release run ${currentRun.id} has an invalid workflow id`
+        `Validated GitHub release run ${currentRun.id} does not match the queued release metadata`
       );
     }
     const previousRun = await this.findPreviousSuccessfulRun(
@@ -649,12 +659,8 @@ export class ReleaseNoteGitHubService {
     request: ReleaseNoteGenerationRequest,
     currentRun: GitHubWorkflowRunAnchor
   ): Promise<GitHubWorkflowRun | null> {
-    const repoName = getRepoName(request.repo);
     for (let page = 1; page <= MAX_WORKFLOW_RUN_PAGES; page++) {
       const query = new URLSearchParams();
-      if (repoName !== CORE_REPO) {
-        query.set('branch', normalizeBranch(request.branch));
-      }
       query.set('per_page', String(WORKFLOW_RUN_PAGE_SIZE));
       query.set('page', String(page));
       const payload = await this.api<GitHubWorkflowRunsResponse>(
