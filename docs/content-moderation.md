@@ -212,8 +212,9 @@ MySQL stores:
 - append-only moderation audit records.
 
 Pre-publication decision records are retained for 30 days and pruned daily by
-`dbMigrationsLoop`. The retention period is deliberately longer than the
-ten-minute duplicate-signal window.
+`dbMigrationsLoop` in bounded batches of 1,000 rows, with at most ten batches
+per invocation. The retention period is deliberately longer than the ten-minute
+duplicate-signal window.
 
 ## Runtime ownership and rollout
 

@@ -304,10 +304,14 @@ describe('ContentModerationDb', () => {
     const { db, executor } = createDb();
     executor.execute.mockResolvedValue({ affectedRows: 3 });
 
-    await expect(db.deleteExpiredPrePublicationChecks(1234)).resolves.toBe(3);
+    await expect(db.deleteExpiredPrePublicationChecks(1234, 500)).resolves.toBe(
+      3
+    );
     expect(executor.execute).toHaveBeenCalledWith(
-      expect.stringContaining('where created_at < :olderThan'),
-      { olderThan: 1234 },
+      expect.stringMatching(
+        /where created_at < :olderThan\s+order by created_at asc\s+limit :batchSize/
+      ),
+      { olderThan: 1234, batchSize: 500 },
       undefined
     );
   });

@@ -1127,14 +1127,17 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
 
   async deleteExpiredPrePublicationChecks(
     olderThan: number,
+    batchSize: number,
     connection?: ConnectionWrapper<any>
   ): Promise<number> {
     const result = await this.db.execute(
       `
         delete from ${CONTENT_MODERATION_PRE_PUBLICATION_CHECKS_TABLE}
         where created_at < :olderThan
+        order by created_at asc
+        limit :batchSize
       `,
-      { olderThan },
+      { olderThan, batchSize },
       this.connectionOptions(connection)
     );
     const affectedRows =
