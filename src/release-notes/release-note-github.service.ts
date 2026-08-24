@@ -213,7 +213,10 @@ function isMatchingProductionRun(
 ): boolean {
   const repoName = getRepoName(request.repo);
   if (repoName === BACKEND_REPO) {
-    return run.display_title.endsWith(' to prod');
+    return (
+      run.display_title.endsWith(' to prod') &&
+      run.head_branch === normalizeBranch(request.branch)
+    );
   }
   if (repoName === FRONTEND_REPO) {
     return (

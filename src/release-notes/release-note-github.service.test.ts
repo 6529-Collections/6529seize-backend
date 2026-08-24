@@ -732,7 +732,7 @@ describe('ReleaseNoteGitHubService', () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
-  it('uses service-specific backend run names from the deploy workflow', async () => {
+  it('uses service-specific backend runs from the requested branch', async () => {
     (fetch as unknown as jest.Mock)
       .mockResolvedValueOnce(
         response({
@@ -753,8 +753,20 @@ describe('ReleaseNoteGitHubService', () => {
               id: 122,
               name: 'Deploy api to prod',
               display_title: 'Deploy api to prod',
-              head_sha: 'previous-sha',
+              head_branch: '1a-staging',
+              head_sha: 'wrong-branch-sha',
               run_number: 44,
+              workflow_id: 82013288,
+              status: 'completed',
+              conclusion: 'success'
+            },
+            {
+              id: 121,
+              name: 'Deploy api to prod',
+              display_title: 'Deploy api to prod',
+              head_branch: 'main',
+              head_sha: 'previous-sha',
+              run_number: 43,
               workflow_id: 82013288,
               status: 'completed',
               conclusion: 'success'
@@ -905,6 +917,7 @@ describe('ReleaseNoteGitHubService', () => {
               id: 122,
               name: 'Deploy api to prod',
               display_title: 'Deploy api to prod',
+              head_branch: 'main',
               head_sha: 'previous-sha',
               run_number: 44,
               workflow_id: 82013288,
@@ -1342,6 +1355,7 @@ describe('ReleaseNoteGitHubService', () => {
               id: 122,
               name: 'Deploy api to prod',
               display_title: 'Deploy api to prod',
+              head_branch: 'main',
               head_sha: 'previous-sha',
               run_number: 99,
               workflow_id: 82013288,
