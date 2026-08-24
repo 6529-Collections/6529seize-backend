@@ -640,6 +640,47 @@ describe('ReleaseNoteGitHubService', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it('rejects a backend release from another current branch', async () => {
+    (fetch as unknown as jest.Mock).mockResolvedValueOnce(
+      response({
+        ...currentRun,
+        name: 'Deploy api to prod',
+        display_title: 'Deploy api to prod',
+        head_branch: '1a-staging'
+      })
+    );
+
+    await expect(
+      new ReleaseNoteGitHubService().getValidatedReleaseRun({
+        ...request,
+        repo: '6529seize-backend',
+        workflow: 'Deploy a service',
+        branch: 'main'
+      })
+    ).rejects.toBeInstanceOf(UntrustedReleaseNoteMetadataError);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a backend release that is not a production deploy', async () => {
+    (fetch as unknown as jest.Mock).mockResolvedValueOnce(
+      response({
+        ...currentRun,
+        name: 'Deploy api to staging',
+        display_title: 'Deploy api to staging'
+      })
+    );
+
+    await expect(
+      new ReleaseNoteGitHubService().getValidatedReleaseRun({
+        ...request,
+        repo: '6529seize-backend',
+        workflow: 'Deploy a service',
+        branch: 'main'
+      })
+    ).rejects.toBeInstanceOf(UntrustedReleaseNoteMetadataError);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('does not use a custom-named run from another workflow path', async () => {
     (fetch as unknown as jest.Mock)
       .mockResolvedValueOnce(response(currentRun))
@@ -739,6 +780,7 @@ describe('ReleaseNoteGitHubService', () => {
           id: 123,
           name: 'Deploy claimsBuilder to prod',
           display_title: 'Deploy claimsBuilder to prod',
+          head_branch: 'main',
           head_sha: 'current-sha',
           run_number: 45,
           workflow_id: 82013288,
@@ -903,6 +945,7 @@ describe('ReleaseNoteGitHubService', () => {
           id: 123,
           name: 'Deploy api to prod',
           display_title: 'Deploy api to prod',
+          head_branch: 'main',
           head_sha: 'current-sha',
           run_number: 45,
           workflow_id: 82013288,
@@ -1340,6 +1383,7 @@ describe('ReleaseNoteGitHubService', () => {
           id: 123,
           name: 'Deploy s3Uploader to prod',
           display_title: 'Deploy s3Uploader to prod',
+          head_branch: 'main',
           head_sha: 'current-sha',
           run_number: 200,
           workflow_id: 82013288,

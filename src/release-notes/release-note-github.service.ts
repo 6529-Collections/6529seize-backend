@@ -599,15 +599,17 @@ export class ReleaseNoteGitHubService {
     const currentRun = await this.api<GitHubWorkflowRun>(
       `/repos/${repository}/actions/runs/${encodeURIComponent(request.run_id)}`
     );
+    const repoName = getRepoName(request.repo);
     if (
       String(currentRun.id) !== request.run_id ||
       currentRun.head_sha !== request.sha ||
       !Number.isSafeInteger(currentRun.workflow_id) ||
       !Number.isSafeInteger(currentRun.run_number) ||
       !isSuccessfulCompletedRun(currentRun) ||
-      (((getRepoName(request.repo) === FRONTEND_REPO &&
-        request.workflow === FRONTEND_PRODUCTION_WORKFLOW) ||
-        getRepoName(request.repo) === CORE_REPO) &&
+      (((repoName === BACKEND_REPO && !request.pull_request_number) ||
+        (repoName === FRONTEND_REPO &&
+          request.workflow === FRONTEND_PRODUCTION_WORKFLOW) ||
+        repoName === CORE_REPO) &&
         !isMatchingProductionRun(currentRun, request))
     ) {
       throw new UntrustedReleaseNoteMetadataError(

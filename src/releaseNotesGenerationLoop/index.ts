@@ -32,6 +32,8 @@ import type { SQSHandler } from 'aws-lambda';
 import { randomUUID } from 'node:crypto';
 
 const logger = Logger.get('RELEASE_NOTES_GENERATION_LOOP');
+// Redis only coordinates recent attempts. Published drops keep a deterministic
+// release_note_id, while non-PR publication progress and cursors live in MySQL.
 const RELEASE_NOTE_DEDUPE_TTL_SECONDS = 7 * 24 * 60 * 60;
 const RELEASE_NOTE_PROCESSING_TTL_SECONDS = 4 * 60;
 const RELEASE_NOTE_MINIMUM_PART_TIME_MS = 45_000;
