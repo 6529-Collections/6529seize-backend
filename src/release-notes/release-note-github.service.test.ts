@@ -107,6 +107,7 @@ describe('ReleaseNoteGitHubService', () => {
           ...currentRun,
           name: 'Deploy api to prod',
           display_title: 'Deploy api to prod',
+          path: '.github/workflows/deploy.yml',
           head_sha: 'current-sha'
         })
       )
@@ -646,6 +647,7 @@ describe('ReleaseNoteGitHubService', () => {
         ...currentRun,
         name: 'Deploy api to prod',
         display_title: 'Deploy api to prod',
+        path: '.github/workflows/deploy.yml',
         head_branch: '1a-staging'
       })
     );
@@ -666,7 +668,8 @@ describe('ReleaseNoteGitHubService', () => {
       response({
         ...currentRun,
         name: 'Deploy api to staging',
-        display_title: 'Deploy api to staging'
+        display_title: 'Deploy api to staging',
+        path: '.github/workflows/deploy.yml'
       })
     );
 
@@ -679,6 +682,55 @@ describe('ReleaseNoteGitHubService', () => {
       })
     ).rejects.toBeInstanceOf(UntrustedReleaseNoteMetadataError);
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts the canonical suffixed backend production run title', async () => {
+    (fetch as unknown as jest.Mock).mockResolvedValueOnce(
+      response({
+        ...currentRun,
+        name: 'Deploy releaseNotesGenerationLoop to prod [backend-prod-releaseNotesGenerationLoop-32709256027]',
+        display_title:
+          'Deploy releaseNotesGenerationLoop to prod [backend-prod-releaseNotesGenerationLoop-32709256027]',
+        path: '.github/workflows/deploy.yml'
+      })
+    );
+
+    await expect(
+      new ReleaseNoteGitHubService().getValidatedReleaseRun({
+        ...request,
+        repo: '6529seize-backend',
+        workflow: 'Deploy a service',
+        branch: 'main'
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        id: '123',
+        run_number: 45,
+        workflow_id: '7',
+        sha: 'abc123'
+      })
+    );
+  });
+
+  it('keeps an in-progress current run retryable', async () => {
+    (fetch as unknown as jest.Mock).mockResolvedValueOnce(
+      response({ ...currentRun, status: 'in_progress', conclusion: null })
+    );
+
+    let thrown: unknown;
+    try {
+      await new ReleaseNoteGitHubService().getValidatedReleaseRun(request);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect(thrown).not.toBeInstanceOf(NonRetryableReleaseNoteError);
+    expect(thrown).toEqual(
+      expect.objectContaining({
+        message: 'GitHub release run 123 is still in_progress'
+      })
+    );
   });
 
   it('does not use a custom-named run from another workflow path', async () => {
@@ -780,6 +832,7 @@ describe('ReleaseNoteGitHubService', () => {
           id: 123,
           name: 'Deploy claimsBuilder to prod',
           display_title: 'Deploy claimsBuilder to prod',
+          path: '.github/workflows/deploy.yml',
           head_branch: 'main',
           head_sha: 'current-sha',
           run_number: 45,
@@ -795,6 +848,7 @@ describe('ReleaseNoteGitHubService', () => {
               id: 122,
               name: 'Deploy api to prod',
               display_title: 'Deploy api to prod',
+              path: '.github/workflows/deploy.yml',
               head_branch: '1a-staging',
               head_sha: 'wrong-branch-sha',
               run_number: 44,
@@ -806,6 +860,7 @@ describe('ReleaseNoteGitHubService', () => {
               id: 121,
               name: 'Deploy api to prod',
               display_title: 'Deploy api to prod',
+              path: '.github/workflows/deploy.yml',
               head_branch: 'main',
               head_sha: 'previous-sha',
               run_number: 43,
@@ -945,6 +1000,7 @@ describe('ReleaseNoteGitHubService', () => {
           id: 123,
           name: 'Deploy api to prod',
           display_title: 'Deploy api to prod',
+          path: '.github/workflows/deploy.yml',
           head_branch: 'main',
           head_sha: 'current-sha',
           run_number: 45,
@@ -960,6 +1016,7 @@ describe('ReleaseNoteGitHubService', () => {
               id: 122,
               name: 'Deploy api to prod',
               display_title: 'Deploy api to prod',
+              path: '.github/workflows/deploy.yml',
               head_branch: 'main',
               head_sha: 'previous-sha',
               run_number: 44,
@@ -1313,6 +1370,7 @@ describe('ReleaseNoteGitHubService', () => {
             ...currentRun,
             name: 'Deploy api to prod',
             display_title: 'Deploy api to prod',
+            path: '.github/workflows/deploy.yml',
             head_sha: 'merge-sha'
           })
         );
@@ -1371,6 +1429,8 @@ describe('ReleaseNoteGitHubService', () => {
       id: 1000 + index,
       name: `Deploy service${index} to prod`,
       display_title: `Deploy service${index} to prod`,
+      path: '.github/workflows/deploy.yml',
+      head_branch: 'main',
       head_sha: 'current-sha',
       run_number: 199 - index,
       workflow_id: 82013288,
@@ -1383,6 +1443,7 @@ describe('ReleaseNoteGitHubService', () => {
           id: 123,
           name: 'Deploy s3Uploader to prod',
           display_title: 'Deploy s3Uploader to prod',
+          path: '.github/workflows/deploy.yml',
           head_branch: 'main',
           head_sha: 'current-sha',
           run_number: 200,
@@ -1399,6 +1460,7 @@ describe('ReleaseNoteGitHubService', () => {
               id: 122,
               name: 'Deploy api to prod',
               display_title: 'Deploy api to prod',
+              path: '.github/workflows/deploy.yml',
               head_branch: 'main',
               head_sha: 'previous-sha',
               run_number: 99,
@@ -1454,6 +1516,8 @@ describe('ReleaseNoteGitHubService', () => {
       id: 2000 + index,
       name: `Deploy service${index} to prod`,
       display_title: `Deploy service${index} to prod`,
+      path: '.github/workflows/deploy.yml',
+      head_branch: 'main',
       head_sha: 'abc123',
       run_number: 1000 - index,
       workflow_id: 7,

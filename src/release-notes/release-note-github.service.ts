@@ -124,6 +124,10 @@ const PAGE_SIZE = 100;
 const BACKEND_REPO = '6529seize-backend';
 const FRONTEND_REPO = '6529seize-frontend';
 const CORE_REPO = '6529-core';
+const BACKEND_PRODUCTION_WORKFLOW = 'Deploy a service';
+const BACKEND_PRODUCTION_WORKFLOW_PATH = '.github/workflows/deploy.yml';
+const BACKEND_PRODUCTION_RUN_PATTERN =
+  /^Deploy [A-Za-z0-9]+ to prod(?: \[[A-Za-z0-9._-]+\])?$/;
 const FRONTEND_PRODUCTION_WORKFLOW = 'Web Deploy - PROD';
 const FRONTEND_PRODUCTION_WORKFLOW_PATH =
   '.github/workflows/build-upload-deploy-prod.yml';
@@ -214,7 +218,9 @@ function isMatchingProductionRun(
   const repoName = getRepoName(request.repo);
   if (repoName === BACKEND_REPO) {
     return (
-      run.display_title.endsWith(' to prod') &&
+      request.workflow === BACKEND_PRODUCTION_WORKFLOW &&
+      run.path === BACKEND_PRODUCTION_WORKFLOW_PATH &&
+      BACKEND_PRODUCTION_RUN_PATTERN.test(run.display_title) &&
       run.head_branch === normalizeBranch(request.branch)
     );
   }
@@ -600,20 +606,30 @@ export class ReleaseNoteGitHubService {
       `/repos/${repository}/actions/runs/${encodeURIComponent(request.run_id)}`
     );
     const repoName = getRepoName(request.repo);
+    const mustMatchProductionRun =
+      (repoName === BACKEND_REPO && !request.pull_request_number) ||
+      (repoName === FRONTEND_REPO &&
+        request.workflow === FRONTEND_PRODUCTION_WORKFLOW) ||
+      repoName === CORE_REPO;
     if (
       String(currentRun.id) !== request.run_id ||
       currentRun.head_sha !== request.sha ||
       !Number.isSafeInteger(currentRun.workflow_id) ||
       !Number.isSafeInteger(currentRun.run_number) ||
-      !isSuccessfulCompletedRun(currentRun) ||
-      (((repoName === BACKEND_REPO && !request.pull_request_number) ||
-        (repoName === FRONTEND_REPO &&
-          request.workflow === FRONTEND_PRODUCTION_WORKFLOW) ||
-        repoName === CORE_REPO) &&
-        !isMatchingProductionRun(currentRun, request))
+      (mustMatchProductionRun && !isMatchingProductionRun(currentRun, request))
     ) {
       throw new UntrustedReleaseNoteMetadataError(
         `GitHub release run ${request.run_id} does not match the queued release metadata`
+      );
+    }
+    if (currentRun.status !== 'completed') {
+      throw new Error(
+        `GitHub release run ${request.run_id} is still ${currentRun.status ?? 'not completed'}`
+      );
+    }
+    if (currentRun.conclusion !== 'success') {
+      throw new UntrustedReleaseNoteMetadataError(
+        `GitHub release run ${request.run_id} did not complete successfully`
       );
     }
     return currentRun;
