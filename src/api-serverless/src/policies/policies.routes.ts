@@ -8,6 +8,7 @@ import {
   saveEULAConsent,
   fetchEULAConsent
 } from './policies.db';
+import { CURRENT_EULA_VERSION } from './eula-policy';
 
 const router = asyncRouter();
 
@@ -74,19 +75,60 @@ router.delete(`/cookies-consent`, function (req: Request, res: any) {
   });
 });
 
-router.post(`/eula-consent`, function (req: Request, res: any) {
-  const deviceId = req.body.device_id;
-  const platform = req.body.platform;
-  if (!deviceId || !platform) {
+type EULAConsentRequest = {
+  readonly deviceId: string;
+  readonly platform: string;
+  readonly eulaVersion: string;
+};
+
+type EULAConsentRequestValidation =
+  | { readonly ok: true; readonly value: EULAConsentRequest }
+  | { readonly ok: false };
+
+const getBoundedString = (value: unknown, maxLength: number) => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 && normalized.length <= maxLength
+    ? normalized
+    : null;
+};
+
+export const validateEULAConsentRequest = (
+  body: unknown
+): EULAConsentRequestValidation => {
+  if (!body || typeof body !== 'object') {
+    return { ok: false };
+  }
+
+  const requestBody = body as Record<string, unknown>;
+  const deviceId = getBoundedString(requestBody['device_id'], 100);
+  const platform = getBoundedString(requestBody['platform'], 32);
+  const eulaVersion = getBoundedString(requestBody['eula_version'], 32);
+  if (!deviceId || !platform || eulaVersion !== CURRENT_EULA_VERSION) {
+    return { ok: false };
+  }
+
+  return {
+    ok: true,
+    value: { deviceId, platform, eulaVersion }
+  };
+};
+
+router.post(`/eula-consent`, async function (req: Request, res: any) {
+  const validation = validateEULAConsentRequest(req.body);
+  if (!validation.ok) {
     return res.status(400).send({
-      message: 'EULA consent: Failed to get device id or platform'
+      message: 'EULA consent: Invalid device id, platform, or EULA version'
     });
   }
 
-  saveEULAConsent(deviceId, platform).then(() => {
-    return res.status(200).send({
-      message: 'EULA consent saved'
-    });
+  const { deviceId, platform, eulaVersion } = validation.value;
+  await saveEULAConsent(deviceId, platform, eulaVersion);
+  return res.status(200).send({
+    message: 'EULA consent saved',
+    eula_version: eulaVersion
   });
 });
 
@@ -106,9 +148,14 @@ router.delete(`/eula-consent`, function (req: Request, res: any) {
   });
 });
 
-router.get(`/eula-consent/:deviceId`, function (req: Request, res: any) {
-  const deviceId = req.params.deviceId;
-  fetchEULAConsent(deviceId).then((consent) => {
-    return res.status(200).send(consent ?? {});
-  });
+router.get(`/eula-consent/:deviceId`, async function (req: Request, res: any) {
+  const deviceId = getBoundedString(req.params.deviceId, 100);
+  if (!deviceId) {
+    return res.status(400).send({
+      message: 'EULA consent: Invalid device id'
+    });
+  }
+
+  const consent = await fetchEULAConsent(deviceId);
+  return res.status(200).send(consent ?? {});
 });
