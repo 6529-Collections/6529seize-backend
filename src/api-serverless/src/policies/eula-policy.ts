@@ -1,4 +1,6 @@
-export const CURRENT_EULA_VERSION = '2026-08-24';
+import { ApiEulaVersion } from '@/api/generated/models/ApiEulaVersion';
+
+export const CURRENT_EULA_VERSION = ApiEulaVersion._20260824;
 
 export const EULA_VALIDITY_DAYS = 365;
 
