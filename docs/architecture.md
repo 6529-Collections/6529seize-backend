@@ -224,6 +224,10 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 
 ### Content moderation
 
+See [Content moderation](./content-moderation.md) for the complete feature
+policy, publication decision flow, API surface, posting-suspension lifecycle,
+data ownership, retention, and rollout contract.
+
 Drop text passes a permissive pre-publication gate for new posts and edits. It
 checks profile suspension and narrow deterministic signals first; only
 signaled, ambiguous text is sent to a dedicated Bedrock evaluator. Known
