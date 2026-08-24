@@ -76,7 +76,6 @@ export interface ModerationReportRow {
 type ModerationQueueReportRow = ModerationReportRow & {
   readonly author_handle: string | null;
   readonly author_pfp: string | null;
-  readonly report_count: number;
   readonly recommendation_rank: number;
 };
 
@@ -689,17 +688,10 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
           r.*,
           p.handle as author_handle,
           p.pfp_url as author_pfp,
-          counts.report_count,
           ${recommendationRankSql} as recommendation_rank
         from ${CONTENT_MODERATION_REPORTS_TABLE} r
         left join ${PROFILES_TABLE} p
           on p.external_id = r.author_profile_id
-        join (
-          select drop_id, count(*) as report_count
-          from ${CONTENT_MODERATION_REPORTS_TABLE}
-          where status = '${ContentReportStatus.OPEN}'
-          group by drop_id
-        ) counts on counts.drop_id = r.drop_id
         where r.status = '${ContentReportStatus.OPEN}'
           and (
             :beforeRank is null
@@ -728,11 +720,33 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       },
       this.connectionOptions(connection)
     );
+    if (!rows.length) {
+      return [];
+    }
+    const dropIds = Array.from(new Set(rows.map((row) => row.drop_id)));
+    const countRows = await this.db.execute<{
+      drop_id: string;
+      report_count: number;
+    }>(
+      `
+        select drop_id, count(*) as report_count
+        from ${CONTENT_MODERATION_REPORTS_TABLE}
+        where status = '${ContentReportStatus.OPEN}'
+          and drop_id in (:dropIds)
+        group by drop_id
+      `,
+      { dropIds },
+      this.connectionOptions(connection)
+    );
+    const reportCounts = new Map(
+      countRows.map((row) => [row.drop_id, Number(row.report_count)])
+    );
     return rows.map((row) => {
       const parsed = this.parseReportJson(row);
       const { recommendation_rank: recommendationRank, ...report } = parsed;
       return {
         ...report,
+        report_count: reportCounts.get(report.drop_id) ?? 0,
         cursor: this.encodeModerationQueueCursor({
           recommendationRank,
           createdAt: report.created_at,
