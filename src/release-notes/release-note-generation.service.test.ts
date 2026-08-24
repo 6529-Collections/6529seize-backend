@@ -233,7 +233,7 @@ describe('ReleaseNoteGenerationService', () => {
     const content =
       createDrop.mock.calls[0][0].createDropRequest.parts[0].content;
     expect(content).toContain(
-      '### Backend Deploy · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
+      '### Backend Deploy [#45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123), [#46](https://github.com/6529-Collections/6529seize-backend/actions/runs/456) · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
     );
     expect(content).not.toContain('\n\n- Service:');
     expect(content).not.toContain('Runs:');
@@ -352,10 +352,59 @@ describe('ReleaseNoteGenerationService', () => {
     const backendContent =
       createDrop.mock.calls[1][0].createDropRequest.parts[0].content;
     expect(backendContent).toContain(
-      '### Backend Deploy · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
+      '### Backend Deploy [#45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123) · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
     );
     expect(backendContent).toContain(
       '- Service: [api #45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123)'
+    );
+
+    await service.generateAndPost(
+      {
+        ...request,
+        release_group_services: [
+          'api',
+          'dbMigrationsLoop',
+          'legacyService',
+          'pushNotificationsHandler'
+        ],
+        release_group_runs: [
+          {
+            service: 'legacyService',
+            run_id: '789',
+            run_number: 'not-available',
+            run_url:
+              'https://github.com/6529-Collections/6529seize-backend/actions/runs/789'
+          },
+          {
+            service: 'pushNotificationsHandler',
+            run_id: '456',
+            run_number: '46',
+            run_url:
+              'https://github.com/6529-Collections/6529seize-backend/actions/runs/456'
+          },
+          {
+            service: 'dbMigrationsLoop',
+            run_id: '456',
+            run_number: '46',
+            run_url:
+              'https://github.com/6529-Collections/6529seize-backend/actions/runs/456'
+          },
+          {
+            service: 'api',
+            run_id: '123',
+            run_number: '45',
+            run_url:
+              'https://github.com/6529-Collections/6529seize-backend/actions/runs/123'
+          }
+        ]
+      },
+      {}
+    );
+
+    const groupedBackendContent =
+      createDrop.mock.calls[2][0].createDropRequest.parts[0].content;
+    expect(groupedBackendContent).toContain(
+      '### Backend Deploy [#45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123), [#46](https://github.com/6529-Collections/6529seize-backend/actions/runs/456), [#789](https://github.com/6529-Collections/6529seize-backend/actions/runs/789) · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
     );
   });
 
