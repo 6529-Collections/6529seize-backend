@@ -474,7 +474,7 @@ describe('processRequest', () => {
     expect(redis.set).toHaveBeenCalledWith(
       'release-note-group:6529seize-backend:pr-1749:run:api',
       expect.any(String),
-      { EX: 7776000 }
+      { EX: 604800 }
     );
     expect(generateAndPost).not.toHaveBeenCalled();
   });
@@ -542,12 +542,12 @@ describe('processRequest', () => {
         run_number: '45',
         run_url: 'https://github.com/example/actions/runs/123'
       }),
-      { EX: 7776000 }
+      { EX: 604800 }
     );
     expect(redis.set).toHaveBeenCalledWith(
       'release-note-group:6529seize-backend:pr-1749:publish-requested',
       '1',
-      { EX: 7776000 }
+      { EX: 604800 }
     );
     expect(redis.set).toHaveBeenCalledWith(
       'release-note:6529seize-backend:pr-1749:processing',
@@ -557,7 +557,7 @@ describe('processRequest', () => {
     expect(redis.set).toHaveBeenCalledWith(
       'release-note:6529seize-backend:pr-1749',
       '1',
-      { EX: 7776000 }
+      { EX: 604800 }
     );
     expect(redis.eval).toHaveBeenCalledWith(expect.any(String), {
       keys: ['release-note:6529seize-backend:pr-1749:processing'],
@@ -636,7 +636,7 @@ describe('processRequest', () => {
     expect(redis.set).not.toHaveBeenCalledWith(
       'release-note:6529seize-backend:pr-1749',
       '1',
-      { EX: 7776000 }
+      { EX: 604800 }
     );
     expect(redis.eval).toHaveBeenCalledWith(expect.any(String), {
       keys: ['release-note:6529seize-backend:pr-1749:processing'],
@@ -682,7 +682,7 @@ describe('processRequest', () => {
     });
 
     expect(redis.set).toHaveBeenCalledWith(runKey, expect.any(String), {
-      EX: 7776000
+      EX: 604800
     });
     await expect(redis.get(runKey)).resolves.toContain('"run_id":"123"');
   });

@@ -32,7 +32,7 @@ import type { SQSHandler } from 'aws-lambda';
 import { randomUUID } from 'node:crypto';
 
 const logger = Logger.get('RELEASE_NOTES_GENERATION_LOOP');
-const RELEASE_NOTE_DEDUPE_TTL_SECONDS = 90 * 24 * 60 * 60;
+const RELEASE_NOTE_DEDUPE_TTL_SECONDS = 7 * 24 * 60 * 60;
 const RELEASE_NOTE_PROCESSING_TTL_SECONDS = 4 * 60;
 const RELEASE_NOTE_MINIMUM_PART_TIME_MS = 45_000;
 const RELEASE_GROUP_TTL_SECONDS = RELEASE_NOTE_DEDUPE_TTL_SECONDS;
