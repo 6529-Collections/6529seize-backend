@@ -138,7 +138,7 @@ describe('ContentModerationDb', () => {
     const firstPage = await db.getModerationQueue({ limit: 1 });
     expect(firstPage[0]?.cursor).toBe(`0.200.${REPORT_ID}`);
     expect(executor.execute.mock.calls[0]?.[0]).toContain(
-      `where status = '${ContentReportStatus.OPEN}'`
+      `where r.status = '${ContentReportStatus.OPEN}'`
     );
     expect(executor.execute.mock.calls[0]?.[0]).toContain(
       `p.external_id = r.author_profile_id`
