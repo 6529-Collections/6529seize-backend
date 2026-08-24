@@ -277,17 +277,33 @@ function getBackendHeadingRuns(
       ];
   const uniqueRuns = new Map<string, ReleaseNoteRunReference>();
   for (const run of candidates) {
+    // GitHub run_id is canonical because one workflow run can deploy services.
     if (!uniqueRuns.has(run.run_id)) {
       uniqueRuns.set(run.run_id, run);
     }
   }
-  return Array.from(uniqueRuns.values()).sort((left, right) =>
-    (left.run_number || left.run_id).localeCompare(
-      right.run_number || right.run_id,
-      undefined,
-      { numeric: true }
-    )
-  );
+  return Array.from(uniqueRuns.values()).sort(compareBackendHeadingRuns);
+}
+
+function getBackendRunLabel(run: ReleaseNoteRunReference): string {
+  const runNumber = run.run_number?.trim();
+  return runNumber && /^\d+$/.test(runNumber) ? runNumber : run.run_id;
+}
+
+function compareBackendHeadingRuns(
+  left: ReleaseNoteRunReference,
+  right: ReleaseNoteRunReference
+): number {
+  const leftLabel = getBackendRunLabel(left);
+  const rightLabel = getBackendRunLabel(right);
+  const leftIsNumeric = /^\d+$/.test(leftLabel);
+  const rightIsNumeric = /^\d+$/.test(rightLabel);
+  if (leftIsNumeric !== rightIsNumeric) {
+    return leftIsNumeric ? -1 : 1;
+  }
+  return leftLabel.localeCompare(rightLabel, undefined, {
+    numeric: leftIsNumeric
+  });
 }
 
 function getReleaseHeading(
@@ -313,7 +329,7 @@ function getReleaseHeading(
   }
   const backendRuns = getBackendHeadingRuns(request)
     .map((run) =>
-      formatMarkdownLink(`#${run.run_number || run.run_id}`, run.run_url)
+      formatMarkdownLink(`#${getBackendRunLabel(run)}`, run.run_url)
     )
     .join(', ');
   return `### ${surface} Deploy ${backendRuns} · commit ${commit}${batchSuffix} — ${formattedDate}`;
