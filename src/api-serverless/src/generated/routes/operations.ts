@@ -17,6 +17,8 @@ import { ApiCompetitionPausePage } from '@/api/generated/models/ApiCompetitionPa
 import { ApiCompetitionVoterPage } from '@/api/generated/models/ApiCompetitionVoterPage';
 import { ApiCreateProfileCmsWalletGallerySnapshotRequest } from '@/api/generated/models/ApiCreateProfileCmsWalletGallerySnapshotRequest';
 import { ApiCreateWaveMetadataRequest } from '@/api/generated/models/ApiCreateWaveMetadataRequest';
+import { ApiDeleteEulaConsentRequest } from '@/api/generated/models/ApiDeleteEulaConsentRequest';
+import { ApiDeleteEulaConsentResponse } from '@/api/generated/models/ApiDeleteEulaConsentResponse';
 import { ApiDmDropsUnreadCount } from '@/api/generated/models/ApiDmDropsUnreadCount';
 import { ApiDmUnreadSnapshot } from '@/api/generated/models/ApiDmUnreadSnapshot';
 import { ApiDropAndWave } from '@/api/generated/models/ApiDropAndWave';
@@ -33,6 +35,7 @@ import { ApiDropV2Page } from '@/api/generated/models/ApiDropV2Page';
 import { ApiDropV2PageWithoutCount } from '@/api/generated/models/ApiDropV2PageWithoutCount';
 import { ApiDropVoteEditLog } from '@/api/generated/models/ApiDropVoteEditLog';
 import { ApiDropVotersPage } from '@/api/generated/models/ApiDropVotersPage';
+import { ApiEulaConsent } from '@/api/generated/models/ApiEulaConsent';
 import { ApiGlobalRepCategoryGiversPage } from '@/api/generated/models/ApiGlobalRepCategoryGiversPage';
 import { ApiGlobalRepCategoryOverview } from '@/api/generated/models/ApiGlobalRepCategoryOverview';
 import { ApiGlobalRepCategoryRatingsPage } from '@/api/generated/models/ApiGlobalRepCategoryRatingsPage';
@@ -57,6 +60,8 @@ import { ApiProfileCmsWalletGallerySnapshot } from '@/api/generated/models/ApiPr
 import { ApiProfilePreferences } from '@/api/generated/models/ApiProfilePreferences';
 import { ApiPublishProfileCmsPackageRequest } from '@/api/generated/models/ApiPublishProfileCmsPackageRequest';
 import { ApiRollbackProfileCmsPackageRequest } from '@/api/generated/models/ApiRollbackProfileCmsPackageRequest';
+import { ApiSaveEulaConsentRequest } from '@/api/generated/models/ApiSaveEulaConsentRequest';
+import { ApiSaveEulaConsentResponse } from '@/api/generated/models/ApiSaveEulaConsentResponse';
 import { ApiSaveProfileCmsPackageDraftRequest } from '@/api/generated/models/ApiSaveProfileCmsPackageDraftRequest';
 import { ApiSubscriptionCoverage } from '@/api/generated/models/ApiSubscriptionCoverage';
 import { ApiUpdateProfilePreferences } from '@/api/generated/models/ApiUpdateProfilePreferences';
@@ -216,6 +221,50 @@ export type GetOgMetadataWaveRequest = Request<
   ApiResponse<GetOgMetadataWaveResponse>,
   never,
   GetOgMetadataWaveQuery,
+  Record<string, never>
+>;
+
+export type DeleteEulaConsentPathParams = Record<string, never>;
+
+export type DeleteEulaConsentQuery = Record<string, never>;
+
+export type DeleteEulaConsentResponse = ApiDeleteEulaConsentResponse;
+
+export type DeleteEulaConsentRequest = Request<
+  DeleteEulaConsentPathParams,
+  ApiResponse<DeleteEulaConsentResponse>,
+  ApiDeleteEulaConsentRequest,
+  DeleteEulaConsentQuery,
+  Record<string, never>
+>;
+
+export type SaveEulaConsentPathParams = Record<string, never>;
+
+export type SaveEulaConsentQuery = Record<string, never>;
+
+export type SaveEulaConsentResponse = ApiSaveEulaConsentResponse;
+
+export type SaveEulaConsentRequest = Request<
+  SaveEulaConsentPathParams,
+  ApiResponse<SaveEulaConsentResponse>,
+  ApiSaveEulaConsentRequest,
+  SaveEulaConsentQuery,
+  Record<string, never>
+>;
+
+export interface GetEulaConsentPathParams {
+  "deviceId": string;
+}
+
+export type GetEulaConsentQuery = Record<string, never>;
+
+export type GetEulaConsentResponse = ApiEulaConsent;
+
+export type GetEulaConsentRequest = Request<
+  GetEulaConsentPathParams,
+  ApiResponse<GetEulaConsentResponse>,
+  never,
+  GetEulaConsentQuery,
   Record<string, never>
 >;
 

@@ -27,6 +27,13 @@ const RETIRED_RELEASE_BUS_V1_ROUTES = new Set([
 const GENERATED_ROUTE_SOURCE_LINE_DRIFT = 300;
 const HAND_WRITTEN_ROUTE_SOURCE_LINE_DRIFT = 250;
 
+const ACCEPTED_ROUTE_SOURCE_MOVES = new Map<string, string>([
+  [
+    '/api/policies/eula-consent/:deviceId',
+    'src/api-serverless/src/generated/routes/openapi-generated.routes.ts:149'
+  ]
+]);
+
 const repositoryRoot = path.resolve(__dirname, '../../../..');
 const fixtureRoot = path.resolve(
   __dirname,
@@ -139,9 +146,11 @@ describe('Phase 0 permanent mounted GET route census', () => {
     for (const route of manifest.routes.filter(
       (entry) => !RETIRED_RELEASE_BUS_V1_ROUTES.has(entry.path)
     )) {
-      const separator = route.source.lastIndexOf(':');
-      const relativeFile = route.source.slice(0, separator);
-      const baselineLine = Number(route.source.slice(separator + 1));
+      const acceptedSource =
+        ACCEPTED_ROUTE_SOURCE_MOVES.get(route.path) ?? route.source;
+      const separator = acceptedSource.lastIndexOf(':');
+      const relativeFile = acceptedSource.slice(0, separator);
+      const baselineLine = Number(acceptedSource.slice(separator + 1));
       const sourcePath = path.join(repositoryRoot, relativeFile);
       const maximumSourceLineDrift = relativeFile.endsWith(
         '/generated/routes/openapi-generated.routes.ts'
@@ -176,7 +185,7 @@ describe('Phase 0 permanent mounted GET route census', () => {
         Math.abs(best.line - baselineLine) > maximumSourceLineDrift
       ) {
         failures.push(
-          `${route.path}: GET declaration missing near ${route.source}`
+          `${route.path}: GET declaration missing near ${acceptedSource}`
         );
         continue;
       }
