@@ -487,7 +487,13 @@ describe('CreateOrUpdateDropUseCase', () => {
 
     expect(() =>
       (useCase as any).verifyGroupMentions({
-        model: createGroupMentionModel(),
+        model: {
+          ...createGroupMentionModel(),
+          mentioned_groups: [
+            DropGroupMention.ALL,
+            DropGroupMention.CONTRIBUTORS
+          ]
+        },
         wave: {
           created_by: 'author-profile',
           admin_group_id: 'admins'
@@ -625,14 +631,13 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).toEqual([DropGroupMention.CONTRIBUTORS]);
   });
 
-  it('allows chat participants to use permission-derived group mentions', () => {
+  it('allows chat participants to use escalation group mentions', () => {
     const useCase = createUseCase({ existingNominations: [] });
     expect(() =>
       (useCase as any).verifyGroupMentions({
         model: {
           ...createGroupMentionModel(),
           mentioned_groups: [
-            DropGroupMention.CONTRIBUTORS,
             DropGroupMention.ADMINS,
             DropGroupMention.DEVS_6529
           ]
@@ -707,7 +712,13 @@ describe('CreateOrUpdateDropUseCase', () => {
 
     expect(() =>
       (useCase as any).verifyGroupMentions({
-        model: createGroupMentionModel(),
+        model: {
+          ...createGroupMentionModel(),
+          mentioned_groups: [
+            DropGroupMention.ALL,
+            DropGroupMention.CONTRIBUTORS
+          ]
+        },
         wave: {
           created_by: 'another-profile',
           admin_group_id: 'admins'
@@ -732,6 +743,26 @@ describe('CreateOrUpdateDropUseCase', () => {
         groupIdsUserIsEligibleFor: ['members']
       })
     ).toThrow(`Only wave creators or admins can mention @all`);
+  });
+
+  it('rejects @contributors mentions from non-admins', () => {
+    const useCase = createUseCase({
+      existingNominations: []
+    });
+
+    expect(() =>
+      (useCase as any).verifyGroupMentions({
+        model: {
+          ...createGroupMentionModel(),
+          mentioned_groups: [DropGroupMention.CONTRIBUTORS]
+        },
+        wave: {
+          created_by: 'another-profile',
+          admin_group_id: 'admins'
+        },
+        groupIdsUserIsEligibleFor: ['members']
+      })
+    ).toThrow(`Only wave creators or admins can mention @contributors`);
   });
 
   it('allows group mentions on drop updates', () => {
@@ -1793,7 +1824,7 @@ describe('CreateOrUpdateDropUseCase', () => {
           ...createGroupMentionModel(),
           mentioned_groups: [DropGroupMention.CONTRIBUTORS]
         },
-        wave: { created_by: 'another-profile', admin_group_id: 'admins' },
+        wave: { created_by: 'author-profile', admin_group_id: 'admins' },
         groupIdsUserIsEligibleFor: []
       })
     ).not.toThrow();

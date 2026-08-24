@@ -129,6 +129,10 @@ const GROUP_MENTION_TOKENS: Readonly<Record<DropGroupMention, string>> = {
   [DropGroupMention.ADMINS]: 'admins',
   [DropGroupMention.DEVS_6529]: DEVS_6529_MENTION_TOKEN
 };
+const ADMIN_ONLY_GROUP_MENTIONS = [
+  DropGroupMention.ALL,
+  DropGroupMention.CONTRIBUTORS
+] as const;
 
 function createGroupMentionPattern(token: string): RegExp {
   return new RegExp(`(^|[^a-z0-9_@])@${token}(?![a-z0-9_@])`, 'i');
@@ -1937,22 +1941,19 @@ export class CreateOrUpdateDropUseCase {
     if (!model.mentioned_groups.length) {
       return;
     }
-    // Contributors, admins, and developers are convenience expansions. Anyone
-    // with chat access could mention the same profiles individually, so only
-    // @all retains the wave creator/admin restriction. In particular,
-    // @devs6529 is intentionally available to every chat participant: it is a
-    // shorter, more reliable form of directly mentioning the configured team.
+    // @all and @contributors are broadcast mentions, so only wave creators and
+    // admins may invoke them. @admins and @devs6529 remain available to every
+    // chat participant as escalation shortcuts.
     const isCreator = wave.created_by === this.getRequiredAuthorId(model);
     const isAdmin =
       wave.admin_group_id !== null &&
       groupIdsUserIsEligibleFor.includes(wave.admin_group_id);
-    if (
-      model.mentioned_groups.includes(DropGroupMention.ALL) &&
-      !isCreator &&
-      !isAdmin
-    ) {
+    const restrictedMention = ADMIN_ONLY_GROUP_MENTIONS.find((group) =>
+      model.mentioned_groups.includes(group)
+    );
+    if (restrictedMention && !isCreator && !isAdmin) {
       throw new ForbiddenException(
-        `Only wave creators or admins can mention @all`
+        `Only wave creators or admins can mention @${GROUP_MENTION_TOKENS[restrictedMention]}`
       );
     }
   }
