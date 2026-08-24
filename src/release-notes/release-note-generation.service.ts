@@ -261,6 +261,35 @@ function formatDeployedAt(value: string): string {
   }).format(deployedAt);
 }
 
+function getBackendHeadingRuns(
+  request: ReleaseNoteGenerationRequest
+): ReleaseNoteRunReference[] {
+  const groupedRuns = Array.from(getBackendRunsByService(request).values());
+  const candidates = groupedRuns.length
+    ? groupedRuns
+    : [
+        {
+          service: request.service?.trim() || 'backend',
+          run_id: request.run_id,
+          run_number: request.run_number,
+          run_url: request.run_url
+        }
+      ];
+  const uniqueRuns = new Map<string, ReleaseNoteRunReference>();
+  for (const run of candidates) {
+    if (!uniqueRuns.has(run.run_id)) {
+      uniqueRuns.set(run.run_id, run);
+    }
+  }
+  return Array.from(uniqueRuns.values()).sort((left, right) =>
+    (left.run_number || left.run_id).localeCompare(
+      right.run_number || right.run_id,
+      undefined,
+      { numeric: true }
+    )
+  );
+}
+
 function getReleaseHeading(
   request: ReleaseNoteGenerationRequest,
   batch: ReleaseNoteBatch
@@ -282,7 +311,12 @@ function getReleaseHeading(
     const run = formatMarkdownLink(`#${runNumber}`, request.run_url);
     return `### ${surface} Deploy ${run} · commit ${commit}${batchSuffix} — ${formattedDate}`;
   }
-  return `### ${surface} Deploy · commit ${commit}${batchSuffix} — ${formattedDate}`;
+  const backendRuns = getBackendHeadingRuns(request)
+    .map((run) =>
+      formatMarkdownLink(`#${run.run_number || run.run_id}`, run.run_url)
+    )
+    .join(', ');
+  return `### ${surface} Deploy ${backendRuns} · commit ${commit}${batchSuffix} — ${formattedDate}`;
 }
 
 export function getFrontendReleaseNoteLabel(

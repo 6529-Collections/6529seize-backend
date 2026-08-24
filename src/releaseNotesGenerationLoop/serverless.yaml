@@ -46,6 +46,8 @@ resources:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: release-note-generation
+        # Success notifications arrive just before GitHub settles the workflow.
+        DelaySeconds: 15
         # Keep retries responsive; publication ids make late duplicate delivery safe.
         VisibilityTimeout: 300
         RedrivePolicy:
