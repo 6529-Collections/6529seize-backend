@@ -19,7 +19,11 @@ jest.mock('./policies.db', () => ({
 }));
 
 import { CURRENT_EULA_VERSION } from './eula-policy';
-import { fetchEULAConsent, saveEULAConsent } from './policies.db';
+import {
+  deleteEULAConsent,
+  fetchEULAConsent,
+  saveEULAConsent
+} from './policies.db';
 import { validateEULAConsentRequest } from './policies.routes';
 
 const eulaPostHandler = mockRouterPost.mock.calls.find(
@@ -27,6 +31,9 @@ const eulaPostHandler = mockRouterPost.mock.calls.find(
 )![1];
 const eulaGetHandler = mockRouterGet.mock.calls.find(
   ([path]) => path === '/eula-consent/:deviceId'
+)![1];
+const eulaDeleteHandler = mockRouterDelete.mock.calls.find(
+  ([path]) => path === '/eula-consent'
 )![1];
 
 function makeResponse() {
@@ -71,6 +78,11 @@ describe('EULA consent routes', () => {
       device_id: 'device-1',
       platform: 'ios',
       eula_version: 'stale-version'
+    },
+    {
+      device_id: 'device-1',
+      platform: 'android',
+      eula_version: CURRENT_EULA_VERSION
     },
     {
       device_id: 123,
@@ -151,5 +163,29 @@ describe('EULA consent routes', () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.send).toHaveBeenCalledWith({});
+  });
+
+  it('validates and normalizes the device id before deleting consent', async () => {
+    const res = makeResponse();
+    (deleteEULAConsent as jest.Mock).mockResolvedValue(undefined);
+
+    await eulaDeleteHandler({ body: { device_id: ' device-1 ' } }, res);
+
+    expect(deleteEULAConsent).toHaveBeenCalledWith('device-1');
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it.each([
+    {},
+    { device_id: '' },
+    { device_id: 123 },
+    { device_id: 'x'.repeat(101) }
+  ])('rejects an invalid device id when deleting consent', async (body) => {
+    const res = makeResponse();
+
+    await eulaDeleteHandler({ body }, res);
+
+    expect(deleteEULAConsent).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
   });
 });

@@ -106,7 +106,7 @@ export const validateEULAConsentRequest = (
   const deviceId = getBoundedString(requestBody['device_id'], 100);
   const platform = getBoundedString(requestBody['platform'], 32);
   const eulaVersion = getBoundedString(requestBody['eula_version'], 32);
-  if (!deviceId || !platform || eulaVersion !== CURRENT_EULA_VERSION) {
+  if (!deviceId || platform !== 'ios' || eulaVersion !== CURRENT_EULA_VERSION) {
     return { ok: false };
   }
 
@@ -132,8 +132,8 @@ router.post(`/eula-consent`, async function (req: Request, res: any) {
   });
 });
 
-router.delete(`/eula-consent`, function (req: Request, res: any) {
-  const deviceId = req.body.device_id;
+router.delete(`/eula-consent`, async function (req: Request, res: any) {
+  const deviceId = getBoundedString(req.body?.device_id, 100);
 
   if (!deviceId) {
     return res.status(400).send({
@@ -141,10 +141,9 @@ router.delete(`/eula-consent`, function (req: Request, res: any) {
     });
   }
 
-  deleteEULAConsent(deviceId).then(() => {
-    return res.status(200).send({
-      message: 'EULA consent deleted'
-    });
+  await deleteEULAConsent(deviceId);
+  return res.status(200).send({
+    message: 'EULA consent deleted'
   });
 });
 
