@@ -186,15 +186,52 @@ describe('PrePublicationModerationService', () => {
   it('routes only Luhn-valid payment card candidates to AI', async () => {
     const { service, aiService } = createService();
 
-    await service.evaluate(input('Card 4242 4242 4242 4242'), {});
+    await service.evaluate(
+      input('Stripe sandbox test card: 4242 4242 4242 4242'),
+      {}
+    );
     expect(aiService.assessPrePublication).toHaveBeenCalledWith({
       signal: 'STRUCTURED_SENSITIVE_DATA',
-      content: 'Card 4242 4242 4242 4242'
+      content: 'Stripe sandbox test card: 4242 4242 4242 4242'
     });
 
     aiService.assessPrePublication.mockClear();
     await service.evaluate(input('Reference 4242 4242 4242 4241'), {});
     expect(aiService.assessPrePublication).not.toHaveBeenCalled();
+  });
+
+  it('rejects claimed real card data after a high-confidence sensitive-data assessment', async () => {
+    const { service, moderationDb, aiService } = createService();
+    aiService.assessPrePublication.mockResolvedValue({
+      outcome: PrePublicationCheckOutcome.REJECT,
+      category: 'SENSITIVE_PRIVATE_INFORMATION',
+      confidence: 0.99,
+      rationale: 'Payment-card number presented as genuine financial data'
+    });
+
+    const result = service.evaluate(
+      input('This is my Mastercard number: 4242 4242 4242 4242'),
+      {}
+    );
+
+    await expect(result).rejects.toMatchObject({
+      code: CONTENT_MODERATION_REJECTION_CODE
+    });
+    expect(aiService.assessPrePublication).toHaveBeenCalledWith({
+      signal: 'STRUCTURED_SENSITIVE_DATA',
+      content: 'This is my Mastercard number: 4242 4242 4242 4242'
+    });
+    expect(moderationDb.recordPrePublicationCheck).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: PrePublicationCheckOutcome.REJECT,
+        deterministicSignal: 'STRUCTURED_SENSITIVE_DATA',
+        evaluatorResult: expect.objectContaining({
+          category: 'SENSITIVE_PRIVATE_INFORMATION',
+          confidence: 0.99
+        })
+      }),
+      undefined
+    );
   });
 
   it('routes repeated identical content to AI using a private fingerprint', async () => {

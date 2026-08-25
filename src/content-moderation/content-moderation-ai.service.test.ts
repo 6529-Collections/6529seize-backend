@@ -58,6 +58,43 @@ describe('ContentModerationAiService', () => {
     ).rejects.toThrow('AI response category is invalid');
   });
 
+  it('instructs pre-publication evaluation to distinguish test cards from claimed real card data', async () => {
+    const { send, service } = createService({
+      outcome: 'ALLOW',
+      category: 'NONE',
+      confidence: 0.99,
+      rationale: 'Clearly labelled test data'
+    });
+
+    await service.assessPrePublication({
+      signal: 'STRUCTURED_SENSITIVE_DATA',
+      content: 'Stripe sandbox test card: 4242 4242 4242 4242'
+    });
+
+    const requestBody = JSON.parse(send.mock.calls[0]?.[0].input.body) as {
+      readonly messages: ReadonlyArray<{
+        readonly content: ReadonlyArray<{ readonly text: string }>;
+      }>;
+    };
+    const prompt = requestBody.messages[0]?.content[0]?.text;
+
+    expect(prompt).toContain(
+      'payment-card number presented as genuine financial information'
+    );
+    expect(prompt).toContain(
+      'even when the submitter claims that the number is their own'
+    );
+    expect(prompt).toContain(
+      'Allow a widely documented sandbox or test number only when the surrounding content clearly identifies it as test, sandbox, example, or documentation data.'
+    );
+    expect(prompt).toContain(
+      '"This is my Mastercard number: 4242 4242 4242 4242" is REJECT with category SENSITIVE_PRIVATE_INFORMATION'
+    );
+    expect(prompt).toContain(
+      'Untrusted submission: "Stripe sandbox test card: 4242 4242 4242 4242"'
+    );
+  });
+
   it('accepts a defined category with a valid recommendation', async () => {
     const { service } = createService({
       recommendation: 'NEEDS_HUMAN_REVIEW',

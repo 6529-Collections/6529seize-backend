@@ -16,7 +16,7 @@ import { TextDecoder } from 'node:util';
 
 export const CONTENT_MODERATION_POLICY_VERSION = 'content-moderation-2026-08-1';
 export const PRE_PUBLICATION_EVALUATOR_VERSION =
-  'pre-publication-evaluator-2026-08-1';
+  'pre-publication-evaluator-2026-08-2';
 export const REPORTED_CONTENT_EVALUATOR_VERSION =
   'reported-content-evaluator-2026-08-1';
 export const CONTENT_MODERATION_BEDROCK_MODEL_ID_ENV =
@@ -189,6 +189,12 @@ Return exactly one JSON object with:
 - rationale: concise explanation for the author
 
 Return REJECT only when confidence is at least 0.95 and the content itself is an explicit match for a prohibited category. If context is missing, intent is unclear, the content may be satire/quotation/counterspeech, or confidence is lower, return ALLOW. Profanity and offensiveness alone must be allowed.
+
+For the STRUCTURED_SENSITIVE_DATA signal, treat a payment-card number presented as genuine financial information as SENSITIVE_PRIVATE_INFORMATION even when the submitter claims that the number is their own. Allow a widely documented sandbox or test number only when the surrounding content clearly identifies it as test, sandbox, example, or documentation data. A number's known test status alone is not enough to allow content that presents it as a real card number.
+
+Context examples for STRUCTURED_SENSITIVE_DATA:
+- "Stripe sandbox test card: 4242 4242 4242 4242" is ALLOW because the surrounding text explicitly identifies test data.
+- "This is my Mastercard number: 4242 4242 4242 4242" is REJECT with category SENSITIVE_PRIVATE_INFORMATION because the surrounding text presents the number as genuine financial information.
 
 Untrusted submission: ${JSON.stringify(input.content)}
     `.trim()
