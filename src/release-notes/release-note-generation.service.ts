@@ -261,51 +261,6 @@ function formatDeployedAt(value: string): string {
   }).format(deployedAt);
 }
 
-function getBackendHeadingRuns(
-  request: ReleaseNoteGenerationRequest
-): ReleaseNoteRunReference[] {
-  const groupedRuns = Array.from(getBackendRunsByService(request).values());
-  const candidates = groupedRuns.length
-    ? groupedRuns
-    : [
-        {
-          service: request.service?.trim() || 'backend',
-          run_id: request.run_id,
-          run_number: request.run_number,
-          run_url: request.run_url
-        }
-      ];
-  const uniqueRuns = new Map<string, ReleaseNoteRunReference>();
-  for (const run of candidates) {
-    // GitHub run_id is canonical because one workflow run can deploy services.
-    if (!uniqueRuns.has(run.run_id)) {
-      uniqueRuns.set(run.run_id, run);
-    }
-  }
-  return Array.from(uniqueRuns.values()).sort(compareBackendHeadingRuns);
-}
-
-function getBackendRunLabel(run: ReleaseNoteRunReference): string {
-  const runNumber = run.run_number?.trim();
-  return runNumber && /^\d+$/.test(runNumber) ? runNumber : run.run_id;
-}
-
-function compareBackendHeadingRuns(
-  left: ReleaseNoteRunReference,
-  right: ReleaseNoteRunReference
-): number {
-  const leftLabel = getBackendRunLabel(left);
-  const rightLabel = getBackendRunLabel(right);
-  const leftIsNumeric = /^\d+$/.test(leftLabel);
-  const rightIsNumeric = /^\d+$/.test(rightLabel);
-  if (leftIsNumeric !== rightIsNumeric) {
-    return leftIsNumeric ? -1 : 1;
-  }
-  return leftLabel.localeCompare(rightLabel, undefined, {
-    numeric: leftIsNumeric
-  });
-}
-
 function getReleaseHeading(
   request: ReleaseNoteGenerationRequest,
   batch: ReleaseNoteBatch
@@ -327,12 +282,7 @@ function getReleaseHeading(
     const run = formatMarkdownLink(`#${runNumber}`, request.run_url);
     return `### ${surface} Deploy ${run} · commit ${commit}${batchSuffix} — ${formattedDate}`;
   }
-  const backendRuns = getBackendHeadingRuns(request)
-    .map((run) =>
-      formatMarkdownLink(`#${getBackendRunLabel(run)}`, run.run_url)
-    )
-    .join(', ');
-  return `### ${surface} Deploy ${backendRuns} · commit ${commit}${batchSuffix} — ${formattedDate}`;
+  return `### ${surface} Deploy · commit ${commit}${batchSuffix} — ${formattedDate}`;
 }
 
 export function getFrontendReleaseNoteLabel(
@@ -423,23 +373,23 @@ function getBackendRunsByService(
   return runsByService;
 }
 
-function getBackendServiceLine(
+function getBackendServiceLines(
   services: string[],
   runsByService: ReadonlyMap<string, ReleaseNoteRunReference>
 ): string | null {
   if (!services.length) {
     return null;
   }
-  const runLinks = services.map((service) => {
-    const run = runsByService.get(service);
-    if (!run) {
-      return service;
-    }
-    const runNumber = run.run_number || run.run_id;
-    return formatMarkdownLink(`${run.service} #${runNumber}`, run.run_url);
-  });
-  const serviceLabel = services.length === 1 ? 'Service' : 'Services';
-  return `- ${serviceLabel}: ${runLinks.join(', ')}`;
+  return services
+    .map((service) => {
+      const run = runsByService.get(service);
+      if (!run) {
+        return `- ${service}`;
+      }
+      const runNumber = run.run_number || run.run_id;
+      return `- ${service} ${formatMarkdownLink(`#${runNumber}`, run.run_url)}`;
+    })
+    .join('\n');
 }
 
 function formatReleaseNoteBlock(
@@ -453,11 +403,13 @@ function formatReleaseNoteBlock(
     const backendServices = services.length
       ? services
       : backendFallbackServices;
-    const serviceLine = getBackendServiceLine(
+    const serviceLines = getBackendServiceLines(
       backendServices,
       backendRunsByService
     );
-    return serviceLine ? `${pullRequestLine}\n${serviceLine}` : pullRequestLine;
+    return serviceLines
+      ? `${pullRequestLine}\n${serviceLines}`
+      : pullRequestLine;
   }
 
   const serviceLabel = services.length === 1 ? 'Service' : 'Services';

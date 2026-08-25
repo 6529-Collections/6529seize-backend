@@ -222,7 +222,7 @@ describe('ReleaseNoteGenerationService', () => {
           parts: [
             expect.objectContaining({
               content: expect.stringContaining(
-                '[PR #42](https://github.com/6529-Collections/6529seize-backend/pull/42): Made notification delivery more reliable. - @[alice6529]\n- Service: [api #45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123)'
+                '[PR #42](https://github.com/6529-Collections/6529seize-backend/pull/42): Made notification delivery more reliable. - @[alice6529]\n- api [#45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123)'
               )
             })
           ]
@@ -233,9 +233,11 @@ describe('ReleaseNoteGenerationService', () => {
     const content =
       createDrop.mock.calls[0][0].createDropRequest.parts[0].content;
     expect(content).toContain(
-      '### Backend Deploy [#45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123), [#46](https://github.com/6529-Collections/6529seize-backend/actions/runs/456) · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
+      '### Backend Deploy · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
     );
-    expect(content).not.toContain('\n\n- Service:');
+    expect(content).not.toContain('\n\n- api');
+    expect(content).not.toContain('Service:');
+    expect(content).not.toContain('Services:');
     expect(content).not.toContain('Runs:');
     expect(content).not.toContain('Services affected:');
   });
@@ -352,10 +354,10 @@ describe('ReleaseNoteGenerationService', () => {
     const backendContent =
       createDrop.mock.calls[1][0].createDropRequest.parts[0].content;
     expect(backendContent).toContain(
-      '### Backend Deploy [#45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123) · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
+      '### Backend Deploy · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
     );
     expect(backendContent).toContain(
-      '- Service: [api #45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123)'
+      '- api [#45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123)'
     );
 
     await service.generateAndPost(
@@ -404,8 +406,12 @@ describe('ReleaseNoteGenerationService', () => {
     const groupedBackendContent =
       createDrop.mock.calls[2][0].createDropRequest.parts[0].content;
     expect(groupedBackendContent).toContain(
-      '### Backend Deploy [#45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123), [#46](https://github.com/6529-Collections/6529seize-backend/actions/runs/456), [#789](https://github.com/6529-Collections/6529seize-backend/actions/runs/789) · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
+      '### Backend Deploy · commit [current-](https://github.com/6529-Collections/6529seize-backend/commit/current-sha) — Jul 13, 11:38 AM UTC'
     );
+    expect(groupedBackendContent).toContain(
+      '- api [#45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123)\n- dbMigrationsLoop [#46](https://github.com/6529-Collections/6529seize-backend/actions/runs/456)\n- legacyService [#not-available](https://github.com/6529-Collections/6529seize-backend/actions/runs/789)\n- pushNotificationsHandler [#46](https://github.com/6529-Collections/6529seize-backend/actions/runs/456)'
+    );
+    expect(groupedBackendContent).not.toContain('[api #45]');
   });
 
   it('renders multi-PR backend notes as paragraphs with adjacent service bullets', async () => {
@@ -458,7 +464,7 @@ describe('ReleaseNoteGenerationService', () => {
     const content =
       createDrop.mock.calls[0][0].createDropRequest.parts[0].content;
     expect(content).toContain(
-      '[PR #42](https://github.com/6529-Collections/6529seize-backend/pull/42): Made notification delivery more reliable. - [@Alice](https://github.com/Alice)\n- Service: [api #45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123)\n\n[PR #43](https://github.com/6529-Collections/6529seize-backend/pull/43): Improved push notification delivery.\n- Service: [pushNotificationsHandler #46](https://github.com/6529-Collections/6529seize-backend/actions/runs/456)'
+      '[PR #42](https://github.com/6529-Collections/6529seize-backend/pull/42): Made notification delivery more reliable. - [@Alice](https://github.com/Alice)\n- api [#45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123)\n\n[PR #43](https://github.com/6529-Collections/6529seize-backend/pull/43): Improved push notification delivery.\n- pushNotificationsHandler [#46](https://github.com/6529-Collections/6529seize-backend/actions/runs/456)'
     );
   });
 
@@ -502,7 +508,7 @@ describe('ReleaseNoteGenerationService', () => {
     const content =
       createDrop.mock.calls[0][0].createDropRequest.parts[0].content;
     expect(content).toContain(
-      '- Services: [api #45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123), [pushNotificationsHandler #46](https://github.com/6529-Collections/6529seize-backend/actions/runs/456)'
+      '- api [#45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123)\n- pushNotificationsHandler [#46](https://github.com/6529-Collections/6529seize-backend/actions/runs/456)'
     );
   });
 
@@ -583,7 +589,7 @@ describe('ReleaseNoteGenerationService', () => {
     const content =
       createDrop.mock.calls[0][0].createDropRequest.parts[0].content;
     expect(content).toContain(
-      '- Services: [api #45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123), pushNotificationsHandler'
+      '- api [#45](https://github.com/6529-Collections/6529seize-backend/actions/runs/123)\n- pushNotificationsHandler'
     );
     expect(content).not.toContain('Runs:');
   });
