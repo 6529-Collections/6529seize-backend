@@ -80,6 +80,7 @@ describe('CreateOrUpdateDropUseCase', () => {
       artCurationTokenWatchService?: any;
       attachmentsDb?: any;
       moderationService?: ModerationServiceMock;
+      moderationDb?: any;
     } = {}
   ) {
     return new CreateOrUpdateDropUseCase(
@@ -97,7 +98,10 @@ describe('CreateOrUpdateDropUseCase', () => {
       overrides.artCurationTokenWatchService ?? ({} as any),
       overrides.attachmentsDb ?? ({} as any),
       {} as any,
-      overrides.moderationService ?? createModerationServiceMock()
+      overrides.moderationService ?? createModerationServiceMock(),
+      overrides.moderationDb ?? {
+        filterBlockedNotificationRows: jest.fn(async (rows) => rows)
+      }
     );
   }
 
@@ -1195,17 +1199,35 @@ describe('CreateOrUpdateDropUseCase', () => {
         .mockResolvedValue([
           'author-profile',
           'reader-profile',
+          'blocked-reader-profile',
           'child-only-profile'
         ]),
       findIdentityGroupMemberships: jest.fn().mockResolvedValue([
         { groupId: 'visibility-group', profileId: 'reader-profile' },
         { groupId: 'parent-visibility-group', profileId: 'reader-profile' },
+        {
+          groupId: 'visibility-group',
+          profileId: 'blocked-reader-profile'
+        },
+        {
+          groupId: 'parent-visibility-group',
+          profileId: 'blocked-reader-profile'
+        },
         { groupId: 'visibility-group', profileId: 'child-only-profile' }
       ])
     };
+    const moderationDb = {
+      filterBlockedNotificationRows: jest.fn(async (rows) =>
+        rows.filter(
+          (row: { identity_id: string }) =>
+            row.identity_id !== 'blocked-reader-profile'
+        )
+      )
+    };
     const useCase = createUseCaseWithMocks({
       wavesApiDb,
-      userGroupsService
+      userGroupsService,
+      moderationDb
     });
 
     const recipientIds = await (
@@ -1231,9 +1253,26 @@ describe('CreateOrUpdateDropUseCase', () => {
     expect(userGroupsService.findIdentityGroupMemberships).toHaveBeenCalledWith(
       {
         groupIds: ['visibility-group', 'parent-visibility-group'],
-        profileIds: ['reader-profile', 'child-only-profile']
+        profileIds: [
+          'reader-profile',
+          'blocked-reader-profile',
+          'child-only-profile'
+        ]
       },
       { timer: undefined, connection }
+    );
+    expect(moderationDb.filterBlockedNotificationRows).toHaveBeenCalledWith(
+      [
+        {
+          identity_id: 'reader-profile',
+          additional_identity_id: 'author-profile'
+        },
+        {
+          identity_id: 'blocked-reader-profile',
+          additional_identity_id: 'author-profile'
+        }
+      ],
+      connection
     );
     expect(wavesApiDb.recordDirectMessageUnreadDrop).toHaveBeenCalledWith(
       {

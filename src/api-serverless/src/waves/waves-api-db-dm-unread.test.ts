@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import {
+  CONTENT_MODERATION_PROFILE_BLOCKS_TABLE,
   DROPS_TABLE,
   IDENTITY_MUTES_TABLE,
   WAVE_READER_METRICS_TABLE
@@ -62,6 +63,13 @@ describe('WavesApiDb DM unread drops count', () => {
       expect.anything()
     );
     expect(db.oneOrNull).toHaveBeenCalledWith(
+      expect.stringContaining(
+        `LEFT JOIN ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}`
+      ),
+      expect.anything(),
+      expect.anything()
+    );
+    expect(db.oneOrNull).toHaveBeenCalledWith(
       expect.stringContaining('r.muted = false'),
       expect.anything(),
       expect.anything()
@@ -84,6 +92,41 @@ describe('WavesApiDb DM unread drops count', () => {
         {}
       )
     ).resolves.toBe(0);
+  });
+});
+
+describe('WavesApiDb effective direct-message mute state', () => {
+  it('treats a blocked one-to-one counterpart as muted without changing the saved wave mute', async () => {
+    const { db, repo } = createRepo();
+    db.execute.mockImplementation((sql: string) => {
+      if (sql.includes(`select * from ${WAVE_READER_METRICS_TABLE}`)) {
+        return Promise.resolve([
+          {
+            wave_id: 'wave-1',
+            reader_id: 'reader-1',
+            latest_read_timestamp: 0,
+            latest_read_serial_no: null,
+            unread_state_version: 0,
+            muted: false
+          }
+        ]);
+      }
+      return Promise.resolve([{ wave_id: 'wave-1' }]);
+    });
+
+    await expect(
+      repo.findWaveReaderMetricsByWaveIds(
+        { readerId: 'reader-1', waveIds: ['wave-1'] },
+        {}
+      )
+    ).resolves.toMatchObject({
+      'wave-1': { muted: true }
+    });
+
+    const effectiveMuteSql = db.execute.mock.calls[1]![0] as string;
+    expect(effectiveMuteSql).toContain(CONTENT_MODERATION_PROFILE_BLOCKS_TABLE);
+    expect(effectiveMuteSql).toContain('count(distinct dm_member.profile_id)');
+    expect(effectiveMuteSql).toContain('w.is_direct_message = true');
   });
 });
 
