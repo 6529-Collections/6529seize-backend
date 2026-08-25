@@ -58,7 +58,7 @@ describe('ContentModerationAiService', () => {
     ).rejects.toThrow('AI response category is invalid');
   });
 
-  it('instructs pre-publication evaluation to distinguish test cards from claimed real card data', async () => {
+  it('instructs pre-publication evaluation to distinguish example data from genuine structured private data', async () => {
     const { send, service } = createService({
       outcome: 'ALLOW',
       category: 'NONE',
@@ -79,16 +79,22 @@ describe('ContentModerationAiService', () => {
     const prompt = requestBody.messages[0]?.content[0]?.text;
 
     expect(prompt).toContain(
-      'payment-card number presented as genuine financial information'
+      'genuine, usable private data, whether it belongs to the submitter or another person'
     );
     expect(prompt).toContain(
-      'even when the submitter claims that the number is their own'
+      'fictitious, sandbox, test, example, redacted, or documentation data'
     );
     expect(prompt).toContain(
-      'Allow a widely documented sandbox or test number only when the surrounding content clearly identifies it as test, sandbox, example, or documentation data.'
+      "An ownership claim or a value's known test status is context only"
     );
     expect(prompt).toContain(
       '"This is my Mastercard number: 4242 4242 4242 4242" is REJECT with category SENSITIVE_PRIVATE_INFORMATION'
+    );
+    expect(prompt).toContain(
+      '"Documentation example SSN: 123-45-6789" is ALLOW'
+    );
+    expect(prompt).toContain(
+      '"My SSN is 123-45-6789" is REJECT with category SENSITIVE_PRIVATE_INFORMATION'
     );
     expect(prompt).toContain(
       'Untrusted submission: "Stripe sandbox test card: 4242 4242 4242 4242"'

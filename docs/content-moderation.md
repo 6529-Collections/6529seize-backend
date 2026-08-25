@@ -64,6 +64,11 @@ The pre-publication evaluator receives only content that produced a narrow
 deterministic signal. It is instructed to be permissive and returns `ALLOW` or
 `REJECT`, a constrained category, confidence, and rationale.
 
+For `STRUCTURED_SENSITIVE_DATA`, genuine usable private identifiers are
+rejected whether they belong to the author or another person. Clearly labelled
+fictitious, sandbox, test, example, redacted, or documentation data is allowed;
+an ownership claim or a value's known test status is not decisive by itself.
+
 - `REJECT` at confidence `>= 0.95` rejects the request.
 - `ALLOW`, a lower-confidence result, or an uncertain result allows it.
 - A timeout, model error, or malformed response is recorded as an evaluator
