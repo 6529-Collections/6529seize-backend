@@ -144,6 +144,14 @@ const GROUP_MENTION_TOKENS: Readonly<Record<DropGroupMention, string>> = {
   [DropGroupMention.ADMINS]: 'admins',
   [DropGroupMention.DEVS_6529]: DEVS_6529_MENTION_TOKEN
 };
+const ADMIN_ONLY_GROUP_MENTIONS = [
+  DropGroupMention.ALL,
+  DropGroupMention.CONTRIBUTORS
+] as const;
+const ESCALATION_GROUP_MENTIONS = new Set<DropGroupMention>([
+  DropGroupMention.ADMINS,
+  DropGroupMention.DEVS_6529
+]);
 
 function createGroupMentionPattern(token: string): RegExp {
   return new RegExp(`(^|[^a-z0-9_@])@${token}(?![a-z0-9_@])`, 'i');
@@ -518,11 +526,20 @@ export class CreateOrUpdateDropUseCase {
       throw new BadRequestException(`Can't modify a winner drop`);
     }
     const normalizedModel = this.normalizeMentionedGroups(model);
+    const preExistingGroupMentions =
+      normalizedModel.drop_id !== null &&
+      normalizedModel.mentioned_groups.includes(DropGroupMention.CONTRIBUTORS)
+        ? await this.dropsDb.getDropGroupMentions(
+            normalizedModel.drop_id,
+            connection
+          )
+        : [];
     const { validatedModel, groupIdsUserIsEligibleFor } =
       await this.validateReferences(normalizedModel, isDescriptionDrop, {
         timer,
         connection,
-        preResolvedIdentityNomination
+        preResolvedIdentityNomination,
+        preExistingGroupMentions
       });
     const authorId = this.getRequiredAuthorId(validatedModel);
     const preExistingDropId = validatedModel.drop_id;
@@ -816,11 +833,13 @@ export class CreateOrUpdateDropUseCase {
     {
       timer,
       connection,
-      preResolvedIdentityNomination
+      preResolvedIdentityNomination,
+      preExistingGroupMentions
     }: {
       timer?: Timer;
       connection: ConnectionWrapper<any>;
       preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
+      preExistingGroupMentions: readonly DropGroupMention[];
     }
   ): Promise<{
     validatedModel: CreateOrUpdateDropModel;
@@ -837,7 +856,8 @@ export class CreateOrUpdateDropUseCase {
           model,
           groupIdsUserIsEligibleFor,
           isDescriptionDrop,
-          preResolvedIdentityNomination
+          preResolvedIdentityNomination,
+          preExistingGroupMentions
         },
         { timer, connection }
       ),
@@ -857,12 +877,14 @@ export class CreateOrUpdateDropUseCase {
       isDescriptionDrop,
       model,
       groupIdsUserIsEligibleFor,
-      preResolvedIdentityNomination
+      preResolvedIdentityNomination,
+      preExistingGroupMentions
     }: {
       isDescriptionDrop: boolean;
       model: CreateOrUpdateDropModel;
       groupIdsUserIsEligibleFor: string[];
       preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
+      preExistingGroupMentions: readonly DropGroupMention[];
     },
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ): Promise<CreateOrUpdateDropModel> {
@@ -886,7 +908,8 @@ export class CreateOrUpdateDropUseCase {
     this.verifyGroupMentions({
       model,
       wave,
-      groupIdsUserIsEligibleFor
+      groupIdsUserIsEligibleFor,
+      preExistingGroupMentions
     });
     await Promise.all([
       this.verifyParticipatoryLimitations(
@@ -2000,31 +2023,41 @@ export class CreateOrUpdateDropUseCase {
   private verifyGroupMentions({
     model,
     wave,
-    groupIdsUserIsEligibleFor
+    groupIdsUserIsEligibleFor,
+    preExistingGroupMentions = []
   }: {
     model: CreateOrUpdateDropModel;
     wave: WaveEntity;
     groupIdsUserIsEligibleFor: string[];
+    preExistingGroupMentions?: readonly DropGroupMention[];
   }) {
     if (!model.mentioned_groups.length) {
       return;
     }
-    // Contributors, admins, and developers are convenience expansions. Anyone
-    // with chat access could mention the same profiles individually, so only
-    // @all retains the wave creator/admin restriction. In particular,
-    // @devs6529 is intentionally available to every chat participant: it is a
-    // shorter, more reliable form of directly mentioning the configured team.
+    // @all and @contributors are broadcast mentions, so only wave creators and
+    // admins may invoke them. @admins and @devs6529 remain available to every
+    // chat participant as escalation shortcuts.
     const isCreator = wave.created_by === this.getRequiredAuthorId(model);
     const isAdmin =
       wave.admin_group_id !== null &&
       groupIdsUserIsEligibleFor.includes(wave.admin_group_id);
-    if (
-      model.mentioned_groups.includes(DropGroupMention.ALL) &&
-      !isCreator &&
-      !isAdmin
-    ) {
+    // Before @contributors became admin-only, ordinary participants could
+    // create drops containing it. Edits do not resend group notifications, so
+    // those authors may retain the existing token but cannot add a new one.
+    const canRetainLegacyContributorMention =
+      model.drop_id !== null &&
+      preExistingGroupMentions.includes(DropGroupMention.CONTRIBUTORS);
+    const restrictedMention = ADMIN_ONLY_GROUP_MENTIONS.find(
+      (group) =>
+        model.mentioned_groups.includes(group) &&
+        !(
+          group === DropGroupMention.CONTRIBUTORS &&
+          canRetainLegacyContributorMention
+        )
+    );
+    if (restrictedMention && !isCreator && !isAdmin) {
       throw new ForbiddenException(
-        `Only wave creators or admins can mention @all`
+        `Only wave creators or admins can mention @${GROUP_MENTION_TOKENS[restrictedMention]}`
       );
     }
   }
@@ -2160,6 +2193,80 @@ export class CreateOrUpdateDropUseCase {
       visibleMemberships.map((membership) => membership.profileId)
     );
     return candidates.filter((profileId) => visibleRecipientIds.has(profileId));
+  }
+
+  private getBroadcastPreferenceGroups(
+    mentionedGroups: readonly DropGroupMention[]
+  ): DropGroupMention[] {
+    // The existing ALL follower preference is the persisted key for both
+    // broadcast mention types, including @contributors-only drops.
+    return ADMIN_ONLY_GROUP_MENTIONS.some((group) =>
+      mentionedGroups.includes(group)
+    )
+      ? [DropGroupMention.ALL]
+      : [];
+  }
+
+  private async resolvePreferenceAwarePermissionGroupMentionRecipients(
+    {
+      model,
+      wave,
+      followerRecipients
+    }: {
+      model: CreateOrUpdateDropModel;
+      wave: WaveEntity;
+      followerRecipients: readonly {
+        identity_id: string;
+        has_group_mention: boolean;
+      }[];
+    },
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+  ): Promise<string[]> {
+    const contributorGroups = model.mentioned_groups.includes(
+      DropGroupMention.CONTRIBUTORS
+    )
+      ? [DropGroupMention.CONTRIBUTORS]
+      : [];
+    const escalationGroups = model.mentioned_groups.filter((group) =>
+      ESCALATION_GROUP_MENTIONS.has(group)
+    );
+    const followerIdentityIds = followerRecipients.map(
+      (recipient) => recipient.identity_id
+    );
+    const [contributorIdentityIds, escalationIdentityIds] = await Promise.all([
+      this.resolvePermissionGroupMentionRecipients(
+        {
+          model: { ...model, mentioned_groups: contributorGroups },
+          wave,
+          followerIdentityIds
+        },
+        { timer, connection }
+      ),
+      this.resolvePermissionGroupMentionRecipients(
+        {
+          model: { ...model, mentioned_groups: escalationGroups },
+          wave,
+          followerIdentityIds
+        },
+        { timer, connection }
+      )
+    ]);
+    const broadcastPreferenceIdentityIds = new Set(
+      // has_group_mention reflects the persisted ALL key. Product semantics
+      // intentionally reuse it for both @all and @contributors broadcasts;
+      // contributor recipients must therefore be joined followers with the
+      // shared broadcast preference enabled too, even when the Chat audience
+      // comes from an explicit chat_group_id.
+      followerRecipients
+        .filter((recipient) => recipient.has_group_mention)
+        .map((recipient) => recipient.identity_id)
+    );
+    return collections.distinct([
+      ...contributorIdentityIds.filter((identityId) =>
+        broadcastPreferenceIdentityIds.has(identityId)
+      ),
+      ...escalationIdentityIds
+    ]);
   }
 
   private warnIfDeveloperMentionHasNoRecipients({
@@ -2359,12 +2466,15 @@ export class CreateOrUpdateDropUseCase {
     const notificationMentionedGroups = groupMentionNotificationsEnabled
       ? model.mentioned_groups
       : [];
+    const broadcastPreferenceGroups = this.getBroadcastPreferenceGroups(
+      notificationMentionedGroups
+    );
     const [followerRecipients, relationshipNotifications] = await Promise.all([
       this.identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications(
         {
           waveId: wave.id,
           authorId,
-          mentionedGroups: notificationMentionedGroups
+          mentionedGroups: broadcastPreferenceGroups
         },
         connection
       ),
@@ -2374,13 +2484,11 @@ export class CreateOrUpdateDropUseCase {
       )
     ]);
     const permissionGroupMentionIdentityIds =
-      await this.resolvePermissionGroupMentionRecipients(
+      await this.resolvePreferenceAwarePermissionGroupMentionRecipients(
         {
           model: { ...model, mentioned_groups: notificationMentionedGroups },
           wave,
-          followerIdentityIds: followerRecipients.map(
-            (recipient) => recipient.identity_id
-          )
+          followerRecipients
         },
         { timer, connection }
       );
@@ -2420,9 +2528,11 @@ export class CreateOrUpdateDropUseCase {
     );
     const mentionedIdentityIds = collections.distinct([
       ...directMentionIdentityIds,
-      ...eligibleFollowerRecipients
-        .filter((recipient) => recipient.has_group_mention)
-        .map((recipient) => recipient.identity_id)
+      ...(notificationMentionedGroups.includes(DropGroupMention.ALL)
+        ? eligibleFollowerRecipients
+            .filter((recipient) => recipient.has_group_mention)
+            .map((recipient) => recipient.identity_id)
+        : [])
     ]);
     const mentionedIdentityIdsSet = new Set(mentionedIdentityIds);
     const allDropsSubscriberIds = eligibleFollowerRecipients
