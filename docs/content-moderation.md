@@ -45,15 +45,15 @@ deterministic or AI checks run.
 
 ### Deterministic screen
 
-| Check | Result |
-| --- | --- |
-| Empty textual content | Allow without AI. |
-| Host matches `CONTENT_MODERATION_BLOCKED_HOSTS` exactly or as a subdomain | Reject directly without AI. |
-| Same author and normalized fingerprint has appeared at least four times in the preceding ten minutes | Send `REPEATED_IDENTICAL_CONTENT` to AI. |
-| US Social Security number pattern or a 13-19 digit Luhn-valid payment-card candidate | Send `STRUCTURED_SENSITIVE_DATA` to AI. |
-| Narrow first-person threat pattern | Send `EXPLICIT_THREAT_PATTERN` to AI. |
-| Minor/underage term near a sexual-exploitation term | Send `SEXUAL_EXPLOITATION_PATTERN` to AI. |
-| No configured signal | Allow without AI. |
+| Check                                                                                                | Result                                    |
+| ---------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| Empty textual content                                                                                | Allow without AI.                         |
+| Host matches `CONTENT_MODERATION_BLOCKED_HOSTS` exactly or as a subdomain                            | Reject directly without AI.               |
+| Same author and normalized fingerprint has appeared at least four times in the preceding ten minutes | Send `REPEATED_IDENTICAL_CONTENT` to AI.  |
+| US Social Security number pattern or a 13-19 digit Luhn-valid payment-card candidate                 | Send `STRUCTURED_SENSITIVE_DATA` to AI.   |
+| Narrow first-person threat pattern                                                                   | Send `EXPLICIT_THREAT_PATTERN` to AI.     |
+| Minor/underage term near a sexual-exploitation term                                                  | Send `SEXUAL_EXPLOITATION_PATTERN` to AI. |
+| No configured signal                                                                                 | Allow without AI.                         |
 
 Profanity is not a deterministic signal. The repeated-content rule is a signal
 for contextual evaluation, not a direct spam rejection.
@@ -63,6 +63,11 @@ for contextual evaluation, not a direct spam rejection.
 The pre-publication evaluator receives only content that produced a narrow
 deterministic signal. It is instructed to be permissive and returns `ALLOW` or
 `REJECT`, a constrained category, confidence, and rationale.
+
+For `STRUCTURED_SENSITIVE_DATA`, genuine usable private identifiers are
+rejected whether they belong to the author or another person. Clearly labelled
+fictitious, sandbox, test, example, redacted, or documentation data is allowed;
+an ownership claim or a value's known test status is not decisive by itself.
 
 - `REJECT` at confidence `>= 0.95` rejects the request.
 - `ALLOW`, a lower-confidence result, or an uncertain result allows it.
@@ -95,6 +100,12 @@ Hiding does not change the drop's global state. Blocking changes only the
 viewer's presentation of the blocked profile's drops. Personal hide and block
 state is returned in viewer-specific drop presentation data and is used to
 suppress related notifications for that viewer.
+
+Blocking also removes the blocker's existing identity subscriptions to that
+profile in the same transaction. A blocker cannot subscribe to the profile
+again until they unblock it. The reverse relationship is not changed: blocking
+does not remove the blocked profile's subscriptions to the blocker, expose the
+block to that profile, or make either public profile unavailable.
 
 ## Reporting
 
@@ -233,12 +244,12 @@ after the backend API is available.
 
 ## Configuration
 
-| Variable | Purpose |
-| --- | --- |
-| `CONTENT_MODERATOR_PROFILE_IDS` | Comma-separated bootstrap moderator profile IDs. Empty grants no configured access. |
-| `CONTENT_MODERATION_BLOCKED_HOSTS` | Comma-separated exact or parent hosts for deterministic unsafe-destination rejection. Empty disables this direct-rejection list. |
-| `CONTENT_MODERATION_BEDROCK_MODEL_ID` | Optional moderation-specific Bedrock model; otherwise the existing configured/default Anthropic model is used. |
-| `CONTENT_MODERATION_REPORTS_PER_HOUR` | Per-profile report ceiling; defaults to `100`. |
+| Variable                              | Purpose                                                                                                                          |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `CONTENT_MODERATOR_PROFILE_IDS`       | Comma-separated bootstrap moderator profile IDs. Empty grants no configured access.                                              |
+| `CONTENT_MODERATION_BLOCKED_HOSTS`    | Comma-separated exact or parent hosts for deterministic unsafe-destination rejection. Empty disables this direct-rejection list. |
+| `CONTENT_MODERATION_BEDROCK_MODEL_ID` | Optional moderation-specific Bedrock model; otherwise the existing configured/default Anthropic model is used.                   |
+| `CONTENT_MODERATION_REPORTS_PER_HOUR` | Per-profile report ceiling; defaults to `100`.                                                                                   |
 
 ## Related documentation
 

@@ -363,14 +363,10 @@ describe('CreateOrUpdateDropUseCase', () => {
     jest.spyOn(useCase as any, 'insertAllDropComponents').mockResolvedValue([]);
     jest.spyOn(env, 'getIntOrNull').mockReturnValue(60_000);
 
-    await (useCase as any).createOrUpdateDrop(
-      editModel,
-      false,
-      {
-        connection: {} as any,
-        prePublication: { trustedSystem: true }
-      }
-    );
+    await (useCase as any).createOrUpdateDrop(editModel, false, {
+      connection: {} as any,
+      prePublication: { trustedSystem: true }
+    });
 
     expect(dropsDb.getDropGroupMentions).toHaveBeenCalledWith('drop-1', {});
     expect((useCase as any).validateReferences).toHaveBeenCalledWith(

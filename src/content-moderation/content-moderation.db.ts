@@ -12,6 +12,7 @@ import {
   DROPS_TABLE,
   DROP_ATTACHMENTS_TABLE,
   DROP_MEDIA_TABLE,
+  IDENTITY_SUBSCRIPTIONS_TABLE,
   PROFILES_TABLE
 } from '@/constants';
 import {
@@ -32,6 +33,7 @@ import {
 import { Time } from '@/time';
 import { randomUUID } from 'node:crypto';
 import { env } from '@/env';
+import { ActivityEventTargetType } from '@/entities/IActivityEvent';
 
 const REPORT_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 const DEFAULT_REPORTS_PER_HOUR = 100;
@@ -155,6 +157,20 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         },
         this.connectionOptions(connection)
       );
+      await this.db.execute(
+        `
+          delete from ${IDENTITY_SUBSCRIPTIONS_TABLE}
+          where subscriber_id = :blockerProfileId
+            and target_id = :blockedProfileId
+            and target_type = :targetType
+        `,
+        {
+          blockerProfileId,
+          blockedProfileId,
+          targetType: ActivityEventTargetType.IDENTITY
+        },
+        this.connectionOptions(connection)
+      );
       await this.insertAudit(
         {
           actorProfileId: blockerProfileId,
@@ -166,6 +182,24 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         connection
       );
     });
+  }
+
+  async isProfileBlocked(
+    blockerProfileId: string,
+    blockedProfileId: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<boolean> {
+    const row = await this.db.oneOrNull<{ id: string }>(
+      `
+        select id
+        from ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}
+        where blocker_profile_id = :blockerProfileId
+          and blocked_profile_id = :blockedProfileId
+      `,
+      { blockerProfileId, blockedProfileId },
+      this.connectionOptions(connection)
+    );
+    return row !== null;
   }
 
   async unblockProfile(
