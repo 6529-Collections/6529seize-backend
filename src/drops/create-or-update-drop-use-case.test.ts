@@ -307,6 +307,16 @@ describe('CreateOrUpdateDropUseCase', () => {
   );
 
   it('does not increment inserted-drop metrics when editing a drop', async () => {
+    const editModel = createChatDropModel({
+      drop_id: 'drop-1',
+      parts: [
+        {
+          content: 'legacy @contributors mention',
+          quoted_drop: null,
+          media: []
+        }
+      ]
+    });
     const dropsDb = {
       findDropById: jest.fn().mockResolvedValue({
         id: 'drop-1',
@@ -317,7 +327,9 @@ describe('CreateOrUpdateDropUseCase', () => {
         updated_at: Date.now(),
         serial_no: 1
       }),
-      getDropGroupMentions: jest.fn().mockResolvedValue([]),
+      getDropGroupMentions: jest
+        .fn()
+        .mockResolvedValue([DropGroupMention.CONTRIBUTORS]),
       applyInsertedDropMetricsDelta: jest.fn().mockResolvedValue(undefined)
     };
     const wavesApiDb = {
@@ -339,7 +351,10 @@ describe('CreateOrUpdateDropUseCase', () => {
       artCurationTokenWatchService
     });
     jest.spyOn(useCase as any, 'validateReferences').mockResolvedValue({
-      validatedModel: createChatDropModel({ drop_id: 'drop-1' }),
+      validatedModel: {
+        ...editModel,
+        mentioned_groups: [DropGroupMention.CONTRIBUTORS]
+      },
       groupIdsUserIsEligibleFor: []
     });
     jest
@@ -349,7 +364,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     jest.spyOn(env, 'getIntOrNull').mockReturnValue(60_000);
 
     await (useCase as any).createOrUpdateDrop(
-      createChatDropModel({ drop_id: 'drop-1' }),
+      editModel,
       false,
       {
         connection: {} as any,
@@ -357,6 +372,16 @@ describe('CreateOrUpdateDropUseCase', () => {
       }
     );
 
+    expect(dropsDb.getDropGroupMentions).toHaveBeenCalledWith('drop-1', {});
+    expect((useCase as any).validateReferences).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mentioned_groups: [DropGroupMention.CONTRIBUTORS]
+      }),
+      false,
+      expect.objectContaining({
+        preExistingGroupMentions: [DropGroupMention.CONTRIBUTORS]
+      })
+    );
     expect(deleteDropUseCase.execute).toHaveBeenCalledWith(
       expect.objectContaining({
         drop_id: 'drop-1',
@@ -593,7 +618,13 @@ describe('CreateOrUpdateDropUseCase', () => {
 
     expect(() =>
       (useCase as any).verifyGroupMentions({
-        model: createGroupMentionModel(),
+        model: {
+          ...createGroupMentionModel(),
+          mentioned_groups: [
+            DropGroupMention.ALL,
+            DropGroupMention.CONTRIBUTORS
+          ]
+        },
         wave: {
           created_by: 'author-profile',
           admin_group_id: 'admins'
@@ -731,14 +762,13 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).toEqual([DropGroupMention.CONTRIBUTORS]);
   });
 
-  it('allows chat participants to use permission-derived group mentions', () => {
+  it('allows chat participants to use escalation group mentions', () => {
     const useCase = createUseCase({ existingNominations: [] });
     expect(() =>
       (useCase as any).verifyGroupMentions({
         model: {
           ...createGroupMentionModel(),
           mentioned_groups: [
-            DropGroupMention.CONTRIBUTORS,
             DropGroupMention.ADMINS,
             DropGroupMention.DEVS_6529
           ]
@@ -813,7 +843,13 @@ describe('CreateOrUpdateDropUseCase', () => {
 
     expect(() =>
       (useCase as any).verifyGroupMentions({
-        model: createGroupMentionModel(),
+        model: {
+          ...createGroupMentionModel(),
+          mentioned_groups: [
+            DropGroupMention.ALL,
+            DropGroupMention.CONTRIBUTORS
+          ]
+        },
         wave: {
           created_by: 'another-profile',
           admin_group_id: 'admins'
@@ -840,6 +876,26 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).toThrow(`Only wave creators or admins can mention @all`);
   });
 
+  it('rejects @contributors mentions from non-admins', () => {
+    const useCase = createUseCase({
+      existingNominations: []
+    });
+
+    expect(() =>
+      (useCase as any).verifyGroupMentions({
+        model: {
+          ...createGroupMentionModel(),
+          mentioned_groups: [DropGroupMention.CONTRIBUTORS]
+        },
+        wave: {
+          created_by: 'another-profile',
+          admin_group_id: 'admins'
+        },
+        groupIdsUserIsEligibleFor: ['members']
+      })
+    ).toThrow(`Only wave creators or admins can mention @contributors`);
+  });
+
   it('allows group mentions on drop updates', () => {
     const useCase = createUseCase({
       existingNominations: []
@@ -858,6 +914,50 @@ describe('CreateOrUpdateDropUseCase', () => {
         groupIdsUserIsEligibleFor: ['admins']
       })
     ).not.toThrow();
+  });
+
+  it('allows non-admin authors to retain a legacy @contributors mention on edit', () => {
+    const useCase = createUseCase({
+      existingNominations: []
+    });
+
+    expect(() =>
+      (useCase as any).verifyGroupMentions({
+        model: {
+          ...createGroupMentionModel(),
+          drop_id: 'drop-1',
+          mentioned_groups: [DropGroupMention.CONTRIBUTORS]
+        },
+        wave: {
+          created_by: 'another-profile',
+          admin_group_id: 'admins'
+        },
+        groupIdsUserIsEligibleFor: ['members'],
+        preExistingGroupMentions: [DropGroupMention.CONTRIBUTORS]
+      })
+    ).not.toThrow();
+  });
+
+  it('rejects non-admin authors who add @contributors during an edit', () => {
+    const useCase = createUseCase({
+      existingNominations: []
+    });
+
+    expect(() =>
+      (useCase as any).verifyGroupMentions({
+        model: {
+          ...createGroupMentionModel(),
+          drop_id: 'drop-1',
+          mentioned_groups: [DropGroupMention.CONTRIBUTORS]
+        },
+        wave: {
+          created_by: 'another-profile',
+          admin_group_id: 'admins'
+        },
+        groupIdsUserIsEligibleFor: ['members'],
+        preExistingGroupMentions: []
+      })
+    ).toThrow(`Only wave creators or admins can mention @contributors`);
   });
 
   it('rejects non-admin chat drops with links when links are disabled', () => {
@@ -1899,7 +1999,7 @@ describe('CreateOrUpdateDropUseCase', () => {
           ...createGroupMentionModel(),
           mentioned_groups: [DropGroupMention.CONTRIBUTORS]
         },
-        wave: { created_by: 'another-profile', admin_group_id: 'admins' },
+        wave: { created_by: 'author-profile', admin_group_id: 'admins' },
         groupIdsUserIsEligibleFor: []
       })
     ).not.toThrow();
@@ -1929,7 +2029,77 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).not.toHaveBeenCalled();
   });
 
-  it('removes muted followers from fully open contributor notifications', async () => {
+  it('notifies only unmuted followers with broadcast mentions enabled for public contributors', async () => {
+    const identitySubscriptionsDb = {
+      findWaveFollowersEligibleForDropNotifications: jest
+        .fn()
+        .mockResolvedValue([
+          {
+            identity_id: 'follower-1',
+            subscribed_to_all_drops: false,
+            has_group_mention: true
+          },
+          {
+            identity_id: 'follower-2',
+            subscribed_to_all_drops: false,
+            has_group_mention: true
+          }
+        ]),
+      findMutedWaveReaders: jest.fn().mockResolvedValue(['follower-2'])
+    };
+    const userNotifier = {
+      notifyWaveDropCreatedRecipients: jest.fn().mockResolvedValue([])
+    };
+    const useCase = createUseCaseWithMocks({
+      identitySubscriptionsDb,
+      userNotifier
+    });
+
+    await (useCase as any).notifyWaveDropRecipients(
+      {
+        model: createNotificationDropModel({
+          mentioned_groups: [DropGroupMention.CONTRIBUTORS]
+        }),
+        wave: {
+          id: 'wave-1',
+          created_by: 'author-1',
+          chat_group_id: null,
+          admin_group_id: null,
+          visibility_group_id: null
+        },
+        directlyMentionedIdentityIds: [],
+        groupMentionNotificationsEnabled: true
+      },
+      { connection: {} }
+    );
+
+    expect(
+      identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications
+    ).toHaveBeenCalledWith(
+      {
+        waveId: 'wave-1',
+        authorId: 'author-1',
+        mentionedGroups: [DropGroupMention.ALL]
+      },
+      {}
+    );
+
+    expect(userNotifier.notifyWaveDropCreatedRecipients).toHaveBeenCalledWith(
+      {
+        waveId: 'wave-1',
+        dropId: 'drop-1',
+        relatedIdentityId: 'author-1',
+        replyNotification: null,
+        quoteNotifications: [],
+        mentionedIdentityIds: ['follower-1'],
+        allDropsSubscriberIds: []
+      },
+      null,
+      { timer: undefined, connection: {} }
+    );
+  });
+
+  it('does not notify public contributors who disabled broadcast mentions', async () => {
     const identitySubscriptionsDb = {
       findWaveFollowersEligibleForDropNotifications: jest
         .fn()
@@ -1938,14 +2108,9 @@ describe('CreateOrUpdateDropUseCase', () => {
             identity_id: 'follower-1',
             subscribed_to_all_drops: false,
             has_group_mention: false
-          },
-          {
-            identity_id: 'follower-2',
-            subscribed_to_all_drops: false,
-            has_group_mention: false
           }
         ]),
-      findMutedWaveReaders: jest.fn().mockResolvedValue(['follower-2'])
+      findMutedWaveReaders: jest.fn().mockResolvedValue([])
     };
     const userNotifier = {
       notifyWaveDropCreatedRecipients: jest.fn().mockResolvedValue([])
@@ -1980,7 +2145,115 @@ describe('CreateOrUpdateDropUseCase', () => {
         relatedIdentityId: 'author-1',
         replyNotification: null,
         quoteNotifications: [],
-        mentionedIdentityIds: ['follower-1'],
+        mentionedIdentityIds: [],
+        allDropsSubscriberIds: []
+      },
+      null,
+      { timer: undefined, connection: {} }
+    );
+  });
+
+  it('requires contributor group members to opt into broadcasts without gating admin mentions', async () => {
+    const identitySubscriptionsDb = {
+      findWaveFollowersEligibleForDropNotifications: jest
+        .fn()
+        .mockResolvedValue([
+          {
+            identity_id: 'contributor-disabled',
+            subscribed_to_all_drops: false,
+            has_group_mention: false
+          },
+          {
+            identity_id: 'contributor-enabled',
+            subscribed_to_all_drops: false,
+            has_group_mention: true
+          },
+          {
+            identity_id: 'admin-disabled',
+            subscribed_to_all_drops: false,
+            has_group_mention: false
+          },
+          {
+            identity_id: 'outsider-enabled',
+            subscribed_to_all_drops: false,
+            has_group_mention: true
+          }
+        ]),
+      findMutedWaveReaders: jest.fn().mockResolvedValue([])
+    };
+    const userGroupsService = {
+      findIdentityGroupMembershipPage: jest
+        .fn()
+        .mockImplementation(({ groupIds }: { groupIds: string[] }) =>
+          Promise.resolve({
+            memberships: [
+              { groupId: 'chatters', profileId: 'contributor-disabled' },
+              { groupId: 'chatters', profileId: 'contributor-enabled' },
+              { groupId: 'chatters', profileId: 'contributor-not-following' },
+              { groupId: 'admins', profileId: 'admin-disabled' }
+            ].filter((membership) => groupIds.includes(membership.groupId)),
+            nextCursor: null
+          })
+        )
+    };
+    const userNotifier = {
+      notifyWaveDropCreatedRecipients: jest.fn().mockResolvedValue([])
+    };
+    const useCase = createUseCaseWithMocks({
+      identitySubscriptionsDb,
+      userGroupsService,
+      userNotifier
+    });
+
+    await (useCase as any).notifyWaveDropRecipients(
+      {
+        model: createNotificationDropModel({
+          mentioned_groups: [
+            DropGroupMention.CONTRIBUTORS,
+            DropGroupMention.ADMINS
+          ]
+        }),
+        wave: {
+          id: 'wave-1',
+          created_by: 'author-1',
+          chat_group_id: 'chatters',
+          admin_group_id: 'admins',
+          visibility_group_id: null
+        },
+        directlyMentionedIdentityIds: [],
+        groupMentionNotificationsEnabled: true
+      },
+      { connection: {} }
+    );
+
+    expect(
+      identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications
+    ).toHaveBeenCalledWith(
+      {
+        waveId: 'wave-1',
+        authorId: 'author-1',
+        mentionedGroups: [DropGroupMention.ALL]
+      },
+      {}
+    );
+
+    const notificationPayload =
+      userNotifier.notifyWaveDropCreatedRecipients.mock.calls[0][0];
+    expect(notificationPayload.mentionedIdentityIds).not.toContain(
+      'contributor-disabled'
+    );
+    expect(notificationPayload.mentionedIdentityIds).not.toContain(
+      'contributor-not-following'
+    );
+
+    expect(userNotifier.notifyWaveDropCreatedRecipients).toHaveBeenCalledWith(
+      {
+        waveId: 'wave-1',
+        dropId: 'drop-1',
+        relatedIdentityId: 'author-1',
+        replyNotification: null,
+        quoteNotifications: [],
+        mentionedIdentityIds: ['contributor-enabled', 'admin-disabled'],
         allDropsSubscriberIds: []
       },
       null,
