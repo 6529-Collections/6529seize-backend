@@ -9,8 +9,10 @@ import { BadRequestException } from '@/exceptions';
 import { ContentModerationDb } from './content-moderation.db';
 import {
   CONTENT_MODERATION_DROP_STATES_TABLE,
-  CONTENT_MODERATION_PROFILE_BLOCKS_TABLE
+  CONTENT_MODERATION_PROFILE_BLOCKS_TABLE,
+  IDENTITY_SUBSCRIPTIONS_TABLE
 } from '@/constants';
+import { ActivityEventTargetType } from '@/entities/IActivityEvent';
 
 const REPORT_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -317,6 +319,15 @@ describe('ContentModerationDb', () => {
     expect(executor.execute).toHaveBeenCalledWith(
       expect.stringContaining(CONTENT_MODERATION_PROFILE_BLOCKS_TABLE),
       expect.any(Object),
+      { wrappedConnection: connection }
+    );
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.stringContaining(`delete from ${IDENTITY_SUBSCRIPTIONS_TABLE}`),
+      {
+        blockerProfileId: 'blocker-1',
+        blockedProfileId: 'blocked-1',
+        targetType: ActivityEventTargetType.IDENTITY
+      },
       { wrappedConnection: connection }
     );
   });
