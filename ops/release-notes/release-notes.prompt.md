@@ -14,7 +14,7 @@ For every supplied pull request:
 - Avoid vague phrases such as "various improvements" or "minor fixes."
 - Do not include pull request numbers, URLs, contributor names, Markdown links, bullets, headings, or preamble in the summary. The renderer adds those deterministically.
 
-The renderer formats the deployment metadata as a level-three Markdown heading and each final entry as `- [PR #123](link): Summary. - @[contributor] — Service: api` or, when several services are affected, `- [PR #123](link): Summary. - @[contributor] — Services: api, claimsBuilder`.
+The renderer formats the deployment metadata as a level-three Markdown heading. Each Backend pull request is followed by one bullet per affected service, with only the service's deployment run number linked. Frontend service metadata remains inline with its release-note entry.
 
 Return valid JSON only, matching this shape:
 
