@@ -387,7 +387,8 @@ function getBackendServiceLines(
         return `- ${service}`;
       }
       const runNumber = run.run_number || run.run_id;
-      return `- ${service} ${formatMarkdownLink(`#${runNumber}`, run.run_url)}`;
+      const runLink = formatMarkdownLink(`#${runNumber}`, run.run_url);
+      return `- ${service} ${runLink}`;
     })
     .join('\n');
 }

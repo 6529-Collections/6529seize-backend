@@ -295,11 +295,29 @@ describe('ReleaseNoteGenerationService', () => {
     ]);
   });
 
-  it('renders repository-specific single-service run links', async () => {
+  it('keeps frontend heading links and renders backend links per service', async () => {
     const createDrop = jest.fn().mockResolvedValue({ id: 'created-drop' });
+    const getReleaseContext = jest
+      .fn()
+      .mockResolvedValueOnce(context)
+      .mockResolvedValueOnce(context)
+      .mockResolvedValueOnce({
+        ...context,
+        pull_requests: [
+          {
+            ...context.pull_requests[0],
+            candidate_services: [
+              'api',
+              'dbMigrationsLoop',
+              'legacyService',
+              'pushNotificationsHandler'
+            ]
+          }
+        ]
+      });
     const service = new ReleaseNoteGenerationService(
       {
-        getReleaseContext: jest.fn().mockResolvedValue(context),
+        getReleaseContext,
         getReleasePrompt: jest.fn().mockResolvedValue('Repository prompt.')
       } as unknown as ReleaseNoteGitHubService,
       {
