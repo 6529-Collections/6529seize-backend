@@ -107,6 +107,20 @@ again until they unblock it. The reverse relationship is not changed: blocking
 does not remove the blocked profile's subscriptions to the blocker, expose the
 block to that profile, or make either public profile unavailable.
 
+Blocking acts as a directional, privacy-preserving mute. One-to-one direct
+messages remain available under the normal direct-message admission policy,
+including conversations created after the block. For the blocker, the
+conversation is effectively muted and deprioritized without changing any saved
+manual mute setting. Messages from the blocked profile are retained but use the
+normal personal-block presentation until individually revealed. The blocked
+profile receives no delivery error or explicit block disclosure.
+
+Group direct messages and shared Waves also remain usable. Drops from a profile
+the viewer blocked retain the normal personal-block presentation, and that
+profile's activity does not create ordinary notifications, push notifications,
+or unread counts for the blocker. Activity from other group members continues
+to behave normally.
+
 ## Reporting
 
 `POST /content-moderation/drops/{drop_id}/reports` creates a report. Reporting,

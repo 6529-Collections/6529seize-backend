@@ -118,6 +118,10 @@ import {
   prePublicationModerationService,
   PrePublicationModerationService
 } from '@/content-moderation/pre-publication-moderation.service';
+import {
+  contentModerationDb,
+  ContentModerationDb
+} from '@/content-moderation/content-moderation.db';
 
 const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
 const GIPHY_CHAT_LINK_HOST_REGEX = /^media\d*\.giphy\.com$/;
@@ -299,7 +303,11 @@ export class CreateOrUpdateDropUseCase {
     private readonly moderationService: Pick<
       PrePublicationModerationService,
       'evaluate'
-    > = prePublicationModerationService
+    > = prePublicationModerationService,
+    private readonly moderationDb: Pick<
+      ContentModerationDb,
+      'filterBlockedNotificationRows'
+    > = contentModerationDb
   ) {}
 
   private assertDropContentLimits(
@@ -755,12 +763,20 @@ export class CreateOrUpdateDropUseCase {
     const candidateRecipientIds = collections.distinct(
       readerIds.filter((readerId) => readerId !== authorId)
     );
-    const recipientIds =
+    const visibleRecipientIds =
       await this.filterDirectMessageUnreadRecipientsByVisibility(
         wave,
         candidateRecipientIds,
         { timer, connection }
       );
+    const recipientRows = await this.moderationDb.filterBlockedNotificationRows(
+      visibleRecipientIds.map((profileId) => ({
+        identity_id: profileId,
+        additional_identity_id: authorId
+      })),
+      connection
+    );
+    const recipientIds = recipientRows.map((row) => row.identity_id);
     await this.wavesApiDb.recordDirectMessageUnreadDrop(
       {
         waveId: wave.id,
@@ -2620,5 +2636,6 @@ export const createOrUpdateDrop = new CreateOrUpdateDropUseCase(
   artCurationTokenWatchService,
   attachmentsDb,
   dropMediaUploadsDb,
-  prePublicationModerationService
+  prePublicationModerationService,
+  contentModerationDb
 );
