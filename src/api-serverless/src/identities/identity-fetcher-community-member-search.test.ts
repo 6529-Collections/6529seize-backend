@@ -111,6 +111,92 @@ describe('IdentityFetcher community-member search', () => {
     });
   });
 
+  it('orders real-handle ENS-only matches in the ENS and wallet bucket', async () => {
+    searchCommunityMembersWhereHandleLike.mockResolvedValue([
+      createIdentity({
+        handle: 'gelprefix',
+        levelRaw: 1,
+        profileId: 'profile-prefix'
+      })
+    ]);
+    searchCommunityMembersWhereEnsLike.mockResolvedValue([
+      createIdentity({
+        handle: 'unrelated-handle',
+        levelRaw: 500,
+        profileId: 'profile-ens-only',
+        ens: 'highgel.eth'
+      }),
+      createIdentity({
+        handle: 'id-0x123',
+        levelRaw: 100,
+        profileId: 'profile-auto-wallet',
+        ens: 'lowgel.eth'
+      })
+    ]);
+
+    const results =
+      await identityFetcher.searchCommunityMemberMinimalsOfClosestMatches({
+        param: 'gel',
+        onlyProfileOwners: true,
+        limit: 10,
+        sort: 'level'
+      });
+
+    expect(results.map((result) => result.handle)).toEqual([
+      'gelprefix',
+      'unrelated-handle',
+      'id-0x123'
+    ]);
+  });
+
+  it('uses the widened source window to fill results after ENS deduplication', async () => {
+    const duplicateProfile = createIdentity({
+      handle: 'gelprefix',
+      levelRaw: 1000,
+      profileId: 'profile-prefix',
+      ens: 'gel-one.eth'
+    });
+    const secondDuplicate = {
+      ...duplicateProfile,
+      ens: 'gel-two.eth'
+    };
+    searchCommunityMembersWhereHandleLike.mockResolvedValue([duplicateProfile]);
+    searchCommunityMembersWhereEnsLike.mockResolvedValue([
+      duplicateProfile,
+      secondDuplicate,
+      createIdentity({
+        handle: 'id-0x123',
+        levelRaw: 900,
+        profileId: 'profile-ens-only',
+        ens: 'gel-three.eth'
+      })
+    ]);
+
+    const results =
+      await identityFetcher.searchCommunityMemberMinimalsOfClosestMatches({
+        param: 'gel',
+        onlyProfileOwners: true,
+        limit: 2,
+        sort: 'level'
+      });
+
+    expect(results.map((result) => result.handle)).toEqual([
+      'gelprefix',
+      'id-0x123'
+    ]);
+    expect(searchCommunityMembersWhereHandleLike).toHaveBeenCalledWith({
+      handle: 'gel',
+      limit: 6,
+      sortByLevel: true
+    });
+    expect(searchCommunityMembersWhereEnsLike).toHaveBeenCalledWith({
+      ensCandidate: 'gel',
+      limit: 6,
+      onlyProfileOwners: true,
+      sortByLevel: true
+    });
+  });
+
   it('keeps the existing relevance mode as the default', async () => {
     searchCommunityMembersWhereHandleLike.mockResolvedValue([
       createIdentity({

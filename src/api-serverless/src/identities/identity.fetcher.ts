@@ -33,9 +33,11 @@ const COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH = {
   exact: 300,
   prefix: 200,
   substring: 100,
-  ensOrAutoWallet: 50,
+  ensOrWallet: 50,
   none: 0
 } as const;
+
+const COMMUNITY_MEMBER_SEARCH_CANDIDATE_MULTIPLIER = 3;
 
 export class IdentityFetcher {
   constructor(
@@ -731,10 +733,11 @@ export class IdentityFetcher {
       );
       return communityMember ? [communityMember] : [];
     } else {
-      // Each source uses the same bucket/level ordering as the final comparator.
-      // Fetching more than the final limit keeps every candidate that could
-      // enter the merged top `limit` while leaving room for deduplication.
-      const candidateLimit = limit * 3;
+      // Fetch a wider source window because the ENS join can return multiple
+      // rows for one profile and the same profile can occur in both sources.
+      // The final comparator remains authoritative after source deduplication.
+      const candidateLimit =
+        limit * COMMUNITY_MEMBER_SEARCH_CANDIDATE_MULTIPLIER;
       const membersByHandles =
         await this.identitiesDb.searchCommunityMembersWhereHandleLike({
           handle: param,
@@ -832,7 +835,7 @@ export class IdentityFetcher {
   ): number {
     if (!rank.hasNonAutoHandle) {
       return rank.ensMatch > COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.none
-        ? COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.ensOrAutoWallet
+        ? COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.ensOrWallet
         : COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.none;
     }
 
@@ -844,7 +847,9 @@ export class IdentityFetcher {
       case COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.substring:
         return COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.substring;
       default:
-        return COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.none;
+        return rank.ensMatch > COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.none
+          ? COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.ensOrWallet
+          : COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.none;
     }
   }
 
@@ -852,7 +857,10 @@ export class IdentityFetcher {
     member: IdentityEntity & { ens?: string | null },
     rank: ReturnType<IdentityFetcher['getCommunityMemberSearchRank']>
   ): string | null {
-    if (rank.hasNonAutoHandle) {
+    if (
+      rank.hasNonAutoHandle &&
+      rank.handleMatch > COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.none
+    ) {
       return member.normalised_handle ?? member.handle;
     }
     return (
