@@ -177,7 +177,8 @@ profile's access state and whether the WatchTower queue has open reports.
 Authorized moderators use:
 
 - `GET /content-moderation/reports?view=OPEN` for the prioritized,
-  cursor-paginated open queue;
+  cursor-paginated open queue, including the reporting profile's handle and
+  profile picture alongside the author identity;
 - `GET /content-moderation/reports?view=RESOLVED` for resolved report history;
 - `GET /content-moderation/profiles/suspended` for the current suspended
   profile list;

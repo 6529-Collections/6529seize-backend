@@ -79,6 +79,8 @@ export interface ModerationReportRow {
 type ModerationQueueReportRow = ModerationReportRow & {
   readonly author_handle: string | null;
   readonly author_pfp: string | null;
+  readonly reporter_handle: string | null;
+  readonly reporter_pfp: string | null;
   readonly author_status: ModeratedProfileStatus;
   readonly recommendation_rank: number;
   readonly sort_timestamp: number;
@@ -87,6 +89,8 @@ type ModerationQueueReportRow = ModerationReportRow & {
 export type ModerationQueueItemRow = ModerationReportRow & {
   readonly author_handle: string | null;
   readonly author_pfp: string | null;
+  readonly reporter_handle: string | null;
+  readonly reporter_pfp: string | null;
   readonly author_status: ModeratedProfileStatus;
   readonly report_count: number;
   readonly cursor: string;
@@ -877,12 +881,16 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
           r.*,
           p.handle as author_handle,
           p.pfp_url as author_pfp,
+          reporter.handle as reporter_handle,
+          reporter.pfp_url as reporter_pfp,
           coalesce(ps.status, '${ModeratedProfileStatus.ACTIVE}') as author_status,
           ${recommendationRankSql} as recommendation_rank,
           ${sortTimestampSql} as sort_timestamp
         from ${CONTENT_MODERATION_REPORTS_TABLE} r
         left join ${PROFILES_TABLE} p
           on p.external_id = r.author_profile_id
+        left join ${PROFILES_TABLE} reporter
+          on reporter.external_id = r.reporter_profile_id
         left join ${CONTENT_MODERATION_PROFILE_STATES_TABLE} ps
           on ps.profile_id = r.author_profile_id
         where ${reportStatusSql}
