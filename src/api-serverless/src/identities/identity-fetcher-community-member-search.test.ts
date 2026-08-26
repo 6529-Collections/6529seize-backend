@@ -18,7 +18,7 @@ const createIdentity = ({
     primary_address: `wallet-${profileId}`,
     handle,
     normalised_handle: handle.toLowerCase(),
-    tdh: levelRaw,
+    tdh: 1,
     rep: 0,
     cic: 0,
     level_raw: levelRaw,

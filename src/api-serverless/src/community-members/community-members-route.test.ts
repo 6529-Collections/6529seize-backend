@@ -85,4 +85,18 @@ describe('community member minimal search route', () => {
       sort: undefined
     });
   });
+
+  it('rejects an unsupported sort value', async () => {
+    const response = await fetch(
+      `${baseUrl}/community-members?param=gel&only_profile_owners=true&sort=unknown`
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'Unsupported community-member sort'
+    });
+    expect(
+      mockSearchCommunityMemberMinimalsOfClosestMatches
+    ).not.toHaveBeenCalled();
+  });
 });

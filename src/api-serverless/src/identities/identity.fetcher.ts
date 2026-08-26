@@ -29,6 +29,14 @@ import { ApiIdentityOverview } from '@/api/generated/models/ApiIdentityOverview'
 
 export type CommunityMemberMinimalSearchSort = 'level';
 
+const COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH = {
+  exact: 300,
+  prefix: 200,
+  substring: 100,
+  ensOrAutoWallet: 50,
+  none: 0
+} as const;
+
 export class IdentityFetcher {
   constructor(
     private readonly identitiesDb: IdentitiesDb,
@@ -723,17 +731,21 @@ export class IdentityFetcher {
       );
       return communityMember ? [communityMember] : [];
     } else {
+      // Each source uses the same bucket/level ordering as the final comparator.
+      // Fetching more than the final limit keeps every candidate that could
+      // enter the merged top `limit` while leaving room for deduplication.
+      const candidateLimit = limit * 3;
       const membersByHandles =
         await this.identitiesDb.searchCommunityMembersWhereHandleLike({
           handle: param,
-          limit: limit * 3,
+          limit: candidateLimit,
           sortByLevel: sort === 'level'
         });
       const profilesByEnsNames =
         await this.identitiesDb.searchCommunityMembersWhereEnsLike({
           ensCandidate: param,
           onlyProfileOwners,
-          limit: limit * 3,
+          limit: candidateLimit,
           sortByLevel: sort === 'level'
         });
       const dedupedMembers: (IdentityEntity & { ens?: string | null })[] = [];
@@ -818,13 +830,22 @@ export class IdentityFetcher {
   private getCommunityMemberLevelSortBucket(
     rank: ReturnType<IdentityFetcher['getCommunityMemberSearchRank']>
   ): number {
-    if (rank.hasNonAutoHandle) {
-      return rank.handleMatch;
+    if (!rank.hasNonAutoHandle) {
+      return rank.ensMatch > COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.none
+        ? COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.ensOrAutoWallet
+        : COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.none;
     }
-    if (rank.ensMatch > 0) {
-      return 50;
+
+    switch (rank.handleMatch) {
+      case COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.exact:
+        return COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.exact;
+      case COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.prefix:
+        return COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.prefix;
+      case COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.substring:
+        return COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.substring;
+      default:
+        return COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.none;
     }
-    return 0;
   }
 
   private getCommunityMemberLevelSortTieBreaker(
@@ -843,7 +864,15 @@ export class IdentityFetcher {
     left: string | null,
     right: string | null
   ): number {
-    return (left ?? '').localeCompare(right ?? '');
+    const normalizedLeft = left ?? '';
+    const normalizedRight = right ?? '';
+    if (normalizedLeft < normalizedRight) {
+      return -1;
+    }
+    if (normalizedLeft > normalizedRight) {
+      return 1;
+    }
+    return 0;
   }
 
   private compareCommunityMemberSearchMatches(
@@ -920,18 +949,18 @@ export class IdentityFetcher {
     query: string
   ): number {
     if (!value) {
-      return 0;
+      return COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.none;
     }
     if (value === query) {
-      return 300;
+      return COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.exact;
     }
     if (value.startsWith(query)) {
-      return 200;
+      return COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.prefix;
     }
     if (value.includes(query)) {
-      return 100;
+      return COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.substring;
     }
-    return 0;
+    return COMMUNITY_MEMBER_SEARCH_MATCH_STRENGTH.none;
   }
 
   private async searchCommunityMemberByWallet(

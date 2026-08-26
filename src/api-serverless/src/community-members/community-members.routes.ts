@@ -35,6 +35,11 @@ router.get(
     const param = req.query.param?.toLowerCase();
     const onlyProfileOwners = req.query.only_profile_owners === 'true';
 
+    if (req.query.sort !== undefined && req.query.sort !== 'level') {
+      res.status(400).send({ error: 'Unsupported community-member sort' });
+      return;
+    }
+
     if (!param) {
       res.send([]);
     } else {

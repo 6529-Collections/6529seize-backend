@@ -1166,7 +1166,6 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     {
       const orderBy = sortByLevel
         ? `
-          (lower(e.display) = lower(:ensCandidate)) desc,
           i.level_raw desc,
           lower(e.display) asc,
           i.profile_id asc
@@ -1204,6 +1203,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
           when i.normalised_handle not like 'id-0x%'
             and i.normalised_handle like concat(lower(:handle), '%') then 200
           when i.normalised_handle not like 'id-0x%' then 100
+          when lower(e.display) like concat('%', lower(:handle), '%') then 50
           else 0
         end desc,
         i.level_raw desc,

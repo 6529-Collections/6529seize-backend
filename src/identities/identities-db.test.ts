@@ -26,13 +26,16 @@ describe('IdentitiesDb', () => {
     expect(sql).toContain(
       "when i.normalised_handle not like 'id-0x%' then 100"
     );
+    expect(sql).toContain(
+      "when lower(e.display) like concat('%', lower(:handle), '%') then 50"
+    );
     expect(sql).toContain('i.level_raw desc');
     expect(sql).toContain('i.normalised_handle asc');
     expect(sql).toContain('i.profile_id asc');
     expect(params).toEqual({ handle: 'gel', limit: 30 });
   });
 
-  it('orders profile-owner ENS candidates by exact match and raw level when requested', async () => {
+  it('orders profile-owner ENS candidates by raw level when requested', async () => {
     const execute = jest.fn().mockResolvedValue([]);
     const repo = new IdentitiesDb(
       () =>
@@ -49,7 +52,6 @@ describe('IdentitiesDb', () => {
     });
 
     const [sql, params] = execute.mock.calls[0];
-    expect(sql).toContain('(lower(e.display) = lower(:ensCandidate)) desc');
     expect(sql).toContain('i.level_raw desc');
     expect(sql).toContain('lower(e.display) asc');
     expect(sql).toContain('i.profile_id asc');
