@@ -5,6 +5,7 @@ import {
   DropModerationStatus
 } from '@/entities/IContentModeration';
 import { ForbiddenException } from '@/exceptions';
+import { env } from '@/env';
 import { ContentModerationAiService } from './content-moderation-ai.service';
 import { ContentModerationDb } from './content-moderation.db';
 import { ContentModerationService } from './content-moderation.service';
@@ -16,6 +17,7 @@ type ContentModerationDbMock = jest.Mocked<
     | 'createReportWithViewerActions'
     | 'getAuditHistoryForDrops'
     | 'getDropSnapshot'
+    | 'hasOpenReports'
     | 'getModerationQueue'
     | 'getPresentations'
     | 'isModerator'
@@ -76,6 +78,7 @@ function createService() {
     tryAiQuarantineForOpenReport: jest.fn().mockResolvedValue(true),
     applyModeratorDropDecision: jest.fn().mockResolvedValue(undefined),
     isModerator: jest.fn().mockResolvedValue(false),
+    hasOpenReports: jest.fn().mockResolvedValue(false),
     getModerationQueue: jest.fn().mockResolvedValue([]),
     getPresentations: jest.fn().mockResolvedValue({
       'drop-1': {
@@ -337,6 +340,46 @@ describe('ContentModerationService', () => {
       service.getQueue('ordinary-profile', { limit: 50 }, {})
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(db.getModerationQueue).not.toHaveBeenCalled();
+  });
+
+  it('combines developer and additional moderator profile IDs', async () => {
+    const { service, db } = createService();
+    jest.spyOn(env, 'getStringArray').mockImplementation((name) => {
+      if (name === 'DEVS_6529_MENTION_PROFILE_IDS') {
+        return [' dev-1 ', 'shared'];
+      }
+      if (name === 'CONTENT_MODERATOR_PROFILE_IDS') {
+        return ['shared', ' moderator-1 '];
+      }
+      return [];
+    });
+    db.isModerator.mockResolvedValue(true);
+    db.hasOpenReports.mockResolvedValue(true);
+
+    await expect(
+      service.getModeratorAccess('moderator-1', {})
+    ).resolves.toEqual({
+      moderator: true,
+      has_open_reports: true
+    });
+    expect(db.isModerator).toHaveBeenCalledWith(
+      'moderator-1',
+      ['dev-1', 'shared', 'moderator-1'],
+      undefined
+    );
+    expect(db.hasOpenReports).toHaveBeenCalledWith(undefined);
+  });
+
+  it('does not query the open queue state for a non-moderator', async () => {
+    const { service, db } = createService();
+
+    await expect(
+      service.getModeratorAccess('ordinary-profile', {})
+    ).resolves.toEqual({
+      moderator: false,
+      has_open_reports: false
+    });
+    expect(db.hasOpenReports).not.toHaveBeenCalled();
   });
 
   it('applies moderator state and report resolution atomically', async () => {

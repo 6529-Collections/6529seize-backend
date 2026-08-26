@@ -156,11 +156,12 @@ AI never removes content permanently and never suspends a profile.
 
 ## Moderator workflow
 
-Moderator access is server-enforced. It comes from explicit profile IDs in
-`CONTENT_MODERATOR_PROFILE_IDS` or an existing durable role row; checking
+Moderator access is server-enforced. It comes from the union of profile IDs in
+`DEVS_6529_MENTION_PROFILE_IDS`, additional profile IDs in
+`CONTENT_MODERATOR_PROFILE_IDS`, and existing durable role rows; checking
 access does not create a role. The route `GET
 /content-moderation/moderator-access` exposes the current authenticated
-profile's access state.
+profile's access state and whether the WatchTower queue has open reports.
 
 Authorized moderators use:
 
@@ -260,7 +261,8 @@ after the backend API is available.
 
 | Variable                              | Purpose                                                                                                                          |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `CONTENT_MODERATOR_PROFILE_IDS`       | Comma-separated bootstrap moderator profile IDs. Empty grants no configured access.                                              |
+| `DEVS_6529_MENTION_PROFILE_IDS`       | Comma-separated `@devs6529` profile IDs. These profiles are also content moderators.                                              |
+| `CONTENT_MODERATOR_PROFILE_IDS`       | Comma-separated additional moderator profile IDs, combined with `DEVS_6529_MENTION_PROFILE_IDS`.                                  |
 | `CONTENT_MODERATION_BLOCKED_HOSTS`    | Comma-separated exact or parent hosts for deterministic unsafe-destination rejection. Empty disables this direct-rejection list. |
 | `CONTENT_MODERATION_BEDROCK_MODEL_ID` | Optional moderation-specific Bedrock model; otherwise the existing configured/default Anthropic model is used.                   |
 | `CONTENT_MODERATION_REPORTS_PER_HOUR` | Per-profile report ceiling; defaults to `100`.                                                                                   |
