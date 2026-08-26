@@ -14,6 +14,7 @@ import { ApiContentModerationRecommendation } from '../models/ApiContentModerati
 import { ApiContentModerationReportReason } from '../models/ApiContentModerationReportReason';
 import { ApiContentModerationReportStatus } from '../models/ApiContentModerationReportStatus';
 import { ApiDropModeration } from '../models/ApiDropModeration';
+import { ApiModeratedProfileStatus } from '../models/ApiModeratedProfileStatus';
 import { HttpFile } from '../http/http';
 
 export class ApiContentModerationQueueItem {
@@ -23,6 +24,7 @@ export class ApiContentModerationQueueItem {
     'author_profile_id': string;
     'author_handle': string | null;
     'author_pfp': string | null;
+    'author_status': ApiModeratedProfileStatus;
     'reason': ApiContentModerationReportReason;
     'notes'?: string | null;
     'content_snapshot': { [key: string]: any; };
@@ -85,6 +87,12 @@ export class ApiContentModerationQueueItem {
             "name": "author_pfp",
             "baseName": "author_pfp",
             "type": "string",
+            "format": ""
+        },
+        {
+            "name": "author_status",
+            "baseName": "author_status",
+            "type": "ApiModeratedProfileStatus",
             "format": ""
         },
         {

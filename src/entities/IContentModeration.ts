@@ -29,7 +29,8 @@ export enum ContentReportReason {
 export enum ContentReportStatus {
   OPEN = 'OPEN',
   RESOLVED_ALLOWED = 'RESOLVED_ALLOWED',
-  RESOLVED_REMOVED = 'RESOLVED_REMOVED'
+  RESOLVED_REMOVED = 'RESOLVED_REMOVED',
+  WITHDRAWN = 'WITHDRAWN'
 }
 
 export enum ContentModerationRecommendation {
@@ -197,8 +198,8 @@ export class ContentModerationProfileStateEntity {
   @Column({ type: 'varchar', length: 50, nullable: false })
   readonly updated_by_profile_id!: string;
 
-  @Column({ type: 'text', nullable: false })
-  readonly reason!: string;
+  @Column({ type: 'text', nullable: true })
+  readonly reason!: string | null;
 
   @Column({ type: 'bigint', nullable: false })
   readonly updated_at!: number;

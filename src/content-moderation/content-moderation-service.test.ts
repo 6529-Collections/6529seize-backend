@@ -17,13 +17,15 @@ type ContentModerationDbMock = jest.Mocked<
     | 'createReportWithViewerActions'
     | 'getAuditHistoryForDrops'
     | 'getDropSnapshot'
-    | 'hasOpenReports'
+    | 'getModerationCounts'
     | 'getModerationQueue'
     | 'getPresentations'
+    | 'getSuspendedProfiles'
     | 'isModerator'
     | 'saveReportAssessment'
     | 'setProfileStatus'
     | 'tryAiQuarantineForOpenReport'
+    | 'withdrawOpenReport'
   >
 >;
 
@@ -78,8 +80,13 @@ function createService() {
     tryAiQuarantineForOpenReport: jest.fn().mockResolvedValue(true),
     applyModeratorDropDecision: jest.fn().mockResolvedValue(undefined),
     isModerator: jest.fn().mockResolvedValue(false),
-    hasOpenReports: jest.fn().mockResolvedValue(false),
+    getModerationCounts: jest.fn().mockResolvedValue({
+      open_report_count: 0,
+      resolved_report_count: 0,
+      suspended_profile_count: 0
+    }),
     getModerationQueue: jest.fn().mockResolvedValue([]),
+    getSuspendedProfiles: jest.fn().mockResolvedValue([]),
     getPresentations: jest.fn().mockResolvedValue({
       'drop-1': {
         viewer: { author_blocked: false, drop_hidden: false },
@@ -90,7 +97,10 @@ function createService() {
       }
     }),
     getAuditHistoryForDrops: jest.fn().mockResolvedValue({}),
-    setProfileStatus: jest.fn().mockResolvedValue(undefined)
+    setProfileStatus: jest.fn().mockResolvedValue(undefined),
+    withdrawOpenReport: jest
+      .fn()
+      .mockResolvedValue(DropModerationStatus.VISIBLE)
   };
   const aiService: ContentModerationAiServiceMock = {
     assessReportedContent: jest.fn().mockResolvedValue({
@@ -354,20 +364,27 @@ describe('ContentModerationService', () => {
       return [];
     });
     db.isModerator.mockResolvedValue(true);
-    db.hasOpenReports.mockResolvedValue(true);
+    db.getModerationCounts.mockResolvedValue({
+      open_report_count: 3,
+      resolved_report_count: 8,
+      suspended_profile_count: 2
+    });
 
     await expect(
       service.getModeratorAccess('moderator-1', {})
     ).resolves.toEqual({
       moderator: true,
-      has_open_reports: true
+      has_open_reports: true,
+      open_report_count: 3,
+      resolved_report_count: 8,
+      suspended_profile_count: 2
     });
     expect(db.isModerator).toHaveBeenCalledWith(
       'moderator-1',
       ['dev-1', 'shared', 'moderator-1'],
       undefined
     );
-    expect(db.hasOpenReports).toHaveBeenCalledWith(undefined);
+    expect(db.getModerationCounts).toHaveBeenCalledWith(undefined);
   });
 
   it('does not query the open queue state for a non-moderator', async () => {
@@ -377,9 +394,12 @@ describe('ContentModerationService', () => {
       service.getModeratorAccess('ordinary-profile', {})
     ).resolves.toEqual({
       moderator: false,
-      has_open_reports: false
+      has_open_reports: false,
+      open_report_count: 0,
+      resolved_report_count: 0,
+      suspended_profile_count: 0
     });
-    expect(db.hasOpenReports).not.toHaveBeenCalled();
+    expect(db.getModerationCounts).not.toHaveBeenCalled();
   });
 
   it('applies moderator state and report resolution atomically', async () => {
@@ -401,6 +421,42 @@ describe('ContentModerationService', () => {
         reason: 'Reviewed in context',
         reportStatus: ContentReportStatus.RESOLVED_ALLOWED
       },
+      {}
+    );
+  });
+
+  it('supports a moderation decision without an optional note', async () => {
+    const { service, db } = createService();
+    db.isModerator.mockResolvedValue(true);
+
+    await service.decideDrop(
+      'moderator-1',
+      { dropId: 'drop-1', decision: 'REMOVE', reason: null },
+      {}
+    );
+
+    expect(db.applyModeratorDropDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: null,
+        reportStatus: ContentReportStatus.RESOLVED_REMOVED
+      }),
+      {}
+    );
+  });
+
+  it('withdraws the reporter open report without requiring moderator access', async () => {
+    const { service, db } = createService();
+
+    await expect(
+      service.withdrawReport('reporter-1', 'drop-1', {})
+    ).resolves.toEqual({
+      drop_id: 'drop-1',
+      status: ContentReportStatus.WITHDRAWN,
+      drop_status: DropModerationStatus.VISIBLE
+    });
+    expect(db.withdrawOpenReport).toHaveBeenCalledWith(
+      'reporter-1',
+      'drop-1',
       {}
     );
   });

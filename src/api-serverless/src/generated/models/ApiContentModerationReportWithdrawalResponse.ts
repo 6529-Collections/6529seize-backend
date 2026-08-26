@@ -10,11 +10,14 @@
  * Do not edit the class manually.
  */
 
+import { ApiContentModerationReportStatus } from '../models/ApiContentModerationReportStatus';
+import { ApiDropModerationStatus } from '../models/ApiDropModerationStatus';
 import { HttpFile } from '../http/http';
 
-export class ApiContentModerationDropDecisionRequest {
-    'decision': ApiContentModerationDropDecisionRequestDecisionEnum;
-    'reason'?: string | null;
+export class ApiContentModerationReportWithdrawalResponse {
+    'drop_id': string;
+    'status': ApiContentModerationReportStatus;
+    'drop_status': ApiDropModerationStatus;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -22,29 +25,30 @@ export class ApiContentModerationDropDecisionRequest {
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "decision",
-            "baseName": "decision",
-            "type": "ApiContentModerationDropDecisionRequestDecisionEnum",
+            "name": "drop_id",
+            "baseName": "drop_id",
+            "type": "string",
             "format": ""
         },
         {
-            "name": "reason",
-            "baseName": "reason",
-            "type": "string",
+            "name": "status",
+            "baseName": "status",
+            "type": "ApiContentModerationReportStatus",
+            "format": ""
+        },
+        {
+            "name": "drop_status",
+            "baseName": "drop_status",
+            "type": "ApiDropModerationStatus",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiContentModerationDropDecisionRequest.attributeTypeMap;
+        return ApiContentModerationReportWithdrawalResponse.attributeTypeMap;
     }
 
     public constructor() {
     }
 }
 
-export enum ApiContentModerationDropDecisionRequestDecisionEnum {
-    Allow = 'ALLOW',
-    Quarantine = 'QUARANTINE',
-    Remove = 'REMOVE'
-}
 

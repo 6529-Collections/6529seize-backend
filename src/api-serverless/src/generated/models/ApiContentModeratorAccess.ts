@@ -15,6 +15,9 @@ import { HttpFile } from '../http/http';
 export class ApiContentModeratorAccess {
     'moderator': boolean;
     'has_open_reports': boolean;
+    'open_report_count': number;
+    'resolved_report_count': number;
+    'suspended_profile_count': number;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -32,6 +35,24 @@ export class ApiContentModeratorAccess {
             "baseName": "has_open_reports",
             "type": "boolean",
             "format": ""
+        },
+        {
+            "name": "open_report_count",
+            "baseName": "open_report_count",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "resolved_report_count",
+            "baseName": "resolved_report_count",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "suspended_profile_count",
+            "baseName": "suspended_profile_count",
+            "type": "number",
+            "format": "int64"
         }    ];
 
     static getAttributeTypeMap() {

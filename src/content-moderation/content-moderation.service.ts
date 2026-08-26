@@ -21,6 +21,7 @@ import {
 import {
   contentModerationDb,
   ContentModerationDb,
+  ModerationReportsView,
   ModerationReportRow
 } from './content-moderation.db';
 
@@ -41,13 +42,15 @@ type ContentModerationDbDependency = Pick<
   | 'createReportWithViewerActions'
   | 'getAuditHistoryForDrops'
   | 'getDropSnapshot'
-  | 'hasOpenReports'
+  | 'getModerationCounts'
   | 'getModerationQueue'
   | 'getPresentations'
+  | 'getSuspendedProfiles'
   | 'isModerator'
   | 'saveReportAssessment'
   | 'setProfileStatus'
   | 'tryAiQuarantineForOpenReport'
+  | 'withdrawOpenReport'
 >;
 
 type ContentModerationAiDependency = Pick<
@@ -137,17 +140,30 @@ export class ContentModerationService {
       this.getConfiguredModeratorProfileIds(),
       ctx.connection
     );
+    if (!moderator) {
+      return {
+        moderator: false,
+        has_open_reports: false,
+        open_report_count: 0,
+        resolved_report_count: 0,
+        suspended_profile_count: 0
+      };
+    }
+    const counts = await this.db.getModerationCounts(ctx.connection);
     return {
-      moderator,
-      has_open_reports: moderator
-        ? await this.db.hasOpenReports(ctx.connection)
-        : false
+      moderator: true,
+      has_open_reports: counts.open_report_count > 0,
+      ...counts
     };
   }
 
   async getQueue(
     profileId: string,
-    input: { limit: number; before?: string | null },
+    input: {
+      limit: number;
+      before?: string | null;
+      view?: ModerationReportsView;
+    },
     ctx: RequestContext
   ) {
     await this.assertModerator(profileId, ctx);
@@ -173,12 +189,38 @@ export class ContentModerationService {
     }));
   }
 
+  async getSuspendedProfiles(
+    moderatorProfileId: string,
+    input: { limit: number; before?: string | null },
+    ctx: RequestContext
+  ) {
+    await this.assertModerator(moderatorProfileId, ctx);
+    return this.db.getSuspendedProfiles(input, ctx.connection);
+  }
+
+  async withdrawReport(
+    reporterProfileId: string,
+    dropId: string,
+    ctx: RequestContext
+  ) {
+    const status = await this.db.withdrawOpenReport(
+      reporterProfileId,
+      dropId,
+      ctx
+    );
+    return {
+      drop_id: dropId,
+      status: ContentReportStatus.WITHDRAWN,
+      drop_status: status
+    };
+  }
+
   async decideDrop(
     moderatorProfileId: string,
     input: {
       dropId: string;
       decision: DropModerationDecision;
-      reason: string;
+      reason: string | null;
     },
     ctx: RequestContext
   ) {
@@ -203,7 +245,7 @@ export class ContentModerationService {
     input: {
       profileId: string;
       status: ModeratedProfileStatus;
-      reason: string;
+      reason: string | null;
     },
     ctx: RequestContext
   ) {

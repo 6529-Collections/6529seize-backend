@@ -28,6 +28,8 @@ import { ApiContentModeratorAccess } from '@/api/generated/models/ApiContentMode
 import { ApiContentModerationQueueItem } from '@/api/generated/models/ApiContentModerationQueueItem';
 import { ApiContentModerationDropDecisionResponse } from '@/api/generated/models/ApiContentModerationDropDecisionResponse';
 import { ApiContentModerationProfileStatusResponse } from '@/api/generated/models/ApiContentModerationProfileStatusResponse';
+import { ApiContentModerationProfileListItem } from '@/api/generated/models/ApiContentModerationProfileListItem';
+import { ApiContentModerationReportWithdrawalResponse } from '@/api/generated/models/ApiContentModerationReportWithdrawalResponse';
 
 const router = asyncRouter();
 const logger = Logger.get('ContentModerationRoutes');
@@ -79,20 +81,20 @@ const ReportSchema = Joi.object({
     .valid(...Object.values(ContentReportReason))
     .required(),
   notes: Joi.string().trim().max(1000).allow('', null).default(null),
-  hide_drop: Joi.boolean().default(false),
+  hide_drop: Joi.boolean().default(true),
   block_author: Joi.boolean().default(false)
 }).required();
 
 const DropDecisionSchema = Joi.object({
   decision: Joi.string().valid('ALLOW', 'QUARANTINE', 'REMOVE').required(),
-  reason: Joi.string().trim().min(1).max(2000).required()
+  reason: Joi.string().trim().max(2000).allow(null).empty('').default(null)
 }).required();
 
 const ProfileStatusSchema = Joi.object({
   status: Joi.string()
     .valid(...Object.values(ModeratedProfileStatus))
     .required(),
-  reason: Joi.string().trim().min(1).max(2000).required()
+  reason: Joi.string().trim().max(2000).allow(null).empty('').default(null)
 }).required();
 
 router.get(
@@ -196,7 +198,7 @@ router.post(
         reporterProfileId: profileId,
         reason: body.reason,
         notes: body.notes || null,
-        hideDrop: body.hide_drop,
+        hideDrop: true,
         blockAuthor: body.block_author
       },
       { timer, authenticationContext }
@@ -207,6 +209,25 @@ router.post(
     res
       .status(201)
       .send(result as unknown as ApiContentModerationReportResponse);
+  }
+);
+
+router.delete(
+  '/drops/:drop_id/reports/mine',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ drop_id: string }>,
+    res: Response<ApiContentModerationReportWithdrawalResponse>
+  ) => {
+    const { profileId, timer, authenticationContext } =
+      await getRequiredProfileId(req);
+    const result = await contentModerationService.withdrawReport(
+      profileId,
+      req.params.drop_id,
+      { timer, authenticationContext }
+    );
+    await broadcastDropModerationChange(req.params.drop_id, timer);
+    res.send(result as unknown as ApiContentModerationReportWithdrawalResponse);
   }
 );
 
@@ -233,7 +254,7 @@ router.get(
       Record<string, string>,
       unknown,
       unknown,
-      { limit?: string; before?: string }
+      { limit?: string; before?: string; view?: string }
     >,
     res: Response<ApiContentModerationQueueItem[]>
   ) => {
@@ -244,12 +265,44 @@ router.get(
       throw new BadRequestException('Limit must be between 1 and 100');
     }
     const before = req.query.before?.trim() || undefined;
+    const view = req.query.view?.trim().toUpperCase() || 'OPEN';
+    if (view !== 'OPEN' && view !== 'RESOLVED') {
+      throw new BadRequestException('View must be OPEN or RESOLVED');
+    }
     const result = await contentModerationService.getQueue(
+      profileId,
+      { limit, before, view },
+      { timer, authenticationContext }
+    );
+    res.send(result as unknown as ApiContentModerationQueueItem[]);
+  }
+);
+
+router.get(
+  '/profiles/suspended',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<
+      Record<string, string>,
+      unknown,
+      unknown,
+      { limit?: string; before?: string }
+    >,
+    res: Response<ApiContentModerationProfileListItem[]>
+  ) => {
+    const { profileId, timer, authenticationContext } =
+      await getRequiredProfileId(req);
+    const limit = numbers.parseIntOrNull(req.query.limit) ?? 50;
+    if (limit < 1 || limit > 100) {
+      throw new BadRequestException('Limit must be between 1 and 100');
+    }
+    const before = req.query.before?.trim() || undefined;
+    const result = await contentModerationService.getSuspendedProfiles(
       profileId,
       { limit, before },
       { timer, authenticationContext }
     );
-    res.send(result as unknown as ApiContentModerationQueueItem[]);
+    res.send(result as unknown as ApiContentModerationProfileListItem[]);
   }
 );
 

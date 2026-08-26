@@ -15,6 +15,10 @@ import { HttpFile } from '../http/http';
 export class ApiDropViewerModerationContext {
     'author_blocked': boolean;
     'drop_hidden': boolean;
+    /**
+    * Latest non-withdrawn report state for the authenticated viewer.
+    */
+    'report_status'?: string;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -31,6 +35,12 @@ export class ApiDropViewerModerationContext {
             "name": "drop_hidden",
             "baseName": "drop_hidden",
             "type": "boolean",
+            "format": ""
+        },
+        {
+            "name": "report_status",
+            "baseName": "report_status",
+            "type": "string",
             "format": ""
         }    ];
 
