@@ -41,7 +41,7 @@ const DEFAULT_REPORTS_PER_HOUR = 100;
 export interface DropViewerModerationContext {
   readonly author_blocked: boolean;
   readonly drop_hidden: boolean;
-  readonly report_status?: ContentReportStatus | undefined;
+  readonly report_status?: ContentReportStatus;
 }
 
 export interface DropModerationContext {
