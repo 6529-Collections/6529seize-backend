@@ -41,6 +41,7 @@ type ContentModerationDbDependency = Pick<
   | 'createReportWithViewerActions'
   | 'getAuditHistoryForDrops'
   | 'getDropSnapshot'
+  | 'hasOpenReports'
   | 'getModerationQueue'
   | 'getPresentations'
   | 'isModerator'
@@ -131,12 +132,16 @@ export class ContentModerationService {
   }
 
   async getModeratorAccess(profileId: string, ctx: RequestContext) {
+    const moderator = await this.db.isModerator(
+      profileId,
+      this.getConfiguredModeratorProfileIds(),
+      ctx.connection
+    );
     return {
-      moderator: await this.db.isModerator(
-        profileId,
-        this.getInitialModeratorProfileIds(),
-        ctx.connection
-      )
+      moderator,
+      has_open_reports: moderator
+        ? await this.db.hasOpenReports(ctx.connection)
+        : false
     };
   }
 
@@ -274,7 +279,7 @@ export class ContentModerationService {
   private async assertModerator(profileId: string, ctx: RequestContext) {
     const isModerator = await this.db.isModerator(
       profileId,
-      this.getInitialModeratorProfileIds(),
+      this.getConfiguredModeratorProfileIds(),
       ctx.connection
     );
     if (!isModerator) {
@@ -315,11 +320,17 @@ export class ContentModerationService {
       : ContentReportStatus.RESOLVED_REMOVED;
   }
 
-  private getInitialModeratorProfileIds(): string[] {
-    return env
-      .getStringArray('CONTENT_MODERATOR_PROFILE_IDS', ',')
-      .map((id) => id.trim())
-      .filter(Boolean);
+  private getConfiguredModeratorProfileIds(): string[] {
+    return Array.from(
+      new Set(
+        [
+          ...env.getStringArray('DEVS_6529_MENTION_PROFILE_IDS', ','),
+          ...env.getStringArray('CONTENT_MODERATOR_PROFILE_IDS', ',')
+        ]
+          .map((id) => id.trim())
+          .filter(Boolean)
+      )
+    );
   }
 }
 

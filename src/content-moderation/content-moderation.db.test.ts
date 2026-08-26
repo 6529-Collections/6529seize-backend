@@ -128,6 +128,18 @@ describe('ContentModerationDb', () => {
     expect(executor.oneOrNull).not.toHaveBeenCalled();
   });
 
+  it('checks for an open moderation report without loading the queue', async () => {
+    const { db, executor } = createDb();
+    executor.oneOrNull.mockResolvedValue({ has_open_report: 1 });
+
+    await expect(db.hasOpenReports()).resolves.toBe(true);
+    expect(executor.oneOrNull).toHaveBeenCalledWith(
+      expect.stringContaining(`where status = '${ContentReportStatus.OPEN}'`),
+      {},
+      undefined
+    );
+  });
+
   it('returns and consumes a stable queue cursor matching its priority order', async () => {
     const { db, executor } = createDb();
     executor.execute.mockImplementation((sql: string) => {

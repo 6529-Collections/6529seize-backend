@@ -1084,6 +1084,21 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     return row?.status ?? ModeratedProfileStatus.ACTIVE;
   }
 
+  async hasOpenReports(connection?: ConnectionWrapper<any>): Promise<boolean> {
+    return (
+      (await this.db.oneOrNull<{ has_open_report: number }>(
+        `
+          select 1 as has_open_report
+          from ${CONTENT_MODERATION_REPORTS_TABLE}
+          where status = '${ContentReportStatus.OPEN}'
+          limit 1
+        `,
+        {},
+        this.connectionOptions(connection)
+      )) !== null
+    );
+  }
+
   async isModerator(
     profileId: string,
     seedProfileIds: string[],
