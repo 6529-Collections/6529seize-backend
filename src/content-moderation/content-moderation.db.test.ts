@@ -53,7 +53,8 @@ function reportRow() {
     resolution_reason: null,
     resolved_at: null,
     report_count: 2,
-    recommendation_rank: 0
+    recommendation_rank: 0,
+    sort_timestamp: 200
   };
 }
 
