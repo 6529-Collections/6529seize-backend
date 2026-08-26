@@ -2,6 +2,63 @@ import { MEMES_CONTRACT, IDENTITIES_TABLE, TDH_NFT_TABLE } from '@/constants';
 import { IdentitiesDb } from './identities.db';
 
 describe('IdentitiesDb', () => {
+  it('orders handle candidates by relevance bucket and raw level when requested', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new IdentitiesDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await repo.searchCommunityMembersWhereHandleLike({
+      handle: 'gel',
+      limit: 30,
+      sortByLevel: true
+    });
+
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain("i.normalised_handle not like 'id-0x%'");
+    expect(sql).toContain('i.normalised_handle = lower(:handle) then 300');
+    expect(sql).toContain(
+      "i.normalised_handle like concat(lower(:handle), '%') then 200"
+    );
+    expect(sql).toContain(
+      "when i.normalised_handle not like 'id-0x%' then 100"
+    );
+    expect(sql).toContain(
+      "when lower(e.display) like concat('%', lower(:handle), '%') then 50"
+    );
+    expect(sql).toContain('i.level_raw desc');
+    expect(sql).toContain('i.normalised_handle asc');
+    expect(sql).toContain('i.profile_id asc');
+    expect(params).toEqual({ handle: 'gel', limit: 30 });
+  });
+
+  it('orders profile-owner ENS candidates by raw level when requested', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new IdentitiesDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await repo.searchCommunityMembersWhereEnsLike({
+      ensCandidate: 'gel.eth',
+      limit: 30,
+      onlyProfileOwners: true,
+      sortByLevel: true
+    });
+
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain('i.level_raw desc');
+    expect(sql).toContain('lower(e.display) asc');
+    expect(sql).toContain('i.profile_id asc');
+    expect(sql).toContain('and i.profile_id is not null');
+    expect(params).toEqual({ ensCandidate: 'gel.eth', limit: 30 });
+  });
+
   it('loads card-set voting credits through distinct profile consolidation keys', async () => {
     const execute = jest.fn().mockResolvedValue([
       {
