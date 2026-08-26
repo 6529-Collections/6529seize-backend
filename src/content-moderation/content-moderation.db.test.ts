@@ -3,6 +3,7 @@ import {
   ContentReportReason,
   ContentReportStatus,
   DropModerationStatus,
+  ModeratedProfileStatus,
   PrePublicationCheckOutcome
 } from '@/entities/IContentModeration';
 import { BadRequestException } from '@/exceptions';
@@ -35,6 +36,7 @@ function reportRow() {
     author_profile_id: 'author-1',
     author_handle: 'author-handle',
     author_pfp: 'https://example.com/author.png',
+    author_status: ModeratedProfileStatus.ACTIVE,
     reason: ContentReportReason.SCAM_OR_PHISHING,
     notes: null,
     content_snapshot: {},
@@ -161,6 +163,7 @@ describe('ContentModerationDb', () => {
       expect.objectContaining({
         author_handle: 'author-handle',
         author_pfp: 'https://example.com/author.png',
+        author_status: ModeratedProfileStatus.ACTIVE,
         report_count: 2
       })
     );
@@ -310,6 +313,45 @@ describe('ContentModerationDb', () => {
     ).rejects.toThrow('already reported');
     expect(createReportSpy).not.toHaveBeenCalled();
     expect(executor.oneOrNull.mock.calls[0]?.[0]).toContain('for update');
+  });
+
+  it('withdraws an open report and restores an AI-only quarantine', async () => {
+    const { db, executor } = createDb();
+    const connection = {} as any;
+    jest
+      .spyOn(db as any, 'executeNativeQueriesInTransaction')
+      .mockImplementation(async (...args: unknown[]) => {
+        const executable = args[0] as (value: any) => Promise<unknown>;
+        return executable(connection);
+      });
+    executor.oneOrNull
+      .mockResolvedValueOnce({ id: REPORT_ID })
+      .mockResolvedValueOnce(null);
+    jest.spyOn(db as any, 'insertAudit').mockResolvedValue(undefined);
+    jest.spyOn(db as any, 'ensureAndLockDropState').mockResolvedValue({
+      status: DropModerationStatus.AI_QUARANTINED,
+      updated_by_profile_id: null
+    });
+    const writeStatusSpy = jest
+      .spyOn(db as any, 'writeDropModerationStatus')
+      .mockResolvedValue(undefined);
+
+    await expect(
+      db.withdrawOpenReport('reporter-1', 'drop-1', {})
+    ).resolves.toBe(DropModerationStatus.VISIBLE);
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.stringContaining(`status = '${ContentReportStatus.WITHDRAWN}'`),
+      expect.objectContaining({ reportId: REPORT_ID }),
+      { wrappedConnection: connection }
+    );
+    expect(writeStatusSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dropId: 'drop-1',
+        status: DropModerationStatus.VISIBLE,
+        previousStatus: DropModerationStatus.AI_QUARANTINED
+      }),
+      connection
+    );
   });
 
   it('wraps personal moderation state and audit writes in a transaction', async () => {

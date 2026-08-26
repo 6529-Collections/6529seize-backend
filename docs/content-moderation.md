@@ -123,20 +123,31 @@ to behave normally.
 
 ## Reporting
 
-`POST /content-moderation/drops/{drop_id}/reports` creates a report. Reporting,
-hiding the drop, and blocking the author are independent choices in one
-request. A user cannot report their own drop.
+`POST /content-moderation/drops/{drop_id}/reports` creates a report and always
+hides that drop for the reporter in the same transaction. Blocking the author
+remains optional, and a user can still hide or block without reporting. A user
+cannot report their own drop.
 
 Before calling the reported-content evaluator, the backend commits one
 transaction containing:
 
 - the report and its reason or optional notes;
 - a private evidence snapshot of the drop and available parent context; and
-- any requested personal hide or block actions.
+- the reporter's personal hide and any requested profile block.
 
 Duplicate open reports by the same reporter and drop are rejected. Report
 volume is limited per profile by `CONTENT_MODERATION_REPORTS_PER_HOUR`, which
 defaults to `100`.
+
+The latest non-withdrawn report status is returned in authenticated viewer
+presentation data. While their report remains open, the reporter may withdraw
+it with `DELETE /content-moderation/drops/{drop_id}/reports/mine`. Withdrawal
+is an audited status transition rather than deletion, leaves the personal hide
+unchanged, and has no effect on reports from other profiles. If the withdrawn
+report was the only open report and its AI assessment alone caused an urgent
+quarantine, the drop returns to `VISIBLE`; a human moderator quarantine is
+never undone by withdrawal. Resolved reports cannot be withdrawn, and an
+allowed resolution permits a later new report.
 
 ### Report assessment
 
@@ -165,17 +176,24 @@ profile's access state and whether the WatchTower queue has open reports.
 
 Authorized moderators use:
 
-- `GET /content-moderation/reports` for the prioritized, cursor-paginated open
-  queue;
+- `GET /content-moderation/reports?view=OPEN` for the prioritized,
+  cursor-paginated open queue;
+- `GET /content-moderation/reports?view=RESOLVED` for resolved report history;
+- `GET /content-moderation/profiles/suspended` for the current suspended
+  profile list;
 - `POST /content-moderation/drops/{drop_id}/decision` to allow/restore,
   quarantine, or remove a drop; and
 - `POST /content-moderation/profiles/{profile_id}/status` to suspend or
   reinstate posting for a profile.
 
-Every drop or profile decision requires a written reason. Drop decisions are
-applied transactionally with report resolution and append-only audit history,
-so a late AI response cannot overwrite a human decision. Quarantine keeps a
-report open; allow and remove resolve it.
+Moderator notes are optional for both drop and profile actions. Drop decisions
+are applied transactionally with report resolution and append-only audit
+history, so a late AI response cannot overwrite a human decision. Allow keeps
+or restores the drop to visible and resolves open reports as allowed;
+quarantine hides the drop globally but keeps reports open; remove hides it
+globally and resolves open reports as removed. Profile suspension is presented
+as a separate action because it controls future publishing rather than the
+reported post.
 
 There is no continuous hold-before-publish queue. Moderators address reported
 content occasionally, with urgent high-confidence AI quarantine providing a
@@ -191,8 +209,8 @@ Posting suspension is a manual moderator state, not an account ban.
 - The state has no automatic expiry. A moderator must explicitly set the
   profile back to `ACTIVE`.
 - A moderator cannot change their own moderation status.
-- The target profile must exist, and the decision, moderator, reason, previous
-  state, new state, and time are audited.
+- The target profile must exist. The decision, moderator, optional note,
+  previous state, new state, and time are audited.
 
 Suspension does not delete or globally hide existing drops. It does not by
 itself prevent authentication, reading, or management of personal visibility

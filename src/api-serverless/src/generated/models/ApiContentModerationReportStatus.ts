@@ -15,5 +15,6 @@ import { HttpFile } from '../http/http';
 export enum ApiContentModerationReportStatus {
     Open = 'OPEN',
     ResolvedAllowed = 'RESOLVED_ALLOWED',
-    ResolvedRemoved = 'RESOLVED_REMOVED'
+    ResolvedRemoved = 'RESOLVED_REMOVED',
+    Withdrawn = 'WITHDRAWN'
 }
