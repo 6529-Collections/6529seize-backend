@@ -108,8 +108,39 @@ export interface UserModerationReportRow {
   readonly created_at: number;
   readonly resolved_at: number | null;
   readonly drop_status: DropModerationStatus;
+  readonly reported_content: ReporterVisibleContentSnapshot;
   readonly cursor: string;
 }
+
+export interface ReporterVisibleContentSnapshot {
+  readonly wave_id: string | null;
+  readonly title: string | null;
+  readonly parts: ReporterVisibleContentPart[];
+}
+
+export interface ReporterVisibleContentPart {
+  readonly part_no: number;
+  readonly content: string | null;
+  readonly media: Array<{
+    readonly url: string;
+    readonly mime_type: string;
+  }>;
+  readonly attachments: Array<{
+    readonly original_file_name: string;
+    readonly kind: string;
+    readonly declared_mime: string;
+    readonly detected_mime: string | null;
+    readonly size_bytes: number | null;
+    readonly ipfs_url: string | null;
+  }>;
+}
+
+type UserModerationReportDbRow = Omit<
+  UserModerationReportRow,
+  'cursor' | 'reported_content'
+> & {
+  readonly content_snapshot: Record<string, unknown> | string;
+};
 
 type ModerationQueueCursor = {
   readonly recommendationRank: number;
@@ -995,7 +1026,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     const cursor = before
       ? this.decodeUserModerationReportCursor(before)
       : null;
-    const rows = await this.db.execute<Omit<UserModerationReportRow, 'cursor'>>(
+    const rows = await this.db.execute<UserModerationReportDbRow>(
       `
         select
           r.id,
@@ -1005,6 +1036,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
           author.pfp_url as author_pfp,
           r.reason,
           r.notes,
+          r.content_snapshot,
           r.status,
           r.created_at,
           r.resolved_at,
@@ -1035,15 +1067,20 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       this.connectionOptions(connection)
     );
 
-    return rows.map((row) => ({
-      ...row,
-      created_at: Number(row.created_at),
-      resolved_at: row.resolved_at === null ? null : Number(row.resolved_at),
-      cursor: this.encodeUserModerationReportCursor({
-        createdAt: Number(row.created_at),
-        reportId: row.id
-      })
-    }));
+    return rows.map((row) => {
+      const { content_snapshot: contentSnapshot, ...report } = row;
+      return {
+        ...report,
+        created_at: Number(report.created_at),
+        resolved_at:
+          report.resolved_at === null ? null : Number(report.resolved_at),
+        reported_content: this.toReporterVisibleContent(contentSnapshot),
+        cursor: this.encodeUserModerationReportCursor({
+          createdAt: Number(report.created_at),
+          reportId: report.id
+        })
+      };
+    });
   }
 
   async getAuditHistoryForDrops(
@@ -1897,6 +1934,87 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       ai_evidence: row.ai_evidence === null ? null : parse(row.ai_evidence),
       ai_confidence:
         row.ai_confidence === null ? null : Number(row.ai_confidence)
+    };
+  }
+
+  private toReporterVisibleContent(
+    value: Record<string, unknown> | string
+  ): ReporterVisibleContentSnapshot {
+    const parsed =
+      typeof value === 'string'
+        ? (JSON.parse(value) as Record<string, unknown>)
+        : value;
+    const parts = Array.isArray(parsed.parts) ? parsed.parts : [];
+    return {
+      wave_id: typeof parsed.wave_id === 'string' ? parsed.wave_id : null,
+      title: typeof parsed.title === 'string' ? parsed.title : null,
+      parts: parts.flatMap((part, index) => {
+        if (!part || typeof part !== 'object' || Array.isArray(part)) {
+          return [];
+        }
+        const record = part as Record<string, unknown>;
+        const media = Array.isArray(record.media) ? record.media : [];
+        const attachments = Array.isArray(record.attachments)
+          ? record.attachments
+          : [];
+        return [
+          {
+            part_no:
+              typeof record.part_no === 'number' ? record.part_no : index + 1,
+            content: typeof record.content === 'string' ? record.content : null,
+            media: media.flatMap((item) => {
+              if (!item || typeof item !== 'object' || Array.isArray(item)) {
+                return [];
+              }
+              const mediaRecord = item as Record<string, unknown>;
+              if (
+                typeof mediaRecord.url !== 'string' ||
+                typeof mediaRecord.mime_type !== 'string'
+              ) {
+                return [];
+              }
+              return [
+                {
+                  url: mediaRecord.url,
+                  mime_type: mediaRecord.mime_type
+                }
+              ];
+            }),
+            attachments: attachments.flatMap((item) => {
+              if (!item || typeof item !== 'object' || Array.isArray(item)) {
+                return [];
+              }
+              const attachment = item as Record<string, unknown>;
+              if (
+                typeof attachment.original_file_name !== 'string' ||
+                typeof attachment.kind !== 'string' ||
+                typeof attachment.declared_mime !== 'string'
+              ) {
+                return [];
+              }
+              return [
+                {
+                  original_file_name: attachment.original_file_name,
+                  kind: attachment.kind,
+                  declared_mime: attachment.declared_mime,
+                  detected_mime:
+                    typeof attachment.detected_mime === 'string'
+                      ? attachment.detected_mime
+                      : null,
+                  size_bytes:
+                    typeof attachment.size_bytes === 'number'
+                      ? attachment.size_bytes
+                      : null,
+                  ipfs_url:
+                    typeof attachment.ipfs_url === 'string'
+                      ? attachment.ipfs_url
+                      : null
+                }
+              ];
+            })
+          }
+        ];
+      })
     };
   }
 

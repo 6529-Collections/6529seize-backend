@@ -217,6 +217,38 @@ describe('ContentModerationDb', () => {
         author_pfp: 'https://example.com/author.png',
         reason: ContentReportReason.SCAM_OR_PHISHING,
         notes: null,
+        content_snapshot: {
+          wave_id: 'wave-1',
+          title: 'Reported title',
+          parent_context: { content: 'private parent context' },
+          parts: [
+            {
+              part_no: 1,
+              content: 'Reported message',
+              media: [
+                {
+                  url: 'https://example.com/image.png',
+                  mime_type: 'image/png',
+                  media_upload_id: 'private-upload-id'
+                }
+              ],
+              attachments: [
+                {
+                  id: 'private-attachment-id',
+                  original_file_name: 'evidence.pdf',
+                  kind: 'DOCUMENT',
+                  declared_mime: 'application/pdf',
+                  detected_mime: 'application/pdf',
+                  status: 'READY',
+                  size_bytes: 123,
+                  sha256: 'private-hash',
+                  verdict: 'CLEAN',
+                  ipfs_url: 'ipfs://attachment'
+                }
+              ]
+            }
+          ]
+        },
         status: ContentReportStatus.RESOLVED_ALLOWED,
         created_at: 200,
         resolved_at: 300,
@@ -229,7 +261,33 @@ describe('ContentModerationDb', () => {
       expect.objectContaining({
         author_handle: 'author-handle',
         cursor: `200.${REPORT_ID}`,
-        status: ContentReportStatus.RESOLVED_ALLOWED
+        status: ContentReportStatus.RESOLVED_ALLOWED,
+        reported_content: {
+          wave_id: 'wave-1',
+          title: 'Reported title',
+          parts: [
+            {
+              part_no: 1,
+              content: 'Reported message',
+              media: [
+                {
+                  url: 'https://example.com/image.png',
+                  mime_type: 'image/png'
+                }
+              ],
+              attachments: [
+                {
+                  original_file_name: 'evidence.pdf',
+                  kind: 'DOCUMENT',
+                  declared_mime: 'application/pdf',
+                  detected_mime: 'application/pdf',
+                  size_bytes: 123,
+                  ipfs_url: 'ipfs://attachment'
+                }
+              ]
+            }
+          ]
+        }
       })
     );
     expect(executor.execute).toHaveBeenCalledWith(
@@ -247,6 +305,14 @@ describe('ContentModerationDb', () => {
     expect(reportListSql).not.toContain('ai_');
     expect(reportListSql).not.toContain('resolution_reason');
     expect(reportListSql).not.toContain('moderator_profile_id');
+    expect(firstPage[0]).not.toHaveProperty('content_snapshot');
+    expect(JSON.stringify(firstPage[0])).not.toContain(
+      'private parent context'
+    );
+    expect(JSON.stringify(firstPage[0])).not.toContain('private-upload-id');
+    expect(JSON.stringify(firstPage[0])).not.toContain('private-attachment-id');
+    expect(JSON.stringify(firstPage[0])).not.toContain('private-hash');
+    expect(JSON.stringify(firstPage[0])).not.toContain('CLEAN');
 
     await db.getReportsForProfile('reporter-1', {
       limit: 1,

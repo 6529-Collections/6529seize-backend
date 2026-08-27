@@ -145,9 +145,13 @@ defaults to `100`.
 `GET /content-moderation/reports/mine` returns a stable cursor-paginated list of
 the authenticated profile's own reports for the Preferences Reports view. It
 includes author identity, the submitted reason and notes, report state, public
-outcome, and global drop state. It is strictly scoped to the caller and does
-not expose AI assessments, internal moderator notes or reasons, moderator
-identity, evidence snapshots, or reports submitted by other profiles.
+outcome, global drop state, and a reporter-safe snapshot of the reported post.
+The snapshot lets the reporter recognize content after moderators remove it,
+but excludes reply-parent context, upload and attachment identifiers, hashes,
+scanner verdicts, and other evidence-only metadata. The endpoint is strictly
+scoped to the caller and does not expose AI assessments, internal moderator
+notes or reasons, moderator identity, the full private evidence snapshot, or
+reports submitted by other profiles.
 
 The latest non-withdrawn report status is returned in authenticated viewer
 presentation data. While their report remains open, the reporter may withdraw
