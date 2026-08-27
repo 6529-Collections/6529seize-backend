@@ -13,7 +13,8 @@ import {
   DROP_ATTACHMENTS_TABLE,
   DROP_MEDIA_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
-  PROFILES_TABLE
+  PROFILES_TABLE,
+  WAVES_TABLE
 } from '@/constants';
 import {
   ContentModerationRecommendation,
@@ -114,6 +115,9 @@ export interface UserModerationReportRow {
 
 export interface ReporterVisibleContentSnapshot {
   readonly wave_id: string | null;
+  readonly wave_name: string | null;
+  readonly wave_picture: string | null;
+  readonly wave_is_direct_message: boolean;
   readonly title: string | null;
   readonly parts: ReporterVisibleContentPart[];
 }
@@ -140,6 +144,9 @@ type UserModerationReportDbRow = Omit<
   'cursor' | 'reported_content'
 > & {
   readonly content_snapshot: Record<string, unknown> | string;
+  readonly wave_name: string | null;
+  readonly wave_picture: string | null;
+  readonly wave_is_direct_message: boolean | number;
 };
 
 type ModerationQueueCursor = {
@@ -1037,6 +1044,9 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
           r.reason,
           r.notes,
           r.content_snapshot,
+          wave.name as wave_name,
+          wave.picture as wave_picture,
+          coalesce(wave.is_direct_message, false) as wave_is_direct_message,
           r.status,
           r.created_at,
           r.resolved_at,
@@ -1046,6 +1056,8 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
           on author.external_id = r.author_profile_id
         left join ${CONTENT_MODERATION_DROP_STATES_TABLE} ds
           on ds.drop_id = r.drop_id
+        left join ${WAVES_TABLE} wave
+          on wave.id = json_unquote(json_extract(r.content_snapshot, '$.wave_id'))
         where r.reporter_profile_id = :reporterProfileId
           and (
             :beforeCreatedAt is null
@@ -1068,13 +1080,23 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     );
 
     return rows.map((row) => {
-      const { content_snapshot: contentSnapshot, ...report } = row;
+      const {
+        content_snapshot: contentSnapshot,
+        wave_name: waveName,
+        wave_picture: wavePicture,
+        wave_is_direct_message: waveIsDirectMessage,
+        ...report
+      } = row;
       return {
         ...report,
         created_at: Number(report.created_at),
         resolved_at:
           report.resolved_at === null ? null : Number(report.resolved_at),
-        reported_content: this.toReporterVisibleContent(contentSnapshot),
+        reported_content: this.toReporterVisibleContent(contentSnapshot, {
+          name: waveName,
+          picture: wavePicture,
+          isDirectMessage: Boolean(waveIsDirectMessage)
+        }),
         cursor: this.encodeUserModerationReportCursor({
           createdAt: Number(report.created_at),
           reportId: report.id
@@ -1938,7 +1960,12 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
   }
 
   private toReporterVisibleContent(
-    value: Record<string, unknown> | string
+    value: Record<string, unknown> | string,
+    wave: {
+      readonly name: string | null;
+      readonly picture: string | null;
+      readonly isDirectMessage: boolean;
+    }
   ): ReporterVisibleContentSnapshot {
     const parsed =
       typeof value === 'string'
@@ -1947,6 +1974,9 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     const parts = Array.isArray(parsed.parts) ? parsed.parts : [];
     return {
       wave_id: typeof parsed.wave_id === 'string' ? parsed.wave_id : null,
+      wave_name: wave.name,
+      wave_picture: wave.picture,
+      wave_is_direct_message: wave.isDirectMessage,
       title: typeof parsed.title === 'string' ? parsed.title : null,
       parts: parts.flatMap((part, index) => {
         if (!part || typeof part !== 'object' || Array.isArray(part)) {

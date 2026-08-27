@@ -215,6 +215,9 @@ describe('ContentModerationDb', () => {
         author_profile_id: 'author-1',
         author_handle: 'author-handle',
         author_pfp: 'https://example.com/author.png',
+        wave_name: 'PRXT WAVE',
+        wave_picture: 'https://example.com/wave.png',
+        wave_is_direct_message: 0,
         reason: ContentReportReason.SCAM_OR_PHISHING,
         notes: null,
         content_snapshot: {
@@ -264,6 +267,9 @@ describe('ContentModerationDb', () => {
         status: ContentReportStatus.RESOLVED_ALLOWED,
         reported_content: {
           wave_id: 'wave-1',
+          wave_name: 'PRXT WAVE',
+          wave_picture: 'https://example.com/wave.png',
+          wave_is_direct_message: false,
           title: 'Reported title',
           parts: [
             {
@@ -305,6 +311,7 @@ describe('ContentModerationDb', () => {
     expect(reportListSql).not.toContain('ai_');
     expect(reportListSql).not.toContain('resolution_reason');
     expect(reportListSql).not.toContain('moderator_profile_id');
+    expect(reportListSql).toContain('left join waves wave');
     expect(firstPage[0]).not.toHaveProperty('content_snapshot');
     expect(JSON.stringify(firstPage[0])).not.toContain(
       'private parent context'
