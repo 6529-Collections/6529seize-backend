@@ -30,6 +30,7 @@ import { ApiContentModerationDropDecisionResponse } from '@/api/generated/models
 import { ApiContentModerationProfileStatusResponse } from '@/api/generated/models/ApiContentModerationProfileStatusResponse';
 import { ApiContentModerationProfileListItem } from '@/api/generated/models/ApiContentModerationProfileListItem';
 import { ApiContentModerationReportWithdrawalResponse } from '@/api/generated/models/ApiContentModerationReportWithdrawalResponse';
+import { ApiContentModerationUserReport } from '@/api/generated/models/ApiContentModerationUserReport';
 
 const router = asyncRouter();
 const logger = Logger.get('ContentModerationRoutes');
@@ -242,6 +243,35 @@ router.get(
         timer,
         authenticationContext
       })
+    );
+  }
+);
+
+router.get(
+  '/reports/mine',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<
+      Record<string, string>,
+      unknown,
+      unknown,
+      { limit?: string; before?: string }
+    >,
+    res: Response<ApiContentModerationUserReport[]>
+  ) => {
+    const { profileId, timer, authenticationContext } =
+      await getRequiredProfileId(req);
+    const limit = numbers.parseIntOrNull(req.query.limit) ?? 50;
+    if (limit < 1 || limit > 100) {
+      throw new BadRequestException('Limit must be between 1 and 100');
+    }
+    const before = req.query.before?.trim() || undefined;
+    res.send(
+      (await contentModerationService.getReportsForProfile(
+        profileId,
+        { limit, before },
+        { timer, authenticationContext }
+      )) as unknown as ApiContentModerationUserReport[]
     );
   }
 );

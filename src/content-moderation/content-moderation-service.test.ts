@@ -21,6 +21,7 @@ type ContentModerationDbMock = jest.Mocked<
     | 'getExistingProfileStatus'
     | 'getModerationCounts'
     | 'getModerationQueue'
+    | 'getReportsForProfile'
     | 'getPresentations'
     | 'getSuspendedProfiles'
     | 'isModerator'
@@ -91,6 +92,7 @@ function createService() {
       suspended_profile_count: 0
     }),
     getModerationQueue: jest.fn().mockResolvedValue([]),
+    getReportsForProfile: jest.fn().mockResolvedValue([]),
     getSuspendedProfiles: jest.fn().mockResolvedValue([]),
     getPresentations: jest.fn().mockResolvedValue({
       'drop-1': {
@@ -126,6 +128,23 @@ function createService() {
 
 describe('ContentModerationService', () => {
   afterEach(() => jest.restoreAllMocks());
+
+  it('returns only reports scoped to the authenticated profile', async () => {
+    const { service, db } = createService();
+
+    await service.getReportsForProfile(
+      'reporter-1',
+      { limit: 25, before: 'cursor' },
+      { connection: {} as any }
+    );
+
+    expect(db.getReportsForProfile).toHaveBeenCalledWith(
+      'reporter-1',
+      { limit: 25, before: 'cursor' },
+      expect.any(Object)
+    );
+    expect(db.isModerator).not.toHaveBeenCalled();
+  });
 
   it('persists the report and personal actions atomically before AI assessment', async () => {
     const { service, db, aiService } = createService();

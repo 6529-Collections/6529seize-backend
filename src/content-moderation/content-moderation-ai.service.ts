@@ -116,6 +116,27 @@ function assertCategory(value: unknown): string {
   return category;
 }
 
+function assertReportedAssessmentCategory(
+  recommendation: ContentModerationRecommendation,
+  category: string
+): void {
+  const expectsNone =
+    recommendation === ContentModerationRecommendation.NO_VIOLATION_DETECTED;
+  if ((category === 'NONE') !== expectsNone) {
+    throw new Error('AI response category conflicts with recommendation');
+  }
+}
+
+function assertPrePublicationAssessmentCategory(
+  outcome: PrePublicationCheckOutcome,
+  category: string
+): void {
+  const expectsNone = outcome === PrePublicationCheckOutcome.ALLOW;
+  if ((category === 'NONE') !== expectsNone) {
+    throw new Error('AI response category conflicts with outcome');
+  }
+}
+
 const POLICY = `
 Platform policy ${CONTENT_MODERATION_POLICY_VERSION}:
 - Allow profanity, vulgarity, criticism, satire, political opinions, controversial ideas, and merely offensive speech.
@@ -164,9 +185,13 @@ Parent context: ${JSON.stringify(input.parentContext ?? null)}
     ) {
       throw new Error('AI response recommendation is invalid');
     }
+    const normalizedRecommendation =
+      recommendation as ContentModerationRecommendation;
+    const category = assertCategory(parsed.category);
+    assertReportedAssessmentCategory(normalizedRecommendation, category);
     return {
-      recommendation: recommendation as ContentModerationRecommendation,
-      category: assertCategory(parsed.category),
+      recommendation: normalizedRecommendation,
+      category,
       confidence: assertConfidence(parsed.confidence),
       rationale: assertString(parsed.rationale, 'rationale'),
       evidence: Array.isArray(parsed.evidence) ? parsed.evidence : []
@@ -210,9 +235,12 @@ Untrusted submission: ${JSON.stringify(input.content)}
     ) {
       throw new Error('AI response outcome is invalid');
     }
+    const normalizedOutcome = outcome as PrePublicationCheckOutcome;
+    const category = assertCategory(parsed.category);
+    assertPrePublicationAssessmentCategory(normalizedOutcome, category);
     return {
-      outcome: outcome as PrePublicationCheckOutcome,
-      category: assertCategory(parsed.category),
+      outcome: normalizedOutcome,
+      category,
       confidence: assertConfidence(parsed.confidence),
       rationale: assertString(parsed.rationale, 'rationale')
     };
