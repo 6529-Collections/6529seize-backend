@@ -59,6 +59,7 @@ import { ApiProfileCmsPrimaryPackage } from '@/api/generated/models/ApiProfileCm
 import { ApiProfileCmsValidationResult } from '@/api/generated/models/ApiProfileCmsValidationResult';
 import { ApiProfileCmsWalletGallerySnapshot } from '@/api/generated/models/ApiProfileCmsWalletGallerySnapshot';
 import { ApiProfilePreferences } from '@/api/generated/models/ApiProfilePreferences';
+import { ApiProfileWaveActivityPage } from '@/api/generated/models/ApiProfileWaveActivityPage';
 import { ApiPublishProfileCmsPackageRequest } from '@/api/generated/models/ApiPublishProfileCmsPackageRequest';
 import { ApiRollbackProfileCmsPackageRequest } from '@/api/generated/models/ApiRollbackProfileCmsPackageRequest';
 import { ApiSaveEulaConsentRequest } from '@/api/generated/models/ApiSaveEulaConsentRequest';
@@ -1284,6 +1285,26 @@ export type SearchDraftWaveMentionsRequest = Request<
   ApiResponse<SearchDraftWaveMentionsResponse>,
   never,
   SearchDraftWaveMentionsQuery,
+  Record<string, never>
+>;
+
+export interface GetProfileWaveActivityPathParams {
+  "identity": string;
+}
+
+export interface GetProfileWaveActivityQuery {
+  "activity_type": string;
+  "limit"?: number;
+  "cursor"?: string;
+}
+
+export type GetProfileWaveActivityResponse = ApiProfileWaveActivityPage;
+
+export type GetProfileWaveActivityRequest = Request<
+  GetProfileWaveActivityPathParams,
+  ApiResponse<GetProfileWaveActivityResponse>,
+  never,
+  GetProfileWaveActivityQuery,
   Record<string, never>
 >;
 
