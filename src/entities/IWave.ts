@@ -197,12 +197,11 @@ export class WaveBase implements WaveBaseType {
 
 @Entity(WAVES_TABLE)
 @Index('idx_wave_serialno_id', ['serial_no', 'id'])
-@Index('idx_wave_created_dm_serial_id', [
-  'created_by',
-  'is_direct_message',
-  'serial_no',
-  'id'
-])
+@Index(
+  'idx_wave_created_dm_serial_id',
+  ['created_by', 'is_direct_message', 'serial_no', 'id'],
+  { synchronize: false }
+)
 @Index('idx_wave_parent_wave_id', ['parent_wave_id'])
 @Index('idx_wave_visibility_group_id', ['visibility_group_id'])
 @Index('idx_wave_admin_group_id', ['admin_group_id'])

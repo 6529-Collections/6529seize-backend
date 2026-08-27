@@ -11970,6 +11970,7 @@ paths:
           required: true
           schema:
             type: string
+            maxLength: 200
         - name: activity_type
           in: query
           required: true

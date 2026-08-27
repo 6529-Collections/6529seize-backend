@@ -2283,7 +2283,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             w.id as wave_id,
             w.name as wave_name,
             w.picture as wave_picture,
-            case when w.visibility_group_id is null then 0 else 1 end as is_private,
+            case
+              when w.visibility_group_id is not null
+                or parent.visibility_group_id is not null
+              then 1 else 0
+            end as is_private,
             coalesce(wm.drops_count, 0) as total_drops_count,
             ${latestPostTimestamp} as target_latest_post_timestamp,
             ${hasQualifyingPost} as has_qualifying_post,
@@ -2368,7 +2372,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             w.id as wave_id,
             w.name as wave_name,
             w.picture as wave_picture,
-            case when w.visibility_group_id is null then 0 else 1 end as is_private,
+            case
+              when w.visibility_group_id is not null
+                or parent.visibility_group_id is not null
+              then 1 else 0
+            end as is_private,
             coalesce(wm.drops_count, 0) as total_drops_count,
             wdm.latest_drop_timestamp as target_latest_post_timestamp
           from ${WAVE_DROPPER_METRICS_TABLE} wdm
