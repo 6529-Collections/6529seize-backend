@@ -10,6 +10,7 @@
  * Do not edit the class manually.
  */
 
+import { ApiContentModerationAuditEntry } from '../models/ApiContentModerationAuditEntry';
 import { ApiContentModerationRecommendation } from '../models/ApiContentModerationRecommendation';
 import { ApiContentModerationReportReason } from '../models/ApiContentModerationReportReason';
 import { ApiContentModerationReportStatus } from '../models/ApiContentModerationReportStatus';
@@ -48,7 +49,7 @@ export class ApiContentModerationQueueItem {
     */
     'cursor': string;
     'moderation': ApiDropModeration;
-    'history': Array<{ [key: string]: any; }>;
+    'history': Array<ApiContentModerationAuditEntry>;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -220,7 +221,7 @@ export class ApiContentModerationQueueItem {
         {
             "name": "history",
             "baseName": "history",
-            "type": "Array<{ [key: string]: any; }>",
+            "type": "Array<ApiContentModerationAuditEntry>",
             "format": ""
         }    ];
 

@@ -2,7 +2,8 @@ import {
   ContentModerationRecommendation,
   ContentReportReason,
   ContentReportStatus,
-  DropModerationStatus
+  DropModerationStatus,
+  ModeratedProfileStatus
 } from '@/entities/IContentModeration';
 import { ForbiddenException } from '@/exceptions';
 import { env } from '@/env';
@@ -17,6 +18,7 @@ type ContentModerationDbMock = jest.Mocked<
     | 'createReportWithViewerActions'
     | 'getAuditHistoryForDrops'
     | 'getDropSnapshot'
+    | 'getExistingProfileStatus'
     | 'getModerationCounts'
     | 'getModerationQueue'
     | 'getPresentations'
@@ -75,6 +77,9 @@ function createService() {
   };
   const db: ContentModerationDbMock = {
     getDropSnapshot: jest.fn().mockResolvedValue(snapshot),
+    getExistingProfileStatus: jest
+      .fn()
+      .mockResolvedValue(ModeratedProfileStatus.ACTIVE),
     createReportWithViewerActions: jest.fn().mockResolvedValue(reportRow()),
     saveReportAssessment: jest.fn().mockResolvedValue(undefined),
     tryAiQuarantineForOpenReport: jest.fn().mockResolvedValue(true),
@@ -400,6 +405,25 @@ describe('ContentModerationService', () => {
       suspended_profile_count: 0
     });
     expect(db.getModerationCounts).not.toHaveBeenCalled();
+  });
+
+  it('returns a public profile moderation status without moderator access', async () => {
+    const { service, db } = createService();
+    db.getExistingProfileStatus.mockResolvedValue(
+      ModeratedProfileStatus.SUSPENDED
+    );
+
+    await expect(
+      service.getPublicProfileStatus('profile-1', {})
+    ).resolves.toEqual({
+      profile_id: 'profile-1',
+      status: ModeratedProfileStatus.SUSPENDED
+    });
+    expect(db.getExistingProfileStatus).toHaveBeenCalledWith(
+      'profile-1',
+      undefined
+    );
+    expect(db.isModerator).not.toHaveBeenCalled();
   });
 
   it('applies moderator state and report resolution atomically', async () => {
