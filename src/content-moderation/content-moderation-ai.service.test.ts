@@ -118,6 +118,56 @@ describe('ContentModerationAiService', () => {
     ).resolves.toMatchObject({ category: 'TARGETED_HARASSMENT' });
   });
 
+  it('rejects NONE when reported content needs review', async () => {
+    const { service } = createService({
+      recommendation: 'NEEDS_HUMAN_REVIEW',
+      category: 'NONE',
+      confidence: 0.8,
+      rationale: 'Context should be reviewed',
+      evidence: []
+    });
+
+    await expect(
+      service.assessReportedContent({
+        reason: ContentReportReason.OTHER,
+        content: { text: 'reported content' }
+      })
+    ).rejects.toThrow('AI response category conflicts with recommendation');
+  });
+
+  it('rejects a violation category when reported content is cleared', async () => {
+    const { service } = createService({
+      recommendation: 'NO_VIOLATION_DETECTED',
+      category: 'SCAM_OR_PHISHING',
+      confidence: 0.9,
+      rationale: 'No violation',
+      evidence: []
+    });
+
+    await expect(
+      service.assessReportedContent({
+        reason: ContentReportReason.SCAM_OR_PHISHING,
+        content: { text: 'ordinary content' }
+      })
+    ).rejects.toThrow('AI response category conflicts with recommendation');
+  });
+
+  it('requires NONE for allowed pre-publication content', async () => {
+    const { service } = createService({
+      outcome: 'ALLOW',
+      category: 'SENSITIVE_PRIVATE_INFORMATION',
+      confidence: 0.7,
+      rationale: 'Allow'
+    });
+
+    await expect(
+      service.assessPrePublication({
+        signal: 'STRUCTURED_SENSITIVE_DATA',
+        content: 'example data'
+      })
+    ).rejects.toThrow('AI response category conflicts with outcome');
+  });
+
   it('resolves the configured model after runtime secrets are loaded', async () => {
     const { send, service } = createService({
       recommendation: 'NO_VIOLATION_DETECTED',

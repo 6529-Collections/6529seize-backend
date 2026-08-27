@@ -96,8 +96,28 @@ export type ModerationQueueItemRow = ModerationReportRow & {
   readonly cursor: string;
 };
 
+export interface UserModerationReportRow {
+  readonly id: string;
+  readonly drop_id: string;
+  readonly author_profile_id: string;
+  readonly author_handle: string | null;
+  readonly author_pfp: string | null;
+  readonly reason: ContentReportReason;
+  readonly notes: string | null;
+  readonly status: ContentReportStatus;
+  readonly created_at: number;
+  readonly resolved_at: number | null;
+  readonly drop_status: DropModerationStatus;
+  readonly cursor: string;
+}
+
 type ModerationQueueCursor = {
   readonly recommendationRank: number;
+  readonly createdAt: number;
+  readonly reportId: string;
+};
+
+type UserModerationReportCursor = {
   readonly createdAt: number;
   readonly reportId: string;
 };
@@ -959,6 +979,71 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         })
       };
     });
+  }
+
+  async getReportsForProfile(
+    reporterProfileId: string,
+    {
+      limit,
+      before
+    }: {
+      readonly limit: number;
+      readonly before?: string | null;
+    },
+    connection?: ConnectionWrapper<any>
+  ): Promise<UserModerationReportRow[]> {
+    const cursor = before
+      ? this.decodeUserModerationReportCursor(before)
+      : null;
+    const rows = await this.db.execute<Omit<UserModerationReportRow, 'cursor'>>(
+      `
+        select
+          r.id,
+          r.drop_id,
+          r.author_profile_id,
+          author.handle as author_handle,
+          author.pfp_url as author_pfp,
+          r.reason,
+          r.notes,
+          r.status,
+          r.created_at,
+          r.resolved_at,
+          coalesce(ds.status, '${DropModerationStatus.VISIBLE}') as drop_status
+        from ${CONTENT_MODERATION_REPORTS_TABLE} r
+        left join ${PROFILES_TABLE} author
+          on author.external_id = r.author_profile_id
+        left join ${CONTENT_MODERATION_DROP_STATES_TABLE} ds
+          on ds.drop_id = r.drop_id
+        where r.reporter_profile_id = :reporterProfileId
+          and (
+            :beforeCreatedAt is null
+            or r.created_at < :beforeCreatedAt
+            or (
+              r.created_at = :beforeCreatedAt
+              and r.id < :beforeReportId
+            )
+          )
+        order by r.created_at desc, r.id desc
+        limit :limit
+      `,
+      {
+        reporterProfileId,
+        limit,
+        beforeCreatedAt: cursor?.createdAt ?? null,
+        beforeReportId: cursor?.reportId ?? null
+      },
+      this.connectionOptions(connection)
+    );
+
+    return rows.map((row) => ({
+      ...row,
+      created_at: Number(row.created_at),
+      resolved_at: row.resolved_at === null ? null : Number(row.resolved_at),
+      cursor: this.encodeUserModerationReportCursor({
+        createdAt: Number(row.created_at),
+        reportId: row.id
+      })
+    }));
   }
 
   async getAuditHistoryForDrops(
@@ -1837,6 +1922,32 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       throw new BadRequestException('Invalid moderation queue cursor');
     }
     return { recommendationRank, createdAt, reportId };
+  }
+
+  private encodeUserModerationReportCursor(
+    cursor: UserModerationReportCursor
+  ): string {
+    return `${cursor.createdAt}.${cursor.reportId}`;
+  }
+
+  private decodeUserModerationReportCursor(
+    value: string
+  ): UserModerationReportCursor {
+    const match =
+      /^(\d+)\.([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(
+        value
+      );
+    const createdAt = Number(match?.[1]);
+    const reportId = match?.[2];
+    if (
+      !match ||
+      !Number.isSafeInteger(createdAt) ||
+      createdAt < 0 ||
+      !reportId
+    ) {
+      throw new BadRequestException('Invalid user report cursor');
+    }
+    return { createdAt, reportId };
   }
 
   private encodeModeratedProfileCursor(input: {

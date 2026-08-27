@@ -206,6 +206,74 @@ describe('ContentModerationDb', () => {
     expect(executor.execute).toHaveBeenCalledTimes(1);
   });
 
+  it('lists only the authenticated reporter reports with a stable cursor', async () => {
+    const { db, executor } = createDb();
+    executor.execute.mockResolvedValue([
+      {
+        id: REPORT_ID,
+        drop_id: 'drop-1',
+        author_profile_id: 'author-1',
+        author_handle: 'author-handle',
+        author_pfp: 'https://example.com/author.png',
+        reason: ContentReportReason.SCAM_OR_PHISHING,
+        notes: null,
+        status: ContentReportStatus.RESOLVED_ALLOWED,
+        created_at: 200,
+        resolved_at: 300,
+        drop_status: DropModerationStatus.VISIBLE
+      }
+    ]);
+
+    const firstPage = await db.getReportsForProfile('reporter-1', { limit: 1 });
+    expect(firstPage[0]).toEqual(
+      expect.objectContaining({
+        author_handle: 'author-handle',
+        cursor: `200.${REPORT_ID}`,
+        status: ContentReportStatus.RESOLVED_ALLOWED
+      })
+    );
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'where r.reporter_profile_id = :reporterProfileId'
+      ),
+      expect.objectContaining({
+        reporterProfileId: 'reporter-1',
+        beforeCreatedAt: null,
+        beforeReportId: null
+      }),
+      undefined
+    );
+    const reportListSql = executor.execute.mock.calls[0]?.[0] as string;
+    expect(reportListSql).not.toContain('ai_');
+    expect(reportListSql).not.toContain('resolution_reason');
+    expect(reportListSql).not.toContain('moderator_profile_id');
+
+    await db.getReportsForProfile('reporter-1', {
+      limit: 1,
+      before: firstPage[0]!.cursor
+    });
+    expect(executor.execute).toHaveBeenLastCalledWith(
+      expect.stringContaining('r.id < :beforeReportId'),
+      expect.objectContaining({
+        beforeCreatedAt: 200,
+        beforeReportId: REPORT_ID
+      }),
+      undefined
+    );
+  });
+
+  it('rejects malformed user report cursors', async () => {
+    const { db, executor } = createDb();
+
+    await expect(
+      db.getReportsForProfile('reporter-1', {
+        limit: 1,
+        before: 'not-a-cursor'
+      })
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(executor.execute).not.toHaveBeenCalled();
+  });
+
   it('includes actor profile context in drop audit history', async () => {
     const { db, executor } = createDb();
     executor.execute.mockResolvedValue([

@@ -45,6 +45,7 @@ type ContentModerationDbDependency = Pick<
   | 'getExistingProfileStatus'
   | 'getModerationCounts'
   | 'getModerationQueue'
+  | 'getReportsForProfile'
   | 'getPresentations'
   | 'getSuspendedProfiles'
   | 'isModerator'
@@ -188,6 +189,14 @@ export class ContentModerationService {
       },
       history: history[report.drop_id] ?? []
     }));
+  }
+
+  async getReportsForProfile(
+    profileId: string,
+    input: { limit: number; before?: string | null },
+    ctx: RequestContext
+  ) {
+    return this.db.getReportsForProfile(profileId, input, ctx.connection);
   }
 
   async getSuspendedProfiles(

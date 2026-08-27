@@ -75,7 +75,10 @@ an ownership claim or a value's known test status is not decisive by itself.
   error and allows the request.
 
 The model's category or rationale is not reflected directly into the generic
-user-facing rejection response.
+user-facing rejection response. The parser also enforces semantic consistency:
+`ALLOW` must use category `NONE`, while `REJECT` must use a substantive policy
+category. A contradictory response is treated as malformed and follows the
+normal fail-open path.
 
 ### Attachments
 
@@ -139,6 +142,13 @@ Duplicate open reports by the same reporter and drop are rejected. Report
 volume is limited per profile by `CONTENT_MODERATION_REPORTS_PER_HOUR`, which
 defaults to `100`.
 
+`GET /content-moderation/reports/mine` returns a stable cursor-paginated list of
+the authenticated profile's own reports for the Preferences Reports view. It
+includes author identity, the submitted reason and notes, report state, public
+outcome, and global drop state. It is strictly scoped to the caller and does
+not expose AI assessments, internal moderator notes or reasons, moderator
+identity, evidence snapshots, or reports submitted by other profiles.
+
 The latest non-withdrawn report status is returned in authenticated viewer
 presentation data. While their report remains open, the reporter may withdraw
 it with `DELETE /content-moderation/drops/{drop_id}/reports/mine`. Withdrawal
@@ -164,6 +174,10 @@ report is retained with `NEEDS_HUMAN_REVIEW`, zero confidence, and an explicit
 classifier-unavailable rationale.
 
 AI never removes content permanently and never suspends a profile.
+The parser requires `NO_VIOLATION_DETECTED` to use category `NONE`, and requires
+human-review or urgent-quarantine recommendations to use a substantive policy
+category. Contradictory evaluator output is treated as an assessment failure,
+so the report remains available for human review.
 
 ## Moderator workflow
 
@@ -186,6 +200,10 @@ Authorized moderators use:
   quarantine, or remove a drop; and
 - `POST /content-moderation/profiles/{profile_id}/status` to suspend or
   reinstate posting for a profile.
+
+The profile-status endpoint is also used by the moderator-only action on a
+public profile page. That global moderation state is independent of the
+moderator's own personal block state.
 
 Moderator notes are optional for both drop and profile actions. Drop decisions
 are applied transactionally with report resolution and append-only audit
