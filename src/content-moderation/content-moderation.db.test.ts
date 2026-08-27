@@ -36,6 +36,8 @@ function reportRow() {
     author_profile_id: 'author-1',
     author_handle: 'author-handle',
     author_pfp: 'https://example.com/author.png',
+    reporter_handle: 'reporter-handle',
+    reporter_pfp: 'https://example.com/reporter.png',
     author_status: ModeratedProfileStatus.ACTIVE,
     reason: ContentReportReason.SCAM_OR_PHISHING,
     notes: null,
@@ -160,10 +162,15 @@ describe('ContentModerationDb', () => {
     expect(executor.execute.mock.calls[0]?.[0]).toContain(
       `p.external_id = r.author_profile_id`
     );
+    expect(executor.execute.mock.calls[0]?.[0]).toContain(
+      `reporter.external_id = r.reporter_profile_id`
+    );
     expect(firstPage[0]).toEqual(
       expect.objectContaining({
         author_handle: 'author-handle',
         author_pfp: 'https://example.com/author.png',
+        reporter_handle: 'reporter-handle',
+        reporter_pfp: 'https://example.com/reporter.png',
         author_status: ModeratedProfileStatus.ACTIVE,
         report_count: 2
       })
