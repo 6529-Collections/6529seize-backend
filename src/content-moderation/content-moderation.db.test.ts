@@ -206,6 +206,37 @@ describe('ContentModerationDb', () => {
     expect(executor.execute).toHaveBeenCalledTimes(1);
   });
 
+  it('includes actor profile context in drop audit history', async () => {
+    const { db, executor } = createDb();
+    executor.execute.mockResolvedValue([
+      {
+        id: 'audit-1',
+        target_drop_id: 'drop-1',
+        actor_profile_id: 'moderator-1',
+        actor_handle: 'watcher',
+        actor_pfp: 'https://example.com/watcher.png'
+      }
+    ]);
+
+    await expect(
+      db.getAuditHistoryForDrops(['drop-1', 'drop-1'])
+    ).resolves.toEqual({
+      'drop-1': [
+        expect.objectContaining({
+          actor_handle: 'watcher',
+          actor_pfp: 'https://example.com/watcher.png'
+        })
+      ]
+    });
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'left join profiles actor\n          on actor.external_id = audit.actor_profile_id'
+      ),
+      { dropIds: ['drop-1'] },
+      undefined
+    );
+  });
+
   it('rejects malformed moderation queue cursors', async () => {
     const { db, executor } = createDb();
 

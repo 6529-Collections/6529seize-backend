@@ -42,6 +42,7 @@ type ContentModerationDbDependency = Pick<
   | 'createReportWithViewerActions'
   | 'getAuditHistoryForDrops'
   | 'getDropSnapshot'
+  | 'getExistingProfileStatus'
   | 'getModerationCounts'
   | 'getModerationQueue'
   | 'getPresentations'
@@ -196,6 +197,17 @@ export class ContentModerationService {
   ) {
     await this.assertModerator(moderatorProfileId, ctx);
     return this.db.getSuspendedProfiles(input, ctx.connection);
+  }
+
+  async getPublicProfileStatus(
+    profileId: string,
+    ctx: RequestContext
+  ): Promise<{ profile_id: string; status: ModeratedProfileStatus }> {
+    const status = await this.db.getExistingProfileStatus(
+      profileId,
+      ctx.connection
+    );
+    return { profile_id: profileId, status };
   }
 
   async withdrawReport(

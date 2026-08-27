@@ -31,6 +31,10 @@ const ACCEPTED_ROUTE_SOURCE_MOVES = new Map<string, string>([
   [
     '/api/policies/eula-consent/:deviceId',
     'src/api-serverless/src/generated/routes/openapi-generated.routes.ts:149'
+  ],
+  [
+    '/api/waves/:id/subwaves',
+    'src/api-serverless/src/generated/routes/openapi-generated.routes.ts:938'
   ]
 ]);
 

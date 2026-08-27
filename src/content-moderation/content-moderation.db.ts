@@ -972,10 +972,15 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       Record<string, unknown> & { target_drop_id: string }
     >(
       `
-        select *
-        from ${CONTENT_MODERATION_AUDIT_LOG_TABLE}
-        where target_drop_id in (:dropIds)
-        order by created_at asc, id asc
+        select
+          audit.*,
+          actor.handle as actor_handle,
+          actor.pfp_url as actor_pfp
+        from ${CONTENT_MODERATION_AUDIT_LOG_TABLE} audit
+        left join ${PROFILES_TABLE} actor
+          on actor.external_id = audit.actor_profile_id
+        where audit.target_drop_id in (:dropIds)
+        order by audit.created_at asc, audit.id asc
       `,
       { dropIds: Array.from(new Set(dropIds)) },
       this.connectionOptions(connection)
@@ -1267,6 +1272,14 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       this.connectionOptions(connection)
     );
     return row?.status ?? ModeratedProfileStatus.ACTIVE;
+  }
+
+  async getExistingProfileStatus(
+    profileId: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<ModeratedProfileStatus> {
+    await this.assertProfileExists(profileId, connection);
+    return this.getProfileStatus(profileId, connection);
   }
 
   async hasOpenReports(connection?: ConnectionWrapper<any>): Promise<boolean> {
