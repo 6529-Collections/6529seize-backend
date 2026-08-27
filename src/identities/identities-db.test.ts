@@ -1,7 +1,113 @@
 import { MEMES_CONTRACT, IDENTITIES_TABLE, TDH_NFT_TABLE } from '@/constants';
+import { ProfileClassification } from '@/entities/IProfile';
 import { IdentitiesDb } from './identities.db';
 
 describe('IdentitiesDb', () => {
+  it('lists identities by raw level without a handle predicate', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new IdentitiesDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await repo.searchIdentitiesWithDisplays(
+      {
+        handle: null,
+        limit: 20,
+        classification: null,
+        subclassification: null
+      },
+      null,
+      { timer: undefined }
+    );
+
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).not.toContain('where');
+    expect(sql).not.toContain('i.normalised_handle like :likeHandle');
+    expect(sql).toContain('i.level_raw desc');
+    expect(params).toEqual({ limit: 20 });
+  });
+
+  it('applies classification filters without requiring a handle', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new IdentitiesDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await repo.searchIdentitiesWithDisplays(
+      {
+        handle: null,
+        limit: 20,
+        classification: ProfileClassification.COLLECTION,
+        subclassification: 'Generative Art'
+      },
+      null,
+      { timer: undefined }
+    );
+
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).not.toContain('i.normalised_handle like :likeHandle');
+    expect(sql).toContain('where i.classification = :classification');
+    expect(sql).toContain('i.sub_classification = :subclassification');
+    expect(sql).toContain('i.level_raw desc');
+    expect(params).toEqual({
+      limit: 20,
+      classification: ProfileClassification.COLLECTION,
+      subclassification: 'Generative Art'
+    });
+  });
+
+  it('filters handle matches and ranks level within relevance buckets', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new IdentitiesDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await repo.searchIdentitiesWithDisplays(
+      {
+        handle: 'Gel',
+        limit: 10,
+        classification: ProfileClassification.ORGANIZATION,
+        subclassification: 'Arts & Culture: Museum'
+      },
+      {
+        sql: 'with user_groups_view as (select * from eligible_profiles)',
+        params: { eligibilityGroupId: 'group-1' }
+      },
+      { timer: undefined }
+    );
+
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain(
+      'join user_groups_view ug on i.profile_id = ug.profile_id'
+    );
+    expect(sql).toContain('i.normalised_handle like :likeHandle');
+    expect(sql).toContain('i.classification = :classification');
+    expect(sql).toContain('i.sub_classification = :subclassification');
+    expect(sql).toContain('(i.normalised_handle = :handle) desc');
+    expect(sql).toContain('(i.normalised_handle like :prefixHandle) desc');
+    expect(sql).toContain('i.level_raw desc');
+    expect(sql).toContain('i.normalised_handle asc');
+    expect(sql).toContain('i.profile_id asc');
+    expect(params).toEqual({
+      eligibilityGroupId: 'group-1',
+      limit: 10,
+      likeHandle: '%gel%',
+      prefixHandle: 'gel%',
+      handle: 'gel',
+      classification: ProfileClassification.ORGANIZATION,
+      subclassification: 'Arts & Culture: Museum'
+    });
+  });
+
   it('orders handle candidates by relevance bucket and raw level when requested', async () => {
     const execute = jest.fn().mockResolvedValue([]);
     const repo = new IdentitiesDb(
