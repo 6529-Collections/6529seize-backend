@@ -149,9 +149,18 @@ type WaveIdRow = {
   wave_id: string;
 };
 
-type RawProfileWaveActivityRow = RawWaveEntity & {
+type RawProfileWaveActivityRow = {
+  wave_id: string;
+  wave_name: string;
+  wave_picture: string | null;
+  is_private: number | string;
+  total_drops_count: number | string;
   target_latest_post_timestamp: number | string | null;
+};
+
+type RawCreatedProfileWaveActivityRow = RawProfileWaveActivityRow & {
   has_qualifying_post: number | string;
+  wave_serial_no: number | string;
 };
 
 export interface CreatedProfileWaveActivityCursor {
@@ -167,9 +176,21 @@ export interface RecentProfileWaveActivityCursor {
 }
 
 export interface ProfileWaveActivityDbItem {
-  readonly wave: WaveEntity;
+  readonly waveId: string;
+  readonly waveName: string;
+  readonly wavePicture: string | null;
+  readonly isPrivate: boolean;
+  readonly totalDropsCount: number;
   readonly latestPostTimestamp: number | null;
+}
+
+export interface CreatedProfileWaveActivityDbItem extends ProfileWaveActivityDbItem {
   readonly hasQualifyingPost: boolean;
+  readonly waveSerialNo: number;
+}
+
+export interface RecentProfileWaveActivityDbItem extends ProfileWaveActivityDbItem {
+  readonly latestPostTimestamp: number;
 }
 
 type UnreadDmDropsCountRow = {
@@ -914,19 +935,18 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     };
   }
 
-  private parseProfileWaveActivityRows(
-    rows: RawProfileWaveActivityRow[]
-  ): ProfileWaveActivityDbItem[] {
-    return rows.map((row) => {
-      const { target_latest_post_timestamp, has_qualifying_post, ...rawWave } =
-        row;
-      const parsedTimestamp = Number(target_latest_post_timestamp ?? 0);
-      return {
-        wave: this.parseWaveEntity(rawWave),
-        latestPostTimestamp: parsedTimestamp > 0 ? parsedTimestamp : null,
-        hasQualifyingPost: Number(has_qualifying_post) === 1
-      };
-    });
+  private parseProfileWaveActivityRow(
+    row: RawProfileWaveActivityRow
+  ): ProfileWaveActivityDbItem {
+    const parsedTimestamp = Number(row.target_latest_post_timestamp ?? 0);
+    return {
+      waveId: row.wave_id,
+      waveName: row.wave_name,
+      wavePicture: row.wave_picture,
+      isPrivate: Number(row.is_private) === 1,
+      totalDropsCount: Number(row.total_drops_count),
+      latestPostTimestamp: parsedTimestamp > 0 ? parsedTimestamp : null
+    };
   }
 
   private parseWaveEntityWithLastDropTime(
@@ -2231,7 +2251,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       readonly cursor: CreatedProfileWaveActivityCursor | null;
     },
     ctx: RequestContext
-  ): Promise<ProfileWaveActivityDbItem[]> {
+  ): Promise<CreatedProfileWaveActivityDbItem[]> {
     const timerKey = `${this.constructor.name}->findCreatedProfileWaveActivity`;
     ctx.timer?.start(timerKey);
     try {
@@ -2257,16 +2277,22 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             )
           )`
         : '';
-      const rows = await this.db.execute<RawProfileWaveActivityRow>(
+      const rows = await this.db.execute<RawCreatedProfileWaveActivityRow>(
         `
           select
-            w.*,
+            w.id as wave_id,
+            w.name as wave_name,
+            w.picture as wave_picture,
+            case when w.visibility_group_id is null then 0 else 1 end as is_private,
+            coalesce(wm.drops_count, 0) as total_drops_count,
             ${latestPostTimestamp} as target_latest_post_timestamp,
-            ${hasQualifyingPost} as has_qualifying_post
+            ${hasQualifyingPost} as has_qualifying_post,
+            w.serial_no as wave_serial_no
           from ${WAVES_TABLE} w
           left join ${WAVE_DROPPER_METRICS_TABLE} wdm
             on wdm.wave_id = w.id
             and wdm.dropper_id = :profileId
+          left join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
           left join ${WAVES_TABLE} parent on parent.id = w.parent_wave_id
           where w.created_by = :profileId
             and (w.is_direct_message = false or w.is_direct_message is null)
@@ -2300,7 +2326,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         },
         ctx.connection ? { wrappedConnection: ctx.connection } : undefined
       );
-      return this.parseProfileWaveActivityRows(rows);
+      return rows.map((row) => ({
+        ...this.parseProfileWaveActivityRow(row),
+        hasQualifyingPost: Number(row.has_qualifying_post) === 1,
+        waveSerialNo: Number(row.wave_serial_no)
+      }));
     } finally {
       ctx.timer?.stop(timerKey);
     }
@@ -2319,7 +2349,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       readonly cursor: RecentProfileWaveActivityCursor | null;
     },
     ctx: RequestContext
-  ): Promise<ProfileWaveActivityDbItem[]> {
+  ): Promise<RecentProfileWaveActivityDbItem[]> {
     const timerKey = `${this.constructor.name}->findRecentProfileWaveActivity`;
     ctx.timer?.start(timerKey);
     try {
@@ -2335,11 +2365,15 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       const rows = await this.db.execute<RawProfileWaveActivityRow>(
         `
           select
-            w.*,
-            wdm.latest_drop_timestamp as target_latest_post_timestamp,
-            1 as has_qualifying_post
+            w.id as wave_id,
+            w.name as wave_name,
+            w.picture as wave_picture,
+            case when w.visibility_group_id is null then 0 else 1 end as is_private,
+            coalesce(wm.drops_count, 0) as total_drops_count,
+            wdm.latest_drop_timestamp as target_latest_post_timestamp
           from ${WAVE_DROPPER_METRICS_TABLE} wdm
           join ${WAVES_TABLE} w on w.id = wdm.wave_id
+          left join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
           left join ${WAVES_TABLE} parent on parent.id = w.parent_wave_id
           where wdm.dropper_id = :profileId
             and wdm.latest_drop_timestamp > 0
@@ -2368,7 +2402,16 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         },
         ctx.connection ? { wrappedConnection: ctx.connection } : undefined
       );
-      return this.parseProfileWaveActivityRows(rows);
+      return rows.map((row) => {
+        const item = this.parseProfileWaveActivityRow(row);
+        if (item.latestPostTimestamp === null) {
+          throw new Error('Recent profile wave activity requires a timestamp');
+        }
+        return {
+          ...item,
+          latestPostTimestamp: item.latestPostTimestamp
+        };
+      });
     } finally {
       ctx.timer?.stop(timerKey);
     }

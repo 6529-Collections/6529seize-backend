@@ -1,13 +1,10 @@
+import type { ApiProfileWaveActivity } from '@/api/generated/models/ApiProfileWaveActivity';
 import type { ApiProfileWaveActivityPage } from '@/api/generated/models/ApiProfileWaveActivityPage';
 import { ApiProfileWaveActivityType } from '@/api/generated/models/ApiProfileWaveActivityType';
 import {
   identityFetcher,
   IdentityFetcher
 } from '@/api/identities/identity.fetcher';
-import {
-  apiWaveOverviewMapper,
-  ApiWaveOverviewMapper
-} from '@/api/waves/api-wave-overview.mapper';
 import { getGroupsUserIsEligibleForReadContext } from '@/api/waves/wave-access.helpers';
 import {
   profileWaveActivityCursorCodec,
@@ -34,7 +31,6 @@ export class ProfileWaveActivityApiService {
     private readonly identityFetcher: IdentityFetcher,
     private readonly userGroupsService: UserGroupsService,
     private readonly wavesApiDb: WavesApiDb,
-    private readonly apiWaveOverviewMapper: ApiWaveOverviewMapper,
     private readonly cursorCodec: ProfileWaveActivityCursorCodec
   ) {}
 
@@ -52,102 +48,92 @@ export class ProfileWaveActivityApiService {
         ),
         getGroupsUserIsEligibleForReadContext(this.userGroupsService, ctx)
       ]);
-      const candidates = await this.findCandidates(
-        request,
-        targetProfileId,
-        eligibleGroups,
-        ctx
-      );
-      const pageItems = candidates.slice(0, request.limit);
-      const wavesById = await this.apiWaveOverviewMapper.mapWaves(
-        pageItems.map((item) => item.wave),
-        ctx,
-        { groupIdsUserIsEligibleFor: eligibleGroups }
-      );
-      return {
-        data: pageItems.map((item) => ({
-          wave: wavesById[item.wave.id],
-          latest_post_timestamp: item.latestPostTimestamp
-        })),
-        next_cursor:
-          candidates.length > request.limit
-            ? this.encodeNextCursor(
-                request.activityType,
-                targetProfileId,
-                pageItems[pageItems.length - 1]
-              )
-            : null
-      };
+      switch (request.activityType) {
+        case ApiProfileWaveActivityType.Created: {
+          const candidates =
+            await this.wavesApiDb.findCreatedProfileWaveActivity(
+              {
+                profileId: targetProfileId,
+                eligibleGroups,
+                limit: request.limit + 1,
+                cursor: this.cursorCodec.decodeCreated(
+                  request.cursor,
+                  targetProfileId
+                )
+              },
+              ctx
+            );
+          return this.buildPage({
+            candidates,
+            limit: request.limit,
+            encodeCursor: (item) =>
+              this.cursorCodec.encodeCreated(targetProfileId, {
+                hasQualifyingPost: item.hasQualifyingPost ? 1 : 0,
+                latestPostTimestamp: item.latestPostTimestamp ?? 0,
+                waveSerialNo: item.waveSerialNo,
+                waveId: item.waveId
+              })
+          });
+        }
+        case ApiProfileWaveActivityType.Recent: {
+          const candidates =
+            await this.wavesApiDb.findRecentProfileWaveActivity(
+              {
+                profileId: targetProfileId,
+                eligibleGroups,
+                limit: request.limit + 1,
+                cursor: this.cursorCodec.decodeRecent(
+                  request.cursor,
+                  targetProfileId
+                )
+              },
+              ctx
+            );
+          return this.buildPage({
+            candidates,
+            limit: request.limit,
+            encodeCursor: (item) =>
+              this.cursorCodec.encodeRecent(targetProfileId, {
+                latestPostTimestamp: item.latestPostTimestamp,
+                waveId: item.waveId
+              })
+          });
+        }
+        default:
+          return assertUnreachable(request.activityType);
+      }
     } finally {
       ctx.timer?.stop(timerKey);
     }
   }
 
-  private async findCandidates(
-    request: GetProfileWaveActivityRequest,
-    targetProfileId: string,
-    eligibleGroups: string[],
-    ctx: RequestContext
-  ): Promise<ProfileWaveActivityDbItem[]> {
-    switch (request.activityType) {
-      case ApiProfileWaveActivityType.Created:
-        return await this.wavesApiDb.findCreatedProfileWaveActivity(
-          {
-            profileId: targetProfileId,
-            eligibleGroups,
-            limit: request.limit + 1,
-            cursor: this.cursorCodec.decodeCreated(
-              request.cursor,
-              targetProfileId
-            )
-          },
-          ctx
-        );
-      case ApiProfileWaveActivityType.Recent:
-        return await this.wavesApiDb.findRecentProfileWaveActivity(
-          {
-            profileId: targetProfileId,
-            eligibleGroups,
-            limit: request.limit + 1,
-            cursor: this.cursorCodec.decodeRecent(
-              request.cursor,
-              targetProfileId
-            )
-          },
-          ctx
-        );
-      default:
-        return assertUnreachable(request.activityType);
-    }
+  private buildPage<TItem extends ProfileWaveActivityDbItem>({
+    candidates,
+    limit,
+    encodeCursor
+  }: {
+    readonly candidates: TItem[];
+    readonly limit: number;
+    readonly encodeCursor: (item: TItem) => string;
+  }): ApiProfileWaveActivityPage {
+    const pageItems = candidates.slice(0, limit);
+    const cursorItem =
+      candidates.length > limit ? pageItems[pageItems.length - 1] : undefined;
+    return {
+      data: pageItems.map((item) => this.mapItem(item)),
+      next_cursor: cursorItem ? encodeCursor(cursorItem) : null
+    };
   }
 
-  private encodeNextCursor(
-    activityType: ApiProfileWaveActivityType,
-    targetProfileId: string,
-    item: ProfileWaveActivityDbItem | undefined
-  ): string | null {
-    if (!item) {
-      return null;
-    }
-    switch (activityType) {
-      case ApiProfileWaveActivityType.Created:
-        return this.cursorCodec.encodeCreated(targetProfileId, {
-          hasQualifyingPost: item.hasQualifyingPost ? 1 : 0,
-          latestPostTimestamp: item.latestPostTimestamp ?? 0,
-          waveSerialNo: Number(item.wave.serial_no),
-          waveId: item.wave.id
-        });
-      case ApiProfileWaveActivityType.Recent:
-        if (item.latestPostTimestamp === null) {
-          throw new Error('Recent profile wave activity requires a timestamp');
-        }
-        return this.cursorCodec.encodeRecent(targetProfileId, {
-          latestPostTimestamp: item.latestPostTimestamp,
-          waveId: item.wave.id
-        });
-      default:
-        return assertUnreachable(activityType);
-    }
+  private mapItem(item: ProfileWaveActivityDbItem): ApiProfileWaveActivity {
+    return {
+      wave_id: item.waveId,
+      wave_name: item.waveName,
+      wave_picture: item.wavePicture,
+      is_private: item.isPrivate,
+      total_drops_count: item.totalDropsCount,
+      latest_post_timestamp: item.latestPostTimestamp
+    };
   }
 }
 
@@ -155,6 +141,5 @@ export const profileWaveActivityApiService = new ProfileWaveActivityApiService(
   identityFetcher,
   userGroupsService,
   wavesApiDb,
-  apiWaveOverviewMapper,
   profileWaveActivityCursorCodec
 );

@@ -21294,11 +21294,26 @@ components:
     ApiProfileWaveActivity:
       type: object
       required:
-        - wave
+        - wave_id
+        - wave_name
+        - wave_picture
+        - is_private
+        - total_drops_count
         - latest_post_timestamp
       properties:
-        wave:
-          $ref: "#/components/schemas/ApiWaveOverview"
+        wave_id:
+          type: string
+        wave_name:
+          type: string
+        wave_picture:
+          type: string
+          nullable: true
+        is_private:
+          type: boolean
+        total_drops_count:
+          type: integer
+          format: int64
+          description: Total retained CHAT drops in the wave, across all authors.
         latest_post_timestamp:
           type: integer
           format: int64

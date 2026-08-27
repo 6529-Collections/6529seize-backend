@@ -10,11 +10,17 @@
  * Do not edit the class manually.
  */
 
-import { ApiWaveOverview } from '../models/ApiWaveOverview';
 import { HttpFile } from '../http/http';
 
 export class ApiProfileWaveActivity {
-    'wave': ApiWaveOverview;
+    'wave_id': string;
+    'wave_name': string;
+    'wave_picture': string | null;
+    'is_private': boolean;
+    /**
+    * Total retained CHAT drops in the wave, across all authors.
+    */
+    'total_drops_count': number;
     /**
     * Latest qualifying authored drop timestamp for the resolved profile in this exact wave, including the wave description drop and replies. Null when a CREATED result has no qualifying authored drop.
     */
@@ -26,10 +32,34 @@ export class ApiProfileWaveActivity {
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "wave",
-            "baseName": "wave",
-            "type": "ApiWaveOverview",
+            "name": "wave_id",
+            "baseName": "wave_id",
+            "type": "string",
             "format": ""
+        },
+        {
+            "name": "wave_name",
+            "baseName": "wave_name",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "wave_picture",
+            "baseName": "wave_picture",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "is_private",
+            "baseName": "is_private",
+            "type": "boolean",
+            "format": ""
+        },
+        {
+            "name": "total_drops_count",
+            "baseName": "total_drops_count",
+            "type": "number",
+            "format": "int64"
         },
         {
             "name": "latest_post_timestamp",
