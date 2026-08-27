@@ -401,9 +401,11 @@ export class IdentitiesService {
   async searchIdentities(
     param: {
       limit: number;
-      handle: string;
+      handle: string | null;
       wave_id: string | null;
       group_id: string | null;
+      classification: ProfileClassification | null;
+      subclassification: string | null;
     },
     ctx: RequestContext
   ): Promise<ApiIdentity[]> {
