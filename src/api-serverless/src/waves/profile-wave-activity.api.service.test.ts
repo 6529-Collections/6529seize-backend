@@ -1,13 +1,13 @@
 import { UserGroupsService } from '@/api/community-members/user-groups.service';
 import { ApiProfileWaveActivityType } from '@/api/generated/models/ApiProfileWaveActivityType';
-import { IdentityFetcher } from '@/api/identities/identity.fetcher';
 import { NotFoundException } from '@/exceptions';
+import { IdentitiesDb } from '@/identities/identities.db';
 import { ProfileWaveActivityApiService } from './profile-wave-activity.api.service';
 import { ProfileWaveActivityCursorCodec } from './profile-wave-activity.cursor';
 import { WavesApiDb } from './waves.api.db';
 
 describe('ProfileWaveActivityApiService', () => {
-  const getProfileIdByIdentityKeyOrThrow = jest.fn();
+  const getProfileIdByIdentityKeyFast = jest.fn();
   const findCreatedProfileWaveActivity = jest.fn();
   const findRecentProfileWaveActivity = jest.fn();
   const decodeCreated = jest.fn();
@@ -15,7 +15,7 @@ describe('ProfileWaveActivityApiService', () => {
   const encodeCreated = jest.fn();
   const encodeRecent = jest.fn();
   const service = new ProfileWaveActivityApiService(
-    { getProfileIdByIdentityKeyOrThrow } as unknown as IdentityFetcher,
+    { getProfileIdByIdentityKeyFast } as unknown as IdentitiesDb,
     {} as UserGroupsService,
     {
       findCreatedProfileWaveActivity,
@@ -31,7 +31,7 @@ describe('ProfileWaveActivityApiService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    getProfileIdByIdentityKeyOrThrow.mockResolvedValue('profile-1');
+    getProfileIdByIdentityKeyFast.mockResolvedValue('profile-1');
     decodeCreated.mockReturnValue(null);
     decodeRecent.mockReturnValue(null);
     encodeCreated.mockReturnValue('next-created');
@@ -105,7 +105,11 @@ describe('ProfileWaveActivityApiService', () => {
       next_cursor: 'next-created'
     });
 
-    expect(getProfileIdByIdentityKeyOrThrow).toHaveBeenCalledTimes(1);
+    expect(getProfileIdByIdentityKeyFast).toHaveBeenCalledTimes(1);
+    expect(getProfileIdByIdentityKeyFast).toHaveBeenCalledWith(
+      { identityKey: 'alice' },
+      expect.any(Object)
+    );
     expect(findCreatedProfileWaveActivity).toHaveBeenCalledWith(
       {
         profileId: 'profile-1',
@@ -153,12 +157,11 @@ describe('ProfileWaveActivityApiService', () => {
     expect(encodeRecent).not.toHaveBeenCalled();
   });
 
-  it('propagates identity not-found errors as API 404 errors', async () => {
-    const error = new NotFoundException('Profile not found');
-    getProfileIdByIdentityKeyOrThrow.mockRejectedValue(error);
+  it('returns an API 404 when the identity does not exist', async () => {
+    getProfileIdByIdentityKeyFast.mockResolvedValue(null);
 
-    await expect(
-      service.getProfileWaveActivity(
+    const error = await service
+      .getProfileWaveActivity(
         {
           identity: 'missing',
           activityType: ApiProfileWaveActivityType.Created,
@@ -166,8 +169,12 @@ describe('ProfileWaveActivityApiService', () => {
         },
         {}
       )
-    ).rejects.toBe(error);
+      .catch((caught: unknown) => caught);
 
+    expect(error).toBeInstanceOf(NotFoundException);
+    if (!(error instanceof NotFoundException)) {
+      throw new Error('Expected a NotFoundException');
+    }
     expect(error.getStatusCode()).toBe(404);
     expect(findCreatedProfileWaveActivity).not.toHaveBeenCalled();
     expect(findRecentProfileWaveActivity).not.toHaveBeenCalled();
