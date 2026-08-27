@@ -1,10 +1,6 @@
 import type { ApiProfileWaveActivity } from '@/api/generated/models/ApiProfileWaveActivity';
 import type { ApiProfileWaveActivityPage } from '@/api/generated/models/ApiProfileWaveActivityPage';
 import { ApiProfileWaveActivityType } from '@/api/generated/models/ApiProfileWaveActivityType';
-import {
-  identityFetcher,
-  IdentityFetcher
-} from '@/api/identities/identity.fetcher';
 import { getGroupsUserIsEligibleForReadContext } from '@/api/waves/wave-access.helpers';
 import {
   profileWaveActivityCursorCodec,
@@ -17,6 +13,8 @@ import {
   UserGroupsService
 } from '@/api/community-members/user-groups.service';
 import { assertUnreachable } from '@/assertions';
+import { NotFoundException } from '@/exceptions';
+import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
 import { RequestContext } from '@/request.context';
 
 export interface GetProfileWaveActivityRequest {
@@ -28,7 +26,7 @@ export interface GetProfileWaveActivityRequest {
 
 export class ProfileWaveActivityApiService {
   public constructor(
-    private readonly identityFetcher: IdentityFetcher,
+    private readonly identitiesDb: IdentitiesDb,
     private readonly userGroupsService: UserGroupsService,
     private readonly wavesApiDb: WavesApiDb,
     private readonly cursorCodec: ProfileWaveActivityCursorCodec
@@ -42,12 +40,17 @@ export class ProfileWaveActivityApiService {
     ctx.timer?.start(timerKey);
     try {
       const [targetProfileId, eligibleGroups] = await Promise.all([
-        this.identityFetcher.getProfileIdByIdentityKeyOrThrow(
+        this.identitiesDb.getProfileIdByIdentityKeyFast(
           { identityKey: request.identity },
           ctx
         ),
         getGroupsUserIsEligibleForReadContext(this.userGroupsService, ctx)
       ]);
+      if (!targetProfileId) {
+        throw new NotFoundException(
+          `Profile not found for identity ${request.identity}`
+        );
+      }
       switch (request.activityType) {
         case ApiProfileWaveActivityType.Created: {
           const candidates =
@@ -137,7 +140,7 @@ export class ProfileWaveActivityApiService {
 }
 
 export const profileWaveActivityApiService = new ProfileWaveActivityApiService(
-  identityFetcher,
+  identitiesDb,
   userGroupsService,
   wavesApiDb,
   profileWaveActivityCursorCodec
