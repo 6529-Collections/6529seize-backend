@@ -7,7 +7,7 @@ import {
   GroupTdhInclusionStrategy,
   UserGroupEntity
 } from '@/entities/IUserGroup';
-import { XTdhGrantTokenMode } from '@/entities/IXTdhGrant';
+import { XTdhGrantEntity, XTdhGrantTokenMode } from '@/entities/IXTdhGrant';
 import { RateMatter } from '@/entities/IRating';
 import { MEMES_CONTRACT } from '@/constants';
 import {
@@ -48,6 +48,13 @@ function buildPreviewGroup(
     excluded_identity_addresses: [],
     ...overrides
   };
+}
+
+function buildGrant(overrides: Partial<XTdhGrantEntity> = {}): XTdhGrantEntity {
+  return Object.assign(new XTdhGrantEntity(), {
+    token_mode: XTdhGrantTokenMode.ALL,
+    ...overrides
+  });
 }
 
 jest.mock('@/redis', () => ({
@@ -245,9 +252,7 @@ describe('UserGroupsService save validation', () => {
   });
 
   it('rejects all-token beneficiary grant matching for full-collection grants', async () => {
-    jest.spyOn(xTdhRepository, 'getGrantById').mockResolvedValue({
-      token_mode: XTdhGrantTokenMode.ALL
-    } as any);
+    jest.spyOn(xTdhRepository, 'getGrantById').mockResolvedValue(buildGrant());
     const userGroupsDb = buildTransactionalDbMock();
     const service = buildService(userGroupsDb as unknown as UserGroupsDb);
 
@@ -861,6 +866,10 @@ describe('UserGroupsDb getAllProfileOwnedTokensByProfileIdGroupedByContract', ()
 });
 
 describe('UserGroupsService draft membership SQL', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it('binds included and excluded draft addresses without persisting a group', async () => {
     const service = buildService();
     const includedAddress = '0x1111111111111111111111111111111111111111';
@@ -991,7 +1000,7 @@ describe('UserGroupsService draft membership SQL', () => {
     const service = buildService();
     const getGrantById = jest
       .spyOn(xTdhRepository, 'getGrantById')
-      .mockResolvedValueOnce({ token_mode: XTdhGrantTokenMode.ALL } as any);
+      .mockResolvedValueOnce(buildGrant());
 
     const result = await service.getSqlAndParamsForPreview(
       buildPreviewGroup({
@@ -1012,7 +1021,7 @@ describe('UserGroupsService draft membership SQL', () => {
       /meme_owners_of_group as[\s\S]*,\s*beneficiaries as[\s\S]*,\s*cm_view as/
     );
     expect(result!.sql).not.toMatch(/,\s*,/);
-    getGrantById.mockRestore();
+    expect(getGrantById).toHaveBeenCalledWith('grant-1', {});
   });
 
   it('rejects an unknown beneficiary grant before evaluating a draft', async () => {
@@ -1028,6 +1037,5 @@ describe('UserGroupsService draft membership SQL', () => {
       )
     ).rejects.toThrow("Can't create group based on grant missing-grant");
     expect(getGrantById).toHaveBeenCalledWith('missing-grant', {});
-    getGrantById.mockRestore();
   });
 });
