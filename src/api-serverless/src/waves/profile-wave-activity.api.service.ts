@@ -117,8 +117,7 @@ export class ProfileWaveActivityApiService {
     readonly encodeCursor: (item: TItem) => string;
   }): ApiProfileWaveActivityPage {
     const pageItems = candidates.slice(0, limit);
-    const cursorItem =
-      candidates.length > limit ? pageItems[pageItems.length - 1] : undefined;
+    const cursorItem = candidates.length > limit ? pageItems.at(-1) : undefined;
     return {
       data: pageItems.map((item) => this.mapItem(item)),
       next_cursor: cursorItem ? encodeCursor(cursorItem) : null
