@@ -12,6 +12,7 @@
 
 import { ApiContentModerationReportReason } from '../models/ApiContentModerationReportReason';
 import { ApiContentModerationReportStatus } from '../models/ApiContentModerationReportStatus';
+import { ApiContentModerationReportedContent } from '../models/ApiContentModerationReportedContent';
 import { ApiDropModerationStatus } from '../models/ApiDropModerationStatus';
 import { HttpFile } from '../http/http';
 
@@ -27,6 +28,7 @@ export class ApiContentModerationUserReport {
     'created_at': number;
     'resolved_at': number | null;
     'drop_status': ApiDropModerationStatus;
+    'reported_content': ApiContentModerationReportedContent;
     /**
     * Opaque cursor for fetching reports after this item.
     */
@@ -101,6 +103,12 @@ export class ApiContentModerationUserReport {
             "name": "drop_status",
             "baseName": "drop_status",
             "type": "ApiDropModerationStatus",
+            "format": ""
+        },
+        {
+            "name": "reported_content",
+            "baseName": "reported_content",
+            "type": "ApiContentModerationReportedContent",
             "format": ""
         },
         {
