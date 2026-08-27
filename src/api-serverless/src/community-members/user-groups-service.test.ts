@@ -987,6 +987,34 @@ describe('UserGroupsService draft membership SQL', () => {
     expect(result!.params).toMatchObject({ level_min: 0, level_max: 0 });
   });
 
+  it('separates NFT and beneficiary grant CTEs with valid delimiters', async () => {
+    const service = buildService();
+    const getGrantById = jest
+      .spyOn(xTdhRepository, 'getGrantById')
+      .mockResolvedValueOnce({ token_mode: XTdhGrantTokenMode.ALL } as any);
+
+    const result = await service.getSqlAndParamsForPreview(
+      buildPreviewGroup({
+        owns_nfts: [
+          {
+            name: ApiGroupOwnsNftNameEnum.Memes,
+            tokens: ['1'],
+            match_mode: GroupNftOwnershipMatchMode.ANY_TOKEN as never
+          }
+        ],
+        is_beneficiary_of_grant_id: 'grant-1'
+      }),
+      {}
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.sql).toMatch(
+      /meme_owners_of_group as[\s\S]*,\s*beneficiaries as[\s\S]*,\s*cm_view as/
+    );
+    expect(result!.sql).not.toMatch(/,\s*,/);
+    getGrantById.mockRestore();
+  });
+
   it('rejects an unknown beneficiary grant before evaluating a draft', async () => {
     const service = buildService();
     const getGrantById = jest

@@ -2277,7 +2277,7 @@ export class UserGroupsService {
   ) {
     let cmPart = ` ${repPart || cicPart || nftsPart ? ', ' : ' '}`;
     if (beneficiariesPart) {
-      cmPart = ` ${beneficiariesPart}, ${cmPart} `;
+      cmPart += `${beneficiariesPart}, `;
     }
     cmPart += ` cm_view as (select i.* from ${IDENTITIES_TABLE} i `;
     if (repPart !== null) {
