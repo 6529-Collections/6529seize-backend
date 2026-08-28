@@ -33,7 +33,8 @@ const ACCEPTED_REMOVED_RESPONSE_MAX_LENGTHS = new Set([
 ]);
 
 const ACCEPTED_RELAXED_REQUIRED_FLAGS = new Set([
-  'GET /v2/waves/{waveId}/search.parameters.query:term.required'
+  'GET /v2/waves/{waveId}/search.parameters.query:term.required',
+  'GET /identities.parameters.query:handle.required'
 ]);
 
 const fixtureRoot = path.resolve(

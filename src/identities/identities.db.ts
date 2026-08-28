@@ -526,7 +526,12 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
   }
 
   async searchIdentitiesWithDisplays(
-    param: { limit: number; handle: string },
+    param: {
+      limit: number;
+      handle: string | null;
+      classification: ProfileClassification | null;
+      subclassification: string | null;
+    },
     base: {
       sql: string;
       params: Record<string, any>;
@@ -534,50 +539,66 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<(IdentityEntity & { display: string | null })[]> {
     ctx.timer?.start(`${this.constructor.name}->searchIdentities`);
+    try {
+      const handle = param.handle?.toLowerCase() ?? null;
+      const queryParams: Record<string, unknown> = {
+        ...(base?.params ?? {}),
+        limit: param.limit
+      };
+      const whereClauses: string[] = [];
 
-    const likeHandle = `%${param.handle.toLowerCase()}%`;
-    const prefixHandle = `${param.handle.toLowerCase()}%`;
-    const handle = param.handle.toLowerCase();
+      if (handle !== null) {
+        whereClauses.push('i.normalised_handle like :likeHandle');
+        queryParams['likeHandle'] = `%${handle}%`;
+        queryParams['prefixHandle'] = `${handle}%`;
+        queryParams['handle'] = handle;
+      }
+      if (param.classification !== null) {
+        whereClauses.push('i.classification = :classification');
+        queryParams['classification'] = param.classification;
+      }
+      if (param.subclassification !== null) {
+        whereClauses.push('i.sub_classification = :subclassification');
+        queryParams['subclassification'] = param.subclassification;
+      }
 
-    const commonParams = {
-      limit: param.limit,
-      likeHandle,
-      prefixHandle,
-      handle
-    };
-
-    const prelude = base?.sql ?? '';
-    const join = base
-      ? `join user_groups_view ug on i.profile_id = ug.profile_id`
-      : '';
-
-    const query = `
-    ${prelude}
-    select i.*, cwt.consolidation_display as display
-    from ${IDENTITIES_TABLE} i
-    ${join}
-    left join ${CONSOLIDATED_WALLETS_TDH_TABLE} cwt
-      on i.consolidation_key = cwt.consolidation_key
-    where i.normalised_handle like :likeHandle
-    order by
-      (i.normalised_handle = :handle) desc,
+      const prelude = base?.sql ?? '';
+      const join = base
+        ? `join user_groups_view ug on i.profile_id = ug.profile_id`
+        : '';
+      const where = whereClauses.length
+        ? `where ${whereClauses.join('\n        and ')}`
+        : '';
+      const orderBy =
+        handle === null
+          ? 'i.level_raw desc'
+          : `(i.normalised_handle = :handle) desc,
       (i.normalised_handle like :prefixHandle) desc,
-      char_length(i.normalised_handle) asc,
-      locate(:handle, i.normalised_handle) asc
-    limit :limit
-  `;
+      i.level_raw desc,
+      i.normalised_handle asc,
+      i.profile_id asc`;
 
-    const queryParams = {
-      ...(base?.params ?? {}),
-      ...commonParams
-    };
+      const query = `
+      ${prelude}
+      select i.*, cwt.consolidation_display as display
+      from ${IDENTITIES_TABLE} i
+      ${join}
+      left join ${CONSOLIDATED_WALLETS_TDH_TABLE} cwt
+        on i.consolidation_key = cwt.consolidation_key
+      ${where}
+      order by
+        ${orderBy}
+      limit :limit
+    `;
 
-    const results = await this.db.execute<
-      IdentityEntity & { display: string | null }
-    >(query, queryParams, { wrappedConnection: ctx.connection });
-
-    ctx.timer?.stop(`${this.constructor.name}->searchIdentities`);
-    return results;
+      return await this.db.execute<IdentityEntity & { display: string | null }>(
+        query,
+        queryParams,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->searchIdentities`);
+    }
   }
 
   async searchWaveMentionCandidates(
