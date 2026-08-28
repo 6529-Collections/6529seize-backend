@@ -149,6 +149,50 @@ type WaveIdRow = {
   wave_id: string;
 };
 
+type RawProfileWaveActivityRow = {
+  wave_id: string;
+  wave_name: string;
+  wave_picture: string | null;
+  is_private: number | string;
+  total_drops_count: number | string;
+  target_latest_post_timestamp: number | string | null;
+};
+
+type RawCreatedProfileWaveActivityRow = RawProfileWaveActivityRow & {
+  has_qualifying_post: number | string;
+  wave_serial_no: number | string;
+};
+
+export interface CreatedProfileWaveActivityCursor {
+  readonly hasQualifyingPost: number;
+  readonly latestPostTimestamp: number;
+  readonly waveSerialNo: number;
+  readonly waveId: string;
+}
+
+export interface RecentProfileWaveActivityCursor {
+  readonly latestPostTimestamp: number;
+  readonly waveId: string;
+}
+
+export interface ProfileWaveActivityDbItem {
+  readonly waveId: string;
+  readonly waveName: string;
+  readonly wavePicture: string | null;
+  readonly isPrivate: boolean;
+  readonly totalDropsCount: number;
+  readonly latestPostTimestamp: number | null;
+}
+
+export interface CreatedProfileWaveActivityDbItem extends ProfileWaveActivityDbItem {
+  readonly hasQualifyingPost: boolean;
+  readonly waveSerialNo: number;
+}
+
+export interface RecentProfileWaveActivityDbItem extends ProfileWaveActivityDbItem {
+  readonly latestPostTimestamp: number;
+}
+
 type UnreadDmDropsCountRow = {
   count: number | string;
 };
@@ -888,6 +932,20 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       decisions_strategy: entity.decisions_strategy
         ? JSON.parse(entity.decisions_strategy)
         : null
+    };
+  }
+
+  private parseProfileWaveActivityRow(
+    row: RawProfileWaveActivityRow
+  ): ProfileWaveActivityDbItem {
+    const parsedTimestamp = Number(row.target_latest_post_timestamp ?? 0);
+    return {
+      waveId: row.wave_id,
+      waveName: row.wave_name,
+      wavePicture: row.wave_picture,
+      isPrivate: Number(row.is_private) === 1,
+      totalDropsCount: Number(row.total_drops_count),
+      latestPostTimestamp: parsedTimestamp > 0 ? parsedTimestamp : null
     };
   }
 
@@ -2177,6 +2235,193 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         .then((result) => result.map((it) => this.parseWaveEntity(it)));
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->findFavouriteWavesOfIdentity`);
+    }
+  }
+
+  public async findCreatedProfileWaveActivity(
+    {
+      profileId,
+      eligibleGroups,
+      limit,
+      cursor
+    }: {
+      readonly profileId: string;
+      readonly eligibleGroups: string[];
+      readonly limit: number;
+      readonly cursor: CreatedProfileWaveActivityCursor | null;
+    },
+    ctx: RequestContext
+  ): Promise<CreatedProfileWaveActivityDbItem[]> {
+    const timerKey = `${this.constructor.name}->findCreatedProfileWaveActivity`;
+    ctx.timer?.start(timerKey);
+    try {
+      const latestPostTimestamp = 'coalesce(wdm.latest_drop_timestamp, 0)';
+      const hasQualifyingPost = `case when ${latestPostTimestamp} > 0 then 1 else 0 end`;
+      const cursorFilter = cursor
+        ? `and (
+            ${hasQualifyingPost} < :cursorHasQualifyingPost
+            or (
+              ${hasQualifyingPost} = :cursorHasQualifyingPost
+              and ${latestPostTimestamp} < :cursorLatestPostTimestamp
+            )
+            or (
+              ${hasQualifyingPost} = :cursorHasQualifyingPost
+              and ${latestPostTimestamp} = :cursorLatestPostTimestamp
+              and w.serial_no < :cursorWaveSerialNo
+            )
+            or (
+              ${hasQualifyingPost} = :cursorHasQualifyingPost
+              and ${latestPostTimestamp} = :cursorLatestPostTimestamp
+              and w.serial_no = :cursorWaveSerialNo
+              and w.id < :cursorWaveId
+            )
+          )`
+        : '';
+      const rows = await this.db.execute<RawCreatedProfileWaveActivityRow>(
+        `
+          select
+            w.id as wave_id,
+            w.name as wave_name,
+            w.picture as wave_picture,
+            case
+              when w.visibility_group_id is not null
+                or parent.visibility_group_id is not null
+              then 1 else 0
+            end as is_private,
+            coalesce(wm.drops_count, 0) as total_drops_count,
+            ${latestPostTimestamp} as target_latest_post_timestamp,
+            ${hasQualifyingPost} as has_qualifying_post,
+            w.serial_no as wave_serial_no
+          from ${WAVES_TABLE} w
+          left join ${WAVE_DROPPER_METRICS_TABLE} wdm
+            on wdm.wave_id = w.id
+            and wdm.dropper_id = :profileId
+          left join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
+          left join ${WAVES_TABLE} parent on parent.id = w.parent_wave_id
+          where w.created_by = :profileId
+            and (w.is_direct_message = false or w.is_direct_message is null)
+            and (
+              w.parent_wave_id is null
+              or parent.is_direct_message = false
+              or parent.is_direct_message is null
+            )
+            and ${this.getWaveAndParentVisibilityFilter(
+              'w',
+              'parent',
+              eligibleGroups,
+              'eligibleGroups'
+            )}
+            ${cursorFilter}
+          order by
+            has_qualifying_post desc,
+            target_latest_post_timestamp desc,
+            w.serial_no desc,
+            w.id desc
+          limit :limit
+        `,
+        {
+          profileId,
+          eligibleGroups,
+          limit,
+          cursorHasQualifyingPost: cursor?.hasQualifyingPost,
+          cursorLatestPostTimestamp: cursor?.latestPostTimestamp,
+          cursorWaveSerialNo: cursor?.waveSerialNo,
+          cursorWaveId: cursor?.waveId
+        },
+        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+      );
+      return rows.map((row) => ({
+        ...this.parseProfileWaveActivityRow(row),
+        hasQualifyingPost: Number(row.has_qualifying_post) === 1,
+        waveSerialNo: Number(row.wave_serial_no)
+      }));
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  public async findRecentProfileWaveActivity(
+    {
+      profileId,
+      eligibleGroups,
+      limit,
+      cursor
+    }: {
+      readonly profileId: string;
+      readonly eligibleGroups: string[];
+      readonly limit: number;
+      readonly cursor: RecentProfileWaveActivityCursor | null;
+    },
+    ctx: RequestContext
+  ): Promise<RecentProfileWaveActivityDbItem[]> {
+    const timerKey = `${this.constructor.name}->findRecentProfileWaveActivity`;
+    ctx.timer?.start(timerKey);
+    try {
+      const cursorFilter = cursor
+        ? `and (
+            wdm.latest_drop_timestamp < :cursorLatestPostTimestamp
+            or (
+              wdm.latest_drop_timestamp = :cursorLatestPostTimestamp
+              and wdm.wave_id < :cursorWaveId
+            )
+          )`
+        : '';
+      const rows = await this.db.execute<RawProfileWaveActivityRow>(
+        `
+          select
+            w.id as wave_id,
+            w.name as wave_name,
+            w.picture as wave_picture,
+            case
+              when w.visibility_group_id is not null
+                or parent.visibility_group_id is not null
+              then 1 else 0
+            end as is_private,
+            coalesce(wm.drops_count, 0) as total_drops_count,
+            wdm.latest_drop_timestamp as target_latest_post_timestamp
+          from ${WAVE_DROPPER_METRICS_TABLE} wdm
+          join ${WAVES_TABLE} w on w.id = wdm.wave_id
+          left join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
+          left join ${WAVES_TABLE} parent on parent.id = w.parent_wave_id
+          where wdm.dropper_id = :profileId
+            and wdm.latest_drop_timestamp > 0
+            and (w.is_direct_message = false or w.is_direct_message is null)
+            and (
+              w.parent_wave_id is null
+              or parent.is_direct_message = false
+              or parent.is_direct_message is null
+            )
+            and ${this.getWaveAndParentVisibilityFilter(
+              'w',
+              'parent',
+              eligibleGroups,
+              'eligibleGroups'
+            )}
+            ${cursorFilter}
+          order by wdm.latest_drop_timestamp desc, wdm.wave_id desc
+          limit :limit
+        `,
+        {
+          profileId,
+          eligibleGroups,
+          limit,
+          cursorLatestPostTimestamp: cursor?.latestPostTimestamp,
+          cursorWaveId: cursor?.waveId
+        },
+        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+      );
+      return rows.map((row) => {
+        const item = this.parseProfileWaveActivityRow(row);
+        if (item.latestPostTimestamp === null) {
+          throw new Error('Recent profile wave activity requires a timestamp');
+        }
+        return {
+          ...item,
+          latestPostTimestamp: item.latestPostTimestamp
+        };
+      });
+    } finally {
+      ctx.timer?.stop(timerKey);
     }
   }
 
