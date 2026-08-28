@@ -1672,7 +1672,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         from ${CONTENT_MODERATION_REPORTS_TABLE}
         where reporter_profile_id = :reporterProfileId
           and drop_id = :dropId
-          and status = '${ContentReportStatus.OPEN}'
+          and status <> '${ContentReportStatus.WITHDRAWN}'
         limit 1
       `,
       input,

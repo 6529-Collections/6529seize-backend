@@ -468,7 +468,7 @@ describe('ContentModerationDb', () => {
     );
   });
 
-  it('rejects a second open report from the same profile for a drop', async () => {
+  it('rejects a second non-withdrawn report from the same profile for a drop', async () => {
     const { db, executor } = createDb();
     const connection = {} as any;
     executor.oneOrNull
@@ -493,6 +493,9 @@ describe('ContentModerationDb', () => {
     ).rejects.toThrow('already reported');
     expect(createReportSpy).not.toHaveBeenCalled();
     expect(executor.oneOrNull.mock.calls[0]?.[0]).toContain('for update');
+    expect(executor.oneOrNull.mock.calls[1]?.[0]).toContain(
+      `status <> '${ContentReportStatus.WITHDRAWN}'`
+    );
   });
 
   it('withdraws an open report and restores an AI-only quarantine', async () => {

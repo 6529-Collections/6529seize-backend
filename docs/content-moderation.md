@@ -138,9 +138,10 @@ transaction containing:
 - a private evidence snapshot of the drop and available parent context; and
 - the reporter's personal hide and any requested profile block.
 
-Duplicate open reports by the same reporter and drop are rejected. Report
-volume is limited per profile by `CONTENT_MODERATION_REPORTS_PER_HOUR`, which
-defaults to `100`.
+Duplicate non-withdrawn reports by the same reporter and drop are rejected.
+Other profiles may still report the same drop independently. Report volume is
+limited per profile by `CONTENT_MODERATION_REPORTS_PER_HOUR`, which defaults to
+`100`.
 
 `GET /content-moderation/reports/mine` returns a stable cursor-paginated list of
 the authenticated profile's own reports for the Preferences Reports view. It
@@ -162,8 +163,9 @@ is an audited status transition rather than deletion, leaves the personal hide
 unchanged, and has no effect on reports from other profiles. If the withdrawn
 report was the only open report and its AI assessment alone caused an urgent
 quarantine, the drop returns to `VISIBLE`; a human moderator quarantine is
-never undone by withdrawal. Resolved reports cannot be withdrawn, and an
-allowed resolution permits a later new report.
+never undone by withdrawal. Resolved reports cannot be withdrawn or reported
+again by the same profile. A profile may submit a new report only after
+withdrawing its earlier open report.
 
 ### Report assessment
 
