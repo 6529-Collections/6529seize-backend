@@ -138,20 +138,23 @@ transaction containing:
 - a private evidence snapshot of the drop and available parent context; and
 - the reporter's personal hide and any requested profile block.
 
-Duplicate open reports by the same reporter and drop are rejected. Report
-volume is limited per profile by `CONTENT_MODERATION_REPORTS_PER_HOUR`, which
-defaults to `100`.
+Duplicate non-withdrawn reports by the same reporter and drop are rejected.
+Other profiles may still report the same drop independently. Report volume is
+limited per profile by `CONTENT_MODERATION_REPORTS_PER_HOUR`, which defaults to
+`100`.
 
 `GET /content-moderation/reports/mine` returns a stable cursor-paginated list of
 the authenticated profile's own reports for the Preferences Reports view. It
 includes author identity, the submitted reason and notes, report state, public
-outcome, global drop state, and a reporter-safe snapshot of the reported post.
-The snapshot lets the reporter recognize content after moderators remove it,
-but excludes reply-parent context, upload and attachment identifiers, hashes,
-scanner verdicts, and other evidence-only metadata. The endpoint is strictly
-scoped to the caller and does not expose AI assessments, internal moderator
-notes or reasons, moderator identity, the full private evidence snapshot, or
-reports submitted by other profiles.
+outcome, global drop state, current wave name and picture, and a reporter-safe
+snapshot of the reported post. The snapshot lets the reporter recognize
+content after moderators remove it, while the wave metadata preserves its
+origin and supports navigation for existing reports. It excludes reply-parent
+context, upload and attachment identifiers, hashes, scanner verdicts, and other
+evidence-only metadata. The endpoint is strictly scoped to the caller and does
+not expose AI assessments, internal moderator notes or reasons, moderator
+identity, the full private evidence snapshot, or reports submitted by other
+profiles.
 
 The latest non-withdrawn report status is returned in authenticated viewer
 presentation data. While their report remains open, the reporter may withdraw
@@ -160,8 +163,9 @@ is an audited status transition rather than deletion, leaves the personal hide
 unchanged, and has no effect on reports from other profiles. If the withdrawn
 report was the only open report and its AI assessment alone caused an urgent
 quarantine, the drop returns to `VISIBLE`; a human moderator quarantine is
-never undone by withdrawal. Resolved reports cannot be withdrawn, and an
-allowed resolution permits a later new report.
+never undone by withdrawal. Resolved reports cannot be withdrawn or reported
+again by the same profile. A profile may submit a new report only after
+withdrawing its earlier open report.
 
 ### Report assessment
 
