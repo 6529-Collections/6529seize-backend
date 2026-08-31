@@ -964,6 +964,16 @@ function appendVideoAnimationDetailValueIssues(
   if (hasOwn(details, 'height') && !isPositiveInteger(details.height)) {
     issues.push('height must be positive');
   }
+  if (
+    hasOwn(details, 'codecs') &&
+    (!Array.isArray(details.codecs) ||
+      details.codecs.length === 0 ||
+      details.codecs.some(
+        (codec) => typeof codec !== 'string' || codec.trim() === ''
+      ))
+  ) {
+    issues.push('codecs must contain non-empty strings');
+  }
   if (issues.length > 0) {
     invalid.push(`MEMES animation_details (${issues.join(', ')})`);
   }

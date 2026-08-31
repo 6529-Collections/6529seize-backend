@@ -425,6 +425,31 @@ describe('validateMintingClaimReadyForArweaveUpload', () => {
       )
     ).rejects.toThrow(/MEMES animation_details/);
   });
+
+  it.each([[], [''], ''])(
+    'rejects otherwise valid video details with empty codecs: %p',
+    async (codecs) => {
+      await expect(
+        validateMintingClaimReadyForArweaveUpload(
+          baseClaim({
+            animation_url: 'https://cdn.example.com/animation.mp4',
+            animation_details: JSON.stringify({
+              bytes: 456,
+              format: 'MP4',
+              duration: 4,
+              sha256: 'b'.repeat(64),
+              width: 1000,
+              height: 1000,
+              codecs
+            })
+          }),
+          MEMES_CONTRACT
+        )
+      ).rejects.toThrow(
+        'MEMES animation_details (codecs must contain non-empty strings)'
+      );
+    }
+  );
 });
 
 describe('uploadMintingClaimToArweave', () => {
@@ -623,7 +648,7 @@ describe('uploadMintingClaimToArweave', () => {
         animation_location: 'animation-checkpoint-tx',
         animation_details: JSON.stringify({
           bytes: 15,
-          codecs: 'avc1',
+          codecs: ['avc1'],
           duration: 1,
           format: 'MP4',
           sha256:
