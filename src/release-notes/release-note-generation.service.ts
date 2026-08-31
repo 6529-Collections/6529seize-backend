@@ -12,7 +12,10 @@ import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { dropsDb, DropsDb, ReleaseNoteDropReference } from '@/drops/drops.db';
 import { createHash } from 'node:crypto';
-import { GITHUB_TO_6529_HANDLES } from './release-note-contributors.config';
+import {
+  GITHUB_TO_6529_HANDLES,
+  isGithubContributorLogin
+} from './release-note-contributors.config';
 import { releaseNotesBedrockPrompter } from './release-notes-bedrock.prompter';
 import {
   GitHubReleaseContext,
@@ -659,18 +662,20 @@ export class ReleaseNoteGenerationService {
     );
     if (!context) {
       throw new Error(
-        `No previous successful production Desktop Publish run was found for v${version}`
+        `No previous successful production Desktop release run was found for v${version}`
       );
     }
     if (!context.pull_requests.length && !context.commit_messages?.length) {
       throw new Error(`No Core changes were found for Desktop v${version}`);
     }
     const bullets = await this.generateDesktopBullets(request, context);
+    const publisher = await this.resolvePublisher(request);
     const createDropRequest = this.buildDesktopCreateDropRequest({
       request,
       version,
       bullets,
       frontendRelease,
+      publisher,
       publicationId,
       waveId
     });
@@ -757,6 +762,7 @@ export class ReleaseNoteGenerationService {
     version,
     bullets,
     frontendRelease,
+    publisher,
     publicationId,
     waveId
   }: {
@@ -764,9 +770,18 @@ export class ReleaseNoteGenerationService {
     readonly version: string;
     readonly bullets: string[];
     readonly frontendRelease: FrontendReleaseNoteReference;
+    readonly publisher: ContributorResolution;
     readonly publicationId: string;
     readonly waveId: string;
   }): ApiCreateDropRequest {
+    const triggeredByGithubLogin = request.triggered_by_github_login?.trim();
+    const publisherCredit =
+      triggeredByGithubLogin && isGithubContributorLogin(triggeredByGithubLogin)
+        ? this.formatContributors(
+            [triggeredByGithubLogin],
+            publisher.mentionsByGithubLogin
+          )
+        : null;
     const releaseBullets = [
       `- Web Updates through ${formatMarkdownLink(frontendRelease.label, frontendRelease.url)}`,
       ...bullets.map((bullet) => `- ${bullet}`)
@@ -789,14 +804,18 @@ export class ReleaseNoteGenerationService {
       formatMarkdownLink(
         `Linux v${version}`,
         `${DESKTOP_DOWNLOAD_BASE_URL}/linux/links/${version}.html`
-      )
+      ),
+      ...(publisherCredit ? ['', `Published by ${publisherCredit}`] : [])
     ].join('\n');
 
     return {
       title: null,
       drop_type: ApiDropType.Chat,
       parts: [{ content, quoted_drop: null, media: [] }],
-      mentioned_users: [],
+      mentioned_users: publisher.mentionedProfiles.map((profile) => ({
+        mentioned_profile_id: profile.profileId,
+        handle_in_content: profile.handle
+      })),
       mentioned_groups: [],
       referenced_nfts: [],
       metadata: getReleaseNoteMetadata(request, publicationId),
@@ -921,10 +940,25 @@ export class ReleaseNoteGenerationService {
   private async resolveContributors(
     pullRequests: ReleasePullRequestContext[]
   ): Promise<ContributorResolution> {
+    return this.resolveGithubLogins(
+      pullRequests.flatMap((pullRequest) => pullRequest.contributors)
+    );
+  }
+
+  private async resolvePublisher(
+    request: ReleaseNoteGenerationRequest
+  ): Promise<ContributorResolution> {
+    const githubLogin = request.triggered_by_github_login?.trim();
+    return this.resolveGithubLogins(
+      githubLogin && isGithubContributorLogin(githubLogin) ? [githubLogin] : []
+    );
+  }
+
+  private async resolveGithubLogins(
+    githubLogins: readonly string[]
+  ): Promise<ContributorResolution> {
     const mappedHandlesByGithubLogin = new Map<string, string>();
-    for (const login of pullRequests.flatMap(
-      (pullRequest) => pullRequest.contributors
-    )) {
+    for (const login of githubLogins) {
       const normalizedLogin = login.toLowerCase();
       const handle = this.contributorsConfig[normalizedLogin]?.trim();
       if (handle) {
