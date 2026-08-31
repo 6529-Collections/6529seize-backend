@@ -388,6 +388,43 @@ describe('validateMintingClaimReadyForArweaveUpload', () => {
       'Invalid fields for Arweave upload: MEMES animation_details (missing keys: sha256).'
     );
   });
+
+  it('rejects placeholder image details before Arweave upload', async () => {
+    await expect(
+      validateMintingClaimReadyForArweaveUpload(
+        baseClaim({
+          image_details: JSON.stringify({
+            bytes: 0,
+            format: 'PNG',
+            sha256: '',
+            width: 0,
+            height: 0
+          })
+        }),
+        MEMES_CONTRACT
+      )
+    ).rejects.toThrow(/MEMES image_details/);
+  });
+
+  it('rejects placeholder video details before Arweave upload', async () => {
+    await expect(
+      validateMintingClaimReadyForArweaveUpload(
+        baseClaim({
+          animation_url: 'https://cdn.example.com/animation.mp4',
+          animation_details: JSON.stringify({
+            bytes: 0,
+            format: 'MP4',
+            duration: 0,
+            sha256: '',
+            width: 0,
+            height: 0,
+            codecs: []
+          })
+        }),
+        MEMES_CONTRACT
+      )
+    ).rejects.toThrow(/MEMES animation_details/);
+  });
 });
 
 describe('uploadMintingClaimToArweave', () => {

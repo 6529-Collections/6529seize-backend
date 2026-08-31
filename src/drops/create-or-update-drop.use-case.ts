@@ -112,6 +112,7 @@ import {
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-media';
 import { Logger } from '@/logging';
+import { validateMainStageMediaSize } from '@/drops/main-stage-media-validator';
 
 const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
 const GIPHY_CHAT_LINK_HOST_REGEX = /^media\d*\.giphy\.com$/;
@@ -198,9 +199,17 @@ export function validateDropMediaAttachment({
   const parsedUrl = parseDropMediaUrl(url);
 
   if (
+    mimeType === 'model/gltf-binary' &&
+    !parsedUrl.pathname.toLowerCase().endsWith('.glb')
+  ) {
+    throw new BadRequestException('GLB media must use a .glb filename');
+  }
+
+  if (
     mimeType.startsWith('image/') ||
     mimeType.startsWith('video/') ||
-    mimeType.startsWith('audio/')
+    mimeType.startsWith('audio/') ||
+    mimeType === 'model/gltf-binary'
   ) {
     if (parsedUrl.origin !== CLOUDFRONT_LINK) {
       throw new BadRequestException(
@@ -1180,6 +1189,12 @@ export class CreateOrUpdateDropUseCase {
           mimeType: media.mime_type,
           authorId
         });
+        if (
+          model.drop_type === DropType.PARTICIPATORY &&
+          wave.id === env.getStringOrNull('MAIN_STAGE_WAVE_ID')
+        ) {
+          await validateMainStageMediaSize(media.url);
+        }
       }
     }
     await this.verifyAttachments({ model }, { timer, connection });

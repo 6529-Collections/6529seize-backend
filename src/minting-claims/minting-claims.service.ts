@@ -41,12 +41,13 @@ const MEME_CALENDAR_TIMEOUT_MS = 10_000;
 
 async function resolveAnimationDetails(
   animationUrl: string,
-  existing: MintingClaimAnimationDetails | null | undefined
+  existing: MintingClaimAnimationDetails | null | undefined,
+  animationKind: MintingClaimRowInput['animation_kind']
 ): Promise<MintingClaimAnimationDetails | null | undefined> {
-  if (existing && 'format' in existing && existing.format === 'HTML') {
+  if (animationKind === 'html') {
     return animationDetailsHtml();
   }
-  if (existing && 'format' in existing && existing.format === 'GLB') {
+  if (animationKind === 'glb') {
     try {
       return await computeAnimationDetailsGlb(animationUrl);
     } catch {
@@ -327,7 +328,8 @@ export class MintingClaimsService {
     if (row.animation_url) {
       const resolved = await resolveAnimationDetails(
         row.animation_url,
-        row.animation_details ?? undefined
+        row.animation_details ?? undefined,
+        row.animation_kind
       );
       animation_details = resolved ?? row.animation_details;
     }

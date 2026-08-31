@@ -2407,6 +2407,36 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).toThrow('Unsupported mime type text/csv');
   });
 
+  it('accepts GLB uploads from the media CDN', () => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'model/gltf-binary',
+        url: `${CLOUDFRONT_LINK}/drops/author_1/file.glb`,
+        dropType: DropType.PARTICIPATORY
+      })
+    ).not.toThrow();
+  });
+
+  it('rejects GLB attachments from an external host', () => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'model/gltf-binary',
+        url: 'https://example.com/file.glb',
+        dropType: DropType.PARTICIPATORY
+      })
+    ).toThrow(`Media needs to come from ${CLOUDFRONT_LINK}`);
+  });
+
+  it('rejects JSON GLTF filenames labeled as binary GLB', () => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'model/gltf-binary',
+        url: `${CLOUDFRONT_LINK}/drops/author_1/file.gltf`,
+        dropType: DropType.PARTICIPATORY
+      })
+    ).toThrow('GLB media must use a .glb filename');
+  });
+
   it('preserves html handling', () => {
     expect(() =>
       validateDropMediaAttachment({

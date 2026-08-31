@@ -11,9 +11,11 @@ import * as priorityAlertsContext from '@/priority-alerts.context';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
 import type { SQSHandler } from 'aws-lambda';
+import { BadRequestException } from '@/exceptions';
 
 const logger = Logger.get('CLAIMS_MEDIA_ARWEAVE_UPLOADER');
 const ALERT_TITLE = 'Claims Media Arweave Uploader';
+const MAX_RECEIVE_COUNT = 10;
 
 function buildUploadErrorWithContext(
   contract: string,
@@ -50,9 +52,10 @@ function parseRecordBody(body: string): { contract: string; claim_id: number } {
   return { contract: contract.toLowerCase(), claim_id: claimId };
 }
 
-async function processMintingClaimUpload(
+export async function processMintingClaimUpload(
   contract: string,
-  claimId: number
+  claimId: number,
+  receiveCount: number
 ): Promise<void> {
   logger.info(
     `Processing minting claim media upload for contract=${contract} claim_id=${claimId}`
@@ -81,7 +84,18 @@ async function processMintingClaimUpload(
   );
 
   try {
-    const uploadResult = await uploadMintingClaimToArweave(contract, claim);
+    const uploadResult = await uploadMintingClaimToArweave(contract, claim, {
+      onImageUploaded: async (locationUrl) => {
+        await updateMintingClaim(contract, claimId, {
+          image_location: arweaveTxIdFromUrl(locationUrl)
+        });
+      },
+      onAnimationUploaded: async (locationUrl) => {
+        await updateMintingClaim(contract, claimId, {
+          animation_location: arweaveTxIdFromUrl(locationUrl)
+        });
+      }
+    });
     await updateMintingClaim(contract, claimId, {
       image_location: arweaveTxIdFromUrl(uploadResult.imageLocationUrl),
       animation_location: uploadResult.animationLocationUrl
@@ -94,19 +108,41 @@ async function processMintingClaimUpload(
     logger.error(
       `Failed to upload claim media to Arweave for contract=${contract} claim_id=${claimId}, error=${error}`
     );
-    try {
+    const isTerminalValidationFailure = error instanceof BadRequestException;
+    if (isTerminalValidationFailure) {
       await updateMintingClaim(contract, claimId, { media_uploading: false });
-    } catch (rollbackError) {
-      logger.error('Failed to reset media_uploading after upload error', {
-        contract,
-        claimId,
-        rollbackError
-      });
+    } else if (receiveCount >= MAX_RECEIVE_COUNT) {
+      try {
+        await updateMintingClaim(contract, claimId, { media_uploading: false });
+      } catch (rollbackError) {
+        logger.error('Failed to reset media_uploading after final retry', {
+          contract,
+          claimId,
+          rollbackError
+        });
+      }
     }
-    await priorityAlertsContext.sendPriorityAlert(
-      ALERT_TITLE,
-      buildUploadErrorWithContext(contract, claimId, error)
-    );
+    if (
+      isTerminalValidationFailure ||
+      receiveCount === 1 ||
+      receiveCount >= MAX_RECEIVE_COUNT
+    ) {
+      try {
+        await priorityAlertsContext.sendPriorityAlert(
+          ALERT_TITLE,
+          buildUploadErrorWithContext(contract, claimId, error)
+        );
+      } catch (alertError) {
+        logger.error('Failed to send claims media upload priority alert', {
+          contract,
+          claimId,
+          alertError
+        });
+      }
+    }
+    if (isTerminalValidationFailure) {
+      return;
+    }
     throw error;
   }
 }
@@ -116,7 +152,14 @@ const sqsHandler: SQSHandler = async (event) => {
     async () => {
       for (const record of event.Records) {
         const message = parseRecordBody(record.body);
-        await processMintingClaimUpload(message.contract, message.claim_id);
+        const receiveCount = Number(record.attributes.ApproximateReceiveCount);
+        await processMintingClaimUpload(
+          message.contract,
+          message.claim_id,
+          Number.isSafeInteger(receiveCount) && receiveCount > 0
+            ? receiveCount
+            : 1
+        );
       }
     },
     { logger }
