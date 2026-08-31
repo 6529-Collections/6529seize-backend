@@ -121,9 +121,7 @@ describe('helpBotReplyLoop daily activity credits', () => {
       hasMore: false
     });
 
-    await expect(
-      processDailyActivityCreditWakeup()
-    ).resolves.toBeUndefined();
+    await expect(processDailyActivityCreditWakeup()).resolves.toBeUndefined();
     expect(sendWakeup).not.toHaveBeenCalled();
   });
 
