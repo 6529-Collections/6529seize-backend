@@ -201,7 +201,8 @@ describe('HelpBotDailyActivityCreditQueueService', () => {
           attempts: 7
         }
       ])
-      .mockResolvedValueOnce({ affectedRows: 1 });
+      .mockResolvedValueOnce({ affectedRows: 1 })
+      .mockResolvedValueOnce([{ profile_id: 'profile-2' }]);
     creditsService.grantDailyActivityCredits.mockRejectedValue(
       new Error('Lock wait timeout exceeded')
     );
@@ -210,7 +211,7 @@ describe('HelpBotDailyActivityCreditQueueService', () => {
       processed: false,
       failed: true,
       dead: false,
-      hasMore: false
+      hasMore: true
     });
     expect(executor.execute).toHaveBeenNthCalledWith(
       2,
@@ -233,7 +234,8 @@ describe('HelpBotDailyActivityCreditQueueService', () => {
           attempts: 99
         }
       ])
-      .mockResolvedValueOnce({ affectedRows: 1 });
+      .mockResolvedValueOnce({ affectedRows: 1 })
+      .mockResolvedValueOnce([]);
     creditsService.grantDailyActivityCredits.mockRejectedValue(
       new Error('persistent failure')
     );
@@ -247,6 +249,34 @@ describe('HelpBotDailyActivityCreditQueueService', () => {
     expect(executor.execute.mock.calls[1][1]).toEqual(
       expect.objectContaining({
         nextStatus: HelpBotDailyActivityCreditRequestStatus.DEAD
+      })
+    );
+  });
+
+  it('parks a malformed persisted activity date on its first attempt', async () => {
+    const { creditsService, executor, service } = createService();
+    executor.execute
+      .mockResolvedValueOnce([
+        {
+          profile_id: 'profile-1',
+          activity_date: 'not-a-date',
+          attempts: 0
+        }
+      ])
+      .mockResolvedValueOnce({ affectedRows: 1 })
+      .mockResolvedValueOnce([]);
+
+    await expect(service.processNextRequest({})).resolves.toEqual({
+      processed: false,
+      failed: true,
+      dead: true,
+      hasMore: false
+    });
+    expect(creditsService.grantDailyActivityCredits).not.toHaveBeenCalled();
+    expect(executor.execute.mock.calls[1][1]).toEqual(
+      expect.objectContaining({
+        nextStatus: HelpBotDailyActivityCreditRequestStatus.DEAD,
+        lastError: 'Invalid help bot activity date: not-a-date'
       })
     );
   });

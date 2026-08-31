@@ -108,6 +108,8 @@ resources:
         ScheduleExpression: rate(1 minute)
         State: ENABLED
         Targets:
+          # Scheduled events include a unique id and timestamp, intentionally
+          # producing one distinct fallback wakeup per minute.
           - Arn: !GetAtt HelpBotDailyActivityCreditsQueue.Arn
             Id: HelpBotDailyActivityCreditsQueueTarget
             SqsParameters:

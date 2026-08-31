@@ -33,6 +33,14 @@ interface PendingRequestRow {
   readonly attempts: number | string;
 }
 
+class InvalidHelpBotActivityDateError extends Error {
+  public constructor(activityDate: string) {
+    super(`Invalid help bot activity date: ${activityDate}`);
+    this.name = InvalidHelpBotActivityDateError.name;
+    Object.setPrototypeOf(this, InvalidHelpBotActivityDateError.prototype);
+  }
+}
+
 export interface ProcessDailyActivityCreditRequestResult {
   readonly processed: boolean;
   readonly failed: boolean;
@@ -145,7 +153,9 @@ export class HelpBotDailyActivityCreditQueueService extends LazyDbAccessCompatib
           hasMore: await this.hasPendingRequests(ctx)
         };
       } catch (error) {
-        const dead = Number(row.attempts) + 1 >= MAX_PROCESSING_ATTEMPTS;
+        const dead =
+          error instanceof InvalidHelpBotActivityDateError ||
+          Number(row.attempts) + 1 >= MAX_PROCESSING_ATTEMPTS;
         await this.recordFailure(row, error, dead, ctx);
         this.logger.error('Failed to process help bot daily activity credit', {
           profileId: row.profile_id,
@@ -154,7 +164,12 @@ export class HelpBotDailyActivityCreditQueueService extends LazyDbAccessCompatib
           dead,
           error
         });
-        return { processed: false, failed: true, dead, hasMore: false };
+        return {
+          processed: false,
+          failed: true,
+          dead,
+          hasMore: await this.hasPendingRequests(ctx)
+        };
       }
     } finally {
       ctx.timer?.stop(timerName);
@@ -191,6 +206,8 @@ export class HelpBotDailyActivityCreditQueueService extends LazyDbAccessCompatib
   private async getNextPendingRequest(
     ctx: RequestContext
   ): Promise<PendingRequestRow | null> {
+    // The dedicated Lambda's reserved concurrency of one and the queue's
+    // single FIFO message group serialize this select-then-update flow.
     const rows = await this.db.execute<PendingRequestRow>(
       `
         SELECT profile_id, activity_date, attempts
@@ -307,7 +324,7 @@ export class HelpBotDailyActivityCreditQueueService extends LazyDbAccessCompatib
       !Number.isFinite(millis) ||
       getHelpBotDailyActivitySourceId(millis) !== activityDate
     ) {
-      throw new Error(`Invalid help bot activity date: ${activityDate}`);
+      throw new InvalidHelpBotActivityDateError(activityDate);
     }
     return millis;
   }

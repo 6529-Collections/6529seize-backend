@@ -125,6 +125,19 @@ describe('helpBotReplyLoop daily activity credits', () => {
     expect(sendWakeup).not.toHaveBeenCalled();
   });
 
+  it('queues a continuation for other due requests after one failure', async () => {
+    processNextRequest.mockResolvedValue({
+      processed: false,
+      failed: true,
+      dead: false,
+      hasMore: true
+    });
+
+    await processDailyActivityCreditWakeup();
+
+    expect(sendWakeup).toHaveBeenCalledTimes(1);
+  });
+
   it('emits the terminal marker and acknowledges a parked dead request', async () => {
     const result = {
       processed: false,
