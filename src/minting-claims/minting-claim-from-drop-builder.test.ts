@@ -117,4 +117,30 @@ describe('buildMintingClaimRowFromDrop', () => {
       ])
     );
   });
+
+  it.each([
+    ['video/mp4', 'video'],
+    ['model/gltf-binary', 'glb']
+  ] as const)(
+    'leaves %s inspection details absent until enrichment succeeds',
+    (mimeType, animationKind) => {
+      const row = buildMintingClaimRowFromDrop(
+        'drop-1',
+        MEMES_CONTRACT,
+        520,
+        [
+          {
+            mime_type: mimeType,
+            url: `https://cdn.example.com/artwork.${animationKind === 'glb' ? 'glb' : 'mp4'}`
+          } as any
+        ],
+        [],
+        15
+      );
+
+      expect(row.animation_url).not.toBeNull();
+      expect(row.animation_details).toBeNull();
+      expect(row.animation_kind).toBe(animationKind);
+    }
+  );
 });

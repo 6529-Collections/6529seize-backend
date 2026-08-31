@@ -388,6 +388,68 @@ describe('validateMintingClaimReadyForArweaveUpload', () => {
       'Invalid fields for Arweave upload: MEMES animation_details (missing keys: sha256).'
     );
   });
+
+  it('rejects placeholder image details before Arweave upload', async () => {
+    await expect(
+      validateMintingClaimReadyForArweaveUpload(
+        baseClaim({
+          image_details: JSON.stringify({
+            bytes: 0,
+            format: 'PNG',
+            sha256: '',
+            width: 0,
+            height: 0
+          })
+        }),
+        MEMES_CONTRACT
+      )
+    ).rejects.toThrow(/MEMES image_details/);
+  });
+
+  it('rejects placeholder video details before Arweave upload', async () => {
+    await expect(
+      validateMintingClaimReadyForArweaveUpload(
+        baseClaim({
+          animation_url: 'https://cdn.example.com/animation.mp4',
+          animation_details: JSON.stringify({
+            bytes: 0,
+            format: 'MP4',
+            duration: 0,
+            sha256: '',
+            width: 0,
+            height: 0,
+            codecs: []
+          })
+        }),
+        MEMES_CONTRACT
+      )
+    ).rejects.toThrow(/MEMES animation_details/);
+  });
+
+  it.each([[], [''], ''])(
+    'rejects otherwise valid video details with empty codecs: %p',
+    async (codecs) => {
+      await expect(
+        validateMintingClaimReadyForArweaveUpload(
+          baseClaim({
+            animation_url: 'https://cdn.example.com/animation.mp4',
+            animation_details: JSON.stringify({
+              bytes: 456,
+              format: 'MP4',
+              duration: 4,
+              sha256: 'b'.repeat(64),
+              width: 1000,
+              height: 1000,
+              codecs
+            })
+          }),
+          MEMES_CONTRACT
+        )
+      ).rejects.toThrow(
+        'MEMES animation_details (codecs must contain non-empty strings)'
+      );
+    }
+  );
 });
 
 describe('uploadMintingClaimToArweave', () => {
@@ -550,6 +612,63 @@ describe('uploadMintingClaimToArweave', () => {
     );
     expect(uploadedMetadata.image_url).toBe(
       'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
+    );
+  });
+
+  it('reuses checkpointed Arweave transactions when source hashes still match', async () => {
+    uploadFileMock.mockReset();
+    uploadFileMock.mockResolvedValueOnce({
+      url: 'https://arweave.net/_MSzxiISR3AgFJqhzBoAbCtFGMglSqRmZi5NTgZLfL4'
+    });
+    fetchPublicUrlToBufferMock
+      .mockResolvedValueOnce({
+        buffer: Buffer.from('image-bytes'),
+        contentType: 'image/png',
+        finalUrl: 'https://cdn.example.com/image.png'
+      })
+      .mockResolvedValueOnce({
+        buffer: Buffer.from('animation-bytes'),
+        contentType: 'video/mp4',
+        finalUrl: 'https://cdn.example.com/animation.mp4'
+      });
+
+    const result = await uploadMintingClaimToArweave(
+      MEMES_CONTRACT,
+      baseClaim({
+        image_location: 'image-checkpoint-tx',
+        image_details: JSON.stringify({
+          bytes: 11,
+          format: 'PNG',
+          sha256:
+            '2c8648d103e3dd7ad87660da0f126a1443b6d21ac1bd3ec000c5e24e2373a90c',
+          width: 800,
+          height: 800
+        }),
+        animation_url: 'https://cdn.example.com/animation.mp4',
+        animation_location: 'animation-checkpoint-tx',
+        animation_details: JSON.stringify({
+          bytes: 15,
+          codecs: ['avc1'],
+          duration: 1,
+          format: 'MP4',
+          sha256:
+            '79badeea50fb56bc902cf2704ad33da0a69421fdf81b9657066be4eef6014f51',
+          width: 800,
+          height: 800
+        })
+      })
+    );
+
+    expect(result.imageLocationUrl).toBe(
+      'https://arweave.net/image-checkpoint-tx'
+    );
+    expect(result.animationLocationUrl).toBe(
+      'https://arweave.net/animation-checkpoint-tx'
+    );
+    expect(uploadFileMock).toHaveBeenCalledTimes(1);
+    expect(uploadFileMock).toHaveBeenCalledWith(
+      expect.any(Buffer),
+      'application/json'
     );
   });
 

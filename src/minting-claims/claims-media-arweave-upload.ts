@@ -757,6 +757,58 @@ function appendMissingDetailKeysIssue(
   }
 }
 
+function isPositiveInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && Number(value) > 0;
+}
+
+function isPositiveFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+function appendBinaryMediaDetailValueIssues(
+  label: string,
+  details: Record<string, unknown> | null,
+  invalid: string[]
+) {
+  if (details == null) return;
+  const issues: string[] = [];
+  if (hasOwn(details, 'bytes')) {
+    if (!isPositiveInteger(details.bytes)) {
+      issues.push('bytes must be positive');
+    } else if (details.bytes > MAX_MINTING_CLAIM_MEDIA_BYTES) {
+      issues.push('bytes exceeds the Main Stage media limit');
+    }
+  }
+  if (hasOwn(details, 'sha256') && normalizeSha256(details.sha256) == null) {
+    issues.push('sha256 must be a 64-character hexadecimal digest');
+  }
+  if (issues.length > 0) invalid.push(`${label} (${issues.join(', ')})`);
+}
+
+function appendImageDetailValueIssues(
+  details: Record<string, unknown> | null,
+  invalid: string[]
+) {
+  if (details == null) return;
+  appendBinaryMediaDetailValueIssues('MEMES image_details', details, invalid);
+  const issues: string[] = [];
+  if (hasOwn(details, 'width') && !isPositiveInteger(details.width)) {
+    issues.push('width must be positive');
+  }
+  if (hasOwn(details, 'height') && !isPositiveInteger(details.height)) {
+    issues.push('height must be positive');
+  }
+  if (
+    hasOwn(details, 'format') &&
+    (typeof details.format !== 'string' || details.format.trim() === '')
+  ) {
+    issues.push('format must be non-empty');
+  }
+  if (issues.length > 0) {
+    invalid.push(`MEMES image_details (${issues.join(', ')})`);
+  }
+}
+
 function getMemesAnimationMetadataState(metadata: Record<string, unknown>) {
   const hasAnimation = hasOwn(metadata, 'animation');
   const hasAnimationUrl = hasOwn(metadata, 'animation_url');
@@ -859,12 +911,72 @@ function appendMemesAnimationDetailsIssues(
     typeof objectAnimationDetails.format === 'string'
       ? objectAnimationDetails.format
       : null;
+  appendAnimationFormatIssue(objectAnimationDetails, format, invalid);
   appendMissingDetailKeysIssue(
     'MEMES animation_details',
     objectAnimationDetails,
     getRequiredAnimationDetailKeys(format),
     invalid
   );
+  if (format !== 'HTML') {
+    appendBinaryMediaDetailValueIssues(
+      'MEMES animation_details',
+      objectAnimationDetails,
+      invalid
+    );
+  }
+  if (format !== 'HTML' && format !== 'GLB') {
+    appendVideoAnimationDetailValueIssues(objectAnimationDetails, invalid);
+  }
+}
+
+function appendAnimationFormatIssue(
+  details: Record<string, unknown> | null,
+  format: string | null,
+  invalid: string[]
+) {
+  if (
+    details != null &&
+    hasOwn(details, 'format') &&
+    (format == null || !['HTML', 'GLB', 'MP4', 'MOV'].includes(format))
+  ) {
+    invalid.push(
+      'MEMES animation_details (format must be HTML, GLB, MP4, or MOV)'
+    );
+  }
+}
+
+function appendVideoAnimationDetailValueIssues(
+  details: Record<string, unknown> | null,
+  invalid: string[]
+) {
+  if (details == null) return;
+  const issues: string[] = [];
+  if (
+    hasOwn(details, 'duration') &&
+    !isPositiveFiniteNumber(details.duration)
+  ) {
+    issues.push('duration must be positive');
+  }
+  if (hasOwn(details, 'width') && !isPositiveInteger(details.width)) {
+    issues.push('width must be positive');
+  }
+  if (hasOwn(details, 'height') && !isPositiveInteger(details.height)) {
+    issues.push('height must be positive');
+  }
+  if (
+    hasOwn(details, 'codecs') &&
+    (!Array.isArray(details.codecs) ||
+      details.codecs.length === 0 ||
+      details.codecs.some(
+        (codec) => typeof codec !== 'string' || codec.trim() === ''
+      ))
+  ) {
+    issues.push('codecs must contain non-empty strings');
+  }
+  if (issues.length > 0) {
+    invalid.push(`MEMES animation_details (${issues.join(', ')})`);
+  }
 }
 
 function appendMemesMetadataSkeletonIssues(
@@ -885,6 +997,10 @@ function appendMemesMetadataSkeletonIssues(
     'MEMES image_details',
     metadata.image_details as Record<string, unknown> | null,
     IMAGE_DETAILS_KEYS,
+    invalid
+  );
+  appendImageDetailValueIssues(
+    metadata.image_details as Record<string, unknown> | null,
     invalid
   );
   appendMemesAnimationDetailsIssues(animationState, invalid);
@@ -1061,7 +1177,11 @@ async function resolveTypeMemeId(
 
 export async function uploadMintingClaimToArweave(
   contract: string,
-  claim: MintingClaimRow
+  claim: MintingClaimRow,
+  callbacks: {
+    onImageUploaded?: (locationUrl: string) => Promise<void>;
+    onAnimationUploaded?: (locationUrl: string) => Promise<void>;
+  } = {}
 ): Promise<{
   imageLocationUrl: string;
   animationLocationUrl: string | null;
@@ -1070,7 +1190,11 @@ export async function uploadMintingClaimToArweave(
   const { imageUrl, typeMemeId, seasonValue } =
     await validateMintingClaimReadyForArweaveUpload(claim, contract);
   const imageLocationUrl = await uploadImageToArweaveOrThrow(claim, imageUrl);
+  await callbacks.onImageUploaded?.(imageLocationUrl);
   const animationLocationUrl = await uploadAnimationToArweaveIfPresent(claim);
+  if (animationLocationUrl) {
+    await callbacks.onAnimationUploaded?.(animationLocationUrl);
+  }
   const metadataLocationUrl = await uploadClaimMetadataToArweave(
     contract,
     claim,

@@ -1,12 +1,23 @@
 import { DropsDb } from '@/drops/drops.db';
 import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
+import {
+  computeAnimationDetailsGlb,
+  computeImageDetails
+} from '@/minting-claims/media-inspector';
 import { RequestContext } from '@/request.context';
+import type { MintingClaimRowInput } from './minting-claim-from-drop.builder';
 import { MemeCardDropMappingsDb } from './meme-card-drop-mappings.db';
 import { MintingClaimsDb } from './minting-claims.db';
 import { MintingClaimsService } from './minting-claims.service';
 
 jest.mock('@/http/safe-fetch', () => ({
   fetchPublicUrlToBuffer: jest.fn()
+}));
+jest.mock('@/minting-claims/media-inspector', () => ({
+  animationDetailsHtml: jest.fn(() => ({ format: 'HTML' })),
+  computeAnimationDetailsGlb: jest.fn(),
+  computeAnimationDetailsVideo: jest.fn(),
+  computeImageDetails: jest.fn()
 }));
 
 type MappingInvoker = {
@@ -23,6 +34,35 @@ type SeasonInvoker = {
     ctx: RequestContext
   ): Promise<number>;
 };
+
+type EnrichmentInvoker = {
+  enrichRowWithComputedDetails(
+    row: MintingClaimRowInput
+  ): Promise<MintingClaimRowInput>;
+};
+
+function claimRowInput(
+  overrides: Partial<MintingClaimRowInput> = {}
+): MintingClaimRowInput {
+  return {
+    drop_id: 'drop-1',
+    contract: '0x0000000000000000000000000000000000000001',
+    claim_id: 1,
+    image_location: null,
+    animation_location: null,
+    metadata_location: null,
+    description: 'description',
+    name: 'name',
+    image_url: null,
+    external_url: null,
+    attributes: [],
+    image_details: null,
+    animation_url: null,
+    animation_details: null,
+    animation_kind: null,
+    ...overrides
+  };
+}
 
 describe('MintingClaimsService Main Stage mapping', () => {
   it('resolves the Main Stage wave after runtime configuration loads', async () => {
@@ -112,5 +152,43 @@ describe('MintingClaimsService claim season resolution', () => {
       16
     );
     expect(getMaxSeasonIdMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('MintingClaimsService media enrichment', () => {
+  const service = new MintingClaimsService(
+    {} as DropsDb,
+    {} as MintingClaimsDb,
+    {} as MemeCardDropMappingsDb,
+    () => null
+  ) as unknown as EnrichmentInvoker;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('fails claim creation enrichment when preview inspection fails', async () => {
+    jest.mocked(computeImageDetails).mockRejectedValue(new Error('too large'));
+
+    await expect(
+      service.enrichRowWithComputedDetails(
+        claimRowInput({ image_url: 'https://cdn.example.com/preview.png' })
+      )
+    ).rejects.toThrow('too large');
+  });
+
+  it('fails claim creation enrichment when GLB inspection fails', async () => {
+    jest
+      .mocked(computeAnimationDetailsGlb)
+      .mockRejectedValue(new Error('invalid glb'));
+
+    await expect(
+      service.enrichRowWithComputedDetails(
+        claimRowInput({
+          animation_url: 'https://cdn.example.com/scene.glb',
+          animation_kind: 'glb'
+        })
+      )
+    ).rejects.toThrow('invalid glb');
   });
 });
