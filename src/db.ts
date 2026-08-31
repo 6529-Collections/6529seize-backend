@@ -103,7 +103,6 @@ import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
 import { equalIgnoreCase } from './strings';
 import { computeMerkleRoot } from './tdhLoop/tdh_merkle';
 import { Time } from './time';
-import { recalculateXTdhUseCase } from './xtdh/recalculate-xtdh.use-case';
 import {
   invalidateWaveUnreadCache,
   type WaveUnreadCacheInvalidations
@@ -1056,21 +1055,23 @@ export async function persistTDHBlock(
   });
 }
 
+export type ConsolidatedTdhPersistenceScope =
+  | { readonly mode: 'FULL' }
+  | {
+      readonly mode: 'PARTIAL';
+      readonly wallets: string[];
+      readonly consolidationKeysToReplace: string[];
+    };
+
 export async function persistConsolidatedTDH(
   block: number,
   tdh: ConsolidatedTDH[],
   memesTdh: ConsolidatedTDHMemes[],
   tdhEditions: ConsolidatedTDHEditions[],
   nftTdh: NftTDH[],
-  wallets?: string[],
-  consolidationKeysToReplace?: string[]
+  scope: ConsolidatedTdhPersistenceScope
 ) {
   logger.info(`[CONSOLIDATED TDH] PERSISTING WALLETS TDH [${tdh.length}]`);
-  if (wallets && !consolidationKeysToReplace) {
-    throw new Error(
-      'Partial consolidated TDH persistence requires exact keys to replace'
-    );
-  }
   let unreadCacheInvalidations: WaveUnreadCacheInvalidations = {
     waveIds: [],
     readerWaves: []
@@ -1082,16 +1083,21 @@ export async function persistConsolidatedTDH(
     const tdhMemesRepo = manager.getRepository(ConsolidatedTDHMemes);
     const tdhEditionsRepo = manager.getRepository(ConsolidatedTDHEditions);
 
-    if (wallets) {
-      logger.info(`[CONSOLIDATED TDH] [DELETING ${wallets.length} WALLETS]`);
-      await deleteConsolidationsByKeys(tdhRepo, consolidationKeysToReplace!);
+    if (scope.mode === 'PARTIAL') {
+      logger.info(
+        `[CONSOLIDATED TDH] [DELETING ${scope.wallets.length} WALLETS]`
+      );
+      await deleteConsolidationsByKeys(
+        tdhRepo,
+        scope.consolidationKeysToReplace
+      );
       await deleteConsolidationsByKeys(
         tdhMemesRepo,
-        consolidationKeysToReplace!
+        scope.consolidationKeysToReplace
       );
       await deleteConsolidationsByKeys(
         tdhEditionsRepo,
-        consolidationKeysToReplace!
+        scope.consolidationKeysToReplace
       );
       await tdhRepo.save(tdh);
 
@@ -1116,14 +1122,14 @@ export async function persistConsolidatedTDH(
       manager,
       block,
       tdh,
-      wallets,
-      consolidationKeysToReplace
+      scope.mode === 'PARTIAL' ? scope.wallets : undefined,
+      scope.mode === 'PARTIAL' ? scope.consolidationKeysToReplace : undefined
     );
     await persistNftTdhWithManager(
       manager,
       nftTdh,
-      wallets,
-      consolidationKeysToReplace
+      scope.mode === 'PARTIAL' ? scope.wallets : undefined,
+      scope.mode === 'PARTIAL' ? scope.consolidationKeysToReplace : undefined
     );
 
     unreadCacheInvalidations =
@@ -1141,7 +1147,6 @@ export async function persistConsolidatedTDH(
       WaveScoreDirtyRefreshReason.IDENTITY_CONSOLIDATION
     );
   }
-  await recalculateXTdhUseCase.activateLoop({});
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
 }
 
