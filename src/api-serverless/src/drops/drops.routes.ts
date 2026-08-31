@@ -52,7 +52,6 @@ import { curationsApiService } from '@/api/curations/curations.api.service';
 import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 import { ApiDropCuration } from '@/api/generated/models/ApiDropCuration';
 import { ApiDropCurationRequest } from '@/api/generated/models/ApiDropCurationRequest';
-import { helpBotCreditsService } from '@/help-bot/help-bot-credits.service';
 import { helpBotTriggerService } from '@/help-bot/help-bot-trigger.service';
 import { Logger } from '@/logging';
 import { wsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
@@ -226,21 +225,11 @@ router.post(
         representativeId: authenticationContext.isAuthenticatedAsProxy()
           ? authenticationContext.roleProfileId!
           : authorProfileId,
-        hideLinkPreview: newDrop.hide_link_preview
+        hideLinkPreview: newDrop.hide_link_preview,
+        requestDailyActivityCredit: true
       },
       { timer, authenticationContext }
     );
-    try {
-      await helpBotCreditsService.grantDailyActivityCredits(
-        { profileId: authorProfileId },
-        { timer, authenticationContext }
-      );
-    } catch (error) {
-      logger.error(
-        `Failed to grant daily help bot activity credits for profile ${authorProfileId}`,
-        error
-      );
-    }
     try {
       await helpBotTriggerService.handleCreatedDrop(
         {

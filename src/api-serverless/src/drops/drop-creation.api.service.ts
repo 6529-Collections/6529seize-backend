@@ -54,6 +54,10 @@ import {
   wavesApiDb as defaultWavesApiDb,
   WavesApiDb
 } from '@/api/waves/waves.api.db';
+import {
+  helpBotDailyActivityCreditQueueService,
+  HelpBotDailyActivityCreditQueueService
+} from '@/help-bot/help-bot-daily-activity-credit-queue.service';
 
 function normalizeCreateDropPollRequest(
   poll: ApiCreateDropPollRequest | null | undefined
@@ -80,7 +84,8 @@ export class DropCreationApiService {
     private readonly dropNftLinksDb: DropNftLinksDb,
     private readonly nftLinkResolvingService: NftLinkResolvingService,
     private readonly dropPollsApiService: DropPollsApiService,
-    private readonly wavesApiDb: WavesApiDb = defaultWavesApiDb
+    private readonly wavesApiDb: WavesApiDb = defaultWavesApiDb,
+    private readonly dailyActivityCreditQueueService: HelpBotDailyActivityCreditQueueService = helpBotDailyActivityCreditQueueService
   ) {}
 
   public async createDrop(
@@ -88,12 +93,14 @@ export class DropCreationApiService {
       createDropRequest,
       authorId,
       representativeId,
-      hideLinkPreview
+      hideLinkPreview,
+      requestDailyActivityCredit = false
     }: {
       createDropRequest: ApiCreateDropRequest;
       authorId: string;
       representativeId: string;
       hideLinkPreview?: boolean;
+      requestDailyActivityCredit?: boolean;
     },
     ctx: RequestContext
   ): Promise<ApiDrop> {
@@ -115,16 +122,28 @@ export class DropCreationApiService {
       await this.createOrUpdateDrop.preResolveIdentityNomination(createModel, {
         timer: ctx.timer
       });
-    const { drop, pendingPushNotificationIds, dmUnreadRecipientIds } =
-      await this.dropsDb.executeNativeQueriesInTransaction(
-        async (connection) => {
-          return await this.createDropWithGivenConnection(
-            { model: createModel, authorId, preResolvedIdentityNomination },
-            normalizeCreateDropPollRequest(createDropRequest.poll),
-            { timer: ctx.timer!, connection }
-          );
-        }
-      );
+    const {
+      drop,
+      pendingPushNotificationIds,
+      dmUnreadRecipientIds,
+      dailyActivityCreditRequestEnqueued
+    } = await this.dropsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        return await this.createDropWithGivenConnection(
+          {
+            model: createModel,
+            authorId,
+            preResolvedIdentityNomination,
+            requestDailyActivityCredit
+          },
+          normalizeCreateDropPollRequest(createDropRequest.poll),
+          { timer: ctx.timer!, connection }
+        );
+      }
+    );
+    if (dailyActivityCreditRequestEnqueued) {
+      await this.dailyActivityCreditQueueService.sendWakeupBestEffort(ctx);
+    }
     await waveScoreService.requestWaveScoreRefreshBestEffort(
       [createModel.wave_id],
       WaveScoreDirtyRefreshReason.DROP_CHANGED,
@@ -149,13 +168,15 @@ export class DropCreationApiService {
     {
       model,
       authorId,
-      preResolvedIdentityNomination
+      preResolvedIdentityNomination,
+      requestDailyActivityCredit
     }: {
       model: CreateOrUpdateDropModel;
       authorId: string;
       preResolvedIdentityNomination: Awaited<
         ReturnType<CreateOrUpdateDropUseCase['preResolveIdentityNomination']>
       > | null;
+      requestDailyActivityCredit: boolean;
     },
     poll: CreateDropPollRequest | null | undefined,
     { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
@@ -163,6 +184,7 @@ export class DropCreationApiService {
     drop: ApiDrop;
     pendingPushNotificationIds: number[];
     dmUnreadRecipientIds: string[];
+    dailyActivityCreditRequestEnqueued: boolean;
   }> {
     const { drop_id, pending_push_notification_ids, dm_unread_recipient_ids } =
       await this.createOrUpdateDrop.execute(model, false, {
@@ -184,6 +206,12 @@ export class DropCreationApiService {
         authenticationContext: AuthenticationContext.fromProfileId(authorId)
       }
     );
+    const dailyActivityCreditRequestEnqueued = requestDailyActivityCredit
+      ? await this.dailyActivityCreditQueueService.enqueueRequest(
+          { profileId: authorId },
+          { timer, connection }
+        )
+      : false;
     const drop = await this.dropsService.findDropByIdOrThrow(
       {
         dropId: drop_id,
@@ -198,7 +226,8 @@ export class DropCreationApiService {
     return {
       drop,
       pendingPushNotificationIds: pending_push_notification_ids,
-      dmUnreadRecipientIds: dm_unread_recipient_ids ?? []
+      dmUnreadRecipientIds: dm_unread_recipient_ids ?? [],
+      dailyActivityCreditRequestEnqueued
     };
   }
 

@@ -34,12 +34,37 @@ functions:
       SENTRY_ENVIRONMENT: 'helpBotReplyLoop_${opt:stage, self:provider.stage}'
       API_GATEWAY_WS_ENDPOINT: ${env:API_GATEWAY_WS_ENDPOINT}
 
+  helpBotDailyActivityCreditLoop:
+    handler: index.dailyActivityCreditHandler
+    name: helpBotDailyActivityCreditLoop
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [HelpBotDailyActivityCreditsQueue, Arn]
+          batchSize: 1
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'helpBotDailyActivityCreditLoop_${opt:stage, self:provider.stage}'
+      API_GATEWAY_WS_ENDPOINT: ${env:API_GATEWAY_WS_ENDPOINT}
+
 resources:
   Resources:
     HelpBotReplyLoopLogGroup:
       Type: AWS::Logs::LogGroup
       Properties:
         LogGroupName: /aws/lambda/helpBotReplyLoop
+        RetentionInDays: 60
+
+    HelpBotDailyActivityCreditLoopLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/helpBotDailyActivityCreditLoop
         RetentionInDays: 60
 
     HelpBotRepliesQueue:
@@ -56,6 +81,37 @@ resources:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: help-bot-replies-dlq
+
+    HelpBotDailyActivityCreditsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: help-bot-daily-activity-credits.fifo
+        FifoQueue: true
+        ContentBasedDeduplication: true
+        VisibilityTimeout: 150
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [HelpBotDailyActivityCreditsDLQ, Arn]
+          maxReceiveCount: 5
+
+    HelpBotDailyActivityCreditsDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: help-bot-daily-activity-credits-dlq.fifo
+        FifoQueue: true
+        ContentBasedDeduplication: true
+        MessageRetentionPeriod: 1209600
+
+    HelpBotDailyActivityCreditsFallbackRule:
+      Type: AWS::Events::Rule
+      Properties:
+        ScheduleExpression: rate(1 minute)
+        State: ENABLED
+        Targets:
+          - Arn: !GetAtt HelpBotDailyActivityCreditsQueue.Arn
+            Id: HelpBotDailyActivityCreditsQueueTarget
+            SqsParameters:
+              MessageGroupId: help-bot-daily-activity-credits
 
     HelpBotRepliesQueuePolicy:
       Type: AWS::SQS::QueuePolicy
@@ -75,6 +131,85 @@ resources:
                 - sqs:SendMessage
               Resource:
                 - !GetAtt HelpBotRepliesQueue.Arn
+
+    HelpBotDailyActivityCreditsQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - Ref: HelpBotDailyActivityCreditsQueue
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
+              Action:
+                - sqs:GetQueueUrl
+                - sqs:SendMessage
+              Resource:
+                - !GetAtt HelpBotDailyActivityCreditsQueue.Arn
+            - Effect: Allow
+              Principal:
+                Service: events.amazonaws.com
+              Action: sqs:SendMessage
+              Resource: !GetAtt HelpBotDailyActivityCreditsQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !GetAtt HelpBotDailyActivityCreditsFallbackRule.Arn
+
+    HelpBotDailyActivityCreditsDLQDepthAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-helpBotDailyActivityCredits-DLQ'
+        AlarmDescription: !Sub 'Help bot daily activity credits DLQ has visible messages in ${AWS::Region}'
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value:
+              Fn::GetAtt: [HelpBotDailyActivityCreditsDLQ, QueueName]
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    HelpBotDailyActivityCreditsDeadRequestFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn:
+        - HelpBotDailyActivityCreditLoopLogGroup
+      Properties:
+        LogGroupName:
+          Ref: HelpBotDailyActivityCreditLoopLogGroup
+        FilterPattern: 'HELP_BOT_DAILY_ACTIVITY_CREDIT_REQUEST_DEAD'
+        MetricTransformations:
+          - MetricNamespace: HelpBot
+            MetricName: DailyActivityCreditDeadRequestCount
+            MetricValue: '1'
+            DefaultValue: 0
+
+    HelpBotDailyActivityCreditsDeadRequestAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: HelpBotDailyActivityCreditsDeadRequestFilter
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-helpBotDailyActivityCredits-DeadRequest'
+        AlarmDescription: !Sub 'Help bot daily activity credit processing parked a durable request in ${AWS::Region}'
+        Namespace: HelpBot
+        MetricName: DailyActivityCreditDeadRequestCount
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
 
     HelpBotReplyLoopOOMFilter:
       Type: AWS::Logs::MetricFilter
