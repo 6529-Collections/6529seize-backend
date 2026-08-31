@@ -2,9 +2,10 @@ import {
   ModeratedProfileStatus,
   PrePublicationCheckOutcome
 } from '@/entities/IContentModeration';
-import { CustomApiCompliantException, ForbiddenException } from '@/exceptions';
+import { CustomApiCompliantException } from '@/exceptions';
 import {
   CONTENT_MODERATION_REJECTION_CODE,
+  PROFILE_SUSPENDED_REJECTION_CODE,
   PrePublicationModerationService
 } from './pre-publication-moderation.service';
 
@@ -258,9 +259,11 @@ describe('PrePublicationModerationService', () => {
       ModeratedProfileStatus.SUSPENDED
     );
 
-    await expect(service.evaluate(input('hello'), {})).rejects.toBeInstanceOf(
-      ForbiddenException
-    );
+    await expect(service.evaluate(input('hello'), {})).rejects.toMatchObject({
+      code: PROFILE_SUSPENDED_REJECTION_CODE,
+      message:
+        'This profile is currently suspended from posting. Contact support if you believe this is an error.'
+    });
     expect(aiService.assessPrePublication).not.toHaveBeenCalled();
     expect(moderationDb.recordPrePublicationCheck).not.toHaveBeenCalled();
   });

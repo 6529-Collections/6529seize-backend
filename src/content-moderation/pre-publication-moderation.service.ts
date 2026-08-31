@@ -3,7 +3,7 @@ import {
   ModeratedProfileStatus,
   PrePublicationCheckOutcome
 } from '@/entities/IContentModeration';
-import { CustomApiCompliantException, ForbiddenException } from '@/exceptions';
+import { CustomApiCompliantException } from '@/exceptions';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { Time } from '@/time';
@@ -21,6 +21,7 @@ import {
 
 export const PRE_PUBLICATION_GATE_VERSION = 'deterministic-gate-2026-08-1';
 export const CONTENT_MODERATION_REJECTION_CODE = 'CONTENT_MODERATION_REJECTED';
+export const PROFILE_SUSPENDED_REJECTION_CODE = 'PROFILE_SUSPENDED';
 const DUPLICATE_WINDOW = Time.minutes(10);
 const DUPLICATE_SIGNAL_THRESHOLD = 4;
 const URL_EDGE_PUNCTUATION = new Set(['.', '!', '?', ';', ':']);
@@ -75,8 +76,10 @@ export class PrePublicationModerationService {
       ctx.connection
     );
     if (profileStatus === ModeratedProfileStatus.SUSPENDED) {
-      throw new ForbiddenException(
-        'This profile is currently suspended from posting. Contact support if you believe this is an error.'
+      throw new CustomApiCompliantException(
+        403,
+        'This profile is currently suspended from posting. Contact support if you believe this is an error.',
+        PROFILE_SUSPENDED_REJECTION_CODE
       );
     }
 
