@@ -1045,7 +1045,8 @@ describe('ReleaseNoteGenerationService', () => {
       pull_request_number: null,
       release_group_runs: undefined,
       release_version: '0.3.13',
-      frontend_sha: frontendSha
+      frontend_sha: frontendSha,
+      triggered_by_github_login: 'prxt6529'
     };
     const findReleaseNoteDropBySourceSha = jest.fn().mockResolvedValue({
       id: 'frontend-drop',
@@ -1076,8 +1077,12 @@ describe('ReleaseNoteGenerationService', () => {
       } as unknown as ReleaseNoteGitHubService,
       { promptAndGetReply } as AiPrompter,
       { createDrop } as unknown as DropCreationApiService,
-      { getIdsByHandles: jest.fn() } as unknown as IdentitiesDb,
-      {},
+      {
+        getIdsByHandles: jest
+          .fn()
+          .mockResolvedValue({ prxt0: 'publisher-profile' })
+      } as unknown as IdentitiesDb,
+      { prxt6529: 'prxt0' },
       {
         findDropIdByMetadata: jest.fn().mockResolvedValue(null),
         findReleaseNoteDropBySourceSha
@@ -1108,11 +1113,18 @@ describe('ReleaseNoteGenerationService', () => {
         '',
         '[Windows v0.3.13](https://d3lqz0a4bldqgf.cloudfront.net/6529-core-app/win/links/0.3.13.html)',
         '[MacOS v0.3.13](https://d3lqz0a4bldqgf.cloudfront.net/6529-core-app/mac/links/0.3.13.html)',
-        '[Linux v0.3.13](https://d3lqz0a4bldqgf.cloudfront.net/6529-core-app/linux/links/0.3.13.html)'
+        '[Linux v0.3.13](https://d3lqz0a4bldqgf.cloudfront.net/6529-core-app/linux/links/0.3.13.html)',
+        '',
+        'Published by @[prxt0]'
       ].join('\n')
     );
     expect(createDropRequest.parts[0].content).not.toContain('PR #');
-    expect(createDropRequest.mentioned_users).toEqual([]);
+    expect(createDropRequest.mentioned_users).toEqual([
+      {
+        mentioned_profile_id: 'publisher-profile',
+        handle_in_content: 'prxt0'
+      }
+    ]);
     expect(createDropRequest.metadata).toEqual(
       expect.arrayContaining([
         {

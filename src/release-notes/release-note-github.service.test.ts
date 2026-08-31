@@ -439,7 +439,7 @@ describe('ReleaseNoteGitHubService', () => {
     expect(fetch).toHaveBeenCalledTimes(13);
   });
 
-  it('uses the previous production Publish across version branches and excludes imported renderer history', async () => {
+  it('uses the previous production release across Publish and Build All flows and excludes imported renderer history', async () => {
     const previousSha = '1111111111111111111111111111111111111111';
     const currentSha = '4444444444444444444444444444444444444444';
     const outerMergeSha = '3333333333333333333333333333333333333333';
@@ -449,7 +449,7 @@ describe('ReleaseNoteGitHubService', () => {
         return Promise.resolve(
           response({
             id: 900,
-            display_title: 'FLOW: Publish / ENV: Production - v0.3.13',
+            display_title: 'FLOW: Build All / ENV: Production - v0.3.13',
             path: '.github/workflows/build-all-platforms.yml',
             head_branch: 'v0.3.13',
             head_sha: currentSha,
@@ -466,22 +466,11 @@ describe('ReleaseNoteGitHubService', () => {
             workflow_runs: [
               {
                 id: 899,
-                display_title: 'FLOW: Build All / ENV: Production - v0.3.13',
-                path: '.github/workflows/build-all-platforms.yml',
-                head_branch: 'v0.3.13',
-                head_sha: 'ignored-build-all',
-                run_number: 327,
-                workflow_id: 99,
-                status: 'completed',
-                conclusion: 'success'
-              },
-              {
-                id: 850,
                 display_title: 'FLOW: Publish / ENV: Production - v0.3.12',
                 path: '.github/workflows/build-all-platforms.yml',
                 head_branch: 'v0.3.12',
                 head_sha: previousSha,
-                run_number: 326,
+                run_number: 327,
                 workflow_id: 99,
                 status: 'completed',
                 conclusion: 'success'
@@ -562,7 +551,7 @@ describe('ReleaseNoteGitHubService', () => {
     const context = await new ReleaseNoteGitHubService().getReleaseContext({
       ...request,
       repo: '6529-core',
-      workflow: 'Publish',
+      workflow: 'Build All',
       run_id: '900',
       run_number: '328',
       run_url: 'https://github.com/6529-Collections/6529-core/actions/runs/900',
@@ -600,6 +589,44 @@ describe('ReleaseNoteGitHubService', () => {
         message.includes('Imported web-only change')
       )
     ).toBe(false);
+  });
+
+  it('rejects Desktop release metadata when the queued flow does not match the current run', async () => {
+    const currentSha = '4444444444444444444444444444444444444444';
+    (fetch as unknown as jest.Mock).mockResolvedValueOnce(
+      response({
+        id: 900,
+        display_title: 'FLOW: Build All / ENV: Production - v0.3.13',
+        path: '.github/workflows/build-all-platforms.yml',
+        head_branch: 'v0.3.13',
+        head_sha: currentSha,
+        run_number: 328,
+        workflow_id: 99,
+        status: 'completed',
+        conclusion: 'success'
+      })
+    );
+
+    await expect(
+      new ReleaseNoteGitHubService().getReleaseContext({
+        ...request,
+        repo: '6529-core',
+        workflow: 'Publish',
+        run_id: '900',
+        run_number: '328',
+        run_url:
+          'https://github.com/6529-Collections/6529-core/actions/runs/900',
+        sha: currentSha,
+        branch: 'v0.3.13',
+        service: 'desktop',
+        prompt_path: 'ops/release-notes/desktop-release-notes.prompt.md',
+        release_group_id: 'desktop-v0.3.13',
+        release_group_services: ['desktop'],
+        release_version: '0.3.13',
+        frontend_sha: '63630a3e27c37296bbe39d9813b014a824265a56'
+      })
+    ).rejects.toBeInstanceOf(UntrustedReleaseNoteMetadataError);
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it('rejects a frontend release from another current workflow path', async () => {
