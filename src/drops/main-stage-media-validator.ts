@@ -1,4 +1,7 @@
-import { HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import {
+  HeadObjectCommand,
+  type HeadObjectCommandOutput
+} from '@aws-sdk/client-s3';
 import { CLOUDFRONT_LINK } from '@/constants';
 import { env } from '@/env';
 import { BadRequestException } from '@/exceptions';
@@ -8,10 +11,16 @@ import { MAX_MAIN_STAGE_MEDIA_BYTES } from '@/minting-claims/media-limits';
 export const MAIN_STAGE_MEDIA_LIMIT_MIB =
   MAX_MAIN_STAGE_MEDIA_BYTES / (1024 * 1024);
 
+type HeadObjectSender = {
+  send(
+    command: HeadObjectCommand
+  ): Promise<Pick<HeadObjectCommandOutput, 'ContentLength'>>;
+};
+
 export async function validateMainStageMediaSize(
   mediaUrl: string,
   dependencies: {
-    s3?: S3Client;
+    s3?: HeadObjectSender;
     bucket?: string;
   } = {}
 ): Promise<void> {

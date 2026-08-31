@@ -594,7 +594,8 @@ Important details:
 - `claims-media-arweave-upload` messages are produced by the API only after the claim row is locked with `media_uploading=true`.
 - If media upload enqueueing fails, the API tries to roll `media_uploading` back to `false`.
 - Before minting-claim media is queued, MEMES metadata validation rejects zero-byte media, empty SHA-256 digests, and non-positive image/video dimensions or duration. Inspection and publication share the same 250 MiB ceiling as Main Stage submission attachment.
-- `claimsMediaArweaveUploader` consumes `{ contract, claim_id }`, re-fetches the claim, uploads media and metadata to Arweave, and checkpoints image and animation transaction ids before uploading metadata. Retryable failures keep `media_uploading=true` so SQS redelivery resumes from those checkpoints; terminal validation failures and the final configured queue attempt clear the flag.
+- `claimsMediaArweaveUploader` consumes `{ contract, claim_id }`, re-fetches the claim, uploads media and metadata to Arweave, and checkpoints image and animation transaction ids before uploading metadata. On SQS redelivery it re-downloads each source to verify the stored SHA-256 and reuses a matching checkpoint transaction instead of uploading a duplicate. Retryable failures keep `media_uploading=true`; terminal validation failures and the final configured queue attempt clear the flag.
+- Claim building completes image and animation inspection before inserting the claim row. Inspection failures are alerted by `claimsBuilder` and retried by SQS, so incomplete or placeholder media details are never persisted as a valid claim.
 
 ## Deployment Model
 

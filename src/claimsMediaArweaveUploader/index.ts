@@ -52,6 +52,62 @@ function parseRecordBody(body: string): { contract: string; claim_id: number } {
   return { contract: contract.toLowerCase(), claim_id: claimId };
 }
 
+async function clearUploadLockAfterFailure(
+  contract: string,
+  claimId: number
+): Promise<void> {
+  await updateMintingClaim(contract, claimId, { media_uploading: false });
+}
+
+async function sendUploadFailureAlert(
+  contract: string,
+  claimId: number,
+  error: unknown
+): Promise<void> {
+  try {
+    await priorityAlertsContext.sendPriorityAlert(
+      ALERT_TITLE,
+      buildUploadErrorWithContext(contract, claimId, error)
+    );
+  } catch (alertError) {
+    logger.error('Failed to send claims media upload priority alert', {
+      contract,
+      claimId,
+      alertError
+    });
+  }
+}
+
+async function handleUploadFailure({
+  contract,
+  claimId,
+  receiveCount,
+  error
+}: {
+  contract: string;
+  claimId: number;
+  receiveCount: number;
+  error: unknown;
+}): Promise<boolean> {
+  const isTerminal = error instanceof BadRequestException;
+  const isFinalAttempt = receiveCount >= MAX_RECEIVE_COUNT;
+  if (isTerminal || isFinalAttempt) {
+    try {
+      await clearUploadLockAfterFailure(contract, claimId);
+    } catch (rollbackError) {
+      logger.error('Failed to reset media_uploading after upload failure', {
+        contract,
+        claimId,
+        rollbackError
+      });
+      await sendUploadFailureAlert(contract, claimId, error);
+      throw rollbackError;
+    }
+    await sendUploadFailureAlert(contract, claimId, error);
+  }
+  return isTerminal;
+}
+
 export async function processMintingClaimUpload(
   contract: string,
   claimId: number,
@@ -108,39 +164,13 @@ export async function processMintingClaimUpload(
     logger.error(
       `Failed to upload claim media to Arweave for contract=${contract} claim_id=${claimId}, error=${error}`
     );
-    const isTerminalValidationFailure = error instanceof BadRequestException;
-    if (isTerminalValidationFailure) {
-      await updateMintingClaim(contract, claimId, { media_uploading: false });
-    } else if (receiveCount >= MAX_RECEIVE_COUNT) {
-      try {
-        await updateMintingClaim(contract, claimId, { media_uploading: false });
-      } catch (rollbackError) {
-        logger.error('Failed to reset media_uploading after final retry', {
-          contract,
-          claimId,
-          rollbackError
-        });
-      }
-    }
-    if (
-      isTerminalValidationFailure ||
-      receiveCount === 1 ||
-      receiveCount >= MAX_RECEIVE_COUNT
-    ) {
-      try {
-        await priorityAlertsContext.sendPriorityAlert(
-          ALERT_TITLE,
-          buildUploadErrorWithContext(contract, claimId, error)
-        );
-      } catch (alertError) {
-        logger.error('Failed to send claims media upload priority alert', {
-          contract,
-          claimId,
-          alertError
-        });
-      }
-    }
-    if (isTerminalValidationFailure) {
+    const isTerminal = await handleUploadFailure({
+      contract,
+      claimId,
+      receiveCount,
+      error
+    });
+    if (isTerminal) {
       return;
     }
     throw error;

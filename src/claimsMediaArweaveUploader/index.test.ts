@@ -37,12 +37,26 @@ describe('processMintingClaimUpload', () => {
       media_uploading: true
     } as any);
     updateClaimMock.mockResolvedValue(undefined);
+    alertMock.mockResolvedValue(undefined);
   });
 
   it('keeps the upload lock set for retryable failures before the final attempt', async () => {
     uploadMock.mockRejectedValue(new Error('temporary gateway failure'));
 
     await expect(processMintingClaimUpload(CONTRACT, 1, 2)).rejects.toThrow(
+      'temporary gateway failure'
+    );
+
+    expect(updateClaimMock).not.toHaveBeenCalledWith(CONTRACT, 1, {
+      media_uploading: false
+    });
+    expect(alertMock).not.toHaveBeenCalled();
+  });
+
+  it('does not page on the first retryable failure', async () => {
+    uploadMock.mockRejectedValue(new Error('temporary gateway failure'));
+
+    await expect(processMintingClaimUpload(CONTRACT, 1, 1)).rejects.toThrow(
       'temporary gateway failure'
     );
 
@@ -89,6 +103,19 @@ describe('processMintingClaimUpload', () => {
     expect(updateClaimMock).toHaveBeenCalledWith(CONTRACT, 1, {
       media_uploading: false
     });
+  });
+
+  it('retries when a terminal failure cannot clear the upload lock', async () => {
+    uploadMock.mockRejectedValue(new BadRequestException('invalid metadata'));
+    updateClaimMock
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('database unavailable'));
+
+    await expect(processMintingClaimUpload(CONTRACT, 1, 1)).rejects.toThrow(
+      'database unavailable'
+    );
+
+    expect(alertMock).toHaveBeenCalledTimes(1);
   });
 
   it('checkpoints media locations before saving the metadata location', async () => {

@@ -10,7 +10,7 @@ describe('validateMainStageMediaSize', () => {
 
     await expect(
       validateMainStageMediaSize(`${CLOUDFRONT_LINK}/drops/author/file.glb`, {
-        s3: { send } as any,
+        s3: { send },
         bucket: 'bucket'
       })
     ).resolves.toBeUndefined();
@@ -28,7 +28,7 @@ describe('validateMainStageMediaSize', () => {
 
     await expect(
       validateMainStageMediaSize(`${CLOUDFRONT_LINK}/drops/author/file.mp4`, {
-        s3: { send } as any,
+        s3: { send },
         bucket: 'bucket'
       })
     ).rejects.toThrow('Main Stage media must not exceed 250 MiB');
@@ -39,7 +39,7 @@ describe('validateMainStageMediaSize', () => {
 
     await expect(
       validateMainStageMediaSize(`${CLOUDFRONT_LINK}/drops/author/file.mp4`, {
-        s3: { send } as any,
+        s3: { send },
         bucket: 'bucket'
       })
     ).rejects.toThrow('Main Stage media could not be verified');
@@ -50,7 +50,7 @@ describe('validateMainStageMediaSize', () => {
 
     await expect(
       validateMainStageMediaSize('ipfs://bafy/example.html', {
-        s3: { send } as any,
+        s3: { send },
         bucket: 'bucket'
       })
     ).resolves.toBeUndefined();

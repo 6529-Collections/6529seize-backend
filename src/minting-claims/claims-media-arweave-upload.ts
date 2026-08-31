@@ -772,14 +772,12 @@ function appendBinaryMediaDetailValueIssues(
 ) {
   if (details == null) return;
   const issues: string[] = [];
-  if (hasOwn(details, 'bytes') && !isPositiveInteger(details.bytes)) {
-    issues.push('bytes must be positive');
-  }
-  if (
-    isPositiveInteger(details.bytes) &&
-    details.bytes > MAX_MINTING_CLAIM_MEDIA_BYTES
-  ) {
-    issues.push('bytes exceeds the Main Stage media limit');
+  if (hasOwn(details, 'bytes')) {
+    if (!isPositiveInteger(details.bytes)) {
+      issues.push('bytes must be positive');
+    } else if (details.bytes > MAX_MINTING_CLAIM_MEDIA_BYTES) {
+      issues.push('bytes exceeds the Main Stage media limit');
+    }
   }
   if (hasOwn(details, 'sha256') && normalizeSha256(details.sha256) == null) {
     issues.push('sha256 must be a 64-character hexadecimal digest');
@@ -913,15 +911,7 @@ function appendMemesAnimationDetailsIssues(
     typeof objectAnimationDetails.format === 'string'
       ? objectAnimationDetails.format
       : null;
-  if (
-    objectAnimationDetails != null &&
-    hasOwn(objectAnimationDetails, 'format') &&
-    (format == null || !['HTML', 'GLB', 'MP4', 'MOV'].includes(format))
-  ) {
-    invalid.push(
-      'MEMES animation_details (format must be HTML, GLB, MP4, or MOV)'
-    );
-  }
+  appendAnimationFormatIssue(objectAnimationDetails, format, invalid);
   appendMissingDetailKeysIssue(
     'MEMES animation_details',
     objectAnimationDetails,
@@ -936,31 +926,46 @@ function appendMemesAnimationDetailsIssues(
     );
   }
   if (format !== 'HTML' && format !== 'GLB') {
-    const issues: string[] = [];
-    if (
-      objectAnimationDetails != null &&
-      hasOwn(objectAnimationDetails, 'duration') &&
-      !isPositiveFiniteNumber(objectAnimationDetails.duration)
-    ) {
-      issues.push('duration must be positive');
-    }
-    if (
-      objectAnimationDetails != null &&
-      hasOwn(objectAnimationDetails, 'width') &&
-      !isPositiveInteger(objectAnimationDetails.width)
-    ) {
-      issues.push('width must be positive');
-    }
-    if (
-      objectAnimationDetails != null &&
-      hasOwn(objectAnimationDetails, 'height') &&
-      !isPositiveInteger(objectAnimationDetails.height)
-    ) {
-      issues.push('height must be positive');
-    }
-    if (issues.length > 0) {
-      invalid.push(`MEMES animation_details (${issues.join(', ')})`);
-    }
+    appendVideoAnimationDetailValueIssues(objectAnimationDetails, invalid);
+  }
+}
+
+function appendAnimationFormatIssue(
+  details: Record<string, unknown> | null,
+  format: string | null,
+  invalid: string[]
+) {
+  if (
+    details != null &&
+    hasOwn(details, 'format') &&
+    (format == null || !['HTML', 'GLB', 'MP4', 'MOV'].includes(format))
+  ) {
+    invalid.push(
+      'MEMES animation_details (format must be HTML, GLB, MP4, or MOV)'
+    );
+  }
+}
+
+function appendVideoAnimationDetailValueIssues(
+  details: Record<string, unknown> | null,
+  invalid: string[]
+) {
+  if (details == null) return;
+  const issues: string[] = [];
+  if (
+    hasOwn(details, 'duration') &&
+    !isPositiveFiniteNumber(details.duration)
+  ) {
+    issues.push('duration must be positive');
+  }
+  if (hasOwn(details, 'width') && !isPositiveInteger(details.width)) {
+    issues.push('width must be positive');
+  }
+  if (hasOwn(details, 'height') && !isPositiveInteger(details.height)) {
+    issues.push('height must be positive');
+  }
+  if (issues.length > 0) {
+    invalid.push(`MEMES animation_details (${issues.join(', ')})`);
   }
 }
 
