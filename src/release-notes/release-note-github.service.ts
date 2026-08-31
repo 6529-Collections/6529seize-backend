@@ -133,7 +133,7 @@ const FRONTEND_PRODUCTION_WORKFLOW_PATH =
   '.github/workflows/build-upload-deploy-prod.yml';
 const CORE_PRODUCTION_WORKFLOW_PATH =
   '.github/workflows/build-all-platforms.yml';
-const CORE_PRODUCTION_RUN_PREFIX = 'FLOW: Publish / ENV: Production - v';
+const CORE_PRODUCTION_WORKFLOWS = new Set(['Publish', 'Build All']);
 const MAX_PROMPT_LENGTH = 20000;
 const MAX_GITHUB_RESPONSE_BYTES = 5 * 1024 * 1024;
 const GITHUB_REQUEST_TIMEOUT_MS = 15000;
@@ -233,12 +233,29 @@ function isMatchingProductionRun(
   }
   if (repoName === CORE_REPO) {
     return (
-      request.workflow === 'Publish' &&
+      CORE_PRODUCTION_WORKFLOWS.has(request.workflow) &&
       run.path === CORE_PRODUCTION_WORKFLOW_PATH &&
-      run.display_title.startsWith(CORE_PRODUCTION_RUN_PREFIX)
+      Array.from(CORE_PRODUCTION_WORKFLOWS).some((workflow) =>
+        run.display_title.startsWith(`FLOW: ${workflow} / ENV: Production - v`)
+      )
     );
   }
   return false;
+}
+
+function isMatchingCurrentProductionRun(
+  run: GitHubWorkflowRun,
+  request: ReleaseNoteGenerationRequest
+): boolean {
+  if (!isMatchingProductionRun(run, request)) {
+    return false;
+  }
+  if (getRepoName(request.repo) !== CORE_REPO) {
+    return true;
+  }
+  return run.display_title.startsWith(
+    `FLOW: ${request.workflow} / ENV: Production - v`
+  );
 }
 
 function isSuccessfulCompletedRun(run: GitHubWorkflowRun): boolean {
@@ -616,7 +633,8 @@ export class ReleaseNoteGitHubService {
       currentRun.head_sha !== request.sha ||
       !Number.isSafeInteger(currentRun.workflow_id) ||
       !Number.isSafeInteger(currentRun.run_number) ||
-      (mustMatchProductionRun && !isMatchingProductionRun(currentRun, request))
+      (mustMatchProductionRun &&
+        !isMatchingCurrentProductionRun(currentRun, request))
     ) {
       throw new UntrustedReleaseNoteMetadataError(
         `GitHub release run ${request.run_id} does not match the queued release metadata`
