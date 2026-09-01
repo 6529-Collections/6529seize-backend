@@ -5,6 +5,7 @@ import { DropType } from '@/entities/IDrop';
 import { waveDropMetricsRefreshService } from '@/drops/wave-drop-metrics-refresh.service';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 import { DbPoolName } from '@/db-query.options';
+import { helpBotDailyActivityCreditQueueService } from '@/help-bot/help-bot-daily-activity-credit-queue.service';
 
 jest.mock('@/api/waves/wave-unread-cache', () => ({
   invalidateWaveUnreadCacheForWave: jest.fn().mockResolvedValue(undefined)
@@ -154,6 +155,12 @@ describe('DropCreationApiService.toggleHideLinkPreview', () => {
 describe('DropCreationApiService.createDrop', () => {
   beforeEach(() => {
     (sendIdentityPushNotifications as jest.Mock).mockResolvedValue(undefined);
+    jest
+      .spyOn(helpBotDailyActivityCreditQueueService, 'enqueueRequest')
+      .mockResolvedValue(false);
+    jest
+      .spyOn(helpBotDailyActivityCreditQueueService, 'sendWakeupBestEffort')
+      .mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -166,6 +173,17 @@ describe('DropCreationApiService.createDrop', () => {
     async (hideLinkPreview) => {
       const connection = {} as any;
       const order: string[] = [];
+      (
+        helpBotDailyActivityCreditQueueService.enqueueRequest as jest.Mock
+      ).mockImplementationOnce(async () => {
+        order.push('daily-credit-request-written');
+        return true;
+      });
+      (
+        helpBotDailyActivityCreditQueueService.sendWakeupBestEffort as jest.Mock
+      ).mockImplementationOnce(async () => {
+        order.push('daily-credit-wakeup-sent');
+      });
       const dropsDb = {
         executeNativeQueriesInTransaction: jest.fn(
           async (callback: (connection: unknown) => Promise<unknown>) => {
@@ -232,7 +250,8 @@ describe('DropCreationApiService.createDrop', () => {
           createDropRequest: { hide_link_preview: hideLinkPreview } as never,
           authorId: 'author-profile',
           representativeId: 'author-profile',
-          hideLinkPreview
+          hideLinkPreview,
+          requestDailyActivityCredit: true
         },
         { timer: undefined } as never
       );
@@ -252,10 +271,18 @@ describe('DropCreationApiService.createDrop', () => {
         expect.anything()
       );
       expect(invalidateWaveUnreadCacheForWave).toHaveBeenCalledWith('wave-1');
+      expect(
+        helpBotDailyActivityCreditQueueService.enqueueRequest
+      ).toHaveBeenCalledWith(
+        { profileId: 'author-profile' },
+        { timer: undefined, connection }
+      );
       expect(order).toEqual([
         'transaction',
         'drop-written',
+        'daily-credit-request-written',
         'committed',
+        'daily-credit-wakeup-sent',
         'unread-cache-invalidated'
       ]);
     }
@@ -363,6 +390,9 @@ describe('DropCreationApiService.createDrop', () => {
       [dmUnreadState],
       [{ connectionId: 'connection-1', identityId: 'reader-profile' }]
     );
+    expect(
+      helpBotDailyActivityCreditQueueService.enqueueRequest
+    ).not.toHaveBeenCalled();
     expect(order).toEqual([
       'drop-written',
       'committed',
