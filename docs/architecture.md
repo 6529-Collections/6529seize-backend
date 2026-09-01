@@ -86,6 +86,7 @@ flowchart TD
     SeizeAPI --> WaveScoreDirtyQueue["SQS: wave-score-refresh-dirty.fifo"] --> WaveScoreRefreshLoop
     TdhLoop --> TdhDoneTopic["SNS: tdh-calculation-done.fifo"]
     TdhDoneTopic --> XTdhQueue["SQS: xtdh-start.fifo"] --> XTdhLoop["xTdhLoop"]
+    DelegationsLoop -->|partial TDH persisted| XTdhQueue
     XTdhLoop --> XTdhQueue
     TdhDoneTopic --> OverRatesQueue["SQS: over-rates-revocation-start.fifo"] --> OverRatesRevocationLoop["overRatesRevocationLoop"]
     TdhDoneTopic --> WaveScoreRefreshQueue["SQS: wave-score-refresh-start.fifo"] --> WaveScoreRefreshLoop["waveScoreRefreshLoop"]
@@ -186,7 +187,7 @@ for alert triage and recovery.
 | `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                             | Answer `@help6529` mentions and direct follow-ups to bot replies.                                                           |
 | `releaseNotesGenerationLoop`     | SQS `release-note-generation`                                                                                                      | Publish production Backend, Frontend, and Desktop release notes as `ci6529`.                                                |
 | `waveDropMetricsRefreshLoop`     | SQS `wave-drop-metrics-refresh-dirty.fifo`; EventBridge fallback                                                                   | Repair materialized wave/dropper drop counts and latest-drop timestamps after drop deletes.                                 |
-| `xTdhLoop`                       | SNS `tdh-calculation-done.fifo` via SQS `xtdh-start.fifo`; self-queued stats phase                                                 | Recalculate the xTDH universe after TDH finishes, then rebuild and publish xTDH stats in a follow-up queue message.         |
+| `xTdhLoop`                       | SNS `tdh-calculation-done.fifo` or a direct post-persistence partial-TDH enqueue via SQS `xtdh-start.fifo`; self-queued stats phase | Recalculate the xTDH universe after TDH finishes, then rebuild and publish xTDH stats in a follow-up queue message.         |
 | `overRatesRevocationLoop`        | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo`                                                         | Revoke over-rates after TDH changes.                                                                                        |
 | `waveScoreRefreshLoop`           | SNS `tdh-calculation-done.fifo` via SQS `wave-score-refresh-start.fifo`; SQS `wave-score-refresh-dirty.fifo`; EventBridge fallback | Refresh materialized wave REP and Wave Score discovery fields after TDH changes or wave/drop/rating/subscription mutations. |
 | `mediaResizerLoop`               | CloudFront/request path                                                                                                            | Resize images on demand.                                                                                                    |
@@ -545,11 +546,14 @@ changing alert or dirty state, while
 No request cache is used for the coverage read boundary, so a confirmed top-up
 or redemption can be reflected immediately.
 
-`xTdhLoop` uses a two-phase FIFO queue flow. The TDH completion SNS topic
-delivers the universe phase through `xtdh-start.fifo`; after the universe
-transaction commits, the same Lambda enqueues a stats phase back to that FIFO
-queue, using the same FIFO message group as the universe message when one is
-available and the queue's default FIFO group otherwise. That shared message
+`xTdhLoop` uses a two-phase FIFO queue flow. A full nightly TDH run relies only
+on the TDH completion SNS topic, published after the remaining TDH work
+finishes, to deliver the universe phase through `xtdh-start.fifo`. A partial TDH
+reconsolidation from `delegationsLoop` instead enqueues one universe phase
+directly after its persistence and checkpoint writes complete. After either
+universe transaction commits, `xTdhLoop` enqueues a stats phase back to that
+FIFO queue, using the same FIFO message group as the universe message when one
+is available and the queue's default FIFO group otherwise. That shared message
 group is what orders each universe phase before its stats phase; the SQS event
 source batch size stays at `1` and Lambda reserved concurrency stays at `1` to
 avoid parallel xTDH work across groups. The stats phase rebuilds the inactive
