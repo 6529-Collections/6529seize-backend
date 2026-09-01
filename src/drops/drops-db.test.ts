@@ -300,6 +300,54 @@ describe('DropsDb', () => {
     expect(options).toEqual({ wrappedConnection: { connection } });
   });
 
+  it("locks only one author's chat drops while preparing a history deletion", async () => {
+    const connection = {};
+    const chatDrops = [{ id: 'chat-1' }, { id: 'chat-2' }];
+    const execute = jest.fn().mockResolvedValue(chatDrops);
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    await expect(
+      repo.findWaveChatDropsByAuthorForUpdate(
+        { waveId: 'wave-1', authorId: 'author-1' },
+        {
+          connection: { connection } as any,
+          timer: undefined
+        }
+      )
+    ).resolves.toBe(chatDrops);
+
+    const [sql, params, options] = execute.mock.calls[0];
+    expect(sql).toContain('wave_id = :waveId');
+    expect(sql).toContain('author_id = :authorId');
+    expect(sql).toContain('drop_type = :dropType');
+    expect(sql).toContain('order by serial_no asc, id asc');
+    expect(sql).toContain('for update');
+    expect(params).toEqual({
+      waveId: 'wave-1',
+      authorId: 'author-1',
+      dropType: DropType.CHAT
+    });
+    expect(options).toEqual({ wrappedConnection: { connection } });
+  });
+
+  it('requires a transaction when locking chat drops for deletion', async () => {
+    const repo = new DropsDb(() => ({ execute: jest.fn() }) as any);
+
+    await expect(
+      repo.findWaveChatDropsByAuthorForUpdate(
+        { waveId: 'wave-1', authorId: 'author-1' },
+        { timer: undefined }
+      )
+    ).rejects.toThrow(
+      'findWaveChatDropsByAuthorForUpdate requires a connection'
+    );
+  });
+
   it('applies a bounded metrics delta when a drop is deleted', async () => {
     const connection = {};
     const execute = jest.fn().mockResolvedValue([]);
