@@ -412,36 +412,68 @@ export class DropCreationApiService {
         );
 
       if (deleteResponses.length) {
-        await waveDropMetricsRefreshService.requestWaveDropMetricsRefreshBestEffort(
-          [waveId],
-          WaveDropMetricsDirtyRefreshReason.DROP_DELETED,
-          ctx
-        );
-        await waveScoreService.requestWaveScoreRefreshBestEffort(
-          [waveId],
-          WaveScoreDirtyRefreshReason.DROP_DELETED,
-          ctx
-        );
-        await invalidateWaveUnreadCacheForWave(waveId);
-        await this.wsListenersNotifier.notifyAboutDropDeletes(
-          deleteResponses.map((response) => ({
-            drop_id: response.id,
-            drop_serial: response.serial_no,
-            wave_id: response.wave_id
-          })),
-          deleteResponses[0]!.visibility_group_id,
-          ctx
-        );
-        await this.notifyDmUnreadStateChanged({
-          waveId,
-          recipientIds: Array.from(
-            new Set(
-              deleteResponses.flatMap(
-                (response) => response.dm_unread_recipient_ids
+        const postCommitEffects = [
+          {
+            name: 'wave drop metrics refresh',
+            run: () =>
+              waveDropMetricsRefreshService.requestWaveDropMetricsRefreshBestEffort(
+                [waveId],
+                WaveDropMetricsDirtyRefreshReason.DROP_DELETED,
+                ctx
               )
-            )
-          ),
-          ctx
+          },
+          {
+            name: 'wave score refresh',
+            run: () =>
+              waveScoreService.requestWaveScoreRefreshBestEffort(
+                [waveId],
+                WaveScoreDirtyRefreshReason.DROP_DELETED,
+                ctx
+              )
+          },
+          {
+            name: 'wave unread cache invalidation',
+            run: () => invalidateWaveUnreadCacheForWave(waveId)
+          },
+          {
+            name: 'drop deletion websocket broadcast',
+            run: () =>
+              this.wsListenersNotifier.notifyAboutDropDeletes(
+                deleteResponses.map((response) => ({
+                  drop_id: response.id,
+                  drop_serial: response.serial_no,
+                  wave_id: response.wave_id
+                })),
+                deleteResponses[0]!.visibility_group_id,
+                ctx
+              )
+          },
+          {
+            name: 'direct-message unread notification',
+            run: () =>
+              this.notifyDmUnreadStateChanged({
+                waveId,
+                recipientIds: Array.from(
+                  new Set(
+                    deleteResponses.flatMap(
+                      (response) => response.dm_unread_recipient_ids
+                    )
+                  )
+                ),
+                ctx
+              })
+          }
+        ] as const;
+        const results = await Promise.allSettled(
+          postCommitEffects.map((effect) => effect.run())
+        );
+        results.forEach((result, index) => {
+          if (result.status === 'rejected') {
+            this.logger.error(
+              `Wave chat history deletion ${postCommitEffects[index]!.name} failed after commit for wave ${waveId}`,
+              result.reason
+            );
+          }
         });
       }
 

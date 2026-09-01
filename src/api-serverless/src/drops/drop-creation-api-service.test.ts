@@ -820,6 +820,217 @@ describe('DropCreationApiService.deleteMyWaveChatHistory', () => {
     expect(wsListenersNotifier.notifyAboutDropDeletes).not.toHaveBeenCalled();
   });
 
+  it('attempts every post-commit effect when one effect fails', async () => {
+    const dropsDb = {
+      executeNativeQueriesInTransaction: jest.fn(
+        async (callback: (connection: unknown) => Promise<unknown>) =>
+          callback({})
+      ),
+      findWaveChatDropsByAuthorForUpdate: jest
+        .fn()
+        .mockResolvedValue([{ id: 'chat-1' }])
+    };
+    const deleteDrop = {
+      execute: jest.fn().mockResolvedValue({
+        id: 'chat-1',
+        serial_no: 10,
+        visibility_group_id: 'group-1',
+        wave_id: 'wave-1',
+        dm_unread_recipient_ids: []
+      })
+    };
+    const wsListenersNotifier = {
+      notifyAboutDropDeletes: jest.fn().mockResolvedValue(undefined)
+    };
+    const wavesApiDb = {
+      findWaveByIdForUpdate: jest.fn().mockResolvedValue({
+        id: 'wave-1',
+        description_drop_id: 'different-author-pinned-drop'
+      })
+    };
+    const service = new DropCreationApiService(
+      {} as never,
+      dropsDb as never,
+      {} as never,
+      {} as never,
+      deleteDrop as never,
+      wsListenersNotifier as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      wavesApiDb as never
+    );
+    const requestWaveDropMetricsRefreshSpy = jest
+      .spyOn(
+        waveDropMetricsRefreshService,
+        'requestWaveDropMetricsRefreshBestEffort'
+      )
+      .mockRejectedValue(new Error('metrics unavailable'));
+    const requestWaveScoreRefreshSpy = jest
+      .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
+      .mockResolvedValue(undefined);
+    jest
+      .mocked(invalidateWaveUnreadCacheForWave)
+      .mockRejectedValueOnce(new Error('cache unavailable'));
+    const ctx = {
+      authenticationContext: {
+        getActingAsId: jest.fn().mockReturnValue('profile-1'),
+        isAuthenticatedAsProxy: jest.fn().mockReturnValue(false)
+      },
+      timer: undefined
+    };
+
+    await expect(
+      service.deleteMyWaveChatHistory({ waveId: 'wave-1' }, ctx as never)
+    ).resolves.toEqual({
+      deleted_drop_ids: ['chat-1'],
+      preserved_pinned_drop_id: null
+    });
+
+    expect(requestWaveDropMetricsRefreshSpy).toHaveBeenCalledTimes(1);
+    expect(requestWaveScoreRefreshSpy).toHaveBeenCalledTimes(1);
+    expect(invalidateWaveUnreadCacheForWave).toHaveBeenCalledWith('wave-1');
+    expect(wsListenersNotifier.notifyAboutDropDeletes).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a missing wave before selecting or deleting drops', async () => {
+    const dropsDb = {
+      executeNativeQueriesInTransaction: jest.fn(
+        async (callback: (connection: unknown) => Promise<unknown>) =>
+          callback({})
+      ),
+      findWaveChatDropsByAuthorForUpdate: jest.fn()
+    };
+    const deleteDrop = { execute: jest.fn() };
+    const wavesApiDb = {
+      findWaveByIdForUpdate: jest.fn().mockResolvedValue(null)
+    };
+    const service = new DropCreationApiService(
+      {} as never,
+      dropsDb as never,
+      {} as never,
+      {} as never,
+      deleteDrop as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      wavesApiDb as never
+    );
+    const ctx = {
+      authenticationContext: {
+        getActingAsId: jest.fn().mockReturnValue('profile-1'),
+        isAuthenticatedAsProxy: jest.fn().mockReturnValue(false)
+      },
+      timer: undefined
+    };
+
+    await expect(
+      service.deleteMyWaveChatHistory({ waveId: 'missing-wave' }, ctx as never)
+    ).rejects.toThrow('Wave missing-wave not found');
+
+    expect(dropsDb.findWaveChatDropsByAuthorForUpdate).not.toHaveBeenCalled();
+    expect(deleteDrop.execute).not.toHaveBeenCalled();
+  });
+
+  it('does not publish post-commit effects when a transactional delete fails', async () => {
+    const dropsDb = {
+      executeNativeQueriesInTransaction: jest.fn(
+        async (callback: (connection: unknown) => Promise<unknown>) =>
+          callback({})
+      ),
+      findWaveChatDropsByAuthorForUpdate: jest
+        .fn()
+        .mockResolvedValue([{ id: 'chat-1' }, { id: 'chat-2' }])
+    };
+    const deleteDrop = {
+      execute: jest
+        .fn()
+        .mockResolvedValueOnce({
+          id: 'chat-1',
+          serial_no: 10,
+          visibility_group_id: 'group-1',
+          wave_id: 'wave-1',
+          dm_unread_recipient_ids: []
+        })
+        .mockRejectedValueOnce(new Error('delete failed'))
+    };
+    const wsListenersNotifier = { notifyAboutDropDeletes: jest.fn() };
+    const wavesApiDb = {
+      findWaveByIdForUpdate: jest.fn().mockResolvedValue({
+        id: 'wave-1',
+        description_drop_id: 'different-author-pinned-drop'
+      })
+    };
+    const service = new DropCreationApiService(
+      {} as never,
+      dropsDb as never,
+      {} as never,
+      {} as never,
+      deleteDrop as never,
+      wsListenersNotifier as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      wavesApiDb as never
+    );
+    const requestWaveDropMetricsRefreshSpy = jest.spyOn(
+      waveDropMetricsRefreshService,
+      'requestWaveDropMetricsRefreshBestEffort'
+    );
+    const requestWaveScoreRefreshSpy = jest.spyOn(
+      waveScoreService,
+      'requestWaveScoreRefreshBestEffort'
+    );
+    const ctx = {
+      authenticationContext: {
+        getActingAsId: jest.fn().mockReturnValue('profile-1'),
+        isAuthenticatedAsProxy: jest.fn().mockReturnValue(false)
+      },
+      timer: undefined
+    };
+
+    await expect(
+      service.deleteMyWaveChatHistory({ waveId: 'wave-1' }, ctx as never)
+    ).rejects.toThrow('delete failed');
+
+    expect(deleteDrop.execute).toHaveBeenCalledTimes(2);
+    expect(requestWaveDropMetricsRefreshSpy).not.toHaveBeenCalled();
+    expect(requestWaveScoreRefreshSpy).not.toHaveBeenCalled();
+    expect(invalidateWaveUnreadCacheForWave).not.toHaveBeenCalled();
+    expect(wsListenersNotifier.notifyAboutDropDeletes).not.toHaveBeenCalled();
+  });
+
+  it('rejects a missing acting profile before opening a transaction', async () => {
+    const dropsDb = {
+      executeNativeQueriesInTransaction: jest.fn()
+    };
+    const service = new DropCreationApiService(
+      {} as never,
+      dropsDb as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+    const ctx = {
+      authenticationContext: {
+        getActingAsId: jest.fn().mockReturnValue(null),
+        isAuthenticatedAsProxy: jest.fn()
+      },
+      timer: undefined
+    };
+
+    await expect(
+      service.deleteMyWaveChatHistory({ waveId: 'wave-1' }, ctx as never)
+    ).rejects.toThrow('Please create a profile first');
+
+    expect(dropsDb.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
+  });
+
   it('rejects proxy deletion before opening a transaction', async () => {
     const dropsDb = {
       executeNativeQueriesInTransaction: jest.fn()

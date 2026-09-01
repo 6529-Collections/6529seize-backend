@@ -248,7 +248,9 @@ matching `CHAT` drops in one transaction, preserves the current pinned drop,
 and delegates each remaining drop to the canonical deletion use case so
 submission/winner drops and dependent drop data are unaffected. After commit,
 the API requests the normal wave metric/score repairs, invalidates unread state,
-and broadcasts the deleted drop identities to connected wave clients.
+and broadcasts the deleted drop identities to connected wave clients. Because
+this is self-service privacy cleanup scoped to the authenticated author ID, it
+remains available if the author is no longer eligible to enter the wave.
 
 Waves have an additive competition read boundary under `/v3/waves`. A wave is
 the chat/visibility hub and owns zero, one, or many competition resources. The

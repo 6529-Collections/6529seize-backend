@@ -122,6 +122,77 @@ describe('WsListenersNotifier', () => {
     ]);
   });
 
+  it('caps concurrent bulk drop deletion sends', async () => {
+    let activeSends = 0;
+    let maximumActiveSends = 0;
+    const appWebSockets = {
+      send: jest.fn().mockImplementation(async () => {
+        activeSends += 1;
+        maximumActiveSends = Math.max(maximumActiveSends, activeSends);
+        await Promise.resolve();
+        activeSends -= 1;
+      })
+    };
+    const wsConnectionRepository = {
+      getCurrentlyOnlineCommunityMemberConnectionIds: jest
+        .fn()
+        .mockResolvedValue(
+          Array.from({ length: 11 }, (_, index) => ({
+            connectionId: `connection-${index}`,
+            profileId: `profile-${index}`
+          }))
+        )
+    };
+    const notifier = new WsListenersNotifier(
+      appWebSockets as any,
+      wsConnectionRepository as any
+    );
+    const deletedDrops = Array.from({ length: 20 }, (_, index) => ({
+      drop_id: `drop-${index}`,
+      wave_id: 'wave-1',
+      drop_serial: index
+    }));
+
+    await notifier.notifyAboutDropDeletes(deletedDrops, null, {});
+
+    expect(appWebSockets.send).toHaveBeenCalledTimes(220);
+    expect(maximumActiveSends).toBe(100);
+  });
+
+  it('attempts later bulk deletion batches after a websocket send fails', async () => {
+    const appWebSockets = {
+      send: jest
+        .fn()
+        .mockRejectedValueOnce(new Error('send failed'))
+        .mockResolvedValue(undefined)
+    };
+    const wsConnectionRepository = {
+      getCurrentlyOnlineCommunityMemberConnectionIds: jest
+        .fn()
+        .mockResolvedValue(
+          Array.from({ length: 11 }, (_, index) => ({
+            connectionId: `connection-${index}`,
+            profileId: `profile-${index}`
+          }))
+        )
+    };
+    const notifier = new WsListenersNotifier(
+      appWebSockets as any,
+      wsConnectionRepository as any
+    );
+    const deletedDrops = Array.from({ length: 10 }, (_, index) => ({
+      drop_id: `drop-${index}`,
+      wave_id: 'wave-1',
+      drop_serial: index
+    }));
+
+    await expect(
+      notifier.notifyAboutDropDeletes(deletedDrops, null, {})
+    ).rejects.toThrow('send failed');
+
+    expect(appWebSockets.send).toHaveBeenCalledTimes(110);
+  });
+
   it('sends each direct-message unread state only to sessions synced for that profile', async () => {
     const appWebSockets = {
       send: jest.fn().mockResolvedValue(undefined)
