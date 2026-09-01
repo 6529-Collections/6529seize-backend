@@ -67,6 +67,10 @@ export {
   DropPollVoteEntity
 } from './IDropPoll';
 export { HelpBotCreditEventEntity } from './IHelpBotCreditEvent';
+export {
+  HelpBotDailyActivityCreditRequestEntity,
+  HelpBotDailyActivityCreditRequestStatus
+} from './IHelpBotDailyActivityCreditRequest';
 export { HelpBotInteractionEntity } from './IHelpBotInteraction';
 export { DropRankEntity } from './IDropRank';
 export { DropReactionsEntity } from './IDropReactions';
