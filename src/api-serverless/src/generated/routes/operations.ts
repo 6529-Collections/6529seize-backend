@@ -19,6 +19,7 @@ import { ApiCreateProfileCmsWalletGallerySnapshotRequest } from '@/api/generated
 import { ApiCreateWaveMetadataRequest } from '@/api/generated/models/ApiCreateWaveMetadataRequest';
 import { ApiDeleteEulaConsentRequest } from '@/api/generated/models/ApiDeleteEulaConsentRequest';
 import { ApiDeleteEulaConsentResponse } from '@/api/generated/models/ApiDeleteEulaConsentResponse';
+import { ApiDeleteMyWaveChatHistoryResponse } from '@/api/generated/models/ApiDeleteMyWaveChatHistoryResponse';
 import { ApiDmDropsUnreadCount } from '@/api/generated/models/ApiDmDropsUnreadCount';
 import { ApiDmUnreadSnapshot } from '@/api/generated/models/ApiDmUnreadSnapshot';
 import { ApiDropAndWave } from '@/api/generated/models/ApiDropAndWave';
@@ -1593,6 +1594,22 @@ export type ValidateWaveGroupsRequest = Request<
   ApiResponse<ValidateWaveGroupsResponse>,
   ApiWaveGroupValidationRequest,
   ValidateWaveGroupsQuery,
+  Record<string, never>
+>;
+
+export interface DeleteMyWaveChatHistoryPathParams {
+  "id": string;
+}
+
+export type DeleteMyWaveChatHistoryQuery = Record<string, never>;
+
+export type DeleteMyWaveChatHistoryResponse = ApiDeleteMyWaveChatHistoryResponse;
+
+export type DeleteMyWaveChatHistoryRequest = Request<
+  DeleteMyWaveChatHistoryPathParams,
+  ApiResponse<DeleteMyWaveChatHistoryResponse>,
+  never,
+  DeleteMyWaveChatHistoryQuery,
   Record<string, never>
 >;
 
