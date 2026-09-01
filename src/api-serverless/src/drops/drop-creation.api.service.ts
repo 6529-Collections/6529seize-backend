@@ -41,6 +41,7 @@ import {
   DropPollsApiService
 } from '@/api/drops/drop-polls.api.service';
 import { ApiCreateDropPollRequest } from '@/api/generated/models/ApiCreateDropPollRequest';
+import { ApiDeleteMyWaveChatHistoryResponse } from '@/api/generated/models/ApiDeleteMyWaveChatHistoryResponse';
 import { invalidateWaveUnreadCacheForWave } from '@/api/waves/wave-unread-cache';
 import {
   waveScoreService,
@@ -331,6 +332,126 @@ export class DropCreationApiService {
       });
     }
     timer?.stop('dropCreationApiService->deleteDrop');
+  }
+
+  public async deleteMyWaveChatHistory(
+    { waveId }: { readonly waveId: string },
+    ctx: RequestContext
+  ): Promise<ApiDeleteMyWaveChatHistoryResponse> {
+    const timerName = `${this.constructor.name}->deleteMyWaveChatHistory`;
+    ctx.timer?.start(timerName);
+    try {
+      const authenticationContext = ctx.authenticationContext;
+      const authenticatedProfileId = authenticationContext?.getActingAsId();
+      if (!authenticationContext || !authenticatedProfileId) {
+        throw new ForbiddenException(`Please create a profile first`);
+      }
+      if (authenticationContext.isAuthenticatedAsProxy()) {
+        throw new ForbiddenException(
+          `Proxy is not allowed to delete chat history`
+        );
+      }
+
+      const { deleteResponses, preservedPinnedDropId } =
+        await this.dropsDb.executeNativeQueriesInTransaction(
+          async (connection) => {
+            const transactionContext: RequestContext = {
+              ...ctx,
+              connection
+            };
+            const wave = await this.wavesApiDb.findWaveByIdForUpdate(
+              waveId,
+              transactionContext
+            );
+            if (!wave) {
+              throw new NotFoundException(`Wave ${waveId} not found`);
+            }
+
+            const chatDrops =
+              await this.dropsDb.findWaveChatDropsByAuthorForUpdate(
+                {
+                  waveId,
+                  authorId: authenticatedProfileId
+                },
+                transactionContext
+              );
+            const pinnedDrop = chatDrops.find(
+              (drop) => drop.id === wave.description_drop_id
+            );
+            const responses: Array<{
+              id: string;
+              visibility_group_id: string | null;
+              serial_no: number;
+              wave_id: string;
+              dm_unread_recipient_ids: string[];
+            }> = [];
+
+            for (const drop of chatDrops) {
+              if (drop.id === pinnedDrop?.id) {
+                continue;
+              }
+              const deleteResponse = await this.deleteDrop.execute(
+                {
+                  drop_id: drop.id,
+                  deleter_identity: authenticatedProfileId,
+                  deleter_id: authenticatedProfileId,
+                  deletion_purpose: 'DELETE'
+                },
+                { timer: ctx.timer, connection }
+              );
+              if (deleteResponse) {
+                responses.push(deleteResponse);
+              }
+            }
+
+            return {
+              deleteResponses: responses,
+              preservedPinnedDropId: pinnedDrop?.id ?? null
+            };
+          }
+        );
+
+      if (deleteResponses.length) {
+        await waveDropMetricsRefreshService.requestWaveDropMetricsRefreshBestEffort(
+          [waveId],
+          WaveDropMetricsDirtyRefreshReason.DROP_DELETED,
+          ctx
+        );
+        await waveScoreService.requestWaveScoreRefreshBestEffort(
+          [waveId],
+          WaveScoreDirtyRefreshReason.DROP_DELETED,
+          ctx
+        );
+        await invalidateWaveUnreadCacheForWave(waveId);
+        await this.wsListenersNotifier.notifyAboutDropDeletes(
+          deleteResponses.map((response) => ({
+            drop_id: response.id,
+            drop_serial: response.serial_no,
+            wave_id: response.wave_id
+          })),
+          deleteResponses[0]!.visibility_group_id,
+          ctx
+        );
+        await this.notifyDmUnreadStateChanged({
+          waveId,
+          recipientIds: Array.from(
+            new Set(
+              deleteResponses.flatMap(
+                (response) => response.dm_unread_recipient_ids
+              )
+            )
+          ),
+          ctx
+        });
+      }
+
+      return {
+        deleted_drop_ids: deleteResponses.map((response) => response.id),
+        preserved_pinned_drop_id: preservedPinnedDropId
+      };
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
   }
 
   async toggleHideLinkPreview(

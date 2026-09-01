@@ -64,6 +64,64 @@ function findMaximumSafeAsciiContentLength(
 }
 
 describe('WsListenersNotifier', () => {
+  it('resolves wave listeners once and sends every bulk drop deletion in order', async () => {
+    const appWebSockets = {
+      send: jest.fn().mockResolvedValue(undefined)
+    };
+    const wsConnectionRepository = {
+      getCurrentlyOnlineCommunityMemberConnectionIds: jest
+        .fn()
+        .mockResolvedValue([
+          { connectionId: 'connection-1', profileId: 'profile-1' },
+          { connectionId: 'connection-2', profileId: 'profile-2' }
+        ])
+    };
+    const notifier = new WsListenersNotifier(
+      appWebSockets as any,
+      wsConnectionRepository as any
+    );
+    const deletedDrops = [
+      { drop_id: 'drop-1', wave_id: 'wave-1', drop_serial: 10 },
+      { drop_id: 'drop-2', wave_id: 'wave-1', drop_serial: 12 }
+    ];
+
+    await notifier.notifyAboutDropDeletes(deletedDrops, 'visibility-group', {});
+
+    expect(
+      wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds
+    ).toHaveBeenCalledWith(
+      { groupId: 'visibility-group', waveId: 'wave-1' },
+      {}
+    );
+    expect(appWebSockets.send).toHaveBeenCalledTimes(4);
+    expect(
+      appWebSockets.send.mock.calls.map(([call]) => ({
+        connectionId: call.connectionId,
+        message: JSON.parse(call.message)
+      }))
+    ).toEqual([
+      {
+        connectionId: 'connection-1',
+        message: { type: WsMessageType.DROP_DELETE, data: deletedDrops[0] }
+      },
+      {
+        connectionId: 'connection-2',
+        message: { type: WsMessageType.DROP_DELETE, data: deletedDrops[0] }
+      },
+      {
+        connectionId: 'connection-1',
+        message: { type: WsMessageType.DROP_DELETE, data: deletedDrops[1] }
+      },
+      {
+        connectionId: 'connection-2',
+        message: { type: WsMessageType.DROP_DELETE, data: deletedDrops[1] }
+      }
+    ]);
+  });
+
   it('sends each direct-message unread state only to sessions synced for that profile', async () => {
     const appWebSockets = {
       send: jest.fn().mockResolvedValue(undefined)

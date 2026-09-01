@@ -545,22 +545,43 @@ export class WsListenersNotifier {
     ctx: RequestContext
   ): Promise<void> {
     ctx.timer?.start(`${this.constructor.name}->notifyAboutDropDelete`);
+    await this.notifyAboutDropDeletes([dropInfo], visibility_group_id, ctx);
+    ctx.timer?.stop(`${this.constructor.name}->notifyAboutDropDelete`);
+  }
+
+  async notifyAboutDropDeletes(
+    dropInfos: readonly {
+      drop_id: string;
+      wave_id: string;
+      drop_serial: number;
+    }[],
+    visibility_group_id: string | null,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (!dropInfos.length) {
+      return;
+    }
+    ctx.timer?.start(`${this.constructor.name}->notifyAboutDropDeletes`);
     const onlineClients =
       await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
         {
           groupId: visibility_group_id,
-          waveId: dropInfo.wave_id
+          waveId: dropInfos[0]!.wave_id
         },
         ctx
       );
     const connectionIds = onlineClients.map((it) => it.connectionId);
-    const message = JSON.stringify(dropDeleteMessage(dropInfo));
     await Promise.all(
-      connectionIds.map((connectionId: string) =>
-        this.appWebSockets.send({ connectionId, message })
-      )
+      connectionIds.map(async (connectionId: string) => {
+        for (const dropInfo of dropInfos) {
+          await this.appWebSockets.send({
+            connectionId,
+            message: JSON.stringify(dropDeleteMessage(dropInfo))
+          });
+        }
+      })
     );
-    ctx.timer?.stop(`${this.constructor.name}->notifyAboutDropDelete`);
+    ctx.timer?.stop(`${this.constructor.name}->notifyAboutDropDeletes`);
   }
 
   async notifyAboutAttachmentStatusUpdate(
