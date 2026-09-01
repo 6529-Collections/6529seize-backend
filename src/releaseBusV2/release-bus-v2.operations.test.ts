@@ -3,6 +3,14 @@ const mockGetWorkflowBlobIdentity = jest.fn();
 const mockFindWorkflowRun = jest.fn();
 const mockDispatchWorkflow = jest.fn();
 const mockResolveRef = jest.fn();
+const LEGACY_WORKFLOW_COMPATIBILITY_TEST_TIME = Date.UTC(
+  2026,
+  7,
+  31,
+  23,
+  59,
+  58
+);
 
 jest.mock('@/releaseBusV2/release-bus-v2.github-app', () => {
   class ReleaseBusGitHubInfrastructureError extends Error {
@@ -156,6 +164,10 @@ describe('Release Bus v2 exact operation callbacks', () => {
     mockDispatchWorkflow.mockReset();
     mockResolveRef.mockReset();
     mockResolveRef.mockResolvedValue('f'.repeat(40));
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   it('injects one transparent beta infrastructure retry before dispatch', async () => {
@@ -1490,6 +1502,9 @@ describe('Release Bus v2 exact operation callbacks', () => {
   });
 
   it('normalizes an old-producer preflight authorization to legacy evidence', async () => {
+    jest
+      .spyOn(Date, 'now')
+      .mockReturnValue(LEGACY_WORKFLOW_COMPATIBILITY_TEST_TIME);
     const initial = operation({
       external_id: null,
       status: 'DISPATCHED',
@@ -1537,6 +1552,9 @@ describe('Release Bus v2 exact operation callbacks', () => {
   });
 
   it('binds an old-producer authorization to its exact run after main moves', async () => {
+    jest
+      .spyOn(Date, 'now')
+      .mockReturnValue(LEGACY_WORKFLOW_COMPATIBILITY_TEST_TIME);
     const initial = operation({
       external_id: null,
       status: 'DISPATCHED',
@@ -1578,6 +1596,9 @@ describe('Release Bus v2 exact operation callbacks', () => {
   });
 
   it('accepts an old-producer operation only through the exact new-consumer workflow blob', async () => {
+    jest
+      .spyOn(Date, 'now')
+      .mockReturnValue(LEGACY_WORKFLOW_COMPATIBILITY_TEST_TIME);
     const initial = operation({
       external_id: null,
       status: 'DISPATCHED',
@@ -1619,6 +1640,9 @@ describe('Release Bus v2 exact operation callbacks', () => {
   });
 
   it('rejects an old-producer operation when its exact workflow blob is not allowlisted', async () => {
+    jest
+      .spyOn(Date, 'now')
+      .mockReturnValue(LEGACY_WORKFLOW_COMPATIBILITY_TEST_TIME);
     const initial = operation({
       external_id: null,
       status: 'DISPATCHED',
