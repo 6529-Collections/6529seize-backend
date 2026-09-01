@@ -47,6 +47,8 @@ const dropNotificationIdentityForLog = (drop: ApiDrop): string =>
     drop.wave?.id
   )} serial_no=${scalarForLog(drop.serial_no)}`;
 
+const DROP_DELETE_NOTIFICATION_BATCH_SIZE = 100;
+
 export interface NotificationConnectionRecipient {
   readonly connectionId: string;
   readonly identityId: string;
@@ -545,22 +547,61 @@ export class WsListenersNotifier {
     ctx: RequestContext
   ): Promise<void> {
     ctx.timer?.start(`${this.constructor.name}->notifyAboutDropDelete`);
-    const onlineClients =
-      await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
-        {
-          groupId: visibility_group_id,
-          waveId: dropInfo.wave_id
-        },
-        ctx
-      );
-    const connectionIds = onlineClients.map((it) => it.connectionId);
-    const message = JSON.stringify(dropDeleteMessage(dropInfo));
-    await Promise.all(
-      connectionIds.map((connectionId: string) =>
-        this.appWebSockets.send({ connectionId, message })
-      )
-    );
+    await this.notifyAboutDropDeletes([dropInfo], visibility_group_id, ctx);
     ctx.timer?.stop(`${this.constructor.name}->notifyAboutDropDelete`);
+  }
+
+  async notifyAboutDropDeletes(
+    dropInfos: readonly {
+      drop_id: string;
+      wave_id: string;
+      drop_serial: number;
+    }[],
+    visibility_group_id: string | null,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (!dropInfos.length) {
+      return;
+    }
+    const timerName = `${this.constructor.name}->notifyAboutDropDeletes`;
+    ctx.timer?.start(timerName);
+    try {
+      const onlineClients =
+        await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
+          {
+            groupId: visibility_group_id,
+            waveId: dropInfos[0]!.wave_id
+          },
+          ctx
+        );
+      const connectionIds = onlineClients.map((it) => it.connectionId);
+      let pendingSends: Promise<void>[] = [];
+      const sendFailures: unknown[] = [];
+      const flushPendingSends = async (): Promise<void> => {
+        const results = await Promise.allSettled(pendingSends);
+        sendFailures.push(
+          ...results.flatMap((result) =>
+            result.status === 'rejected' ? [result.reason] : []
+          )
+        );
+        pendingSends = [];
+      };
+      for (const dropInfo of dropInfos) {
+        const message = JSON.stringify(dropDeleteMessage(dropInfo));
+        for (const connectionId of connectionIds) {
+          pendingSends.push(this.appWebSockets.send({ connectionId, message }));
+          if (pendingSends.length === DROP_DELETE_NOTIFICATION_BATCH_SIZE) {
+            await flushPendingSends();
+          }
+        }
+      }
+      await flushPendingSends();
+      if (sendFailures.length) {
+        throw sendFailures[0];
+      }
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
   }
 
   async notifyAboutAttachmentStatusUpdate(

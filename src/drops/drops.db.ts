@@ -268,6 +268,46 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  async findWaveChatDropsByAuthorForUpdate(
+    {
+      waveId,
+      authorId
+    }: {
+      readonly waveId: string;
+      readonly authorId: string;
+    },
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    if (!ctx.connection) {
+      throw new Error(
+        'findWaveChatDropsByAuthorForUpdate requires a connection'
+      );
+    }
+    const timerName = `${this.constructor.name}->findWaveChatDropsByAuthorForUpdate`;
+    ctx.timer?.start(timerName);
+    try {
+      return await this.db.execute<DropEntity>(
+        `
+          select *
+          from ${DROPS_TABLE}
+          where wave_id = :waveId
+            and author_id = :authorId
+            and drop_type = :dropType
+          order by serial_no asc, id asc
+          for update
+        `,
+        {
+          waveId,
+          authorId,
+          dropType: DropType.CHAT
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   async getDropPartOnes(
     dropIds: string[],
     ctx: RequestContext
