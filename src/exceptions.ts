@@ -1,5 +1,8 @@
 export abstract class ApiCompliantException extends Error {
-  protected constructor(message: string) {
+  protected constructor(
+    message: string,
+    readonly code?: string
+  ) {
     super(message);
     Object.setPrototypeOf(this, new.target.prototype);
     this.name = new.target.name;
@@ -50,8 +53,8 @@ export class UnauthorisedException extends ApiCompliantException {
 
 export class CustomApiCompliantException extends ApiCompliantException {
   private status: number;
-  constructor(status: number, message: string) {
-    super(message);
+  constructor(status: number, message: string, code?: string) {
+    super(message, code);
     this.status = status;
   }
 

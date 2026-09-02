@@ -262,6 +262,21 @@ function createService() {
   const reactionsDb = {
     getReactionProfilesByDropId: jest.fn().mockResolvedValue([])
   };
+  const moderationDb = {
+    getPresentations: jest.fn().mockImplementation((drops: DropEntity[]) =>
+      Promise.resolve(
+        Object.fromEntries(
+          drops.map((drop) => [
+            drop.id,
+            {
+              viewer: { author_blocked: false, drop_hidden: false },
+              moderation: { status: 'VISIBLE', can_view: true }
+            }
+          ])
+        )
+      )
+    )
+  };
 
   return {
     service: new ApiDropV2Service(
@@ -272,7 +287,8 @@ function createService() {
       apiWaveOverviewMapper as any,
       identityFetcher as any,
       attachmentsDb as any,
-      reactionsDb as any
+      reactionsDb as any,
+      moderationDb as any
     ),
     deps: {
       dropsDb,
@@ -282,7 +298,8 @@ function createService() {
       apiWaveOverviewMapper,
       identityFetcher,
       attachmentsDb,
-      reactionsDb
+      reactionsDb,
+      moderationDb
     }
   };
 }
@@ -756,6 +773,14 @@ describe('ApiDropV2Service', () => {
 
     expect(result).toEqual({
       part_no: 2,
+      viewer_context: {
+        author_blocked: false,
+        drop_hidden: false
+      },
+      moderation: {
+        status: 'VISIBLE',
+        can_view: true
+      },
       content: 'Second part',
       media: [
         {
@@ -807,6 +832,30 @@ describe('ApiDropV2Service', () => {
       ['attachment-1'],
       connection
     );
+  });
+
+  it('returns a structural part tombstone without loading content or files', async () => {
+    const { service, deps } = createService();
+    deps.moderationDb.getPresentations.mockResolvedValue({
+      'drop-1': {
+        viewer: { author_blocked: false, drop_hidden: false },
+        moderation: { status: 'AI_QUARANTINED', can_view: false }
+      }
+    });
+
+    await expect(
+      service.findPartByDropIdOrThrow('drop-1', 1, {
+        authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+      })
+    ).resolves.toEqual({
+      part_no: 1,
+      viewer_context: { author_blocked: false, drop_hidden: false },
+      moderation: { status: 'AI_QUARANTINED', can_view: false }
+    });
+
+    expect(deps.dropsDb.findDropPartByDropIdAndPartNo).not.toHaveBeenCalled();
+    expect(deps.dropsDb.findDropPartMedia).not.toHaveBeenCalled();
+    expect(deps.attachmentsDb.getDropPartAttachments).not.toHaveBeenCalled();
   });
 
   it('throws for hidden drop part without fetching the part', async () => {
