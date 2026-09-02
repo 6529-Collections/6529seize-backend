@@ -202,6 +202,8 @@ Authorized moderators use:
   cursor-paginated open queue, including the reporting profile's handle and
   profile picture alongside the author identity;
 - `GET /content-moderation/reports?view=RESOLVED` for resolved report history;
+- `GET /content-moderation/block-activity` for the newest-first,
+  cursor-paginated history of real profile-block transitions;
 - `GET /content-moderation/profiles/suspended` for the current suspended
   profile list;
 - `POST /content-moderation/drops/{drop_id}/decision` to allow/restore,
@@ -281,6 +283,12 @@ MySQL stores:
 - moderator roles;
 - pre-publication decisions; and
 - append-only moderation audit records.
+
+The moderator-only block-activity history is built from transition audit
+records. Repeating a block or unblock request without changing relationship
+state does not add another audit event, while blocking again after an unblock
+creates a new event. The history remains independent from content reports and
+does not invoke automated moderation or change global content/profile state.
 
 Pre-publication decision records are retained for 30 days and pruned daily by
 `dbMigrationsLoop` in bounded batches of 1,000 rows, with at most ten batches
