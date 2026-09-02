@@ -9,7 +9,8 @@ import { RequestContext } from '../../../request.context';
 import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
 import {
   createOrUpdateDrop,
-  CreateOrUpdateDropUseCase
+  CreateOrUpdateDropUseCase,
+  PrePublicationPreparation
 } from '../../../drops/create-or-update-drop.use-case';
 import {
   CreateOrUpdateDropModel,
@@ -123,6 +124,10 @@ export class DropCreationApiService {
       await this.createOrUpdateDrop.preResolveIdentityNomination(createModel, {
         timer: ctx.timer
       });
+    const prePublication = await this.createOrUpdateDrop.preparePrePublication(
+      createModel,
+      ctx
+    );
     const {
       drop,
       pendingPushNotificationIds,
@@ -135,6 +140,7 @@ export class DropCreationApiService {
             model: createModel,
             authorId,
             preResolvedIdentityNomination,
+            prePublication,
             requestDailyActivityCredit
           },
           normalizeCreateDropPollRequest(createDropRequest.poll),
@@ -170,6 +176,7 @@ export class DropCreationApiService {
       model,
       authorId,
       preResolvedIdentityNomination,
+      prePublication,
       requestDailyActivityCredit
     }: {
       model: CreateOrUpdateDropModel;
@@ -177,6 +184,7 @@ export class DropCreationApiService {
       preResolvedIdentityNomination: Awaited<
         ReturnType<CreateOrUpdateDropUseCase['preResolveIdentityNomination']>
       > | null;
+      prePublication: PrePublicationPreparation;
       requestDailyActivityCredit: boolean;
     },
     poll: CreateDropPollRequest | null | undefined,
@@ -191,7 +199,8 @@ export class DropCreationApiService {
       await this.createOrUpdateDrop.execute(model, false, {
         timer,
         connection,
-        preResolvedIdentityNomination
+        preResolvedIdentityNomination,
+        prePublication
       });
     await this.dropPollsApiService.createPollForDrop(
       {
@@ -543,6 +552,9 @@ export class DropCreationApiService {
     if (!drop) {
       throw new NotFoundException(`Drop ${dropId} not found`);
     }
+    if (drop.author_id !== authorId) {
+      throw new ForbiddenException(`Only the author can update drop ${dropId}`);
+    }
     const waveId = drop.wave_id;
     const replyTo: DropPartIdentifierModel | null =
       drop.reply_to_drop_id !== null
@@ -573,6 +585,10 @@ export class DropCreationApiService {
       await this.createOrUpdateDrop.preResolveIdentityNomination(model, {
         timer: ctx.timer
       });
+    const prePublication = await this.createOrUpdateDrop.preparePrePublication(
+      model,
+      ctx
+    );
     const { apiDrop, pendingPushNotificationIds } =
       await this.dropsDb.executeNativeQueriesInTransaction(
         async (connection) => {
@@ -580,7 +596,8 @@ export class DropCreationApiService {
             await this.createOrUpdateDrop.execute(model, false, {
               timer: ctx.timer!,
               connection,
-              preResolvedIdentityNomination
+              preResolvedIdentityNomination,
+              prePublication
             });
           const apiDrop = await this.dropsService.findDropByIdOrThrow(
             {
