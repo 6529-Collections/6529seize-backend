@@ -745,7 +745,11 @@ reuses staging artifact bytes. Frontend/backend preparation and independent
 backend DAG frontiers run concurrently; only shared environment mutation plus
 E2E ownership is serialized. Operation keys, workflow titles, workflow
 authorization, SHA/artifact checks, row versions, and callback identity make
-retries and duplicate reconciliation idempotent.
+retries and duplicate reconciliation idempotent. Each persisted workflow
+operation records an immutable 40-character `workflow_control_sha`, and its run
+must execute at that exact control SHA. Operation records without that identity
+are invalid and fail closed; runtime authorization never derives a replacement
+identity from a run head or a time-bounded workflow-blob allowlist.
 Automatic staging E2E reaches the baseline-adoption decision through an API
 callback dispatched by `workflow_dispatch`. When an exact adoption intent is
 active, the API reads both workflow identities from GitHub: the staging E2E

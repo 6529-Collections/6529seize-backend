@@ -35,6 +35,14 @@ the affected lane `OFF` with `changeable: true`, no hidden emergency fence
 blocks fallback, and the drain gate passes. If Release Bus cannot safely
 self-deploy while `ON`, stop for explicit owner direction.
 
+Every persisted workflow operation request must include a 40-character
+`workflow_control_sha` captured when the operation is created. Authorization
+requires the workflow run head to equal that immutable control SHA in addition
+to matching the stored repository, workflow path, ref, and attempt key.
+Old-format operation records without `workflow_control_sha` fail closed before
+dispatch or callback authorization. There is no workflow-blob allowlist,
+wall-clock grace period, or run-head-derived compatibility identity.
+
 ## Dashboard read model
 
 `/deploy/ui/bus` presents Staging and Production as the two operator-facing
