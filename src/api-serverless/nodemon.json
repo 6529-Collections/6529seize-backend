@@ -2,5 +2,5 @@
   "watch": ["../../src"],
   "ext": "ts,yaml",
   "ignore": ["src/**/*.spec.ts"],
-  "exec": "ts-node -r tsconfig-paths/register src/handler.ts"
+  "exec": "ts-node --project tsconfig.dev.json -r tsconfig-paths/register src/handler.ts"
 }
