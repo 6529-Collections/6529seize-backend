@@ -206,6 +206,10 @@ export class ContentModerationProfileStateEntity {
 }
 
 @Entity(CONTENT_MODERATION_AUDIT_LOG_TABLE)
+@Index(`${CONTENT_MODERATION_AUDIT_LOG_TABLE}_action_created_idx`, [
+  'action',
+  'created_at'
+])
 export class ContentModerationAuditLogEntity {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
   readonly id!: string;

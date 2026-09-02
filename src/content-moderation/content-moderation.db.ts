@@ -113,6 +113,26 @@ export interface UserModerationReportRow {
   readonly cursor: string;
 }
 
+interface BlockActivityCursor {
+  readonly createdAt: number;
+  readonly auditId: string;
+}
+
+interface BlockActivityDbRow {
+  readonly id: string;
+  readonly blocker_profile_id: string;
+  readonly blocker_handle: string | null;
+  readonly blocker_pfp: string | null;
+  readonly blocked_profile_id: string;
+  readonly blocked_handle: string | null;
+  readonly blocked_pfp: string | null;
+  readonly created_at: number;
+}
+
+export interface BlockActivityItemRow extends BlockActivityDbRow {
+  readonly cursor: string;
+}
+
 export interface ReporterVisibleContentSnapshot {
   readonly wave_id: string | null;
   readonly wave_name: string | null;
@@ -211,20 +231,9 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     }
     await this.withTransaction(ctx.connection, async (connection) => {
       await this.assertProfileExists(blockedProfileId, connection);
-      const existing = await this.db.oneOrNull<{ id: string }>(
+      const insertResult = await this.db.execute(
         `
-          select id
-          from ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}
-          where blocker_profile_id = :blockerProfileId
-            and blocked_profile_id = :blockedProfileId
-          for update
-        `,
-        { blockerProfileId, blockedProfileId },
-        this.connectionOptions(connection)
-      );
-      await this.db.execute(
-        `
-          insert into ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} (
+          insert ignore into ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} (
             blocker_profile_id,
             blocked_profile_id,
             created_at
@@ -233,7 +242,6 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
             :blockedProfileId,
             :createdAt
           )
-          on duplicate key update created_at = values(created_at)
         `,
         {
           blockerProfileId,
@@ -242,6 +250,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         },
         this.connectionOptions(connection)
       );
+      const transitionedToBlocked = this.db.getAffectedRows(insertResult) > 0;
       await this.db.execute(
         `
           delete from ${IDENTITY_SUBSCRIPTIONS_TABLE}
@@ -256,16 +265,18 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         },
         this.connectionOptions(connection)
       );
-      await this.insertAudit(
-        {
-          actorProfileId: blockerProfileId,
-          action: 'PROFILE_BLOCKED',
-          targetProfileId: blockedProfileId,
-          previousState: existing ? 'BLOCKED' : 'UNBLOCKED',
-          newState: 'BLOCKED'
-        },
-        connection
-      );
+      if (transitionedToBlocked) {
+        await this.insertAudit(
+          {
+            actorProfileId: blockerProfileId,
+            action: 'PROFILE_BLOCKED',
+            targetProfileId: blockedProfileId,
+            previousState: 'UNBLOCKED',
+            newState: 'BLOCKED'
+          },
+          connection
+        );
+      }
     });
   }
 
@@ -293,17 +304,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<void> {
     await this.withTransaction(ctx.connection, async (connection) => {
-      const existing = await this.db.oneOrNull<{ id: string }>(
-        `
-        select id
-        from ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}
-        where blocker_profile_id = :blockerProfileId
-          and blocked_profile_id = :blockedProfileId
-      `,
-        { blockerProfileId, blockedProfileId },
-        this.connectionOptions(connection)
-      );
-      await this.db.execute(
+      const deleteResult = await this.db.execute(
         `
         delete from ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}
         where blocker_profile_id = :blockerProfileId
@@ -312,16 +313,18 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         { blockerProfileId, blockedProfileId },
         this.connectionOptions(connection)
       );
-      await this.insertAudit(
-        {
-          actorProfileId: blockerProfileId,
-          action: 'PROFILE_UNBLOCKED',
-          targetProfileId: blockedProfileId,
-          previousState: existing ? 'BLOCKED' : 'UNBLOCKED',
-          newState: 'UNBLOCKED'
-        },
-        connection
-      );
+      if (this.db.getAffectedRows(deleteResult) > 0) {
+        await this.insertAudit(
+          {
+            actorProfileId: blockerProfileId,
+            action: 'PROFILE_UNBLOCKED',
+            targetProfileId: blockedProfileId,
+            previousState: 'BLOCKED',
+            newState: 'UNBLOCKED'
+          },
+          connection
+        );
+      }
     });
   }
 
@@ -351,6 +354,66 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       { blockerProfileId },
       this.connectionOptions(connection)
     );
+  }
+
+  async getBlockActivity(
+    {
+      limit,
+      before
+    }: {
+      readonly limit: number;
+      readonly before?: string | null;
+    },
+    connection?: ConnectionWrapper<any>
+  ): Promise<BlockActivityItemRow[]> {
+    const cursor = before ? this.decodeBlockActivityCursor(before) : null;
+    const rows = await this.db.execute<BlockActivityDbRow>(
+      `
+        select
+          audit.id,
+          audit.actor_profile_id as blocker_profile_id,
+          blocker.handle as blocker_handle,
+          blocker.pfp_url as blocker_pfp,
+          audit.target_profile_id as blocked_profile_id,
+          blocked.handle as blocked_handle,
+          blocked.pfp_url as blocked_pfp,
+          audit.created_at
+        from ${CONTENT_MODERATION_AUDIT_LOG_TABLE} audit
+        left join ${PROFILES_TABLE} blocker
+          on blocker.external_id = audit.actor_profile_id
+        left join ${PROFILES_TABLE} blocked
+          on blocked.external_id = audit.target_profile_id
+        where audit.action = 'PROFILE_BLOCKED'
+          and audit.previous_state = 'UNBLOCKED'
+          and audit.new_state = 'BLOCKED'
+          and audit.actor_profile_id is not null
+          and audit.target_profile_id is not null
+          and (
+            :beforeCreatedAt is null
+            or audit.created_at < :beforeCreatedAt
+            or (
+              audit.created_at = :beforeCreatedAt
+              and audit.id < :beforeAuditId
+            )
+          )
+        order by audit.created_at desc, audit.id desc
+        limit :limit
+      `,
+      {
+        limit,
+        beforeCreatedAt: cursor?.createdAt ?? null,
+        beforeAuditId: cursor?.auditId ?? null
+      },
+      this.connectionOptions(connection)
+    );
+    return rows.map((row) => ({
+      ...row,
+      created_at: Number(row.created_at),
+      cursor: this.encodeBlockActivityCursor({
+        createdAt: Number(row.created_at),
+        auditId: row.id
+      })
+    }));
   }
 
   async hideDrop(
@@ -2050,6 +2113,25 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
 
   private encodeModerationQueueCursor(cursor: ModerationQueueCursor): string {
     return `${cursor.recommendationRank}.${cursor.createdAt}.${cursor.reportId}`;
+  }
+
+  private encodeBlockActivityCursor(cursor: BlockActivityCursor): string {
+    return `${cursor.createdAt}.${cursor.auditId}`;
+  }
+
+  private decodeBlockActivityCursor(value: string): BlockActivityCursor {
+    const match = /^(\d+)\.(\d+)$/.exec(value);
+    const createdAt = Number(match?.[1]);
+    const auditId = match?.[2];
+    if (
+      !match ||
+      !Number.isSafeInteger(createdAt) ||
+      createdAt < 0 ||
+      !auditId
+    ) {
+      throw new BadRequestException('Invalid block activity cursor');
+    }
+    return { createdAt, auditId };
   }
 
   private decodeModerationQueueCursor(value: string): ModerationQueueCursor {

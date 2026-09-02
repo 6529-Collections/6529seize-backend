@@ -103,6 +103,7 @@ export * from '../models/ApiConsolidatedTdhMetricsPage';
 export * from '../models/ApiConsolidatedTdhMetricsSort';
 export * from '../models/ApiConsolidatedTdhView';
 export * from '../models/ApiContentModerationAuditEntry';
+export * from '../models/ApiContentModerationBlockActivityItem';
 export * from '../models/ApiContentModerationDropDecisionRequest';
 export * from '../models/ApiContentModerationDropDecisionResponse';
 export * from '../models/ApiContentModerationProfileListItem';
@@ -790,6 +791,7 @@ import { ApiConsolidatedTdhMetricsPage } from '../models/ApiConsolidatedTdhMetri
 import { ApiConsolidatedTdhMetricsSort } from '../models/ApiConsolidatedTdhMetricsSort';
 import { ApiConsolidatedTdhView } from '../models/ApiConsolidatedTdhView';
 import { ApiContentModerationAuditEntry } from '../models/ApiContentModerationAuditEntry';
+import { ApiContentModerationBlockActivityItem } from '../models/ApiContentModerationBlockActivityItem';
 import { ApiContentModerationDropDecisionRequest, ApiContentModerationDropDecisionRequestDecisionEnum    } from '../models/ApiContentModerationDropDecisionRequest';
 import { ApiContentModerationDropDecisionResponse   } from '../models/ApiContentModerationDropDecisionResponse';
 import { ApiContentModerationProfileListItem         } from '../models/ApiContentModerationProfileListItem';
@@ -1693,6 +1695,7 @@ let typeMap: {[index: string]: any} = {
     "ApiConsolidatedTdhMetrics": ApiConsolidatedTdhMetrics,
     "ApiConsolidatedTdhMetricsPage": ApiConsolidatedTdhMetricsPage,
     "ApiContentModerationAuditEntry": ApiContentModerationAuditEntry,
+    "ApiContentModerationBlockActivityItem": ApiContentModerationBlockActivityItem,
     "ApiContentModerationDropDecisionRequest": ApiContentModerationDropDecisionRequest,
     "ApiContentModerationDropDecisionResponse": ApiContentModerationDropDecisionResponse,
     "ApiContentModerationProfileListItem": ApiContentModerationProfileListItem,
