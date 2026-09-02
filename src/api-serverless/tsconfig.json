@@ -22,11 +22,7 @@
     ".vscode/**/*"
   ],
   "ts-node": {
-    "require": ["tsconfig-paths/register"],
-    "compilerOptions": {
-      "strictNullChecks": true,
-      "noImplicitAny": true
-    }
+    "require": ["tsconfig-paths/register"]
   },
   "emitDecoratorMetadata": true,
   "strictPropertyInitialization": false
