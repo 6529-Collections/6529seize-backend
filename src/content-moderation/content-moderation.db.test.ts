@@ -562,9 +562,7 @@ describe('ContentModerationDb', () => {
     executor.oneOrNull.mockResolvedValueOnce({ external_id: 'blocked-1' });
     executor.execute.mockImplementation((sql: string) =>
       Promise.resolve(
-        sql.includes(
-          `insert ignore into ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}`
-        )
+        sql.includes(`insert into ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}`)
           ? [0, 1]
           : []
       )
@@ -611,7 +609,10 @@ describe('ContentModerationDb', () => {
       .map(([sql]) => String(sql))
       .join('\n');
     expect(executeSql).toContain(
-      `insert ignore into ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}`
+      `insert into ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}`
+    );
+    expect(executeSql).toContain(
+      'on duplicate key update created_at = created_at'
     );
     expect(
       executor.execute.mock.calls.some(
@@ -620,7 +621,24 @@ describe('ContentModerationDb', () => {
           'PROFILE_BLOCKED'
       )
     ).toBe(false);
-    expect(executeSql).not.toContain('on duplicate key update created_at');
+  });
+
+  it('does not suppress unrelated block insert failures', async () => {
+    const { db, executor } = createDb();
+    const insertError = new Error('constraint failure');
+    executor.oneOrNull.mockResolvedValueOnce({ external_id: 'blocked-1' });
+    executor.execute.mockRejectedValueOnce(insertError);
+
+    await expect(db.blockProfile('blocker-1', 'blocked-1', {})).rejects.toBe(
+      insertError
+    );
+    expect(
+      executor.execute.mock.calls.some(
+        ([, params]) =>
+          (params as { action?: string } | undefined)?.action ===
+          'PROFILE_BLOCKED'
+      )
+    ).toBe(false);
   });
 
   it('lists real block transitions newest first with a stable cursor', async () => {
@@ -664,7 +682,9 @@ describe('ContentModerationDb', () => {
     await db.getBlockActivity({ limit: 20, before: '500.42' });
 
     expect(executor.execute).toHaveBeenCalledWith(
-      expect.stringContaining(CONTENT_MODERATION_AUDIT_LOG_TABLE),
+      expect.stringMatching(
+        /content_moderation_audit_log[\s\S]*audit\.id < cast\(:beforeAuditId as unsigned\)/
+      ),
       expect.objectContaining({
         beforeCreatedAt: 500,
         beforeAuditId: '42'

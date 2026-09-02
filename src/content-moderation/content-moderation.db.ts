@@ -233,7 +233,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       await this.assertProfileExists(blockedProfileId, connection);
       const insertResult = await this.db.execute(
         `
-          insert ignore into ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} (
+          insert into ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} (
             blocker_profile_id,
             blocked_profile_id,
             created_at
@@ -242,6 +242,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
             :blockedProfileId,
             :createdAt
           )
+          on duplicate key update created_at = created_at
         `,
         {
           blockerProfileId,
@@ -250,7 +251,10 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         },
         this.connectionOptions(connection)
       );
-      const transitionedToBlocked = this.db.getAffectedRows(insertResult) > 0;
+      // The unique block relationship makes concurrent duplicate requests a
+      // no-op update. Only the connection that inserted the row records the
+      // transition; unrelated constraint errors are not suppressed.
+      const transitionedToBlocked = this.db.getAffectedRows(insertResult) === 1;
       await this.db.execute(
         `
           delete from ${IDENTITY_SUBSCRIPTIONS_TABLE}
@@ -393,7 +397,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
             or audit.created_at < :beforeCreatedAt
             or (
               audit.created_at = :beforeCreatedAt
-              and audit.id < :beforeAuditId
+              and audit.id < cast(:beforeAuditId as unsigned)
             )
           )
         order by audit.created_at desc, audit.id desc
