@@ -160,7 +160,23 @@ export class AuthDb extends LazyDbAccessCompatibleService {
          and secret_hash = :secretHash
          and revoked_at is null
          and expires_at > :now`,
-      { id, secretHash, now, clientType: CLIENT_TYPE_WEB }
+      { id, secretHash, now, clientType: CLIENT_TYPE_WEB },
+      { forcePool: DbPoolName.WRITE }
+    );
+  }
+
+  async getActiveWebSessionById(
+    id: string,
+    now: Date
+  ): Promise<WalletAuthSessionEntity | null> {
+    return this.db.oneOrNull<WalletAuthSessionEntity>(
+      `select * from ${WALLET_AUTH_SESSIONS_TABLE}
+       where id = :id
+         and client_type = :clientType
+         and revoked_at is null
+         and expires_at > :now`,
+      { id, now, clientType: CLIENT_TYPE_WEB },
+      { forcePool: DbPoolName.WRITE }
     );
   }
 
@@ -177,7 +193,8 @@ export class AuthDb extends LazyDbAccessCompatibleService {
          and refresh_token_hash = :refreshTokenHash
          and revoked_at is null
          and expires_at > :now`,
-      { address, refreshTokenHash, now, clientType }
+      { address, refreshTokenHash, now, clientType },
+      { forcePool: DbPoolName.WRITE }
     );
   }
 
