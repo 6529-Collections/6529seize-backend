@@ -8,8 +8,6 @@
     "target": "ES2020",
     "outDir": "lib",
     "resolveJsonModule": true,
-    "strictNullChecks": true,
-    "noImplicitAny": true,
     "noUnusedParameters": false,
     "noUnusedLocals": false,
     "experimentalDecorators": true,
@@ -24,7 +22,11 @@
     ".vscode/**/*"
   ],
   "ts-node": {
-    "require": ["tsconfig-paths/register"]
+    "require": ["tsconfig-paths/register"],
+    "compilerOptions": {
+      "strictNullChecks": true,
+      "noImplicitAny": true
+    }
   },
   "emitDecoratorMetadata": true,
   "strictPropertyInitialization": false
