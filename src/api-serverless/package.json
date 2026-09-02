@@ -59,7 +59,7 @@
     "@types/jsonwebtoken": "^9.0.3",
     "@types/memory-cache": "^0.2.2",
     "@types/multer": "^2.0.0",
-    "@types/node": "^14.14.25",
+    "@types/node": "^18.19.130",
     "esbuild": "^0.28.1",
     "eslint": "^9.27.0",
     "eslint-config-prettier": "^10.1.5",
