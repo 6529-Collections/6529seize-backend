@@ -220,6 +220,17 @@ export interface PrePublicationCheckRecord {
   readonly evaluatorResult: Record<string, unknown> | null;
 }
 
+function getInsertIdFromWriteResult(result: unknown): number {
+  if (result != null && typeof result === 'object' && 'insertId' in result) {
+    return Number((result as { insertId?: unknown }).insertId ?? 0);
+  }
+  if (!Array.isArray(result)) {
+    return 0;
+  }
+  const third = result[2] as unknown;
+  return typeof third === 'number' ? third : 0;
+}
+
 export class ContentModerationDb extends LazyDbAccessCompatibleService {
   async blockProfile(
     blockerProfileId: string,
@@ -253,8 +264,10 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       );
       // The unique block relationship makes concurrent duplicate requests a
       // no-op update. Only the connection that inserted the row records the
-      // transition; unrelated constraint errors are not suppressed.
-      const transitionedToBlocked = this.db.getAffectedRows(insertResult) === 1;
+      // transition; insertId remains zero for the no-op even when the MySQL
+      // connection's FOUND_ROWS flag reports one affected row.
+      const transitionedToBlocked =
+        getInsertIdFromWriteResult(insertResult) > 0;
       await this.db.execute(
         `
           delete from ${IDENTITY_SUBSCRIPTIONS_TABLE}

@@ -563,7 +563,7 @@ describe('ContentModerationDb', () => {
     executor.execute.mockImplementation((sql: string) =>
       Promise.resolve(
         sql.includes(`insert into ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}`)
-          ? [0, 1]
+          ? [0, 1, 123]
           : []
       )
     );
@@ -598,10 +598,16 @@ describe('ContentModerationDb', () => {
     );
   });
 
-  it('does not refresh or audit an already-active block', async () => {
+  it('does not refresh or audit a duplicate block reported as affected', async () => {
     const { db, executor } = createDb();
     executor.oneOrNull.mockResolvedValueOnce({ external_id: 'blocked-1' });
-    executor.execute.mockResolvedValue([]);
+    executor.execute.mockImplementation((sql: string) =>
+      Promise.resolve(
+        sql.includes(`insert into ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}`)
+          ? [0, 1, 0]
+          : []
+      )
+    );
 
     await db.blockProfile('blocker-1', 'blocked-1', {});
 
