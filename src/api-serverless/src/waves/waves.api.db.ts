@@ -9,12 +9,15 @@ import {
   DROPS_MENTIONS_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
+  CONTENT_MODERATION_PROFILE_BLOCKS_TABLE,
   IDENTITY_MUTES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   NFTS_TABLE,
   OFFICIAL_WAVES_TABLE,
   PINNED_WAVES_TABLE,
+  PROFILE_GROUPS_TABLE,
+  USER_GROUPS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_CHAT_DROP_COOLDOWNS_TABLE,
   WAVE_METRICS_TABLE,
@@ -403,25 +406,67 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
 
   private async findMutedCandidateWaveIds({
     authenticated_user_id,
-    waveIds
+    waveIds,
+    connection
   }: {
     authenticated_user_id: string | null;
     waveIds: string[];
+    connection?: ConnectionWrapper<any>;
   }): Promise<Set<string>> {
     if (!authenticated_user_id || !waveIds.length) {
       return new Set();
     }
     const rows = await this.db.execute<WaveIdRow>(
       `
-        select wave_id
-        from ${WAVE_READER_METRICS_TABLE}
-        where reader_id = :authenticated_user_id
-          and wave_id in (:waveIds)
-          and coalesce(muted, false) = true
+        select w.id as wave_id
+        from ${WAVES_TABLE} w
+        left join ${WAVE_READER_METRICS_TABLE} wrm
+          on wrm.wave_id = w.id
+         and wrm.reader_id = :authenticated_user_id
+        where w.id in (:waveIds)
+          and (
+            coalesce(wrm.muted, false) = true
+            or ${this.getBlockedOneToOneDirectMessageExpression(
+              'w',
+              'authenticated_user_id'
+            )}
+          )
       `,
-      { authenticated_user_id, waveIds }
+      { authenticated_user_id, waveIds },
+      connection ? { wrappedConnection: connection } : undefined
     );
     return new Set(rows.map((row) => row.wave_id));
+  }
+
+  private getBlockedOneToOneDirectMessageExpression(
+    waveAlias: string,
+    readerIdParam: string
+  ): string {
+    return `(
+      ${waveAlias}.is_direct_message = true
+      and ${waveAlias}.chat_group_id is not null
+      and exists (
+        select 1
+        from ${USER_GROUPS_TABLE} dm_group
+        join ${PROFILE_GROUPS_TABLE} blocked_member
+          on blocked_member.profile_group_id = dm_group.profile_group_id
+        join ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} profile_block
+          on profile_block.blocker_profile_id = :${readerIdParam}
+         and profile_block.blocked_profile_id = blocked_member.profile_id
+        where dm_group.id = ${waveAlias}.chat_group_id
+          and exists (
+            select 1
+            from ${PROFILE_GROUPS_TABLE} reader_member
+            where reader_member.profile_group_id = dm_group.profile_group_id
+              and reader_member.profile_id = :${readerIdParam}
+          )
+          and 2 = (
+            select count(distinct dm_member.profile_id)
+            from ${PROFILE_GROUPS_TABLE} dm_member
+            where dm_member.profile_group_id = dm_group.profile_group_id
+          )
+      )
+    )`;
   }
 
   private async findFollowedCandidateWaveIds({
@@ -1795,7 +1840,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                 child.parent_wave_id,
                 count(
                   case
-                    when d.author_id != :identityId and muted_author.id is null
+                    when d.author_id != :identityId
+                      and muted_author.id is null
+                      and blocked_author.id is null
                       then d.id
                   end
                 ) as subwave_unread_drops,
@@ -1804,6 +1851,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                     when child_follow.id is not null
                       and d.author_id != :identityId
                       and muted_author.id is null
+                      and blocked_author.id is null
                       then d.id
                   end
                 ) as hidden_followed_subwave_unread_drops,
@@ -1812,6 +1860,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                     when child_follow.id is not null
                       and d.author_id != :identityId
                       and muted_author.id is null
+                      and blocked_author.id is null
                       then d.serial_no
                   end
                 ) as first_hidden_followed_subwave_unread_drop_serial_no
@@ -1838,6 +1887,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               left join ${IDENTITY_MUTES_TABLE} muted_author
                 on muted_author.muter_id = :identityId
                and muted_author.muted_identity_id = d.author_id
+              left join ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} blocked_author
+                on blocked_author.blocker_profile_id = :identityId
+               and blocked_author.blocked_profile_id = d.author_id
               where child.parent_wave_id in (:parentWaveIds)
                 and coalesce(parent_reader.muted, false) = false
                 and ${this.getWaveVisibilityFilter(
@@ -3077,8 +3129,14 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const useFollowedSubwaveActivity =
       !!param.authenticated_user_id &&
       param.only_waves_followed_by_authenticated_user;
+    const effectivelyMuted = param.authenticated_user_id
+      ? `(coalesce(wrm.muted, false) = true or ${this.getBlockedOneToOneDirectMessageExpression(
+          'w',
+          'authenticated_user_id'
+        )})`
+      : 'false';
     const rootSortExpr = param.authenticated_user_id
-      ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN 0 ELSE wm.latest_drop_timestamp END`
+      ? `CASE WHEN ${effectivelyMuted} THEN 0 ELSE wm.latest_drop_timestamp END`
       : `wm.latest_drop_timestamp`;
     const sortExpr = useFollowedSubwaveActivity
       ? `GREATEST(${rootSortExpr}, COALESCE(fsa.latest_followed_subwave_activity_timestamp, 0))`
@@ -3205,13 +3263,19 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       !!param.authenticated_user_id &&
       (param.only_waves_followed_by_authenticated_user ||
         param.exclude_followed);
+    const effectivelyMuted = param.authenticated_user_id
+      ? `(coalesce(wrm.muted, false) = true or ${this.getBlockedOneToOneDirectMessageExpression(
+          'w',
+          'authenticated_user_id'
+        )})`
+      : 'false';
     const applyMutedScoreFloor = (column: string) =>
       param.authenticated_user_id
-        ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN 0 ELSE ${column} END`
+        ? `CASE WHEN ${effectivelyMuted} THEN 0 ELSE ${column} END`
         : column;
     const scoreColumn = this.getWaveScoreSortColumn(param.score_sort);
     const tierRankExpr = param.authenticated_user_id
-      ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN 999 ELSE wm.wave_visibility_rank END`
+      ? `CASE WHEN ${effectivelyMuted} THEN 999 ELSE wm.wave_visibility_rank END`
       : `wm.wave_visibility_rank`;
     const scoreExpr = applyMutedScoreFloor(scoreColumn);
     const visibilityScoreExpr = applyMutedScoreFloor(
@@ -3221,7 +3285,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const hotnessScoreExpr = applyMutedScoreFloor(`wm.wave_hotness_score`);
     const repSortScoreExpr = applyMutedScoreFloor(`wm.wave_rep_sort_score`);
     const visibilityTierExpr = param.authenticated_user_id
-      ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN NULL ELSE wm.wave_visibility_tier END`
+      ? `CASE WHEN ${effectivelyMuted} THEN NULL ELSE wm.wave_visibility_tier END`
       : `wm.wave_visibility_tier`;
     const latestActivityExpr =
       useFollowedSubwaveActivity &&
@@ -3704,37 +3768,46 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       return {};
     }
     timer?.start('wavesApiDb->findWaveReaderMetricsByWaveIds');
-    const result = await this.db
-      .execute<WaveReaderMetricEntity>(
+    const [result, effectivelyMutedWaveIds] = await Promise.all([
+      this.db.execute<WaveReaderMetricEntity>(
         `select * from ${WAVE_READER_METRICS_TABLE} where wave_id in (:waveIds) and reader_id = :readerId`,
         params,
         { wrappedConnection: connection }
-      )
-      .then((results) => {
-        const existingMetricsByWaveId = results.reduce(
-          (acc, metric) => {
-            acc[metric.wave_id] = metric;
-            return acc;
-          },
-          {} as Record<string, WaveReaderMetricEntity>
-        );
-        return params.waveIds.reduce(
-          (acc, waveId) => {
-            acc[waveId] = existingMetricsByWaveId[waveId] ?? {
-              wave_id: waveId,
-              reader_id: params.readerId,
-              latest_read_timestamp: 0,
-              latest_read_serial_no: null,
-              unread_state_version: 0,
-              muted: false
-            };
-            return acc;
-          },
-          {} as Record<string, WaveReaderMetricEntity>
-        );
-      });
+      ),
+      this.findMutedCandidateWaveIds({
+        authenticated_user_id: params.readerId,
+        waveIds: params.waveIds,
+        connection
+      })
+    ]);
+    const metricsByWaveId = result
+      .map((metric) => ({
+        ...metric,
+        muted: metric.muted || effectivelyMutedWaveIds.has(metric.wave_id)
+      }))
+      .reduce(
+        (acc, metric) => {
+          acc[metric.wave_id] = metric;
+          return acc;
+        },
+        {} as Record<string, WaveReaderMetricEntity>
+      );
+    const resultByWaveId = params.waveIds.reduce(
+      (acc, waveId) => {
+        acc[waveId] = metricsByWaveId[waveId] ?? {
+          wave_id: waveId,
+          reader_id: params.readerId,
+          latest_read_timestamp: 0,
+          latest_read_serial_no: null,
+          unread_state_version: 0,
+          muted: effectivelyMutedWaveIds.has(waveId)
+        };
+        return acc;
+      },
+      {} as Record<string, WaveReaderMetricEntity>
+    );
     timer?.stop('wavesApiDb->findWaveReaderMetricsByWaveIds');
-    return result;
+    return resultByWaveId;
   }
 
   async updateWaveReaderMetricLatestReadTimestamp(
@@ -4178,9 +4251,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                 LEFT JOIN ${IDENTITY_MUTES_TABLE} im
                   ON im.muter_id = :identityId
                   AND im.muted_identity_id = d.author_id
+                LEFT JOIN ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} profile_block
+                  ON profile_block.blocker_profile_id = :identityId
+                  AND profile_block.blocked_profile_id = d.author_id
                 WHERE d.wave_id IN (:waveIds)
                   AND d.author_id != :identityId
                   AND im.id IS NULL
+                  AND profile_block.id IS NULL
                   AND d.created_at > r.latest_read_timestamp
                   AND r.muted = false
                 GROUP BY d.wave_id
@@ -4363,6 +4440,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                     when state.muted = false
                      and d.author_id != state.reader_id
                      and im.id is null
+                     and profile_block.id is null
                      and d.serial_no > state.latest_read_serial_no
                     then 1
                     else 0
@@ -4373,6 +4451,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                     when state.muted = false
                      and d.author_id != state.reader_id
                      and im.id is null
+                     and profile_block.id is null
                      and d.serial_no > state.latest_read_serial_no
                     then d.serial_no
                     else null
@@ -4395,6 +4474,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
          left join ${IDENTITY_MUTES_TABLE} im
            on im.muter_id = state.reader_id
           and im.muted_identity_id = d.author_id
+         left join ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} profile_block
+           on profile_block.blocker_profile_id = state.reader_id
+          and profile_block.blocked_profile_id = d.author_id
          group by state.reader_id,
                   state.wave_id,
                   state.muted,
@@ -4449,10 +4531,14 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           LEFT JOIN ${IDENTITY_MUTES_TABLE} im
             ON im.muter_id = :identityId
            AND im.muted_identity_id = d.author_id
+          LEFT JOIN ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} profile_block
+            ON profile_block.blocker_profile_id = :identityId
+           AND profile_block.blocked_profile_id = d.author_id
           LEFT JOIN ${WAVES_TABLE} parent
             ON parent.id = w.parent_wave_id
           WHERE d.author_id != :identityId
             AND im.id IS NULL
+            AND profile_block.id IS NULL
             AND d.created_at > COALESCE(r.latest_read_timestamp, 0)
             AND r.muted = false
             AND ${this.getWaveAndParentVisibilityFilter(

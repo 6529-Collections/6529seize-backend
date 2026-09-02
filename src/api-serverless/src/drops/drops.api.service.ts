@@ -85,6 +85,11 @@ import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { ApiWaveMin } from '@/api/generated/models/ApiWaveMin';
 import { apiDropMapper, ApiDropMapper } from '@/api/drops/api-drop.mapper';
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
+import {
+  contentModerationDb,
+  ContentModerationDb
+} from '@/content-moderation/content-moderation.db';
+import { ApiDropModerationStatus } from '@/api/generated/models/ApiDropModerationStatus';
 
 export class DropsApiService {
   constructor(
@@ -96,7 +101,8 @@ export class DropsApiService {
     private readonly identityFetcher: IdentityFetcher,
     private readonly metricsRecorder: MetricsRecorder,
     private readonly wsListenersNotifier: WsListenersNotifier,
-    private readonly apiDropMapper: ApiDropMapper
+    private readonly apiDropMapper: ApiDropMapper,
+    private readonly moderationDb: ContentModerationDb = contentModerationDb
   ) {}
 
   public async findDropByIdOrThrow(
@@ -193,9 +199,16 @@ export class DropsApiService {
       lightDropIds.map((it) => it.id),
       ctx
     );
+    const moderationPresentations = await this.moderationDb.getPresentations(
+      entities,
+      context_profile_id,
+      ctx.connection
+    );
     const apiLightDrops = Object.values(
       entities.reduce(
         (acc, it) => {
+          const presentation = moderationPresentations[it.id];
+          const canView = presentation?.moderation.can_view ?? true;
           acc[it.id] = {
             id: it.id,
             wave_id: it.wave_id,
@@ -207,10 +220,21 @@ export class DropsApiService {
               ApiDropType,
               it.drop_type.toString()
             ),
-            title: it.title,
+            title: canView ? it.title : null,
             is_reply_drop: !!it.reply_to_drop_id,
-            part_1_medias: JSON.parse(it.medias_json ?? `[]`) as ApiDropMedia[],
-            part_1_text: it.part_content,
+            part_1_medias: canView
+              ? (JSON.parse(it.medias_json ?? `[]`) as ApiDropMedia[])
+              : [],
+            part_1_text: canView ? it.part_content : null,
+            viewer_context: presentation?.viewer ?? {
+              author_blocked: false,
+              drop_hidden: false
+            },
+            moderation: {
+              status: (presentation?.moderation.status ??
+                'VISIBLE') as unknown as ApiDropModerationStatus,
+              can_view: canView
+            },
             has_quote: !!it.part_quoted_drop_id
           };
           return acc;
@@ -1541,5 +1565,6 @@ export const dropsService = new DropsApiService(
   identityFetcher,
   metricsRecorder,
   wsListenersNotifier,
-  apiDropMapper
+  apiDropMapper,
+  contentModerationDb
 );

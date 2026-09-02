@@ -50,6 +50,10 @@ import { NULL_ADDRESS } from '@/constants';
 import { findEnsForAddress } from '@/ens-lookup';
 import { helpBotCreditsService } from '@/help-bot/help-bot-credits.service';
 import { Logger } from '@/logging';
+import {
+  ContentModerationDb,
+  contentModerationDb
+} from '@/content-moderation/content-moderation.db';
 
 let pfpS3Client: S3Client | undefined;
 
@@ -65,7 +69,8 @@ export class IdentitiesService {
     private readonly identitiesDb: IdentitiesDb,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly userNotifier: UserNotifier,
-    private readonly identityFetcher: IdentityFetcher
+    private readonly identityFetcher: IdentityFetcher,
+    private readonly contentModerationDb: ContentModerationDb
   ) {}
 
   async addIdentitySubscriptionActions({
@@ -90,6 +95,17 @@ export class IdentitiesService {
           .then((it) => it[identityAddress]?.identity?.profile_id ?? null);
         if (!identityId) {
           throw new NotFoundException(`Identity ${identityAddress} not found`);
+        }
+        if (
+          await this.contentModerationDb.isProfileBlocked(
+            subscriber,
+            identityId,
+            connection
+          )
+        ) {
+          throw new BadRequestException(
+            `You can't follow a profile you have blocked`
+          );
         }
         const proposedActions = Object.values(acceptedActions).map((it) =>
           enums.resolveOrThrow(ActivityEventAction, it)
@@ -642,5 +658,6 @@ export const identitiesService = new IdentitiesService(
   identitiesDb,
   identitySubscriptionsDb,
   userNotifier,
-  identityFetcher
+  identityFetcher,
+  contentModerationDb
 );

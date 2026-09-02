@@ -15,6 +15,7 @@ import { ApiCompetitionOutcomePage } from '@/api/generated/models/ApiCompetition
 import { ApiCompetitionPage } from '@/api/generated/models/ApiCompetitionPage';
 import { ApiCompetitionPausePage } from '@/api/generated/models/ApiCompetitionPausePage';
 import { ApiCompetitionVoterPage } from '@/api/generated/models/ApiCompetitionVoterPage';
+import { ApiContentModerationProfileStatusResponse } from '@/api/generated/models/ApiContentModerationProfileStatusResponse';
 import { ApiCreateProfileCmsWalletGallerySnapshotRequest } from '@/api/generated/models/ApiCreateProfileCmsWalletGallerySnapshotRequest';
 import { ApiCreateWaveMetadataRequest } from '@/api/generated/models/ApiCreateWaveMetadataRequest';
 import { ApiDeleteEulaConsentRequest } from '@/api/generated/models/ApiDeleteEulaConsentRequest';
@@ -80,6 +81,22 @@ import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
 import { ApiWaveSearchAuthor } from '@/api/generated/models/ApiWaveSearchAuthor';
 import { ApiWaveV3 } from '@/api/generated/models/ApiWaveV3';
+
+export interface GetPublicContentModerationProfileStatusPathParams {
+  "profile_id": string;
+}
+
+export type GetPublicContentModerationProfileStatusQuery = Record<string, never>;
+
+export type GetPublicContentModerationProfileStatusResponse = ApiContentModerationProfileStatusResponse;
+
+export type GetPublicContentModerationProfileStatusRequest = Request<
+  GetPublicContentModerationProfileStatusPathParams,
+  ApiResponse<GetPublicContentModerationProfileStatusResponse>,
+  never,
+  GetPublicContentModerationProfileStatusQuery,
+  Record<string, never>
+>;
 
 export interface GetWalletDistributionAllocationsPathParams {
   "contract": string;
