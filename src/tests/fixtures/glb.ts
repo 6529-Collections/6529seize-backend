@@ -1,5 +1,6 @@
 export const JSON_CHUNK_TYPE = 0x4e4f534a;
 export const BIN_CHUNK_TYPE = 0x004e4942;
+const DEFAULT_GLB_JSON = { asset: { version: '2.0' } } as const;
 
 export function glbChunk(type: number, data: Buffer): Buffer {
   const padding = (4 - (data.length % 4)) % 4;
@@ -25,7 +26,7 @@ export function glbFromChunks(chunks: Buffer[]): Buffer {
 }
 
 export function validGlb(
-  json: unknown = { asset: { version: '2.0' } },
+  json: unknown = DEFAULT_GLB_JSON,
   binary?: Buffer
 ): Buffer {
   const chunks = [glbChunk(JSON_CHUNK_TYPE, Buffer.from(JSON.stringify(json)))];

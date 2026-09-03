@@ -36,6 +36,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 function hasOwn(value: object, key: string): boolean {
+  // Object.hasOwn requires ES2022; keep this compatible with the root ES6 lib.
   return Object.prototype.hasOwnProperty.call(value, key);
 }
 
