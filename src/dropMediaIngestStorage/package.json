@@ -4,7 +4,7 @@
   "description": "",
   "scripts": {
     "preinstall": "node ../../scripts/require-6529-command.cjs",
-    "build": "node ../../scripts/require-6529-command.cjs && rm -rf dist && mkdir -p dist && printf 'release-bus resources-only artifact\\n' > dist/README.txt && cd dist && zip -q index.zip README.txt",
+    "build": "node ../../scripts/require-6529-command.cjs && rm -rf dist && mkdir -p dist && printf 'resources-only deployment artifact\\n' > dist/README.txt && cd dist && zip -q index.zip README.txt",
     "sls-deploy:staging": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/bin/serverless.js deploy --stage=staging --region=eu-west-1",
     "sls-deploy:prod": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/bin/serverless.js deploy --stage=prod --region=us-east-1"
   },

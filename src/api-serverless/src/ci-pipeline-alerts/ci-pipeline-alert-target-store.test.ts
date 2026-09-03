@@ -8,8 +8,7 @@ import { RedisCiPipelineAlertTargetStore } from './ci-pipeline-alert-target.stor
 const identity = {
   repo: '6529seize-frontend',
   environment: 'staging' as const,
-  runId: '791',
-  releaseTrainId: 'train-123'
+  runId: '791'
 };
 
 const target = {
@@ -24,7 +23,7 @@ describe('RedisCiPipelineAlertTargetStore', () => {
     jest.clearAllMocks();
   });
 
-  it('indexes a deploy drop by run and Release Train identity', async () => {
+  it('indexes a deploy drop by deployment run identity', async () => {
     const values = new Map<string, string>();
     const redis = {
       set: jest.fn(async (key: string, value: string, _options: unknown) => {
@@ -38,9 +37,9 @@ describe('RedisCiPipelineAlertTargetStore', () => {
 
     await store.rememberDeployTarget(identity, target);
 
-    expect(redis.set).toHaveBeenCalledTimes(2);
+    expect(redis.set).toHaveBeenCalledTimes(1);
     const writtenKeys = redis.set.mock.calls.map(([key]) => key);
-    expect(new Set(writtenKeys).size).toBe(2);
+    expect(new Set(writtenKeys).size).toBe(1);
     for (const [, value, options] of redis.set.mock.calls) {
       expect(JSON.parse(value)).toEqual(target);
       expect(options).toEqual({ EX: 30 * 24 * 60 * 60 });
@@ -52,26 +51,16 @@ describe('RedisCiPipelineAlertTargetStore', () => {
     await expect(
       store.resolveDeployTarget({ ...identity, runId: 'different-run' })
     ).resolves.toBeNull();
-    await expect(
-      store.resolveDeployTarget({
-        ...identity,
-        releaseTrainId: 'different-train'
-      })
-    ).resolves.toBeNull();
   });
 
-  it('treats conflicting parent identities as ambiguous', async () => {
+  it('ignores malformed cached correlation data', async () => {
     const redis = {
       get: jest
         .fn()
-        .mockResolvedValueOnce(JSON.stringify(target))
-        .mockResolvedValueOnce(
-          JSON.stringify({ ...target, dropId: 'different-drop' })
-        )
+        .mockResolvedValue(JSON.stringify({ ...target, dropId: '' }))
     };
     (getRedisClient as jest.Mock).mockReturnValue(redis);
     const store = new RedisCiPipelineAlertTargetStore();
-
     await expect(store.resolveDeployTarget(identity)).resolves.toBeNull();
   });
 

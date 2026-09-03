@@ -1,18 +1,8 @@
 import { shouldCaptureRawBody } from './raw-body-paths';
 
 describe('shouldCaptureRawBody', () => {
-  it('captures the fully mounted release-bus webhook path', () => {
-    expect(shouldCaptureRawBody('/deploy/github/webhook')).toBe(true);
-    expect(shouldCaptureRawBody('/deploy/github/webhook?delivery=1')).toBe(
-      true
-    );
-  });
-
-  it('does not capture neighboring deploy routes', () => {
-    expect(shouldCaptureRawBody('/deploy/release-bus-v2/authorize')).toBe(
-      false
-    );
-    expect(shouldCaptureRawBody('/deploy/github/webhook/extra')).toBe(false);
+  it('does not capture ordinary deploy routes', () => {
+    expect(shouldCaptureRawBody('/deploy/ui/dispatch')).toBe(false);
   });
 
   it('preserves the existing signed webhook paths', () => {

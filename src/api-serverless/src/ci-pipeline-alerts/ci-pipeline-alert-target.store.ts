@@ -15,7 +15,6 @@ export interface CiPipelineDeployTargetIdentity {
   readonly repo: string;
   readonly environment: 'staging' | 'prod';
   readonly runId?: string | null;
-  readonly releaseTrainId?: string | null;
 }
 
 export interface CiPipelineAlertTargetStore {
@@ -30,7 +29,7 @@ export interface CiPipelineAlertTargetStore {
 
 function targetKey(
   identity: CiPipelineDeployTargetIdentity,
-  kind: 'run' | 'train',
+  kind: 'run',
   value: string
 ): string {
   const digest = crypto
@@ -42,10 +41,7 @@ function targetKey(
 
 function identityKeys(identity: CiPipelineDeployTargetIdentity): string[] {
   return [
-    ...(identity.runId ? [targetKey(identity, 'run', identity.runId)] : []),
-    ...(identity.releaseTrainId
-      ? [targetKey(identity, 'train', identity.releaseTrainId)]
-      : [])
+    ...(identity.runId ? [targetKey(identity, 'run', identity.runId)] : [])
   ];
 }
 

@@ -35,7 +35,6 @@ function getE2EValidationError(value: CiPipelineAlertRequest): string | null {
 
   const hasE2EIdentity = [
     value.parent_deploy_run_id,
-    value.parent_release_train_id,
     value.validation_pack
   ].some((field) => typeof field === 'string' && field.trim().length > 0);
   return hasE2EIdentity
@@ -85,17 +84,7 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
       .pattern(/^[1-9]\d{0,19}$/)
       .allow(null, '')
       .optional(),
-    parent_release_train_id: Joi.string()
-      .trim()
-      .pattern(/^[A-Za-z0-9._-]{1,100}$/)
-      .allow(null, '')
-      .optional(),
     validation_pack: Joi.string()
-      .trim()
-      .pattern(/^[A-Za-z0-9._-]{1,100}$/)
-      .allow(null, '')
-      .optional(),
-    release_train_id: Joi.string()
       .trim()
       .pattern(/^[A-Za-z0-9._-]{1,100}$/)
       .allow(null, '')
@@ -183,14 +172,6 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
         return helpers.message({
           custom:
             'release_version and frontend_sha must be supplied together for 6529-core'
-        });
-      }
-      if (
-        value.contributor_github_logins !== undefined &&
-        !value.release_train_id?.trim()
-      ) {
-        return helpers.message({
-          custom: 'release_train_id is required with contributor_github_logins'
         });
       }
       const e2eValidationError = getE2EValidationError(value);
@@ -365,7 +346,6 @@ export function buildCiPipelineAlertDedupeKey(
         request.alert_type ?? 'workflow',
         request.run_attempt ?? 1,
         request.parent_deploy_run_id ?? '',
-        request.parent_release_train_id ?? '',
         request.validation_pack ?? ''
       ])
     )

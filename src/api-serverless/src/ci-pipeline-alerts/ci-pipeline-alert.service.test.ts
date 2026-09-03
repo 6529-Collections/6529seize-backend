@@ -350,8 +350,7 @@ describe('CiPipelineAlertService', () => {
         ...baseRequest,
         alert_type: 'deploy',
         status: 'success',
-        title: 'WEB deploy complete',
-        release_train_id: 'train-123'
+        title: 'WEB deploy complete'
       },
       {}
     );
@@ -360,8 +359,7 @@ describe('CiPipelineAlertService', () => {
       {
         repo: '6529seize-frontend',
         environment: 'prod',
-        runId: '12345',
-        releaseTrainId: 'train-123'
+        runId: '12345'
       },
       {
         dropId: 'deploy-drop',
@@ -408,8 +406,7 @@ describe('CiPipelineAlertService', () => {
     expect(alertTargetStore.resolveDeployTarget).toHaveBeenCalledWith({
       repo: '6529seize-frontend',
       environment: 'prod',
-      runId: '12345',
-      releaseTrainId: null
+      runId: '12345'
     });
     expect(
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
@@ -452,7 +449,7 @@ describe('CiPipelineAlertService', () => {
         title: 'WEB E2E failed',
         triggered_by_github_login: 'ragnep',
         run_attempt: 1,
-        parent_release_train_id: 'train-123',
+        parent_deploy_run_id: '791',
         validation_pack: 'core',
         environment: 'staging'
       },
@@ -461,6 +458,11 @@ describe('CiPipelineAlertService', () => {
 
     const request =
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest;
+    expect(alertTargetStore.resolveDeployTarget).toHaveBeenCalledWith({
+      repo: '6529seize-frontend',
+      environment: 'staging',
+      runId: '791'
+    });
     expect(request.reply_to).toEqual({
       drop_id: 'deploy-drop',
       drop_part_id: 7
@@ -491,7 +493,7 @@ describe('CiPipelineAlertService', () => {
     expect(request.parts[0].content.endsWith('\n\ncc @devs6529')).toBe(true);
   });
 
-  it('posts a manual E2E success standalone when its deploy is ambiguous', async () => {
+  it('posts a manual E2E success standalone when its deployment run is missing', async () => {
     const service = new CiPipelineAlertService(
       dropCreationApiService as any,
       identitiesRepository as any,
@@ -508,7 +510,6 @@ describe('CiPipelineAlertService', () => {
         status: 'success',
         triggered_by_github_login: 'ragnep',
         parent_deploy_run_id: null,
-        parent_release_train_id: null,
         validation_pack: 'all',
         environment: 'staging'
       },
@@ -529,7 +530,7 @@ describe('CiPipelineAlertService', () => {
     { environment: 'staging', waveId: 'staging-wave' },
     { environment: 'prod', waveId: 'prod-wave' }
   ] as const)(
-    'attributes $environment deployments to the Release Train',
+    'attributes $environment deployments to an unmapped automation actor',
     async ({ environment, waveId }) => {
       const service = new CiPipelineAlertService(
         dropCreationApiService as any,
@@ -541,7 +542,7 @@ describe('CiPipelineAlertService', () => {
           ...baseRequest,
           status: 'success',
           environment,
-          triggered_by_github_login: '6529-release-bus[bot]'
+          triggered_by_github_login: 'github-actions[bot]'
         },
         {}
       );
@@ -555,7 +556,7 @@ describe('CiPipelineAlertService', () => {
           mentioned_users: [],
           parts: [
             expect.objectContaining({
-              content: expect.stringContaining('Initiated by: Release Train')
+              content: expect.stringContaining('Initiated by: unknown')
             })
           ]
         })
@@ -563,7 +564,7 @@ describe('CiPipelineAlertService', () => {
     }
   );
 
-  it('does not render or notify train-wide contributors on each deployment', async () => {
+  it('does not render or notify all contributors on each deployment', async () => {
     identitiesRepository.getIdsByHandles.mockResolvedValue({
       GelatoGenesis: 'profile-gelato',
       ragne: 'profile-ragne'
@@ -578,8 +579,7 @@ describe('CiPipelineAlertService', () => {
         ...baseRequest,
         status: 'success',
         environment: 'staging',
-        triggered_by_github_login: '6529-release-bus[bot]',
-        release_train_id: 'train-123',
+        triggered_by_github_login: 'github-actions[bot]',
         contributor_github_logins: [
           'GelatoGenesis',
           'ragnep',
@@ -595,7 +595,7 @@ describe('CiPipelineAlertService', () => {
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest;
     expect(createDropRequest.mentioned_users).toEqual([]);
     expect(createDropRequest.parts[0].content).toContain(
-      'Initiated by: Release Train'
+      'Initiated by: unknown'
     );
     expect(createDropRequest.parts[0].content).not.toContain('Contributors:');
   });
@@ -610,7 +610,6 @@ describe('CiPipelineAlertService', () => {
       {
         ...baseRequest,
         status: 'success',
-        release_train_id: 'train-123',
         contributor_github_logins: ['GelatoGenesis']
       },
       {}
@@ -876,7 +875,7 @@ describe('CiPipelineAlertService', () => {
     );
   });
 
-  it('fans one v2 deploy success out to every PR-scoped release-note group', async () => {
+  it('fans one deploy success out to every PR-scoped release-note group', async () => {
     const service = new CiPipelineAlertService(
       dropCreationApiService as any,
       identitiesRepository as any,
@@ -890,14 +889,13 @@ describe('CiPipelineAlertService', () => {
         workflow: 'Deploy a service',
         service: 'api',
         status: 'success',
-        triggered_by_github_login: '6529-release-bus[bot]',
-        release_train_id: 'train-123',
+        triggered_by_github_login: 'github-actions[bot]',
         contributor_github_logins: ['Alice', 'BOB', 'alice'],
         release_notes_prompt_path: 'ops/release-notes/release-notes.prompt.md',
         release_note_groups: [
           {
             release_group_id: 'pr-1801',
-            release_group_services: ['worker', 'api'],
+            release_group_services: ['dbMigrationsLoop', 'api'],
             pull_request_number: 1801,
             publish_release_note: true
           },
@@ -918,7 +916,7 @@ describe('CiPipelineAlertService', () => {
       1,
       expect.objectContaining({
         release_group_id: 'pr-1801',
-        release_group_services: ['api', 'worker'],
+        release_group_services: ['api', 'dbMigrationsLoop'],
         pull_request_number: 1801,
         contributor_github_logins: ['Alice', 'BOB'],
         publish_release_note: true
