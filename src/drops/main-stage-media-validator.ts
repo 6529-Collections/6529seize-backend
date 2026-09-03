@@ -8,8 +8,7 @@ import { BadRequestException } from '@/exceptions';
 import { getS3 } from '@/s3.client';
 import { MAX_MAIN_STAGE_MEDIA_BYTES } from '@/minting-claims/media-limits';
 
-export const MAIN_STAGE_MEDIA_LIMIT_MIB =
-  MAX_MAIN_STAGE_MEDIA_BYTES / (1024 * 1024);
+const MAIN_STAGE_MEDIA_LIMIT_MB = MAX_MAIN_STAGE_MEDIA_BYTES / 1_000_000;
 
 type HeadObjectSender = {
   send(
@@ -65,7 +64,7 @@ export async function validateMainStageMediaSize(
   }
   if (contentLength > MAX_MAIN_STAGE_MEDIA_BYTES) {
     throw new BadRequestException(
-      `Main Stage media must not exceed ${MAIN_STAGE_MEDIA_LIMIT_MIB} MiB`
+      `Main Stage media must not exceed ${MAIN_STAGE_MEDIA_LIMIT_MB} MB`
     );
   }
 }

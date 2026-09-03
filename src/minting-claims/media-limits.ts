@@ -1,4 +1,5 @@
-export const MAX_MAIN_STAGE_MEDIA_BYTES = 250 * 1024 * 1024;
+// Decimal MB, matching the limit displayed by the submission UI.
+export const MAX_MAIN_STAGE_MEDIA_BYTES = 250_000_000;
 
 // Minting-claim inspection and publication must use the same ceiling enforced
 // when media is attached to a Main Stage submission.

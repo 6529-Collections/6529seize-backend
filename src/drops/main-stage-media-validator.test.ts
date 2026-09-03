@@ -1,11 +1,19 @@
 import { CLOUDFRONT_LINK } from '@/constants';
-import { MAX_MAIN_STAGE_MEDIA_BYTES } from '@/minting-claims/media-limits';
+import {
+  MAX_MAIN_STAGE_MEDIA_BYTES,
+  MAX_MINTING_CLAIM_MEDIA_BYTES
+} from '@/minting-claims/media-limits';
 import { validateMainStageMediaSize } from './main-stage-media-validator';
 
 describe('validateMainStageMediaSize', () => {
-  it('accepts a stored object at the 250 MiB boundary', async () => {
+  it('uses the same exact 250 MB ceiling for submissions and minting', () => {
+    expect(MAX_MAIN_STAGE_MEDIA_BYTES).toBe(250_000_000);
+    expect(MAX_MINTING_CLAIM_MEDIA_BYTES).toBe(250_000_000);
+  });
+
+  it('accepts a stored object at the 250 MB boundary', async () => {
     const send = jest.fn().mockResolvedValue({
-      ContentLength: MAX_MAIN_STAGE_MEDIA_BYTES
+      ContentLength: 250_000_000
     });
 
     await expect(
@@ -21,18 +29,21 @@ describe('validateMainStageMediaSize', () => {
     });
   });
 
-  it('rejects an object larger than 250 MiB', async () => {
-    const send = jest.fn().mockResolvedValue({
-      ContentLength: MAX_MAIN_STAGE_MEDIA_BYTES + 1
-    });
+  it.each([250_000_001, 262_144_000])(
+    'rejects an object of %i bytes',
+    async (bytes) => {
+      const send = jest.fn().mockResolvedValue({
+        ContentLength: bytes
+      });
 
-    await expect(
-      validateMainStageMediaSize(`${CLOUDFRONT_LINK}/drops/author/file.mp4`, {
-        s3: { send },
-        bucket: 'bucket'
-      })
-    ).rejects.toThrow('Main Stage media must not exceed 250 MiB');
-  });
+      await expect(
+        validateMainStageMediaSize(`${CLOUDFRONT_LINK}/drops/author/file.mp4`, {
+          s3: { send },
+          bucket: 'bucket'
+        })
+      ).rejects.toThrow('Main Stage media must not exceed 250 MB');
+    }
+  );
 
   it('fails closed when the stored object cannot be inspected', async () => {
     const send = jest.fn().mockRejectedValue(new Error('NotFound'));
