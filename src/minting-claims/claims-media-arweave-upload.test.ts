@@ -406,6 +406,46 @@ describe('validateMintingClaimReadyForArweaveUpload', () => {
     ).rejects.toThrow(/MEMES image_details/);
   });
 
+  describe.each(['PNG', 'MP4', 'GLB'])('%s decimal byte limit', (format) => {
+    function claimWithBytes(bytes: number): MintingClaimRow {
+      const details = JSON.stringify({
+        bytes,
+        format,
+        sha256: 'a'.repeat(64),
+        width: 800,
+        height: 800,
+        duration: 4,
+        codecs: ['h264']
+      });
+      return baseClaim(
+        format === 'PNG'
+          ? { image_details: details }
+          : {
+              animation_url: `https://cdn.example.com/animation.${format.toLowerCase()}`,
+              animation_details: details
+            }
+      );
+    }
+
+    it.each([249_999_999, 250_000_000])('accepts %i bytes', async (bytes) => {
+      await expect(
+        validateMintingClaimReadyForArweaveUpload(
+          claimWithBytes(bytes),
+          MEMES_CONTRACT
+        )
+      ).resolves.toBeDefined();
+    });
+
+    it.each([250_000_001, 262_144_000])('rejects %i bytes', async (bytes) => {
+      await expect(
+        validateMintingClaimReadyForArweaveUpload(
+          claimWithBytes(bytes),
+          MEMES_CONTRACT
+        )
+      ).rejects.toThrow('bytes exceeds the Main Stage media limit');
+    });
+  });
+
   it('rejects placeholder video details before Arweave upload', async () => {
     await expect(
       validateMintingClaimReadyForArweaveUpload(
@@ -507,6 +547,10 @@ describe('uploadMintingClaimToArweave', () => {
     );
 
     expect(uploadFileMock).toHaveBeenCalledTimes(2);
+    expect(fetchPublicUrlToBufferMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ maxBytes: 250_000_000 })
+    );
     const metadataUploadBuffer = uploadFileMock.mock.calls[1]?.[0] as Buffer;
     const uploadedMetadata = JSON.parse(metadataUploadBuffer.toString('utf8'));
 
