@@ -42,8 +42,6 @@ import { identityFetcher } from '../identities/identity.fetcher';
 import { Timer } from '../../../time';
 import { authDb } from './auth.db';
 import {
-  clearWalletSessionCookieForAddressAndOrigin,
-  clearWalletSessionCookieForOrigin,
   createConnectionShare,
   createNativeSession,
   createWebSession,
@@ -524,20 +522,6 @@ router.post(
       apiHost: req.headers.host
     });
     if (!refreshed) {
-      res.setHeader(
-        'Set-Cookie',
-        refreshRequest.client_address
-          ? clearWalletSessionCookieForAddressAndOrigin({
-              address: refreshRequest.client_address,
-              clientOrigin: requestOrigin,
-              apiHost: req.headers.host,
-              includeCompatibilityCookie: false
-            })
-          : clearWalletSessionCookieForOrigin({
-              clientOrigin: requestOrigin,
-              apiHost: req.headers.host
-            })
-      );
       throw new UnauthorisedException('Invalid session');
     }
     res.setHeader('Set-Cookie', refreshed.setCookie);
