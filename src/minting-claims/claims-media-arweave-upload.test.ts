@@ -1,4 +1,7 @@
 import { describe, expect, it, beforeEach, jest } from '@jest/globals';
+import { createHash } from 'node:crypto';
+import { validGlb } from '@/tests/fixtures/glb';
+import { BadRequestException } from '@/exceptions';
 import type { MintingClaimRow } from '@/api/minting-claims/api.minting-claims.db';
 import { arweaveFileUploader } from '@/arweave';
 import { GRADIENT_CONTRACT, MEMES_CONTRACT } from '@/constants';
@@ -1049,7 +1052,7 @@ describe('uploadMintingClaimToArweave', () => {
   it('uploads GLB MEMES metadata in the expected object shape', async () => {
     uploadFileMock.mockReset();
     fetchPublicUrlToBufferMock.mockResolvedValue({
-      buffer: Buffer.from('glb-bytes'),
+      buffer: validGlb(),
       contentType: 'model/gltf-binary',
       finalUrl: 'https://cdn.example.com/model.glb'
     });
@@ -1092,6 +1095,39 @@ describe('uploadMintingClaimToArweave', () => {
       sha256: 'b'.repeat(64)
     });
   });
+
+  it.each([null, 'https://arweave.net/existing-animation'])(
+    'rejects invalid GLB before animation publication or checkpoint reuse (%s)',
+    async (animationLocation) => {
+      const buffer = Buffer.from('renamed text pretending to be a GLB');
+      fetchPublicUrlToBufferMock.mockResolvedValue({
+        buffer,
+        contentType: 'model/gltf-binary',
+        finalUrl: 'https://cdn.example.com/art.glb'
+      });
+      const onImageUploaded = jest
+        .fn<(_location: string) => Promise<void>>()
+        .mockResolvedValue(undefined);
+      await expect(
+        uploadMintingClaimToArweave(
+          MEMES_CONTRACT,
+          baseClaim({
+            animation_url: 'https://cdn.example.com/art.glb',
+            animation_location: animationLocation,
+            animation_details: JSON.stringify({
+              bytes: buffer.length,
+              format: 'GLB',
+              sha256: createHash('sha256').update(buffer).digest('hex')
+            })
+          }),
+          { onImageUploaded }
+        )
+      ).rejects.toThrow(BadRequestException);
+      expect(onImageUploaded).toHaveBeenCalledTimes(1);
+      expect(uploadFileMock).toHaveBeenCalledTimes(1);
+      expect(uploadFileMock.mock.calls[0]?.[1]).toBe('image/png');
+    }
+  );
 
   it('preserves non-MEMES metadata shape', async () => {
     uploadFileMock.mockReset();
