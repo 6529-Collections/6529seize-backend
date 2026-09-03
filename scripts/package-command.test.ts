@@ -273,7 +273,7 @@ printf 'arg=%s\\n' "$@"
     ]);
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain('58 package.json files');
+    expect(result.stdout).toContain('57 package.json files');
     expect(result.stdout).toContain('guarded by 6529');
   });
 

@@ -242,20 +242,5 @@ export const XTDH_STATS_META_TABLE = 'xtdh_stats_meta';
 export const WS_CONNECTIONS_TABLE = 'ws_connections';
 export const WS_NOTIFICATION_SUBSCRIPTIONS_TABLE =
   'ws_notification_subscriptions';
-export const RELEASE_BUS_V2_CANDIDATES_TABLE = 'release_bus_v2_candidates';
-export const RELEASE_BUS_V2_CANDIDATE_DEPENDENCIES_TABLE =
-  'release_bus_v2_candidate_dependencies';
-export const RELEASE_BUS_V2_TRAINS_TABLE = 'release_bus_v2_trains';
-export const RELEASE_BUS_V2_TRAIN_CANDIDATES_TABLE =
-  'release_bus_v2_train_candidates';
-export const RELEASE_BUS_V2_OPERATIONS_TABLE = 'release_bus_v2_operations';
-export const RELEASE_BUS_V2_LOCKS_TABLE = 'release_bus_v2_locks';
-export const RELEASE_BUS_V2_MANIFESTS_TABLE = 'release_bus_v2_manifests';
-export const RELEASE_BUS_V2_CONTROLS_TABLE = 'release_bus_v2_controls';
-export const RELEASE_BUS_V2_EVENTS_TABLE = 'release_bus_v2_events';
-export const RELEASE_BUS_V2_STAGING_STATE_TABLE =
-  'release_bus_v2_staging_state';
-export const RELEASE_BUS_V2_PRODUCTION_AUTHORITIES_TABLE =
-  'release_bus_v2_production_authorities';
 export const RELEASE_NOTE_STREAM_STATES_TABLE = 'release_note_stream_states';
 export const RELEASE_NOTE_PUBLICATIONS_TABLE = 'release_note_publications';

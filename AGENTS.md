@@ -1,88 +1,34 @@
-# Simple Release Bus v2
+# AGENTS.md
 
-- Before staging, production, promotion, or release mutation, run
-  `node ops/scripts/release-bus-status.mjs` and follow `deploy-6529`.
-- Route only from the helper's two effective lane states. When the target lane
-  is `ON`, use v2. When it is `OFF`, use serialized manual fallback only when
-  `changeable: true`, no hidden emergency fence blocks fallback, the target
-  environment lock is free, no mutation/E2E workflow is active, and every
-  already-dispatched exact operation is terminal. Both lanes `OFF` means full
-  manual fallback.
-- There is no inferred control-plane or self-upgrade exception. While a target
-  lane is `ON`, every deploy for that environment—including API, `releaseBus`,
-  cleaner/reconciler, and other control-plane changes—must carry a valid
-  Release Bus operation identity. A manual workflow must fail before checkout,
-  build, ref, credential, or deployment mutation unless the affected lane is
-  authoritatively `OFF` and its fallback gate passes. If the bus cannot safely
-  self-deploy while `ON`, stop for explicit owner direction.
-- Staging `ON` accepts exact candidates. Production `ON` requires a separate
-  exact-SHA production action after `STAGING_VALIDATED`.
-- Raw mode and `ALL` are internal emergency fences, not normal routing or UI
-  controls. Never bypass them. Use `release-bus-v2-fast-off.mjs` only for an
-  emergency hard stop.
-- In manual fallback, dispatch exactly one backend `Deploy a service` workflow
-  and stop. A later continuation may dispatch another service only after the
-  prior run's exact success is already established and a new staging-drain
-  snapshot is clear. Shared concurrency can cancel sibling service runs,
-  including independent DAG-frontier units.
-- Immediately before pushing frontend `1a-staging`, and separately immediately
-  before dispatching each backend staging service, take one fresh bounded
-  read-only staging-drain snapshot across both repositories. Finish preparatory
-  work first, including the final shared-ref fetch and any recomputation. Then
-  read each existing source once: the repo-local Release Bus status helper for
-  the effective staging lane, `/deploy/ui/bus` or its versioned read API for the
-  `staging-environment` lock plus active trains and operations, and GitHub
-  Actions for `queued` and `in_progress` runs in both repositories. Bound the
-  Actions scan to ten pages of 100 runs per status and repository; fail closed
-  if that bound or any source cannot prove current state. The status helper
-  alone is not a staging-drain snapshot.
-- A clear snapshot requires staging `OFF` with `changeable: true`, an unowned
-  staging lock, no active `STAGING` or `PRODUCTION_QUALIFICATION` train or
-  nonterminal operation, and no queued/running staging mutation or staging E2E.
-  Staging mutations include frontend/backend staging deploys and both staging-
-  ref advance workflows. Production deploy/E2E, PR CI, and unrelated workflows
-  do not block staging.
-- Snapshot collection is the final read-only sequence before one mutation; do
-  not reuse it for another service, a batch, or a later push. If blocked,
-  unavailable, incomplete, or ambiguous, stop and return control without
-  waiting, polling, cancelling, retrying, or mutating. For a workflow blocker,
-  report repository, workflow, status, run ID, and link. Otherwise report the
-  gate/lock/train/operation/source, exact state or error, observation time, and
-  available owner, identity, or link. Existing workflow authorization and all
-  rejection/failure alerts remain unchanged as final race protection.
-- For coupled work, declare backend dependencies and preserve backend-before-
-  frontend ordering. Within v2, only independent backend DAG frontier units run
-  together.
-- `STAGING_DEPLOYED` is not validation. Do not mutate staging during manifest-
-  bound E2E, and never infer production readiness from staging validation.
-- CI wave senders pass deploy/run identities, never raw drop IDs. The `api`
-  receiver exclusively owns Redis correlation and the drop `reply_to` target;
-  every supplied deploy-run/train identity must resolve to the same drop or the
-  E2E result posts standalone.
-- Preserve exact backend Lambda identifiers and `WEB` capitalization in CI
-  wave messages. Keep alert delivery best effort and deploy the backend `api`
-  receiver before frontend workflow senders. The same rollout updates the
-  production-only `releaseBus` trusted frontend PR-CI policy digest; staging
-  notification validation needs only `api`. Follow `docs/ci-pipeline-alerts.md`
-  for the durable contract.
-- Production readiness is an explicit dependency-closed selection. Every
-  selected unchanged SHA must carry successful staging manifest/E2E evidence;
-  unrelated staging candidates and the current shared-staging combination are
-  not production gates.
-- New production trains use `CANDIDATE_STAGING_EVIDENCE_V1`: compose and build
-  freshly from both current production bases, do not create a
-  `PRODUCTION_QUALIFICATION` child, and require terminal read-only production
-  E2E before `PRODUCTION_DEPLOYED`. Null-policy legacy trains retain their
-  immutable claimed behavior.
-- Normal train preflight reuses exact-head/merge-tree PR CI evidence, not
-  environment-incompatible artifact bytes. It installs dependencies once,
-  builds/packages only the selected backend units, and emits immutable
-  environment-bound manifests. Repository-wide lint, typecheck, test inventory,
-  and full Jest matrices remain PR CI gates and must not return to the normal
-  staging or production train critical path.
-- Never cancel another actor's workflow, force-push a shared ref, or bypass exact
-  SHA/artifact checks. Never author or post release notes manually; preserve the
-  autonomous bot's complete grouping metadata and finalize signal.
+## Deployment
+
+- Follow `ops/skills/deploy-6529/SKILL.md` for authorized staging and production
+  work, using ordinary Git merges and the existing GitHub Actions workflows.
+- For staging, merge the development branch into the latest `1a-staging` and
+  push. Frontend changes automatically start `Web Deploy - STAGING`; backend
+  changes require dispatching `Deploy a service` for the required services.
+- For production, merge the development branch into `main`, then dispatch
+  `Web Deploy - PROD` for frontend or `Deploy a service` with `environment=prod`
+  for backend. A staging request alone does not authorize production.
+- Run backend service deployments sequentially in dependency order. Wait for
+  each run to succeed, then continue the next service in the same task without
+  asking for repeated authorization already covered by the requested phase.
+- Deploy backend dependencies before merging or deploying dependent frontend
+  changes in each environment. Read the backend service catalog and the change
+  to determine the units and order; avoid deploying unrelated services.
+- Fetch shared refs before merging. Preserve other developers' changes, resolve
+  conflicts normally, and never force-push or overwrite a moved shared ref.
+  Do not cancel another developer's deployment; coordinate through GitHub run
+  visibility and wait when the work would conflict.
+- Follow each deployment through its existing health and automatic E2E checks.
+  Fix failures on the development branch and repeat the authorized sequence.
+  Keep ordinary CI, artifact integrity, and runtime version checks intact.
+- CI wave notifications carry deploy run IDs through E2E and reruns. The
+  backend alone resolves the drop reply target; notification failures remain
+  best effort. Keep receiver and sender contracts compatible during rollout.
+- Never author or post release notes manually. Preserve the autonomous bot's
+  PR/service grouping metadata and final publication signal; use the explicit
+  release-note opt-out for authorized internal operations.
 
 # Commiting to Git
 

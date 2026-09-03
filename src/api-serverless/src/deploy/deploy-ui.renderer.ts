@@ -49,7 +49,7 @@ function renderServiceCard(service: DeployServiceConfig): string {
     .join('');
 
   return `<label class="service-card" data-service-card data-service-name="${escapeHtml(service.name)}" data-environments="${escapeHtml(environments)}">
-    <input class="service-checkbox" type="checkbox" value="${escapeHtml(service.name)}" />
+    <input class="service-checkbox" type="radio" name="backend-deploy-service" value="${escapeHtml(service.name)}" />
     <div class="service-card-header">
       <span class="service-name">${escapeHtml(service.name)}</span>
       <span class="service-toggle" aria-hidden="true"></span>
@@ -1062,7 +1062,6 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
           <h1 class="brand-title">6529 Deploy Console</h1>
         </div>
         <div class="hero-actions">
-          <a class="hero-link" href="/deploy/ui/bus"><span>Release Bus</span></a>
           <a
             class="hero-link"
             href="/health/ui"
@@ -1178,7 +1177,7 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
         type="button"
         aria-expanded="true"
         aria-controls="deploy-batch-content">
-        <h2 id="deploy-panel-title" class="panel-title">Deploy Batch</h2>
+        <h2 id="deploy-panel-title" class="panel-title">Deploy service</h2>
         <span class="panel-heading-indicator" aria-hidden="true">
           <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M6 3L11 8L6 13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1205,15 +1204,20 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
               <button type="button" class="env-button" data-env-button data-environment="prod">PRODUCTION</button>
             </div>
           </div>
-          <div class="field">
-            <label class="field-label" for="break-glass-reason">Break-glass reason</label>
-            <input id="break-glass-reason" class="input" type="text" maxlength="1000" placeholder="Required after Release Bus enforcement" />
+          <div id="release-note-fields" class="field hidden">
+            <div id="backend-release-note-fields">
+              <label class="field-label" for="release-pull-request">Production pull request</label>
+              <input id="release-pull-request" class="input" type="number" min="1" placeholder="Backend PR number for release notes" />
+              <label class="field-label" for="release-group-services">Production services</label>
+              <input id="release-group-services" class="input" type="text" maxlength="2000" placeholder="Full service group, e.g. dbMigrationsLoop,api" />
+            </div>
+            <label><input id="release-note-opt-out" type="checkbox" /> Internal operation: skip release notes</label>
           </div>
         </div>
 
         <div class="toolbar">
           <input id="service-search" class="input" type="search" placeholder="Filter services" />
-          <button id="select-visible-button" type="button" class="button-secondary">Select Visible</button>
+          <button id="select-visible-button" type="button" class="button-secondary">Select First Visible</button>
           <button id="clear-selection-button" type="button" class="button-secondary">Clear Selected</button>
         </div>
 
@@ -1230,7 +1234,7 @@ export function renderDeployUI(services: DeployServiceConfig[]): string {
         </div>
 
         <div class="control-actions">
-          <button id="deploy-button" type="button" class="button-primary" disabled>Deploy Batch</button>
+          <button id="deploy-button" type="button" class="button-primary" disabled>Deploy service</button>
         </div>
         <div id="deploy-status" class="status-line"></div>
         <div id="results-panel" class="results-list hidden"></div>
@@ -1273,7 +1277,11 @@ export function renderDeployUiApp(): string {
     document.querySelectorAll('[data-deploy-target]')
   );
   var refInput = document.getElementById('ref-input');
-  var breakGlassReasonInput = document.getElementById('break-glass-reason');
+  var releaseNoteFields = document.getElementById('release-note-fields');
+  var backendReleaseNoteFields = document.getElementById('backend-release-note-fields');
+  var releasePullRequestInput = document.getElementById('release-pull-request');
+  var releaseGroupServicesInput = document.getElementById('release-group-services');
+  var releaseNoteOptOutInput = document.getElementById('release-note-opt-out');
   var refMenu = document.getElementById('ref-menu');
   var quickRefButtons = Array.prototype.slice.call(
     document.querySelectorAll('[data-quick-ref]')
@@ -1302,7 +1310,7 @@ export function renderDeployUiApp(): string {
     deployTarget: 'backend',
     backendEnvironment: bootstrap.default_environment || 'staging',
     frontendEnvironment: 'prod',
-    backendRef: '',
+    backendRef: bootstrap.default_environment === 'prod' ? 'main' : '1a-staging',
     frontendRef: 'main',
     environment: bootstrap.default_environment || 'staging',
     runsTimer: null,
@@ -1321,8 +1329,8 @@ export function renderDeployUiApp(): string {
 
   var TARGET_UI_CONFIGS = {
     backend: {
-      panelTitle: 'Deploy Batch',
-      buttonLabel: 'Deploy Batch',
+      panelTitle: 'Deploy service',
+      buttonLabel: 'Deploy service',
       statusLabel: 'backend',
       showServices: true,
       visibleEnvironments: ['staging', 'prod']
@@ -1378,6 +1386,7 @@ export function renderDeployUiApp(): string {
       state.backendEnvironment = value;
     }
     state.environment = value;
+    setCurrentRef(value === 'prod' ? 'main' : '1a-staging');
   }
 
   function setStatus(node, message, kind) {
@@ -1453,6 +1462,17 @@ export function renderDeployUiApp(): string {
       button.classList.toggle('hidden', !isVisible);
       button.classList.toggle('is-active', environment === state.environment);
     });
+    syncReleaseNoteControls();
+  }
+
+  function syncReleaseNoteControls() {
+    var isProduction = state.environment === 'prod';
+    var isBackendProduction = isProduction && state.deployTarget === 'backend';
+    releaseNoteFields.classList.toggle('hidden', !isProduction);
+    backendReleaseNoteFields.classList.toggle('hidden', !isBackendProduction);
+    releaseNoteOptOutInput.disabled = !isProduction;
+    releasePullRequestInput.disabled = !isBackendProduction || releaseNoteOptOutInput.checked;
+    releaseGroupServicesInput.disabled = !isBackendProduction || releaseNoteOptOutInput.checked;
   }
 
   function syncAuthControls() {
@@ -1545,6 +1565,16 @@ export function renderDeployUiApp(): string {
       });
   }
 
+  function selectServiceCard(selectedCard) {
+    serviceCards.forEach(function (card) {
+      var checkbox = card.querySelector('input');
+      if (!checkbox) return;
+      checkbox.checked = card === selectedCard;
+      card.classList.toggle('is-selected', checkbox.checked);
+    });
+    updateSelectedSummary();
+  }
+
   function updateSelectedSummary() {
     var targetConfig = getCurrentTargetConfig();
     var selected = selectedServices();
@@ -1555,7 +1585,7 @@ export function renderDeployUiApp(): string {
       clearSelectionButton.disabled = true;
     } else {
       selectedSummary.textContent = selected.length + ' service' + (selected.length === 1 ? '' : 's') + ' selected.';
-      deployButton.disabled = !state.token || selected.length === 0 || !hasRef;
+      deployButton.disabled = !state.token || selected.length !== 1 || !hasRef;
       clearSelectionButton.disabled = selected.length === 0;
     }
     updateDeployOverview();
@@ -2038,6 +2068,25 @@ export function renderDeployUiApp(): string {
     }
   }
 
+  function buildDispatchRequest(ref, services) {
+    var request = {
+      target: state.deployTarget,
+      ref: ref,
+      environment: state.environment
+    };
+    if (state.deployTarget === 'backend') {
+      request.services = services;
+    }
+    if (state.environment === 'prod') {
+      request.release_note_opt_out = releaseNoteOptOutInput.checked;
+      if (state.deployTarget === 'backend' && !releaseNoteOptOutInput.checked) {
+        request.release_pull_request = releasePullRequestInput.value ? Number(releasePullRequestInput.value) : null;
+        request.release_group_services = releaseGroupServicesInput.value.trim();
+      }
+    }
+    return request;
+  }
+
   async function onDeploy() {
     var targetConfig = getCurrentTargetConfig();
     var services = selectedServices();
@@ -2050,8 +2099,8 @@ export function renderDeployUiApp(): string {
       setStatus(deployStatus, 'Ref is required.', 'error');
       return;
     }
-    if (targetConfig.showServices && services.length === 0) {
-      setStatus(deployStatus, 'Select at least one service.', 'error');
+    if (targetConfig.showServices && services.length !== 1) {
+      setStatus(deployStatus, 'Select one service.', 'error');
       return;
     }
 
@@ -2073,22 +2122,7 @@ export function renderDeployUiApp(): string {
           },
           getAuthHeaders()
         ),
-        body: JSON.stringify(
-          !targetConfig.showServices
-            ? {
-                target: state.deployTarget,
-                ref: ref,
-                environment: state.environment,
-                break_glass_reason: breakGlassReasonInput.value.trim()
-              }
-            : {
-                target: state.deployTarget,
-                ref: ref,
-                environment: state.environment,
-                services: services,
-                break_glass_reason: breakGlassReasonInput.value.trim()
-              }
-        )
+        body: JSON.stringify(buildDispatchRequest(ref, services))
       });
       renderResults(payload.results || []);
       if ((payload.summary && payload.summary.failed) === 0) {
@@ -2128,6 +2162,7 @@ export function renderDeployUiApp(): string {
   connectButton.addEventListener('click', onConnect);
   forgetButton.addEventListener('click', onForget);
   deployButton.addEventListener('click', onDeploy);
+  releaseNoteOptOutInput.addEventListener('change', syncReleaseNoteControls);
   refreshRunsButton.addEventListener('click', loadRuns);
   runsPrevButton.addEventListener('click', function () {
     if (!state.runsHasPreviousPage) {
@@ -2153,29 +2188,13 @@ export function renderDeployUiApp(): string {
     });
   }
   selectVisibleButton.addEventListener('click', function () {
-    serviceCards.forEach(function (card) {
-      if (card.classList.contains('is-disabled') || card.classList.contains('is-hidden')) {
-        return;
-      }
-      var checkbox = card.querySelector('input');
-      if (!checkbox) {
-        return;
-      }
-      checkbox.checked = true;
-      card.classList.add('is-selected');
+    var firstVisible = serviceCards.find(function (card) {
+      return !card.classList.contains('is-disabled') && !card.classList.contains('is-hidden');
     });
-    updateSelectedSummary();
+    if (firstVisible) selectServiceCard(firstVisible);
   });
   clearSelectionButton.addEventListener('click', function () {
-    serviceCards.forEach(function (card) {
-      var checkbox = card.querySelector('input');
-      if (!checkbox) {
-        return;
-      }
-      checkbox.checked = false;
-      card.classList.remove('is-selected');
-    });
-    updateSelectedSummary();
+    selectServiceCard(null);
   });
   targetButtons.forEach(function (button) {
     button.addEventListener('click', function () {
@@ -2193,6 +2212,7 @@ export function renderDeployUiApp(): string {
   envButtons.forEach(function (button) {
     button.addEventListener('click', function () {
       setCurrentEnvironment(button.getAttribute('data-environment'));
+      syncTargetSpecificControls();
       applyEnvironmentFilter();
       updateDeployOverview();
     });
@@ -2282,19 +2302,18 @@ export function renderDeployUiApp(): string {
   });
 
   serviceCards.forEach(function (card) {
+    var checkbox = card.querySelector('input');
+    if (checkbox) {
+      checkbox.addEventListener('change', function () {
+        if (checkbox.checked) selectServiceCard(card);
+      });
+    }
     card.addEventListener('click', function (event) {
       if (card.classList.contains('is-disabled')) {
         event.preventDefault();
         return;
       }
-      var checkbox = card.querySelector('input');
-      if (!checkbox) {
-        return;
-      }
-      window.setTimeout(function () {
-        card.classList.toggle('is-selected', !!checkbox.checked);
-        updateSelectedSummary();
-      }, 0);
+      selectServiceCard(card);
     });
   });
 

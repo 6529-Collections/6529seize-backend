@@ -23,7 +23,6 @@ const {
   CI_RELEASE_NOTE_PUBLISH,
   CI_RELEASE_NOTE_GROUPS,
   CI_RELEASE_NOTE_OPT_OUT,
-  CI_RELEASE_TRAIN_ID,
   CI_RELEASE_CONTRIBUTORS,
   CI_PIPELINES_SHA,
   GITHUB_REPOSITORY,
@@ -252,17 +251,6 @@ try {
   console.error(releaseContributorMetadataErrorMessage(error));
   process.exit(1);
 }
-if (
-  CI_RELEASE_TRAIN_ID &&
-  !/^[A-Za-z0-9._-]{1,100}$/.test(CI_RELEASE_TRAIN_ID)
-) {
-  console.error('CI_RELEASE_TRAIN_ID is invalid');
-  process.exit(1);
-}
-if (releaseContributors.length > 0 && !CI_RELEASE_TRAIN_ID) {
-  console.error('CI_RELEASE_TRAIN_ID is required with CI_RELEASE_CONTRIBUTORS');
-  process.exit(1);
-}
 if (CI_PIPELINES_SHA && !/^[a-f0-9]{40}$/.test(CI_PIPELINES_SHA)) {
   console.error('CI_PIPELINES_SHA must be a 40-character lowercase Git SHA');
   process.exit(1);
@@ -304,17 +292,6 @@ const releaseNotesFields = isReleaseNotesEligible
         deployed_at: new Date().toISOString()
       }
   : {};
-// Keep the two new fields atomic. During the ordered rollout, the old
-// dispatcher supplies an empty array and the old receiver rejects unknown
-// fields; the train id has no downstream use unless contributor credits exist.
-const releaseTrainFields =
-  CI_RELEASE_TRAIN_ID && releaseContributors.length > 0
-    ? {
-        release_train_id: CI_RELEASE_TRAIN_ID,
-        contributor_github_logins: releaseContributors
-      }
-    : {};
-
 const payload = {
   alert_type: alertType,
   repo: repository.split('/').pop() ?? repository,
@@ -331,7 +308,9 @@ const payload = {
   branch: GITHUB_REF_NAME || null,
   environment: targetEnvironment || null,
   service: CI_PIPELINES_SERVICE || null,
-  ...releaseTrainFields,
+  ...(releaseContributors.length
+    ? { contributor_github_logins: releaseContributors }
+    : {}),
   ...releaseNotesFields
 };
 

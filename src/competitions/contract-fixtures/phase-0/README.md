@@ -24,6 +24,16 @@ four authenticated operational routes:
 - `/deploy/release-trains`
 - `/deploy/release-trains/:id`
 
+The accepted complete Release Bus removal also retires these three operational
+UI routes. They are excluded from the runtime census while the immutable
+baseline remains unchanged:
+
+- `/deploy/ui/branch-head`
+- `/deploy/ui/bus`
+- `/deploy/ui/bus/app.js`
+
+The ordinary deployment UI and all other mounted GET contracts remain enforced.
+
 ## Accepted additive enum extensions
 
 The subscription coverage notification contract adds the
