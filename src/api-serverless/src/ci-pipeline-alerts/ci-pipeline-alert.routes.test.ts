@@ -429,24 +429,7 @@ describe('ci pipeline alert routes', () => {
     expect(ciPipelineAlertService.postAlert).not.toHaveBeenCalled();
   });
 
-  it('requires a release train id with contributor metadata', async () => {
-    (getRedisClient as jest.Mock).mockReturnValue(null);
-
-    await expect(
-      ciPipelineAlertHandler(
-        makeAlertRequest({
-          contributor_github_logins: ['GelatoGenesis']
-        }),
-        makeResponse()
-      )
-    ).rejects.toThrow(
-      'release_train_id is required with contributor_github_logins'
-    );
-
-    expect(ciPipelineAlertService.postAlert).not.toHaveBeenCalled();
-  });
-
-  it('accepts signed release train contributor metadata', async () => {
+  it('accepts signed contributor metadata', async () => {
     (getRedisClient as jest.Mock).mockReturnValue(null);
     (ciPipelineAlertService.postAlert as jest.Mock).mockResolvedValue(
       undefined
@@ -454,7 +437,6 @@ describe('ci pipeline alert routes', () => {
 
     await ciPipelineAlertHandler(
       makeAlertRequest({
-        release_train_id: 'train-123',
         contributor_github_logins: ['GelatoGenesis', 'prxt6529']
       }),
       makeResponse()
@@ -462,7 +444,6 @@ describe('ci pipeline alert routes', () => {
 
     expect(ciPipelineAlertService.postAlert).toHaveBeenCalledWith(
       expect.objectContaining({
-        release_train_id: 'train-123',
         contributor_github_logins: ['GelatoGenesis', 'prxt6529']
       }),
       expect.any(Object)
@@ -482,7 +463,6 @@ describe('ci pipeline alert routes', () => {
         service: 'web',
         run_attempt: 2,
         parent_deploy_run_id: '791',
-        parent_release_train_id: 'train-123',
         validation_pack: 'core'
       }),
       makeResponse()
@@ -495,7 +475,6 @@ describe('ci pipeline alert routes', () => {
         service: 'web',
         run_attempt: 2,
         parent_deploy_run_id: '791',
-        parent_release_train_id: 'train-123',
         validation_pack: 'core'
       }),
       expect.any(Object)
@@ -559,7 +538,6 @@ describe('ci pipeline alert routes', () => {
     await ciPipelineAlertHandler(
       makeAlertRequest({
         parent_deploy_run_id: null,
-        parent_release_train_id: '',
         validation_pack: null
       }),
       makeResponse()
@@ -568,7 +546,6 @@ describe('ci pipeline alert routes', () => {
     expect(ciPipelineAlertService.postAlert).toHaveBeenCalledWith(
       expect.objectContaining({
         parent_deploy_run_id: null,
-        parent_release_train_id: '',
         validation_pack: null
       }),
       expect.any(Object)
@@ -625,7 +602,7 @@ describe('ci pipeline alert routes', () => {
           release_note_groups: [
             {
               ...structuredGroup,
-              release_group_services: ['releaseBus']
+              release_group_services: ['dbMigrationsLoop']
             }
           ]
         }),

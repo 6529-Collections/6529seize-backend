@@ -165,8 +165,6 @@ flowchart TD
 | `dbDumpsDaily`                           | Create daily database dumps.                                                                                                                                        |
 | `nextgenMediaUploader`                   | Upload NextGen media.                                                                                                                                               |
 | `nextgenMediaImageResolutions`           | Generate NextGen image resolutions.                                                                                                                                 |
-| `releaseBusV2Reconciler`                 | Claim and reconcile exact Simple Release Bus v2 trains.                                                                                                             |
-| `releaseBusCleaner`                      | Remove expired temporary v2 release branches that no active train owns.                                                                                             |
 
 `transactionsLoop` receipt verification fails closed and raises per-function
 error alarms. See the [transactions ingestion runbook](transactions-loop-ingestion-runbook.md)
@@ -266,8 +264,7 @@ but never globally quarantined or moderator-removed content.
 
 CI deploy and WEB E2E signals enter the API through the signed pipeline-alert
 route. The API renders and posts the deploy drop, then retains successful WEB
-deploy reply targets in Redis by deploy run ID and optional Release Bus train
-ID. Terminal E2E signals carry those durable identities back to the API; only
+deploy reply targets in Redis by deploy run ID. Terminal E2E signals carry those durable identities back to the API; only
 an unambiguous match becomes a drop reply, while missing or inconsistent state
 falls back to a standalone result. Workflows never own Seize drop IDs. See
 [CI Pipeline Alerts](./ci-pipeline-alerts.md) for the request, formatting,
@@ -510,7 +507,7 @@ Wave drop metric repairs use the same DB-backed/SQS pattern. Drop deletes apply 
 
 Help6529 daily activity credits use the same durable handoff shape. Drop creation inserts one `help_bot_daily_activity_credit_requests` row per profile and UTC date inside the drop transaction, then publishes a small wakeup to `help-bot-daily-activity-credits.fifo` only after commit. `helpBotDailyActivityCreditLoop` grants outside the request path, records retry state and errors on the durable row, prioritizes untouched requests over retrying failures, retains completed rows for 30 days to suppress repeated daily work, and parks repeatedly failing rows as `DEAD`. A single FIFO message group and reserved concurrency of one serialize credit processing in a Lambda isolated from normal bot replies. The queue DLQ surfaces unhandled worker failures and a dead-row log metric alarm surfaces exhausted durable retries; a one-minute EventBridge rule wakes the same queue after a recorded retry or when post-commit SQS publication fails. The existing unique `help_bot_credit_events` grant key remains the final idempotency barrier if processing is redelivered or crashes between granting and marking the request complete.
 
-The zero-downtime rollout order is mandatory: deploy `dbMigrationsLoop` first to create the request table and indexes, deploy `helpBotReplyLoop` second to create the queue and worker, and deploy `api` last to begin inserting requests and publishing wakeups. Release Bus must encode the same `dbMigrationsLoop -> helpBotReplyLoop -> api` dependency chain.
+The zero-downtime rollout order is mandatory: deploy `dbMigrationsLoop` first to create the request table and indexes, deploy `helpBotReplyLoop` second to create the queue and worker, and deploy `api` last to begin inserting requests and publishing wakeups. Follow the same `dbMigrationsLoop -> helpBotReplyLoop -> api` dependency chain when dispatching the services.
 
 Subscription coverage uses a DB-backed scheduled reconciliation pattern without
 a cross-service dirty-event queue. Top-up, redemption, subscription
@@ -521,7 +518,7 @@ paths. Notification delivery still uses the existing post-commit SQS-backed
 push pipeline.
 `subscriptionCoverageReconciliationLoop` is a separate Lambda function in the
 existing allowlisted `subscriptionsDaily` Serverless stack. Deploying that unit
-updates both handlers and verifies both Lambda versions; its release-bus
+updates both handlers and verifies both Lambda versions; its service-catalog
 dependencies place the stack after schema, API, push, top-up, transaction, and
 owner-balance prerequisites. The function drains versioned dirty rows every
 minute and performs an hourly bounded full sweep to cover projected calendar
@@ -675,181 +672,37 @@ shims. Bootstrap or `direnv` exposes the command only inside this repository
 tree; it does not alter the machine-wide npm installation. See
 [`docs/package-commands.md`](package-commands.md) for the command contract.
 
-Simple Release Bus v2 is an additive MySQL-backed control plane shared by the
-production API and the production-region `releaseBusV2Reconciler` Lambda. Ten
-versioned tables store immutable candidates, dependency edges, staging and
-production trains, memberships, exact operations, environment/scheduler locks,
-manifests, controls, and events. The reconciler has reserved concurrency one
-and an EventBridge one-minute fallback, but it advances several internal row
-transitions per invocation and exits at an actual external wait.
+Staging and production use ordinary Git merges and GitHub Actions. Backend
+staging merges to `1a-staging`, followed by a `Deploy a service` dispatch for
+each required service with `environment=staging`. Production merges to `main`
+and uses the same workflow with `environment=prod`. Services deploy
+sequentially in dependency order, with each run observed to completion before
+the next dispatch. The service catalog records allowed environments and
+default dependencies. The workflow's environment concurrency avoids overlapping
+backend deployment runs; it does not create a cross-repository scheduler.
 
-The v2 API exposes candidate, train, train-detail, manifest, control, lock, and
-authoritative staging-state GET routes publicly under
-`/deploy/release-bus-v2`. These read-only responses are uncached and expose the
-same raw operational state used by `/deploy/ui/bus`, which loads as a public
-read-only dashboard. They remain covered by the API's existing anonymous/IP
-rate-limiting middleware. GitHub authentication is optional in the dashboard
-and is used only to request operator actions. Every mutation retains its
-route-specific GitHub repository-write, organization-operator,
-workflow-credential, or webhook signature authorization before state can
-change.
-`RELEASE_BUS_V2_MODE` supports `OFF`, `STAGING`, and `PRODUCTION`, with separate
-staging and production queues. Staging validation never schedules production:
-an unchanged exact candidate SHA must be explicitly marked ready. An
-operator-only maintenance route can transactionally yield legacy stalled
-production qualifications while v2 is `OFF` with `ALL` paused, or in `STAGING`
-mode with `PRODUCTION` paused. Every v2 lock must be free and a double staging
-workflow/ref handshake must be stable. Recovery then owns the scheduler fence,
-re-verifies every lock inside the yield transaction, and processes at most one
-qualification per request so committed progress is always reported. Every
-committed yield requires a follow-up drain check; only an empty recovery
-response proves there are no further live qualifications to yield. A separate
-operator-only maintenance route can idempotently restore a candidate's derived
-staging status only when its exact repository, PR, and head are uniquely
-included in the authoritative current validated staging manifest. The repair
-acquires the scheduler and staging fences, rejects active trains or production
-ownership, and cannot infer validation from candidate rows alone. Its
-mutation-free discovery mode enumerates exact current-manifest mismatches; an
-executing request must repeat the bounded repository/PR/head identities from
-that report, so historical superseded heads outside the manifest stay
-untouched.
+Frontend staging continues to deploy automatically on application/workflow
+pushes to `1a-staging`; frontend production is dispatched through
+`Web Deploy - PROD` on `main`. Both frontend deployment workflows include
+automatic E2E validation. For coupled releases, complete backend dependencies
+before merging and deploying dependent frontend changes. Workflows resolve the
+source commit and verify artifact and runtime versions automatically.
 
-The API also exposes a two-phase operator-only logical candidate
-deregistration boundary. Its read-only preparation returns one complete
-candidate/control/lock/staging-state row-version inventory and digest.
-Execution requires both independently changeable lanes paused while `ALL`
-remains unpaused, all three exact locks wholly free, every train/operation
-terminal, and all backend/frontend staging/production mutation and E2E
-workflows inactive. It temporarily owns all three locks and transactionally
-marks candidates `DEREGISTERED` with detached rather than absent staging
-presence, clears scheduling/admission/production intent, and moves the
-singleton to `DETACHED_MANUAL_OWNERSHIP`. Existing dependency, train,
-operation, manifest, and event history remains immutable. A detached singleton
-blocks registration and claims; it can become clean main only when both exact
-staging refs equal the corresponding current main bases. Matching an older
-validated manifest never restores its prior candidate membership.
-Terminal candidate history is byte-for-byte immutable, except that a
-`SUPERSEDED` row with the exact deleted-branch event and retained production
-request/staging evidence is still active intent because the reconciler can
-restore it; deregistration must consume that narrow recoverable case.
-These additive values fit the existing varchar widths and require no database
-migration. Execution is forbidden during mixed API/reconciler runtime; both
-lane controls remain paused until every runtime and generated/UI contract
-understands the detached states.
+The API's authenticated `/deploy/ui` remains a convenience for viewing refs
+and runs and dispatching the ordinary workflows. GitHub authentication and
+repository permissions remain in place. It has no release queue, candidate
+registry, environment-state ledger, or separate deployment authority.
 
-GitHub Actions performs exact composition, fast preflight, immutable packaging,
-backend DAG deployment, frontend deployment, and manifest-bound E2E. Train
-preflight consumes exact-head/merge-tree PR CI evidence instead of repeating
-repository-wide lint, typecheck, test inventory, or full test matrices. It
-installs backend dependencies once and builds/packages only selected deploy
-units. Frontend builds only the target environment profile. Every artifact is
-environment-, composition-SHA-, unit-, and digest-bound; ordinary production
-freshly composes and builds its exact dependency-closed selection and never
-reuses staging artifact bytes. Frontend/backend preparation and independent
-backend DAG frontiers run concurrently; only shared environment mutation plus
-E2E ownership is serialized. Operation keys, workflow titles, workflow
-authorization, SHA/artifact checks, row versions, and callback identity make
-retries and duplicate reconciliation idempotent.
-Automatic staging E2E reaches the baseline-adoption decision through an API
-callback dispatched by `workflow_dispatch`. When an exact adoption intent is
-active, the API reads both workflow identities from GitHub: the staging E2E
-run must be owned by `github-actions[bot]`, use the frontend repository for
-both the run and head repository, and execute `.github/workflows/staging-e2e.yml`;
-the associated deploy run remains subject to the generic trusted-actor reader.
-Only this dedicated staging E2E reader admits the GitHub Actions bot, and every
-metadata mismatch fails closed before baseline evidence is recorded.
-Operation reads normally use the read pool. When reconciliation has just
-CAS-written a dispatch reservation and must decide whether it may call GitHub,
-it rereads that immutable operation from the writer pool. An explicit
-transaction connection already identifies the writer and takes precedence over
-pool selection. Only an authoritative `DISPATCHED` reservation permits the
-external dispatch; missing or concurrently advanced state fails closed without
-dispatching.
+For backend production, each service notification carries the merged PR and
+canonical service group. Earlier services hold publication; the final
+successful service supplies the publication signal. Internal operations may
+explicitly opt out. The independent `releaseNotesGenerationLoop` remains
+downstream of those notifications and writes/publishes the autonomous release
+note. CI wave E2E replies correlate to the successful frontend deployment by
+GitHub run ID.
 
-One-click production workflows use the production authority ledger described in
-[`docs/release-bus-v2-production-authority.md`](release-bus-v2-production-authority.md).
-Frontend and backend operations intentionally share the existing
-`production-environment` lock and production control epoch. A GitHub entry
-point verifies its exact in-progress run before atomically acquiring that lock
-and a `BOUND` authority; an external controller may instead create a short-lived
-unbound `PREPARED` row before dispatch. Artifact discovery is deliberately
-after prepare/bind: only immediate pre-mutation reauthorization freezes the
-selection digest. Completion additionally requires repository-specific trusted
-evidence: a frontend authority needs the exact successful Production E2E run
-(bound by persisted deploy ID/title, not by E2E head SHA) and isolated verifier
-digest, while a backend authority needs the exact successful deploy-bound
-`Deploy a service` run (including service/title/path, repository, attempt, and
-target SHA) plus its evidence digest. Deploy success alone cannot release a
-frontend authority, and an unrelated or mismatched backend run cannot release
-the backend authority. The DB lease token remains persisted server-side and is
-never part of an API response or workflow output.
-
-The authority schema follows the repository's entities-first contract. For the
-API-only rollout, deploy `dbMigrationsLoop` first and `api` second, then verify
-the table plus its unique operation and indexed status keys on the writer
-database. Workflow consumers are merged later and are not deployed in this
-rollout. Drain callers before a rollback and retain the authority table as audit
-history; do not drop it while any operation may still reference the lease
-record.
-
-For cumulative staging, each affected repository's immutable release commit
-has the recorded `1a-staging` head as its first parent and the composed
-candidate tree as its second parent. After preparation and the staging fence,
-the reconciler advances only affected `1a-staging` refs through dedicated,
-operation-owned workflows before deployment. Each workflow authorizes the
-exact train/attempt before reading or mutating the ref, proves the recorded
-old SHA is an ancestor of the immutable target, applies an exact leased
-fast-forward, and reports the observed postcondition. It uses the workflow
-`GITHUB_TOKEN`, so this Release Bus-owned branch advance cannot recursively
-start the legacy staging deployment workflow. Branch heads, deployed runtime,
-manifest identity, and E2E inputs therefore describe the same combined state.
-A retry observes a completed ref operation and continues idempotently; an
-unexpected ref move fails closed and pauses only the staging lane. Rollback
-uses the same forward-only pattern with an immutable restore commit instead of
-rewinding a shared ref.
-
-Each staging reconcile rechecks every mutable NEW candidate against its open
-PR's current exact head, including candidates already building or deploying.
-Once a newer registered/current head supersedes a candidate, no additional
-operation is dispatched for the obsolete head. Already-dispatched workflows
-are observed to completion without cancellation, then unrelated NEW candidates
-return immediately to the queue for the next train. An ordinary combined
-staging preflight failure likewise fails the affected repository's NEW group
-once and requeues independent repositories after current workflows drain;
-subset-isolation diagnostics are reserved for production qualification and
-never extend the ordinary staging critical path. A grouped failure retries only
-after an explicit unchanged-head registration revalidates the exact green PR
-evidence and immutable dependency/plan identity against the terminal failure's
-candidate row version; reconciliation alone never loops it.
-
-The staging manifest distinguishes deployed from validated state and binds E2E
-to exact frontend/backend tree SHAs, environment-bound artifact digests,
-service operations, and workflow runs. Staging evidence qualifies unchanged
-candidate source and E2E history; it never qualifies staging artifact bytes for
-ordinary production. Production records the selected candidates' exact staging
-evidence, freshly composes the dependency-closed set onto the current production
-main bases, freshly builds production-bound artifacts, and advances only those
-tested SHAs by compare-and-swap. A moved `main` is never overwritten and
-triggers bounded production-only replan/coalescence without mutating the
-admitted staging set.
-
-Infrastructure and retryable deployment failures retry only the same operation.
-Control-plane defects pause automated claiming without blaming candidates, and
-the serialized manual workflow remains available after v2 is deliberately set
-`OFF`. The cleaner removes expired unowned v2 release refs.
-
-The GitHub App private key and workflow authorization token use the existing
-`prod/lambdas` secret bootstrap. Production API and releaseBus deployments copy
-only the non-secret v2 mode and App identity into Lambda configuration.
-
-For successful production backend operations, v2 emits one canonical group per
-candidate PR and fans overlapping service deployments into each applicable
-group. Every applicable successful service persists publication intent; the
-consumer waits for the canonical completion set and elects one publisher with
-its Redis processing lock. Candidates may explicitly opt out only for internal
-operations. The independent
-`releaseNotesGenerationLoop` remains downstream of these signals; the Release
-Bus never authors or posts release notes itself.
+See [Deployment](deployment.md) for the direct workflow process and
+[CI Pipeline Alerts](ci-pipeline-alerts.md) for notification contracts.
 
 Deployment is service-by-service through the generated GitHub Actions workflow. The workflow exposes `api` and each Lambda service as a deploy choice.
 

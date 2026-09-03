@@ -81,10 +81,9 @@ describe('notify-ci-wave release-note metadata', () => {
     });
   });
 
-  it('sends canonical release train contributors and the deployed SHA', async () => {
+  it('sends canonical release contributors and the deployed SHA', async () => {
     const expectedSha = 'b'.repeat(40);
     const result = await runNotifier({
-      CI_RELEASE_TRAIN_ID: 'train-123',
       CI_RELEASE_CONTRIBUTORS: JSON.stringify([
         'GelatoGenesis',
         'prxt6529',
@@ -97,39 +96,23 @@ describe('notify-ci-wave release-note metadata', () => {
       code: 0,
       stderr: '',
       payload: {
-        release_train_id: 'train-123',
         contributor_github_logins: ['GelatoGenesis', 'prxt6529'],
         sha: expectedSha
       }
     });
   });
 
-  it('rejects release contributors without a train id', async () => {
+  it('omits empty contributor metadata', async () => {
     const result = await runNotifier({
-      CI_RELEASE_CONTRIBUTORS: JSON.stringify(['GelatoGenesis'])
-    });
-
-    expect(result.code).toBe(1);
-    expect(result.stderr).toContain(
-      'CI_RELEASE_TRAIN_ID is required with CI_RELEASE_CONTRIBUTORS'
-    );
-    expect(result.payload).toBeNull();
-  });
-
-  it('keeps new fields atomic until the updated dispatcher supplies contributors', async () => {
-    const result = await runNotifier({
-      CI_RELEASE_TRAIN_ID: 'train-123',
       CI_RELEASE_CONTRIBUTORS: '[]'
     });
 
     expect(result.code).toBe(0);
-    expect(result.payload).not.toHaveProperty('release_train_id');
     expect(result.payload).not.toHaveProperty('contributor_github_logins');
   });
 
   it('rejects invalid release contributor metadata', async () => {
     const result = await runNotifier({
-      CI_RELEASE_TRAIN_ID: 'train-123',
       CI_RELEASE_CONTRIBUTORS: JSON.stringify(['not a login'])
     });
 
@@ -144,7 +127,6 @@ describe('notify-ci-wave release-note metadata', () => {
     'rejects impossible GitHub login %s',
     async (login) => {
       const result = await runNotifier({
-        CI_RELEASE_TRAIN_ID: 'train-123',
         CI_RELEASE_CONTRIBUTORS: JSON.stringify([login])
       });
 
@@ -167,12 +149,12 @@ describe('notify-ci-wave release-note metadata', () => {
     expect(result.payload).toBeNull();
   });
 
-  it('sends canonical per-PR v2 release-note groups', async () => {
+  it('sends canonical per-PR release-note groups', async () => {
     const result = await runNotifier({
       CI_RELEASE_NOTE_GROUPS: JSON.stringify([
         {
           release_group_id: 'pr-1801',
-          release_group_services: ['worker', 'api', 'api'],
+          release_group_services: ['dbMigrationsLoop', 'api', 'api'],
           pull_request_number: 1801,
           publish_release_note: true
         }
@@ -186,7 +168,7 @@ describe('notify-ci-wave release-note metadata', () => {
         release_note_groups: [
           {
             release_group_id: 'pr-1801',
-            release_group_services: ['api', 'worker'],
+            release_group_services: ['api', 'dbMigrationsLoop'],
             pull_request_number: 1801,
             publish_release_note: true
           }
@@ -207,7 +189,7 @@ describe('notify-ci-wave release-note metadata', () => {
       CI_RELEASE_NOTE_GROUPS: JSON.stringify([
         {
           release_group_id: 'pr-1801',
-          release_group_services: ['worker', 'api'],
+          release_group_services: ['dbMigrationsLoop', 'api'],
           pull_request_number: 1801,
           publish_release_note: true
         },

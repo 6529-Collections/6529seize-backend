@@ -33,7 +33,6 @@ const activeGuidanceFiles = [
 const automationFiles = [
   '.github/workflows/deploy.yml',
   '.github/workflows/on-pull-request.yml',
-  '.github/workflows/release-bus-v2-preflight.yml',
   'scripts/check-changed.mjs',
   'scripts/generate-deploy-config.mjs'
 ];
