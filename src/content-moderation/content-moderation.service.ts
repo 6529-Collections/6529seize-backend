@@ -194,7 +194,11 @@ export class ContentModerationService {
 
   async getBlockActivity(
     moderatorProfileId: string,
-    input: { limit: number; before?: string | null },
+    input: {
+      limit: number;
+      before?: string | null;
+      include_unblocks?: boolean;
+    },
     ctx: RequestContext
   ) {
     await this.assertModerator(moderatorProfileId, ctx);

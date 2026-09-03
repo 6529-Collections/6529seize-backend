@@ -86,6 +86,7 @@ import { ApiWaveV3 } from '@/api/generated/models/ApiWaveV3';
 export type GetContentModerationBlockActivityPathParams = Record<string, never>;
 
 export interface GetContentModerationBlockActivityQuery {
+  "include_unblocks"?: boolean;
   "limit"?: number;
   "before"?: string;
 }

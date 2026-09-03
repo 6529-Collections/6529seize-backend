@@ -1,3 +1,4 @@
+import { ApiContentModerationBlockActivityItemActionEnum } from '@/api/generated/models/ApiContentModerationBlockActivityItem';
 import {
   ContentModerationRecommendation,
   ContentReportReason,
@@ -152,7 +153,11 @@ describe('ContentModerationService', () => {
     const { service, db } = createService();
 
     await expect(
-      service.getBlockActivity('profile-1', { limit: 25, before: '500.42' }, {})
+      service.getBlockActivity(
+        'profile-1',
+        { limit: 25, before: '500.42', include_unblocks: true },
+        {}
+      )
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(db.getBlockActivity).not.toHaveBeenCalled();
 
@@ -160,6 +165,7 @@ describe('ContentModerationService', () => {
     db.getBlockActivity.mockResolvedValue([
       {
         id: '42',
+        action: ApiContentModerationBlockActivityItemActionEnum.Unblocked,
         blocker_profile_id: 'blocker-1',
         blocker_handle: 'blocker',
         blocker_pfp: null,
@@ -174,12 +180,14 @@ describe('ContentModerationService', () => {
     await expect(
       service.getBlockActivity(
         'moderator-1',
-        { limit: 25, before: '500.42' },
+        { limit: 25, before: '500.42', include_unblocks: true },
         {}
       )
-    ).resolves.toEqual([expect.objectContaining({ id: '42' })]);
+    ).resolves.toEqual([
+      expect.objectContaining({ id: '42', action: 'PROFILE_UNBLOCKED' })
+    ]);
     expect(db.getBlockActivity).toHaveBeenCalledWith(
-      { limit: 25, before: '500.42' },
+      { limit: 25, before: '500.42', include_unblocks: true },
       undefined
     );
   });
