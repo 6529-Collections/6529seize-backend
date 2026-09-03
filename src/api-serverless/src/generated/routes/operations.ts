@@ -15,6 +15,7 @@ import { ApiCompetitionOutcomePage } from '@/api/generated/models/ApiCompetition
 import { ApiCompetitionPage } from '@/api/generated/models/ApiCompetitionPage';
 import { ApiCompetitionPausePage } from '@/api/generated/models/ApiCompetitionPausePage';
 import { ApiCompetitionVoterPage } from '@/api/generated/models/ApiCompetitionVoterPage';
+import { ApiContentModerationBlockActivityItem } from '@/api/generated/models/ApiContentModerationBlockActivityItem';
 import { ApiContentModerationProfileStatusResponse } from '@/api/generated/models/ApiContentModerationProfileStatusResponse';
 import { ApiCreateProfileCmsWalletGallerySnapshotRequest } from '@/api/generated/models/ApiCreateProfileCmsWalletGallerySnapshotRequest';
 import { ApiCreateWaveMetadataRequest } from '@/api/generated/models/ApiCreateWaveMetadataRequest';
@@ -81,6 +82,24 @@ import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
 import { ApiWaveSearchAuthor } from '@/api/generated/models/ApiWaveSearchAuthor';
 import { ApiWaveV3 } from '@/api/generated/models/ApiWaveV3';
+
+export type GetContentModerationBlockActivityPathParams = Record<string, never>;
+
+export interface GetContentModerationBlockActivityQuery {
+  "include_unblocks"?: boolean;
+  "limit"?: number;
+  "before"?: string;
+}
+
+export type GetContentModerationBlockActivityResponse = ApiContentModerationBlockActivityItem[];
+
+export type GetContentModerationBlockActivityRequest = Request<
+  GetContentModerationBlockActivityPathParams,
+  ApiResponse<GetContentModerationBlockActivityResponse>,
+  never,
+  GetContentModerationBlockActivityQuery,
+  Record<string, never>
+>;
 
 export interface GetPublicContentModerationProfileStatusPathParams {
   "profile_id": string;

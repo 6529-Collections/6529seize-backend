@@ -9,6 +9,7 @@ import {
 import { BadRequestException } from '@/exceptions';
 import { ContentModerationDb } from './content-moderation.db';
 import {
+  CONTENT_MODERATION_AUDIT_LOG_TABLE,
   CONTENT_MODERATION_DROP_STATES_TABLE,
   CONTENT_MODERATION_PROFILE_BLOCKS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE
@@ -20,7 +21,19 @@ const REPORT_ID = '11111111-1111-4111-8111-111111111111';
 function createDb() {
   const executor = {
     execute: jest.fn().mockResolvedValue([]),
-    oneOrNull: jest.fn().mockResolvedValue(null)
+    oneOrNull: jest.fn().mockResolvedValue(null),
+    getAffectedRows: jest.fn((result: unknown) => {
+      if (result && typeof result === 'object' && !Array.isArray(result)) {
+        return Number((result as { affectedRows?: unknown }).affectedRows ?? 0);
+      }
+      return Array.isArray(result) && typeof result[1] === 'number'
+        ? result[1]
+        : 0;
+    }),
+    executeNativeQueriesInTransaction: jest.fn(
+      async (executable: (connection: object) => Promise<unknown>) =>
+        executable({})
+    )
   };
   return {
     executor,
@@ -546,9 +559,14 @@ describe('ContentModerationDb', () => {
         const executable = args[0] as (value: any) => Promise<unknown>;
         return executable(connection);
       });
-    executor.oneOrNull
-      .mockResolvedValueOnce({ external_id: 'blocked-1' })
-      .mockResolvedValueOnce(null);
+    executor.oneOrNull.mockResolvedValueOnce({ external_id: 'blocked-1' });
+    executor.execute.mockImplementation((sql: string) =>
+      Promise.resolve(
+        sql.includes(`insert into ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}`)
+          ? [0, 1, 123]
+          : []
+      )
+    );
 
     await db.blockProfile('blocker-1', 'blocked-1', {});
 
@@ -567,6 +585,147 @@ describe('ContentModerationDb', () => {
       },
       { wrappedConnection: connection }
     );
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.stringContaining(CONTENT_MODERATION_AUDIT_LOG_TABLE),
+      expect.objectContaining({
+        action: 'PROFILE_BLOCKED',
+        actorProfileId: 'blocker-1',
+        targetProfileId: 'blocked-1',
+        previousState: 'UNBLOCKED',
+        newState: 'BLOCKED'
+      }),
+      { wrappedConnection: connection }
+    );
+  });
+
+  it('does not refresh or audit a duplicate block reported as affected', async () => {
+    const { db, executor } = createDb();
+    executor.oneOrNull.mockResolvedValueOnce({ external_id: 'blocked-1' });
+    executor.execute.mockImplementation((sql: string) =>
+      Promise.resolve(
+        sql.includes(`insert into ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}`)
+          ? [0, 1, 0]
+          : []
+      )
+    );
+
+    await db.blockProfile('blocker-1', 'blocked-1', {});
+
+    const executeSql = executor.execute.mock.calls
+      .map(([sql]) => String(sql))
+      .join('\n');
+    expect(executeSql).toContain(
+      `insert into ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}`
+    );
+    expect(executeSql).toContain(
+      'on duplicate key update created_at = created_at'
+    );
+    expect(
+      executor.execute.mock.calls.some(
+        ([, params]) =>
+          (params as { action?: string } | undefined)?.action ===
+          'PROFILE_BLOCKED'
+      )
+    ).toBe(false);
+  });
+
+  it('does not suppress unrelated block insert failures', async () => {
+    const { db, executor } = createDb();
+    const insertError = new Error('constraint failure');
+    executor.oneOrNull.mockResolvedValueOnce({ external_id: 'blocked-1' });
+    executor.execute.mockRejectedValueOnce(insertError);
+
+    await expect(db.blockProfile('blocker-1', 'blocked-1', {})).rejects.toBe(
+      insertError
+    );
+    expect(
+      executor.execute.mock.calls.some(
+        ([, params]) =>
+          (params as { action?: string } | undefined)?.action ===
+          'PROFILE_BLOCKED'
+      )
+    ).toBe(false);
+  });
+
+  it('lists real block transitions newest first with a stable cursor', async () => {
+    const { db, executor } = createDb();
+    executor.execute.mockResolvedValue([
+      {
+        id: '42',
+        action: 'PROFILE_BLOCKED',
+        blocker_profile_id: 'blocker-1',
+        blocker_handle: 'blocker',
+        blocker_pfp: 'https://example.com/blocker.png',
+        blocked_profile_id: 'blocked-1',
+        blocked_handle: 'blocked',
+        blocked_pfp: 'https://example.com/blocked.png',
+        created_at: '500'
+      }
+    ]);
+
+    await expect(db.getBlockActivity({ limit: 20 })).resolves.toEqual([
+      expect.objectContaining({
+        id: '42',
+        action: 'PROFILE_BLOCKED',
+        created_at: 500,
+        cursor: '500.42'
+      })
+    ]);
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /from content_moderation_audit_log audit[\s\S]*audit\.action = 'PROFILE_BLOCKED'[\s\S]*audit\.previous_state = 'UNBLOCKED'[\s\S]*order by audit\.created_at desc, audit\.id desc/
+      ),
+      {
+        limit: 20,
+        includeUnblocks: false,
+        beforeCreatedAt: null,
+        beforeAuditId: null
+      },
+      undefined
+    );
+  });
+
+  it.each([0, 1])(
+    'audits an unblock only when a relationship is removed (%i)',
+    async (affectedRows) => {
+      const { db, executor } = createDb();
+      executor.execute.mockResolvedValue({ affectedRows });
+
+      await db.unblockProfile('blocker-1', 'blocked-1', {});
+
+      const auditCalls = executor.execute.mock.calls.filter(
+        ([, params]) => params?.action === 'PROFILE_UNBLOCKED'
+      );
+      expect(auditCalls).toHaveLength(affectedRows);
+      if (affectedRows > 0) {
+        expect(auditCalls[0]?.[1]).toMatchObject({
+          actorProfileId: 'blocker-1',
+          targetProfileId: 'blocked-1',
+          previousState: 'BLOCKED',
+          newState: 'UNBLOCKED'
+        });
+      }
+    }
+  );
+
+  it('validates and applies a block activity cursor', async () => {
+    const { db, executor } = createDb();
+
+    await db.getBlockActivity({ limit: 20, before: '500.42' });
+
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /content_moderation_audit_log[\s\S]*audit\.id < cast\(:beforeAuditId as unsigned\)/
+      ),
+      expect.objectContaining({
+        beforeCreatedAt: 500,
+        beforeAuditId: '42'
+      }),
+      undefined
+    );
+    await expect(
+      db.getBlockActivity({ limit: 20, before: 'not-a-cursor' })
+    ).rejects.toThrow(BadRequestException);
   });
 
   it('deletes expired pre-publication checks by retention cutoff', async () => {
