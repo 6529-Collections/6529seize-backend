@@ -13,6 +13,7 @@ type GitHubCall = string[];
 type FakeRun = {
   databaseId: number;
   displayTitle: string;
+  createdAt?: string;
   service?: string;
 };
 
@@ -39,10 +40,18 @@ if (args[0] === 'api' && args[1] === 'user') {
     return [[field.slice(0, separator), field.slice(separator + 1)]];
   }));
   const count = process.env.MOCK_DEPLOY_AMBIGUOUS === 'true' ? 2 : 1;
+  if (process.env.MOCK_DEPLOY_LATE_OLD_RUN === 'true') {
+    state.runs.push({
+      databaseId: 999,
+      displayTitle: 'Deploy ' + fields.service + ' to ' + fields.environment,
+      createdAt: '2020-01-01T00:00:00Z'
+    });
+  }
   for (let index = 0; index < count; index++) {
     state.runs.push({
       databaseId: state.nextId++,
       displayTitle: 'Deploy ' + fields.service + ' to ' + fields.environment,
+      createdAt: new Date().toISOString().replace(/\\.\\d{3}Z$/, 'Z'),
       service: fields.service
     });
   }
@@ -80,6 +89,7 @@ describe('ordinary backend deployment helpers', () => {
       runs?: FakeRun[];
       failService?: string;
       ambiguous?: boolean;
+      lateOldRun?: boolean;
     } = {}
   ) {
     const statePath = path.join(directory, 'state.json');
@@ -99,7 +109,8 @@ describe('ordinary backend deployment helpers', () => {
           PATH: `${directory}${path.delimiter}${process.env.PATH ?? ''}`,
           MOCK_DEPLOY_STATE: statePath,
           MOCK_DEPLOY_FAIL_SERVICE: options.failService ?? '',
-          MOCK_DEPLOY_AMBIGUOUS: String(options.ambiguous ?? false)
+          MOCK_DEPLOY_AMBIGUOUS: String(options.ambiguous ?? false),
+          MOCK_DEPLOY_LATE_OLD_RUN: String(options.lateOldRun ?? false)
         }
       }
     );
@@ -165,9 +176,28 @@ describe('ordinary backend deployment helpers', () => {
         '--limit',
         '100',
         '--json',
-        'databaseId,displayTitle'
+        'databaseId,displayTitle,createdAt'
       ]);
     }
+  });
+
+  it('ignores an older matching run first returned after dispatch', () => {
+    const result = runHelper(
+      'deploy-lambda.sh',
+      ['1a-staging', 'staging', 'api'],
+      { lateOldRun: true }
+    );
+
+    expect(result.status).toBe(0);
+    expect(mutationCalls(result.calls)).toHaveLength(2);
+    expect(mutationCalls(result.calls)[1]).toEqual([
+      'run',
+      'watch',
+      '1001',
+      '--repo',
+      deployRepository,
+      '--exit-status'
+    ]);
   });
 
   it('waits for each production service before dispatching the next and preserves group inputs', () => {
