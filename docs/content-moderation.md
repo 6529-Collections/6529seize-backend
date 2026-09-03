@@ -293,6 +293,7 @@ both actions, and an unblock never removes earlier history. Fetch the next page
 using the last item's cursor; a page shorter than the requested limit ends the
 feed. A full final page requires one additional request that returns an empty
 array.
+
 Repeating a block or unblock request without changing relationship
 state does not add another audit event, while blocking again after an unblock
 creates a new event. The history remains independent from content reports and
