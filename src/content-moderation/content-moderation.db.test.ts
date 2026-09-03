@@ -652,6 +652,7 @@ describe('ContentModerationDb', () => {
     executor.execute.mockResolvedValue([
       {
         id: '42',
+        action: 'PROFILE_BLOCKED',
         blocker_profile_id: 'blocker-1',
         blocker_handle: 'blocker',
         blocker_pfp: 'https://example.com/blocker.png',
@@ -665,6 +666,7 @@ describe('ContentModerationDb', () => {
     await expect(db.getBlockActivity({ limit: 20 })).resolves.toEqual([
       expect.objectContaining({
         id: '42',
+        action: 'PROFILE_BLOCKED',
         created_at: 500,
         cursor: '500.42'
       })
@@ -675,12 +677,36 @@ describe('ContentModerationDb', () => {
       ),
       {
         limit: 20,
+        includeUnblocks: false,
         beforeCreatedAt: null,
         beforeAuditId: null
       },
       undefined
     );
   });
+
+  it.each([0, 1])(
+    'audits an unblock only when a relationship is removed (%i)',
+    async (affectedRows) => {
+      const { db, executor } = createDb();
+      executor.execute.mockResolvedValue({ affectedRows });
+
+      await db.unblockProfile('blocker-1', 'blocked-1', {});
+
+      const auditCalls = executor.execute.mock.calls.filter(
+        ([, params]) => params?.action === 'PROFILE_UNBLOCKED'
+      );
+      expect(auditCalls).toHaveLength(affectedRows);
+      if (affectedRows > 0) {
+        expect(auditCalls[0]?.[1]).toMatchObject({
+          actorProfileId: 'blocker-1',
+          targetProfileId: 'blocked-1',
+          previousState: 'BLOCKED',
+          newState: 'UNBLOCKED'
+        });
+      }
+    }
+  );
 
   it('validates and applies a block activity cursor', async () => {
     const { db, executor } = createDb();

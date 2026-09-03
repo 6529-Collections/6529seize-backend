@@ -10,9 +10,11 @@ import * as Joi from 'joi';
 const QuerySchema = Joi.object<{
   limit: number;
   before?: string;
+  include_unblocks: boolean;
 }>({
   limit: Joi.number().integer().min(1).max(100).default(50),
-  before: Joi.string().trim().min(1).max(1000).optional()
+  before: Joi.string().trim().min(1).max(1000).optional(),
+  include_unblocks: Joi.boolean().default(false)
 })
   .unknown(false)
   .required();

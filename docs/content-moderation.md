@@ -285,7 +285,15 @@ MySQL stores:
 - append-only moderation audit records.
 
 The moderator-only block-activity history is built from transition audit
-records. Repeating a block or unblock request without changing relationship
+records. Each item identifies its `PROFILE_BLOCKED` or `PROFILE_UNBLOCKED`
+action. Request `include_unblocks=true` to combine both actions in one
+newest-first cursor feed; omission retains block-only results for older clients
+that cannot render unblocks. Pagination uses the timestamp and audit ID across
+both actions, and an unblock never removes earlier history. Fetch the next page
+using the last item's cursor; a page shorter than the requested limit ends the
+feed. A full final page requires one additional request that returns an empty
+array.
+Repeating a block or unblock request without changing relationship
 state does not add another audit event, while blocking again after an unblock
 creates a new event. The history remains independent from content reports and
 does not invoke automated moderation or change global content/profile state.
@@ -314,8 +322,8 @@ after the backend API is available.
 
 | Variable                              | Purpose                                                                                                                          |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `DEVS_6529_MENTION_PROFILE_IDS`       | Comma-separated `@devs6529` profile IDs. These profiles are also content moderators.                                              |
-| `CONTENT_MODERATOR_PROFILE_IDS`       | Comma-separated additional moderator profile IDs, combined with `DEVS_6529_MENTION_PROFILE_IDS`.                                  |
+| `DEVS_6529_MENTION_PROFILE_IDS`       | Comma-separated `@devs6529` profile IDs. These profiles are also content moderators.                                             |
+| `CONTENT_MODERATOR_PROFILE_IDS`       | Comma-separated additional moderator profile IDs, combined with `DEVS_6529_MENTION_PROFILE_IDS`.                                 |
 | `CONTENT_MODERATION_BLOCKED_HOSTS`    | Comma-separated exact or parent hosts for deterministic unsafe-destination rejection. Empty disables this direct-rejection list. |
 | `CONTENT_MODERATION_BEDROCK_MODEL_ID` | Optional moderation-specific Bedrock model; otherwise the existing configured/default Anthropic model is used.                   |
 | `CONTENT_MODERATION_REPORTS_PER_HOUR` | Per-profile report ceiling; defaults to `100`.                                                                                   |

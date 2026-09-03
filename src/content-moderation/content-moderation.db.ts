@@ -35,6 +35,7 @@ import { Time } from '@/time';
 import { randomUUID } from 'node:crypto';
 import { env } from '@/env';
 import { ActivityEventTargetType } from '@/entities/IActivityEvent';
+import type { ApiContentModerationBlockActivityItemActionEnum } from '@/api/generated/models/ApiContentModerationBlockActivityItem';
 
 const REPORT_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 const DEFAULT_REPORTS_PER_HOUR = 100;
@@ -120,6 +121,7 @@ interface BlockActivityCursor {
 
 interface BlockActivityDbRow {
   readonly id: string;
+  readonly action: ApiContentModerationBlockActivityItemActionEnum;
   readonly blocker_profile_id: string;
   readonly blocker_handle: string | null;
   readonly blocker_pfp: string | null;
@@ -376,10 +378,12 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
   async getBlockActivity(
     {
       limit,
-      before
+      before,
+      include_unblocks = false
     }: {
       readonly limit: number;
       readonly before?: string | null;
+      readonly include_unblocks?: boolean;
     },
     connection?: ConnectionWrapper<any>
   ): Promise<BlockActivityItemRow[]> {
@@ -388,6 +392,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       `
         select
           audit.id,
+          audit.action,
           audit.actor_profile_id as blocker_profile_id,
           blocker.handle as blocker_handle,
           blocker.pfp_url as blocker_pfp,
@@ -400,9 +405,19 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
           on blocker.external_id = audit.actor_profile_id
         left join ${PROFILES_TABLE} blocked
           on blocked.external_id = audit.target_profile_id
-        where audit.action = 'PROFILE_BLOCKED'
-          and audit.previous_state = 'UNBLOCKED'
-          and audit.new_state = 'BLOCKED'
+        where (
+            (
+              audit.action = 'PROFILE_BLOCKED'
+              and audit.previous_state = 'UNBLOCKED'
+              and audit.new_state = 'BLOCKED'
+            )
+            or (
+              :includeUnblocks = true
+              and audit.action = 'PROFILE_UNBLOCKED'
+              and audit.previous_state = 'BLOCKED'
+              and audit.new_state = 'UNBLOCKED'
+            )
+          )
           and audit.actor_profile_id is not null
           and audit.target_profile_id is not null
           and (
@@ -418,6 +433,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       `,
       {
         limit,
+        includeUnblocks: include_unblocks,
         beforeCreatedAt: cursor?.createdAt ?? null,
         beforeAuditId: cursor?.auditId ?? null
       },
