@@ -245,19 +245,6 @@ export { WaveGroupNotificationSubscriptionEntity } from './IWaveGroupNotificatio
 export { WinnerDropVoterVoteEntity } from './IWinnerDropVoterVote';
 export { WSConnectionEntity } from './IWSConnection';
 export { WSNotificationSubscriptionEntity } from './IWSNotificationSubscription';
-export {
-  ReleaseBusV2CandidateDependencyEntity,
-  ReleaseBusV2CandidateEntity,
-  ReleaseBusV2ControlEntity,
-  ReleaseBusV2EventEntity,
-  ReleaseBusV2LockEntity,
-  ReleaseBusV2ManifestEntity,
-  ReleaseBusV2OperationEntity,
-  ReleaseBusV2ProductionAuthorityEntity,
-  ReleaseBusV2StagingStateEntity,
-  ReleaseBusV2TrainCandidateEntity,
-  ReleaseBusV2TrainEntity
-} from './IReleaseBusV2';
 export { XTdhGrantEntity } from './IXTdhGrant';
 export { XTdhGrantTokenEntity } from './IXTdhGrantToken';
 export { XTdhStatsMetaEntity } from './IXTdhStatsMeta';

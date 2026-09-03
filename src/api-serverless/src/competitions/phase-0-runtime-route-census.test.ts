@@ -17,11 +17,14 @@ type GetCall = {
   readonly cache: ManifestRoute['cache'] | null;
 };
 
-const RETIRED_RELEASE_BUS_V1_ROUTES = new Set([
+const RETIRED_OPERATIONAL_ROUTES = new Set([
   '/deploy/release-bus/controls',
   '/deploy/release-candidates',
   '/deploy/release-trains',
-  '/deploy/release-trains/:id'
+  '/deploy/release-trains/:id',
+  '/deploy/ui/branch-head',
+  '/deploy/ui/bus',
+  '/deploy/ui/bus/app.js'
 ]);
 
 const GENERATED_ROUTE_SOURCE_LINE_DRIFT = 300;
@@ -139,16 +142,16 @@ describe('Phase 0 permanent mounted GET route census', () => {
     expect(new Set(manifest.routes.map((route) => route.path)).size).toBe(296);
     expect(
       manifest.routes.filter(
-        (route) => !RETIRED_RELEASE_BUS_V1_ROUTES.has(route.path)
+        (route) => !RETIRED_OPERATIONAL_ROUTES.has(route.path)
       )
-    ).toHaveLength(292);
+    ).toHaveLength(289);
   });
 
   it('keeps every non-retired route declaration mounted in its owning source', () => {
     const callsBySource = new Map<string, GetCall[]>();
     const failures: string[] = [];
     for (const route of manifest.routes.filter(
-      (entry) => !RETIRED_RELEASE_BUS_V1_ROUTES.has(entry.path)
+      (entry) => !RETIRED_OPERATIONAL_ROUTES.has(entry.path)
     )) {
       const acceptedSource =
         ACCEPTED_ROUTE_SOURCE_MOVES.get(route.path) ?? route.source;

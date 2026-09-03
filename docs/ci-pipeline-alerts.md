@@ -50,17 +50,15 @@ After creating a successful frontend WEB deploy drop, the service stores:
 
 - its drop ID and first part ID;
 - its deployed SHA and mapped GitHub initiator;
-- lookup keys for repository, environment, deploy run ID, and optional Release
-  Bus train ID.
+- a lookup key for repository, environment, and deploy run ID.
 
 The Redis entries expire after 30 days. A later `web_e2e` request supplies
-`parent_deploy_run_id`, `parent_release_train_id`, or both. Every supplied key
-must exist and resolve to the same drop. Only then does the API send a
-`reply_to` target to drop creation.
+`parent_deploy_run_id`. The matching repository/environment/run key must
+resolve to a valid deploy drop before the API supplies a `reply_to` target.
 
 Missing identities, expired entries, partial writes, Redis failure, malformed
-entries, or disagreement between deploy-run and train identities all fail safe
-to a standalone post. The API must never guess a reply target. GitHub workflows
+entries, or mismatched deploy-run identities all fail safe to a standalone
+post. The API must never guess a reply target. GitHub workflows
 therefore pass durable deployment identities, not raw Seize drop IDs.
 
 ## Reruns And Mentions
@@ -76,19 +74,17 @@ as people to mention.
 
 ## Deployment And Rollback
 
-The backend PR changes two runtime services for different reasons:
+`api` owns alert validation, rendering, Redis correlation, and wave posting.
+Deploy the receiver before enabling a sender that requires new fields. When
+removing fields, coordinate the workflow/API change so no active sender relies
+on the removed contract. Let existing notification-producing runs finish
+before retiring their receiver fields.
 
-- `api` owns alert validation, rendering, Redis correlation, and wave posting;
-- the production-only `releaseBus` service trusts the frontend PR-CI policy
-  bundle introduced by these workflow changes.
-
-Deploy `api` before enabling the frontend workflow sender because an older API
-rejects the new `web_e2e` fields. Deploy `releaseBus` before asking the
-production Release Bus to accept frontend heads with the new policy bundle. A
-staging-only notification test needs the updated `api`, not a `releaseBus`
-deployment. For rollback, revert the frontend sender and policy bundle before
-rolling back the corresponding backend services, so no active sender targets
-an older receiver and no accepted frontend policy loses its trusted digest.
+For rollback, restore compatible sender/receiver versions together; roll back
+senders first if an older receiver rejects their payload. Preserve run-based
+Redis correlation and the independent `releaseNotesGenerationLoop`, its queue,
+and release-note grouping/finalization. Notification transport remains best
+effort and does not grant deployment permission.
 
 The frontend workflow-side contract, including default-branch E2E activation,
 is documented in that repository's

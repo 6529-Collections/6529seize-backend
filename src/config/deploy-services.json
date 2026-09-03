@@ -4,189 +4,231 @@
   "services": [
     {
       "name": "api",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "api-zip",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["seizeAPI"],
+      "verification_targets": [
+        "seizeAPI"
+      ],
       "validation_profile": "api-health",
-      "staging_policy": "allowed",
-      "default_dependencies": ["dbMigrationsLoop"],
-      "automatic_rollback_supported": false
+      "default_dependencies": [
+        "dbMigrationsLoop"
+      ]
     },
     {
       "name": "aggregatedActivityLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["aggregatedActivityLoop"],
+      "verification_targets": [
+        "aggregatedActivityLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "attachmentsOrchestrator",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["attachmentsOrchestrator"],
+      "verification_targets": [
+        "attachmentsOrchestrator"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "attachmentsProcessor",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["attachmentsProcessor"],
+      "verification_targets": [
+        "attachmentsProcessor"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "artCurationNftWatchLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["artCurationNftWatchLoop"],
+      "verification_targets": [
+        "artCurationNftWatchLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "cloudwatchAlarmsToDiscordLoop",
-      "allowed_environments": ["prod"],
+      "allowed_environments": [
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["cloudwatchAlarmsToDiscordLoop"],
+      "verification_targets": [
+        "cloudwatchAlarmsToDiscordLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "production-only",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "claimsBuilder",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["claimsBuilder"],
+      "verification_targets": [
+        "claimsBuilder"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "claimsMediaArweaveUploader",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["claimsMediaArweaveUploader"],
+      "verification_targets": [
+        "claimsMediaArweaveUploader"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "customReplayLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["customReplayLoop"],
+      "verification_targets": [
+        "customReplayLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "dbDumpsDaily",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["dbDumpsDaily"],
+      "verification_targets": [
+        "dbDumpsDaily"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "dbMigrationsLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["dbMigrationsLoop"],
+      "verification_targets": [
+        "dbMigrationsLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "delegationsLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["delegationsLoop"],
+      "verification_targets": [
+        "delegationsLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "discoverEnsLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["discoverEnsLoop"],
+      "verification_targets": [
+        "discoverEnsLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "dropMediaIngestStorage",
-      "allowed_environments": ["staging"],
+      "allowed_environments": [
+        "staging"
+      ],
       "deploy_adapter": "resources-only",
       "aws_region": {
         "staging": "eu-west-1",
@@ -194,97 +236,115 @@
       },
       "verification_targets": [],
       "validation_profile": "cloudformation-stack",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "dropMediaSanitizer",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["dropMediaSanitizer"],
+      "verification_targets": [
+        "dropMediaSanitizer"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "dropVideoConversionInvokerLoop",
-      "allowed_environments": ["staging"],
+      "allowed_environments": [
+        "staging"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["dropVideoConversionInvokerLoop"],
+      "verification_targets": [
+        "dropVideoConversionInvokerLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "ethPriceLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["ethPriceLoop"],
+      "verification_targets": [
+        "ethPriceLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "externalCollectionLiveTailingLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["externalCollectionLiveTailingLoop"],
+      "verification_targets": [
+        "externalCollectionLiveTailingLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "externalCollectionSnapshottingLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["externalCollectionSnapshottingLoop"],
+      "verification_targets": [
+        "externalCollectionSnapshottingLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "helpBotReplyLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["helpBotReplyLoop"],
+      "verification_targets": [
+        "helpBotReplyLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "marketStatsLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
@@ -297,296 +357,336 @@
         "marketStatsNEXTGEN"
       ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "mediaResizerLoop",
-      "allowed_environments": ["prod"],
+      "allowed_environments": [
+        "prod"
+      ],
       "deploy_adapter": "direct-lambda-zip",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["mediaResizerLoop"],
+      "verification_targets": [
+        "mediaResizerLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "production-only",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "mintAnnouncementsLoop",
-      "allowed_environments": ["staging", "prod"],
-      "deploy_adapter": "serverless",
-      "aws_region": {
-        "staging": "eu-west-1",
-        "prod": "us-east-1"
-      },
-      "verification_targets": ["mintAnnouncementsLoop"],
-      "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
-    },
-    {
-      "name": "nextgenContractLoop",
-      "allowed_environments": ["staging", "prod"],
-      "deploy_adapter": "serverless",
-      "aws_region": {
-        "staging": "eu-west-1",
-        "prod": "us-east-1"
-      },
-      "verification_targets": ["nextgenContractLoop"],
-      "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
-    },
-    {
-      "name": "nextgenMediaImageResolutions",
-      "allowed_environments": ["prod"],
-      "deploy_adapter": "serverless",
-      "aws_region": {
-        "staging": "eu-west-1",
-        "prod": "us-east-1"
-      },
-      "verification_targets": ["nextgenMediaImageResolutions"],
-      "validation_profile": "lambda-version",
-      "staging_policy": "production-only",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
-    },
-    {
-      "name": "nextgenMediaProxyInterceptor",
-      "allowed_environments": ["prod"],
-      "deploy_adapter": "special-script",
-      "aws_region": {
-        "staging": "eu-west-1",
-        "prod": "us-east-1"
-      },
-      "verification_targets": ["nextgenMediaProxyInterceptor"],
-      "validation_profile": "lambda-edge-association",
-      "staging_policy": "production-only",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
-    },
-    {
-      "name": "nextgenMediaUploader",
-      "allowed_environments": ["prod"],
-      "deploy_adapter": "serverless",
-      "aws_region": {
-        "staging": "eu-west-1",
-        "prod": "us-east-1"
-      },
-      "verification_targets": ["nextgenMediaUploader"],
-      "validation_profile": "lambda-version",
-      "staging_policy": "production-only",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
-    },
-    {
-      "name": "nextgenMetadataLoop",
-      "allowed_environments": ["staging", "prod"],
-      "deploy_adapter": "serverless",
-      "aws_region": {
-        "staging": "eu-west-1",
-        "prod": "us-east-1"
-      },
-      "verification_targets": ["nextgenMetadataLoop"],
-      "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
-    },
-    {
-      "name": "nftHistoryLoop",
-      "allowed_environments": ["staging", "prod"],
-      "deploy_adapter": "serverless",
-      "aws_region": {
-        "staging": "eu-west-1",
-        "prod": "us-east-1"
-      },
-      "verification_targets": ["nftHistoryLoop"],
-      "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
-    },
-    {
-      "name": "nftLinkRefresherLoop",
-      "allowed_environments": ["staging", "prod"],
-      "deploy_adapter": "serverless",
-      "aws_region": {
-        "staging": "eu-west-1",
-        "prod": "us-east-1"
-      },
-      "verification_targets": ["nftLinkRefresherLoop"],
-      "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
-    },
-    {
-      "name": "nftLinkMediaPreviewLoop",
-      "allowed_environments": ["staging", "prod"],
-      "deploy_adapter": "serverless",
-      "aws_region": {
-        "staging": "eu-west-1",
-        "prod": "us-east-1"
-      },
-      "verification_targets": ["nftLinkMediaPreviewLoop"],
-      "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
-    },
-    {
-      "name": "nftOwnersLoop",
-      "allowed_environments": ["staging", "prod"],
-      "deploy_adapter": "serverless",
-      "aws_region": {
-        "staging": "eu-west-1",
-        "prod": "us-east-1"
-      },
-      "verification_targets": ["nftOwnersLoop"],
-      "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
-    },
-    {
-      "name": "nftsLoop",
-      "allowed_environments": ["staging", "prod"],
-      "deploy_adapter": "serverless",
-      "aws_region": {
-        "staging": "eu-west-1",
-        "prod": "us-east-1"
-      },
-      "verification_targets": ["nftsLoop"],
-      "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
-    },
-    {
-      "name": "overRatesRevocationLoop",
-      "allowed_environments": ["staging", "prod"],
-      "deploy_adapter": "serverless",
-      "aws_region": {
-        "staging": "eu-west-1",
-        "prod": "us-east-1"
-      },
-      "verification_targets": ["overRatesRevocationLoop"],
-      "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
-    },
-    {
-      "name": "ownersBalancesLoop",
-      "allowed_environments": ["staging", "prod"],
-      "deploy_adapter": "serverless",
-      "aws_region": {
-        "staging": "eu-west-1",
-        "prod": "us-east-1"
-      },
-      "verification_targets": ["ownersBalancesLoop"],
-      "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": ["dbMigrationsLoop"],
-      "automatic_rollback_supported": false
-    },
-    {
-      "name": "populateHistoricConsolidatedTdh",
-      "allowed_environments": ["staging", "prod"],
-      "deploy_adapter": "serverless",
-      "aws_region": {
-        "staging": "eu-west-1",
-        "prod": "us-east-1"
-      },
-      "verification_targets": ["populateHistoricConsolidatedTdh"],
-      "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
-    },
-    {
-      "name": "pushNotificationsHandler",
-      "allowed_environments": ["staging", "prod"],
-      "deploy_adapter": "serverless",
-      "aws_region": {
-        "staging": "eu-west-1",
-        "prod": "us-east-1"
-      },
-      "verification_targets": ["pushNotificationsHandler"],
-      "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": ["dbMigrationsLoop"],
-      "automatic_rollback_supported": false
-    },
-    {
-      "name": "rateEventProcessingLoop",
-      "allowed_environments": ["staging", "prod"],
-      "deploy_adapter": "serverless",
-      "aws_region": {
-        "staging": "eu-west-1",
-        "prod": "us-east-1"
-      },
-      "verification_targets": ["rateEventProcessingLoop"],
-      "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
-    },
-    {
-      "name": "releaseBus",
-      "allowed_environments": ["prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
       "verification_targets": [
-        "releaseBusCleaner",
-        "releaseBusV2Reconciler"
+        "mintAnnouncementsLoop"
       ],
       "validation_profile": "lambda-version",
-      "staging_policy": "production-only",
-      "default_dependencies": ["api"],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
+    },
+    {
+      "name": "nextgenContractLoop",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "nextgenContractLoop"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": []
+    },
+    {
+      "name": "nextgenMediaImageResolutions",
+      "allowed_environments": [
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "nextgenMediaImageResolutions"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": []
+    },
+    {
+      "name": "nextgenMediaProxyInterceptor",
+      "allowed_environments": [
+        "prod"
+      ],
+      "deploy_adapter": "special-script",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "nextgenMediaProxyInterceptor"
+      ],
+      "validation_profile": "lambda-edge-association",
+      "default_dependencies": []
+    },
+    {
+      "name": "nextgenMediaUploader",
+      "allowed_environments": [
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "nextgenMediaUploader"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": []
+    },
+    {
+      "name": "nextgenMetadataLoop",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "nextgenMetadataLoop"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": []
+    },
+    {
+      "name": "nftHistoryLoop",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "nftHistoryLoop"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": []
+    },
+    {
+      "name": "nftLinkRefresherLoop",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "nftLinkRefresherLoop"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": []
+    },
+    {
+      "name": "nftLinkMediaPreviewLoop",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "nftLinkMediaPreviewLoop"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": []
+    },
+    {
+      "name": "nftOwnersLoop",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "nftOwnersLoop"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": []
+    },
+    {
+      "name": "nftsLoop",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "nftsLoop"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": []
+    },
+    {
+      "name": "overRatesRevocationLoop",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "overRatesRevocationLoop"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": []
+    },
+    {
+      "name": "ownersBalancesLoop",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "ownersBalancesLoop"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": [
+        "dbMigrationsLoop"
+      ]
+    },
+    {
+      "name": "populateHistoricConsolidatedTdh",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "populateHistoricConsolidatedTdh"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": []
+    },
+    {
+      "name": "pushNotificationsHandler",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "pushNotificationsHandler"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": [
+        "dbMigrationsLoop"
+      ]
+    },
+    {
+      "name": "rateEventProcessingLoop",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "rateEventProcessingLoop"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": []
     },
     {
       "name": "releaseNotesGenerationLoop",
-      "allowed_environments": ["prod"],
+      "allowed_environments": [
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["releaseNotesGenerationLoop"],
+      "verification_targets": [
+        "releaseNotesGenerationLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "production-only",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "refreshEnsLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["refreshENS"],
+      "verification_targets": [
+        "refreshENS"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "rememesLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
@@ -598,41 +698,48 @@
         "rememesFileLoop"
       ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "royaltiesLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["royaltiesLoop"],
+      "verification_targets": [
+        "royaltiesLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "s3Uploader",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["s3Uploader"],
+      "verification_targets": [
+        "s3Uploader"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "subscriptionsDaily",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
@@ -643,7 +750,6 @@
         "subscriptionCoverageReconciliationLoop"
       ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
       "default_dependencies": [
         "api",
         "dbMigrationsLoop",
@@ -651,82 +757,101 @@
         "pushNotificationsHandler",
         "subscriptionsTopUpLoop",
         "transactionsProcessingLoop"
-      ],
-      "automatic_rollback_supported": false
+      ]
     },
     {
       "name": "subscriptionsTopUpLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["subscriptionsTopUpLoop"],
+      "verification_targets": [
+        "subscriptionsTopUpLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": ["dbMigrationsLoop"],
-      "automatic_rollback_supported": false
+      "default_dependencies": [
+        "dbMigrationsLoop"
+      ]
     },
     {
       "name": "xTdhGrantsReviewerLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["xTdhGrantsReviewerLoop"],
+      "verification_targets": [
+        "xTdhGrantsReviewerLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "tdhHistoryLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["tdhHistoryLoop"],
+      "verification_targets": [
+        "tdhHistoryLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "tdhLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["tdhLoop"],
+      "verification_targets": [
+        "tdhLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "teamLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["teamLoop"],
+      "verification_targets": [
+        "teamLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "transactionsLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
@@ -738,93 +863,111 @@
         "memeLabTransactionsLoop"
       ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "transactionsProcessingLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["transactionsProcessingLoop"],
+      "verification_targets": [
+        "transactionsProcessingLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": ["dbMigrationsLoop"],
-      "automatic_rollback_supported": false
+      "default_dependencies": [
+        "dbMigrationsLoop"
+      ]
     },
     {
       "name": "waveDecisionExecutionLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["waveDecisionExecutionLoop"],
+      "verification_targets": [
+        "waveDecisionExecutionLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "waveLeaderboardSnapshotterLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["waveLeaderboardSnapshotterLoop"],
+      "verification_targets": [
+        "waveLeaderboardSnapshotterLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "waveDropMetricsRefreshLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["waveDropMetricsRefreshLoop"],
+      "verification_targets": [
+        "waveDropMetricsRefreshLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "waveScoreRefreshLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["waveScoreRefreshLoop"],
+      "verification_targets": [
+        "waveScoreRefreshLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     },
     {
       "name": "xTdhLoop",
-      "allowed_environments": ["staging", "prod"],
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
         "prod": "us-east-1"
       },
-      "verification_targets": ["xTdhLoop"],
+      "verification_targets": [
+        "xTdhLoop"
+      ],
       "validation_profile": "lambda-version",
-      "staging_policy": "allowed",
-      "default_dependencies": [],
-      "automatic_rollback_supported": false
+      "default_dependencies": []
     }
   ]
 }

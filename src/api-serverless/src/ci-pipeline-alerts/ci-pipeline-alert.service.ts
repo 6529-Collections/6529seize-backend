@@ -9,7 +9,6 @@ import { env } from '@/env';
 import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
-import { isReleaseBusGitHubAppActor } from '@/releaseBusV2/release-bus-v2.constants';
 import {
   releaseNoteGenerationQueue,
   ReleaseNoteGenerationQueue
@@ -53,9 +52,7 @@ export interface CiPipelineAlertRequest {
   readonly service?: string | null;
   readonly run_attempt?: number | null;
   readonly parent_deploy_run_id?: string | null;
-  readonly parent_release_train_id?: string | null;
   readonly validation_pack?: string | null;
-  readonly release_train_id?: string | null;
   readonly contributor_github_logins?: string[];
   readonly release_notes_prompt_path?: string | null;
   readonly release_group_id?: string | null;
@@ -289,13 +286,7 @@ function formatServiceLabel(request: CiPipelineAlertRequest): string {
   return service ?? repoLabel;
 }
 
-function formatInitiator(
-  request: CiPipelineAlertRequest,
-  mentions: AlertMentions
-): string {
-  if (isReleaseBusGitHubAppActor(request.triggered_by_github_login)) {
-    return 'Release Train';
-  }
+function formatInitiator(mentions: AlertMentions): string {
   return mentions.triggeredBy
     ? '@[' + mentions.triggeredBy.handle + ']'
     : 'unknown';
@@ -390,7 +381,7 @@ function isSuccessfulWebDeployAlert(request: CiPipelineAlertRequest): boolean {
 
 function isAutomationActor(value: string | null | undefined): boolean {
   const login = normalizeOptionalValue(value)?.toLowerCase();
-  return login === 'github-actions[bot]' || isReleaseBusGitHubAppActor(login);
+  return login === 'github-actions[bot]';
 }
 
 function getMappedProfileHandle(githubLogin: string | null): string | null {
@@ -453,8 +444,7 @@ export class CiPipelineAlertService {
           {
             repo: request.repo,
             environment,
-            runId: request.run_id,
-            releaseTrainId: request.release_train_id
+            runId: request.run_id
           },
           {
             dropId: drop.id,
@@ -483,8 +473,7 @@ export class CiPipelineAlertService {
     return this.alertTargetStore.resolveDeployTarget({
       repo: request.repo,
       environment,
-      runId: normalizeOptionalValue(request.parent_deploy_run_id),
-      releaseTrainId: normalizeOptionalValue(request.parent_release_train_id)
+      runId: normalizeOptionalValue(request.parent_deploy_run_id)
     });
   }
 
@@ -556,7 +545,9 @@ export class CiPipelineAlertService {
     normalizedGroup: NormalizedReleaseNoteGroup,
     ctx: RequestContext
   ): Promise<void> {
-    const contributorGithubLogins = this.getReleaseTrainContributors(request);
+    const contributorGithubLogins = normalizeContributorGithubLogins(
+      request.contributor_github_logins
+    );
     const triggeredByGithubLogin = normalizeOptionalValue(
       request.triggered_by_github_login
     );
@@ -618,18 +609,6 @@ export class CiPipelineAlertService {
       },
       ctx
     );
-  }
-
-  private getReleaseTrainContributors(
-    request: CiPipelineAlertRequest
-  ): string[] {
-    const triggeredByGithubLogin = normalizeOptionalValue(
-      request.triggered_by_github_login
-    );
-    return isReleaseBusGitHubAppActor(triggeredByGithubLogin) &&
-      normalizeOptionalValue(request.release_train_id)
-      ? normalizeContributorGithubLogins(request.contributor_github_logins)
-      : [];
   }
 
   private async resolveAlertMentions(
@@ -799,7 +778,7 @@ export class CiPipelineAlertService {
     const formattedDescription = description
       ? truncate(sanitizeAlertText(description), MAX_ALERT_DESCRIPTION_LENGTH)
       : null;
-    const triggeredBy = formatInitiator(request, mentions);
+    const triggeredBy = formatInitiator(mentions);
     const lines = [
       formatAlertHeading(request),
       '',
