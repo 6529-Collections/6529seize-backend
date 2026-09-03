@@ -17,7 +17,7 @@ description: Write, open, iterate, and prepare pull requests in the 6529 SEIZE b
      deployment and smoke validation. Never author or post a release note;
      follow the deploy skill’s metadata/finalization contract so the existing
      autonomous bot publishes exactly once after the production group succeeds.
-   If the user did not explicitly request merge or deployment, stop at `review-ready`.
+     If the user did not explicitly request merge or deployment, stop at `review-ready`.
 
 2. Inspect the change before writing:
    - Read the issue, task, or user request.
@@ -36,28 +36,35 @@ description: Write, open, iterate, and prepare pull requests in the 6529 SEIZE b
 
    ```markdown
    ## Issue
+
    - What problem, user need, bug, or follow-up this PR addresses.
 
    ## Fix
+
    - The core solution and why it is appropriate.
 
    ## Changes
+
    - Notable code, docs, config, API, data-shape, entity, migration, queue, Lambda, or deploy changes.
 
    ## Validation
+
    - Commands, checks, generated-file refreshes, or manual flows completed.
    - Anything intentionally not tested, with the reason and residual risk.
 
    ## Risk
+
    - Level: Low | Medium | High
    - Why: blast radius, reversibility, data/security/performance/deploy impact.
    - Rollback: expected rollback or mitigation path.
 
    ## Deployment
+
    - Lambdas/services to redeploy, in order.
    - State "None" when no backend deploy is needed.
 
    ## Review Notes
+
    - Areas reviewers or bots should focus on, plus any trade-offs.
    ```
 
@@ -81,7 +88,11 @@ description: Write, open, iterate, and prepare pull requests in the 6529 SEIZE b
 7. Decide readiness:
    - Agent-happy means the diff is scoped, reviewed, validates the requested behavior, and has no known unaddressed high-risk issues.
    - Bot-happy means every available review bot has no remaining blocking concerns on the latest pushed commit, or the agent has documented why a remaining item is safe to defer.
-   - Human approval and required CI still govern merge eligibility.
+   - Required approvals and relevant CI govern merge eligibility, subject to the
+     user's existing authorization. Pending or failed E2E unrelated to the change
+     does not block release work. Report it separately and use the authorized
+     merge path if it is the only cause of a blocked aggregate check; do not
+     change repository protections or claim the E2E passed.
 
 ## Validation
 
