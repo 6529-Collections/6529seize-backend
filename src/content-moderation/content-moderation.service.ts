@@ -41,6 +41,7 @@ type ContentModerationDbDependency = Pick<
   | 'applyModeratorDropDecision'
   | 'createReportWithViewerActions'
   | 'getAuditHistoryForDrops'
+  | 'getBlockActivity'
   | 'getDropSnapshot'
   | 'getExistingProfileStatus'
   | 'getModerationCounts'
@@ -189,6 +190,19 @@ export class ContentModerationService {
       },
       history: history[report.drop_id] ?? []
     }));
+  }
+
+  async getBlockActivity(
+    moderatorProfileId: string,
+    input: {
+      limit: number;
+      before?: string | null;
+      include_unblocks?: boolean;
+    },
+    ctx: RequestContext
+  ) {
+    await this.assertModerator(moderatorProfileId, ctx);
+    return this.db.getBlockActivity(input, ctx.connection);
   }
 
   async getReportsForProfile(
