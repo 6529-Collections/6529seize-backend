@@ -26,7 +26,11 @@ actual deployment.
   consumers may need their own earlier steps.
 - Keep CI, artifact integrity, deployed-version checks, and health checks.
   Successful frontend deployments automatically trigger separate E2E workflows.
-  Web Deploy finishes before E2E; follow both runs before calling the change validated.
+  Deployment is complete when build, artifact, live-version, and health checks
+  pass. E2E reports separately and does not gate merges, deployments, promotion,
+  or release completion. Unrelated PR E2E (for example, Museum tests for a change
+  outside Museum) must not delay a release; keep relevant CI checks and report
+  the separate E2E status accurately.
 - Coordinate potentially conflicting deployments through GitHub run visibility;
   existing concurrency is repository-scoped. Do not cancel another developer's
   run. Wait for that work to finish when the environment would conflict.
@@ -67,7 +71,9 @@ run IDs to correlate E2E replies.
 Inspect the failing job and logs. Fix attributable failures on the development
 branch, merge the fix into the authorized target, and repeat only the required
 deployments. Keep dependent frontend changes waiting for successful backend
-dependencies. A passed deploy with failed E2E is deployed but unvalidated.
+dependencies. Report deployment health and E2E as separate outcomes. Investigate
+known attributable regressions, but do not wait for E2E or block releases on
+unrelated E2E failures.
 
 Use a reviewed revert or compatible known-good source through the same ordinary
 workflow for rollback; retain shared history and account for database/API
