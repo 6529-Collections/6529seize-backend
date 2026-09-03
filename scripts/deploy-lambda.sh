@@ -27,10 +27,11 @@ for deploy_input in "$@"; do
 done
 
 deploy_actor="$(gh api user --jq .login)"
+deploy_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 list_deploy_runs() {
   gh run list --repo "$deploy_repository" --workflow deploy.yml \
     --branch "$deploy_branch" --event workflow_dispatch --user "$deploy_actor" \
-    --limit 100 --json databaseId,displayTitle
+    --limit 100 --json databaseId,displayTitle,createdAt
 }
 prior_deploy_runs="$(list_deploy_runs | jq '[.[].databaseId]')"
 gh workflow run deploy.yml --repo "$deploy_repository" --ref "$deploy_branch" "${deploy_inputs[@]}"
@@ -39,8 +40,9 @@ gh workflow run deploy.yml --repo "$deploy_repository" --ref "$deploy_branch" "$
 for deploy_attempt in {1..60}; do
   new_deploy_runs="$(list_deploy_runs | jq \
     --arg title "Deploy $deploy_service to $deploy_environment" \
+    --arg started_at "$deploy_started_at" \
     --argjson prior "$prior_deploy_runs" \
-    '[.[] | select(.displayTitle == $title) | .databaseId | select(. as $id | $prior | index($id) | not)]')"
+    '[.[] | select(.displayTitle == $title and .createdAt >= $started_at) | .databaseId | select(. as $id | $prior | index($id) | not)] | unique')"
   deploy_count="$(jq length <<< "$new_deploy_runs")"
   if [ "$deploy_count" -eq 1 ]; then
     deploy_run_id="$(jq -r '.[0]' <<< "$new_deploy_runs")"
