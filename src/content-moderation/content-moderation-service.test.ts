@@ -1,3 +1,4 @@
+import { ApiContentModerationBlockActivityItemActionEnum } from '@/api/generated/models/ApiContentModerationBlockActivityItem';
 import {
   ContentModerationRecommendation,
   ContentReportReason,
@@ -17,6 +18,7 @@ type ContentModerationDbMock = jest.Mocked<
     | 'applyModeratorDropDecision'
     | 'createReportWithViewerActions'
     | 'getAuditHistoryForDrops'
+    | 'getBlockActivity'
     | 'getDropSnapshot'
     | 'getExistingProfileStatus'
     | 'getModerationCounts'
@@ -92,6 +94,7 @@ function createService() {
       suspended_profile_count: 0
     }),
     getModerationQueue: jest.fn().mockResolvedValue([]),
+    getBlockActivity: jest.fn().mockResolvedValue([]),
     getReportsForProfile: jest.fn().mockResolvedValue([]),
     getSuspendedProfiles: jest.fn().mockResolvedValue([]),
     getPresentations: jest.fn().mockResolvedValue({
@@ -144,6 +147,49 @@ describe('ContentModerationService', () => {
       expect.any(Object)
     );
     expect(db.isModerator).not.toHaveBeenCalled();
+  });
+
+  it('returns block activity only to an authorized moderator', async () => {
+    const { service, db } = createService();
+
+    await expect(
+      service.getBlockActivity(
+        'profile-1',
+        { limit: 25, before: '500.42', include_unblocks: true },
+        {}
+      )
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(db.getBlockActivity).not.toHaveBeenCalled();
+
+    db.isModerator.mockResolvedValue(true);
+    db.getBlockActivity.mockResolvedValue([
+      {
+        id: '42',
+        action: ApiContentModerationBlockActivityItemActionEnum.Unblocked,
+        blocker_profile_id: 'blocker-1',
+        blocker_handle: 'blocker',
+        blocker_pfp: null,
+        blocked_profile_id: 'blocked-1',
+        blocked_handle: 'blocked',
+        blocked_pfp: null,
+        created_at: 500,
+        cursor: '500.42'
+      }
+    ]);
+
+    await expect(
+      service.getBlockActivity(
+        'moderator-1',
+        { limit: 25, before: '500.42', include_unblocks: true },
+        {}
+      )
+    ).resolves.toEqual([
+      expect.objectContaining({ id: '42', action: 'PROFILE_UNBLOCKED' })
+    ]);
+    expect(db.getBlockActivity).toHaveBeenCalledWith(
+      { limit: 25, before: '500.42', include_unblocks: true },
+      undefined
+    );
   });
 
   it('persists the report and personal actions atomically before AI assessment', async () => {
