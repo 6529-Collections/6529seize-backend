@@ -74,12 +74,13 @@ import { ApiCompliantException } from '@/exceptions';
 import * as sentryContext from '../../sentry.context';
 import { Time, Timer } from '@/time';
 import { DropType } from '@/entities/IDrop';
-import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import { dropsDb } from '@/drops/drops.db';
 import { identitiesDb } from '@/identities/identities.db';
-import { identityNotificationsDb } from '@/notifications/identity-notifications.db';
+import { userNotifier } from '@/notifications/user.notifier';
 import { dbSupplier } from '@/sql-executor';
 import { identitySubscriptionsDb } from '@/api/identity-subscriptions/identity-subscriptions.db';
+import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
+import { selectSentryAlertAllDropsSubscriberIds } from '@/api/sentry-alerts/sentry-alert-notification-recipients';
 import { asyncRouter } from './async.router';
 import { getJwtSecret } from './auth/auth';
 
@@ -518,85 +519,90 @@ async function postSentryAlertDrop({
   const dropId = randomUUID();
   const now = Time.currentMillis();
 
-  await dbSupplier().executeNativeQueriesInTransaction(async (connection) => {
-    const [wave, senderIdentity] = await Promise.all([
-      dropsDb.findWaveByIdOrNull(waveId, connection),
-      identitiesDb.getIdentityByProfileId(senderId, connection)
-    ]);
-    if (!wave) {
-      throw new Error(`Configured ALERTS_WAVE_ID ${waveId} not found`);
-    }
-    if (!senderIdentity) {
-      throw new Error(`Configured ALERTS_BOT_PROFILE_ID ${senderId} not found`);
-    }
+  const pendingPushNotificationIds =
+    await dbSupplier().executeNativeQueriesInTransaction(async (connection) => {
+      const [wave, senderIdentity] = await Promise.all([
+        dropsDb.findWaveByIdOrNull(waveId, connection),
+        identitiesDb.getIdentityByProfileId(senderId, connection)
+      ]);
+      if (!wave) {
+        throw new Error(`Configured ALERTS_WAVE_ID ${waveId} not found`);
+      }
+      if (!senderIdentity) {
+        throw new Error(
+          `Configured ALERTS_BOT_PROFILE_ID ${senderId} not found`
+        );
+      }
 
-    await dropsDb.insertDrop(
-      {
-        id: dropId,
-        author_id: senderId,
-        title,
-        parts_count: 1,
-        wave_id: waveId,
-        reply_to_drop_id: null,
-        reply_to_part_id: null,
-        created_at: now,
-        updated_at: null,
-        serial_no: null,
-        drop_type: DropType.CHAT,
-        signature: null,
-        is_additional_action_promised: null
-      },
-      connection
-    );
+      await dropsDb.insertDrop(
+        {
+          id: dropId,
+          author_id: senderId,
+          title,
+          parts_count: 1,
+          wave_id: waveId,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          created_at: now,
+          updated_at: null,
+          serial_no: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          is_additional_action_promised: null
+        },
+        connection
+      );
 
-    await dropsDb.insertDropParts(
-      [
+      await dropsDb.insertDropParts(
+        [
+          {
+            drop_id: dropId,
+            drop_part_id: 1,
+            content,
+            quoted_drop_id: null,
+            quoted_drop_part_id: null,
+            wave_id: waveId
+          }
+        ],
+        connection
+      );
+
+      await dropsDb.updateHideLinkPreview(
         {
           drop_id: dropId,
-          drop_part_id: 1,
-          content,
-          quoted_drop_id: null,
-          quoted_drop_part_id: null,
-          wave_id: waveId
-        }
-      ],
-      connection
-    );
+          hide_link_preview: true
+        },
+        { connection }
+      );
 
-    await dropsDb.updateHideLinkPreview(
-      {
-        drop_id: dropId,
-        hide_link_preview: true
-      },
-      { connection }
-    );
-
-    const followerIds = await identitySubscriptionsDb.findWaveSubscribers(
-      waveId,
-      connection
-    );
-    const followerIdsToNotify = followerIds.filter((id) => id !== senderId);
-
-    await Promise.all(
-      followerIdsToNotify.map((id) =>
-        identityNotificationsDb.insertNotification(
+      const followerRecipients =
+        await identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications(
           {
-            identity_id: id,
-            additional_identity_id: senderId,
-            related_drop_id: dropId,
-            related_drop_part_no: null,
-            related_drop_2_id: null,
-            related_drop_2_part_no: null,
-            wave_id: waveId,
-            cause: IdentityNotificationCause.PRIORITY_ALERT,
-            additional_data: {},
-            visibility_group_id: null
+            waveId,
+            authorId: senderId,
+            mentionedGroups: []
           },
           connection
-        )
-      )
-    );
-  });
+        );
+      const allDropsSubscriberIds =
+        selectSentryAlertAllDropsSubscriberIds(followerRecipients);
+
+      return userNotifier.notifyWaveDropCreatedRecipients(
+        {
+          waveId,
+          dropId,
+          relatedIdentityId: senderId,
+          replyNotification: null,
+          quoteNotifications: [],
+          mentionedIdentityIds: [],
+          allDropsSubscriberIds
+        },
+        wave.visibility_group_id,
+        { connection }
+      );
+    });
+
+  await sendIdentityPushNotifications(pendingPushNotificationIds);
 }
 
 function requestLogMiddleware() {
