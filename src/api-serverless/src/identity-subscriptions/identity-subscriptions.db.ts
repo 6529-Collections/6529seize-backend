@@ -305,28 +305,6 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
       .then((result) => result?.cnt ?? 0);
   }
 
-  async findWaveSubscribers(
-    waveId: string,
-    connection: ConnectionWrapper<any>
-  ) {
-    return this.db
-      .execute<{
-        subscriber_id: string;
-      }>(
-        `select subscriber_id from ${IDENTITY_SUBSCRIPTIONS_TABLE}
-         where target_id = :waveId
-           and target_type = :target_type
-           and target_action = :target_action`,
-        {
-          waveId,
-          target_type: ActivityEventTargetType.WAVE,
-          target_action: ActivityEventAction.DROP_CREATED
-        },
-        { wrappedConnection: connection }
-      )
-      .then((it) => it.map((it) => it.subscriber_id));
-  }
-
   async findWaveSubscribedAllSubscribers(
     waveId: string,
     connection: ConnectionWrapper<any>
