@@ -111,7 +111,7 @@ ${indent(yamlList(serviceNames))}
         required: false
       release_note_opt_out:
         type: boolean
-        description: 'Explicitly skip autonomous release notes for an internal operation'
+        description: 'Suppress autonomous release notes only when explicitly requested by the user'
         required: false
         default: false
 permissions:
