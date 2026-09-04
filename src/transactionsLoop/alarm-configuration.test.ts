@@ -61,7 +61,21 @@ describe('transactions loop alarm configuration', () => {
       expect(alarm).toContain(`${functionName}-Errors`);
       expect(alarm).toContain(`${functionName}-Throttles`);
     }
+    expect(alarm.match(/ALARM\(/g)).toHaveLength(6);
+    expect(alarm.match(/\bOR\b/g)).toHaveLength(5);
+    expect(alarm).not.toMatch(/\bAND\b/);
     expect(alarm).toContain('AlarmActions:');
     expect(alarm).toContain('OKActions:');
   });
+
+  it.each(functions)(
+    'keeps %s OOM paging immediate and independent',
+    (functionName) => {
+      const alarm = resourceBlock(`${functionName}TransactionsLoopOOMAlarm`);
+
+      expect(alarm).toContain('EvaluationPeriods: 1');
+      expect(alarm).toContain('AlarmActions:');
+      expect(alarm).toContain('OKActions:');
+    }
+  );
 });
