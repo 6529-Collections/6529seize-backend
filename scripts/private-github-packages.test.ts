@@ -37,16 +37,21 @@ type WorkflowStep = {
   readonly name?: string;
 };
 
+type WorkflowPermissions =
+  | Readonly<Record<string, string>>
+  | 'read-all'
+  | 'write-all';
+
 type WorkflowJob = {
   readonly env?: Record<string, string>;
-  readonly permissions?: Record<string, string>;
+  readonly permissions?: WorkflowPermissions;
   readonly steps?: WorkflowStep[];
 };
 
 type Workflow = {
   readonly env?: Record<string, string>;
   readonly jobs?: Record<string, WorkflowJob>;
-  readonly permissions?: Record<string, string>;
+  readonly permissions?: WorkflowPermissions;
 };
 
 type PrivatePackagePolicy = {
@@ -162,22 +167,36 @@ describe('private GitHub Packages install policy', () => {
       readonly permission: string;
       readonly scope: 'job' | 'workflow';
     }> = [];
-    if (workflow.permissions?.packages !== undefined) {
+    const workflowPackagePermission = packagePermission(workflow.permissions);
+    if (workflowPackagePermission !== undefined) {
       scopes.push({
-        permission: workflow.permissions.packages,
+        permission: workflowPackagePermission,
         scope: 'workflow'
       });
     }
     for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
-      if (job.permissions?.packages !== undefined) {
+      const jobPackagePermission = packagePermission(job.permissions);
+      if (jobPackagePermission !== undefined) {
         scopes.push({
           jobName,
-          permission: job.permissions.packages,
+          permission: jobPackagePermission,
           scope: 'job'
         });
       }
     }
     return scopes;
+  }
+
+  function packagePermission(
+    permissions: WorkflowPermissions | undefined
+  ): string | undefined {
+    if (permissions === 'read-all') {
+      return 'read';
+    }
+    if (permissions === 'write-all') {
+      return 'write';
+    }
+    return permissions?.packages;
   }
 
   function expectRootInstallCredentialScope(
@@ -192,7 +211,11 @@ describe('private GitHub Packages install policy', () => {
         scope: 'job'
       }
     ]);
-    expect(workflow.jobs?.[jobName]?.permissions?.contents).toBe('read');
+    const permissions = workflow.jobs?.[jobName]?.permissions;
+    expect(typeof permissions).toBe('object');
+    expect(
+      typeof permissions === 'object' ? permissions.contents : undefined
+    ).toBe('read');
     expect(workflowCredentialScopes(workflow)).toEqual([
       {
         jobName,
@@ -459,5 +482,17 @@ describe('private GitHub Packages install policy', () => {
       'build-and-deploy',
       'Install root dependencies for manual build'
     );
+  });
+
+  it('enumerates scalar GitHub Actions package permissions', () => {
+    expect(
+      workflowPackagePermissionScopes({
+        jobs: { broadJob: { permissions: 'write-all' } },
+        permissions: 'read-all'
+      })
+    ).toEqual([
+      { permission: 'read', scope: 'workflow' },
+      { jobName: 'broadJob', permission: 'write', scope: 'job' }
+    ]);
   });
 });
