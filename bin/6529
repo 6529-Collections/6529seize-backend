@@ -57,6 +57,7 @@ shift
 
 case "$command_name" in
   bootstrap)
+    unset NODE_AUTH_TOKEN
     exec bash "$REPO_ROOT/scripts/bootstrap-6529-command.sh" "$@"
     ;;
   help|-h|--help)
@@ -83,6 +84,16 @@ fi
 REAL_COREPACK="$(resolve_real_corepack)"
 export PATH="$SCRIPT_DIR${clean_path:+:$clean_path}"
 
+run_private_root_install() {
+  exec node "$REPO_ROOT/scripts/private-github-packages.cjs" \
+    "$REAL_COREPACK" -- "$@"
+}
+
+exec_without_package_token() {
+  unset NODE_AUTH_TOKEN
+  exec "$@"
+}
+
 case "$command_name" in
   ci)
     for argument in "$@"; do
@@ -92,7 +103,10 @@ case "$command_name" in
         exit 1
       fi
     done
-    exec "$REAL_COREPACK" npm ci "$@"
+    if [[ "$current_directory" == "$REPO_ROOT" ]]; then
+      run_private_root_install ci "$@"
+    fi
+    exec_without_package_token "$REAL_COREPACK" npm ci "$@"
     ;;
   i|install)
     echo "Direct install-style commands are intentionally unavailable." >&2
@@ -104,40 +118,52 @@ case "$command_name" in
       echo "Usage: \`6529 add <package>\`" >&2
       exit 1
     fi
-    exec "$REAL_COREPACK" npm install "$@"
+    if [[ "$current_directory" == "$REPO_ROOT" ]]; then
+      run_private_root_install install "$@"
+    fi
+    exec_without_package_token "$REAL_COREPACK" npm install "$@"
     ;;
   remove|rm|uninstall)
     if [[ "$#" -eq 0 ]]; then
       echo "Usage: \`6529 remove <package>\`" >&2
       exit 1
     fi
-    exec "$REAL_COREPACK" npm uninstall "$@"
+    if [[ "$current_directory" == "$REPO_ROOT" ]]; then
+      run_private_root_install uninstall "$@"
+    fi
+    exec_without_package_token "$REAL_COREPACK" npm uninstall "$@"
     ;;
   update)
-    exec "$REAL_COREPACK" npm update "$@"
+    if [[ "$current_directory" == "$REPO_ROOT" ]]; then
+      run_private_root_install update "$@"
+    fi
+    exec_without_package_token "$REAL_COREPACK" npm update "$@"
     ;;
   audit)
-    exec "$REAL_COREPACK" npm audit "$@"
+    exec_without_package_token "$REAL_COREPACK" npm audit "$@"
     ;;
   audit:fix)
-    exec "$REAL_COREPACK" npm audit fix "$@"
+    if [[ "$current_directory" == "$REPO_ROOT" ]]; then
+      run_private_root_install audit fix "$@"
+    fi
+    exec_without_package_token "$REAL_COREPACK" npm audit fix "$@"
     ;;
   run)
     if [[ "$#" -eq 0 ]]; then
       echo "Usage: \`6529 run <script>\`" >&2
       exit 1
     fi
-    exec "$REAL_COREPACK" npm run "$@"
+    exec_without_package_token "$REAL_COREPACK" npm run "$@"
     ;;
   exec)
     if [[ "$#" -eq 0 ]]; then
       echo "Usage: \`6529 exec <binary>\`" >&2
       exit 1
     fi
-    exec "$REAL_COREPACK" npm exec -- "$@"
+    exec_without_package_token "$REAL_COREPACK" npm exec -- "$@"
     ;;
   npm:version)
-    exec "$REAL_COREPACK" npm --version
+    exec_without_package_token "$REAL_COREPACK" npm --version
     ;;
   version|-v|--version)
     echo "The 6529 wrapper does not currently publish its own version." >&2
@@ -145,7 +171,7 @@ case "$command_name" in
     exit 1
     ;;
   explain|fund|outdated|prune|dedupe|ls|list|view)
-    exec "$REAL_COREPACK" npm "$command_name" "$@"
+    exec_without_package_token "$REAL_COREPACK" npm "$command_name" "$@"
     ;;
   test|start|stop|restart)
     echo "Use \`6529 run $command_name\` for package.json scripts." >&2

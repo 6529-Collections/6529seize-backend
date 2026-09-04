@@ -34,6 +34,23 @@ machine-wide npm installation.
 `./bin/6529` remains available without bootstrap when an explicit repo-local
 path is preferable, including automation and fresh-clone setup.
 
+### Private root package
+
+The root package includes
+`@6529-collections/release-request@0.0.3` from GitHub Packages. Root dependency
+installs need a GitHub token with `read:packages`; nested API and Lambda
+packages do not. `6529 ci` reuses the active GitHub CLI token only when
+`gh auth status` reports that scope. Otherwise, provide `NODE_AUTH_TOKEN` to
+the root install command. CI must provide it and never prompts.
+
+The wrapper keeps the token only in the private-package fetch process. It
+routes only the `@6529-collections` scope to `https://npm.pkg.github.com`,
+runs install lifecycle scripts through a token-removing shell, and deletes its
+temporary npm configuration when the install ends. It also removes
+`NODE_AUTH_TOKEN` from ordinary scripts, local binaries, and nested-package
+commands. Do not put the token in this repository, an `.npmrc`, an `.env`
+file, a command argument, or shell history.
+
 ## Daily Commands
 
 Run commands from the directory containing the applicable `package.json`:

@@ -100,6 +100,7 @@ on:
 permissions:
   actions: read
   contents: read
+  packages: read
 
 # Keep backend service deployments sequential within each environment.
 concurrency:
@@ -226,6 +227,8 @@ jobs:
         run: |
           test "$(./bin/6529 npm:version)" = "$(node -p 'require("./package.json").packageManager.split("npm@")[1]')"
       - name: Install root dependencies for manual build
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
         run: ./bin/6529 ci
       - name: Install lambda dependencies
         if: github.event.inputs.service != 'api'

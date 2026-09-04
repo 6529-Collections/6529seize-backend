@@ -13,6 +13,9 @@ jobs:
   build:
     name: Build backend and API
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
 
     steps:
       - name: Checkout
@@ -38,8 +41,12 @@ jobs:
             echo "::error::The 6529 wrapper did not resolve the pinned npm (expected ${expected}, got ${resolved})."
             exit 1
           fi
-      - name: Install dependencies
-        run: ./bin/6529 ci && pushd src/api-serverless && ../../bin/6529 ci && popd
+      - name: Install root dependencies
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: ./bin/6529 ci
+      - name: Install API dependencies
+        run: pushd src/api-serverless && ../../bin/6529 ci && popd
       - name: Verify generated files are committed
         run: |
           ./bin/6529 run generate:deploy-config

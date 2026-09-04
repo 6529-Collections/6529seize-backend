@@ -68,6 +68,7 @@ if [[ "\${1:-}" == "npm" && "\${2:-}" == "--version" ]]; then
   exit 0
 fi
 printf 'authorized=%s\\n' "\${SEIZE_6529_COMMAND:-0}"
+printf 'package-token=%s\\n' "\${NODE_AUTH_TOKEN:+present}"
 printf 'arg=%s\\n' "$@"
 `
     );
@@ -75,6 +76,8 @@ printf 'arg=%s\\n' "$@"
     return {
       directory,
       environment: envWithoutAuthorization({
+        CI: 'true',
+        NODE_AUTH_TOKEN: 'test-package-read-token',
         PATH: `${repoBin}:${directory}:${process.env.PATH ?? ''}`
       })
     };
@@ -203,6 +206,9 @@ printf 'arg=%s\\n' "$@"
           .filter((line) => line.startsWith('arg='))
           .map((line) => line.slice('arg='.length))
       ).toEqual(expectedArgs);
+      if (args[0] === 'run' || args[0] === 'exec') {
+        expect(result.stdout).not.toContain('package-token=present');
+      }
     }
   );
 
@@ -219,6 +225,8 @@ printf 'arg=%s\\n' "$@"
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('arg=generate:openapi');
+    expect(result.stdout).toContain('package-token=');
+    expect(result.stdout).not.toContain('package-token=present');
   });
 
   it('reports npm explicitly through npm:version', () => {
