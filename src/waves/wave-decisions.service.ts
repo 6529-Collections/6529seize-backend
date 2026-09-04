@@ -635,6 +635,24 @@ export class WaveDecisionsService {
     await this.waveDecisionsDb.deleteDropsRanks(winnerDropIds, ctx);
     await this.dropsDb.resyncParticipatoryDropCountsForWaves([waveId], ctx);
     await this.dropVotingDb.deleteStaleLeaderboardEntries(ctx);
+
+    // Sequential APPROVE: if reset_votes_after_win is enabled on this wave,
+    // clear all vote state on remaining PARTICIPATORY drops so the community
+    // must re-vote from scratch on the next candidate in sequence.
+    const resetVotesAfterWin = await this.waveDecisionsDb.getResetVotesAfterWin(
+      waveId,
+      ctx
+    );
+    if (resetVotesAfterWin) {
+      this.logger.info(
+        `Resetting votes for remaining participatory drops in wave ${waveId} after winner formalization`
+      );
+      await this.dropVotingDb.resetVotesForParticipatoryDropsInWave(
+        waveId,
+        ctx
+      );
+    }
+
     const announcementDropResult = await this.createAnnouncementDrop(
       waveId,
       winnerDropIds,
