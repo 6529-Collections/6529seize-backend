@@ -114,10 +114,6 @@ ${indent(yamlList(serviceNames))}
         description: 'Suppress autonomous release notes only when explicitly requested by the user'
         required: false
         default: false
-permissions:
-  actions: read
-  contents: read
-
 # Keep backend service deployments sequential within each environment.
 concurrency:
   group: deploy-control-\${{ github.event.inputs.environment }}
@@ -143,6 +139,10 @@ jobs:
   build-and-deploy:
     name: Build and deploy \${{ github.event.inputs.service }} to \${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      packages: read
     concurrency:
       group: deploy-service-\${{ github.event.inputs.environment }}-\${{ github.event.inputs.service }}
       cancel-in-progress: false
@@ -243,6 +243,8 @@ jobs:
         run: |
           test "$(./bin/6529 npm:version)" = "$(node -p 'require("./package.json").packageManager.split("npm@")[1]')"
       - name: Install root dependencies for manual build
+        env:
+          NODE_AUTH_TOKEN: \${{ github.token }}
         run: ./bin/6529 ci
       - name: Install lambda dependencies
         if: github.event.inputs.service != 'api'

@@ -1,5 +1,11 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -59,6 +65,7 @@ describe('6529 package command', () => {
     const directory = mkdtempSync(path.join(tmpdir(), 'fake-corepack-'));
     temporaryDirectories.push(directory);
     const corepackPath = path.join(directory, 'corepack');
+    symlinkSync(process.execPath, path.join(directory, 'node'));
     writeFileSync(
       corepackPath,
       `#!/usr/bin/env bash
@@ -68,6 +75,7 @@ if [[ "\${1:-}" == "npm" && "\${2:-}" == "--version" ]]; then
   exit 0
 fi
 printf 'authorized=%s\\n' "\${SEIZE_6529_COMMAND:-0}"
+printf 'package-token=%s\\n' "\${NODE_AUTH_TOKEN:+present}"
 printf 'arg=%s\\n' "$@"
 `
     );
@@ -75,6 +83,8 @@ printf 'arg=%s\\n' "$@"
     return {
       directory,
       environment: envWithoutAuthorization({
+        CI: 'true',
+        NODE_AUTH_TOKEN: 'test-package-read-token',
         PATH: `${repoBin}:${directory}:${process.env.PATH ?? ''}`
       })
     };
@@ -203,6 +213,9 @@ printf 'arg=%s\\n' "$@"
           .filter((line) => line.startsWith('arg='))
           .map((line) => line.slice('arg='.length))
       ).toEqual(expectedArgs);
+      if (args[0] === 'run' || args[0] === 'exec') {
+        expect(result.stdout).not.toContain('package-token=present');
+      }
     }
   );
 
@@ -219,6 +232,32 @@ printf 'arg=%s\\n' "$@"
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('arg=generate:openapi');
+    expect(result.stdout).toContain('package-token=');
+    expect(result.stdout).not.toContain('package-token=present');
+  });
+
+  it('recognizes the repository root through a symlinked working path', () => {
+    const fakeCorepack = createFakeCorepack();
+    const directory = mkdtempSync(path.join(tmpdir(), 'symlinked-repo-root-'));
+    temporaryDirectories.push(directory);
+    const linkedRoot = path.join(directory, 'backend');
+    symlinkSync(repoRoot, linkedRoot, 'dir');
+
+    const result = run(
+      '/bin/bash',
+      [
+        '-c',
+        'cd -L "$1" && printf "logical-cwd=%s\\n" "$PWD" && exec "$2" ci --ignore-scripts',
+        'bash',
+        linkedRoot,
+        path.join(repoBin, '6529')
+      ],
+      { env: fakeCorepack.environment }
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(`logical-cwd=${linkedRoot}\n`);
+    expect(result.stdout).toContain('package-token=present');
   });
 
   it('reports npm explicitly through npm:version', () => {
