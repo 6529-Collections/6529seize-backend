@@ -1,3 +1,13 @@
+import { assertValidGlb } from '@/minting-claims/glb-validation';
+import {
+  IMAGE_DETAILS_KEYS,
+  VIDEO_ANIMATION_DETAILS_KEYS,
+  HTML_ANIMATION_DETAILS_KEYS,
+  GLB_ANIMATION_DETAILS_KEYS,
+  getImageDetailIssues,
+  getAnimationDetailIssues,
+  normalizeSha256
+} from '@/minting-claims/media-details-validation';
 import type { MintingClaimRow } from '@/api/minting-claims/api.minting-claims.db';
 import {
   fetchMaxSeasonId,
@@ -31,24 +41,6 @@ const TYPE_TRAIT = 'Type';
 const TYPE_TRAIT_VALUE_CARD = 'Card';
 const ISSUANCE_MONTH_TRAIT = 'Issuance Month';
 const MEME_NAME_TRAIT = 'Meme Name';
-const IMAGE_DETAILS_KEYS = [
-  'bytes',
-  'format',
-  'sha256',
-  'width',
-  'height'
-] as const;
-const VIDEO_ANIMATION_DETAILS_KEYS = [
-  'bytes',
-  'format',
-  'duration',
-  'sha256',
-  'width',
-  'height',
-  'codecs'
-] as const;
-const HTML_ANIMATION_DETAILS_KEYS = ['format'] as const;
-const GLB_ANIMATION_DETAILS_KEYS = ['bytes', 'format', 'sha256'] as const;
 const MEMES_REQUIRED_METADATA_KEYS = new Set([
   'created_by',
   'description',
@@ -168,13 +160,6 @@ function inferImageContentTypeFromUrl(url: string): string | null {
   } catch {
     return null;
   }
-}
-
-function normalizeSha256(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const normalized = value.trim().toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(normalized)) return null;
-  return normalized;
 }
 
 function isIpfsUrl(value: string): boolean {
@@ -322,6 +307,7 @@ async function uploadAnimationToArweaveIfPresent(
     expectsGlb,
     detailsFormat: details?.format ?? null
   });
+  if (contentTypeToUpload === 'model/gltf-binary') assertValidGlb(buffer);
   const currentSha256 = computeSha256Hex(buffer);
   const existingSha256 = normalizeSha256(
     (details as { sha256?: unknown }).sha256
@@ -742,21 +728,6 @@ function appendMemesFinalAttributeSchemaIssues(
   }
 }
 
-function appendMissingDetailKeysIssue(
-  label: string,
-  details: Record<string, unknown> | null,
-  requiredKeys: readonly string[],
-  invalid: string[]
-) {
-  if (details == null) {
-    return;
-  }
-  const missingKeys = requiredKeys.filter((key) => !hasOwn(details, key));
-  if (missingKeys.length > 0) {
-    invalid.push(`${label} (missing keys: ${missingKeys.join(', ')})`);
-  }
-}
-
 function getMemesAnimationMetadataState(metadata: Record<string, unknown>) {
   const hasAnimation = hasOwn(metadata, 'animation');
   const hasAnimationUrl = hasOwn(metadata, 'animation_url');
@@ -823,18 +794,6 @@ function appendMissingMemesAnimationKeys(
   }
 }
 
-function getRequiredAnimationDetailKeys(
-  format: string | null
-): readonly string[] {
-  if (format === 'HTML') {
-    return HTML_ANIMATION_DETAILS_KEYS;
-  }
-  if (format === 'GLB') {
-    return GLB_ANIMATION_DETAILS_KEYS;
-  }
-  return VIDEO_ANIMATION_DETAILS_KEYS;
-}
-
 function appendMemesAnimationDetailsIssues(
   state: ReturnType<typeof getMemesAnimationMetadataState>,
   invalid: string[]
@@ -850,21 +809,7 @@ function appendMemesAnimationDetailsIssues(
     return;
   }
 
-  const objectAnimationDetails = state.animationDetails as Record<
-    string,
-    unknown
-  > | null;
-  const format =
-    objectAnimationDetails != null &&
-    typeof objectAnimationDetails.format === 'string'
-      ? objectAnimationDetails.format
-      : null;
-  appendMissingDetailKeysIssue(
-    'MEMES animation_details',
-    objectAnimationDetails,
-    getRequiredAnimationDetailKeys(format),
-    invalid
-  );
+  invalid.push(...getAnimationDetailIssues(state.animationDetails));
 }
 
 function appendMemesMetadataSkeletonIssues(
@@ -881,12 +826,9 @@ function appendMemesMetadataSkeletonIssues(
     invalid.push(`MEMES Metadata (${issues.join('; ')})`);
   }
 
-  appendMissingDetailKeysIssue(
-    'MEMES image_details',
-    metadata.image_details as Record<string, unknown> | null,
-    IMAGE_DETAILS_KEYS,
-    invalid
-  );
+  if (hasOwn(metadata, 'image_details')) {
+    invalid.push(...getImageDetailIssues(metadata.image_details));
+  }
   appendMemesAnimationDetailsIssues(animationState, invalid);
 }
 
@@ -1061,7 +1003,11 @@ async function resolveTypeMemeId(
 
 export async function uploadMintingClaimToArweave(
   contract: string,
-  claim: MintingClaimRow
+  claim: MintingClaimRow,
+  callbacks: {
+    onImageUploaded?: (locationUrl: string) => Promise<void>;
+    onAnimationUploaded?: (locationUrl: string) => Promise<void>;
+  } = {}
 ): Promise<{
   imageLocationUrl: string;
   animationLocationUrl: string | null;
@@ -1070,7 +1016,11 @@ export async function uploadMintingClaimToArweave(
   const { imageUrl, typeMemeId, seasonValue } =
     await validateMintingClaimReadyForArweaveUpload(claim, contract);
   const imageLocationUrl = await uploadImageToArweaveOrThrow(claim, imageUrl);
+  await callbacks.onImageUploaded?.(imageLocationUrl);
   const animationLocationUrl = await uploadAnimationToArweaveIfPresent(claim);
+  if (animationLocationUrl) {
+    await callbacks.onAnimationUploaded?.(animationLocationUrl);
+  }
   const metadataLocationUrl = await uploadClaimMetadataToArweave(
     contract,
     claim,
