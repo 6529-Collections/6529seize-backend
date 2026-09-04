@@ -38,11 +38,13 @@ type WorkflowStep = {
 };
 
 type WorkflowJob = {
+  readonly env?: Record<string, string>;
   readonly permissions?: Record<string, string>;
   readonly steps?: WorkflowStep[];
 };
 
 type Workflow = {
+  readonly env?: Record<string, string>;
   readonly jobs?: Record<string, WorkflowJob>;
   readonly permissions?: Record<string, string>;
 };
@@ -119,16 +121,63 @@ describe('private GitHub Packages install policy', () => {
     ) as Workflow;
   }
 
-  function workflowTokenSteps(workflow: Workflow) {
-    return Object.entries(workflow.jobs ?? {}).flatMap(([jobName, job]) =>
-      (job.steps ?? [])
-        .filter((step) => step.env?.NODE_AUTH_TOKEN !== undefined)
-        .map((step) => ({
+  function workflowCredentialScopes(workflow: Workflow) {
+    const scopes: Array<{
+      readonly jobName?: string;
+      readonly scope: 'job' | 'step' | 'workflow';
+      readonly stepName?: string;
+      readonly token: string;
+    }> = [];
+    if (workflow.env?.NODE_AUTH_TOKEN !== undefined) {
+      scopes.push({
+        scope: 'workflow',
+        token: workflow.env.NODE_AUTH_TOKEN
+      });
+    }
+    for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
+      if (job.env?.NODE_AUTH_TOKEN !== undefined) {
+        scopes.push({
           jobName,
-          stepName: step.name,
-          token: step.env?.NODE_AUTH_TOKEN
-        }))
-    );
+          scope: 'job',
+          token: job.env.NODE_AUTH_TOKEN
+        });
+      }
+      for (const step of job.steps ?? []) {
+        if (step.env?.NODE_AUTH_TOKEN !== undefined) {
+          scopes.push({
+            jobName,
+            scope: 'step',
+            stepName: step.name,
+            token: step.env.NODE_AUTH_TOKEN
+          });
+        }
+      }
+    }
+    return scopes;
+  }
+
+  function workflowPackagePermissionScopes(workflow: Workflow) {
+    const scopes: Array<{
+      readonly jobName?: string;
+      readonly permission: string;
+      readonly scope: 'job' | 'workflow';
+    }> = [];
+    if (workflow.permissions?.packages !== undefined) {
+      scopes.push({
+        permission: workflow.permissions.packages,
+        scope: 'workflow'
+      });
+    }
+    for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
+      if (job.permissions?.packages !== undefined) {
+        scopes.push({
+          jobName,
+          permission: job.permissions.packages,
+          scope: 'job'
+        });
+      }
+    }
+    return scopes;
   }
 
   function expectRootInstallCredentialScope(
@@ -136,15 +185,18 @@ describe('private GitHub Packages install policy', () => {
     jobName: string,
     stepName: string
   ): void {
-    expect(workflow.permissions).toBeUndefined();
-    const jobsWithPackageRead = Object.entries(workflow.jobs ?? {})
-      .filter(([, job]) => job.permissions?.packages === 'read')
-      .map(([name]) => name);
-    expect(jobsWithPackageRead).toEqual([jobName]);
-    expect(workflow.jobs?.[jobName]?.permissions?.contents).toBe('read');
-    expect(workflowTokenSteps(workflow)).toEqual([
+    expect(workflowPackagePermissionScopes(workflow)).toEqual([
       {
         jobName,
+        permission: 'read',
+        scope: 'job'
+      }
+    ]);
+    expect(workflow.jobs?.[jobName]?.permissions?.contents).toBe('read');
+    expect(workflowCredentialScopes(workflow)).toEqual([
+      {
+        jobName,
+        scope: 'step',
         stepName,
         token: '${{ github.token }}'
       }

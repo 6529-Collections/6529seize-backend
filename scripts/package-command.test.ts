@@ -243,12 +243,20 @@ printf 'arg=%s\\n' "$@"
     const linkedRoot = path.join(directory, 'backend');
     symlinkSync(repoRoot, linkedRoot, 'dir');
 
-    const result = run(path.join(repoBin, '6529'), ['ci', '--ignore-scripts'], {
-      cwd: linkedRoot,
-      env: fakeCorepack.environment
-    });
+    const result = run(
+      '/bin/bash',
+      [
+        '-c',
+        'cd -L "$1" && printf "logical-cwd=%s\\n" "$PWD" && exec "$2" ci --ignore-scripts',
+        'bash',
+        linkedRoot,
+        path.join(repoBin, '6529')
+      ],
+      { env: fakeCorepack.environment }
+    );
 
     expect(result.status).toBe(0);
+    expect(result.stdout).toContain(`logical-cwd=${linkedRoot}\n`);
     expect(result.stdout).toContain('package-token=present');
   });
 
