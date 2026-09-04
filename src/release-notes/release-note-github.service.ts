@@ -233,6 +233,7 @@ function isMatchingProductionRun(
   }
   if (repoName === CORE_REPO) {
     return (
+      request.environment === 'prod' &&
       CORE_PRODUCTION_WORKFLOWS.has(request.workflow) &&
       run.path === CORE_PRODUCTION_WORKFLOW_PATH &&
       Array.from(CORE_PRODUCTION_WORKFLOWS).some((workflow) =>
@@ -640,15 +641,17 @@ export class ReleaseNoteGitHubService {
         `GitHub release run ${request.run_id} does not match the queued release metadata`
       );
     }
-    if (currentRun.status !== 'completed') {
-      throw new Error(
-        `GitHub release run ${request.run_id} is still ${currentRun.status ?? 'not completed'}`
-      );
-    }
-    if (currentRun.conclusion !== 'success') {
-      throw new UntrustedReleaseNoteMetadataError(
-        `GitHub release run ${request.run_id} did not complete successfully`
-      );
+    if (repoName !== CORE_REPO) {
+      if (currentRun.status !== 'completed') {
+        throw new Error(
+          `GitHub release run ${request.run_id} is still ${currentRun.status ?? 'not completed'}`
+        );
+      }
+      if (currentRun.conclusion !== 'success') {
+        throw new UntrustedReleaseNoteMetadataError(
+          `GitHub release run ${request.run_id} did not complete successfully`
+        );
+      }
     }
     return currentRun;
   }
