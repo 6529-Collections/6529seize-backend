@@ -602,7 +602,13 @@ async function postSentryAlertDrop({
       );
     });
 
-  await sendIdentityPushNotifications(pendingPushNotificationIds);
+  try {
+    await sendIdentityPushNotifications(pendingPushNotificationIds);
+  } catch (error) {
+    logger.error(
+      `Failed to enqueue Sentry alert push notifications for drop ${dropId}: ${error}`
+    );
+  }
 }
 
 function requestLogMiddleware() {
