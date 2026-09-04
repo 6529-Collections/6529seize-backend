@@ -8,6 +8,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { parse as parseYaml } from 'yaml';
 
 type CommandResult = {
   readonly error?: Error;
@@ -30,6 +31,21 @@ type SpawnFunction = (
   args: string[],
   options: SpawnOptions
 ) => CommandResult;
+
+type WorkflowStep = {
+  readonly env?: Record<string, string>;
+  readonly name?: string;
+};
+
+type WorkflowJob = {
+  readonly permissions?: Record<string, string>;
+  readonly steps?: WorkflowStep[];
+};
+
+type Workflow = {
+  readonly jobs?: Record<string, WorkflowJob>;
+  readonly permissions?: Record<string, string>;
+};
 
 type PrivatePackagePolicy = {
   readonly AUTH_PLACEHOLDER: string;
@@ -60,6 +76,7 @@ type PrivatePackagePolicy = {
   readonly sanitizeEnvironment: (
     environment: NodeJS.ProcessEnv
   ) => NodeJS.ProcessEnv;
+  readonly validateArguments: (args: string[]) => void;
   readonly validateRepositoryPolicy: (repositoryRoot?: string) => void;
 };
 
@@ -91,6 +108,47 @@ describe('private GitHub Packages install policy', () => {
       );
     }
     return directory;
+  }
+
+  function readWorkflow(filename: string): Workflow {
+    return parseYaml(
+      readFileSync(
+        path.join(policy.REPOSITORY_ROOT, '.github', 'workflows', filename),
+        'utf8'
+      )
+    ) as Workflow;
+  }
+
+  function workflowTokenSteps(workflow: Workflow) {
+    return Object.entries(workflow.jobs ?? {}).flatMap(([jobName, job]) =>
+      (job.steps ?? [])
+        .filter((step) => step.env?.NODE_AUTH_TOKEN !== undefined)
+        .map((step) => ({
+          jobName,
+          stepName: step.name,
+          token: step.env?.NODE_AUTH_TOKEN
+        }))
+    );
+  }
+
+  function expectRootInstallCredentialScope(
+    workflow: Workflow,
+    jobName: string,
+    stepName: string
+  ): void {
+    expect(workflow.permissions).toBeUndefined();
+    const jobsWithPackageRead = Object.entries(workflow.jobs ?? {})
+      .filter(([, job]) => job.permissions?.packages === 'read')
+      .map(([name]) => name);
+    expect(jobsWithPackageRead).toEqual([jobName]);
+    expect(workflow.jobs?.[jobName]?.permissions?.contents).toBe('read');
+    expect(workflowTokenSteps(workflow)).toEqual([
+      {
+        jobName,
+        stepName,
+        token: '${{ github.token }}'
+      }
+    ]);
   }
 
   it('pins the approved CLI version and immutable package artifact', () => {
@@ -161,6 +219,19 @@ describe('private GitHub Packages install policy', () => {
     );
   });
 
+  it('rejects a malformed tarball reference for the approved private record', () => {
+    const directory = repositoryFixture();
+    const lockfilePath = path.join(directory, 'package-lock.json');
+    const lockfile = JSON.parse(readFileSync(lockfilePath, 'utf8'));
+    const packagePath = `node_modules/${policy.PRIVATE_PACKAGE_NAME}`;
+    lockfile.packages[packagePath].resolved = 'not-a-registry-url';
+    writeFileSync(lockfilePath, `${JSON.stringify(lockfile, null, 2)}\n`);
+
+    expect(() => policy.validateRepositoryPolicy(directory)).toThrow(
+      'approved tarball'
+    );
+  });
+
   it('reuses a GitHub CLI token only when read:packages is present', () => {
     const token = 'test-token-with-read-packages';
     const withScope = jest
@@ -205,6 +276,32 @@ describe('private GitHub Packages install policy', () => {
       })
     ).toThrow('CI is non-interactive');
     expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('does not treat an explicitly disabled CI flag as CI', () => {
+    const token = 'test-token-for-local-fallback';
+    const spawn = jest
+      .fn<ReturnType<SpawnFunction>, Parameters<SpawnFunction>>()
+      .mockReturnValueOnce({
+        status: 0,
+        stderr: "Token scopes: 'read:packages'\n",
+        stdout: ''
+      })
+      .mockReturnValueOnce({ status: 0, stderr: '', stdout: `${token}\n` });
+
+    expect(
+      policy.resolveAuthenticationToken({
+        environment: { CI: 'false' },
+        spawn
+      })
+    ).toBe(token);
+    expect(spawn).toHaveBeenCalledTimes(2);
+  });
+
+  it('explains that the approved private package is pinned on uninstall', () => {
+    expect(() =>
+      policy.validateArguments(['uninstall', policy.PRIVATE_PACKAGE_NAME])
+    ).toThrow('pinned by repository policy');
   });
 
   it('keeps the token out of package arguments, lifecycle scripts, and output', () => {
@@ -300,38 +397,15 @@ describe('private GitHub Packages install policy', () => {
   });
 
   it('limits GitHub workflow package access to root install steps', () => {
-    const pullRequestWorkflow = readFileSync(
-      path.join(
-        policy.REPOSITORY_ROOT,
-        '.github/workflows/on-pull-request.yml'
-      ),
-      'utf8'
+    expectRootInstallCredentialScope(
+      readWorkflow('on-pull-request.yml'),
+      'build',
+      'Install root dependencies'
     );
-    const deployWorkflow = readFileSync(
-      path.join(policy.REPOSITORY_ROOT, '.github/workflows/deploy.yml'),
-      'utf8'
-    );
-    const deployGenerator = readFileSync(
-      path.join(policy.REPOSITORY_ROOT, 'scripts/generate-deploy-config.mjs'),
-      'utf8'
-    );
-
-    for (const content of [pullRequestWorkflow, deployWorkflow]) {
-      expect(content.match(/packages: read/g)).toHaveLength(1);
-      expect(content.match(/NODE_AUTH_TOKEN:/g)).toHaveLength(1);
-      expect(content).toContain('NODE_AUTH_TOKEN: ${{ github.token }}');
-    }
-    expect(deployGenerator.match(/packages: read/g)).toHaveLength(1);
-    expect(deployGenerator.match(/NODE_AUTH_TOKEN:/g)).toHaveLength(1);
-    expect(deployGenerator).toContain('NODE_AUTH_TOKEN: \\${{ github.token }}');
-    expect(pullRequestWorkflow).toContain(
-      '- name: Install API dependencies\n        run:'
-    );
-    expect(deployWorkflow).toContain(
-      '- name: Install lambda dependencies\n        if:'
-    );
-    expect(deployWorkflow).toContain(
-      '- name: Install api dependencies\n        if:'
+    expectRootInstallCredentialScope(
+      readWorkflow('deploy.yml'),
+      'build-and-deploy',
+      'Install root dependencies for manual build'
     );
   });
 });

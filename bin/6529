@@ -48,6 +48,19 @@ resolve_real_corepack() {
   printf '%s' "$resolved"
 }
 
+resolve_real_node() {
+  local corepack_path="$1"
+  local runtime_directory=""
+  local resolved=""
+  runtime_directory="$(cd "$(dirname "$corepack_path")" && pwd -P)"
+  resolved="$runtime_directory/node"
+  if [[ ! -x "$resolved" ]]; then
+    echo "Node.js must be installed beside the resolved Corepack executable." >&2
+    exit 1
+  fi
+  printf '%s' "$resolved"
+}
+
 command_name="${1:-}"
 if [[ -z "$command_name" ]]; then
   print_usage
@@ -82,10 +95,11 @@ if [[ ! -f "$current_directory/package.json" ]]; then
 fi
 
 REAL_COREPACK="$(resolve_real_corepack)"
+REAL_NODE="$(resolve_real_node "$REAL_COREPACK")"
 export PATH="$SCRIPT_DIR${clean_path:+:$clean_path}"
 
 run_private_root_install() {
-  exec node "$REPO_ROOT/scripts/private-github-packages.cjs" \
+  exec "$REAL_NODE" "$REPO_ROOT/scripts/private-github-packages.cjs" \
     "$REAL_COREPACK" -- "$@"
 }
 
@@ -105,8 +119,9 @@ case "$command_name" in
     done
     if [[ "$current_directory" == "$REPO_ROOT" ]]; then
       run_private_root_install ci "$@"
+    else
+      exec_without_package_token "$REAL_COREPACK" npm ci "$@"
     fi
-    exec_without_package_token "$REAL_COREPACK" npm ci "$@"
     ;;
   i|install)
     echo "Direct install-style commands are intentionally unavailable." >&2
@@ -120,8 +135,9 @@ case "$command_name" in
     fi
     if [[ "$current_directory" == "$REPO_ROOT" ]]; then
       run_private_root_install install "$@"
+    else
+      exec_without_package_token "$REAL_COREPACK" npm install "$@"
     fi
-    exec_without_package_token "$REAL_COREPACK" npm install "$@"
     ;;
   remove|rm|uninstall)
     if [[ "$#" -eq 0 ]]; then
@@ -130,14 +146,16 @@ case "$command_name" in
     fi
     if [[ "$current_directory" == "$REPO_ROOT" ]]; then
       run_private_root_install uninstall "$@"
+    else
+      exec_without_package_token "$REAL_COREPACK" npm uninstall "$@"
     fi
-    exec_without_package_token "$REAL_COREPACK" npm uninstall "$@"
     ;;
   update)
     if [[ "$current_directory" == "$REPO_ROOT" ]]; then
       run_private_root_install update "$@"
+    else
+      exec_without_package_token "$REAL_COREPACK" npm update "$@"
     fi
-    exec_without_package_token "$REAL_COREPACK" npm update "$@"
     ;;
   audit)
     exec_without_package_token "$REAL_COREPACK" npm audit "$@"
@@ -145,8 +163,9 @@ case "$command_name" in
   audit:fix)
     if [[ "$current_directory" == "$REPO_ROOT" ]]; then
       run_private_root_install audit fix "$@"
+    else
+      exec_without_package_token "$REAL_COREPACK" npm audit fix "$@"
     fi
-    exec_without_package_token "$REAL_COREPACK" npm audit fix "$@"
     ;;
   run)
     if [[ "$#" -eq 0 ]]; then

@@ -9,6 +9,7 @@ const PRIVATE_SCOPE = '@6529-collections';
 const PRIVATE_PACKAGE_NAME = `${PRIVATE_SCOPE}/release-request`;
 const PRIVATE_PACKAGE_VERSION = '0.0.3';
 const PRIVATE_PACKAGE_SPEC = `${PRIVATE_PACKAGE_NAME}@${PRIVATE_PACKAGE_VERSION}`;
+const PRIVATE_PACKAGE_LOCK_PATH = `node_modules/${PRIVATE_PACKAGE_NAME}`;
 const PRIVATE_REGISTRY = 'https://npm.pkg.github.com';
 const PRIVATE_TARBALL =
   `${PRIVATE_REGISTRY}/download/${PRIVATE_PACKAGE_NAME}/` +
@@ -113,6 +114,73 @@ function validateOnlyApprovedPrivateDependency(metadata, label) {
   }
 }
 
+function isPrivatePackageRecordPath(packagePath) {
+  return new RegExp(`(?:^|node_modules/)${PRIVATE_SCOPE}/[^/]+$`).test(
+    packagePath
+  );
+}
+
+function resolvedHostname(metadata) {
+  try {
+    return new URL(metadata.resolved).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function validateLockfilePackageRecord(packagePath, metadata) {
+  validateOnlyApprovedPrivateDependency(
+    metadata,
+    `package-lock.json record ${packagePath || '<root>'}`
+  );
+
+  if (
+    isPrivatePackageRecordPath(packagePath) &&
+    packagePath !== PRIVATE_PACKAGE_LOCK_PATH
+  ) {
+    throw policyError(
+      `package-lock.json contains an unapproved private package record: ${packagePath}`
+    );
+  }
+  if (
+    packagePath === PRIVATE_PACKAGE_LOCK_PATH &&
+    metadata.resolved !== PRIVATE_TARBALL
+  ) {
+    throw policyError(
+      `package-lock.json must resolve ${PRIVATE_PACKAGE_SPEC} to the approved tarball`
+    );
+  }
+  if (
+    resolvedHostname(metadata) === 'npm.pkg.github.com' &&
+    packagePath !== PRIVATE_PACKAGE_LOCK_PATH
+  ) {
+    throw policyError(
+      `package-lock.json routes an unapproved package through ${PRIVATE_REGISTRY}: ${packagePath}`
+    );
+  }
+}
+
+function validateLockfilePackageRecords(lockfile) {
+  for (const [packagePath, metadata] of Object.entries(
+    lockfile.packages ?? {}
+  )) {
+    validateLockfilePackageRecord(packagePath, metadata);
+  }
+}
+
+function validateApprovedPackageRecord(packageRecord) {
+  if (
+    packageRecord?.version !== PRIVATE_PACKAGE_VERSION ||
+    packageRecord?.resolved !== PRIVATE_TARBALL ||
+    packageRecord?.integrity !== PRIVATE_INTEGRITY ||
+    packageRecord?.dev !== true
+  ) {
+    throw policyError(
+      `package-lock.json must contain the approved ${PRIVATE_PACKAGE_SPEC} tarball and integrity`
+    );
+  }
+}
+
 function validateRepositoryPolicy(
   repositoryRoot = REPOSITORY_ROOT,
   { allowMissingLockEntry = false } = {}
@@ -141,43 +209,8 @@ function validateRepositoryPolicy(
   validateOnlyApprovedPrivateDependency(rootRecord, 'package-lock.json root');
 
   const lockedRootVersion = rootRecord.devDependencies?.[PRIVATE_PACKAGE_NAME];
-  const packageRecord =
-    lockfile.packages?.[`node_modules/${PRIVATE_PACKAGE_NAME}`];
-
-  for (const [packagePath, metadata] of Object.entries(
-    lockfile.packages ?? {}
-  )) {
-    validateOnlyApprovedPrivateDependency(
-      metadata,
-      `package-lock.json record ${packagePath || '<root>'}`
-    );
-    const isPrivatePackageRecord = new RegExp(
-      `(?:^|node_modules/)${PRIVATE_SCOPE}/[^/]+$`
-    ).test(packagePath);
-    if (
-      isPrivatePackageRecord &&
-      packagePath !== `node_modules/${PRIVATE_PACKAGE_NAME}`
-    ) {
-      throw policyError(
-        `package-lock.json contains an unapproved private package record: ${packagePath}`
-      );
-    }
-    let resolvedHost = null;
-    try {
-      resolvedHost = new URL(metadata.resolved).hostname;
-    } catch {
-      // Package records without a registry tarball do not need host validation.
-    }
-    if (
-      resolvedHost === 'npm.pkg.github.com' &&
-      (packagePath !== `node_modules/${PRIVATE_PACKAGE_NAME}` ||
-        metadata.resolved !== PRIVATE_TARBALL)
-    ) {
-      throw policyError(
-        `package-lock.json routes an unapproved package through ${PRIVATE_REGISTRY}: ${packagePath}`
-      );
-    }
-  }
+  const packageRecord = lockfile.packages?.[PRIVATE_PACKAGE_LOCK_PATH];
+  validateLockfilePackageRecords(lockfile);
 
   if (allowMissingLockEntry && !lockedRootVersion && !packageRecord) {
     return;
@@ -188,16 +221,7 @@ function validateRepositoryPolicy(
     );
   }
 
-  if (
-    packageRecord?.version !== PRIVATE_PACKAGE_VERSION ||
-    packageRecord?.resolved !== PRIVATE_TARBALL ||
-    packageRecord?.integrity !== PRIVATE_INTEGRITY ||
-    packageRecord?.dev !== true
-  ) {
-    throw policyError(
-      `package-lock.json must contain the approved ${PRIVATE_PACKAGE_SPEC} tarball and integrity`
-    );
-  }
+  validateApprovedPackageRecord(packageRecord);
 }
 
 function normalizeOption(argument) {
@@ -208,7 +232,7 @@ function normalizeOption(argument) {
     .replace(/^no-/, '');
 }
 
-function validateArguments(args) {
+function validateAuthenticatedCommand(args) {
   if (!ALLOWED_COMMANDS.has(args[0])) {
     throw policyError(
       'only npm install and dependency mutation commands are allowed'
@@ -219,40 +243,55 @@ function validateArguments(args) {
       'npm audit may authenticate only when applying audit fixes'
     );
   }
+}
 
+function validatePrivatePackageSpecs(command, argument) {
+  const privateSpecs =
+    argument.match(
+      /@6529-collections\/[A-Za-z0-9._-]+(?:@[A-Za-z0-9._-]+)?/g
+    ) ?? [];
+  if (command === 'uninstall' && privateSpecs.length > 0) {
+    throw policyError(
+      `${PRIVATE_PACKAGE_SPEC} is pinned by repository policy and cannot be removed`
+    );
+  }
+  for (const packageSpec of privateSpecs) {
+    if (packageSpec !== PRIVATE_PACKAGE_SPEC) {
+      throw policyError(
+        `only ${PRIVATE_PACKAGE_SPEC} may use private package routing`
+      );
+    }
+  }
+}
+
+function validateNpmOption(argument) {
+  if (!argument.startsWith('-')) {
+    return;
+  }
+  const option = normalizeOption(argument);
+  if (
+    FORBIDDEN_OPTION_FRAGMENTS.some((fragment) => option.includes(fragment))
+  ) {
+    throw policyError(
+      `npm option is not allowed during authenticated install: ${argument}`
+    );
+  }
+}
+
+function validateArgument(command, argument) {
+  if (argument.includes('npm.pkg.github.com')) {
+    throw policyError(
+      'private registry URLs cannot be supplied on the command line'
+    );
+  }
+  validatePrivatePackageSpecs(command, argument);
+  validateNpmOption(argument);
+}
+
+function validateArguments(args) {
+  validateAuthenticatedCommand(args);
   for (const argument of args) {
-    if (argument.includes('npm.pkg.github.com')) {
-      throw policyError(
-        'private registry URLs cannot be supplied on the command line'
-      );
-    }
-    const privateSpecs =
-      argument.match(
-        /@6529-collections\/[A-Za-z0-9._-]+(?:@[A-Za-z0-9._-]+)?/g
-      ) ?? [];
-    if (args[0] === 'uninstall' && privateSpecs.length > 0) {
-      throw policyError(
-        `${PRIVATE_PACKAGE_NAME} cannot be removed through the authenticated install path`
-      );
-    }
-    for (const packageSpec of privateSpecs) {
-      if (packageSpec !== PRIVATE_PACKAGE_SPEC) {
-        throw policyError(
-          `only ${PRIVATE_PACKAGE_SPEC} may use private package routing`
-        );
-      }
-    }
-    if (!argument.startsWith('-')) {
-      continue;
-    }
-    const option = normalizeOption(argument);
-    if (
-      FORBIDDEN_OPTION_FRAGMENTS.some((fragment) => option.includes(fragment))
-    ) {
-      throw policyError(
-        `npm option is not allowed during authenticated install: ${argument}`
-      );
-    }
+    validateArgument(args[0], argument);
   }
 }
 
@@ -274,8 +313,18 @@ function tokenEnvironmentKeys(environment) {
   );
 }
 
+function environmentFlagEnabled(value) {
+  const normalized = String(value ?? '')
+    .trim()
+    .toLowerCase();
+  return !['', '0', 'false', 'no', 'off'].includes(normalized);
+}
+
 function isCi(environment) {
-  return Boolean(environment.CI) || environment.GITHUB_ACTIONS === 'true';
+  return (
+    environmentFlagEnabled(environment.CI) ||
+    environmentFlagEnabled(environment.GITHUB_ACTIONS)
+  );
 }
 
 function parseGhScopes(output) {
@@ -288,7 +337,7 @@ function parseGhScopes(output) {
   return scopesLine
     .replace(/^.*Token scopes:\s*/i, '')
     .split(',')
-    .map((scope) => scope.replace(/[\s'\"]/g, ''))
+    .map((scope) => scope.replace(/[\s'"]/g, ''))
     .filter(Boolean);
 }
 
@@ -433,6 +482,8 @@ function runPrivatePackageCommand({
       return installResult.status ?? 1;
     }
 
+    // This strict post-install check is the authoritative guard for every
+    // manifest and lockfile mutation, including the initial approved add.
     validateRepositoryPolicy(repositoryRoot);
     return 0;
   } finally {

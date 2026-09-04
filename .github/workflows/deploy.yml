@@ -97,11 +97,6 @@ on:
         description: 'Suppress autonomous release notes only when explicitly requested by the user'
         required: false
         default: false
-permissions:
-  actions: read
-  contents: read
-  packages: read
-
 # Keep backend service deployments sequential within each environment.
 concurrency:
   group: deploy-control-${{ github.event.inputs.environment }}
@@ -127,6 +122,10 @@ jobs:
   build-and-deploy:
     name: Build and deploy ${{ github.event.inputs.service }} to ${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      packages: read
     concurrency:
       group: deploy-service-${{ github.event.inputs.environment }}-${{ github.event.inputs.service }}
       cancel-in-progress: false
