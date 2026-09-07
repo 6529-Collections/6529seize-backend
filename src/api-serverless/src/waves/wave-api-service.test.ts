@@ -633,49 +633,52 @@ describe('WaveApiService updateWave immutability', () => {
     ).toHaveBeenCalledWith('wave-1', expect.objectContaining({ connection }));
   });
 
-  it('rejects subwave visibility updates that differ from the parent', async () => {
-    const parentWave = aWave(
-      {
-        visibility_group_id: 'parent-group'
-      },
-      {
-        id: 'parent-wave',
-        name: 'Parent Wave',
-        serial_no: 1
-      }
-    );
-    const waveBeforeUpdate = aWave(
-      {
-        created_by: 'profile-1',
-        parent_wave_id: parentWave.id,
-        visibility_group_id: 'parent-group'
-      },
-      {
-        id: 'subwave-1',
-        name: 'Subwave',
-        serial_no: 2
-      }
-    );
-    const { service, wavesApiDb, ctx } = createService({
-      waveBeforeUpdate,
-      eligibleGroups: ['parent-group']
-    });
-    wavesApiDb.findWaveByIdForUpdate
-      .mockResolvedValueOnce(waveBeforeUpdate)
-      .mockResolvedValue(parentWave);
+  it.each([null, 'different-group'])(
+    'allows subwave visibility updates to %s under a restricted parent',
+    async (visibilityGroupId) => {
+      const parentWave = aWave(
+        {
+          visibility_group_id: 'parent-group'
+        },
+        {
+          id: 'parent-wave',
+          name: 'Parent Wave',
+          serial_no: 1
+        }
+      );
+      const waveBeforeUpdate = aWave(
+        {
+          created_by: 'profile-1',
+          parent_wave_id: parentWave.id,
+          visibility_group_id: 'parent-group'
+        },
+        {
+          id: 'subwave-1',
+          name: 'Subwave',
+          serial_no: 2
+        }
+      );
+      const { service, wavesApiDb, ctx } = createService({
+        waveBeforeUpdate,
+        eligibleGroups: ['parent-group']
+      });
+      wavesApiDb.findWaveByIdForUpdate
+        .mockResolvedValueOnce(waveBeforeUpdate)
+        .mockResolvedValue(parentWave);
 
-    await expect(
-      service.updateWave(
-        'subwave-1',
-        updateRequest({ type: ApiWaveType.Chat }),
-        ctx
-      )
-    ).rejects.toThrow(`Subwave visibility must match parent wave visibility`);
+      await expect(
+        service.updateWave(
+          'subwave-1',
+          updateRequest({ type: ApiWaveType.Chat, visibilityGroupId }),
+          ctx
+        )
+      ).resolves.toEqual({ id: 'subwave-1' });
 
-    expect(wavesApiDb.deleteWave).not.toHaveBeenCalled();
-  });
+      expect(wavesApiDb.insertWave).toHaveBeenCalled();
+    }
+  );
 
-  it('rejects parent visibility updates while subwaves exist', async () => {
+  it('allows parent visibility updates while subwaves exist', async () => {
     const waveBeforeUpdate = aWave(
       {
         created_by: 'profile-1',
@@ -699,11 +702,9 @@ describe('WaveApiService updateWave immutability', () => {
         }),
         ctx
       )
-    ).rejects.toThrow(
-      `Parent wave visibility cannot be changed while it has subwaves`
-    );
+    ).resolves.toEqual({ id: 'parent-wave' });
 
-    expect(wavesApiDb.deleteWave).not.toHaveBeenCalled();
+    expect(wavesApiDb.insertWave).toHaveBeenCalled();
   });
 });
 
@@ -1211,31 +1212,37 @@ describe('WaveApiService subwave creation authorization', () => {
     ).rejects.toThrow(`Parent wave parent-wave not found`);
   });
 
-  it('rejects subwaves with visibility that differs from the parent', async () => {
-    const parentWave = aWave(
-      {
-        created_by: 'creator-profile',
-        visibility_group_id: 'parent-group'
-      },
-      {
-        id: 'parent-wave',
-        name: 'Parent Wave',
-        serial_no: 1
-      }
-    );
-    const { service } = createService({
-      parentWave,
-      eligibleGroups: ['parent-group']
-    });
+  it.each([null, 'different-group'])(
+    'allows subwaves with visibility %s under a restricted parent',
+    async (visibilityGroupId) => {
+      const parentWave = aWave(
+        {
+          created_by: 'creator-profile',
+          visibility_group_id: 'parent-group'
+        },
+        {
+          id: 'parent-wave',
+          name: 'Parent Wave',
+          serial_no: 1
+        }
+      );
+      const { service } = createService({
+        parentWave,
+        eligibleGroups: ['parent-group']
+      });
 
-    await expect(
-      (service as any).validateSubwaveCreationParent({
-        request,
-        actingAsId: 'creator-profile',
-        ctx: { timer: undefined }
-      })
-    ).rejects.toThrow(`Subwave visibility must match parent wave visibility`);
-  });
+      await expect(
+        (service as any).validateSubwaveCreationParent({
+          request: {
+            ...request,
+            visibility: { scope: { group_id: visibilityGroupId } }
+          },
+          actingAsId: 'creator-profile',
+          ctx: { timer: undefined }
+        })
+      ).resolves.toBeUndefined();
+    }
+  );
 
   it('rejects users who are neither parent creator nor parent admin', async () => {
     const parentWave = aWave(

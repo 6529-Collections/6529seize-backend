@@ -1,3 +1,4 @@
+import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import {
   ConnectionWrapper,
   dbSupplier,
@@ -82,7 +83,7 @@ export class ProfileWavesDb extends LazyDbAccessCompatibleService {
           from ${PROFILE_WAVES_TABLE} pw
           join ${WAVES_TABLE} w on w.id = pw.wave_id
           where pw.profile_id in (:profileIds)
-            and w.visibility_group_id is null
+            and ${waveReadAccessSql('w', false)}
             and (w.is_direct_message is null or w.is_direct_message = false)
         `,
         { profileIds },

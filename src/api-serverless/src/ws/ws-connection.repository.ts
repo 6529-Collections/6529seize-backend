@@ -177,6 +177,69 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   }
 
   async getCurrentlyOnlineCommunityMemberConnectionIds(
+    params: { groupId: string | null; waveId: string },
+    ctx: RequestContext
+  ) {
+    return this.getWaveRecipients(params.waveId, ctx, false);
+  }
+
+  async getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast(
+    params: { groupId: string | null; waveId: string },
+    ctx: RequestContext
+  ) {
+    return this.getWaveRecipients(params.waveId, ctx, true);
+  }
+
+  private async getWaveRecipients(
+    waveId: string,
+    ctx: RequestContext,
+    systemBroadcast: boolean
+  ) {
+    // Read both current groups: payloads and established subscriptions may be
+    // stale after either the parent or child changes its audience.
+    const wave = await this.db.oneOrNull<{
+      visibility_group_id: string | null;
+      parent_wave_id: string | null;
+      parent_id: string | null;
+      parent_parent_id: string | null;
+      parent_group_id: string | null;
+    }>(
+      `select w.visibility_group_id, w.parent_wave_id, p.id as parent_id,
+              p.parent_wave_id as parent_parent_id,
+              p.visibility_group_id as parent_group_id
+       from ${WAVES_TABLE} w left join ${WAVES_TABLE} p on p.id = w.parent_wave_id
+       where w.id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    // A parent that is itself a subwave would exceed the supported depth.
+    if (
+      !wave ||
+      (wave.parent_wave_id && (!wave.parent_id || wave.parent_parent_id))
+    ) {
+      return [];
+    }
+    const getRecipients = (groupId: string | null) =>
+      systemBroadcast
+        ? this.getGroupRecipientsForSystemBroadcast({ groupId, waveId }, ctx)
+        : this.getGroupRecipients({ groupId, waveId }, ctx);
+    const recipients = await getRecipients(wave.visibility_group_id);
+    if (
+      !wave.parent_group_id ||
+      wave.parent_group_id === wave.visibility_group_id
+    ) {
+      return recipients;
+    }
+    const parentRecipients = await getRecipients(wave.parent_group_id);
+    const permitted = new Set(
+      parentRecipients.map((recipient) => recipient.connectionId)
+    );
+    return recipients.filter((recipient) =>
+      permitted.has(recipient.connectionId)
+    );
+  }
+
+  private async getGroupRecipients(
     {
       groupId,
       waveId
@@ -257,17 +320,14 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     return result;
   }
 
-  async getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast(
+  private async getGroupRecipientsForSystemBroadcast(
     params: { groupId: string | null; waveId: string },
     ctx: RequestContext
   ): Promise<
     { connectionId: string; profileId: string | null; wave_id: string | null }[]
   > {
     if (params.groupId === null) {
-      return await this.getCurrentlyOnlineCommunityMemberConnectionIds(
-        params,
-        ctx
-      );
+      return await this.getGroupRecipients(params, ctx);
     }
     const viewResult =
       await this.userGroupsService.getSqlAndParamsByGroupIdForSystemBroadcast(

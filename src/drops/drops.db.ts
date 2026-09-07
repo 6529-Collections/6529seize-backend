@@ -1,3 +1,4 @@
+import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import {
   userGroupsService,
   UserGroupsService
@@ -473,14 +474,11 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   }
 
   private getVisibleWaveFilterSql(groupIdsUserIsEligibleFor: string[]): string {
-    return [
-      'w.visibility_group_id is null',
-      groupIdsUserIsEligibleFor.length
-        ? `w.visibility_group_id in (:groupsUserIsEligibleFor)`
-        : null
-    ]
-      .filter((it): it is string => !!it)
-      .join(' or ');
+    return waveReadAccessSql(
+      'w',
+      groupIdsUserIsEligibleFor.length > 0,
+      'groupsUserIsEligibleFor'
+    );
   }
 
   async insertDrop(
@@ -795,11 +793,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return this.db.oneOrNull<DropEntity>(
       `
         select d.* from ${DROPS_TABLE} d
-         join waves w on d.wave_id = w.id and (${
-           group_ids_user_is_eligible_for.length
-             ? `w.visibility_group_id in (:group_ids_user_is_eligible_for) or`
-             : ``
-         } w.visibility_group_id is null)
+         join waves w on d.wave_id = w.id and ${waveReadAccessSql('w', group_ids_user_is_eligible_for.length > 0, 'group_ids_user_is_eligible_for')}
          where d.id = :id
         `,
       {
@@ -884,11 +878,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          join ${
            UserGroupsService.GENERATED_VIEW
          } cm on cm.profile_id = d.author_id
-         join ${WAVES_TABLE} w on d.wave_id = w.id and (${
-           group_ids_user_is_eligible_for.length
-             ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or`
-             : ``
-         } w.visibility_group_id is null) ${wave_id ? `and w.id = :wave_id` : ``}
+         join ${WAVES_TABLE} w on d.wave_id = w.id and ${waveReadAccessSql('w', group_ids_user_is_eligible_for.length > 0, 'groupsUserIsEligibleFor')} ${wave_id ? `and w.id = :wave_id` : ``}
          where ${
            drop_type ? ` d.drop_type = :drop_type and ` : ``
          } d.serial_no < :serialNoLessThan ${
@@ -1218,11 +1208,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   ): Promise<{ id: string; serial_no: number }[]> {
     const sql = `select d.id, d.serial_no
       from ${DROPS_TABLE} d
-      join ${WAVES_TABLE} w on d.wave_id = w.id and (${
-        group_ids_user_is_eligible_for.length
-          ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or`
-          : ``
-      } w.visibility_group_id is null)
+      join ${WAVES_TABLE} w on d.wave_id = w.id and ${waveReadAccessSql('w', group_ids_user_is_eligible_for.length > 0, 'groupsUserIsEligibleFor')}
       where d.wave_id = :wave_id
         and d.serial_no >= :min_serial_no
         and d.serial_no <= :max_serial_no
@@ -1376,7 +1362,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         join ${DROPS_TABLE} d
           on d.id = dc.drop_id
           and d.wave_id = pw.wave_id
-        where w.visibility_group_id is null
+        where ${waveReadAccessSql('w', false)}
           and coalesce(w.is_direct_message, false) = false
         order by d.serial_no desc
         limit :limit offset :offset
@@ -3799,7 +3785,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         JOIN ${DROP_BOOSTS_TABLE} p on p.drop_id = d.id
         join ${WAVES_TABLE} w on w.id = d.wave_id
         where p.boosted_at > :count_only_boosts_after
-        and (w.visibility_group_id is null ${eligibile_groups.length ? `or w.visibility_group_id in (:eligibile_groups)` : ''})
+        and ${waveReadAccessSql('w', eligibile_groups.length > 0, 'eligibile_groups')}
         ${author_id ? ` and d.author_id = :author_id ` : ''}
         ${wave_id ? ` and d.wave_id = :wave_id ` : ''}
         group by 1, 2
@@ -3864,7 +3850,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         join ${DROP_BOOSTS_TABLE} p on p.drop_id = d.id
         join ${WAVES_TABLE} w on w.id = d.wave_id
         where p.boosted_at > :count_only_boosts_after
-        and (w.visibility_group_id is null ${eligibile_groups.length ? `or w.visibility_group_id in (:eligibile_groups)` : ''})
+        and ${waveReadAccessSql('w', eligibile_groups.length > 0, 'eligibile_groups')}
         ${author_id ? ` and d.author_id = :author_id ` : ''}
         ${wave_id ? ` and d.wave_id = :wave_id ` : ''}
         group by 1, 2 
