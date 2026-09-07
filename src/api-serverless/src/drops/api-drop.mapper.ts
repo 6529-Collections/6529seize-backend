@@ -15,6 +15,7 @@ import {
 import { NftLinkEntity } from '@/entities/INftLink';
 import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
 import { RequestContext } from '@/request.context';
+import { Logger } from '@/logging';
 import { collections } from '@/collections';
 import { enums } from '@/enums';
 import { env } from '@/env';
@@ -32,6 +33,7 @@ import { ApiDropNftLink } from '@/api/generated/models/ApiDropNftLink';
 import { ApiDropReactionCounter } from '@/api/generated/models/ApiDropReactionCounter';
 import { ApiDropReferencedNFT } from '@/api/generated/models/ApiDropReferencedNFT';
 import { ApiDropV2 } from '@/api/generated/models/ApiDropV2';
+import { ApiIdentityOverview } from '@/api/generated/models/ApiIdentityOverview';
 import { ApiDropV2ContextProfileContext } from '@/api/generated/models/ApiDropV2ContextProfileContext';
 import { ApiDropModerationStatus } from '@/api/generated/models/ApiDropModerationStatus';
 import { ApiIdentityWaveParticipation } from '@/api/generated/models/ApiIdentityWaveParticipation';
@@ -117,9 +119,12 @@ const PRIORITY_METADATA_ADDITIONAL_MEDIA_KEY = 'additional_media';
 
 export interface ApiDropMapperOptions {
   readonly groupIdsUserIsEligibleFor?: string[];
+  readonly includeLargestVote?: boolean;
 }
 
 export class ApiDropMapper {
+  private readonly logger = Logger.get(this.constructor.name);
+
   constructor(
     private readonly identityFetcher: IdentityFetcher,
     private readonly identitiesDb: IdentitiesDb,
@@ -348,7 +353,7 @@ export class ApiDropMapper {
       const priorityMetadataByDropId =
         this.mapPriorityMetadataByDropId(priorityMetadataRows);
 
-      return entities.reduce(
+      const dropsById = entities.reduce(
         (acc, drop) => {
           const participation = authorWaveParticipationByWave[drop.wave_id]?.[
             drop.author_id
@@ -409,8 +414,62 @@ export class ApiDropMapper {
         },
         {} as Record<string, ApiDropV2>
       );
+      if (options.includeLargestVote) {
+        await this.enrichLargestVotes(dropsById, authorsById, ctx);
+      }
+      return dropsById;
     } finally {
       ctx.timer?.stop(timerKey);
+    }
+  }
+
+  private async enrichLargestVotes(
+    dropsById: Record<string, ApiDropV2>,
+    knownIdentities: Record<string, ApiIdentityOverview>,
+    ctx: RequestContext
+  ): Promise<void> {
+    // Only mapped, visible submissions are eligible. SQL also checks RANK.
+    const dropIds = Object.values(dropsById)
+      .filter(
+        (drop) =>
+          drop.submission_context?.status === ApiSubmissionDropStatus.Active
+      )
+      .map((drop) => drop.id);
+    if (!dropIds.length) {
+      return;
+    }
+    try {
+      const rows = await this.dropVotingDb.getLargestDropVotes(dropIds, ctx);
+      const missingIdentityIds = collections.distinct(
+        rows
+          .map((row) => row.voter_id)
+          .filter((id) => !knownIdentities[id])
+      );
+      const identities = {
+        ...knownIdentities,
+        ...(missingIdentityIds.length
+          ? await this.identityFetcher.getApiIdentityOverviewsByIds(
+              missingIdentityIds,
+              ctx
+            )
+          : {})
+      };
+      for (const row of rows) {
+        const voting = dropsById[row.drop_id]?.submission_context?.voting;
+        const voter = identities[row.voter_id];
+        if (
+          !voting ||
+          !voter ||
+          !Number.isSafeInteger(row.vote) ||
+          row.vote === 0
+        ) {
+          continue;
+        }
+        voting.largest_vote = { voter, vote: row.vote };
+      }
+    } catch {
+      // Optional highlights must not prevent reading the underlying drops.
+      this.logger.warn('Drop vote summary unavailable');
     }
   }
 
