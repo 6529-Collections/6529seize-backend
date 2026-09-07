@@ -222,6 +222,9 @@ export class FeedApiService {
           return null;
         }
         if (drop.reply_to) {
+          if (!drops[drop.reply_to.drop_id]) {
+            return null;
+          }
           return {
             item: {
               reply: drop,
@@ -241,6 +244,9 @@ export class FeedApiService {
         const data = JSON.parse(activityEvent.data);
         const replyId = data.reply_id as string;
         const dropId = (data.drop_id ?? activityEvent.target_id) as string;
+        if (!drops[dropId] || !drops[replyId]) {
+          return null;
+        }
         return {
           item: {
             drop: drops[dropId],

@@ -212,6 +212,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       { waveId },
       { wrappedConnection: ctx.connection }
     );
+    // A parent that is itself a subwave would exceed the supported depth.
     if (
       !wave ||
       (wave.parent_wave_id && (!wave.parent_id || wave.parent_parent_id))
