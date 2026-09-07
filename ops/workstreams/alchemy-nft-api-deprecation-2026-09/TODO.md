@@ -100,6 +100,8 @@ The affected backend path is:
 - [ ] Re-scan production source for every endpoint name in Alchemy's notice.
 - [ ] Deploy service `api` for the proxy change. No database migration or loop
   deployment is expected for the minimal address-only migration.
+- [ ] Lambdas requiring redeployment: none; deployment order: N/A. The affected
+  proxy is deployed through service `api`, not a separately deployed Lambda.
 - [ ] Coordinate deployment ordering with FE: the backend route needed by the
   new frontend must exist first; obsolete route removal must not precede a
   still-live frontend/Core caller unless the release is atomic.
