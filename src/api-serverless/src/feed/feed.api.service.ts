@@ -205,6 +205,9 @@ export class FeedApiService {
     switch (action) {
       case ActivityEventAction.WAVE_CREATED: {
         const waveId = JSON.parse(activityEvent.data).wave_id as string;
+        if (!waves[waveId]) {
+          return null;
+        }
         return {
           item: waves[waveId],
           serial_no: eventId,

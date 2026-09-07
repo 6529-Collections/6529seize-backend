@@ -100,6 +100,29 @@ function createService(outsideGroupIds: readonly string[] = []) {
 }
 
 describe('Wave group View containment', () => {
+  it.each([false, true])(
+    'checks only the supplied Chat audience for subwave preview: %s',
+    async (outside) => {
+      const { service, userGroupsService } = createService(
+        outside ? [CHAT_GROUP_ID] : []
+      );
+      await expect(
+        service.validateWaveGroupContainmentPreview(
+          { visibility_group_id: VIEW_GROUP_ID, chat_group_id: CHAT_GROUP_ID },
+          null,
+          { timer: undefined }
+        )
+      ).resolves.toEqual(outside ? [ApiWaveGroupRole.Chat] : []);
+      expect(
+        userGroupsService.findGroupIdsWithMembersOutsideContainingGroup
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({ id: VIEW_GROUP_ID }),
+        [expect.objectContaining({ id: CHAT_GROUP_ID })],
+        expect.anything()
+      );
+    }
+  );
+
   it('fast-paths public View and identical groups', async () => {
     const { service, userGroupsService } = createService();
 
