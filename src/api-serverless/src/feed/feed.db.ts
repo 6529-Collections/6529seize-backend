@@ -1,3 +1,4 @@
+import { optionalWaveReadAccessSql } from '@/waves/wave-read-access-sql';
 import {
   ConnectionWrapper,
   dbSupplier,
@@ -36,6 +37,7 @@ export class FeedDb extends LazyDbAccessCompatibleService {
           ${visibilityFilter}
           )
       
+        AND ${optionalWaveReadAccessSql('ae.wave_id', params.visibility_group_ids.length > 0, 'visibility_group_ids')}
         AND (
           -- Subscribed events from other users
           (ae.action_author_id <> :subscriber_id
@@ -87,6 +89,7 @@ export class FeedDb extends LazyDbAccessCompatibleService {
       AND ae.visibility_group_id IS NULL
     
       AND ae.wave_id in (:wave_ids)
+      AND ${optionalWaveReadAccessSql('ae.wave_id', false)}
     
     ORDER BY ae.id DESC
     LIMIT :limit

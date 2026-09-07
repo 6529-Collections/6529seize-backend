@@ -1,3 +1,4 @@
+import { optionalWaveReadAccessSql } from '@/waves/wave-read-access-sql';
 import { sendIdentityPushNotification } from '../api-serverless/src/push-notifications/push-notifications.service';
 import {
   IDENTITIES_TABLE,
@@ -450,6 +451,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
             ? ` OR n.visibility_group_id IN (:eligible_group_ids) `
             : ``
         })
+        AND ${optionalWaveReadAccessSql('n.wave_id', param.eligible_group_ids.length > 0, 'eligible_group_ids')}
         ${causes ? ` AND n.cause IN (:causes)` : ``}
         ${causesExclude ? ` AND n.cause NOT IN (:causesExclude)` : ``}
         ${param.unread_only ? ` AND n.read_at IS NULL` : ``}
@@ -546,6 +548,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
                 ? ` OR n.visibility_group_id IN (:eligibleGroupIds) `
                 : ``
             })
+            AND ${optionalWaveReadAccessSql('n.wave_id', eligibleGroupIds.length > 0)}
             AND COALESCE(r.muted, FALSE) = FALSE
             AND m.id IS NULL
             AND b.id IS NULL
