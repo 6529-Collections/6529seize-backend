@@ -32,6 +32,11 @@ import { sqlExecutor } from '@/sql-executor';
 import { ethers } from 'ethers';
 import { env } from '@/env';
 import {
+  assertValidComputedMediaDetails,
+  getImageDetailIssues,
+  getAnimationDetailIssues
+} from '@/minting-claims/media-details-validation';
+import {
   memeCardDropMappingsDb,
   MemeCardDropMappingsDb
 } from '@/minting-claims/meme-card-drop-mappings.db';
@@ -41,23 +46,15 @@ const MEME_CALENDAR_TIMEOUT_MS = 10_000;
 
 async function resolveAnimationDetails(
   animationUrl: string,
-  existing: MintingClaimAnimationDetails | null | undefined
-): Promise<MintingClaimAnimationDetails | null | undefined> {
-  if (existing && 'format' in existing && existing.format === 'HTML') {
+  animationKind: MintingClaimRowInput['animation_kind']
+): Promise<MintingClaimAnimationDetails> {
+  if (animationKind === 'html') {
     return animationDetailsHtml();
   }
-  if (existing && 'format' in existing && existing.format === 'GLB') {
-    try {
-      return await computeAnimationDetailsGlb(animationUrl);
-    } catch {
-      return existing;
-    }
+  if (animationKind === 'glb') {
+    return await computeAnimationDetailsGlb(animationUrl);
   }
-  try {
-    return await computeAnimationDetailsVideo(animationUrl);
-  } catch {
-    return existing;
-  }
+  return await computeAnimationDetailsVideo(animationUrl);
 }
 
 function parseAirdropConfigFromMetadatas(
@@ -317,19 +314,18 @@ export class MintingClaimsService {
   ): Promise<MintingClaimRowInput> {
     let image_details = row.image_details;
     if (row.image_url) {
-      try {
-        image_details = await computeImageDetails(row.image_url);
-      } catch {
-        image_details = row.image_details;
-      }
+      image_details = await computeImageDetails(row.image_url);
+      assertValidComputedMediaDetails(getImageDetailIssues(image_details));
     }
     let animation_details = row.animation_details;
     if (row.animation_url) {
-      const resolved = await resolveAnimationDetails(
+      animation_details = await resolveAnimationDetails(
         row.animation_url,
-        row.animation_details ?? undefined
+        row.animation_kind
       );
-      animation_details = resolved ?? row.animation_details;
+      assertValidComputedMediaDetails(
+        getAnimationDetailIssues(animation_details)
+      );
     }
     return {
       ...row,
