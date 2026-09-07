@@ -32,6 +32,11 @@ import { sqlExecutor } from '@/sql-executor';
 import { ethers } from 'ethers';
 import { env } from '@/env';
 import {
+  assertValidComputedMediaDetails,
+  getImageDetailIssues,
+  getAnimationDetailIssues
+} from '@/minting-claims/media-details-validation';
+import {
   memeCardDropMappingsDb,
   MemeCardDropMappingsDb
 } from '@/minting-claims/meme-card-drop-mappings.db';
@@ -310,12 +315,16 @@ export class MintingClaimsService {
     let image_details = row.image_details;
     if (row.image_url) {
       image_details = await computeImageDetails(row.image_url);
+      assertValidComputedMediaDetails(getImageDetailIssues(image_details));
     }
     let animation_details = row.animation_details;
     if (row.animation_url) {
       animation_details = await resolveAnimationDetails(
         row.animation_url,
         row.animation_kind
+      );
+      assertValidComputedMediaDetails(
+        getAnimationDetailIssues(animation_details)
       );
     }
     return {
