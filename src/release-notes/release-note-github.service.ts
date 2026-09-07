@@ -641,6 +641,10 @@ export class ReleaseNoteGitHubService {
         `GitHub release run ${request.run_id} does not match the queued release metadata`
       );
     }
+    // Core release-note requests are HMAC-authenticated and enqueued upstream
+    // only after the production S3-links notification succeeds. The same
+    // workflow can still be running, or later fail in Arweave/CloudFront,
+    // without invalidating that completed S3 milestone.
     if (repoName !== CORE_REPO) {
       if (currentRun.status !== 'completed') {
         throw new Error(
