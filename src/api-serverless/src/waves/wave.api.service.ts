@@ -1016,10 +1016,6 @@ export class WaveApiService {
     if (visibleParentWave.parent_wave_id !== null) {
       throw new BadRequestException(`Subwaves cannot be parent waves`);
     }
-    this.assertSubwaveVisibilityMatchesParent({
-      requestedVisibilityGroupId: request.visibility.scope.group_id,
-      parentWave: visibleParentWave
-    });
     if (
       !isWaveCreatorOrAdmin({
         authenticatedProfileId: actingAsId,
@@ -1033,35 +1029,15 @@ export class WaveApiService {
     }
   }
 
-  private assertSubwaveVisibilityMatchesParent({
-    requestedVisibilityGroupId,
-    parentWave
-  }: {
-    requestedVisibilityGroupId: string | null;
-    parentWave: Pick<WaveEntity, 'visibility_group_id'>;
-  }) {
-    if (requestedVisibilityGroupId !== parentWave.visibility_group_id) {
-      throw new BadRequestException(
-        `Subwave visibility must match parent wave visibility`
-      );
-    }
-  }
-
-  private async validateWaveVisibilityInheritanceOnUpdate({
-    request,
+  private async validateWaveParentOnUpdate({
     waveBeforeUpdate,
     groupIdsUserIsEligibleFor,
     ctx
   }: {
-    request: ApiUpdateWaveRequest;
-    waveBeforeUpdate: Pick<
-      WaveEntity,
-      'id' | 'parent_wave_id' | 'visibility_group_id'
-    >;
+    waveBeforeUpdate: Pick<WaveEntity, 'id' | 'parent_wave_id'>;
     groupIdsUserIsEligibleFor: string[];
     ctx: RequestContextWithConnection;
   }) {
-    const requestedVisibilityGroupId = request.visibility.scope.group_id;
     const parentWaveId = waveBeforeUpdate.parent_wave_id;
     if (parentWaveId) {
       const parentWave = await assertWaveAndParentVisibleOrThrow({
@@ -1074,24 +1050,6 @@ export class WaveApiService {
       if (parentWave.parent_wave_id !== null) {
         throw new BadRequestException(`Subwaves cannot be parent waves`);
       }
-      this.assertSubwaveVisibilityMatchesParent({
-        requestedVisibilityGroupId,
-        parentWave
-      });
-      return;
-    }
-
-    if (requestedVisibilityGroupId === waveBeforeUpdate.visibility_group_id) {
-      return;
-    }
-    const subwaveIds = await this.wavesApiDb.findSubwaveIdsByParentWaveId(
-      waveBeforeUpdate.id,
-      ctx
-    );
-    if (subwaveIds.length) {
-      throw new BadRequestException(
-        `Parent wave visibility cannot be changed while it has subwaves`
-      );
     }
   }
 
@@ -2252,8 +2210,7 @@ export class WaveApiService {
           ctxWithConnection,
           waveBeforeUpdate
         );
-        await this.validateWaveVisibilityInheritanceOnUpdate({
-          request,
+        await this.validateWaveParentOnUpdate({
           waveBeforeUpdate,
           groupIdsUserIsEligibleFor: groupsUserIsEligibleFor,
           ctx: ctxWithConnection
