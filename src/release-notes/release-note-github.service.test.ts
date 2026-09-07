@@ -46,6 +46,60 @@ const currentRun = {
   conclusion: 'success'
 };
 
+const coreSha = '4444444444444444444444444444444444444444';
+
+const coreRequest: ReleaseNoteGenerationRequest = {
+  ...request,
+  repo: '6529-core',
+  workflow: 'Publish',
+  run_id: '900',
+  run_number: '328',
+  run_url: 'https://github.com/6529-Collections/6529-core/actions/runs/900',
+  sha: coreSha,
+  branch: 'v0.3.13',
+  service: 'desktop',
+  prompt_path: 'ops/release-notes/desktop-release-notes.prompt.md',
+  release_group_id: 'desktop-v0.3.13',
+  release_group_services: ['desktop'],
+  release_version: '0.3.13',
+  frontend_sha: '63630a3e27c37296bbe39d9813b014a824265a56'
+};
+
+const coreRun = {
+  id: 900,
+  display_title: 'FLOW: Publish / ENV: Production - v0.3.13',
+  path: '.github/workflows/build-all-platforms.yml',
+  head_branch: 'v0.3.13',
+  head_sha: coreSha,
+  run_number: 328,
+  workflow_id: 99,
+  status: 'completed',
+  conclusion: 'success'
+};
+
+const nonCoreRunCases = [
+  {
+    label: 'frontend',
+    releaseRequest: request,
+    run: currentRun
+  },
+  {
+    label: 'backend',
+    releaseRequest: {
+      ...request,
+      repo: '6529seize-backend',
+      workflow: 'Deploy a service',
+      branch: 'main'
+    },
+    run: {
+      ...currentRun,
+      name: 'Deploy api to prod',
+      display_title: 'Deploy api to prod',
+      path: '.github/workflows/deploy.yml'
+    }
+  }
+];
+
 describe('ReleaseNoteGitHubService', () => {
   const originalToken = process.env.RELEASE_NOTES_GITHUB_TOKEN;
 
@@ -629,6 +683,94 @@ describe('ReleaseNoteGitHubService', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it('accepts a Desktop S3 milestone while the later Arweave stage is still in progress', async () => {
+    (fetch as unknown as jest.Mock).mockResolvedValueOnce(
+      response({
+        ...coreRun,
+        status: 'in_progress',
+        conclusion: null
+      })
+    );
+
+    await expect(
+      new ReleaseNoteGitHubService().getValidatedReleaseRun(coreRequest)
+    ).resolves.toEqual({
+      id: '900',
+      run_number: 328,
+      workflow_id: '99',
+      sha: coreSha
+    });
+  });
+
+  it('accepts a Desktop S3 milestone after a later workflow stage fails', async () => {
+    (fetch as unknown as jest.Mock).mockResolvedValueOnce(
+      response({
+        ...coreRun,
+        display_title: 'FLOW: Build All / ENV: Production - v0.3.13',
+        conclusion: 'failure'
+      })
+    );
+
+    await expect(
+      new ReleaseNoteGitHubService().getValidatedReleaseRun({
+        ...coreRequest,
+        workflow: 'Build All'
+      })
+    ).resolves.toEqual(expect.objectContaining({ id: '900', sha: coreSha }));
+  });
+
+  it.each([
+    {
+      label: 'run id',
+      requestOverrides: {},
+      runOverrides: { id: 901 }
+    },
+    {
+      label: 'SHA',
+      requestOverrides: {},
+      runOverrides: {
+        head_sha: '5555555555555555555555555555555555555555'
+      }
+    },
+    {
+      label: 'workflow path',
+      requestOverrides: {},
+      runOverrides: { path: '.github/workflows/build-mac.yml' }
+    },
+    {
+      label: 'production environment',
+      requestOverrides: { environment: 'staging' },
+      runOverrides: {}
+    },
+    {
+      label: 'allowed flow',
+      requestOverrides: { workflow: 'MacOS' },
+      runOverrides: {
+        display_title: 'FLOW: MacOS / ENV: Production - v0.3.13'
+      }
+    }
+  ])(
+    'rejects Desktop S3 metadata with an invalid $label',
+    async ({ requestOverrides, runOverrides }) => {
+      (fetch as unknown as jest.Mock).mockResolvedValueOnce(
+        response({
+          ...coreRun,
+          status: 'in_progress',
+          conclusion: null,
+          ...runOverrides
+        })
+      );
+
+      await expect(
+        new ReleaseNoteGitHubService().getValidatedReleaseRun({
+          ...coreRequest,
+          ...requestOverrides
+        })
+      ).rejects.toBeInstanceOf(UntrustedReleaseNoteMetadataError);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    }
+  );
+
   it('rejects a frontend release from another current workflow path', async () => {
     (fetch as unknown as jest.Mock).mockResolvedValueOnce(
       response({
@@ -739,26 +881,45 @@ describe('ReleaseNoteGitHubService', () => {
     );
   });
 
-  it('keeps an in-progress current run retryable', async () => {
-    (fetch as unknown as jest.Mock).mockResolvedValueOnce(
-      response({ ...currentRun, status: 'in_progress', conclusion: null })
-    );
+  it.each(nonCoreRunCases)(
+    'keeps an in-progress $label release run retryable',
+    async ({ releaseRequest, run }) => {
+      (fetch as unknown as jest.Mock).mockResolvedValueOnce(
+        response({ ...run, status: 'in_progress', conclusion: null })
+      );
 
-    let thrown: unknown;
-    try {
-      await new ReleaseNoteGitHubService().getValidatedReleaseRun(request);
-    } catch (error) {
-      thrown = error;
+      let thrown: unknown;
+      try {
+        await new ReleaseNoteGitHubService().getValidatedReleaseRun(
+          releaseRequest
+        );
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(Error);
+      expect(thrown).not.toBeInstanceOf(NonRetryableReleaseNoteError);
+      expect(thrown).toEqual(
+        expect.objectContaining({
+          message: 'GitHub release run 123 is still in_progress'
+        })
+      );
     }
+  );
 
-    expect(thrown).toBeInstanceOf(Error);
-    expect(thrown).not.toBeInstanceOf(NonRetryableReleaseNoteError);
-    expect(thrown).toEqual(
-      expect.objectContaining({
-        message: 'GitHub release run 123 is still in_progress'
-      })
-    );
-  });
+  it.each(nonCoreRunCases)(
+    'continues rejecting a completed unsuccessful $label release run',
+    async ({ releaseRequest, run }) => {
+      (fetch as unknown as jest.Mock).mockResolvedValueOnce(
+        response({ ...run, status: 'completed', conclusion: 'failure' })
+      );
+
+      await expect(
+        new ReleaseNoteGitHubService().getValidatedReleaseRun(releaseRequest)
+      ).rejects.toBeInstanceOf(UntrustedReleaseNoteMetadataError);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    }
+  );
 
   it('does not use a custom-named run from another workflow path', async () => {
     (fetch as unknown as jest.Mock)
