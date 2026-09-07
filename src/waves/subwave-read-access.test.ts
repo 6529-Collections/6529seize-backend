@@ -98,6 +98,20 @@ describeWithSeed(
     }
   ],
   () => {
+    const originalNotifierActivated = process.env.USER_NOTIFIER_ACTIVATED;
+
+    beforeEach(() => {
+      process.env.USER_NOTIFIER_ACTIVATED = 'true';
+    });
+
+    afterEach(() => {
+      if (originalNotifierActivated === undefined) {
+        delete process.env.USER_NOTIFIER_ACTIVATED;
+      } else {
+        process.env.USER_NOTIFIER_ACTIVATED = originalNotifierActivated;
+      }
+    });
+
     it.each([
       { groups: [], ids: [] },
       { groups: ['child-group'], ids: [] },
@@ -210,7 +224,7 @@ describeWithSeed(
     });
 
     it('filters notification rows and unread counts using current parent access', async () => {
-      await notifications.insertManyNotifications(
+      const insertedIds = await notifications.insertManyNotifications(
         children.map((wave) => ({
           identity_id: author.profile_id!,
           additional_identity_id: null,
@@ -224,6 +238,7 @@ describeWithSeed(
           wave_id: wave.id
         }))
       );
+      expect(insertedIds).toHaveLength(children.length);
       for (const groups of [
         [],
         ['child-group'],
