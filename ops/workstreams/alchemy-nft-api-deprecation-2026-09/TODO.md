@@ -1,6 +1,6 @@
 # Alchemy NFT API deprecation TODO
 
-Status: Open
+Status: Address-only implementation complete; deployment and manual acceptance pending
 
 Deadline: September 30, 2026
 
@@ -18,7 +18,7 @@ Sources:
 - [V3 `getNFTsForOwner`](https://www.alchemy.com/docs/reference/nft-api-endpoints/nft-api-endpoints/nft-ownership-endpoints/get-nf-ts-for-owner-v-3)
 - [Current NFT API endpoint inventory](https://www.alchemy.com/docs/reference/nft-api-endpoints)
 
-## Audit result
+## Original audit result (before implementation)
 
 | Deprecated endpoint family | Repository status | Assessment |
 | --- | --- | --- |
@@ -43,79 +43,26 @@ The affected backend path is:
 3. The frontend uses this route as failover for its local free-text collection
    search. Core contains the same client path through its imported renderer.
 
-## Required TODOs
+## Implementation checklist
 
-### 1. Agree the cross-repository replacement contract
+- [x] Remove the sole caller and wrapper method for Alchemy collection search.
+- [x] Keep the legacy search route as a non-cacheable HTTP 410 retirement response.
+- [x] Retain the contract-address endpoint and its existing response/cache semantics.
+- [x] Eliminate the search array/envelope mismatch by removing FE search failover.
+- [x] Cover retirement, invalid input, metadata, provider errors, and the retained wrapper.
+- [x] Update the architecture and wrapper documentation.
+- [x] Add [Actual changes](ACTUAL_CHANGES.md) and [What to test](WHAT_TO_TEST.md).
+- [ ] Complete manual acceptance on the deployed environment.
+- [ ] Deploy service `api`; no migration or ingestion/loop Lambda deployment.
+- [ ] Coordinate FE rollout and subsequent Core sync/release before September 30.
+- [ ] Obtain the external allowlist-service owner's audit of
+  `POST /other/search-contract-metadata` and `GET /other/contract-metadata/{contract}`.
+  That service source is outside these repositories.
 
-- [ ] Choose one behavior with FE before changing the backend route:
-  - **Recommended minimal migration:** retire
-    `/alchemy-proxy/collections`; require a valid contract address and reuse
-    `/alchemy-proxy/contract`, which already calls V3 `getContractMetadata`.
-  - **Preserve keyword discovery:** implement a separately selected search
-    provider or a 6529-owned indexed catalogue. Do not pass arbitrary text to
-    `getContractMetadata`; `contractAddress` is required.
-- [ ] Decide whether the old `/collections` route is removed, returns a clear
-  terminal migration error for a bounded compatibility period, or is replaced
-  by a new explicitly documented search contract.
-- [ ] Identify any consumers other than the in-repository FE/Core failover
-  client before retiring the runtime-only route.
+No new public API or schema is introduced, so OpenAPI regeneration is not needed.
+The implementation retires a legacy route and preserves its existing error shape.
 
-### 2. Remove the deprecated implementation
-
-- [ ] Remove `AlchemyNftClient.searchContractMetadata` from
-  `src/alchemy-sdk.ts` once its final caller is gone.
-- [ ] Remove or replace `GET /alchemy-proxy/collections` in
-  `src/api-serverless/src/alchemy-proxy/alchemy-proxy.routes.ts`.
-- [ ] Remove the `searchContractMetadata` unit case from
-  `src/alchemy-sdk.test.ts` and add focused coverage for the chosen replacement
-  route or retirement behavior.
-- [ ] Update `docs/alchemy-sdk-removal.md`, which currently lists
-  `searchContractMetadata` as part of the supported in-tree wrapper surface.
-- [ ] Keep `/alchemy-proxy/contract` on V3 `getContractMetadata`; its address
-  validation, checksum normalization, cache, 404-to-null behavior, and
-  `_checksum` response field remain relevant.
-
-### 3. Correct the first-party response contract
-
-- [ ] Fix or eliminate the current shape mismatch during migration. The
-  in-tree Alchemy wrapper unwraps `{ contracts: [...] }` to an array, and the
-  backend proxy returns that array. FE/Core's fallback parser expects an
-  `AlchemySearchResponse` envelope and reads `.contracts`, so a successful
-  fallback response can become an empty result.
-- [ ] If keyword discovery remains, define one canonical result envelope,
-  pagination contract, spam semantics, and error status across the primary
-  frontend route and backend failover route.
-- [ ] If a replacement becomes a supported 6529 public API rather than a
-  runtime-only proxy, add it to `src/api-serverless/openapi.yaml`, regenerate
-  backend artifacts, and synchronize/regenerate the frontend OpenAPI client as
-  required by repository policy.
-
-### 4. Validate and deploy before September 30
-
-- [ ] Add route tests for invalid input, a valid address or search query,
-  upstream errors, response shape, cache behavior, and the selected
-  compatibility behavior.
-- [ ] Run focused wrapper/API tests plus the backend lint/build checks required
-  by the implementation diff.
-- [ ] Re-scan production source for every endpoint name in Alchemy's notice.
-- [ ] Deploy service `api` for the proxy change. No database migration or loop
-  deployment is expected for the minimal address-only migration.
-- [ ] Lambdas requiring redeployment: none; deployment order: N/A. The affected
-  proxy is deployed through service `api`, not a separately deployed Lambda.
-- [ ] Coordinate deployment ordering with FE: the backend route needed by the
-  new frontend must exist first; obsolete route removal must not precede a
-  still-live frontend/Core caller unless the release is atomic.
-- [ ] Confirm Core receives the matching FE behavior through its renderer sync.
-
-## External dependency follow-up
-
-- [ ] Ask the owner of the separately deployed allowlist service behind FE's
-  `ALLOWLIST_API_ENDPOINT` to audit
-  `POST /other/search-contract-metadata` and
-  `GET /other/contract-metadata/{contract}`. Their implementation is not in
-  this backend repository, so its Alchemy usage cannot be proven here.
-
-## Exactness and logic assessment
+## Original exactness and logic assessment
 
 - `getContractMetadata` is already an exact endpoint-level match for address
   lookup. It receives `contractAddress`; its returned metadata is forwarded to

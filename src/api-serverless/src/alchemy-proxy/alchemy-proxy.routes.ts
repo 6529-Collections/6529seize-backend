@@ -33,31 +33,14 @@ function checksumAddress(address: string): string | null {
   }
 }
 
-router.get(
-  '/collections',
-  cacheRequest({ ttl: Time.minutes(1) }),
-  async (req: Request, res: Response) => {
-    const query = (req.query.query as string)?.trim();
-    if (!query) {
-      return res.status(400).json({ error: 'query is required' });
-    }
-
-    try {
-      const chain = (req.query.chain as string) ?? 'ethereum';
-      const network = resolveNetwork(chain);
-      const alchemy = getAlchemyInstance(network);
-
-      const result = await alchemy.nft.searchContractMetadata(query);
-      return res.json(result);
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : 'Failed to search NFT collections';
-      return res.status(400).json({ error: message });
-    }
-  }
-);
+// Keep a terminal response for older clients without contacting the retired API.
+router.get('/collections', (_req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store');
+  return res.status(410).json({
+    error:
+      'Collection name search is no longer available. Use a contract address.'
+  });
+});
 
 router.get(
   '/contract',
