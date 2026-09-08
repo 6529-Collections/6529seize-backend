@@ -24,6 +24,7 @@ import { WaveLeaderboardEntryEntity } from '../../../entities/IWaveLeaderboardEn
 import { DropType } from '../../../entities/IDrop';
 import { DbPoolName } from '../../../db-query.options';
 import { WinnerDropVoterVoteEntity } from '../../../entities/IWinnerDropVoterVote';
+import { WaveType } from '@/entities/IWave';
 import mysql from 'mysql';
 
 type MergedDropRealVoterVoteChange = {
@@ -32,6 +33,26 @@ type MergedDropRealVoterVoteChange = {
   voter_id: string;
   vote: number;
   timestamp: number;
+};
+
+export interface DropVoteSummaryVoter {
+  readonly drop_id: string;
+  readonly voter_id: string;
+  readonly vote: number;
+}
+
+export interface DropVoteDistributionRow extends DropVoteSummaryVoter {
+  readonly positive_total: number;
+  readonly negative_total: number;
+}
+
+type DropVoteSummaryVoterDbRow = Omit<DropVoteSummaryVoter, 'vote'> & {
+  vote: number | string;
+};
+
+type DropVoteDistributionDbRow = DropVoteSummaryVoterDbRow & {
+  positive_total: number | string;
+  negative_total: number | string;
 };
 
 export interface DropSubmissionVotingSummary {
@@ -529,6 +550,148 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
         .join(', ')}
     `;
     await this.db.execute(sql, undefined, queryOptions);
+  }
+
+  public async getLargestDropVotes(
+    dropIds: readonly string[],
+    ctx: RequestContext
+  ): Promise<DropVoteSummaryVoter[]> {
+    if (!dropIds.length) {
+      return [];
+    }
+    const timerKey = `${this.constructor.name}->getLargestDropVotes`;
+    try {
+      ctx.timer?.start(timerKey);
+      const rows = await this.db.execute<DropVoteSummaryVoterDbRow>(
+        `
+        with extrema as (
+          select
+            s.drop_id,
+            min(s.votes) as min_vote,
+            max(s.votes) as max_vote
+          from ${DROP_VOTER_STATE_TABLE} s
+          where s.drop_id in (:dropIds)
+          group by s.drop_id
+        ),
+        eligible_extrema as (
+          select e.drop_id, e.min_vote, e.max_vote
+          from extrema e
+          join ${DROPS_TABLE} d on d.id = e.drop_id
+          join ${WAVES_TABLE} w on w.id = d.wave_id
+          where d.drop_type = '${DropType.PARTICIPATORY}'
+            and w.type = '${WaveType.RANK}'
+            and (e.min_vote <> 0 or e.max_vote <> 0)
+        ),
+        extreme_voters as (
+          select
+            e.*,
+            (
+              select s.voter_id
+              from ${DROP_VOTER_STATE_TABLE} s
+              where s.drop_id = e.drop_id and s.votes = e.min_vote
+              order by s.voter_id asc
+              limit 1
+            ) as min_voter_id,
+            (
+              select s.voter_id
+              from ${DROP_VOTER_STATE_TABLE} s
+              where s.drop_id = e.drop_id and s.votes = e.max_vote
+              order by s.voter_id asc
+              limit 1
+            ) as max_voter_id
+          from eligible_extrema e
+        ),
+        selected_extrema as (
+          select
+            e.*,
+            abs(e.min_vote) > abs(e.max_vote)
+              or (
+                abs(e.min_vote) = abs(e.max_vote)
+                and e.min_voter_id < e.max_voter_id
+              ) as use_min
+          from extreme_voters e
+        )
+        select
+          drop_id,
+          if(use_min, min_voter_id, max_voter_id) as voter_id,
+          if(use_min, min_vote, max_vote) as vote
+        from selected_extrema
+      `,
+        { dropIds },
+        { wrappedConnection: ctx.connection }
+      );
+      return rows.map((row) => ({ ...row, vote: Number(row.vote) }));
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  public async getDropVoteDistribution(
+    dropId: string,
+    ctx: RequestContext
+  ): Promise<DropVoteDistributionRow[]> {
+    if (!dropId) {
+      return [];
+    }
+    const timerKey = `${this.constructor.name}->getDropVoteDistribution`;
+    try {
+      ctx.timer?.start(timerKey);
+      const rows = await this.db.execute<DropVoteDistributionDbRow>(
+        `
+        with eligible_drop as (
+          select d.id
+          from ${DROPS_TABLE} d
+          join ${WAVES_TABLE} w on w.id = d.wave_id
+          where d.id = :dropId
+            and d.drop_type = '${DropType.PARTICIPATORY}'
+            and w.type = '${WaveType.RANK}'
+        ),
+        totals as (
+          select
+            sum(case when s.votes > 0 then s.votes else 0 end) as positive_total,
+            sum(case when s.votes < 0 then s.votes else 0 end) as negative_total
+          from ${DROP_VOTER_STATE_TABLE} s
+          join eligible_drop e on e.id = s.drop_id
+          where s.votes <> 0
+        ),
+        positive_votes as (
+          select s.drop_id, s.voter_id, s.votes as vote
+          from ${DROP_VOTER_STATE_TABLE} s
+          join eligible_drop e on e.id = s.drop_id
+          where s.votes > 0
+          order by s.votes desc, s.voter_id asc
+          limit 3
+        ),
+        negative_votes as (
+          select s.drop_id, s.voter_id, s.votes as vote
+          from ${DROP_VOTER_STATE_TABLE} s
+          join eligible_drop e on e.id = s.drop_id
+          where s.votes < 0
+          order by s.votes asc, s.voter_id asc
+          limit 3
+        ),
+        top_votes as (
+          select drop_id, voter_id, vote from positive_votes
+          union all
+          select drop_id, voter_id, vote from negative_votes
+        )
+        select v.drop_id, v.voter_id, v.vote, t.positive_total, t.negative_total
+        from top_votes v
+        cross join totals t
+        order by abs(v.vote) desc, v.voter_id asc
+      `,
+        { dropId },
+        { wrappedConnection: ctx.connection }
+      );
+      return rows.map((row) => ({
+        ...row,
+        vote: Number(row.vote),
+        positive_total: Number(row.positive_total),
+        negative_total: Number(row.negative_total)
+      }));
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
   }
 
   public async getTallyForDrops(
