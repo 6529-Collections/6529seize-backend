@@ -134,6 +134,15 @@ case "$command_name" in
       echo "Usage: \`6529 exec <binary>\`" >&2
       exit 1
     fi
+    if [[ "$1" == "6529-release-request" ]]; then
+      release_request_cli="$REPO_ROOT/node_modules/@6529-collections/release-request/bin/6529-release-request.mjs"
+      if [[ ! -x "$release_request_cli" ]]; then
+        echo "The local release-request CLI is missing. Run \`./bin/6529 ci\` from the repository root." >&2
+        exit 1
+      fi
+      shift
+      exec "$release_request_cli" "$@"
+    fi
     exec "$REAL_COREPACK" npm exec -- "$@"
     ;;
   npm:version)

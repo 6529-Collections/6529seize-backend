@@ -389,6 +389,33 @@ flags remain intersected with View eligibility if group criteria later drift.
 
 The waves v2 read boundary keeps timeline, reply-thread, and curation feeds as separate contracts. `/v2/waves/{id}/drops` returns the wave timeline feed, `/v2/drops/{id}/replies` returns the reply thread for a root drop after resolving its owning visible wave, and `/v2/waves/{id}/curations/{curation_id}/drops` returns drops for one wave curation.
 
+Current vote-allocation summaries use separate card and detail read paths.
+V2 rank-wave leaderboard responses can add an optional
+`submission_context.voting.largest_vote` to visible active participatory
+submissions. This is one voter's current signed allocation with the greatest
+absolute size, not necessarily a positive vote. The mapper batches the
+extrema lookup for the page and hydrates the selected voter identities;
+unavailable highlights do not prevent reading the leaderboard.
+
+`GET /v2/drops/{id}/vote-summary` returns an optional `vote_distribution` with
+complete signed positive and negative totals and at most three individual
+allocations per direction. It checks the existing wave-read eligibility and
+drop moderation presentation before querying voter state. Missing or
+inaccessible drops return 404; unsupported drops, content the viewer cannot
+see, and drops without nonzero allocations omit the distribution. Both
+summary paths are limited to `PARTICIPATORY` drops in `RANK` waves, excluding
+winner snapshots. Ordinary single-drop GETs and voter-list endpoints remain
+unchanged. These amounts are current allocations, not vote-edit deltas or
+time-weighted scores; vote writes, ranking, and score calculations are
+unchanged.
+
+These read-only summaries query `drop_voter_states`; the schema already
+defines a `(drop_id, votes, voter_id)` index. They add no tables, jobs, writes,
+or backend cache. The detail response is bounded to six voter entries, but
+exact totals still aggregate the drop's current nonzero allocations. Query-plan and
+production-load performance have not been measured; bounded response size is
+not a constant-cost query guarantee.
+
 For the wave configured by `MAIN_STAGE_WAVE_ID`, v2 winning-drop responses can
 also expose an optional Meme card ID through their submission context. The
 public `/meme-cards/{id}/drop` lookup provides the reverse link. Both directions
