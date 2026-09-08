@@ -15,5 +15,5 @@ src/*/.serverless-offline
 *.ignore
 /temp
 .staging-db-dump/
-/.release-coordinator/runs/
-/.release-coordinator/outbox/
+**/.release-coordinator/runs/
+**/.release-coordinator/outbox/
