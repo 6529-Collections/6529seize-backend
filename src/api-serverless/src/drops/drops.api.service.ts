@@ -873,7 +873,8 @@ export class DropsApiService {
     const leaderboard = await this.findLeaderboardData(params, ctx);
     const dropsById = await this.apiDropMapper.mapDrops(
       leaderboard.dropEntities,
-      ctx
+      ctx,
+      { includeLargestVote: leaderboard.waveType === WaveType.RANK }
     );
     return {
       wave: leaderboard.wave,
@@ -889,6 +890,7 @@ export class DropsApiService {
     ctx: RequestContext
   ): Promise<{
     wave: ApiWaveMin;
+    waveType: WaveType;
     dropEntities: DropEntity[];
     count: number;
     next: boolean;
@@ -1002,6 +1004,7 @@ export class DropsApiService {
     );
     return {
       wave: waveMin,
+      waveType: visibleWaveEntity.type,
       dropEntities,
       count: count,
       next: count > params.page_size * params.page

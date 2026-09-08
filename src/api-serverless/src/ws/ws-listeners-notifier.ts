@@ -564,8 +564,13 @@ export class WsListenersNotifier {
     waveId: string;
   }) {
     const connectionIds = await this.wsConnectionRepository
-      .findAllByWaveId(waveId)
-      .then((res) => res.map((it) => it.connection_id));
+      .getCurrentlyOnlineCommunityMemberConnectionIds(
+        { waveId, groupId: null },
+        {}
+      )
+      .then((res) =>
+        res.filter((it) => it.wave_id === waveId).map((it) => it.connectionId)
+      );
     if (!connectionIds.length) {
       return;
     }

@@ -38,6 +38,7 @@ import { ApiDropV2Page } from '@/api/generated/models/ApiDropV2Page';
 import { ApiDropV2PageWithoutCount } from '@/api/generated/models/ApiDropV2PageWithoutCount';
 import { ApiDropVoteEditLog } from '@/api/generated/models/ApiDropVoteEditLog';
 import { ApiDropVotersPage } from '@/api/generated/models/ApiDropVotersPage';
+import { ApiDropVoteSummary } from '@/api/generated/models/ApiDropVoteSummary';
 import { ApiEulaConsent } from '@/api/generated/models/ApiEulaConsent';
 import { ApiGlobalRepCategoryGiversPage } from '@/api/generated/models/ApiGlobalRepCategoryGiversPage';
 import { ApiGlobalRepCategoryOverview } from '@/api/generated/models/ApiGlobalRepCategoryOverview';
@@ -920,6 +921,22 @@ export type GetDropRepliesV2Request = Request<
   ApiResponse<GetDropRepliesV2Response>,
   never,
   GetDropRepliesV2Query,
+  Record<string, never>
+>;
+
+export interface GetDropV2VoteSummaryByIdPathParams {
+  "id": string;
+}
+
+export type GetDropV2VoteSummaryByIdQuery = Record<string, never>;
+
+export type GetDropV2VoteSummaryByIdResponse = ApiDropVoteSummary;
+
+export type GetDropV2VoteSummaryByIdRequest = Request<
+  GetDropV2VoteSummaryByIdPathParams,
+  ApiResponse<GetDropV2VoteSummaryByIdResponse>,
+  never,
+  GetDropV2VoteSummaryByIdQuery,
   Record<string, never>
 >;
 

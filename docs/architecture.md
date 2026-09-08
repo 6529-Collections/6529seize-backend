@@ -373,7 +373,7 @@ Important API responsibilities:
   clients that synchronize unread state through WebSockets.
 - Authenticated social writes: drops, votes, reactions, curations, subscriptions, groups, proxies, profile CMS package drafts/publish actions, minting claims, and push settings.
 - `@help6529` trigger detection after drop creation. The API writes a durable `help_bot_interactions` row, reacts with the bot's seen marker, and enqueues the reply worker when the `help6529` profile exists.
-- Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments. When `DROP_MEDIA_SANITIZE_IMAGES=true`, drop/wave image multipart uploads complete into private ingest storage, return `media_status=processing`, and publish a `DROP_UPDATE` websocket event with reason `MEDIA_STATUS` after the sanitizer marks the media ready or failed.
+- Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments. When `DROP_MEDIA_SANITIZE_IMAGES=true`, drop/wave image multipart uploads complete into private ingest storage, return `media_status=processing`, and publish a `DROP_UPDATE` websocket event with reason `MEDIA_STATUS` after the sanitizer marks the media ready or failed. Participatory drops in the configured Main Stage wave accept managed-CDN GLB media and verify each stored S3 object's authoritative size is no more than 250 MB (250,000,000 bytes) before attachment.
 - WebSocket connection registration and real-time wave-related messages.
 - Operational endpoints such as health, docs, RPC/proxy routes, webhooks, and deploy-related routes.
 
@@ -388,6 +388,33 @@ are checked before replacing a Wave-referenced group, and runtime privilege
 flags remain intersected with View eligibility if group criteria later drift.
 
 The waves v2 read boundary keeps timeline, reply-thread, and curation feeds as separate contracts. `/v2/waves/{id}/drops` returns the wave timeline feed, `/v2/drops/{id}/replies` returns the reply thread for a root drop after resolving its owning visible wave, and `/v2/waves/{id}/curations/{curation_id}/drops` returns drops for one wave curation.
+
+Current vote-allocation summaries use separate card and detail read paths.
+V2 rank-wave leaderboard responses can add an optional
+`submission_context.voting.largest_vote` to visible active participatory
+submissions. This is one voter's current signed allocation with the greatest
+absolute size, not necessarily a positive vote. The mapper batches the
+extrema lookup for the page and hydrates the selected voter identities;
+unavailable highlights do not prevent reading the leaderboard.
+
+`GET /v2/drops/{id}/vote-summary` returns an optional `vote_distribution` with
+complete signed positive and negative totals and at most three individual
+allocations per direction. It checks the existing wave-read eligibility and
+drop moderation presentation before querying voter state. Missing or
+inaccessible drops return 404; unsupported drops, content the viewer cannot
+see, and drops without nonzero allocations omit the distribution. Both
+summary paths are limited to `PARTICIPATORY` drops in `RANK` waves, excluding
+winner snapshots. Ordinary single-drop GETs and voter-list endpoints remain
+unchanged. These amounts are current allocations, not vote-edit deltas or
+time-weighted scores; vote writes, ranking, and score calculations are
+unchanged.
+
+These read-only summaries query `drop_voter_states`; the schema already
+defines a `(drop_id, votes, voter_id)` index. They add no tables, jobs, writes,
+or backend cache. The detail response is bounded to six voter entries, but
+exact totals still aggregate the drop's current nonzero allocations. Query-plan and
+production-load performance have not been measured; bounded response size is
+not a constant-cost query guarantee.
 
 For the wave configured by `MAIN_STAGE_WAVE_ID`, v2 winning-drop responses can
 also expose an optional Meme card ID through their submission context. The
@@ -652,7 +679,11 @@ Important details:
 - `claimsBuilder` consumes `{ drop_id }`, then calls the minting-claim service to create the missing claim from the winning drop.
 - `claims-media-arweave-upload` messages are produced by the API only after the claim row is locked with `media_uploading=true`.
 - If media upload enqueueing fails, the API tries to roll `media_uploading` back to `false`.
-- `claimsMediaArweaveUploader` consumes `{ contract, claim_id }`, re-fetches the claim, uploads media and metadata to Arweave, then stores Arweave transaction ids back on the claim row.
+- Media inspection, claim creation, and MEMES publication readiness share media-detail validation: binary media needs positive bytes within the limit and a SHA-256 digest; images/video need positive dimensions, and video also needs positive duration and non-empty codecs. Inspection and publication share the same 250 MB (250,000,000 bytes) ceiling as Main Stage submission attachment.
+- `claimsMediaArweaveUploader` consumes `{ contract, claim_id }`, re-fetches the claim, uploads media and metadata to Arweave, and checkpoints image and animation transaction ids before uploading metadata. On SQS redelivery it re-downloads each source to verify the stored SHA-256 and reuses a matching checkpoint transaction instead of uploading a duplicate. Retryable failures keep `media_uploading=true`; terminal validation failures and the final configured queue attempt clear the flag.
+- Claim building completes image and animation inspection and validates the computed results before inserting the claim row. Invalid results fail creation even if the inspector returned successfully. Inspection failures are alerted by `claimsBuilder` and retried by SQS; they do not create a row containing placeholder details. This is a media-only gate, not final publication readiness: editable draft fields can remain incomplete, and HTML retains its format-only details.
+- GLB inspection validates the actual binary container (magic, version, declared length, aligned/bounded chunks, JSON asset version, and embedded BIN length/padding), rather than trusting the filename or MIME type. Publication repeats this check on fetched GLB bytes before animation upload or checkpoint reuse, including for older claims. This does not validate scene semantics or fetch/validate external dependencies. Spec-permitted unknown chunks and external references remain supported.
+- Roll out this media contract downstream-first: `claimsMediaArweaveUploader`, then `claimsBuilder`, then `api`, then the matching frontend. This updates the consumers' ceiling and validation before producers admit larger media. There is no schema migration or automatic repair of old invalid claims.
 
 ## Deployment Model
 

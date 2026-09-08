@@ -1,6 +1,7 @@
 import {
   CreateOrUpdateDropModel,
   CreateOrUpdateDropPartModel,
+  DropMediaModel,
   DropPartIdentifierModel,
   DropReferencedNftModel
 } from './create-or-update-drop.model';
@@ -112,6 +113,7 @@ import {
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-media';
 import { Logger } from '@/logging';
+import { validateMainStageMediaSize } from '@/drops/main-stage-media-validator';
 import { RequestContext } from '@/request.context';
 import {
   getPrePublicationContentFingerprint,
@@ -217,9 +219,17 @@ export function validateDropMediaAttachment({
   const parsedUrl = parseDropMediaUrl(url);
 
   if (
+    mimeType === 'model/gltf-binary' &&
+    !parsedUrl.pathname.toLowerCase().endsWith('.glb')
+  ) {
+    throw new BadRequestException('GLB media must use a .glb filename');
+  }
+
+  if (
     mimeType.startsWith('image/') ||
     mimeType.startsWith('video/') ||
-    mimeType.startsWith('audio/')
+    mimeType.startsWith('audio/') ||
+    mimeType === 'model/gltf-binary'
   ) {
     if (parsedUrl.origin !== CLOUDFRONT_LINK) {
       throw new BadRequestException(
@@ -1255,18 +1265,16 @@ export class CreateOrUpdateDropUseCase {
   ) {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->verifyMedia`);
     const authorId = this.getRequiredAuthorId(model);
+    const enforceMainStageLimit =
+      model.drop_type === DropType.PARTICIPATORY &&
+      wave.id === env.getStringOrNull('MAIN_STAGE_WAVE_ID');
     for (const part of model.parts) {
       for (const media of part.media) {
-        validateDropMediaAttachment({
-          mimeType: media.mime_type,
-          url: media.url,
-          dropType: model.drop_type
-        });
-        await this.verifyDropMediaUploadReference({
-          mediaUploadId: media.media_upload_id ?? null,
-          mediaUrl: media.url,
-          mimeType: media.mime_type,
-          authorId
+        await this.verifyMediaReference({
+          media,
+          dropType: model.drop_type,
+          authorId,
+          enforceMainStageLimit
         });
       }
     }
@@ -1300,6 +1308,33 @@ export class CreateOrUpdateDropUseCase {
       }
     }
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyMedia`);
+  }
+
+  private async verifyMediaReference({
+    media,
+    dropType,
+    authorId,
+    enforceMainStageLimit
+  }: {
+    media: DropMediaModel;
+    dropType: DropType;
+    authorId: string;
+    enforceMainStageLimit: boolean;
+  }): Promise<void> {
+    validateDropMediaAttachment({
+      mimeType: media.mime_type,
+      url: media.url,
+      dropType
+    });
+    await this.verifyDropMediaUploadReference({
+      mediaUploadId: media.media_upload_id ?? null,
+      mediaUrl: media.url,
+      mimeType: media.mime_type,
+      authorId
+    });
+    if (enforceMainStageLimit) {
+      await validateMainStageMediaSize(media.url);
+    }
   }
 
   private async verifyDropMediaUploadReference({
