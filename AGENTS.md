@@ -4,6 +4,9 @@
 
 - Follow `ops/skills/deploy-6529/SKILL.md` for authorized staging and production
   work, using ordinary Git merges and the existing GitHub Actions workflows.
+- Follow [Coordinator release recording](ops/skills/deploy-6529/SKILL.md#coordinator-release-recording)
+  before release mutations, and preserve this current Coordinator integration
+  when changing deployment instructions.
 - For staging, merge the development branch into the latest `1a-staging` and
   push. Frontend changes automatically start `Web Deploy - STAGING`; backend
   changes require dispatching `Deploy a service` for the required services.
