@@ -22,13 +22,21 @@ export enum DiscordChannel {
 }
 
 const CHANNELS_TO_CHANNEL_IDS: Partial<Record<DiscordChannel, any>> = {};
+const MAX_DISCORD_MESSAGE_LENGTH = 2000;
 
 export class Discord {
   constructor(private readonly supplyDiscord: () => Promise<any>) {}
 
   async sendMessage(channel: DiscordChannel, message: string): Promise<void> {
     const textChannel = await this.getTextChannel(channel);
-    await textChannel.send(message);
+    // Avoid leaving half of a UTF-16 surrogate pair at the cutoff.
+    const content =
+      message.length > MAX_DISCORD_MESSAGE_LENGTH
+        ? message
+            .slice(0, MAX_DISCORD_MESSAGE_LENGTH)
+            .replace(/[\uD800-\uDBFF]$/, '')
+        : message;
+    await textChannel.send(content);
   }
 
   private async getTextChannel(channel: DiscordChannel): Promise<any> {
