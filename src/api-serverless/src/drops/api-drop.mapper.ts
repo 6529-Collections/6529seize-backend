@@ -441,9 +441,7 @@ export class ApiDropMapper {
     try {
       const rows = await this.dropVotingDb.getLargestDropVotes(dropIds, ctx);
       const missingIdentityIds = collections.distinct(
-        rows
-          .map((row) => row.voter_id)
-          .filter((id) => !knownIdentities[id])
+        rows.map((row) => row.voter_id).filter((id) => !knownIdentities[id])
       );
       const identities = {
         ...knownIdentities,

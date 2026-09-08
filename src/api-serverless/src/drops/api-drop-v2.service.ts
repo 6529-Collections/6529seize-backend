@@ -9,7 +9,10 @@ import { ApiDropAndWave } from '@/api/generated/models/ApiDropAndWave';
 import { ApiDropMetadataV2 } from '@/api/generated/models/ApiDropMetadataV2';
 import { ApiDropVoteDistribution } from '@/api/generated/models/ApiDropVoteDistribution';
 import { ApiDropVoteSummary } from '@/api/generated/models/ApiDropVoteSummary';
-import { dropVotingDb, DropVotingDb } from '@/api/drops/drop-voting.db';
+import {
+  dropVotingDb as defaultDropVotingDb,
+  DropVotingDb
+} from '@/api/drops/drop-voting.db';
 import { apiDropMapper, ApiDropMapper } from '@/api/drops/api-drop.mapper';
 import {
   apiWaveOverviewMapper,
@@ -102,7 +105,7 @@ export class ApiDropV2Service {
     private readonly attachmentsDb: AttachmentsDb,
     private readonly reactionsDb: ReactionsDb,
     private readonly moderationDb: ContentModerationDb = contentModerationDb,
-    private readonly dropVotingDb: DropVotingDb = dropVotingDb
+    private readonly dropVotingDb: DropVotingDb = defaultDropVotingDb
   ) {}
 
   public async findDrops(
