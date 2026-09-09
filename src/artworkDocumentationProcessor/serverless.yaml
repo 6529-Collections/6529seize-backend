@@ -32,6 +32,44 @@ functions:
 
 resources:
   Resources:
+    ArtworkDocumentationMetricsPolicy:
+      Type: AWS::IAM::Policy
+      Properties:
+        PolicyName: artwork-documentation-metrics-${opt:stage, self:provider.stage}
+        Roles: [lambda-vpc-role]
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: cloudwatch:PutMetricData
+              Resource: '*'
+              Condition:
+                StringEquals:
+                  cloudwatch:namespace: 6529/ArtworkDocumentation
+    ArtworkDocumentationProcessingFailures:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: Artwork archive verification failed or quarantined an upload; inspect restricted operations queue.
+        Namespace: 6529/ArtworkDocumentation
+        MetricName: FailuresLastHour
+        Statistic: Maximum
+        Period: 300
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+    ArtworkDocumentationQueueDelay:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: Artwork verification queue exceeds one hour; check GuardDuty and worker health.
+        Namespace: 6529/ArtworkDocumentation
+        MetricName: OldestPendingAge
+        Statistic: Maximum
+        Period: 300
+        EvaluationPeriods: 2
+        Threshold: 3600
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
     ArtworkDocumentationProcessorErrors:
       Type: AWS::CloudWatch::Alarm
       Properties:

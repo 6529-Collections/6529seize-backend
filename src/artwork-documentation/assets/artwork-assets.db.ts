@@ -35,7 +35,10 @@ export class ArtworkAssetsDb extends LazyDbAccessCompatibleService {
     return this.db.executeNativeQueriesInTransaction(async (connection) => {
       const options = { wrappedConnection: connection };
       await this.db.execute(
-        `insert ignore into ${ARTWORK_ASSET_QUOTAS_TABLE} (context_id) values (:contextId)`,
+        // ON DUPLICATE KEY UPDATE takes an exclusive lock immediately; INSERT
+        // IGNORE's shared duplicate lock can deadlock when concurrent writers
+        // subsequently upgrade it with SELECT FOR UPDATE.
+        `insert into ${ARTWORK_ASSET_QUOTAS_TABLE} (context_id) values (:contextId) on duplicate key update context_id = :contextId`,
         { contextId: asset.context_id },
         options
       );
@@ -178,6 +181,43 @@ export class ArtworkAssetsDb extends LazyDbAccessCompatibleService {
       { now },
       { forcePool: DbPoolName.WRITE }
     );
+  }
+
+  async operationalStats(now: number): Promise<{
+    pending: number;
+    oldestAgeSeconds: number;
+    failuresLastHour: number;
+    maxQuotaPercent: number;
+  }> {
+    const [states, quota] = await Promise.all([
+      this.db.oneOrNull<{
+        pending: number;
+        oldest: number | null;
+        failures: number;
+      }>(
+        `select coalesce(sum(state = 'processing'), 0) pending, min(case when state = 'processing' then expires_at - :orphanLifetime else null end) oldest, coalesce(sum(state in ('failed','quarantined') and updated_at > :recent), 0) failures from ${ARTWORK_ASSETS_TABLE} where state in ('processing','failed','quarantined')`,
+        {
+          recent: now - 60 * 60_000,
+          orphanLifetime: ARTWORK_UPLOAD_POLICY.orphan_lifetime_ms
+        },
+        { forcePool: DbPoolName.WRITE }
+      ),
+      this.db.oneOrNull<{ bytes: number }>(
+        `select coalesce(max(total), 0) bytes from (select sum(reserved_bytes) total from ${ARTWORK_ASSETS_TABLE} where reserved_bytes > 0 group by context_id) context_usage`,
+        {},
+        { forcePool: DbPoolName.WRITE }
+      )
+    ]);
+    return {
+      pending: Number(states?.pending ?? 0),
+      oldestAgeSeconds: states?.oldest
+        ? Math.max(0, (now - Number(states.oldest)) / 1000)
+        : 0,
+      failuresLastHour: Number(states?.failures ?? 0),
+      maxQuotaPercent:
+        (100 * Number(quota?.bytes ?? 0)) /
+        ARTWORK_UPLOAD_POLICY.context_quota_bytes
+    };
   }
 }
 export const artworkAssetsDb = new ArtworkAssetsDb(dbSupplier);

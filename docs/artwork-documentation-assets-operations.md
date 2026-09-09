@@ -54,7 +54,12 @@ Before onboarding, the release coordinator verifies:
 - A multipart large-file test exercises accepted-part recovery, a short final
   part and changed-file rejection; the API never handles full original bytes.
 - Processor Lambda error alarm is visible to the operational monitoring owner.
-  Query count, oldest processing age and failure codes before enabling the pilot.
+  The `6529/ArtworkDocumentation` namespace also emits pending count, oldest
+  processing age, failures/quarantines in the last hour and maximum context quota
+  use. Failure and one-hour queue-delay alarms complement the Lambda error alarm;
+  normal handled failures do not appear as Lambda invocation errors. Inspect
+  these metrics and failure codes before enabling the pilot. Metrics contain no
+  artist identity, filename, object key or instrument text.
 
 The current AWS limit is 100 GB per scanned S3 object; the product limit is 4 GiB.
 See [AWS scan quotas](https://docs.aws.amazon.com/guardduty/latest/ug/malware-protection-s3-quotas-guardduty.html)

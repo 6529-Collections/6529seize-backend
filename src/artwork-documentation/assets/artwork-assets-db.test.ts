@@ -3,12 +3,17 @@ import { randomUUID } from 'node:crypto';
 import { ArtworkAssetsDb } from '@/artwork-documentation/assets/artwork-assets.db';
 import { anArtworkAsset } from '@/artwork-documentation/assets/artwork-assets.test-support';
 import { sqlExecutor } from '@/sql-executor';
-import { describeWithSeed } from '@/tests/_setup/seed';
-import { ARTWORK_ASSETS_TABLE } from '@/artwork-documentation/assets/artwork-assets.types';
+import {
+  ARTWORK_ASSETS_TABLE,
+  ARTWORK_ASSET_QUOTAS_TABLE
+} from '@/artwork-documentation/assets/artwork-assets.types';
+import { ARTWORK_UPLOAD_POLICY } from '@/artwork-documentation/assets/artwork-assets.policy';
 
-describeWithSeed('artwork archive reservations and leases', [], () => {
+describe('artwork archive reservations and leases', () => {
   let db: ArtworkAssetsDb;
-  beforeEach(() => {
+  beforeEach(async () => {
+    await sqlExecutor.execute(`delete from ${ARTWORK_ASSETS_TABLE}`);
+    await sqlExecutor.execute(`delete from ${ARTWORK_ASSET_QUOTAS_TABLE}`);
     db = new ArtworkAssetsDb(() => sqlExecutor);
   });
 
@@ -93,5 +98,22 @@ describeWithSeed('artwork archive reservations and leases', [], () => {
     );
     expect(Number(retained?.referenced)).toBe(1);
     expect(Number(retained?.expires_at)).toBe(0);
+  });
+
+  it('reports queue age from completion even when retry timestamps keep changing', async () => {
+    const now = Date.now();
+    await db.reserve(
+      anArtworkAsset({
+        state: 'processing',
+        expires_at: now + ARTWORK_UPLOAD_POLICY.orphan_lifetime_ms - 7200_000,
+        updated_at: now
+      })
+    );
+    await db.reserve(anArtworkAsset({ state: 'failed', updated_at: now }));
+    const stats = await db.operationalStats(now);
+    expect(stats.pending).toBe(1);
+    expect(stats.oldestAgeSeconds).toBe(7200);
+    expect(stats.failuresLastHour).toBe(1);
+    expect(stats.maxQuotaPercent).toBeGreaterThan(0);
   });
 });
