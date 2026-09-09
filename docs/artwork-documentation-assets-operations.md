@@ -147,7 +147,7 @@ synthetic ready asset (at most 10 MiB). In PowerShell 7:
 $drill = @{
   AssetId = '<synthetic-ready-asset-UUID>'
   ExpectedSha256 = '<SHA256-from-the-confirmed-revision-manifest>'
-  StateDirectory = 'C:\Users\Administrator\.codex\outputs\artwork-restore-drill'
+  StateDirectory = '<absolute-path-to-private-operator-state-directory>'
 }
 ./scripts/artwork-archive-restore-drill.ps1 @drill -Phase StartBackup
 ./scripts/artwork-archive-restore-drill.ps1 @drill -Phase BackupStatus
