@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { createHash } from 'node:crypto';
 import { CustomApiCompliantException } from '@/exceptions';
 import { canonicalizeJson } from '@/profile-cms/protocol/v1/canonical-json';
 import { Answer, Json, ValueSchema } from './artwork-documentation.types';
@@ -11,20 +11,23 @@ export function fail(status: number, code: string): never {
   );
 }
 
+function normalizeString(value: string): string {
+  // Validate UTF-16 code units before normalization. codePointAt would combine
+  // valid pairs and defeat the explicit lone-surrogate checks below.
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(++i);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) fail(422, 'INVALID_UNICODE');
+    } else if (code >= 0xdc00 && code <= 0xdfff) fail(422, 'INVALID_UNICODE');
+  }
+  return value.replace(/\r\n?/g, '\n').normalize('NFC');
+}
 export function normalizeJson(value: unknown, depth = 0): Json {
   if (depth > 30) fail(422, 'INVALID_VALUE');
   if (value === null || typeof value === 'boolean') return value;
   if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string') {
-    for (let i = 0; i < value.length; i++) {
-      const code = value.charCodeAt(i);
-      if (code >= 0xd800 && code <= 0xdbff) {
-        const next = value.charCodeAt(++i);
-        if (!(next >= 0xdc00 && next <= 0xdfff)) fail(422, 'INVALID_UNICODE');
-      } else if (code >= 0xdc00 && code <= 0xdfff) fail(422, 'INVALID_UNICODE');
-    }
-    return value.replace(/\r\n?/g, '\n').normalize('NFC');
-  }
+  if (typeof value === 'string') return normalizeString(value);
   if (Array.isArray(value))
     return value.map((item) => normalizeJson(item, depth + 1));
   if (typeof value !== 'object' || value === undefined)

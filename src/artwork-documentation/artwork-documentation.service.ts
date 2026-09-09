@@ -1,4 +1,4 @@
-import { randomUUID, createHash } from 'crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { RequestContext } from '@/request.context';
 import {
   DROPS_PARTS_TABLE,
@@ -32,7 +32,6 @@ import {
   ContextRecord,
   DocumentationProfile,
   Issue,
-  Json,
   ModuleId,
   MODULE_IDS,
   Mutation,
@@ -132,6 +131,58 @@ function moduleAssetReferences(
       if (entry.asset_id)
         result.push({ field: 'ingredients', id: entry.asset_id });
   return result;
+}
+function validateInterview(
+  answers: Answers,
+  profile: DocumentationProfile
+): void {
+  const instrument = profile.interview_instrument;
+  const suppliedId = answerValue<string>(answers.instrument_id);
+  const suppliedVersion = answerValue<number>(answers.instrument_version);
+  if (
+    (suppliedId !== undefined && suppliedId !== instrument.id) ||
+    (suppliedVersion !== undefined && suppliedVersion !== instrument.version)
+  )
+    fail(422, 'UNSUPPORTED_INTERVIEW_INSTRUMENT');
+  for (const kind of ['recording', 'transcript']) {
+    const asset = answers[`${kind}_asset_id`];
+    if (!answerValue(asset)) continue;
+    const permission = answerValue<string>(answers[`${kind}_permission`]);
+    if (
+      !answerValue(answers.date) ||
+      !answerValue<unknown[]>(answers.participants)?.length ||
+      !['private_review', 'intended_public_record'].includes(permission ?? '')
+    )
+      fail(422, 'INTERVIEW_PERMISSION_REQUIRED');
+    if (
+      asset.intended_visibility === 'public_record' &&
+      permission !== 'intended_public_record'
+    )
+      fail(422, 'INTERVIEW_DISCLOSURE_MISMATCH');
+  }
+}
+export function confirmationStatus(
+  draftVersion: number,
+  confirmedDraftVersion?: number
+): string {
+  if (confirmedDraftVersion === undefined) return 'unconfirmed';
+  return confirmedDraftVersion === draftVersion ? 'current' : 'newer_draft';
+}
+function moduleCompletion(missing: number, answered: number): string {
+  if (missing) return answered ? 'in_progress' : 'not_started';
+  return answered ? 'ready' : 'not_applicable';
+}
+function validateSourceActor(
+  drop: DropRow | null,
+  actor: string,
+  profile: DocumentationProfile,
+  coordinator: boolean
+): void {
+  if (drop && profile.wave_id && drop.wave_id !== profile.wave_id)
+    fail(422, 'SOURCE_WAVE_MISMATCH');
+  if (drop && drop.author_id !== actor && !coordinator)
+    fail(404, 'UNAVAILABLE');
+  if (coordinator && !drop) fail(422, 'VERIFIED_SOURCE_REQUIRED');
 }
 const noAssetGateway: AssetGateway = {
   listAssets: async () => [],
@@ -321,11 +372,10 @@ export class ArtworkDocumentationService {
             answers: parseJson<Answers>(availableArtist.answers_json)
           }
         : null,
-      confirmation_status: latest
-        ? latest.source_draft_version === context.draft_version
-          ? 'current'
-          : 'newer_draft'
-        : 'unconfirmed',
+      confirmation_status: confirmationStatus(
+        context.draft_version,
+        latest?.source_draft_version
+      ),
       latest_revision_id: context.latest_revision_id,
       lifecycle: context.lifecycle,
       assets,
@@ -403,7 +453,7 @@ export class ArtworkDocumentationService {
           { id: workId },
           transaction
         );
-        if (!work || work.owner_profile_id !== actor) fail(404, 'UNAVAILABLE');
+        if (work?.owner_profile_id !== actor) fail(404, 'UNAVAILABLE');
         if (profile.program_id) {
           const caps = await this.grantCapabilities(
             actor,
@@ -549,13 +599,7 @@ export class ArtworkDocumentationService {
             schema_version: 1,
             answers,
             completeness: {
-              status: missing.length
-                ? count
-                  ? 'in_progress'
-                  : 'not_started'
-                : count
-                  ? 'ready'
-                  : 'not_applicable',
+              status: moduleCompletion(missing.length, count),
               required: visibleRequired.length,
               addressed,
               missing,
@@ -626,8 +670,6 @@ export class ArtworkDocumentationService {
         const drop = body.source_drop_id
           ? await this.getDrop(body.source_drop_id, transaction, true)
           : null;
-        if (drop && profile.wave_id && drop.wave_id !== profile.wave_id)
-          fail(422, 'SOURCE_WAVE_MISMATCH');
         const caps = await this.grantCapabilities(
           actor,
           null,
@@ -636,28 +678,13 @@ export class ArtworkDocumentationService {
         );
         const coordinator =
           body.start_mode === 'coordinator_import' && caps.manage_assignments;
-        if (drop && drop.author_id !== actor && !coordinator)
-          fail(404, 'UNAVAILABLE');
-        if (coordinator && !drop) fail(422, 'VERIFIED_SOURCE_REQUIRED');
-        if (drop) {
-          const existing = await this.db.one<{ context_id: string }>(
-            `SELECT context_id FROM ${AD_DROP_LINKS} WHERE drop_id=:id`,
-            { id: drop.id },
-            transaction
-          );
-          if (existing) {
-            const linked = await this.authorizeContext(
-              existing.context_id,
-              transaction
-            );
-            if (
-              linked.context.program_id !== profile.program_id ||
-              linked.context.profile.profile_id !== profile.profile_id
-            )
-              fail(409, 'SOURCE_CONTEXT_PROFILE_MISMATCH');
-            return { context_id: existing.context_id };
-          }
-        }
+        validateSourceActor(drop, actor, profile, coordinator);
+        const existing = await this.existingSourceContext(
+          drop,
+          profile,
+          transaction
+        );
+        if (existing) return { context_id: existing };
         if (profile.program_id && !caps.manage_context && !coordinator)
           fail(403, 'PROGRAM_INVITATION_REQUIRED');
         if (
@@ -730,6 +757,26 @@ export class ArtworkDocumentationService {
       }
     );
     return this.getContext(reference.context_id, ctx);
+  }
+  private async existingSourceContext(
+    drop: DropRow | null,
+    profile: DocumentationProfile,
+    ctx: RequestContext
+  ): Promise<string | null> {
+    if (!drop) return null;
+    const existing = await this.db.one<{ context_id: string }>(
+      `SELECT context_id FROM ${AD_DROP_LINKS} WHERE drop_id=:id`,
+      { id: drop.id },
+      ctx
+    );
+    if (!existing) return null;
+    const linked = await this.authorizeContext(existing.context_id, ctx);
+    if (
+      linked.context.program_id !== profile.program_id ||
+      linked.context.profile.profile_id !== profile.profile_id
+    )
+      fail(409, 'SOURCE_CONTEXT_PROFILE_MISMATCH');
+    return existing.context_id;
   }
   async getDrop(
     id: string,
@@ -873,6 +920,8 @@ export class ArtworkDocumentationService {
           fail(403, 'FIELD_EDIT_NOT_ALLOWED');
       const previous = access.context.modules[moduleId];
       const answers = applyOperations(moduleId, previous, body.operations);
+      if (moduleId === 'interview')
+        validateInterview(answers, access.context.profile);
       const previousReferences = new Set(
         moduleAssetReferences(moduleId, previous).map(
           (reference) => `${reference.id}:${reference.role ?? ''}`

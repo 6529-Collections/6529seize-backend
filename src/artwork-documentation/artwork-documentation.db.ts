@@ -34,8 +34,10 @@ export class ArtworkDocumentationDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<void> {
     const keys = Object.keys(values);
+    const columns = keys.map((key) => `\`${key}\``).join(',');
+    const parameters = keys.map((key) => `:${key}`).join(',');
     await this.query(
-      `INSERT INTO ${table} (${keys.map((key) => `\`${key}\``).join(',')}) VALUES (${keys.map((key) => `:${key}`).join(',')})`,
+      `INSERT INTO ${table} (${columns}) VALUES (${parameters})`,
       values,
       ctx
     );

@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 import { RequestContext } from '@/request.context';
 import {
   AD_CONTEXTS,
@@ -10,14 +10,16 @@ import {
 import {
   artworkDocumentationService,
   ArtworkDocumentationService,
-  ReviewRow
+  ReviewRow,
+  confirmationStatus
 } from './artwork-documentation.service';
 import {
   Capabilities,
   ContextAccess,
   ContextRecord,
   Mutation,
-  ReviewLane
+  ReviewLane,
+  REVIEW_LANES
 } from './artwork-documentation.types';
 import { answerValue, fail } from './artwork-documentation.validation';
 import { canReadField, validateGrant } from './artwork-documentation.access';
@@ -50,6 +52,102 @@ type GrantRow = {
   created_at: number;
   revoked_at: number | null;
 };
+export type ContextFilters = {
+  cursor?: string;
+  limit?: number;
+  confirmation_status?: string;
+  review_lane?: string;
+  outstanding_action?: string;
+  profile_id?: string;
+  profile_version?: number;
+};
+type QueueFilter = { clauses: string[]; params: Record<string, unknown> };
+function addConfirmationFilter(
+  raw: ContextFilters,
+  { clauses }: QueueFilter
+): void {
+  if (raw.confirmation_status !== undefined) {
+    const choices: Record<string, string> = {
+      unconfirmed: 'r.id IS NULL',
+      current: 'r.source_draft_version=c.draft_version',
+      newer_draft: 'r.source_draft_version<c.draft_version'
+    };
+    if (!Object.prototype.hasOwnProperty.call(choices, raw.confirmation_status))
+      fail(422, 'INVALID_FILTER');
+    clauses.push(choices[raw.confirmation_status]);
+  }
+}
+function addReviewFilter(
+  raw: ContextFilters,
+  { clauses, params }: QueueFilter
+): void {
+  if (
+    raw.review_lane !== undefined &&
+    !REVIEW_LANES.includes(raw.review_lane as ReviewLane)
+  )
+    fail(422, 'INVALID_FILTER');
+  if (
+    raw.outstanding_action !== undefined &&
+    !['artist_confirmation', 'review', 'changes_requested'].includes(
+      raw.outstanding_action
+    )
+  )
+    fail(422, 'INVALID_FILTER');
+  if (raw.outstanding_action === 'artist_confirmation')
+    clauses.push('(r.id IS NULL OR r.source_draft_version<c.draft_version)');
+  const reviewClauses = ['v.revision_id=c.latest_revision_id'];
+  if (raw.review_lane) {
+    reviewClauses.push('v.lane=:reviewLane');
+    params.reviewLane = raw.review_lane;
+  }
+  if (raw.outstanding_action === 'review')
+    reviewClauses.push(
+      "v.status='pending'",
+      'r.source_draft_version=c.draft_version'
+    );
+  if (raw.outstanding_action === 'changes_requested')
+    reviewClauses.push("v.status='changes_requested'");
+  if (reviewClauses.length > 1)
+    clauses.push(
+      `EXISTS (SELECT 1 FROM ${AD_REVIEWS} v WHERE ${reviewClauses.join(' AND ')})`
+    );
+}
+function addProfileFilter(
+  raw: ContextFilters,
+  { clauses, params }: QueueFilter
+): void {
+  if (raw.profile_id !== undefined) {
+    if (
+      typeof raw.profile_id !== 'string' ||
+      !raw.profile_id.length ||
+      raw.profile_id.length > 100
+    )
+      fail(422, 'INVALID_FILTER');
+    clauses.push(
+      "JSON_UNQUOTE(JSON_EXTRACT(c.profile_json,'$.profile_id'))=:profileId"
+    );
+    params.profileId = raw.profile_id;
+  }
+  if (raw.profile_version !== undefined) {
+    if (!Number.isSafeInteger(raw.profile_version) || raw.profile_version < 1)
+      fail(422, 'INVALID_FILTER');
+    clauses.push("JSON_EXTRACT(c.profile_json,'$.version')=:profileVersion");
+    params.profileVersion = raw.profile_version;
+  }
+}
+function queueFilters(raw: ContextFilters): {
+  sql: string;
+  params: Record<string, unknown>;
+} {
+  const filters: QueueFilter = { clauses: [], params: {} };
+  addConfirmationFilter(raw, filters);
+  addReviewFilter(raw, filters);
+  addProfileFilter(raw, filters);
+  return {
+    sql: filters.clauses.map((clause) => ` AND (${clause})`).join(''),
+    params: filters.params
+  };
+}
 
 export function pageParameters(raw: { cursor?: string; limit?: number }): {
   limit: number;
@@ -77,11 +175,11 @@ export function pageParameters(raw: { cursor?: string; limit?: number }): {
 }
 export class ArtworkDocumentationReviewService {
   constructor(
-    private core: ArtworkDocumentationService = artworkDocumentationService
+    private readonly core: ArtworkDocumentationService = artworkDocumentationService
   ) {}
   async listContexts(
     ctx: RequestContext,
-    raw: { cursor?: string; limit?: number },
+    raw: ContextFilters,
     programId?: string,
     workId?: string
   ) {
@@ -97,10 +195,12 @@ export class ArtworkDocumentationReviewService {
         fail(404, 'UNAVAILABLE');
     }
     const { limit, cursor } = pageParameters(raw);
+    const filters = queueFilters(raw);
     const rows = await this.core.db.query<{ id: string; updated_at: number }>(
-      `SELECT c.id,c.updated_at FROM ${AD_CONTEXTS} c WHERE (c.owner_profile_id=:actor OR EXISTS (SELECT 1 FROM ${AD_GRANTS} g WHERE g.subject_profile_id=:actor AND g.revoked_at IS NULL AND (g.context_id=c.id OR (g.context_id IS NULL AND g.program_id=c.program_id)))) AND (:programId IS NULL OR c.program_id=:programId) AND (:workId IS NULL OR c.work_id=:workId) AND (:cursorId IS NULL OR c.updated_at<:updated OR (c.updated_at=:updated AND c.id<:cursorId)) ORDER BY c.updated_at DESC,c.id DESC LIMIT :limit`,
+      `SELECT c.id,c.updated_at FROM ${AD_CONTEXTS} c LEFT JOIN ${AD_REVISIONS} r ON r.id=c.latest_revision_id WHERE (c.owner_profile_id=:actor OR EXISTS (SELECT 1 FROM ${AD_GRANTS} g WHERE g.subject_profile_id=:actor AND g.revoked_at IS NULL AND (g.context_id=c.id OR (g.context_id IS NULL AND g.program_id=c.program_id)))) AND (:programId IS NULL OR c.program_id=:programId) AND (:workId IS NULL OR c.work_id=:workId) AND (:cursorId IS NULL OR c.updated_at<:updated OR (c.updated_at=:updated AND c.id<:cursorId))${filters.sql} ORDER BY c.updated_at DESC,c.id DESC LIMIT :limit`,
       {
         actor,
+        ...filters.params,
         programId: programId ?? null,
         workId: workId ?? null,
         cursorId: cursor?.id ?? null,
@@ -148,16 +248,20 @@ export class ArtworkDocumentationReviewService {
         ? (answerValue<string>(title) ?? null)
         : null,
       draft_version: c.draft_version,
-      confirmation_status: revision
-        ? revision.source_draft_version === c.draft_version
-          ? 'current'
-          : 'newer_draft'
-        : 'unconfirmed',
+      confirmation_status: confirmationStatus(
+        c.draft_version,
+        revision?.source_draft_version
+      ),
       latest_revision_id: c.latest_revision_id,
       lifecycle: c.lifecycle,
       updated_at: c.updated_at,
       profile_id: c.profile.profile_id,
-      profile_version: c.profile.version
+      profile_version: c.profile.version,
+      reviews: c.latest_revision_id
+        ? (await this.core.reviews(c.latest_revision_id, access, ctx)).map(
+            (review) => ({ ...review, reason: null })
+          )
+        : []
     };
   }
   async work(id: string, ctx: RequestContext) {

@@ -81,6 +81,12 @@ export type DocumentationProfile = {
   guidance_version: string;
   confirmation_copy_version: string;
   confirmation_copy: string;
+  interview_instrument: {
+    id: string;
+    version: number;
+    language: string;
+    prompts: { id: string; text: string }[];
+  };
   limits: Record<string, number>;
   [key: string]: unknown;
 };

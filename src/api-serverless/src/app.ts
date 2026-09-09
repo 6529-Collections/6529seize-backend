@@ -621,6 +621,9 @@ function requestLogMiddleware() {
       request.apiGateway?.context?.awsRequestId ?? ids.uniqueShortId();
     if (request.path.startsWith('/api/artwork-documentation')) {
       response.setHeader('X-Request-Id', requestId);
+      response.setHeader('Cache-Control', 'private, no-store');
+      response.setHeader('X-Robots-Tag', 'noindex, nofollow');
+      response.setHeader('X-Content-Type-Options', 'nosniff');
     }
     loggerContext.run({ requestId }, () => {
       const { method } = request;

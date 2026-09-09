@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 import { AuthenticationContext } from '@/auth-context';
 import { PROFILES_TABLE } from '@/constants';
 import { doInDbContext } from '@/secrets';

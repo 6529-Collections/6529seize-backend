@@ -43,6 +43,14 @@ artist confirmation authority. Artists can invite documentation editors;
 program coordinators assign reviewers. Artists cannot appoint institutional
 reviewers and coordinators cannot assign themselves extra evidence access.
 
+Coordinator queues filter confirmation state, review lane, outstanding action
+and pinned profile before cursor pagination. Queue summaries contain lane status
+without private review reasons. A profile pins the exact eight interview prompts
+alongside its instrument ID, version and language. Recording and transcript
+references require participants, date and explicit disclosure permission. The
+basic profile uses curatorial and rights lanes; photography and Keys and Gates
+also require technical review.
+
 Original files and their processing/storage operational requirements are in
 [the archive operations guide](artwork-documentation-assets-operations.md).
 Content links use the most restrictive disclosure already selected for the

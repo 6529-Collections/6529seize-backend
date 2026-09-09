@@ -1552,6 +1552,39 @@ paths:
             type: integer
             minimum: 1
             maximum: 100
+        - name: confirmation_status
+          in: query
+          schema:
+            type: string
+            enum:
+              - unconfirmed
+              - current
+              - newer_draft
+        - name: review_lane
+          in: query
+          schema:
+            type: string
+            enum:
+              - curatorial
+              - technical
+              - rights
+        - name: outstanding_action
+          in: query
+          schema:
+            type: string
+            enum:
+              - artist_confirmation
+              - review
+              - changes_requested
+        - name: profile_id
+          in: query
+          schema:
+            type: string
+        - name: profile_version
+          in: query
+          schema:
+            type: integer
+            minimum: 1
       responses:
         "200":
           description: Authorized private response
@@ -12033,7 +12066,9 @@ paths:
     get:
       tags:
         - TDH
-      summary: Get current TDH boost definitions evaluated for the latest completed snapshot
+      summary: >-
+        Get current TDH boost definitions evaluated for the latest completed
+        snapshot
       description: >-
         Returns the current TDH boost definitions evaluated against the latest
         completed snapshot's eligible Meme card range, including the snapshot
@@ -16350,6 +16385,10 @@ components:
         profile_version:
           type: integer
           format: int64
+        reviews:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiArtworkDocumentationReview"
       required:
         - id
         - work_id
@@ -16362,6 +16401,7 @@ components:
         - updated_at
         - profile_id
         - profile_version
+        - reviews
       additionalProperties: false
     ApiArtworkDocumentationCreateContext:
       type: object
@@ -16535,6 +16575,36 @@ components:
       required:
         - artist_record_revision_id
       additionalProperties: false
+    ApiArtworkDocumentationInterviewInstrument:
+      type: object
+      required:
+        - id
+        - version
+        - language
+        - prompts
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        version:
+          type: integer
+        language:
+          type: string
+        prompts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiArtworkDocumentationInterviewPrompt"
+    ApiArtworkDocumentationInterviewPrompt:
+      type: object
+      required:
+        - id
+        - text
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        text:
+          type: string
     ApiArtworkDocumentationLifecycleRequest:
       type: object
       properties:
@@ -16656,6 +16726,8 @@ components:
           type: string
         confirmation_copy:
           type: string
+        interview_instrument:
+          $ref: "#/components/schemas/ApiArtworkDocumentationInterviewInstrument"
         limits:
           type: object
           additionalProperties:
@@ -16680,6 +16752,7 @@ components:
         - guidance_version
         - confirmation_copy_version
         - confirmation_copy
+        - interview_instrument
         - limits
         - storage_mode
         - submission_gate

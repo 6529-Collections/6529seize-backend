@@ -350,7 +350,7 @@ export const LOCKED_RESTRICTED = [
   'rights.identifiability_note',
   'rights.sensitive_context_note'
 ];
-const unknownAllowed = [
+const unknownAllowed = new Set([
   'artwork.capture_date',
   'artwork.completion_date',
   'artwork.location',
@@ -358,7 +358,7 @@ const unknownAllowed = [
   'process.camera',
   'process.lens',
   'interview.date'
-];
+]);
 export const FIELD_CATALOGUE: Record<ModuleId, FieldDefinition[]> =
   Object.fromEntries(
     MODULE_IDS.map((moduleId) => [
@@ -367,7 +367,7 @@ export const FIELD_CATALOGUE: Record<ModuleId, FieldDefinition[]> =
         const path = `${moduleId}.${id}`;
         const locked = LOCKED_RESTRICTED.includes(path);
         const statuses: Answer['status'][] = ['provided'];
-        if (unknownAllowed.includes(path)) statuses.push('unknown');
+        if (unknownAllowed.has(path)) statuses.push('unknown');
         if (path === 'artwork.location') statuses.push('withheld');
         return {
           id,
@@ -416,6 +416,28 @@ export const CONFIRMATION_COPY_VERSION =
   'artwork-documentation-confirmation-v1';
 export const CONFIRMATION_COPY =
   'I have reviewed this version. It reflects my account of the work to the best of my knowledge, including any uncertainty I have recorded. I have checked the credits, selected files and information marked for a future public record.';
+function interviewInstrument(
+  profileId: string
+): DocumentationProfile['interview_instrument'] {
+  const prompts = [
+    'What first drew you to make this work?',
+    'What is happening in the image, and what lies outside the frame that a future viewer should know?',
+    'Which choices in capture, construction or editing were most important to the final work?',
+    'How does this work relate to your practice and to other works in the same series?',
+    profileId === 'keys_and_gates_v1'
+      ? 'For Keys and Gates, what does the idea of a key or a gate mean in this image?'
+      : 'What themes or ideas connect this work to the context in which it is being presented?',
+    'What is most likely to be misunderstood about this work?',
+    'What must remain intact when the work is displayed, reproduced or preserved?',
+    'Is there anything you would want someone encountering the work many years from now to know?'
+  ];
+  return {
+    id: 'artwork-documentation-artist-interview-v1',
+    version: 1,
+    language: 'en',
+    prompts: prompts.map((text, index) => ({ id: `q${index + 1}`, text }))
+  };
+}
 export const DOCUMENTATION_LIMITS = {
   context_payload_bytes: 262144,
   write_request_bytes: 524288,
@@ -450,6 +472,7 @@ export const PROFILES: DocumentationProfile[] = [
           'identity.record_language',
           'artwork.title',
           'artwork.title_language',
+          'artwork.medium',
           'artwork.canonical_asset_id',
           'context.caption',
           'rights.rights_basis',
@@ -463,7 +486,10 @@ export const PROFILES: DocumentationProfile[] = [
             ? ['context.theme_connection']
             : [])
         ],
-  review_lanes: ['curatorial', 'technical', 'rights'],
+  review_lanes:
+    profile_id === 'stream_artwork_basic_v1'
+      ? ['curatorial', 'rights']
+      : ['curatorial', 'technical', 'rights'],
   modules: MODULE_IDS.map((id) => ({
     id,
     version: 1,
@@ -472,6 +498,7 @@ export const PROFILES: DocumentationProfile[] = [
   guidance_version: 'artwork-documentation-copy-v1',
   confirmation_copy_version: CONFIRMATION_COPY_VERSION,
   confirmation_copy: CONFIRMATION_COPY,
+  interview_instrument: interviewInstrument(profile_id),
   limits: DOCUMENTATION_LIMITS,
   storage_mode: 'private_database_and_object_storage',
   submission_gate: 'optional',
@@ -493,7 +520,7 @@ export function getProfile(
     (item) => item.profile_id === id && item.version === version
   );
   if (!profile) fail(422, 'UNSUPPORTED_PROFILE');
-  return JSON.parse(JSON.stringify(profile));
+  return structuredClone(profile);
 }
 export function emptyModules(): Record<ModuleId, Answers> {
   return Object.fromEntries(MODULE_IDS.map((id) => [id, {}])) as Record<
@@ -591,10 +618,20 @@ function validateAnswer(
 function validateSuppliedObject(path: string, value: Json): void {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return;
   const item = value as Record<string, Json>;
-  const kind = item.kind;
   if ('precision' in item && !validateDateObject(item))
     fail(422, 'INVALID_DATE');
   if ('versions' in item) validateLocalized(item);
+  validateKindDetails(path, item);
+  validateAvailabilityDetails(path, item);
+  if (
+    ['process.contributors', 'process.ingredients', 'context.history'].includes(
+      path
+    )
+  )
+    validateEntries(path, item);
+}
+function validateKindDetails(path: string, item: Record<string, Json>): void {
+  const kind = item.kind;
   if (
     (kind === 'other' && !item.detail) ||
     (path === 'process.ai_use' &&
@@ -612,11 +649,17 @@ function validateSuppliedObject(path: string, value: Json): void {
       fail(422, 'DETAIL_REQUIRED');
   }
   if (
-    ['process.contributors', 'process.ingredients', 'context.history'].includes(
-      path
-    )
+    path === 'rights.third_party_material' &&
+    kind === 'present' &&
+    !item.details
   )
-    validateEntries(path, item);
+    fail(422, 'DETAIL_REQUIRED');
+}
+function validateAvailabilityDetails(
+  path: string,
+  item: Record<string, Json>
+): void {
+  const kind = item.kind;
   if (
     path.startsWith('files.') &&
     ['unavailable', 'retained_by_artist', 'not_applicable'].includes(
@@ -632,12 +675,6 @@ function validateSuppliedObject(path: string, value: Json): void {
     !item.explanation
   )
     fail(422, 'EXPLANATION_REQUIRED');
-  if (
-    path === 'rights.third_party_material' &&
-    kind === 'present' &&
-    !item.details
-  )
-    fail(422, 'DETAIL_REQUIRED');
 }
 
 function validateEntries(path: string, item: Record<string, Json>): void {

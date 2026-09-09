@@ -89,10 +89,7 @@ export function canReadField(
     return access.capabilities.read_archival_files;
   return false;
 }
-export function validateGrant(
-  raw: unknown,
-  access: ContextAccess
-): Capabilities {
+function parseGrant(raw: unknown): Partial<Capabilities> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw))
     fail(422, 'INVALID_GRANT');
   const value = raw as Record<string, unknown>;
@@ -108,9 +105,47 @@ export function validateGrant(
         fail(422, 'INVALID_GRANT');
     } else if (typeof item !== 'boolean') fail(422, 'INVALID_GRANT');
   }
+  return value as Partial<Capabilities>;
+}
+function assignedEvidenceAllowed(
+  key: string,
+  grant: Capabilities,
+  access: ContextAccess
+): boolean {
+  if (access.isArtist || !access.capabilities.manage_assignments) return false;
+  const evidenceLanes: Record<string, ReviewLane> = {
+    read_rights_evidence: 'rights',
+    read_archival_files: 'technical',
+    read_source_receipts: 'curatorial'
+  };
+  return grant.review_lanes.includes(evidenceLanes[key]);
+}
+function validateEvidenceGrant(
+  grant: Capabilities,
+  access: ContextAccess
+): void {
+  for (const key of [
+    'read_archival_files',
+    'read_rights_evidence',
+    'read_source_receipts',
+    'read_contact'
+  ] as const) {
+    if (
+      grant[key] &&
+      !access.capabilities[key] &&
+      !assignedEvidenceAllowed(key, grant, access)
+    )
+      fail(403, 'CANNOT_ELEVATE_GRANT');
+  }
+}
+export function validateGrant(
+  raw: unknown,
+  access: ContextAccess
+): Capabilities {
+  const value = parseGrant(raw);
   if (value.confirm_as_artist === true)
     fail(403, 'ARTIST_AUTHORITY_NOT_GRANTABLE');
-  const grant = mergeCapabilities([value as Partial<Capabilities>]);
+  const grant = mergeCapabilities([value]);
   // Artist editor grants cannot appoint institutional reviewers or coordinators.
   if (
     access.isArtist &&
@@ -119,24 +154,7 @@ export function validateGrant(
       grant.manage_context)
   )
     fail(403, 'REVIEWER_ASSIGNMENT_REQUIRED');
-  for (const key of [
-    'read_archival_files',
-    'read_rights_evidence',
-    'read_source_receipts',
-    'read_contact'
-  ] as const)
-    if (grant[key] && !access.capabilities[key]) {
-      const assignedEvidence =
-        !access.isArtist &&
-        access.capabilities.manage_assignments &&
-        ((key === 'read_rights_evidence' &&
-          grant.review_lanes.includes('rights')) ||
-          (key === 'read_archival_files' &&
-            grant.review_lanes.includes('technical')) ||
-          (key === 'read_source_receipts' &&
-            grant.review_lanes.includes('curatorial')));
-      if (!assignedEvidence) fail(403, 'CANNOT_ELEVATE_GRANT');
-    }
+  validateEvidenceGrant(grant, access);
   if (!access.isArtist && grant.edit_modules.length)
     fail(403, 'ARTIST_EDITOR_GRANT_REQUIRED');
   if (grant.manage_assignments || grant.manage_context)
@@ -145,11 +163,10 @@ export function validateGrant(
   return grant;
 }
 export function laneForModule(moduleId: string): ReviewLane {
-  return moduleId === 'rights'
-    ? 'rights'
-    : ['files', 'process', 'preservation'].includes(moduleId)
-      ? 'technical'
-      : 'curatorial';
+  if (moduleId === 'rights') return 'rights';
+  if (['files', 'process', 'preservation'].includes(moduleId))
+    return 'technical';
+  return 'curatorial';
 }
 export function requireEdit(access: ContextAccess, moduleId: ModuleId): void {
   if (!access.capabilities.edit_modules.includes(moduleId))

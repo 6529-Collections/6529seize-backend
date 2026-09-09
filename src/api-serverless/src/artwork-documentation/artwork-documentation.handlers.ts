@@ -6,7 +6,10 @@ import { ApiCompliantException } from '@/exceptions';
 import { Timer } from '@/time';
 import { RequestContext } from '@/request.context';
 import { artworkDocumentationService as core } from '@/artwork-documentation/artwork-documentation.service';
-import { artworkDocumentationReviewService as review } from '@/artwork-documentation/artwork-documentation.review';
+import {
+  artworkDocumentationReviewService as review,
+  ContextFilters
+} from '@/artwork-documentation/artwork-documentation.review';
 import {
   ModuleId,
   MODULE_IDS,
@@ -83,7 +86,12 @@ async function execute<T>(
       )
     };
     const result = await operation(ctx);
-    if (result && typeof result === 'object' && 'draft_version' in result)
+    if (
+      result &&
+      typeof result === 'object' &&
+      'draft_version' in result &&
+      typeof result.draft_version === 'number'
+    )
       req.res?.set('ETag', `"draft-${result.draft_version}"`);
     return result as T;
   } catch (error) {
@@ -314,7 +322,21 @@ export function handleListDocumentationProgram(
   req: Operations.ArtworkDocumentationListDocumentationProgramRequest
 ): Promise<Operations.ArtworkDocumentationListDocumentationProgramResponse> {
   return execute(req, (ctx) =>
-    review.listContexts(ctx, page(req), req.params.programId)
+    review.listContexts(
+      ctx,
+      {
+        ...page(req),
+        confirmation_status: req.query.confirmation_status,
+        review_lane: req.query.review_lane,
+        outstanding_action: req.query.outstanding_action,
+        profile_id: req.query.profile_id,
+        profile_version:
+          req.query.profile_version === undefined
+            ? undefined
+            : Number(req.query.profile_version)
+      } as ContextFilters,
+      req.params.programId
+    )
   );
 }
 export function handlePreviewDocumentationUpgrade(

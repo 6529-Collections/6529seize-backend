@@ -11,7 +11,8 @@ import {
   AD_CONTEXTS,
   AD_DROP_LINKS,
   AD_GRANTS,
-  AD_REVISIONS
+  AD_REVISIONS,
+  AD_REVIEWS
 } from './artwork-documentation.tables';
 import {
   Answer,
@@ -395,6 +396,7 @@ describe('artwork documentation transactional persistence', () => {
     record.modules.artwork = {
       title: answer('Image'),
       title_language: answer('en'),
+      medium: answer({ kind: 'digital_photograph' }),
       canonical_asset_id: answer(assetId)
     };
     record.modules.context = {
@@ -525,7 +527,7 @@ describe('artwork documentation transactional persistence', () => {
     };
     const write = mutation('confirm', body, 1);
     const confirmed = await service.confirm(record.id, body, write, ctx);
-    expect(confirmed.reviews).toHaveLength(3);
+    expect(confirmed.reviews).toHaveLength(2);
     expect(
       confirmed.reviews.every((review) => review.status === 'pending')
     ).toBe(true);
@@ -713,5 +715,230 @@ describe('artwork documentation transactional persistence', () => {
         )
       ).lifecycle
     ).toBe('active');
+  });
+  it('filters queues before pagination and returns only generic review summaries', async () => {
+    const current = await readyContext();
+    const newer = await readyContext();
+    const unconfirmed = await create();
+    const confirmBody = {
+      accepted: true,
+      confirmation_copy_version: CONFIRMATION_COPY_VERSION
+    };
+    const confirmed = await service.confirm(
+      current.id,
+      confirmBody,
+      mutation(`confirm-${current.id}`, confirmBody, 1),
+      ctx
+    );
+    await service.confirm(
+      newer.id,
+      confirmBody,
+      mutation(`confirm-${newer.id}`, confirmBody, 1),
+      ctx
+    );
+    const patch = {
+      schema_version: 1,
+      operations: [
+        { op: 'set' as const, field: 'title', answer: answer('New draft') }
+      ]
+    };
+    await service.patchModule(
+      newer.id,
+      'artwork',
+      patch,
+      mutation('title', patch, 1),
+      ctx
+    );
+    expect(
+      (
+        await reviews.listContexts(ctx, {
+          confirmation_status: 'current',
+          limit: 1
+        })
+      ).data.map((row) => row.id)
+    ).toEqual([current.id]);
+    expect(
+      (
+        await reviews.listContexts(ctx, { confirmation_status: 'newer_draft' })
+      ).data.map((row) => row.id)
+    ).toEqual([newer.id]);
+    expect(
+      (
+        await reviews.listContexts(ctx, { confirmation_status: 'unconfirmed' })
+      ).data.map((row) => row.id)
+    ).toEqual([unconfirmed.id]);
+    expect(
+      (
+        await reviews.listContexts(ctx, {
+          outstanding_action: 'artist_confirmation'
+        })
+      ).data
+    ).toHaveLength(2);
+    expect(
+      (
+        await reviews.listContexts(ctx, {
+          outstanding_action: 'review',
+          review_lane: 'rights',
+          profile_id: 'stream_artwork_basic_v1',
+          profile_version: 1
+        })
+      ).data.map((row) => row.id)
+    ).toEqual([current.id]);
+    await db.query(
+      `UPDATE ${AD_REVIEWS} SET status='changes_requested',reason=:reason WHERE revision_id=:id AND lane='rights'`,
+      { id: confirmed.id, reason: 'Private evidence concern' },
+      ctx
+    );
+    const queue = await reviews.listContexts(ctx, {
+      outstanding_action: 'changes_requested',
+      review_lane: 'rights'
+    });
+    expect(queue.data.map((row) => row.id)).toEqual([current.id]);
+    expect(JSON.stringify(queue)).not.toContain('Private evidence concern');
+    expect(
+      (await reviews.listContexts(ctx, { profile_version: 2 })).data
+    ).toEqual([]);
+    await expect(
+      reviews.listContexts(ctx, { review_lane: 'invented' })
+    ).rejects.toMatchObject({ code: 'INVALID_FILTER' });
+    expect(
+      confirmed.snapshot.profile.interview_instrument.prompts
+    ).toHaveLength(8);
+    expect(confirmed.snapshot.profile.interview_instrument.prompts[0]).toEqual({
+      id: 'q1',
+      text: 'What first drew you to make this work?'
+    });
+  });
+  it('requires explicit interview metadata and future disclosure permission for recording references', async () => {
+    const record = await readyContext();
+    const recordingId = randomUUID();
+    record.asset_links.push({
+      ...record.asset_links[0],
+      id: randomUUID(),
+      asset_id: recordingId,
+      role: 'interview_recording'
+    });
+    await db.saveContext(record, ctx);
+    const reference = {
+      op: 'set' as const,
+      field: 'recording_asset_id',
+      answer: answer(recordingId)
+    };
+    const missing = { schema_version: 1, operations: [reference] };
+    await expect(
+      service.patchModule(
+        record.id,
+        'interview',
+        missing,
+        mutation('interview', missing, 1),
+        ctx
+      )
+    ).rejects.toMatchObject({ code: 'INTERVIEW_PERMISSION_REQUIRED' });
+    const operations = [
+      reference,
+      {
+        op: 'set' as const,
+        field: 'date',
+        answer: answer({
+          precision: 'day',
+          start: '2026-09-09',
+          approximate: false
+        })
+      },
+      {
+        op: 'set' as const,
+        field: 'participants',
+        answer: answer([{ name: 'Artist', role: 'artist' }])
+      },
+      {
+        op: 'set' as const,
+        field: 'recording_permission',
+        answer: answer('private_review')
+      }
+    ];
+    const restricted = { schema_version: 1, operations };
+    await expect(
+      service.patchModule(
+        record.id,
+        'interview',
+        restricted,
+        mutation('interview', restricted, 1),
+        ctx
+      )
+    ).rejects.toMatchObject({ code: 'INTERVIEW_DISCLOSURE_MISMATCH' });
+    const allowed = {
+      schema_version: 1,
+      operations: operations.map((operation) =>
+        operation.field === 'recording_permission'
+          ? { ...operation, answer: answer('intended_public_record') }
+          : operation
+      )
+    };
+    await expect(
+      service.patchModule(
+        record.id,
+        'interview',
+        allowed,
+        mutation('interview', allowed, 1),
+        ctx
+      )
+    ).resolves.toMatchObject({ draft_version: 2 });
+  });
+  it('retains attributable review decision history without exposing private reasons to general readers', async () => {
+    const record = await readyContext();
+    const confirmBody = {
+      accepted: true,
+      confirmation_copy_version: CONFIRMATION_COPY_VERSION
+    };
+    const confirmed = await service.confirm(
+      record.id,
+      confirmBody,
+      mutation('confirm', confirmBody, 1),
+      ctx
+    );
+    const reviewerId = randomUUID();
+    const viewerId = randomUUID();
+    await assign(record, reviewerId, {
+      review_lanes: ['rights'],
+      read_rights_evidence: true
+    });
+    await assign(record, viewerId, {});
+    const reviewer = makeContext(reviewerId);
+    const statuses = ['changes_requested', 'pending'];
+    for (let index = 0; index < statuses.length; index++) {
+      const body = {
+        expected_review_version: index + 1,
+        status: statuses[index],
+        reason: `Private rights reason ${index}`
+      };
+      await reviews.review(
+        record.id,
+        confirmed.id,
+        'rights',
+        body,
+        mutation('rights-review', body, 1),
+        reviewer
+      );
+    }
+    const row = await db.one<{ decision_history_json: unknown }>(
+      `SELECT decision_history_json FROM ${AD_REVIEWS} WHERE revision_id=:id AND lane='rights'`,
+      { id: confirmed.id },
+      ctx
+    );
+    const history =
+      typeof row!.decision_history_json === 'string'
+        ? JSON.parse(row!.decision_history_json)
+        : row!.decision_history_json;
+    expect(history).toHaveLength(2);
+    expect(history[0]).toMatchObject({
+      reviewer_profile_id: reviewerId,
+      reason: 'Private rights reason 0',
+      review_version: 2
+    });
+    const visible = JSON.stringify(
+      await service.getRevision(record.id, confirmed.id, makeContext(viewerId))
+    );
+    expect(visible).not.toContain('Private rights reason');
+    expect(visible).not.toContain('decision_history_json');
   });
 });

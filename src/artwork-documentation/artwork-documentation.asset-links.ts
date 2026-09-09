@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 import { RequestContext } from '@/request.context';
 import { artworkAssetsService } from './assets/artwork-assets.service';
 import {

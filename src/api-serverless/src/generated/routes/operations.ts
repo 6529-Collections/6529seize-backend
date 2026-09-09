@@ -641,6 +641,11 @@ export interface ArtworkDocumentationListDocumentationProgramPathParams {
 export interface ArtworkDocumentationListDocumentationProgramQuery {
   "cursor"?: string;
   "limit"?: number;
+  "confirmation_status"?: "unconfirmed" | "current" | "newer_draft";
+  "review_lane"?: "curatorial" | "technical" | "rights";
+  "outstanding_action"?: "artist_confirmation" | "review" | "changes_requested";
+  "profile_id"?: string;
+  "profile_version"?: number;
 }
 
 export type ArtworkDocumentationListDocumentationProgramResponse = ApiArtworkDocumentationContextListResponse;
