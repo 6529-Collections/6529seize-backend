@@ -227,8 +227,7 @@ export function inspectAssetHeader(
   return {
     detected_mime: ARTWORK_FORMATS[extension][0],
     inspection_status:
-      PREVIEW_EXTENSIONS.includes(extension) ||
-      TEXT_EXTENSIONS.has(extension)
+      PREVIEW_EXTENSIONS.includes(extension) || TEXT_EXTENSIONS.has(extension)
         ? 'verified'
         : 'unsupported'
   };
