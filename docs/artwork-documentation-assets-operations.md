@@ -114,9 +114,13 @@ uploads after one day. The worker removes expired unreferenced originals.
 Ready unattached assets expire after seven days, as disclosed in the UI.
 An asset attached to a draft or any confirmed revision gets a retained flag in
 the same database transaction; replacement/detachment does not delete that
-previous original. The cleanup worker locks the same asset row before deletion,
-so a concurrent reference cannot race cleanup. Preview noncurrent versions have
-a seven-day lifecycle rule. There is no blanket original-object expiry rule.
+previous original. Cleanup claims the same asset row as `expired` under a short
+transaction, then releases the database lock before deleting from S3. A retained
+asset cannot be claimed, and an expired claim cannot acquire new references.
+Quota remains reserved until deletion succeeds; storage faults retain the claim
+and retry with bounded backoff. Lease expiry recovers an interrupted cleanup,
+and stale workers cannot release another worker's reservation. Preview noncurrent
+versions have a seven-day lifecycle rule. There is no blanket original-object expiry rule.
 
 The storage stack adds a separate AWS Backup vault and daily 03:00 UTC backup
 with a 35-day operational recovery window. Its resource selection is the one

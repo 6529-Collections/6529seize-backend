@@ -783,10 +783,12 @@ It requires a successful real GuardDuty scan before streaming byte-size/SHA-256
 verification and bounded format inspection. Small supported images can produce
 stripped private previews; large/vendor originals remain intact with honest
 inspection support status. The worker never publishes to the social CDN,
-IPFS/Arweave or Stream. It removes expired unreferenced uploads under the same
-row lock used by reference/confirmation transactions; any draft/revision
-reference retains the original. Original downloads require archival access,
-and rights instruments require their separate evidence capability.
+IPFS/Arweave or Stream. Cleanup commits an expired-state lease under the same
+row lock used by reference/confirmation transactions, then deletes from S3
+outside the transaction. Retained originals cannot be claimed, expired claims
+cannot gain references, and quota is released only after successful deletion;
+failed deletion and interrupted leases retry durably. Original downloads require
+archival access, and rights instruments require their separate evidence capability.
 
 Deploy storage and schema before processor/API, then dependent frontend.
 Feature flags are off by default and can be enabled through environment-specific

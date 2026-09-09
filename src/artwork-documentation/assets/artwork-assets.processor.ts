@@ -160,6 +160,8 @@ export class ArtworkAssetsProcessor {
     asset: StoredAsset,
     path: string
   ): Promise<Partial<StoredAsset>> {
+    let preview: Buffer;
+    let dimensions: { width: number | null; height: number | null };
     try {
       const pipeline = sharp(path, {
         limitInputPixels: PREVIEW_PIXEL_LIMIT,
@@ -167,19 +169,12 @@ export class ArtworkAssetsProcessor {
         pages: 1
       }).timeout({ seconds: 25 });
       const info = await pipeline.metadata();
-      const preview = await pipeline
+      dimensions = { width: info.width ?? null, height: info.height ?? null };
+      preview = await pipeline
         .rotate()
         .resize(1600, 1600, { fit: 'inside', withoutEnlargement: true })
         .jpeg({ quality: 85 })
         .toBuffer();
-      // No withMetadata/keepMetadata: generated pixels contain no GPS, EXIF, XMP or artist instrument metadata.
-      const key = await this.storage.putPreview(asset, preview);
-      return {
-        preview_key: key,
-        width: info.width ?? null,
-        height: info.height ?? null,
-        inspection_status: 'verified'
-      };
     } catch (error) {
       // Bounded parser limits do not reject an otherwise safely scanned archival original.
       if (
@@ -189,30 +184,29 @@ export class ArtworkAssetsProcessor {
         return { inspection_status: 'unsupported' };
       throw new AssetInspectionError('INVALID_IMAGE_DATA');
     }
+    // Storage failures remain operational retries, never invalid-image findings.
+    // No withMetadata/keepMetadata: generated pixels contain no source metadata.
+    const key = await this.storage.putPreview(asset, preview);
+    return {
+      preview_key: key,
+      ...dimensions,
+      inspection_status: 'verified'
+    };
   }
   async cleanup(): Promise<void> {
-    const candidates = await this.db.cleanupCandidates(Date.now());
-    for (const candidate of candidates) {
-      await this.db.withLocked(
-        candidate.id,
-        candidate.context_id,
-        async (asset, connection) => {
-          // Core confirmation/attachment holds the same asset lock before marking retained.
-          if (
-            asset.referenced ||
-            asset.state === 'processing' ||
-            Number(asset.expires_at) > Date.now() ||
-            Number(asset.reserved_bytes) === 0
-          )
-            return;
-          await this.storage.cancel(asset);
-          await this.db.update(
-            asset.id,
-            { state: 'expired', reserved_bytes: 0, updated_at: Date.now() },
-            connection
-          );
-        }
-      );
+    for (let count = 0; count < 20; count++) {
+      // The expired-state claim commits before S3 access. Attachment cannot
+      // retain a claimed asset because validation and reference writes require ready.
+      const asset = await this.db.claimCleanup(Date.now());
+      if (!asset) return;
+      let succeeded = false;
+      try {
+        await this.storage.cancel(asset);
+        succeeded = true;
+      } catch {
+        // Preserve the claim and quota for retry without retaining raw SDK errors.
+      }
+      await this.db.finishCleanup(asset, succeeded, Date.now());
     }
   }
 }

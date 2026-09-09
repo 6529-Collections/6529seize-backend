@@ -178,11 +178,63 @@ export class ArtworkAssetsDb extends LazyDbAccessCompatibleService {
       }
     );
   }
-  async cleanupCandidates(now: number): Promise<StoredAsset[]> {
-    return this.db.execute<StoredAsset>(
-      `select * from ${ARTWORK_ASSETS_TABLE} where referenced = 0 and reserved_bytes > 0 and expires_at > 0 and expires_at < :now and state <> 'processing' order by expires_at asc limit 20`,
-      { now },
-      { forcePool: DbPoolName.WRITE }
+  async claimCleanup(now: number): Promise<StoredAsset | null> {
+    return this.db.executeNativeQueriesInTransaction(async (connection) => {
+      const asset = await this.db.oneOrNull<StoredAsset>(
+        `select * from ${ARTWORK_ASSETS_TABLE} where referenced = 0 and reserved_bytes > 0 and expires_at > 0 and expires_at < :now and state <> 'processing' and lease_until < :now and next_attempt_at <= :now order by expires_at asc limit 1 for update skip locked`,
+        { now },
+        { wrappedConnection: connection }
+      );
+      if (!asset) return null;
+      const claimed: StoredAsset = {
+        ...asset,
+        state: 'expired',
+        lease_until: now + 15 * 60_000,
+        attempts: asset.state === 'expired' ? asset.attempts + 1 : 1,
+        updated_at: now
+      };
+      await this.update(
+        asset.id,
+        {
+          state: claimed.state,
+          lease_until: claimed.lease_until,
+          attempts: claimed.attempts,
+          updated_at: now
+        },
+        connection
+      );
+      return claimed;
+    });
+  }
+  async finishCleanup(
+    claim: StoredAsset,
+    succeeded: boolean,
+    now: number
+  ): Promise<void> {
+    await this.withLocked(
+      claim.id,
+      claim.context_id,
+      async (current, connection) => {
+        if (
+          current.state !== 'expired' ||
+          current.referenced ||
+          Number(current.lease_until) !== Number(claim.lease_until)
+        )
+          return;
+        await this.update(
+          claim.id,
+          {
+            reserved_bytes: succeeded ? 0 : current.reserved_bytes,
+            lease_until: 0,
+            next_attempt_at: succeeded
+              ? 0
+              : now + Math.min(30, Math.max(1, claim.attempts)) * 60_000,
+            failure_code: succeeded ? null : 'ASSET_CLEANUP_RETRY',
+            updated_at: now
+          },
+          connection
+        );
+      }
     );
   }
 
