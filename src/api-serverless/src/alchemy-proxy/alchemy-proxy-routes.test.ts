@@ -10,6 +10,7 @@ jest.mock('@/api/request-cache', () => ({
 
 import { Router } from 'express';
 import { getAlchemyInstance } from '@/alchemy';
+import { CustomApiCompliantException } from '@/exceptions';
 import '@/api/alchemy-proxy/alchemy-proxy.routes';
 
 const mockRouter = jest.mocked(Router).mock.results[0].value;
@@ -49,14 +50,31 @@ beforeEach(() => {
 describe('retired collection search', () => {
   it.each([{}, { query: 'memes' }, { query: ADDRESS }, { query: ['a', 'b'] }])(
     'returns a non-cacheable 410 without Alchemy for %j',
-    async (query) => {
-      const res = await request('/collections', query);
-      expect(res.status).toHaveBeenCalledWith(410);
+    (query) => {
+      const res = { setHeader: jest.fn() };
+      const invoke = () =>
+        handlerFor('/collections')(
+          { query } as unknown as Request,
+          res as unknown as Response,
+          jest.fn()
+        );
+      // The shared API error middleware serializes this exception as { error }.
+      let thrown: unknown;
+      try {
+        invoke();
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(CustomApiCompliantException);
+      if (!(thrown instanceof CustomApiCompliantException)) {
+        throw new Error('Expected an API-compliant retirement error');
+      }
+      expect(thrown.getStatusCode()).toBe(410);
+      expect(thrown.message).toBe(
+        'Collection name search is no longer available. Use a contract address.'
+      );
+      expect(thrown.code).toBeUndefined();
       expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
-      expect(res.json).toHaveBeenCalledWith({
-        error:
-          'Collection name search is no longer available. Use a contract address.'
-      });
       expect(getAlchemyInstance).not.toHaveBeenCalled();
       const route = mockRouter.get.mock.calls.find(
         (args: unknown[]) => args[0] === '/collections'

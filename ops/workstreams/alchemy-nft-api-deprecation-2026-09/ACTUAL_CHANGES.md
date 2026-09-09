@@ -36,9 +36,11 @@ apply the keyword result filter.
 - Old FE/Core versions using collection-name fallback will receive 410 and
   may display no suggestions. Deploying this BE change alone does not teach
   those clients address-only UX.
-- Updated FE uses the already-existing contract endpoint, so it can ship first.
-  Coordinate the BE retirement with FE and the subsequent Core sync/release;
-  there is no server-only way to preserve old keyword discovery.
+- Deploy updated FE first using the already-existing contract endpoint. Gate BE
+  retirement on older web/desktop clients being updated, or explicit release
+  owner acceptance of compatibility loss for remaining older clients. Record
+  that decision and the Core release plan before deploying BE; there is no
+  server-only way to preserve keyword discovery after the provider deadline.
 - Core's own renderer search and the separately deployed allowlist service
   remain outside this implementation. Their retirement work is still required.
 - Deployment unit: `api` only. No ingestion or loop Lambda requires deployment:

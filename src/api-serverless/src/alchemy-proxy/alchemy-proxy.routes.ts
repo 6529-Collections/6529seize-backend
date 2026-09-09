@@ -1,4 +1,5 @@
 import { Network } from '@/alchemy-sdk';
+import { CustomApiCompliantException } from '@/exceptions';
 import { ethers } from 'ethers';
 import { Request, Response, Router } from 'express';
 import { getAlchemyInstance } from '../../../alchemy';
@@ -36,10 +37,10 @@ function checksumAddress(address: string): string | null {
 // Keep a terminal response for older clients without contacting the retired API.
 router.get('/collections', (_req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
-  return res.status(410).json({
-    error:
-      'Collection name search is no longer available. Use a contract address.'
-  });
+  throw new CustomApiCompliantException(
+    410,
+    'Collection name search is no longer available. Use a contract address.'
+  );
 });
 
 router.get(

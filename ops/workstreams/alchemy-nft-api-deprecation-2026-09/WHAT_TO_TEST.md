@@ -47,8 +47,10 @@ These are read-only requests. Do not include API keys or credentials in reports.
   This is intentional, not preservation of free-text search.
 - [ ] Deploy only service `api` for this implementation. No database migration
   or ingestion/loop Lambda deployment is needed.
-- [ ] Confirm FE rollout and the later Core sync/release are tracked before
-  September 30, 2026.
+- [ ] Deploy FE first. Before BE retirement, record that older web/desktop
+  clients are updated or that the release owner explicitly accepts the
+  compatibility loss for remaining old clients. Record the Core release plan
+  against the September 30, 2026 provider deadline.
 - [ ] Keep the external allowlist-service owner audit open until its provider
   usage is verified.
 
