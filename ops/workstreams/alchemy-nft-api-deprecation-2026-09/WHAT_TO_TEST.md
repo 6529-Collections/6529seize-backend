@@ -45,8 +45,9 @@ These are read-only requests. Do not include API keys or credentials in reports.
 
 - [ ] Record that old FE/Core keyword-search fallback now receives 410.
   This is intentional, not preservation of free-text search.
-- [ ] Deploy only service `api` for this implementation. No database migration
-  or ingestion/loop Lambda deployment is needed.
+- [ ] Lambda redeployment: `api` only (the sole backend deployment step), after
+  the FE rollout and compatibility gate below. No prerequisite Lambda,
+  database migration, or ingestion/loop Lambda deployment is needed.
 - [ ] Deploy FE first. Before BE retirement, record that older web/desktop
   clients are updated or that the release owner explicitly accepts the
   compatibility loss for remaining old clients. Record the Core release plan
