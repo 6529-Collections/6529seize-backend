@@ -1,5 +1,8 @@
 # Alchemy NFT API deprecation TODO
 
+See [main versus revised: backend acceptance comparison](ACTUAL_CHANGES.md#main-versus-revised-backend-acceptance-comparison)
+for current behavior, revised expectations, and the paired frontend feature-removal comparison.
+
 Status: Address-only implementation complete; deployment and manual acceptance pending
 
 Deadline: September 30, 2026

@@ -5,6 +5,29 @@ removes the Alchemy V3 search implementation and accompanies the address-only
 picker in [FE PR #3897](https://github.com/6529-Collections/6529seize-frontend/pull/3897).
 Deployment is separate from implementation.
 
+## Main versus revised: backend acceptance comparison
+
+Baseline checked on September 9, 2026: BE `main` at
+`41dfb41a33b9c1c01b7f4cb6a082838febf4594e`. This is a source comparison,
+not an assertion about which version is deployed in any environment.
+
+| What to test / feature | Main at the baseline above | Revised BE #1974 |
+| --- | --- | --- |
+| Nonempty `/alchemy-proxy/collections?query=memes` | Calls Alchemy `searchContractMetadata` and returns a contract array on success. | Always 410 with `Collection name search is no longer available. Use a contract address.` No search call or results. |
+| Empty or missing query | 400 with `query is required`. | Same 410 retirement message as nonempty queries; retirement takes precedence over input validation. |
+| Search caching | One-minute request cache may serve successful search results. | No search-cache middleware; `Cache-Control: no-store`. Old search entries are not read. |
+| Older-client keyword fallback | BE is the fallback for FE/Core collection-name search. The array/envelope mismatch can already hide successful results. | No keyword fallback remains. Older clients receive 410 and may show no suggestions; apply the release gate below. |
+| `/alchemy-proxy/contract` and FE address fallback | Existing V3 contract metadata with `_checksum`, input validation, error handling, and five-minute cache. | Unchanged. Verify valid/mixed-case addresses, invalid input, and FE failover using the existing contract endpoint. |
+| Owner NFTs and token metadata | Existing owner filtering/pagination and token metadata. | Unchanged. Smoke-test known wallet/contract and token inputs. |
+| Deployment units | Existing API Lambda and ingestion/loop services. | Redeploy `api` only after FE rollout and the compatibility gate. No migration or other Lambda dependency. |
+
+The sole externally visible BE feature removal is collection-name search
+through `/alchemy-proxy/collections`; its unused SDK wrapper is also removed.
+The address-only picker, removal of keyword suggestions and **Show anyway**,
+and preserved token/card search behavior are frontend-owned. See the paired
+[full FE main-versus-revised comparison](https://github.com/6529-Collections/6529seize-frontend/blob/agent-prxt/alchemy-nft-api-deprecation-todo/ops/workstreams/alchemy-nft-api-deprecation-2026-09/ACTUAL_CHANGES.md#what-to-test-main-versus-revised)
+and [features removed](https://github.com/6529-Collections/6529seize-frontend/blob/agent-prxt/alchemy-nft-api-deprecation-todo/ops/workstreams/alchemy-nft-api-deprecation-2026-09/ACTUAL_CHANGES.md#features-removed-main-versus-revised).
+
 ## Behavior and API differences
 
 | Capability | Before | After |
