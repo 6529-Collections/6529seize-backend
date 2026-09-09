@@ -39,6 +39,15 @@ const TinyIntToBooleanCaster: TypeCast = function castField(field, next) {
 export const CustomTypeCaster: TypeCast = (field, next) =>
   TinyIntToBooleanCaster(field, () => BigIntToNumberCaster(field, next));
 
+function describeQuery(sql: string, params?: Record<string, unknown>): string {
+  if (/\bartwork_documentation_[a-z_]+\b/i.test(sql)) {
+    return '[private artwork documentation query]';
+  }
+  const normalized = sql.replace('\n', ' ');
+  if (!params) return normalized;
+  return `${normalized} with params ${JSON.stringify(params)}`;
+}
+
 export async function execNativeTransactionally<T>(
   executable: (connectionWrapper: ConnectionWrapper<any>) => Promise<T>,
   connection: PoolConnection
@@ -82,9 +91,7 @@ export async function execSQLWithParams<T>(
       const privateArtworkQuery = /\bartwork_documentation_[a-z_]+\b/i.test(
         sql
       );
-      const queryDescription = privateArtworkQuery
-        ? '[private artwork documentation query]'
-        : `${sql.replace('\n', ' ')}${params ? ` with params ${JSON.stringify(params)}` : ''}`;
+      const queryDescription = describeQuery(sql, params);
       const queryTook = timer.diffFromNow();
       if (queryTook.gt(Time.seconds(1))) {
         logger.warn(
