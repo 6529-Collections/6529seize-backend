@@ -97,6 +97,36 @@ review any proposed source language. Re-running the command recovers existing
 contexts instead of duplicating works. Output contains IDs only. No invitation,
 email, Wave post, wallet action or payment is sent by this command.
 
+### Operator access inside the VPC
+
+The dedicated `artworkDocumentationProcessor` also accepts two closed actions
+through IAM-authorized Lambda invocation. It has no HTTP operator endpoint. Keep
+Lambda invoke access limited to release operators, with invocation audit logging
+configured by the deployment owner. Applied actions record the supplied UUID correlation ID in the
+documentation event table. Neither action changes process environment variables
+or enables the API's feature flags. Normal scheduled events still run only the
+archival processor and operational metrics.
+
+```json
+{"operator_action":"import_keys_and_gates_v1","correlation_id":"<request-UUID>","coordinator_profile_id":"<verified-profile-UUID>","apply":false}
+```
+
+Imports default to read-only dry-run; only explicit boolean `apply: true` applies
+the code-pinned roster. The processor uses the same import validation as the CLI.
+No caller-supplied roster, program, SQL or grant configuration is accepted.
+
+```json
+{"operator_action":"create_smoke_context_v1","correlation_id":"<request-UUID>"}
+```
+
+The smoke action resolves the existing `punk6529bot` profile in the target
+database and creates one empty basic nonprogram context. Reuse the same
+correlation ID to recover the same context after an uncertain response. It
+creates no source records, shared identity edits, files or program grants, and
+returns only identifiers. It works while API features remain disabled; the API
+must be enabled independently after deployment verification before the bot can
+exercise that context with its normal authenticated requests.
+
 ## Retention and recovery
 
 Archiving is reversible and does not remove revisions. Asset replacement or

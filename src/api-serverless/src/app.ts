@@ -26,6 +26,7 @@ import feedRoutes from './feed/feed.routes';
 import gasRoutes from './gas/gas.routes';
 import generatedOpenApiRoutes from './generated/routes/openapi-generated.routes';
 import { validateDocumentationRawJson } from '@/artwork-documentation/artwork-documentation.raw-json';
+import { documentationErrorMiddleware } from '@/api/artwork-documentation/artwork-documentation.http';
 import identitiesRoutes from './identities/identities.routes';
 import contentModerationRoutes from './content-moderation/content-moderation.routes';
 import identitySubscriptionsRoutes from './identity-subscriptions/identity-subscriptions.routes';
@@ -71,10 +72,7 @@ import {
   Strategy as JwtStrategy,
   VerifiedCallback
 } from 'passport-jwt';
-import {
-  ApiCompliantException,
-  CustomApiCompliantException
-} from '@/exceptions';
+import { ApiCompliantException } from '@/exceptions';
 import * as sentryContext from '../../sentry.context';
 import { Time, Timer } from '@/time';
 import { DropType } from '@/entities/IDrop';
@@ -1727,25 +1725,7 @@ async function initializeApp() {
     )
   );
 
-  app.use((error: Error, req: Request, _res: Response, next: NextFunction) => {
-    if (!req.path.startsWith('/api/artwork-documentation')) return next(error);
-    req.body = undefined;
-    req.query = {};
-    // Parser/SQL errors can carry the full input. Retain only a safe domain code.
-    const safe =
-      error instanceof ApiCompliantException
-        ? new CustomApiCompliantException(
-            error.getStatusCode(),
-            error.message,
-            error.code
-          )
-        : new CustomApiCompliantException(
-            500,
-            'artworkDocumentation.errors.DOCUMENTATION_OPERATION_FAILED',
-            'DOCUMENTATION_OPERATION_FAILED'
-          );
-    return next(safe);
-  });
+  app.use(documentationErrorMiddleware);
   if (sentryContext.isConfigured()) {
     app.use(Sentry.Handlers.errorHandler());
     app.use(sentryFlusherMiddleware());

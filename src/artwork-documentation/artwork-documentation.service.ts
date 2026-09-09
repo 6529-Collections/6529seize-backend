@@ -189,21 +189,45 @@ const noAssetGateway: AssetGateway = {
   validateReadyAsset: async () => fail(409, 'ASSET_NOT_READY'),
   markReferenced: async () => undefined
 };
+export type DocumentationFeaturePolicy = {
+  enabled(): boolean;
+  selfServiceEnabled(): boolean;
+};
+const environmentFeaturePolicy: DocumentationFeaturePolicy = {
+  enabled: () => process.env.ARTWORK_DOCUMENTATION_ENABLED === 'true',
+  selfServiceEnabled: () =>
+    process.env.ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED === 'true'
+};
 
 export class ArtworkDocumentationService {
   constructor(
     readonly db: ArtworkDocumentationDb = artworkDocumentationDb,
-    private assets: AssetGateway = noAssetGateway
+    private assets: AssetGateway = noAssetGateway,
+    private readonly featurePolicy: DocumentationFeaturePolicy = environmentFeaturePolicy
   ) {}
   setAssetGateway(gateway: AssetGateway): void {
     this.assets = gateway;
   }
   actor(ctx: RequestContext): string {
-    if (process.env.ARTWORK_DOCUMENTATION_ENABLED !== 'true')
-      fail(404, 'UNAVAILABLE');
+    if (!this.featurePolicy.enabled()) fail(404, 'UNAVAILABLE');
     const actor = ctx.authenticationContext?.authenticatedProfileId;
     if (!actor) fail(401, 'AUTHENTICATION_REQUIRED');
     return actor;
+  }
+  async bindAssetMutation(
+    id: string,
+    uploadId: string,
+    mutation: Mutation,
+    ctx: RequestContext
+  ): Promise<void> {
+    const actor = this.actor(ctx);
+    await this.authorizeContext(id, ctx);
+    await this.db.idempotent(
+      digest([actor, mutation.route, mutation.key]),
+      digest(mutation.body),
+      ctx,
+      async () => ({ context_id: id, upload_id: uploadId })
+    );
   }
   async authorizeContext(
     id: string,
@@ -243,13 +267,12 @@ export class ArtworkDocumentationService {
     );
   }
   async profiles(ctx: RequestContext) {
-    if (process.env.ARTWORK_DOCUMENTATION_ENABLED !== 'true')
+    if (!this.featurePolicy.enabled())
       return { enabled: false, self_service_enabled: false, profiles: [] };
     this.actor(ctx);
     return {
       enabled: true,
-      self_service_enabled:
-        process.env.ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED === 'true',
+      self_service_enabled: this.featurePolicy.selfServiceEnabled(),
       profiles: PROFILES
     };
   }
@@ -462,9 +485,7 @@ export class ArtworkDocumentationService {
             transaction
           );
           if (!caps.read_context) fail(403, 'PROGRAM_INVITATION_REQUIRED');
-        } else if (
-          process.env.ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED !== 'true'
-        )
+        } else if (!this.featurePolicy.selfServiceEnabled())
           fail(403, 'SELF_SERVICE_DISABLED');
         const context: ContextRecord = {
           id: randomUUID(),
@@ -687,10 +708,7 @@ export class ArtworkDocumentationService {
         if (existing) return { context_id: existing };
         if (profile.program_id && !caps.manage_context && !coordinator)
           fail(403, 'PROGRAM_INVITATION_REQUIRED');
-        if (
-          !profile.program_id &&
-          process.env.ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED !== 'true'
-        )
+        if (!profile.program_id && !this.featurePolicy.selfServiceEnabled())
           fail(403, 'SELF_SERVICE_DISABLED');
         const owner = coordinator ? drop!.author_id : actor;
         const context: ContextRecord = {

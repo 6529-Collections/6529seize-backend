@@ -758,6 +758,14 @@ For a documentation-only change, no Lambda redeploy is required.
 
 ### Private artwork documentation archive
 
+The dedicated processor also exposes two IAM-only invocation actions for release
+operators inside the VPC: the code-pinned Keys and Gates roster dry-run/import,
+and an idempotent empty nonprogram smoke context for the existing `punk6529bot`
+identity. These actions use an isolated service feature policy, accept no arbitrary
+SQL, roster or grants, and leave public API feature flags unchanged. Scheduled
+events continue through the archival tick. See the closed event schemas in
+[`artwork-documentation.md`](artwork-documentation.md#operator-access-inside-the-vpc).
+
 Artwork documentation uses a dedicated authenticated API boundary under
 `/artwork-documentation`, with private MySQL drafts and immutable confirmed
 records. `artwork_documentation_works` keeps stable work identity, while separate

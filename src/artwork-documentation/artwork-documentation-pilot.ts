@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { AuthenticationContext } from '@/auth-context';
 import { PROFILES_TABLE } from '@/constants';
 import { doInDbContext } from '@/secrets';
-import { artworkDocumentationService as service } from './artwork-documentation.service';
+import {
+  artworkDocumentationService,
+  ArtworkDocumentationService
+} from './artwork-documentation.service';
 import { AD_EVENTS, AD_GRANTS } from './artwork-documentation.tables';
 import { emptyCapabilities } from './artwork-documentation.access';
 import { fail } from './artwork-documentation.validation';
@@ -32,7 +35,8 @@ const WAVE_ID = '4ff022b3-aa17-4a0a-ba78-58f64ff1d427';
 
 export async function importKeysAndGates(
   coordinatorProfileId: string,
-  apply: boolean
+  apply: boolean,
+  service: ArtworkDocumentationService = artworkDocumentationService
 ) {
   const ctx = {
     authenticationContext:

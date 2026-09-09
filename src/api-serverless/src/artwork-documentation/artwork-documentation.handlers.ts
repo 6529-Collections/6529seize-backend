@@ -19,9 +19,9 @@ import {
 } from '@/artwork-documentation/artwork-documentation.types';
 import {
   fail,
-  normalizeJson,
   parseIfMatch
 } from '@/artwork-documentation/artwork-documentation.validation';
+import { validateDocumentationBody } from './artwork-documentation.http';
 
 type DocumentationRequest = Pick<
   Request<unknown, unknown, unknown, unknown>,
@@ -45,13 +45,7 @@ const fieldOperation = Joi.object({
 });
 
 function body<T>(req: DocumentationRequest, schema: Joi.Schema): T {
-  const result = schema.validate(normalizeJson(req.body), {
-    convert: false,
-    abortEarly: true,
-    allowUnknown: false
-  });
-  if (result.error) fail(422, 'INVALID_REQUEST');
-  return result.value as T;
+  return validateDocumentationBody<T>(req.body, schema);
 }
 function mutation(req: DocumentationRequest, expected = false): Mutation {
   const key = req.get('Idempotency-Key');

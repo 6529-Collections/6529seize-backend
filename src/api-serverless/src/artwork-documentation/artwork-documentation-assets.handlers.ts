@@ -108,21 +108,32 @@ export function handleCompleteDocumentationUpload(
   req: Operations.ArtworkDocumentationCompleteDocumentationUploadRequest
 ): Promise<Operations.ArtworkDocumentationCompleteDocumentationUploadResponse> {
   return execute(req, async (ctx) => {
-    mutation(req);
+    const access = toAssetAccess(
+      await core.authorizeContext(req.params.id, ctx)
+    );
+    const input = body<
+      Parameters<typeof artworkAssetsService.completeUpload>[3]
+    >(
+      req,
+      Joi.object({
+        parts: Joi.array()
+          .items(part.keys({ etag: Joi.string().min(1).max(200).required() }))
+          .min(1)
+          .max(256)
+          .required()
+      })
+    );
+    await core.bindAssetMutation(
+      req.params.id,
+      req.params.uploadId,
+      mutation(req),
+      ctx
+    );
     return artworkAssetsService.completeUpload(
       req.params.id,
       req.params.uploadId,
-      toAssetAccess(await core.authorizeContext(req.params.id, ctx)),
-      body(
-        req,
-        Joi.object({
-          parts: Joi.array()
-            .items(part.keys({ etag: Joi.string().min(1).max(200).required() }))
-            .min(1)
-            .max(256)
-            .required()
-        })
-      )
+      access,
+      input
     );
   });
 }
@@ -130,7 +141,12 @@ export function handleCancelDocumentationUpload(
   req: Operations.ArtworkDocumentationCancelDocumentationUploadRequest
 ): Promise<Operations.ArtworkDocumentationCancelDocumentationUploadResponse> {
   return execute(req, async (ctx) => {
-    mutation(req);
+    await core.bindAssetMutation(
+      req.params.id,
+      req.params.uploadId,
+      mutation(req),
+      ctx
+    );
     await artworkAssetsService.cancelUpload(
       req.params.id,
       req.params.uploadId,

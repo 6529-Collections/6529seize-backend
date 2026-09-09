@@ -9,6 +9,7 @@ import { ArtworkDocumentationService } from './artwork-documentation.service';
 import { ArtworkDocumentationReviewService } from './artwork-documentation.review';
 import {
   AD_CONTEXTS,
+  AD_ARTISTS,
   AD_DROP_LINKS,
   AD_GRANTS,
   AD_REVISIONS,
@@ -940,5 +941,73 @@ describe('artwork documentation transactional persistence', () => {
     );
     expect(visible).not.toContain('Private rights reason');
     expect(visible).not.toContain('decision_history_json');
+  });
+  it('binds external asset mutation keys before allowing same-body retries', async () => {
+    const record = await readyContext();
+    const uploadId = randomUUID();
+    const body = { parts: [{ part_number: 1, etag: 'first' }] };
+    const write = mutation(`complete:${record.id}:${uploadId}`, body);
+    await service.bindAssetMutation(record.id, uploadId, write, ctx);
+    await expect(
+      service.bindAssetMutation(record.id, uploadId, write, ctx)
+    ).resolves.toBeUndefined();
+    await expect(
+      service.bindAssetMutation(
+        record.id,
+        uploadId,
+        { ...write, body: { parts: [{ part_number: 1, etag: 'different' }] } },
+        ctx
+      )
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_MISMATCH' });
+    await expect(
+      service.bindAssetMutation(
+        record.id,
+        uploadId,
+        write,
+        makeContext(randomUUID())
+      )
+    ).rejects.toMatchObject({ code: 'UNAVAILABLE' });
+  });
+  it('isolates the smoke operator policy from disabled API feature flags', async () => {
+    process.env.ARTWORK_DOCUMENTATION_ENABLED = 'false';
+    process.env.ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED = 'false';
+    const operator = new ArtworkDocumentationService(db, assets, {
+      enabled: () => true,
+      selfServiceEnabled: () => true
+    });
+    const body = {
+      profile_id: 'stream_artwork_basic_v1',
+      profile_version: 1,
+      start_mode: 'standalone'
+    };
+    const write = mutation('operator:create_smoke_context_v1', body);
+    const created = await operator.createWork(body, write, ctx);
+    expect((await operator.createWork(body, write, ctx)).id).toBe(created.id);
+    expect(created).toMatchObject({
+      owner_profile_id: actor,
+      program_id: null,
+      artist_record_revision_id: null,
+      asset_links: [],
+      source_links: []
+    });
+    expect(
+      Object.values(created.modules).every(
+        (module) => Object.keys(module.answers).length === 0
+      )
+    ).toBe(true);
+    expect(
+      await db.query(
+        `SELECT owner_profile_id FROM ${AD_ARTISTS} WHERE owner_profile_id=:actor`,
+        { actor },
+        ctx
+      )
+    ).toEqual([]);
+    await expect(service.getContext(created.id, ctx)).rejects.toMatchObject({
+      code: 'UNAVAILABLE'
+    });
+    expect(process.env.ARTWORK_DOCUMENTATION_ENABLED).toBe('false');
+    expect(process.env.ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED).toBe(
+      'false'
+    );
   });
 });
