@@ -14,7 +14,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-if (![Guid]::TryParseExact($AssetId, 'D', [ref]([Guid]::Empty))) { throw 'AssetId must be a canonical UUID.' }
+if (-not [Guid]::TryParseExact($AssetId, 'D', [ref]([Guid]::Empty))) { throw 'AssetId must be a canonical UUID.' }
 $region = 'eu-west-1'
 $archiveBucket = '6529-artwork-documentation-987989283142-eu-west-1'
 $restoreBucket = '6529-artwork-restore-987989283142-eu-west-1'
@@ -44,7 +44,7 @@ if ($Phase -eq 'StartBackup') {
   if (Test-Path -LiteralPath $statePath) { throw 'A drill for this asset already exists; use its status/restore phases.' }
   $head = Invoke-ArchiveAws -Arguments @('s3api', 'head-object', '--bucket', $archiveBucket, '--key', $objectKey)
   if ($head.ContentLength -gt 10485760) { throw 'Use a synthetic staging fixture of at most 10MiB for the restore drill.' }
-  if ($head.Metadata.'artwork-asset-id' -ne $AssetId -or !$head.VersionId) { throw 'Object identity or immutable version is missing.' }
+  if ($head.Metadata.'artwork-asset-id' -ne $AssetId -or -not $head.VersionId) { throw 'Object identity or immutable version is missing.' }
   $result = Invoke-ArchiveAws -Arguments @('backup', 'start-backup-job', '--backup-vault-name', $outputs['ArtworkBackupVaultName'], '--resource-arn', "arn:aws:s3:::$archiveBucket", '--iam-role-arn', $outputs['ArtworkBackupRoleArn'], '--idempotency-token', "artwork-drill-$AssetId", '--lifecycle', 'DeleteAfterDays=7', '--backup-options', 'BackupACLs=disabled,BackupObjectTags=enabled')
   $state = @{ asset_id = $AssetId; expected_sha256 = $ExpectedSha256.ToLowerInvariant(); original_version = $head.VersionId; original_size = $head.ContentLength; backup_job_id = $result.BackupJobId; started_at = [DateTime]::UtcNow.ToString('o') }
   Save-DrillState $state
@@ -52,7 +52,7 @@ if ($Phase -eq 'StartBackup') {
   exit 0
 }
 
-if (!(Test-Path -LiteralPath $statePath)) { throw 'StartBackup must create the drill state first.' }
+if (-not (Test-Path -LiteralPath $statePath)) { throw 'StartBackup must create the drill state first.' }
 $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable
 if ($state.asset_id -ne $AssetId -or $state.expected_sha256 -ne $ExpectedSha256.ToLowerInvariant()) { throw 'Drill identity or expected confirmed digest changed.' }
 
@@ -72,7 +72,7 @@ if ($Phase -eq 'BackupStatus' -or $Phase -eq 'StartRestore') {
   exit 0
 }
 
-if (!$state.restore_job_id) { throw 'StartRestore must complete before this phase.' }
+if (-not $state.restore_job_id) { throw 'StartRestore must complete before this phase.' }
 $restore = Invoke-ArchiveAws -Arguments @('backup', 'describe-restore-job', '--restore-job-id', $state.restore_job_id)
 if ($Phase -eq 'RestoreStatus') { $restore | Select-Object RestoreJobId, Status, StatusMessage | ConvertTo-Json; exit 0 }
 if ($restore.Status -ne 'COMPLETED') { throw "Restore must complete before verification; current state: $($restore.Status)" }

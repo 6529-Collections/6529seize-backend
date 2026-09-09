@@ -119,8 +119,11 @@ export class ArtworkAssetsDb extends LazyDbAccessCompatibleService {
         ].includes(key)
     );
     if (!entries.length) return;
+    const assignments = entries
+      .map(([key]) => `\`${key}\` = :${key}`)
+      .join(', ');
     await this.db.execute(
-      `update ${ARTWORK_ASSETS_TABLE} set ${entries.map(([key]) => `\`${key}\` = :${key}`).join(', ')} where id = :id`,
+      `update ${ARTWORK_ASSETS_TABLE} set ${assignments} where id = :id`,
       { id, ...Object.fromEntries(entries) },
       { wrappedConnection: connection }
     );

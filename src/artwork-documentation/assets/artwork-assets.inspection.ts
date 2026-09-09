@@ -23,7 +23,7 @@ export const PREVIEW_EXTENSIONS = [
   'webp',
   'gif'
 ];
-const TEXT_EXTENSIONS = ['txt', 'md', 'xmp'];
+const TEXT_EXTENSIONS = new Set(['txt', 'md', 'xmp']);
 
 /** Stream the entire object once. The prefix and decoder buffers are strictly bounded. */
 export async function hashAssetStream(
@@ -34,7 +34,7 @@ export async function hashAssetStream(
   previewFile?: string
 ): Promise<{ sha256: string; size: number; prefix: Buffer }> {
   const hash = createHash('sha256');
-  const decoder = TEXT_EXTENSIONS.includes(extension)
+  const decoder = TEXT_EXTENSIONS.has(extension)
     ? new TextDecoder('utf-8', { fatal: true })
     : null;
   let size = 0;
@@ -228,7 +228,7 @@ export function inspectAssetHeader(
     detected_mime: ARTWORK_FORMATS[extension][0],
     inspection_status:
       PREVIEW_EXTENSIONS.includes(extension) ||
-      TEXT_EXTENSIONS.includes(extension)
+      TEXT_EXTENSIONS.has(extension)
         ? 'verified'
         : 'unsupported'
   };
