@@ -195,14 +195,57 @@ directory. Its implementation scope is:
 
 ### Phase 1: provider-neutral code, Alchemy endpoint
 
-1. Provision `ETHEREUM_RPC_URL` in every affected environment, pointing to the
-   current Alchemy mainnet endpoint.
-2. Deploy backend configuration support before dependent runtime migrations.
-3. Migrate backend ordinary callers and verify indexed Alchemy paths continue
-   to use `ALCHEMY_API_KEY`.
-4. Migrate frontend server-side ordinary reads.
-5. Remove obsolete Alchemy-derived ordinary RPC helpers after all callers have
-   moved.
+The implementation must refresh this source-derived inventory immediately
+before changing runtime code. At the time of this decision, these backend
+deployables contain confirmed ordinary-RPC call paths and therefore require
+`ETHEREUM_RPC_URL`:
+
+| Deployment | Ordinary-RPC responsibility |
+| --- | --- |
+| `api` | ENS resolution, wallet-signature and profile-CMS contract checks, NextGen validation, and other request-time contract reads |
+| `discoverEnsLoop` | ENS reverse resolution for newly discovered wallets |
+| `refreshEnsLoop` | ENS reverse-resolution refreshes |
+| `delegationsLoop` | Block, log, transaction, and ENS reads |
+| `nftsLoop` | Block and contract reads, including edition-size calculation |
+| `nftHistoryLoop` | Block, transaction, and receipt reads alongside Alchemy asset transfers |
+| `transactionsLoop` | Transaction, receipt, ENS, and trace reads alongside Alchemy asset transfers |
+| `nextgenContractLoop` | Block, log, transaction, receipt, ENS, contract, and trace reads alongside Alchemy asset transfers |
+| `tdhLoop` | Block and contract reads |
+| `subscriptionsTopUpLoop` | Block reads alongside Alchemy asset transfers |
+| `mintAnnouncementsLoop` | Manifold contract reads |
+| `artCurationNftWatchLoop` | Art-curation contract reads |
+| `populateHistoricConsolidatedTdh` | Manual historical block-timestamp reads |
+
+`nftLinkRefresherLoop` is conditional. Its contract reads currently use
+`NFT_INDEXER_RPC`; add it to this inventory only if the implementation decision
+is to collapse that separate capacity boundary into `ETHEREUM_RPC_URL`.
+
+The backend rollout is two ordered passes. Complete the entire configuration
+pass before switching any runtime caller:
+
+1. In local/development, staging, and production, provision
+   `ETHEREUM_RPC_URL` with the current Alchemy mainnet endpoint. Do not remove
+   `ALCHEMY_API_KEY` from indexed-product consumers.
+2. Add environment wiring to each confirmed deployment above, then deploy the
+   configuration-only change sequentially in this order: `api`,
+   `discoverEnsLoop`, `refreshEnsLoop`, `delegationsLoop`, `nftsLoop`,
+   `nftHistoryLoop`, `transactionsLoop`, `nextgenContractLoop`, `tdhLoop`,
+   `subscriptionsTopUpLoop`, `mintAnnouncementsLoop`,
+   `artCurationNftWatchLoop`, and `populateHistoricConsolidatedTdh`.
+3. Verify each deployed service received the configuration without changing
+   its provider behavior. Do not invoke `populateHistoricConsolidatedTdh`
+   merely to verify configuration.
+4. In a separate runtime pass, migrate and deploy the same sequence one service
+   at a time. Verify ordinary reads against the configured Alchemy endpoint
+   after each deploy and verify any colocated indexed Alchemy path still uses
+   `ALCHEMY_API_KEY`.
+5. If `nftLinkRefresherLoop` joins the canonical boundary, deploy it after the
+   confirmed sequence and before removing `NFT_INDEXER_RPC` from any
+   environment.
+6. Migrate frontend server-side ordinary reads only after the backend runtime
+   pass is complete.
+7. Remove obsolete Alchemy-derived ordinary RPC helpers only after all backend
+   and frontend callers have moved.
 
 ### Phase 2: URL-only provider replacement
 
