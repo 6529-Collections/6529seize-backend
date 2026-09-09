@@ -7,8 +7,14 @@ export function validateDocumentationRawJson(bytes: Buffer): void {
   const stack: (Set<string> | null)[] = [];
   for (let i = 0; i < source.length; i++) {
     const character = source[i];
-    if (character === '{' || character === '[') { stack.push(character === '{' ? new Set() : null); continue; }
-    if (character === '}' || character === ']') { stack.pop(); continue; }
+    if (character === '{' || character === '[') {
+      stack.push(character === '{' ? new Set() : null);
+      continue;
+    }
+    if (character === '}' || character === ']') {
+      stack.pop();
+      continue;
+    }
     if (character !== '"') continue;
     const start = i;
     while (++i < source.length) {
@@ -19,10 +25,15 @@ export function validateDocumentationRawJson(bytes: Buffer): void {
     while (/\s/.test(source[next] ?? '') && next < source.length) next++;
     if (source[next] !== ':') continue;
     let key: string;
-    try { key = JSON.parse(source.slice(start, i + 1)); } catch { fail(422, 'INVALID_JSON'); }
+    try {
+      key = JSON.parse(source.slice(start, i + 1));
+    } catch {
+      fail(422, 'INVALID_JSON');
+    }
     const keys = stack[stack.length - 1];
     if (!keys || keys.has(key)) fail(422, 'DUPLICATE_JSON_KEY');
-    if (['__proto__', 'prototype', 'constructor'].includes(key)) fail(422, 'INVALID_FIELD');
+    if (['__proto__', 'prototype', 'constructor'].includes(key))
+      fail(422, 'INVALID_FIELD');
     keys.add(key);
   }
 }

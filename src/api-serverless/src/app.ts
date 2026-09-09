@@ -71,7 +71,10 @@ import {
   Strategy as JwtStrategy,
   VerifiedCallback
 } from 'passport-jwt';
-import { ApiCompliantException } from '@/exceptions';
+import {
+  ApiCompliantException,
+  CustomApiCompliantException
+} from '@/exceptions';
 import * as sentryContext from '../../sentry.context';
 import { Time, Timer } from '@/time';
 import { DropType } from '@/entities/IDrop';
@@ -616,8 +619,14 @@ function requestLogMiddleware() {
   return (request: Request, response: Response, next: NextFunction) => {
     const requestId =
       request.apiGateway?.context?.awsRequestId ?? ids.uniqueShortId();
+    if (request.path.startsWith('/api/artwork-documentation')) {
+      response.setHeader('X-Request-Id', requestId);
+    }
     loggerContext.run({ requestId }, () => {
-      const { method, originalUrl: url } = request;
+      const { method } = request;
+      const url = request.path.startsWith('/api/artwork-documentation')
+        ? request.path
+        : request.originalUrl;
       const uqKey = `${method} ${url}`;
       const timer = new Timer(uqKey);
       (request as any).timer = timer;
@@ -1715,6 +1724,25 @@ async function initializeApp() {
     )
   );
 
+  app.use((error: Error, req: Request, _res: Response, next: NextFunction) => {
+    if (!req.path.startsWith('/api/artwork-documentation')) return next(error);
+    req.body = undefined;
+    req.query = {};
+    // Parser/SQL errors can carry the full input. Retain only a safe domain code.
+    const safe =
+      error instanceof ApiCompliantException
+        ? new CustomApiCompliantException(
+            error.getStatusCode(),
+            error.message,
+            error.code
+          )
+        : new CustomApiCompliantException(
+            500,
+            'artworkDocumentation.errors.DOCUMENTATION_OPERATION_FAILED',
+            'DOCUMENTATION_OPERATION_FAILED'
+          );
+    return next(safe);
+  });
   if (sentryContext.isConfigured()) {
     app.use(Sentry.Handlers.errorHandler());
     app.use(sentryFlusherMiddleware());

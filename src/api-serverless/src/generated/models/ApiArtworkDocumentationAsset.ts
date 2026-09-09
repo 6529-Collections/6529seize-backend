@@ -23,11 +23,13 @@ export class ApiArtworkDocumentationAsset {
     'role': string;
     'intended_visibility': string;
     'inspection_status'?: string;
-    'width'?: number;
-    'height'?: number;
+    'width'?: number | null;
+    'height'?: number | null;
     'created_at'?: number;
-    'expires_at'?: number;
+    'expires_at'?: number | null;
     'failure_code'?: string | null;
+    'access_class'?: ApiArtworkDocumentationAssetAccessClassEnum;
+    'has_preview'?: boolean;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -123,6 +125,18 @@ export class ApiArtworkDocumentationAsset {
             "baseName": "failure_code",
             "type": "string",
             "format": ""
+        },
+        {
+            "name": "access_class",
+            "baseName": "access_class",
+            "type": "ApiArtworkDocumentationAssetAccessClassEnum",
+            "format": ""
+        },
+        {
+            "name": "has_preview",
+            "baseName": "has_preview",
+            "type": "boolean",
+            "format": ""
         }    ];
 
     static getAttributeTypeMap() {
@@ -132,3 +146,9 @@ export class ApiArtworkDocumentationAsset {
     public constructor() {
     }
 }
+
+export enum ApiArtworkDocumentationAssetAccessClassEnum {
+    Artwork = 'artwork',
+    RightsEvidence = 'rights_evidence'
+}
+

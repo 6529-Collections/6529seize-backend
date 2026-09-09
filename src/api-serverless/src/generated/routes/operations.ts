@@ -9,6 +9,7 @@ import { ApiArtworkDocumentationCompleteUpload } from '@/api/generated/models/Ap
 import { ApiArtworkDocumentationConfirmRequest } from '@/api/generated/models/ApiArtworkDocumentationConfirmRequest';
 import { ApiArtworkDocumentationContext } from '@/api/generated/models/ApiArtworkDocumentationContext';
 import { ApiArtworkDocumentationContextListResponse } from '@/api/generated/models/ApiArtworkDocumentationContextListResponse';
+import { ApiArtworkDocumentationCreateContext } from '@/api/generated/models/ApiArtworkDocumentationCreateContext';
 import { ApiArtworkDocumentationCreateThread } from '@/api/generated/models/ApiArtworkDocumentationCreateThread';
 import { ApiArtworkDocumentationCreateWork } from '@/api/generated/models/ApiArtworkDocumentationCreateWork';
 import { ApiArtworkDocumentationDownloadRequest } from '@/api/generated/models/ApiArtworkDocumentationDownloadRequest';
@@ -21,6 +22,7 @@ import { ApiArtworkDocumentationLifecycleRequest } from '@/api/generated/models/
 import { ApiArtworkDocumentationPatchModule } from '@/api/generated/models/ApiArtworkDocumentationPatchModule';
 import { ApiArtworkDocumentationPatchThread } from '@/api/generated/models/ApiArtworkDocumentationPatchThread';
 import { ApiArtworkDocumentationProfilesResponse } from '@/api/generated/models/ApiArtworkDocumentationProfilesResponse';
+import { ApiArtworkDocumentationPublicPreview } from '@/api/generated/models/ApiArtworkDocumentationPublicPreview';
 import { ApiArtworkDocumentationReview } from '@/api/generated/models/ApiArtworkDocumentationReview';
 import { ApiArtworkDocumentationReviewRequest } from '@/api/generated/models/ApiArtworkDocumentationReviewRequest';
 import { ApiArtworkDocumentationRevision } from '@/api/generated/models/ApiArtworkDocumentationRevision';
@@ -432,6 +434,22 @@ export type ArtworkDocumentationPreviewDocumentationUpgradeRequest = Request<
   Record<string, never>
 >;
 
+export interface ArtworkDocumentationGetDocumentationPublicPreviewPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationGetDocumentationPublicPreviewQuery = Record<string, never>;
+
+export type ArtworkDocumentationGetDocumentationPublicPreviewResponse = ApiArtworkDocumentationPublicPreview;
+
+export type ArtworkDocumentationGetDocumentationPublicPreviewRequest = Request<
+  ArtworkDocumentationGetDocumentationPublicPreviewPathParams,
+  ApiResponse<ArtworkDocumentationGetDocumentationPublicPreviewResponse>,
+  never,
+  ArtworkDocumentationGetDocumentationPublicPreviewQuery,
+  Record<string, never>
+>;
+
 export interface ArtworkDocumentationListDocumentationRevisionsPathParams {
   "id": string;
 }
@@ -678,6 +696,22 @@ export type ArtworkDocumentationGetDocumentationWorkRequest = Request<
   ApiResponse<ArtworkDocumentationGetDocumentationWorkResponse>,
   never,
   ArtworkDocumentationGetDocumentationWorkQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationCreateDocumentationContextPathParams {
+  "workId": string;
+}
+
+export type ArtworkDocumentationCreateDocumentationContextQuery = Record<string, never>;
+
+export type ArtworkDocumentationCreateDocumentationContextResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationCreateDocumentationContextRequest = Request<
+  ArtworkDocumentationCreateDocumentationContextPathParams,
+  ApiResponse<ArtworkDocumentationCreateDocumentationContextResponse>,
+  ApiArtworkDocumentationCreateContext,
+  ArtworkDocumentationCreateDocumentationContextQuery,
   Record<string, never>
 >;
 

@@ -2634,6 +2634,142 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/ApiArtworkDocumentationDownloadRequest"
+  /artwork-documentation/contexts/{id}/public-preview:
+    get:
+      tags:
+        - ArtworkDocumentation
+      summary: Preview only the artist-selected public-record fields, still privately
+      operationId: artworkDocumentationGetDocumentationPublicPreview
+      security:
+        - bearerAuth: []
+      x-6529-router:
+        enabled: true
+        auth: required
+        cache: false
+        typeImportGroup: artwork-documentation
+        handler:
+          import: "@/api/artwork-documentation/artwork-documentation.handlers"
+          name: handleGetDocumentationPublicPreview
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Authorized private response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiArtworkDocumentationPublicPreview"
+        "401":
+          description: >-
+            Private documentation domain error; stable code, safe message and
+            request ID. Missing and unauthorized records are indistinguishable.
+        "403":
+          description: >-
+            Private documentation domain error; stable code, safe message and
+            request ID. Missing and unauthorized records are indistinguishable.
+        "404":
+          description: >-
+            Private documentation domain error; stable code, safe message and
+            request ID. Missing and unauthorized records are indistinguishable.
+        "409":
+          description: >-
+            Private documentation domain error; stable code, safe message and
+            request ID. Missing and unauthorized records are indistinguishable.
+        "413":
+          description: >-
+            Private documentation domain error; stable code, safe message and
+            request ID. Missing and unauthorized records are indistinguishable.
+        "422":
+          description: >-
+            Private documentation domain error; stable code, safe message and
+            request ID. Missing and unauthorized records are indistinguishable.
+        "428":
+          description: >-
+            Private documentation domain error; stable code, safe message and
+            request ID. Missing and unauthorized records are indistinguishable.
+        "429":
+          description: >-
+            Private documentation domain error; stable code, safe message and
+            request ID. Missing and unauthorized records are indistinguishable.
+  /artwork-documentation/works/{workId}/contexts:
+    post:
+      tags:
+        - ArtworkDocumentation
+      summary: >-
+        Create an explicitly empty documentation context for an artist-owned
+        work
+      operationId: artworkDocumentationCreateDocumentationContext
+      security:
+        - bearerAuth: []
+      x-6529-router:
+        enabled: true
+        auth: required
+        cache: false
+        typeImportGroup: artwork-documentation
+        handler:
+          import: "@/api/artwork-documentation/artwork-documentation.handlers"
+          name: handleCreateDocumentationContext
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Authorized private response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiArtworkDocumentationContext"
+        "401":
+          description: >-
+            Private documentation domain error; stable code, safe message and
+            request ID. Missing and unauthorized records are indistinguishable.
+        "403":
+          description: >-
+            Private documentation domain error; stable code, safe message and
+            request ID. Missing and unauthorized records are indistinguishable.
+        "404":
+          description: >-
+            Private documentation domain error; stable code, safe message and
+            request ID. Missing and unauthorized records are indistinguishable.
+        "409":
+          description: >-
+            Private documentation domain error; stable code, safe message and
+            request ID. Missing and unauthorized records are indistinguishable.
+        "413":
+          description: >-
+            Private documentation domain error; stable code, safe message and
+            request ID. Missing and unauthorized records are indistinguishable.
+        "422":
+          description: >-
+            Private documentation domain error; stable code, safe message and
+            request ID. Missing and unauthorized records are indistinguishable.
+        "428":
+          description: >-
+            Private documentation domain error; stable code, safe message and
+            request ID. Missing and unauthorized records are indistinguishable.
+        "429":
+          description: >-
+            Private documentation domain error; stable code, safe message and
+            request ID. Missing and unauthorized records are indistinguishable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiArtworkDocumentationCreateContext"
   /auth/nonce:
     get:
       tags:
@@ -15740,18 +15876,28 @@ components:
         width:
           type: integer
           format: int64
+          nullable: true
         height:
           type: integer
           format: int64
+          nullable: true
         created_at:
           type: integer
           format: int64
         expires_at:
           type: integer
           format: int64
+          nullable: true
         failure_code:
           type: string
           nullable: true
+        access_class:
+          type: string
+          enum:
+            - artwork
+            - rights_evidence
+        has_preview:
+          type: boolean
       required:
         - id
         - filename
@@ -15847,6 +15993,22 @@ components:
       required:
         - kind
       additionalProperties: false
+    ApiArtworkDocumentationAvailableArtistRecord:
+      type: object
+      required:
+        - id
+        - record_version
+        - answers
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        record_version:
+          type: integer
+        answers:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ApiArtworkDocumentationAnswer"
     ApiArtworkDocumentationCapabilities:
       type: object
       properties:
@@ -16087,6 +16249,11 @@ components:
         updated_at:
           type: integer
           format: int64
+        available_artist_record:
+          allOf:
+            - $ref: >-
+                #/components/schemas/ApiArtworkDocumentationAvailableArtistRecord
+          nullable: true
       required:
         - id
         - work_id
@@ -16166,6 +16333,24 @@ components:
         - profile_id
         - profile_version
       additionalProperties: false
+    ApiArtworkDocumentationCreateContext:
+      type: object
+      required:
+        - profile_id
+        - profile_version
+        - acknowledge_empty_context
+      additionalProperties: false
+      properties:
+        profile_id:
+          type: string
+        profile_version:
+          type: integer
+        program_id:
+          type: string
+        acknowledge_empty_context:
+          type: boolean
+          enum:
+            - true
     ApiArtworkDocumentationCreateThread:
       type: object
       properties:
@@ -16395,6 +16580,19 @@ components:
         - expected_thread_version
         - resolved
       additionalProperties: false
+    ApiArtworkDocumentationPreviewModule:
+      type: object
+      required:
+        - schema_version
+        - answers
+      additionalProperties: false
+      properties:
+        schema_version:
+          type: integer
+        answers:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ApiArtworkDocumentationAnswer"
     ApiArtworkDocumentationProfile:
       type: object
       properties:
@@ -16491,6 +16689,27 @@ components:
         - self_service_enabled
         - profiles
       additionalProperties: false
+    ApiArtworkDocumentationPublicPreview:
+      type: object
+      required:
+        - context_id
+        - draft_version
+        - modules
+        - asset_links
+      additionalProperties: false
+      properties:
+        context_id:
+          type: string
+        draft_version:
+          type: integer
+        modules:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ApiArtworkDocumentationPreviewModule"
+        asset_links:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiArtworkDocumentationAssetLink"
     ApiArtworkDocumentationReceivedPart:
       type: object
       properties:

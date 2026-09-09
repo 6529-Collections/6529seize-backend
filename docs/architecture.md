@@ -750,7 +750,15 @@ For a documentation-only change, no Lambda redeploy is required.
 
 Artwork documentation uses a dedicated authenticated API boundary under
 `/artwork-documentation`, with private MySQL drafts and immutable confirmed
-records. Its file path is separate from public drop uploads and their sanitizer.
+records. `artwork_documentation_works` keeps stable work identity, while separate
+contexts pin profiles, artist-record revisions, module answers and disclosure
+choices. Context row locks guard all content versions, and immutable revisions
+retain confirmation receipts and independent reviewer decisions. Explicit
+context/program grants are separate from Wave roles and proxy authentication.
+The public-record preview removes restricted answers on the server; creating
+another context for a work requires an explicit artist choice and starts empty.
+See [the application contract and pilot runbook](artwork-documentation.md).
+Its file path is separate from public drop uploads and their sanitizer.
 `artworkDocumentationStorage` provisions a private regional versioned S3 bucket
 and GuardDuty Malware Protection plan for `originals/`; it has no CloudFront
 origin. The same stack enrolls only this archive in a daily AWS Backup plan with

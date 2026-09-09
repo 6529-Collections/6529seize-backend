@@ -232,7 +232,8 @@ function toGeneratedOperation({
   const unsupportedParameters = parameters.filter(
     // Header parameters remain on Express Request.headers/get; handlers validate
     // their values (including content-version and idempotency requirements).
-    (param) => param.in !== 'path' && param.in !== 'query' && param.in !== 'header'
+    (param) =>
+      param.in !== 'path' && param.in !== 'query' && param.in !== 'header'
   );
   if (unsupportedParameters.length) {
     throw new Error(

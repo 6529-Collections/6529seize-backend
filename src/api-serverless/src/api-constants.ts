@@ -51,8 +51,13 @@ export function getCorsOptionsForRequest(
   if (path.startsWith('/api/artwork-documentation')) {
     return {
       ...corsOptions,
-      origin: getAllowedWebAuthCredentialOrigin(originHeader, apiHostHeader) ?? false,
-      allowedHeaders: [...corsOptions.allowedHeaders, 'If-Match', 'Idempotency-Key'],
+      origin:
+        getAllowedWebAuthCredentialOrigin(originHeader, apiHostHeader) ?? false,
+      allowedHeaders: [
+        ...corsOptions.allowedHeaders,
+        'If-Match',
+        'Idempotency-Key'
+      ],
       exposedHeaders: ['ETag', 'X-Request-Id']
     };
   }

@@ -76,13 +76,19 @@ export async function execSQLWithParams<T>(
     };
     const timer = Time.now();
     connection.query({ sql, values: params }, (err: any, result: T[]) => {
+      // Artwork records and archival metadata are private even in infrastructure
+      // logs. Bulk inserts can embed values directly in SQL, so hide both the
+      // statement and parameters for every query touching this table family.
+      const privateArtworkQuery = /\bartwork_documentation_[a-z_]+\b/i.test(
+        sql
+      );
+      const queryDescription = privateArtworkQuery
+        ? '[private artwork documentation query]'
+        : `${sql.replace('\n', ' ')}${params ? ` with params ${JSON.stringify(params)}` : ''}`;
       const queryTook = timer.diffFromNow();
       if (queryTook.gt(Time.seconds(1))) {
         logger.warn(
-          `SQL query took ${queryTook.toMillis()} ms to execute: ${sql.replace(
-            '\n',
-            ' '
-          )}${params ? ` with params ${JSON.stringify(params)}` : ''}`
+          `SQL query took ${queryTook.toMillis()} ms to execute: ${queryDescription}`
         );
       }
       if (closeConnection) {
@@ -90,9 +96,9 @@ export async function execSQLWithParams<T>(
       }
       if (err) {
         logger.error(
-          `Error "${err}" executing SQL query ${sql.replace('\n', ' ')}${
-            params ? ` with params ${JSON.stringify(params)}` : ''
-          }\n`
+          privateArtworkQuery
+            ? 'Database error executing private artwork documentation query'
+            : `Error "${err}" executing SQL query ${queryDescription}\n`
         );
         reject(err);
       } else {

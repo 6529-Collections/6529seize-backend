@@ -12,6 +12,7 @@
 
 import { ApiArtworkDocumentationAsset } from '../models/ApiArtworkDocumentationAsset';
 import { ApiArtworkDocumentationAssetLink } from '../models/ApiArtworkDocumentationAssetLink';
+import { ApiArtworkDocumentationAvailableArtistRecord } from '../models/ApiArtworkDocumentationAvailableArtistRecord';
 import { ApiArtworkDocumentationCapabilities } from '../models/ApiArtworkDocumentationCapabilities';
 import { ApiArtworkDocumentationContextIssuesInner } from '../models/ApiArtworkDocumentationContextIssuesInner';
 import { ApiArtworkDocumentationModule } from '../models/ApiArtworkDocumentationModule';
@@ -40,6 +41,7 @@ export class ApiArtworkDocumentationContext {
     'source_links': Array<ApiArtworkDocumentationSourceLink>;
     'issues': Array<ApiArtworkDocumentationContextIssuesInner>;
     'updated_at': number;
+    'available_artist_record'?: ApiArtworkDocumentationAvailableArtistRecord | null;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -159,6 +161,12 @@ export class ApiArtworkDocumentationContext {
             "baseName": "updated_at",
             "type": "number",
             "format": "int64"
+        },
+        {
+            "name": "available_artist_record",
+            "baseName": "available_artist_record",
+            "type": "ApiArtworkDocumentationAvailableArtistRecord",
+            "format": ""
         }    ];
 
     static getAttributeTypeMap() {
