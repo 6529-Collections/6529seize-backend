@@ -48,6 +48,19 @@ function describeQuery(sql: string, params?: Record<string, unknown>): string {
   return `${normalized} with params ${JSON.stringify(params)}`;
 }
 
+function privateQueryError(original: unknown): Error {
+  const sanitized = new Error(
+    'Private artwork documentation database operation failed'
+  );
+  if (original && typeof original === 'object' && 'code' in original) {
+    const code = original.code;
+    if (typeof code === 'string' && /^(ER_|PROTOCOL_)[A-Z0-9_]+$/.test(code)) {
+      Object.assign(sanitized, { code });
+    }
+  }
+  return sanitized;
+}
+
 export async function execNativeTransactionally<T>(
   executable: (connectionWrapper: ConnectionWrapper<any>) => Promise<T>,
   connection: PoolConnection
@@ -107,7 +120,7 @@ export async function execSQLWithParams<T>(
             ? 'Database error executing private artwork documentation query'
             : `Error "${err}" executing SQL query ${queryDescription}\n`
         );
-        reject(err);
+        reject(privateArtworkQuery ? privateQueryError(err) : err);
       } else {
         resolve(Object.values(JSON.parse(JSON.stringify(result))));
       }

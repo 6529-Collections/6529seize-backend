@@ -18,7 +18,8 @@
       ],
       "validation_profile": "api-health",
       "default_dependencies": [
-        "dbMigrationsLoop"
+        "dbMigrationsLoop",
+        "artworkDocumentationProcessor"
       ]
     },
     {
