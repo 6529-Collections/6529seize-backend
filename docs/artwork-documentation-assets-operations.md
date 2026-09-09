@@ -10,7 +10,8 @@ Use the existing `Deploy a service` pipeline and coordinator release record.
 Deploy this release's exact commit in this dependency order in each environment:
 
 1. `artworkDocumentationStorage` creates the regional private, encrypted, versioned
-   bucket and a GuardDuty Malware Protection plan limited to `originals/`.
+   bucket, a GuardDuty plan limited to `originals/`, a scoped AWS Backup plan/vault
+   and a separate private restore-test destination.
 2. `dbMigrationsLoop` registers `ArtworkDocumentationAssetEntity` and its quota
    mutex entity, alongside the core documentation entities.
 3. `artworkDocumentationProcessor` deploys the scheduled worker (one invocation
@@ -112,14 +113,61 @@ previous original. The cleanup worker locks the same asset row before deletion,
 so a concurrent reference cannot race cleanup. Preview noncurrent versions have
 a seven-day lifecycle rule. There is no blanket original-object expiry rule.
 
-The backend operations owner must include these two tables, all core record
-tables and private bucket objects/version IDs in existing database/object backup
-and access-review procedures. S3 versioning alone is not a separate backup.
-Before onboarding, restore one isolated sample revision plus its referenced
-original version using existing backup tools, hash the restored bytes, compare
-with the stored manifest, and record the restore evidence with the release.
-Do not claim a successful backup/restore based only on this runbook or a bucket's
-versioning status.
+The storage stack adds a separate AWS Backup vault and daily 03:00 UTC backup
+with a 35-day operational recovery window. Its resource selection is the one
+archive bucket ARN; it does not enroll unrelated buckets. The custom backup role
+can read only that bucket's bytes. The restore role can write only to the separate
+private `6529-artwork-restore-987989283142-<region>` bucket and cannot overwrite
+the live archive. Restore copies expire after seven days. Both buckets use
+BucketOwnerEnforced ownership; ACL backup/restore is disabled, object tags are
+preserved, and the restored bytes use SSE-S3. Backup vault deletion is retained;
+there is no irreversible vault-lock configuration in this release.
+
+Daily backups imply up to a day of recovery-point lag; this is not continuous
+PITR or cross-region disaster recovery. Thirty-five days is the operational
+backup window, not a promise of public or institutional artwork retention.
+Confirm the account's S3 Backup opt-in with `aws backup describe-region-settings`
+in both regions before deployment. It was already enabled in both regions during
+implementation; no regional preference change was made. If that changes, the
+coordinator must review existing broad resource selections before enabling it.
+See [AWS S3 backup prerequisites](https://docs.aws.amazon.com/aws-backup/latest/devguide/s3-backups.html).
+
+The backend operations owner includes these two tables and all core record
+tables in existing MySQL backups. Before onboarding, restore one synthetic
+confirmed revision into an isolated test database and compare the canonical
+snapshot/hash. Also perform a real S3 backup/restore drill using the referenced
+synthetic ready asset (at most 10 MiB). In PowerShell 7:
+
+```powershell
+$drill = @{
+  AssetId = '<synthetic-ready-asset-UUID>'
+  ExpectedSha256 = '<SHA256-from-the-confirmed-revision-manifest>'
+  StateDirectory = 'C:\Users\Administrator\.codex\outputs\artwork-restore-drill'
+}
+./scripts/artwork-archive-restore-drill.ps1 @drill -Phase StartBackup
+./scripts/artwork-archive-restore-drill.ps1 @drill -Phase BackupStatus
+# When BackupStatus reports COMPLETED:
+./scripts/artwork-archive-restore-drill.ps1 @drill -Phase StartRestore
+./scripts/artwork-archive-restore-drill.ps1 @drill -Phase RestoreStatus
+# When RestoreStatus reports COMPLETED:
+./scripts/artwork-archive-restore-drill.ps1 @drill -Phase Verify
+```
+
+The helper is staging-only, checks the account and stack destinations, starts a
+seven-day on-demand backup, restores only the named object into the isolated
+destination, and requires matching byte size and SHA-256 before recording
+success. Keep its state file and the isolated database restore result as release
+evidence. Status commands return immediately; wait between checks in the
+coordinator. A completed AWS job alone is insufficient because a restore with no
+matching objects can still report completed. See
+[AWS item restore behavior](https://docs.aws.amazon.com/aws-backup/latest/devguide/restoring-s3.html).
+
+An operational recovery may create new S3 version IDs. After comparing every
+restored object's bytes against its immutable manifest, an authorized operator
+records a storage-locator recovery mapping (old/new bucket and version) before
+reconnecting records; do not change the artist's confirmed payload or infer
+that an old version ID exists in the restore destination. Do not claim successful
+backup/restore until both the database and object drills have actual evidence.
 
 Artist-facing permanent deletion is outside this first UI. Existing support
 requests go to the authorized backend operations owner. The operator identifies

@@ -753,7 +753,9 @@ Artwork documentation uses a dedicated authenticated API boundary under
 records. Its file path is separate from public drop uploads and their sanitizer.
 `artworkDocumentationStorage` provisions a private regional versioned S3 bucket
 and GuardDuty Malware Protection plan for `originals/`; it has no CloudFront
-origin. Multipart part URLs bind byte lengths and SHA-256 checksums. Context quota
+origin. The same stack enrolls only this archive in a daily AWS Backup plan with
+a 35-day recovery window and provisions an isolated private restore destination;
+backup/restore roles have bucket-specific byte access. Multipart part URLs bind byte lengths and SHA-256 checksums. Context quota
 mutex rows serialize reservations in `artwork_documentation_asset_quotas`, while
 `artwork_documentation_assets` stores upload state, immutable object version,
 fixity, access class and a durable processing lease.
