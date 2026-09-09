@@ -25,6 +25,7 @@ import lightDropsRoutes from './drops/light-drops.routes';
 import feedRoutes from './feed/feed.routes';
 import gasRoutes from './gas/gas.routes';
 import generatedOpenApiRoutes from './generated/routes/openapi-generated.routes';
+import { validateDocumentationRawJson } from '@/artwork-documentation/artwork-documentation.raw-json';
 import identitiesRoutes from './identities/identities.routes';
 import contentModerationRoutes from './content-moderation/content-moderation.routes';
 import identitySubscriptionsRoutes from './identity-subscriptions/identity-subscriptions.routes';
@@ -747,6 +748,9 @@ async function initializeApp() {
     express.json({
       limit: '5mb',
       verify: (req: any, _res: any, buf: Buffer) => {
+        if (req.url?.startsWith('/api/artwork-documentation')) {
+          validateDocumentationRawJson(buf);
+        }
         // Store raw body only for webhook endpoints that need signature verification
         if (shouldCaptureRawBody(req.url)) {
           req.rawBody = buf;

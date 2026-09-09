@@ -230,7 +230,9 @@ function toGeneratedOperation({
   const typePrefix = toPascalCase(operation.operationId);
   const parameters = operation.parameters ?? [];
   const unsupportedParameters = parameters.filter(
-    (param) => param.in !== 'path' && param.in !== 'query'
+    // Header parameters remain on Express Request.headers/get; handlers validate
+    // their values (including content-version and idempotency requirements).
+    (param) => param.in !== 'path' && param.in !== 'query' && param.in !== 'header'
   );
   if (unsupportedParameters.length) {
     throw new Error(

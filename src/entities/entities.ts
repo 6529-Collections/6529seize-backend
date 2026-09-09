@@ -253,3 +253,4 @@ export {
   XTdhTokenGrantStatsB
 } from './IXTdhTokenGrantStats';
 export { XTdhTokenStatsA, XTdhTokenStatsB } from './IXTdhTokenStats';
+export * from './IArtworkDocumentation';

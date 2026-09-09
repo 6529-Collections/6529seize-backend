@@ -18,6 +18,7 @@ type ApiCorsOptions = {
   methods: string[];
   allowedHeaders: string[];
   credentials?: true;
+  exposedHeaders?: string[];
 };
 
 export const corsOptions: ApiCorsOptions = {
@@ -47,6 +48,14 @@ export function getCorsOptionsForRequest(
   originHeader: unknown,
   apiHostHeader: unknown
 ): ApiCorsOptions {
+  if (path.startsWith('/api/artwork-documentation')) {
+    return {
+      ...corsOptions,
+      origin: getAllowedWebAuthCredentialOrigin(originHeader, apiHostHeader) ?? false,
+      allowedHeaders: [...corsOptions.allowedHeaders, 'If-Match', 'Idempotency-Key'],
+      exposedHeaders: ['ETag', 'X-Request-Id']
+    };
+  }
   if (!WEB_AUTH_CREDENTIAL_ROUTE_PATHS.has(path)) {
     return corsOptions;
   }
