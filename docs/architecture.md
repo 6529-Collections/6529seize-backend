@@ -746,6 +746,34 @@ For a documentation-only change, no Lambda redeploy is required.
 
 ## Architecture Notes
 
+### Private artwork documentation archive
+
+Artwork documentation uses a dedicated authenticated API boundary under
+`/artwork-documentation`, with private MySQL drafts and immutable confirmed
+records. Its file path is separate from public drop uploads and their sanitizer.
+`artworkDocumentationStorage` provisions a private regional versioned S3 bucket
+and GuardDuty Malware Protection plan for `originals/`; it has no CloudFront
+origin. Multipart part URLs bind byte lengths and SHA-256 checksums. Context quota
+mutex rows serialize reservations in `artwork_documentation_asset_quotas`, while
+`artwork_documentation_assets` stores upload state, immutable object version,
+fixity, access class and a durable processing lease.
+
+`artworkDocumentationProcessor` runs every minute with reserved concurrency one.
+It requires a successful real GuardDuty scan before streaming byte-size/SHA-256
+verification and bounded format inspection. Small supported images can produce
+stripped private previews; large/vendor originals remain intact with honest
+inspection support status. The worker never publishes to the social CDN,
+IPFS/Arweave or Stream. It removes expired unreferenced uploads under the same
+row lock used by reference/confirmation transactions; any draft/revision
+reference retains the original. Original downloads require archival access,
+and rights instruments require their separate evidence capability.
+
+Deploy storage and schema before processor/API, then dependent frontend.
+Feature flags are off by default and can be enabled through environment-specific
+repository variables in the existing deployment pipeline. See
+[archive operations](artwork-documentation-assets-operations.md) for exact units,
+limits, access, recovery, backup/restore and cleanup procedures.
+
 The strongest part of the architecture is its operational decomposition. Expensive, slow, and retryable work is mostly outside the request path, and the loop structure makes individual jobs independently deployable.
 
 The biggest tradeoff is the DB-centered coupling. Many services share tables directly, so changes need to be treated as cross-service contracts even when they look local. The safest pattern is additive schema changes first, backward-compatible writers/readers second, and cleanup only after all dependent Lambdas are deployed.

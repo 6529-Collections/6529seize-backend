@@ -968,6 +968,41 @@
       ],
       "validation_profile": "lambda-version",
       "default_dependencies": []
+    },
+    {
+      "name": "artworkDocumentationStorage",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "deploy_adapter": "resources-only",
+      "aws_region": {
+        "prod": "us-east-1",
+        "staging": "eu-west-1"
+      },
+      "verification_targets": [],
+      "validation_profile": "cloudformation-stack",
+      "default_dependencies": []
+    },
+    {
+      "name": "artworkDocumentationProcessor",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "prod": "us-east-1",
+        "staging": "eu-west-1"
+      },
+      "verification_targets": [
+        "artworkDocumentationProcessor"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": [
+        "artworkDocumentationStorage",
+        "dbMigrationsLoop"
+      ]
     }
   ]
 }

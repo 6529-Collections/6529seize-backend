@@ -254,3 +254,8 @@ export {
 } from './IXTdhTokenGrantStats';
 export { XTdhTokenStatsA, XTdhTokenStatsB } from './IXTdhTokenStats';
 export * from './IArtworkDocumentation';
+
+export {
+  ArtworkDocumentationAssetEntity,
+  ArtworkDocumentationAssetQuotaEntity
+} from './IArtworkDocumentationAsset';

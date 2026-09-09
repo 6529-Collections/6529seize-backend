@@ -75,6 +75,8 @@ on:
           - waveDropMetricsRefreshLoop
           - waveScoreRefreshLoop
           - xTdhLoop
+          - artworkDocumentationStorage
+          - artworkDocumentationProcessor
       release_pull_request:
         type: string
         description: 'Merged PR represented by this production release'
@@ -117,6 +119,10 @@ env:
   DROP_MEDIA_INGEST_S3_BUCKET_STAGING: ${{ vars.DROP_MEDIA_INGEST_S3_BUCKET_STAGING }}
   DROP_MEDIA_INGEST_S3_REGION: ${{ vars.DROP_MEDIA_INGEST_S3_REGION }}
   DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME: ${{ vars.DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME }}
+  ARTWORK_DOCUMENTATION_ENABLED_PROD: ${{ vars.ARTWORK_DOCUMENTATION_ENABLED_PROD }}
+  ARTWORK_DOCUMENTATION_ENABLED_STAGING: ${{ vars.ARTWORK_DOCUMENTATION_ENABLED_STAGING }}
+  ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_PROD: ${{ vars.ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_PROD }}
+  ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_STAGING: ${{ vars.ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_STAGING }}
   API_GATEWAY_WS_ENDPOINT_PROD: https://ws.6529.io
   API_GATEWAY_WS_ENDPOINT_STAGING: https://ws.staging.6529.io
 
@@ -138,7 +144,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]]
-          [[ "$INPUT_SERVICE" =~ ^(api|aggregatedActivityLoop|attachmentsOrchestrator|attachmentsProcessor|artCurationNftWatchLoop|cloudwatchAlarmsToDiscordLoop|claimsBuilder|claimsMediaArweaveUploader|customReplayLoop|dbDumpsDaily|dbMigrationsLoop|delegationsLoop|discoverEnsLoop|dropMediaIngestStorage|dropMediaSanitizer|dropVideoConversionInvokerLoop|ethPriceLoop|externalCollectionLiveTailingLoop|externalCollectionSnapshottingLoop|helpBotReplyLoop|marketStatsLoop|mediaResizerLoop|mintAnnouncementsLoop|nextgenContractLoop|nextgenMediaImageResolutions|nextgenMediaProxyInterceptor|nextgenMediaUploader|nextgenMetadataLoop|nftHistoryLoop|nftLinkRefresherLoop|nftLinkMediaPreviewLoop|nftOwnersLoop|nftsLoop|overRatesRevocationLoop|ownersBalancesLoop|populateHistoricConsolidatedTdh|pushNotificationsHandler|rateEventProcessingLoop|releaseNotesGenerationLoop|refreshEnsLoop|rememesLoop|royaltiesLoop|s3Uploader|subscriptionsDaily|subscriptionsTopUpLoop|xTdhGrantsReviewerLoop|tdhHistoryLoop|tdhLoop|teamLoop|transactionsLoop|transactionsProcessingLoop|waveDecisionExecutionLoop|waveLeaderboardSnapshotterLoop|waveDropMetricsRefreshLoop|waveScoreRefreshLoop|xTdhLoop)$ ]]
+          [[ "$INPUT_SERVICE" =~ ^(api|aggregatedActivityLoop|attachmentsOrchestrator|attachmentsProcessor|artCurationNftWatchLoop|cloudwatchAlarmsToDiscordLoop|claimsBuilder|claimsMediaArweaveUploader|customReplayLoop|dbDumpsDaily|dbMigrationsLoop|delegationsLoop|discoverEnsLoop|dropMediaIngestStorage|dropMediaSanitizer|dropVideoConversionInvokerLoop|ethPriceLoop|externalCollectionLiveTailingLoop|externalCollectionSnapshottingLoop|helpBotReplyLoop|marketStatsLoop|mediaResizerLoop|mintAnnouncementsLoop|nextgenContractLoop|nextgenMediaImageResolutions|nextgenMediaProxyInterceptor|nextgenMediaUploader|nextgenMetadataLoop|nftHistoryLoop|nftLinkRefresherLoop|nftLinkMediaPreviewLoop|nftOwnersLoop|nftsLoop|overRatesRevocationLoop|ownersBalancesLoop|populateHistoricConsolidatedTdh|pushNotificationsHandler|rateEventProcessingLoop|releaseNotesGenerationLoop|refreshEnsLoop|rememesLoop|royaltiesLoop|s3Uploader|subscriptionsDaily|subscriptionsTopUpLoop|xTdhGrantsReviewerLoop|tdhHistoryLoop|tdhLoop|teamLoop|transactionsLoop|transactionsProcessingLoop|waveDecisionExecutionLoop|waveLeaderboardSnapshotterLoop|waveDropMetricsRefreshLoop|waveScoreRefreshLoop|xTdhLoop|artworkDocumentationStorage|artworkDocumentationProcessor)$ ]]
           if [ "$INPUT_ENVIRONMENT" = prod ]; then
             test "$GITHUB_REF" = refs/heads/main
           else
@@ -254,14 +260,21 @@ jobs:
             DROP_MEDIA_SANITIZE_IMAGES_VALUE="${DROP_MEDIA_SANITIZE_IMAGES_PROD:-false}"
             DROP_MEDIA_INGEST_BUCKET="$DROP_MEDIA_INGEST_S3_BUCKET_PROD"
             API_GATEWAY_WS_ENDPOINT="$API_GATEWAY_WS_ENDPOINT_PROD"
+            ARTWORK_DOCUMENTATION_ENABLED_VALUE="$ARTWORK_DOCUMENTATION_ENABLED_PROD"
+            ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_VALUE="$ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_PROD"
           else
             ATTACHMENTS_BUCKET="$ATTACHMENTS_INGEST_S3_BUCKET_STAGING"
             DROP_MEDIA_SANITIZE_IMAGES_VALUE="${DROP_MEDIA_SANITIZE_IMAGES_STAGING:-false}"
             DROP_MEDIA_INGEST_BUCKET="$DROP_MEDIA_INGEST_S3_BUCKET_STAGING"
             API_GATEWAY_WS_ENDPOINT="$API_GATEWAY_WS_ENDPOINT_STAGING"
+            ARTWORK_DOCUMENTATION_ENABLED_VALUE="$ARTWORK_DOCUMENTATION_ENABLED_STAGING"
+            ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_VALUE="$ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_STAGING"
           fi
           DROP_MEDIA_INGEST_REGION="$DROP_MEDIA_INGEST_S3_REGION"
           DROP_MEDIA_SANITIZER_QUEUE="$DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME"
+          for feature_value in "$ARTWORK_DOCUMENTATION_ENABLED_VALUE" "$ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_VALUE"; do
+            case "$feature_value" in ''|true|false) ;; *) echo "Invalid artwork documentation feature flag"; exit 1 ;; esac
+          done
 
           if [ -z "$ATTACHMENTS_BUCKET" ]; then
             echo "ATTACHMENTS_INGEST_S3_BUCKET is not configured for ${{ github.event.inputs.environment }}"
@@ -300,6 +313,8 @@ jobs:
             echo "DROP_MEDIA_INGEST_STAGE=${{ github.event.inputs.environment }}"
             echo "DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME=$DROP_MEDIA_SANITIZER_QUEUE"
             echo "API_GATEWAY_WS_ENDPOINT=$API_GATEWAY_WS_ENDPOINT"
+            echo "ARTWORK_DOCUMENTATION_ENABLED_VALUE=$ARTWORK_DOCUMENTATION_ENABLED_VALUE"
+            echo "ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_VALUE=$ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_VALUE"
           } >> "$GITHUB_ENV"
       - name: Verify production Lambda secret exists
         if: github.event.inputs.environment == 'prod' && github.event.inputs.service == 'api'
@@ -331,9 +346,10 @@ jobs:
           sleep 10
           aws lambda get-function-configuration --function-name seizeAPI --query 'Environment.Variables' --output json --no-cli-pager > /tmp/current_env.json 2>/dev/null || echo '{}' > /tmp/current_env.json
           jq --arg commit "$GIT_COMMIT" --arg claimsMediaArweaveUploadSqsUrl "$CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL" --arg attachmentsIngestS3Bucket "$ATTACHMENTS_INGEST_S3_BUCKET" --arg dropMediaSanitizeImages "$DROP_MEDIA_SANITIZE_IMAGES" --arg dropMediaIngestS3Bucket "$DROP_MEDIA_INGEST_S3_BUCKET" --arg dropMediaIngestS3Region "$DROP_MEDIA_INGEST_S3_REGION" --arg dropMediaIngestStage "$DROP_MEDIA_INGEST_STAGE" --arg dropMediaSanitizerSqsQueueName "$DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME" --arg apiGatewayWsEndpoint "$API_GATEWAY_WS_ENDPOINT" '. + {GIT_COMMIT: $commit, CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL: $claimsMediaArweaveUploadSqsUrl, ATTACHMENTS_INGEST_S3_BUCKET: $attachmentsIngestS3Bucket, DROP_MEDIA_SANITIZE_IMAGES: $dropMediaSanitizeImages, DROP_MEDIA_INGEST_S3_BUCKET: $dropMediaIngestS3Bucket, DROP_MEDIA_INGEST_S3_REGION: $dropMediaIngestS3Region, DROP_MEDIA_INGEST_STAGE: $dropMediaIngestStage, DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME: $dropMediaSanitizerSqsQueueName, API_GATEWAY_WS_ENDPOINT: $apiGatewayWsEndpoint}' /tmp/current_env.json > /tmp/app_env.json
-          jq '{Variables: .}' /tmp/app_env.json > /tmp/env_config.json
+          jq --arg enabled "$ARTWORK_DOCUMENTATION_ENABLED_VALUE" --arg selfService "$ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_VALUE" --arg archiveRegion "$DEPLOY_REGION" --arg archiveBucket "6529-artwork-documentation-987989283142-$DEPLOY_REGION" '. + {ARTWORK_DOCUMENTATION_ENABLED: (if $enabled == "" then (.ARTWORK_DOCUMENTATION_ENABLED // "false") else $enabled end), ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED: (if $selfService == "" then (.ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED // "false") else $selfService end), ARTWORK_DOCUMENTATION_S3_REGION: $archiveRegion, ARTWORK_DOCUMENTATION_S3_BUCKET: $archiveBucket}' /tmp/app_env.json > /tmp/artwork_env.json
+          jq '{Variables: .}' /tmp/artwork_env.json > /tmp/env_config.json
           aws lambda update-function-configuration --function-name seizeAPI --description "$VERSION_DESCRIPTION" --environment file:///tmp/env_config.json --memory-size "$API_MEMORY_SIZE" --timeout "$API_TIMEOUT" --no-cli-pager > /dev/null 2>&1
-          rm -f /tmp/current_env.json /tmp/app_env.json /tmp/env_config.json
+          rm -f /tmp/current_env.json /tmp/app_env.json /tmp/artwork_env.json /tmp/env_config.json
       - name: Deploy mediaResizerLoop
         if: github.event.inputs.service == 'mediaResizerLoop'
         run: |
@@ -365,13 +381,13 @@ jobs:
             exit 1
           fi
       - name: Verify immutable Lambda code
-        if: ${{ !(github.event.inputs.service == 'dropMediaIngestStorage') && !(github.event.inputs.service == 'nextgenMediaProxyInterceptor') }}
+        if: ${{ !(github.event.inputs.service == 'dropMediaIngestStorage' || github.event.inputs.service == 'artworkDocumentationStorage') && !(github.event.inputs.service == 'nextgenMediaProxyInterceptor') }}
         shell: bash
         env:
-          VERIFICATION_TARGETS_BY_SERVICE: '{"api":["seizeAPI"],"aggregatedActivityLoop":["aggregatedActivityLoop"],"attachmentsOrchestrator":["attachmentsOrchestrator"],"attachmentsProcessor":["attachmentsProcessor"],"artCurationNftWatchLoop":["artCurationNftWatchLoop"],"cloudwatchAlarmsToDiscordLoop":["cloudwatchAlarmsToDiscordLoop"],"claimsBuilder":["claimsBuilder"],"claimsMediaArweaveUploader":["claimsMediaArweaveUploader"],"customReplayLoop":["customReplayLoop"],"dbDumpsDaily":["dbDumpsDaily"],"dbMigrationsLoop":["dbMigrationsLoop"],"delegationsLoop":["delegationsLoop"],"discoverEnsLoop":["discoverEnsLoop"],"dropMediaIngestStorage":[],"dropMediaSanitizer":["dropMediaSanitizer"],"dropVideoConversionInvokerLoop":["dropVideoConversionInvokerLoop"],"ethPriceLoop":["ethPriceLoop"],"externalCollectionLiveTailingLoop":["externalCollectionLiveTailingLoop"],"externalCollectionSnapshottingLoop":["externalCollectionSnapshottingLoop"],"helpBotReplyLoop":["helpBotReplyLoop"],"marketStatsLoop":["marketStatsMEMES","marketStatsLAB","marketStatsGRADIENT","marketStatsNEXTGEN"],"mediaResizerLoop":["mediaResizerLoop"],"mintAnnouncementsLoop":["mintAnnouncementsLoop"],"nextgenContractLoop":["nextgenContractLoop"],"nextgenMediaImageResolutions":["nextgenMediaImageResolutions"],"nextgenMediaProxyInterceptor":["nextgenMediaProxyInterceptor"],"nextgenMediaUploader":["nextgenMediaUploader"],"nextgenMetadataLoop":["nextgenMetadataLoop"],"nftHistoryLoop":["nftHistoryLoop"],"nftLinkRefresherLoop":["nftLinkRefresherLoop"],"nftLinkMediaPreviewLoop":["nftLinkMediaPreviewLoop"],"nftOwnersLoop":["nftOwnersLoop"],"nftsLoop":["nftsLoop"],"overRatesRevocationLoop":["overRatesRevocationLoop"],"ownersBalancesLoop":["ownersBalancesLoop"],"populateHistoricConsolidatedTdh":["populateHistoricConsolidatedTdh"],"pushNotificationsHandler":["pushNotificationsHandler"],"rateEventProcessingLoop":["rateEventProcessingLoop"],"releaseNotesGenerationLoop":["releaseNotesGenerationLoop"],"refreshEnsLoop":["refreshENS"],"rememesLoop":["rememesS3Loop","rememesRefreshMetadataLoop","rememesFileLoop"],"royaltiesLoop":["royaltiesLoop"],"s3Uploader":["s3Uploader"],"subscriptionsDaily":["subscriptionsDaily","subscriptionCoverageReconciliationLoop"],"subscriptionsTopUpLoop":["subscriptionsTopUpLoop"],"xTdhGrantsReviewerLoop":["xTdhGrantsReviewerLoop"],"tdhHistoryLoop":["tdhHistoryLoop"],"tdhLoop":["tdhLoop"],"teamLoop":["teamLoop"],"transactionsLoop":["memesTransactionsLoop","gradientsTransactionsLoop","memeLabTransactionsLoop"],"transactionsProcessingLoop":["transactionsProcessingLoop"],"waveDecisionExecutionLoop":["waveDecisionExecutionLoop"],"waveLeaderboardSnapshotterLoop":["waveLeaderboardSnapshotterLoop"],"waveDropMetricsRefreshLoop":["waveDropMetricsRefreshLoop"],"waveScoreRefreshLoop":["waveScoreRefreshLoop"],"xTdhLoop":["xTdhLoop"]}'
+          VERIFICATION_TARGETS_BY_SERVICE: '{"api":["seizeAPI"],"aggregatedActivityLoop":["aggregatedActivityLoop"],"attachmentsOrchestrator":["attachmentsOrchestrator"],"attachmentsProcessor":["attachmentsProcessor"],"artCurationNftWatchLoop":["artCurationNftWatchLoop"],"cloudwatchAlarmsToDiscordLoop":["cloudwatchAlarmsToDiscordLoop"],"claimsBuilder":["claimsBuilder"],"claimsMediaArweaveUploader":["claimsMediaArweaveUploader"],"customReplayLoop":["customReplayLoop"],"dbDumpsDaily":["dbDumpsDaily"],"dbMigrationsLoop":["dbMigrationsLoop"],"delegationsLoop":["delegationsLoop"],"discoverEnsLoop":["discoverEnsLoop"],"dropMediaIngestStorage":[],"dropMediaSanitizer":["dropMediaSanitizer"],"dropVideoConversionInvokerLoop":["dropVideoConversionInvokerLoop"],"ethPriceLoop":["ethPriceLoop"],"externalCollectionLiveTailingLoop":["externalCollectionLiveTailingLoop"],"externalCollectionSnapshottingLoop":["externalCollectionSnapshottingLoop"],"helpBotReplyLoop":["helpBotReplyLoop"],"marketStatsLoop":["marketStatsMEMES","marketStatsLAB","marketStatsGRADIENT","marketStatsNEXTGEN"],"mediaResizerLoop":["mediaResizerLoop"],"mintAnnouncementsLoop":["mintAnnouncementsLoop"],"nextgenContractLoop":["nextgenContractLoop"],"nextgenMediaImageResolutions":["nextgenMediaImageResolutions"],"nextgenMediaProxyInterceptor":["nextgenMediaProxyInterceptor"],"nextgenMediaUploader":["nextgenMediaUploader"],"nextgenMetadataLoop":["nextgenMetadataLoop"],"nftHistoryLoop":["nftHistoryLoop"],"nftLinkRefresherLoop":["nftLinkRefresherLoop"],"nftLinkMediaPreviewLoop":["nftLinkMediaPreviewLoop"],"nftOwnersLoop":["nftOwnersLoop"],"nftsLoop":["nftsLoop"],"overRatesRevocationLoop":["overRatesRevocationLoop"],"ownersBalancesLoop":["ownersBalancesLoop"],"populateHistoricConsolidatedTdh":["populateHistoricConsolidatedTdh"],"pushNotificationsHandler":["pushNotificationsHandler"],"rateEventProcessingLoop":["rateEventProcessingLoop"],"releaseNotesGenerationLoop":["releaseNotesGenerationLoop"],"refreshEnsLoop":["refreshENS"],"rememesLoop":["rememesS3Loop","rememesRefreshMetadataLoop","rememesFileLoop"],"royaltiesLoop":["royaltiesLoop"],"s3Uploader":["s3Uploader"],"subscriptionsDaily":["subscriptionsDaily","subscriptionCoverageReconciliationLoop"],"subscriptionsTopUpLoop":["subscriptionsTopUpLoop"],"xTdhGrantsReviewerLoop":["xTdhGrantsReviewerLoop"],"tdhHistoryLoop":["tdhHistoryLoop"],"tdhLoop":["tdhLoop"],"teamLoop":["teamLoop"],"transactionsLoop":["memesTransactionsLoop","gradientsTransactionsLoop","memeLabTransactionsLoop"],"transactionsProcessingLoop":["transactionsProcessingLoop"],"waveDecisionExecutionLoop":["waveDecisionExecutionLoop"],"waveLeaderboardSnapshotterLoop":["waveLeaderboardSnapshotterLoop"],"waveDropMetricsRefreshLoop":["waveDropMetricsRefreshLoop"],"waveScoreRefreshLoop":["waveScoreRefreshLoop"],"xTdhLoop":["xTdhLoop"],"artworkDocumentationStorage":[],"artworkDocumentationProcessor":["artworkDocumentationProcessor"]}'
         run: |
           set -euo pipefail
-          [[ "$INPUT_SERVICE" =~ ^(api|aggregatedActivityLoop|attachmentsOrchestrator|attachmentsProcessor|artCurationNftWatchLoop|cloudwatchAlarmsToDiscordLoop|claimsBuilder|claimsMediaArweaveUploader|customReplayLoop|dbDumpsDaily|dbMigrationsLoop|delegationsLoop|discoverEnsLoop|dropMediaIngestStorage|dropMediaSanitizer|dropVideoConversionInvokerLoop|ethPriceLoop|externalCollectionLiveTailingLoop|externalCollectionSnapshottingLoop|helpBotReplyLoop|marketStatsLoop|mediaResizerLoop|mintAnnouncementsLoop|nextgenContractLoop|nextgenMediaImageResolutions|nextgenMediaProxyInterceptor|nextgenMediaUploader|nextgenMetadataLoop|nftHistoryLoop|nftLinkRefresherLoop|nftLinkMediaPreviewLoop|nftOwnersLoop|nftsLoop|overRatesRevocationLoop|ownersBalancesLoop|populateHistoricConsolidatedTdh|pushNotificationsHandler|rateEventProcessingLoop|releaseNotesGenerationLoop|refreshEnsLoop|rememesLoop|royaltiesLoop|s3Uploader|subscriptionsDaily|subscriptionsTopUpLoop|xTdhGrantsReviewerLoop|tdhHistoryLoop|tdhLoop|teamLoop|transactionsLoop|transactionsProcessingLoop|waveDecisionExecutionLoop|waveLeaderboardSnapshotterLoop|waveDropMetricsRefreshLoop|waveScoreRefreshLoop|xTdhLoop)$ ]]
+          [[ "$INPUT_SERVICE" =~ ^(api|aggregatedActivityLoop|attachmentsOrchestrator|attachmentsProcessor|artCurationNftWatchLoop|cloudwatchAlarmsToDiscordLoop|claimsBuilder|claimsMediaArweaveUploader|customReplayLoop|dbDumpsDaily|dbMigrationsLoop|delegationsLoop|discoverEnsLoop|dropMediaIngestStorage|dropMediaSanitizer|dropVideoConversionInvokerLoop|ethPriceLoop|externalCollectionLiveTailingLoop|externalCollectionSnapshottingLoop|helpBotReplyLoop|marketStatsLoop|mediaResizerLoop|mintAnnouncementsLoop|nextgenContractLoop|nextgenMediaImageResolutions|nextgenMediaProxyInterceptor|nextgenMediaUploader|nextgenMetadataLoop|nftHistoryLoop|nftLinkRefresherLoop|nftLinkMediaPreviewLoop|nftOwnersLoop|nftsLoop|overRatesRevocationLoop|ownersBalancesLoop|populateHistoricConsolidatedTdh|pushNotificationsHandler|rateEventProcessingLoop|releaseNotesGenerationLoop|refreshEnsLoop|rememesLoop|royaltiesLoop|s3Uploader|subscriptionsDaily|subscriptionsTopUpLoop|xTdhGrantsReviewerLoop|tdhHistoryLoop|tdhLoop|teamLoop|transactionsLoop|transactionsProcessingLoop|waveDecisionExecutionLoop|waveLeaderboardSnapshotterLoop|waveDropMetricsRefreshLoop|waveScoreRefreshLoop|xTdhLoop|artworkDocumentationStorage|artworkDocumentationProcessor)$ ]]
           if [ "$INPUT_SERVICE" = api ]; then
             package_path=src/api-serverless/dist/index.zip
           else
@@ -387,11 +403,11 @@ jobs:
             fi
           done < <(jq -r '.[]' <<< "$targets")
       - name: Verify resources-only CloudFormation stack
-        if: (github.event.inputs.service == 'dropMediaIngestStorage')
+        if: (github.event.inputs.service == 'dropMediaIngestStorage' || github.event.inputs.service == 'artworkDocumentationStorage')
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$INPUT_SERVICE" =~ ^(api|aggregatedActivityLoop|attachmentsOrchestrator|attachmentsProcessor|artCurationNftWatchLoop|cloudwatchAlarmsToDiscordLoop|claimsBuilder|claimsMediaArweaveUploader|customReplayLoop|dbDumpsDaily|dbMigrationsLoop|delegationsLoop|discoverEnsLoop|dropMediaIngestStorage|dropMediaSanitizer|dropVideoConversionInvokerLoop|ethPriceLoop|externalCollectionLiveTailingLoop|externalCollectionSnapshottingLoop|helpBotReplyLoop|marketStatsLoop|mediaResizerLoop|mintAnnouncementsLoop|nextgenContractLoop|nextgenMediaImageResolutions|nextgenMediaProxyInterceptor|nextgenMediaUploader|nextgenMetadataLoop|nftHistoryLoop|nftLinkRefresherLoop|nftLinkMediaPreviewLoop|nftOwnersLoop|nftsLoop|overRatesRevocationLoop|ownersBalancesLoop|populateHistoricConsolidatedTdh|pushNotificationsHandler|rateEventProcessingLoop|releaseNotesGenerationLoop|refreshEnsLoop|rememesLoop|royaltiesLoop|s3Uploader|subscriptionsDaily|subscriptionsTopUpLoop|xTdhGrantsReviewerLoop|tdhHistoryLoop|tdhLoop|teamLoop|transactionsLoop|transactionsProcessingLoop|waveDecisionExecutionLoop|waveLeaderboardSnapshotterLoop|waveDropMetricsRefreshLoop|waveScoreRefreshLoop|xTdhLoop)$ ]]
+          [[ "$INPUT_SERVICE" =~ ^(api|aggregatedActivityLoop|attachmentsOrchestrator|attachmentsProcessor|artCurationNftWatchLoop|cloudwatchAlarmsToDiscordLoop|claimsBuilder|claimsMediaArweaveUploader|customReplayLoop|dbDumpsDaily|dbMigrationsLoop|delegationsLoop|discoverEnsLoop|dropMediaIngestStorage|dropMediaSanitizer|dropVideoConversionInvokerLoop|ethPriceLoop|externalCollectionLiveTailingLoop|externalCollectionSnapshottingLoop|helpBotReplyLoop|marketStatsLoop|mediaResizerLoop|mintAnnouncementsLoop|nextgenContractLoop|nextgenMediaImageResolutions|nextgenMediaProxyInterceptor|nextgenMediaUploader|nextgenMetadataLoop|nftHistoryLoop|nftLinkRefresherLoop|nftLinkMediaPreviewLoop|nftOwnersLoop|nftsLoop|overRatesRevocationLoop|ownersBalancesLoop|populateHistoricConsolidatedTdh|pushNotificationsHandler|rateEventProcessingLoop|releaseNotesGenerationLoop|refreshEnsLoop|rememesLoop|royaltiesLoop|s3Uploader|subscriptionsDaily|subscriptionsTopUpLoop|xTdhGrantsReviewerLoop|tdhHistoryLoop|tdhLoop|teamLoop|transactionsLoop|transactionsProcessingLoop|waveDecisionExecutionLoop|waveLeaderboardSnapshotterLoop|waveDropMetricsRefreshLoop|waveScoreRefreshLoop|xTdhLoop|artworkDocumentationStorage|artworkDocumentationProcessor)$ ]]
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]]
           stack_name="$INPUT_SERVICE-$INPUT_ENVIRONMENT"
           stack_status="$(aws cloudformation describe-stacks             --stack-name "$stack_name"             --query 'Stacks[0].StackStatus'             --output text)"
