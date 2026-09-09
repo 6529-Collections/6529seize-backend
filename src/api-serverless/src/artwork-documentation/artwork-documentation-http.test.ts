@@ -92,6 +92,8 @@ describe('private documentation HTTP validation', () => {
         expect(JSON.stringify(errors)).not.toContain('private-marker');
         expect(JSON.stringify(errors)).not.toContain('xxxxx');
         expect(errors).toHaveLength(1);
+        const captured = errors[0] as { error: Error };
+        expect(captured.error.message).not.toMatch(/private-marker|xxxxx/);
       });
     }
   );
@@ -114,5 +116,6 @@ describe('private documentation HTTP validation', () => {
     expect(safe.getStatusCode()).toBe(500);
     expect(safe.code).toBe('DOCUMENTATION_OPERATION_FAILED');
     expect(JSON.stringify(safe)).not.toContain('private-marker');
+    expect(safe.message).not.toMatch(/private-marker|xxxxx/);
   });
 });
