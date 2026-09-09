@@ -106,6 +106,7 @@ import { ApiSaveEulaConsentRequest } from '@/api/generated/models/ApiSaveEulaCon
 import { ApiSaveEulaConsentResponse } from '@/api/generated/models/ApiSaveEulaConsentResponse';
 import { ApiSaveProfileCmsPackageDraftRequest } from '@/api/generated/models/ApiSaveProfileCmsPackageDraftRequest';
 import { ApiSubscriptionCoverage } from '@/api/generated/models/ApiSubscriptionCoverage';
+import { ApiTdhRules } from '@/api/generated/models/ApiTdhRules';
 import { ApiUpdateProfilePreferences } from '@/api/generated/models/ApiUpdateProfilePreferences';
 import { ApiValidateProfileCmsAgentPatchRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentPatchRequest';
 import { ApiValidateProfileCmsPackageRequest } from '@/api/generated/models/ApiValidateProfileCmsPackageRequest';
@@ -1353,6 +1354,20 @@ export type GetSubscriptionCoverageRequest = Request<
   ApiResponse<GetSubscriptionCoverageResponse>,
   never,
   GetSubscriptionCoverageQuery,
+  Record<string, never>
+>;
+
+export type GetTdhRulesPathParams = Record<string, never>;
+
+export type GetTdhRulesQuery = Record<string, never>;
+
+export type GetTdhRulesResponse = ApiTdhRules;
+
+export type GetTdhRulesRequest = Request<
+  GetTdhRulesPathParams,
+  ApiResponse<GetTdhRulesResponse>,
+  never,
+  GetTdhRulesQuery,
   Record<string, never>
 >;
 
