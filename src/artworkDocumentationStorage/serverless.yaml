@@ -1,0 +1,300 @@
+service: artworkDocumentationStorage
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  stage: ${opt:stage, 'staging'}
+
+resources:
+  Resources:
+    ArtworkArchiveBucket:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Retain
+      UpdateReplacePolicy: Retain
+      Properties:
+        BucketName: !Sub '6529-artwork-documentation-${AWS::AccountId}-${AWS::Region}'
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        OwnershipControls:
+          Rules:
+            - ObjectOwnership: BucketOwnerEnforced
+        VersioningConfiguration:
+          Status: Enabled
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins:
+                - https://staging.6529.io
+                - https://6529.io
+                - https://www.6529.io
+              AllowedMethods: [PUT, GET, HEAD]
+              AllowedHeaders: [content-type, x-amz-checksum-sha256, x-amz-sdk-checksum-algorithm]
+              ExposedHeaders: [ETag, x-amz-checksum-sha256]
+              MaxAge: 300
+        NotificationConfiguration:
+          EventBridgeConfiguration:
+            EventBridgeEnabled: true
+        LifecycleConfiguration:
+          Rules:
+            - Id: AbortIncompleteArchiveUploads
+              Status: Enabled
+              AbortIncompleteMultipartUpload:
+                DaysAfterInitiation: 1
+            - Id: RemoveReplacedPreviewVersions
+              Status: Enabled
+              Prefix: previews/
+              NoncurrentVersionExpiration:
+                NoncurrentDays: 7
+
+    ArtworkArchiveBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref ArtworkArchiveBucket
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Sid: DenyNonTls
+              Effect: Deny
+              Principal: '*'
+              Action: s3:*
+              Resource:
+                - !GetAtt ArtworkArchiveBucket.Arn
+                - !Sub '${ArtworkArchiveBucket.Arn}/*'
+              Condition:
+                Bool:
+                  aws:SecureTransport: false
+            - Sid: DenyCloudFrontOrigins
+              Effect: Deny
+              Principal:
+                Service: cloudfront.amazonaws.com
+              Action: s3:GetObject
+              Resource: !Sub '${ArtworkArchiveBucket.Arn}/*'
+            - Sid: ArchiveRuntimeBucketOperations
+              Effect: Allow
+              Principal:
+                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
+              Action: [s3:GetBucketLocation, s3:ListBucket, s3:ListBucketMultipartUploads]
+              Resource: !GetAtt ArtworkArchiveBucket.Arn
+            - Sid: ArchiveRuntimeObjectOperations
+              Effect: Allow
+              Principal:
+                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
+              Action: [s3:AbortMultipartUpload, s3:ListMultipartUploadParts, s3:PutObject, s3:GetObject, s3:GetObjectVersion, s3:GetObjectTagging, s3:GetObjectVersionTagging, s3:DeleteObject, s3:DeleteObjectVersion]
+              Resource:
+                - !Sub '${ArtworkArchiveBucket.Arn}/originals/*'
+                - !Sub '${ArtworkArchiveBucket.Arn}/previews/*'
+
+    ArtworkMalwareScanRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: malware-protection-plan.guardduty.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: artwork-original-malware-protection
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action: [events:PutRule, events:DeleteRule, events:PutTargets, events:RemoveTargets]
+                  Resource: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/DO-NOT-DELETE-AmazonGuardDutyMalwareProtectionS3*'
+                  Condition:
+                    StringLike:
+                      events:ManagedBy: malware-protection-plan.guardduty.amazonaws.com
+                - Effect: Allow
+                  Action: [events:DescribeRule, events:ListTargetsByRule]
+                  Resource: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/DO-NOT-DELETE-AmazonGuardDutyMalwareProtectionS3*'
+                - Effect: Allow
+                  Action: [s3:GetObject, s3:GetObjectVersion, s3:PutObjectTagging, s3:GetObjectTagging, s3:PutObjectVersionTagging, s3:GetObjectVersionTagging]
+                  Resource:
+                    - !Sub '${ArtworkArchiveBucket.Arn}/originals/*'
+                    - !Sub '${ArtworkArchiveBucket.Arn}/malware-protection-resource-validation-object'
+                - Effect: Allow
+                  Action: [s3:PutBucketNotification, s3:GetBucketNotification, s3:ListBucket]
+                  Resource: !GetAtt ArtworkArchiveBucket.Arn
+                - Effect: Allow
+                  Action: s3:PutObject
+                  Resource: !Sub '${ArtworkArchiveBucket.Arn}/malware-protection-resource-validation-object'
+
+    ArtworkMalwareProtectionPlan:
+      Type: AWS::GuardDuty::MalwareProtectionPlan
+      DependsOn: ArtworkArchiveBucketPolicy
+      Properties:
+        Role: !GetAtt ArtworkMalwareScanRole.Arn
+        ProtectedResource:
+          S3Bucket:
+            BucketName: !Ref ArtworkArchiveBucket
+            ObjectPrefixes: [originals/]
+        Actions:
+          Tagging:
+            Status: ENABLED
+
+    ArtworkArchiveBackupVault:
+      Type: AWS::Backup::BackupVault
+      DeletionPolicy: Retain
+      UpdateReplacePolicy: Retain
+      Properties:
+        BackupVaultName: artwork-documentation-${opt:stage, self:provider.stage}
+
+    ArtworkArchiveBackupRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: backup.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: artwork-archive-backup-only
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action: [s3:GetBucketTagging, s3:GetInventoryConfiguration, s3:ListBucketVersions, s3:ListBucket, s3:GetBucketVersioning, s3:GetBucketLocation, s3:GetBucketAcl, s3:PutInventoryConfiguration, s3:GetBucketNotification, s3:PutBucketNotification, s3:ListTagsForResource]
+                  Resource: !GetAtt ArtworkArchiveBucket.Arn
+                - Effect: Allow
+                  Action: [s3:GetObjectAcl, s3:GetObject, s3:GetObjectVersionTagging, s3:GetObjectVersionAcl, s3:GetObjectTagging, s3:GetObjectVersion]
+                  Resource: !Sub '${ArtworkArchiveBucket.Arn}/*'
+                - Effect: Allow
+                  Action: [events:DeleteRule, events:PutTargets, events:DescribeRule, events:EnableRule, events:PutRule, events:RemoveTargets, events:ListTargetsByRule, events:DisableRule]
+                  Resource: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/AwsBackupManagedRule*'
+                - Effect: Allow
+                  Action: [cloudwatch:GetMetricData, events:ListRules, s3:ListAllMyBuckets]
+                  Resource: '*'
+                - Effect: Allow
+                  Action: backup:TagResource
+                  Resource: !Sub 'arn:aws:backup:${AWS::Region}:${AWS::AccountId}:recovery-point:*'
+
+    ArtworkArchiveBackupPlan:
+      Type: AWS::Backup::BackupPlan
+      Properties:
+        BackupPlan:
+          BackupPlanName: artwork-documentation-${opt:stage, self:provider.stage}
+          AdvancedBackupSettings:
+            - ResourceType: S3
+              BackupOptions:
+                BackupACLs: disabled
+                BackupObjectTags: enabled
+          BackupPlanRule:
+            - RuleName: daily-private-archive
+              TargetBackupVault: !Ref ArtworkArchiveBackupVault
+              ScheduleExpression: cron(0 3 ? * * *)
+              StartWindowMinutes: 60
+              CompletionWindowMinutes: 360
+              EnableContinuousBackup: false
+              Lifecycle:
+                DeleteAfterDays: 35
+
+    ArtworkArchiveBackupSelection:
+      Type: AWS::Backup::BackupSelection
+      Properties:
+        BackupPlanId: !Ref ArtworkArchiveBackupPlan
+        BackupSelection:
+          SelectionName: only-this-artwork-archive
+          IamRoleArn: !GetAtt ArtworkArchiveBackupRole.Arn
+          Resources:
+            - !GetAtt ArtworkArchiveBucket.Arn
+
+    ArtworkArchiveRestoreBucket:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Retain
+      UpdateReplacePolicy: Retain
+      Properties:
+        BucketName: !Sub '6529-artwork-restore-${AWS::AccountId}-${AWS::Region}'
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        OwnershipControls:
+          Rules:
+            - ObjectOwnership: BucketOwnerEnforced
+        VersioningConfiguration:
+          Status: Enabled
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+        LifecycleConfiguration:
+          Rules:
+            - Id: ExpireRestoreDrillCopies
+              Status: Enabled
+              ExpirationInDays: 7
+              NoncurrentVersionExpiration:
+                NoncurrentDays: 7
+              AbortIncompleteMultipartUpload:
+                DaysAfterInitiation: 1
+
+    ArtworkArchiveRestoreBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref ArtworkArchiveRestoreBucket
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Deny
+              Principal: '*'
+              Action: s3:*
+              Resource:
+                - !GetAtt ArtworkArchiveRestoreBucket.Arn
+                - !Sub '${ArtworkArchiveRestoreBucket.Arn}/*'
+              Condition:
+                Bool:
+                  aws:SecureTransport: false
+            - Effect: Deny
+              Principal:
+                Service: cloudfront.amazonaws.com
+              Action: s3:GetObject
+              Resource: !Sub '${ArtworkArchiveRestoreBucket.Arn}/*'
+
+    ArtworkArchiveRestoreRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: backup.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: only-private-artwork-restore-destination
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action: [s3:ListBucketVersions, s3:ListBucket, s3:GetBucketVersioning, s3:GetBucketLocation, s3:PutBucketVersioning, s3:PutBucketOwnershipControls, s3:GetBucketOwnershipControls]
+                  Resource: !GetAtt ArtworkArchiveRestoreBucket.Arn
+                - Effect: Allow
+                  Action: [s3:GetObject, s3:GetObjectVersion, s3:GetObjectVersionAcl, s3:GetObjectTagging, s3:PutObjectTagging, s3:GetObjectAcl, s3:ListMultipartUploadParts, s3:PutObject]
+                  Resource: !Sub '${ArtworkArchiveRestoreBucket.Arn}/*'
+
+  Outputs:
+    ArtworkArchiveBucketName:
+      Value: !Ref ArtworkArchiveBucket
+    ArtworkMalwareProtectionPlanId:
+      Value: !GetAtt ArtworkMalwareProtectionPlan.MalwareProtectionPlanId
+    ArtworkMalwareProtectionPlanStatus:
+      Value: !GetAtt ArtworkMalwareProtectionPlan.Status
+    ArtworkBackupVaultName:
+      Value: !Ref ArtworkArchiveBackupVault
+    ArtworkBackupPlanId:
+      Value: !Ref ArtworkArchiveBackupPlan
+    ArtworkBackupRoleArn:
+      Value: !GetAtt ArtworkArchiveBackupRole.Arn
+    ArtworkRestoreRoleArn:
+      Value: !GetAtt ArtworkArchiveRestoreRole.Arn
+    ArtworkRestoreBucketName:
+      Value: !Ref ArtworkArchiveRestoreBucket
