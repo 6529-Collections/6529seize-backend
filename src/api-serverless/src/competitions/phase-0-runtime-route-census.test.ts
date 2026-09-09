@@ -30,6 +30,12 @@ const RETIRED_OPERATIONAL_ROUTES = new Set([
 const GENERATED_ROUTE_SOURCE_LINE_DRIFT = 300;
 const HAND_WRITTEN_ROUTE_SOURCE_LINE_DRIFT = 250;
 
+// The address-only Alchemy migration retains this route as an uncached 410.
+// Keep checking its mount/auth and every other baseline cache expectation.
+const ACCEPTED_ROUTE_CACHE_CHANGES = new Map<string, ManifestRoute['cache']>([
+  ['/alchemy-proxy/collections', 'uncached']
+]);
+
 const ACCEPTED_ROUTE_SOURCE_MOVES = new Map<string, string>([
   [
     '/api/policies/eula-consent/:deviceId',
@@ -207,9 +213,11 @@ describe('Phase 0 permanent mounted GET route census', () => {
       ) {
         failures.push(`${route.path}: required auth has no static evidence`);
       }
-      if (best.cache !== route.cache) {
+      const expectedCache =
+        ACCEPTED_ROUTE_CACHE_CHANGES.get(route.path) ?? route.cache;
+      if (best.cache !== expectedCache) {
         failures.push(
-          `${route.path}: cache changed from ${route.cache} to ${best.cache}`
+          `${route.path}: cache changed from ${expectedCache} to ${best.cache}`
         );
       }
     }

@@ -266,28 +266,6 @@ describe('Alchemy SDK replacement', () => {
       );
     });
 
-    it('calls searchContractMetadata as REST GET', async () => {
-      mockedAxios.get.mockResolvedValue({
-        status: 200,
-        data: { contracts: [{ address: '0xabc', name: 'Memes' }] }
-      });
-
-      const alchemy = new Alchemy({
-        network: Network.ETH_MAINNET,
-        apiKey: 'test-key'
-      });
-
-      const result = await alchemy.nft.searchContractMetadata('memes');
-
-      expect(result).toEqual([{ address: '0xabc', name: 'Memes' }]);
-      expect(mockedAxios.get).toHaveBeenCalledWith(
-        'https://eth-mainnet.g.alchemy.com/nft/v3/test-key/searchContractMetadata',
-        expect.objectContaining({
-          params: { query: 'memes' }
-        })
-      );
-    });
-
     it('calls getNFTsForOwner as REST GET with repeated array params', async () => {
       mockedAxios.get.mockResolvedValue({
         status: 200,
