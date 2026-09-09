@@ -25,6 +25,10 @@ import { ethTools } from '../eth-tools';
 import { Logger } from '../logging';
 import { getCalculationEditionSize } from '../memes-edition-size-floor';
 import { equalIgnoreCase } from '../strings';
+import {
+  LAST_BOOSTED_MEMES_SEASON,
+  MEMES_SEASON_SET_BOOST
+} from '../tdhLoop/tdh-rules';
 
 const logger = Logger.get('NFT_EXTENDED_DATA');
 
@@ -267,10 +271,7 @@ export async function findMemesExtendedData() {
   const seasons = Array.from(new Set(extended.map((e) => e.season)));
   const memesSeasons: MemesSeason[] = seasons.map((s) => {
     const inSeason = extended.filter((e) => e.season === s);
-    let boost = 0;
-    if (s <= 20) {
-      boost = 0.05;
-    }
+    const boost = s <= LAST_BOOSTED_MEMES_SEASON ? MEMES_SEASON_SET_BOOST : 0;
     const memesSeason: MemesSeason = {
       id: s,
       created_at: new Date(),
