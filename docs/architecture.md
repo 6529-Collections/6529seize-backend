@@ -286,6 +286,16 @@ WebSocket notification subscription replacement is transactional. New connection
 
 The API is organized by domain routers under `src/api-serverless/src`. The OpenAPI file defines the public contract and generated models. Legacy routes are wired manually, while newer OpenAPI operations can opt into generated route wiring through `x-6529-router` and thin domain handlers.
 
+`GET /tdh/rules` publishes current TDH boost definitions evaluated against the
+latest completed snapshot's eligible Meme card range. The latest row in
+`tdh_blocks` is the completion marker because consolidation persists its TDH
+rows before publishing that block. The API combines the block timestamp with
+Meme mint dates and current season definitions, then applies the calculator's
+shared eligibility and boost helpers. Rule definitions are current server
+configuration, not historical or versioned inputs persisted with the snapshot.
+The public current-season rules and configured future schedule remain
+independent of any collector identity.
+
 Authenticated profiles can delete their own chat history from one wave through
 `DELETE /waves/{id}/my-chat-history`. The API locks the wave and the profile's
 matching `CHAT` drops in one transaction, preserves the current pinned drop,
