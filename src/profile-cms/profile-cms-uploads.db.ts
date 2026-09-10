@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ArweaveUploadState } from '@/arweave';
 import { PROFILES_TABLE, PROFILE_CMS_UPLOADS_TABLE } from '@/constants';
+import type { DbQueryOptions } from '@/db-query.options';
 import { ProfileCmsUploadEntity } from '@/entities/IProfileCmsUpload';
 import { CustomApiCompliantException, NotFoundException } from '@/exceptions';
 import { CmsPackageV1 } from '@/profile-cms/protocol/v1';
@@ -106,18 +107,7 @@ export class ProfileCmsUploadsDb extends LazyDbAccessCompatibleService {
     await this.db
       .executeNativeQueriesInTransaction(async (connection) => {
         const options = { wrappedConnection: connection };
-        const row = await this.db.oneOrNull<ProfileCmsUploadEntity>(
-          `select * from ${PROFILE_CMS_UPLOADS_TABLE} where id = :id for update`,
-          { id: reservation.id },
-          options
-        );
-        if (!reservation.token || row?.lease_token !== reservation.token) {
-          throw new CustomApiCompliantException(
-            409,
-            'CMS upload lease expired; retry to resume the current transaction',
-            'cms_upload_lease_expired'
-          );
-        }
+        await this.assertCurrentOwner(reservation, options);
         await this.db.execute(
           `update ${PROFILE_CMS_UPLOADS_TABLE} set upload_state = :state where id = :id and lease_token = :token`,
           {
@@ -140,21 +130,7 @@ export class ProfileCmsUploadsDb extends LazyDbAccessCompatibleService {
     await this.db
       .executeNativeQueriesInTransaction(async (connection) => {
         const options = { wrappedConnection: connection };
-        const row = await this.db.oneOrNull<ProfileCmsUploadEntity>(
-          `select * from ${PROFILE_CMS_UPLOADS_TABLE} where id = :id for update`,
-          { id: reservation.id },
-          options
-        );
-        // Expiry permits another worker to claim the row. The token, checked
-        // under the same row lock as takeover, fences an older owner. Finishing
-        // after the deadline is safe while no replacement has claimed it.
-        if (!reservation.token || row?.lease_token !== reservation.token) {
-          throw new CustomApiCompliantException(
-            409,
-            'CMS upload lease expired; retry to retrieve the current receipt',
-            'cms_upload_lease_expired'
-          );
-        }
+        await this.assertCurrentOwner(reservation, options);
         await this.db.execute(
           `update ${PROFILE_CMS_UPLOADS_TABLE} set receipt = :receipt, upload_state = null, lease_token = null, lease_until = null where id = :id and lease_token = :token`,
           {
@@ -166,6 +142,27 @@ export class ProfileCmsUploadsDb extends LazyDbAccessCompatibleService {
         );
       })
       .finally(() => ctx.timer?.stop('ProfileCmsUploadsDb->complete'));
+  }
+
+  private async assertCurrentOwner(
+    reservation: ProfileCmsUploadReservation,
+    options: DbQueryOptions
+  ): Promise<void> {
+    const row = await this.db.oneOrNull<ProfileCmsUploadEntity>(
+      `select * from ${PROFILE_CMS_UPLOADS_TABLE} where id = :id for update`,
+      { id: reservation.id },
+      options
+    );
+    // Expiry permits another worker to claim the row. The token, checked under
+    // the same row lock as takeover, fences an older owner. Finishing after the
+    // deadline is safe while no replacement has claimed it.
+    if (!reservation.token || row?.lease_token !== reservation.token) {
+      throw new CustomApiCompliantException(
+        409,
+        'CMS upload lease expired; retry to resume the current transaction',
+        'cms_upload_lease_expired'
+      );
+    }
   }
 
   async release(

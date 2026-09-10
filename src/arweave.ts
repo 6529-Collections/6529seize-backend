@@ -60,7 +60,9 @@ export class ArweaveFileUploader {
     const uploader = hooks?.savedState
       ? await resumeUpload(arweave, hooks.savedState)
       : await createSignedUpload(arweave, arweaveKey, fileBuffer, contentType);
-    const dataBase64 = Buffer.from(uploader.data).toString('base64');
+    const dataBase64 = hooks
+      ? Buffer.from(uploader.data).toString('base64')
+      : '';
     const transactionId = uploader.toJSON().transaction.id;
 
     // A failed checkpoint must prevent submission. The signed transaction and
@@ -123,13 +125,14 @@ function serializeUpload(
   uploader: TransactionUploader,
   dataBase64: string
 ): ArweaveUploadState {
-  // Library toJSON serializes public transaction fields only. JSON-cloning
-  // also detaches mutable uploader state from an in-flight DB checkpoint.
-  const serialized = JSON.parse(JSON.stringify(uploader)) as Omit<
-    ArweaveUploadState,
-    'data_base64'
-  >;
-  return { ...serialized, data_base64: dataBase64 };
+  // Serialize public transaction fields explicitly before cloning; cloning the
+  // library instance itself would bypass its toJSON filtering of internal data.
+  const serialized = uploader.toJSON();
+  return structuredClone({
+    ...serialized,
+    transaction: serialized.transaction.toJSON(),
+    data_base64: dataBase64
+  });
 }
 
 export const arweaveFileUploader = new ArweaveFileUploader(getArweaveInstance);

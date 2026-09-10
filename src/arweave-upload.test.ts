@@ -43,6 +43,20 @@ function setup() {
 describe('durable Arweave uploads', () => {
   afterEach(() => jest.restoreAllMocks());
 
+  it('preserves the existing uploadFile contract without checkpoint hooks', async () => {
+    const { uploader, create, sign, post, status } = setup();
+    const file = Buffer.from('prefix-original-file-suffix').subarray(7, 20);
+    await expect(uploader.uploadFile(file, 'image/png')).resolves.toEqual({
+      url: `https://arweave.net/${transactionId}`
+    });
+    expect(Buffer.from(create.mock.calls[0][0].data as Uint8Array)).toEqual(
+      file
+    );
+    expect(sign).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(status).not.toHaveBeenCalled();
+  });
+
   it('persists the full signed transaction and original bytes before any submission', async () => {
     const { uploader, post } = setup();
     const states: ArweaveUploadState[] = [];
