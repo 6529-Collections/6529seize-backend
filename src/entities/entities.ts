@@ -229,6 +229,8 @@ export {
 export { WalletAuthSessionEntity } from './IWalletAuthSession';
 export type { WalletAuthClientType } from './IWalletAuthSession';
 export { WalletConnectionShareEntity } from './IWalletConnectionShare';
+export { CommunityAppClientEntity } from './ICommunityAppClient';
+export { CommunityAppDeviceCodeEntity } from './ICommunityAppDeviceCode';
 export {
   WaveDecisionEntity,
   WaveDecisionWinnerDropEntity

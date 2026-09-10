@@ -55,6 +55,12 @@ import {
   refreshNativeSession,
   refreshWebSessionForAddress
 } from './auth-session-v2';
+import { communityAppAuthDb } from './community-app-auth.db';
+import {
+  createDeviceAuthorization,
+  approveDeviceAuthorization,
+  exchangeDeviceCodeForToken
+} from './community-app-auth.service';
 import {
   buildStructuredWalletSignatureMessage,
   consumeStructuredWalletSignatureNonce,
@@ -658,6 +664,99 @@ router.post(
       throw new UnauthorisedException('Invalid connection share code');
     }
     res.status(201).send(redeemed.response);
+  }
+);
+
+// === Community App Device Authorization ===
+
+function assertCommunityAppAuthEnabled(): void {
+  if (process.env.COMMUNITY_APP_AUTH_DISABLED === 'true') {
+    throw new BadRequestException('Community app authentication is disabled');
+  }
+}
+
+const CommunityAppDeviceCodeRequestSchema = Joi.object({
+  client_id: Joi.string().max(64).required(),
+  redirect_uri: Joi.string().uri().required(),
+  scope: Joi.string().max(255).required(),
+  code_challenge: Joi.string().hex().length(64).required(),
+  code_challenge_method: Joi.string().valid('S256').required()
+});
+
+const CommunityAppApproveRequestSchema = Joi.object({
+  user_code: Joi.string().length(8).required()
+});
+
+const CommunityAppTokenRequestSchema = Joi.object({
+  device_code: Joi.string().hex().length(64).required(),
+  code_verifier: Joi.string().min(43).max(128).required()
+});
+
+router.post(
+  '/community-app/device-code',
+  async function (req: Request, res: Response) {
+    assertCommunityAppAuthEnabled();
+    const body = getValidatedByJoiOrThrow(req.body, CommunityAppDeviceCodeRequestSchema);
+    const result = await createDeviceAuthorization({
+      clientId: body.client_id,
+      redirectUri: body.redirect_uri,
+      scope: body.scope,
+      codeChallenge: body.code_challenge,
+      codeChallengeMethod: body.code_challenge_method
+    }, communityAppAuthDb);
+    res.status(201).send({
+      device_code: result.deviceCode,
+      user_code: result.userCode,
+      expires_in: result.expiresIn,
+      redirect_uri: result.redirectUri
+    });
+  }
+);
+
+router.post(
+  '/community-app/approve',
+  needsAuthenticatedUser(),
+  async function (req: Request, res: Response) {
+    assertCommunityAppAuthEnabled();
+    const body = getValidatedByJoiOrThrow(req.body, CommunityAppApproveRequestSchema);
+    const address = getAuthenticatedWalletOrNull(req)?.toLowerCase();
+    if (!address) {
+      throw new UnauthorisedException('Authentication required');
+    }
+    const role = ((req.user as any)?.role ?? null) as string | null;
+    const result = await approveDeviceAuthorization(body.user_code, address, role, communityAppAuthDb);
+    if (!result) {
+      throw new BadRequestException('Invalid or expired user code');
+    }
+    res.status(200).send({
+      client_id: result.clientId,
+      client_name: result.clientName,
+      client_description: result.clientDescription,
+      redirect_uri: result.redirectUri,
+      scope: result.scope
+    });
+  }
+);
+
+router.post(
+  '/community-app/token',
+  async function (req: Request, res: Response) {
+    assertCommunityAppAuthEnabled();
+    const body = getValidatedByJoiOrThrow(req.body, CommunityAppTokenRequestSchema);
+    const result = await exchangeDeviceCodeForToken({
+      deviceCode: body.device_code,
+      codeVerifier: body.code_verifier
+    }, communityAppAuthDb);
+    if (!result) {
+      throw new UnauthorisedException('Invalid, expired, or unapproved device code');
+    }
+    res.status(200).send({
+      access_token: result.accessToken.token,
+      token_type: 'Bearer',
+      expires_in: 900,
+      scope: result.scope,
+      address: result.address
+    });
   }
 );
 

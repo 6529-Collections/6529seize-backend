@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS community_app_device_codes (
+  id varchar(36) NOT NULL,
+  device_code_hash char(64) NOT NULL,
+  user_code_hash char(64) NOT NULL,
+  client_id varchar(64) NOT NULL,
+  redirect_uri varchar(255) NOT NULL,
+  scope varchar(255) NOT NULL,
+  pkce_code_challenge char(128) NOT NULL,
+  pkce_code_challenge_method varchar(10) NOT NULL,
+  approved_by_address varchar(100) DEFAULT NULL,
+  approved_by_role varchar(100) DEFAULT NULL,
+  created_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  expires_at datetime(3) NOT NULL,
+  approved_at datetime(3) DEFAULT NULL,
+  consumed_at datetime(3) DEFAULT NULL,
+  PRIMARY KEY (id),
+  UNIQUE INDEX idx_device_code_hash (device_code_hash),
+  UNIQUE INDEX idx_user_code_hash (user_code_hash),
+  INDEX idx_device_codes_expires (expires_at),
+  INDEX idx_device_codes_approved (approved_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

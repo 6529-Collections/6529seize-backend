@@ -93,6 +93,42 @@ export function issueAccessToken(
   return { token, expiresAt };
 }
 
+export interface ScopedAccessToken {
+  readonly token: string;
+  readonly expiresAt: Date;
+}
+
+export interface ScopedTokenClaims {
+  readonly sub: string;       // wallet address
+  readonly aud: string;       // client_id (audience)
+  readonly scope: string;     // space-separated scopes
+  readonly role?: string | null;
+}
+
+const DEFAULT_SCOPED_TOKEN_TTL_SECONDS = 15 * 60; // 15 minutes
+
+export function issueScopedAccessToken(
+  claims: ScopedTokenClaims,
+  ttlSeconds: number = DEFAULT_SCOPED_TOKEN_TTL_SECONDS
+): ScopedAccessToken {
+  const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+  const token = jwt.sign(
+    {
+      id: randomUUID(),
+      sub: claims.sub.toLowerCase(),
+      aud: claims.aud,
+      scope: claims.scope,
+      ...(claims.role ? { role: claims.role } : {}),
+      type: 'community_app'
+    },
+    getJwtSecret(),
+    {
+      expiresIn: ttlSeconds
+    }
+  );
+  return { token, expiresAt };
+}
+
 export function isAuthConnectionSharingEnabled(): boolean {
   return process.env.AUTH_CONNECTION_SHARING_DISABLED !== 'true';
 }
