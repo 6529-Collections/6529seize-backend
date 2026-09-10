@@ -218,19 +218,27 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 1. Client requests enter through API Gateway and land in `seizeAPI`.
 2. The API validates input, authenticates JWT or anonymous context, reads/writes MySQL, uses Redis for cache/rate limiting, and sometimes publishes SQS work.
 3. Scheduled ingestion Lambdas poll Ethereum/RPC/Alchemy/Etherscan, normalize chain state, and write canonical rows into MySQL.
-
-The Alchemy NFT API proxy supports contract-address metadata lookup through
-`/alchemy-proxy/contract` using V3 `getContractMetadata`. Collection-name
-search is retired: `/alchemy-proxy/collections` returns HTTP 410 with a
-`no-store` error response and makes no upstream or cache request. FE uses the
-contract lookup as fallback for its address-only picker. The removed search
-wrapper has no remaining callers; ingestion, ownership queries, and token
-metadata continue using their existing supported endpoints.
 4. Derived-data Lambdas read canonical tables and write projections such as TDH, owner balances, aggregated activity, wave decisions, leaderboards, metrics, and reputation aggregates.
 5. SQS workers handle slow or retryable side effects through named queues: claim building, claim media Arweave uploads, S3 media mirroring, attachment orchestration/processing, NFT link resolution/previews, xTDH recalculation, Wave Score dirty refreshes, and notification delivery through Firebase plus recipient-scoped WebSocket invalidations.
 
 6. S3 and CloudFront serve media. Drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception.
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
+
+### Alchemy NFT metadata proxy
+
+`GET /alchemy-proxy/contract` retains its existing address lookup: `address`
+must be `0x` followed by 40 hexadecimal characters; missing or malformed input
+returns HTTP 400. It uses V3 `getContractMetadata` and returns the provider
+metadata with `_checksum`, or JSON `null` when the provider returns 404. The
+route retains its five-minute request-cache middleware. FE uses this endpoint
+as fallback for its address-only picker.
+
+Collection-name search is retired: `GET /alchemy-proxy/collections` returns
+HTTP 410 with `Cache-Control: no-store` and the error message
+`Collection name search is no longer available. Use a contract address.`
+It makes no upstream or cache request, including for missing or empty queries.
+The removed search wrapper has no remaining callers; ingestion, ownership
+queries, and token metadata continue using their existing supported endpoints.
 
 ### Content moderation
 

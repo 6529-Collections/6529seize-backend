@@ -27,7 +27,7 @@ Sources:
 | --- | --- | --- |
 | `getCollectionsForOwner` | Not used | No change. |
 | `getCollectionMetadata` | Not used | No change. V3 `getContractMetadata` is already used. |
-| `isHolderOfCollection` / `isHolderOfContract` | Not used | No change. V3 `getNFTsForOwner` already receives `contractAddresses`. |
+| `isHolderOfCollection` / `isHolderOfContract` | Not used | No endpoint migration. V3 `getNFTsForOwner` is already called, but live acceptance later found and corrected its contract-filter serialization. |
 | `getSpamContracts` | Not used | No change. |
 | `searchContractMetadata` | **Used** | Must be removed or replaced before the deadline. |
 | `summarizeNftAttributes` / `summarizeNFTAttributes` | Not used | No change. |
@@ -53,6 +53,8 @@ The affected backend path is:
 - [x] Retain the contract-address endpoint and its existing response/cache semantics.
 - [x] Eliminate the search array/envelope mismatch by removing FE search failover.
 - [x] Cover retirement, invalid input, metadata, provider errors, and the retained wrapper.
+- [x] Correct `getNFTsForOwner` filtering to emit Alchemy's required
+  `contractAddresses[]` query parameter.
 - [x] Update the architecture and wrapper documentation.
 - [x] Add [Actual changes](ACTUAL_CHANGES.md) and [What to test](WHAT_TO_TEST.md).
 - [ ] Complete manual acceptance on the deployed environment.
@@ -70,9 +72,11 @@ The implementation retires a legacy route and preserves its existing error shape
 - `getContractMetadata` is already an exact endpoint-level match for address
   lookup. It receives `contractAddress`; its returned metadata is forwarded to
   FE/Core, whose normalizer handles the OpenSea metadata fields it consumes.
-- `getNFTsForOwner` is already an exact endpoint-level match for the former
-  holder check use case because the proxy passes `contractAddresses: [contract]`
-  and preserves `pageKey`.
+- `getNFTsForOwner` is the correct endpoint-level match for the former holder
+  check use case. The proxy already passed `contractAddresses: [contract]`, but
+  its custom REST serializer omitted Alchemy's required `[]` suffix, so the
+  provider ignored the filter. This implementation corrects the emitted
+  parameter while preserving `pageKey`.
 - `searchContractMetadata` is **not an exact behavior-level match** for
   `getContractMetadata`. The former accepts a keyword and returns many
   contracts; the latter accepts one address and returns one contract. The
