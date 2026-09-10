@@ -3,7 +3,10 @@ import { Logger } from '@/logging';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
 import { publishArtworkAssetMetrics } from '@/artwork-documentation/assets/artwork-assets.metrics';
-import { dispatchDocumentationProcessorEvent } from './artwork-documentation-operator';
+import {
+  dispatchDocumentationProcessorEvent,
+  enrichDocumentationOperatorError
+} from './artwork-documentation-operator';
 
 const logger = Logger.get('ARTWORK_DOCUMENTATION_PROCESSOR');
 export const handler = sentryContext.wrapLambdaHandler(
@@ -20,5 +23,6 @@ export const handler = sentryContext.wrapLambdaHandler(
         }),
       { logger }
     );
-  }
+  },
+  { enrichEvent: enrichDocumentationOperatorError }
 );

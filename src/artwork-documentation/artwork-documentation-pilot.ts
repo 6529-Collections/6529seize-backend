@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { AuthenticationContext } from '@/auth-context';
 import { PROFILES_TABLE } from '@/constants';
 import { doInDbContext } from '@/secrets';
+import { CustomApiCompliantException } from '@/exceptions';
+import { RequestContext } from '@/request.context';
+import { KeysAndGatesSourceDropsMissingError } from '@/artwork-documentation/artwork-documentation-import.errors';
 import {
   artworkDocumentationService,
   ArtworkDocumentationService
@@ -36,7 +39,8 @@ const WAVE_ID = '4ff022b3-aa17-4a0a-ba78-58f64ff1d427';
 export async function importKeysAndGates(
   coordinatorProfileId: string,
   apply: boolean,
-  service: ArtworkDocumentationService = artworkDocumentationService
+  service: ArtworkDocumentationService = artworkDocumentationService,
+  correlationId?: string
 ) {
   const ctx = {
     authenticationContext:
@@ -48,16 +52,7 @@ export async function importKeysAndGates(
     ctx
   );
   if (!profile) fail(422, 'COORDINATOR_PROFILE_NOT_FOUND');
-  const sources = [];
-  for (const id of KEYS_AND_GATES_SOURCE_DROP_IDS) {
-    const drop = await service.getDrop(id, ctx);
-    if (drop.wave_id !== WAVE_ID) fail(422, 'SOURCE_WAVE_MISMATCH');
-    sources.push({
-      drop_id: id,
-      owner_profile_id: drop.author_id,
-      wave_id: drop.wave_id
-    });
-  }
+  const sources = await loadSources(service, ctx, apply, correlationId);
   if (!apply)
     return {
       mode: 'dry_run',
@@ -143,6 +138,43 @@ export async function importKeysAndGates(
     coordinator_profile_id: coordinatorProfileId,
     contexts: results
   };
+}
+
+async function loadSources(
+  service: ArtworkDocumentationService,
+  ctx: RequestContext,
+  apply: boolean,
+  correlationId?: string
+) {
+  const sources = [];
+  const missingDropIds: string[] = [];
+  for (const id of KEYS_AND_GATES_SOURCE_DROP_IDS) {
+    try {
+      const drop = await service.getDrop(id, ctx);
+      sources.push({
+        drop_id: id,
+        owner_profile_id: drop.author_id,
+        wave_id: drop.wave_id
+      });
+    } catch (error) {
+      if (
+        !(error instanceof CustomApiCompliantException) ||
+        error.getStatusCode() !== 404 ||
+        error.code !== 'UNAVAILABLE'
+      )
+        throw error;
+      missingDropIds.push(id);
+    }
+  }
+  if (missingDropIds.length)
+    throw new KeysAndGatesSourceDropsMissingError(
+      missingDropIds,
+      apply,
+      correlationId
+    );
+  if (sources.some((source) => source.wave_id !== WAVE_ID))
+    fail(422, 'SOURCE_WAVE_MISMATCH');
+  return sources;
 }
 
 if (require.main === module) {
