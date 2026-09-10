@@ -1,5 +1,6 @@
 import { PushNotificationDevice } from '@/entities/IPushNotification';
 import { Logger } from '@/logging';
+import { isIosPushPlatform } from './push-platform';
 import {
   deviceBadgeKey,
   getDeviceBadgeState,
@@ -30,10 +31,9 @@ export async function sendIdentityPushGroups(
   // iOS alerts and refresh jobs share a device lock; calculate immediately before send.
   const groups = new Map<string, IdentityPushNotificationMessage[]>();
   for (const message of messages) {
-    const key =
-      message.device.platform === 'ios'
-        ? deviceBadgeKey(message.device)
-        : 'android';
+    const key = isIosPushPlatform(message.device.platform)
+      ? deviceBadgeKey(message.device)
+      : 'other';
     const group = groups.get(key) ?? [];
     group.push(message);
     groups.set(key, group);
@@ -49,8 +49,16 @@ export async function sendIdentityPushGroups(
       };
       try {
         const device = group[0].device;
-        if (device.platform !== 'ios') {
-          await send(group);
+        if (!isIosPushPlatform(device.platform)) {
+          await send(
+            group.map((message) => ({
+              ...message,
+              input:
+                message.device.platform?.trim().toLowerCase() === 'android'
+                  ? message.input
+                  : { ...message.input, omitBadge: true }
+            }))
+          );
           return;
         }
         await withDeviceBadgeLock(device, async () => {

@@ -1,4 +1,5 @@
 import { In } from 'typeorm';
+import { isIosPushPlatform } from './push-platform';
 import { getDataSource } from '@/db';
 import { PushNotificationDevice } from '@/entities/IPushNotification';
 import { Logger } from '@/logging';
@@ -21,11 +22,11 @@ export async function refreshProfileBadges(
   const devices = await getDataSource()
     .getRepository(PushNotificationDevice)
     .findBy({
-      profile_id: In(uniqueProfileIds),
-      platform: 'ios'
+      profile_id: In(uniqueProfileIds)
     });
   const groups = new Map<string, PushNotificationDevice[]>();
   for (const device of devices) {
+    if (!isIosPushPlatform(device.platform)) continue;
     const key = deviceBadgeKey(device);
     const group = groups.get(key) ?? [];
     group.push(device);
@@ -50,7 +51,7 @@ export async function refreshProfileBadges(
           code === 'messaging/registration-token-not-registered' ||
           code === 'messaging/invalid-registration-token'
         ) {
-          // Match the exact old token, never delete a freshly rotated registration.
+          // Remove all profiles using this invalid token, preserving rotated-token rows.
           await getDataSource().getRepository(PushNotificationDevice).delete({
             device_id: device.device_id,
             token: device.token

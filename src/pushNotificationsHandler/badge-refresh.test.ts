@@ -36,7 +36,7 @@ beforeEach(() => {
 it('coalesces shared-device reads into one iOS update', async () => {
   expect(await refreshProfileBadges(['a', 'a', 'b'])).toEqual([]);
   expect(findDevices).toHaveBeenCalledWith(
-    expect.objectContaining({ platform: 'ios' })
+    expect.objectContaining({ profile_id: expect.anything() })
   );
   expect(withDeviceBadgeLock).toHaveBeenCalledTimes(1);
   expect(sendBadgeUpdate).toHaveBeenCalledTimes(1);
@@ -95,4 +95,15 @@ it('does nothing for profiles with no iOS registrations', async () => {
   findDevices.mockResolvedValue([]);
   expect(await refreshProfileBadges(['android-only'])).toEqual([]);
   expect(sendBadgeUpdate).not.toHaveBeenCalled();
+});
+
+it('recognizes legacy iOS casing and skips Android or unknown platforms', async () => {
+  findDevices.mockResolvedValue([
+    { ...phone, profile_id: 'a', platform: ' iOS ' },
+    { ...phone, token: 'android', profile_id: 'b', platform: 'android' },
+    { ...phone, token: 'unknown', profile_id: 'b', platform: null }
+  ]);
+  expect(await refreshProfileBadges(['a', 'b'])).toEqual([]);
+  expect(sendBadgeUpdate).toHaveBeenCalledTimes(1);
+  expect(sendBadgeUpdate).toHaveBeenCalledWith('token', 1);
 });

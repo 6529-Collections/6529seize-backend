@@ -26,6 +26,8 @@ export interface PushNotificationMessageInput {
   notification_id: number;
   extra_data: Record<string, string | number | null | undefined>;
   badge?: number;
+  /** Preserve the existing badge when the registration platform cannot be identified. */
+  omitBadge?: boolean;
   imageUrl?: string;
 }
 
@@ -173,7 +175,9 @@ function buildMessage(
     apns: {
       payload: {
         aps: {
-          badge: numbers.parseIntOrNull(input.badge) ?? 1,
+          ...(input.omitBadge
+            ? {}
+            : { badge: numbers.parseIntOrNull(input.badge) ?? 1 }),
           sound: 'default'
         }
       }

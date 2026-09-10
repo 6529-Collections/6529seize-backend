@@ -85,3 +85,22 @@ it('leaves Android alerts unchanged and independent of badge coordination', asyn
   expect(withDeviceBadgeLock).not.toHaveBeenCalled();
   expect(getDeviceBadgeState).not.toHaveBeenCalled();
 });
+
+it('coordinates noncanonical iOS platform casing', async () => {
+  await sendIdentityPushGroups([message(1, 'a', ' iOS ')], results);
+  expect(withDeviceBadgeLock).toHaveBeenCalledTimes(1);
+  expect(sendMessages).toHaveBeenCalledWith([
+    expect.objectContaining({ badge: 1 })
+  ]);
+});
+
+it.each(['', 'unknown', 'web'])(
+  'preserves the badge for unknown platform %s',
+  async (platform) => {
+    await sendIdentityPushGroups([message(1, 'a', platform)], results);
+    expect(sendMessages).toHaveBeenCalledWith([
+      expect.objectContaining({ omitBadge: true })
+    ]);
+    expect(withDeviceBadgeLock).not.toHaveBeenCalled();
+  }
+);

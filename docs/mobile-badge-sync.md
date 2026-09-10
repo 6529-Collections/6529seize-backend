@@ -16,13 +16,14 @@ Updates depend on APNs delivery and the user's badge permission.
    `pushNotificationsHandler`. Its configured three-second delay is unchanged.
    Duplicate requests for the same device/token in a batch share one refresh.
 3. The worker looks up current iOS registrations for the affected profiles and
-   counts each distinct profile registered to each device/token once. Device push
+   counts each distinct profile registered to each device once. Device push
    preferences and existing unread visibility, wave mute, profile mute, block and
    moderation rules still apply. This is the mobile push badge count, which can
    differ from the unfiltered in-app notification total.
 4. Counts use the primary database, not a replica, React state or Notification
    Center item counts. Both normal iOS pushes and refreshes acquire the same
-   device/token lock before counting and sending. Lock contention is retryable;
+   device lock before counting and sending, including across token rotation.
+   Lock contention is retryable;
    locks expire after 120 seconds, longer than the worker's 60-second timeout.
 5. Firebase sends only `aps.badge` with the exact aggregate, including zero.
    There is no `notification` title/body, sound, feed item, redirect or
@@ -39,23 +40,30 @@ Updates depend on APNs delivery and the user's badge permission.
   another succeeds. Every retry recalculates current state instead of replaying
   an old count. Existing partial-batch retries and the dead-letter queue apply.
 - Registrations are checked again under the lock. Removed/rotated registrations
-  are skipped. Invalid Firebase tokens are removed only when the stored token
-  exactly matches the failed one.
+  are skipped. Invalid Firebase tokens are removed for all profiles whose stored
+  token exactly matches the invalid one, preserving rows with a rotated token.
 - Redis must be available for iOS badge-bearing delivery. If coordination fails,
-  the worker retries rather than submit competing counts. Android alert delivery
-  does not acquire this lock.
+  the worker retries rather than submit competing counts. A release failure is
+  logged without masking the send result; the lock expires automatically. Android
+  alert delivery does not acquire this lock.
 - Queue publication is an awaited, best-effort handoff after persistence. A queue
   failure is logged and does not turn an already successful read into an API
   error. There is no transactional outbox: a failed enqueue or a process stopping
   between persistence and publication can leave the badge stale until a later
   read/unread operation or normal push updates it.
-- Worker serialization prevents overlapping server-side badge submissions; it
-  cannot guarantee immediate or ordered device-side delivery through FCM/APNs.
+- Worker serialization prevents overlapping server-side badge submissions for
+  the same device ID, including when connected profiles temporarily have different
+  tokens during rotation. Counts include all profiles registered to that device.
+  Serialization cannot guarantee immediate or ordered device-side delivery through FCM/APNs.
   A count can also become stale after it is submitted. This feature provides
   asynchronous reconciliation, not a synchronous device acknowledgement.
 
 ## Platform and rollout boundaries
 
+- iOS platform matching tolerates casing and surrounding whitespace on existing
+  registrations. Null/unsupported platforms cannot safely be inferred: corrective
+  updates are skipped, and ordinary alerts omit the badge instead of guessing a
+  count. A later canonical iOS registration restores badge synchronization.
 - This backend feature changes iOS badges only. Android notification payloads and
   launcher behavior remain unchanged. No Android numeric badge guarantee is made.
 - Badge-only pushes do not implement selective removal of already delivered
@@ -64,8 +72,8 @@ Updates depend on APNs delivery and the user's badge permission.
 - No native package or mobile release is introduced. Before production rollout,
   verify badge-only behavior on an existing installed iOS app in foreground and
   background with badge permission enabled: 2 → 1, single-profile 1 → 0, and a
-  rapid read followed by a new push. Confirm no alert or sound is produced and
-  record what remains in Notification Center. Backend tests cannot establish
+  rapid read followed by a new push. This includes the badge-only `alert` push
+  type. Confirm no alert or sound is produced and record what remains in Notification Center. Backend tests cannot establish
   the behavior of the installed native delegate or APNs delivery.
 - Deploy `pushNotificationsHandler` before `api`: older workers do not understand
   the new queue message type. No DB schema/migrations or new queues are needed.

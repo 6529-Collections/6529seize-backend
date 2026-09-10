@@ -57,6 +57,7 @@ export async function requestDeviceBadgeRefresh(
   try {
     await sendBatchMessagesToSQS([
       {
+        // This handoff always sends exactly one entry; SQS IDs are unique within a batch only.
         Id: 'badge-refresh',
         MessageBody: JSON.stringify({
           type: 'badge_refresh',

@@ -37,7 +37,10 @@ jest.mock('@/redis', () => ({
 const device = { device_id: 'phone', token: 'token' };
 beforeEach(() => {
   jest.clearAllMocks();
-  findDevices.mockResolvedValue([{ profile_id: 'a' }, { profile_id: 'b' }]);
+  findDevices.mockResolvedValue([
+    { profile_id: 'a', token: 'token' },
+    { profile_id: 'b', token: 'token' }
+  ]);
   findSettings.mockResolvedValue(null);
   countUnread.mockReset().mockResolvedValue(1);
   redisAvailable = true;
@@ -59,11 +62,14 @@ it('refreshes 2 → 1 → 0 from profile counts, including zero on the final rea
     undefined,
     expect.objectContaining({ forcePool: DbPoolName.WRITE })
   );
-  expect(findDevices).toHaveBeenCalledWith(device);
+  expect(findDevices).toHaveBeenCalledWith({ device_id: 'phone' });
 });
 
 it('deduplicates profiles and supports single-profile devices', async () => {
-  findDevices.mockResolvedValue([{ profile_id: 'a' }, { profile_id: 'a' }]);
+  findDevices.mockResolvedValue([
+    { profile_id: 'a', token: 'token' },
+    { profile_id: 'a', token: 'token' }
+  ]);
   expect((await getDeviceBadgeState(device)).count).toBe(1);
   expect(countUnread).toHaveBeenCalledTimes(1);
   countUnread.mockResolvedValue(0);
@@ -127,3 +133,38 @@ it.each(['busy', 'unavailable'])(
     expect(redisEval).not.toHaveBeenCalled();
   }
 );
+
+it('counts all connected profiles during partial token rotation', async () => {
+  findDevices.mockResolvedValue([
+    { profile_id: 'a', token: 'new-token' },
+    { profile_id: 'b', token: 'token' }
+  ]);
+  expect(await getDeviceBadgeState(device)).toEqual({
+    count: 2,
+    profileIds: new Set(['b'])
+  });
+  expect(await getDeviceBadgeState({ ...device, token: 'new-token' })).toEqual({
+    count: 2,
+    profileIds: new Set(['a'])
+  });
+});
+
+it('uses one lock across tokens belonging to the same device', async () => {
+  await withDeviceBadgeLock(device, async () => undefined);
+  await withDeviceBadgeLock(
+    { ...device, token: 'rotated' },
+    async () => undefined
+  );
+  expect(redisSet.mock.calls[0][0]).toBe(redisSet.mock.calls[1][0]);
+});
+
+it('preserves action success and failure when releasing the lock fails', async () => {
+  redisEval.mockRejectedValue(new Error('Redis unavailable'));
+  await expect(withDeviceBadgeLock(device, async () => 3)).resolves.toBe(3);
+  const failure = new Error('send failed');
+  await expect(
+    withDeviceBadgeLock(device, async () => {
+      throw failure;
+    })
+  ).rejects.toBe(failure);
+});

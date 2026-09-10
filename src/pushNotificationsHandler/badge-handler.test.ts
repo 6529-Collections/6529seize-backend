@@ -77,3 +77,19 @@ it('keeps existing notification-only messages compatible', async () => {
   expect(refreshProfileBadges).not.toHaveBeenCalled();
   expect(sendIdentityNotificationsBatch).toHaveBeenCalledWith([12]);
 });
+
+it('routes a message with both fields exclusively to badge refresh', async () => {
+  jest.mocked(refreshProfileBadges).mockResolvedValue(['a']);
+  expect(
+    await handler(
+      event({
+        type: 'badge_refresh',
+        profile_id: 'a',
+        identity_notification_id: 12
+      }),
+      {} as Context,
+      jest.fn()
+    )
+  ).toEqual({ batchItemFailures: [{ itemIdentifier: '0' }] });
+  expect(sendIdentityNotificationsBatch).not.toHaveBeenCalled();
+});
