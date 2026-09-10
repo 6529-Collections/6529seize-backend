@@ -29,7 +29,7 @@ These are read-only requests. Do not include API keys or credentials in reports.
 - [ ] Repeated valid requests retain the existing five-minute metadata cache.
 - [ ] Do not expect standalone metadata to certify non-spam status.
 
-## FE integration and unchanged endpoints
+## FE integration and retained endpoints
 
 - [ ] With FE PR #3897 deployed, block its local contract route in your browser.
   Paste a fresh valid ERC-721 contract address. The BE fallback supplies the
@@ -37,7 +37,10 @@ These are read-only requests. Do not include API keys or credentials in reports.
 - [ ] Block both routes, confirm FE shows an error, remove the blocking rule,
   and use Try again to recover.
 - [ ] Smoke-test `/alchemy-proxy/owner-nfts` using a known test wallet/contract.
-  Contract filtering and `pageKey` behavior remain unchanged.
+  Every returned NFT must belong to the requested contract. If the response
+  includes a `pageKey`, request the next page and repeat that assertion.
+- [ ] Confirm a fresh cache-miss request does not return unrelated contracts;
+  this covers the corrected `contractAddresses[]` serialization.
 - [ ] Smoke-test a known token through `POST /alchemy-proxy/token-metadata`;
   the `tokens` response is unchanged.
 

@@ -18,11 +18,13 @@ not an assertion about which version is deployed in any environment.
 | Search caching | One-minute request cache may serve successful search results. | No search-cache middleware; `Cache-Control: no-store`. Old search entries are not read. |
 | Older-client keyword fallback | BE is the fallback for FE/Core collection-name search. The array/envelope mismatch can already hide successful results. | No keyword fallback remains. Older clients receive 410 and may show no suggestions; apply the release gate below. |
 | `/alchemy-proxy/contract` and FE address fallback | Existing V3 contract metadata with `_checksum`, input validation, error handling, and five-minute cache. | Unchanged. Verify valid/mixed-case addresses, invalid input, and FE failover using the existing contract endpoint. |
-| Owner NFTs and token metadata | Existing owner filtering/pagination and token metadata. | Unchanged. Smoke-test known wallet/contract and token inputs. |
+| Owner NFTs and token metadata | `/owner-nfts` passes `contractAddresses`, but the custom REST serializer emits an unbracketed parameter that Alchemy ignores; a live cache-miss probe returned unrelated contracts. Token metadata and pagination work. | Owner filtering now emits Alchemy's required `contractAddresses[]` parameter. Pagination and token metadata remain unchanged. |
 | Deployment units | Existing API Lambda and ingestion/loop services. | Redeploy `api` only after FE rollout and the compatibility gate. No migration or other Lambda dependency. |
 
 The sole externally visible BE feature removal is collection-name search
 through `/alchemy-proxy/collections`; its unused SDK wrapper is also removed.
+The PR additionally corrects the retained `/owner-nfts` contract filter; this
+is a bug fix rather than a removed capability.
 The address-only picker, removal of keyword suggestions and **Show anyway**,
 and preserved token/card search behavior are frontend-owned. See the paired
 [full FE main-versus-revised comparison](https://github.com/6529-Collections/6529seize-frontend/blob/agent-prxt/alchemy-nft-api-deprecation-todo/ops/workstreams/alchemy-nft-api-deprecation-2026-09/ACTUAL_CHANGES.md#what-to-test-main-versus-revised)
@@ -35,7 +37,7 @@ and [features removed](https://github.com/6529-Collections/6529seize-frontend/bl
 | `GET /alchemy-proxy/collections` | Accepted free-text `query` and called Alchemy's retiring `searchContractMetadata`. | HTTP 410 with `{"error":"Collection name search is no longer available. Use a contract address."}`. Applies to all query values, including addresses and missing query. |
 | Search response | A bare contract array after the wrapper unwrapped Alchemy's envelope. FE/Core expected an envelope, which could silently produce no suggestions. | No search results. FE removes that fallback and parser rather than maintaining a redundant search response shape. |
 | Search caching | One-minute request cache could serve search data. | No search cache middleware; `Cache-Control: no-store`. Old Redis search entries are no longer read by this route. |
-| In-tree Alchemy wrapper | Exposed `searchContractMetadata(query)`. | Method and its obsolete unit case are removed. No other wrapper method changes. |
+| In-tree Alchemy wrapper | Exposed `searchContractMetadata(query)`. Array query parameters were serialized without Alchemy's required `[]` suffix. | The obsolete search method is removed. NFT REST array parameters use bracketed keys, restoring `getNFTsForOwner` contract filtering. |
 | Keyword discovery, ranking, pagination, spam-filtered result lists | Depended on Alchemy's search behavior. | Not replaced. `getContractMetadata` cannot provide these features. |
 
 ## Retained contract
@@ -48,7 +50,8 @@ existing 400 error behavior. The five-minute metadata cache is unchanged.
 
 No new public endpoint, generated model, OpenAPI schema, database migration,
 or provider is introduced. The retired route keeps the existing legacy error
-shape. Owner NFT filtering/pagination and token metadata remain unchanged.
+shape. Owner NFT filtering is corrected; its pagination and token metadata
+behavior remain unchanged.
 
 No spam lookup is added: standalone contract metadata is not an affirmative
 spam verdict. FE retains its previous pasted-address behavior, which did not
@@ -67,8 +70,8 @@ apply the keyword result filter.
 - Core's own renderer search and the separately deployed allowlist service
   remain outside this implementation. Their retirement work is still required.
 - Deployment unit: `api` only. No ingestion or loop Lambda requires deployment:
-  only the API called the removed wrapper method, and all retained shared
-  wrapper behavior is unchanged. No migration or service dependency order.
+  only the API calls the removed search method and the corrected
+  `getNftsForOwner` wrapper. No migration or service dependency order.
 - A rollback after September 30, 2026 must not restore calls to the removed
   Alchemy endpoint; use a corrective address-only release.
 
