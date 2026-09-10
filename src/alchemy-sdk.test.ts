@@ -306,6 +306,9 @@ describe('Alchemy SDK replacement', () => {
       expect(searchParams.has('contractAddresses')).toBe(false);
       expect(searchParams.get('owner')).toBe('0xowner');
       expect(searchParams.get('pageKey')).toBe('p1');
+      expect(() =>
+        requestConfig.paramsSerializer.serialize({ unsupported: {} })
+      ).toThrow('Unsupported Alchemy NFT query parameter value');
     });
 
     it('calls getNFTMetadataBatch as REST POST', async () => {

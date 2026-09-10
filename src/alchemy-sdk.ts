@@ -149,16 +149,30 @@ function toNftQueryParams(
   return out;
 }
 
+function serializeNftQueryValue(value: unknown): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    typeof value === 'bigint'
+  ) {
+    return value.toString();
+  }
+  throw new TypeError('Unsupported Alchemy NFT query parameter value');
+}
+
 function serializeNftQueryParams(params: Record<string, unknown>): string {
   const searchParams = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
     if (Array.isArray(value)) {
       for (const item of value) {
-        searchParams.append(`${key}[]`, String(item));
+        searchParams.append(`${key}[]`, serializeNftQueryValue(item));
       }
       continue;
     }
-    searchParams.append(key, String(value));
+    searchParams.append(key, serializeNftQueryValue(value));
   }
   return searchParams.toString();
 }
