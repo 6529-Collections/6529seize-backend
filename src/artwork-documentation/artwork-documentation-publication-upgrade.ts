@@ -104,7 +104,7 @@ async function inspectProgram(
   const results: UpgradeResult[] = [];
   for (const row of rows) {
     const context = await service.db.context(row.id, ctx, event.apply);
-    if (!context || context.program_id !== PROGRAM_ID)
+    if (context?.program_id !== PROGRAM_ID)
       fail(409, 'PROGRAM_CONTEXT_CHANGED');
     const reason = await upgradeBlocker(context, service, ctx);
     if (reason) {

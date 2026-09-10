@@ -133,8 +133,11 @@ export function validatePublicationAssetLink(
     assetError(422, 'PUBLICATION_ASSET_TERMS_REQUIRED');
   if (input.manifest)
     requirePublicationAsset(access, {
-      role: String(input.manifest.role ?? ''),
-      intended_visibility: String(input.manifest.intended_visibility ?? '')
+      role: typeof input.manifest.role === 'string' ? input.manifest.role : '',
+      intended_visibility:
+        typeof input.manifest.intended_visibility === 'string'
+          ? input.manifest.intended_visibility
+          : ''
     });
 }
 export function validateStartUpload(input: StartArtworkUpload): string {
