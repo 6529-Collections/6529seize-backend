@@ -5,17 +5,19 @@ jest.mock('@/nextgen/nextgen.db', () => ({
 }));
 
 import { getDataSource } from '@/db';
+import { Logger } from '@/logging';
 import {
   fetchNextGenCollections,
   fetchNextgenTokens
 } from '@/nextgen/nextgen.db';
-import { OpenSeaClient } from './opensea-client';
+import { OpenSeaClient, OpenSeaHttpError } from './opensea-client';
 import {
   discoverOpenSeaCollections,
   MarketDepthPersistence,
   OpenSeaCollectionTarget,
   pollOpenSeaCollection,
-  pollOpenSeaEvents
+  pollOpenSeaEvents,
+  pollOpenSeaMarketDepthForContract
 } from './opensea-poller';
 import { MarketDepthCursor } from './market-depth.types';
 import { PublishMarketDepthSnapshotInput } from './market-depth.types';
@@ -27,6 +29,8 @@ const TARGET: OpenSeaCollectionTarget = {
 };
 
 describe('discoverOpenSeaCollections', () => {
+  afterEach(() => jest.restoreAllMocks());
+
   it('uses local NextGen links and falls back to representative token lookup', async () => {
     (getDataSource as jest.Mock).mockReturnValue({ manager: {} });
     (fetchNextGenCollections as jest.Mock).mockResolvedValue([
@@ -61,6 +65,101 @@ describe('discoverOpenSeaCollections', () => {
       expect.any(String),
       '20000000001'
     );
+  });
+
+  it.each([
+    ['not indexed', new OpenSeaHttpError(404, 0, 'fixture request details')],
+    ['transport failure', new Error('fixture authenticated URL')]
+  ])(
+    'preserves other targets when the first project lookup fails: %s',
+    async (_reason, error) => {
+      const warn = jest
+        .spyOn(Logger.get('OPENSEA_MARKET_DEPTH'), 'warn')
+        .mockImplementation(() => undefined);
+      (getDataSource as jest.Mock).mockReturnValue({ manager: {} });
+      (fetchNextGenCollections as jest.Mock).mockResolvedValue([
+        { id: 1 },
+        { id: 2 },
+        { id: 3, opensea_link: 'https://opensea.io/collection/local-slug' }
+      ]);
+      (fetchNextgenTokens as jest.Mock).mockResolvedValue([
+        { id: '10000000001', collection_id: 1 },
+        { id: '20000000001', collection_id: 2 }
+      ]);
+      const getNftCollection = jest
+        .fn()
+        .mockRejectedValueOnce(error)
+        .mockResolvedValue('later-slug');
+      const client = { getNftCollection } as unknown as OpenSeaClient;
+
+      const targets = await discoverOpenSeaCollections(client, 100_000);
+
+      expect(targets.map((target) => target.collection_slug)).toEqual([
+        'thememes6529',
+        'memelab6529',
+        '6529-gradient',
+        'later-slug',
+        'local-slug'
+      ]);
+      expect(targets.map((target) => target.collection_id)).toEqual([
+        null,
+        null,
+        null,
+        2,
+        3
+      ]);
+      expect(getNftCollection).toHaveBeenNthCalledWith(
+        2,
+        expect.any(String),
+        '20000000001',
+        100_000
+      );
+      // Do not log provider errors, whose messages or causes can contain credentials.
+      expect(warn.mock.calls).toEqual([
+        [
+          '[NEXTGEN COLLECTION 1] OpenSea discovery lookup failed; will retry next scheduled run'
+        ]
+      ]);
+
+      getNftCollection.mockResolvedValueOnce('recovered-slug');
+      const retried = await discoverOpenSeaCollections(client, 200_000);
+      expect(retried).toContainEqual(
+        expect.objectContaining({
+          collection_id: 1,
+          collection_slug: 'recovered-slug'
+        })
+      );
+      expect(getNftCollection).toHaveBeenNthCalledWith(
+        3,
+        expect.any(String),
+        '10000000001',
+        200_000
+      );
+    }
+  );
+
+  it('still fails a NextGen poll visibly when all project lookups fail', async () => {
+    jest
+      .spyOn(Logger.get('OPENSEA_MARKET_DEPTH'), 'warn')
+      .mockImplementation(() => undefined);
+    (getDataSource as jest.Mock).mockReturnValue({ manager: {} });
+    (fetchNextGenCollections as jest.Mock).mockResolvedValue([{ id: 1 }]);
+    (fetchNextgenTokens as jest.Mock).mockResolvedValue([
+      { id: '10000000001', collection_id: 1 }
+    ]);
+    const client = {
+      getNftCollection: jest
+        .fn()
+        .mockRejectedValue(new OpenSeaHttpError(404, 0, 'OpenSea HTTP 404')),
+      getAllListings: jest.fn()
+    } as unknown as OpenSeaClient;
+    const db = database();
+
+    await expect(
+      pollOpenSeaMarketDepthForContract('nextgen', { client, db })
+    ).rejects.toThrow('No OpenSea market-depth target for nextgen');
+    expect(client.getAllListings).not.toHaveBeenCalled();
+    expect(db.publishCompletedSnapshot).not.toHaveBeenCalled();
   });
 });
 

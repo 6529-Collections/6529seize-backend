@@ -133,15 +133,27 @@ export async function discoverOpenSeaCollections(
         );
         continue;
       }
-      slug = (
-        deadlineMs === undefined
-          ? await client.getNftCollection(nextgenContract, representativeToken)
-          : await client.getNftCollection(
-              nextgenContract,
-              representativeToken,
-              deadlineMs
-            )
-      ).toLowerCase();
+      try {
+        slug = (
+          deadlineMs === undefined
+            ? await client.getNftCollection(
+                nextgenContract,
+                representativeToken
+              )
+            : await client.getNftCollection(
+                nextgenContract,
+                representativeToken,
+                deadlineMs
+              )
+        ).toLowerCase();
+      } catch {
+        // A newly minted project may not be indexed yet. Retry on the next run
+        // without preventing subscriptions to the other collections.
+        logger.warn(
+          `[NEXTGEN COLLECTION ${collection.id}] OpenSea discovery lookup failed; will retry next scheduled run`
+        );
+        continue;
+      }
     }
     nextgenTargets.push({
       contract: nextgenContract,
