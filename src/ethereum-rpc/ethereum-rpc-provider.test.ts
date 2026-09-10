@@ -20,6 +20,7 @@ describe('Ethereum RPC provider foundation', () => {
     process.env = originalEnv;
   });
 
+  /** Track real providers from an isolated factory so teardown releases them. */
   function loadFactory() {
     const { getEthereumRpcProvider } = require('./ethereum-rpc-provider') as {
       getEthereumRpcProvider: (chainId?: number) => JsonRpcProvider;
@@ -52,6 +53,25 @@ describe('Ethereum RPC provider foundation', () => {
     );
     delete process.env.ETHEREUM_RPC_URL;
     expect(() => factory()).toThrow('ETHEREUM_RPC_URL');
+  });
+
+  it('replaces a destroyed cached provider and reuses its live replacement', async () => {
+    process.env.ETHEREUM_RPC_URL = 'https://rpc.example.test';
+    const factory = loadFactory();
+    const original = factory();
+    original.destroy();
+    expect(original.destroyed).toBe(true);
+
+    const replacement = factory();
+    expect(replacement).not.toBe(original);
+    expect(replacement.destroyed).toBe(false);
+    expect(factory()).toBe(replacement);
+    expect(replacement._getConnection().url).toBe(process.env.ETHEREUM_RPC_URL);
+    jest.spyOn(replacement, '_send').mockImplementation(async (payload) => {
+      const requests = Array.isArray(payload) ? payload : [payload];
+      return requests.map((request) => ({ id: request.id, result: '0x1' }));
+    });
+    expect((await replacement.getNetwork()).chainId).toBe(BigInt(1));
   });
 
   it.each([1, 5, 11155111])(

@@ -29,6 +29,7 @@ describe('Ethereum RPC existing environment wiring', () => {
     process.env = originalEnv;
   });
 
+  /** Inspect the configured transport without issuing a network request. */
   function readProviderUrl(chainId = 1) {
     const { getEthereumRpcProvider } = require('./ethereum-rpc-provider') as {
       getEthereumRpcProvider: (chainId: number) => JsonRpcProvider;

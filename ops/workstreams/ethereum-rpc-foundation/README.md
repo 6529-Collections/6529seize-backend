@@ -30,6 +30,12 @@ settings remain unchanged; the compatibility client's additional retry wrapper
 is not implicitly reproduced here and must be preserved where needed during
 caller migration.
 
+Destroyed cache entries are replaced on the next request. Live providers for
+previous URLs remain cached until process restart so URL changes do not destroy
+transports that existing callers may still be using. Continuous in-process URL
+rotation is not the supported rollout path; restart/redeploy when switching
+providers. Revisit cache eviction with caller lifecycle ownership during migration.
+
 The existing `src/rpc-provider.ts`, `src/alchemy.ts`, `src/alchemy-sdk.ts`, ENS
 fallback, tracing and callers are unchanged. Merely adding or omitting the new
 settings cannot repoint or break existing RPC consumers in this slice.

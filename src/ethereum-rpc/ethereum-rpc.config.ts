@@ -1,5 +1,3 @@
-export type EthereumRpcChainId = 1 | 5 | 11155111;
-
 const RPC_ENV_BY_CHAIN = {
   1: 'ETHEREUM_RPC_URL',
   5: 'ETHEREUM_GOERLI_RPC_URL',
@@ -18,7 +16,7 @@ export function getEthereumRpcEnvName(chainId: number): string {
 export function getEthereumRpcUrl(chainId: number = 1): string {
   const envName = getEthereumRpcEnvName(chainId);
   const value = process.env[envName];
-  if (!value || !value.trim()) {
+  if (!value?.trim()) {
     throw new Error(`${envName} is required for Ethereum RPC chain ${chainId}`);
   }
 
@@ -29,6 +27,8 @@ export function getEthereumRpcUrl(chainId: number = 1): string {
     throw new Error(`${envName} must be a complete HTTP(S) URL`);
   }
 
+  // URL parsing normalizes malformed slashes and whitespace. Check the raw
+  // value too, and disallow fragments because they are never sent to the RPC.
   if (
     !/^https?:\/\/[^/]/i.test(value) ||
     (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||

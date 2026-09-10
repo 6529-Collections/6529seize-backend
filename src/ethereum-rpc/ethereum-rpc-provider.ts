@@ -11,7 +11,7 @@ export function getEthereumRpcProvider(chainId: number = 1): JsonRpcProvider {
   const url = getEthereumRpcUrl(chainId);
   const cacheKey = `${chainId}:${url}`;
   let provider = providers.get(cacheKey);
-  if (!provider) {
+  if (!provider || provider.destroyed) {
     // Supplying the expected chain retains ethers' network-mismatch checks.
     // Do not use staticNetwork: it would trust a misconfigured endpoint.
     provider = new JsonRpcProvider(url, chainId);
