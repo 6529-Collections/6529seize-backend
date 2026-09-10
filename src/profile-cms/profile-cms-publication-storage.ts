@@ -100,17 +100,29 @@ export class ProfileCmsPublicationStorage {
       ctx
     );
     if (reservation.receipt) return reservation.receipt;
+    let uploadState = reservation.uploadState;
     try {
       const result = await this.uploader.uploadFileWithTransactionId(
         params.bytes,
-        'application/json'
+        'application/json',
+        {
+          savedState: uploadState,
+          onState: async (state) => {
+            await this.uploads.saveState(reservation, state, ctx);
+            uploadState = state;
+          }
+        }
       );
       if (!/^[A-Za-z0-9_-]{43}$/.test(result.transaction_id))
         throw new Error('invalid transaction');
       const receipt: Receipt = {
         provider: 'arweave',
         uri: `ar://${result.transaction_id}`,
-        content_hash: cmsBytesHash(params.bytes),
+        content_hash: cmsBytesHash(
+          uploadState
+            ? Buffer.from(uploadState.data_base64, 'base64')
+            : params.bytes
+        ),
         provider_content_id: result.transaction_id,
         canonical: true,
         recorded_at: new Date().toISOString()
@@ -118,7 +130,10 @@ export class ProfileCmsPublicationStorage {
       await this.uploads.complete(reservation, receipt, ctx);
       return receipt;
     } catch (error) {
-      await this.uploads.release(reservation, ctx);
+      // Once a signed transaction is durable, retain the lease until expiry.
+      // A retry resumes that transaction even if submission or receipt commit
+      // succeeded remotely but its acknowledgement was lost.
+      if (!uploadState) await this.uploads.release(reservation, ctx);
       if (error instanceof CustomApiCompliantException) throw error;
       throw new CustomApiCompliantException(
         502,

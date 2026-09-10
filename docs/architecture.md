@@ -492,7 +492,11 @@ exported for future mirrors. Consumed publish intent hashes are stored in
 `profile_cms_publish_signatures`.
 
 CMS storage upload uses `profile_cms_uploads` for durable receipt reuse, expiring
-upload leases, and profile upload quotas. The content core is stored separately
+upload leases, and profile upload quotas. Its nullable `upload_state` checkpoints
+the signed public Arweave transaction, original bytes, and chunk progress before
+submission, allowing retries to resume the same transaction after a lost provider
+or database acknowledgement. A final receipt atomically clears the checkpoint.
+The content core is stored separately
 from a `6529.cms.publication.v1` signed recovery manifest containing the complete
 EIP-712 intent and signature envelope. `profile_cms_packages.recovery_receipt`
 locates that manifest. The API fetches and hashes both remote objects before

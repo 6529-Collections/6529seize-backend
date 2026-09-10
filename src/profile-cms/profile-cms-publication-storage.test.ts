@@ -1,6 +1,10 @@
 import { Response } from 'node-fetch';
 import fetch from 'node-fetch';
-import { ArweaveFileUploader } from '@/arweave';
+import {
+  ArweaveFileUploader,
+  ArweaveUploadHooks,
+  ArweaveUploadState
+} from '@/arweave';
 import { ProfileCmsUploadsDb } from '@/profile-cms/profile-cms-uploads.db';
 import {
   CMS_MAX_STORAGE_BYTES,
@@ -160,5 +164,124 @@ describe('CMS durable storage', () => {
       )
     ).rejects.toThrow('2 MiB');
     expect(uploads.reserve).not.toHaveBeenCalled();
+  });
+
+  it('resumes the same signed transaction and original manifest bytes after a receipt commit failure', async () => {
+    process.env.ARWEAVE_KEY = 'configured-for-test';
+    let savedState: ArweaveUploadState | undefined;
+    let transactionsCreated = 0;
+    const uploads = {
+      reserve: jest.fn(async () => ({
+        id: 'id',
+        token: 'new-lease',
+        uploadState: savedState
+      })),
+      saveState: jest.fn(async (_reservation, state: ArweaveUploadState) => {
+        savedState = state;
+      }),
+      complete: jest
+        .fn()
+        .mockRejectedValueOnce(new Error('database unavailable after submit'))
+        .mockResolvedValue(undefined),
+      release: jest.fn()
+    };
+    const submittedIds: string[] = [];
+    const uploader = {
+      uploadFileWithTransactionId: jest.fn(
+        async (body: Buffer, _type: string, hooks: ArweaveUploadHooks) => {
+          const state = hooks.savedState ?? {
+            chunkIndex: 0,
+            transaction: { id: String(++transactionsCreated).repeat(43) },
+            lastRequestTimeEnd: 0,
+            lastResponseError: '',
+            lastResponseStatus: 0,
+            txPosted: false,
+            data_base64: body.toString('base64')
+          };
+          await hooks.onState(state);
+          submittedIds.push(state.transaction.id);
+          await hooks.onState({ ...state, txPosted: true });
+          return { transaction_id: state.transaction.id, url: '' };
+        }
+      )
+    };
+    const storage = new ProfileCmsPublicationStorage(
+      uploads as unknown as ProfileCmsUploadsDb,
+      uploader as unknown as ArweaveFileUploader
+    );
+    const params = {
+      operationKey: 'signed-manifest',
+      profileId: 'profile',
+      packageDbId: 'draft',
+      bytes
+    };
+    await expect(storage.upload(params, {})).rejects.toThrow(
+      'Failed to upload'
+    );
+    expect(uploads.release).not.toHaveBeenCalled();
+    // The next request can reconstruct unsigned timestamps differently. The
+    // stored transaction, including its original bytes, remains authoritative.
+    const resumed = await storage.upload(
+      { ...params, bytes: Buffer.from('new request timestamp') },
+      {}
+    );
+    expect(transactionsCreated).toBe(1);
+    expect(submittedIds).toEqual(['1'.repeat(43), '1'.repeat(43)]);
+    expect(resumed).toMatchObject({
+      uri: `ar://${'1'.repeat(43)}`,
+      content_hash: cmsBytesHash(bytes)
+    });
+    expect(uploads.complete).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 'id' }),
+      resumed,
+      {}
+    );
+  });
+
+  it('releases an unused lease when the initial signed transaction cannot be persisted', async () => {
+    process.env.ARWEAVE_KEY = 'configured-for-test';
+    const uploads = {
+      reserve: jest.fn().mockResolvedValue({ id: 'id', token: 'lease' }),
+      saveState: jest.fn().mockRejectedValue(new Error('database unavailable')),
+      release: jest.fn()
+    };
+    const submit = jest.fn();
+    const uploader = {
+      uploadFileWithTransactionId: jest.fn(
+        async (_body: Buffer, _type: string, hooks: ArweaveUploadHooks) => {
+          await hooks.onState({
+            chunkIndex: 0,
+            transaction: { id: 'a'.repeat(43) },
+            lastRequestTimeEnd: 0,
+            lastResponseError: '',
+            lastResponseStatus: 0,
+            txPosted: false,
+            data_base64: bytes.toString('base64')
+          });
+          submit();
+          return { transaction_id: 'a'.repeat(43), url: '' };
+        }
+      )
+    };
+    const storage = new ProfileCmsPublicationStorage(
+      uploads as unknown as ProfileCmsUploadsDb,
+      uploader as unknown as ArweaveFileUploader
+    );
+    await expect(
+      storage.upload(
+        {
+          operationKey: 'body',
+          profileId: 'profile',
+          packageDbId: 'draft',
+          bytes
+        },
+        {}
+      )
+    ).rejects.toThrow('Failed to upload');
+    expect(submit).not.toHaveBeenCalled();
+    expect(uploads.release).toHaveBeenCalledWith(
+      { id: 'id', token: 'lease' },
+      {}
+    );
   });
 });

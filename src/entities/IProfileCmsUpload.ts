@@ -20,4 +20,6 @@ export class ProfileCmsUploadEntity {
   readonly lease_until!: number | null;
   @Column({ type: 'json', nullable: true })
   readonly receipt!: unknown;
+  @Column({ type: 'json', nullable: true })
+  readonly upload_state!: unknown;
 }

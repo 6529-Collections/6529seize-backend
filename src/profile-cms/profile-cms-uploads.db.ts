@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { ArweaveUploadState } from '@/arweave';
 import { PROFILES_TABLE, PROFILE_CMS_UPLOADS_TABLE } from '@/constants';
 import { ProfileCmsUploadEntity } from '@/entities/IProfileCmsUpload';
 import { CustomApiCompliantException, NotFoundException } from '@/exceptions';
@@ -11,6 +12,14 @@ export interface ProfileCmsUploadReservation {
   id: string;
   token?: string;
   receipt?: Receipt;
+  uploadState?: ArweaveUploadState;
+}
+
+function parseUploadState(value: unknown): ArweaveUploadState | undefined {
+  if (!value) return undefined;
+  return typeof value === 'string'
+    ? JSON.parse(value)
+    : (value as ArweaveUploadState);
 }
 
 export class ProfileCmsUploadsDb extends LazyDbAccessCompatibleService {
@@ -79,9 +88,47 @@ export class ProfileCmsUploadsDb extends LazyDbAccessCompatibleService {
           },
           options
         );
-        return { id, token };
+        return {
+          id,
+          token,
+          uploadState: parseUploadState(row?.upload_state)
+        };
       })
       .finally(() => ctx.timer?.stop('ProfileCmsUploadsDb->reserve'));
+  }
+
+  async saveState(
+    reservation: ProfileCmsUploadReservation,
+    state: ArweaveUploadState,
+    ctx: RequestContext
+  ): Promise<void> {
+    ctx.timer?.start('ProfileCmsUploadsDb->saveState');
+    await this.db
+      .executeNativeQueriesInTransaction(async (connection) => {
+        const options = { wrappedConnection: connection };
+        const row = await this.db.oneOrNull<ProfileCmsUploadEntity>(
+          `select * from ${PROFILE_CMS_UPLOADS_TABLE} where id = :id for update`,
+          { id: reservation.id },
+          options
+        );
+        if (!reservation.token || row?.lease_token !== reservation.token) {
+          throw new CustomApiCompliantException(
+            409,
+            'CMS upload lease expired; retry to resume the current transaction',
+            'cms_upload_lease_expired'
+          );
+        }
+        await this.db.execute(
+          `update ${PROFILE_CMS_UPLOADS_TABLE} set upload_state = :state where id = :id and lease_token = :token`,
+          {
+            id: reservation.id,
+            token: reservation.token,
+            state: JSON.stringify(state)
+          },
+          options
+        );
+      })
+      .finally(() => ctx.timer?.stop('ProfileCmsUploadsDb->saveState'));
   }
 
   async complete(
@@ -98,6 +145,9 @@ export class ProfileCmsUploadsDb extends LazyDbAccessCompatibleService {
           { id: reservation.id },
           options
         );
+        // Expiry permits another worker to claim the row. The token, checked
+        // under the same row lock as takeover, fences an older owner. Finishing
+        // after the deadline is safe while no replacement has claimed it.
         if (!reservation.token || row?.lease_token !== reservation.token) {
           throw new CustomApiCompliantException(
             409,
@@ -106,7 +156,7 @@ export class ProfileCmsUploadsDb extends LazyDbAccessCompatibleService {
           );
         }
         await this.db.execute(
-          `update ${PROFILE_CMS_UPLOADS_TABLE} set receipt = :receipt, lease_token = null, lease_until = null where id = :id and lease_token = :token`,
+          `update ${PROFILE_CMS_UPLOADS_TABLE} set receipt = :receipt, upload_state = null, lease_token = null, lease_until = null where id = :id and lease_token = :token`,
           {
             id: reservation.id,
             token: reservation.token,

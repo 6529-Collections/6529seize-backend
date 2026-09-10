@@ -171,6 +171,7 @@ describe('ProfileCmsApiService', () => {
     publicationStorage = new ProfileCmsPublicationStorage(
       {
         reserve: jest.fn(async (id: string) => ({ id, token: 'lease' })),
+        saveState: jest.fn(),
         complete: jest.fn(),
         release: jest.fn()
       } as unknown as ProfileCmsUploadsDb,
@@ -1640,7 +1641,8 @@ describe('ProfileCmsApiService', () => {
       );
       expect(arweaveUploader.uploadFileWithTransactionId).toHaveBeenCalledWith(
         expect.any(Buffer),
-        'application/json'
+        'application/json',
+        expect.objectContaining({ onState: expect.any(Function) })
       );
       expect(result.receipt).toMatchObject({
         provider: 'arweave',

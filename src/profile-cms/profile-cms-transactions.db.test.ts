@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { randomUUID } from 'node:crypto';
+import type { ArweaveUploadState } from '@/arweave';
 import { sqlExecutor } from '@/sql-executor';
 import {
   ProfileCmsPackagesDb,
@@ -125,6 +126,65 @@ describeWithSeed(
       await uploads.complete(current, receipt, {});
       await expect(
         uploads.reserve('expired-upload', profileId, 'draft', 123000, {})
+      ).resolves.toMatchObject({ receipt });
+    });
+
+    it('retains signed transaction bytes across expired leases and rejects stale checkpoint writes', async () => {
+      const original = await uploads.reserve(
+        'resume-upload',
+        profileId,
+        'draft',
+        1000,
+        {}
+      );
+      const state: ArweaveUploadState = {
+        chunkIndex: 0,
+        transaction: { id: 'a'.repeat(43) },
+        lastRequestTimeEnd: 0,
+        lastResponseError: '',
+        lastResponseStatus: 0,
+        txPosted: false,
+        data_base64: Buffer.from('original transaction bytes').toString(
+          'base64'
+        )
+      };
+      await uploads.saveState(original, state, {});
+      const resumed = await uploads.reserve(
+        'resume-upload',
+        profileId,
+        'draft',
+        122000,
+        {}
+      );
+      expect(resumed.uploadState).toEqual(state);
+      await expect(
+        uploads.saveState(original, { ...state, txPosted: true }, {})
+      ).rejects.toMatchObject({ code: 'cms_upload_lease_expired' });
+      await uploads.saveState(resumed, { ...state, txPosted: true }, {});
+      await uploads.complete(resumed, receipt, {});
+      const completed = await uploads.reserve(
+        'resume-upload',
+        profileId,
+        'draft',
+        123000,
+        {}
+      );
+      expect(completed.receipt).toEqual(receipt);
+      expect(completed.uploadState).toBeUndefined();
+    });
+
+    it('accepts a completed receipt after lease expiry when no replacement owns the row', async () => {
+      const now = Date.now();
+      const reservation = await uploads.reserve(
+        'finished-after-expiry',
+        profileId,
+        'draft',
+        now - 120001,
+        {}
+      );
+      await uploads.complete(reservation, receipt, {});
+      await expect(
+        uploads.reserve('finished-after-expiry', profileId, 'draft', now, {})
       ).resolves.toMatchObject({ receipt });
     });
 

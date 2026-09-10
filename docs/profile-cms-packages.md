@@ -333,13 +333,23 @@ independently proves profile registry membership, a trusted timestamp, or the
 current primary pointer.
 
 `profile_cms_uploads` reserves durable operation keys and short leases outside
-network I/O transactions. Identical completed uploads reuse receipts; concurrent
-in-flight attempts return `409 cms_upload_in_progress`. Expired leases can be
-retried after 120 seconds. Each object is limited to 2 MiB and each profile to
+network I/O transactions. Before provider submission, it checkpoints the complete
+signed Arweave transaction and original public content bytes, then checkpoints
+chunk progress. A retry resumes that transaction ID and those bytes even if the
+provider accepted it before a progress or final receipt write failed. Completed
+uploads reuse receipts. Concurrent attempts return `409 cms_upload_in_progress`;
+interrupted attempts retain their lease and can be resumed after 120 seconds.
+Expiry permits takeover; a replacement token fences the previous worker under
+the row lock. The current token can still record completion after the deadline
+if no replacement has claimed the operation.
+The signed transaction checkpoint contains no storage wallet private key and is
+cleared atomically when its final receipt is recorded.
+Each object is limited to 2 MiB and each profile to
 32 upload attempts per 24-hour activity window (core and manifest uploads both
-count). A failed or interrupted upload can consume a quota attempt; interruption
-after network submission can leave an orphan transaction. Retries stay bounded
-by the lease and quota. `ARWEAVE_KEY` must be configured for API storage writes.
+count). A failed or interrupted upload can consume a quota attempt. Abandoning
+publication can leave an unreferenced transaction, but retrying the same durable
+operation does not create another paid transaction. Retries stay bounded by the
+lease and quota. `ARWEAVE_KEY` must be configured for API storage writes.
 
 Retain the exact signed publish request during storage propagation retries.
 Re-sign only after its deadline expires or the persisted signing context changes.
