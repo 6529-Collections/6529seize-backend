@@ -11,6 +11,7 @@ import {
   persistNFTs
 } from '../db';
 import { BaseNFT } from '../entities/INFT';
+import { Time } from '@/time';
 import { Logger } from '../logging';
 import { equalIgnoreCase } from '../strings';
 import {
@@ -39,15 +40,20 @@ export const findNftMarketStats = async (contract: string) => {
 
   logger.info(`[COLLECTION ${collectionSlug}] FINDING BEST PRICES...`);
 
+  // Bound the entire paginated price refresh, leaving time in the 900s Lambda
+  // for database work. Both complete collections are required before any writes.
+  const priceFetchDeadlineMs = Date.now() + Time.minutes(10).toMillis();
   const offersMap = await fetchBestOffersForCollection(
     collectionSlug,
-    itemType
+    itemType,
+    priceFetchDeadlineMs
   );
 
   logger.info(`[COLLECTION ${collectionSlug}] FINDING BEST LISTINGS...`);
   const listingsMap = await fetchBestListingsForCollection(
     collectionSlug,
-    itemType
+    itemType,
+    priceFetchDeadlineMs
   );
 
   const nfts = await getNFTsForContract(contract);
