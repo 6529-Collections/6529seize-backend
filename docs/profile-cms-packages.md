@@ -100,8 +100,18 @@ Request shape:
 Frontend integration notes:
 
 - `wallets` accepts Ethereum addresses and `.eth` ENS names. Addresses are
-  normalized through `ethers.getAddress(...).toLowerCase()`. ENS names are
-  resolved only from the backend `ens` table for deterministic MVP snapshots.
+  normalized through `ethers.getAddress(...).toLowerCase()`. ENS names use
+  onchain Ethereum forward resolution through the configured Alchemy RPC and a
+  one-minute success cache. This supports aliases whose indexed display name
+  differs and avoids treating stale reverse-index entries as the current owner.
+  Requests resolve at most 25 distinct names, with four lookups in parallel and
+  a four-second overall wait. Each lookup has a four-second deadline, RPC
+  requests time out after 1.5 seconds without retries, and no queued names start
+  after the overall deadline. ENS names requiring offchain resolution are not
+  supported; enter their wallet address instead. Missing names return
+  `ens_not_found`; provider failures and deadline expiry return
+  `ens_lookup_failed`. Other valid wallet inputs still produce their snapshots.
+  Raw wallet addresses retain their indexed display names.
 - The snapshot source is always `indexed_ownership`; `block_reference` is the
   highest `nft_owners.block_reference` represented by indexed rows in the
   response.
