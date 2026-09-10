@@ -104,7 +104,7 @@ function classifyTransaction(row: ApiTransaction): string {
   )
     return 'burn';
   if (from === NULL_ADDRESS.toLowerCase() || from === MANIFOLD.toLowerCase())
-    return 'mint';
+    return row.value > 0 ? 'mint' : 'airdrop';
   return row.value > 0 ? 'sale' : 'transfer';
 }
 
@@ -205,9 +205,9 @@ function transactionTypePredicate(filter: string): string | null {
     case 'purchases':
       return `t.value > 0 AND ${ordinary}`;
     case 'mints':
-      return 't.value > 0 AND t.from_address IN (:zero,:manifold)';
+      return 't.value > 0 AND t.from_address IN (:zero,:manifold) AND t.to_address NOT IN (:zero,:dead)';
     case 'airdrops':
-      return 't.value = 0 AND t.from_address=:zero';
+      return 't.value = 0 AND t.from_address IN (:zero,:manifold) AND t.to_address NOT IN (:zero,:dead)';
     case 'burns':
       return 't.to_address IN (:zero,:dead)';
     case 'transfers':

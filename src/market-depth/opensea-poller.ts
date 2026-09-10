@@ -16,6 +16,7 @@ import {
   CurrentMarketDepthSnapshot,
   MarketDepthCursor,
   MarketDepthSnapshotMetadata,
+  NormalizedMarketDepthOrder,
   PublishMarketDepthSnapshotInput
 } from './market-depth.types';
 import {
@@ -246,6 +247,18 @@ export async function pollOpenSeaEvents(
   return eventCount;
 }
 
+function excludeConflictingOrder(order: NormalizedMarketDepthOrder): void {
+  // Live pages can overlap a fill or cancellation. Retain the first
+  // observation and both raw payloads, but do not count uncertain depth.
+  order.is_executable = false;
+  const caveats = Array.isArray(order.executable_caveats)
+    ? order.executable_caveats
+    : [];
+  order.executable_caveats = Array.from(
+    new Set([...caveats, 'conflicting_provider_observations'])
+  );
+}
+
 export async function pollOpenSeaCollection(
   target: OpenSeaCollectionTarget,
   options: OpenSeaPollOptions = {}
@@ -293,9 +306,7 @@ export async function pollOpenSeaCollection(
       const comparable = (order: NormalizedOrder) =>
         JSON.stringify({ ...order, source_data: null });
       if (comparable(existing) !== comparable(result.order)) {
-        throw new Error(
-          `Conflicting OpenSea states for order ${result.order.order_id}`
-        );
+        excludeConflictingOrder(existing);
       }
       continue;
     }

@@ -197,7 +197,8 @@ export async function reconcileOpenSeaOrders(input: {
       });
       continue;
     }
-    if (Date.now() + MIN_REQUEST_BUDGET_MS >= input.deadlineMs) break;
+    if (attemptedAt.getTime() + MIN_REQUEST_BUDGET_MS >= input.deadlineMs)
+      break;
 
     try {
       const response = await input.client.getOrder(

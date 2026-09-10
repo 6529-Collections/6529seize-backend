@@ -80,5 +80,6 @@ prove successful capture.
 Archives are retained without an automatic deletion policy. Monitor snapshot
 count and compressed byte growth, reconciliation backlog and oldest due retry,
 and last completed capture per partition. Combined compressed archives are
-limited to 24 MiB per snapshot to fit the database packet limit with driver
-encoding overhead. Oversize capture fails visibly instead of truncating depth.
+limited to 6 MiB per snapshot, with 4 MiB per archive. This keeps driver
+hex-encoding below a conservative 16 MiB SQL packet budget, including headroom.
+Oversize capture fails visibly instead of truncating depth.

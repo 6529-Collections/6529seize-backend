@@ -82,6 +82,32 @@ function database(due: MarketDepthReconciliation[]): OpenSeaReconciliationDb {
 
 describe('OpenSea order reconciliation', () => {
   afterEach(() => jest.restoreAllMocks());
+  it.each([
+    { timestamp: '2000-01-01T00:00:00Z', budget: 60_000, shouldRequest: true },
+    { timestamp: '2099-01-01T00:00:00Z', budget: 2_000, shouldRequest: false }
+  ])(
+    'uses the injected clock $timestamp for request-budget decisions',
+    async ({ timestamp, budget, shouldRequest }) => {
+      const attemptedAt = new Date(timestamp);
+      const db = database([reconciliation({ ...ORDER, end_at: null })]);
+      const client = {
+        getOrder: jest
+          .fn()
+          .mockRejectedValue(new OpenSeaHttpError(404, 0, 'not found'))
+      } as unknown as OpenSeaClient;
+      await reconcileOpenSeaOrders({
+        target: { contract: ORDER.contract, collection_slug: 'fixture' },
+        client,
+        db,
+        now: () => attemptedAt,
+        deadlineMs: attemptedAt.getTime() + budget
+      });
+      expect(client.getOrder).toHaveBeenCalledTimes(shouldRequest ? 1 : 0);
+      expect(db.markReconciliationRetry).toHaveBeenCalledTimes(
+        shouldRequest ? 1 : 0
+      );
+    }
+  );
   it('queues only previously active orders absent from the new book', () => {
     expect(missingOrders([ORDER], [])).toEqual([ORDER]);
     expect(missingOrders([ORDER], [ORDER])).toEqual([]);

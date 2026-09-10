@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { DbPoolName } from '@/db-query.options';
+import { Logger } from '@/logging';
 import {
   MARKET_DEPTH_COLLECTION_STATE_TABLE,
   MARKET_DEPTH_CURRENT_ORDERS_TABLE,
@@ -36,6 +37,7 @@ import {
 } from './market-depth.types';
 
 type DbConnection = ConnectionWrapper<unknown>;
+const logger = Logger.get('MARKET_DEPTH_DB');
 
 type SnapshotRow = Omit<MarketDepthSnapshotMetadata, 'chain' | 'chain_id'> & {
   chain: string;
@@ -577,11 +579,15 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
           connection
         )
       )[0];
+      if (!session || !Number.isInteger(Number(session.lock_wait_timeout))) {
+        throw new Error('Could not read market-depth session lock timeout');
+      }
       await this.query(
         'SET SESSION innodb_lock_wait_timeout=3',
         {},
         connection
       );
+      let operationFailed = false;
       try {
         await this.query(
           `INSERT INTO ${MARKET_DEPTH_CURSORS_TABLE}
@@ -662,14 +668,38 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
           },
           connection
         );
+      } catch (error) {
+        operationFailed = true;
+        throw error;
       } finally {
-        await this.query(
-          'SET SESSION innodb_lock_wait_timeout=:lockWaitTimeout',
-          { lockWaitTimeout: Number(session.lock_wait_timeout) },
-          connection
+        await this.restoreEventSession(
+          connection,
+          Number(session.lock_wait_timeout),
+          operationFailed
         );
       }
     });
+  }
+
+  private async restoreEventSession(
+    connection: DbConnection,
+    lockWaitTimeout: number,
+    operationFailed: boolean
+  ): Promise<void> {
+    try {
+      await this.query(
+        'SET SESSION innodb_lock_wait_timeout=:lockWaitTimeout',
+        { lockWaitTimeout },
+        connection
+      );
+    } catch (error) {
+      if (!operationFailed) throw error;
+      // Preserve the original operation error so cursor conflicts remain
+      // distinguishable. Cleanup failures after successful writes still abort.
+      logger.warn(
+        'Could not restore the lock timeout after a failed event write'
+      );
+    }
   }
 
   async getCursor(

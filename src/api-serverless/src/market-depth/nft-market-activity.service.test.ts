@@ -4,7 +4,7 @@ import {
   transactionToActivity
 } from './nft-market-activity.service';
 import { SqlExecutor } from '@/sql-executor';
-import { MEMES_CONTRACT, NULL_ADDRESS } from '@/constants';
+import { MANIFOLD, MEMES_CONTRACT, NULL_ADDRESS } from '@/constants';
 import { resolveEns } from '@/db-api';
 
 jest.mock('@/db-api', () => ({ resolveEns: jest.fn() }));
@@ -102,6 +102,47 @@ describe('NFT market activity', () => {
       'invalidation'
     );
   });
+
+  it.each([NULL_ADDRESS, MANIFOLD])(
+    'classifies free issuance from %s as an airdrop and preserves burn priority',
+    (from) => {
+      expect(
+        transactionToActivity(transaction({ from_address: from, value: 0 }))
+          .action
+      ).toBe('airdrop');
+      expect(
+        transactionToActivity(
+          transaction({
+            from_address: from,
+            to_address: NULL_ADDRESS,
+            value: 0
+          })
+        ).action
+      ).toBe('burn');
+    }
+  );
+
+  it.each(['airdrops', 'mints'] as const)(
+    'includes both issuance origins and excludes burns from the %s filter',
+    async (filter) => {
+      const execute = jest.fn().mockResolvedValue([]);
+      const executor = {
+        execute,
+        oneOrNull: jest.fn().mockResolvedValue(null)
+      } as unknown as SqlExecutor;
+      await new NftMarketActivityService(() => executor).getActivity({
+        filter
+      });
+      const transactionSql = execute.mock.calls.find(([sql]: [string]) =>
+        sql.includes('FROM transactions t')
+      )?.[0];
+      expect(transactionSql).toContain('t.from_address IN (:zero,:manifold)');
+      expect(transactionSql).toContain('t.to_address NOT IN (:zero,:dead)');
+      expect(transactionSql).toContain(
+        filter === 'airdrops' ? 't.value = 0' : 't.value > 0'
+      );
+    }
+  );
 
   it('merges both event sources in deterministic time order and binds its cursor to filters', async () => {
     const execute = jest

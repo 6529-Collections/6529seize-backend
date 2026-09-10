@@ -4,11 +4,11 @@ export const MARKET_DEPTH_CHAIN_ID = '1' as const;
 export const MARKET_DEPTH_SNAPSHOT_SCHEMA_VERSION = 1;
 /**
  * Snapshot archives share one SQL packet and the current driver hex-escapes
- * buffers. Keep their combined compressed size below half of the smallest
- * verified 64 MiB server packet, with headroom for SQL and snapshot metadata.
+ * buffers. Keep escaped payloads below a conservative 16 MiB packet budget,
+ * with headroom for SQL and snapshot metadata; remote packet settings vary.
  */
-export const MAX_MARKET_DEPTH_ARCHIVE_BYTES = 24 * 1024 * 1024;
-export const MAX_MARKET_DEPTH_ARCHIVES_TOTAL_BYTES = 24 * 1024 * 1024;
+export const MAX_MARKET_DEPTH_ARCHIVE_BYTES = 4 * 1024 * 1024;
+export const MAX_MARKET_DEPTH_ARCHIVES_TOTAL_BYTES = 6 * 1024 * 1024;
 
 export type MarketDepthOrderSide = 'ask' | 'bid';
 export type MarketDepthOrderStatus =

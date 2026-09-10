@@ -6,6 +6,7 @@ jest.mock('@/nextgen/nextgen.db', () => ({
 
 import { getDataSource } from '@/db';
 import { Logger } from '@/logging';
+import { gunzipSync } from 'node:zlib';
 import {
   fetchNextGenCollections,
   fetchNextgenTokens
@@ -219,42 +220,46 @@ describe('pollOpenSeaEvents', () => {
   });
 });
 
+function listingOrder() {
+  return {
+    order_hash: `0x${'a'.repeat(64)}`,
+    chain: 'ethereum',
+    protocol_address: '0x2222222222222222222222222222222222222222',
+    status: 'ACTIVE',
+    remaining_quantity: '1',
+    price: {
+      current: { currency: 'ETH', decimals: 18, value: '100000000000000000' }
+    },
+    protocol_data: {
+      parameters: {
+        offerer: '0x3333333333333333333333333333333333333333',
+        orderType: 0,
+        startTime: '1789040000',
+        endTime: '1789050000',
+        offer: [
+          {
+            itemType: 3,
+            token: TARGET.contract,
+            identifierOrCriteria: '42',
+            startAmount: '1'
+          }
+        ],
+        consideration: [
+          {
+            itemType: 0,
+            token: '0x0000000000000000000000000000000000000000',
+            startAmount: '100000000000000000'
+          }
+        ]
+      }
+    }
+  };
+}
+
 describe('pollOpenSeaCollection', () => {
   it('publishes only after listings, offers, and the closed event window complete', async () => {
     const db = database();
-    const order = {
-      order_hash: `0x${'a'.repeat(64)}`,
-      chain: 'ethereum',
-      protocol_address: '0x2222222222222222222222222222222222222222',
-      status: 'ACTIVE',
-      remaining_quantity: '1',
-      price: {
-        current: { currency: 'ETH', decimals: 18, value: '100000000000000000' }
-      },
-      protocol_data: {
-        parameters: {
-          offerer: '0x3333333333333333333333333333333333333333',
-          orderType: 0,
-          startTime: '1789040000',
-          endTime: '1789050000',
-          offer: [
-            {
-              itemType: 3,
-              token: TARGET.contract,
-              identifierOrCriteria: '42',
-              startAmount: '1'
-            }
-          ],
-          consideration: [
-            {
-              itemType: 0,
-              token: '0x0000000000000000000000000000000000000000',
-              startAmount: '100000000000000000'
-            }
-          ]
-        }
-      }
-    };
+    const order = listingOrder();
     const client = {
       getAllListings: jest.fn().mockResolvedValue([order]),
       getAllOffers: jest.fn().mockResolvedValue([]),
@@ -277,6 +282,73 @@ describe('pollOpenSeaCollection', () => {
         orders: [expect.objectContaining({ token_id: '42', side: 'ask' })]
       })
     );
+  });
+
+  it.each([
+    { remaining_quantity: '3', status: 'ACTIVE' },
+    { remaining_quantity: '0', status: 'FULFILLED' }
+  ])(
+    'keeps the collection available but excludes conflicting order observations %j',
+    async (changedState) => {
+      const db = database();
+      const first = listingOrder();
+      first.protocol_data.parameters.offer[0].startAmount = '4';
+      first.remaining_quantity = '4';
+      const changed = { ...first, ...changedState };
+      const unaffected = { ...first, order_hash: `0x${'b'.repeat(64)}` };
+      const rawListings = [first, changed, first, unaffected];
+      const client = {
+        getAllListings: jest.fn().mockResolvedValue(rawListings),
+        getAllOffers: jest.fn().mockResolvedValue([]),
+        getEventsPage: jest.fn().mockResolvedValue({ entries: [], next: null })
+      } as unknown as OpenSeaClient;
+      await pollOpenSeaCollection(TARGET, {
+        client,
+        db,
+        now: () => new Date('2026-09-10T12:00:00Z')
+      });
+      const publication = jest.mocked(db.publishCompletedSnapshot).mock
+        .calls[0][0];
+      expect(publication.raw_order_count).toBe(4);
+      expect(publication.orders).toHaveLength(2);
+      expect(publication.orders[0]).toMatchObject({
+        order_id: first.order_hash,
+        remaining_quantity: '4',
+        is_executable: false,
+        executable_caveats: ['conflicting_provider_observations']
+      });
+      expect(publication.orders[1].is_executable).toBe(true);
+      expect(
+        JSON.parse(gunzipSync(publication.raw_archive_gzip).toString()).listings
+      ).toEqual(rawListings);
+    }
+  );
+
+  it('deduplicates matching observations without excluding executable depth', async () => {
+    const db = database();
+    const order = listingOrder();
+    const client = {
+      getAllListings: jest
+        .fn()
+        .mockResolvedValue([
+          order,
+          { ...order, provider_metadata: 'second page' }
+        ]),
+      getAllOffers: jest.fn().mockResolvedValue([]),
+      getEventsPage: jest.fn().mockResolvedValue({ entries: [], next: null })
+    } as unknown as OpenSeaClient;
+    await pollOpenSeaCollection(TARGET, {
+      client,
+      db,
+      now: () => new Date('2026-09-10T12:00:00Z')
+    });
+    const publication = jest.mocked(db.publishCompletedSnapshot).mock
+      .calls[0][0];
+    expect(publication.orders).toHaveLength(1);
+    expect(publication.orders[0]).toMatchObject({
+      is_executable: true,
+      executable_caveats: null
+    });
   });
 
   it('keeps the completed book published when event catch-up fails', async () => {

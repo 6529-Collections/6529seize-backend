@@ -112,7 +112,11 @@ describeWithSeed('MarketDepthDb', [] as never[], () => {
         snapshot('00000000-0000-4000-8000-000000000000', {
           raw_archive_gzip: Buffer.concat([
             Buffer.from([0x1f, 0x8b]),
-            Buffer.alloc(MAX_MARKET_DEPTH_ARCHIVES_TOTAL_BYTES - 2)
+            Buffer.alloc(MAX_MARKET_DEPTH_ARCHIVES_TOTAL_BYTES / 2 - 1)
+          ]),
+          normalized_archive_gzip: Buffer.concat([
+            Buffer.from([0x1f, 0x8b]),
+            Buffer.alloc(MAX_MARKET_DEPTH_ARCHIVES_TOTAL_BYTES / 2 - 1)
           ])
         })
       )

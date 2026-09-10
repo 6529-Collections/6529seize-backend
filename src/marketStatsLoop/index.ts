@@ -80,7 +80,10 @@ async function refreshNextgen(deadlineMs: number): Promise<void> {
   try {
     if (Date.now() >= deadlineMs)
       throw new Error('Invocation deadline reached');
-    await findNextgenMarketStats(NEXTGEN_CORE[mainnet.id].toLowerCase());
+    await findNextgenMarketStats(
+      NEXTGEN_CORE[mainnet.id].toLowerCase(),
+      deadlineMs
+    );
   } catch (error) {
     failures.push(error);
     logger.error('[NEXTGEN] Legacy market stats failed', error);

@@ -1,6 +1,28 @@
+jest.mock('../db', () => ({ getDataSource: jest.fn() }));
+jest.mock('../nextgen/nextgen.db', () => ({
+  fetchNextgenTokens: jest.fn(),
+  persitNextgenTokenListings: jest.fn()
+}));
+jest.mock('../logging', () => ({
+  Logger: {
+    get: () => ({
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn()
+    })
+  }
+}));
+
+import { getDataSource } from '../db';
+import {
+  fetchNextgenTokens,
+  persitNextgenTokenListings
+} from '../nextgen/nextgen.db';
 import { NEXTGEN_ROYALTIES_ADDRESS } from '../nextgen/nextgen_constants';
 import {
   fetchOpenSeaCollectionListings,
+  findNextgenMarketStats,
   getOpenSeaCollectionSlug,
   getOpenSeaListingStats,
   indexBestOpenSeaListingsByTokenId,
@@ -57,6 +79,7 @@ describe('NextGen OpenSea market stats helpers', () => {
   beforeEach(() => {
     process.env.OPENSEA_API_KEY = 'opensea-key';
     fetchMock.mockReset();
+    jest.mocked(persitNextgenTokenListings).mockReset();
     global.fetch = fetchMock as unknown as typeof fetch;
   });
 
@@ -66,6 +89,8 @@ describe('NextGen OpenSea market stats helpers', () => {
 
   afterEach(() => {
     delete process.env.OPENSEA_API_KEY;
+    jest.useRealTimers();
+    jest.restoreAllMocks();
   });
 
   it('resolves the OpenSea collection slug from the contract endpoint', async () => {
@@ -83,7 +108,8 @@ describe('NextGen OpenSea market stats helpers', () => {
         headers: {
           accept: 'application/json',
           'x-api-key': 'opensea-key'
-        }
+        },
+        signal: expect.any(AbortSignal)
       }
     );
   });
@@ -198,7 +224,89 @@ describe('NextGen OpenSea market stats helpers', () => {
     );
 
     await expect(fetchOpenSeaCollectionListings('slug')).rejects.toThrow(
-      '[OPENSEA ERROR] 500 Server Error: failed'
+      'NextGen market stats provider HTTP 500'
     );
   });
+
+  it('does not start legacy work after the invocation deadline', async () => {
+    await expect(findNextgenMarketStats('0xabc', Date.now())).rejects.toThrow(
+      'NextGen market stats deadline exceeded'
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['headers', 'body'])(
+    'aborts provider %s waits at the remaining invocation budget',
+    async (stage) => {
+      jest.useFakeTimers();
+      fetchMock.mockImplementation((_url, options: RequestInit) => {
+        const pending = new Promise((_resolve, reject) => {
+          options.signal?.addEventListener('abort', () =>
+            reject(new Error('request aborted'))
+          );
+        });
+        return stage === 'headers'
+          ? pending
+          : Promise.resolve({ ok: true, json: () => pending });
+      });
+      const result = expect(
+        getOpenSeaCollectionSlug('0xabc', Date.now() + 250)
+      ).rejects.toThrow('request aborted');
+      await jest.advanceTimersByTimeAsync(250);
+      await result;
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
+      expect(jest.getTimerCount()).toBe(0);
+    }
+  );
+
+  it('does not request another listing page after the shared deadline', async () => {
+    jest.useFakeTimers();
+    const deadline = Date.now() + 100;
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => {
+        jest.setSystemTime(deadline);
+        return { listings: [], next: 'next-page' };
+      }
+    });
+    await expect(
+      fetchOpenSeaCollectionListings('slug', deadline)
+    ).rejects.toThrow('deadline exceeded');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['batch', 'delay'])(
+    'stops the transaction before further batches when the %s consumes the budget',
+    async (stage) => {
+      jest.useFakeTimers();
+      const deadline = Date.now() + 1000;
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({ collection: 'slug' }))
+        .mockResolvedValueOnce(jsonResponse({ listings: [] }))
+        .mockResolvedValueOnce(jsonResponse({ tokens: [] }));
+      const transaction = jest.fn(async (callback) => callback({}));
+      jest
+        .mocked(getDataSource)
+        .mockReturnValue({ transaction } as unknown as ReturnType<
+          typeof getDataSource
+        >);
+      jest
+        .mocked(fetchNextgenTokens)
+        .mockResolvedValue(
+          Array.from({ length: 31 }, (_, id) => ({ id })) as Awaited<
+            ReturnType<typeof fetchNextgenTokens>
+          >
+        );
+      jest.mocked(persitNextgenTokenListings).mockImplementation(async () => {
+        jest.setSystemTime(stage === 'batch' ? deadline : deadline - 400);
+      });
+
+      await expect(findNextgenMarketStats('0xabc', deadline)).rejects.toThrow(
+        'deadline exceeded'
+      );
+      expect(persitNextgenTokenListings).toHaveBeenCalledTimes(1);
+      expect(jest.getTimerCount()).toBe(0);
+    }
+  );
 });
