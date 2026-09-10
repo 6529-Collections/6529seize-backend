@@ -9,6 +9,7 @@ type JsonObject = Record<string, any>;
 
 const ACCEPTED_ADDITIVE_ENUM_EXTENSIONS: Readonly<Record<string, string[]>> = {
   'schema ApiNotificationCause.enum': ['SUBSCRIPTION_COVERAGE'],
+  'schema ApiProfileCmsPointerEvent.properties.event_type.enum': ['unpublish'],
   'schema ApiPushNotificationSettings.required': ['subscription_coverage']
 };
 
