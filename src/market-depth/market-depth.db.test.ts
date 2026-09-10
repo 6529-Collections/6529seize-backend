@@ -147,6 +147,11 @@ describeWithSeed('MarketDepthDb', [] as never[], () => {
     expect(current?.orders.map((item) => item.order_key)).toEqual([
       'order-key-1'
     ]);
+    const archive = await marketDepthDb.getSnapshotArchive(first.id);
+    expect(Buffer.isBuffer(archive?.raw_archive_gzip)).toBe(true);
+    expect(archive?.raw_archive_gzip.subarray(0, 2)).toEqual(
+      Buffer.from([0x1f, 0x8b])
+    );
   });
 
   it('rolls back publication when its durable reconciliation enqueue fails', async () => {

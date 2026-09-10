@@ -4,7 +4,7 @@ import { BadRequestException } from '@/exceptions';
 import { GetNftMarketActivityQuery } from '@/api/generated/routes/operations';
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
-const TOKEN_ID = /^(0|[1-9][0-9]{0,77})$/;
+const TOKEN_ID = /^(0|[1-9]\d{0,77})$/;
 const pageSize = Joi.number().integer().min(1).max(100).default(50);
 const cursor = Joi.string().max(2048);
 

@@ -72,6 +72,19 @@ function parseJson<T>(value: unknown): T {
   return (typeof value === 'string' ? JSON.parse(value) : value) as T;
 }
 
+function bufferFromDb(value: unknown, field: string): Buffer {
+  if (Buffer.isBuffer(value)) return value;
+  if (
+    value &&
+    typeof value === 'object' &&
+    (value as { type?: unknown }).type === 'Buffer' &&
+    Array.isArray((value as { data?: unknown }).data)
+  ) {
+    return Buffer.from((value as { data: number[] }).data);
+  }
+  throw new Error(`${field} is not a database buffer`);
+}
+
 function normalizeContract(contract: string): string {
   return contract.trim().toLowerCase();
 }
@@ -529,15 +542,26 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
   async getSnapshotArchive(
     snapshotId: string
   ): Promise<MarketDepthSnapshotArchive | null> {
-    return (
-      (
-        await this.query<MarketDepthSnapshotArchive>(
-          `SELECT id AS snapshot_id, raw_archive_gzip, normalized_archive_gzip
+    const row = (
+      await this.query<MarketDepthSnapshotArchive>(
+        `SELECT id AS snapshot_id, raw_archive_gzip, normalized_archive_gzip
          FROM ${MARKET_DEPTH_SNAPSHOTS_TABLE} WHERE id=:snapshotId`,
-          { snapshotId }
-        )
-      )[0] ?? null
-    );
+        { snapshotId }
+      )
+    )[0];
+    return row
+      ? {
+          ...row,
+          raw_archive_gzip: bufferFromDb(
+            row.raw_archive_gzip,
+            'raw_archive_gzip'
+          ),
+          normalized_archive_gzip: bufferFromDb(
+            row.normalized_archive_gzip,
+            'normalized_archive_gzip'
+          )
+        }
+      : null;
   }
 
   async appendEvents(input: AppendMarketDepthEventsInput): Promise<void> {

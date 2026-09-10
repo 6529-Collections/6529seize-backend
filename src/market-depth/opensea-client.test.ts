@@ -1,6 +1,7 @@
 jest.mock('@/redis', () => ({ getRedisClient: () => null }));
 
 import { OpenSeaClient, parseOpenSeaJson } from './opensea-client';
+import { normalizeOpenSeaEvent } from './opensea-normalizer';
 
 it('preserves JSON integers beyond JavaScript safe-number precision', () => {
   expect(parseOpenSeaJson('{"remaining_quantity":9007199254740993}')).toEqual({
@@ -8,7 +9,131 @@ it('preserves JSON integers beyond JavaScript safe-number precision', () => {
   });
 });
 
+it.each([
+  '9007199254740993',
+  '-9007199254740993',
+  '9007199254740993.5',
+  '9.007199254740993e15',
+  '1e400',
+  '1e-400',
+  '1.0000000000000001'
+])(
+  'preserves the exact numeric literal %s without rejecting the page',
+  (literal) => {
+    expect(
+      parseOpenSeaJson(`{"quantity":${literal},"metadata":0.125}`)
+    ).toEqual({
+      quantity: literal,
+      metadata: 0.125
+    });
+  }
+);
+
+it('accepts ordinary fractional metadata and safe integer quantities', () => {
+  expect(
+    parseOpenSeaJson(
+      '{"quantity":9007199254740991,"metadata":[0.5,-1.25,1.2e-3]}'
+    )
+  ).toEqual({
+    quantity: Number.MAX_SAFE_INTEGER,
+    metadata: [0.5, -1.25, 0.0012]
+  });
+});
+
+it.each(['9007199254740993.5', '1.0000000000000001', '1e-400'])(
+  'does not normalize rounded fractional quantity %s as an integer',
+  (literal) => {
+    const event = normalizeOpenSeaEvent(
+      parseOpenSeaJson(`{"event_type":"sale","quantity":${literal}}`),
+      '0x1111111111111111111111111111111111111111',
+      'fixture',
+      new Date('2026-09-10T12:00:00Z')
+    );
+    expect(event.quantity).toBeNull();
+  }
+);
+
 describe('OpenSeaClient', () => {
+  it('rejects oversized declared responses before reading and cancels their body', async () => {
+    const pull = jest.fn();
+    const cancel = jest.fn(() => new Promise<void>(() => undefined));
+    const response = new Response(
+      new ReadableStream({ pull, cancel }, { highWaterMark: 0 }),
+      {
+        headers: { 'content-length': String(16 * 1024 * 1024 + 1) }
+      }
+    );
+    const fetchImpl = jest.fn().mockResolvedValue(response);
+    const client = new OpenSeaClient({ apiKey: 'fixture-key', fetchImpl });
+
+    await expect(client.getAllOffers('fixture')).rejects.toThrow(
+      'OpenSea response exceeds the size limit'
+    );
+    expect(pull).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([undefined, '1'])(
+    'bounds streamed bytes when Content-Length is %s and does not retry',
+    async (contentLength) => {
+      const cancel = jest.fn();
+      const chunk = new Uint8Array(1024 * 1024);
+      const pull = jest.fn(
+        (controller: ReadableStreamDefaultController<Uint8Array>) => {
+          controller.enqueue(chunk);
+        }
+      );
+      const response = new Response(
+        new ReadableStream({ pull, cancel }, { highWaterMark: 0 }),
+        {
+          headers: contentLength ? { 'content-length': contentLength } : {}
+        }
+      );
+      const fetchImpl = jest.fn().mockResolvedValue(response);
+      const client = new OpenSeaClient({ apiKey: 'fixture-key', fetchImpl });
+
+      await expect(client.getAllOffers('fixture')).rejects.toThrow(
+        'OpenSea response exceeds the size limit'
+      );
+      expect(pull).toHaveBeenCalledTimes(17);
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('accepts a response exactly at the byte limit', async () => {
+    const source = '{"offers":[]}'.padEnd(16 * 1024 * 1024, ' ');
+    const client = new OpenSeaClient({
+      apiKey: 'fixture-key',
+      fetchImpl: jest.fn().mockResolvedValue(new Response(source))
+    });
+    await expect(client.getAllOffers('fixture')).resolves.toEqual([]);
+  });
+
+  it('decodes UTF-8 split across chunks before parsing numeric literals', async () => {
+    const source = Buffer.from(
+      '{"offers":[{"name":"🌊","quantity":9007199254740993,"rarity":0.5}]}'
+    );
+    const split = source.indexOf(Buffer.from('🌊')) + 1;
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(source.subarray(0, split));
+          controller.enqueue(source.subarray(split));
+          controller.close();
+        }
+      })
+    );
+    const client = new OpenSeaClient({
+      apiKey: 'fixture-key',
+      fetchImpl: jest.fn().mockResolvedValue(response)
+    });
+    await expect(client.getAllOffers('fixture')).resolves.toEqual([
+      { name: '🌊', quantity: '9007199254740993', rarity: 0.5 }
+    ]);
+  });
+
   it('walks every listing page and requests private listings', async () => {
     const fetchImpl = jest
       .fn()

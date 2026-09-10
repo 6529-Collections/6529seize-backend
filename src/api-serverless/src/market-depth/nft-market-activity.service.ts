@@ -28,6 +28,7 @@ import {
 const ADDRESS = /^0x[0-9a-f]{40}$/;
 const ACTIVITY_NOTES = [
   'Sales, mints, transfers and burns come from indexed on-chain transactions.',
+  'Sales and purchases select the same trades without a wallet filter; with wallets, sales select sellers and purchases select buyers.',
   'Marketplace history combines recorded OpenSea events and observed order statuses. Live delivery is best effort; events before capture may be unavailable.'
 ];
 
@@ -411,7 +412,7 @@ export class NftMarketActivityService extends LazyDbAccessCompatibleService {
     ]);
     const merged = [...transactions, ...market].sort(compareActivity);
     const data = merged.slice(0, selection.limit);
-    const last = data[data.length - 1];
+    const last = data.at(-1);
     return {
       data,
       next:

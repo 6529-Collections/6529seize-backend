@@ -290,7 +290,8 @@ describe('normalizeOpenSeaEvent', () => {
   it('deduplicates realistic REST and stream listing payloads when REST omits protocol', () => {
     const rest = normalizeOpenSeaEvent(
       {
-        event_type: 'listing',
+        event_type: 'order',
+        order_type: 'listing',
         event_timestamp: 1789041540,
         order_hash: `0x${'e'.repeat(64)}`,
         asset: { identifier: '42' },
@@ -316,5 +317,67 @@ describe('normalizeOpenSeaEvent', () => {
       OBSERVED_AT
     );
     expect(rest.event_id).toBe(stream.event_id);
+  });
+
+  it.each([
+    ['listing', 'item_listed', 'listing', '42'],
+    ['item_offer', 'item_received_bid', 'offer', '42'],
+    ['collection_offer', 'collection_offer', 'collection_offer', null],
+    ['trait_offer', 'trait_offer', 'trait_offer', null]
+  ])(
+    'resolves REST order subtype %s before assigning its lifecycle ID',
+    (orderType, streamType, kind, tokenId) => {
+      const common = {
+        order_hash: `0x${'f'.repeat(64)}`,
+        maker: MAKER,
+        quantity: 1
+      };
+      const restRaw = {
+        ...common,
+        event_type: 'order',
+        order_type: orderType,
+        event_timestamp: 1789041540,
+        asset: tokenId ? { identifier: tokenId } : undefined
+      };
+      const rest = normalizeOpenSeaEvent(
+        restRaw,
+        CONTRACT,
+        'fixture',
+        OBSERVED_AT
+      );
+      const stream = normalizeOpenSeaEvent(
+        {
+          ...common,
+          event_type: streamType,
+          event_timestamp: '2026-09-10T11:59:00.123Z',
+          protocol_address: PROTOCOL,
+          nft: tokenId ? { identifier: tokenId } : undefined
+        },
+        CONTRACT,
+        'fixture',
+        OBSERVED_AT
+      );
+      expect(rest.kind).toBe(kind);
+      expect(rest.token_id).toBe(tokenId);
+      expect(rest.event_id).toBe(stream.event_id);
+      expect(rest.raw).toMatchObject({
+        event_type: 'order',
+        order_type: orderType
+      });
+    }
+  );
+
+  it('retains unknown REST order subtypes without inventing an action', () => {
+    const event = normalizeOpenSeaEvent(
+      { event_type: 'order', order_type: 'future_type' },
+      CONTRACT,
+      'fixture',
+      OBSERVED_AT
+    );
+    expect(event.kind).toBe('order');
+    expect(event.raw).toEqual({
+      event_type: 'order',
+      order_type: 'future_type'
+    });
   });
 });

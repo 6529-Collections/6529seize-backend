@@ -137,6 +137,83 @@ describe('NFT market activity', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it('pages every row once across source boundaries with identical timestamps', async () => {
+    const transactions = ['f', 'b', '2'].map((digit) =>
+      transaction({ event_key: digit.repeat(64) })
+    );
+    const market = ['e', '9', '1'].map((digit) =>
+      event({ event_id: digit.repeat(64) })
+    );
+    const execute = jest.fn(
+      async (
+        sql: string,
+        params: {
+          beforeAt: Date | null;
+          beforeId: string | null;
+          rowLimit: number;
+        }
+      ) => {
+        const isMarket = sql.includes('FROM market_depth_events');
+        const rows = isMarket ? market : transactions;
+        const id = (row: (typeof rows)[number]) =>
+          'event_key' in row ? `t:${row.event_key}` : `m:${row.event_id}`;
+        if (params.beforeId) {
+          expect(sql).toContain(
+            isMarket
+              ? "CONCAT('m:',e.event_id) < :beforeId"
+              : "CONCAT('t:',SHA2"
+          );
+          expect(params.beforeAt).toEqual(at);
+        }
+        return rows
+          .filter((row) => !params.beforeId || id(row) < params.beforeId)
+          .slice(0, params.rowLimit);
+      }
+    );
+    const executor = {
+      execute,
+      oneOrNull: jest.fn().mockResolvedValue(null)
+    } as unknown as SqlExecutor;
+    const service = new NftMarketActivityService(() => executor);
+    const ids: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 4; page++) {
+      const result = await service.getActivity({ page_size: 2, cursor });
+      ids.push(...result.data.map((row) => row.event_id));
+      cursor = result.next ?? undefined;
+      if (!cursor) break;
+    }
+    expect(ids).toEqual([
+      ...transactions.map((row) => `t:${row.event_key}`),
+      ...market.map((row) => `m:${row.event_id}`)
+    ]);
+    expect(new Set(ids).size).toBe(6);
+    expect(cursor).toBeUndefined();
+  });
+
+  it.each([
+    ['sales', 't.from_address IN (:wallets)'],
+    ['purchases', 't.to_address IN (:wallets)']
+  ])(
+    'selects the correct wallet direction for %s without market rows',
+    async (filter, predicate) => {
+      jest.mocked(resolveEns).mockResolvedValue([address]);
+      const execute = jest.fn().mockResolvedValue([]);
+      const executor = {
+        execute,
+        oneOrNull: jest.fn().mockResolvedValue(null)
+      } as unknown as SqlExecutor;
+      const service = new NftMarketActivityService(() => executor);
+      await service.getActivity({
+        wallet: address,
+        filter: filter as 'sales' | 'purchases'
+      });
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(execute.mock.calls[0][0]).toContain(predicate);
+      expect(execute.mock.calls[0][1].wallets).toEqual([address]);
+    }
+  );
+
   it('rejects unsupported contracts and malformed cursors before querying', async () => {
     const execute = jest.fn();
     const service = new NftMarketActivityService(

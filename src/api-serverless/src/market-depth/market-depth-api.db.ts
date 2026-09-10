@@ -107,11 +107,10 @@ export class MarketDepthApiDb extends LazyDbAccessCompatibleService {
         'Market depth is unavailable for this collection'
       );
     const nextgen = contract === NEXTGEN_CORE[1].toLowerCase();
-    const table = nextgen
-      ? NEXTGEN_TOKENS_TABLE
-      : contract === MEMELAB_CONTRACT.toLowerCase()
-        ? NFTS_MEME_LAB_TABLE
-        : NFTS_TABLE;
+    let table = NFTS_TABLE;
+    if (nextgen) table = NEXTGEN_TOKENS_TABLE;
+    else if (contract === MEMELAB_CONTRACT.toLowerCase())
+      table = NFTS_MEME_LAB_TABLE;
     const row = await this.db.oneOrNull<{ collection_id: number | null }>(
       `SELECT ${nextgen ? 'collection_id' : 'NULL AS collection_id'} FROM ${table}
        WHERE id=:tokenId ${nextgen ? '' : 'AND contract=:contract'} LIMIT 1`,

@@ -292,6 +292,49 @@ const defaultCreateClient = (
 ): StreamClient =>
   new OpenSeaStreamClient({ apiKey, onError, logLevel: LogLevel.ERROR });
 
+async function stopSubscriptions(
+  unsubscribe: readonly (() => void)[],
+  client: StreamClient | undefined,
+  budgetMs: () => number
+): Promise<Error | null> {
+  let failure: Error | null = null;
+  for (const remove of unsubscribe) {
+    try {
+      remove();
+    } catch {
+      failure ??= new Error('OpenSea Stream unsubscribe failed');
+    }
+  }
+  if (client) {
+    try {
+      await bounded(
+        () => new Promise<void>((resolve) => client.disconnect(resolve)),
+        Math.min(DISCONNECT_TIMEOUT_MS, budgetMs()),
+        'OpenSea Stream disconnect timed out'
+      );
+    } catch {
+      failure ??= new Error('OpenSea Stream disconnect failed');
+    }
+  }
+  return failure;
+}
+
+async function drainAcceptedEvents(
+  buffer: EventBuffer,
+  flush: () => Promise<void>,
+  persistenceTimedOut: boolean
+): Promise<Error | null> {
+  // Even subscription/callback/shutdown failures must drain accepted events.
+  // A timed-out write is the exception: its outcome is still unknown.
+  if (persistenceTimedOut) return null;
+  try {
+    while (buffer.length) await flush();
+    return null;
+  } catch {
+    return new Error('OpenSea Stream final persistence failed');
+  }
+}
+
 export async function runMarketDepthStream(
   options: StreamRuntimeOptions
 ): Promise<void> {
@@ -378,35 +421,17 @@ export async function runMarketDepthStream(
         : new Error('OpenSea Stream capture or persistence failed');
   } finally {
     accepting = false;
-    for (const remove of unsubscribe) {
-      try {
-        remove();
-      } catch {
-        failure ??= new Error('OpenSea Stream unsubscribe failed');
-      }
-    }
-    if (client) {
-      const activeClient = client;
-      try {
-        await bounded(
-          () =>
-            new Promise<void>((resolve) => activeClient.disconnect(resolve)),
-          Math.min(DISCONNECT_TIMEOUT_MS, budgetMs()),
-          'OpenSea Stream disconnect timed out'
-        );
-      } catch {
-        failure ??= new Error('OpenSea Stream disconnect failed');
-      }
-    }
-    // Even subscription/callback/shutdown failures must drain accepted events.
-    // A timed-out write is the exception: its outcome is still unknown.
-    if (!persistenceTimedOut) {
-      try {
-        while (buffer.length) await flush();
-      } catch {
-        failure ??= new Error('OpenSea Stream final persistence failed');
-      }
-    }
+    const shutdownFailure = await stopSubscriptions(
+      unsubscribe,
+      client,
+      budgetMs
+    );
+    const drainFailure = await drainAcceptedEvents(
+      buffer,
+      flush,
+      persistenceTimedOut
+    );
+    failure ??= shutdownFailure ?? drainFailure;
     log.info(
       `[STREAM accepted=${buffer.accepted} persisted=${buffer.persisted} duplicates=${buffer.duplicates} pending=${buffer.length} transport_errors=${transportErrors}]`
     );

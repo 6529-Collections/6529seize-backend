@@ -212,6 +212,7 @@ function canonicalEventKind(value: unknown): string {
   const kind = text(value)?.toLowerCase() ?? 'unknown';
   const aliases: Record<string, string> = {
     item_listed: 'listing',
+    item_offer: 'offer',
     item_received_bid: 'offer',
     item_sold: 'sale',
     item_transferred: 'transfer',
@@ -221,6 +222,21 @@ function canonicalEventKind(value: unknown): string {
     order_revalidate: 'revalidate'
   };
   return aliases[kind] ?? kind;
+}
+
+function eventKind(event: JsonRecord): string {
+  const kind = canonicalEventKind(event.event_type);
+  if (kind !== 'order') return kind;
+  // REST groups creation events under "order"; Stream supplies the action itself.
+  const orderType = lower(event.order_type);
+  if (
+    ['listing', 'item_offer', 'collection_offer', 'trait_offer'].includes(
+      orderType ?? ''
+    )
+  ) {
+    return canonicalEventKind(orderType);
+  }
+  return kind;
 }
 
 export function openSeaLifecycleEventId(input: {
@@ -290,35 +306,20 @@ function caveatJson(reasons: readonly string[]): MarketDepthJsonValue | null {
   return reasons.length > 0 ? [...reasons] : null;
 }
 
-export function normalizeOpenSeaOrder(
-  raw: unknown,
-  options: NormalizeOrderOptions
-): NormalizedOrderResult {
-  const order = record(raw);
-  const orderId = text(order.order_hash);
-  const protocol = lower(order.protocol_address);
-  if (!orderId || !protocol) {
-    return {
-      order: null,
-      unsupported: false,
-      skipped: true,
-      reasons: ['missing_order_identity']
-    };
-  }
-
-  const contract = options.contract.toLowerCase();
-  const protocolData = record(order.protocol_data);
-  const parameters = record(protocolData.parameters);
+function inspectOrderItems(
+  parameters: JsonRecord,
+  options: NormalizeOrderOptions,
+  reasons: string[]
+) {
   const offered = array(parameters.offer);
   const considered = array(parameters.consideration);
   const candidates = nftItems(
     options.side === 'ask' ? offered : considered,
-    contract
+    options.contract.toLowerCase()
   );
   const offeredPayments = paymentItems(offered);
   const consideredPayments = paymentItems(considered);
   const payments = [...offeredPayments, ...consideredPayments];
-  const reasons: string[] = [];
   if (candidates.length !== 1) reasons.push('unsupported_nft_item_count');
   if (allNftItems([...offered, ...considered]).length !== 1) {
     reasons.push('bundled_nft_items');
@@ -343,8 +344,19 @@ export function normalizeOpenSeaOrder(
     reasons.push('mixed_payment_currencies');
   }
 
-  const nft = candidates[0] ?? {};
-  const criteria = record(order.criteria);
+  return {
+    nft: candidates[0] ?? {},
+    payments,
+    items: [...offered, ...considered]
+  };
+}
+
+function inspectOrderAmounts(
+  order: JsonRecord,
+  nft: JsonRecord,
+  side: 'ask' | 'bid',
+  reasons: string[]
+) {
   const originalQuantity = exactInteger(nft.startAmount) ?? '0';
   const remainingQuantity =
     exactInteger(order.remaining_quantity) ?? originalQuantity;
@@ -356,30 +368,47 @@ export function normalizeOpenSeaOrder(
     reasons.push('remaining_exceeds_original');
   }
 
-  const price = orderPrice(order, options.side);
+  const price = orderPrice(order, side);
   const rawPrice = exactInteger(price.value);
   const decimals = currencyDecimals(price.decimals);
   if (rawPrice === null) reasons.push('missing_exact_price');
   if (decimals === null) reasons.push('missing_currency_decimals');
   if (text(price.currency) === null) reasons.push('missing_currency_symbol');
+  return { originalQuantity, remainingQuantity, price, rawPrice, decimals };
+}
+
+function validateOrderProtocol(
+  order: JsonRecord,
+  parameters: JsonRecord,
+  items: unknown[],
+  reasons: string[]
+): void {
   if (lower(order.chain) !== 'ethereum') reasons.push('unexpected_chain');
   const orderType = integer(parameters.orderType);
   if (orderType === null || orderType > 3)
     reasons.push('unsupported_order_type');
-  const dynamicItem = [...offered, ...considered].some((value) => {
+  const dynamicItem = items.some((value) => {
     const item = record(value);
     const start = exactInteger(item.startAmount);
     const end = exactInteger(item.endAmount) ?? start;
     return start === null || end === null || start !== end;
   });
   if (dynamicItem) reasons.push('dynamic_amount_order');
+}
 
+function orderAvailability(
+  order: JsonRecord,
+  parameters: JsonRecord,
+  observedAt: Date,
+  remainingQuantity: string,
+  reasons: string[]
+) {
   const orderStatus = status(order.status);
   const isPrivate = detectPrivate(order, parameters);
   const startAt =
     dateFromEpoch(parameters.startTime) ?? dateValue(order.order_created_at);
   const endAt = dateFromEpoch(parameters.endTime);
-  const now = options.observedAt.getTime();
+  const now = observedAt.getTime();
   const outsideTime =
     (startAt !== null && startAt.getTime() > now) ||
     (endAt !== null && endAt.getTime() <= now);
@@ -388,6 +417,44 @@ export function normalizeOpenSeaOrder(
   if (isPrivate) reasons.push('private_order');
   if (outsideTime) reasons.push('outside_order_time');
   if (remainingQuantity === '0') reasons.push('no_remaining_quantity');
+  return { orderStatus, isPrivate, startAt, endAt, outsideTime };
+}
+
+export function normalizeOpenSeaOrder(
+  raw: unknown,
+  options: NormalizeOrderOptions
+): NormalizedOrderResult {
+  const order = record(raw);
+  const orderId = text(order.order_hash);
+  const protocol = lower(order.protocol_address);
+  if (!orderId || !protocol) {
+    return {
+      order: null,
+      unsupported: false,
+      skipped: true,
+      reasons: ['missing_order_identity']
+    };
+  }
+
+  const contract = options.contract.toLowerCase();
+  const parameters = record(record(order.protocol_data).parameters);
+  const reasons: string[] = [];
+  const { nft, payments, items } = inspectOrderItems(
+    parameters,
+    options,
+    reasons
+  );
+  const { originalQuantity, remainingQuantity, price, rawPrice, decimals } =
+    inspectOrderAmounts(order, nft, options.side, reasons);
+  validateOrderProtocol(order, parameters, items, reasons);
+  const { orderStatus, isPrivate, startAt, endAt, outsideTime } =
+    orderAvailability(
+      order,
+      parameters,
+      options.observedAt,
+      remainingQuantity,
+      reasons
+    );
 
   const unsupportedReasons = reasons.filter((reason) =>
     [
@@ -408,7 +475,7 @@ export function normalizeOpenSeaOrder(
       'unsupported_order_type'
     ].includes(reason)
   );
-  const normalizedScope = scopeFor(nft, criteria);
+  const normalizedScope = scopeFor(nft, record(order.criteria));
   const tokenId =
     normalizedScope === 'token' ? exactInteger(nft.identifierOrCriteria) : null;
   if (normalizedScope === 'token' && tokenId === null) {
@@ -456,13 +523,11 @@ export function normalizeOpenSeaOrder(
       protocol_data: json(order.protocol_data),
       source_data: json(raw),
       is_executable:
-        unsupported ||
-        orderStatus !== 'ACTIVE' ||
-        isPrivate ||
-        outsideTime ||
-        remainingQuantity === '0'
-          ? false
-          : true,
+        !unsupported &&
+        orderStatus === 'ACTIVE' &&
+        !isPrivate &&
+        !outsideTime &&
+        remainingQuantity !== '0',
       executable_caveats: caveatJson(reasons)
     },
     unsupported,
@@ -486,7 +551,7 @@ export function normalizeOpenSeaEvent(
   const priceRaw = exactInteger(payment.quantity);
   const decimals = currencyDecimals(payment.decimals);
   const providerAt = dateValue(event.event_timestamp);
-  const kind = canonicalEventKind(event.event_type);
+  const kind = eventKind(event);
   const orderId = text(event.order_hash);
   const transactionHash = text(event.transaction);
   const tokenId = exactInteger(nft.identifier) ?? exactInteger(event.token_id);

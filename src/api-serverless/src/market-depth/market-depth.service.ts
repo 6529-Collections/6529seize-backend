@@ -252,8 +252,7 @@ function readDepthCursor(
     };
   const parsed = decodeMarketCursor<DepthCursor>(value);
   if (
-    !parsed ||
-    parsed.v !== 1 ||
+    parsed?.v !== 1 ||
     parsed.contract !== contract ||
     parsed.token_id !== tokenId ||
     parsed.fingerprint !== fingerprint ||
@@ -329,15 +328,17 @@ export function buildMarketDepthResponse(
     ? new Date(Math.min(...completedTimes))
     : null;
   const nextOffset = cursor.offset + pageSize;
+  let status = ApiMarketDepthStatusEnum.Unavailable;
+  if (asOf !== null) {
+    status =
+      now - asOf.getTime() > 3_600_000
+        ? ApiMarketDepthStatusEnum.Stale
+        : ApiMarketDepthStatusEnum.Fresh;
+  }
   return {
     contract,
     token_id: tokenId,
-    status:
-      asOf === null
-        ? ApiMarketDepthStatusEnum.Unavailable
-        : now - asOf.getTime() > 3_600_000
-          ? ApiMarketDepthStatusEnum.Stale
-          : ApiMarketDepthStatusEnum.Fresh,
+    status,
     as_of: asOf,
     snapshots: snapshots.map(({ snapshot }) => ({
       id: snapshot.id,

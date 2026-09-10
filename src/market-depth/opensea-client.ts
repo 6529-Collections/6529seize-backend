@@ -4,6 +4,8 @@ import { getRedisClient } from '@/redis';
 const API_BASE = 'https://api.opensea.io/api/v2';
 const PAGE_LIMIT = 200;
 const REQUEST_TIMEOUT_MS = 15_000;
+// Limit decoded bytes as well as Content-Length (which may describe compressed data).
+const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const DEFAULT_DEADLINE_MS = 10 * 60_000;
 const MAX_ATTEMPTS = 5;
 const RETRYABLE = new Set([408, 429, 500, 502, 503, 504]);
@@ -83,23 +85,70 @@ const parseJsonWithSource = JSON.parse as unknown as (
   reviver: (key: string, value: unknown, context: JsonParseContext) => unknown
 ) => unknown;
 
-/** Preserve provider int64/uint quantities that cannot round-trip through a JS number. */
+/** Preserve unsafe numeric lexemes without making unrelated metadata abort a page. */
 export function parseOpenSeaJson(source: string): unknown {
   return parseJsonWithSource(source, (_key, value, context) => {
     if (
       typeof value === 'number' &&
-      Number.isInteger(value) &&
-      !Number.isSafeInteger(value)
+      (!Number.isFinite(value) ||
+        (Number.isInteger(value) &&
+          (!Number.isSafeInteger(value) ||
+            (context?.source !== undefined &&
+              !/^-?\d+$/.test(context.source)))))
     ) {
-      if (context?.source && /^-?\d+$/.test(context.source)) {
-        return context.source;
-      }
+      // Fractions can round to unsafe integers, too. Preserve the literal rather
+      // than a rounded value; the normalizer accepts only canonical integers.
+      if (context?.source) return context.source;
       throw new Error(
-        'OpenSea JSON contains an integer that cannot be preserved'
+        'OpenSea JSON contains a number that cannot be preserved'
       );
     }
     return value;
   });
+}
+
+async function readResponseBody(response: Response): Promise<string> {
+  const declaredBytes = Number(response.headers.get('content-length'));
+  if (declaredBytes > MAX_RESPONSE_BYTES) {
+    throw new Error('OpenSea response exceeds the size limit');
+  }
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  let complete = false;
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) {
+        complete = true;
+        return Buffer.concat(chunks, bytes).toString('utf8');
+      }
+      bytes += chunk.value.byteLength;
+      if (bytes > MAX_RESPONSE_BYTES) {
+        throw new Error('OpenSea response exceeds the size limit');
+      }
+      chunks.push(Buffer.from(chunk.value));
+    }
+  } finally {
+    // Cleanup must not hold the request open if a transport cancellation stalls.
+    if (!complete) void reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}
+
+function collectionSlug(raw: Record<string, unknown>): string | null {
+  const collection = asRecord(raw.collection);
+  if (typeof collection.collection === 'string') return collection.collection;
+  if (typeof raw.collection === 'string') return raw.collection;
+  if (typeof collection.slug === 'string') return collection.slug;
+  return null;
+}
+
+function providerResetAt(reset: number, now: number): number {
+  if (reset > 10_000_000_000) return reset;
+  if (reset > now / 1000) return reset * 1000;
+  return now + reset * 1000;
 }
 
 function envPositiveInteger(name: string, fallback: number): number {
@@ -122,6 +171,14 @@ function isTransientNetworkError(error: unknown): boolean {
     current = details.cause;
   }
   return error instanceof TypeError;
+}
+
+function isRetryable(error: unknown): boolean {
+  return (
+    (error instanceof OpenSeaHttpError && RETRYABLE.has(error.status)) ||
+    (error instanceof Error && error.name === 'AbortError') ||
+    isTransientNetworkError(error)
+  );
 }
 
 export class OpenSeaClient {
@@ -204,15 +261,7 @@ export class OpenSeaClient {
         deadlineMs
       )
     );
-    const collection = asRecord(raw.collection);
-    const slug =
-      typeof collection.collection === 'string'
-        ? collection.collection
-        : typeof raw.collection === 'string'
-          ? raw.collection
-          : typeof collection.slug === 'string'
-            ? collection.slug
-            : null;
+    const slug = collectionSlug(raw);
     if (!slug) throw new Error('OpenSea NFT collection response has no slug');
     return slug;
   }
@@ -315,13 +364,64 @@ export class OpenSeaClient {
     const reset = Number(response.headers.get('x-ratelimit-reset'));
     if (!Number.isFinite(remaining) || !Number.isFinite(reset) || remaining > 0)
       return;
-    const resetMs =
-      reset > 10_000_000_000
-        ? reset
-        : reset > this.now() / 1000
-          ? reset * 1000
-          : this.now() + reset * 1000;
+    const resetMs = providerResetAt(reset, this.now());
     this.providerBlockedUntil = Math.max(this.providerBlockedUntil, resetMs);
+  }
+
+  private async acquireRequestBudget(deadlineMs: number): Promise<number> {
+    const providerWait = Math.max(0, this.providerBlockedUntil - this.now());
+    if (this.now() + providerWait >= deadlineMs)
+      throw new Error('OpenSea request deadline exceeded');
+    if (providerWait > 0) await this.sleep(providerWait);
+    await this.distributedAcquire(deadlineMs);
+    const remaining = deadlineMs - this.now();
+    if (remaining <= 0) throw new Error('OpenSea request deadline exceeded');
+    return remaining;
+  }
+
+  private async requestJson(url: URL, remaining: number): Promise<unknown> {
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () => controller.abort(),
+      Math.min(REQUEST_TIMEOUT_MS, remaining)
+    );
+    let response: Response | undefined;
+    try {
+      response = await this.fetchImpl(url, {
+        headers: { 'x-api-key': this.apiKey },
+        signal: controller.signal
+      });
+      this.updateProviderLimit(response);
+      if (!response.ok) {
+        throw new OpenSeaHttpError(
+          response.status,
+          retryAfter(response, this.now()),
+          `OpenSea HTTP ${response.status}`
+        );
+      }
+      return parseOpenSeaJson(await readResponseBody(response));
+    } finally {
+      clearTimeout(timeout);
+      controller.abort();
+      if (response?.body && !response.bodyUsed) {
+        void response.body.cancel().catch(() => undefined);
+      }
+    }
+  }
+
+  private async waitForRetry(
+    error: unknown,
+    attempt: number,
+    deadlineMs: number
+  ): Promise<void> {
+    if (!isRetryable(error) || attempt === MAX_ATTEMPTS) throw error;
+    const serverWait =
+      error instanceof OpenSeaHttpError ? error.retryAfterMs : 0;
+    const backoff = Math.min(30_000, 500 * 2 ** (attempt - 1));
+    const wait = Math.max(serverWait, backoff + randomInt(backoff));
+    if (this.now() + wait >= deadlineMs)
+      throw new Error('OpenSea request deadline exceeded during retry');
+    await this.sleep(wait);
   }
 
   private async getJson(
@@ -333,52 +433,11 @@ export class OpenSeaClient {
     for (const [key, value] of Object.entries(query))
       url.searchParams.set(key, value);
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      const providerWait = Math.max(0, this.providerBlockedUntil - this.now());
-      if (this.now() + providerWait >= deadlineMs)
-        throw new Error('OpenSea request deadline exceeded');
-      if (providerWait > 0) await this.sleep(providerWait);
-      await this.distributedAcquire(deadlineMs);
-      const remaining = deadlineMs - this.now();
-      if (remaining <= 0) throw new Error('OpenSea request deadline exceeded');
-      const controller = new AbortController();
-      const timeout = setTimeout(
-        () => controller.abort(),
-        Math.min(REQUEST_TIMEOUT_MS, remaining)
-      );
-      let response: Response | undefined;
+      const remaining = await this.acquireRequestBudget(deadlineMs);
       try {
-        response = await this.fetchImpl(url, {
-          headers: { 'x-api-key': this.apiKey },
-          signal: controller.signal
-        });
-        this.updateProviderLimit(response);
-        if (!response.ok) {
-          throw new OpenSeaHttpError(
-            response.status,
-            retryAfter(response, this.now()),
-            `OpenSea HTTP ${response.status}`
-          );
-        }
-        return parseOpenSeaJson(await response.text());
+        return await this.requestJson(url, remaining);
       } catch (error) {
-        const retryable =
-          (error instanceof OpenSeaHttpError && RETRYABLE.has(error.status)) ||
-          (error instanceof Error && error.name === 'AbortError') ||
-          isTransientNetworkError(error);
-        if (!retryable || attempt === MAX_ATTEMPTS) throw error;
-        const serverWait =
-          error instanceof OpenSeaHttpError ? error.retryAfterMs : 0;
-        const backoff = Math.min(30_000, 500 * 2 ** (attempt - 1));
-        const wait = Math.max(serverWait, backoff + randomInt(backoff));
-        if (this.now() + wait >= deadlineMs)
-          throw new Error('OpenSea request deadline exceeded during retry');
-        await this.sleep(wait);
-      } finally {
-        clearTimeout(timeout);
-        controller.abort();
-        if (response?.body && !response.bodyUsed) {
-          await response.body.cancel().catch(() => undefined);
-        }
+        await this.waitForRetry(error, attempt, deadlineMs);
       }
     }
     throw new Error('OpenSea request failed');
