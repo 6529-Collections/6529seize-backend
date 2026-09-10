@@ -524,9 +524,13 @@ rollout is additive: deploy `dbMigrationsLoop`, then `api`; existing published
 packages remain readable without retroactive manifest generation.
 
 Profile CMS wallet gallery snapshots are read-only API projections over
-`nft_owners`, `ens`, `nfts`, `nfts_meme_lab`, and `nextgen_tokens`. They do not
-create schema, run migrations, enqueue indexers, or fetch chain/metadata data
-live. Request-side asset/contract exclusions are applied in the API service and
+`nft_owners`, `ens`, `nfts`, `nfts_meme_lab`, and `nextgen_tokens`. ENS inputs use
+bounded onchain forward resolution through an isolated provider for the
+configured Alchemy RPC and a one-minute cache. Shared provider settings remain
+unchanged; indexed reverse displays are not proof of the current ENS address.
+Raw addresses retain indexed display labels. Snapshots do not create
+schema, run migrations, enqueue indexers, or fetch NFT holdings/metadata live.
+Request-side asset/contract exclusions are applied in the API service and
 reported in the response for generator auditability.
 
 Profile privacy and notification preferences are stored in
