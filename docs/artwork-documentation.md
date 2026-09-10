@@ -115,6 +115,15 @@ Imports default to read-only dry-run; only explicit boolean `apply: true` applie
 the code-pinned roster. The processor uses the same import validation as the CLI.
 No caller-supplied roster, program, SQL or grant configuration is accepted.
 
+Missing source drops abort the import before any grants or workspaces are
+written. The operator reports `KEYS_AND_GATES_SOURCE_DROPS_MISSING` with all
+missing roster IDs, the `dry_run` or `apply` mode and the operator correlation
+ID in Sentry's `artwork_documentation_import` context. The invocation still
+fails; it is not treated as a successful or partially applied import. This is
+operator-only diagnostic information; public API errors remain generic.
+Staging does not contain the production commission sources, so running the
+production roster there can produce this validation error.
+
 ```json
 {"operator_action":"create_smoke_context_v1","correlation_id":"<request-UUID>"}
 ```
