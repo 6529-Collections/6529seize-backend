@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import { AuthenticationContext } from '@/auth-context';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
-import { DROPS_TABLE } from '@/constants';
+import { DROPS_TABLE, PROFILES_TABLE } from '@/constants';
 import { ArtworkDocumentationDb } from './artwork-documentation.db';
 import { ArtworkDocumentationService } from './artwork-documentation.service';
 import { ArtworkDocumentationReviewService } from './artwork-documentation.review';
@@ -16,6 +16,16 @@ import {
   AD_REVIEWS
 } from './artwork-documentation.tables';
 import {
+  AD_EVENTS,
+  AD_IDEMPOTENCY,
+  AD_SOURCES
+} from './artwork-documentation.tables';
+import {
+  COORDINATOR_READ_FLAGS,
+  setKeysAndGatesCoordinatorReadAccess
+} from './artwork-documentation-coordinator-access';
+import { upgradeEmptyKeysAndGatesPublication } from './artwork-documentation-publication-upgrade';
+import {
   Answer,
   AssetGateway,
   Capabilities,
@@ -24,9 +34,12 @@ import {
 } from './artwork-documentation.types';
 import {
   CONFIRMATION_COPY_VERSION,
+  PUBLICATION_CONFIRMATION_COPY_VERSION,
   getProfile
 } from './artwork-documentation.catalogue';
 import { emptyCapabilities } from './artwork-documentation.access';
+import { ArtworkAssetsDb } from './assets/artwork-assets.db';
+import { anArtworkAsset } from './assets/artwork-assets.test-support';
 
 const makeContext = (actor: string): RequestContext => ({
   authenticationContext: AuthenticationContext.fromProfileId(actor)
@@ -43,6 +56,584 @@ const answer = (
 ): Answer => ({ status: 'provided', value, intended_visibility });
 
 describe('artwork documentation transactional persistence', () => {
+  async function programCoordinator() {
+    const id = randomUUID();
+    await db.insert(
+      PROFILES_TABLE,
+      {
+        external_id: id,
+        normalised_handle: id,
+        handle: id,
+        primary_wallet: '0x0000000000000000000000000000000000000001',
+        created_by_wallet: '0x0000000000000000000000000000000000000001',
+        created_at: new Date()
+      },
+      ctx
+    );
+    const grantId = randomUUID();
+    await db.insert(
+      AD_GRANTS,
+      {
+        id: grantId,
+        context_id: null,
+        program_id: '6529NM-AP-01',
+        subject_profile_id: id,
+        capabilities_json: JSON.stringify({
+          ...emptyCapabilities(),
+          read_context: true,
+          manage_context: true,
+          manage_assignments: true,
+          retained_unknown_key: 'preserve'
+        }),
+        grantor_profile_id: actor,
+        revoked_at: null,
+        created_at: Date.now()
+      },
+      ctx
+    );
+    return {
+      id,
+      grantId,
+      event: {
+        correlation_id: randomUUID(),
+        coordinator_profile_id: id,
+        apply: false
+      }
+    };
+  }
+  async function setProgram(record: ContextRecord) {
+    record.program_id = '6529NM-AP-01';
+    await db.query(
+      `UPDATE ${AD_CONTEXTS} SET program_id=:program WHERE id=:id`,
+      { program: record.program_id, id: record.id },
+      ctx
+    );
+    await db.saveContext(record, ctx);
+  }
+  it('changes only the existing coordinator read flags and applies them to draft, history, sources and discussions', async () => {
+    const record = await readyContext();
+    const confirmed = await service.confirm(
+      record.id,
+      { accepted: true, confirmation_copy_version: CONFIRMATION_COPY_VERSION },
+      mutation('confirm', {}, 1),
+      ctx
+    );
+    record.latest_revision_id = confirmed.id;
+    record.modules.artwork.title = answer('Unpublished title', 'restricted');
+    record.modules.identity.private_contact = answer(
+      'Private contact',
+      'restricted'
+    );
+    record.modules.rights.sensitive_context_note = answer(
+      'Private rights note',
+      'restricted'
+    );
+    record.restricted_paths = [
+      'artwork.title',
+      'identity.private_contact',
+      'rights.sensitive_context_note'
+    ];
+    await setProgram(record);
+    const thread = {
+      field_path: 'artwork.title',
+      audience: 'artist_and_reviewers',
+      restricted_class: 'ordinary',
+      text: 'Drafting discussion'
+    };
+    await reviews.createThread(
+      record.id,
+      thread,
+      mutation('thread', thread, 1),
+      ctx
+    );
+    const sourceId = randomUUID();
+    await db.insert(
+      AD_SOURCES,
+      {
+        id: sourceId,
+        context_id: record.id,
+        drop_id: randomUUID(),
+        receipt_text: JSON.stringify({
+          title: 'Source title',
+          parts: [],
+          metadata: []
+        }),
+        sha256: 'b'.repeat(64),
+        is_excerpt: false,
+        importer_profile_id: actor,
+        created_at: Date.now()
+      },
+      ctx
+    );
+    const coordinator = await programCoordinator();
+    const viewer = makeContext(coordinator.id);
+    const before = (await db.context(record.id, ctx))!;
+    expect(
+      (await service.getContext(record.id, viewer)).modules.artwork.answers
+        .title
+    ).toEqual({ redacted: true });
+    expect((await reviews.listThreads(record.id, viewer)).data).toHaveLength(0);
+    const dry = await setKeysAndGatesCoordinatorReadAccess(
+      coordinator.event,
+      service
+    );
+    expect(dry.mode).toBe('dry_run');
+    expect(dry.changed_read_flags).toEqual([...COORDINATOR_READ_FLAGS]);
+    expect(dry.redacted_field_count).toBeGreaterThan(0);
+    const apply = { ...coordinator.event, apply: true };
+    const result = await setKeysAndGatesCoordinatorReadAccess(apply, service);
+    expect(result.redacted_field_count).toBe(0);
+    expect(result.effective_capabilities).toMatchObject({
+      read_restricted_fields: true,
+      read_contact: true,
+      read_rights_evidence: true,
+      read_archival_files: true,
+      read_source_receipts: true,
+      confirm_as_artist: false,
+      edit_modules: [],
+      review_lanes: []
+    });
+    expect(
+      (await service.getContext(record.id, viewer)).modules.artwork.answers
+        .title
+    ).toEqual(record.modules.artwork.title);
+    expect(
+      (await service.getRevision(record.id, confirmed.id, viewer)).snapshot
+        .modules.artwork.answers.title
+    ).toEqual(answer('Image'));
+    expect((await reviews.listThreads(record.id, viewer)).data).toHaveLength(1);
+    expect(
+      (await service.sourcePreview(record.id, sourceId, viewer)).receipt_text
+    ).toContain('Source title');
+    expect(
+      JSON.stringify(await service.publicPreview(record.id, viewer))
+    ).not.toMatch(
+      /Unpublished title|Private contact|Private rights note|Drafting discussion/
+    );
+    await expect(
+      service.getContext(record.id, makeContext(randomUUID()))
+    ).rejects.toMatchObject({ code: 'UNAVAILABLE' });
+    await expect(
+      service.confirm(
+        record.id,
+        {
+          accepted: true,
+          confirmation_copy_version: CONFIRMATION_COPY_VERSION
+        },
+        mutation('confirm-coordinator', {}, 1),
+        viewer
+      )
+    ).rejects.toMatchObject({ code: 'DIRECT_ARTIST_REQUIRED' });
+    await expect(
+      reviews.grant(
+        record.id,
+        coordinator.id,
+        { read_restricted_fields: true },
+        mutation('self-grant', {}, 1),
+        viewer
+      )
+    ).rejects.toMatchObject({ code: 'GRANT_NOT_ALLOWED' });
+    expect(await db.context(record.id, ctx)).toEqual(before);
+    const saved = await db.one<{ capabilities_json: string }>(
+      `SELECT capabilities_json FROM ${AD_GRANTS} WHERE id=:id`,
+      { id: coordinator.grantId },
+      ctx
+    );
+    expect(JSON.stringify(saved)).toContain('retained_unknown_key');
+    expect(await setKeysAndGatesCoordinatorReadAccess(apply, service)).toEqual(
+      result
+    );
+    await db.query(
+      `DELETE FROM ${AD_IDEMPOTENCY} WHERE id=:id`,
+      {
+        id: (await import('./artwork-documentation.validation')).digest([
+          'set_keys_and_gates_coordinator_read_access_v1',
+          apply.correlation_id
+        ])
+      },
+      ctx
+    );
+    expect(await setKeysAndGatesCoordinatorReadAccess(apply, service)).toEqual(
+      result
+    );
+    expect(
+      await db.query(
+        `SELECT id FROM ${AD_EVENTS} WHERE id=:id`,
+        { id: apply.correlation_id },
+        ctx
+      )
+    ).toHaveLength(1);
+    const other = await programCoordinator();
+    await expect(
+      setKeysAndGatesCoordinatorReadAccess(
+        { ...apply, coordinator_profile_id: other.id },
+        service
+      )
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_MISMATCH' });
+  });
+  it('fails coordinator operations closed for absent, scoped, revoked or duplicate grants', async () => {
+    await expect(
+      setKeysAndGatesCoordinatorReadAccess(
+        {
+          correlation_id: randomUUID(),
+          coordinator_profile_id: randomUUID(),
+          apply: true
+        },
+        service
+      )
+    ).rejects.toMatchObject({ code: 'COORDINATOR_PROFILE_NOT_FOUND' });
+    const coordinator = await programCoordinator();
+    await db.query(
+      `UPDATE ${AD_GRANTS} SET revoked_at=:now WHERE id=:id`,
+      { id: coordinator.grantId, now: Date.now() },
+      ctx
+    );
+    await expect(
+      setKeysAndGatesCoordinatorReadAccess(coordinator.event, service)
+    ).rejects.toMatchObject({ code: 'EXISTING_COORDINATOR_GRANT_REQUIRED' });
+    await db.query(
+      `UPDATE ${AD_GRANTS} SET revoked_at=NULL,context_id=:context WHERE id=:id`,
+      { id: coordinator.grantId, context: randomUUID() },
+      ctx
+    );
+    await expect(
+      setKeysAndGatesCoordinatorReadAccess(coordinator.event, service)
+    ).rejects.toMatchObject({ code: 'EXISTING_COORDINATOR_GRANT_REQUIRED' });
+    await db.query(
+      `UPDATE ${AD_GRANTS} SET context_id=NULL,capabilities_json=:caps WHERE id=:id`,
+      {
+        id: coordinator.grantId,
+        caps: JSON.stringify({ ...emptyCapabilities(), read_context: true })
+      },
+      ctx
+    );
+    await expect(
+      setKeysAndGatesCoordinatorReadAccess(coordinator.event, service)
+    ).rejects.toMatchObject({ code: 'EXISTING_COORDINATOR_GRANT_REQUIRED' });
+  });
+  it('confirms a publication-only record while keeping team questions outside every artwork snapshot and preview', async () => {
+    const record = await readyContext();
+    record.profile = getProfile('stream_artwork_basic_v1', 2);
+    record.asset_links[0].manifest = {
+      ...record.asset_links[0].manifest,
+      role: 'artwork_final',
+      intended_visibility: 'public_record'
+    };
+    await db.saveContext(record, ctx);
+    const thread = {
+      audience: 'artist_and_reviewers',
+      restricted_class: 'ordinary',
+      text: 'Team question marker only'
+    };
+    await reviews.createThread(
+      record.id,
+      thread,
+      mutation('questions', thread, 1),
+      ctx
+    );
+    const body = {
+      accepted: true,
+      confirmation_copy_version: PUBLICATION_CONFIRMATION_COPY_VERSION
+    };
+    const confirmed = await service.confirm(
+      record.id,
+      body,
+      mutation('confirm-public', body, 1),
+      ctx
+    );
+    expect(confirmed.snapshot.profile.intake_mode).toBe('publication_only');
+    expect(confirmed.confirmation).toMatchObject({
+      copy_version: PUBLICATION_CONFIRMATION_COPY_VERSION
+    });
+    const raw = await db.one<{ snapshot_json: string }>(
+      `SELECT snapshot_json FROM ${AD_REVISIONS} WHERE id=:id`,
+      { id: confirmed.id },
+      ctx
+    );
+    expect(JSON.stringify(raw)).not.toContain('Team question marker only');
+    expect(
+      JSON.stringify(await service.publicPreview(record.id, ctx))
+    ).not.toContain('Team question marker only');
+    expect((await reviews.listThreads(record.id, ctx)).data).toHaveLength(1);
+    for (const [field, value] of [
+      ['title', answer('Private title', 'restricted')]
+    ] as const) {
+      const patch = {
+        schema_version: 1,
+        operations: [{ op: 'set' as const, field, answer: value }]
+      };
+      await expect(
+        service.patchModule(
+          record.id,
+          'artwork',
+          patch,
+          mutation('private-patch', patch, 1),
+          ctx
+        )
+      ).rejects.toMatchObject({ code: 'PUBLICATION_INTENT_REQUIRED' });
+    }
+    record.modules.identity.private_contact = answer(
+      'Tainted private record',
+      'restricted'
+    );
+    await db.saveContext(record, ctx);
+    await expect(
+      service.confirm(
+        record.id,
+        body,
+        mutation('confirm-tainted', body, 1),
+        ctx
+      )
+    ).rejects.toMatchObject({ code: 'FIELD_NOT_IN_PROFILE' });
+  });
+  it('upgrades only empty Keys contexts and preserves data, sources, grants and questions', async () => {
+    const created = await create();
+    const pristine = (await db.context(created.id, ctx))!;
+    pristine.profile = getProfile('keys_and_gates_v1', 1);
+    await setProgram(pristine);
+    const filled = await readyContext();
+    filled.profile = getProfile('keys_and_gates_v1', 1);
+    await setProgram(filled);
+    const thread = {
+      audience: 'artist_and_reviewers',
+      restricted_class: 'ordinary',
+      text: 'Question survives profile upgrade'
+    };
+    await reviews.createThread(
+      pristine.id,
+      thread,
+      mutation('questions', thread, 1),
+      ctx
+    );
+    const coordinator = await programCoordinator();
+    const dry = await upgradeEmptyKeysAndGatesPublication(
+      coordinator.event,
+      service
+    );
+    expect(dry).toMatchObject({
+      mode: 'dry_run',
+      contexts: expect.arrayContaining([
+        { context_id: pristine.id, status: 'eligible' },
+        { context_id: filled.id, status: 'skipped', reason: 'ANSWERS_EXIST' }
+      ])
+    });
+    expect((await db.context(pristine.id, ctx))!.profile.version).toBe(1);
+    const apply = { ...coordinator.event, apply: true };
+    const upgraded = await upgradeEmptyKeysAndGatesPublication(apply, service);
+    expect((await db.context(pristine.id, ctx))!.profile.version).toBe(2);
+    expect((await db.context(pristine.id, ctx))!.draft_version).toBe(2);
+    expect((await db.context(filled.id, ctx))!.profile.version).toBe(1);
+    expect((await reviews.listThreads(pristine.id, ctx)).data).toHaveLength(1);
+    expect(await upgradeEmptyKeysAndGatesPublication(apply, service)).toEqual(
+      upgraded
+    );
+  });
+  it('sees an upload committed while the upgrade waits for its context lock', async () => {
+    const created = await create();
+    const record = (await db.context(created.id, ctx))!;
+    record.profile = getProfile('keys_and_gates_v1', 1);
+    await setProgram(record);
+    const coordinator = await programCoordinator();
+    let releaseReservation!: () => void;
+    let reservationLocked!: () => void;
+    let upgradeWaiting!: () => void;
+    const release = new Promise<void>((resolve) => {
+      releaseReservation = resolve;
+    });
+    const locked = new Promise<void>((resolve) => {
+      reservationLocked = resolve;
+    });
+    const waiting = new Promise<void>((resolve) => {
+      upgradeWaiting = resolve;
+    });
+    const originalOne = sqlExecutor.oneOrNull.bind(sqlExecutor);
+    const one = jest
+      .spyOn(sqlExecutor, 'oneOrNull')
+      .mockImplementation(async (...args) => {
+        const row = await originalOne(...args);
+        if (
+          args[0].startsWith(
+            `select lifecycle, profile_json, modules_json from ${AD_CONTEXTS}`
+          ) &&
+          args[1]?.contextId === record.id
+        ) {
+          reservationLocked();
+          await release;
+        }
+        return row;
+      });
+    const originalContext = db.context.bind(db);
+    const contextRead = jest
+      .spyOn(db, 'context')
+      .mockImplementation(async (...args) => {
+        if (args[0] === record.id && args[2] === true) upgradeWaiting();
+        return originalContext(...args);
+      });
+    const assetDb = new ArtworkAssetsDb(() => sqlExecutor);
+    const reserving = assetDb.reserve(
+      anArtworkAsset({
+        id: randomUUID(),
+        context_id: record.id,
+        uploader_profile_id: actor,
+        role: 'camera_original',
+        intended_visibility: 'restricted'
+      })
+    );
+    let upgrading:
+      | ReturnType<typeof upgradeEmptyKeysAndGatesPublication>
+      | undefined;
+    try {
+      await locked;
+      upgrading = upgradeEmptyKeysAndGatesPublication(
+        { ...coordinator.event, apply: true },
+        service
+      );
+      await waiting;
+      releaseReservation();
+      await reserving;
+      expect(await upgrading).toMatchObject({
+        contexts: expect.arrayContaining([
+          {
+            context_id: record.id,
+            status: 'skipped',
+            reason: 'UPLOAD_OR_ASSET_EXISTS'
+          }
+        ])
+      });
+      expect((await db.context(record.id, ctx))!.profile.version).toBe(1);
+    } finally {
+      releaseReservation();
+      await Promise.allSettled([reserving, upgrading]);
+      one.mockRestore();
+      contextRead.mockRestore();
+    }
+  });
+  it('rejects incompatible shared identity pins and profile changes without rewriting legacy data', async () => {
+    const legacy = await create();
+    const patch = {
+      schema_version: 1,
+      expected_artist_record_version: 0,
+      operations: [
+        {
+          op: 'set' as const,
+          field: 'display_name',
+          answer: answer('Private legacy name', 'restricted')
+        }
+      ]
+    };
+    const saved = await service.patchModule(
+      legacy.id,
+      'identity',
+      patch,
+      mutation('identity', patch, 1),
+      ctx
+    );
+    const body = {
+      profile_id: 'stream_artwork_basic_v1',
+      profile_version: 2,
+      start_mode: 'standalone'
+    };
+    const publication = await service.createWork(
+      body,
+      mutation('create-public', body),
+      ctx
+    );
+    await expect(
+      service.pinArtist(
+        publication.id,
+        saved.artist_record_revision_id!,
+        mutation('pin', { id: saved.artist_record_revision_id }, 1),
+        ctx
+      )
+    ).rejects.toMatchObject({ code: 'PUBLICATION_INTENT_REQUIRED' });
+    const unchanged = await service.getContext(publication.id, ctx);
+    expect(unchanged.artist_record_revision_id).toBeNull();
+    expect(unchanged.modules.identity.answers).toEqual({});
+    expect(
+      (await service.getContext(legacy.id, ctx)).modules.identity.answers
+        .display_name
+    ).toEqual(patch.operations[0].answer);
+    await expect(
+      reviews.upgrade(
+        legacy.id,
+        'stream_artwork_basic_v1',
+        2,
+        mutation('upgrade', {}, 2),
+        ctx
+      )
+    ).rejects.toMatchObject({ code: 'PUBLICATION_INTENT_REQUIRED' });
+    expect((await service.getContext(legacy.id, ctx)).profile.version).toBe(1);
+    await expect(
+      reviews.upgrade(
+        publication.id,
+        'stream_artwork_basic_v1',
+        1,
+        mutation('downgrade', {}, 1),
+        ctx
+      )
+    ).rejects.toMatchObject({ code: 'PUBLICATION_PROFILE_REQUIRED' });
+  });
+  it('imports only valid public source mappings into publication-only profiles', async () => {
+    const body = {
+      profile_id: 'stream_artwork_basic_v1',
+      profile_version: 2,
+      start_mode: 'standalone'
+    };
+    const publication = await service.createWork(
+      body,
+      mutation('create-public', body),
+      ctx
+    );
+    const receipt = randomUUID();
+    await db.insert(
+      AD_SOURCES,
+      {
+        id: receipt,
+        context_id: publication.id,
+        drop_id: randomUUID(),
+        receipt_text: JSON.stringify({
+          title: 'Public source title',
+          parts: [],
+          metadata: []
+        }),
+        sha256: 'b'.repeat(64),
+        is_excerpt: false,
+        importer_profile_id: actor,
+        created_at: Date.now()
+      },
+      ctx
+    );
+    const input = {
+      source_receipt_id: receipt,
+      fields: [{ source_path: 'title', target_field: 'artwork.title' }]
+    };
+    const result = await service.importSource(
+      publication.id,
+      input,
+      mutation('source-import', input, 1),
+      ctx
+    );
+    expect(result.modules.artwork.answers.title).toEqual(
+      answer('Public source title')
+    );
+    const invalid = {
+      ...input,
+      fields: [
+        { source_path: 'title', target_field: 'identity.private_contact' }
+      ]
+    };
+    await expect(
+      service.importSource(
+        publication.id,
+        invalid,
+        mutation('invalid-source', invalid, 2),
+        ctx
+      )
+    ).rejects.toMatchObject({ code: 'INVALID_SOURCE_MAPPING' });
+    expect((await db.context(publication.id, ctx))!.restricted_paths).toEqual(
+      []
+    );
+  });
   it('resolves a preseeded program source for its artist while new creation is disabled', async () => {
     const record = await readyContext();
     const dropId = randomUUID();

@@ -788,10 +788,14 @@ For a documentation-only change, no Lambda redeploy is required.
 
 ### Private artwork documentation archive
 
-The dedicated processor also exposes two IAM-only invocation actions for release
+The dedicated processor also exposes closed IAM-only invocation actions for release
 operators inside the VPC: the code-pinned Keys and Gates roster dry-run/import,
 and an idempotent empty nonprogram smoke context for the existing `punk6529bot`
-identity. These actions use an isolated service feature policy, accept no arbitrary
+identity. Additional dry-run-first actions update only the five read permissions
+of one existing program coordinator grant and upgrade only empty Keys contexts
+to publication-only profile version 2. They use fixed program scope and audited
+correlation replay protection, without creating grants or changing artist authority.
+These actions use an isolated service feature policy, accept no arbitrary
 SQL, roster or grants, and leave public API feature flags unchanged. Scheduled
 events continue through the archival tick. See the closed event schemas in
 [`artwork-documentation.md`](artwork-documentation.md#operator-access-inside-the-vpc).
@@ -803,6 +807,15 @@ contexts pin profiles, artist-record revisions, module answers and disclosure
 choices. Context row locks guard all content versions, and immutable revisions
 retain confirmation receipts and independent reviewer decisions. Explicit
 context/program grants are separate from Wave roles and proxy authentication.
+
+Version 2 profiles collect only artwork answers and selected materials intended
+for eventual public publication; legacy private intake remains protected. Team
+questions use existing context discussion threads and are excluded from every
+artwork confirmation snapshot and public preview. Profile-aware server validation
+covers edits, identity pins, source imports, upgrades and confirmation. Asset
+reservation locks the context before its quota so it cannot race a publication
+profile upgrade using stale private-intake permissions. No new table or storage
+boundary is introduced by this follow-up; deploy the processor before the API.
 The public-record preview removes restricted answers on the server; creating
 another context for a work requires an explicit artist choice and starts empty.
 See [the application contract and pilot runbook](artwork-documentation.md).

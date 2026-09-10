@@ -416,6 +416,14 @@ export const CONFIRMATION_COPY_VERSION =
   'artwork-documentation-confirmation-v1';
 export const CONFIRMATION_COPY =
   'I have reviewed this version. It reflects my account of the work to the best of my knowledge, including any uncertainty I have recorded. I have checked the credits, selected files and information marked for a future public record.';
+export const PUBLICATION_CONFIRMATION_COPY_VERSION =
+  'artwork-documentation-confirmation-v2';
+export const PUBLICATION_CONFIRMATION_COPY =
+  'I have reviewed this version. All artwork answers and selected files in this record are intended for publication with the work, including any uncertainty I have recorded. I have checked the credits and publication permissions. Questions for the team are drafting discussion and are not part of this artwork record. Confirmation does not publish or mint the work.';
+const PUBLICATION_EXCLUDED_FIELDS = new Set([
+  ...LOCKED_RESTRICTED,
+  'files.source_availability'
+]);
 function interviewInstrument(
   profileId: string
 ): DocumentationProfile['interview_instrument'] {
@@ -452,7 +460,7 @@ export const DOCUMENTATION_LIMITS = {
   download_url_seconds: 300,
   unattached_ready_asset_seconds: 604800
 };
-export const PROFILES: DocumentationProfile[] = [
+const LEGACY_PROFILES: DocumentationProfile[] = [
   'stream_artwork_basic_v1',
   'photography_documentation_v1',
   'keys_and_gates_v1'
@@ -512,6 +520,69 @@ export const PROFILES: DocumentationProfile[] = [
   ]
 }));
 
+export const PROFILES: DocumentationProfile[] = [
+  ...LEGACY_PROFILES,
+  ...LEGACY_PROFILES.map(
+    (profile): DocumentationProfile => ({
+      ...structuredClone(profile),
+      version: 2,
+      intake_mode: 'publication_only',
+      required_for_review: profile.required_for_review.filter(
+        (path) => !PUBLICATION_EXCLUDED_FIELDS.has(path)
+      ),
+      modules: profile.modules.map((module) => ({
+        ...module,
+        fields: module.fields
+          .filter(
+            (field) =>
+              !PUBLICATION_EXCLUDED_FIELDS.has(`${module.id}.${field.id}`)
+          )
+          .map((field) => ({
+            ...field,
+            allowed_statuses: field.allowed_statuses.filter(
+              (status) => status !== 'withheld'
+            ),
+            default_visibility: 'public_record',
+            value_schema:
+              module.id === 'interview' &&
+              ['recording_permission', 'transcript_permission'].includes(
+                field.id
+              )
+                ? choice('intended_public_record')
+                : field.value_schema
+          }))
+      })),
+      guidance_version: 'artwork-documentation-copy-v2',
+      confirmation_copy_version: PUBLICATION_CONFIRMATION_COPY_VERSION,
+      confirmation_copy: PUBLICATION_CONFIRMATION_COPY
+    })
+  )
+];
+
+export function profileFields(
+  profile: DocumentationProfile,
+  moduleId: ModuleId
+): FieldDefinition[] {
+  return profile.modules.find((module) => module.id === moduleId)?.fields ?? [];
+}
+
+export function validateProfileAnswers(
+  profile: DocumentationProfile,
+  moduleId: ModuleId,
+  answers: Answers
+): void {
+  if (profile.intake_mode !== 'publication_only') return;
+  for (const [field, answer] of Object.entries(answers)) {
+    const definition = profileFields(profile, moduleId).find(
+      (item) => item.id === field
+    );
+    if (!definition) fail(422, 'FIELD_NOT_IN_PROFILE');
+    if (answer.intended_visibility !== 'public_record')
+      fail(422, 'PUBLICATION_INTENT_REQUIRED');
+    validateAnswer(moduleId, definition, answer);
+  }
+}
+
 export function getProfile(
   id: unknown,
   version: unknown
@@ -532,7 +603,8 @@ export function emptyModules(): Record<ModuleId, Answers> {
 export function applyOperations(
   moduleId: ModuleId,
   previous: Answers,
-  operations: Operation[]
+  operations: Operation[],
+  profile?: DocumentationProfile
 ): Answers {
   if (
     !MODULE_IDS.includes(moduleId) ||
@@ -544,9 +616,9 @@ export function applyOperations(
   const result = { ...previous };
   const seen = new Set<string>();
   for (const operation of operations) {
-    const definition = FIELD_CATALOGUE[moduleId].find(
-      (field) => field.id === operation.field
-    );
+    const definition = (
+      profile ? profileFields(profile, moduleId) : FIELD_CATALOGUE[moduleId]
+    ).find((field) => field.id === operation.field);
     if (
       !definition ||
       seen.has(operation.field) ||
@@ -564,6 +636,7 @@ export function applyOperations(
         operation.answer
       );
   }
+  if (profile) validateProfileAnswers(profile, moduleId, result);
   return result;
 }
 
