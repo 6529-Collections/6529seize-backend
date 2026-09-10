@@ -27,6 +27,7 @@ import {
 } from '@/entities/IProfileActivityLog';
 import { PageSortDirection } from '@/api/page-request';
 import { ApiPageSortDirection } from '@/api/generated/models/ApiPageSortDirection';
+import { Logger } from '@/logging';
 
 function makeDrop(overrides: Partial<DropEntity> = {}): DropEntity {
   return {
@@ -277,6 +278,9 @@ function createService() {
       )
     )
   };
+  const dropVotingDb = {
+    getDropVoteDistribution: jest.fn().mockResolvedValue([])
+  };
 
   return {
     service: new ApiDropV2Service(
@@ -288,7 +292,8 @@ function createService() {
       identityFetcher as any,
       attachmentsDb as any,
       reactionsDb as any,
-      moderationDb as any
+      moderationDb as any,
+      dropVotingDb as any
     ),
     deps: {
       dropsDb,
@@ -299,12 +304,287 @@ function createService() {
       identityFetcher,
       attachmentsDb,
       reactionsDb,
-      moderationDb
+      moderationDb,
+      dropVotingDb
     }
   };
 }
 
 describe('ApiDropV2Service', () => {
+  describe('findVoteSummaryByDropIdOrThrow', () => {
+    afterEach(() => jest.restoreAllMocks());
+
+    const requestContext = {
+      authenticationContext: AuthenticationContext.notAuthenticated()
+    };
+    const firstVoter = {
+      id: 'voter-1',
+      primary_address: '0x1',
+      level: 1,
+      classification: 'PSEUDONYM',
+      badges: {
+        artist_of_main_stage_submissions: 0,
+        artist_of_memes: 0
+      }
+    };
+    const secondVoter = {
+      id: 'voter-2',
+      primary_address: '0x2',
+      level: 2,
+      classification: 'PSEUDONYM',
+      badges: {
+        artist_of_main_stage_submissions: 0,
+        artist_of_memes: 0
+      }
+    };
+
+    function setParticipatoryDrop(
+      deps: ReturnType<typeof createService>['deps']
+    ) {
+      deps.dropsDb.findDropByIdWithEligibilityCheck.mockResolvedValue(
+        makeDrop({ drop_type: DropType.PARTICIPATORY })
+      );
+    }
+
+    it.each([
+      {
+        name: 'positive-only',
+        rows: [
+          {
+            drop_id: 'drop-1',
+            voter_id: 'voter-1',
+            vote: 10,
+            positive_total: 10,
+            negative_total: 0
+          }
+        ],
+        identities: { 'voter-1': firstVoter },
+        expectedPositiveVotes: [{ voter: firstVoter, vote: 10 }],
+        expectedNegativeVotes: []
+      },
+      {
+        name: 'negative-only',
+        rows: [
+          {
+            drop_id: 'drop-1',
+            voter_id: 'voter-1',
+            vote: -7,
+            positive_total: 0,
+            negative_total: -7
+          }
+        ],
+        identities: { 'voter-1': firstVoter },
+        expectedPositiveVotes: [],
+        expectedNegativeVotes: [{ voter: firstVoter, vote: -7 }]
+      },
+      {
+        name: 'mixed',
+        rows: [
+          {
+            drop_id: 'drop-1',
+            voter_id: 'voter-1',
+            vote: 10,
+            positive_total: 10,
+            negative_total: -7
+          },
+          {
+            drop_id: 'drop-1',
+            voter_id: 'voter-2',
+            vote: -7,
+            positive_total: 10,
+            negative_total: -7
+          }
+        ],
+        identities: { 'voter-1': firstVoter, 'voter-2': secondVoter },
+        expectedPositiveVotes: [{ voter: firstVoter, vote: 10 }],
+        expectedNegativeVotes: [{ voter: secondVoter, vote: -7 }]
+      }
+    ])(
+      'returns authoritative totals for $name allocations',
+      async (testCase) => {
+        const { service, deps } = createService();
+        setParticipatoryDrop(deps);
+        deps.dropVotingDb.getDropVoteDistribution.mockResolvedValue(
+          testCase.rows
+        );
+        deps.identityFetcher.getApiIdentityOverviewsByIds.mockResolvedValue(
+          testCase.identities
+        );
+
+        const result = await service.findVoteSummaryByDropIdOrThrow(
+          'drop-1',
+          requestContext
+        );
+
+        expect(result).toEqual({
+          vote_distribution: {
+            positive_total: testCase.rows[0].positive_total,
+            negative_total: testCase.rows[0].negative_total,
+            positive_votes: testCase.expectedPositiveVotes,
+            negative_votes: testCase.expectedNegativeVotes
+          }
+        });
+      }
+    );
+
+    it('retains totals and resolved voters when identity enrichment is partial', async () => {
+      const { service, deps } = createService();
+      setParticipatoryDrop(deps);
+      deps.dropVotingDb.getDropVoteDistribution.mockResolvedValue([
+        {
+          drop_id: 'drop-1',
+          voter_id: 'voter-1',
+          vote: 10,
+          positive_total: 15,
+          negative_total: 0
+        },
+        {
+          drop_id: 'drop-1',
+          voter_id: 'voter-2',
+          vote: 5,
+          positive_total: 15,
+          negative_total: 0
+        }
+      ]);
+      deps.identityFetcher.getApiIdentityOverviewsByIds.mockResolvedValue({
+        'voter-2': secondVoter
+      });
+
+      const result = await service.findVoteSummaryByDropIdOrThrow(
+        'drop-1',
+        requestContext
+      );
+
+      expect(result).toEqual({
+        vote_distribution: {
+          positive_total: 15,
+          negative_total: 0,
+          positive_votes: [{ voter: secondVoter, vote: 5 }],
+          negative_votes: []
+        }
+      });
+    });
+
+    it('retains totals when identity enrichment fails', async () => {
+      const { service, deps } = createService();
+      const warn = jest
+        .spyOn(Logger.get('ApiDropV2Service'), 'warn')
+        .mockImplementation();
+      setParticipatoryDrop(deps);
+      deps.dropVotingDb.getDropVoteDistribution.mockResolvedValue([
+        {
+          drop_id: 'drop-1',
+          voter_id: 'voter-1',
+          vote: 10,
+          positive_total: 10,
+          negative_total: 0
+        }
+      ]);
+      deps.identityFetcher.getApiIdentityOverviewsByIds.mockRejectedValue(
+        new Error('profile query unavailable')
+      );
+
+      const result = await service.findVoteSummaryByDropIdOrThrow(
+        'drop-1',
+        requestContext
+      );
+
+      expect(result).toEqual({
+        vote_distribution: {
+          positive_total: 10,
+          negative_total: 0,
+          positive_votes: [],
+          negative_votes: []
+        }
+      });
+      expect(warn).toHaveBeenCalledWith(
+        'Drop vote summary identity enrichment unavailable',
+        expect.any(Error)
+      );
+    });
+
+    it('omits distributions for unsupported and zero-vote drops', async () => {
+      const { service, deps } = createService();
+
+      await expect(
+        service.findVoteSummaryByDropIdOrThrow('drop-1', requestContext)
+      ).resolves.toEqual({});
+      expect(deps.dropVotingDb.getDropVoteDistribution).not.toHaveBeenCalled();
+
+      setParticipatoryDrop(deps);
+      await expect(
+        service.findVoteSummaryByDropIdOrThrow('drop-1', requestContext)
+      ).resolves.toEqual({});
+      expect(deps.dropVotingDb.getDropVoteDistribution).toHaveBeenCalledTimes(
+        1
+      );
+      expect(
+        deps.identityFetcher.getApiIdentityOverviewsByIds
+      ).not.toHaveBeenCalled();
+    });
+
+    it('omits distributions for moderated drops', async () => {
+      const { service, deps } = createService();
+      setParticipatoryDrop(deps);
+      deps.moderationDb.getPresentations.mockResolvedValue({
+        'drop-1': {
+          viewer: { author_blocked: false, drop_hidden: false },
+          moderation: { status: 'MODERATOR_REMOVED', can_view: false }
+        }
+      });
+
+      await expect(
+        service.findVoteSummaryByDropIdOrThrow('drop-1', requestContext)
+      ).resolves.toEqual({});
+      expect(deps.dropVotingDb.getDropVoteDistribution).not.toHaveBeenCalled();
+    });
+
+    it('does not publish invalid allocation totals', async () => {
+      const { service, deps } = createService();
+      setParticipatoryDrop(deps);
+      deps.dropVotingDb.getDropVoteDistribution.mockResolvedValue([
+        {
+          drop_id: 'drop-1',
+          voter_id: 'voter-1',
+          vote: 10,
+          positive_total: Number.MAX_SAFE_INTEGER,
+          negative_total: -1
+        }
+      ]);
+
+      await expect(
+        service.findVoteSummaryByDropIdOrThrow('drop-1', requestContext)
+      ).resolves.toEqual({});
+      expect(
+        deps.identityFetcher.getApiIdentityOverviewsByIds
+      ).not.toHaveBeenCalled();
+    });
+
+    it('surfaces authoritative vote query failures for client retry', async () => {
+      const { service, deps } = createService();
+      setParticipatoryDrop(deps);
+      const queryError = new Error('vote query unavailable');
+      deps.dropVotingDb.getDropVoteDistribution.mockRejectedValue(queryError);
+
+      await expect(
+        service.findVoteSummaryByDropIdOrThrow('drop-1', requestContext)
+      ).rejects.toBe(queryError);
+      expect(
+        deps.identityFetcher.getApiIdentityOverviewsByIds
+      ).not.toHaveBeenCalled();
+    });
+
+    it('does not expose summaries for invisible drops', async () => {
+      const { service, deps } = createService();
+      deps.dropsDb.findDropByIdWithEligibilityCheck.mockResolvedValue(null);
+
+      await expect(
+        service.findVoteSummaryByDropIdOrThrow('drop-1', requestContext)
+      ).rejects.toThrow(NotFoundException);
+      expect(deps.dropVotingDb.getDropVoteDistribution).not.toHaveBeenCalled();
+    });
+  });
+
   it('finds visible V2 drops by parent drop id', async () => {
     const { service, deps } = createService();
     const parentDrop = makeDrop({ id: 'parent-drop' });

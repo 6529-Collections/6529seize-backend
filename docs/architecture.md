@@ -224,6 +224,22 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 6. S3 and CloudFront serve media. Drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception.
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
+### Alchemy NFT metadata proxy
+
+`GET /alchemy-proxy/contract` retains its existing address lookup: `address`
+must be `0x` followed by 40 hexadecimal characters; missing or malformed input
+returns HTTP 400. It uses V3 `getContractMetadata` and returns the provider
+metadata with `_checksum`, or JSON `null` when the provider returns 404. The
+route retains its five-minute request-cache middleware. FE uses this endpoint
+as fallback for its address-only picker.
+
+Collection-name search is retired: `GET /alchemy-proxy/collections` returns
+HTTP 410 with `Cache-Control: no-store` and the error message
+`Collection name search is no longer available. Use a contract address.`
+It makes no upstream or cache request, including for missing or empty queries.
+The removed search wrapper has no remaining callers; ingestion, ownership
+queries, and token metadata continue using their existing supported endpoints.
+
 ### Content moderation
 
 See [Content moderation](./content-moderation.md) for the complete feature
