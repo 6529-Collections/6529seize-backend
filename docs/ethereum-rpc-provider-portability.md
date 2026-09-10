@@ -1,6 +1,6 @@
 # Ethereum RPC Provider Portability
 
-Status: Proposed
+Status: Backend implementation planned; frontend implementation tracked separately
 
 Owners: Backend and frontend
 
@@ -79,14 +79,17 @@ separately configured RPC endpoints.
 
 ### Frontend
 
-- Server-side Open Graph code creates multiple Viem clients with default,
-  hard-coded `rpc1.6529.io`, and public-node transports.
+- [Frontend PR #3911](https://github.com/6529-Collections/6529seize-frontend/pull/3911)
+  implements the shared server-only `ETHEREUM_RPC_URL` boundary and deployment
+  configuration. Implementation does not imply deployment; consult the PR and
+  frontend execution record for current rollout state.
 - Active `/api/alchemy/*` routes and Open Graph NFT metadata fallback code use
   Alchemy NFT REST APIs. Those are indexed-product dependencies and remain in
   scope for `ALCHEMY_API_KEY`, not `ETHEREUM_RPC_URL`.
-- `services/alchemy-api.ts` and the implementation modules
-  `services/alchemy/{index,collections,owner-nfts,tokens}.ts` have no production
-  importers. Their only importer is `__tests__/services/alchemy-api.test.ts`.
+- The unused `services/alchemy-api.ts` facade, implementation modules
+  `services/alchemy/{index,collections,owner-nfts,tokens}.ts`, and orphaned test
+  were removed in merged
+  [frontend PR #3915](https://github.com/6529-Collections/6529seize-frontend/pull/3915).
 - `services/alchemy/types.ts` and `services/alchemy/utils.ts` are active shared
   modules and are not dead code.
 
@@ -113,6 +116,84 @@ types, construct Alchemy hostnames, or rely on Alchemy response extensions.
 `NEXT_PUBLIC_*` value or shipped to browser bundles.
 
 ## Backend implementation plan
+
+### Delivery split: three implementation PRs
+
+Keep [backend PR #1979](https://github.com/6529-Collections/6529seize-backend/pull/1979)
+as the documentation-only plan/tracker. Implement the migration in three
+sequential PRs, each reviewable and deployable after its prerequisites. Add
+their links and completion evidence here as they are created and completed.
+These PR numbers are not allocated yet; the labels below describe scope, not
+existing GitHub PRs.
+
+#### Implementation PR 1: configuration and shared provider
+
+- Add `ETHEREUM_RPC_URL` validation, environment samples, service configuration
+  wiring, and an additive provider-neutral factory with focused tests.
+- Inventory supported non-mainnet chains and the services requiring each
+  credential. Document explicit chain configuration; never send testnet reads
+  to the mainnet URL.
+- Preserve all existing caller routing in this PR. Do not repoint the existing
+  shared factory while introducing the new boundary, since that would switch
+  live callers before the configuration pass finishes.
+- Provision and verify configuration on all affected services before PR 2
+  activates the new path. Keep `ALCHEMY_API_KEY` for current consumers.
+
+Completion: configuration is available without changing provider behaviour,
+and the unused new factory is covered for valid/missing/invalid configuration
+and chain selection. Once callers migrate, missing configuration must fail
+clearly rather than silently reconstructing an Alchemy URL.
+
+#### Implementation PR 2: straightforward ordinary reads
+
+- Migrate ENS, wallet-signature and other contract checks, block and log
+  lookups in the API and simpler background jobs to the new shared boundary.
+- Preserve existing retry, timeout, caching, null-result and numeric-conversion
+  semantics, with focused provider-boundary and caller regression coverage.
+- Keep mixed transaction/NFT indexing workflows on their existing paths until
+  PR 3. Shared-helper changes must not accidentally migrate those consumers;
+  include the complete consumer graph in the scope and deployment inventory.
+
+Completion: the selected ordinary callers work through `ETHEREUM_RPC_URL`
+without an Alchemy key dependency. Document exactly which callers remain for
+PR 3; partial migration is not full backend portability.
+
+#### Implementation PR 3: mixed indexing workflows and cleanup
+
+- Split transaction/NFT history, NextGen and subscription workflows so ordinary
+  lookups use `ETHEREUM_RPC_URL`, while NFT REST calls and
+  `alchemy_getAssetTransfers` remain on the Alchemy indexed client.
+- Preserve ingestion results, pagination, checkpoints, retry behaviour and
+  value conversions. Test both paths together, including failure cases, so
+  separating providers does not skip or duplicate indexed work.
+- Isolate `trace_block` behind an explicit trace-capable provider policy;
+  tracing is not part of the ordinary-RPC compatibility promise.
+- Remove obsolete ordinary-RPC helpers and compatibility methods only after
+  their callers have migrated. Move neutral types out of the Alchemy module.
+  Unlike the deleted FE facade, backend `src/alchemy-sdk.ts` is actively used:
+  retain or extract its indexed capabilities, rather than deleting it wholesale.
+
+Completion: all ordinary callers covered by this decision use the canonical
+boundary, indexed Alchemy operations remain functional, and the acceptance
+criteria below are met with explicit dispositions for exceptions.
+
+#### Why this split and what stays separate
+
+Configuration first avoids switching services before their runtime values are
+available. Separating simpler reads from mixed indexing keeps review and
+rollback focused; the latter carries the greater risk of changing persisted
+ingestion results. Each implementation PR must list all affected deployables,
+including indirect consumers of shared code, and its deployment/rollback plan.
+
+Resolve whether `NFT_INDEXER_RPC` is an intentional separate capacity boundary
+before claiming complete ordinary-RPC convergence. If retained, document the
+exception explicitly rather than claiming one URL controls those reads too.
+
+Investigate legacy `/rpc` consumers separately. Any removal or change of its
+public proxy contract belongs in a separate, explicitly scoped PR once its
+consumers are known; it must not block unrelated server-read migration. This
+is not a fourth mandatory implementation PR unless that investigation requires
+a change.
 
 ### 1. Establish the configuration contract
 
@@ -235,15 +316,18 @@ pass before switching any runtime caller:
 3. Verify each deployed service received the configuration without changing
    its provider behavior. Do not invoke `populateHistoricConsolidatedTdh`
    merely to verify configuration.
-4. In a separate runtime pass, migrate and deploy the same sequence one service
-   at a time. Verify ordinary reads against the configured Alchemy endpoint
-   after each deploy and verify any colocated indexed Alchemy path still uses
-   `ALCHEMY_API_KEY`.
+4. In the runtime pass, deliver implementation PR 2 before PR 3. For each PR,
+   refresh the affected-service inventory and deploy its affected subset in
+   the order above, adjusted for any verified service dependencies. Shared
+   helper changes may require redeploying a service in both PRs. Verify ordinary
+   reads against the configured Alchemy endpoint after each deploy and verify
+   any colocated indexed Alchemy path still uses `ALCHEMY_API_KEY`.
 5. If `nftLinkRefresherLoop` joins the canonical boundary, deploy it after the
    confirmed sequence and before removing `NFT_INDEXER_RPC` from any
    environment.
-6. Migrate frontend server-side ordinary reads only after the backend runtime
-   pass is complete.
+6. Track frontend implementation and deployment independently through frontend
+   PR #3911. Its server-owned RPC boundary does not depend on the backend
+   migration completing; the previous FE-after-BE ordering is superseded.
 7. Remove obsolete Alchemy-derived ordinary RPC helpers only after all backend
    and frontend callers have moved.
 
