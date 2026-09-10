@@ -14,7 +14,7 @@ import {
   executeDocumentationRequest as execute
 } from './artwork-documentation.handlers';
 
-const uuid = Joi.string().guid().required();
+const uuid = Joi.string().guid();
 const visibility = Joi.string().valid('public_record', 'restricted').required();
 const role = Joi.string()
   .valid(...ARTWORK_ASSET_ROLES)
@@ -24,7 +24,7 @@ const uri = Joi.string()
   .max(2048)
   .uri({ scheme: ['https', 'ipfs', 'ar'] });
 const assetLink = Joi.object({
-  asset_id: uuid,
+  asset_id: uuid.required(),
   role,
   intended_visibility: visibility,
   label: optionalText(160),
