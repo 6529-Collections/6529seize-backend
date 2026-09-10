@@ -42,9 +42,6 @@ All under `src/alchemy-sdk.ts`, imported via `@/alchemy-sdk`:
 - `alchemy.nft`
   - `getNftMetadata(contract, tokenId, options?)` — REST `GET /getNFTMetadata`.
   - `getContractMetadata(contract)` — REST `GET /getContractMetadata`.
-  - `searchContractMetadata(query)` — REST `GET /searchContractMetadata`,
-    unwrapping Alchemy's `{ contracts: [...] }` REST envelope to preserve the
-    old SDK return shape.
   - `getNftsForOwner(owner, options?)` — REST `GET /getNFTsForOwner`, array
     params serialised as repeated `key=a&key=b` (what Alchemy's NFT REST v3
     expects).

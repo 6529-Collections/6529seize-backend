@@ -2,6 +2,43 @@
 import { Request } from 'express';
 import { ApiResponse } from '@/api/api-response';
 import { ApiArchiveProfileCmsPackageRequest } from '@/api/generated/models/ApiArchiveProfileCmsPackageRequest';
+import { ApiArtworkDocumentationAssetLinkRequest } from '@/api/generated/models/ApiArtworkDocumentationAssetLinkRequest';
+import { ApiArtworkDocumentationAssetResponse } from '@/api/generated/models/ApiArtworkDocumentationAssetResponse';
+import { ApiArtworkDocumentationCommentRequest } from '@/api/generated/models/ApiArtworkDocumentationCommentRequest';
+import { ApiArtworkDocumentationCompleteUpload } from '@/api/generated/models/ApiArtworkDocumentationCompleteUpload';
+import { ApiArtworkDocumentationConfirmRequest } from '@/api/generated/models/ApiArtworkDocumentationConfirmRequest';
+import { ApiArtworkDocumentationContext } from '@/api/generated/models/ApiArtworkDocumentationContext';
+import { ApiArtworkDocumentationContextListResponse } from '@/api/generated/models/ApiArtworkDocumentationContextListResponse';
+import { ApiArtworkDocumentationCreateContext } from '@/api/generated/models/ApiArtworkDocumentationCreateContext';
+import { ApiArtworkDocumentationCreateThread } from '@/api/generated/models/ApiArtworkDocumentationCreateThread';
+import { ApiArtworkDocumentationCreateWork } from '@/api/generated/models/ApiArtworkDocumentationCreateWork';
+import { ApiArtworkDocumentationDownloadRequest } from '@/api/generated/models/ApiArtworkDocumentationDownloadRequest';
+import { ApiArtworkDocumentationDownloadResponse } from '@/api/generated/models/ApiArtworkDocumentationDownloadResponse';
+import { ApiArtworkDocumentationEmptyResponse } from '@/api/generated/models/ApiArtworkDocumentationEmptyResponse';
+import { ApiArtworkDocumentationGrantRequest } from '@/api/generated/models/ApiArtworkDocumentationGrantRequest';
+import { ApiArtworkDocumentationGrantsResponse } from '@/api/generated/models/ApiArtworkDocumentationGrantsResponse';
+import { ApiArtworkDocumentationIdBody } from '@/api/generated/models/ApiArtworkDocumentationIdBody';
+import { ApiArtworkDocumentationLifecycleRequest } from '@/api/generated/models/ApiArtworkDocumentationLifecycleRequest';
+import { ApiArtworkDocumentationPatchModule } from '@/api/generated/models/ApiArtworkDocumentationPatchModule';
+import { ApiArtworkDocumentationPatchThread } from '@/api/generated/models/ApiArtworkDocumentationPatchThread';
+import { ApiArtworkDocumentationProfilesResponse } from '@/api/generated/models/ApiArtworkDocumentationProfilesResponse';
+import { ApiArtworkDocumentationPublicPreview } from '@/api/generated/models/ApiArtworkDocumentationPublicPreview';
+import { ApiArtworkDocumentationReview } from '@/api/generated/models/ApiArtworkDocumentationReview';
+import { ApiArtworkDocumentationReviewRequest } from '@/api/generated/models/ApiArtworkDocumentationReviewRequest';
+import { ApiArtworkDocumentationRevision } from '@/api/generated/models/ApiArtworkDocumentationRevision';
+import { ApiArtworkDocumentationRevisionListResponse } from '@/api/generated/models/ApiArtworkDocumentationRevisionListResponse';
+import { ApiArtworkDocumentationSignedPartsResponse } from '@/api/generated/models/ApiArtworkDocumentationSignedPartsResponse';
+import { ApiArtworkDocumentationSignPartsRequest } from '@/api/generated/models/ApiArtworkDocumentationSignPartsRequest';
+import { ApiArtworkDocumentationSourceImportPreview } from '@/api/generated/models/ApiArtworkDocumentationSourceImportPreview';
+import { ApiArtworkDocumentationSourceImportRequest } from '@/api/generated/models/ApiArtworkDocumentationSourceImportRequest';
+import { ApiArtworkDocumentationSourceLinkRequest } from '@/api/generated/models/ApiArtworkDocumentationSourceLinkRequest';
+import { ApiArtworkDocumentationStartUpload } from '@/api/generated/models/ApiArtworkDocumentationStartUpload';
+import { ApiArtworkDocumentationThread } from '@/api/generated/models/ApiArtworkDocumentationThread';
+import { ApiArtworkDocumentationThreadsResponse } from '@/api/generated/models/ApiArtworkDocumentationThreadsResponse';
+import { ApiArtworkDocumentationUpgradePreview } from '@/api/generated/models/ApiArtworkDocumentationUpgradePreview';
+import { ApiArtworkDocumentationUpgradeRequest } from '@/api/generated/models/ApiArtworkDocumentationUpgradeRequest';
+import { ApiArtworkDocumentationUploadSession } from '@/api/generated/models/ApiArtworkDocumentationUploadSession';
+import { ApiArtworkDocumentationWork } from '@/api/generated/models/ApiArtworkDocumentationWork';
 import { ApiCommunityMembersPage } from '@/api/generated/models/ApiCommunityMembersPage';
 import { ApiCompetition } from '@/api/generated/models/ApiCompetition';
 import { ApiCompetitionConfigVersionPage } from '@/api/generated/models/ApiCompetitionConfigVersionPage';
@@ -69,6 +106,7 @@ import { ApiSaveEulaConsentRequest } from '@/api/generated/models/ApiSaveEulaCon
 import { ApiSaveEulaConsentResponse } from '@/api/generated/models/ApiSaveEulaConsentResponse';
 import { ApiSaveProfileCmsPackageDraftRequest } from '@/api/generated/models/ApiSaveProfileCmsPackageDraftRequest';
 import { ApiSubscriptionCoverage } from '@/api/generated/models/ApiSubscriptionCoverage';
+import { ApiTdhRules } from '@/api/generated/models/ApiTdhRules';
 import { ApiUpdateProfilePreferences } from '@/api/generated/models/ApiUpdateProfilePreferences';
 import { ApiValidateProfileCmsAgentPatchRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentPatchRequest';
 import { ApiValidateProfileCmsPackageRequest } from '@/api/generated/models/ApiValidateProfileCmsPackageRequest';
@@ -83,6 +121,605 @@ import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
 import { ApiWaveSearchAuthor } from '@/api/generated/models/ApiWaveSearchAuthor';
 import { ApiWaveV3 } from '@/api/generated/models/ApiWaveV3';
+
+export interface ArtworkDocumentationGetDocumentationContextPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationGetDocumentationContextQuery = Record<string, never>;
+
+export type ArtworkDocumentationGetDocumentationContextResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationGetDocumentationContextRequest = Request<
+  ArtworkDocumentationGetDocumentationContextPathParams,
+  ApiResponse<ArtworkDocumentationGetDocumentationContextResponse>,
+  never,
+  ArtworkDocumentationGetDocumentationContextQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationPatchDocumentationContextPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationPatchDocumentationContextQuery = Record<string, never>;
+
+export type ArtworkDocumentationPatchDocumentationContextResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationPatchDocumentationContextRequest = Request<
+  ArtworkDocumentationPatchDocumentationContextPathParams,
+  ApiResponse<ArtworkDocumentationPatchDocumentationContextResponse>,
+  ApiArtworkDocumentationLifecycleRequest,
+  ArtworkDocumentationPatchDocumentationContextQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationPinDocumentationArtistPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationPinDocumentationArtistQuery = Record<string, never>;
+
+export type ArtworkDocumentationPinDocumentationArtistResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationPinDocumentationArtistRequest = Request<
+  ArtworkDocumentationPinDocumentationArtistPathParams,
+  ApiResponse<ArtworkDocumentationPinDocumentationArtistResponse>,
+  ApiArtworkDocumentationIdBody,
+  ArtworkDocumentationPinDocumentationArtistQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationLinkDocumentationAssetPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationLinkDocumentationAssetQuery = Record<string, never>;
+
+export type ArtworkDocumentationLinkDocumentationAssetResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationLinkDocumentationAssetRequest = Request<
+  ArtworkDocumentationLinkDocumentationAssetPathParams,
+  ApiResponse<ArtworkDocumentationLinkDocumentationAssetResponse>,
+  ApiArtworkDocumentationAssetLinkRequest,
+  ArtworkDocumentationLinkDocumentationAssetQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationUnlinkDocumentationAssetPathParams {
+  "id": string;
+  "linkId": string;
+}
+
+export type ArtworkDocumentationUnlinkDocumentationAssetQuery = Record<string, never>;
+
+export type ArtworkDocumentationUnlinkDocumentationAssetResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationUnlinkDocumentationAssetRequest = Request<
+  ArtworkDocumentationUnlinkDocumentationAssetPathParams,
+  ApiResponse<ArtworkDocumentationUnlinkDocumentationAssetResponse>,
+  never,
+  ArtworkDocumentationUnlinkDocumentationAssetQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationPatchDocumentationAssetLinkPathParams {
+  "id": string;
+  "linkId": string;
+}
+
+export type ArtworkDocumentationPatchDocumentationAssetLinkQuery = Record<string, never>;
+
+export type ArtworkDocumentationPatchDocumentationAssetLinkResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationPatchDocumentationAssetLinkRequest = Request<
+  ArtworkDocumentationPatchDocumentationAssetLinkPathParams,
+  ApiResponse<ArtworkDocumentationPatchDocumentationAssetLinkResponse>,
+  ApiArtworkDocumentationAssetLinkRequest,
+  ArtworkDocumentationPatchDocumentationAssetLinkQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationDownloadDocumentationAssetPathParams {
+  "id": string;
+  "assetId": string;
+}
+
+export type ArtworkDocumentationDownloadDocumentationAssetQuery = Record<string, never>;
+
+export type ArtworkDocumentationDownloadDocumentationAssetResponse = ApiArtworkDocumentationDownloadResponse;
+
+export type ArtworkDocumentationDownloadDocumentationAssetRequest = Request<
+  ArtworkDocumentationDownloadDocumentationAssetPathParams,
+  ApiResponse<ArtworkDocumentationDownloadDocumentationAssetResponse>,
+  ApiArtworkDocumentationDownloadRequest,
+  ArtworkDocumentationDownloadDocumentationAssetQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationStartDocumentationUploadPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationStartDocumentationUploadQuery = Record<string, never>;
+
+export type ArtworkDocumentationStartDocumentationUploadResponse = ApiArtworkDocumentationUploadSession;
+
+export type ArtworkDocumentationStartDocumentationUploadRequest = Request<
+  ArtworkDocumentationStartDocumentationUploadPathParams,
+  ApiResponse<ArtworkDocumentationStartDocumentationUploadResponse>,
+  ApiArtworkDocumentationStartUpload,
+  ArtworkDocumentationStartDocumentationUploadQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationCancelDocumentationUploadPathParams {
+  "id": string;
+  "uploadId": string;
+}
+
+export type ArtworkDocumentationCancelDocumentationUploadQuery = Record<string, never>;
+
+export type ArtworkDocumentationCancelDocumentationUploadResponse = ApiArtworkDocumentationEmptyResponse;
+
+export type ArtworkDocumentationCancelDocumentationUploadRequest = Request<
+  ArtworkDocumentationCancelDocumentationUploadPathParams,
+  ApiResponse<ArtworkDocumentationCancelDocumentationUploadResponse>,
+  never,
+  ArtworkDocumentationCancelDocumentationUploadQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationGetDocumentationUploadPathParams {
+  "id": string;
+  "uploadId": string;
+}
+
+export type ArtworkDocumentationGetDocumentationUploadQuery = Record<string, never>;
+
+export type ArtworkDocumentationGetDocumentationUploadResponse = ApiArtworkDocumentationUploadSession;
+
+export type ArtworkDocumentationGetDocumentationUploadRequest = Request<
+  ArtworkDocumentationGetDocumentationUploadPathParams,
+  ApiResponse<ArtworkDocumentationGetDocumentationUploadResponse>,
+  never,
+  ArtworkDocumentationGetDocumentationUploadQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationCompleteDocumentationUploadPathParams {
+  "id": string;
+  "uploadId": string;
+}
+
+export type ArtworkDocumentationCompleteDocumentationUploadQuery = Record<string, never>;
+
+export type ArtworkDocumentationCompleteDocumentationUploadResponse = ApiArtworkDocumentationAssetResponse;
+
+export type ArtworkDocumentationCompleteDocumentationUploadRequest = Request<
+  ArtworkDocumentationCompleteDocumentationUploadPathParams,
+  ApiResponse<ArtworkDocumentationCompleteDocumentationUploadResponse>,
+  ApiArtworkDocumentationCompleteUpload,
+  ArtworkDocumentationCompleteDocumentationUploadQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationSignDocumentationPartsPathParams {
+  "id": string;
+  "uploadId": string;
+}
+
+export type ArtworkDocumentationSignDocumentationPartsQuery = Record<string, never>;
+
+export type ArtworkDocumentationSignDocumentationPartsResponse = ApiArtworkDocumentationSignedPartsResponse;
+
+export type ArtworkDocumentationSignDocumentationPartsRequest = Request<
+  ArtworkDocumentationSignDocumentationPartsPathParams,
+  ApiResponse<ArtworkDocumentationSignDocumentationPartsResponse>,
+  ApiArtworkDocumentationSignPartsRequest,
+  ArtworkDocumentationSignDocumentationPartsQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationConfirmDocumentationPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationConfirmDocumentationQuery = Record<string, never>;
+
+export type ArtworkDocumentationConfirmDocumentationResponse = ApiArtworkDocumentationRevision;
+
+export type ArtworkDocumentationConfirmDocumentationRequest = Request<
+  ArtworkDocumentationConfirmDocumentationPathParams,
+  ApiResponse<ArtworkDocumentationConfirmDocumentationResponse>,
+  ApiArtworkDocumentationConfirmRequest,
+  ArtworkDocumentationConfirmDocumentationQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationListDocumentationGrantsPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationListDocumentationGrantsQuery = Record<string, never>;
+
+export type ArtworkDocumentationListDocumentationGrantsResponse = ApiArtworkDocumentationGrantsResponse;
+
+export type ArtworkDocumentationListDocumentationGrantsRequest = Request<
+  ArtworkDocumentationListDocumentationGrantsPathParams,
+  ApiResponse<ArtworkDocumentationListDocumentationGrantsResponse>,
+  never,
+  ArtworkDocumentationListDocumentationGrantsQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationGrantDocumentationAccessPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationGrantDocumentationAccessQuery = Record<string, never>;
+
+export type ArtworkDocumentationGrantDocumentationAccessResponse = ApiArtworkDocumentationGrantsResponse;
+
+export type ArtworkDocumentationGrantDocumentationAccessRequest = Request<
+  ArtworkDocumentationGrantDocumentationAccessPathParams,
+  ApiResponse<ArtworkDocumentationGrantDocumentationAccessResponse>,
+  ApiArtworkDocumentationGrantRequest,
+  ArtworkDocumentationGrantDocumentationAccessQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationRevokeDocumentationAccessPathParams {
+  "id": string;
+  "grantId": string;
+}
+
+export type ArtworkDocumentationRevokeDocumentationAccessQuery = Record<string, never>;
+
+export type ArtworkDocumentationRevokeDocumentationAccessResponse = ApiArtworkDocumentationGrantsResponse;
+
+export type ArtworkDocumentationRevokeDocumentationAccessRequest = Request<
+  ArtworkDocumentationRevokeDocumentationAccessPathParams,
+  ApiResponse<ArtworkDocumentationRevokeDocumentationAccessResponse>,
+  never,
+  ArtworkDocumentationRevokeDocumentationAccessQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationPatchDocumentationModulePathParams {
+  "id": string;
+  "moduleId": string;
+}
+
+export type ArtworkDocumentationPatchDocumentationModuleQuery = Record<string, never>;
+
+export type ArtworkDocumentationPatchDocumentationModuleResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationPatchDocumentationModuleRequest = Request<
+  ArtworkDocumentationPatchDocumentationModulePathParams,
+  ApiResponse<ArtworkDocumentationPatchDocumentationModuleResponse>,
+  ApiArtworkDocumentationPatchModule,
+  ArtworkDocumentationPatchDocumentationModuleQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationUpgradeDocumentationProfilePathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationUpgradeDocumentationProfileQuery = Record<string, never>;
+
+export type ArtworkDocumentationUpgradeDocumentationProfileResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationUpgradeDocumentationProfileRequest = Request<
+  ArtworkDocumentationUpgradeDocumentationProfilePathParams,
+  ApiResponse<ArtworkDocumentationUpgradeDocumentationProfileResponse>,
+  ApiArtworkDocumentationUpgradeRequest,
+  ArtworkDocumentationUpgradeDocumentationProfileQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationPreviewDocumentationUpgradePathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationPreviewDocumentationUpgradeQuery = Record<string, never>;
+
+export type ArtworkDocumentationPreviewDocumentationUpgradeResponse = ApiArtworkDocumentationUpgradePreview;
+
+export type ArtworkDocumentationPreviewDocumentationUpgradeRequest = Request<
+  ArtworkDocumentationPreviewDocumentationUpgradePathParams,
+  ApiResponse<ArtworkDocumentationPreviewDocumentationUpgradeResponse>,
+  ApiArtworkDocumentationUpgradeRequest,
+  ArtworkDocumentationPreviewDocumentationUpgradeQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationGetDocumentationPublicPreviewPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationGetDocumentationPublicPreviewQuery = Record<string, never>;
+
+export type ArtworkDocumentationGetDocumentationPublicPreviewResponse = ApiArtworkDocumentationPublicPreview;
+
+export type ArtworkDocumentationGetDocumentationPublicPreviewRequest = Request<
+  ArtworkDocumentationGetDocumentationPublicPreviewPathParams,
+  ApiResponse<ArtworkDocumentationGetDocumentationPublicPreviewResponse>,
+  never,
+  ArtworkDocumentationGetDocumentationPublicPreviewQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationListDocumentationRevisionsPathParams {
+  "id": string;
+}
+
+export interface ArtworkDocumentationListDocumentationRevisionsQuery {
+  "cursor"?: string;
+  "limit"?: number;
+}
+
+export type ArtworkDocumentationListDocumentationRevisionsResponse = ApiArtworkDocumentationRevisionListResponse;
+
+export type ArtworkDocumentationListDocumentationRevisionsRequest = Request<
+  ArtworkDocumentationListDocumentationRevisionsPathParams,
+  ApiResponse<ArtworkDocumentationListDocumentationRevisionsResponse>,
+  never,
+  ArtworkDocumentationListDocumentationRevisionsQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationGetDocumentationRevisionPathParams {
+  "id": string;
+  "revisionId": string;
+}
+
+export type ArtworkDocumentationGetDocumentationRevisionQuery = Record<string, never>;
+
+export type ArtworkDocumentationGetDocumentationRevisionResponse = ApiArtworkDocumentationRevision;
+
+export type ArtworkDocumentationGetDocumentationRevisionRequest = Request<
+  ArtworkDocumentationGetDocumentationRevisionPathParams,
+  ApiResponse<ArtworkDocumentationGetDocumentationRevisionResponse>,
+  never,
+  ArtworkDocumentationGetDocumentationRevisionQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationReviewDocumentationPathParams {
+  "id": string;
+  "revisionId": string;
+  "lane": string;
+}
+
+export type ArtworkDocumentationReviewDocumentationQuery = Record<string, never>;
+
+export type ArtworkDocumentationReviewDocumentationResponse = ApiArtworkDocumentationReview;
+
+export type ArtworkDocumentationReviewDocumentationRequest = Request<
+  ArtworkDocumentationReviewDocumentationPathParams,
+  ApiResponse<ArtworkDocumentationReviewDocumentationResponse>,
+  ApiArtworkDocumentationReviewRequest,
+  ArtworkDocumentationReviewDocumentationQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationImportDocumentationSourcePathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationImportDocumentationSourceQuery = Record<string, never>;
+
+export type ArtworkDocumentationImportDocumentationSourceResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationImportDocumentationSourceRequest = Request<
+  ArtworkDocumentationImportDocumentationSourcePathParams,
+  ApiResponse<ArtworkDocumentationImportDocumentationSourceResponse>,
+  ApiArtworkDocumentationSourceImportRequest,
+  ArtworkDocumentationImportDocumentationSourceQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationPreviewDocumentationSourcePathParams {
+  "id": string;
+  "receiptId": string;
+}
+
+export type ArtworkDocumentationPreviewDocumentationSourceQuery = Record<string, never>;
+
+export type ArtworkDocumentationPreviewDocumentationSourceResponse = ApiArtworkDocumentationSourceImportPreview;
+
+export type ArtworkDocumentationPreviewDocumentationSourceRequest = Request<
+  ArtworkDocumentationPreviewDocumentationSourcePathParams,
+  ApiResponse<ArtworkDocumentationPreviewDocumentationSourceResponse>,
+  never,
+  ArtworkDocumentationPreviewDocumentationSourceQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationLinkDocumentationSourcePathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationLinkDocumentationSourceQuery = Record<string, never>;
+
+export type ArtworkDocumentationLinkDocumentationSourceResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationLinkDocumentationSourceRequest = Request<
+  ArtworkDocumentationLinkDocumentationSourcePathParams,
+  ApiResponse<ArtworkDocumentationLinkDocumentationSourceResponse>,
+  ApiArtworkDocumentationSourceLinkRequest,
+  ArtworkDocumentationLinkDocumentationSourceQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationListDocumentationThreadsPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationListDocumentationThreadsQuery = Record<string, never>;
+
+export type ArtworkDocumentationListDocumentationThreadsResponse = ApiArtworkDocumentationThreadsResponse;
+
+export type ArtworkDocumentationListDocumentationThreadsRequest = Request<
+  ArtworkDocumentationListDocumentationThreadsPathParams,
+  ApiResponse<ArtworkDocumentationListDocumentationThreadsResponse>,
+  never,
+  ArtworkDocumentationListDocumentationThreadsQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationCreateDocumentationThreadPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationCreateDocumentationThreadQuery = Record<string, never>;
+
+export type ArtworkDocumentationCreateDocumentationThreadResponse = ApiArtworkDocumentationThread;
+
+export type ArtworkDocumentationCreateDocumentationThreadRequest = Request<
+  ArtworkDocumentationCreateDocumentationThreadPathParams,
+  ApiResponse<ArtworkDocumentationCreateDocumentationThreadResponse>,
+  ApiArtworkDocumentationCreateThread,
+  ArtworkDocumentationCreateDocumentationThreadQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationPatchDocumentationThreadPathParams {
+  "id": string;
+  "threadId": string;
+}
+
+export type ArtworkDocumentationPatchDocumentationThreadQuery = Record<string, never>;
+
+export type ArtworkDocumentationPatchDocumentationThreadResponse = ApiArtworkDocumentationThread;
+
+export type ArtworkDocumentationPatchDocumentationThreadRequest = Request<
+  ArtworkDocumentationPatchDocumentationThreadPathParams,
+  ApiResponse<ArtworkDocumentationPatchDocumentationThreadResponse>,
+  ApiArtworkDocumentationPatchThread,
+  ArtworkDocumentationPatchDocumentationThreadQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationCommentDocumentationThreadPathParams {
+  "id": string;
+  "threadId": string;
+}
+
+export type ArtworkDocumentationCommentDocumentationThreadQuery = Record<string, never>;
+
+export type ArtworkDocumentationCommentDocumentationThreadResponse = ApiArtworkDocumentationThread;
+
+export type ArtworkDocumentationCommentDocumentationThreadRequest = Request<
+  ArtworkDocumentationCommentDocumentationThreadPathParams,
+  ApiResponse<ArtworkDocumentationCommentDocumentationThreadResponse>,
+  ApiArtworkDocumentationCommentRequest,
+  ArtworkDocumentationCommentDocumentationThreadQuery,
+  Record<string, never>
+>;
+
+export type ArtworkDocumentationGetDocumentationProfilesPathParams = Record<string, never>;
+
+export type ArtworkDocumentationGetDocumentationProfilesQuery = Record<string, never>;
+
+export type ArtworkDocumentationGetDocumentationProfilesResponse = ApiArtworkDocumentationProfilesResponse;
+
+export type ArtworkDocumentationGetDocumentationProfilesRequest = Request<
+  ArtworkDocumentationGetDocumentationProfilesPathParams,
+  ApiResponse<ArtworkDocumentationGetDocumentationProfilesResponse>,
+  never,
+  ArtworkDocumentationGetDocumentationProfilesQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationListDocumentationProgramPathParams {
+  "programId": string;
+}
+
+export interface ArtworkDocumentationListDocumentationProgramQuery {
+  "cursor"?: string;
+  "limit"?: number;
+  "confirmation_status"?: "unconfirmed" | "current" | "newer_draft";
+  "review_lane"?: "curatorial" | "technical" | "rights";
+  "outstanding_action"?: "artist_confirmation" | "review" | "changes_requested";
+  "profile_id"?: string;
+  "profile_version"?: number;
+}
+
+export type ArtworkDocumentationListDocumentationProgramResponse = ApiArtworkDocumentationContextListResponse;
+
+export type ArtworkDocumentationListDocumentationProgramRequest = Request<
+  ArtworkDocumentationListDocumentationProgramPathParams,
+  ApiResponse<ArtworkDocumentationListDocumentationProgramResponse>,
+  never,
+  ArtworkDocumentationListDocumentationProgramQuery,
+  Record<string, never>
+>;
+
+export type ArtworkDocumentationListDocumentationWorksPathParams = Record<string, never>;
+
+export interface ArtworkDocumentationListDocumentationWorksQuery {
+  "cursor"?: string;
+  "limit"?: number;
+}
+
+export type ArtworkDocumentationListDocumentationWorksResponse = ApiArtworkDocumentationContextListResponse;
+
+export type ArtworkDocumentationListDocumentationWorksRequest = Request<
+  ArtworkDocumentationListDocumentationWorksPathParams,
+  ApiResponse<ArtworkDocumentationListDocumentationWorksResponse>,
+  never,
+  ArtworkDocumentationListDocumentationWorksQuery,
+  Record<string, never>
+>;
+
+export type ArtworkDocumentationCreateDocumentationWorkPathParams = Record<string, never>;
+
+export type ArtworkDocumentationCreateDocumentationWorkQuery = Record<string, never>;
+
+export type ArtworkDocumentationCreateDocumentationWorkResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationCreateDocumentationWorkRequest = Request<
+  ArtworkDocumentationCreateDocumentationWorkPathParams,
+  ApiResponse<ArtworkDocumentationCreateDocumentationWorkResponse>,
+  ApiArtworkDocumentationCreateWork,
+  ArtworkDocumentationCreateDocumentationWorkQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationGetDocumentationWorkPathParams {
+  "workId": string;
+}
+
+export type ArtworkDocumentationGetDocumentationWorkQuery = Record<string, never>;
+
+export type ArtworkDocumentationGetDocumentationWorkResponse = ApiArtworkDocumentationWork;
+
+export type ArtworkDocumentationGetDocumentationWorkRequest = Request<
+  ArtworkDocumentationGetDocumentationWorkPathParams,
+  ApiResponse<ArtworkDocumentationGetDocumentationWorkResponse>,
+  never,
+  ArtworkDocumentationGetDocumentationWorkQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationCreateDocumentationContextPathParams {
+  "workId": string;
+}
+
+export type ArtworkDocumentationCreateDocumentationContextQuery = Record<string, never>;
+
+export type ArtworkDocumentationCreateDocumentationContextResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationCreateDocumentationContextRequest = Request<
+  ArtworkDocumentationCreateDocumentationContextPathParams,
+  ApiResponse<ArtworkDocumentationCreateDocumentationContextResponse>,
+  ApiArtworkDocumentationCreateContext,
+  ArtworkDocumentationCreateDocumentationContextQuery,
+  Record<string, never>
+>;
 
 export type GetContentModerationBlockActivityPathParams = Record<string, never>;
 
@@ -722,6 +1359,20 @@ export type GetSubscriptionCoverageRequest = Request<
   ApiResponse<GetSubscriptionCoverageResponse>,
   never,
   GetSubscriptionCoverageQuery,
+  Record<string, never>
+>;
+
+export type GetTdhRulesPathParams = Record<string, never>;
+
+export type GetTdhRulesQuery = Record<string, never>;
+
+export type GetTdhRulesResponse = ApiTdhRules;
+
+export type GetTdhRulesRequest = Request<
+  GetTdhRulesPathParams,
+  ApiResponse<GetTdhRulesResponse>,
+  never,
+  GetTdhRulesQuery,
   Record<string, never>
 >;
 

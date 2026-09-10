@@ -39,6 +39,28 @@ const TinyIntToBooleanCaster: TypeCast = function castField(field, next) {
 export const CustomTypeCaster: TypeCast = (field, next) =>
   TinyIntToBooleanCaster(field, () => BigIntToNumberCaster(field, next));
 
+function describeQuery(sql: string, params?: Record<string, unknown>): string {
+  if (/\bartwork_documentation_[a-z_]+\b/i.test(sql)) {
+    return '[private artwork documentation query]';
+  }
+  const normalized = sql.replace('\n', ' ');
+  if (!params) return normalized;
+  return `${normalized} with params ${JSON.stringify(params)}`;
+}
+
+function privateQueryError(original: unknown): Error {
+  const sanitized = new Error(
+    'Private artwork documentation database operation failed'
+  );
+  if (original && typeof original === 'object' && 'code' in original) {
+    const code = original.code;
+    if (typeof code === 'string' && /^(ER_|PROTOCOL_)[A-Z0-9_]+$/.test(code)) {
+      Object.assign(sanitized, { code });
+    }
+  }
+  return sanitized;
+}
+
 export async function execNativeTransactionally<T>(
   executable: (connectionWrapper: ConnectionWrapper<any>) => Promise<T>,
   connection: PoolConnection
@@ -76,13 +98,17 @@ export async function execSQLWithParams<T>(
     };
     const timer = Time.now();
     connection.query({ sql, values: params }, (err: any, result: T[]) => {
+      // Artwork records and archival metadata are private even in infrastructure
+      // logs. Bulk inserts can embed values directly in SQL, so hide both the
+      // statement and parameters for every query touching this table family.
+      const privateArtworkQuery = /\bartwork_documentation_[a-z_]+\b/i.test(
+        sql
+      );
+      const queryDescription = describeQuery(sql, params);
       const queryTook = timer.diffFromNow();
       if (queryTook.gt(Time.seconds(1))) {
         logger.warn(
-          `SQL query took ${queryTook.toMillis()} ms to execute: ${sql.replace(
-            '\n',
-            ' '
-          )}${params ? ` with params ${JSON.stringify(params)}` : ''}`
+          `SQL query took ${queryTook.toMillis()} ms to execute: ${queryDescription}`
         );
       }
       if (closeConnection) {
@@ -90,11 +116,11 @@ export async function execSQLWithParams<T>(
       }
       if (err) {
         logger.error(
-          `Error "${err}" executing SQL query ${sql.replace('\n', ' ')}${
-            params ? ` with params ${JSON.stringify(params)}` : ''
-          }\n`
+          privateArtworkQuery
+            ? 'Database error executing private artwork documentation query'
+            : `Error "${err}" executing SQL query ${queryDescription}\n`
         );
-        reject(err);
+        reject(privateArtworkQuery ? privateQueryError(err) : err);
       } else {
         resolve(Object.values(JSON.parse(JSON.stringify(result))));
       }

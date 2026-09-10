@@ -28,6 +28,27 @@ describe('api CORS constants', () => {
     expect(corsOptions).not.toHaveProperty('credentials');
   });
 
+  it('allows artwork version headers only for approved browser origins', () => {
+    expect(
+      getCorsOptionsForRequest(
+        '/api/artwork-documentation/works',
+        'https://6529.io',
+        'api.6529.io'
+      )
+    ).toMatchObject({
+      origin: 'https://6529.io',
+      allowedHeaders: expect.arrayContaining(['If-Match', 'Idempotency-Key']),
+      exposedHeaders: expect.arrayContaining(['ETag'])
+    });
+    expect(
+      getCorsOptionsForRequest(
+        '/api/artwork-documentation/works',
+        'https://evil.example',
+        'api.6529.io'
+      ).origin
+    ).toBe(false);
+  });
+
   it('uses exact credentialed CORS for the default production web origin on production API', () => {
     expect(
       getCorsOptionsForRequest(

@@ -224,6 +224,22 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 6. S3 and CloudFront serve media. Drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception.
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
+### Alchemy NFT metadata proxy
+
+`GET /alchemy-proxy/contract` retains its existing address lookup: `address`
+must be `0x` followed by 40 hexadecimal characters; missing or malformed input
+returns HTTP 400. It uses V3 `getContractMetadata` and returns the provider
+metadata with `_checksum`, or JSON `null` when the provider returns 404. The
+route retains its five-minute request-cache middleware. FE uses this endpoint
+as fallback for its address-only picker.
+
+Collection-name search is retired: `GET /alchemy-proxy/collections` returns
+HTTP 410 with `Cache-Control: no-store` and the error message
+`Collection name search is no longer available. Use a contract address.`
+It makes no upstream or cache request, including for missing or empty queries.
+The removed search wrapper has no remaining callers; ingestion, ownership
+queries, and token metadata continue using their existing supported endpoints.
+
 ### Content moderation
 
 See [Content moderation](./content-moderation.md) for the complete feature
@@ -277,6 +293,16 @@ WebSocket notification subscription replacement is transactional. New connection
 ## API Boundary
 
 The API is organized by domain routers under `src/api-serverless/src`. The OpenAPI file defines the public contract and generated models. Legacy routes are wired manually, while newer OpenAPI operations can opt into generated route wiring through `x-6529-router` and thin domain handlers.
+
+`GET /tdh/rules` publishes current TDH boost definitions evaluated against the
+latest completed snapshot's eligible Meme card range. The latest row in
+`tdh_blocks` is the completion marker because consolidation persists its TDH
+rows before publishing that block. The API combines the block timestamp with
+Meme mint dates and current season definitions, then applies the calculator's
+shared eligibility and boost helpers. Rule definitions are current server
+configuration, not historical or versioned inputs persisted with the snapshot.
+The public current-season rules and configured future schedule remain
+independent of any collector identity.
 
 Authenticated profiles can delete their own chat history from one wave through
 `DELETE /waves/{id}/my-chat-history`. The API locks the wave and the profile's
@@ -745,6 +771,54 @@ Typical deployment order when schema or generated API contracts change:
 For a documentation-only change, no Lambda redeploy is required.
 
 ## Architecture Notes
+
+### Private artwork documentation archive
+
+The dedicated processor also exposes two IAM-only invocation actions for release
+operators inside the VPC: the code-pinned Keys and Gates roster dry-run/import,
+and an idempotent empty nonprogram smoke context for the existing `punk6529bot`
+identity. These actions use an isolated service feature policy, accept no arbitrary
+SQL, roster or grants, and leave public API feature flags unchanged. Scheduled
+events continue through the archival tick. See the closed event schemas in
+[`artwork-documentation.md`](artwork-documentation.md#operator-access-inside-the-vpc).
+
+Artwork documentation uses a dedicated authenticated API boundary under
+`/artwork-documentation`, with private MySQL drafts and immutable confirmed
+records. `artwork_documentation_works` keeps stable work identity, while separate
+contexts pin profiles, artist-record revisions, module answers and disclosure
+choices. Context row locks guard all content versions, and immutable revisions
+retain confirmation receipts and independent reviewer decisions. Explicit
+context/program grants are separate from Wave roles and proxy authentication.
+The public-record preview removes restricted answers on the server; creating
+another context for a work requires an explicit artist choice and starts empty.
+See [the application contract and pilot runbook](artwork-documentation.md).
+Its file path is separate from public drop uploads and their sanitizer.
+`artworkDocumentationStorage` provisions a private regional versioned S3 bucket
+and GuardDuty Malware Protection plan for `originals/`; it has no CloudFront
+origin. The same stack enrolls only this archive in a daily AWS Backup plan with
+a 35-day recovery window and provisions an isolated private restore destination;
+backup/restore roles have bucket-specific byte access. Multipart part URLs bind byte lengths and SHA-256 checksums. Context quota
+mutex rows serialize reservations in `artwork_documentation_asset_quotas`, while
+`artwork_documentation_assets` stores upload state, immutable object version,
+fixity, access class and a durable processing lease.
+
+`artworkDocumentationProcessor` runs every minute with reserved concurrency one.
+It requires a successful real GuardDuty scan before streaming byte-size/SHA-256
+verification and bounded format inspection. Small supported images can produce
+stripped private previews; large/vendor originals remain intact with honest
+inspection support status. The worker never publishes to the social CDN,
+IPFS/Arweave or Stream. Cleanup commits an expired-state lease under the same
+row lock used by reference/confirmation transactions, then deletes from S3
+outside the transaction. Retained originals cannot be claimed, expired claims
+cannot gain references, and quota is released only after successful deletion;
+failed deletion and interrupted leases retry durably. Original downloads require
+archival access, and rights instruments require their separate evidence capability.
+
+Deploy storage and schema before processor/API, then dependent frontend.
+Feature flags are off by default and can be enabled through environment-specific
+repository variables in the existing deployment pipeline. See
+[archive operations](artwork-documentation-assets-operations.md) for exact units,
+limits, access, recovery, backup/restore and cleanup procedures.
 
 The strongest part of the architecture is its operational decomposition. Expensive, slow, and retryable work is mostly outside the request path, and the loop structure makes individual jobs independently deployable.
 
