@@ -1,5 +1,6 @@
 import { Logger } from '@/logging';
 import { Time } from '@/time';
+import { randomInt } from 'node:crypto';
 
 const logger = Logger.get('OPENSEA_PRICE_FETCH');
 const MAX_ATTEMPTS = 4;
@@ -152,10 +153,7 @@ export async function fetchOpenSeaPricePage(
       }
 
       const backoffMs = 1000 * 2 ** (attempt - 1);
-      const delayMs = Math.max(
-        serverDelayMs,
-        backoffMs + Math.floor(Math.random() * backoffMs)
-      );
+      const delayMs = Math.max(serverDelayMs, backoffMs + randomInt(backoffMs));
       logger.warn(
         `[OPENSEA] Attempt ${attempt}/${MAX_ATTEMPTS} failed for ${url}: ${errorMessage(error)}. Retrying in ${delayMs}ms`
       );

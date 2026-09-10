@@ -1,6 +1,11 @@
 import { fetchOpenSeaPricePage } from '@/marketStatsLoop/opensea-price-fetch';
 import { Time } from '@/time';
 
+jest.mock('node:crypto', () => ({
+  ...jest.requireActual('node:crypto'),
+  randomInt: (max: number) => Math.floor(max / 2)
+}));
+
 const url =
   'https://api.opensea.io/api/v2/offers/collection/test/all?next=page2';
 const transportError = Object.assign(new TypeError('fetch failed'), {
@@ -21,7 +26,6 @@ describe('OpenSea price requests', () => {
     ) {
       delays.push(this.toMillis());
     });
-    jest.spyOn(Math, 'random').mockReturnValue(0.5);
   });
 
   afterEach(() => {
@@ -197,6 +201,34 @@ describe('OpenSea price requests', () => {
   it('does not start requests after the shared deadline', async () => {
     await expect(request(Date.now())).rejects.toThrow('deadline exceeded');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('shortens an in-flight request only to the remaining shared budget', async () => {
+    jest.useFakeTimers();
+    try {
+      let requestSignal: AbortSignal | null | undefined;
+      fetchMock.mockImplementationOnce(async (_url, options) => {
+        requestSignal = options!.signal;
+        return new Promise<never>((_resolve, reject) => {
+          requestSignal!.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError'))
+          );
+        });
+      });
+
+      const pending = expect(request(Date.now() + 1000)).rejects.toThrow(
+        'deadline exceeded'
+      );
+      await jest.advanceTimersByTimeAsync(999);
+      expect(requestSignal?.aborted).toBe(false);
+      await jest.advanceTimersByTimeAsync(1);
+      await pending;
+      expect(requestSignal?.aborted).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(delays).toEqual([]);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('stops retrying when the backoff would exceed the shared deadline', async () => {

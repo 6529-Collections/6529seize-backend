@@ -107,13 +107,13 @@ function parsePricePage<T>(
   const page = data as Record<string, unknown>;
   if (
     !Array.isArray(page[itemLabel]) ||
-    (page.next != null && (typeof page.next !== 'string' || !page.next))
+    (page.next != null && typeof page.next !== 'string')
   ) {
     throw new Error(`[OPENSEA] Invalid ${itemLabel} page for ${url}`);
   }
   return {
     entries: page[itemLabel] as T[],
-    next: (page.next as string | null) ?? null
+    next: (page.next as string | null) || null
   };
 }
 

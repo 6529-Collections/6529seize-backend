@@ -123,6 +123,23 @@ describe('OpenSea price pagination and persistence', () => {
   );
 
   it.each(sources)(
+    'accepts an empty terminal cursor after complete %s results',
+    async (source) => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          [source]: [order(source, '1', '1000000000000000000')],
+          next: ''
+        })
+      );
+
+      await expect(fetchPrices(source)).resolves.toEqual(
+        new Map([['1', { price: 1, maker: 'maker-1000000000000000000' }]])
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each(sources)(
     'rejects a failed later %s page instead of returning partial prices',
     async (source) => {
       fetchMock
@@ -144,8 +161,7 @@ describe('OpenSea price pagination and persistence', () => {
     {},
     { offers: null },
     { offers: {} },
-    { offers: [], next: 123 },
-    { offers: [], next: '' }
+    { offers: [], next: 123 }
   ])('rejects an invalid page payload: %j', async (payload) => {
     fetchMock.mockResolvedValueOnce(Response.json(payload));
     await expect(fetchBestOffersForCollection('collection', 3)).rejects.toThrow(
