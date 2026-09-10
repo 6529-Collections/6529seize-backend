@@ -38,7 +38,7 @@ describe('CMS durable storage', () => {
     );
     await expect(storage.verify(receipt)).resolves.toEqual(bytes);
     expect(download).toHaveBeenCalledWith(
-      `https://arweave.net/${'a'.repeat(43)}`,
+      `https://arweave.net/raw/${'a'.repeat(43)}`,
       expect.objectContaining({
         redirect: 'error',
         timeout: 8000,
@@ -60,6 +60,25 @@ describe('CMS durable storage', () => {
     await expect(storage.verify(receipt)).rejects.toMatchObject({
       code: 'cms_storage_pending'
     });
+  });
+
+  it('treats HTTP 202 as pending and verifies the same receipt after propagation', async () => {
+    const pending = new Response('pending', { status: 202 });
+    const download = jest
+      .fn()
+      .mockResolvedValueOnce(pending)
+      .mockResolvedValueOnce(new Response(bytes));
+    const storage = new ProfileCmsPublicationStorage(
+      undefined,
+      undefined,
+      download as unknown as typeof fetch
+    );
+
+    await expect(storage.verify(receipt)).rejects.toMatchObject({
+      code: 'cms_storage_pending'
+    });
+    expect(pending.bodyUsed).toBe(false);
+    await expect(storage.verify(receipt)).resolves.toEqual(bytes);
   });
 
   it('rejects hash mismatches and unsupported URLs before following redirects or arbitrary hosts', async () => {

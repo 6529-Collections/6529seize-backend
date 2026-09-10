@@ -285,9 +285,11 @@ receipt:
 
 The API also fetches the canonical object from the fixed Arweave/IPFS gateways,
 with redirects disabled, an 8-second timeout, and a 2 MiB limit. It compares the
-SHA-256 of the actual bytes with the signed package hash. A missing or propagating
-object returns `503 cms_storage_pending`; mismatched bytes are rejected. The
-primary pointer stays unchanged and the draft remains retryable.
+SHA-256 of the actual bytes with the signed package hash. Arweave reads use its
+raw-data endpoint to avoid browser sandbox redirects and manifest resolution.
+Only HTTP 200 supplies verifiable content; a missing or propagating object,
+including HTTP 202, returns `503 cms_storage_pending`. Mismatched bytes are
+rejected. The primary pointer stays unchanged and the draft remains retryable.
 
 ### Draft Upload And Signed Recovery Manifest
 
