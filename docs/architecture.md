@@ -380,8 +380,8 @@ Important API responsibilities:
   checks, rollback/archive endpoints, and package export data for future
   standalone renderers and mirrors.
 - Authenticated profile-native CMS wallet gallery snapshots under
-  `/profile-cms/wallet-gallery/snapshot`, gated by
-  `FEATURE_PROFILE_CMS_WALLET_GALLERY`, reading current indexed NFT ownership
+  `/profile-cms/wallet-gallery/snapshot`, enabled by default with an explicit
+  `FEATURE_PROFILE_CMS_WALLET_GALLERY=false` override, reading indexed NFT ownership
   and normalized media from MySQL for deterministic gallery generation.
 - Profile-native CMS BYO-agent affordances under `/profile-cms/agent` and
   `/profile-cms/packages/{id}/agent`, including a public schema bundle,
@@ -484,12 +484,26 @@ consumes the verified typed-data hash to prevent publish-intent replay, and
 supersedes the previous primary package in one transaction.
 
 Profile CMS pointer history is stored in `profile_cms_pointer_events`. Publish,
-set-primary, supersede, rollback, and archive events keep package hashes,
+set-primary, supersede, rollback, unpublish, and archive events keep package hashes,
 previous-primary links, actor profile ids, signature metadata, and canonical
 storage receipts. `event_sequence` preserves logical ordering for events written
 in the same millisecond so the primary pointer history can be reconstructed and
 exported for future mirrors. Consumed publish intent hashes are stored in
 `profile_cms_publish_signatures`.
+
+CMS storage upload uses `profile_cms_uploads` for durable receipt reuse, expiring
+upload leases, and profile upload quotas. Its nullable `upload_state` checkpoints
+the signed public Arweave transaction, original bytes, and chunk progress before
+submission, allowing retries to resume the same transaction after a lost provider
+or database acknowledgement. A final receipt atomically clears the checkpoint.
+The content core is stored separately
+from a `6529.cms.publication.v1` signed recovery manifest containing the complete
+EIP-712 intent and signature envelope. `profile_cms_packages.recovery_receipt`
+locates that manifest. The API fetches and hashes both remote objects before
+atomically activating a primary pointer. Unpublish removes only that pointer;
+restoring a prior publication checks the caller's expected current state. Schema
+rollout is additive: deploy `dbMigrationsLoop`, then `api`; existing published
+packages remain readable without retroactive manifest generation.
 
 Profile CMS wallet gallery snapshots are read-only API projections over
 `nft_owners`, `ens`, `nfts`, `nfts_meme_lab`, and `nextgen_tokens`. They do not

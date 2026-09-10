@@ -1,8 +1,10 @@
-import { PROFILE_CMS_PACKAGES_TABLE } from '@/constants';
+import { PROFILES_TABLE, PROFILE_CMS_PACKAGES_TABLE } from '@/constants';
 import {
   ProfileCmsPackageEntity,
   ProfileCmsPackageStatus
 } from '@/entities/IProfileCmsPackage';
+import { DbPoolName, DbQueryOptions } from '@/db-query.options';
+import { NotFoundException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
 import {
   ConnectionWrapper,
@@ -123,7 +125,8 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
         'findById',
         `select * from ${PROFILE_CMS_PACKAGES_TABLE} where id = :id`,
         { id },
-        ctx
+        ctx,
+        DbPoolName.WRITE
       )
     );
   }
@@ -207,14 +210,16 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
          where profile_id = :profileId ${statusFilter}
          order by version desc, updated_at desc`,
         { profileId },
-        ctx
+        ctx,
+        includePrivate ? DbPoolName.WRITE : undefined
       )
     );
   }
 
   async findPrimaryPublishedByProfileId(
     profileId: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    forcePool?: DbPoolName
   ): Promise<ProfileCmsPackageEntity | null> {
     return this.hydrate(
       await this.timedOneOrNull<ProfileCmsPackageEntity>(
@@ -227,7 +232,8 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
          order by published_at desc, updated_at desc
          limit 1`,
         { profileId },
-        ctx
+        ctx,
+        forcePool
       )
     );
   }
@@ -272,15 +278,20 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
   async lockProfilePackagesForUpdate(
     profileId: string,
     ctx: RequestContext
-  ): Promise<void> {
-    await this.timedExecute(
+  ): Promise<string> {
+    const profile = await this.timedOneOrNull<{
+      external_id: string;
+      handle: string;
+    }>(
       'lockProfilePackagesForUpdate',
-      `select id from ${PROFILE_CMS_PACKAGES_TABLE}
-       where profile_id = :profileId
+      `select external_id, handle from ${PROFILES_TABLE}
+       where external_id = :profileId
        for update`,
       { profileId },
       ctx
     );
+    if (!profile) throw new NotFoundException('CMS profile not found');
+    return profile.handle;
   }
 
   async markValidating(
@@ -406,6 +417,53 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async updateStorageReceipt(
+    fields: {
+      readonly id: string;
+      readonly cms_package: unknown;
+      readonly storage_receipts: unknown;
+      readonly storage_provider: string | null;
+      readonly storage_uri: string | null;
+      readonly storage_content_hash: string | null;
+      readonly storage_provider_content_id: string | null;
+      readonly storage_recorded_at: string | null;
+      readonly storage_pinned: boolean | null;
+      readonly storage_canonical: boolean | null;
+      readonly updated_at: number;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.timedExecute(
+      'updateStorageReceipt',
+      `update ${PROFILE_CMS_PACKAGES_TABLE}
+       set cms_package = :cms_package,
+           storage_receipts = :storage_receipts,
+           storage_provider = :storage_provider,
+           storage_uri = :storage_uri,
+           storage_content_hash = :storage_content_hash,
+           storage_provider_content_id = :storage_provider_content_id,
+           storage_recorded_at = :storage_recorded_at,
+           storage_pinned = :storage_pinned,
+           storage_canonical = :storage_canonical,
+           updated_at = :updated_at
+       where id = :id`,
+      {
+        id: fields.id,
+        cms_package: JSON.stringify(fields.cms_package),
+        storage_receipts: JSON.stringify(fields.storage_receipts),
+        storage_provider: fields.storage_provider,
+        storage_uri: fields.storage_uri,
+        storage_content_hash: fields.storage_content_hash,
+        storage_provider_content_id: fields.storage_provider_content_id,
+        storage_recorded_at: fields.storage_recorded_at,
+        storage_pinned: nullableBooleanParam(fields.storage_pinned),
+        storage_canonical: nullableBooleanParam(fields.storage_canonical),
+        updated_at: fields.updated_at
+      },
+      ctx
+    );
+  }
+
   async archive(id: string, now: number, ctx: RequestContext): Promise<void> {
     await this.timedExecute(
       'archive',
@@ -420,6 +478,49 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
         now,
         status: ProfileCmsPackageStatus.ARCHIVED
       },
+      ctx
+    );
+  }
+
+  async setRecoveryReceipt(
+    id: string,
+    receipt: unknown,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.timedExecute(
+      'setRecoveryReceipt',
+      `update ${PROFILE_CMS_PACKAGES_TABLE} set recovery_receipt = :receipt where id = :id`,
+      { id, receipt: JSON.stringify(receipt) },
+      ctx
+    );
+  }
+
+  async recordDraftFailure(
+    id: string,
+    result: unknown,
+    error: string,
+    now: number,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.timedExecute(
+      'recordDraftFailure',
+      `update ${PROFILE_CMS_PACKAGES_TABLE} set validation_result = :result, validation_error = :error, validated_at = :now, failed_at = :now where id = :id and status = :status`,
+      {
+        id,
+        result: JSON.stringify(result),
+        error,
+        now,
+        status: ProfileCmsPackageStatus.DRAFT
+      },
+      ctx
+    );
+  }
+
+  async unpublish(id: string, now: number, ctx: RequestContext): Promise<void> {
+    await this.timedExecute(
+      'unpublish',
+      `update ${PROFILE_CMS_PACKAGES_TABLE} set is_primary = false, status = :status, updated_at = :now where id = :id and status = 'PUBLISHED' and is_primary = true`,
+      { id, now, status: ProfileCmsPackageStatus.SUPERSEDED },
       ctx
     );
   }
@@ -474,6 +575,7 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
       cms_package: parseJsonColumn(row.cms_package),
       validation_result: parseJsonColumn(row.validation_result),
       storage_receipts: parseJsonColumn(row.storage_receipts),
+      recovery_receipt: parseJsonColumn(row.recovery_receipt),
       is_primary: !!row.is_primary,
       production_valid: !!row.production_valid,
       storage_pinned: nullableBoolean(row.storage_pinned),
@@ -508,14 +610,15 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
     timerName: string,
     sql: string,
     params: Record<string, unknown>,
-    ctx: RequestContext
+    ctx: RequestContext,
+    forcePool?: DbPoolName
   ): Promise<T[]> {
     ctx.timer?.start(`${this.constructor.name}->${timerName}`);
     try {
       return await this.db.execute<T>(
         sql,
         params,
-        this.options(ctx.connection)
+        this.options(ctx.connection, forcePool)
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->${timerName}`);
@@ -526,14 +629,15 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
     timerName: string,
     sql: string,
     params: Record<string, unknown>,
-    ctx: RequestContext
+    ctx: RequestContext,
+    forcePool?: DbPoolName
   ): Promise<T | null> {
     ctx.timer?.start(`${this.constructor.name}->${timerName}`);
     try {
       return await this.db.oneOrNull<T>(
         sql,
         params,
-        this.options(ctx.connection)
+        this.options(ctx.connection, forcePool)
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->${timerName}`);
@@ -541,9 +645,10 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
   }
 
   private options(
-    connection: ConnectionWrapper<unknown> | undefined
-  ): { wrappedConnection: ConnectionWrapper<unknown> } | undefined {
-    return connection ? { wrappedConnection: connection } : undefined;
+    connection: ConnectionWrapper<unknown> | undefined,
+    forcePool?: DbPoolName
+  ): DbQueryOptions {
+    return { wrappedConnection: connection, forcePool };
   }
 }
 

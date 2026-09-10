@@ -76,6 +76,7 @@ const child = aWave({
 const standalone = aWave({ visibility_group_id: zero.id });
 const privateWave = aWave({ visibility_group_id: privateZero.id });
 
+/** Creates a persisted socket fixture with an expiry beyond the test period. */
 function connection(
   connectionId: string,
   identityId: string | null,
@@ -107,6 +108,7 @@ type Recipient = {
   wave_id: string | null;
 };
 
+/** Sorts complete recipient rows without removing duplicates from the comparison. */
 function sortedRows(rows: Recipient[]): string[] {
   return rows
     .map((row) =>
@@ -165,6 +167,7 @@ describeWithSeed(
 
     afterEach(() => jest.restoreAllMocks());
 
+    /** Executes the real generated query for comparison with the optimized path. */
     async function groupRecipients(
       groupId: string,
       optimized: boolean
