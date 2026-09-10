@@ -16,6 +16,7 @@ import {
   canReadOriginal,
   expectedPartSize,
   requireAssetWrite,
+  requirePublicationAsset,
   validateAssetParts,
   validateStartUpload
 } from '@/artwork-documentation/assets/artwork-assets.policy';
@@ -111,6 +112,7 @@ export class ArtworkAssetsService {
     idempotencyKey: string
   ) {
     requireAssetWrite(access, input.role);
+    requirePublicationAsset(access, input);
     const extension = validateStartUpload(input);
     if (
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -164,6 +166,7 @@ export class ArtworkAssetsService {
       contextId,
       async (asset, connection) => {
         requireTransferAccess(asset, access);
+        requirePublicationAsset(access, asset);
         if (asset.state !== 'created') return;
         if (Number(asset.expires_at) <= Date.now())
           assetError(409, 'UPLOAD_NOT_ACTIVE');
@@ -185,6 +188,7 @@ export class ArtworkAssetsService {
   async getUpload(contextId: string, uploadId: string, access: AssetAccess) {
     const asset = await this.getAsset(contextId, uploadId, access);
     requireTransferAccess(asset, access);
+    requirePublicationAsset(access, asset);
     const parts =
       asset.state === 'uploading' ? await this.storage.parts(asset) : [];
     return {
@@ -208,6 +212,7 @@ export class ArtworkAssetsService {
       contextId,
       async (asset, connection) => {
         requireTransferAccess(asset, access);
+        requirePublicationAsset(access, asset);
         requireUploading(asset);
         validateAssetParts(input.parts, Number(asset.size_bytes));
         const state = partState(asset);
@@ -252,6 +257,7 @@ export class ArtworkAssetsService {
       contextId,
       async (asset, connection) => {
         requireTransferAccess(asset, access);
+        requirePublicationAsset(access, asset);
         const completionHash = validateCompletionParts(asset, input.parts);
         if (asset.state === 'processing' || asset.state === 'ready')
           return { asset: manifest(asset) };
@@ -351,6 +357,7 @@ export class ArtworkAssetsService {
       connection,
       Boolean(connection)
     );
+    requirePublicationAsset(access, asset);
     if (
       asset.state !== 'ready' ||
       !asset.sha256 ||
@@ -387,6 +394,8 @@ export class ArtworkAssetsService {
       true
     );
     const role = input.role ?? asset.role;
+    requirePublicationAsset(access, asset);
+    requirePublicationAsset(access, { ...input, role });
     validateStartUpload({
       filename: asset.filename,
       size_bytes: Number(asset.size_bytes),

@@ -17,6 +17,7 @@ export function emptyCapabilities(): Capabilities {
     read_rights_evidence: false,
     read_source_receipts: false,
     read_contact: false,
+    read_restricted_fields: false,
     confirm_as_artist: false,
     review_lanes: [],
     manage_assignments: false,
@@ -31,6 +32,7 @@ export function artistCapabilities(): Capabilities {
     read_rights_evidence: true,
     read_source_receipts: true,
     read_contact: true,
+    read_restricted_fields: true,
     confirm_as_artist: true,
     review_lanes: [],
     manage_assignments: true,
@@ -79,6 +81,7 @@ export function canReadField(
   const effectiveRestricted =
     restricted || access.context.restricted_paths.includes(path);
   if (!effectiveRestricted) return true;
+  if (access.capabilities.read_restricted_fields) return true;
   if (path.startsWith('rights.'))
     return access.capabilities.read_rights_evidence;
   if (
@@ -128,7 +131,8 @@ function validateEvidenceGrant(
     'read_archival_files',
     'read_rights_evidence',
     'read_source_receipts',
-    'read_contact'
+    'read_contact',
+    'read_restricted_fields'
   ] as const) {
     if (
       grant[key] &&
