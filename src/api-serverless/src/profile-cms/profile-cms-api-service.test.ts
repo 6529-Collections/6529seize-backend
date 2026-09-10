@@ -13,20 +13,27 @@ import {
 import { ProfileCmsPointerEventType } from '@/entities/IProfileCmsPointerEvent';
 import {
   BadRequestException,
+  CustomApiCompliantException,
   ForbiddenException,
   NotFoundException
 } from '@/exceptions';
 import { ProfileCmsPackagesDb } from '@/profile-cms/profile-cms-packages.db';
 import { ProfileCmsPointerEventsDb } from '@/profile-cms/profile-cms-pointer-events.db';
 import { ProfileCmsPublishSignaturesDb } from '@/profile-cms/profile-cms-publish-signatures.db';
+import { ProfileCmsPublicationStorage } from '@/profile-cms/profile-cms-publication-storage';
+import { ProfileCmsUploadsDb } from '@/profile-cms/profile-cms-uploads.db';
 import { ProfileCmsStorageReceiptVerifier } from '@/profile-cms/profile-cms-storage';
 import { ProfileCmsPublishSignatureVerificationResult } from '@/profile-cms/profile-cms-signing';
 import {
+  canonicalizeJson,
   CMS_AGENT_PATCH_MAX_OPERATIONS,
   CMS_AGENT_PATCH_SCHEMA,
   CmsAgentPatchV1,
-  CmsPackageV1
+  CmsPackageV1,
+  toPackageHashInput
 } from '@/profile-cms/protocol/v1';
+import { createHash } from 'node:crypto';
+import { ArweaveFileUploader } from '@/arweave';
 import { RequestContext } from '@/request.context';
 import { ConnectionWrapper } from '@/sql-executor';
 import {
@@ -42,6 +49,9 @@ import type { IdentityFetcher } from '@/api/identities/identity.fetcher';
 type PackagesDbMock = Pick<
   ProfileCmsPackagesDb,
   | 'getNextVersion'
+  | 'recordDraftFailure'
+  | 'setRecoveryReceipt'
+  | 'unpublish'
   | 'insert'
   | 'findById'
   | 'findByIdForUpdate'
@@ -59,6 +69,12 @@ type PackagesDbMock = Pick<
   | 'markValidating'
   | 'supersedePrimaryForProfile'
   | 'executeNativeQueriesInTransaction'
+  | 'updateStorageReceipt'
+>;
+
+type ArweaveUploaderMock = Pick<
+  ArweaveFileUploader,
+  'uploadFileWithTransactionId'
 >;
 
 type PointerEventsDbMock = Pick<
@@ -82,11 +98,19 @@ describe('ProfileCmsApiService', () => {
   let publishSignaturesDb: jest.Mocked<PublishSignaturesDbMock>;
   let identityFetcher: jest.Mocked<IdentityFetcherMock>;
   let publishSignatureVerifier: jest.Mock;
+  let arweaveUploader: jest.Mocked<ArweaveUploaderMock>;
   let service: ProfileCmsApiService;
+  let originalArweaveKey: string | undefined;
+  let publicationStorage: ProfileCmsPublicationStorage;
 
   beforeEach(() => {
+    originalArweaveKey = process.env.ARWEAVE_KEY;
+    process.env.ARWEAVE_KEY = '{"kty":"RSA"}';
     packagesDb = {
       getNextVersion: jest.fn(),
+      recordDraftFailure: jest.fn(),
+      setRecoveryReceipt: jest.fn(),
+      unpublish: jest.fn(),
       insert: jest.fn(),
       findById: jest.fn(),
       findByIdForUpdate: jest.fn(),
@@ -96,14 +120,17 @@ describe('ProfileCmsApiService', () => {
       findPrimaryPublishedByProfileId: jest.fn(),
       findPrimaryPublishedByProfileIdForUpdate: jest.fn(),
       listByProfile: jest.fn(),
-      lockProfilePackagesForUpdate: jest.fn(),
+      lockProfilePackagesForUpdate: jest
+        .fn()
+        .mockResolvedValue(PROFILE_CMS_FIXTURE_HANDLE),
       archive: jest.fn(),
       markFailed: jest.fn(),
       markPrimary: jest.fn(),
       markPublished: jest.fn(),
       markValidating: jest.fn(),
       supersedePrimaryForProfile: jest.fn(),
-      executeNativeQueriesInTransaction: jest.fn()
+      executeNativeQueriesInTransaction: jest.fn(),
+      updateStorageReceipt: jest.fn()
     };
     pointerEventsDb = {
       insert: jest.fn(),
@@ -134,14 +161,42 @@ describe('ProfileCmsApiService', () => {
     publishSignatureVerifier = jest.fn(async ({ request }) =>
       createSignatureVerification(request.signer_address)
     );
+    arweaveUploader = {
+      uploadFileWithTransactionId: jest.fn().mockResolvedValue({
+        url: 'https://arweave.net/' + 'a'.repeat(43),
+        transaction_id: 'a'.repeat(43)
+      })
+    };
+    process.env.ARWEAVE_KEY = 'configured-for-test';
+    publicationStorage = new ProfileCmsPublicationStorage(
+      {
+        reserve: jest.fn(async (id: string) => ({ id, token: 'lease' })),
+        complete: jest.fn(),
+        release: jest.fn()
+      } as unknown as ProfileCmsUploadsDb,
+      arweaveUploader as unknown as ArweaveFileUploader
+    );
+    jest
+      .spyOn(publicationStorage, 'verify')
+      .mockResolvedValue(Buffer.from('{}'));
     service = new ProfileCmsApiService(
       packagesDb as unknown as ProfileCmsPackagesDb,
       identityFetcher as unknown as IdentityFetcher,
       pointerEventsDb as unknown as ProfileCmsPointerEventsDb,
       publishSignaturesDb as unknown as ProfileCmsPublishSignaturesDb,
       new ProfileCmsStorageReceiptVerifier(),
-      publishSignatureVerifier
+      publishSignatureVerifier,
+      arweaveUploader as unknown as ArweaveFileUploader,
+      publicationStorage
     );
+  });
+
+  afterEach(() => {
+    if (originalArweaveKey === undefined) {
+      delete process.env.ARWEAVE_KEY;
+    } else {
+      process.env.ARWEAVE_KEY = originalArweaveKey;
+    }
   });
 
   it('saves a draft CMS package for the profile owner', async () => {
@@ -161,7 +216,10 @@ describe('ProfileCmsApiService', () => {
 
     expect(result).toMatchObject({
       id: expect.any(String),
-      package: cmsPackage,
+      package: expect.objectContaining({
+        payload: cmsPackage.payload,
+        integrity: cmsPackage.integrity
+      }),
       profile_id: PROFILE_CMS_FIXTURE_PROFILE_ID,
       profile_handle: PROFILE_CMS_FIXTURE_HANDLE,
       package_id: cmsPackage.package_id,
@@ -175,14 +233,9 @@ describe('ProfileCmsApiService', () => {
         status: ProfileCmsPackageStatus.DRAFT,
         primary_path: `/${PROFILE_CMS_FIXTURE_HANDLE}/index.html`,
         production_valid: false,
-        storage_provider: 'ipfs',
-        storage_uri:
-          'ipfs://bafybeigdyrztmrgfydgytzqojqfaytmqmvqwxqk66xcs4i6hj5yq',
+        storage_provider: 'fixture',
         storage_content_hash: cmsPackage.integrity.package_hash,
-        storage_provider_content_id:
-          'bafybeigdyrztmrgfydgytzqojqfaytmqmvqwxqk66xcs4i6hj5yq',
-        storage_pinned: true,
-        storage_canonical: true
+        storage_canonical: false
       }),
       expect.any(Object)
     );
@@ -750,7 +803,10 @@ describe('ProfileCmsApiService', () => {
     expect(packagesDb.markValidating).not.toHaveBeenCalled();
   });
 
-  it('rejects invalid packages before production publish and records failure state', async () => {
+  it('rejects publish when the draft has no real canonical storage receipt', async () => {
+    // Realistic "not uploaded to decentralized storage yet" state: fixture
+    // signature + fixture-only storage. After the server discards the fixture
+    // storage there is no real canonical receipt, so publish must fail closed.
     const invalidPackage = createFixtureOnlyPackage();
     const entity = createEntity({
       cms_package: invalidPackage,
@@ -762,19 +818,104 @@ describe('ProfileCmsApiService', () => {
     await expect(
       service.publish(entity.id, publishSignatureRequest(), ownerContext())
     ).rejects.toBeInstanceOf(BadRequestException);
-    expect(packagesDb.markValidating).toHaveBeenCalledWith(
-      entity.id,
-      expect.any(Number),
-      expect.any(Object)
-    );
-    expect(packagesDb.markFailed).toHaveBeenCalledWith(
+    expect(packagesDb.markValidating).not.toHaveBeenCalled();
+    expect(packagesDb.recordDraftFailure).toHaveBeenCalledWith(
       entity.id,
       expect.objectContaining({ valid: false }),
-      expect.stringContaining('signature.fixture_not_allowed'),
+      expect.any(String),
       expect.any(Number),
       expect.any(Object)
     );
     expect(packagesDb.markPublished).not.toHaveBeenCalled();
+    expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
+  });
+
+  it('rebuilds fixture placeholders into a real signature envelope and real storage on publish', async () => {
+    // The realistic post-storage-upload draft state: the package still carries
+    // a fixture signature placeholder plus a fixture storage entry alongside the
+    // real Arweave receipt. Publish must discard the fixtures and persist the
+    // real, server-verified signature envelope and the real canonical receipt.
+    const stored = createMixedFixtureAndRealPackage();
+    const draft = createEntity({ cms_package: stored });
+    const published = createEntity({
+      id: draft.id,
+      status: ProfileCmsPackageStatus.PUBLISHED,
+      is_primary: true,
+      published_at: 1234,
+      production_valid: true
+    });
+    packagesDb.findById
+      .mockResolvedValueOnce(draft)
+      .mockResolvedValueOnce(published);
+    packagesDb.findByIdForUpdate.mockResolvedValue(draft);
+    packagesDb.findPrimaryPublishedByProfileIdForUpdate.mockResolvedValue(null);
+
+    await service.publish(
+      draft.id,
+      {
+        expected_package_hash: draft.package_hash,
+        expected_payload_hash: draft.payload_hash,
+        ...publishSignatureRequest()
+      },
+      ownerContext()
+    );
+
+    // The rebuilt package is persisted before the row is marked published.
+    expect(packagesDb.updateStorageReceipt).toHaveBeenCalledTimes(1);
+    const [persistArgs] = packagesDb.updateStorageReceipt.mock.calls[0];
+    const persistedPackage = persistArgs.cms_package as CmsPackageV1;
+
+    // Exactly one eip712 envelope carrying the request signer + signature.
+    expect(persistedPackage.signatures).toHaveLength(1);
+    expect(persistedPackage.signatures[0]).toMatchObject({
+      type: 'eip712',
+      signer: '0xf58fe66af1a8c792cd64d8d706eddabadfcb2fd0',
+      signature: '0xsignature'
+    });
+    expect(persistedPackage.signatures[0].signature).not.toBe('0x1234');
+    expect(
+      persistedPackage.signatures.some(
+        (signature) => signature.type === 'fixture'
+      )
+    ).toBe(false);
+
+    // No fixture storage entries; the real canonical Arweave receipt survives.
+    expect(
+      persistedPackage.storage.some((receipt) => receipt.provider === 'fixture')
+    ).toBe(false);
+    const canonicalReceipts = persistedPackage.storage.filter(
+      (receipt) => receipt.canonical
+    );
+    expect(canonicalReceipts).toHaveLength(1);
+    expect(canonicalReceipts[0]).toMatchObject({
+      provider: 'arweave',
+      content_hash: stored.integrity.package_hash
+    });
+
+    // Hash invariance: stripping signatures/storage keeps package_hash intact.
+    expect(persistedPackage.integrity.package_hash).toBe(
+      stored.integrity.package_hash
+    );
+    expect(toPackageHashInput(persistedPackage)).toEqual(
+      toPackageHashInput(stored)
+    );
+    expect(persistArgs.storage_provider).toBe('arweave');
+    expect(persistArgs.storage_content_hash).toBe(
+      stored.integrity.package_hash
+    );
+    expect(persistArgs.storage_canonical).toBe(true);
+
+    expect(packagesDb.markPublished).toHaveBeenCalledWith(
+      draft.id,
+      PROFILE_CMS_FIXTURE_PROFILE_ID,
+      expect.objectContaining({ valid: true }),
+      expect.any(Number),
+      expect.objectContaining({ connection: expect.any(Object) })
+    );
+    // Persist happens under the transaction, before markPublished flips status.
+    expect(
+      packagesDb.updateStorageReceipt.mock.invocationCallOrder[0]
+    ).toBeLessThan(packagesDb.markPublished.mock.invocationCallOrder[0]);
   });
 
   it('publishes a valid draft and supersedes the previous primary package', async () => {
@@ -945,7 +1086,7 @@ describe('ProfileCmsApiService', () => {
     await expect(
       service.publish(draft.id, publishSignatureRequest(), ownerContext())
     ).rejects.toBeInstanceOf(BadRequestException);
-    expect(packagesDb.markFailed).toHaveBeenCalledWith(
+    expect(packagesDb.recordDraftFailure).toHaveBeenCalledWith(
       draft.id,
       expect.objectContaining({ valid: false }),
       expect.stringContaining('storage.s3_cannot_be_canonical'),
@@ -1154,7 +1295,7 @@ describe('ProfileCmsApiService', () => {
         { expected_current_package_id: 'other-package' },
         ownerContext()
       )
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: 'cms_primary_changed' });
     expect(packagesDb.markPrimary).not.toHaveBeenCalled();
   });
 
@@ -1174,6 +1315,493 @@ describe('ProfileCmsApiService', () => {
       )
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(packagesDb.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects rollback to a published row that still carries fixture placeholders', async () => {
+    // Rollback re-points to an already-published package; the production-safe
+    // guard must reject any row whose stored package retained fixtures, so no
+    // fixture-validation trap can promote an unsafe package to primary.
+    const target = createEntity({
+      id: 'previous-package',
+      status: ProfileCmsPackageStatus.SUPERSEDED,
+      production_valid: true,
+      cms_package: createFixtureOnlyPackage()
+    });
+    packagesDb.findById.mockResolvedValue(target);
+
+    await expect(
+      service.rollbackPrimary(
+        target.id,
+        { expected_current_package_id: 'current-package' },
+        ownerContext()
+      )
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(packagesDb.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('unpublishes the current package atomically with an audit event', async () => {
+    const current = createEntity({
+      status: ProfileCmsPackageStatus.PUBLISHED,
+      is_primary: true,
+      production_valid: true,
+      published_at: 1000
+    });
+    const removed = createEntity({
+      ...current,
+      status: ProfileCmsPackageStatus.SUPERSEDED,
+      is_primary: false
+    });
+    packagesDb.findById
+      .mockResolvedValueOnce(current)
+      .mockResolvedValue(removed);
+    packagesDb.findByIdForUpdate.mockResolvedValue(current);
+    packagesDb.findPrimaryPublishedByProfileIdForUpdate.mockResolvedValue(
+      current
+    );
+    await expect(
+      service.unpublishPackage(
+        current.id,
+        {
+          expected_current_package_id: current.id,
+          expected_current_package_hash: current.package_hash
+        },
+        ownerContext()
+      )
+    ).resolves.toMatchObject({ is_primary: false, status: 'superseded' });
+    expect(packagesDb.unpublish).toHaveBeenCalledWith(
+      current.id,
+      expect.any(Number),
+      expect.objectContaining({ connection: expect.any(Object) })
+    );
+    expect(pointerEventsDb.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: ProfileCmsPointerEventType.UNPUBLISH,
+        package_db_id: current.id
+      }),
+      expect.objectContaining({ connection: expect.any(Object) })
+    );
+  });
+
+  it('retries unpublish without duplicate audit or removal of a newer primary', async () => {
+    const target = createEntity({
+      status: ProfileCmsPackageStatus.SUPERSEDED,
+      production_valid: true,
+      published_at: 1000
+    });
+    const request = {
+      expected_current_package_id: target.id,
+      expected_current_package_hash: target.package_hash
+    };
+    packagesDb.findById.mockResolvedValue(target);
+    packagesDb.findByIdForUpdate.mockResolvedValue(target);
+    packagesDb.findPrimaryPublishedByProfileIdForUpdate.mockResolvedValue(null);
+    await service.unpublishPackage(target.id, request, ownerContext());
+    expect(packagesDb.unpublish).not.toHaveBeenCalled();
+    expect(pointerEventsDb.insert).not.toHaveBeenCalled();
+    packagesDb.findPrimaryPublishedByProfileIdForUpdate.mockResolvedValue(
+      createEntity({ id: 'new-primary' })
+    );
+    await expect(
+      service.unpublishPackage(target.id, request, ownerContext())
+    ).rejects.toMatchObject({ code: 'cms_primary_changed' });
+    expect(packagesDb.unpublish).not.toHaveBeenCalled();
+  });
+
+  it('requires publish authority and both current-pointer fields for unpublish', async () => {
+    const target = createEntity();
+    packagesDb.findById.mockResolvedValue(target);
+    const request = {
+      expected_current_package_id: target.id,
+      expected_current_package_hash: target.package_hash
+    };
+    await expect(
+      service.unpublishPackage(target.id, request, {})
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      service.unpublishPackage(
+        target.id,
+        { expected_current_package_id: target.id },
+        ownerContext()
+      )
+    ).rejects.toBeInstanceOf(CustomApiCompliantException);
+    expect(packagesDb.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('restores an unpublished package when the caller observed no primary', async () => {
+    const target = createEntity({
+      status: ProfileCmsPackageStatus.SUPERSEDED,
+      production_valid: true,
+      published_at: 1000
+    });
+    packagesDb.findById.mockResolvedValue(target);
+    packagesDb.findByIdForUpdate.mockResolvedValue(target);
+    packagesDb.findPrimaryPublishedByProfileIdForUpdate.mockResolvedValue(null);
+    await service.rollbackPrimary(
+      target.id,
+      { expected_current_package_id: null },
+      ownerContext()
+    );
+    expect(packagesDb.markPrimary).toHaveBeenCalledWith(
+      target.id,
+      expect.any(Number),
+      expect.any(Object)
+    );
+    expect(pointerEventsDb.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: ProfileCmsPointerEventType.SET_PRIMARY,
+        previous_package_db_id: null
+      }),
+      expect.any(Object)
+    );
+  });
+
+  it('rejects a stale primary before upload and rechecks it inside the publish transaction', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+    const request = {
+      ...publishSignatureRequest(),
+      expected_current_package_id: null
+    };
+    packagesDb.findPrimaryPublishedByProfileId.mockResolvedValue(
+      createEntity({ id: 'another-primary' })
+    );
+    await expect(
+      service.publish(draft.id, request, ownerContext())
+    ).rejects.toMatchObject({ code: 'cms_primary_changed' });
+    expect(arweaveUploader.uploadFileWithTransactionId).not.toHaveBeenCalled();
+    packagesDb.findPrimaryPublishedByProfileId.mockResolvedValue(null);
+    packagesDb.findByIdForUpdate.mockResolvedValue(draft);
+    packagesDb.findPrimaryPublishedByProfileIdForUpdate.mockResolvedValue(
+      createEntity({ id: 'racing-primary' })
+    );
+    await expect(
+      service.publish(draft.id, request, ownerContext())
+    ).rejects.toMatchObject({ code: 'cms_primary_changed' });
+    expect(packagesDb.markPublished).not.toHaveBeenCalled();
+  });
+
+  it('rejects saved publications and rollback targets after a live handle rename', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+    identityFetcher.getIdentityAndConsolidationsByIdentityKey.mockResolvedValue(
+      {
+        id: draft.profile_id,
+        handle: 'RenamedProfile',
+        primary_wallet: publishSignatureRequest().signer_address
+      } as never
+    );
+    await expect(
+      service.publish(draft.id, publishSignatureRequest(), ownerContext())
+    ).rejects.toMatchObject({ code: 'cms_profile_changed' });
+    expect(arweaveUploader.uploadFileWithTransactionId).not.toHaveBeenCalled();
+    const oldPublication = createEntity({
+      status: ProfileCmsPackageStatus.SUPERSEDED,
+      production_valid: true,
+      published_at: 1000
+    });
+    packagesDb.findById.mockResolvedValue(oldPublication);
+    await expect(
+      service.rollbackPrimary(
+        oldPublication.id,
+        { expected_current_package_id: null },
+        ownerContext()
+      )
+    ).rejects.toMatchObject({ code: 'cms_profile_changed' });
+    expect(packagesDb.markPrimary).not.toHaveBeenCalled();
+  });
+
+  it('rechecks handle binding against the locked profile row after upload', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+    packagesDb.findByIdForUpdate.mockResolvedValue(draft);
+    packagesDb.lockProfilePackagesForUpdate.mockResolvedValue(
+      'RenamedDuringUpload'
+    );
+    await expect(
+      service.publish(draft.id, publishSignatureRequest(), ownerContext())
+    ).rejects.toMatchObject({ code: 'cms_profile_changed' });
+    expect(packagesDb.markPublished).not.toHaveBeenCalled();
+    expect(publishSignaturesDb.insertConsumed).not.toHaveBeenCalled();
+  });
+
+  it('uses distinct manifest upload operations for different authorizations of the same typed message', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+    packagesDb.findByIdForUpdate.mockResolvedValue(draft);
+    packagesDb.findPrimaryPublishedByProfileIdForUpdate.mockResolvedValue(null);
+    const upload = jest.spyOn(publicationStorage, 'upload');
+    const first = { ...publishSignatureRequest(), signature: '0x1111' };
+    const second = { ...first, signature: '0x2222' };
+    await service.publish(draft.id, first, ownerContext());
+    await service.publish(draft.id, second, ownerContext());
+    expect(upload.mock.calls[0][0].operationKey).not.toBe(
+      upload.mock.calls[1][0].operationKey
+    );
+    expect(upload.mock.calls[0][0].operationKey).toContain(first.signature);
+    expect(upload.mock.calls[1][0].operationKey).toContain(second.signature);
+  });
+
+  it.each([1, 2])(
+    'does not activate before remote storage verification %s succeeds',
+    async (pendingStep) => {
+      if (pendingStep === 2)
+        jest
+          .mocked(publicationStorage.verify)
+          .mockResolvedValueOnce(Buffer.from('{}'));
+      const draft = createEntity();
+      packagesDb.findById.mockResolvedValue(draft);
+      jest
+        .mocked(publicationStorage.verify)
+        .mockRejectedValue(
+          new CustomApiCompliantException(503, 'pending', 'cms_storage_pending')
+        );
+      await expect(
+        service.publish(draft.id, publishSignatureRequest(), ownerContext())
+      ).rejects.toMatchObject({ code: 'cms_storage_pending' });
+      expect(packagesDb.markPublished).not.toHaveBeenCalled();
+      expect(publishSignaturesDb.insertConsumed).not.toHaveBeenCalled();
+    }
+  );
+
+  it('accepts the same completed signed publish retry without reactivating a superseded package', async () => {
+    const request = publishSignatureRequest();
+    const cmsPackage = createValidProfileCmsPackage();
+    cmsPackage.signatures[0].signature = request.signature;
+    const published = createEntity({
+      cms_package: cmsPackage,
+      status: ProfileCmsPackageStatus.SUPERSEDED,
+      production_valid: true,
+      published_at: 1000
+    });
+    packagesDb.findById.mockResolvedValue(published);
+    await expect(
+      service.publish(published.id, { ...request, deadline: 1 }, ownerContext())
+    ).resolves.toMatchObject({ status: 'superseded', is_primary: false });
+    expect(packagesDb.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
+    expect(arweaveUploader.uploadFileWithTransactionId).not.toHaveBeenCalled();
+  });
+
+  describe('uploadToStorage', () => {
+    const arweaveTxId = 'a'.repeat(43);
+
+    it('uploads canonical JSON to Arweave and returns a valid receipt', async () => {
+      const draft = createEntity();
+      packagesDb.findById.mockResolvedValue(draft);
+      packagesDb.findByIdForUpdate.mockResolvedValue(draft);
+      arweaveUploader.uploadFileWithTransactionId.mockResolvedValue({
+        url: `https://arweave.net/${arweaveTxId}`,
+        transaction_id: arweaveTxId
+      });
+
+      const result = await service.uploadToStorage(draft.id, ownerContext());
+
+      expect(arweaveUploader.uploadFileWithTransactionId).toHaveBeenCalledTimes(
+        1
+      );
+      expect(arweaveUploader.uploadFileWithTransactionId).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        'application/json'
+      );
+      expect(result.receipt).toMatchObject({
+        provider: 'arweave',
+        uri: `ar://${arweaveTxId}`,
+        content_hash: draft.package_hash,
+        provider_content_id: arweaveTxId,
+        canonical: true
+      });
+      expect(typeof result.receipt.recorded_at).toBe('string');
+      expect(packagesDb.updateStorageReceipt).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: draft.id,
+          storage_provider: 'arweave',
+          storage_uri: `ar://${arweaveTxId}`,
+          storage_content_hash: draft.package_hash,
+          storage_provider_content_id: arweaveTxId,
+          storage_canonical: true
+        }),
+        expect.objectContaining({ connection: expect.any(Object) })
+      );
+    });
+
+    it('uploads the exact canonical bytes whose sha256 reproduces the receipt content hash', async () => {
+      const draft = createEntity();
+      packagesDb.findById.mockResolvedValue(draft);
+      packagesDb.findByIdForUpdate.mockResolvedValue(draft);
+      arweaveUploader.uploadFileWithTransactionId.mockResolvedValue({
+        url: `https://arweave.net/${arweaveTxId}`,
+        transaction_id: arweaveTxId
+      });
+
+      const result = await service.uploadToStorage(draft.id, ownerContext());
+
+      const uploadedBytes = arweaveUploader.uploadFileWithTransactionId.mock
+        .calls[0][0] as Buffer;
+      const uploadedBytesSha256 = createHash('sha256')
+        .update(uploadedBytes)
+        .digest('hex');
+      expect(`sha256:${uploadedBytesSha256}`).toBe(result.receipt.content_hash);
+      expect(result.receipt.content_hash).toBe(draft.package_hash);
+      expect(uploadedBytes.toString('utf8')).toBe(
+        canonicalizeJson(toPackageHashInput(draft.cms_package as CmsPackageV1))
+      );
+    });
+
+    it('returns the concurrent writer receipt found under lock without persisting a duplicate', async () => {
+      const draft = createEntity();
+      const concurrentReceipt = {
+        provider: 'arweave' as const,
+        uri: `ar://${'b'.repeat(43)}`,
+        content_hash: draft.package_hash,
+        provider_content_id: 'b'.repeat(43),
+        canonical: true,
+        recorded_at: '2026-06-17T00:00:00.000Z'
+      };
+      const lockedByOtherWriter = createEntity({
+        cms_package: {
+          ...(draft.cms_package as CmsPackageV1),
+          storage: [
+            ...(draft.cms_package as CmsPackageV1).storage,
+            concurrentReceipt
+          ]
+        }
+      });
+      packagesDb.findById.mockResolvedValue(draft);
+      packagesDb.findByIdForUpdate.mockResolvedValue(lockedByOtherWriter);
+      arweaveUploader.uploadFileWithTransactionId.mockResolvedValue({
+        url: `https://arweave.net/${arweaveTxId}`,
+        transaction_id: arweaveTxId
+      });
+
+      const result = await service.uploadToStorage(draft.id, ownerContext());
+
+      expect(result.receipt).toEqual(concurrentReceipt);
+      expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
+    });
+
+    it('fails with 502 when the uploader returns a malformed transaction id', async () => {
+      const draft = createEntity();
+      packagesDb.findById.mockResolvedValue(draft);
+      packagesDb.findByIdForUpdate.mockResolvedValue(draft);
+      arweaveUploader.uploadFileWithTransactionId.mockResolvedValue({
+        url: 'https://arweave.net/not-a-valid-transaction-id',
+        transaction_id: 'not-a-valid-transaction-id'
+      });
+
+      const error = await service
+        .uploadToStorage(draft.id, ownerContext())
+        .catch((caught) => caught);
+
+      expect(error).toBeInstanceOf(CustomApiCompliantException);
+      expect(error.getStatusCode()).toBe(502);
+      expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
+    });
+
+    it('returns the existing canonical Arweave receipt without re-uploading', async () => {
+      const basePackage = createValidProfileCmsPackage();
+      const existingReceipt = {
+        provider: 'arweave' as const,
+        uri: `ar://${arweaveTxId}`,
+        content_hash: basePackage.integrity.package_hash,
+        provider_content_id: arweaveTxId,
+        canonical: true,
+        recorded_at: '2026-06-17T00:00:00.000Z'
+      };
+      const cmsPackage: CmsPackageV1 = {
+        ...basePackage,
+        storage: [...basePackage.storage, existingReceipt]
+      };
+      const draft = createEntity({ cms_package: cmsPackage });
+      packagesDb.findById.mockResolvedValue(draft);
+
+      const result = await service.uploadToStorage(draft.id, ownerContext());
+
+      expect(result.receipt).toEqual(existingReceipt);
+      expect(
+        arweaveUploader.uploadFileWithTransactionId
+      ).not.toHaveBeenCalled();
+      expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
+    });
+
+    it('rejects upload when the package is not in DRAFT status', async () => {
+      const published = createEntity({
+        status: ProfileCmsPackageStatus.PUBLISHED,
+        production_valid: true,
+        published_at: 1000
+      });
+      packagesDb.findById.mockResolvedValue(published);
+
+      await expect(
+        service.uploadToStorage(published.id, ownerContext())
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(
+        arweaveUploader.uploadFileWithTransactionId
+      ).not.toHaveBeenCalled();
+      expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
+    });
+
+    it('rejects upload for a caller who cannot manage the profile', async () => {
+      const draft = createEntity();
+      packagesDb.findById.mockResolvedValue(draft);
+
+      await expect(
+        service.uploadToStorage(draft.id, {
+          authenticationContext: AuthenticationContext.notAuthenticated()
+        })
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(
+        arweaveUploader.uploadFileWithTransactionId
+      ).not.toHaveBeenCalled();
+      expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
+    });
+
+    it('rejects upload when the stored package hash does not match the recomputed hash', async () => {
+      const draft = createEntity({
+        package_hash: PROFILE_CMS_FIXTURE_ZERO_HASH
+      });
+      packagesDb.findById.mockResolvedValue(draft);
+
+      await expect(
+        service.uploadToStorage(draft.id, ownerContext())
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(
+        arweaveUploader.uploadFileWithTransactionId
+      ).not.toHaveBeenCalled();
+      expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
+    });
+
+    it('fails cleanly without leaking internals when the uploader throws', async () => {
+      const draft = createEntity();
+      packagesDb.findById.mockResolvedValue(draft);
+      arweaveUploader.uploadFileWithTransactionId.mockRejectedValue(
+        new Error('connection reset by peer at 10.0.0.1:443')
+      );
+
+      const error = await service
+        .uploadToStorage(draft.id, ownerContext())
+        .catch((caught) => caught);
+
+      expect(error).toBeInstanceOf(CustomApiCompliantException);
+      expect(error.getStatusCode()).toBe(502);
+      expect(error.message).not.toContain('10.0.0.1');
+      expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
+    });
+
+    it('rejects upload when ARWEAVE_KEY is not configured', async () => {
+      delete process.env.ARWEAVE_KEY;
+      const draft = createEntity();
+      packagesDb.findById.mockResolvedValue(draft);
+
+      const error = await service
+        .uploadToStorage(draft.id, ownerContext())
+        .catch((caught) => caught);
+
+      expect(error).toBeInstanceOf(CustomApiCompliantException);
+      expect(error.getStatusCode()).toBe(503);
+      expect(
+        arweaveUploader.uploadFileWithTransactionId
+      ).not.toHaveBeenCalled();
+      expect(packagesDb.updateStorageReceipt).not.toHaveBeenCalled();
+    });
   });
 
   it('exports package storage receipts with pointer events', async () => {
@@ -1225,7 +1853,7 @@ describe('ProfileCmsApiService', () => {
     const result = await service.exportPackage(published.id, {
       authenticationContext: AuthenticationContext.notAuthenticated()
     });
-    expect(result.pointer_events[0]).not.toHaveProperty('signature');
+    expect(result.pointer_events[0]).toHaveProperty('signature', '0xsignature');
     expect(result.pointer_events[0]).not.toHaveProperty('typed_data');
   });
 });
@@ -1280,6 +1908,29 @@ function createFixtureOnlyPackage(): CmsPackageV1 {
     ...createValidProfileCmsPackage(),
     signatures: [createFixtureProfileCmsSignature()],
     storage: [createFixtureProfileCmsStorageReceipt()]
+  };
+}
+
+function createMixedFixtureAndRealPackage(): CmsPackageV1 {
+  const basePackage = createValidProfileCmsPackage();
+  const arweaveTxId = 'a'.repeat(43);
+  return {
+    ...basePackage,
+    signatures: [createFixtureProfileCmsSignature()],
+    storage: [
+      {
+        ...createFixtureProfileCmsStorageReceipt(),
+        canonical: false
+      },
+      {
+        provider: 'arweave',
+        uri: `ar://${arweaveTxId}`,
+        content_hash: basePackage.integrity.package_hash,
+        provider_content_id: arweaveTxId,
+        canonical: true,
+        recorded_at: '2026-06-17T00:00:00.000Z'
+      }
+    ]
   };
 }
 

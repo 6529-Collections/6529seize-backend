@@ -95,6 +95,7 @@ import { ApiProfileCmsAgentSchemaBundle } from '@/api/generated/models/ApiProfil
 import { ApiProfileCmsAgentSourcePacket } from '@/api/generated/models/ApiProfileCmsAgentSourcePacket';
 import { ApiProfileCmsPackage } from '@/api/generated/models/ApiProfileCmsPackage';
 import { ApiProfileCmsPackageExport } from '@/api/generated/models/ApiProfileCmsPackageExport';
+import { ApiProfileCmsPackageStorageUploadResult } from '@/api/generated/models/ApiProfileCmsPackageStorageUploadResult';
 import { ApiProfileCmsPrimaryPackage } from '@/api/generated/models/ApiProfileCmsPrimaryPackage';
 import { ApiProfileCmsValidationResult } from '@/api/generated/models/ApiProfileCmsValidationResult';
 import { ApiProfileCmsWalletGallerySnapshot } from '@/api/generated/models/ApiProfileCmsWalletGallerySnapshot';
@@ -107,6 +108,7 @@ import { ApiSaveEulaConsentResponse } from '@/api/generated/models/ApiSaveEulaCo
 import { ApiSaveProfileCmsPackageDraftRequest } from '@/api/generated/models/ApiSaveProfileCmsPackageDraftRequest';
 import { ApiSubscriptionCoverage } from '@/api/generated/models/ApiSubscriptionCoverage';
 import { ApiTdhRules } from '@/api/generated/models/ApiTdhRules';
+import { ApiUnpublishProfileCmsPackageRequest } from '@/api/generated/models/ApiUnpublishProfileCmsPackageRequest';
 import { ApiUpdateProfilePreferences } from '@/api/generated/models/ApiUpdateProfilePreferences';
 import { ApiValidateProfileCmsAgentPatchRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentPatchRequest';
 import { ApiValidateProfileCmsPackageRequest } from '@/api/generated/models/ApiValidateProfileCmsPackageRequest';
@@ -1097,6 +1099,38 @@ export type RollbackProfileCmsPackageRequest = Request<
   ApiResponse<RollbackProfileCmsPackageResponse>,
   ApiRollbackProfileCmsPackageRequest,
   RollbackProfileCmsPackageQuery,
+  Record<string, never>
+>;
+
+export interface UploadProfileCmsPackageStoragePathParams {
+  "id": string;
+}
+
+export type UploadProfileCmsPackageStorageQuery = Record<string, never>;
+
+export type UploadProfileCmsPackageStorageResponse = ApiProfileCmsPackageStorageUploadResult;
+
+export type UploadProfileCmsPackageStorageRequest = Request<
+  UploadProfileCmsPackageStoragePathParams,
+  ApiResponse<UploadProfileCmsPackageStorageResponse>,
+  never,
+  UploadProfileCmsPackageStorageQuery,
+  Record<string, never>
+>;
+
+export interface UnpublishProfileCmsPackagePathParams {
+  "id": string;
+}
+
+export type UnpublishProfileCmsPackageQuery = Record<string, never>;
+
+export type UnpublishProfileCmsPackageResponse = ApiProfileCmsPackage;
+
+export type UnpublishProfileCmsPackageRequest = Request<
+  UnpublishProfileCmsPackagePathParams,
+  ApiResponse<UnpublishProfileCmsPackageResponse>,
+  ApiUnpublishProfileCmsPackageRequest,
+  UnpublishProfileCmsPackageQuery,
   Record<string, never>
 >;
 

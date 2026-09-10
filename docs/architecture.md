@@ -484,12 +484,22 @@ consumes the verified typed-data hash to prevent publish-intent replay, and
 supersedes the previous primary package in one transaction.
 
 Profile CMS pointer history is stored in `profile_cms_pointer_events`. Publish,
-set-primary, supersede, rollback, and archive events keep package hashes,
+set-primary, supersede, rollback, unpublish, and archive events keep package hashes,
 previous-primary links, actor profile ids, signature metadata, and canonical
 storage receipts. `event_sequence` preserves logical ordering for events written
 in the same millisecond so the primary pointer history can be reconstructed and
 exported for future mirrors. Consumed publish intent hashes are stored in
 `profile_cms_publish_signatures`.
+
+CMS storage upload uses `profile_cms_uploads` for durable receipt reuse, expiring
+upload leases, and profile upload quotas. The content core is stored separately
+from a `6529.cms.publication.v1` signed recovery manifest containing the complete
+EIP-712 intent and signature envelope. `profile_cms_packages.recovery_receipt`
+locates that manifest. The API fetches and hashes both remote objects before
+atomically activating a primary pointer. Unpublish removes only that pointer;
+restoring a prior publication checks the caller's expected current state. Schema
+rollout is additive: deploy `dbMigrationsLoop`, then `api`; existing published
+packages remain readable without retroactive manifest generation.
 
 Profile CMS wallet gallery snapshots are read-only API projections over
 `nft_owners`, `ens`, `nfts`, `nfts_meme_lab`, and `nextgen_tokens`. They do not

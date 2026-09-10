@@ -51,6 +51,8 @@ Private endpoints are OpenAPI-backed and mounted under `/api/profile-cms`:
 
 - `POST /profile-cms/packages` saves a draft package for a profile.
 - `POST /profile-cms/packages/validate` validates a package against CMS V1.
+- `POST /profile-cms/packages/{id}/storage/upload` uploads the saved canonical content core.
+- `POST /profile-cms/packages/{id}/unpublish` removes the current primary with required expected-current id and hash.
 - `POST /profile-cms/packages/{id}/publish` validates, verifies storage and
   signature intent, and publishes a draft.
 - `POST /profile-cms/packages/{id}/rollback` sets an earlier published or
@@ -176,7 +178,7 @@ Publish runs CMS V1 validation with production options:
 - Fixture signatures are rejected.
 - Fixture storage receipts are rejected.
 - At least one IPFS or Arweave receipt is required for production publish.
-- Only draft packages can be published.
+- Only draft packages can be newly published. An exact completed signature retry returns the existing publication without moving the pointer again.
 - Publishing a package marks it primary and supersedes the previous primary
   package for that profile.
 - Publishing requires a canonical decentralized storage receipt and an EIP-712
@@ -193,6 +195,7 @@ The publish request body extends the expected hash guard with signing intent:
 {
   "expected_package_hash": "sha256:...",
   "expected_payload_hash": "sha256:...",
+  "expected_current_package_id": null,
   "signer_address": "0x...",
   "signature": "0x...",
   "chain_id": 1,
@@ -279,15 +282,76 @@ receipt:
 - S3 and fixture receipts may be retained as non-canonical metadata, but they
   cannot satisfy production publish.
 
-This verifier checks provider shape and package-hash consistency. It does not
-fetch remote bytes from IPFS/Arweave yet; that remains a storage adapter
-deployment concern for later acceleration and mirror work.
+The API also fetches the canonical object from the fixed Arweave/IPFS gateways,
+with redirects disabled, an 8-second timeout, and a 2 MiB limit. It compares the
+SHA-256 of the actual bytes with the signed package hash. A missing or propagating
+object returns `503 cms_storage_pending`; mismatched bytes are rejected. The
+primary pointer stays unchanged and the draft remains retryable.
+
+### Draft Upload And Signed Recovery Manifest
+
+Saving creates an immutable revision with a server-assigned database id and
+version. It resets inherited storage/signature envelopes to draft placeholders;
+the content core and its hashes are preserved. Clients must read the saved row,
+upload that row, read its canonical receipt, and derive signing fields from that
+record. Package-by-id reads and authorized private lists use the writer database
+so signing preparation sees completed writes without replica lag. Public primary
+reads may take a short time to propagate. A changed live profile handle requires
+a new draft; publish and rollback check the handle again under the profile lock.
+The signed `primaryPath` is `/{profile_handle}/index.html`. Imported core
+handle casing can differ from the canonical profile handle; the signed core hash
+preserves the original content. `site.base_path` can be another valid profile
+route and is not the signed primary pointer path.
+
+`POST /profile-cms/packages/{id}/storage/upload` writes canonical JSON with
+`signatures`, `storage`, and `integrity.package_hash` omitted, exactly matching the
+package-hash preimage. The returned native `ar://` receipt is stored on the draft.
+
+After wallet verification, publish uploads a separate canonical JSON manifest:
+
+```text
+schema: 6529.cms.publication.v1
+package_uri, package_hash, payload_hash
+profile_id, profile_handle, package_id, package_db_id, version, primary_path
+typed_data: { domain, types, primaryType: ProfileCmsPublish, message }
+signature, signature_kind: eoa | eip1271, signer_address
+package_envelope: { integrity, signatures, storage }
+published_at
+```
+
+The manifest's own Arweave receipt is returned as `recovery_receipt` on package
+and export responses. Both the content core and this signed manifest must be
+retrievable and hash-verified before the primary pointer moves. Recovery loads
+these two objects, verifies the core hash and all EIP-712 bindings, verifies the
+wallet signature, overlays `package_envelope` onto the core, and validates CMS V1.
+This works without the 6529 API. A historic deadline may be expired during
+recovery; it only limited live publication. EOA wallet authorship is verifiable
+offline. Safe verification requires chain RPC state and does not establish a
+historic signer-set proof. Neither the wallet signature nor `published_at`
+independently proves profile registry membership, a trusted timestamp, or the
+current primary pointer.
+
+`profile_cms_uploads` reserves durable operation keys and short leases outside
+network I/O transactions. Identical completed uploads reuse receipts; concurrent
+in-flight attempts return `409 cms_upload_in_progress`. Expired leases can be
+retried after 120 seconds. Each object is limited to 2 MiB and each profile to
+32 upload attempts per 24-hour activity window (core and manifest uploads both
+count). A failed or interrupted upload can consume a quota attempt; interruption
+after network submission can leave an orphan transaction. Retries stay bounded
+by the lease and quota. `ARWEAVE_KEY` must be configured for API storage writes.
+
+Retain the exact signed publish request during storage propagation retries.
+Re-sign only after its deadline expires or the persisted signing context changes.
+Completed retries never reactivate a superseded package. Failed validation
+records diagnostics on the draft without permanently consuming its state or
+signature. New manifest fields are additive; previously published packages remain
+readable without a recovery receipt and are not rewritten automatically.
 
 ## Pointer Events And Export
 
 `profile_cms_pointer_events` records `publish`, `set_primary`, `supersede`,
-`rollback`, and `archive` events. Events include package ids, hashes, previous
-primary row id when relevant, actor profile id, publish typed-data hash,
+`rollback`, `unpublish`, and `archive` events. Events include package ids, hashes,
+previous primary row id when relevant, actor profile id, publish typed-data hash,
 signature, canonical storage receipt, and an `event_sequence` that preserves
 logical ordering for events written in the same millisecond. The log is
 append-only enough to reconstruct primary pointer history for a profile.
@@ -295,13 +359,21 @@ append-only enough to reconstruct primary pointer history for a profile.
 Rollback requires `expected_current_package_id` and optionally
 `expected_current_package_hash` so clients cannot accidentally move a stale
 pointer. Only published or superseded production-safe packages can become
-primary again.
+primary again. Pass `expected_current_package_id: null` to restore after
+unpublish when there is no current primary. Unpublish requires the exact current
+id and hash, retains the signed package, and records an audit event. Repeating
+unpublish after it succeeds does not duplicate the event or remove a newer
+primary. Publishing accepts the same expected-current guard, checked before paid
+uploads and again under the profile lock; pointer conflicts return 409.
+
+Profile-row locking also serializes first-draft version allocation and primary
+changes, including profiles with no existing CMS rows.
 
 The export endpoint returns the CMS package JSON, indexed hashes/version/status,
 the stored receipt array, and pointer events. Public pointer metadata
 intentionally includes `actor_profile_id`, `signer_address`, `typed_data_hash`,
-and storage receipt data so mirrors can verify who moved the pointer and which
-decentralized receipt was selected. The response intentionally omits raw
-`signature` and full `typed_data`. It is intended for future standalone
-renderers and mirrors; public access is limited to published production-safe
-packages, with private rows still requiring profile CMS permissions.
+storage receipt data, raw `signature`, and complete `typed_data` so mirrors can
+verify published wallet intent and the selected decentralized receipt. Responses
+also expose `is_primary` separately from publication history status and include
+`recovery_receipt` when one was created. For standalone renderers and mirrors,
+public access is limited to published production-safe packages, with private rows still requiring profile CMS permissions.
