@@ -123,10 +123,30 @@ Keep [backend PR #1979](https://github.com/6529-Collections/6529seize-backend/pu
 as the documentation-only plan/tracker. Implement the migration in three
 sequential PRs, each reviewable and deployable after its prerequisites. Add
 their links and completion evidence here as they are created and completed.
-These PR numbers are not allocated yet; the labels below describe scope, not
-existing GitHub PRs.
+Implementation PR 1 is tracked in
+[backend PR #1985](https://github.com/6529-Collections/6529seize-backend/pull/1985).
+Parts 2 and 3 do not have implementation PRs yet.
 
 #### Implementation PR 1: configuration and shared provider
+
+Implementation opened: [PR #1985](https://github.com/6529-Collections/6529seize-backend/pull/1985).
+Its [foundation record](https://github.com/6529-Collections/6529seize-backend/blob/agent-prxt/ethereum-rpc-foundation/ops/workstreams/ethereum-rpc-foundation/README.md)
+documents the implemented configuration contract, source-derived consumer
+inventory, rollout prerequisites and exceptions.
+
+- Code delivered: additive lazy ethers provider with mainnet, Sepolia and
+  Goerli URL selection, safe validation, chain checks, samples and focused
+  provider/environment-loading coverage. Existing callers remain unchanged.
+- Existing wiring reused: Lambda loops already load every key from regional
+  Secrets Manager `prod/lambdas`; the API uses that loader when
+  `API_LOAD_SECRETS=true`. No duplicate Actions secrets or per-Lambda URL
+  fields are introduced. Alternative API runtime configuration must be
+  provisioned through its existing path.
+- Still pending: provision and verify runtime values before part 2. No secrets
+  were provisioned and no deployment was performed. Opening the implementation
+  PR does not mark the configuration rollout or caller migration complete.
+
+Scope and completion criteria:
 
 - Add `ETHEREUM_RPC_URL` validation, environment samples, service configuration
   wiring, and an additive provider-neutral factory with focused tests.
