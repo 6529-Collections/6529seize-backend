@@ -1,5 +1,9 @@
 import { Logger } from '../logging';
 import { Time } from '../time';
+import {
+  fetchOpenSeaPricePage,
+  waitForOpenSeaPage
+} from '@/marketStatsLoop/opensea-price-fetch';
 
 const logger = Logger.get('NFT_MARKET_STATS_PRICES_PRICES');
 
@@ -44,62 +48,6 @@ interface OpenSeaBestOfferResponse extends OpenSeaUserResponse {
   price: OpenSeaPriceResponse;
 }
 
-const fetchWithRetries = async <T>(
-  url: string,
-  maxRetries = 12
-): Promise<T | null> => {
-  let attempt = 0;
-
-  while (attempt <= maxRetries) {
-    attempt++;
-
-    const response = await fetch(url, {
-      headers: {
-        'x-api-key': process.env.OPENSEA_API_KEY!
-      }
-    });
-
-    if (response.status === 429) {
-      if (attempt > maxRetries) {
-        logger.error(`[OPENSEA] Throttled after ${maxRetries} retries: ${url}`);
-        return null;
-      }
-      logger.warn(
-        `[OPENSEA] HTTP 429 on attempt ${attempt} for ${url}. Retrying in ${RETRY_DELAY_MS / 1000}s...`
-      );
-      await Time.millis(RETRY_DELAY_MS).sleep();
-      continue;
-    }
-
-    if (!response.ok) {
-      logger.warn(
-        `[OPENSEA] Request failed with status ${response.status} for ${url}`
-      );
-      return null;
-    }
-
-    try {
-      const data = (await response.json()) as T;
-      return data;
-    } catch (error) {
-      logger.error(`[OPENSEA] Failed to parse JSON for ${url}`, error);
-      return null;
-    }
-  }
-
-  return null;
-};
-
-interface OpenSeaCollectionListingsResponse {
-  listings: (OpenSeaBestListingResponse & { asset: { token_id: string } })[];
-  next: string | null;
-}
-
-interface OpenSeaCollectionOffersResponse {
-  offers: (OpenSeaBestOfferResponse & { asset: { token_id: string } })[];
-  next: string | null;
-}
-
 type PriceSource = 'listings' | 'offers';
 
 interface FetchConfig<T> {
@@ -114,29 +62,59 @@ interface FetchConfig<T> {
 async function fetchBestPricesForCollection<T>(
   collectionSlug: string,
   requiredItemType: number,
-  config: FetchConfig<T>
+  config: FetchConfig<T>,
+  deadlineMs: number
 ): Promise<Map<string, PriceResponse>> {
   const results = new Map<string, PriceResponse>();
   const baseUrl = config.baseUrl.replace('{slug}', collectionSlug);
   let next: string | null = null;
+  const seenCursors = new Set<string>();
 
   do {
     const url = buildUrl(baseUrl, next);
-    const data = await fetchWithRetries<
-      { next?: string | null } & Record<string, T[]>
-    >(url);
-    if (!data) break;
+    const data = await fetchOpenSeaPricePage(url, deadlineMs);
+    const { entries, next: nextCursor } = parsePricePage<T>(
+      data,
+      config.itemLabel,
+      url
+    );
 
-    const entries = data[config.itemLabel] || [];
     for (const entry of entries) {
       processEntry(entry, requiredItemType, config, results);
     }
 
-    next = data.next ?? null;
-    if (next) await Time.millis(RETRY_DELAY_MS).sleep();
+    next = nextCursor;
+    if (next) {
+      if (seenCursors.has(next)) {
+        throw new Error(`[OPENSEA] Repeated pagination cursor for ${url}`);
+      }
+      seenCursors.add(next);
+      await waitForOpenSeaPage(RETRY_DELAY_MS, deadlineMs, url);
+    }
   } while (next);
 
   return results;
+}
+
+function parsePricePage<T>(
+  data: unknown,
+  itemLabel: PriceSource,
+  url: string
+): { entries: T[]; next: string | null } {
+  if (!data || typeof data !== 'object') {
+    throw new Error(`[OPENSEA] Invalid ${itemLabel} response for ${url}`);
+  }
+  const page = data as Record<string, unknown>;
+  if (
+    !Array.isArray(page[itemLabel]) ||
+    (page.next != null && (typeof page.next !== 'string' || !page.next))
+  ) {
+    throw new Error(`[OPENSEA] Invalid ${itemLabel} page for ${url}`);
+  }
+  return {
+    entries: page[itemLabel] as T[],
+    next: (page.next as string | null) ?? null
+  };
 }
 
 function buildUrl(baseUrl: string, next: string | null): string {
@@ -177,7 +155,8 @@ function processEntry<T>(
 
 export const fetchBestListingsForCollection = (
   collectionSlug: string,
-  requiredItemType: number
+  requiredItemType: number,
+  deadlineMs = Date.now() + Time.minutes(10).toMillis()
 ): Promise<Map<string, PriceResponse>> =>
   fetchBestPricesForCollection<OpenSeaBestListingResponse>(
     collectionSlug,
@@ -194,12 +173,14 @@ export const fetchBestListingsForCollection = (
       getMaker: (entry) => entry.protocol_data?.parameters?.offerer ?? null,
       isBetterPrice: (newPrice, existingPrice) => newPrice < existingPrice,
       itemLabel: 'listings'
-    }
+    },
+    deadlineMs
   );
 
 export const fetchBestOffersForCollection = (
   collectionSlug: string,
-  requiredItemType: number
+  requiredItemType: number,
+  deadlineMs = Date.now() + Time.minutes(10).toMillis()
 ): Promise<Map<string, PriceResponse>> =>
   fetchBestPricesForCollection<OpenSeaBestOfferResponse>(
     collectionSlug,
@@ -216,5 +197,6 @@ export const fetchBestOffersForCollection = (
       getMaker: (entry) => entry.protocol_data?.parameters?.offerer ?? null,
       isBetterPrice: (newPrice, existingPrice) => newPrice > existingPrice,
       itemLabel: 'offers'
-    }
+    },
+    deadlineMs
   );
