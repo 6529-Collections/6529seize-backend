@@ -98,7 +98,7 @@ export class ProfileCmsUploadsDb extends LazyDbAccessCompatibleService {
           { id: reservation.id },
           options
         );
-        if (!row || row.lease_token !== reservation.token) {
+        if (!reservation.token || row?.lease_token !== reservation.token) {
           throw new CustomApiCompliantException(
             409,
             'CMS upload lease expired; retry to retrieve the current receipt',

@@ -339,19 +339,18 @@ export class ProfileCmsApiService {
     this.assertExpectedHashes(entity, request);
     this.assertPublishSignatureRequest(request);
     this.assertPublishDeadline(request.deadline);
-    if (request.expected_current_package_id !== undefined) {
-      this.assertExpectedCurrentPrimary(
-        await this.packagesDb.findPrimaryPublishedByProfileId(
-          entity.profile_id,
-          ctx,
-          DbPoolName.WRITE
-        ),
-        {
-          expected_current_package_id: request.expected_current_package_id,
-          expected_current_package_hash: request.expected_current_package_hash
-        }
-      );
-    }
+    this.assertExpectedCurrentPrimary(
+      await this.packagesDb.findPrimaryPublishedByProfileId(
+        entity.profile_id,
+        ctx,
+        DbPoolName.WRITE
+      ),
+      {
+        expected_current_package_id:
+          request.expected_current_package_id ?? null,
+        expected_current_package_hash: request.expected_current_package_hash
+      }
+    );
 
     // Verify the EIP-712 request signature FIRST. It derives everything from
     // the entity + request (via the client-signed canonical storage receipt)
@@ -520,12 +519,11 @@ export class ProfileCmsApiService {
             lockedEntity.profile_id,
             txCtx
           );
-        if (request.expected_current_package_id !== undefined) {
-          this.assertExpectedCurrentPrimary(previousPrimary, {
-            expected_current_package_id: request.expected_current_package_id,
-            expected_current_package_hash: request.expected_current_package_hash
-          });
-        }
+        this.assertExpectedCurrentPrimary(previousPrimary, {
+          expected_current_package_id:
+            request.expected_current_package_id ?? null,
+          expected_current_package_hash: request.expected_current_package_hash
+        });
         await this.packagesDb.markValidating(
           lockedEntity.id,
           publishedAt,
@@ -724,8 +722,16 @@ export class ProfileCmsApiService {
           !current &&
           target.status === ProfileCmsPackageStatus.SUPERSEDED &&
           target.production_valid
-        )
-          return;
+        ) {
+          const events = await this.pointerEventsDb.listByPackageId(
+            target.id,
+            txCtx
+          );
+          if (
+            events.at(-1)?.event_type === ProfileCmsPointerEventType.UNPUBLISH
+          )
+            return;
+        }
         this.assertExpectedCurrentPrimary(current, request);
         await this.packagesDb.unpublish(id, Time.currentMillis(), txCtx);
         await this.recordPointerEvents(
@@ -1132,9 +1138,8 @@ export class ProfileCmsApiService {
     if (!signatureVerification.signer_address) {
       throw new BadRequestException('CMS publish signature signer is missing');
     }
-    const deepCopy = JSON.parse(JSON.stringify(storedPackage)) as CmsPackageV1;
     return {
-      ...deepCopy,
+      ...storedPackage,
       signatures: [
         this.buildPublishSignatureEnvelope(
           signatureVerification,
@@ -1143,7 +1148,7 @@ export class ProfileCmsApiService {
       ],
       // Drop every fixture-provider receipt; keep the real receipts (including
       // the real canonical one the storage validator will re-check).
-      storage: deepCopy.storage.filter(
+      storage: storedPackage.storage.filter(
         (receipt) => receipt.provider !== 'fixture'
       )
     };

@@ -6642,9 +6642,9 @@ paths:
       description: >-
         Creates a bounded deterministic snapshot from the backend's currently
         indexed NFT ownership tables. This endpoint does not live-index wallets
-        or mutate CMS package hash/signing semantics. It is gated by
-        FEATURE_PROFILE_CMS_WALLET_GALLERY while the gallery generator contract
-        is being integrated.
+        or mutate CMS package hash/signing semantics. It is enabled when
+        FEATURE_PROFILE_CMS_WALLET_GALLERY is absent or exactly true. Any other
+        configured value disables the endpoint.
       operationId: createProfileCmsWalletGallerySnapshot
       x-6529-router:
         enabled: true
@@ -24704,6 +24704,7 @@ components:
           type: string
         expected_current_package_hash:
           type: string
+          pattern: "^sha256:[a-f0-9]{64}$"
     ApiProfileCmsStorageReceipt:
       type: object
       required:
@@ -25849,6 +25850,7 @@ components:
         - deadline
       properties:
         expected_current_package_id:
+          description: Omit or pass null only when no current primary is expected.
           type: string
           nullable: true
         expected_current_package_hash:

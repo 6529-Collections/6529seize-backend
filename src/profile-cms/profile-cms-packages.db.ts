@@ -519,7 +519,7 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
   async unpublish(id: string, now: number, ctx: RequestContext): Promise<void> {
     await this.timedExecute(
       'unpublish',
-      `update ${PROFILE_CMS_PACKAGES_TABLE} set is_primary = false, status = :status, updated_at = :now where id = :id`,
+      `update ${PROFILE_CMS_PACKAGES_TABLE} set is_primary = false, status = :status, updated_at = :now where id = :id and status = 'PUBLISHED' and is_primary = true`,
       { id, now, status: ProfileCmsPackageStatus.SUPERSEDED },
       ctx
     );

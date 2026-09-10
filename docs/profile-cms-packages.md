@@ -78,9 +78,10 @@ holdings:
 POST /api/profile-cms/wallet-gallery/snapshot
 ```
 
-This endpoint is authenticated and gated by
-`FEATURE_PROFILE_CMS_WALLET_GALLERY=true` while the frontend generator contract
-is being integrated. It reads the current backend NFT ownership index; it does
+This endpoint is authenticated and enabled when
+`FEATURE_PROFILE_CMS_WALLET_GALLERY` is absent or exactly `true`. Setting it to
+`false` or any other value disables snapshot generation. It reads the current
+backend NFT ownership index; it does
 not live-index wallets, enqueue chain work, or change CMS package hash/signing
 semantics.
 
@@ -364,7 +365,9 @@ unpublish when there is no current primary. Unpublish requires the exact current
 id and hash, retains the signed package, and records an audit event. Repeating
 unpublish after it succeeds does not duplicate the event or remove a newer
 primary. Publishing accepts the same expected-current guard, checked before paid
-uploads and again under the profile lock; pointer conflicts return 409.
+uploads and again under the profile lock; pointer conflicts return 409. Omitting
+the publish guard means no primary is expected, just like passing null. An
+unpublish retry must also match the latest package audit event.
 
 Profile-row locking also serializes first-draft version allocation and primary
 changes, including profiles with no existing CMS rows.

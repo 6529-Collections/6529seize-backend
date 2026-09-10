@@ -13,6 +13,9 @@
 import { HttpFile } from '../http/http';
 
 export class ApiPublishProfileCmsPackageRequest {
+    /**
+    * Omit or pass null only when no current primary is expected.
+    */
     'expected_current_package_id'?: string | null;
     'expected_current_package_hash'?: string;
     'expected_package_hash'?: string;

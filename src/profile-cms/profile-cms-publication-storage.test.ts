@@ -35,7 +35,12 @@ describe('CMS durable storage', () => {
     await expect(storage.verify(receipt)).resolves.toEqual(bytes);
     expect(download).toHaveBeenCalledWith(
       `https://arweave.net/${'a'.repeat(43)}`,
-      { redirect: 'error', timeout: 8000, size: CMS_MAX_STORAGE_BYTES }
+      expect.objectContaining({
+        redirect: 'error',
+        timeout: 8000,
+        size: CMS_MAX_STORAGE_BYTES,
+        signal: expect.any(AbortSignal)
+      })
     );
   });
 
@@ -69,6 +74,45 @@ describe('CMS durable storage', () => {
         ...receipt,
         uri: 'http://169.254.169.254/latest/meta-data'
       })
+    ).rejects.toThrow('root IPFS or Arweave');
+    expect(download).not.toHaveBeenCalled();
+  });
+
+  it('aborts a stalled gateway at the wall-clock deadline', async () => {
+    jest.useFakeTimers();
+    try {
+      const download = jest.fn(
+        (_url: string, options: { signal: AbortSignal }) =>
+          new Promise((_resolve, reject) =>
+            options.signal.addEventListener('abort', () =>
+              reject(new Error('aborted'))
+            )
+          )
+      );
+      const storage = new ProfileCmsPublicationStorage(
+        undefined,
+        undefined,
+        download as unknown as typeof fetch
+      );
+      const result = expect(storage.verify(receipt)).rejects.toMatchObject({
+        code: 'cms_storage_pending'
+      });
+      await jest.advanceTimersByTimeAsync(8000);
+      await result;
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('rejects oversized native identifiers before making a gateway request', async () => {
+    const download = jest.fn();
+    const storage = new ProfileCmsPublicationStorage(
+      undefined,
+      undefined,
+      download as unknown as typeof fetch
+    );
+    await expect(
+      storage.verify({ ...receipt, uri: 'ipfs://b' + 'a'.repeat(257) })
     ).rejects.toThrow('root IPFS or Arweave');
     expect(download).not.toHaveBeenCalled();
   });

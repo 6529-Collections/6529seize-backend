@@ -134,7 +134,7 @@ describe('ProfileCmsApiService', () => {
     };
     pointerEventsDb = {
       insert: jest.fn(),
-      listByPackageId: jest.fn()
+      listByPackageId: jest.fn().mockResolvedValue([])
     };
     publishSignaturesDb = {
       insertConsumed: jest.fn()
@@ -942,9 +942,13 @@ describe('ProfileCmsApiService', () => {
       previousPrimary
     );
 
+    packagesDb.findPrimaryPublishedByProfileId.mockResolvedValue(
+      previousPrimary
+    );
     const result = await service.publish(
       draft.id,
       {
+        expected_current_package_id: previousPrimary.id,
         expected_package_hash: draft.package_hash,
         expected_payload_hash: draft.payload_hash,
         ...publishSignatureRequest()
@@ -1395,6 +1399,9 @@ describe('ProfileCmsApiService', () => {
     packagesDb.findById.mockResolvedValue(target);
     packagesDb.findByIdForUpdate.mockResolvedValue(target);
     packagesDb.findPrimaryPublishedByProfileIdForUpdate.mockResolvedValue(null);
+    pointerEventsDb.listByPackageId.mockResolvedValue([
+      { event_type: ProfileCmsPointerEventType.UNPUBLISH }
+    ] as never);
     await service.unpublishPackage(target.id, request, ownerContext());
     expect(packagesDb.unpublish).not.toHaveBeenCalled();
     expect(pointerEventsDb.insert).not.toHaveBeenCalled();
@@ -1405,6 +1412,39 @@ describe('ProfileCmsApiService', () => {
       service.unpublishPackage(target.id, request, ownerContext())
     ).rejects.toMatchObject({ code: 'cms_primary_changed' });
     expect(packagesDb.unpublish).not.toHaveBeenCalled();
+  });
+
+  it('rejects unpublish of a superseded package without a matching unpublish audit event', async () => {
+    const target = createEntity({
+      status: ProfileCmsPackageStatus.SUPERSEDED,
+      production_valid: true
+    });
+    packagesDb.findById.mockResolvedValue(target);
+    packagesDb.findByIdForUpdate.mockResolvedValue(target);
+    packagesDb.findPrimaryPublishedByProfileIdForUpdate.mockResolvedValue(null);
+    await expect(
+      service.unpublishPackage(
+        target.id,
+        {
+          expected_current_package_id: target.id,
+          expected_current_package_hash: target.package_hash
+        },
+        ownerContext()
+      )
+    ).rejects.toBeInstanceOf(CustomApiCompliantException);
+    expect(packagesDb.unpublish).not.toHaveBeenCalled();
+  });
+
+  it('treats an omitted publish pointer guard as an expectation of no current primary', async () => {
+    const draft = createEntity();
+    packagesDb.findById.mockResolvedValue(draft);
+    packagesDb.findPrimaryPublishedByProfileId.mockResolvedValue(
+      createEntity({ id: 'existing-primary' })
+    );
+    await expect(
+      service.publish(draft.id, publishSignatureRequest(), ownerContext())
+    ).rejects.toMatchObject({ code: 'cms_primary_changed' });
+    expect(arweaveUploader.uploadFileWithTransactionId).not.toHaveBeenCalled();
   });
 
   it('requires publish authority and both current-pointer fields for unpublish', async () => {

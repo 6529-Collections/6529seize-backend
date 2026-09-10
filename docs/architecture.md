@@ -380,8 +380,8 @@ Important API responsibilities:
   checks, rollback/archive endpoints, and package export data for future
   standalone renderers and mirrors.
 - Authenticated profile-native CMS wallet gallery snapshots under
-  `/profile-cms/wallet-gallery/snapshot`, gated by
-  `FEATURE_PROFILE_CMS_WALLET_GALLERY`, reading current indexed NFT ownership
+  `/profile-cms/wallet-gallery/snapshot`, enabled by default with an explicit
+  `FEATURE_PROFILE_CMS_WALLET_GALLERY=false` override, reading indexed NFT ownership
   and normalized media from MySQL for deterministic gallery generation.
 - Profile-native CMS BYO-agent affordances under `/profile-cms/agent` and
   `/profile-cms/packages/{id}/agent`, including a public schema bundle,

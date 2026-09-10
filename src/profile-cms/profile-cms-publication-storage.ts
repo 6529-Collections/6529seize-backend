@@ -21,7 +21,7 @@ function receiptGateway(uri: string): string {
   const arweave = /^ar:\/\/([A-Za-z0-9_-]{43})$/.exec(uri);
   if (arweave) return `https://arweave.net/${arweave[1]}`;
   const ipfs =
-    /^ipfs:\/\/((?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{20,}|z[1-9A-HJ-NP-Za-km-z]{20,}))$/.exec(
+    /^ipfs:\/\/((?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{20,256}|z[1-9A-HJ-NP-Za-km-z]{20,256}))$/.exec(
       uri
     );
   if (ipfs) return `https://ipfs.io/ipfs/${ipfs[1]}`;
@@ -41,9 +41,12 @@ export class ProfileCmsPublicationStorage {
   async verify(receipt: Receipt): Promise<Buffer> {
     const url = receiptGateway(receipt.uri);
     let bytes: Buffer;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
     try {
       const response = await this.download(url, {
         redirect: 'error',
+        signal: controller.signal,
         timeout: 8000,
         size: CMS_MAX_STORAGE_BYTES
       });
@@ -55,6 +58,8 @@ export class ProfileCmsPublicationStorage {
         'CMS storage is not yet retrievable; retry after the upload propagates',
         'cms_storage_pending'
       );
+    } finally {
+      clearTimeout(timeout);
     }
     if (cmsBytesHash(bytes) !== receipt.content_hash) {
       throw new CustomApiCompliantException(
