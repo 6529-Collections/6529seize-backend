@@ -4,7 +4,7 @@ import { AuthenticationContext } from '@/auth-context';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { DROPS_TABLE, PROFILES_TABLE } from '@/constants';
-import { ArtworkDocumentationDb } from './artwork-documentation.db';
+import { ArtworkDocumentationDb, parseJson } from './artwork-documentation.db';
 import { ArtworkDocumentationService } from './artwork-documentation.service';
 import { ArtworkDocumentationReviewService } from './artwork-documentation.review';
 import {
@@ -40,6 +40,7 @@ import {
 import { emptyCapabilities } from './artwork-documentation.access';
 import { ArtworkAssetsDb } from './assets/artwork-assets.db';
 import { anArtworkAsset } from './assets/artwork-assets.test-support';
+import { digest } from './artwork-documentation.validation';
 
 const makeContext = (actor: string): RequestContext => ({
   authenticationContext: AuthenticationContext.fromProfileId(actor)
@@ -270,6 +271,72 @@ describe('artwork documentation transactional persistence', () => {
         service
       )
     ).rejects.toMatchObject({ code: 'IDEMPOTENCY_MISMATCH' });
+  });
+  it('reports current narrowed access on replay without reapplying an expired audited grant change', async () => {
+    const record = await readyContext();
+    record.modules.artwork.title = answer('Unpublished title', 'restricted');
+    record.restricted_paths = ['artwork.title'];
+    await setProgram(record);
+    const coordinator = await programCoordinator();
+    const apply = { ...coordinator.event, apply: true };
+    const result = await setKeysAndGatesCoordinatorReadAccess(apply, service);
+    expect(result.redacted_field_count).toBe(0);
+    const narrowed = {
+      ...result.effective_capabilities,
+      read_restricted_fields: false,
+      retained_unknown_key: 'preserve'
+    };
+    await db.query(
+      `UPDATE ${AD_GRANTS} SET capabilities_json=:caps WHERE id=:id`,
+      { id: coordinator.grantId, caps: JSON.stringify(narrowed) },
+      ctx
+    );
+    const idempotencyId = digest([
+      'set_keys_and_gates_coordinator_read_access_v1',
+      apply.correlation_id
+    ]);
+    await db.query(
+      `DELETE FROM ${AD_IDEMPOTENCY} WHERE id=:id`,
+      { id: idempotencyId },
+      ctx
+    );
+    const replay = await setKeysAndGatesCoordinatorReadAccess(apply, service);
+    expect(replay.changed_read_flags).toEqual(result.changed_read_flags);
+    expect(replay.effective_capabilities).toMatchObject({
+      read_restricted_fields: false,
+      confirm_as_artist: false,
+      edit_modules: [],
+      review_lanes: []
+    });
+    expect(replay.target_capabilities.read_restricted_fields).toBe(true);
+    expect(replay.redacted_field_count).toBeGreaterThan(0);
+    const dry = await setKeysAndGatesCoordinatorReadAccess(
+      coordinator.event,
+      service
+    );
+    expect(dry.mode).toBe('dry_run');
+    expect(dry.changed_read_flags).toEqual(['read_restricted_fields']);
+    expect(dry.effective_capabilities).toEqual(replay.effective_capabilities);
+    const saved = await db.one<{ capabilities_json: unknown }>(
+      `SELECT capabilities_json FROM ${AD_GRANTS} WHERE id=:id`,
+      { id: coordinator.grantId },
+      ctx
+    );
+    expect(parseJson(saved!.capabilities_json)).toEqual(narrowed);
+    expect(
+      await db.query(
+        `SELECT id FROM ${AD_EVENTS} WHERE id=:id`,
+        { id: apply.correlation_id },
+        ctx
+      )
+    ).toHaveLength(1);
+    expect(
+      await db.query(
+        `SELECT id FROM ${AD_IDEMPOTENCY} WHERE id=:id`,
+        { id: idempotencyId },
+        ctx
+      )
+    ).toHaveLength(1);
   });
   it('fails coordinator operations closed for absent, scoped, revoked or duplicate grants', async () => {
     await expect(

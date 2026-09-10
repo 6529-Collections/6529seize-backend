@@ -188,6 +188,16 @@ profile IDs, changed read flags, effective and target capabilities, context coun
 and the count of fields still redacted by the actual authorization/projection
 service. No answers, filenames or asset hashes are returned.
 
+`changed_read_flags` describes the original audited apply, including on replay;
+it is not a statement of current authority. `effective_capabilities` and the
+projection counts are fresh, best-effort reads after the transaction, rather
+than cached apply results or one atomic snapshot. Concurrent permission changes
+can therefore appear in these observations. Verify the actual effective read
+flags and `redacted_field_count` before relying on the result; target capabilities
+describe the proposed access only. A replay never restores subsequently removed
+access, and a missing or revoked coordinator grant is rejected. A dry-run with a
+previously used correlation remains a fresh read-only inspection.
+
 ```json
 {"operator_action":"upgrade_empty_keys_and_gates_publication_v2","correlation_id":"<different-request-UUID>","coordinator_profile_id":"<verified-existing-coordinator-UUID>","apply":false}
 ```
