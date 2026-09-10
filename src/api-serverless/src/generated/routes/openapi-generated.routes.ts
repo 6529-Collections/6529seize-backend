@@ -5,8 +5,10 @@ import { maybeAuthenticatedUser, needsAuthenticatedUser } from '@/api/auth/auth'
 import { cacheRequest } from '@/api/request-cache';
 import { Time } from '@/time';
 import { Response } from 'express';
+import { ArtworkDocumentationCancelDocumentationUploadRequest, ArtworkDocumentationCancelDocumentationUploadResponse, ArtworkDocumentationCommentDocumentationThreadRequest, ArtworkDocumentationCommentDocumentationThreadResponse, ArtworkDocumentationCompleteDocumentationUploadRequest, ArtworkDocumentationCompleteDocumentationUploadResponse, ArtworkDocumentationConfirmDocumentationRequest, ArtworkDocumentationConfirmDocumentationResponse, ArtworkDocumentationCreateDocumentationContextRequest, ArtworkDocumentationCreateDocumentationContextResponse, ArtworkDocumentationCreateDocumentationThreadRequest, ArtworkDocumentationCreateDocumentationThreadResponse, ArtworkDocumentationCreateDocumentationWorkRequest, ArtworkDocumentationCreateDocumentationWorkResponse, ArtworkDocumentationDownloadDocumentationAssetRequest, ArtworkDocumentationDownloadDocumentationAssetResponse, ArtworkDocumentationGetDocumentationContextRequest, ArtworkDocumentationGetDocumentationContextResponse, ArtworkDocumentationGetDocumentationProfilesRequest, ArtworkDocumentationGetDocumentationProfilesResponse, ArtworkDocumentationGetDocumentationPublicPreviewRequest, ArtworkDocumentationGetDocumentationPublicPreviewResponse, ArtworkDocumentationGetDocumentationRevisionRequest, ArtworkDocumentationGetDocumentationRevisionResponse, ArtworkDocumentationGetDocumentationUploadRequest, ArtworkDocumentationGetDocumentationUploadResponse, ArtworkDocumentationGetDocumentationWorkRequest, ArtworkDocumentationGetDocumentationWorkResponse, ArtworkDocumentationGrantDocumentationAccessRequest, ArtworkDocumentationGrantDocumentationAccessResponse, ArtworkDocumentationImportDocumentationSourceRequest, ArtworkDocumentationImportDocumentationSourceResponse, ArtworkDocumentationLinkDocumentationAssetRequest, ArtworkDocumentationLinkDocumentationAssetResponse, ArtworkDocumentationLinkDocumentationSourceRequest, ArtworkDocumentationLinkDocumentationSourceResponse, ArtworkDocumentationListDocumentationGrantsRequest, ArtworkDocumentationListDocumentationGrantsResponse, ArtworkDocumentationListDocumentationProgramRequest, ArtworkDocumentationListDocumentationProgramResponse, ArtworkDocumentationListDocumentationRevisionsRequest, ArtworkDocumentationListDocumentationRevisionsResponse, ArtworkDocumentationListDocumentationThreadsRequest, ArtworkDocumentationListDocumentationThreadsResponse, ArtworkDocumentationListDocumentationWorksRequest, ArtworkDocumentationListDocumentationWorksResponse, ArtworkDocumentationPatchDocumentationAssetLinkRequest, ArtworkDocumentationPatchDocumentationAssetLinkResponse, ArtworkDocumentationPatchDocumentationContextRequest, ArtworkDocumentationPatchDocumentationContextResponse, ArtworkDocumentationPatchDocumentationModuleRequest, ArtworkDocumentationPatchDocumentationModuleResponse, ArtworkDocumentationPatchDocumentationThreadRequest, ArtworkDocumentationPatchDocumentationThreadResponse, ArtworkDocumentationPinDocumentationArtistRequest, ArtworkDocumentationPinDocumentationArtistResponse, ArtworkDocumentationPreviewDocumentationSourceRequest, ArtworkDocumentationPreviewDocumentationSourceResponse, ArtworkDocumentationPreviewDocumentationUpgradeRequest, ArtworkDocumentationPreviewDocumentationUpgradeResponse, ArtworkDocumentationReviewDocumentationRequest, ArtworkDocumentationReviewDocumentationResponse, ArtworkDocumentationRevokeDocumentationAccessRequest, ArtworkDocumentationRevokeDocumentationAccessResponse, ArtworkDocumentationSignDocumentationPartsRequest, ArtworkDocumentationSignDocumentationPartsResponse, ArtworkDocumentationStartDocumentationUploadRequest, ArtworkDocumentationStartDocumentationUploadResponse, ArtworkDocumentationUnlinkDocumentationAssetRequest, ArtworkDocumentationUnlinkDocumentationAssetResponse, ArtworkDocumentationUpgradeDocumentationProfileRequest, ArtworkDocumentationUpgradeDocumentationProfileResponse } from './operations';
 import { GetCompetitionEntryV3Request, GetCompetitionEntryV3Response, GetWaveCompetitionV3Request, GetWaveCompetitionV3Response, GetWaveHubV3Request, GetWaveHubV3Response, ListCompetitionDecisionsV3Request, ListCompetitionDecisionsV3Response, ListCompetitionEntriesV3Request, ListCompetitionEntriesV3Response, ListCompetitionEntryVotesV3Request, ListCompetitionEntryVotesV3Response, ListCompetitionLeaderboardV3Request, ListCompetitionLeaderboardV3Response, ListCompetitionOutcomeDistributionV3Request, ListCompetitionOutcomeDistributionV3Response, ListCompetitionOutcomesV3Request, ListCompetitionOutcomesV3Response, ListCompetitionPausesV3Request, ListCompetitionPausesV3Response, ListCompetitionVersionsV3Request, ListCompetitionVersionsV3Response, ListCompetitionVotersV3Request, ListCompetitionVotersV3Response, ListCompetitionWinnersV3Request, ListCompetitionWinnersV3Response, ListWaveCompetitionsV3Request, ListWaveCompetitionsV3Response } from './operations';
 import { GetProfilePreferencesRequest, GetProfilePreferencesResponse, PutProfilePreferencesRequest, PutProfilePreferencesResponse } from './operations';
+import { handleCancelDocumentationUpload, handleCommentDocumentationThread, handleCompleteDocumentationUpload, handleConfirmDocumentation, handleCreateDocumentationContext, handleCreateDocumentationThread, handleCreateDocumentationWork, handleDownloadDocumentationAsset, handleGetDocumentationContext, handleGetDocumentationProfiles, handleGetDocumentationPublicPreview, handleGetDocumentationRevision, handleGetDocumentationUpload, handleGetDocumentationWork, handleGrantDocumentationAccess, handleImportDocumentationSource, handleLinkDocumentationAsset, handleLinkDocumentationSource, handleListDocumentationGrants, handleListDocumentationProgram, handleListDocumentationRevisions, handleListDocumentationThreads, handleListDocumentationWorks, handlePatchDocumentationAssetLink, handlePatchDocumentationContext, handlePatchDocumentationModule, handlePatchDocumentationThread, handlePinDocumentationArtist, handlePreviewDocumentationSource, handlePreviewDocumentationUpgrade, handleReviewDocumentation, handleRevokeDocumentationAccess, handleSignDocumentationParts, handleStartDocumentationUpload, handleUnlinkDocumentationAsset, handleUpgradeDocumentationProfile } from '@/api/artwork-documentation/artwork-documentation.handlers';
 import { handlePreviewGroupMembers } from '@/api/community-members/group-members-preview.handler';
 import { handleGetCompetitionEntryV3, handleGetWaveCompetitionV3, handleGetWaveHubV3, handleListCompetitionDecisionsV3, handleListCompetitionEntriesV3, handleListCompetitionEntryVotesV3, handleListCompetitionLeaderboardV3, handleListCompetitionOutcomeDistributionV3, handleListCompetitionOutcomesV3, handleListCompetitionPausesV3, handleListCompetitionVersionsV3, handleListCompetitionVotersV3, handleListCompetitionWinnersV3, handleListWaveCompetitionsV3 } from '@/api/competitions/competitions-v3.handlers';
 import { handleGetContentModerationBlockActivity } from '@/api/content-moderation/get-block-activity.handler';
@@ -34,6 +36,402 @@ import { handleSearchDraftWaveMentions, handleSearchWaveMentions } from '@/api/w
 import { handleCreateWaveMetadata, handleDeleteWaveMetadata, handleGetDropRepliesV2, handleGetOfficialWaves, handleGetWaveCompetitionDropsV2, handleGetWaveDecisionsV2, handleGetWaveDropsV2, handleGetWaveLeaderboardV2, handleGetWaveMetadata, handleGetWavesV2, handleListWaveCurationDropsV2, handleListWaveSubwaves, handleSearchDropsInWaveV2, handleSearchWaveAuthorsV2 } from '@/api/waves/waves-v2.handlers';
 import { ArchiveProfileCmsPackageRequest, ArchiveProfileCmsPackageResponse, CreateProfileCmsWalletGallerySnapshotRequest, CreateProfileCmsWalletGallerySnapshotResponse, CreateWaveMetadataRequest, CreateWaveMetadataResponse, DeleteEulaConsentRequest, DeleteEulaConsentResponse, DeleteMyWaveChatHistoryRequest, DeleteMyWaveChatHistoryResponse, DeleteWaveMetadataRequest, DeleteWaveMetadataResponse, DownloadDropV2VotersByIdRequest, DownloadDropV2VotersByIdResponse, ExportProfileCmsPackageRequest, ExportProfileCmsPackageResponse, GetBoostedDropsV2Request, GetBoostedDropsV2Response, GetContentModerationBlockActivityRequest, GetContentModerationBlockActivityResponse, GetCuratedProfileWaveDropsV2Request, GetCuratedProfileWaveDropsV2Response, GetDmDropsUnreadRequest, GetDmDropsUnreadResponse, GetDmUnreadSnapshotRequest, GetDmUnreadSnapshotResponse, GetDropPollOptionVotersV2Request, GetDropPollOptionVotersV2Response, GetDropRepliesV2Request, GetDropRepliesV2Response, GetDropsV2Request, GetDropsV2Response, GetDropV2BoostsByIdRequest, GetDropV2BoostsByIdResponse, GetDropV2ByIdRequest, GetDropV2ByIdResponse, GetDropV2MetadataByIdRequest, GetDropV2MetadataByIdResponse, GetDropV2PartByIdRequest, GetDropV2PartByIdResponse, GetDropV2ReactionsByIdRequest, GetDropV2ReactionsByIdResponse, GetDropV2VoteEditLogsByIdRequest, GetDropV2VoteEditLogsByIdResponse, GetDropV2VotersByIdRequest, GetDropV2VotersByIdResponse, GetDropV2VoteSummaryByIdRequest, GetDropV2VoteSummaryByIdResponse, GetEulaConsentRequest, GetEulaConsentResponse, GetGlobalRepCategoryGiversRequest, GetGlobalRepCategoryGiversResponse, GetGlobalRepCategoryOverviewRequest, GetGlobalRepCategoryOverviewResponse, GetGlobalRepCategoryRatingsRequest, GetGlobalRepCategoryRatingsResponse, GetGlobalRepCategoryRecipientsRequest, GetGlobalRepCategoryRecipientsResponse, GetGlobalRepCategoryWaveContributorsRequest, GetGlobalRepCategoryWaveContributorsResponse, GetGlobalRepCategoryWaveOverviewRequest, GetGlobalRepCategoryWaveOverviewResponse, GetGlobalRepCategoryWavesRequest, GetGlobalRepCategoryWavesResponse, GetMemeCardDropMappingRequest, GetMemeCardDropMappingResponse, GetNotificationsV2Request, GetNotificationsV2Response, GetOfficialWavesRequest, GetOfficialWavesResponse, GetOgMetadataDropRequest, GetOgMetadataDropResponse, GetOgMetadataProfileRequest, GetOgMetadataProfileResponse, GetOgMetadataWaveRequest, GetOgMetadataWaveResponse, GetPrimaryProfileCmsPackageRequest, GetPrimaryProfileCmsPackageResponse, GetProfileCmsAgentSchemaBundleRequest, GetProfileCmsAgentSchemaBundleResponse, GetProfileCmsAgentSourcePacketRequest, GetProfileCmsAgentSourcePacketResponse, GetProfileCmsPackageByHashRequest, GetProfileCmsPackageByHashResponse, GetProfileCmsPackageByIdRequest, GetProfileCmsPackageByIdResponse, GetProfileCmsPackageByVersionRequest, GetProfileCmsPackageByVersionResponse, GetProfileWaveActivityRequest, GetProfileWaveActivityResponse, GetPublicContentModerationProfileStatusRequest, GetPublicContentModerationProfileStatusResponse, GetSubscriptionCoverageRequest, GetSubscriptionCoverageResponse, GetTdhRulesRequest, GetTdhRulesResponse, GetWalletDistributionAllocationsRequest, GetWalletDistributionAllocationsResponse, GetWaveCompetitionDropsV2Request, GetWaveCompetitionDropsV2Response, GetWaveDecisionsV2Request, GetWaveDecisionsV2Response, GetWaveDropsV2Request, GetWaveDropsV2Response, GetWaveLeaderboardV2Request, GetWaveLeaderboardV2Response, GetWaveMetadataRequest, GetWaveMetadataResponse, GetWavePollsV2Request, GetWavePollsV2Response, GetWavesV2Request, GetWavesV2Response, ListProfileCmsPackagesRequest, ListProfileCmsPackagesResponse, ListWaveCurationDropsV2Request, ListWaveCurationDropsV2Response, ListWaveSubwavesRequest, ListWaveSubwavesResponse, PreviewGroupMembersRequest, PreviewGroupMembersResponse, PublishProfileCmsPackageRequest, PublishProfileCmsPackageResponse, ResolveDecentralizedMediaRequest, ResolveDecentralizedMediaResponse, RollbackProfileCmsPackageRequest, RollbackProfileCmsPackageResponse, SaveEulaConsentRequest, SaveEulaConsentResponse, SaveProfileCmsPackageDraftRequest, SaveProfileCmsPackageDraftResponse, SearchDraftWaveMentionsRequest, SearchDraftWaveMentionsResponse, SearchDropsInWaveV2Request, SearchDropsInWaveV2Response, SearchWaveAuthorsV2Request, SearchWaveAuthorsV2Response, SearchWaveMentionsRequest, SearchWaveMentionsResponse, ValidateProfileCmsAgentPatchRequest, ValidateProfileCmsAgentPatchResponse, ValidateProfileCmsPackageRequest, ValidateProfileCmsPackageResponse, ValidateWaveGroupsRequest, ValidateWaveGroupsResponse, VoteDropPollV2Request, VoteDropPollV2Response } from './operations';
 const router = asyncRouter();
+router.get(
+  '/artwork-documentation/contexts/:id',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationGetDocumentationContextRequest,
+    res: Response<ApiResponse<ArtworkDocumentationGetDocumentationContextResponse>>
+  ) => {
+    res.send(await handleGetDocumentationContext(req));
+  }
+);
+
+router.patch(
+  '/artwork-documentation/contexts/:id',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationPatchDocumentationContextRequest,
+    res: Response<ApiResponse<ArtworkDocumentationPatchDocumentationContextResponse>>
+  ) => {
+    res.send(await handlePatchDocumentationContext(req));
+  }
+);
+
+router.post(
+  '/artwork-documentation/contexts/:id/artist-record-pin',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationPinDocumentationArtistRequest,
+    res: Response<ApiResponse<ArtworkDocumentationPinDocumentationArtistResponse>>
+  ) => {
+    res.send(await handlePinDocumentationArtist(req));
+  }
+);
+
+router.post(
+  '/artwork-documentation/contexts/:id/asset-links',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationLinkDocumentationAssetRequest,
+    res: Response<ApiResponse<ArtworkDocumentationLinkDocumentationAssetResponse>>
+  ) => {
+    res.send(await handleLinkDocumentationAsset(req));
+  }
+);
+
+router.delete(
+  '/artwork-documentation/contexts/:id/asset-links/:linkId',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationUnlinkDocumentationAssetRequest,
+    res: Response<ApiResponse<ArtworkDocumentationUnlinkDocumentationAssetResponse>>
+  ) => {
+    res.send(await handleUnlinkDocumentationAsset(req));
+  }
+);
+
+router.patch(
+  '/artwork-documentation/contexts/:id/asset-links/:linkId',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationPatchDocumentationAssetLinkRequest,
+    res: Response<ApiResponse<ArtworkDocumentationPatchDocumentationAssetLinkResponse>>
+  ) => {
+    res.send(await handlePatchDocumentationAssetLink(req));
+  }
+);
+
+router.post(
+  '/artwork-documentation/contexts/:id/assets/uploads',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationStartDocumentationUploadRequest,
+    res: Response<ApiResponse<ArtworkDocumentationStartDocumentationUploadResponse>>
+  ) => {
+    res.send(await handleStartDocumentationUpload(req));
+  }
+);
+
+router.delete(
+  '/artwork-documentation/contexts/:id/assets/uploads/:uploadId',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationCancelDocumentationUploadRequest,
+    res: Response<ApiResponse<ArtworkDocumentationCancelDocumentationUploadResponse>>
+  ) => {
+    res.send(await handleCancelDocumentationUpload(req));
+  }
+);
+
+router.get(
+  '/artwork-documentation/contexts/:id/assets/uploads/:uploadId',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationGetDocumentationUploadRequest,
+    res: Response<ApiResponse<ArtworkDocumentationGetDocumentationUploadResponse>>
+  ) => {
+    res.send(await handleGetDocumentationUpload(req));
+  }
+);
+
+router.post(
+  '/artwork-documentation/contexts/:id/assets/uploads/:uploadId/complete',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationCompleteDocumentationUploadRequest,
+    res: Response<ApiResponse<ArtworkDocumentationCompleteDocumentationUploadResponse>>
+  ) => {
+    res.send(await handleCompleteDocumentationUpload(req));
+  }
+);
+
+router.post(
+  '/artwork-documentation/contexts/:id/assets/uploads/:uploadId/parts',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationSignDocumentationPartsRequest,
+    res: Response<ApiResponse<ArtworkDocumentationSignDocumentationPartsResponse>>
+  ) => {
+    res.send(await handleSignDocumentationParts(req));
+  }
+);
+
+router.post(
+  '/artwork-documentation/contexts/:id/assets/:assetId/download',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationDownloadDocumentationAssetRequest,
+    res: Response<ApiResponse<ArtworkDocumentationDownloadDocumentationAssetResponse>>
+  ) => {
+    res.send(await handleDownloadDocumentationAsset(req));
+  }
+);
+
+router.post(
+  '/artwork-documentation/contexts/:id/confirmations',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationConfirmDocumentationRequest,
+    res: Response<ApiResponse<ArtworkDocumentationConfirmDocumentationResponse>>
+  ) => {
+    res.send(await handleConfirmDocumentation(req));
+  }
+);
+
+router.get(
+  '/artwork-documentation/contexts/:id/grants',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationListDocumentationGrantsRequest,
+    res: Response<ApiResponse<ArtworkDocumentationListDocumentationGrantsResponse>>
+  ) => {
+    res.send(await handleListDocumentationGrants(req));
+  }
+);
+
+router.post(
+  '/artwork-documentation/contexts/:id/grants',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationGrantDocumentationAccessRequest,
+    res: Response<ApiResponse<ArtworkDocumentationGrantDocumentationAccessResponse>>
+  ) => {
+    res.send(await handleGrantDocumentationAccess(req));
+  }
+);
+
+router.delete(
+  '/artwork-documentation/contexts/:id/grants/:grantId',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationRevokeDocumentationAccessRequest,
+    res: Response<ApiResponse<ArtworkDocumentationRevokeDocumentationAccessResponse>>
+  ) => {
+    res.send(await handleRevokeDocumentationAccess(req));
+  }
+);
+
+router.patch(
+  '/artwork-documentation/contexts/:id/modules/:moduleId',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationPatchDocumentationModuleRequest,
+    res: Response<ApiResponse<ArtworkDocumentationPatchDocumentationModuleResponse>>
+  ) => {
+    res.send(await handlePatchDocumentationModule(req));
+  }
+);
+
+router.post(
+  '/artwork-documentation/contexts/:id/profile-upgrades',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationUpgradeDocumentationProfileRequest,
+    res: Response<ApiResponse<ArtworkDocumentationUpgradeDocumentationProfileResponse>>
+  ) => {
+    res.send(await handleUpgradeDocumentationProfile(req));
+  }
+);
+
+router.post(
+  '/artwork-documentation/contexts/:id/profile-upgrades/preview',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationPreviewDocumentationUpgradeRequest,
+    res: Response<ApiResponse<ArtworkDocumentationPreviewDocumentationUpgradeResponse>>
+  ) => {
+    res.send(await handlePreviewDocumentationUpgrade(req));
+  }
+);
+
+router.get(
+  '/artwork-documentation/contexts/:id/public-preview',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationGetDocumentationPublicPreviewRequest,
+    res: Response<ApiResponse<ArtworkDocumentationGetDocumentationPublicPreviewResponse>>
+  ) => {
+    res.send(await handleGetDocumentationPublicPreview(req));
+  }
+);
+
+router.get(
+  '/artwork-documentation/contexts/:id/revisions',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationListDocumentationRevisionsRequest,
+    res: Response<ApiResponse<ArtworkDocumentationListDocumentationRevisionsResponse>>
+  ) => {
+    res.send(await handleListDocumentationRevisions(req));
+  }
+);
+
+router.get(
+  '/artwork-documentation/contexts/:id/revisions/:revisionId',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationGetDocumentationRevisionRequest,
+    res: Response<ApiResponse<ArtworkDocumentationGetDocumentationRevisionResponse>>
+  ) => {
+    res.send(await handleGetDocumentationRevision(req));
+  }
+);
+
+router.put(
+  '/artwork-documentation/contexts/:id/revisions/:revisionId/reviews/:lane',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationReviewDocumentationRequest,
+    res: Response<ApiResponse<ArtworkDocumentationReviewDocumentationResponse>>
+  ) => {
+    res.send(await handleReviewDocumentation(req));
+  }
+);
+
+router.post(
+  '/artwork-documentation/contexts/:id/source-imports',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationImportDocumentationSourceRequest,
+    res: Response<ApiResponse<ArtworkDocumentationImportDocumentationSourceResponse>>
+  ) => {
+    res.send(await handleImportDocumentationSource(req));
+  }
+);
+
+router.get(
+  '/artwork-documentation/contexts/:id/source-imports/:receiptId/preview',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationPreviewDocumentationSourceRequest,
+    res: Response<ApiResponse<ArtworkDocumentationPreviewDocumentationSourceResponse>>
+  ) => {
+    res.send(await handlePreviewDocumentationSource(req));
+  }
+);
+
+router.post(
+  '/artwork-documentation/contexts/:id/source-links',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationLinkDocumentationSourceRequest,
+    res: Response<ApiResponse<ArtworkDocumentationLinkDocumentationSourceResponse>>
+  ) => {
+    res.send(await handleLinkDocumentationSource(req));
+  }
+);
+
+router.get(
+  '/artwork-documentation/contexts/:id/threads',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationListDocumentationThreadsRequest,
+    res: Response<ApiResponse<ArtworkDocumentationListDocumentationThreadsResponse>>
+  ) => {
+    res.send(await handleListDocumentationThreads(req));
+  }
+);
+
+router.post(
+  '/artwork-documentation/contexts/:id/threads',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationCreateDocumentationThreadRequest,
+    res: Response<ApiResponse<ArtworkDocumentationCreateDocumentationThreadResponse>>
+  ) => {
+    res.send(await handleCreateDocumentationThread(req));
+  }
+);
+
+router.patch(
+  '/artwork-documentation/contexts/:id/threads/:threadId',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationPatchDocumentationThreadRequest,
+    res: Response<ApiResponse<ArtworkDocumentationPatchDocumentationThreadResponse>>
+  ) => {
+    res.send(await handlePatchDocumentationThread(req));
+  }
+);
+
+router.post(
+  '/artwork-documentation/contexts/:id/threads/:threadId/comments',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationCommentDocumentationThreadRequest,
+    res: Response<ApiResponse<ArtworkDocumentationCommentDocumentationThreadResponse>>
+  ) => {
+    res.send(await handleCommentDocumentationThread(req));
+  }
+);
+
+router.get(
+  '/artwork-documentation/profiles',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationGetDocumentationProfilesRequest,
+    res: Response<ApiResponse<ArtworkDocumentationGetDocumentationProfilesResponse>>
+  ) => {
+    res.send(await handleGetDocumentationProfiles(req));
+  }
+);
+
+router.get(
+  '/artwork-documentation/programs/:programId/contexts',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationListDocumentationProgramRequest,
+    res: Response<ApiResponse<ArtworkDocumentationListDocumentationProgramResponse>>
+  ) => {
+    res.send(await handleListDocumentationProgram(req));
+  }
+);
+
+router.get(
+  '/artwork-documentation/works',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationListDocumentationWorksRequest,
+    res: Response<ApiResponse<ArtworkDocumentationListDocumentationWorksResponse>>
+  ) => {
+    res.send(await handleListDocumentationWorks(req));
+  }
+);
+
+router.post(
+  '/artwork-documentation/works',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationCreateDocumentationWorkRequest,
+    res: Response<ApiResponse<ArtworkDocumentationCreateDocumentationWorkResponse>>
+  ) => {
+    res.send(await handleCreateDocumentationWork(req));
+  }
+);
+
+router.get(
+  '/artwork-documentation/works/:workId',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationGetDocumentationWorkRequest,
+    res: Response<ApiResponse<ArtworkDocumentationGetDocumentationWorkResponse>>
+  ) => {
+    res.send(await handleGetDocumentationWork(req));
+  }
+);
+
+router.post(
+  '/artwork-documentation/works/:workId/contexts',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationCreateDocumentationContextRequest,
+    res: Response<ApiResponse<ArtworkDocumentationCreateDocumentationContextResponse>>
+  ) => {
+    res.send(await handleCreateDocumentationContext(req));
+  }
+);
+
 router.get(
   '/content-moderation/block-activity',
   needsAuthenticatedUser(),

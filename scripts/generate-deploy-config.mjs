@@ -134,6 +134,10 @@ env:
   DROP_MEDIA_INGEST_S3_BUCKET_STAGING: \${{ vars.DROP_MEDIA_INGEST_S3_BUCKET_STAGING }}
   DROP_MEDIA_INGEST_S3_REGION: \${{ vars.DROP_MEDIA_INGEST_S3_REGION }}
   DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME: \${{ vars.DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME }}
+  ARTWORK_DOCUMENTATION_ENABLED_PROD: \${{ vars.ARTWORK_DOCUMENTATION_ENABLED_PROD }}
+  ARTWORK_DOCUMENTATION_ENABLED_STAGING: \${{ vars.ARTWORK_DOCUMENTATION_ENABLED_STAGING }}
+  ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_PROD: \${{ vars.ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_PROD }}
+  ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_STAGING: \${{ vars.ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_STAGING }}
   API_GATEWAY_WS_ENDPOINT_PROD: https://ws.6529.io
   API_GATEWAY_WS_ENDPOINT_STAGING: https://ws.staging.6529.io
 
@@ -271,14 +275,21 @@ jobs:
             DROP_MEDIA_SANITIZE_IMAGES_VALUE="\${DROP_MEDIA_SANITIZE_IMAGES_PROD:-false}"
             DROP_MEDIA_INGEST_BUCKET="$DROP_MEDIA_INGEST_S3_BUCKET_PROD"
             API_GATEWAY_WS_ENDPOINT="$API_GATEWAY_WS_ENDPOINT_PROD"
+            ARTWORK_DOCUMENTATION_ENABLED_VALUE="$ARTWORK_DOCUMENTATION_ENABLED_PROD"
+            ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_VALUE="$ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_PROD"
           else
             ATTACHMENTS_BUCKET="$ATTACHMENTS_INGEST_S3_BUCKET_STAGING"
             DROP_MEDIA_SANITIZE_IMAGES_VALUE="\${DROP_MEDIA_SANITIZE_IMAGES_STAGING:-false}"
             DROP_MEDIA_INGEST_BUCKET="$DROP_MEDIA_INGEST_S3_BUCKET_STAGING"
             API_GATEWAY_WS_ENDPOINT="$API_GATEWAY_WS_ENDPOINT_STAGING"
+            ARTWORK_DOCUMENTATION_ENABLED_VALUE="$ARTWORK_DOCUMENTATION_ENABLED_STAGING"
+            ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_VALUE="$ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_STAGING"
           fi
           DROP_MEDIA_INGEST_REGION="$DROP_MEDIA_INGEST_S3_REGION"
           DROP_MEDIA_SANITIZER_QUEUE="$DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME"
+          for feature_value in "$ARTWORK_DOCUMENTATION_ENABLED_VALUE" "$ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_VALUE"; do
+            case "$feature_value" in ''|true|false) ;; *) echo "Invalid artwork documentation feature flag"; exit 1 ;; esac
+          done
 
           if [ -z "$ATTACHMENTS_BUCKET" ]; then
             echo "ATTACHMENTS_INGEST_S3_BUCKET is not configured for \${{ github.event.inputs.environment }}"
@@ -317,6 +328,8 @@ jobs:
             echo "DROP_MEDIA_INGEST_STAGE=\${{ github.event.inputs.environment }}"
             echo "DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME=$DROP_MEDIA_SANITIZER_QUEUE"
             echo "API_GATEWAY_WS_ENDPOINT=$API_GATEWAY_WS_ENDPOINT"
+            echo "ARTWORK_DOCUMENTATION_ENABLED_VALUE=$ARTWORK_DOCUMENTATION_ENABLED_VALUE"
+            echo "ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_VALUE=$ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_VALUE"
           } >> "$GITHUB_ENV"
       - name: Verify production Lambda secret exists
         if: github.event.inputs.environment == 'prod' && github.event.inputs.service == 'api'
@@ -348,9 +361,10 @@ jobs:
           sleep 10
           aws lambda get-function-configuration --function-name seizeAPI --query 'Environment.Variables' --output json --no-cli-pager > /tmp/current_env.json 2>/dev/null || echo '{}' > /tmp/current_env.json
           jq --arg commit "$GIT_COMMIT" --arg claimsMediaArweaveUploadSqsUrl "$CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL" --arg attachmentsIngestS3Bucket "$ATTACHMENTS_INGEST_S3_BUCKET" --arg dropMediaSanitizeImages "$DROP_MEDIA_SANITIZE_IMAGES" --arg dropMediaIngestS3Bucket "$DROP_MEDIA_INGEST_S3_BUCKET" --arg dropMediaIngestS3Region "$DROP_MEDIA_INGEST_S3_REGION" --arg dropMediaIngestStage "$DROP_MEDIA_INGEST_STAGE" --arg dropMediaSanitizerSqsQueueName "$DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME" --arg apiGatewayWsEndpoint "$API_GATEWAY_WS_ENDPOINT" '. + {GIT_COMMIT: $commit, CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL: $claimsMediaArweaveUploadSqsUrl, ATTACHMENTS_INGEST_S3_BUCKET: $attachmentsIngestS3Bucket, DROP_MEDIA_SANITIZE_IMAGES: $dropMediaSanitizeImages, DROP_MEDIA_INGEST_S3_BUCKET: $dropMediaIngestS3Bucket, DROP_MEDIA_INGEST_S3_REGION: $dropMediaIngestS3Region, DROP_MEDIA_INGEST_STAGE: $dropMediaIngestStage, DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME: $dropMediaSanitizerSqsQueueName, API_GATEWAY_WS_ENDPOINT: $apiGatewayWsEndpoint}' /tmp/current_env.json > /tmp/app_env.json
-          jq '{Variables: .}' /tmp/app_env.json > /tmp/env_config.json
+          jq --arg enabled "$ARTWORK_DOCUMENTATION_ENABLED_VALUE" --arg selfService "$ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_VALUE" --arg archiveRegion "$DEPLOY_REGION" --arg archiveBucket "6529-artwork-documentation-987989283142-$DEPLOY_REGION" '. + {ARTWORK_DOCUMENTATION_ENABLED: (if $enabled == "" then (.ARTWORK_DOCUMENTATION_ENABLED // "false") else $enabled end), ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED: (if $selfService == "" then (.ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED // "false") else $selfService end), ARTWORK_DOCUMENTATION_S3_REGION: $archiveRegion, ARTWORK_DOCUMENTATION_S3_BUCKET: $archiveBucket}' /tmp/app_env.json > /tmp/artwork_env.json
+          jq '{Variables: .}' /tmp/artwork_env.json > /tmp/env_config.json
           aws lambda update-function-configuration --function-name seizeAPI --description "$VERSION_DESCRIPTION" --environment file:///tmp/env_config.json --memory-size "$API_MEMORY_SIZE" --timeout "$API_TIMEOUT" --no-cli-pager > /dev/null 2>&1
-          rm -f /tmp/current_env.json /tmp/app_env.json /tmp/env_config.json
+          rm -f /tmp/current_env.json /tmp/app_env.json /tmp/artwork_env.json /tmp/env_config.json
       - name: Deploy mediaResizerLoop
         if: github.event.inputs.service == 'mediaResizerLoop'
         run: |
