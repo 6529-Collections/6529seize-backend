@@ -15,6 +15,7 @@ jest.mock('../logging', () => ({
 }));
 
 import { getDataSource } from '../db';
+import { DataSource, EntityManager, QueryRunner } from 'typeorm';
 import {
   fetchNextgenTokens,
   persitNextgenTokenListings
@@ -26,7 +27,8 @@ import {
   getOpenSeaCollectionSlug,
   getOpenSeaListingStats,
   indexBestOpenSeaListingsByTokenId,
-  OpenSeaListing
+  OpenSeaListing,
+  withNextgenDatabaseDeadline
 } from './nft_market_stats_nextgen';
 
 const fetchMock = jest.fn();
@@ -285,7 +287,14 @@ describe('NextGen OpenSea market stats helpers', () => {
         .mockResolvedValueOnce(jsonResponse({ collection: 'slug' }))
         .mockResolvedValueOnce(jsonResponse({ listings: [] }))
         .mockResolvedValueOnce(jsonResponse({ tokens: [] }));
-      const transaction = jest.fn(async (callback) => callback({}));
+      const transaction = jest.fn(async (callback) =>
+        callback({
+          queryRunner: {
+            isTransactionActive: true,
+            connect: async () => ({ query: jest.fn(), destroy: jest.fn() })
+          }
+        })
+      );
       jest
         .mocked(getDataSource)
         .mockReturnValue({ transaction } as unknown as ReturnType<
@@ -309,4 +318,213 @@ describe('NextGen OpenSea market stats helpers', () => {
       expect(jest.getTimerCount()).toBe(0);
     }
   );
+});
+
+describe('NextGen transaction query deadlines', () => {
+  afterEach(() => jest.useRealTimers());
+
+  it.each([10_000, 1_234])(
+    'caps the native query timeout at the remaining %ims and restores the connection method',
+    async (budget) => {
+      jest.useFakeTimers();
+      const originalQuery = jest.fn((_sql, _parameters, callback) =>
+        callback(null, ['result'])
+      );
+      const connection = { query: originalQuery, destroy: jest.fn() };
+      const manager = {
+        queryRunner: {
+          isTransactionActive: true,
+          connect: async () => connection
+        }
+      } as unknown as EntityManager;
+      const result = await withNextgenDatabaseDeadline(
+        manager,
+        Date.now() + budget,
+        () =>
+          new Promise((resolve, reject) => {
+            connection.query(
+              { sql: 'SELECT id FROM nextgen_tokens', timeout: 90_000 },
+              [],
+              (error: Error | null, rows: unknown) =>
+                error ? reject(error) : resolve(rows)
+            );
+          })
+      );
+      expect(result).toEqual(['result']);
+      expect(originalQuery.mock.calls[0][0].timeout).toBeLessThanOrEqual(
+        Math.min(5_000, budget)
+      );
+      expect(originalQuery.mock.calls[0][0].timeout).toBeGreaterThan(0);
+      expect(connection.query).toBe(originalQuery);
+      expect(connection.destroy).not.toHaveBeenCalled();
+      expect(jest.getTimerCount()).toBe(0);
+    }
+  );
+
+  it.each([
+    'SELECT id FROM nextgen_tokens',
+    'INSERT INTO nextgen_token_listings VALUES (?)'
+  ])(
+    'discards a timed-out connection and lets TypeORM roll back and release for %s',
+    async (sql) => {
+      jest.useFakeTimers();
+      const cleanup: string[] = [];
+      const originalQuery = jest.fn((options, _parameters, callback) => {
+        setTimeout(
+          () =>
+            callback(
+              Object.assign(new Error('query timed out'), {
+                code: 'PROTOCOL_SEQUENCE_TIMEOUT'
+              })
+            ),
+          Math.min(50, options.timeout)
+        );
+      });
+      const connection = {
+        query: originalQuery,
+        destroy: jest.fn(() => {
+          cleanup.push('destroy');
+        })
+      };
+      const runner = {
+        isTransactionActive: true,
+        connect: async () => connection,
+        startTransaction: jest.fn(),
+        commitTransaction: jest.fn(),
+        rollbackTransaction: jest.fn(async () => {
+          cleanup.push('rollback');
+          throw new Error('connection closed');
+        }),
+        release: jest.fn(async () => {
+          cleanup.push('release');
+        }),
+        manager: undefined as unknown as EntityManager
+      };
+      const dataSource = {
+        createQueryRunner: () => runner
+      } as unknown as DataSource;
+      runner.manager = new EntityManager(
+        dataSource,
+        runner as unknown as QueryRunner
+      );
+      const afterQuery = jest.fn();
+      const transaction = new EntityManager(dataSource).transaction(
+        async (manager) => {
+          await withNextgenDatabaseDeadline(
+            manager,
+            Date.now() + 250,
+            () =>
+              new Promise((resolve, reject) => {
+                connection.query(
+                  sql,
+                  [],
+                  (error: Error | null, rows: unknown) =>
+                    error ? reject(error) : resolve(rows)
+                );
+              })
+          );
+          afterQuery();
+        }
+      );
+      const rejected = expect(transaction).rejects.toThrow('query timed out');
+      await jest.advanceTimersByTimeAsync(250);
+      await rejected;
+      expect(afterQuery).not.toHaveBeenCalled();
+      expect(runner.commitTransaction).not.toHaveBeenCalled();
+      expect(cleanup).toEqual(['destroy', 'rollback', 'release']);
+      expect(connection.query).toBe(originalQuery);
+      expect(jest.getTimerCount()).toBe(0);
+    }
+  );
+
+  it('enforces the wall-clock deadline when the driver does not report a timeout and ignores late callbacks', async () => {
+    jest.useFakeTimers();
+    let nativeCallback:
+      | ((error: Error | null, result?: unknown) => void)
+      | undefined;
+    const originalQuery = jest.fn((_sql, _parameters, callback) => {
+      nativeCallback = callback;
+    });
+    const cleanup: string[] = [];
+    const connection = {
+      query: originalQuery,
+      destroy: jest.fn(() => {
+        cleanup.push('destroy');
+      })
+    };
+    const manager = {
+      queryRunner: {
+        isTransactionActive: true,
+        connect: async () => connection
+      }
+    } as unknown as EntityManager;
+    const callback = jest.fn();
+    const operation = withNextgenDatabaseDeadline(
+      manager,
+      Date.now() + 250,
+      () =>
+        new Promise((resolve, reject) => {
+          connection.query(
+            'SELECT slowly_streamed_rows',
+            [],
+            (error: Error | null, result: unknown) => {
+              cleanup.push('callback');
+              callback(error);
+              if (error) reject(error);
+              else resolve(result);
+            }
+          );
+        })
+    );
+    const rejected = expect(operation).rejects.toThrow(
+      'NextGen database query deadline exceeded'
+    );
+    await jest.advanceTimersByTimeAsync(250);
+    await rejected;
+    nativeCallback?.(null, ['late row']);
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(cleanup).toEqual(['destroy', 'callback']);
+    expect(connection.query).toBe(originalQuery);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('clears the wall-clock timer on a synchronous native query failure', async () => {
+    jest.useFakeTimers();
+    const originalQuery = jest.fn(() => {
+      throw new Error('driver failure');
+    });
+    const connection = { query: originalQuery, destroy: jest.fn() };
+    const manager = {
+      queryRunner: {
+        isTransactionActive: true,
+        connect: async () => connection
+      }
+    } as unknown as EntityManager;
+    await expect(
+      withNextgenDatabaseDeadline(manager, Date.now() + 250, async () => {
+        connection.query();
+      })
+    ).rejects.toThrow('driver failure');
+    expect(connection.query).toBe(originalQuery);
+    expect(jest.getTimerCount()).toBe(0);
+    expect(connection.destroy).not.toHaveBeenCalled();
+  });
+
+  it('does not dispatch a native query once the deadline has elapsed', async () => {
+    const originalQuery = jest.fn();
+    const connection = { query: originalQuery, destroy: jest.fn() };
+    const manager = {
+      queryRunner: {
+        isTransactionActive: true,
+        connect: async () => connection
+      }
+    } as unknown as EntityManager;
+    await expect(
+      withNextgenDatabaseDeadline(manager, Date.now(), async () => {
+        connection.query('SELECT 1', [], jest.fn());
+      })
+    ).rejects.toThrow('deadline exceeded');
+    expect(originalQuery).not.toHaveBeenCalled();
+    expect(connection.query).toBe(originalQuery);
+  });
 });

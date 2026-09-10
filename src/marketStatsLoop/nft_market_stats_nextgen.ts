@@ -18,6 +18,7 @@ const OPENSEA_API_BASE_URL = 'https://api.opensea.io/api/v2';
 const OPENSEA_CHAIN = 'ethereum';
 const OPENSEA_COLLECTION_LISTINGS_LIMIT = 100;
 const PROVIDER_REQUEST_TIMEOUT_MS = 15_000;
+const DATABASE_QUERY_TIMEOUT_MS = 5_000;
 
 function remainingBudget(deadlineMs: number, requiredMs = 0): number {
   const remainingMs = deadlineMs - Date.now();
@@ -25,6 +26,80 @@ function remainingBudget(deadlineMs: number, requiredMs = 0): number {
     throw new Error('NextGen market stats deadline exceeded');
   }
   return remainingMs;
+}
+
+type MysqlQueryCallback = (
+  error: (Error & { code?: string }) | null,
+  result?: unknown,
+  fields?: unknown
+) => void;
+
+interface TransactionConnection {
+  query(
+    sql: string | { sql: string; timeout?: number },
+    parameters: unknown,
+    callback: MysqlQueryCallback
+  ): unknown;
+  destroy(): void;
+}
+
+/** Apply driver timeouts only to this transaction's pinned connection. */
+export async function withNextgenDatabaseDeadline<T>(
+  manager: EntityManager,
+  deadlineMs: number,
+  operation: () => Promise<T>
+): Promise<T> {
+  if (!manager.queryRunner?.isTransactionActive) {
+    throw new Error('NextGen database deadline requires an active transaction');
+  }
+  const connection =
+    (await manager.queryRunner.connect()) as TransactionConnection;
+  const originalQuery = connection.query;
+  connection.query = (sql, parameters, callback) => {
+    const timeoutMs = Math.min(
+      DATABASE_QUERY_TIMEOUT_MS,
+      remainingBudget(deadlineMs)
+    );
+    let completed = false;
+    const finish: MysqlQueryCallback = (error, result, fields) => {
+      if (completed) return;
+      completed = true;
+      clearTimeout(timer);
+      // A timed-out write must never return its connection to the pool. Closing
+      // it aborts the uncommitted transaction, including with mysql2's nonfatal
+      // query timeout. TypeORM's transaction handler still rolls back/releases.
+      if (error?.code === 'PROTOCOL_SEQUENCE_TIMEOUT') connection.destroy();
+      callback(error, result, fields);
+    };
+    // mysqljs refreshes its inactivity timer on result packets. This absolute
+    // deadline also stops a query that keeps sending data without completing.
+    const timer = setTimeout(
+      () =>
+        finish(
+          Object.assign(new Error('NextGen database query deadline exceeded'), {
+            code: 'PROTOCOL_SEQUENCE_TIMEOUT'
+          })
+        ),
+      timeoutMs
+    );
+    try {
+      return originalQuery.call(
+        connection,
+        { ...(typeof sql === 'string' ? { sql } : sql), timeout: timeoutMs },
+        parameters,
+        finish
+      );
+    } catch (error) {
+      completed = true;
+      clearTimeout(timer);
+      throw error;
+    }
+  };
+  try {
+    return await operation();
+  } finally {
+    connection.query = originalQuery;
+  }
 }
 
 interface OpenSeaContractResponse {
@@ -360,7 +435,11 @@ export const findNextgenMarketStats = async (
   await dataSource.transaction(async (entityManager) => {
     remainingBudget(deadlineMs);
     logger.info(`Fetching NextGen tokens`);
-    const tokens: NextGenToken[] = await fetchNextgenTokens(entityManager);
+    const tokens: NextGenToken[] = await withNextgenDatabaseDeadline(
+      entityManager,
+      deadlineMs,
+      () => fetchNextgenTokens(entityManager)
+    );
     remainingBudget(deadlineMs);
     logger.info(
       `Fetched ${tokens.length} NextGen tokens. Sorting and batching them...`
@@ -463,7 +542,9 @@ async function processBatch(
   }
 
   remainingBudget(deadlineMs);
-  await persitNextgenTokenListings(manager, listings);
+  await withNextgenDatabaseDeadline(manager, deadlineMs, () =>
+    persitNextgenTokenListings(manager, listings)
+  );
   remainingBudget(deadlineMs);
   logger.info(
     `[CONTRACT ${contract}] [TOKENS ${tokens[0].id} - ${
