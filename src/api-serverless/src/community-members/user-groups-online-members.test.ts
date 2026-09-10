@@ -10,6 +10,7 @@ import { NotFoundException } from '@/exceptions';
 import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { ApiGroupFilterDirection } from '@/api/generated/models/ApiGroupFilterDirection';
 
+/** Creates independent level-zero criteria with the API display fields present. */
 function levelZeroGroup(): ApiGroupDescription {
   return {
     cic: { min: null, max: null, user_identity: null, direction: null },
@@ -38,6 +39,7 @@ function levelZeroGroup(): ApiGroupDescription {
   };
 }
 
+/** Stubs group loading with a fresh copy so query normalization cannot leak between calls. */
 function serviceFor(group: ApiGroupDescription) {
   const service = new UserGroupsService(mock(), mock(), mock());
   const load = jest

@@ -8,6 +8,7 @@ import {
   TEST_DB_NAME_PREFIX_ENV
 } from '@/tests/_setup/testDatabase';
 
+/** Starts an isolated MySQL container and initializes one database per Jest worker. */
 module.exports = async (globalConfig?: unknown) => {
   // 1️⃣  Start MySQL ⤵
   const container = await new MySqlContainer(
