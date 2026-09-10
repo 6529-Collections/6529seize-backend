@@ -4,8 +4,14 @@ import type { Handler } from 'aws-lambda';
 
 const logger = Logger.get('SENTRY_CONTEXT');
 
+export type LambdaSentryEvent = Parameters<typeof Sentry.captureEvent>[0];
+
 interface LambdaSentryOptions {
   readonly shouldCaptureException?: (error: unknown) => boolean;
+  readonly enrichEvent?: (
+    event: LambdaSentryEvent,
+    error: unknown
+  ) => LambdaSentryEvent;
 }
 
 export function isConfigured() {
@@ -35,7 +41,7 @@ export function wrapLambdaHandler(
       beforeSend: (event, hint) =>
         options.shouldCaptureException?.(hint.originalException) === false
           ? null
-          : event
+          : (options.enrichEvent?.(event, hint.originalException) ?? event)
     });
     return Sentry.AWSLambda.wrapHandler(handler);
   }
