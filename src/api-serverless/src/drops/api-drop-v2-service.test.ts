@@ -312,6 +312,8 @@ function createService() {
 
 describe('ApiDropV2Service', () => {
   describe('findVoteSummaryByDropIdOrThrow', () => {
+    afterEach(() => jest.restoreAllMocks());
+
     const requestContext = {
       authenticationContext: AuthenticationContext.notAuthenticated()
     };
