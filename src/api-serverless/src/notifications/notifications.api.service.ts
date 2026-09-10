@@ -1,3 +1,4 @@
+import { requestDeviceBadgeRefresh } from '@/api/push-notifications/push-notifications.service';
 import { assertUnreachable } from '../../../assertions';
 import { AuthenticationContext } from '../../../auth-context';
 import { collections } from '../../../collections';
@@ -115,6 +116,7 @@ export class NotificationsApiService {
       ...param,
       readAt: Time.currentMillis()
     });
+    await requestDeviceBadgeRefresh(param.identity_id);
     await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
       param.identity_id
     ]);
@@ -128,6 +130,7 @@ export class NotificationsApiService {
       ...param,
       readAt: null
     });
+    await requestDeviceBadgeRefresh(param.identity_id);
     await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
       param.identity_id
     ]);
@@ -142,6 +145,7 @@ export class NotificationsApiService {
       identityId,
       ctx
     );
+    await requestDeviceBadgeRefresh(identityId);
     await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
       identityId
     ]);
@@ -193,6 +197,7 @@ export class NotificationsApiService {
         ctx
       );
     }
+    await requestDeviceBadgeRefresh(identityId);
     await invalidateWaveUnreadCacheForReaderWave({
       identityId,
       waveId

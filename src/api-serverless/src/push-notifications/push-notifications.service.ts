@@ -49,6 +49,29 @@ export const sendIdentityPushNotifications = async (ids: number[]) => {
   }
 };
 
+/** Only enqueue here: device discovery, counting and Firebase run in the worker. */
+export async function requestDeviceBadgeRefresh(
+  profileId: string
+): Promise<void> {
+  if (!isActivated()) return;
+  try {
+    await sendBatchMessagesToSQS([
+      {
+        Id: 'badge-refresh',
+        MessageBody: JSON.stringify({
+          type: 'badge_refresh',
+          profile_id: profileId
+        })
+      }
+    ]);
+  } catch (error) {
+    // The read is already persisted. Do not report a failed read or send a guessed badge.
+    logger.error(
+      `Failed to enqueue badge refresh for profile ${profileId}: ${error}`
+    );
+  }
+}
+
 const sendBatchMessagesToSQS = async (
   entries: NonNullable<SendMessageBatchCommandInput['Entries']>
 ) => {

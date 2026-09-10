@@ -71,3 +71,53 @@ describe('sendIdentityPushNotifications', () => {
     ]);
   });
 });
+
+describe('requestDeviceBadgeRefresh', () => {
+  beforeEach(() => {
+    process.env.PUSH_NOTIFICATIONS_ACTIVATED = 'true';
+    sendMock.mockReset();
+    sendMock.mockResolvedValue({});
+  });
+  afterEach(() => {
+    delete process.env.PUSH_NOTIFICATIONS_ACTIVATED;
+  });
+
+  it('queues only the profile id, never a precomputed count', async () => {
+    const { requestDeviceBadgeRefresh } =
+      await import('./push-notifications.service');
+    await requestDeviceBadgeRefresh('profile-a');
+    expect(sendMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        Entries: [
+          {
+            Id: 'badge-refresh',
+            MessageBody: JSON.stringify({
+              type: 'badge_refresh',
+              profile_id: 'profile-a'
+            })
+          }
+        ]
+      })
+    );
+  });
+  it('skips enqueue when push delivery is disabled', async () => {
+    delete process.env.PUSH_NOTIFICATIONS_ACTIVATED;
+    const { requestDeviceBadgeRefresh } =
+      await import('./push-notifications.service');
+    await requestDeviceBadgeRefresh('profile-a');
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+  it.each(['transport', 'partial batch'])(
+    'does not fail an already persisted read on %s failure',
+    async (failure) => {
+      if (failure === 'transport')
+        sendMock.mockRejectedValue(new Error('SQS unavailable'));
+      else sendMock.mockResolvedValue({ Failed: [{ Id: 'badge-refresh' }] });
+      const { requestDeviceBadgeRefresh } =
+        await import('./push-notifications.service');
+      await expect(
+        requestDeviceBadgeRefresh('profile-a')
+      ).resolves.toBeUndefined();
+    }
+  );
+});

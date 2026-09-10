@@ -71,6 +71,30 @@ function init() {
   }
 }
 
+/** A badge update has no alert, sound, feed notification, or background wakeup. */
+export async function sendBadgeUpdate(
+  token: string,
+  count: number
+): Promise<void> {
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new Error('Invalid device badge count');
+  }
+  init();
+  await admin.messaging().send({
+    token,
+    apns: {
+      headers: {
+        'apns-push-type': 'alert',
+        'apns-priority': '5',
+        'apns-collapse-id': 'device-badge-refresh',
+        // Do not store a count for later delivery to an offline device.
+        'apns-expiration': '0'
+      },
+      payload: { aps: { badge: count } }
+    }
+  });
+}
+
 export async function sendMessages(
   inputs: PushNotificationMessageInput[]
 ): Promise<PushNotificationSendResult[]> {
