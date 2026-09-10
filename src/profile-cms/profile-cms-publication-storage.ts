@@ -19,7 +19,7 @@ export function cmsBytesHash(bytes: Buffer): string {
 
 function receiptGateway(uri: string): string {
   const arweave = /^ar:\/\/([A-Za-z0-9_-]{43})$/.exec(uri);
-  if (arweave) return `https://arweave.net/${arweave[1]}`;
+  if (arweave) return `https://arweave.net/raw/${arweave[1]}`;
   const ipfs =
     /^ipfs:\/\/((?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{20,256}|z[1-9A-HJ-NP-Za-km-z]{20,256}))$/.exec(
       uri
@@ -50,7 +50,9 @@ export class ProfileCmsPublicationStorage {
         timeout: 8000,
         size: CMS_MAX_STORAGE_BYTES
       });
-      if (!response.ok) throw new Error('unavailable');
+      // Arweave returns HTTP 202 with a pending marker before data propagates.
+      // Only a complete HTTP 200 response contains bytes suitable for hashing.
+      if (response.status !== 200) throw new Error('unavailable');
       bytes = await response.buffer();
     } catch {
       throw new CustomApiCompliantException(
