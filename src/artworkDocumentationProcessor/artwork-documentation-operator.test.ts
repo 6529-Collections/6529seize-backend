@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto';
+import type { LambdaSentryEvent } from '@/sentry.context';
 import { AuthenticationContext } from '@/auth-context';
 import { ArtworkDocumentationService } from '@/artwork-documentation/artwork-documentation.service';
 import { artworkDocumentationDb } from '@/artwork-documentation/artwork-documentation.db';
 import { importKeysAndGates } from '@/artwork-documentation/artwork-documentation-pilot';
+import { KeysAndGatesSourceDropsMissingError } from '@/artwork-documentation/artwork-documentation-import.errors';
 import {
   dispatchDocumentationProcessorEvent,
+  enrichDocumentationOperatorError,
   parseDocumentationOperatorEvent,
   runDocumentationOperator
 } from './artwork-documentation-operator';
@@ -107,6 +110,12 @@ describe('IAM-only artwork documentation operator', () => {
       }
     );
     await runDocumentationOperator(event);
+    expect(importKeysAndGates).toHaveBeenCalledWith(
+      event.coordinator_profile_id,
+      false,
+      expect.any(ArtworkDocumentationService),
+      event.correlation_id
+    );
     expect(insert).not.toHaveBeenCalled();
     expect(process.env.ARTWORK_DOCUMENTATION_ENABLED).toBe('false');
     expect(process.env.ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED).toBe(
@@ -190,5 +199,80 @@ describe('IAM-only artwork documentation operator', () => {
       })
     ).rejects.toMatchObject({ code: 'SMOKE_PROFILE_NOT_FOUND' });
     expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe('operator Sentry diagnostics', () => {
+  it.each([false, true])(
+    'enriches missing-source errors with apply=%s',
+    (apply) => {
+      const missing = [randomUUID(), randomUUID()];
+      const correlationId = randomUUID();
+      const error = new KeysAndGatesSourceDropsMissingError(
+        missing,
+        apply,
+        correlationId
+      );
+      const event: LambdaSentryEvent = {
+        tags: { environment: 'staging' },
+        contexts: { runtime: { name: 'node' } },
+        exception: {
+          values: [
+            {
+              type: error.name,
+              value: error.message,
+              mechanism: { type: 'generic', handled: false }
+            }
+          ]
+        }
+      };
+      const enriched = enrichDocumentationOperatorError(event, error);
+      expect(enriched).toEqual({
+        ...event,
+        fingerprint: ['KEYS_AND_GATES_SOURCE_DROPS_MISSING'],
+        tags: {
+          ...event.tags,
+          error_code: error.code,
+          operator_action: 'import_keys_and_gates_v1',
+          import_mode: apply ? 'apply' : 'dry_run'
+        },
+        contexts: {
+          ...event.contexts,
+          artwork_documentation_import: {
+            error_code: error.code,
+            missing_drop_ids: missing,
+            mode: apply ? 'apply' : 'dry_run',
+            correlation_id: correlationId
+          }
+        }
+      });
+      expect(enriched.exception).toBe(event.exception);
+      expect(event.contexts).not.toHaveProperty('artwork_documentation_import');
+      const unrelated: LambdaSentryEvent = {
+        message: 'A subsequent scheduled worker error'
+      };
+      expect(
+        enrichDocumentationOperatorError(unrelated, new Error('Worker failed'))
+      ).toBe(unrelated);
+    }
+  );
+
+  it('keeps a failed import rejected and does not record a successful operator action', async () => {
+    const error = new KeysAndGatesSourceDropsMissingError(
+      [randomUUID()],
+      true,
+      randomUUID()
+    );
+    (importKeysAndGates as jest.Mock).mockRejectedValue(error);
+    const insert = jest.spyOn(artworkDocumentationDb, 'insert');
+    await expect(
+      runDocumentationOperator({
+        operator_action: 'import_keys_and_gates_v1',
+        coordinator_profile_id: randomUUID(),
+        correlation_id: randomUUID(),
+        apply: true
+      })
+    ).rejects.toBe(error);
+    expect(insert).not.toHaveBeenCalled();
   });
 });

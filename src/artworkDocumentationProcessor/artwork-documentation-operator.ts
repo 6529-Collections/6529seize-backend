@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { LambdaSentryEvent } from '@/sentry.context';
 import { AuthenticationContext } from '@/auth-context';
 import { PROFILES_TABLE } from '@/constants';
 import { ArtworkDocumentationService } from '@/artwork-documentation/artwork-documentation.service';
@@ -6,6 +7,7 @@ import { artworkDocumentationDb } from '@/artwork-documentation/artwork-document
 import { importKeysAndGates } from '@/artwork-documentation/artwork-documentation-pilot';
 import { AD_EVENTS } from '@/artwork-documentation/artwork-documentation.tables';
 import { fail } from '@/artwork-documentation/artwork-documentation.validation';
+import { KeysAndGatesSourceDropsMissingError } from '@/artwork-documentation/artwork-documentation-import.errors';
 
 export type DocumentationOperatorEvent =
   | {
@@ -76,7 +78,8 @@ export async function runDocumentationOperator(
     const result = await importKeysAndGates(
       event.coordinator_profile_id,
       event.apply,
-      service
+      service,
+      event.correlation_id
     );
     if (event.apply)
       await recordOperatorAction(service, event, event.coordinator_profile_id);
@@ -150,4 +153,30 @@ export async function dispatchDocumentationProcessorEvent(
   if (action) return operator(action);
   await tick();
   return undefined;
+}
+
+export function enrichDocumentationOperatorError(
+  event: LambdaSentryEvent,
+  error: unknown
+): LambdaSentryEvent {
+  if (!(error instanceof KeysAndGatesSourceDropsMissingError)) return event;
+  return {
+    ...event,
+    fingerprint: [error.code],
+    tags: {
+      ...event.tags,
+      error_code: error.code,
+      operator_action: 'import_keys_and_gates_v1',
+      import_mode: error.mode
+    },
+    contexts: {
+      ...event.contexts,
+      artwork_documentation_import: {
+        error_code: error.code,
+        missing_drop_ids: error.missingDropIds,
+        mode: error.mode,
+        correlation_id: error.correlationId
+      }
+    }
+  };
 }
