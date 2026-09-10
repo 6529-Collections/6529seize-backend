@@ -1,12 +1,15 @@
 # Ethereum RPC Provider Portability
 
-Status: Backend implementation planned; frontend implementation tracked separately
+Status: Backend foundation opened in PR #1985; caller migration planned;
+frontend implementation tracked separately
 
 Owners: Backend and frontend
 
 Canonical record: This document is the cross-repository source of truth for
-the migration. The frontend-owned execution record is
-[Ethereum RPC provider portability](https://github.com/6529-Collections/6529seize-frontend/blob/main/ops/workstreams/ethereum-rpc-provider-portability/README.md).
+the migration. The frontend-owned execution record is tracked in
+[frontend PR #3911](https://github.com/6529-Collections/6529seize-frontend/pull/3911),
+under `ops/workstreams/ethereum-rpc-provider-portability/README.md`. Use the PR
+while it remains unmerged; the file is not yet available on frontend `main`.
 
 ## Decision
 
@@ -130,7 +133,7 @@ Parts 2 and 3 do not have implementation PRs yet.
 #### Implementation PR 1: configuration and shared provider
 
 Implementation opened: [PR #1985](https://github.com/6529-Collections/6529seize-backend/pull/1985).
-Its [foundation record](https://github.com/6529-Collections/6529seize-backend/blob/agent-prxt/ethereum-rpc-foundation/ops/workstreams/ethereum-rpc-foundation/README.md)
+Its [foundation record snapshot](https://github.com/6529-Collections/6529seize-backend/blob/2b4ed0266795c278ee4d9d949e3f1422a8bf880c/ops/workstreams/ethereum-rpc-foundation/README.md)
 documents the implemented configuration contract, source-derived consumer
 inventory, rollout prerequisites and exceptions.
 
@@ -277,9 +280,11 @@ a change.
 The frontend owns a concise execution record in its `ops/workstreams/`
 directory. Its implementation scope is:
 
-1. Delete the unused `services/alchemy-api.ts` facade, the unused
+1. Completed in merged [PR #3915](https://github.com/6529-Collections/6529seize-frontend/pull/3915):
+   deleted the unused `services/alchemy-api.ts` facade, the unused
    `services/alchemy/{index,collections,owner-nfts,tokens}.ts` implementations,
-   and their orphaned test.
+   and their orphaned test. The remaining implementation is tracked in PR #3911;
+   code completion does not imply deployment.
 2. Retain `services/alchemy/types.ts` and `services/alchemy/utils.ts` while
    production code imports them.
 3. Add one server-only provider-neutral construction path for ordinary
@@ -327,8 +332,10 @@ pass before switching any runtime caller:
 1. In local/development, staging, and production, provision
    `ETHEREUM_RPC_URL` with the current Alchemy mainnet endpoint. Do not remove
    `ALCHEMY_API_KEY` from indexed-product consumers.
-2. Add environment wiring to each confirmed deployment above, then deploy the
-   configuration-only change sequentially in this order: `api`,
+2. Reuse the existing regional shared-secret loader confirmed in PR #1985;
+   services outside that path must use their established runtime configuration.
+   Refresh/redeploy only as needed to load and verify configuration, in this
+   order: `api`,
    `discoverEnsLoop`, `refreshEnsLoop`, `delegationsLoop`, `nftsLoop`,
    `nftHistoryLoop`, `transactionsLoop`, `nextgenContractLoop`, `tdhLoop`,
    `subscriptionsTopUpLoop`, `mintAnnouncementsLoop`,
