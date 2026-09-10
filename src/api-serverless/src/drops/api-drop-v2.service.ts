@@ -48,6 +48,8 @@ import {
   ContentModerationDb
 } from '@/content-moderation/content-moderation.db';
 import { ApiDropModerationStatus } from '@/api/generated/models/ApiDropModerationStatus';
+import { ApiIdentityOverview } from '@/api/generated/models/ApiIdentityOverview';
+import { Logger } from '@/logging';
 
 export type ApiDropWithWave = ApiDropAndWave;
 export type DropVotersSearchParams = {
@@ -95,6 +97,8 @@ export interface FindCuratedProfileWaveDropsV2Request {
 }
 
 export class ApiDropV2Service {
+  private readonly logger = Logger.get(this.constructor.name);
+
   constructor(
     private readonly dropsDb: DropsDb,
     private readonly userGroupsService: UserGroupsService,
@@ -277,11 +281,19 @@ export class ApiDropV2Service {
         return {};
       }
 
-      const votersById =
-        await this.identityFetcher.getApiIdentityOverviewsByIds(
+      let votersById: Record<string, ApiIdentityOverview> = {};
+      try {
+        votersById = await this.identityFetcher.getApiIdentityOverviewsByIds(
           rows.map((row) => row.voter_id),
           ctx
         );
+      } catch (error) {
+        // Totals come from voter state and must not depend on profile enrichment.
+        this.logger.warn(
+          'Drop vote summary identity enrichment unavailable',
+          error
+        );
+      }
       const distribution: ApiDropVoteDistribution = {
         positive_total: totals.positive_total,
         negative_total: totals.negative_total,
@@ -291,8 +303,8 @@ export class ApiDropV2Service {
       for (const row of rows) {
         const voter = votersById[row.voter_id];
         if (!voter) {
-          // Do not mislabel a smaller known vote as the largest allocation.
-          return {};
+          // Do not mislabel an allocation with another voter's identity.
+          continue;
         }
         const side =
           row.vote > 0
