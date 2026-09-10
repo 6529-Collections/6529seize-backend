@@ -10,7 +10,9 @@ import {
 
 module.exports = async (globalConfig?: unknown) => {
   // 1️⃣  Start MySQL ⤵
-  const container = await new MySqlContainer('mysql:8.3')
+  const container = await new MySqlContainer(
+    process.env.TEST_MYSQL_IMAGE ?? 'mysql:8.3'
+  )
     .withEnvironment({ MYSQL_ROOT_PASSWORD: 'root' })
     .withTmpFs({ '/var/lib/mysql': 'rw' })
     .withCommand(['--default-authentication-plugin=mysql_native_password'])

@@ -282,7 +282,8 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     }
     const viewResult = await this.userGroupsService.getSqlAndParamsByGroupId(
       groupId,
-      ctx
+      ctx,
+      { forOnlineRecipients: true }
     );
     if (viewResult === null) {
       ctx?.timer?.stop(
@@ -332,7 +333,8 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     const viewResult =
       await this.userGroupsService.getSqlAndParamsByGroupIdForSystemBroadcast(
         params.groupId,
-        ctx
+        ctx,
+        { forOnlineRecipients: true }
       );
     if (viewResult === null) {
       return [];
