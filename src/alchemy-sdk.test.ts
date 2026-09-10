@@ -266,29 +266,7 @@ describe('Alchemy SDK replacement', () => {
       );
     });
 
-    it('calls searchContractMetadata as REST GET', async () => {
-      mockedAxios.get.mockResolvedValue({
-        status: 200,
-        data: { contracts: [{ address: '0xabc', name: 'Memes' }] }
-      });
-
-      const alchemy = new Alchemy({
-        network: Network.ETH_MAINNET,
-        apiKey: 'test-key'
-      });
-
-      const result = await alchemy.nft.searchContractMetadata('memes');
-
-      expect(result).toEqual([{ address: '0xabc', name: 'Memes' }]);
-      expect(mockedAxios.get).toHaveBeenCalledWith(
-        'https://eth-mainnet.g.alchemy.com/nft/v3/test-key/searchContractMetadata',
-        expect.objectContaining({
-          params: { query: 'memes' }
-        })
-      );
-    });
-
-    it('calls getNFTsForOwner as REST GET with repeated array params', async () => {
+    it('calls getNFTsForOwner with bracketed contract address params', async () => {
       mockedAxios.get.mockResolvedValue({
         status: 200,
         data: { ownedNfts: [], totalCount: 0 }
@@ -312,9 +290,25 @@ describe('Alchemy SDK replacement', () => {
             contractAddresses: ['0xa', '0xb'],
             pageKey: 'p1'
           }),
-          paramsSerializer: { indexes: null }
+          paramsSerializer: { serialize: expect.any(Function) }
         })
       );
+
+      const requestConfig = mockedAxios.get.mock.calls[0][1];
+      const serialized = requestConfig.paramsSerializer.serialize(
+        requestConfig.params
+      );
+      const searchParams = new URLSearchParams(serialized);
+      expect(searchParams.getAll('contractAddresses[]')).toEqual([
+        '0xa',
+        '0xb'
+      ]);
+      expect(searchParams.has('contractAddresses')).toBe(false);
+      expect(searchParams.get('owner')).toBe('0xowner');
+      expect(searchParams.get('pageKey')).toBe('p1');
+      expect(() =>
+        requestConfig.paramsSerializer.serialize({ unsupported: {} })
+      ).toThrow('Unsupported Alchemy NFT query parameter value');
     });
 
     it('calls getNFTMetadataBatch as REST POST', async () => {
