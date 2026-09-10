@@ -37,11 +37,46 @@ bytes and hashes. Digests establish byte equality, not truth or authorship.
 
 The three review lanes refer to one immutable revision. Later draft edits do
 not overwrite an earlier confirmation or carry acceptance into a new revision.
-Rights-sensitive fields, private contact, source receipts and original-file
-access are separately permissioned. Context and program grants do not confer
+Legacy rights-sensitive fields, private contact, source receipts and original-file
+access are separately permissioned. The optional `read_restricted_fields` grant
+adds access to other restricted answers and their historical projections. Its
+absence means false. It does not confer contact, locked rights-evidence,
+original-file or source-receipt permissions. Context and program grants do not confer
 artist confirmation authority. Artists can invite documentation editors;
 program coordinators assign reviewers. Artists cannot appoint institutional
 reviewers and coordinators cannot assign themselves extra evidence access.
+
+### Publication-only intake
+
+The latest version of each profile is version 2, with `intake_mode:
+publication_only`. Profile IDs stay stable. Version 1 snapshots remain available
+with their existing permissions; no legacy private answer is silently published
+or deleted. Version 2 prepares one artwork record whose answers and selected
+files are intended for eventual public publication. MySQL and private object
+storage hold the draft workspace until the separate future publication/mint
+process. There is no private appendix in the final artwork record.
+
+Version 2 removes private contact, private source-file inventory, depicted-person
+and consent-evidence fields, identifiability notes and sensitive-context notes.
+It accepts no `restricted` visibility or `withheld` answer status. Public rights
+declarations and institutional rights review remain; omitting private evidence
+from intake does not establish consent or clearance. Uploads and attachments
+reject camera originals, working files, consent instruments and rights
+instruments. Other supporting materials must be intended for publication, and
+interview assets require explicit public publication permission.
+
+Artists use context-level `artist_and_reviewers`, `ordinary` threads without a
+field or revision binding for **Questions for the team**. These are drafting
+discussion outside the artwork record, not a hidden archival appendix. Relevant
+resolved information belongs in the public artwork answers. Thread content is
+never included in confirmation snapshots, asset manifests or public previews.
+
+The server validates the pinned profile on answer writes, source imports,
+artist-record pins, profile upgrades and confirmation. A shared artist revision
+containing incompatible or restricted answers cannot be pinned into version 2;
+the existing shared revision is preserved. Publication-only profiles cannot be
+downgraded into private intake. Confirmation uses the profile's exact versioned
+copy and still performs no publication, decentralization or mint transaction.
 
 Coordinator queues filter confirmation state, review lane, outstanding action
 and pinned profile before cursor pagination. Queue summaries contain lane status
@@ -99,11 +134,11 @@ email, Wave post, wallet action or payment is sent by this command.
 
 ### Operator access inside the VPC
 
-The dedicated `artworkDocumentationProcessor` also accepts two closed actions
+The dedicated `artworkDocumentationProcessor` also accepts closed actions
 through IAM-authorized Lambda invocation. It has no HTTP operator endpoint. Keep
 Lambda invoke access limited to release operators, with invocation audit logging
 configured by the deployment owner. Applied actions record the supplied UUID correlation ID in the
-documentation event table. Neither action changes process environment variables
+documentation event table. No action changes process environment variables
 or enables the API's feature flags. Normal scheduled events still run only the
 archival processor and operational metrics.
 
@@ -135,6 +170,53 @@ creates no source records, shared identity edits, files or program grants, and
 returns only identifiers. It works while API features remain disabled; the API
 must be enabled independently after deployment verification before the bot can
 exercise that context with its normal authenticated requests.
+
+```json
+{"operator_action":"set_keys_and_gates_coordinator_read_access_v1","correlation_id":"<request-UUID>","coordinator_profile_id":"<verified-existing-coordinator-UUID>","apply":false}
+```
+
+This explicit read-access action is limited to `6529NM-AP-01` and requires an
+existing profile with exactly one active program-wide grant already carrying
+`read_context`, `manage_context` and `manage_assignments`. It never creates a
+grant. After reviewing dry-run metadata, repeat with the same correlation UUID
+and `apply: true` to enable only `read_archival_files`, `read_rights_evidence`,
+`read_source_receipts`, `read_contact` and `read_restricted_fields`. All other
+stored capabilities are preserved; editing, review lanes and artist confirmation
+are not added. The transaction records an idempotent audit. Replays do not
+reapply a revoked or subsequently narrowed grant. Output contains grant/program/
+profile IDs, changed read flags, effective and target capabilities, context count
+and the count of fields still redacted by the actual authorization/projection
+service. No answers, filenames or asset hashes are returned.
+
+`changed_read_flags` describes the original audited apply, including on replay;
+it is not a statement of current authority. `effective_capabilities` and the
+projection counts are fresh, best-effort reads after the transaction, rather
+than cached apply results or one atomic snapshot. Concurrent permission changes
+can therefore appear in these observations. Verify the actual effective read
+flags and `redacted_field_count` before relying on the result; target capabilities
+describe the proposed access only. A replay never restores subsequently removed
+access, and a missing or revoked coordinator grant is rejected. A dry-run with a
+previously used correlation remains a fresh read-only inspection.
+
+```json
+{"operator_action":"upgrade_empty_keys_and_gates_publication_v2","correlation_id":"<different-request-UUID>","coordinator_profile_id":"<verified-existing-coordinator-UUID>","apply":false}
+```
+
+The publication upgrade uses the same existing coordinator guard and hard-pinned
+program. Dry-run lists eligible/skipped context IDs and reason codes. Explicit
+apply upgrades only active version 1 Keys contexts with no answers, asset links,
+restriction history, underlying asset/upload rows or confirmed revisions. Any
+existing artist pin must be compatible. Sources, grants, threads and pins stay
+unchanged. Eligible contexts advance one draft version with an audit event; the
+correlation UUID makes retries idempotent. Concurrent upload reservation and
+upgrade lock the context in the same order. A missing staging program grant is
+an expected rejection, not a reason to relax these guards.
+
+For this additive follow-up, deploy `artworkDocumentationProcessor` then `api`.
+No table, storage-stack or migration deployment is required. Invoke the read
+grant and publication upgrade only after both runtime units are verified in the
+target environment. The existing public preview always retains its own
+restricted projection even for a coordinator with full read access.
 
 ## Retention and recovery
 

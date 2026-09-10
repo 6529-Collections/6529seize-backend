@@ -8,10 +8,15 @@ import { importKeysAndGates } from '@/artwork-documentation/artwork-documentatio
 import { AD_EVENTS } from '@/artwork-documentation/artwork-documentation.tables';
 import { fail } from '@/artwork-documentation/artwork-documentation.validation';
 import { KeysAndGatesSourceDropsMissingError } from '@/artwork-documentation/artwork-documentation-import.errors';
+import { setKeysAndGatesCoordinatorReadAccess } from '@/artwork-documentation/artwork-documentation-coordinator-access';
+import { upgradeEmptyKeysAndGatesPublication } from '@/artwork-documentation/artwork-documentation-publication-upgrade';
 
 export type DocumentationOperatorEvent =
   | {
-      operator_action: 'import_keys_and_gates_v1';
+      operator_action:
+        | 'import_keys_and_gates_v1'
+        | 'set_keys_and_gates_coordinator_read_access_v1'
+        | 'upgrade_empty_keys_and_gates_publication_v2';
       correlation_id: string;
       coordinator_profile_id: string;
       apply: boolean;
@@ -42,7 +47,11 @@ export function parseDocumentationOperatorEvent(
     };
   }
   if (
-    input.operator_action !== 'import_keys_and_gates_v1' ||
+    ![
+      'import_keys_and_gates_v1',
+      'set_keys_and_gates_coordinator_read_access_v1',
+      'upgrade_empty_keys_and_gates_publication_v2'
+    ].includes(input.operator_action as string) ||
     !isUuid(input.coordinator_profile_id)
   )
     fail(422, 'INVALID_OPERATOR_REQUEST');
@@ -54,7 +63,10 @@ export function parseDocumentationOperatorEvent(
   )
     fail(422, 'INVALID_OPERATOR_REQUEST');
   return {
-    operator_action: input.operator_action,
+    operator_action: input.operator_action as
+      | 'import_keys_and_gates_v1'
+      | 'set_keys_and_gates_coordinator_read_access_v1'
+      | 'upgrade_empty_keys_and_gates_publication_v2',
     correlation_id: input.correlation_id,
     coordinator_profile_id: input.coordinator_profile_id,
     apply: input.apply === true
@@ -74,6 +86,10 @@ export async function runDocumentationOperator(
         event.operator_action === 'create_smoke_context_v1'
     }
   );
+  if (event.operator_action === 'set_keys_and_gates_coordinator_read_access_v1')
+    return setKeysAndGatesCoordinatorReadAccess(event, service);
+  if (event.operator_action === 'upgrade_empty_keys_and_gates_publication_v2')
+    return upgradeEmptyKeysAndGatesPublication(event, service);
   if (event.operator_action === 'import_keys_and_gates_v1') {
     const result = await importKeysAndGates(
       event.coordinator_profile_id,

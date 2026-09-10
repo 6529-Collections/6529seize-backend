@@ -723,7 +723,7 @@ import { ApiArtworkDocumentationAssetLinkRequest } from '../models/ApiArtworkDoc
 import { ApiArtworkDocumentationAssetResponse } from '../models/ApiArtworkDocumentationAssetResponse';
 import { ApiArtworkDocumentationAssetTerms, ApiArtworkDocumentationAssetTermsKindEnum     } from '../models/ApiArtworkDocumentationAssetTerms';
 import { ApiArtworkDocumentationAvailableArtistRecord } from '../models/ApiArtworkDocumentationAvailableArtistRecord';
-import { ApiArtworkDocumentationCapabilities        , ApiArtworkDocumentationCapabilitiesEditModulesEnum  , ApiArtworkDocumentationCapabilitiesReviewLanesEnum   } from '../models/ApiArtworkDocumentationCapabilities';
+import { ApiArtworkDocumentationCapabilities         , ApiArtworkDocumentationCapabilitiesEditModulesEnum  , ApiArtworkDocumentationCapabilitiesReviewLanesEnum   } from '../models/ApiArtworkDocumentationCapabilities';
 import { ApiArtworkDocumentationComment } from '../models/ApiArtworkDocumentationComment';
 import { ApiArtworkDocumentationCommentRequest } from '../models/ApiArtworkDocumentationCommentRequest';
 import { ApiArtworkDocumentationCompletePart } from '../models/ApiArtworkDocumentationCompletePart';
@@ -754,7 +754,7 @@ import { ApiArtworkDocumentationOperation, ApiArtworkDocumentationOperationOpEnu
 import { ApiArtworkDocumentationPatchModule } from '../models/ApiArtworkDocumentationPatchModule';
 import { ApiArtworkDocumentationPatchThread } from '../models/ApiArtworkDocumentationPatchThread';
 import { ApiArtworkDocumentationPreviewModule } from '../models/ApiArtworkDocumentationPreviewModule';
-import { ApiArtworkDocumentationProfile     , ApiArtworkDocumentationProfileReviewLanesEnum            } from '../models/ApiArtworkDocumentationProfile';
+import { ApiArtworkDocumentationProfile, ApiArtworkDocumentationProfileIntakeModeEnum       , ApiArtworkDocumentationProfileReviewLanesEnum            } from '../models/ApiArtworkDocumentationProfile';
 import { ApiArtworkDocumentationProfileModule, ApiArtworkDocumentationProfileModuleIdEnum     } from '../models/ApiArtworkDocumentationProfileModule';
 import { ApiArtworkDocumentationProfilesResponse } from '../models/ApiArtworkDocumentationProfilesResponse';
 import { ApiArtworkDocumentationPublicPreview } from '../models/ApiArtworkDocumentationPublicPreview';
@@ -1441,6 +1441,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiArtworkDocumentationDownloadRequestVariantEnum",
     "ApiArtworkDocumentationLifecycleRequestLifecycleEnum",
     "ApiArtworkDocumentationOperationOpEnum",
+    "ApiArtworkDocumentationProfileIntakeModeEnum",
     "ApiArtworkDocumentationProfileReviewLanesEnum",
     "ApiArtworkDocumentationProfileModuleIdEnum",
     "ApiArtworkDocumentationReviewLaneEnum",
