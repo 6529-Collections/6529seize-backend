@@ -8,8 +8,16 @@ import {
 } from '@/artwork-documentation/assets/artwork-assets.types';
 import {
   ARTWORK_UPLOAD_POLICY,
-  assetError
+  assetError,
+  publicationAssetAccess,
+  requirePublicationAsset
 } from '@/artwork-documentation/assets/artwork-assets.policy';
+import { AD_CONTEXTS } from '@/artwork-documentation/artwork-documentation.tables';
+import { parseJson } from '@/artwork-documentation/artwork-documentation.db';
+import type {
+  DocumentationProfile,
+  Modules
+} from '@/artwork-documentation/artwork-documentation.types';
 
 export class ArtworkAssetsDb extends LazyDbAccessCompatibleService {
   async find(
@@ -34,6 +42,27 @@ export class ArtworkAssetsDb extends LazyDbAccessCompatibleService {
   async reserve(asset: StoredAsset): Promise<StoredAsset> {
     return this.db.executeNativeQueriesInTransaction(async (connection) => {
       const options = { wrappedConnection: connection };
+      // Share the context-first lock order with profile upgrades. Authorization
+      // loaded before this transaction cannot authorize an obsolete intake mode.
+      const context = await this.db.oneOrNull<{
+        lifecycle: string;
+        profile_json: string;
+        modules_json: string;
+      }>(
+        `select lifecycle, profile_json, modules_json from ${AD_CONTEXTS} where id = :contextId for update`,
+        { contextId: asset.context_id },
+        options
+      );
+      if (!context) assetError(404, 'ASSET_CONTEXT_NOT_FOUND');
+      if (context.lifecycle !== 'active')
+        assetError(403, 'ASSET_EDIT_FORBIDDEN');
+      requirePublicationAsset(
+        publicationAssetAccess({
+          profile: parseJson<DocumentationProfile>(context.profile_json),
+          modules: parseJson<Modules>(context.modules_json)
+        }),
+        asset
+      );
       await this.db.execute(
         // ON DUPLICATE KEY UPDATE takes an exclusive lock immediately; INSERT
         // IGNORE's shared duplicate lock can deadlock when concurrent writers

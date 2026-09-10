@@ -58,6 +58,34 @@ describe('IAM-only artwork documentation operator', () => {
     expect(tick).not.toHaveBeenCalled();
   });
   it.each([
+    'set_keys_and_gates_coordinator_read_access_v1',
+    'upgrade_empty_keys_and_gates_publication_v2'
+  ])(
+    'defaults %s to dry-run and rejects caller-supplied scope or capabilities',
+    (action) => {
+      const event = {
+        operator_action: action,
+        correlation_id: randomUUID(),
+        coordinator_profile_id: randomUUID()
+      };
+      expect(parseDocumentationOperatorEvent(event)).toEqual({
+        ...event,
+        apply: false
+      });
+      for (const extra of [
+        { program_id: 'another-program' },
+        { capabilities: { confirm_as_artist: true } },
+        { context_ids: [] },
+        { apply: 'true' }
+      ])
+        expect(() =>
+          parseDocumentationOperatorEvent({ ...event, ...extra })
+        ).toThrow(
+          expect.objectContaining({ code: 'INVALID_OPERATOR_REQUEST' })
+        );
+    }
+  );
+  it.each([
     { operator_action: 'arbitrary_sql', correlation_id: randomUUID() },
     {
       operator_action: 'create_smoke_context_v1',

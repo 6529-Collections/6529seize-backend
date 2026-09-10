@@ -1,6 +1,11 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { RequestContext } from '@/request.context';
 import {
+  publicationAssetAccess,
+  validatePublicationAssetLink
+} from '@/artwork-documentation/assets/artwork-assets.policy';
+import { ARTWORK_ASSETS_TABLE } from '@/artwork-documentation/assets/artwork-assets.types';
+import {
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
   DROP_METADATA_TABLE
@@ -48,13 +53,12 @@ import {
 import {
   applyOperations,
   conditionalRequired,
-  CONFIRMATION_COPY,
-  CONFIRMATION_COPY_VERSION,
   DOCUMENTATION_LIMITS,
   emptyModules,
-  FIELD_CATALOGUE,
   getAnswer,
   getProfile,
+  profileFields,
+  validateProfileAnswers,
   PROFILES
 } from './artwork-documentation.catalogue';
 import {
@@ -574,7 +578,7 @@ export class ArtworkDocumentationService {
     return Object.fromEntries(
       MODULE_IDS.map((moduleId) => {
         const answers: Record<string, Answer | { redacted: true }> = {};
-        for (const definition of FIELD_CATALOGUE[moduleId]) {
+        for (const definition of profileFields(context.profile, moduleId)) {
           const answer = context.modules[moduleId][definition.id];
           if (
             !canReadField(
@@ -624,7 +628,9 @@ export class ArtworkDocumentationService {
               required: visibleRequired.length,
               addressed,
               missing,
-              restricted_checks_exist: !access.isArtist
+              restricted_checks_exist: Object.values(answers).some(
+                (answer) => 'redacted' in answer
+              )
             }
           }
         ];
@@ -937,7 +943,12 @@ export class ArtworkDocumentationService {
         )
           fail(403, 'FIELD_EDIT_NOT_ALLOWED');
       const previous = access.context.modules[moduleId];
-      const answers = applyOperations(moduleId, previous, body.operations);
+      const answers = applyOperations(
+        moduleId,
+        previous,
+        body.operations,
+        access.context.profile
+      );
       if (moduleId === 'interview')
         validateInterview(answers, access.context.profile);
       const previousReferences = new Set(
@@ -1041,11 +1052,10 @@ export class ArtworkDocumentationService {
       );
       if (!revision) fail(404, 'UNAVAILABLE');
       const privateContact = access.context.modules.identity.private_contact;
-      access.context.modules.identity = parseJson<Answers>(
-        revision.answers_json
-      );
-      if (privateContact)
-        access.context.modules.identity.private_contact = privateContact;
+      const identity = parseJson<Answers>(revision.answers_json);
+      if (privateContact) identity.private_contact = privateContact;
+      validateProfileAnswers(access.context.profile, 'identity', identity);
+      access.context.modules.identity = identity;
       access.context.restricted_paths = Array.from(
         new Set([
           ...access.context.restricted_paths,
@@ -1065,6 +1075,7 @@ export class ArtworkDocumentationService {
     confirmation: boolean
   ): Promise<void> {
     const context = access.context;
+    this.validatePublicationRecord(context);
     // Permission to change each field/link is checked at its write boundary.
     // Structural validation must also inspect untouched private references without
     // disclosing them to an editor who has access only to ordinary fields.
@@ -1127,6 +1138,58 @@ export class ArtworkDocumentationService {
       )
     )
       fail(422, 'SOURCE_ASSET_REQUIRED');
+  }
+  validatePublicationRecord(context: ContextRecord): void {
+    if (context.profile.intake_mode !== 'publication_only') return;
+    for (const moduleId of MODULE_IDS)
+      validateProfileAnswers(
+        context.profile,
+        moduleId,
+        context.modules[moduleId]
+      );
+    if (context.restricted_paths.length)
+      fail(422, 'PUBLICATION_RECORD_RESTRICTED');
+    validateInterview(context.modules.interview, context.profile);
+    for (const link of context.asset_links)
+      validatePublicationAssetLink(publicationAssetAccess(context), link);
+  }
+  async validatePublicationUpgrade(
+    context: ContextRecord,
+    ctx: RequestContext
+  ): Promise<void> {
+    this.validatePublicationRecord(context);
+    if (context.profile.intake_mode !== 'publication_only') return;
+    const assets = await this.db.query<{
+      role: string;
+      intended_visibility: string;
+      access_class: string;
+    }>(
+      `SELECT role,intended_visibility,access_class FROM ${ARTWORK_ASSETS_TABLE} WHERE context_id=:id FOR UPDATE`,
+      { id: context.id },
+      ctx
+    );
+    for (const asset of assets)
+      validatePublicationAssetLink(publicationAssetAccess(context), {
+        ...asset,
+        intended_terms: { kind: 'unspecified' },
+        manifest: asset
+      });
+    if (context.artist_record_revision_id) {
+      const pin = await this.db.one<{ answers_json: unknown }>(
+        `SELECT answers_json FROM ${AD_ARTIST_REVISIONS} WHERE id=:id AND owner_profile_id=:owner`,
+        {
+          id: context.artist_record_revision_id,
+          owner: context.owner_profile_id
+        },
+        ctx
+      );
+      if (!pin) fail(422, 'ARTIST_PIN_UNAVAILABLE');
+      validateProfileAnswers(
+        context.profile,
+        'identity',
+        parseJson<Answers>(pin.answers_json)
+      );
+    }
   }
   issues(context: ContextRecord): Issue[] {
     const result: Issue[] = [];
@@ -1199,7 +1262,8 @@ export class ArtworkDocumentationService {
           fail(409, 'DRAFT_CONFLICT');
         if (
           body.accepted !== true ||
-          body.confirmation_copy_version !== CONFIRMATION_COPY_VERSION
+          body.confirmation_copy_version !==
+            access.context.profile.confirmation_copy_version
         )
           fail(422, 'CONFIRMATION_COPY_REQUIRED');
         if (
@@ -1235,8 +1299,8 @@ export class ArtworkDocumentationService {
         const revisionId = randomUUID();
         const confirmation = {
           actor_profile_id: access.actorProfileId,
-          copy_version: CONFIRMATION_COPY_VERSION,
-          accepted_copy: CONFIRMATION_COPY,
+          copy_version: access.context.profile.confirmation_copy_version,
+          accepted_copy: access.context.profile.confirmation_copy,
           confirmed_at: Date.now()
         };
         await this.db.insert(
@@ -1471,7 +1535,8 @@ export class ArtworkDocumentationService {
         access.context.modules[moduleId] = applyOperations(
           moduleId,
           access.context.modules[moduleId],
-          [{ op: 'set', field, answer: proposed.answer }]
+          [{ op: 'set', field, answer: proposed.answer }],
+          access.context.profile
         );
       }
       await this.audit(

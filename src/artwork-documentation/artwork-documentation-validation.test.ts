@@ -3,7 +3,9 @@ import {
   emptyModules,
   getProfile,
   conditionalRequired,
-  FIELD_CATALOGUE
+  FIELD_CATALOGUE,
+  validateProfileAnswers,
+  PUBLICATION_CONFIRMATION_COPY_VERSION
 } from './artwork-documentation.catalogue';
 import {
   answerValue,
@@ -24,6 +26,101 @@ const answer = (
 const set = (module: ModuleId, field: string, value: Answer) =>
   applyOperations(module, {}, [{ op: 'set', field, answer: value }]);
 describe('artwork documentation typed field contract', () => {
+  it.each([
+    'stream_artwork_basic_v1',
+    'photography_documentation_v1',
+    'keys_and_gates_v1'
+  ])('pins publication-only v2 without changing %s legacy fields', (name) => {
+    const legacy = getProfile(name, 1);
+    const profile = getProfile(name, 2);
+    expect(legacy.intake_mode).toBeUndefined();
+    expect(profile.intake_mode).toBe('publication_only');
+    expect(profile.confirmation_copy_version).toBe(
+      PUBLICATION_CONFIRMATION_COPY_VERSION
+    );
+    const fields = profile.modules.flatMap((module) =>
+      module.fields.map((field) => `${module.id}.${field.id}`)
+    );
+    for (const excluded of [
+      'identity.private_contact',
+      'files.source_availability',
+      'rights.people_depicted',
+      'rights.consent_status',
+      'rights.consent_asset_ids',
+      'rights.identifiability_note',
+      'rights.sensitive_context_note'
+    ]) {
+      expect(fields).not.toContain(excluded);
+      expect(profile.required_for_review).not.toContain(excluded);
+    }
+    expect(
+      profile.required_for_review.every((path) => fields.includes(path))
+    ).toBe(true);
+    expect(
+      profile.modules
+        .flatMap((module) => module.fields)
+        .every(
+          (field) =>
+            field.default_visibility === 'public_record' &&
+            !field.locked_restricted &&
+            !field.allowed_statuses.includes('withheld')
+        )
+    ).toBe(true);
+    expect(
+      legacy.modules
+        .find((module) => module.id === 'identity')!
+        .fields.some((field) => field.id === 'private_contact')
+    ).toBe(true);
+    expect(profile.review_lanes).toEqual(legacy.review_lanes);
+  });
+  it('rejects direct excluded/private/withheld values and private interview permission in v2', () => {
+    const profile = getProfile('keys_and_gates_v1', 2);
+    for (const [module, field, value] of [
+      ['identity', 'private_contact', answer('Contact', 'restricted')],
+      ['artwork', 'title', answer('Private title', 'restricted')],
+      [
+        'artwork',
+        'location',
+        { status: 'withheld', intended_visibility: 'public_record' }
+      ],
+      ['interview', 'recording_permission', answer('private_review')]
+    ] as [ModuleId, string, Answer][])
+      expect(() =>
+        applyOperations(
+          module,
+          {},
+          [{ op: 'set', field, answer: value }],
+          profile
+        )
+      ).toThrow();
+    expect(() =>
+      validateProfileAnswers(profile, 'identity', {
+        display_name: answer('Private artist', 'restricted')
+      })
+    ).toThrow(expect.objectContaining({ code: 'PUBLICATION_INTENT_REQUIRED' }));
+    expect(
+      applyOperations(
+        'artwork',
+        {},
+        [{ op: 'set', field: 'title', answer: answer('Public title') }],
+        profile
+      ).title.value
+    ).toBe('Public title');
+    expect(
+      applyOperations(
+        'artwork',
+        {},
+        [
+          {
+            op: 'set',
+            field: 'location',
+            answer: { status: 'unknown', intended_visibility: 'public_record' }
+          }
+        ],
+        profile
+      ).location.status
+    ).toBe('unknown');
+  });
   it('registers exactly the eight modules and every configured required path', () => {
     for (const name of [
       'stream_artwork_basic_v1',

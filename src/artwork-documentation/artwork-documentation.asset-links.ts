@@ -14,6 +14,10 @@ import {
 } from './artwork-documentation.types';
 import { requireEdit } from './artwork-documentation.access';
 import { fail } from './artwork-documentation.validation';
+import {
+  publicationAssetAccess,
+  validatePublicationAssetLink
+} from './assets/artwork-assets.policy';
 
 export function toAssetAccess(access: ContextAccess): AssetAccess {
   return {
@@ -23,7 +27,8 @@ export function toAssetAccess(access: ContextAccess): AssetAccess {
       access.capabilities.edit_modules.includes('files'),
     canReadArchivalFiles: access.capabilities.read_archival_files,
     canReadRightsEvidence: access.capabilities.read_rights_evidence,
-    canReadRestricted: access.isArtist
+    canReadRestricted: access.isArtist,
+    ...publicationAssetAccess(access.context)
   };
 }
 core.setAssetGateway({
@@ -107,6 +112,7 @@ export async function writeAssetLink(
   await core.mutate(id, mutation, ctx, async (access, transaction) => {
     requireEdit(access, 'files');
     const input = normalizeLink(raw);
+    validatePublicationAssetLink(toAssetAccess(access), input);
     const old = linkId
       ? access.context.asset_links.find((link) => link.id === linkId)
       : null;
