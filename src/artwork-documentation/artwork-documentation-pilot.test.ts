@@ -76,11 +76,12 @@ describe('Keys and Gates import source validation', () => {
     }
   );
 
-  it('reports an entirely absent roster, including without an operator correlation ID', async () => {
-    const { service, getDrop, transaction } = setup();
-    getDrop.mockRejectedValue(
-      new CustomApiCompliantException(404, 'Unavailable', 'UNAVAILABLE')
-    );
+  it('recognizes the real getDrop not-found error for an entirely absent roster', async () => {
+    const { service, profile, getDrop, transaction } = setup();
+    getDrop.mockRestore();
+    profile
+      .mockResolvedValue(null)
+      .mockResolvedValueOnce({ external_id: coordinator });
     await expect(
       importKeysAndGates(coordinator, false, service)
     ).rejects.toMatchObject({
