@@ -64,7 +64,7 @@ export async function getDeviceBadgeState(device: BadgeDevice): Promise<{
       .filter((row) => row.token === device.token)
       .map((row) => row.profile_id)
   );
-  if (!profileIds.size) return { count: 0, profileIds };
+  if (!registrations.length) return { count: 0, profileIds };
   // Token rotation may update connected profiles at different times. Count the whole device.
   const connectedProfileIds = new Set(
     registrations.map((row) => row.profile_id)

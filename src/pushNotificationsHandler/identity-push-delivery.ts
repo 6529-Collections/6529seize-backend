@@ -1,3 +1,4 @@
+import { getDataSource } from '@/db';
 import { PushNotificationDevice } from '@/entities/IPushNotification';
 import { Logger } from '@/logging';
 import { isIosPushPlatform } from './push-platform';
@@ -31,9 +32,7 @@ export async function sendIdentityPushGroups(
   // iOS alerts and refresh jobs share a device lock; calculate immediately before send.
   const groups = new Map<string, IdentityPushNotificationMessage[]>();
   for (const message of messages) {
-    const key = isIosPushPlatform(message.device.platform)
-      ? deviceBadgeKey(message.device)
-      : 'other';
+    const key = deviceBadgeKey(message.device);
     const group = groups.get(key) ?? [];
     group.push(message);
     groups.set(key, group);
@@ -49,26 +48,31 @@ export async function sendIdentityPushGroups(
       };
       try {
         const device = group[0].device;
-        if (!isIosPushPlatform(device.platform)) {
-          await send(
-            group.map((message) => ({
-              ...message,
-              input:
-                message.device.platform?.trim().toLowerCase() === 'android'
-                  ? message.input
-                  : { ...message.input, omitBadge: true }
-            }))
-          );
-          return;
-        }
         await withDeviceBadgeLock(device, async () => {
-          const state = await getDeviceBadgeState(device);
+          const ios = isIosPushPlatform(device.platform);
+          const state = ios
+            ? await getDeviceBadgeState(device)
+            : {
+                count: 0,
+                profileIds: new Set(
+                  (
+                    await getDataSource()
+                      .getRepository(PushNotificationDevice)
+                      .findBy({
+                        device_id: device.device_id,
+                        token: device.token
+                      })
+                  ).map((row) => row.profile_id)
+                )
+              };
           await send(
             group
               .filter((message) => state.profileIds.has(message.identityId))
               .map((message) => ({
                 ...message,
-                input: { ...message.input, badge: state.count }
+                input: ios
+                  ? { ...message.input, badge: state.count }
+                  : { ...message.input, omitBadge: true }
               }))
           );
         });

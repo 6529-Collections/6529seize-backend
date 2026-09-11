@@ -45,7 +45,8 @@ Updates depend on APNs delivery and the user's badge permission.
 - Redis must be available for iOS badge-bearing delivery. If coordination fails,
   the worker retries rather than submit competing counts. A release failure is
   logged without masking the send result; the lock expires automatically. Android
-  alert delivery does not acquire this lock.
+  alert delivery and installation revocation also acquire this device lock;
+  Android rechecks recipient registrations without calculating numeric badges.
 - Queue publication is an awaited, best-effort handoff after persistence. A queue
   failure is logged and does not turn an already successful read into an API
   error. There is no transactional outbox: a failed enqueue or a process stopping
@@ -90,11 +91,57 @@ Updates depend on APNs delivery and the user's badge permission.
   rapid read followed by a new push. This includes the badge-only `alert` push
   type. Confirm no alert or sound is produced and record what remains in Notification Center. Backend tests cannot establish
   the behavior of the installed native delegate or APNs delivery.
-- Deploy `pushNotificationsHandler` before `api`: older workers do not understand
-  the new queue message type. No DB schema/migrations or new queues are needed.
+- Deploy `dbMigrationsLoop` first to synchronize `push_installations`, then
+  `pushNotificationsHandler`, then `api`, then the frontend. Older workers do not
+  understand installation refresh messages. No new queue or Lambda is needed.
   The existing `PUSH_NOTIFICATIONS_ACTIVATED` API switch controls enqueueing.
-- The frontend help corpus/mobile push guide should be updated with the deferred
-  frontend cleanup feature after device behavior has been verified.
+- The companion frontend documents profile-scoped reads and installation logout.
+
+## Native logout and installation ownership
+
+`POST /push-notifications/installations/revoke` accepts an installation secret,
+monotonic revision, `all_profiles`, optional `profile_id`, and exact native
+refresh-token/address pairs. The installation credential authorizes device
+cleanup without a live wallet JWT, allowing the secure client outbox to finish
+an offline logout after local accounts are removed. Each supplied refresh token
+revokes only its matching native session; other devices and web sessions remain.
+
+A single logout deletes `push_notification_devices` and settings for the selected
+profile/device. Sign-out-all deletes every registration/settings row for that
+device, including forgotten local profiles. A sessions-only revocation omits the
+profile when another connected wallet still owns it or the account has no profile.
+The frontend removes identifiable profile tray entries for a single logout and
+uses global native tray removal only for explicit sign-out-all.
+
+The durable `push_installations` row stores a SHA-256 installation-secret hash,
+revocation revision, and latest FCM token/platform. It survives profile deletion
+so the worker can send badge zero after the last registration disappears.
+Revocation commits first, then enqueues `installation_badge_refresh` by device ID.
+A failed queue handoff returns an error for client retry. Repeated revisions are
+idempotent and cannot erase a later login; new registration must present the
+current revision. Registration and revocation lock the same database row.
+Revocation and final push recipient validation/submission also share the Redis
+device lock. Already accepted FCM/APNs pushes cannot be recalled by this fence.
+
+The installation refresh worker reads the latest token and whole-device count,
+including profiles whose rows retain older tokens during rotation. It sends no
+numeric badge update on Android. Failed counts do not become zero. Invalid FCM
+tokens are retired conditionally without deleting a concurrent replacement.
+
+For an unclaimed legacy device, the first credential must prove knowledge of the
+FCM token on every existing registration row. Device IDs are visible to profiles
+and do not authorize device-wide deletion by themselves. Conflicting legacy
+tokens or a lost installation credential require operator-assisted reconciliation
+after ownership verification; the client keeps cleanup pending and blocks new
+registration rather than taking over another profile's rows. Once claimed, legacy
+registration calls without the secret are rejected. Keep the schema on rollback;
+roll back the frontend before API producer changes, then drain jobs before
+rolling back the worker. Old clients cannot register against a claimed installation.
+
+Offline logout is eventually reconciled only when the client can run and reach
+the API. Secure-storage failure prevents local credential removal; clearing app
+data can lose the pending outbox. This client outbox does not change the separate
+best-effort queue handoff for ordinary notification read operations.
 
 APNs references: [payload keys](https://developer.apple.com/library/archive/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/PayloadKeyReference.html)
 and [push request headers](https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns).

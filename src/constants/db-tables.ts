@@ -256,3 +256,5 @@ export const MARKET_DEPTH_RECONCILIATION_QUEUE_TABLE =
 export const PROFILE_CMS_AGENT_GRANTS_TABLE = 'profile_cms_agent_grants';
 export const PROFILE_CMS_AGENT_PROPOSALS_TABLE = 'profile_cms_agent_proposals';
 export const PROFILE_CMS_AGENT_EVENTS_TABLE = 'profile_cms_agent_events';
+
+export const PUSH_INSTALLATIONS_TABLE = 'push_installations';

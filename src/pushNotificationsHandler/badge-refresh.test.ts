@@ -1,12 +1,22 @@
-import { refreshProfileBadges } from './badge-refresh';
+import {
+  refreshProfileBadges,
+  refreshInstallationBadge
+} from './badge-refresh';
 import { getDeviceBadgeState, withDeviceBadgeLock } from './device-badge';
 import { sendBadgeUpdate } from './sendPushNotifications';
 
 const findDevices = jest.fn();
 const deleteDevice = jest.fn();
+const findInstallation = jest.fn();
+const updateInstallation = jest.fn();
 jest.mock('@/db', () => ({
   getDataSource: () => ({
-    getRepository: () => ({ findBy: findDevices, delete: deleteDevice })
+    getRepository: () => ({
+      findBy: findDevices,
+      delete: deleteDevice,
+      findOneBy: findInstallation,
+      update: updateInstallation
+    })
   })
 }));
 jest.mock('./sendPushNotifications', () => ({ sendBadgeUpdate: jest.fn() }));
@@ -21,6 +31,7 @@ jest.mock('./device-badge', () => ({
 const phone = { device_id: 'phone', token: 'token', platform: 'ios' };
 beforeEach(() => {
   jest.clearAllMocks();
+  findInstallation.mockResolvedValue(phone);
   findDevices.mockResolvedValue([
     { ...phone, profile_id: 'a' },
     { ...phone, profile_id: 'b' }
@@ -106,4 +117,43 @@ it('recognizes legacy iOS casing and skips Android or unknown platforms', async 
   expect(await refreshProfileBadges(['a', 'b'])).toEqual([]);
   expect(sendBadgeUpdate).toHaveBeenCalledTimes(1);
   expect(sendBadgeUpdate).toHaveBeenCalledWith('token', 1);
+});
+
+describe('installation logout badge refresh', () => {
+  it('sends the remaining profile count after a single logout', async () => {
+    await refreshInstallationBadge('phone');
+    expect(sendBadgeUpdate).toHaveBeenCalledWith('token', 1);
+  });
+  it('can send zero after the final registration row is removed', async () => {
+    jest
+      .mocked(getDeviceBadgeState)
+      .mockResolvedValue({ count: 0, profileIds: new Set() });
+    await refreshInstallationBadge('phone');
+    expect(sendBadgeUpdate).toHaveBeenCalledWith('token', 0);
+  });
+  it('propagates count failures without falsely clearing the badge', async () => {
+    jest
+      .mocked(getDeviceBadgeState)
+      .mockRejectedValue(new Error('database unavailable'));
+    await expect(refreshInstallationBadge('phone')).rejects.toThrow(
+      'database unavailable'
+    );
+    expect(sendBadgeUpdate).not.toHaveBeenCalled();
+  });
+  it('skips numeric badge updates for Android', async () => {
+    findInstallation.mockResolvedValue({ ...phone, platform: 'android' });
+    await refreshInstallationBadge('phone');
+    expect(getDeviceBadgeState).not.toHaveBeenCalled();
+    expect(sendBadgeUpdate).not.toHaveBeenCalled();
+  });
+  it('retires an invalid token without touching a concurrent replacement', async () => {
+    jest.mocked(sendBadgeUpdate).mockRejectedValue({
+      code: 'messaging/registration-token-not-registered'
+    });
+    await refreshInstallationBadge('phone');
+    expect(updateInstallation).toHaveBeenCalledWith(
+      { device_id: 'phone', token: 'token' },
+      { token: null }
+    );
+  });
 });

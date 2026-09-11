@@ -1,4 +1,8 @@
-import { refreshProfileBadges } from './badge-refresh';
+import { PushInstallationEntity } from '@/entities/IPushInstallation';
+import {
+  refreshInstallationBadge,
+  refreshProfileBadges
+} from './badge-refresh';
 import { SQSBatchResponse, SQSHandler } from 'aws-lambda';
 import {
   AttachmentEntity,
@@ -25,6 +29,7 @@ const sqsHandler: SQSHandler = async (event): Promise<SQSBatchResponse> => {
         identityNotificationId: number;
       }[] = [];
       const badgeRecords: { messageId: string; profileId: string }[] = [];
+      const installationRecords: { messageId: string; deviceId: string }[] = [];
       const failures: { itemIdentifier: string }[] = [];
 
       for (const record of event.Records) {
@@ -38,6 +43,15 @@ const sqsHandler: SQSHandler = async (event): Promise<SQSBatchResponse> => {
             badgeRecords.push({
               messageId: record.messageId,
               profileId: notification.profile_id
+            });
+          } else if (
+            notification.type === 'installation_badge_refresh' &&
+            typeof notification.device_id === 'string' &&
+            notification.device_id.trim()
+          ) {
+            installationRecords.push({
+              messageId: record.messageId,
+              deviceId: notification.device_id
             });
           } else if (notification.identity_notification_id) {
             identityNotificationRecords.push({
@@ -95,6 +109,14 @@ const sqsHandler: SQSHandler = async (event): Promise<SQSBatchResponse> => {
         }
       }
 
+      for (const record of installationRecords) {
+        try {
+          await refreshInstallationBadge(record.deviceId);
+        } catch (error) {
+          logger.error(`Installation badge refresh failed: ${error}`);
+          failures.push({ itemIdentifier: record.messageId });
+        }
+      }
       return {
         batchItemFailures: failures
       };
@@ -104,6 +126,7 @@ const sqsHandler: SQSHandler = async (event): Promise<SQSBatchResponse> => {
       entities: [
         IdentityNotificationEntity,
         PushNotificationDevice,
+        PushInstallationEntity,
         PushNotificationSettingsEntity,
         WaveEntity,
         WaveReaderMetricEntity,

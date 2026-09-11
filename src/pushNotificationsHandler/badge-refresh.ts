@@ -1,3 +1,4 @@
+import { PushInstallationEntity } from '@/entities/IPushInstallation';
 import { In } from 'typeorm';
 import { isIosPushPlatform } from './push-platform';
 import { getDataSource } from '@/db';
@@ -66,4 +67,39 @@ export async function refreshProfileBadges(
     })
   );
   return Array.from(failed);
+}
+
+/** Resolve the current token even after all profile registration rows were deleted. */
+export async function refreshInstallationBadge(
+  deviceId: string
+): Promise<void> {
+  await withDeviceBadgeLock({ device_id: deviceId, token: '' }, async () => {
+    const installation = await getDataSource()
+      .getRepository(PushInstallationEntity)
+      .findOneBy({ device_id: deviceId });
+    if (!installation?.token || !isIosPushPlatform(installation.platform))
+      return;
+    const state = await getDeviceBadgeState({
+      device_id: deviceId,
+      token: installation.token
+    });
+    try {
+      await sendBadgeUpdate(installation.token, state.count);
+    } catch (error) {
+      const code = (error as { code?: string } | null)?.code;
+      if (
+        code !== 'messaging/registration-token-not-registered' &&
+        code !== 'messaging/invalid-registration-token'
+      )
+        throw error;
+      // A rotated token may be registered concurrently; never remove that target.
+      const target = { device_id: deviceId, token: installation.token };
+      await getDataSource()
+        .getRepository(PushNotificationDevice)
+        .delete(target);
+      await getDataSource()
+        .getRepository(PushInstallationEntity)
+        .update(target, { token: null });
+    }
+  });
 }
