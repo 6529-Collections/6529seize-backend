@@ -624,6 +624,8 @@ platforms. Desktop-versus-website comparisons retain local-node scope. Pass the
 validated scope to retrieval so prior answer text cannot change it. Ordinary
 desktop-browser layout and website TDH questions retain normal routing.
 
+Desktop retrieval filters to Core records and existing Desktop-tagged app handoffs
+before ranking. Shorthand Desktop TDH/Merkle comparisons also retain local scope.
 Desktop topic scoring excludes bare platform terms and requires a topic match;
 non-Desktop queries exclude Core records. A Desktop answer retains the complete
 primary record rather than merging/truncating recovery procedures with the

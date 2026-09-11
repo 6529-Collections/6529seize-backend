@@ -52,6 +52,8 @@ describe('Desktop corpus retrieval and answers', () => {
       'why is my Desktop app TDH different from the website?',
       'tdh-out-of-sync'
     ],
+    ['Why is my Desktop TDH different from the website?', 'tdh-out-of-sync'],
+    ['Why does Desktop Merkle differ from the website?', 'tdh-out-of-sync'],
     ['how do I rebuild ownership in Core?', 'transaction-reset'],
     ['how do I do nfts full recovery in Core?', 'nft-recovery'],
     [
@@ -88,27 +90,35 @@ describe('Desktop corpus retrieval and answers', () => {
     return { answerer, publicAnswer };
   }
 
-  it('uses complete recovery facts instead of public total-TDH data', async () => {
-    const { answerer, publicAnswer } = makeAnswerer();
-    const result = await answerer.answer({
-      question: 'why is my Desktop app total TDH different?',
-      baseUrl: 'https://6529.io'
-    });
-    expect(result.type).toBe('ANSWER');
-    if (result.type !== 'ANSWER') throw new Error('Expected a Desktop answer');
-    expect(result.record.id).toBe('desktop.tdh-out-of-sync');
-    expect(publicAnswer).not.toHaveBeenCalled();
-    expect(result.answer).toContain('Reconcile');
-    expect(result.answer).toContain('deletes local NFT records');
-    expect(result.answer).toContain('never share wallet secrets');
-    expect(result.answer).not.toContain('https://6529.io/core');
-    for (const sourceRef of result.record.sourceRefs) {
-      expect(result.answer).not.toContain(sourceRef);
+  it.each([
+    'why is my Desktop app total TDH different?',
+    'Why is my Desktop TDH different from the website?',
+    'Why does Desktop Merkle differ from the website?'
+  ])(
+    'uses complete recovery facts instead of public total-TDH data: %s',
+    async (question) => {
+      const { answerer, publicAnswer } = makeAnswerer();
+      const result = await answerer.answer({
+        question,
+        baseUrl: 'https://6529.io'
+      });
+      expect(result.type).toBe('ANSWER');
+      if (result.type !== 'ANSWER')
+        throw new Error('Expected a Desktop answer');
+      expect(result.record.id).toBe('desktop.tdh-out-of-sync');
+      expect(publicAnswer).not.toHaveBeenCalled();
+      expect(result.answer).toContain('Reconcile');
+      expect(result.answer).toContain('deletes local NFT records');
+      expect(result.answer).toContain('never share wallet secrets');
+      expect(result.answer).not.toContain('https://6529.io/core');
+      for (const sourceRef of result.record.sourceRefs) {
+        expect(result.answer).not.toContain(sourceRef);
+      }
+      expect(result.answer.length).toBeLessThanOrEqual(
+        MAX_DESKTOP_ANSWER_CHARACTERS
+      );
     }
-    expect(result.answer.length).toBeLessThanOrEqual(
-      MAX_DESKTOP_ANSWER_CHARACTERS
-    );
-  });
+  );
 
   it('retains Desktop scope for a specific follow-up without mixing old instructions', async () => {
     const { answerer } = makeAnswerer();
@@ -169,6 +179,46 @@ describe('Desktop corpus retrieval and answers', () => {
     );
   });
 
+  it('ranks only eligible Desktop records even when a generic record strongly matches', async () => {
+    const question = 'why is my Desktop app total TDH different?';
+    const competing = JSON.parse(corpus);
+    competing.records.push({
+      id: 'generic.competing-tdh',
+      title: question,
+      aliases: question
+        .split(' ')
+        .map((_, index, words) => words.slice(index).join(' ')),
+      keywords: question.split(' '),
+      facts: ['Public profile TDH guidance.'],
+      canonical_path: '/network/tdh',
+      tags: ['tdh']
+    });
+    const knowledge = new FrontendHelpBotKnowledgeSource(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(competing)
+    }));
+    // Prove the competitor is eligible and highly relevant in the generic scope.
+    expect(
+      (await knowledge.findMatch(question, { desktopScope: false }))?.record.id
+    ).toBe('generic.competing-tdh');
+    const matches = await knowledge.findMatches(question, 20, {
+      desktopScope: true
+    });
+    expect(matches[0]?.record.id).toBe('desktop.tdh-out-of-sync');
+    expect(matches.map((match) => match.record.id)).not.toContain(
+      'generic.competing-tdh'
+    );
+    const answerer = new HelpBotAnswerer(null, knowledge);
+    const result = await answerer.answer({
+      question,
+      baseUrl: 'https://6529.io'
+    });
+    expect(result.type === 'ANSWER' && result.record.id).toBe(
+      'desktop.tdh-out-of-sync'
+    );
+  });
+
   it('does not manufacture a recovery match from the platform name alone', async () => {
     const { answerer } = makeAnswerer();
     const result = await answerer.answer({
@@ -222,7 +272,15 @@ describe('Desktop corpus retrieval and answers', () => {
     'How do I use Core wallets on the website?',
     'How do I use Core wallets on 6529.io?',
     'How do I use Core wallets for mobile?',
-    'How do I use Core wallets on web?'
+    'How do I use Core wallets on web?',
+    'mobile Core wallets',
+    'browser Core RPC setup',
+    'website Core wallets',
+    'Android Core wallets',
+    'iOS Core wallets',
+    'web Core RPC setup',
+    '6529.io Core wallets',
+    'Is mobile Core TDH different from Desktop TDH?'
   ])(
     'excludes explicit platform targets even when Core is mentioned: %s',
     async (question) => {

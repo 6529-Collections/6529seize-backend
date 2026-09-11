@@ -16,21 +16,13 @@ export function isDesktopSupportQuestion(question: string): boolean {
   const comparesLocalTdh =
     hasDesktopSupportTopic(question) &&
     /\b(?:tdh|merkle)\b/i.test(question) &&
-    /\b(?:compare|compared|comparison|different|differs|mismatch|versus|vs)\b/i.test(
+    /\b(?:compare|compared|comparison|different|differ|differs|mismatch|versus|vs)\b/i.test(
       question
     ) &&
     !/\b(?:mobile|android|ios)\b/i.test(question);
   if (
-    /\b(?:on|in|using|use|for)\s+(?:(?:the|my|a)\s+)?(?:mobile|android|ios|website|browser|web|6529\.io)\b/i.test(
-      question
-    ) &&
+    /\b(?:mobile|android|ios|website|browser|web|6529\.io)\b/i.test(question) &&
     !comparesLocalTdh
-  ) {
-    return false;
-  }
-  if (
-    /\b(?:mobile|android|ios|website|browser)\b/i.test(question) &&
-    !/\b(?:core|6529 desktop|desktop app|desktop node)\b/i.test(question)
   ) {
     return false;
   }
@@ -40,7 +32,7 @@ export function isDesktopSupportQuestion(question: string): boolean {
 function hasDesktopSupportTopic(question: string): boolean {
   return [
     /\b(?:what is core|6529 core|6529\s+desktop)\b/i,
-    /\bdesktop\s+(?:app|application|node|wallets?)\b/i,
+    /\bdesktop\s+(?:app|application|node|wallets?|tdh|merkle)\b/i,
     /\bcore\s+(?:app|wallets?|workers?|rpc|tdh|ipfs|recovery)\b/i,
     /\b(?:in|with|using|about|start|setup|explain|describe)\s+core\b/i,
     /\b(?:my\s+node|rpc\s+providers?|nftdelegation|my\s+ipfs)\b/i,

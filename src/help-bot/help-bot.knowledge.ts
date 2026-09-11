@@ -1065,7 +1065,11 @@ function findMatchesInRecords(
   const desktopQuestion =
     options?.desktopScope ?? isDesktopSupportQuestion(question);
   return records
-    .filter((record) => desktopQuestion || !isDesktopKnowledgeRecord(record))
+    .filter((record) =>
+      desktopQuestion
+        ? isDesktopKnowledgeRecord(record) || record.tags.includes('desktop')
+        : !isDesktopKnowledgeRecord(record)
+    )
     .map((record) => ({
       record,
       score:
