@@ -34,7 +34,7 @@ const BATCH_SIZE = 2;
 const SCAN_BUDGET_MS = 20000;
 export const collectPlanOptionsSchema = z
   .object({
-    budget_wei: marketUintSchema,
+    budget_wei: marketUintSchema.optional(),
     recipient: marketAddressSchema,
     expected_analysis_id: z.string().max(100).optional()
   })
@@ -43,7 +43,7 @@ export type CollectPlanOptions = z.infer<typeof collectPlanOptionsSchema>;
 interface PlanData {
   goal: CollectingAnalysisRequest;
   analysis: CollectingAnalysis;
-  budget_wei: string;
+  budget_wei?: string;
   asset_keys: string[];
   cursor: number;
   candidates: CollectingCandidate[];
@@ -85,7 +85,9 @@ export function collectPlanView(row: PlanRow) {
     payload.candidates,
     {
       evaluated_at: new Date().toISOString(),
-      budget_wei: payload.budget_wei,
+      ...(payload.budget_wei === undefined
+        ? {}
+        : { budget_wei: payload.budget_wei }),
       max_states: 20000
     }
   );
@@ -167,7 +169,9 @@ export async function createCollectPlan(
   const payload: PlanData = {
     goal,
     analysis,
-    budget_wei: options.budget_wei,
+    ...(options.budget_wei === undefined
+      ? {}
+      : { budget_wei: options.budget_wei }),
     asset_keys: assetKeys,
     cursor: 0,
     candidates: [],

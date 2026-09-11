@@ -4,6 +4,7 @@ import {
   advanceCollectPlan,
   collectPlanRankingCandidates,
   createCollectPlan,
+  collectPlanOptionsSchema,
   readCollectPlan
 } from './collect-plans.service';
 import { collectingService } from '@/collecting/collecting.service';
@@ -204,39 +205,86 @@ describe('persisted collecting scans', () => {
   beforeEach(() => jest.clearAllMocks());
   afterEach(() => jest.restoreAllMocks());
 
-  it('creates and immediately reads a saved plan before its row reaches the replica', async () => {
-    const { saved, execute } = scanFixture();
-    const original = execute.getMockImplementation()!;
-    execute.mockImplementation(async (sql, params) => {
-      if (sql.startsWith('INSERT INTO collect_plans')) {
-        Object.assign(saved, params);
-        return [{ affected: 1 }];
-      }
-      return original(sql, params);
-    });
-    holdPlanReplica(saved, null);
-    jest.mocked(marketChain).mockReturnValue({
-      rpc: {
-        getFeeData: jest.fn().mockResolvedValue({ maxFeePerGas: BigInt(1) })
-      }
-    } as unknown as ReturnType<typeof marketChain>);
+  it.each([undefined, '1000000'])(
+    'persists budget %s and immediately reads the plan before its row reaches the replica',
+    async (budget) => {
+      const { saved, execute } = scanFixture();
+      const original = execute.getMockImplementation()!;
+      execute.mockImplementation(async (sql, params) => {
+        if (sql.startsWith('INSERT INTO collect_plans')) {
+          Object.assign(saved, params);
+          return [{ affected: 1 }];
+        }
+        return original(sql, params);
+      });
+      holdPlanReplica(saved, null);
+      jest.mocked(marketChain).mockReturnValue({
+        rpc: {
+          getFeeData: jest.fn().mockResolvedValue({ maxFeePerGas: BigInt(1) })
+        }
+      } as unknown as ReturnType<typeof marketChain>);
 
-    const created = await createCollectPlan(
-      'p',
-      { profile_id: 'p', kind: 'exact' },
-      { recipient: 'w', budget_wei: '1000000' }
-    );
-    expect(created).toMatchObject({
-      id: saved.id,
-      profile_id: 'p',
-      state: 'SCANNING',
-      checked_asset_count: 0,
-      total_asset_count: 1
-    });
-    await expect(readCollectPlan(created.id, 'p')).resolves.toMatchObject({
-      id: created.id,
-      analysis
-    });
+      const created = await createCollectPlan(
+        'p',
+        { profile_id: 'p', kind: 'exact' },
+        {
+          recipient: 'w',
+          ...(budget === undefined ? {} : { budget_wei: budget })
+        }
+      );
+      expect(created).toMatchObject({
+        id: saved.id,
+        profile_id: 'p',
+        state: 'SCANNING',
+        checked_asset_count: 0,
+        total_asset_count: 1
+      });
+      await expect(readCollectPlan(created.id, 'p')).resolves.toMatchObject({
+        id: created.id,
+        analysis
+      });
+      const payload = JSON.parse(saved.payload_json);
+      expect('budget_wei' in payload).toBe(budget !== undefined);
+      expect(payload.budget_wei).toBe(budget);
+    }
+  );
+
+  it('distinguishes uncapped analysis from an explicit zero spending cap', async () => {
+    const { saved } = scanFixture();
+    const payload = JSON.parse(saved.payload_json);
+    delete payload.budget_wei;
+    saved.payload_json = JSON.stringify(payload);
+    const uncapped = await advanceCollectPlan('plan', 'p');
+    expect(uncapped.result.legs).toHaveLength(1);
+    const cappedPayload = JSON.parse(saved.payload_json);
+    cappedPayload.budget_wei = '0';
+    saved.payload_json = JSON.stringify(cappedPayload);
+    const capped = await readCollectPlan('plan', 'p');
+    expect(capped.result.legs).toHaveLength(0);
+    expect(capped.result.total_cost_wei).toBe('0');
+  });
+
+  it.each(['', '-1', '1.5', '1e3', ' 1', null, 1, '9'.repeat(79)])(
+    'rejects an invalid supplied analysis cap %s',
+    (budget_wei) => {
+      expect(
+        collectPlanOptionsSchema.safeParse({
+          recipient: MEMES_CONTRACT,
+          budget_wei
+        }).success
+      ).toBe(false);
+    }
+  );
+
+  it('accepts omitted or exact integer analysis caps', () => {
+    for (const options of [{}, { budget_wei: '0' }, { budget_wei: '100' }]) {
+      expect(
+        collectPlanOptionsSchema.safeParse({
+          recipient: MEMES_CONTRACT,
+          ...options
+        }).success
+      ).toBe(true);
+    }
   });
 
   it('observes its acquired lease and returns the new checkpoint while the replica retains the previous scan', async () => {
