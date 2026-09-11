@@ -16,6 +16,10 @@ import {
   MARKET_ZERO_ADDRESS
 } from '@/marketplace/seaport.registry';
 import { seedCollectPlanFromIndex } from './collect-indexed-plan-seed';
+import { buildMarketOrder } from '@/marketplace/seaport.builder';
+import { TypedDataEncoder } from 'ethers';
+import { SEAPORT_ORDER_TYPES } from '@/marketplace/seaport.schema';
+import { CustomApiCompliantException } from '@/exceptions';
 
 jest.mock('@/collecting/collecting.service', () => ({
   collectingService: { getCatalog: jest.fn() }
@@ -241,5 +245,93 @@ it('does not truncate a larger candidate universe and call it complete', async (
   const options = setup(
     Array.from({ length: 2001 }, (_, index) => String(index + 1))
   );
+  expect(await seedCollectPlanFromIndex(options)).toBeNull();
+});
+
+it.each(['valid', 'invalid-start', 'invalid-end', 'overflow-end'])(
+  'validates real signed-order timestamps and expiry for %s source data',
+  async (state) => {
+    const built = buildMarketOrder(
+      {
+        kind: 'LIST',
+        chainId: 1,
+        wallet: maker,
+        recipient: maker,
+        asset: {
+          contract: MEMES_CONTRACT.toLowerCase(),
+          tokenId: '1',
+          standard: 'ERC1155'
+        },
+        quantity: '3',
+        currency: MARKET_ZERO_ADDRESS,
+        maxTotalWei: '300',
+        minNetWei: '300',
+        fees: [],
+        includeOptionalCreatorFees: false,
+        startTime: String(now / 1000 - 60),
+        endTime: String(now / 1000 + 60)
+      },
+      '0',
+      '1'
+    ).order;
+    const parameters = structuredClone(built.components);
+    parameters.orderType = 1;
+    const validHash = TypedDataEncoder.hashStruct(
+      'OrderComponents',
+      SEAPORT_ORDER_TYPES,
+      parameters
+    );
+    if (state === 'invalid-start') parameters.startTime = 'NaN';
+    if (state === 'invalid-end') parameters.endTime = 'NaN';
+    if (state === 'overflow-end') parameters.endTime = '8640000000001';
+    const hash =
+      state === 'overflow-end'
+        ? TypedDataEncoder.hashStruct(
+            'OrderComponents',
+            SEAPORT_ORDER_TYPES,
+            parameters
+          )
+        : validHash;
+    const indexedOrder = {
+      ...order('1'),
+      order_id: hash,
+      source_data: JSON.parse(
+        JSON.stringify({
+          chain: 'ethereum',
+          protocol_address: MARKET_SEAPORT,
+          order_hash: hash,
+          protocol_data: { parameters },
+          remaining_quantity: '3'
+        })
+      ) as CurrentMarketDepthOrder['source_data']
+    };
+    const options = setup(['1'], [book([indexedOrder])]);
+    const actual = jest.requireActual<
+      typeof import('@/marketplace/provider.opensea')
+    >('@/marketplace/provider.opensea');
+    jest
+      .mocked(describeIndexedMarketListing)
+      .mockImplementation(actual.describeIndexedMarketListing);
+    const result = await seedCollectPlanFromIndex(options);
+    expect(result?.candidates).toHaveLength(state === 'valid' ? 1 : 0);
+    if (state === 'valid') {
+      expect(result?.candidates[0].unit_price_wei).toBe('100');
+      expect(result?.candidates[0].valid_until).toBe(
+        new Date(now + 60000).toISOString()
+      );
+    }
+  }
+);
+
+it('retains the scanner when a collection partition becomes unavailable', async () => {
+  const options = setup(['1']);
+  jest
+    .mocked(marketDepthApiDb.getBooks)
+    .mockRejectedValue(
+      new CustomApiCompliantException(
+        503,
+        'The indexed collection is temporarily unavailable.'
+      )
+    );
   expect(await seedCollectPlanFromIndex(options)).toBeNull();
 });

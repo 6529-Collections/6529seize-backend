@@ -167,6 +167,13 @@ export class MarketDepthApiDb extends LazyDbAccessCompatibleService {
     const completed = books.filter(
       (book): book is CurrentMarketDepthSnapshot => book !== null
     );
+    // A collection-wide read must account for every known partition. Token
+    // depth can still display the partitions available during a refresh.
+    if (collectionListings && completed.length !== partitions.length)
+      throw new CustomApiCompliantException(
+        503,
+        'The indexed collection is temporarily unavailable.'
+      );
     const orderIds = Array.from(
       new Set(
         completed.flatMap((book) => book.orders.map((order) => order.order_id))

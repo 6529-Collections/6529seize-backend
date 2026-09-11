@@ -15,6 +15,10 @@ import { MEMES_CONTRACT } from '@/constants';
 import { MARKET_ZERO_ADDRESS } from '@/marketplace/seaport.registry';
 import { DbPoolName, DbQueryOptions } from '@/db-query.options';
 import { marketChain } from '@/marketplace/market-chain';
+import {
+  CollectIndexedPlanSeed,
+  seedCollectPlanFromIndex
+} from '@/api/collect/collect-indexed-plan-seed';
 
 jest.mock('@/collecting/collecting.service', () => ({
   collectingService: { analyze: jest.fn(), getCatalog: jest.fn() }
@@ -24,6 +28,9 @@ jest.mock('@/api/marketplace/marketplace.service', () => ({
 }));
 jest.mock('@/marketplace/market-chain', () => ({ marketChain: jest.fn() }));
 jest.mock('@/sql-executor', () => ({ dbSupplier: jest.fn() }));
+jest.mock('@/api/collect/collect-indexed-plan-seed', () => ({
+  seedCollectPlanFromIndex: jest.fn()
+}));
 jest.mock('@/marketplace/provider.opensea', () => ({
   ...jest.requireActual('@/marketplace/provider.opensea'),
   describeMarketOrder: jest.fn(() => ({ totalWei: '1' }))
@@ -201,8 +208,52 @@ function reorderJsonProperties(value: unknown): unknown {
   return value;
 }
 
+function createFixture(current = analysis) {
+  const fixture = scanFixture(current);
+  const original = fixture.execute.getMockImplementation()!;
+  fixture.execute.mockImplementation(async (sql, params) => {
+    if (sql.startsWith('INSERT INTO collect_plans')) {
+      Object.assign(fixture.saved, params);
+      return [{ affected: 1 }];
+    }
+    return original(sql, params);
+  });
+  holdPlanReplica(fixture.saved, null);
+  const getFeeData = jest.fn().mockResolvedValue({ maxFeePerGas: BigInt(1) });
+  jest.mocked(marketChain).mockReturnValue({
+    rpc: { getFeeData }
+  } as unknown as ReturnType<typeof marketChain>);
+  return { ...fixture, getFeeData };
+}
+
+function indexedSeed(assetKeys = ['asset']): CollectIndexedPlanSeed {
+  return {
+    candidates: assetKeys.map((asset_key) => ({
+      candidate_id: `candidate-${asset_key}`,
+      order_id: `order-${asset_key}`,
+      asset_key,
+      quantity_available: '1',
+      unit_price_wei: '100',
+      execution_group: `group-${asset_key}`,
+      group_cost_wei: '450000',
+      inventory_key: `seller:${asset_key}`,
+      inventory_quantity: '1',
+      valid_until: new Date(Date.now() + 60000).toISOString()
+    })),
+    checked_asset_count: assetKeys.length,
+    unavailable_asset_count: 0,
+    indexed_ask_count: assetKeys.length,
+    source_snapshot_ids: ['complete-snapshot'],
+    observed_at: new Date().toISOString(),
+    source: 'OPENSEA_COMPLETE_INDEX'
+  };
+}
+
 describe('persisted collecting scans', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.mocked(seedCollectPlanFromIndex).mockResolvedValue(null);
+  });
   afterEach(() => jest.restoreAllMocks());
 
   it.each([undefined, '1000000'])(
@@ -262,6 +313,229 @@ describe('persisted collecting scans', () => {
     const capped = await readCollectPlan('plan', 'p');
     expect(capped.result.legs).toHaveLength(0);
     expect(capped.result.total_cost_wei).toBe('0');
+  });
+
+  it.each([undefined, '0', '1000000'])(
+    'creates a ready indexed estimate with budget %s and preserves source, recipient and gas',
+    async (budget) => {
+      const current = {
+        ...analysis,
+        recipient: 'friend',
+        recipient_in_profile: false,
+        counts_toward_profile: false
+      };
+      const { saved, provider, execute } = createFixture(current);
+      const seed = indexedSeed();
+      jest.mocked(seedCollectPlanFromIndex).mockResolvedValue(seed);
+      const created = await createCollectPlan(
+        'p',
+        { profile_id: 'p', kind: 'exact' },
+        {
+          recipient: 'friend',
+          ...(budget === undefined ? {} : { budget_wei: budget })
+        }
+      );
+      expect(collectingService.analyze).toHaveBeenCalledWith({
+        profile_id: 'p',
+        kind: 'exact',
+        recipient: 'friend'
+      });
+      expect(seedCollectPlanFromIndex).toHaveBeenCalledTimes(1);
+      expect(seedCollectPlanFromIndex).toHaveBeenCalledWith({
+        analysis: current,
+        assetKeys: ['asset'],
+        gasReservePerOrderWei: '450000'
+      });
+      expect(created).toMatchObject({
+        state: 'READY',
+        checked_asset_count: 1,
+        total_asset_count: 1,
+        failed_asset_count: 0,
+        asset_scan_complete: true,
+        candidate_universe_complete: false,
+        gas_reserve_per_order_wei: '450000',
+        analysis: current
+      });
+      expect(created.result.legs).toHaveLength(budget === '0' ? 0 : 1);
+      expect(created.result.total_cost_wei).toBe(
+        budget === '0' ? '0' : '450100'
+      );
+      expect(created.assumptions[0]).toContain(seed.observed_at);
+      const payload = JSON.parse(saved.payload_json);
+      expect('budget_wei' in payload).toBe(budget !== undefined);
+      expect(payload.indexed_source).toEqual({
+        source: seed.source,
+        observed_at: seed.observed_at,
+        indexed_ask_count: seed.indexed_ask_count,
+        source_snapshot_ids: seed.source_snapshot_ids
+      });
+      execute.mockClear();
+      await expect(advanceCollectPlan(saved.id, 'p')).resolves.toMatchObject({
+        state: 'READY',
+        checked_asset_count: 1
+      });
+      expect(execute).not.toHaveBeenCalled();
+      expect(provider.discoverOrders).not.toHaveBeenCalled();
+      expect(provider.getOrder).not.toHaveBeenCalled();
+    }
+  );
+
+  it('accounts for all 546 missing NFTs at creation without per-NFT provider calls', async () => {
+    const keys = Array.from({ length: 546 }, (_, index) => `asset-${index}`);
+    const current = {
+      ...analysis,
+      required_count: keys.length,
+      missing_asset_keys: keys,
+      requirements: keys.map((key) => ({
+        ...analysis.requirements[0],
+        id: key,
+        asset_keys: [key]
+      }))
+    };
+    const { provider } = createFixture(current);
+    const seed = indexedSeed(keys);
+    seed.candidates.pop();
+    seed.unavailable_asset_count = 1;
+    jest.mocked(seedCollectPlanFromIndex).mockResolvedValue(seed);
+    const created = await createCollectPlan(
+      'p',
+      { profile_id: 'p', kind: 'memes_full_set' },
+      { recipient: 'w' }
+    );
+    expect(created).toMatchObject({
+      state: 'READY',
+      checked_asset_count: 546,
+      total_asset_count: 546,
+      unavailable_asset_count: 1,
+      asset_scan_complete: true,
+      candidate_universe_complete: false
+    });
+    expect(seedCollectPlanFromIndex).toHaveBeenCalledTimes(1);
+    expect(created.result.legs).toHaveLength(545);
+    expect(provider.discoverOrders).not.toHaveBeenCalled();
+    expect(provider.getOrder).not.toHaveBeenCalled();
+  });
+
+  it('accounts for a complete empty index without reporting provider failures', async () => {
+    createFixture();
+    const seed = indexedSeed();
+    seed.candidates = [];
+    seed.indexed_ask_count = 0;
+    seed.unavailable_asset_count = 1;
+    jest.mocked(seedCollectPlanFromIndex).mockResolvedValue(seed);
+    await expect(
+      createCollectPlan(
+        'p',
+        { profile_id: 'p', kind: 'exact' },
+        { recipient: 'w' }
+      )
+    ).resolves.toMatchObject({
+      state: 'READY',
+      unavailable_asset_count: 1,
+      failed_asset_count: 0,
+      asset_scan_complete: true,
+      result: { status: 'unavailable', legs: [] }
+    });
+  });
+
+  it('keeps the provider scanner when complete indexed coverage is unavailable', async () => {
+    const { saved, provider } = createFixture();
+    const created = await createCollectPlan(
+      'p',
+      { profile_id: 'p', kind: 'exact' },
+      { recipient: 'w' }
+    );
+    expect(created.state).toBe('SCANNING');
+    expect(JSON.parse(saved.payload_json)).not.toHaveProperty('indexed_source');
+    await expect(advanceCollectPlan(saved.id, 'p')).resolves.toMatchObject({
+      state: 'READY',
+      checked_asset_count: 1
+    });
+    expect(provider.discoverOrders).toHaveBeenCalledTimes(1);
+    expect(provider.getOrder).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not read the index for an already complete goal', async () => {
+    createFixture({
+      ...analysis,
+      complete: true,
+      satisfied_count: 1,
+      missing_asset_keys: [],
+      requirements: [
+        {
+          ...analysis.requirements[0],
+          owned_quantity: '1',
+          missing_quantity: '0'
+        }
+      ]
+    });
+    await expect(
+      createCollectPlan(
+        'p',
+        { profile_id: 'p', kind: 'exact' },
+        { recipient: 'w' }
+      )
+    ).resolves.toMatchObject({ state: 'READY', total_asset_count: 0 });
+    expect(seedCollectPlanFromIndex).not.toHaveBeenCalled();
+  });
+
+  it('requires the active profile, matching analysis and live gas before reading the index', async () => {
+    const { getFeeData } = createFixture();
+    await expect(
+      createCollectPlan(
+        'other',
+        { profile_id: 'p', kind: 'exact' },
+        { recipient: 'w' }
+      )
+    ).rejects.toMatchObject({
+      message: 'Create a plan for your active profile.'
+    });
+    await expect(
+      createCollectPlan(
+        'p',
+        { profile_id: 'p', kind: 'exact' },
+        {
+          recipient: 'w',
+          expected_analysis_id: 'old-analysis'
+        }
+      )
+    ).rejects.toMatchObject({ code: 'HOLDINGS_CHANGED' });
+    getFeeData.mockResolvedValue({ maxFeePerGas: null });
+    await expect(
+      createCollectPlan(
+        'p',
+        { profile_id: 'p', kind: 'exact' },
+        { recipient: 'w' }
+      )
+    ).rejects.toMatchObject({ message: 'A gas estimate is unavailable.' });
+    expect(seedCollectPlanFromIndex).not.toHaveBeenCalled();
+  });
+
+  it('drops expired indexed candidates and still rejects changed profile or recipient state', async () => {
+    const { saved } = createFixture();
+    const seed = indexedSeed();
+    jest.mocked(seedCollectPlanFromIndex).mockResolvedValue(seed);
+    await createCollectPlan(
+      'p',
+      { profile_id: 'p', kind: 'exact' },
+      { recipient: 'w' }
+    );
+    const payload = JSON.parse(saved.payload_json);
+    payload.candidates[0].valid_until = new Date(Date.now() - 1).toISOString();
+    saved.payload_json = JSON.stringify(reorderJsonProperties(payload));
+    await expect(readCollectPlan(saved.id, 'p')).resolves.toMatchObject({
+      result: { legs: [] }
+    });
+    jest.mocked(collectingService.analyze).mockResolvedValue({
+      ...analysis,
+      recipient: 'changed-recipient',
+      account: { ...analysis.account, membership_hash: 'changed' }
+    });
+    await expect(
+      collectPlanRankingCandidates(saved.id, 'p', 'w')
+    ).rejects.toMatchObject({
+      code: 'HOLDINGS_CHANGED'
+    });
   });
 
   it.each(['', '-1', '1.5', '1e3', ' 1', null, 1, '9'.repeat(79)])(

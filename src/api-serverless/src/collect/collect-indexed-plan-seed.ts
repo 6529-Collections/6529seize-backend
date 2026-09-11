@@ -20,6 +20,8 @@ import {
 import { marketUintSchema } from '@/marketplace/seaport.schema';
 
 const FRESH_MILLIS = 3600000;
+// Planner candidates and raw indexed asks have independent bounds: a complete
+// book may contain many listings for the same NFT but at most 2,000 candidates.
 const MAX_CANDIDATES = 2000;
 
 export interface CollectIndexedPlanSeed {
@@ -53,6 +55,8 @@ async function readFamilyBooks(assets: CollectingAsset[]) {
   const contracts = new Set(
     assets.map((asset) => asset.contract.toLowerCase())
   );
+  // A catalog outside the supported one-contract-per-family model retains the
+  // scanner; it must not turn an uncertain collection boundary into coverage.
   if (contracts.size !== 1) return [];
   const first = assets[0];
   try {
@@ -118,6 +122,7 @@ function indexedCandidate(
     )
       return null;
     const available = BigInt(order.remaining_quantity);
+    // Match the collecting planner's per-NFT quantity bound.
     const quantity = (
       available > BigInt(9999) ? BigInt(9999) : available
     ).toString();
@@ -171,6 +176,8 @@ export async function seedCollectPlanFromIndex(options: {
   const keys = new Set(options.assetKeys);
   const assets = catalog.assets.filter((asset) => keys.has(asset.asset_key));
   if (!assets.length || assets.length !== keys.size) return null;
+  // The canonical catalog maps Memes, Gradients and Pebbles to distinct
+  // contracts; Pebbles currently contains only NextGen collection 1.
   const families = Array.from(new Set(assets.map((asset) => asset.family)));
   const groups = await Promise.all(
     families.map((family) =>

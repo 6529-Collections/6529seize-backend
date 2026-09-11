@@ -34,6 +34,15 @@ transaction and signature paths are verified.
   estimated gas. Omission estimates the goal without a cost cap; an explicit
   zero remains a zero cap. Neither grants spending authority nor changes the
   exact price, recipient, review or wallet approval required for execution.
+  When every required collection has a complete indexed ask snapshot less than
+  one hour old, creation can return a ready estimate for all missing NFTs in one
+  collection read per family. Missing, stale or truncated coverage retains the
+  incremental provider scan. The saved estimate identifies its index observation
+  time and bounds each candidate to both order expiry and snapshot freshness.
+  It uses one best supported exact unit ask per NFT, excludes every profile
+  wallet's listings, and may need other orders for additional copies. An indexed
+  estimate is not a live executable quote; purchase preparation still rechecks
+  the exact order, inventory, fees, paying wallet and recipient.
 - `POST /collect/tdh-scenarios` projects an exact acquisition allocation.
 - `POST /collect/tdh-ranking` compares the current listing pool or a saved plan,
   including the nonlinear basket effect on existing holdings. Cost estimates
