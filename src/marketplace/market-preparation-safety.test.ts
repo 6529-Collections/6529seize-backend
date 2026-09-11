@@ -1,5 +1,6 @@
 import {
   MarketPreparation,
+  marketPrepareSchema,
   MarketPrepareRequest
 } from '@/marketplace/market-preparation';
 import type { MarketChain } from '@/marketplace/market-chain';
@@ -92,6 +93,46 @@ beforeEach(() => {
   jest.clearAllMocks();
   (collectingService.getCatalog as jest.Mock).mockRejectedValue(
     new Error('catalog unavailable')
+  );
+});
+
+describe('trade request expiry and exact-order contract', () => {
+  it.each(['LIST', 'OFFER'] as const)(
+    'requires Unix-seconds expiry for %s',
+    (kind) => {
+      expect(marketPrepareSchema.safeParse({ ...request, kind }).success).toBe(
+        false
+      );
+      expect(
+        marketPrepareSchema.safeParse({
+          ...request,
+          kind,
+          expires_at: 1800001000
+        }).success
+      ).toBe(true);
+    }
+  );
+
+  it.each(['BUY', 'ACCEPT', 'CANCEL'] as const)(
+    'requires an exact order and rejects expiry overrides for %s',
+    (kind) => {
+      const input = {
+        ...request,
+        kind,
+        order: {
+          protocol_address: MARKET_SEAPORT,
+          order_hash: `0x${'a'.repeat(64)}`
+        }
+      };
+      expect(marketPrepareSchema.safeParse({ ...request, kind }).success).toBe(
+        false
+      );
+      expect(marketPrepareSchema.safeParse(input).success).toBe(true);
+      expect(
+        marketPrepareSchema.safeParse({ ...input, expires_at: 1800001000 })
+          .success
+      ).toBe(false);
+    }
   );
 });
 

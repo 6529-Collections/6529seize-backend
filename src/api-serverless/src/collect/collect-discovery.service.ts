@@ -24,14 +24,27 @@ export async function discoverCollectListings(
       received_count: 0,
       complete: false
     };
+  const contracts = new Set(
+    assets.map((asset) => asset.contract.toLowerCase())
+  );
+  if (contracts.size !== 1)
+    throw new CustomApiCompliantException(
+      503,
+      'This collection family spans unsupported contracts. Refresh the catalog.',
+      'CATALOG_CHANGED'
+    );
+  const contract = assets[0].contract.toLowerCase();
   const byId = new Map(assets.map((asset) => [asset.token_id, asset]));
   const page = await marketplaceProvider().discoverCollectionListings(
-    assets[0].contract,
+    contract,
     limit,
     cursor
   );
   const entries = page.listings.flatMap((order) => {
-    const asset = byId.get(order.asset.tokenId);
+    const asset =
+      order.asset.contract.toLowerCase() === contract
+        ? byId.get(order.asset.tokenId)
+        : undefined;
     return asset ? [{ asset, order }] : [];
   });
   return {
@@ -46,7 +59,7 @@ export async function discoverCollectListings(
 
 export async function collectGasReserve() {
   const fee = await marketChain().rpc.getFeeData();
-  if (fee.maxFeePerGas === null)
+  if (fee.maxFeePerGas === null || fee.maxFeePerGas <= BigInt(0))
     throw new CustomApiCompliantException(
       503,
       'A gas estimate is unavailable.'
@@ -64,11 +77,17 @@ async function rankingCandidates(
     collectingDb.readAccountHoldings(profileId),
     collectGasReserve()
   ]);
+  const wallets = new Set(
+    scope.account.wallets.map((wallet) => wallet.toLowerCase())
+  );
+  const nowSeconds = Date.now() / 1000;
   const eligible = page.entries.filter(
     ({ asset, order }) =>
       asset.tdh_eligible &&
       order.currency === MARKET_ZERO_ADDRESS &&
-      !scope.account.wallets.includes(order.maker.toLowerCase())
+      !wallets.has(order.maker.toLowerCase()) &&
+      Number(order.startTime) <= nowSeconds &&
+      Number(order.endTime) > nowSeconds
   );
   const result: CollectingQuotedTdhCandidate[] = [];
   for (const { asset, order } of eligible) {

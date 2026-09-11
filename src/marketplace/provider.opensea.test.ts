@@ -1,11 +1,13 @@
 import { MarketTradeIntent } from '@/marketplace/provider.types';
-import { Wallet } from 'ethers';
+import { TypedDataEncoder, Wallet } from 'ethers';
 import {
   buildMarketOrder,
+  prepareMarketCancel,
   MARKET_SEAPORT_INTERFACE
 } from '@/marketplace/seaport.builder';
 import {
   OpenSeaMarketplaceProvider,
+  OPENSEA_REQUEST_TIMEOUT_MS,
   marketFeesForTotal,
   describeMarketOrder
 } from '@/marketplace/provider.opensea';
@@ -16,6 +18,7 @@ import {
   MARKET_WETH,
   MARKET_ZERO_ADDRESS
 } from '@/marketplace/seaport.registry';
+import { SEAPORT_ORDER_TYPES } from '@/marketplace/seaport.schema';
 
 const maker = '0x1111111111111111111111111111111111111111';
 const buyer = '0x2222222222222222222222222222222222222222';
@@ -40,9 +43,216 @@ const intent: MarketTradeIntent = {
   endTime: '1900000000'
 };
 const response = (value: unknown) =>
-  ({ ok: true, text: async () => JSON.stringify(value) }) as Response;
+  new Response(JSON.stringify(value), {
+    headers: { 'content-type': 'application/json' }
+  });
 
 describe('OpenSea boundary', () => {
+  it.each([
+    'timestamp-text',
+    'timestamp-overflow',
+    'hex-amount',
+    'zero-prefixed-amount',
+    'whitespace-amount',
+    'bad-token-id',
+    'foreign-token',
+    'foreign-currency',
+    'foreign-protocol',
+    'foreign-chain',
+    'bad-address'
+  ])(
+    'excludes hostile %s provider orders before exposing discovery economics',
+    async (failure) => {
+      const order = buildMarketOrder(intent, '0', '1').order;
+      const raw = {
+        chain: 'ethereum',
+        protocol_address: MARKET_SEAPORT,
+        order_hash: order.orderHash,
+        protocol_data: { parameters: structuredClone(order.components) },
+        remaining_quantity: '2'
+      };
+      const c = raw.protocol_data.parameters;
+      if (failure === 'timestamp-text') c.endTime = 'NaN';
+      if (failure === 'timestamp-overflow') c.endTime = '8640000000001';
+      if (failure === 'hex-amount') c.consideration[0].startAmount = '0xc6';
+      if (failure === 'zero-prefixed-amount')
+        c.consideration[0].startAmount = '0198';
+      if (failure === 'whitespace-amount')
+        c.consideration[0].startAmount = ' 198';
+      if (failure === 'bad-token-id') c.offer[0].identifierOrCriteria = '1.5';
+      if (failure === 'foreign-token') c.offer[0].token = buyer;
+      if (failure === 'foreign-currency') c.consideration[0].token = buyer;
+      if (failure === 'foreign-protocol') raw.protocol_address = buyer;
+      if (failure === 'foreign-chain') raw.chain = 'polygon';
+      if (failure === 'bad-address') c.offerer = 'not-an-address';
+      if (
+        ['timestamp-overflow', 'foreign-token', 'foreign-currency'].includes(
+          failure
+        )
+      )
+        raw.order_hash = TypedDataEncoder.hashStruct(
+          'OrderComponents',
+          SEAPORT_ORDER_TYPES,
+          c
+        );
+      const mock = jest
+        .fn()
+        .mockResolvedValueOnce(response({ collection: 'thememes6529' }))
+        .mockResolvedValueOnce(response(raw));
+      const provider = new OpenSeaMarketplaceProvider({
+        apiKey: 'test-placeholder',
+        fetch: mock
+      });
+      await expect(
+        provider.discoverOrders(intent.asset, 'LISTING')
+      ).resolves.toEqual([]);
+      expect(mock).toHaveBeenCalledTimes(2);
+    }
+  );
+  it('bounds Date conversion without restricting raw Seaport components used to cancel long-lived orders', async () => {
+    const longIntent = { ...intent, endTime: '8640000000001' };
+    const order = buildMarketOrder(longIntent, '0', '1').order;
+    const mock = jest.fn();
+    const provider = new OpenSeaMarketplaceProvider({
+      apiKey: 'test-placeholder',
+      fetch: mock
+    });
+    await expect(provider.prepareOrder(longIntent)).rejects.toMatchObject({
+      code: 'ORDER_MISMATCH'
+    });
+    expect(mock).not.toHaveBeenCalled();
+    expect(() =>
+      describeMarketOrder(
+        {
+          identity: {
+            protocolAddress: MARKET_SEAPORT,
+            orderHash: order.orderHash
+          },
+          components: order.components,
+          signature: '0x'
+        },
+        intent.asset,
+        'LISTING'
+      )
+    ).toThrow(/timestamp/);
+    expect(order.components.endTime).toBe(longIntent.endTime);
+    expect(
+      prepareMarketCancel(
+        maker,
+        { protocolAddress: MARKET_SEAPORT, orderHash: order.orderHash },
+        order.components
+      ).purpose
+    ).toBe('CANCEL');
+  });
+  it('enforces the byte limit while streaming and rejects malformed JSON without exposing provider data', async () => {
+    const payloads = [
+      new Response(new Uint8Array(2000001)),
+      new Response(JSON.stringify('é'.repeat(1000000))),
+      new Response('small', { headers: { 'content-length': '2000001' } }),
+      new Response('{"private-provider-data":'),
+      new Response(new Uint8Array([255]))
+    ];
+    for (const payload of payloads) {
+      const mock = jest.fn().mockResolvedValue(payload);
+      const provider = new OpenSeaMarketplaceProvider({
+        apiKey: 'test-placeholder',
+        fetch: mock
+      });
+      await expect(
+        provider.discoverOrders(intent.asset, 'LISTING')
+      ).rejects.toMatchObject({
+        code: 'PROVIDER_UNAVAILABLE',
+        message: 'The marketplace provider could not complete the request.'
+      });
+      expect(mock).toHaveBeenCalledTimes(1);
+      expect(mock.mock.calls[0][1]).toMatchObject({
+        redirect: 'error',
+        method: 'GET'
+      });
+      expect(mock.mock.calls[0][1].signal.aborted).toBe(true);
+    }
+  });
+  it('stops reading an oversized chunked response before buffering its remaining bytes', async () => {
+    let reads = 0;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          reads++;
+          if (reads === 1)
+            controller.enqueue(
+              new TextEncoder().encode('{"padding":"' + 'x'.repeat(1000000))
+            );
+          else if (reads === 2)
+            controller.enqueue(new TextEncoder().encode('x'.repeat(1000000)));
+          else {
+            controller.enqueue(new TextEncoder().encode('"}'));
+            controller.close();
+          }
+        }
+      },
+      { highWaterMark: 0 }
+    );
+    const mock = jest.fn().mockResolvedValue(new Response(body));
+    const provider = new OpenSeaMarketplaceProvider({
+      apiKey: 'test-placeholder',
+      fetch: mock
+    });
+    await expect(
+      provider.discoverOrders(intent.asset, 'LISTING')
+    ).rejects.toMatchObject({ code: 'PROVIDER_UNAVAILABLE' });
+    expect(reads).toBe(2);
+  });
+  it.each(['headers', 'body'] as const)(
+    'aborts a stalled %s phase after the same eight-second deadline without retry',
+    async (phase) => {
+      jest.useFakeTimers();
+      try {
+        const mock = jest
+          .fn()
+          .mockImplementation((_url, options: RequestInit) => {
+            if (phase === 'headers')
+              return new Promise((_resolve, reject) => {
+                options.signal!.addEventListener(
+                  'abort',
+                  () => reject(new Error('private transport details')),
+                  { once: true }
+                );
+              });
+            return Promise.resolve(
+              new Response(
+                new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.enqueue(new TextEncoder().encode('{'));
+                    options.signal!.addEventListener(
+                      'abort',
+                      () =>
+                        controller.error(new Error('private stream details')),
+                      { once: true }
+                    );
+                  }
+                })
+              )
+            );
+          });
+        const provider = new OpenSeaMarketplaceProvider({
+          apiKey: 'test-placeholder',
+          fetch: mock
+        });
+        const result = expect(
+          provider.discoverOrders(intent.asset, 'LISTING')
+        ).rejects.toMatchObject({
+          code: 'PROVIDER_UNAVAILABLE',
+          message: 'The marketplace provider could not complete the request.'
+        });
+        await jest.advanceTimersByTimeAsync(OPENSEA_REQUEST_TIMEOUT_MS);
+        await result;
+        expect(mock).toHaveBeenCalledTimes(1);
+        expect(mock.mock.calls[0][1].signal.aborted).toBe(true);
+      } finally {
+        jest.useRealTimers();
+      }
+    }
+  );
   it('reuses an already fetched exact order while still checking identity and current counter', async () => {
     const order = buildMarketOrder(intent, '0', '1').order;
     const identity = {
@@ -246,7 +456,7 @@ describe('OpenSea boundary', () => {
       currency: MARKET_WETH
     };
     const base = buildMarketOrder(baseIntent, '0', '1').order;
-    const mock = jest.fn().mockResolvedValue(
+    const mock = jest.fn().mockImplementation(() =>
       response({
         steps: [
           {

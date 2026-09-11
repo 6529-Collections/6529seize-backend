@@ -27,6 +27,7 @@ import {
   marketOrderParametersSchema,
   marketUintSchema,
   parseMarketValue,
+  parseMarketTimestampSeconds,
   SEAPORT_ORDER_TYPES
 } from '@/marketplace/seaport.schema';
 import {
@@ -39,6 +40,36 @@ import {
   buildMarketFulfillment,
   validateMarketTypedData
 } from '@/marketplace/seaport.builder';
+
+export const OPENSEA_REQUEST_TIMEOUT_MS = 8000;
+const MAX_PROVIDER_RESPONSE_BYTES = 2000000;
+
+async function readProviderJson(response: Response): Promise<unknown> {
+  const length = response.headers.get('content-length');
+  if (
+    length !== null &&
+    /^\d+$/.test(length) &&
+    Number(length) > MAX_PROVIDER_RESPONSE_BYTES
+  )
+    throw new Error('response size');
+  if (!response.body) throw new Error('provider body');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let bytes = 0;
+  let text = '';
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      bytes += chunk.value.byteLength;
+      if (bytes > MAX_PROVIDER_RESPONSE_BYTES) throw new Error('response size');
+      text += decoder.decode(chunk.value, { stream: true });
+    }
+    return JSON.parse(text + decoder.decode()) as unknown;
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 export interface MarketFeePolicy {
   fees: Array<{ recipient: string; basisPoints: number; required: boolean }>;
@@ -152,6 +183,8 @@ export function describeMarketOrder(
   quantity?: string
 ): MarketDiscoveredOrder {
   const c = parseMarketValue(marketOrderComponentsSchema, provider.components);
+  const startTime = parseMarketTimestampSeconds(c.startTime);
+  const endTime = parseMarketTimestampSeconds(c.endTime);
   const listing = side === 'LISTING';
   const nft = listing ? c.offer[0] : c.consideration[0];
   const count = quantity ?? nft.startAmount;
@@ -221,8 +254,8 @@ export function describeMarketOrder(
       : {}),
     netWei: validated.netWei,
     fees,
-    startTime: c.startTime,
-    endTime: c.endTime
+    startTime,
+    endTime
   };
 }
 
@@ -244,7 +277,10 @@ export class OpenSeaMarketplaceProvider {
         'The marketplace provider is not configured.'
       );
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
+    const timeout = setTimeout(
+      () => controller.abort(),
+      OPENSEA_REQUEST_TIMEOUT_MS
+    );
     try {
       const response = await this.fetcher(`https://api.opensea.io${path}`, {
         method: body === undefined ? 'GET' : 'POST',
@@ -259,9 +295,7 @@ export class OpenSeaMarketplaceProvider {
       });
       if (allowNotFound && response.status === 404) return null;
       if (!response.ok) throw new Error('provider response');
-      const text = await response.text();
-      if (text.length > 2000000) throw new Error('response size');
-      return JSON.parse(text) as unknown;
+      return await readProviderJson(response);
     } catch {
       // No transport cause, headers, bearer signatures or provider body enter application logs.
       throw new MarketValidationError(
@@ -270,6 +304,7 @@ export class OpenSeaMarketplaceProvider {
       );
     } finally {
       clearTimeout(timeout);
+      controller.abort();
     }
   }
   private async collection(asset: MarketAsset): Promise<string> {
@@ -461,8 +496,12 @@ export class OpenSeaMarketplaceProvider {
         'Only new orders require a signature.'
       );
     const timing = {
-      start_time: new Date(Number(i.startTime) * 1000).toISOString(),
-      end_time: new Date(Number(i.endTime) * 1000).toISOString()
+      start_time: new Date(
+        Number(parseMarketTimestampSeconds(i.startTime)) * 1000
+      ).toISOString(),
+      end_time: new Date(
+        Number(parseMarketTimestampSeconds(i.endTime)) * 1000
+      ).toISOString()
     };
     const item = {
       chain: 'ethereum',

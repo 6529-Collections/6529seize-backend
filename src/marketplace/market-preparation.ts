@@ -58,7 +58,23 @@ export const marketPrepareSchema = z
       .optional(),
     acknowledge_external_recipient: z.boolean()
   })
-  .strict();
+  .strict()
+  .superRefine((request, context) => {
+    const createsOrder = request.kind === 'LIST' || request.kind === 'OFFER';
+    if (createsOrder !== (request.expires_at !== undefined))
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['expires_at'],
+        message:
+          'Order expiry in Unix seconds is required only for LIST and OFFER.'
+      });
+    if (!createsOrder && !request.order)
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['order'],
+        message: 'Select an exact order to buy, accept, or cancel.'
+      });
+  });
 export type MarketPrepareRequest = z.infer<typeof marketPrepareSchema>;
 export type KnownMarketOrder = Pick<
   MarketProviderOrder,

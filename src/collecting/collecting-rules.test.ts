@@ -75,6 +75,14 @@ export function ruleSettlement(
 }
 
 describe('saved collecting rules', () => {
+  it.each([now, now - 1, Math.floor(now / 1000), now + 365 * 86400000 + 1])(
+    'rejects expired, seconds-based or overlong rule expiry using server time (%s)',
+    (expires_at) => {
+      expect(() =>
+        normalizeRuleDefinition({ ...ruleDefinition(), expires_at }, now)
+      ).toThrow(/expiry/);
+    }
+  );
   it('keeps refreshed quotes within the immutable pending review and blocks prompts after pause', () => {
     const pending = reserveCollectingRuleReview(rule(), ruleReview(), now);
     expect(() =>

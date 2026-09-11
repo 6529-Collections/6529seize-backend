@@ -17,7 +17,10 @@ import {
   marketAddressSchema
 } from '@/marketplace/seaport.schema';
 import { MARKET_ZERO_ADDRESS } from '@/marketplace/seaport.registry';
-import { describeMarketOrder } from '@/marketplace/provider.opensea';
+import {
+  describeMarketOrder,
+  OPENSEA_REQUEST_TIMEOUT_MS
+} from '@/marketplace/provider.opensea';
 import { marketplaceProvider } from '@/api/marketplace/marketplace.service';
 import { marketRequestHash } from '@/marketplace/market-operations.db';
 import { CollectingQuotedTdhCandidate } from '@/collecting/collecting-tdh-ranking';
@@ -26,6 +29,7 @@ const MAX_CANDIDATES = 2000;
 // Each artwork may need discovery and order reads. Keep one concurrent pair
 // within the API request budget, persisting progress between requests.
 const BATCH_SIZE = 2;
+const SCAN_BUDGET_MS = 20000;
 export const collectPlanOptionsSchema = z
   .object({
     budget_wei: marketUintSchema,
@@ -139,7 +143,7 @@ export async function createCollectPlan(
       'HOLDINGS_CHANGED'
     );
   const fee = await marketChain().rpc.getFeeData();
-  if (fee.maxFeePerGas === null)
+  if (fee.maxFeePerGas === null || fee.maxFeePerGas <= BigInt(0))
     throw new CustomApiCompliantException(
       503,
       'A gas estimate is unavailable.'
@@ -224,6 +228,16 @@ export async function collectPlanRankingCandidates(
     payload.candidates.map((candidate) => [candidate.candidate_id, candidate])
   );
   const plan = collectPlanView(row).result;
+  const selectedQuotes = plan.legs.map((leg) => {
+    const quote = byId.get(leg.candidate_id);
+    if (!quote || quote.asset_key !== leg.asset_key)
+      throw new CustomApiCompliantException(
+        409,
+        'Plan quotes changed. Refresh this plan.',
+        'HOLDINGS_CHANGED'
+      );
+    return quote;
+  });
   const candidates: CollectingQuotedTdhCandidate[] = payload.candidates
     .filter((candidate) => eligible.has(candidate.asset_key))
     .slice(0, 1999)
@@ -249,11 +263,9 @@ export async function collectPlanRankingCandidates(
     candidates.push({
       candidate_id: plan.plan_id,
       total_cost_wei: plan.total_cost_wei,
-      valid_until: plan.legs.reduce(
-        (earliest, leg) =>
-          byId.get(leg.candidate_id)!.valid_until < earliest
-            ? byId.get(leg.candidate_id)!.valid_until
-            : earliest,
+      valid_until: selectedQuotes.reduce(
+        (earliest, quote) =>
+          quote.valid_until < earliest ? quote.valid_until : earliest,
         '9999-01-01T00:00:00.000Z'
       ),
       acquisitions: Array.from(quantities, ([asset_key, quantity]) => ({
@@ -267,7 +279,8 @@ export async function collectPlanRankingCandidates(
 
 async function candidatesFor(
   key: string,
-  payload: PlanData
+  payload: PlanData,
+  deadline: number
 ): Promise<CollectingCandidate[]> {
   const catalog = await collectingService.getCatalog();
   const asset = catalog.assets.find((item) => item.asset_key === key);
@@ -279,15 +292,23 @@ async function candidatesFor(
       asset.family === 'memes' ? ('ERC1155' as const) : ('ERC721' as const)
   };
   const provider = marketplaceProvider();
+  // Discovery performs a contract lookup and one listing read. Do not start
+  // another bounded transport stage unless this request can await its timeout.
+  requireScanBudget(deadline, 2);
   const listings = await provider.discoverOrders(marketAsset, 'LISTING', 1);
   const result: CollectingCandidate[] = [];
-  for (const listing of listings) {
+  const wallets = new Set(
+    payload.analysis.account.wallets.map((wallet) => wallet.toLowerCase())
+  );
+  for (const listing of listings.slice(0, 1)) {
     if (
       listing.currency !== MARKET_ZERO_ADDRESS ||
-      payload.analysis.account.wallets.includes(listing.maker.toLowerCase())
+      wallets.has(listing.maker.toLowerCase())
     )
       continue;
+    requireScanBudget(deadline, 1);
     const order = await provider.getOrder(listing.identity);
+    requireScanBudget(deadline, 0);
     if (order.components.orderType % 2 === 0 && listing.quantity !== '1')
       continue;
     const unit = describeMarketOrder(order, marketAsset, 'LISTING', '1');
@@ -307,6 +328,23 @@ async function candidatesFor(
     });
   }
   return result;
+}
+
+function requireScanBudget(deadline: number, remainingReads: number) {
+  if (Date.now() + remainingReads * OPENSEA_REQUEST_TIMEOUT_MS > deadline)
+    throw new CustomApiCompliantException(
+      503,
+      'The listing scan exceeded its request budget. Rebuild the plan to retry failed assets.',
+      'PLAN_SCAN_TIMEOUT'
+    );
+}
+
+function lostScanLease(): never {
+  throw new CustomApiCompliantException(
+    409,
+    'Another request took over this scan. Retry to load its latest progress.',
+    'PLAN_SCAN_RETRY'
+  );
 }
 
 export async function advanceCollectPlan(id: string, profileId: string) {
@@ -342,20 +380,26 @@ export async function advanceCollectPlan(id: string, profileId: string) {
       payload.cursor,
       payload.cursor + BATCH_SIZE
     );
+    const deadline = Date.now() + SCAN_BUDGET_MS;
     for (let index = 0; index < keys.length; index += 2) {
+      const renewalTime = Date.now();
       const renewed = await dbSupplier().execute(
         'UPDATE collect_plans SET lease_until=:until WHERE id=:id AND lease_token=:lease AND lease_until>:now',
-        { until: Date.now() + 60000, id, lease, now: Date.now() }
+        { until: renewalTime + 60000, id, lease, now: renewalTime }
       );
-      if (!dbSupplier().getAffectedRows(renewed))
-        return readCollectPlan(id, profileId);
+      if (!dbSupplier().getAffectedRows(renewed)) lostScanLease();
       const batch = await Promise.allSettled(
-        keys.slice(index, index + 2).map((key) => candidatesFor(key, payload))
+        keys
+          .slice(index, index + 2)
+          .map((key) => candidatesFor(key, payload, deadline))
       );
       for (const item of batch) {
         if (item.status === 'rejected') payload.failed++;
         else if (item.value.length === 0) payload.unavailable++;
-        else payload.candidates.push(...item.value);
+        else
+          payload.candidates.push(
+            ...item.value.slice(0, MAX_CANDIDATES - payload.candidates.length)
+          );
       }
     }
     payload.cursor += keys.length;
@@ -364,10 +408,13 @@ export async function advanceCollectPlan(id: string, profileId: string) {
       payload.candidates.length >= MAX_CANDIDATES
         ? 'READY'
         : 'SCANNING';
-    await dbSupplier().execute(
-      'UPDATE collect_plans SET payload_json=:payload,state=:state,updated_at=:now,lease_token=NULL,lease_until=0 WHERE id=:id AND lease_token=:lease AND lease_until>:now',
+    // Expiry permits takeover; the token is the commit fence. A late batch may
+    // preserve its checkpoint only while no newer worker has acquired the row.
+    const persisted = await dbSupplier().execute(
+      'UPDATE collect_plans SET payload_json=:payload,state=:state,updated_at=:now,lease_token=NULL,lease_until=0 WHERE id=:id AND lease_token=:lease',
       { payload: JSON.stringify(payload), state, now: Date.now(), id, lease }
     );
+    if (!dbSupplier().getAffectedRows(persisted)) lostScanLease();
     return readCollectPlan(id, profileId);
   } catch (error) {
     await dbSupplier().execute(

@@ -143,6 +143,18 @@ describe('market service authorization and first payload exposure', () => {
     ).rejects.toThrow(/paying/);
     expect(marketOperationsDb.create).not.toHaveBeenCalled();
   });
+  it('binds a checksum-cased authenticated wallet to its canonical lowercase actor', () => {
+    const checksum = '0x33FD426905F149f8376e227d0C9D3340AaD17aF1';
+    expect(
+      assertMarketActor(
+        { ...auth, authenticatedWallet: checksum } as AuthenticationContext,
+        {
+          ...request,
+          wallet: checksum.toLowerCase()
+        }
+      )
+    ).toEqual({ profileId: 'profile', wallet: checksum.toLowerCase() });
+  });
   it('returns an idempotent existing operation without preparing a replacement signed order', async () => {
     const existing = { id: 'operation', state: 'REVIEW', liability_wei: '100' };
     (marketOperationsDb.create as jest.Mock).mockResolvedValue({

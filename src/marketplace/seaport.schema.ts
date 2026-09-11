@@ -106,3 +106,14 @@ export function parseMarketValue<T>(schema: z.ZodType<T>, input: unknown): T {
   }
   return parsed.data;
 }
+
+/** Discovery/UI timestamps must fit JavaScript Date; raw Seaport cancellation remains uint256. */
+export function parseMarketTimestampSeconds(input: unknown): string {
+  const seconds = parseMarketValue(marketUintSchema, input);
+  if (BigInt(seconds) > BigInt(8640000000000))
+    throw new MarketValidationError(
+      'ORDER_MISMATCH',
+      'The marketplace timestamp is outside the supported range.'
+    );
+  return seconds;
+}

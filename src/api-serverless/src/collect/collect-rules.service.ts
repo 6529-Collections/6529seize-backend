@@ -28,7 +28,9 @@ import { readCollectPlan } from './collect-plans.service';
 type Actor = ReturnType<typeof assertMarketActor>;
 export async function requireRuleWallet(id: string, actor: Actor) {
   const rule = await collectingRulesService.get(id, actor.profileId);
-  if (rule.definition.funding_wallet.toLowerCase() !== actor.wallet)
+  if (
+    rule.definition.funding_wallet.toLowerCase() !== actor.wallet.toLowerCase()
+  )
     throw new ForbiddenException('Switch to the funding wallet for this rule.');
   return rule;
 }
@@ -41,13 +43,17 @@ export async function createRule(
   const actor = assertMarketActor(auth);
   if (
     actor.profileId !== definition.profile_id ||
-    actor.wallet !== definition.funding_wallet.toLowerCase()
+    actor.wallet.toLowerCase() !== definition.funding_wallet.toLowerCase()
   )
     throw new ForbiddenException(
       'Create a rule for your active profile and signing wallet.'
     );
   const scope = await collectingDb.readAccountHoldings(actor.profileId);
-  if (!scope.account.wallets.includes(actor.wallet))
+  if (
+    !scope.account.wallets.some(
+      (wallet) => wallet.toLowerCase() === actor.wallet.toLowerCase()
+    )
+  )
     throw new ForbiddenException('The funding wallet is not in this profile.');
   const catalog = await collectingService.getCatalog();
   const keys = new Set(catalog.assets.map((asset) => asset.asset_key));

@@ -193,15 +193,13 @@ paths:
               - OFFER
       responses:
         "200":
-          description: Current reviewed trade state
+          description: Public observed listings or offers for the requested artwork; no private operation history
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiMarketOrders"
         "400":
           description: Invalid trade terms
-        "403":
-          description: Wallet is not authorized
         "404":
           description: Trade or asset unavailable
         "409":
@@ -17188,7 +17186,7 @@ components:
           type: integer
           format: int64
           minimum: 1
-          description: Order expiry as Unix seconds. Required for LIST and OFFER.
+          description: Order expiry as Unix seconds, required for LIST and OFFER and rejected for BUY, ACCEPT, and CANCEL. Operation review freshness uses Unix milliseconds instead.
         order:
           $ref: "#/components/schemas/ApiMarketIdentity"
         acknowledge_external_recipient:
