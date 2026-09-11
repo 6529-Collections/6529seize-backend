@@ -26,6 +26,14 @@ it.each([
   {
     queryStringParameters: { operator_action: 'verify_media_dependencies_v1' }
   },
+  {
+    version: '1.0',
+    httpMethod: 'POST',
+    path: '/mediaResizerLoop',
+    requestContext: { requestId: 'synthetic-http-proxy' },
+    body: '{"operator_action":"verify_media_dependencies_v1"}',
+    isBase64Encoded: false
+  },
   { operator_action: 'verify_media_dependencies_v1', Records: [] }
 ])(
   'passes normal events and HTTP parameters through unchanged',
@@ -37,3 +45,11 @@ it.each([
     expect(business).toHaveBeenCalledWith(event, context, callback);
   }
 );
+
+it('preserves SQS partial-batch responses without changing their contents', async () => {
+  const response = { batchItemFailures: [{ itemIdentifier: 'retry-fixture' }] };
+  const business = jest.fn().mockResolvedValue(response);
+  expect(
+    await withMediaDependencySmoke(business)({ Records: [] }, context, callback)
+  ).toBe(response);
+});

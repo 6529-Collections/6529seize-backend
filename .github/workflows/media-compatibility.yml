@@ -20,6 +20,7 @@ on:
       - 'src/s3.ts'
       - 'src/s3_rememes.ts'
       - 'scripts/*media*'
+      - 'scripts/check-package-lock.mjs'
       - 'scripts/media-fixtures/**'
       - '.github/workflows/media-compatibility.yml'
 

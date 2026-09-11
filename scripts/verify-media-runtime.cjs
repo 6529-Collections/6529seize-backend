@@ -73,8 +73,7 @@ async function verifyImages() {
   await assert.rejects(sharp(Buffer.from('malformed-image')).metadata());
 }
 
-async function verifyOptionalMedia() {
-  if (!fs.existsSync(path.join(root, 'node_modules/imagescript'))) return;
+async function verifyImageScript() {
   const gif = await load('imagescript').GIF.decode(
     fs.readFileSync(path.join(fixtures, 'gif'))
   );
@@ -83,7 +82,12 @@ async function verifyOptionalMedia() {
   assert.equal(meta.pages, 2);
   assert.equal(meta.pageHeight, 6);
   assert.deepEqual(meta.delay, [80, 160]);
+}
+
+function verifyFfmpeg() {
   const ffmpeg = load('@ffmpeg-installer/ffmpeg');
+  assert.ok(ffmpeg.path.startsWith(path.join(root, 'node_modules') + path.sep));
+  assert.ok(fs.existsSync(ffmpeg.path));
   const output = execFileSync(ffmpeg.path, ['-version'], {
     encoding: 'utf8',
     timeout: 10000
@@ -99,8 +103,7 @@ async function verifyOptionalMedia() {
   assert.equal(typeof load('fluent-ffmpeg'), 'function');
   console.log(
     JSON.stringify({
-      ffmpeg: ffmpeg.version,
-      imagescript: load('imagescript/package.json').version
+      ffmpeg: ffmpeg.version
     })
   );
 }
@@ -133,7 +136,11 @@ async function main() {
     }
   }
   await verifyImages();
-  await verifyOptionalMedia();
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(root, 'package.json'), 'utf8')
+  );
+  if (manifest.dependencies?.imagescript) await verifyImageScript();
+  if (manifest.dependencies?.['fluent-ffmpeg']) verifyFfmpeg();
   if (process.argv.includes('--lambda')) {
     const handler = load(path.join(root, 'index.js')).handler;
     assert.equal(typeof handler, 'function');

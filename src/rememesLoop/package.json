@@ -7,7 +7,7 @@
     "preinstall": "node ../../scripts/require-6529-command.cjs",
     "prebuild": "node ../../scripts/require-6529-command.cjs && node ../../scripts/require-lambda-media-build.cjs && rm -rf dist && SHARP_IGNORE_GLOBAL_LIBVIPS=1 ../../bin/6529 ci --os=linux --cpu=x64 --libc=glibc --include=optional",
     "build": "node ../../scripts/require-6529-command.cjs && esbuild index.ts --bundle --external:sharp --external:imagescript --external:@ffmpeg-installer/ffmpeg --external:fluent-ffmpeg --sourcemap --platform=node --target=es2020 --outfile=dist/index.js --metafile=dist/esbuild-meta.json && cp -r node_modules dist/node_modules",
-    "postbuild": "node ../../scripts/require-6529-command.cjs && cp rememes.csv dist && cd dist && zip -r index.zip * && cd .. && node ../../scripts/verify-media-zip.cjs dist/index.zip",
+    "postbuild": "node ../../scripts/require-6529-command.cjs && cp rememes.csv dist && cp package.json dist/ && cd dist && zip -r index.zip * && cd .. && node ../../scripts/verify-media-zip.cjs dist/index.zip",
     "sls-deploy:prod": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/bin/serverless.js deploy --stage=prod --region=us-east-1",
     "sls-deploy:staging": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/bin/serverless.js deploy --stage=staging --region=eu-west-1"
   },

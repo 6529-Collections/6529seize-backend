@@ -18,6 +18,9 @@ processing. It adds no HTTP route; ordinary SQS, schedule and API Gateway
 events keep their existing handlers. This lets operators verify each deployed
 Lambda, including production-only media resizing and the three rememes
 functions, without invoking whole production loops.
+The resizer's HTTP API uses AWS_PROXY payload 1.0 without request templates;
+request bodies remain inside the HTTP event envelope and cannot become this
+top-level operator payload.
 
 ## Profile collecting and marketplace operations
 
