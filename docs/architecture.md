@@ -953,8 +953,13 @@ The additive `artwork_documentation_program_viewers` table holds profile or
 existing-group subjects for read-only program access. Access resolution uses
 the current site group eligibility evaluator scoped to granted IDs, with no
 copied member roster. Queue, draft, history, file and discussion reads share
-the existing authorization boundary; every context mutation requires a writer
-capability before its operation-specific check. The IAM-only
+the existing authorization boundary. Every mutation uses the original artist
+and collaborator grants, so additional viewer reads cannot widen field, asset,
+discussion, assignment or review authority. Context responses expose original
+`mutation_capabilities` and visible `mutation_restricted_paths` for accurate
+editing controls. Upload-session reads retain viewer access and report
+`can_mutate` using original grants and the stored upload ownership, reference
+and lifecycle state. The IAM-only
 `set_program_viewers_v1` action inventories original grants and managed viewers,
 requires the reviewed inventory hash before replacing viewer configuration,
 and records a permanent replay fence. It preserves artist/context grants and

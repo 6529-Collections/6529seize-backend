@@ -13,7 +13,10 @@ import {
 } from '@/constants';
 import { DbPoolName } from '@/db-query.options';
 import { ArtworkDocumentationDb, parseJson } from './artwork-documentation.db';
-import { ArtworkDocumentationService } from './artwork-documentation.service';
+import {
+  ArtworkDocumentationService,
+  artworkDocumentationService
+} from './artwork-documentation.service';
 import { ArtworkDocumentationReviewService } from './artwork-documentation.review';
 import {
   AD_CONTEXTS,
@@ -55,7 +58,12 @@ import {
   ProgramViewersEvent,
   setProgramViewers
 } from './artwork-documentation-program-viewer-operator';
-import { toAssetAccess } from './artwork-documentation.asset-links';
+import {
+  toAssetAccess,
+  writeAssetLink,
+  removeAssetLink
+} from './artwork-documentation.asset-links';
+import { artworkAssetsService } from './assets/artwork-assets.service';
 import { requireAssetWrite } from './assets/artwork-assets.policy';
 
 const makeContext = (actor: string): RequestContext => ({
@@ -95,12 +103,371 @@ describe('artwork documentation transactional persistence', () => {
   }
   describe('program viewers', () => {
     afterEach(async () => {
+      jest.restoreAllMocks();
       await db.query(
         `DELETE FROM ${AD_PROGRAM_VIEWERS} WHERE grantor_profile_id=:actor`,
         { actor },
         ctx
       );
     });
+    it.each(['profile', 'group'] as const)(
+      'keeps assignment and rights-review authority unchanged for a %s viewer',
+      async (type) => {
+        const record = await readyContext();
+        await setProgram(record);
+        const collaborator = randomUUID();
+        const original = {
+          manage_assignments: true,
+          review_lanes: ['rights'] as const
+        };
+        await assign(record, collaborator, {
+          ...original,
+          review_lanes: ['rights']
+        });
+        const group = `authority-${randomUUID()}`;
+        await programViewer(type === 'profile' ? collaborator : group, type);
+        const mixed = new ArtworkDocumentationService(db, assets, undefined, {
+          getGroupsUserIsEligibleForByIds: async (profile, ids) =>
+            profile === collaborator ? ids.filter((id) => id === group) : []
+        });
+        const mixedReviews = new ArtworkDocumentationReviewService(mixed);
+        const collaboratorContext = makeContext(collaborator);
+        const projected = await mixed.getContext(
+          record.id,
+          collaboratorContext
+        );
+        expect(projected.capabilities.read_rights_evidence).toBe(true);
+        expect(projected.mutation_capabilities.read_rights_evidence).toBe(
+          false
+        );
+        for (const flag of [
+          'read_contact',
+          'read_restricted_fields'
+        ] as const) {
+          await expect(
+            mixedReviews.grant(
+              record.id,
+              randomUUID(),
+              {
+                ...emptyCapabilities(),
+                read_context: true,
+                [flag]: true
+              },
+              mutation('mixed-grant', {}, 1),
+              collaboratorContext
+            )
+          ).rejects.toMatchObject({ code: 'CANNOT_ELEVATE_GRANT' });
+        }
+        await expect(
+          mixedReviews.review(
+            record.id,
+            randomUUID(),
+            'rights',
+            {
+              expected_review_version: 1,
+              status: 'accepted'
+            },
+            mutation('mixed-review', {}, 1),
+            collaboratorContext
+          )
+        ).rejects.toMatchObject({ code: 'RIGHTS_EVIDENCE_ACCESS_REQUIRED' });
+        expect(await db.context(record.id, ctx)).toEqual(record);
+      }
+    );
+    it('omits restriction history for answers redacted by hidden asset references', async () => {
+      const record = await readyContext();
+      record.asset_links[0].intended_visibility = 'restricted';
+      record.restricted_paths = [
+        'artwork.canonical_asset_id',
+        `asset:${record.asset_links[0].asset_id}`
+      ];
+      await db.saveContext(record, ctx);
+      const reader = randomUUID();
+      await assign(record, reader, { read_restricted_fields: true });
+      const projected = await service.getContext(
+        record.id,
+        makeContext(reader)
+      );
+      expect(projected.modules.artwork.answers.canonical_asset_id).toEqual({
+        redacted: true
+      });
+      expect(projected.asset_links).toEqual([]);
+      expect(projected.mutation_restricted_paths).toEqual([]);
+    });
+    it.each(['profile', 'group'] as const)(
+      'preserves original writer scope alongside a %s viewer grant',
+      async (subjectType) => {
+        const record = await readyContext();
+        record.modules.context.making_context = answer(
+          'A public-looking answer with restricted history'
+        );
+        record.modules.identity.private_contact = answer(
+          'Contact evidence',
+          'restricted'
+        );
+        record.restricted_paths = [
+          'context.making_context',
+          'identity.private_contact',
+          `asset-rights:${record.asset_links[0].asset_id}`,
+          `asset:${record.asset_links[0].asset_id}`,
+          'unknown.hidden',
+          `asset:${randomUUID()}`
+        ];
+        await setProgram(record);
+        const editor = randomUUID();
+        const editorContext = makeContext(editor);
+        await assign(record, editor, {
+          edit_modules: ['context', 'files', 'identity', 'artwork', 'rights']
+        });
+        const groupId = `mixed-${randomUUID()}`;
+        const mixed = new ArtworkDocumentationService(db, assets, undefined, {
+          getGroupsUserIsEligibleForByIds: async (profile, ids) =>
+            profile === editor ? [...ids] : []
+        });
+        const mixedReviews = new ArtworkDocumentationReviewService(mixed);
+        const before = await mixed.getContext(record.id, editorContext);
+        expect(before.modules.context.answers.making_context).toEqual({
+          redacted: true
+        });
+        expect(before.mutation_restricted_paths).not.toContain(
+          'context.making_context'
+        );
+        await programViewer(
+          subjectType === 'profile' ? editor : groupId,
+          subjectType
+        );
+        const projected = await mixed.getContext(record.id, editorContext);
+        expect(projected.modules.context.answers.making_context).toEqual(
+          record.modules.context.making_context
+        );
+        expect(projected.asset_links).toHaveLength(1);
+        expect(projected.capabilities.read_restricted_fields).toBe(true);
+        expect(projected.mutation_capabilities).toEqual(before.capabilities);
+        expect(projected.mutation_restricted_paths).toEqual(
+          expect.arrayContaining([
+            'context.making_context',
+            'identity.private_contact',
+            `asset-rights:${record.asset_links[0].asset_id}`
+          ])
+        );
+        expect(projected.mutation_restricted_paths).not.toContain(
+          'unknown.hidden'
+        );
+        expect(projected.mutation_restricted_paths).toHaveLength(4);
+        for (const [moduleId, field, value] of [
+          ['context', 'making_context', answer('Overwrite latched answer')],
+          [
+            'identity',
+            'private_contact',
+            answer('Overwrite contact', 'restricted')
+          ],
+          ['rights', 'people_depicted', answer('includes_minors', 'restricted')]
+        ] as const) {
+          const patch = {
+            schema_version: 1,
+            operations: [{ op: 'set' as const, field, answer: value }]
+          };
+          await expect(
+            mixed.patchModule(
+              record.id,
+              moduleId,
+              patch,
+              mutation('mixed-patch', patch, 1),
+              editorContext
+            )
+          ).rejects.toMatchObject({ code: 'FIELD_EDIT_NOT_ALLOWED' });
+        }
+        const sourceId = randomUUID();
+        await db.insert(
+          AD_SOURCES,
+          {
+            id: sourceId,
+            context_id: record.id,
+            drop_id: randomUUID(),
+            receipt_text: JSON.stringify({
+              title: 'Imported title',
+              parts: [],
+              metadata: []
+            }),
+            sha256: 'b'.repeat(64),
+            is_excerpt: false,
+            importer_profile_id: actor,
+            created_at: Date.now()
+          },
+          ctx
+        );
+        expect(
+          (await mixed.sourcePreview(record.id, sourceId, editorContext)).fields
+        ).toHaveLength(1);
+        const source = {
+          source_receipt_id: sourceId,
+          fields: [
+            {
+              source_path: 'title',
+              target_field: 'artwork.title',
+              overwrite: true
+            }
+          ]
+        };
+        await expect(
+          mixed.importSource(
+            record.id,
+            source,
+            mutation('mixed-import', source, 1),
+            editorContext
+          )
+        ).rejects.toMatchObject({ code: 'SOURCE_RECEIPT_ACCESS_REQUIRED' });
+        const restrictedThread = await mixedReviews.createThread(
+          record.id,
+          {
+            audience: 'artist_and_reviewers',
+            restricted_class: 'ordinary',
+            field_path: 'context.making_context',
+            text: 'Restricted-history discussion'
+          },
+          mutation('thread', {}),
+          ctx
+        );
+        expect(
+          (await mixedReviews.listThreads(record.id, editorContext)).data.map(
+            (thread) => thread.id
+          )
+        ).toContain(restrictedThread.id);
+        await expect(
+          mixedReviews.comment(
+            record.id,
+            restrictedThread.id,
+            'Denied comment',
+            mutation('mixed-comment', {}),
+            editorContext
+          )
+        ).rejects.toMatchObject({ code: 'UNAVAILABLE' });
+        await expect(
+          mixedReviews.patchThread(
+            record.id,
+            restrictedThread.id,
+            { expected_thread_version: 1, resolved: true },
+            mutation('mixed-resolve', {}),
+            editorContext
+          )
+        ).rejects.toMatchObject({ code: 'UNAVAILABLE' });
+        await expect(
+          mixedReviews.createThread(
+            record.id,
+            {
+              audience: 'artist_and_reviewers',
+              restricted_class: 'rights',
+              text: 'Denied rights discussion'
+            },
+            mutation('mixed-thread', {}),
+            editorContext
+          )
+        ).rejects.toMatchObject({ code: 'THREAD_AUDIENCE_NOT_ALLOWED' });
+        const writeAccess = await mixed.authorizeMutationContext(
+          record.id,
+          editorContext
+        );
+        expect(writeAccess.capabilities).toEqual(before.capabilities);
+        expect(mixed.canReadAssetLink(record.asset_links[0], writeAccess)).toBe(
+          false
+        );
+        jest
+          .spyOn(artworkDocumentationService, 'mutate')
+          .mockImplementation(mixed.mutate.bind(mixed));
+        const link = record.asset_links[0];
+        await expect(
+          writeAssetLink(
+            record.id,
+            link,
+            mutation('mixed-link', link, 1),
+            editorContext,
+            link.id
+          )
+        ).rejects.toMatchObject({ code: 'UNAVAILABLE' });
+        await expect(
+          removeAssetLink(
+            record.id,
+            link.id,
+            mutation('mixed-unlink', {}, 1),
+            editorContext
+          )
+        ).rejects.toMatchObject({ code: 'UNAVAILABLE' });
+        await expect(
+          artworkAssetsService.startUpload(
+            record.id,
+            toAssetAccess(writeAccess),
+            {
+              filename: 'rights.pdf',
+              size_bytes: 9,
+              declared_mime: 'application/pdf',
+              role: 'consent_instrument',
+              intended_visibility: 'restricted'
+            },
+            randomUUID()
+          )
+        ).rejects.toMatchObject({ code: 'RIGHTS_EVIDENCE_FORBIDDEN' });
+        await expect(
+          sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+            artworkAssetsService.updateDisclosure(
+              record.id,
+              link.asset_id,
+              toAssetAccess(writeAccess),
+              { role: 'consent_instrument', intended_visibility: 'restricted' },
+              connection
+            )
+          )
+        ).rejects.toMatchObject({ code: 'RIGHTS_EVIDENCE_FORBIDDEN' });
+        expect(await db.context(record.id, ctx)).toEqual(record);
+        const publicPatch = {
+          schema_version: 1,
+          operations: [
+            {
+              op: 'set' as const,
+              field: 'caption',
+              answer: answer({
+                primary_language: 'en',
+                versions: [
+                  {
+                    language: 'en',
+                    text: 'An ordinary authorized caption',
+                    authorship: 'original',
+                    approved_by_artist: true
+                  }
+                ]
+              })
+            }
+          ]
+        };
+        await expect(
+          mixed.patchModule(
+            record.id,
+            'context',
+            publicPatch,
+            mutation('mixed-public-patch', publicPatch, 1),
+            editorContext
+          )
+        ).resolves.toMatchObject({ draft_version: 2 });
+        const ordinary = await mixedReviews.createThread(
+          record.id,
+          {
+            audience: 'artist_and_reviewers',
+            restricted_class: 'ordinary',
+            text: 'Allowed team question'
+          },
+          mutation('mixed-public-thread', {}),
+          editorContext
+        );
+        await expect(
+          mixedReviews.comment(
+            record.id,
+            ordinary.id,
+            'Allowed ordinary reply',
+            mutation('mixed-public-reply', {}),
+            editorContext
+          )
+        ).resolves.toMatchObject({ id: ordinary.id });
+      }
+    );
     it('reads the program queue, draft, files, confirmed revision and team questions without mutation authority', async () => {
       const record = await readyContext();
       const revision = await service.confirm(

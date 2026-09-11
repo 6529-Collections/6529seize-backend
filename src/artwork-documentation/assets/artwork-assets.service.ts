@@ -72,6 +72,17 @@ function requireTransferAccess(asset: StoredAsset, access: AssetAccess): void {
   )
     assetError(403, 'UPLOAD_ACCESS_FORBIDDEN');
 }
+function canMutateUpload(asset: StoredAsset, access: AssetAccess): boolean {
+  return (
+    access.canEdit &&
+    !asset.referenced &&
+    !['cancelled', 'expired'].includes(asset.state) &&
+    Number(asset.expires_at) > Date.now() &&
+    canReadAsset(asset, access) &&
+    (asset.uploader_profile_id === access.actorProfileId ||
+      canReadOriginal(asset, access))
+  );
+}
 function requireUploading(asset: StoredAsset): void {
   if (asset.state !== 'uploading' || Number(asset.expires_at) <= Date.now())
     assetError(409, 'UPLOAD_NOT_ACTIVE');
@@ -185,7 +196,12 @@ export class ArtworkAssetsService {
     return this.getUpload(contextId, reserved.id, access);
   }
 
-  async getUpload(contextId: string, uploadId: string, access: AssetAccess) {
+  async getUpload(
+    contextId: string,
+    uploadId: string,
+    access: AssetAccess,
+    mutationAccess: AssetAccess = access
+  ) {
     const asset = await this.getAsset(contextId, uploadId, access);
     requireTransferAccess(asset, access);
     requirePublicationAsset(access, asset);
@@ -194,6 +210,7 @@ export class ArtworkAssetsService {
     return {
       asset: manifest(asset),
       upload_id: asset.id,
+      can_mutate: canMutateUpload(asset, mutationAccess),
       policy: ARTWORK_UPLOAD_POLICY,
       received_parts: parts,
       expires_at: Number(asset.expires_at)

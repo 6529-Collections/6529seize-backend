@@ -545,8 +545,13 @@ export class ArtworkDocumentationReviewService {
         .map((row) => this.projectThread(row))
     };
   }
-  async thread(id: string, threadId: string, ctx: RequestContext) {
-    const access = await this.core.authorizeContext(id, ctx);
+  async thread(
+    id: string,
+    threadId: string,
+    ctx: RequestContext,
+    access?: ContextAccess
+  ) {
+    access ??= await this.core.authorizeContext(id, ctx);
     const row = await this.core.db.one<ThreadRow>(
       `SELECT * FROM ${AD_THREADS} WHERE context_id=:id AND id=:threadId`,
       { id, threadId },
@@ -640,7 +645,7 @@ export class ArtworkDocumentationReviewService {
       mutation,
       ctx,
       async (access, transaction) => {
-        const row = await this.thread(id, threadId, transaction);
+        const row = await this.thread(id, threadId, transaction, access);
         const comments = parseJson<Comment[]>(row.comments_json);
         if (comments.length >= 200) fail(413, 'COMMENT_LIMIT');
         comments.push({
@@ -672,7 +677,7 @@ export class ArtworkDocumentationReviewService {
       mutation,
       ctx,
       async (access, transaction) => {
-        const row = await this.thread(id, threadId, transaction);
+        const row = await this.thread(id, threadId, transaction, access);
         if (row.thread_version !== body.expected_thread_version)
           fail(409, 'THREAD_CONFLICT');
         if (
