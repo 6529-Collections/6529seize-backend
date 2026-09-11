@@ -73,6 +73,22 @@ export async function requestDeviceBadgeRefresh(
   }
 }
 
+/** Logout retries must retry a failed queue handoff, without repeating deletion. */
+export async function requestInstallationBadgeRefresh(
+  deviceId: string
+): Promise<void> {
+  if (!isActivated()) return;
+  await sendBatchMessagesToSQS([
+    {
+      Id: 'installation-badge-refresh',
+      MessageBody: JSON.stringify({
+        type: 'installation_badge_refresh',
+        device_id: deviceId
+      })
+    }
+  ]);
+}
+
 const sendBatchMessagesToSQS = async (
   entries: NonNullable<SendMessageBatchCommandInput['Entries']>
 ) => {

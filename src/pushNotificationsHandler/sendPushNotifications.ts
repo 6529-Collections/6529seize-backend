@@ -163,13 +163,21 @@ function buildMessage(
     notification.imageUrl = input.imageUrl!.trim();
   }
 
+  const data = buildMessageData(input);
+  const targetProfileId = data.target_profile_id;
+  // Android's delivered-notification API exposes the native tag, but may omit
+  // FCM custom data. Keep profile/read identity available without a native update.
+  const tag = targetProfileId
+    ? `6529:v1:${encodeURIComponent(targetProfileId)}:${data.notification_id}:${encodeURIComponent(data.wave_id ?? '')}`
+    : undefined;
   return {
     notification,
     token: input.token,
-    data: buildMessageData(input),
+    data,
     android: {
       notification: {
-        sound: 'default'
+        sound: 'default',
+        ...(tag ? { tag } : {})
       }
     },
     apns: {

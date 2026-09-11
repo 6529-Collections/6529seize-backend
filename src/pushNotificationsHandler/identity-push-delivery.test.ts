@@ -1,3 +1,9 @@
+const mockFindRegistrations = jest.fn();
+jest.mock('@/db', () => ({
+  getDataSource: () => ({
+    getRepository: () => ({ findBy: mockFindRegistrations })
+  })
+}));
 import {
   sendIdentityPushGroups,
   type IdentityPushNotificationMessage
@@ -40,6 +46,10 @@ function message(
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockFindRegistrations.mockResolvedValue([
+    { profile_id: 'a' },
+    { profile_id: 'b' }
+  ]);
   jest
     .mocked(getDeviceBadgeState)
     .mockReset()
@@ -78,11 +88,13 @@ it('does not send to a profile removed since the alert was built', async () => {
   ]);
 });
 
-it('leaves Android alerts unchanged and independent of badge coordination', async () => {
+it('coordinates Android alerts with logout without calculating an iOS badge', async () => {
   const android = message(1, 'a', 'android');
   expect(await sendIdentityPushGroups([android], results)).toEqual([]);
-  expect(sendMessages).toHaveBeenCalledWith([android.input]);
-  expect(withDeviceBadgeLock).not.toHaveBeenCalled();
+  expect(sendMessages).toHaveBeenCalledWith([
+    { ...android.input, omitBadge: true }
+  ]);
+  expect(withDeviceBadgeLock).toHaveBeenCalledTimes(1);
   expect(getDeviceBadgeState).not.toHaveBeenCalled();
 });
 
@@ -101,6 +113,17 @@ it.each(['', 'unknown', 'web'])(
     expect(sendMessages).toHaveBeenCalledWith([
       expect.objectContaining({ omitBadge: true })
     ]);
-    expect(withDeviceBadgeLock).not.toHaveBeenCalled();
+    expect(withDeviceBadgeLock).toHaveBeenCalledTimes(1);
   }
 );
+
+it('drops an Android recipient removed after the alert was built', async () => {
+  mockFindRegistrations.mockResolvedValue([{ profile_id: 'b' }]);
+  await sendIdentityPushGroups(
+    [message(1, 'a', 'android'), message(2, 'b', 'android')],
+    results
+  );
+  expect(sendMessages).toHaveBeenCalledWith([
+    expect.objectContaining({ notification_id: 2, omitBadge: true })
+  ]);
+});

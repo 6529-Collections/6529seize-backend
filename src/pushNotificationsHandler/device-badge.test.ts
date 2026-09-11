@@ -168,3 +168,11 @@ it('preserves action success and failure when releasing the lock fails', async (
     })
   ).rejects.toBe(failure);
 });
+
+it('counts remaining profiles when logout removed the latest-token registration', async () => {
+  findDevices.mockResolvedValue([{ profile_id: 'b', token: 'older-token' }]);
+  expect(await getDeviceBadgeState(device)).toEqual({
+    count: 1,
+    profileIds: new Set()
+  });
+});

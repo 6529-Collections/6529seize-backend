@@ -9,6 +9,11 @@ jest.mock('firebase-admin', () => ({
 
 beforeEach(() => {
   send.mockReset().mockResolvedValue('message-id');
+  sendEach.mockReset().mockResolvedValue({
+    successCount: 1,
+    failureCount: 0,
+    responses: [{ success: true }]
+  });
 });
 
 it.each([0, 1, 2])(
@@ -64,4 +69,38 @@ it('omits the APNs badge rather than guessing for an unknown platform', async ()
   const payload = sendEach.mock.calls[0][0][0];
   expect(payload.apns.payload.aps).toEqual({ sound: 'default' });
   expect(payload.android).toEqual({ notification: { sound: 'default' } });
+});
+
+it('tags Android notifications with the payload profile, notification and wave identity', async () => {
+  await sendMessages([
+    {
+      title: 'Hello',
+      body: 'World',
+      token: 'token',
+      notification_id: 42,
+      extra_data: { target_profile_id: 'profile:A', wave_id: 'wave/1' }
+    }
+  ]);
+  expect(sendEach.mock.calls[0][0][0].android.notification).toEqual({
+    sound: 'default',
+    tag: '6529:v1:profile%3AA:42:wave%2F1'
+  });
+});
+
+it('keeps two profiles separate even when their Android native notification IDs coincide', async () => {
+  await sendMessages(
+    ['A', 'B'].map((profile) => ({
+      title: 'Hello',
+      body: 'World',
+      token: 'token',
+      notification_id: 42,
+      extra_data: { target_profile_id: profile }
+    }))
+  );
+  expect(
+    sendEach.mock.calls[0][0].map(
+      (message: { android: { notification: { tag: string } } }) =>
+        message.android.notification.tag
+    )
+  ).toEqual(['6529:v1:A:42:', '6529:v1:B:42:']);
 });

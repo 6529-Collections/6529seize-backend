@@ -1,6 +1,9 @@
 import type { Context, SQSEvent, SQSRecord } from 'aws-lambda';
 import { handler } from './index';
-import { refreshProfileBadges } from './badge-refresh';
+import {
+  refreshProfileBadges,
+  refreshInstallationBadge
+} from './badge-refresh';
 import { sendIdentityNotificationsBatch } from './identityPushNotifications';
 
 jest.mock('@/secrets', () => ({
@@ -9,7 +12,10 @@ jest.mock('@/secrets', () => ({
 jest.mock('@/sentry.context', () => ({
   wrapLambdaHandler: (action: unknown) => action
 }));
-jest.mock('./badge-refresh', () => ({ refreshProfileBadges: jest.fn() }));
+jest.mock('./badge-refresh', () => ({
+  refreshProfileBadges: jest.fn(),
+  refreshInstallationBadge: jest.fn()
+}));
 jest.mock('./identityPushNotifications', () => ({
   sendIdentityNotificationsBatch: jest.fn()
 }));
@@ -24,6 +30,10 @@ function event(...bodies: unknown[]): SQSEvent {
 }
 
 beforeEach(() => {
+  jest
+    .mocked(refreshInstallationBadge)
+    .mockReset()
+    .mockResolvedValue(undefined);
   jest.mocked(refreshProfileBadges).mockReset().mockResolvedValue([]);
   jest.mocked(sendIdentityNotificationsBatch).mockReset().mockResolvedValue([]);
 });
@@ -92,4 +102,24 @@ it('routes a message with both fields exclusively to badge refresh', async () =>
     )
   ).toEqual({ batchItemFailures: [{ itemIdentifier: '0' }] });
   expect(sendIdentityNotificationsBatch).not.toHaveBeenCalled();
+});
+
+it('retries only failed installation jobs in a mixed batch', async () => {
+  jest
+    .mocked(refreshInstallationBadge)
+    .mockRejectedValueOnce(new Error('FCM unavailable'))
+    .mockResolvedValueOnce(undefined);
+  expect(
+    await handler(
+      event(
+        { type: 'installation_badge_refresh', device_id: 'phone-a' },
+        { type: 'installation_badge_refresh', device_id: 'phone-b' },
+        { identity_notification_id: 12 }
+      ),
+      {} as Context,
+      jest.fn()
+    )
+  ).toEqual({ batchItemFailures: [{ itemIdentifier: '0' }] });
+  expect(refreshInstallationBadge).toHaveBeenCalledWith('phone-b');
+  expect(sendIdentityNotificationsBatch).toHaveBeenCalledWith([12]);
 });
