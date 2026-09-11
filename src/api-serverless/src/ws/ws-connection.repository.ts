@@ -239,6 +239,10 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     );
   }
 
+  /**
+   * Joins online connections to the visibility-checked group membership query.
+   * Ungrouped waves retain their existing anonymous-recipient behavior.
+   */
   private async getGroupRecipients(
     {
       groupId,
@@ -282,7 +286,8 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     }
     const viewResult = await this.userGroupsService.getSqlAndParamsByGroupId(
       groupId,
-      ctx
+      ctx,
+      { forOnlineRecipients: true }
     );
     if (viewResult === null) {
       ctx?.timer?.stop(
@@ -320,6 +325,10 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     return result;
   }
 
+  /**
+   * Selects online members for trusted broadcasts, independent of caller visibility.
+   * Missing groups yield no recipients; ungrouped waves use the regular path.
+   */
   private async getGroupRecipientsForSystemBroadcast(
     params: { groupId: string | null; waveId: string },
     ctx: RequestContext
@@ -332,7 +341,8 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     const viewResult =
       await this.userGroupsService.getSqlAndParamsByGroupIdForSystemBroadcast(
         params.groupId,
-        ctx
+        ctx,
+        { forOnlineRecipients: true }
       );
     if (viewResult === null) {
       return [];

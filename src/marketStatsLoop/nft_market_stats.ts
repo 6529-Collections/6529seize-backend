@@ -22,7 +22,10 @@ import {
 
 const logger = Logger.get('NFT_MARKET_STATS');
 
-export const findNftMarketStats = async (contract: string) => {
+export const findNftMarketStats = async (
+  contract: string,
+  deadlineMs = Date.now() + Time.minutes(10).toMillis()
+) => {
   let collectionSlug = '';
   let itemType = 0;
   if (equalIgnoreCase(contract, MEMES_CONTRACT)) {
@@ -42,7 +45,7 @@ export const findNftMarketStats = async (contract: string) => {
 
   // Bound the entire paginated price refresh, leaving time in the 900s Lambda
   // for database work. Both complete collections are required before any writes.
-  const priceFetchDeadlineMs = Date.now() + Time.minutes(10).toMillis();
+  const priceFetchDeadlineMs = deadlineMs;
   const offersMap = await fetchBestOffersForCollection(
     collectionSlug,
     itemType,

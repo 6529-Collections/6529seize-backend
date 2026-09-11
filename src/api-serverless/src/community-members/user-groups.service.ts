@@ -29,6 +29,7 @@ import {
   UserGroupsDb
 } from '@/user-groups/user-groups.db';
 import slugify from 'slugify';
+import { isDeepStrictEqual } from 'node:util';
 import {
   BadRequestException,
   ForbiddenException,
@@ -110,6 +111,45 @@ type GClean = Omit<
   | 'excluded_identity_group_identities_count'
   | 'is_beneficiary_of_grant'
 >;
+
+type GroupSqlOptions = { forOnlineRecipients?: boolean };
+
+// Required makes new top-level criteria, including optional ones, require an
+// explicit template update. Exact comparison rejects unknown runtime criteria.
+const LEVEL_ZERO_ONLY_GROUP: Required<GClean> = {
+  cic: { min: null, max: null, user_identity: null, direction: null },
+  rep: {
+    min: null,
+    max: null,
+    user_identity: null,
+    direction: null,
+    category: null
+  },
+  level: { min: 0, max: null },
+  tdh: {
+    min: null,
+    max: null,
+    inclusion_strategy: ApiGroupTdhInclusionStrategy.Tdh
+  },
+  owns_nfts: [],
+  identity_group_id: null,
+  excluded_identity_group_id: null,
+  is_beneficiary_of_grant_id: null,
+  is_beneficiary_of_grant_match_mode: ApiGroupBeneficiaryGrantMatchMode.AnyToken
+};
+
+/**
+ * Accepts only the exact level-zero criteria after removing API display fields.
+ * Extra or changed membership rules keep the general query path.
+ */
+function isLevelZeroOnlyGroup(group: GClean): boolean {
+  const criteria: Record<string, unknown> = { ...group };
+  // These API display fields do not define membership.
+  delete criteria.identity_group_identities_count;
+  delete criteria.excluded_identity_group_identities_count;
+  delete criteria.is_beneficiary_of_grant;
+  return isDeepStrictEqual(criteria, LEVEL_ZERO_ONLY_GROUP);
+}
 
 type PreviewIdentityMembership = {
   readonly includedAddresses: readonly string[];
@@ -1646,9 +1686,14 @@ export class UserGroupsService {
     return (await this.mapForApi([group], ctx)).at(0)!;
   }
 
+  /**
+   * Builds membership SQL after checking access to the requested group.
+   * Online-recipient optimization is opt-in; a null group keeps the general query.
+   */
   public async getSqlAndParamsByGroupId(
     groupId: string | null,
-    ctx: RequestContext
+    ctx: RequestContext,
+    options: GroupSqlOptions = {}
   ): Promise<{
     sql: string;
     params: Record<string, any>;
@@ -1690,7 +1735,13 @@ export class UserGroupsService {
       );
     } else {
       const group = await this.getByIdOrThrow(groupId, ctx);
-      return await this.getSqlAndParams(group.group, groupId, ctx);
+      return await this.getSqlAndParams(
+        group.group,
+        groupId,
+        ctx,
+        undefined,
+        options
+      );
     }
   }
 
@@ -1731,15 +1782,20 @@ export class UserGroupsService {
     });
   }
 
+  /**
+   * Builds membership SQL for trusted broadcasts without a caller visibility check.
+   * Missing groups return null so callers send to no recipients.
+   */
   public async getSqlAndParamsByGroupIdForSystemBroadcast(
     groupId: string | null,
-    ctx: RequestContext
+    ctx: RequestContext,
+    options: GroupSqlOptions = {}
   ): Promise<{
     sql: string;
     params: Record<string, any>;
   } | null> {
     if (groupId === null) {
-      return await this.getSqlAndParamsByGroupId(groupId, ctx);
+      return await this.getSqlAndParamsByGroupId(groupId, ctx, options);
     }
     const group = await this.userGroupsDb.getByIdWithoutVisibilityCheck(
       groupId,
@@ -1752,7 +1808,13 @@ export class UserGroupsService {
     if (!apiGroup) {
       return null;
     }
-    return await this.getSqlAndParams(apiGroup.group, groupId, ctx);
+    return await this.getSqlAndParams(
+      apiGroup.group,
+      groupId,
+      ctx,
+      undefined,
+      options
+    );
   }
 
   public async findGroupIdsWithMembersOutsideContainingGroup(
@@ -1801,16 +1863,44 @@ export class UserGroupsService {
     );
   }
 
+  /**
+   * Builds the membership view and bind parameters for persisted or preview rules.
+   * Only exact level-zero online lookups use the optimized query; previews and
+   * every other criteria shape retain the general query.
+   */
   private async getSqlAndParams(
     group: GClean,
     group_id: string | null,
     ctx: RequestContext,
-    previewIdentityMembership?: PreviewIdentityMembership
+    previewIdentityMembership?: PreviewIdentityMembership,
+    options: GroupSqlOptions = {}
   ): Promise<{
     sql: string;
     params: Record<string, any>;
   } | null> {
     ctx.timer?.start(`${this.constructor.name}->getSqlAndParams`);
+    if (
+      options.forOnlineRecipients === true &&
+      previewIdentityMembership === undefined &&
+      isLevelZeroOnlyGroup(group)
+    ) {
+      ctx.timer?.stop(`${this.constructor.name}->getSqlAndParams`);
+      // The general query selects eligible profile IDs, then joins them back to
+      // all identity rows in getPersistedInclusionExclusionPart. EXISTS preserves
+      // that row multiplicity, including mixed-level rows for the same profile.
+      // Filtering the outer i.level_raw instead would change existing results.
+      return {
+        sql: `with ${UserGroupsService.GENERATED_VIEW} as (
+          select i.* from ${IDENTITIES_TABLE} i
+          where exists (
+            select 1 from ${IDENTITIES_TABLE} eligible
+            where eligible.profile_id = i.profile_id
+              and eligible.level_raw >= :level_min
+          )
+        )`,
+        params: { level_min: 0 }
+      };
+    }
     const filterUsers = [
       group.cic.user_identity,
       group.rep.user_identity

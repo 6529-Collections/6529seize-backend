@@ -50,6 +50,81 @@ function setup(patch: Partial<StoredAsset> = {}) {
 }
 
 describe('archive upload and access service', () => {
+  it('rejects excluded publication uploads before reserving storage', async () => {
+    const { service, db, storage } = setup();
+    await expect(
+      service.startUpload(
+        'context-1',
+        { ...artistAssetAccess, publicationOnly: true },
+        {
+          filename: 'working.png',
+          size_bytes: 9,
+          declared_mime: 'image/png',
+          role: 'working_file',
+          intended_visibility: 'public_record'
+        },
+        '22222222-2222-4222-8222-222222222222'
+      )
+    ).rejects.toMatchObject({ code: 'PUBLICATION_ASSET_ROLE_REQUIRED' });
+    expect(db.withLocked).not.toHaveBeenCalled();
+    expect(storage.signPart).not.toHaveBeenCalled();
+  });
+  it('rejects restricted upload retries without reading or completing S3 parts', async () => {
+    const { service, storage, asset } = setup({
+      intended_visibility: 'restricted'
+    });
+    const access = { ...artistAssetAccess, publicationOnly: true };
+    await expect(
+      service.getUpload('context-1', asset.id, access)
+    ).rejects.toMatchObject({ code: 'PUBLICATION_VISIBILITY_REQUIRED' });
+    await expect(
+      service.signParts('context-1', asset.id, access, {
+        parts: [{ part_number: 1, checksum_sha256: checksum }]
+      })
+    ).rejects.toMatchObject({ code: 'PUBLICATION_VISIBILITY_REQUIRED' });
+    await expect(
+      service.completeUpload('context-1', asset.id, access, {
+        parts: [{ part_number: 1, checksum_sha256: checksum, etag: 'etag' }]
+      })
+    ).rejects.toMatchObject({ code: 'PUBLICATION_VISIBILITY_REQUIRED' });
+    expect(storage.parts).not.toHaveBeenCalled();
+    expect(storage.signPart).not.toHaveBeenCalled();
+    expect(storage.complete).not.toHaveBeenCalled();
+    await service.cancelUpload('context-1', asset.id, access);
+    expect(storage.cancel).toHaveBeenCalledTimes(1);
+  });
+  it('cannot attach a private source by relabeling or demote a public file', async () => {
+    const { service, db, asset } = setup({
+      role: 'working_file',
+      state: 'ready',
+      sha256: 'a'.repeat(64),
+      scan_status: 'NO_THREATS_FOUND'
+    });
+    const access = { ...artistAssetAccess, publicationOnly: true };
+    await expect(
+      service.validateReadyAsset('context-1', asset.id, access)
+    ).rejects.toMatchObject({ code: 'PUBLICATION_ASSET_ROLE_REQUIRED' });
+    await expect(
+      service.updateDisclosure(
+        'context-1',
+        asset.id,
+        access,
+        { role: 'artwork_final', intended_visibility: 'public_record' },
+        { connection: {} }
+      )
+    ).rejects.toMatchObject({ code: 'PUBLICATION_ASSET_ROLE_REQUIRED' });
+    asset.role = 'artwork_final';
+    await expect(
+      service.updateDisclosure(
+        'context-1',
+        asset.id,
+        access,
+        { intended_visibility: 'restricted' },
+        { connection: {} }
+      )
+    ).rejects.toMatchObject({ code: 'PUBLICATION_VISIBILITY_REQUIRED' });
+    expect(db.update).not.toHaveBeenCalled();
+  });
   it('does not reuse already issued part numbers for changed bytes', async () => {
     const { service, storage } = setup();
     await service.signParts('context-1', 'asset', artistAssetAccess, {

@@ -5,6 +5,8 @@ import {
   canReadAsset,
   canReadOriginal,
   expectedPartSize,
+  requirePublicationAsset,
+  validatePublicationAssetLink,
   validateAssetParts,
   validateStartUpload
 } from '@/artwork-documentation/assets/artwork-assets.policy';
@@ -17,6 +19,87 @@ const checksum = createHash('sha256')
   .update('last short part')
   .digest('base64');
 describe('artwork archive policy', () => {
+  const publicationAccess = { publicationOnly: true };
+  it.each([
+    'camera_original',
+    'working_file',
+    'consent_instrument',
+    'rights_instrument'
+  ])('rejects private-source role %s for publication-only intake', (role) => {
+    expect(() =>
+      requirePublicationAsset(publicationAccess, {
+        role,
+        intended_visibility: 'public_record'
+      })
+    ).toThrow('publication_asset_role_required');
+    expect(() =>
+      requirePublicationAsset(
+        {},
+        {
+          role,
+          intended_visibility: 'restricted'
+        }
+      )
+    ).not.toThrow();
+  });
+  it('rejects restricted visibility and private deposit terms in a public role', () => {
+    expect(() =>
+      requirePublicationAsset(publicationAccess, {
+        role: 'artwork_final',
+        intended_visibility: 'restricted'
+      })
+    ).toThrow('publication_visibility_required');
+    expect(() =>
+      validatePublicationAssetLink(publicationAccess, {
+        role: 'preservation_master',
+        intended_visibility: 'public_record',
+        intended_terms: { kind: 'private_deposit' }
+      })
+    ).toThrow('publication_asset_terms_required');
+    expect(() =>
+      validatePublicationAssetLink(publicationAccess, {
+        role: 'preservation_master',
+        intended_visibility: 'public_record',
+        intended_terms: { kind: 'unspecified' }
+      })
+    ).not.toThrow();
+  });
+  it('validates stored manifest eligibility independently of the role link', () => {
+    expect(() =>
+      validatePublicationAssetLink(publicationAccess, {
+        role: 'other_supporting',
+        intended_visibility: 'public_record',
+        intended_terms: { kind: 'unspecified' },
+        manifest: { role: 'working_file', intended_visibility: 'public_record' }
+      })
+    ).toThrow('publication_asset_role_required');
+  });
+  it('requires separate publication permission for each interview medium', () => {
+    expect(() =>
+      requirePublicationAsset(publicationAccess, {
+        role: 'interview_recording',
+        intended_visibility: 'public_record'
+      })
+    ).toThrow('interview_publication_permission_required');
+    expect(() =>
+      requirePublicationAsset(
+        { ...publicationAccess, canPublishInterviewRecording: true },
+        {
+          role: 'interview_recording',
+          intended_visibility: 'public_record'
+        }
+      )
+    ).not.toThrow();
+    expect(() =>
+      requirePublicationAsset(
+        { ...publicationAccess, canPublishInterviewRecording: true },
+        {
+          role: 'interview_transcript',
+          intended_visibility: 'public_record'
+        }
+      )
+    ).toThrow('interview_publication_permission_required');
+  });
   it('permits real 4GiB masters and rejects one byte beyond', () => {
     const input = {
       filename: 'master.tiff',

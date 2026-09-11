@@ -328,6 +328,11 @@ export class ArtworkDocumentationReviewService {
     if (!access.capabilities.manage_context)
       fail(403, 'MANAGE_CONTEXT_REQUIRED');
     const proposed = getProfile(profileId, version);
+    if (
+      access.context.profile.intake_mode === 'publication_only' &&
+      proposed.intake_mode !== 'publication_only'
+    )
+      fail(422, 'PUBLICATION_PROFILE_REQUIRED');
     if (proposed.program_id !== access.context.program_id)
       fail(422, 'PROGRAM_CHANGE_NOT_ALLOWED');
     return {
@@ -359,6 +364,7 @@ export class ArtworkDocumentationReviewService {
         transaction
       );
       access.context.profile = preview.proposed_profile;
+      await this.core.validatePublicationUpgrade(access.context, transaction);
       return { context_id: id };
     });
     return this.core.getContext(id, ctx);

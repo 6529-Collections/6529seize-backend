@@ -17,6 +17,97 @@ const logger = Logger.get('NEXTGEN_MARKET_STATS');
 const OPENSEA_API_BASE_URL = 'https://api.opensea.io/api/v2';
 const OPENSEA_CHAIN = 'ethereum';
 const OPENSEA_COLLECTION_LISTINGS_LIMIT = 100;
+const PROVIDER_REQUEST_TIMEOUT_MS = 15_000;
+const DATABASE_QUERY_TIMEOUT_MS = 5_000;
+
+class NextgenProviderHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`NextGen market stats provider HTTP ${status}`);
+    Object.setPrototypeOf(this, NextgenProviderHttpError.prototype);
+  }
+}
+
+function remainingBudget(deadlineMs: number, requiredMs = 0): number {
+  const remainingMs = deadlineMs - Date.now();
+  if (remainingMs <= requiredMs) {
+    throw new Error('NextGen market stats deadline exceeded');
+  }
+  return remainingMs;
+}
+
+type MysqlQueryCallback = (
+  error: (Error & { code?: string }) | null,
+  result?: unknown,
+  fields?: unknown
+) => void;
+
+interface TransactionConnection {
+  query(
+    sql: string | { sql: string; timeout?: number },
+    parameters: unknown,
+    callback: MysqlQueryCallback
+  ): unknown;
+  destroy(): void;
+}
+
+/** Apply driver timeouts only to this transaction's pinned connection. */
+export async function withNextgenDatabaseDeadline<T>(
+  manager: EntityManager,
+  deadlineMs: number,
+  operation: () => Promise<T>
+): Promise<T> {
+  if (!manager.queryRunner?.isTransactionActive) {
+    throw new Error('NextGen database deadline requires an active transaction');
+  }
+  const connection =
+    (await manager.queryRunner.connect()) as TransactionConnection;
+  const originalQuery = connection.query;
+  connection.query = (sql, parameters, callback) => {
+    const timeoutMs = Math.min(
+      DATABASE_QUERY_TIMEOUT_MS,
+      remainingBudget(deadlineMs)
+    );
+    let completed = false;
+    const finish: MysqlQueryCallback = (error, result, fields) => {
+      if (completed) return;
+      completed = true;
+      clearTimeout(timer);
+      // A timed-out write must never return its connection to the pool. Closing
+      // it aborts the uncommitted transaction, including with mysql2's nonfatal
+      // query timeout. TypeORM's transaction handler still rolls back/releases.
+      if (error?.code === 'PROTOCOL_SEQUENCE_TIMEOUT') connection.destroy();
+      callback(error, result, fields);
+    };
+    // mysqljs refreshes its inactivity timer on result packets. This absolute
+    // deadline also stops a query that keeps sending data without completing.
+    const timer = setTimeout(
+      () =>
+        finish(
+          Object.assign(new Error('NextGen database query deadline exceeded'), {
+            code: 'PROTOCOL_SEQUENCE_TIMEOUT'
+          })
+        ),
+      timeoutMs
+    );
+    try {
+      return originalQuery.call(
+        connection,
+        { ...(typeof sql === 'string' ? { sql } : sql), timeout: timeoutMs },
+        parameters,
+        finish
+      );
+    } catch (error) {
+      completed = true;
+      clearTimeout(timer);
+      throw error;
+    }
+  };
+  try {
+    return await operation();
+  } finally {
+    connection.query = originalQuery;
+  }
+}
 
 interface OpenSeaContractResponse {
   collection?: string;
@@ -98,28 +189,45 @@ function getOpenSeaHeaders(): Record<string, string> {
   };
 }
 
-async function fetchOpenSeaJson<T>(url: string): Promise<T> {
-  const response = await fetch(url, {
-    headers: {
-      ...getOpenSeaHeaders()
+async function fetchProviderJson<T>(
+  url: string,
+  headers: Record<string, string>,
+  deadlineMs: number
+): Promise<T> {
+  const timeoutMs = Math.min(
+    PROVIDER_REQUEST_TIMEOUT_MS,
+    remainingBudget(deadlineMs)
+  );
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let response: Response | undefined;
+  try {
+    response = await fetch(url, { headers, signal: controller.signal });
+    if (!response.ok) {
+      throw new NextgenProviderHttpError(response.status);
     }
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(
-      `[OPENSEA ERROR] ${response.status} ${response.statusText}: ${body}`
-    );
+    const data = (await response.json()) as T;
+    remainingBudget(deadlineMs);
+    return data;
+  } finally {
+    clearTimeout(timeout);
+    controller.abort();
+    if (response?.body && !response.bodyUsed) {
+      void response.body.cancel().catch(() => undefined);
+    }
   }
-
-  return (await response.json()) as T;
 }
 
 export async function getOpenSeaCollectionSlug(
-  contract: string
+  contract: string,
+  deadlineMs = Date.now() + Time.minutes(10).toMillis()
 ): Promise<string> {
   const url = `${OPENSEA_API_BASE_URL}/chain/${OPENSEA_CHAIN}/contract/${contract}`;
-  const data = await fetchOpenSeaJson<OpenSeaContractResponse>(url);
+  const data = await fetchProviderJson<OpenSeaContractResponse>(
+    url,
+    getOpenSeaHeaders(),
+    deadlineMs
+  );
 
   if (!data.collection) {
     throw new TypeError(
@@ -131,7 +239,8 @@ export async function getOpenSeaCollectionSlug(
 }
 
 export async function fetchOpenSeaCollectionListings(
-  collectionSlug: string
+  collectionSlug: string,
+  deadlineMs = Date.now() + Time.minutes(10).toMillis()
 ): Promise<OpenSeaListing[]> {
   let next: string | null = null;
   const listings: OpenSeaListing[] = [];
@@ -148,8 +257,10 @@ export async function fetchOpenSeaCollectionListings(
     }
 
     logger.info(`Fetching ${url.toString()}`);
-    const data = await fetchOpenSeaJson<OpenSeaCollectionListingsResponse>(
-      url.toString()
+    const data = await fetchProviderJson<OpenSeaCollectionListingsResponse>(
+      url.toString(),
+      getOpenSeaHeaders(),
+      deadlineMs
     );
     logger.info(`Fetched ${url.toString()}`);
 
@@ -293,16 +404,24 @@ export function indexBestOpenSeaListingsByTokenId(
   return listingsByTokenId;
 }
 
-export const findNextgenMarketStats = async (contract: string) => {
+export const findNextgenMarketStats = async (
+  contract: string,
+  deadlineMs = Date.now() + Time.minutes(10).toMillis()
+) => {
+  remainingBudget(deadlineMs);
   logger.info(`[CONTRACT ${contract}] [RUNNING]`);
 
   logger.info(`Getting OpenSea collection slug for contract: ${contract}`);
-  const openSeaCollectionSlug = await getOpenSeaCollectionSlug(contract);
+  const openSeaCollectionSlug = await getOpenSeaCollectionSlug(
+    contract,
+    deadlineMs
+  );
   logger.info(
     `Getting OpenSea listings for collection: ${openSeaCollectionSlug}`
   );
   const openSeaListings = await fetchOpenSeaCollectionListings(
-    openSeaCollectionSlug
+    openSeaCollectionSlug,
+    deadlineMs
   );
   const openSeaListingsByTokenId =
     indexBestOpenSeaListingsByTokenId(openSeaListings);
@@ -311,7 +430,7 @@ export const findNextgenMarketStats = async (contract: string) => {
   );
 
   logger.info(`Getting Blur listings for contract: ${contract}`);
-  const blurListings = await getBlurListings(contract);
+  const blurListings = await getBlurListings(contract, deadlineMs);
   logger.info(`Got Blur listings for contract: ${contract}`);
 
   //Disabling Magic Eden listings for now
@@ -319,9 +438,16 @@ export const findNextgenMarketStats = async (contract: string) => {
   const meListings: any[] = [];
 
   const dataSource = getDataSource();
+  remainingBudget(deadlineMs);
   await dataSource.transaction(async (entityManager) => {
+    remainingBudget(deadlineMs);
     logger.info(`Fetching NextGen tokens`);
-    const tokens: NextGenToken[] = await fetchNextgenTokens(entityManager);
+    const tokens: NextGenToken[] = await withNextgenDatabaseDeadline(
+      entityManager,
+      deadlineMs,
+      () => fetchNextgenTokens(entityManager)
+    );
+    remainingBudget(deadlineMs);
     logger.info(
       `Fetched ${tokens.length} NextGen tokens. Sorting and batching them...`
     );
@@ -332,6 +458,7 @@ export const findNextgenMarketStats = async (contract: string) => {
     );
     let i = 0;
     for (const batch of batchedTokens) {
+      remainingBudget(deadlineMs);
       i++;
       logger.info(`Processing batch ${i}/${batchedTokens.length}`);
       await processBatch(
@@ -340,9 +467,12 @@ export const findNextgenMarketStats = async (contract: string) => {
         contract,
         openSeaListingsByTokenId,
         blurListings,
-        meListings
+        meListings,
+        deadlineMs
       );
+      remainingBudget(deadlineMs, 500);
       await new Promise((resolve) => setTimeout(resolve, 500));
+      remainingBudget(deadlineMs);
       logger.info(`Batch ${i}/${batchedTokens.length} processed`);
     }
     logger.info(`All NextGen token batches processed.`);
@@ -355,11 +485,13 @@ async function processBatch(
   contract: string,
   openSeaListingsByTokenId: Map<string, OpenSeaListing>,
   blurListings: any[],
-  meListings: any[]
+  meListings: any[],
+  deadlineMs: number
 ) {
   const listings: NextGenTokenListing[] = [];
 
   for (const token of tokens) {
+    remainingBudget(deadlineMs);
     let osPrice = 0;
     let osRoyalty = 0;
     let osListingTime = 0;
@@ -416,7 +548,11 @@ async function processBatch(
     listings.push(listing);
   }
 
-  await persitNextgenTokenListings(manager, listings);
+  remainingBudget(deadlineMs);
+  await withNextgenDatabaseDeadline(manager, deadlineMs, () =>
+    persitNextgenTokenListings(manager, listings)
+  );
+  remainingBudget(deadlineMs);
   logger.info(
     `[CONTRACT ${contract}] [TOKENS ${tokens[0].id} - ${
       tokens[tokens.length - 1].id
@@ -424,15 +560,29 @@ async function processBatch(
   );
 }
 
-async function getBlurListings(contract: string): Promise<any[]> {
+async function getBlurListings(
+  contract: string,
+  deadlineMs: number
+): Promise<any[]> {
   const url = `https://blur.p.rapidapi.com/v1/collections/${contract}/tokens?filters=%7B%22marketplace%22%3A%22BLUR%22%7D`;
-  const response = await fetch(url, {
-    headers: {
-      'X-RapidAPI-Key': process.env.RAPID_API_KEY!
-    }
-  });
-  const jsonResponse: any = await response.json();
-  return jsonResponse?.tokens ?? [];
+  try {
+    const jsonResponse = await fetchProviderJson<{ tokens?: any[] }>(
+      url,
+      {
+        'X-RapidAPI-Key': process.env.RAPID_API_KEY!
+      },
+      deadlineMs
+    );
+    return jsonResponse?.tokens ?? [];
+  } catch (error) {
+    if (!(error instanceof NextgenProviderHttpError)) throw error;
+    // Preserve legacy optional-provider behavior without hiding deadline,
+    // transport, or database failures, and never log the provider response.
+    logger.warn(
+      `[BLUR] Optional listings provider returned HTTP ${error.status}; using empty Blur listings`
+    );
+    return [];
+  }
 }
 
 async function getMagicEdenListings(contract: string): Promise<any[]> {

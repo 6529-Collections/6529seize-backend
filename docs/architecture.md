@@ -10,6 +10,51 @@ The main runtime pieces are:
 - SQS and EventBridge as the async execution fabric.
 - S3, CloudFront, Arweave, Ethereum/RPC providers, Firebase, Sentry, CloudWatch, Discord, and SNS around the core.
 
+## Profile collecting and marketplace operations
+
+The API owns `/collect/*` and `/market/*`. Collecting derives versioned catalogs
+and set requirements for The Memes, Gradients and Pebbles, using the profile's
+confirmed consolidated wallets. Existing Pebbles trait rankings use that same
+profile scope. TDH projections reuse the production calculation kernel and
+first verify parity with the official snapshot.
+
+The marketplace adapter obtains unsigned OpenSea Seaport actions server-side.
+Closed schemas, a protocol/spender registry, independent action decoding and
+chain simulation bind the exact artwork, quantity, wallet, recipient, fees and
+economic limits. The client independently validates before asking its wallet
+to sign or send. Purchase fulfillment delivers directly to a reviewed profile
+or third-party recipient. The backend never holds user signing keys.
+
+`market_operations` and `market_operation_events` persist idempotent operations
+and state transitions. A per-wallet/currency lock serializes potential offer
+exposure before signable terms are revealed. `market_reviewed_transactions`
+retains immutable execution payloads so an earlier reviewed transaction can be
+recovered after refresh. A unique transaction-hash binding prevents duplicate
+settlement attribution. Receipt reconciliation verifies canonical blocks,
+Seaport events and NFT transfers; potential exposure persists until verified
+fill, cancellation or safe-chain expiry.
+
+Before the client opens a transaction prompt, a durable send attempt binds the
+reviewed payload and operation revision. An unresolved attempt blocks another
+send for that operation across browsers and devices. Hash recovery validates
+the original approval or fulfillment; only a positively identified pre-broadcast
+rejection can release an attempt without a verified transaction outcome.
+
+`collect_plans` stores incremental listing scans with renewable leases and
+profile/catalog invalidation. It distinguishes a completed asset scan from
+incomplete market coverage. `collect_rules` and `collect_rule_operations` store
+fixed targets, review limits, one outstanding operation and monotonic verified
+acquisitions. Rules only prepare transactions for owner approval. Their limits
+are not a smart-contract-enforced mandate or authority to broadcast unattended.
+
+Deploy the additive entity changes through `dbMigrationsLoop` before the API,
+then deploy the dependent frontend. The exported TDH helper does not change the
+scheduled TDH calculation and does not require a TDH loop deployment.
+`MARKETPLACE_TRADING_ENABLED=false` stops new trade preparation/publication;
+inspection, transaction reconciliation and direct cancellation remain available.
+The default enables supported actions when provider/RPC configuration exists.
+Keep operation history and exposure tables when disabling or rolling back trading.
+
 ## High-Level Diagram
 
 This is the compact map. Lambda boxes are intentionally just service names; trigger type is shown by the surrounding group or the queue/topic feeding the Lambda. The tables below carry the longer descriptions so the diagram stays readable.
@@ -48,7 +93,8 @@ flowchart TD
     TdhHistoryLoop ~~~ OwnersBalancesLoop["ownersBalancesLoop"]
     OwnersBalancesLoop ~~~ AggregatedActivityLoop["aggregatedActivityLoop"]
     AggregatedActivityLoop ~~~ MarketStatsLoop["marketStatsLoop"]
-    MarketStatsLoop ~~~ RateEventProcessingLoop["rateEventProcessingLoop"]
+    MarketStatsLoop ~~~ MarketDepthStreamLoop["marketDepthStreamLoop"]
+    MarketDepthStreamLoop ~~~ RateEventProcessingLoop["rateEventProcessingLoop"]
     RateEventProcessingLoop ~~~ WaveDecisionExecutionLoop["waveDecisionExecutionLoop"]
     WaveDecisionExecutionLoop ~~~ WaveLeaderboardSnapshotterLoop["waveLeaderboardSnapshotterLoop"]
     WaveLeaderboardSnapshotterLoop ~~~ WaveDropMetricsRefreshLoop["waveDropMetricsRefreshLoop"]
@@ -145,7 +191,8 @@ flowchart TD
 | `tdhHistoryLoop`                         | Write historical TDH snapshots.                                                                                                                                     |
 | `ownersBalancesLoop`                     | Project owner balance aggregates.                                                                                                                                   |
 | `aggregatedActivityLoop`                 | Calculate activity aggregates.                                                                                                                                      |
-| `marketStatsLoop`                        | Aggregate market stats for MEMES, Lab, Gradients, and NextGen.                                                                                                      |
+| `marketStatsLoop`                        | Aggregate market stats and archive full OpenSea order books for MEMES, Lab, Gradients, and each NextGen project.                                                   |
+| `marketDepthStreamLoop`                  | Capture OpenSea order lifecycle events with overlapping scheduled subscriptions and idempotent persistence.                                                       |
 | `rateEventProcessingLoop`                | Process DB-backed rating events.                                                                                                                                    |
 | `waveDecisionExecutionLoop`              | Execute wave decisions and enqueue claim builds.                                                                                                                    |
 | `waveLeaderboardSnapshotterLoop`         | Snapshot wave leaderboards.                                                                                                                                         |
@@ -223,6 +270,22 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 
 6. S3 and CloudFront serve media. Drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception.
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
+
+### NFT market depth and activity
+
+`marketStatsLoop` publishes complete OpenSea order snapshots atomically with
+current orders and a persistent queue for reconciling disappeared orders.
+`marketDepthStreamLoop` records live order lifecycle events, while REST event
+catch-up and per-order status checks recover supported missed observations.
+Six `market_depth_*` tables retain immutable compressed archives, current orders,
+collection state, events, cursors and retry work. All amounts and quantities
+needed for normalization preserve exact integer strings.
+
+The API exposes currency-specific quoted depth for an individual token and a
+merged feed of canonical transactions and market actions. Quoted quantities can
+share inventory or funding and are not a verified executable security budget.
+See the [market depth runbook](../ops/runbooks/market-depth.md) for interpretation,
+provider limitations, deployment order and verification.
 
 ### Alchemy NFT metadata proxy
 
@@ -380,8 +443,8 @@ Important API responsibilities:
   checks, rollback/archive endpoints, and package export data for future
   standalone renderers and mirrors.
 - Authenticated profile-native CMS wallet gallery snapshots under
-  `/profile-cms/wallet-gallery/snapshot`, gated by
-  `FEATURE_PROFILE_CMS_WALLET_GALLERY`, reading current indexed NFT ownership
+  `/profile-cms/wallet-gallery/snapshot`, enabled by default with an explicit
+  `FEATURE_PROFILE_CMS_WALLET_GALLERY=false` override, reading indexed NFT ownership
   and normalized media from MySQL for deterministic gallery generation.
 - Profile-native CMS BYO-agent affordances under `/profile-cms/agent` and
   `/profile-cms/packages/{id}/agent`, including a public schema bundle,
@@ -484,17 +547,49 @@ consumes the verified typed-data hash to prevent publish-intent replay, and
 supersedes the previous primary package in one transaction.
 
 Profile CMS pointer history is stored in `profile_cms_pointer_events`. Publish,
-set-primary, supersede, rollback, and archive events keep package hashes,
+set-primary, supersede, rollback, unpublish, and archive events keep package hashes,
 previous-primary links, actor profile ids, signature metadata, and canonical
 storage receipts. `event_sequence` preserves logical ordering for events written
 in the same millisecond so the primary pointer history can be reconstructed and
 exported for future mirrors. Consumed publish intent hashes are stored in
 `profile_cms_publish_signatures`.
 
+CMS storage upload uses `profile_cms_uploads` for durable receipt reuse, expiring
+upload leases, and profile upload quotas. Its nullable `upload_state` checkpoints
+the signed public Arweave transaction, original bytes, and chunk progress before
+submission, allowing retries to resume the same transaction after a lost provider
+or database acknowledgement. A final receipt atomically clears the checkpoint.
+The content core is stored separately
+from a `6529.cms.publication.v1` signed recovery manifest containing the complete
+EIP-712 intent and signature envelope. `profile_cms_packages.recovery_receipt`
+locates that manifest. The API fetches and hashes both remote objects before
+atomically activating a primary pointer. Unpublish removes only that pointer;
+restoring a prior publication checks the caller's expected current state. Schema
+rollout is additive: deploy `dbMigrationsLoop`, then `api`; existing published
+packages remain readable without retroactive manifest generation.
+
+Connected CMS agents use a separate opaque capability boundary. An owner grants
+read and proposal-only access to one immutable saved draft/profile/version/hash;
+wallet JWTs and publish rights are not delegated. `profile_cms_agent_grants`
+stores only token digests and expiring/revocable scopes and quotas.
+`profile_cms_agent_proposals` stores bounded full-package candidates and terminal
+owner review states, while `profile_cms_agent_events` records issuance, revocation,
+submission and disposition. Writer transactions serialize profile quotas,
+revocation, idempotency and proposal audit. The service performs no uploads,
+external fetches, model inference, saves or publication. Applied review state
+requires an independently saved newer draft with the exact candidate hash.
+Owner lists return summaries and individual reads return one candidate. This
+adds no Lambda or queue; deploy `dbMigrationsLoop` before `api`. See
+[external-agent proposal API](profile-cms-agent-proposals.md).
+
 Profile CMS wallet gallery snapshots are read-only API projections over
-`nft_owners`, `ens`, `nfts`, `nfts_meme_lab`, and `nextgen_tokens`. They do not
-create schema, run migrations, enqueue indexers, or fetch chain/metadata data
-live. Request-side asset/contract exclusions are applied in the API service and
+`nft_owners`, `ens`, `nfts`, `nfts_meme_lab`, and `nextgen_tokens`. ENS inputs use
+bounded onchain forward resolution through an isolated provider for the
+configured Alchemy RPC and a one-minute cache. Shared provider settings remain
+unchanged; indexed reverse displays are not proof of the current ENS address.
+Raw addresses retain indexed display labels. Snapshots do not create
+schema, run migrations, enqueue indexers, or fetch NFT holdings/metadata live.
+Request-side asset/contract exclusions are applied in the API service and
 reported in the response for generator auditability.
 
 Profile privacy and notification preferences are stored in
@@ -774,10 +869,14 @@ For a documentation-only change, no Lambda redeploy is required.
 
 ### Private artwork documentation archive
 
-The dedicated processor also exposes two IAM-only invocation actions for release
+The dedicated processor also exposes closed IAM-only invocation actions for release
 operators inside the VPC: the code-pinned Keys and Gates roster dry-run/import,
 and an idempotent empty nonprogram smoke context for the existing `punk6529bot`
-identity. These actions use an isolated service feature policy, accept no arbitrary
+identity. Additional dry-run-first actions update only the five read permissions
+of one existing program coordinator grant and upgrade only empty Keys contexts
+to publication-only profile version 2. They use fixed program scope and audited
+correlation replay protection, without creating grants or changing artist authority.
+These actions use an isolated service feature policy, accept no arbitrary
 SQL, roster or grants, and leave public API feature flags unchanged. Scheduled
 events continue through the archival tick. See the closed event schemas in
 [`artwork-documentation.md`](artwork-documentation.md#operator-access-inside-the-vpc).
@@ -789,6 +888,15 @@ contexts pin profiles, artist-record revisions, module answers and disclosure
 choices. Context row locks guard all content versions, and immutable revisions
 retain confirmation receipts and independent reviewer decisions. Explicit
 context/program grants are separate from Wave roles and proxy authentication.
+
+Version 2 profiles collect only artwork answers and selected materials intended
+for eventual public publication; legacy private intake remains protected. Team
+questions use existing context discussion threads and are excluded from every
+artwork confirmation snapshot and public preview. Profile-aware server validation
+covers edits, identity pins, source imports, upgrades and confirmation. Asset
+reservation locks the context before its quota so it cannot race a publication
+profile upgrade using stale private-intake permissions. No new table or storage
+boundary is introduced by this follow-up; deploy the processor before the API.
 The public-record preview removes restricted answers on the server; creating
 another context for a work requires an explicit artist choice and starts empty.
 See [the application contract and pilot runbook](artwork-documentation.md).

@@ -6,9 +6,15 @@ import { cacheRequest } from '@/api/request-cache';
 import { Time } from '@/time';
 import { Response } from 'express';
 import { ArtworkDocumentationCancelDocumentationUploadRequest, ArtworkDocumentationCancelDocumentationUploadResponse, ArtworkDocumentationCommentDocumentationThreadRequest, ArtworkDocumentationCommentDocumentationThreadResponse, ArtworkDocumentationCompleteDocumentationUploadRequest, ArtworkDocumentationCompleteDocumentationUploadResponse, ArtworkDocumentationConfirmDocumentationRequest, ArtworkDocumentationConfirmDocumentationResponse, ArtworkDocumentationCreateDocumentationContextRequest, ArtworkDocumentationCreateDocumentationContextResponse, ArtworkDocumentationCreateDocumentationThreadRequest, ArtworkDocumentationCreateDocumentationThreadResponse, ArtworkDocumentationCreateDocumentationWorkRequest, ArtworkDocumentationCreateDocumentationWorkResponse, ArtworkDocumentationDownloadDocumentationAssetRequest, ArtworkDocumentationDownloadDocumentationAssetResponse, ArtworkDocumentationGetDocumentationContextRequest, ArtworkDocumentationGetDocumentationContextResponse, ArtworkDocumentationGetDocumentationProfilesRequest, ArtworkDocumentationGetDocumentationProfilesResponse, ArtworkDocumentationGetDocumentationPublicPreviewRequest, ArtworkDocumentationGetDocumentationPublicPreviewResponse, ArtworkDocumentationGetDocumentationRevisionRequest, ArtworkDocumentationGetDocumentationRevisionResponse, ArtworkDocumentationGetDocumentationUploadRequest, ArtworkDocumentationGetDocumentationUploadResponse, ArtworkDocumentationGetDocumentationWorkRequest, ArtworkDocumentationGetDocumentationWorkResponse, ArtworkDocumentationGrantDocumentationAccessRequest, ArtworkDocumentationGrantDocumentationAccessResponse, ArtworkDocumentationImportDocumentationSourceRequest, ArtworkDocumentationImportDocumentationSourceResponse, ArtworkDocumentationLinkDocumentationAssetRequest, ArtworkDocumentationLinkDocumentationAssetResponse, ArtworkDocumentationLinkDocumentationSourceRequest, ArtworkDocumentationLinkDocumentationSourceResponse, ArtworkDocumentationListDocumentationGrantsRequest, ArtworkDocumentationListDocumentationGrantsResponse, ArtworkDocumentationListDocumentationProgramRequest, ArtworkDocumentationListDocumentationProgramResponse, ArtworkDocumentationListDocumentationRevisionsRequest, ArtworkDocumentationListDocumentationRevisionsResponse, ArtworkDocumentationListDocumentationThreadsRequest, ArtworkDocumentationListDocumentationThreadsResponse, ArtworkDocumentationListDocumentationWorksRequest, ArtworkDocumentationListDocumentationWorksResponse, ArtworkDocumentationPatchDocumentationAssetLinkRequest, ArtworkDocumentationPatchDocumentationAssetLinkResponse, ArtworkDocumentationPatchDocumentationContextRequest, ArtworkDocumentationPatchDocumentationContextResponse, ArtworkDocumentationPatchDocumentationModuleRequest, ArtworkDocumentationPatchDocumentationModuleResponse, ArtworkDocumentationPatchDocumentationThreadRequest, ArtworkDocumentationPatchDocumentationThreadResponse, ArtworkDocumentationPinDocumentationArtistRequest, ArtworkDocumentationPinDocumentationArtistResponse, ArtworkDocumentationPreviewDocumentationSourceRequest, ArtworkDocumentationPreviewDocumentationSourceResponse, ArtworkDocumentationPreviewDocumentationUpgradeRequest, ArtworkDocumentationPreviewDocumentationUpgradeResponse, ArtworkDocumentationReviewDocumentationRequest, ArtworkDocumentationReviewDocumentationResponse, ArtworkDocumentationRevokeDocumentationAccessRequest, ArtworkDocumentationRevokeDocumentationAccessResponse, ArtworkDocumentationSignDocumentationPartsRequest, ArtworkDocumentationSignDocumentationPartsResponse, ArtworkDocumentationStartDocumentationUploadRequest, ArtworkDocumentationStartDocumentationUploadResponse, ArtworkDocumentationUnlinkDocumentationAssetRequest, ArtworkDocumentationUnlinkDocumentationAssetResponse, ArtworkDocumentationUpgradeDocumentationProfileRequest, ArtworkDocumentationUpgradeDocumentationProfileResponse } from './operations';
+import { AdvanceCollectPlanRequest, AdvanceCollectPlanResponse, AnalyzeCollectGoalRequest, AnalyzeCollectGoalResponse, CreateCollectPlanRequest, CreateCollectPlanResponse, CreateCollectRuleRequest, CreateCollectRuleResponse, GetCollectAssetsRequest, GetCollectAssetsResponse, GetCollectCapabilitiesRequest, GetCollectCapabilitiesResponse, GetCollectCatalogRequest, GetCollectCatalogResponse, GetCollectPlanRequest, GetCollectPlanResponse, GetCollectRuleRequest, GetCollectRuleResponse, GetCollectRulesRequest, GetCollectRulesResponse, GetMarketListingsRequest, GetMarketListingsResponse, PauseCollectRuleRequest, PauseCollectRuleResponse, PrepareCollectRuleRequest, PrepareCollectRuleResponse, ProjectCollectPurchasesRequest, ProjectCollectPurchasesResponse, RankCollectTdhPurchasesRequest, RankCollectTdhPurchasesResponse, ReconcileCollectRuleRequest, ReconcileCollectRuleResponse } from './operations';
 import { GetCompetitionEntryV3Request, GetCompetitionEntryV3Response, GetWaveCompetitionV3Request, GetWaveCompetitionV3Response, GetWaveHubV3Request, GetWaveHubV3Response, ListCompetitionDecisionsV3Request, ListCompetitionDecisionsV3Response, ListCompetitionEntriesV3Request, ListCompetitionEntriesV3Response, ListCompetitionEntryVotesV3Request, ListCompetitionEntryVotesV3Response, ListCompetitionLeaderboardV3Request, ListCompetitionLeaderboardV3Response, ListCompetitionOutcomeDistributionV3Request, ListCompetitionOutcomeDistributionV3Response, ListCompetitionOutcomesV3Request, ListCompetitionOutcomesV3Response, ListCompetitionPausesV3Request, ListCompetitionPausesV3Response, ListCompetitionVersionsV3Request, ListCompetitionVersionsV3Response, ListCompetitionVotersV3Request, ListCompetitionVotersV3Response, ListCompetitionWinnersV3Request, ListCompetitionWinnersV3Response, ListWaveCompetitionsV3Request, ListWaveCompetitionsV3Response } from './operations';
+import { BeginMarketTransactionAttemptRequest, BeginMarketTransactionAttemptResponse, ContinueMarketOperationRequest, ContinueMarketOperationResponse, GetMarketOperationRequest, GetMarketOperationResponse, GetMarketOrdersRequest, GetMarketOrdersResponse, GetMyMarketOperationsRequest, GetMyMarketOperationsResponse, PrepareMarketOperationRequest, PrepareMarketOperationResponse, PublishMarketOperationRequest, PublishMarketOperationResponse, RejectMarketTransactionAttemptRequest, RejectMarketTransactionAttemptResponse, SubmitMarketOperationRequest, SubmitMarketOperationResponse } from './operations';
 import { GetProfilePreferencesRequest, GetProfilePreferencesResponse, PutProfilePreferencesRequest, PutProfilePreferencesResponse } from './operations';
 import { handleCancelDocumentationUpload, handleCommentDocumentationThread, handleCompleteDocumentationUpload, handleConfirmDocumentation, handleCreateDocumentationContext, handleCreateDocumentationThread, handleCreateDocumentationWork, handleDownloadDocumentationAsset, handleGetDocumentationContext, handleGetDocumentationProfiles, handleGetDocumentationPublicPreview, handleGetDocumentationRevision, handleGetDocumentationUpload, handleGetDocumentationWork, handleGrantDocumentationAccess, handleImportDocumentationSource, handleLinkDocumentationAsset, handleLinkDocumentationSource, handleListDocumentationGrants, handleListDocumentationProgram, handleListDocumentationRevisions, handleListDocumentationThreads, handleListDocumentationWorks, handlePatchDocumentationAssetLink, handlePatchDocumentationContext, handlePatchDocumentationModule, handlePatchDocumentationThread, handlePinDocumentationArtist, handlePreviewDocumentationSource, handlePreviewDocumentationUpgrade, handleReviewDocumentation, handleRevokeDocumentationAccess, handleSignDocumentationParts, handleStartDocumentationUpload, handleUnlinkDocumentationAsset, handleUpgradeDocumentationProfile } from '@/api/artwork-documentation/artwork-documentation.handlers';
+import { handleGetMarketListings, handleRankCollectTdhPurchases } from '@/api/collect/collect-discovery.handlers';
+import { handleAdvanceCollectPlan, handleCreateCollectPlan, handleGetCollectPlan, handleProjectCollectPurchases } from '@/api/collect/collect-plan.handlers';
+import { handleCreateCollectRule, handleGetCollectRule, handleGetCollectRules, handlePauseCollectRule, handlePrepareCollectRule, handleReconcileCollectRule } from '@/api/collect/collect-rules.handlers';
+import { handleAnalyzeCollectGoal, handleGetCollectAssets, handleGetCollectCapabilities, handleGetCollectCatalog } from '@/api/collect/collect.handlers';
 import { handlePreviewGroupMembers } from '@/api/community-members/group-members-preview.handler';
 import { handleGetCompetitionEntryV3, handleGetWaveCompetitionV3, handleGetWaveHubV3, handleListCompetitionDecisionsV3, handleListCompetitionEntriesV3, handleListCompetitionEntryVotesV3, handleListCompetitionLeaderboardV3, handleListCompetitionOutcomeDistributionV3, handleListCompetitionOutcomesV3, handleListCompetitionPausesV3, handleListCompetitionVersionsV3, handleListCompetitionVotersV3, handleListCompetitionWinnersV3, handleListWaveCompetitionsV3 } from '@/api/competitions/competitions-v3.handlers';
 import { handleGetContentModerationBlockActivity } from '@/api/content-moderation/get-block-activity.handler';
@@ -18,12 +24,15 @@ import { handleGetDmDropsUnread, handleGetDmUnreadSnapshot } from '@/api/dm-drop
 import { handleGetDropPollOptionVotersV2, handleGetWavePollsV2, handleVoteDropPollV2 } from '@/api/drops/drop-polls.handlers';
 import { handleDownloadDropV2VotersById, handleGetBoostedDropsV2, handleGetCuratedProfileWaveDropsV2, handleGetDropsV2, handleGetDropV2BoostsById, handleGetDropV2ById, handleGetDropV2MetadataById, handleGetDropV2PartById, handleGetDropV2ReactionsById, handleGetDropV2VoteEditLogsById, handleGetDropV2VotersById } from '@/api/drops/drops-v2.handlers';
 import { handleGetDropV2VoteSummaryById } from '@/api/drops/get-drop-vote-summary.handler';
+import { handleGetNftMarketActivity, handleGetNftMarketDepth } from '@/api/market-depth/market-depth.handlers';
+import { handleBeginMarketTransactionAttempt, handleContinueMarketOperation, handleGetMarketOperation, handleGetMarketOrders, handleGetMyMarketOperations, handlePrepareMarketOperation, handlePublishMarketOperation, handleRejectMarketTransactionAttempt, handleSubmitMarketOperation } from '@/api/marketplace/marketplace.handlers';
 import { handleResolveDecentralizedMedia } from '@/api/media/decentralized-media.handlers';
 import { handleGetMemeCardDropMapping } from '@/api/memes/meme-card-drop-mappings.handlers';
 import { handleGetNotificationsV2 } from '@/api/notifications/notifications-v2.handlers';
 import { handleGetOgMetadataDrop, handleGetOgMetadataProfile, handleGetOgMetadataWave } from '@/api/og-metadata/og-metadata.handlers';
 import { handleDeleteEulaConsent, handleGetEulaConsent, handleSaveEulaConsent } from '@/api/policies/eula-consent.handlers';
-import { handleArchiveProfileCmsPackage, handleExportProfileCmsPackage, handleGetPrimaryProfileCmsPackage, handleGetProfileCmsAgentSchemaBundle, handleGetProfileCmsAgentSourcePacket, handleGetProfileCmsPackageByHash, handleGetProfileCmsPackageById, handleGetProfileCmsPackageByVersion, handleListProfileCmsPackages, handlePublishProfileCmsPackage, handleRollbackProfileCmsPackage, handleSaveProfileCmsPackageDraft, handleValidateProfileCmsAgentPatch, handleValidateProfileCmsPackage } from '@/api/profile-cms/profile-cms.handlers';
+import { handleCreateProfileCmsAgentGrant, handleGetOwnerProfileCmsAgentProposal, handleGetProfileCmsAgentDraft, handleGetProfileCmsAgentProposal, handleListProfileCmsAgentGrants, handleListProfileCmsAgentProposals, handleReviewProfileCmsAgentProposal, handleRevokeProfileCmsAgentGrant, handleSubmitProfileCmsAgentProposal, handleValidateProfileCmsAgentCandidate } from '@/api/profile-cms/profile-cms-agent.handlers';
+import { handleArchiveProfileCmsPackage, handleExportProfileCmsPackage, handleGetPrimaryProfileCmsPackage, handleGetProfileCmsAgentSchemaBundle, handleGetProfileCmsAgentSourcePacket, handleGetProfileCmsPackageByHash, handleGetProfileCmsPackageById, handleGetProfileCmsPackageByVersion, handleListProfileCmsPackages, handlePublishProfileCmsPackage, handleRollbackProfileCmsPackage, handleSaveProfileCmsPackageDraft, handleUnpublishProfileCmsPackage, handleUploadProfileCmsPackageStorage, handleValidateProfileCmsAgentPatch, handleValidateProfileCmsPackage } from '@/api/profile-cms/profile-cms.handlers';
 import { handleCreateProfileCmsWalletGallerySnapshot } from '@/api/profile-cms/wallet-gallery.handlers';
 import { handleGetProfilePreferences, handlePutProfilePreferences } from '@/api/profile-preferences/profile-preferences.handlers';
 import { handleGetGlobalRepCategoryGivers, handleGetGlobalRepCategoryOverview, handleGetGlobalRepCategoryRatings, handleGetGlobalRepCategoryRecipients, handleGetGlobalRepCategoryWaveContributors, handleGetGlobalRepCategoryWaveOverview, handleGetGlobalRepCategoryWaves } from '@/api/rep-categories/global-rep-category.handlers';
@@ -34,7 +43,7 @@ import { handleGetProfileWaveActivity } from '@/api/waves/profile-wave-activity.
 import { handleValidateWaveGroups } from '@/api/waves/wave-group-validation.handler';
 import { handleSearchDraftWaveMentions, handleSearchWaveMentions } from '@/api/waves/wave-mention-search.handler';
 import { handleCreateWaveMetadata, handleDeleteWaveMetadata, handleGetDropRepliesV2, handleGetOfficialWaves, handleGetWaveCompetitionDropsV2, handleGetWaveDecisionsV2, handleGetWaveDropsV2, handleGetWaveLeaderboardV2, handleGetWaveMetadata, handleGetWavesV2, handleListWaveCurationDropsV2, handleListWaveSubwaves, handleSearchDropsInWaveV2, handleSearchWaveAuthorsV2 } from '@/api/waves/waves-v2.handlers';
-import { ArchiveProfileCmsPackageRequest, ArchiveProfileCmsPackageResponse, CreateProfileCmsWalletGallerySnapshotRequest, CreateProfileCmsWalletGallerySnapshotResponse, CreateWaveMetadataRequest, CreateWaveMetadataResponse, DeleteEulaConsentRequest, DeleteEulaConsentResponse, DeleteMyWaveChatHistoryRequest, DeleteMyWaveChatHistoryResponse, DeleteWaveMetadataRequest, DeleteWaveMetadataResponse, DownloadDropV2VotersByIdRequest, DownloadDropV2VotersByIdResponse, ExportProfileCmsPackageRequest, ExportProfileCmsPackageResponse, GetBoostedDropsV2Request, GetBoostedDropsV2Response, GetContentModerationBlockActivityRequest, GetContentModerationBlockActivityResponse, GetCuratedProfileWaveDropsV2Request, GetCuratedProfileWaveDropsV2Response, GetDmDropsUnreadRequest, GetDmDropsUnreadResponse, GetDmUnreadSnapshotRequest, GetDmUnreadSnapshotResponse, GetDropPollOptionVotersV2Request, GetDropPollOptionVotersV2Response, GetDropRepliesV2Request, GetDropRepliesV2Response, GetDropsV2Request, GetDropsV2Response, GetDropV2BoostsByIdRequest, GetDropV2BoostsByIdResponse, GetDropV2ByIdRequest, GetDropV2ByIdResponse, GetDropV2MetadataByIdRequest, GetDropV2MetadataByIdResponse, GetDropV2PartByIdRequest, GetDropV2PartByIdResponse, GetDropV2ReactionsByIdRequest, GetDropV2ReactionsByIdResponse, GetDropV2VoteEditLogsByIdRequest, GetDropV2VoteEditLogsByIdResponse, GetDropV2VotersByIdRequest, GetDropV2VotersByIdResponse, GetDropV2VoteSummaryByIdRequest, GetDropV2VoteSummaryByIdResponse, GetEulaConsentRequest, GetEulaConsentResponse, GetGlobalRepCategoryGiversRequest, GetGlobalRepCategoryGiversResponse, GetGlobalRepCategoryOverviewRequest, GetGlobalRepCategoryOverviewResponse, GetGlobalRepCategoryRatingsRequest, GetGlobalRepCategoryRatingsResponse, GetGlobalRepCategoryRecipientsRequest, GetGlobalRepCategoryRecipientsResponse, GetGlobalRepCategoryWaveContributorsRequest, GetGlobalRepCategoryWaveContributorsResponse, GetGlobalRepCategoryWaveOverviewRequest, GetGlobalRepCategoryWaveOverviewResponse, GetGlobalRepCategoryWavesRequest, GetGlobalRepCategoryWavesResponse, GetMemeCardDropMappingRequest, GetMemeCardDropMappingResponse, GetNotificationsV2Request, GetNotificationsV2Response, GetOfficialWavesRequest, GetOfficialWavesResponse, GetOgMetadataDropRequest, GetOgMetadataDropResponse, GetOgMetadataProfileRequest, GetOgMetadataProfileResponse, GetOgMetadataWaveRequest, GetOgMetadataWaveResponse, GetPrimaryProfileCmsPackageRequest, GetPrimaryProfileCmsPackageResponse, GetProfileCmsAgentSchemaBundleRequest, GetProfileCmsAgentSchemaBundleResponse, GetProfileCmsAgentSourcePacketRequest, GetProfileCmsAgentSourcePacketResponse, GetProfileCmsPackageByHashRequest, GetProfileCmsPackageByHashResponse, GetProfileCmsPackageByIdRequest, GetProfileCmsPackageByIdResponse, GetProfileCmsPackageByVersionRequest, GetProfileCmsPackageByVersionResponse, GetProfileWaveActivityRequest, GetProfileWaveActivityResponse, GetPublicContentModerationProfileStatusRequest, GetPublicContentModerationProfileStatusResponse, GetSubscriptionCoverageRequest, GetSubscriptionCoverageResponse, GetTdhRulesRequest, GetTdhRulesResponse, GetWalletDistributionAllocationsRequest, GetWalletDistributionAllocationsResponse, GetWaveCompetitionDropsV2Request, GetWaveCompetitionDropsV2Response, GetWaveDecisionsV2Request, GetWaveDecisionsV2Response, GetWaveDropsV2Request, GetWaveDropsV2Response, GetWaveLeaderboardV2Request, GetWaveLeaderboardV2Response, GetWaveMetadataRequest, GetWaveMetadataResponse, GetWavePollsV2Request, GetWavePollsV2Response, GetWavesV2Request, GetWavesV2Response, ListProfileCmsPackagesRequest, ListProfileCmsPackagesResponse, ListWaveCurationDropsV2Request, ListWaveCurationDropsV2Response, ListWaveSubwavesRequest, ListWaveSubwavesResponse, PreviewGroupMembersRequest, PreviewGroupMembersResponse, PublishProfileCmsPackageRequest, PublishProfileCmsPackageResponse, ResolveDecentralizedMediaRequest, ResolveDecentralizedMediaResponse, RollbackProfileCmsPackageRequest, RollbackProfileCmsPackageResponse, SaveEulaConsentRequest, SaveEulaConsentResponse, SaveProfileCmsPackageDraftRequest, SaveProfileCmsPackageDraftResponse, SearchDraftWaveMentionsRequest, SearchDraftWaveMentionsResponse, SearchDropsInWaveV2Request, SearchDropsInWaveV2Response, SearchWaveAuthorsV2Request, SearchWaveAuthorsV2Response, SearchWaveMentionsRequest, SearchWaveMentionsResponse, ValidateProfileCmsAgentPatchRequest, ValidateProfileCmsAgentPatchResponse, ValidateProfileCmsPackageRequest, ValidateProfileCmsPackageResponse, ValidateWaveGroupsRequest, ValidateWaveGroupsResponse, VoteDropPollV2Request, VoteDropPollV2Response } from './operations';
+import { ArchiveProfileCmsPackageRequest, ArchiveProfileCmsPackageResponse, CreateProfileCmsAgentGrantRequest, CreateProfileCmsAgentGrantResponse, CreateProfileCmsWalletGallerySnapshotRequest, CreateProfileCmsWalletGallerySnapshotResponse, CreateWaveMetadataRequest, CreateWaveMetadataResponse, DeleteEulaConsentRequest, DeleteEulaConsentResponse, DeleteMyWaveChatHistoryRequest, DeleteMyWaveChatHistoryResponse, DeleteWaveMetadataRequest, DeleteWaveMetadataResponse, DownloadDropV2VotersByIdRequest, DownloadDropV2VotersByIdResponse, ExportProfileCmsPackageRequest, ExportProfileCmsPackageResponse, GetBoostedDropsV2Request, GetBoostedDropsV2Response, GetContentModerationBlockActivityRequest, GetContentModerationBlockActivityResponse, GetCuratedProfileWaveDropsV2Request, GetCuratedProfileWaveDropsV2Response, GetDmDropsUnreadRequest, GetDmDropsUnreadResponse, GetDmUnreadSnapshotRequest, GetDmUnreadSnapshotResponse, GetDropPollOptionVotersV2Request, GetDropPollOptionVotersV2Response, GetDropRepliesV2Request, GetDropRepliesV2Response, GetDropsV2Request, GetDropsV2Response, GetDropV2BoostsByIdRequest, GetDropV2BoostsByIdResponse, GetDropV2ByIdRequest, GetDropV2ByIdResponse, GetDropV2MetadataByIdRequest, GetDropV2MetadataByIdResponse, GetDropV2PartByIdRequest, GetDropV2PartByIdResponse, GetDropV2ReactionsByIdRequest, GetDropV2ReactionsByIdResponse, GetDropV2VoteEditLogsByIdRequest, GetDropV2VoteEditLogsByIdResponse, GetDropV2VotersByIdRequest, GetDropV2VotersByIdResponse, GetDropV2VoteSummaryByIdRequest, GetDropV2VoteSummaryByIdResponse, GetEulaConsentRequest, GetEulaConsentResponse, GetGlobalRepCategoryGiversRequest, GetGlobalRepCategoryGiversResponse, GetGlobalRepCategoryOverviewRequest, GetGlobalRepCategoryOverviewResponse, GetGlobalRepCategoryRatingsRequest, GetGlobalRepCategoryRatingsResponse, GetGlobalRepCategoryRecipientsRequest, GetGlobalRepCategoryRecipientsResponse, GetGlobalRepCategoryWaveContributorsRequest, GetGlobalRepCategoryWaveContributorsResponse, GetGlobalRepCategoryWaveOverviewRequest, GetGlobalRepCategoryWaveOverviewResponse, GetGlobalRepCategoryWavesRequest, GetGlobalRepCategoryWavesResponse, GetMemeCardDropMappingRequest, GetMemeCardDropMappingResponse, GetNftMarketActivityRequest, GetNftMarketActivityResponse, GetNftMarketDepthRequest, GetNftMarketDepthResponse, GetNotificationsV2Request, GetNotificationsV2Response, GetOfficialWavesRequest, GetOfficialWavesResponse, GetOgMetadataDropRequest, GetOgMetadataDropResponse, GetOgMetadataProfileRequest, GetOgMetadataProfileResponse, GetOgMetadataWaveRequest, GetOgMetadataWaveResponse, GetOwnerProfileCmsAgentProposalRequest, GetOwnerProfileCmsAgentProposalResponse, GetPrimaryProfileCmsPackageRequest, GetPrimaryProfileCmsPackageResponse, GetProfileCmsAgentDraftRequest, GetProfileCmsAgentDraftResponse, GetProfileCmsAgentProposalRequest, GetProfileCmsAgentProposalResponse, GetProfileCmsAgentSchemaBundleRequest, GetProfileCmsAgentSchemaBundleResponse, GetProfileCmsAgentSourcePacketRequest, GetProfileCmsAgentSourcePacketResponse, GetProfileCmsPackageByHashRequest, GetProfileCmsPackageByHashResponse, GetProfileCmsPackageByIdRequest, GetProfileCmsPackageByIdResponse, GetProfileCmsPackageByVersionRequest, GetProfileCmsPackageByVersionResponse, GetProfileWaveActivityRequest, GetProfileWaveActivityResponse, GetPublicContentModerationProfileStatusRequest, GetPublicContentModerationProfileStatusResponse, GetSubscriptionCoverageRequest, GetSubscriptionCoverageResponse, GetTdhRulesRequest, GetTdhRulesResponse, GetWalletDistributionAllocationsRequest, GetWalletDistributionAllocationsResponse, GetWaveCompetitionDropsV2Request, GetWaveCompetitionDropsV2Response, GetWaveDecisionsV2Request, GetWaveDecisionsV2Response, GetWaveDropsV2Request, GetWaveDropsV2Response, GetWaveLeaderboardV2Request, GetWaveLeaderboardV2Response, GetWaveMetadataRequest, GetWaveMetadataResponse, GetWavePollsV2Request, GetWavePollsV2Response, GetWavesV2Request, GetWavesV2Response, ListProfileCmsAgentGrantsRequest, ListProfileCmsAgentGrantsResponse, ListProfileCmsAgentProposalsRequest, ListProfileCmsAgentProposalsResponse, ListProfileCmsPackagesRequest, ListProfileCmsPackagesResponse, ListWaveCurationDropsV2Request, ListWaveCurationDropsV2Response, ListWaveSubwavesRequest, ListWaveSubwavesResponse, PreviewGroupMembersRequest, PreviewGroupMembersResponse, PublishProfileCmsPackageRequest, PublishProfileCmsPackageResponse, ResolveDecentralizedMediaRequest, ResolveDecentralizedMediaResponse, ReviewProfileCmsAgentProposalRequest, ReviewProfileCmsAgentProposalResponse, RevokeProfileCmsAgentGrantRequest, RevokeProfileCmsAgentGrantResponse, RollbackProfileCmsPackageRequest, RollbackProfileCmsPackageResponse, SaveEulaConsentRequest, SaveEulaConsentResponse, SaveProfileCmsPackageDraftRequest, SaveProfileCmsPackageDraftResponse, SearchDraftWaveMentionsRequest, SearchDraftWaveMentionsResponse, SearchDropsInWaveV2Request, SearchDropsInWaveV2Response, SearchWaveAuthorsV2Request, SearchWaveAuthorsV2Response, SearchWaveMentionsRequest, SearchWaveMentionsResponse, SubmitProfileCmsAgentProposalRequest, SubmitProfileCmsAgentProposalResponse, UnpublishProfileCmsPackageRequest, UnpublishProfileCmsPackageResponse, UploadProfileCmsPackageStorageRequest, UploadProfileCmsPackageStorageResponse, ValidateProfileCmsAgentCandidateRequest, ValidateProfileCmsAgentCandidateResponse, ValidateProfileCmsAgentPatchRequest, ValidateProfileCmsAgentPatchResponse, ValidateProfileCmsPackageRequest, ValidateProfileCmsPackageResponse, ValidateWaveGroupsRequest, ValidateWaveGroupsResponse, VoteDropPollV2Request, VoteDropPollV2Response } from './operations';
 const router = asyncRouter();
 router.get(
   '/artwork-documentation/contexts/:id',
@@ -432,6 +441,167 @@ router.post(
   }
 );
 
+router.post(
+  '/collect/analyses',
+  async (
+    req: AnalyzeCollectGoalRequest,
+    res: Response<ApiResponse<AnalyzeCollectGoalResponse>>
+  ) => {
+    res.send(await handleAnalyzeCollectGoal(req));
+  }
+);
+
+router.get(
+  '/collect/assets',
+  async (
+    req: GetCollectAssetsRequest,
+    res: Response<ApiResponse<GetCollectAssetsResponse>>
+  ) => {
+    res.send(await handleGetCollectAssets(req));
+  }
+);
+
+router.get(
+  '/collect/capabilities',
+  async (
+    req: GetCollectCapabilitiesRequest,
+    res: Response<ApiResponse<GetCollectCapabilitiesResponse>>
+  ) => {
+    res.send(await handleGetCollectCapabilities(req));
+  }
+);
+
+router.get(
+  '/collect/catalog',
+  async (
+    req: GetCollectCatalogRequest,
+    res: Response<ApiResponse<GetCollectCatalogResponse>>
+  ) => {
+    res.send(await handleGetCollectCatalog(req));
+  }
+);
+
+router.post(
+  '/collect/plans',
+  needsAuthenticatedUser(),
+  async (
+    req: CreateCollectPlanRequest,
+    res: Response<ApiResponse<CreateCollectPlanResponse>>
+  ) => {
+    res.send(await handleCreateCollectPlan(req));
+  }
+);
+
+router.get(
+  '/collect/plans/:id',
+  needsAuthenticatedUser(),
+  async (
+    req: GetCollectPlanRequest,
+    res: Response<ApiResponse<GetCollectPlanResponse>>
+  ) => {
+    res.send(await handleGetCollectPlan(req));
+  }
+);
+
+router.post(
+  '/collect/plans/:id/advance',
+  needsAuthenticatedUser(),
+  async (
+    req: AdvanceCollectPlanRequest,
+    res: Response<ApiResponse<AdvanceCollectPlanResponse>>
+  ) => {
+    res.send(await handleAdvanceCollectPlan(req));
+  }
+);
+
+router.get(
+  '/collect/rules',
+  needsAuthenticatedUser(),
+  async (
+    req: GetCollectRulesRequest,
+    res: Response<ApiResponse<GetCollectRulesResponse>>
+  ) => {
+    res.send(await handleGetCollectRules(req));
+  }
+);
+
+router.post(
+  '/collect/rules',
+  needsAuthenticatedUser(),
+  async (
+    req: CreateCollectRuleRequest,
+    res: Response<ApiResponse<CreateCollectRuleResponse>>
+  ) => {
+    res.send(await handleCreateCollectRule(req));
+  }
+);
+
+router.get(
+  '/collect/rules/:id',
+  needsAuthenticatedUser(),
+  async (
+    req: GetCollectRuleRequest,
+    res: Response<ApiResponse<GetCollectRuleResponse>>
+  ) => {
+    res.send(await handleGetCollectRule(req));
+  }
+);
+
+router.post(
+  '/collect/rules/:id/pause',
+  needsAuthenticatedUser(),
+  async (
+    req: PauseCollectRuleRequest,
+    res: Response<ApiResponse<PauseCollectRuleResponse>>
+  ) => {
+    res.send(await handlePauseCollectRule(req));
+  }
+);
+
+router.post(
+  '/collect/rules/:id/prepare',
+  needsAuthenticatedUser(),
+  async (
+    req: PrepareCollectRuleRequest,
+    res: Response<ApiResponse<PrepareCollectRuleResponse>>
+  ) => {
+    res.send(await handlePrepareCollectRule(req));
+  }
+);
+
+router.post(
+  '/collect/rules/:id/reconcile',
+  needsAuthenticatedUser(),
+  async (
+    req: ReconcileCollectRuleRequest,
+    res: Response<ApiResponse<ReconcileCollectRuleResponse>>
+  ) => {
+    res.send(await handleReconcileCollectRule(req));
+  }
+);
+
+router.post(
+  '/collect/tdh-ranking',
+  needsAuthenticatedUser(),
+  async (
+    req: RankCollectTdhPurchasesRequest,
+    res: Response<ApiResponse<RankCollectTdhPurchasesResponse>>
+  ) => {
+    res.send(await handleRankCollectTdhPurchases(req));
+  }
+);
+
+router.post(
+  '/collect/tdh-scenarios',
+  needsAuthenticatedUser(),
+  async (
+    req: ProjectCollectPurchasesRequest,
+    res: Response<ApiResponse<ProjectCollectPurchasesResponse>>
+  ) => {
+    res.send(await handleProjectCollectPurchases(req));
+  }
+);
+
 router.get(
   '/content-moderation/block-activity',
   needsAuthenticatedUser(),
@@ -497,6 +667,124 @@ router.post(
   }
 );
 
+router.get(
+  '/market/listings',
+  async (
+    req: GetMarketListingsRequest,
+    res: Response<ApiResponse<GetMarketListingsResponse>>
+  ) => {
+    res.send(await handleGetMarketListings(req));
+  }
+);
+
+router.get(
+  '/market/me/operations',
+  needsAuthenticatedUser(),
+  async (
+    req: GetMyMarketOperationsRequest,
+    res: Response<ApiResponse<GetMyMarketOperationsResponse>>
+  ) => {
+    res.send(await handleGetMyMarketOperations(req));
+  }
+);
+
+router.post(
+  '/market/operations',
+  needsAuthenticatedUser(),
+  async (
+    req: PrepareMarketOperationRequest,
+    res: Response<ApiResponse<PrepareMarketOperationResponse>>
+  ) => {
+    res.send(await handlePrepareMarketOperation(req));
+  }
+);
+
+router.get(
+  '/market/operations/:id',
+  needsAuthenticatedUser(),
+  async (
+    req: GetMarketOperationRequest,
+    res: Response<ApiResponse<GetMarketOperationResponse>>
+  ) => {
+    res.send(await handleGetMarketOperation(req));
+  }
+);
+
+router.post(
+  '/market/operations/:id/continue',
+  needsAuthenticatedUser(),
+  async (
+    req: ContinueMarketOperationRequest,
+    res: Response<ApiResponse<ContinueMarketOperationResponse>>
+  ) => {
+    res.send(await handleContinueMarketOperation(req));
+  }
+);
+
+router.post(
+  '/market/operations/:id/send-attempts',
+  needsAuthenticatedUser(),
+  async (
+    req: BeginMarketTransactionAttemptRequest,
+    res: Response<ApiResponse<BeginMarketTransactionAttemptResponse>>
+  ) => {
+    res.send(await handleBeginMarketTransactionAttempt(req));
+  }
+);
+
+router.post(
+  '/market/operations/:id/send-attempts/rejection',
+  needsAuthenticatedUser(),
+  async (
+    req: RejectMarketTransactionAttemptRequest,
+    res: Response<ApiResponse<RejectMarketTransactionAttemptResponse>>
+  ) => {
+    res.send(await handleRejectMarketTransactionAttempt(req));
+  }
+);
+
+router.post(
+  '/market/operations/:id/signature',
+  needsAuthenticatedUser(),
+  async (
+    req: PublishMarketOperationRequest,
+    res: Response<ApiResponse<PublishMarketOperationResponse>>
+  ) => {
+    res.send(await handlePublishMarketOperation(req));
+  }
+);
+
+router.post(
+  '/market/operations/:id/submissions',
+  needsAuthenticatedUser(),
+  async (
+    req: SubmitMarketOperationRequest,
+    res: Response<ApiResponse<SubmitMarketOperationResponse>>
+  ) => {
+    res.send(await handleSubmitMarketOperation(req));
+  }
+);
+
+router.get(
+  '/market/orders',
+  async (
+    req: GetMarketOrdersRequest,
+    res: Response<ApiResponse<GetMarketOrdersResponse>>
+  ) => {
+    res.send(await handleGetMarketOrders(req));
+  }
+);
+
+router.get(
+  '/market-depth/:contract/:token_id',
+  async (
+    req: GetNftMarketDepthRequest,
+    res: Response<ApiResponse<GetNftMarketDepthResponse>>
+  ) => {
+    res.send(await handleGetNftMarketDepth(req));
+  }
+);
+
 router.post(
   '/media/resolve',
   async (
@@ -515,6 +803,16 @@ router.get(
     res: Response<ApiResponse<GetMemeCardDropMappingResponse>>
   ) => {
     res.send(await handleGetMemeCardDropMapping(req));
+  }
+);
+
+router.get(
+  '/nft-activity',
+  async (
+    req: GetNftMarketActivityRequest,
+    res: Response<ApiResponse<GetNftMarketActivityResponse>>
+  ) => {
+    res.send(await handleGetNftMarketActivity(req));
   }
 );
 
@@ -591,6 +889,79 @@ router.get(
   }
 );
 
+router.delete(
+  '/profile-cms/agent-grants/:id',
+  needsAuthenticatedUser(),
+  async (
+    req: RevokeProfileCmsAgentGrantRequest,
+    res: Response<ApiResponse<RevokeProfileCmsAgentGrantResponse>>
+  ) => {
+    res.send(await handleRevokeProfileCmsAgentGrant(req));
+  }
+);
+
+router.get(
+  '/profile-cms/agent-proposals/:id',
+  needsAuthenticatedUser(),
+  async (
+    req: GetOwnerProfileCmsAgentProposalRequest,
+    res: Response<ApiResponse<GetOwnerProfileCmsAgentProposalResponse>>
+  ) => {
+    res.send(await handleGetOwnerProfileCmsAgentProposal(req));
+  }
+);
+
+router.post(
+  '/profile-cms/agent-proposals/:id',
+  needsAuthenticatedUser(),
+  async (
+    req: ReviewProfileCmsAgentProposalRequest,
+    res: Response<ApiResponse<ReviewProfileCmsAgentProposalResponse>>
+  ) => {
+    res.send(await handleReviewProfileCmsAgentProposal(req));
+  }
+);
+
+router.get(
+  '/profile-cms/agent-session/draft',
+  async (
+    req: GetProfileCmsAgentDraftRequest,
+    res: Response<ApiResponse<GetProfileCmsAgentDraftResponse>>
+  ) => {
+    res.send(await handleGetProfileCmsAgentDraft(req));
+  }
+);
+
+router.post(
+  '/profile-cms/agent-session/proposals',
+  async (
+    req: SubmitProfileCmsAgentProposalRequest,
+    res: Response<ApiResponse<SubmitProfileCmsAgentProposalResponse>>
+  ) => {
+    res.send(await handleSubmitProfileCmsAgentProposal(req));
+  }
+);
+
+router.post(
+  '/profile-cms/agent-session/proposals/validate',
+  async (
+    req: ValidateProfileCmsAgentCandidateRequest,
+    res: Response<ApiResponse<ValidateProfileCmsAgentCandidateResponse>>
+  ) => {
+    res.send(await handleValidateProfileCmsAgentCandidate(req));
+  }
+);
+
+router.get(
+  '/profile-cms/agent-session/proposals/:id',
+  async (
+    req: GetProfileCmsAgentProposalRequest,
+    res: Response<ApiResponse<GetProfileCmsAgentProposalResponse>>
+  ) => {
+    res.send(await handleGetProfileCmsAgentProposal(req));
+  }
+);
+
 router.post(
   '/profile-cms/packages',
   needsAuthenticatedUser(),
@@ -657,6 +1028,39 @@ router.get(
   }
 );
 
+router.get(
+  '/profile-cms/packages/:id/agent-grants',
+  needsAuthenticatedUser(),
+  async (
+    req: ListProfileCmsAgentGrantsRequest,
+    res: Response<ApiResponse<ListProfileCmsAgentGrantsResponse>>
+  ) => {
+    res.send(await handleListProfileCmsAgentGrants(req));
+  }
+);
+
+router.post(
+  '/profile-cms/packages/:id/agent-grants',
+  needsAuthenticatedUser(),
+  async (
+    req: CreateProfileCmsAgentGrantRequest,
+    res: Response<ApiResponse<CreateProfileCmsAgentGrantResponse>>
+  ) => {
+    res.send(await handleCreateProfileCmsAgentGrant(req));
+  }
+);
+
+router.get(
+  '/profile-cms/packages/:id/agent-proposals',
+  needsAuthenticatedUser(),
+  async (
+    req: ListProfileCmsAgentProposalsRequest,
+    res: Response<ApiResponse<ListProfileCmsAgentProposalsResponse>>
+  ) => {
+    res.send(await handleListProfileCmsAgentProposals(req));
+  }
+);
+
 router.post(
   '/profile-cms/packages/:id/archive',
   needsAuthenticatedUser(),
@@ -698,6 +1102,28 @@ router.post(
     res: Response<ApiResponse<RollbackProfileCmsPackageResponse>>
   ) => {
     res.send(await handleRollbackProfileCmsPackage(req));
+  }
+);
+
+router.post(
+  '/profile-cms/packages/:id/storage/upload',
+  needsAuthenticatedUser(),
+  async (
+    req: UploadProfileCmsPackageStorageRequest,
+    res: Response<ApiResponse<UploadProfileCmsPackageStorageResponse>>
+  ) => {
+    res.send(await handleUploadProfileCmsPackageStorage(req));
+  }
+);
+
+router.post(
+  '/profile-cms/packages/:id/unpublish',
+  needsAuthenticatedUser(),
+  async (
+    req: UnpublishProfileCmsPackageRequest,
+    res: Response<ApiResponse<UnpublishProfileCmsPackageResponse>>
+  ) => {
+    res.send(await handleUnpublishProfileCmsPackage(req));
   }
 );
 
