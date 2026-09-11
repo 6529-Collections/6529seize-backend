@@ -183,6 +183,28 @@ function watermarkSeconds(value: string | null): number | null {
   return Number.isSafeInteger(seconds) && seconds >= 0 ? seconds : null;
 }
 
+async function getEventPageBeforeDeadline(
+  client: OpenSeaClient,
+  collectionSlug: string,
+  after: number,
+  before: number,
+  cursor: string | null,
+  deadlineMs: number
+) {
+  try {
+    return await client.getEventsPage(
+      collectionSlug,
+      after,
+      before,
+      cursor,
+      deadlineMs
+    );
+  } catch (error) {
+    if (error instanceof OpenSeaDeadlineError) return null;
+    throw error;
+  }
+}
+
 export async function pollOpenSeaEvents(
   target: OpenSeaCollectionTarget,
   options: OpenSeaPollOptions = {}
@@ -239,19 +261,15 @@ export async function pollOpenSeaEvents(
   do {
     if (pageCount >= pageLimit || now().getTime() >= deadlineMs)
       return result(false);
-    let page;
-    try {
-      page = await client.getEventsPage(
-        target.collection_slug,
-        after,
-        closedBefore,
-        cursor,
-        deadlineMs
-      );
-    } catch (error) {
-      if (error instanceof OpenSeaDeadlineError) return result(false);
-      throw error;
-    }
+    const page = await getEventPageBeforeDeadline(
+      client,
+      target.collection_slug,
+      after,
+      closedBefore,
+      cursor,
+      deadlineMs
+    );
+    if (page === null) return result(false);
     const observedAt = now();
     const events = page.entries.map((entry) =>
       normalizeOpenSeaEvent(

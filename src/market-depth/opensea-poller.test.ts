@@ -281,6 +281,30 @@ describe('pollOpenSeaEvents', () => {
     });
   });
 
+  it('rejects an echoed stored cursor without recording false checkpoint progress', async () => {
+    const db = database({
+      source: 'opensea',
+      chain: 'ethereum',
+      chain_id: '1',
+      contract: TARGET.contract,
+      collection_slug: TARGET.collection_slug,
+      provider_cursor: 'resume-page',
+      provider_watermark: null,
+      provider_at: new Date('2026-09-10T12:00:00Z'),
+      observed_at: new Date('2026-09-10T12:00:00Z')
+    });
+    const client = {
+      getEventsPage: jest
+        .fn()
+        .mockResolvedValue({ entries: [], next: 'resume-page' })
+    } as unknown as OpenSeaClient;
+
+    await expect(pollOpenSeaEvents(TARGET, { client, db })).rejects.toThrow(
+      'Repeated OpenSea event cursor'
+    );
+    expect(db.appendEvents).not.toHaveBeenCalled();
+  });
+
   it('defers a typed request-budget exhaustion without advancing the checkpoint', async () => {
     const db = database();
     const client = {
