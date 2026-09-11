@@ -1,0 +1,17 @@
+{
+  "name": "market-depth-stream-loop",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "preinstall": "node ../../scripts/require-6529-command.cjs",
+    "prebuild": "node ../../scripts/require-6529-command.cjs && rm -rf dist",
+    "build": "node ../../scripts/require-6529-command.cjs && esbuild index.ts --bundle --sourcemap --platform=node --target=es2022 --outfile=dist/index.js",
+    "postbuild": "node ../../scripts/require-6529-command.cjs && cd dist && zip -r index.zip index.js*",
+    "sls-deploy:prod": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/bin/serverless.js deploy --stage=prod --region=us-east-1",
+    "sls-deploy:staging": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/bin/serverless.js deploy --stage=staging --region=eu-west-1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  },
+  "packageManager": "npm@10.9.8"
+}

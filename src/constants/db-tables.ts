@@ -245,3 +245,11 @@ export const WS_NOTIFICATION_SUBSCRIPTIONS_TABLE =
   'ws_notification_subscriptions';
 export const RELEASE_NOTE_STREAM_STATES_TABLE = 'release_note_stream_states';
 export const RELEASE_NOTE_PUBLICATIONS_TABLE = 'release_note_publications';
+export const MARKET_DEPTH_SNAPSHOTS_TABLE = 'market_depth_snapshots';
+export const MARKET_DEPTH_COLLECTION_STATE_TABLE =
+  'market_depth_collection_state';
+export const MARKET_DEPTH_CURRENT_ORDERS_TABLE = 'market_depth_current_orders';
+export const MARKET_DEPTH_EVENTS_TABLE = 'market_depth_events';
+export const MARKET_DEPTH_CURSORS_TABLE = 'market_depth_cursors';
+export const MARKET_DEPTH_RECONCILIATION_QUEUE_TABLE =
+  'market_depth_reconciliation_queue';
