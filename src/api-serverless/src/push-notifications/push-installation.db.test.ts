@@ -130,6 +130,45 @@ describeWithSeed('push installation logout', [], () => {
     expect(await registrations()).toHaveLength(2);
   });
 
+  it('requires retained token proof after legacy profile registrations are removed', async () => {
+    await registerInstallationDevice(device('A'), {}, {});
+    await sqlExecutor.execute(
+      `DELETE FROM ${PUSH_NOTIFICATION_DEVICES_TABLE} WHERE device_id = :device_id`,
+      { device_id: 'phone' }
+    );
+    await expect(revoke(1)).rejects.toThrow('ambiguous');
+    await expect(
+      registerInstallationDevice(
+        { ...device('attacker'), token: 'wrong-token' },
+        credential,
+        {}
+      )
+    ).rejects.toThrow('ambiguous');
+    expect(await registrations()).toEqual([]);
+    const unclaimed = await sqlExecutor.oneOrNull(
+      `SELECT secret_hash, revision FROM ${PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE} WHERE device_id = :device_id`,
+      { device_id: 'phone' }
+    );
+    expect(unclaimed).toEqual({ secret_hash: null, revision: 0 });
+    const result = await revokeInstallation(
+      {
+        device_id: 'phone',
+        installation_secret: secret,
+        token: 'fcm-token',
+        revision: 1,
+        all_profiles: true,
+        sessions: []
+      },
+      {}
+    );
+    expect(result).toMatchObject({
+      revision: 1,
+      token: 'fcm-token',
+      platform: 'ios'
+    });
+    expect(result.secret_hash).toHaveLength(64);
+  });
+
   it('revokes only supplied native refresh sessions, not other devices or web sessions', async () => {
     process.env.AUTH_SESSION_HASH_SECRET = 'push-logout-test-secret';
     const address = '0x' + '1'.repeat(40);

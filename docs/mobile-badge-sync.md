@@ -129,7 +129,9 @@ numeric badge update on Android. Failed counts do not become zero. Invalid FCM
 tokens are retired conditionally without deleting a concurrent replacement.
 
 For an unclaimed legacy device, the first credential must prove knowledge of the
-FCM token on every existing registration row. Device IDs are visible to profiles
+FCM token on every existing registration row, or the retained installation token
+when those rows have already been removed. A fresh installation with neither
+registrations nor a retained token has no prior ownership to prove. Device IDs are visible to profiles
 and do not authorize device-wide deletion by themselves. Conflicting legacy
 tokens or a lost installation credential require operator-assisted reconciliation
 after ownership verification; the client keeps cleanup pending and blocks new

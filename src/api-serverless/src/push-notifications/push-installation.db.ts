@@ -61,14 +61,23 @@ async function lockInstallation(proof: InstallationProof, ctx: RequestContext) {
     );
     // Device IDs are public to registered profiles. A caller must know the
     // existing FCM token, and cannot add its own token row to claim others.
-    if (legacy.some((row) => !proof.token || row.token !== proof.token)) {
+    const retainedTokenMismatch =
+      !legacy.length &&
+      installation.token &&
+      installation.token !== proof.token;
+    if (
+      retainedTokenMismatch ||
+      legacy.some((row) => !proof.token || row.token !== proof.token)
+    ) {
       throw new ForbiddenException(
         'Legacy installation token ownership is ambiguous'
       );
     }
     installation.secret_hash = digest(proof.installation_secret);
-    installation.token = legacy[0]?.token ?? proof.token ?? null;
-    installation.platform = legacy[0]?.platform ?? null;
+    installation.token =
+      legacy[0]?.token ?? installation.token ?? proof.token ?? null;
+    installation.platform =
+      legacy[0]?.platform ?? installation.platform ?? null;
     await sqlExecutor.execute(
       `UPDATE ${PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE} SET secret_hash = :secret_hash, token = :token, platform = :platform WHERE device_id = :device_id`,
       { ...installation },
