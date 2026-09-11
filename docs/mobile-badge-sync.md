@@ -124,6 +124,8 @@ independently of database collation. The unique refresh-token-hash lookup still
 restricts the candidate session. The early-claim session lookup intentionally holds its matching
 row lock until commit against concurrent revocation/rotation; the refresh hash
 is unique and the search stops on its first valid session.
+Fresh claims allow at most 50 session lookups per request; include their primary
+database latency and lock contention when verifying the API limiter at rollout.
 
 A single logout deletes `push_notification_devices` and settings for the selected
 profile/device. Sign-out-all deletes every registration/settings row for that
@@ -139,6 +141,12 @@ Revocation commits first, then enqueues `installation_badge_refresh` by device I
 A failed queue handoff returns an error for client retry. Repeated revisions are
 idempotent and cannot erase a later login; new registration must present the
 current revision. Registration and revocation lock the same database row.
+Locking rejects a missing transaction connection before issuing any query.
+Unclaimed installations start at revision zero, and the API requires revoke
+revisions of at least one. Advancing a revision establishes and retains the
+credential in the same transaction; it never clears ownership. Consequently, a
+valid stale revoke always verifies an already-claimed installation's credential
+before returning, and cannot claim it with a replacement secret.
 If the client never retries a failed logout queue handoff, the registrations
 remain deleted but the badge can stay stale. The retained installation record
 does not schedule its own reconciliation. Recovery requires the client to retry

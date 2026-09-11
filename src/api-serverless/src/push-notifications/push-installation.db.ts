@@ -86,6 +86,9 @@ async function lockInstallation(
   ctx: RequestContext,
   authorization: FreshClaimAuthorization
 ) {
+  if (!ctx.connection?.connection) {
+    throw new Error('Push installation locks require a transaction connection');
+  }
   const options = { wrappedConnection: ctx.connection };
   // Create the row when absent; the explicit locking read below fences every
   // existing-row claim regardless of whether the duplicate-key update changes it.

@@ -44,6 +44,30 @@ const storedInstallation = () =>
   );
 
 describeWithSeed('push installation logout', [], () => {
+  it.each(['registration', 'revocation'] as const)(
+    'rejects %s before querying when its transaction connection is missing',
+    async (operation) => {
+      const query = jest.spyOn(sqlExecutor, 'execute');
+      const transaction = jest
+        .spyOn(sqlExecutor, 'executeNativeQueriesInTransaction')
+        .mockImplementation(async (action) =>
+          action({ connection: undefined })
+        );
+      try {
+        const result =
+          operation === 'registration'
+            ? registerInstallationDevice(device('A'), credential, {})
+            : revoke(1);
+        await expect(result).rejects.toThrow(
+          'require a transaction connection'
+        );
+        expect(query).not.toHaveBeenCalled();
+      } finally {
+        transaction.mockRestore();
+        query.mockRestore();
+      }
+    }
+  );
   it('preserves legacy registration defaults and each profile settings during token rotation', async () => {
     await registerInstallationDevice(device('A'), {}, {});
     await registerInstallationDevice(device('B'), {}, {});
@@ -248,7 +272,22 @@ describeWithSeed('push installation logout', [], () => {
       { ...credential, installation_revision: 1 },
       {}
     );
-    await revoke(1);
+    const beforeReplay = await storedInstallation();
+    await expect(
+      revokeInstallation(
+        {
+          device_id: 'phone',
+          installation_secret: 'b'.repeat(64),
+          revision: 1,
+          all_profiles: true,
+          sessions: []
+        },
+        {}
+      )
+    ).rejects.toThrow('credential');
+    expect(await storedInstallation()).toEqual(beforeReplay);
+    expect(await revoke(1)).toEqual({ device_id: 'phone', revision: 1 });
+    expect(await storedInstallation()).toEqual(beforeReplay);
     expect(await registrations()).toEqual([
       { device_id: 'phone', profile_id: 'A' }
     ]);
