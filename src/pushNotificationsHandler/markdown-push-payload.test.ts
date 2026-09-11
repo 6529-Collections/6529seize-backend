@@ -24,14 +24,18 @@ describe('Markdown push payload', () => {
     });
   });
 
-  it('sends readable text before the length limit while retaining title and routing', async () => {
+  it('sends the full readable text when it fits while retaining title and routing', async () => {
+    const title =
+      '[prxt0] A longer wave title that previously got cut off · DM';
     const text =
       '# Heading\n\n> Run `npm test`\n\n**Hello** @[prxt0] :wave: ' +
-      '**👋**'.repeat(260);
+      '**' +
+      '👋'.repeat(260) +
+      '**';
     const body = formatDropMarkdownForPush(text);
     await sendMessages([
       {
-        title: '[prxt0] snake_case messaged you · DM',
+        title,
         body,
         token: 'test-token',
         notification_id: 123,
@@ -44,10 +48,10 @@ describe('Markdown push payload', () => {
     const expectedText =
       'Heading\n“Run ‘npm test’”\nHello @prxt0 👋 ' + '👋'.repeat(260);
     expect(message.notification).toEqual({
-      title: '[prxt0] snake_case messaged you · DM',
-      body: Array.from(expectedText).slice(0, 247).join('') + '...'
+      title,
+      body: expectedText
     });
-    expect(Array.from(message.notification.body)).toHaveLength(250);
+    expect(Array.from(message.notification.body).length).toBeGreaterThan(250);
     expect(message.data).toEqual({
       notification_id: '123',
       wave_id: 'test-wave',

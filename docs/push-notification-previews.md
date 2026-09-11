@@ -13,7 +13,25 @@ Image references and links to uploaded media are omitted from the text, as in
 the existing push sanitizer. When Markdown produces no text, the handler uses
 the existing attachment summary or the notification's fallback text. Mentions
 and emoji still use the existing push formatting. Preview conversion happens
-before notification length limits are applied.
+before the outgoing notification is sized.
+
+Android and iOS use the same payload budget. Titles and bodies no longer have
+fixed 50- and 250-character limits: text that fits is sent in full. The handler
+counts UTF-8 bytes, including JSON escaping, routing data, image URLs, and
+platform settings, and reserves 512 bytes below the 4 KB provider limit for
+provider-added fields. The recipient token is transport and is not counted.
+The phone controls how much of the delivered text it displays.
+
+When necessary, the handler removes text from the end of the body and appends
+`...`, preserving Unicode code points. Unusually large titles are shortened
+only when necessary after reducing the body. An image that cannot fit even
+with minimal text is omitted. Routing data is never truncated; if metadata
+alone cannot fit, that notification is reported as failed without preventing
+other notifications in the batch from being sent.
+This retains the existing queue failure policy: when no device succeeds, the
+notification is retried and persistent failures go to the dead-letter queue
+after the configured maximum of 10 receives. A local budget failure does not
+trigger an immediate Firebase image retry or delete the recipient's device token.
 
 The formatter enforces the existing 25,000 UTF-16-code-unit drop-part limit
 before parsing. Oversized historical content and parser failures use the
@@ -22,8 +40,8 @@ cutting through a link destination. Bare media URLs are removed before choosing
 that fallback, including when they appear in quotes or code.
 
 The original drop keeps its Markdown and renders normally inside the app.
-Notification titles, attachment filenames, permissions, and delivery settings
-are unaffected.
+Title formatting, attachment filenames, permissions, badges, and sound settings
+are unaffected. The payload budget applies to all outgoing notification types.
 
 ## Help bot corpus handoff
 
