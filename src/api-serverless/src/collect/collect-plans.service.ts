@@ -176,6 +176,7 @@ export async function createCollectPlan(
         .flatMap((item) => item.asset_keys)
     )
   ).sort((a, b) => a.localeCompare(b));
+  // A non-null seed accounts for every asset; partial coverage always scans.
   const seed = assetKeys.length
     ? await seedCollectPlanFromIndex({
         analysis,
