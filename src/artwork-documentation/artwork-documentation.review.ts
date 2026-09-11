@@ -5,7 +5,9 @@ import {
   AD_GRANTS,
   AD_REVISIONS,
   AD_REVIEWS,
-  AD_THREADS
+  AD_THREADS,
+  AD_DROP_LINKS,
+  AD_SOURCES
 } from './artwork-documentation.tables';
 import {
   artworkDocumentationService,
@@ -52,6 +54,38 @@ type GrantRow = {
   created_at: number;
   revoked_at: number | null;
 };
+type SourceSubmission = {
+  drop_id: string;
+  wave_id: string;
+  source_receipt_id: string;
+  title: string | null;
+};
+function visibleIdentityText(
+  access: ContextAccess,
+  field: 'display_name' | 'preferred_credit'
+): string | null {
+  const answer = access.context.modules.identity[field];
+  if (
+    !canReadField(
+      access,
+      `identity.${field}`,
+      answer?.intended_visibility === 'restricted'
+    )
+  )
+    return null;
+  const value = answerValue(answer);
+  return typeof value === 'string' ? value : null;
+}
+function sourceTitle(raw: unknown): string | null {
+  try {
+    const value: unknown = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return typeof value === 'string' && Array.from(value).length <= 255
+      ? value
+      : null;
+  } catch {
+    return null;
+  }
+}
 export type ContextFilters = {
   cursor?: string;
   limit?: number;
@@ -218,12 +252,15 @@ export class ArtworkDocumentationReviewService {
       ctx
     );
     const visible = rows.slice(0, limit);
-    const data = await Promise.all(
+    const accesses = await Promise.all(
       visible.map(async (row) =>
-        this.summary(
-          await this.core.authorizeContext(row.id, ctx, false, viewerPrograms),
-          ctx
-        )
+        this.core.authorizeContext(row.id, ctx, false, viewerPrograms)
+      )
+    );
+    const sources = await this.sourceSubmissions(accesses, ctx);
+    const data = await Promise.all(
+      accesses.map((access) =>
+        this.summary(access, ctx, sources.get(access.context.id) ?? null)
       )
     );
     const last = visible[visible.length - 1];
@@ -237,7 +274,50 @@ export class ArtworkDocumentationReviewService {
           : null
     };
   }
-  private async summary(access: ContextAccess, ctx: RequestContext) {
+  private async sourceSubmissions(
+    accesses: ContextAccess[],
+    ctx: RequestContext
+  ): Promise<Map<string, SourceSubmission>> {
+    const ids = accesses
+      .filter((access) => access.capabilities.read_source_receipts)
+      .map((access) => access.context.id);
+    if (!ids.length) return new Map();
+    const rows = await this.core.db.query<{
+      context_id: string;
+      drop_id: string;
+      wave_id: string;
+      source_receipt_id: string;
+      title_json: unknown;
+    }>(
+      `SELECT context_id,drop_id,wave_id,source_receipt_id,title_json FROM (
+        SELECT l.context_id,l.drop_id,l.wave_id,l.source_receipt_id,
+          CASE WHEN s.is_excerpt=0 AND JSON_VALID(s.receipt_text)
+            THEN JSON_EXTRACT(s.receipt_text,'$.title') ELSE NULL END AS title_json,
+          ROW_NUMBER() OVER (PARTITION BY l.context_id ORDER BY s.created_at ASC,s.id ASC) AS source_rank
+        FROM ${AD_DROP_LINKS} l JOIN ${AD_SOURCES} s
+          ON s.id=l.source_receipt_id AND s.context_id=l.context_id AND s.drop_id=l.drop_id
+        WHERE l.context_id IN (:ids)
+      ) ranked_sources WHERE source_rank=1`,
+      { ids },
+      ctx
+    );
+    return new Map(
+      rows.map((row) => [
+        row.context_id,
+        {
+          drop_id: row.drop_id,
+          wave_id: row.wave_id,
+          source_receipt_id: row.source_receipt_id,
+          title: sourceTitle(row.title_json)
+        }
+      ])
+    );
+  }
+  private async summary(
+    access: ContextAccess,
+    ctx: RequestContext,
+    source: SourceSubmission | null
+  ) {
     const c = access.context;
     const revision = c.latest_revision_id
       ? await this.core.db.one<{ source_draft_version: number }>(
@@ -251,6 +331,10 @@ export class ArtworkDocumentationReviewService {
       id: c.id,
       work_id: c.work_id,
       program_id: c.program_id,
+      owner_profile_id: c.owner_profile_id,
+      artist_display_name: visibleIdentityText(access, 'display_name'),
+      artist_preferred_credit: visibleIdentityText(access, 'preferred_credit'),
+      source_submission: source,
       title: canReadField(
         access,
         'artwork.title',
