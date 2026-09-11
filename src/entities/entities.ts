@@ -1,4 +1,12 @@
 export { AbusivenessDetectionResult } from './IAbusivenessDetectionResult';
+export { CollectPlanEntity } from './ICollectPlan';
+export { CollectRuleEntity, CollectRuleOperationEntity } from './ICollectRule';
+export {
+  MarketOperationEntity,
+  MarketOperationEventEntity,
+  MarketWalletExposureLockEntity,
+  MarketReviewedTransactionEntity
+} from './IMarketOperation';
 export {
   ArtCurationTokenWatchEntity,
   ArtCurationTokenWatchStatus

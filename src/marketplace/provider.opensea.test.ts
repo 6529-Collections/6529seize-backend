@@ -1,0 +1,473 @@
+import { MarketTradeIntent } from '@/marketplace/provider.types';
+import { Wallet } from 'ethers';
+import {
+  buildMarketOrder,
+  MARKET_SEAPORT_INTERFACE
+} from '@/marketplace/seaport.builder';
+import {
+  OpenSeaMarketplaceProvider,
+  marketFeesForTotal,
+  describeMarketOrder
+} from '@/marketplace/provider.opensea';
+import { validateMarketOrder } from '@/marketplace/quote-validation';
+import {
+  MARKET_SEAPORT,
+  MARKET_OPENSEA_CONDUIT_KEY,
+  MARKET_WETH,
+  MARKET_ZERO_ADDRESS
+} from '@/marketplace/seaport.registry';
+
+const maker = '0x1111111111111111111111111111111111111111';
+const buyer = '0x2222222222222222222222222222222222222222';
+const gift = '0x3333333333333333333333333333333333333333';
+const intent: MarketTradeIntent = {
+  kind: 'LIST',
+  chainId: 1,
+  wallet: maker,
+  recipient: maker,
+  asset: {
+    contract: '0x33fd426905f149f8376e227d0c9d3340aad17af1',
+    tokenId: '56',
+    standard: 'ERC1155'
+  },
+  quantity: '2',
+  currency: MARKET_ZERO_ADDRESS,
+  maxTotalWei: '200',
+  minNetWei: '198',
+  fees: [{ recipient: gift, amountWei: '2' }],
+  includeOptionalCreatorFees: false,
+  startTime: '1700000000',
+  endTime: '1900000000'
+};
+const response = (value: unknown) =>
+  ({ ok: true, text: async () => JSON.stringify(value) }) as Response;
+
+describe('OpenSea boundary', () => {
+  it('reuses an already fetched exact order while still checking identity and current counter', async () => {
+    const order = buildMarketOrder(intent, '0', '1').order;
+    const identity = {
+      protocolAddress: MARKET_SEAPORT,
+      orderHash: order.orderHash
+    };
+    const known = {
+      identity,
+      components: order.components,
+      signature: '0x1234'
+    };
+    const buyIntent = {
+      ...intent,
+      kind: 'BUY' as const,
+      wallet: buyer,
+      recipient: gift,
+      order: identity
+    };
+    const mock = jest.fn().mockResolvedValue(
+      response({
+        fulfillment_data: {
+          transaction: {
+            function: 'fulfillBasicOrder_efficient_6GL6yc(tuple)',
+            chain: 1,
+            to: MARKET_SEAPORT,
+            value: '200',
+            input_data: { parameters: { signature: '0x1234' } }
+          }
+        }
+      })
+    );
+    const provider = new OpenSeaMarketplaceProvider({
+      apiKey: 'test-placeholder',
+      fetch: mock
+    });
+    await expect(
+      provider.prepareFulfillment(buyIntent, '0', known)
+    ).resolves.toMatchObject({ purpose: 'FULFILL', value: '200' });
+    expect(mock).toHaveBeenCalledTimes(1);
+    expect(mock.mock.calls[0][0]).toContain('/fulfillment_data');
+    mock.mockClear();
+    await expect(
+      provider.prepareFulfillment(buyIntent, '1', known)
+    ).rejects.toThrow(/counter/);
+    await expect(
+      provider.prepareFulfillment(buyIntent, '0', {
+        ...known,
+        identity: { ...identity, orderHash: '0x' + '9'.repeat(64) }
+      })
+    ).rejects.toThrow(/target/);
+    expect(mock).not.toHaveBeenCalled();
+  });
+  it('advertises a unit price only when the exact signed order supports an integral single-unit fill', () => {
+    const describe = (i: MarketTradeIntent, orderType: number) => {
+      const components = buildMarketOrder(i, '0', '1').order.components;
+      components.orderType = orderType;
+      const order = validateMarketOrder(i, components);
+      return describeMarketOrder(
+        {
+          identity: {
+            protocolAddress: MARKET_SEAPORT,
+            orderHash: order.orderHash
+          },
+          components,
+          signature: '0x'
+        },
+        i.asset,
+        i.kind === 'LIST' ? 'LISTING' : 'OFFER'
+      );
+    };
+    expect(describe(intent, 0).unitTotalWei).toBeUndefined();
+    expect(describe(intent, 1).unitTotalWei).toBe('100');
+    expect(
+      describe(
+        {
+          ...intent,
+          minNetWei: '197',
+          fees: [{ recipient: gift, amountWei: '3' }]
+        },
+        1
+      ).unitTotalWei
+    ).toBeUndefined();
+    expect(
+      describe({ ...intent, kind: 'OFFER', currency: MARKET_WETH }, 3)
+        .unitTotalWei
+    ).toBe('100');
+    expect(
+      describe(
+        {
+          ...intent,
+          quantity: '1',
+          asset: {
+            contract: '0x0c58ef43ff3032005e472cb5709f8908acb00205',
+            standard: 'ERC721',
+            tokenId: '1'
+          }
+        },
+        0
+      ).unitTotalWei
+    ).toBe('200');
+  });
+  it('normalizes the advanced uint count without weakening the exact order hash', async () => {
+    const order = buildMarketOrder(intent, '0', '1').order;
+    const { counter: _counter, ...parameters } = order.components;
+    const mock = jest
+      .fn()
+      .mockResolvedValueOnce(
+        response({
+          order: {
+            chain: 'ethereum',
+            protocol_address: MARKET_SEAPORT,
+            order_hash: order.orderHash,
+            protocol_data: { parameters: order.components }
+          }
+        })
+      )
+      .mockResolvedValueOnce(
+        response({
+          fulfillment_data: {
+            transaction: {
+              function: 'fulfillAdvancedOrder(tuple)',
+              chain: 1,
+              to: MARKET_SEAPORT,
+              value: '200',
+              input_data: {
+                advancedOrder: {
+                  parameters: {
+                    ...parameters,
+                    totalOriginalConsiderationItems: '2'
+                  },
+                  numerator: '1',
+                  denominator: '1',
+                  signature: '0x1234',
+                  extraData: '0x'
+                },
+                criteriaResolvers: [],
+                fulfillerConduitKey: MARKET_OPENSEA_CONDUIT_KEY,
+                recipient: gift
+              }
+            }
+          }
+        })
+      );
+    const provider = new OpenSeaMarketplaceProvider({
+      apiKey: 'test-placeholder',
+      fetch: mock
+    });
+    await expect(
+      provider.prepareFulfillment(
+        {
+          ...intent,
+          kind: 'BUY',
+          wallet: buyer,
+          recipient: gift,
+          order: { protocolAddress: MARKET_SEAPORT, orderHash: order.orderHash }
+        },
+        '0'
+      )
+    ).resolves.toMatchObject({ value: '200', purpose: 'FULFILL' });
+  });
+  it('returns provider coverage and pagination while preserving distinct orders for one token', async () => {
+    const order = buildMarketOrder(intent, '0', '1').order;
+    const publicOrder = {
+      chain: 'ethereum',
+      protocol_address: MARKET_SEAPORT,
+      order_hash: order.orderHash,
+      protocol_data: { parameters: order.components },
+      remaining_quantity: 2
+    };
+    const mock = jest
+      .fn()
+      .mockResolvedValueOnce(response({ collection: 'thememes6529' }))
+      .mockResolvedValueOnce(
+        response({
+          listings: [publicOrder, publicOrder],
+          next: 'next/opaque?cursor'
+        })
+      );
+    const provider = new OpenSeaMarketplaceProvider({
+      apiKey: 'test-placeholder',
+      fetch: mock
+    });
+    const page = await provider.discoverCollectionListings(
+      intent.asset.contract,
+      2,
+      'prior?cursor'
+    );
+    expect(page.listings).toHaveLength(2);
+    expect(page.coverage).toMatchObject({
+      receivedCount: 2,
+      acceptedCount: 2,
+      hasMore: true,
+      exhaustive: false
+    });
+    expect(mock.mock.calls[1][0]).toContain('next=prior%3Fcursor');
+  });
+  it('preserves the standard offer typed data and rejects unreviewed fee changes', async () => {
+    const baseIntent = {
+      ...intent,
+      kind: 'OFFER' as const,
+      currency: MARKET_WETH
+    };
+    const base = buildMarketOrder(baseIntent, '0', '1').order;
+    const mock = jest.fn().mockResolvedValue(
+      response({
+        steps: [
+          {
+            createOfferAction: {
+              signatureRequest: {
+                chainIdentifier: { chainArch: 'CHAIN_ARCH_EVM', chainId: 1 },
+                message: JSON.stringify(base.typedData)
+              }
+            }
+          }
+        ]
+      })
+    );
+    const provider = new OpenSeaMarketplaceProvider({
+      apiKey: 'test-placeholder',
+      fetch: mock
+    });
+    const prepared = await provider.prepareOrder(baseIntent);
+    expect(prepared.order).toEqual(base);
+    const body = JSON.parse(mock.mock.calls[0][1].body);
+    expect(body.use_creator_fee).toBe(false);
+    const requested = {
+      ...baseIntent,
+      minNetWei: '197',
+      fees: [...intent.fees, { recipient: maker, amountWei: '1' }]
+    };
+    await expect(provider.prepareOrder(requested)).rejects.toThrow();
+    await expect(
+      provider.prepareOrder({ ...baseIntent, recipient: buyer })
+    ).rejects.toThrow(/recipient/);
+  });
+  it.each(['LIST', 'OFFER'] as const)(
+    'publishes only the exact maker-authorized canonical %s order',
+    async (kind) => {
+      const wallet = Wallet.createRandom();
+      const publishIntent = {
+        ...intent,
+        kind,
+        wallet: wallet.address,
+        recipient: wallet.address,
+        currency: kind === 'OFFER' ? MARKET_WETH : MARKET_ZERO_ADDRESS
+      };
+      const order = buildMarketOrder(publishIntent, '0', '1').order;
+      const signature = await wallet.signTypedData(
+        order.typedData.domain,
+        order.typedData.types,
+        order.components
+      );
+      const mock = jest
+        .fn()
+        .mockResolvedValue(response({ order_hash: order.orderHash }));
+      const provider = new OpenSeaMarketplaceProvider({
+        apiKey: 'test-placeholder',
+        fetch: mock
+      });
+      await expect(
+        provider.publishOrder(publishIntent, order, signature)
+      ).resolves.toEqual({ orderHash: order.orderHash });
+      expect(mock.mock.calls[0][0]).toBe(
+        `https://api.opensea.io/api/v2/orders/ethereum/seaport/${kind === 'LIST' ? 'listings' : 'offers'}`
+      );
+      expect(mock.mock.calls[0][1].method).toBe('POST');
+      expect(JSON.parse(mock.mock.calls[0][1].body)).toEqual({
+        parameters: {
+          ...order.components,
+          totalOriginalConsiderationItems: order.components.consideration.length
+        },
+        protocol_address: MARKET_SEAPORT,
+        signature
+      });
+      mock.mockClear();
+      const stranger = Wallet.createRandom();
+      const wrongSignature = await stranger.signTypedData(
+        order.typedData.domain,
+        order.typedData.types,
+        order.components
+      );
+      await expect(
+        provider.publishOrder(publishIntent, order, wrongSignature)
+      ).rejects.toThrow(/signature/);
+      expect(mock).not.toHaveBeenCalled();
+      mock.mockResolvedValue(response({ order_hash: '0x' + '9'.repeat(64) }));
+      await expect(
+        provider.publishOrder(publishIntent, order, signature)
+      ).rejects.toThrow(/could not be confirmed/);
+      expect(mock).toHaveBeenCalledTimes(1);
+    }
+  );
+  it('treats a best-listing 404 as empty while authentication errors remain unavailable', async () => {
+    const mock = jest
+      .fn()
+      .mockResolvedValueOnce(response({ collection: 'thememes6529' }))
+      .mockResolvedValueOnce({ ok: false, status: 404 });
+    const provider = new OpenSeaMarketplaceProvider({
+      apiKey: 'test-placeholder',
+      fetch: mock
+    });
+    await expect(
+      provider.discoverOrders(intent.asset, 'LISTING')
+    ).resolves.toEqual([]);
+    mock
+      .mockResolvedValueOnce(response({ collection: 'thememes6529' }))
+      .mockResolvedValueOnce({ ok: false, status: 401 });
+    await expect(
+      provider.discoverOrders(intent.asset, 'LISTING')
+    ).rejects.toThrow(/provider/);
+  });
+  it('uses explicit quantities, fees and expiry and extracts only canonical typed data', async () => {
+    const order = buildMarketOrder(intent, '0', '1').order;
+    const mock = jest.fn().mockResolvedValue(
+      response({
+        steps: [
+          { nftApprovalAction: { data: '0xmalicious' } },
+          {
+            createListingsAction: {
+              signatureRequest: {
+                chainIdentifier: { chainArch: 'CHAIN_ARCH_EVM', chainId: 1 },
+                message: JSON.stringify(order.typedData)
+              }
+            }
+          }
+        ]
+      })
+    );
+    const provider = new OpenSeaMarketplaceProvider({
+      apiKey: 'test-placeholder',
+      fetch: mock
+    });
+    expect((await provider.prepareOrder(intent)).order.orderHash).toBe(
+      order.orderHash
+    );
+    const body = JSON.parse(mock.mock.calls[0][1].body);
+    expect(body.items[0]).toMatchObject({
+      quantity: '2',
+      start_time: '2023-11-14T22:13:20.000Z',
+      end_time: '2030-03-17T17:46:40.000Z'
+    });
+    expect(body.use_creator_fee).toBe(false);
+    expect(body.items[0].price.amount).toBe('0.0000000000000001');
+  });
+  it('rebuilds basic listings as advanced gift transactions and passes explicit fill units', async () => {
+    const order = buildMarketOrder(intent, '0', '1').order;
+    const mock = jest
+      .fn()
+      .mockResolvedValueOnce(
+        response({
+          order: {
+            chain: 'ethereum',
+            protocol_address: MARKET_SEAPORT,
+            order_hash: order.orderHash,
+            protocol_data: { parameters: order.components }
+          }
+        })
+      )
+      .mockResolvedValueOnce(
+        response({
+          fulfillment_data: {
+            transaction: {
+              function: 'fulfillBasicOrder_efficient_6GL6yc(tuple)',
+              chain: 1,
+              to: MARKET_SEAPORT,
+              value: '200',
+              input_data: { parameters: { signature: '0x1234' } }
+            }
+          }
+        })
+      );
+    const provider = new OpenSeaMarketplaceProvider({
+      apiKey: 'test-placeholder',
+      fetch: mock
+    });
+    const tx = await provider.prepareFulfillment(
+      {
+        ...intent,
+        kind: 'BUY',
+        wallet: buyer,
+        recipient: gift,
+        order: { protocolAddress: MARKET_SEAPORT, orderHash: order.orderHash }
+      },
+      '0'
+    );
+    const body = JSON.parse(mock.mock.calls[1][1].body);
+    expect(body).toMatchObject({
+      units_to_fill: '2',
+      recipient: gift,
+      include_optional_creator_fees: false
+    });
+    expect(
+      MARKET_SEAPORT_INTERFACE.decodeFunctionData(
+        'fulfillAdvancedOrder',
+        tx.data
+      ).recipient.toLowerCase()
+    ).toBe(gift);
+  });
+  it('does not expose transport secrets or retry an uncertain publication', async () => {
+    const mock = jest
+      .fn()
+      .mockRejectedValue(new Error('x-api-key secret and bearer signature'));
+    const provider = new OpenSeaMarketplaceProvider({
+      apiKey: 'never-print',
+      fetch: mock
+    });
+    await expect(provider.getFeePolicy(intent.asset)).rejects.toThrow(
+      'The marketplace provider could not complete the request.'
+    );
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
+  it('calculates each fee with integers and includes optional fees only when reviewed', () => {
+    const policy = {
+      version: 'v',
+      fees: [
+        { recipient: maker, basisPoints: 100, required: true },
+        { recipient: gift, basisPoints: 690, required: false }
+      ]
+    };
+    expect(marketFeesForTotal(policy, '101', false)).toEqual([
+      { recipient: maker, amountWei: '1' }
+    ]);
+    expect(marketFeesForTotal(policy, '10000', true)).toEqual([
+      { recipient: maker, amountWei: '100' },
+      { recipient: gift, amountWei: '690' }
+    ]);
+  });
+});

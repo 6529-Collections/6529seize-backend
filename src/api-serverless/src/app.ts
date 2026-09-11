@@ -27,6 +27,7 @@ import gasRoutes from './gas/gas.routes';
 import generatedOpenApiRoutes from './generated/routes/openapi-generated.routes';
 import { validateDocumentationRawJson } from '@/artwork-documentation/artwork-documentation.raw-json';
 import { documentationErrorMiddleware } from '@/api/artwork-documentation/artwork-documentation.http';
+import { marketErrorMiddleware } from '@/api/marketplace/marketplace.http';
 import identitiesRoutes from './identities/identities.routes';
 import contentModerationRoutes from './content-moderation/content-moderation.routes';
 import identitySubscriptionsRoutes from './identity-subscriptions/identity-subscriptions.routes';
@@ -1726,6 +1727,7 @@ async function initializeApp() {
   );
 
   app.use(documentationErrorMiddleware);
+  app.use(marketErrorMiddleware);
   if (sentryContext.isConfigured()) {
     app.use(Sentry.Handlers.errorHandler());
     app.use(sentryFlusherMiddleware());

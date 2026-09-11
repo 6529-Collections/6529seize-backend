@@ -10,6 +10,45 @@ The main runtime pieces are:
 - SQS and EventBridge as the async execution fabric.
 - S3, CloudFront, Arweave, Ethereum/RPC providers, Firebase, Sentry, CloudWatch, Discord, and SNS around the core.
 
+## Profile collecting and marketplace operations
+
+The API owns `/collect/*` and `/market/*`. Collecting derives versioned catalogs
+and set requirements for The Memes, Gradients and Pebbles, using the profile's
+confirmed consolidated wallets. Existing Pebbles trait rankings use that same
+profile scope. TDH projections reuse the production calculation kernel and
+first verify parity with the official snapshot.
+
+The marketplace adapter obtains unsigned OpenSea Seaport actions server-side.
+Closed schemas, a protocol/spender registry, independent action decoding and
+chain simulation bind the exact artwork, quantity, wallet, recipient, fees and
+economic limits. The client independently validates before asking its wallet
+to sign or send. Purchase fulfillment delivers directly to a reviewed profile
+or third-party recipient. The backend never holds user signing keys.
+
+`market_operations` and `market_operation_events` persist idempotent operations
+and state transitions. A per-wallet/currency lock serializes potential offer
+exposure before signable terms are revealed. `market_reviewed_transactions`
+retains immutable execution payloads so an earlier reviewed transaction can be
+recovered after refresh. A unique transaction-hash binding prevents duplicate
+settlement attribution. Receipt reconciliation verifies canonical blocks,
+Seaport events and NFT transfers; potential exposure persists until verified
+fill, cancellation or safe-chain expiry.
+
+`collect_plans` stores incremental listing scans with renewable leases and
+profile/catalog invalidation. It distinguishes a completed asset scan from
+incomplete market coverage. `collect_rules` and `collect_rule_operations` store
+fixed targets, review limits, one outstanding operation and monotonic verified
+acquisitions. Rules only prepare transactions for owner approval. Their limits
+are not a smart-contract-enforced mandate or authority to broadcast unattended.
+
+Deploy the additive entity changes through `dbMigrationsLoop` before the API,
+then deploy the dependent frontend. The exported TDH helper does not change the
+scheduled TDH calculation and does not require a TDH loop deployment.
+`MARKETPLACE_TRADING_ENABLED=false` stops new trade preparation/publication;
+inspection, transaction reconciliation and direct cancellation remain available.
+The default enables supported actions when provider/RPC configuration exists.
+Keep operation history and exposure tables when disabling or rolling back trading.
+
 ## High-Level Diagram
 
 This is the compact map. Lambda boxes are intentionally just service names; trigger type is shown by the surrounding group or the queue/topic feeding the Lambda. The tables below carry the longer descriptions so the diagram stays readable.
