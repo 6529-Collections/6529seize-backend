@@ -106,6 +106,14 @@ export { MentionAliasEntity, MentionAliasMemberEntity } from './IMentionAlias';
 export { MintingClaimEntity } from './IMintingClaim';
 export { MetricRollupHourEntity } from './IMetricRollupHour';
 export {
+  MarketDepthCollectionStateEntity,
+  MarketDepthCurrentOrderEntity,
+  MarketDepthCursorEntity,
+  MarketDepthEventEntity,
+  MarketDepthReconciliationEntity,
+  MarketDepthSnapshotEntity
+} from './IMarketDepth';
+export {
   NextGenAllowlist,
   NextGenAllowlistBurn,
   NextGenAllowlistCollection,
