@@ -10,6 +10,15 @@ The main runtime pieces are:
 - SQS and EventBridge as the async execution fabric.
 - S3, CloudFront, Arweave, Ethereum/RPC providers, Firebase, Sentry, CloudWatch, Discord, and SNS around the core.
 
+The six Sharp media packages also accept the exact direct-invocation payload
+`{"operator_action":"verify_media_dependencies_v1"}` for release diagnostics.
+This IAM-invoked path runs fixed synthetic codec operations in memory and
+returns native versions before entering database, queue, storage or notification
+processing. It adds no HTTP route; ordinary SQS, schedule and API Gateway
+events keep their existing handlers. This lets operators verify each deployed
+Lambda, including production-only media resizing and the three rememes
+functions, without invoking whole production loops.
+
 ## Profile collecting and marketplace operations
 
 The API owns `/collect/*` and `/market/*`. Collecting derives versioned catalogs

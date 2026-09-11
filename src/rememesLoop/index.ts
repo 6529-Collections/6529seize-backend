@@ -1,3 +1,4 @@
+import { withMediaDependencySmoke } from '@/media/media-dependency-smoke';
 import { createReadStream } from 'fs';
 import { doInDbContext } from '../secrets';
 import { Rememe, RememeSource, RememeUpload } from '../entities/IRememe';
@@ -50,7 +51,7 @@ const myarweave = Arweave.init({
 
 let alchemy: Alchemy;
 
-export const handler = sentryContext.wrapLambdaHandler(async () => {
+const liveHandler = sentryContext.wrapLambdaHandler(async () => {
   await doInDbContext(
     async () => {
       const loadFile = process.env.REMEMES_LOAD_FILE == 'true';
@@ -360,3 +361,5 @@ async function persistS3() {
   const rememes: Rememe[] = await fetchMissingS3Rememes();
   await persistRememesS3(rememes);
 }
+
+export const handler = withMediaDependencySmoke(liveHandler);
