@@ -122,6 +122,9 @@ export interface MarketDepthSnapshotReadOptions {
   token_id?: string;
   /** Large provider/protocol payloads are retained in DB but can be omitted. */
   include_payloads?: boolean;
+  /** Bound collection-wide discovery without reading the much larger bid book. */
+  side?: MarketDepthOrderSide;
+  limit?: number;
 }
 
 export interface MarketDepthSnapshotArchive {

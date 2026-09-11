@@ -30,6 +30,18 @@ confirmed consolidated wallets. Existing Pebbles trait rankings use that same
 profile scope. TDH projections reuse the production calculation kernel and
 first verify parity with the official snapshot.
 
+Anonymous `GET /collect/tdh-listings` compares supported ETH asks across the
+completed market-depth collection index. It reuses the marketplace adapter to
+validate stored signed order identities, exact fill quantities and fees, and
+applies observed cancellations and fills before ranking. Comparison uses exact
+wei against the indexed base accrual rate rounded to production hundredths,
+without inheriting seller holding time or applying profile multipliers. Reads
+are bounded across collection partitions; freshness and index coverage remain
+explicit. A short-lived cache contains only public discovery DTOs, and cursors
+bind the ranked content, catalog and collection. Checkout still obtains a fresh
+executable quote. This read-only endpoint adds no table or loop dependency and
+requires only the API deployment, followed by its frontend consumer.
+
 The marketplace adapter obtains unsigned OpenSea Seaport actions server-side.
 Closed schemas, a protocol/spender registry, independent action decoding and
 chain simulation bind the exact artwork, quantity, wallet, recipient, fees and

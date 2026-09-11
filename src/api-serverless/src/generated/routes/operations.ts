@@ -52,6 +52,7 @@ import { ApiCollectRulePause } from '@/api/generated/models/ApiCollectRulePause'
 import { ApiCollectRulePrepare } from '@/api/generated/models/ApiCollectRulePrepare';
 import { ApiCollectRulePrepared } from '@/api/generated/models/ApiCollectRulePrepared';
 import { ApiCollectRules } from '@/api/generated/models/ApiCollectRules';
+import { ApiCollectTdhListings } from '@/api/generated/models/ApiCollectTdhListings';
 import { ApiCollectTdhProjection } from '@/api/generated/models/ApiCollectTdhProjection';
 import { ApiCollectTdhRanking } from '@/api/generated/models/ApiCollectTdhRanking';
 import { ApiCollectTdhRankingRequest } from '@/api/generated/models/ApiCollectTdhRankingRequest';
@@ -957,6 +958,24 @@ export type ReconcileCollectRuleRequest = Request<
   ApiResponse<ReconcileCollectRuleResponse>,
   never,
   ReconcileCollectRuleQuery,
+  Record<string, never>
+>;
+
+export type GetCollectTdhListingsPathParams = Record<string, never>;
+
+export interface GetCollectTdhListingsQuery {
+  "family"?: string;
+  "cursor"?: string;
+  "limit"?: number;
+}
+
+export type GetCollectTdhListingsResponse = ApiCollectTdhListings;
+
+export type GetCollectTdhListingsRequest = Request<
+  GetCollectTdhListingsPathParams,
+  ApiResponse<GetCollectTdhListingsResponse>,
+  never,
+  GetCollectTdhListingsQuery,
   Record<string, never>
 >;
 

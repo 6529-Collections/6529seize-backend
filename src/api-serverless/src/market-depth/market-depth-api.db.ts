@@ -9,7 +9,7 @@ import {
   NFTS_TABLE
 } from '@/constants';
 import { NEXTGEN_CORE } from '@/api/nextgen/abis';
-import { NotFoundException } from '@/exceptions';
+import { CustomApiCompliantException, NotFoundException } from '@/exceptions';
 import { NEXTGEN_TOKENS_TABLE } from '@/nextgen/nextgen_constants';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { marketDepthDb } from '@/market-depth/market-depth.db';
@@ -135,16 +135,25 @@ export class MarketDepthApiDb extends LazyDbAccessCompatibleService {
   }
 
   async getBooks(
-    token: MarketTokenContext
+    token: MarketTokenContext,
+    collectionListings = false
   ): Promise<CurrentMarketDepthSnapshot[]> {
     const partitions = await this.getPartitions(token);
+    if (collectionListings && partitions.length > 8)
+      throw new CustomApiCompliantException(
+        503,
+        'The indexed collection is temporarily unavailable.'
+      );
+    const collectionLimit = Math.floor(10000 / Math.max(1, partitions.length));
     const books = await Promise.all(
       partitions.map((partition) =>
         marketDepthDb.getLatestCompletedSnapshot(
           partition.source,
           token.contract,
           partition.collection_slug,
-          { token_id: token.token_id, include_payloads: false }
+          collectionListings
+            ? { side: 'ask', limit: collectionLimit }
+            : { token_id: token.token_id, include_payloads: false }
         )
       )
     );
