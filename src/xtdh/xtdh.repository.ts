@@ -1,7 +1,8 @@
 import {
   ConnectionWrapper,
   dbSupplier,
-  LazyDbAccessCompatibleService
+  LazyDbAccessCompatibleService,
+  SqlExecutor
 } from '../sql-executor';
 import { RequestContext } from '../request.context';
 import {
@@ -33,6 +34,7 @@ import { NotFoundException } from '../exceptions';
 import { XTdhGrantTokenEntity } from '../entities/IXTdhGrantToken';
 import { numbers } from '../numbers';
 import { PageSortDirection } from '../api-serverless/src/page-request';
+import { XTdhStatsDb, xTdhStatsDb } from '@/xtdh/xtdh-stats.db';
 
 export type GrantWithCap = XTdhGrantEntity & { grantor_x_tdh_rate: number };
 
@@ -225,6 +227,13 @@ const withSql = (ctes: string[], tail: string) =>
 
 export class XTdhRepository extends LazyDbAccessCompatibleService {
   private readonly logger = Logger.get(this.constructor.name);
+
+  constructor(
+    sqlExecutorGetter: () => SqlExecutor,
+    private readonly statsDb: XTdhStatsDb = xTdhStatsDb
+  ) {
+    super(sqlExecutorGetter);
+  }
 
   async getWalletsWithoutIdentities(ctx: RequestContext): Promise<string[]> {
     try {
@@ -807,6 +816,7 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
     },
     ctx: RequestContext
   ) {
+    this.assertStandaloneStatsRebuild(ctx);
     const TABLE = `${XTDH_TOKEN_STATS_TABLE_PREFIX}${slot}`;
     const GRANT_TABLE = `${XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX}${slot}`;
 
@@ -922,11 +932,7 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
                            AND ac.token_id      = ta.token_id
       `;
 
-      await this.db.execute(
-        sql,
-        { cut_ms },
-        { wrappedConnection: ctx.connection }
-      );
+      await this.statsDb.insertFromSelect(sql, { cut_ms }, ctx);
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->refillXTdhTokenStats`);
     }
@@ -958,6 +964,7 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
     },
     ctx: RequestContext
   ) {
+    this.assertStandaloneStatsRebuild(ctx);
     const TABLE = XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX + slot;
 
     try {
@@ -1099,13 +1106,21 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
       `
         );
 
-      await this.db.execute(
+      await this.statsDb.insertFromSelect(
         sql,
         { x_tdh_epoch_ms: epochMs },
-        { wrappedConnection: ctx.connection }
+        ctx
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->refillXTdhGrantStats`);
+    }
+  }
+
+  private assertStandaloneStatsRebuild(ctx: RequestContext) {
+    if (ctx.connection) {
+      throw new Error(
+        'xTDH stats rebuild must own its transactions; TRUNCATE would commit a caller transaction'
+      );
     }
   }
 

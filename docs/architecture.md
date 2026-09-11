@@ -721,6 +721,13 @@ source batch size stays at `1` and Lambda reserved concurrency stays at `1` to
 avoid parallel xTDH work across groups. The stats phase rebuilds the inactive
 xTDH stats slot and activates it only after the rebuild succeeds; a redelivered
 stats message truncates and refills the inactive slot again before activation.
+Each grant/token stats `INSERT ... SELECT` runs in a dedicated `READ COMMITTED`
+transaction after its table is truncated, so source reads do not take shared
+row locks against ownership indexing, grants, or consolidation writes. The
+transaction isolation setting applies only to that insert; session defaults
+and universe transaction semantics stay unchanged. Failed inserts roll back
+before SQS retries the inactive-slot rebuild. Stats refills reject a supplied
+transaction because `TRUNCATE` would implicitly commit it.
 
 ## 6529 Help Bot Flow
 
