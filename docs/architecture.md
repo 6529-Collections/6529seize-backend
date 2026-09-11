@@ -568,6 +568,20 @@ restoring a prior publication checks the caller's expected current state. Schema
 rollout is additive: deploy `dbMigrationsLoop`, then `api`; existing published
 packages remain readable without retroactive manifest generation.
 
+Connected CMS agents use a separate opaque capability boundary. An owner grants
+read and proposal-only access to one immutable saved draft/profile/version/hash;
+wallet JWTs and publish rights are not delegated. `profile_cms_agent_grants`
+stores only token digests and expiring/revocable scopes and quotas.
+`profile_cms_agent_proposals` stores bounded full-package candidates and terminal
+owner review states, while `profile_cms_agent_events` records issuance, revocation,
+submission and disposition. Writer transactions serialize profile quotas,
+revocation, idempotency and proposal audit. The service performs no uploads,
+external fetches, model inference, saves or publication. Applied review state
+requires an independently saved newer draft with the exact candidate hash.
+Owner lists return summaries and individual reads return one candidate. This
+adds no Lambda or queue; deploy `dbMigrationsLoop` before `api`. See
+[external-agent proposal API](profile-cms-agent-proposals.md).
+
 Profile CMS wallet gallery snapshots are read-only API projections over
 `nft_owners`, `ens`, `nfts`, `nfts_meme_lab`, and `nextgen_tokens`. ENS inputs use
 bounded onchain forward resolution through an isolated provider for the

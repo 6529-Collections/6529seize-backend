@@ -272,12 +272,14 @@ export * from '../models/ApiCreateNewWaveVotingConfig';
 export * from '../models/ApiCreateNewWaveVotingConfigBase';
 export * from '../models/ApiCreateOrUpdateProfileRequest';
 export * from '../models/ApiCreateProfileCicStatement';
+export * from '../models/ApiCreateProfileCmsAgentGrantRequest';
 export * from '../models/ApiCreateProfileCmsWalletGallerySnapshotRequest';
 export * from '../models/ApiCreateWaveConfig';
 export * from '../models/ApiCreateWaveDropRequest';
 export * from '../models/ApiCreateWaveMetadataRequest';
 export * from '../models/ApiCreateWaveOutcome';
 export * from '../models/ApiCreateWaveOutcomeDistributionItem';
+export * from '../models/ApiCreatedProfileCmsAgentGrant';
 export * from '../models/ApiCuratedProfileWaveDropsPage';
 export * from '../models/ApiCurationDrop';
 export * from '../models/ApiCurationDropsPage';
@@ -490,8 +492,14 @@ export * from '../models/ApiPageWithoutCount';
 export * from '../models/ApiPaymentDetails';
 export * from '../models/ApiProfileBlockState';
 export * from '../models/ApiProfileClassification';
+export * from '../models/ApiProfileCmsAgentCandidateValidation';
+export * from '../models/ApiProfileCmsAgentConstraints';
+export * from '../models/ApiProfileCmsAgentDraft';
+export * from '../models/ApiProfileCmsAgentGrant';
 export * from '../models/ApiProfileCmsAgentPatchValidationResult';
 export * from '../models/ApiProfileCmsAgentPatchValidationResultTarget';
+export * from '../models/ApiProfileCmsAgentProposal';
+export * from '../models/ApiProfileCmsAgentProposalSummary';
 export * from '../models/ApiProfileCmsAgentSchemaBundle';
 export * from '../models/ApiProfileCmsAgentSchemaBundleEndpointAuth';
 export * from '../models/ApiProfileCmsAgentSchemaBundleEndpoints';
@@ -556,6 +564,7 @@ export * from '../models/ApiReplyToDrop';
 export * from '../models/ApiReplyToDropAuthor';
 export * from '../models/ApiReplyToDropResponse';
 export * from '../models/ApiReplyToDropV2';
+export * from '../models/ApiReviewProfileCmsAgentProposalRequest';
 export * from '../models/ApiRollbackProfileCmsPackageRequest';
 export * from '../models/ApiSaveEulaConsentRequest';
 export * from '../models/ApiSaveEulaConsentResponse';
@@ -577,6 +586,7 @@ export * from '../models/ApiSubmissionDropContext';
 export * from '../models/ApiSubmissionDropStatus';
 export * from '../models/ApiSubmissionDropVoting';
 export * from '../models/ApiSubmissionDropVotingContextProfileContext';
+export * from '../models/ApiSubmitProfileCmsAgentProposalRequest';
 export * from '../models/ApiSubscriptionCoverage';
 export * from '../models/ApiSubscriptionCoverageDeadlineBasis';
 export * from '../models/ApiSubscriptionCoverageEligibilityBasis';
@@ -624,6 +634,7 @@ export * from '../models/ApiUploadItem';
 export * from '../models/ApiUploadPartOfMultipartUploadRequest';
 export * from '../models/ApiUploadPartOfMultipartUploadResponse';
 export * from '../models/ApiUploadsPage';
+export * from '../models/ApiValidateProfileCmsAgentCandidateRequest';
 export * from '../models/ApiValidateProfileCmsAgentPatchRequest';
 export * from '../models/ApiValidateProfileCmsPackageRequest';
 export * from '../models/ApiWallet';
@@ -1057,12 +1068,14 @@ import { ApiCreateNewWaveVotingConfigClass } from '../models/ApiCreateNewWaveVot
 import { ApiCreateNewWaveVotingConfigBase          } from '../models/ApiCreateNewWaveVotingConfigBase';
 import { ApiCreateOrUpdateProfileRequest        } from '../models/ApiCreateOrUpdateProfileRequest';
 import { ApiCreateProfileCicStatement     } from '../models/ApiCreateProfileCicStatement';
+import { ApiCreateProfileCmsAgentGrantRequest } from '../models/ApiCreateProfileCmsAgentGrantRequest';
 import { ApiCreateProfileCmsWalletGallerySnapshotRequest } from '../models/ApiCreateProfileCmsWalletGallerySnapshotRequest';
 import { ApiCreateWaveConfig          } from '../models/ApiCreateWaveConfig';
 import { ApiCreateWaveDropRequest } from '../models/ApiCreateWaveDropRequest';
 import { ApiCreateWaveMetadataRequest } from '../models/ApiCreateWaveMetadataRequest';
 import { ApiCreateWaveOutcome        } from '../models/ApiCreateWaveOutcome';
 import { ApiCreateWaveOutcomeDistributionItem } from '../models/ApiCreateWaveOutcomeDistributionItem';
+import { ApiCreatedProfileCmsAgentGrant } from '../models/ApiCreatedProfileCmsAgentGrant';
 import { ApiCuratedProfileWaveDropsPage } from '../models/ApiCuratedProfileWaveDropsPage';
 import { ApiCurationDrop                                   } from '../models/ApiCurationDrop';
 import { ApiCurationDropsPage } from '../models/ApiCurationDropsPage';
@@ -1275,8 +1288,14 @@ import { ApiPageWithoutCount } from '../models/ApiPageWithoutCount';
 import { ApiPaymentDetails } from '../models/ApiPaymentDetails';
 import { ApiProfileBlockState } from '../models/ApiProfileBlockState';
 import { ApiProfileClassification } from '../models/ApiProfileClassification';
+import { ApiProfileCmsAgentCandidateValidation } from '../models/ApiProfileCmsAgentCandidateValidation';
+import { ApiProfileCmsAgentConstraints    , ApiProfileCmsAgentConstraintsHashNormalizationEnum    } from '../models/ApiProfileCmsAgentConstraints';
+import { ApiProfileCmsAgentDraft   , ApiProfileCmsAgentDraftProposalSchemaEnum   } from '../models/ApiProfileCmsAgentDraft';
+import { ApiProfileCmsAgentGrant } from '../models/ApiProfileCmsAgentGrant';
 import { ApiProfileCmsAgentPatchValidationResult, ApiProfileCmsAgentPatchValidationResultSchemaEnum          } from '../models/ApiProfileCmsAgentPatchValidationResult';
 import { ApiProfileCmsAgentPatchValidationResultTarget } from '../models/ApiProfileCmsAgentPatchValidationResultTarget';
+import { ApiProfileCmsAgentProposal, ApiProfileCmsAgentProposalStatusEnum                } from '../models/ApiProfileCmsAgentProposal';
+import { ApiProfileCmsAgentProposalSummary, ApiProfileCmsAgentProposalSummaryStatusEnum               } from '../models/ApiProfileCmsAgentProposalSummary';
 import { ApiProfileCmsAgentSchemaBundle, ApiProfileCmsAgentSchemaBundleSchemaEnum      , ApiProfileCmsAgentSchemaBundleDataClassesEnum       } from '../models/ApiProfileCmsAgentSchemaBundle';
 import { ApiProfileCmsAgentSchemaBundleEndpointAuth, ApiProfileCmsAgentSchemaBundleEndpointAuthSourcePacketEnum  , ApiProfileCmsAgentSchemaBundleEndpointAuthValidatePackageEnum  , ApiProfileCmsAgentSchemaBundleEndpointAuthValidatePatchEnum   } from '../models/ApiProfileCmsAgentSchemaBundleEndpointAuth';
 import { ApiProfileCmsAgentSchemaBundleEndpoints } from '../models/ApiProfileCmsAgentSchemaBundleEndpoints';
@@ -1341,6 +1360,7 @@ import { ApiReplyToDrop } from '../models/ApiReplyToDrop';
 import { ApiReplyToDropAuthor } from '../models/ApiReplyToDropAuthor';
 import { ApiReplyToDropResponse } from '../models/ApiReplyToDropResponse';
 import { ApiReplyToDropV2 } from '../models/ApiReplyToDropV2';
+import { ApiReviewProfileCmsAgentProposalRequest, ApiReviewProfileCmsAgentProposalRequestStatusEnum        } from '../models/ApiReviewProfileCmsAgentProposalRequest';
 import { ApiRollbackProfileCmsPackageRequest } from '../models/ApiRollbackProfileCmsPackageRequest';
 import { ApiSaveEulaConsentRequest    } from '../models/ApiSaveEulaConsentRequest';
 import { ApiSaveEulaConsentResponse   } from '../models/ApiSaveEulaConsentResponse';
@@ -1362,6 +1382,7 @@ import { ApiSubmissionDropContext        } from '../models/ApiSubmissionDropCont
 import { ApiSubmissionDropStatus } from '../models/ApiSubmissionDropStatus';
 import { ApiSubmissionDropVoting } from '../models/ApiSubmissionDropVoting';
 import { ApiSubmissionDropVotingContextProfileContext } from '../models/ApiSubmissionDropVotingContextProfileContext';
+import { ApiSubmitProfileCmsAgentProposalRequest } from '../models/ApiSubmitProfileCmsAgentProposalRequest';
 import { ApiSubscriptionCoverage                 } from '../models/ApiSubscriptionCoverage';
 import { ApiSubscriptionCoverageDeadlineBasis } from '../models/ApiSubscriptionCoverageDeadlineBasis';
 import { ApiSubscriptionCoverageEligibilityBasis } from '../models/ApiSubscriptionCoverageEligibilityBasis';
@@ -1409,6 +1430,7 @@ import { ApiUploadItem } from '../models/ApiUploadItem';
 import { ApiUploadPartOfMultipartUploadRequest } from '../models/ApiUploadPartOfMultipartUploadRequest';
 import { ApiUploadPartOfMultipartUploadResponse } from '../models/ApiUploadPartOfMultipartUploadResponse';
 import { ApiUploadsPage } from '../models/ApiUploadsPage';
+import { ApiValidateProfileCmsAgentCandidateRequest } from '../models/ApiValidateProfileCmsAgentCandidateRequest';
 import { ApiValidateProfileCmsAgentPatchRequest } from '../models/ApiValidateProfileCmsAgentPatchRequest';
 import { ApiValidateProfileCmsPackageRequest } from '../models/ApiValidateProfileCmsPackageRequest';
 import { ApiWallet } from '../models/ApiWallet';
@@ -1694,7 +1716,11 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiOgMetadataEntityType",
     "ApiPageSortDirection",
     "ApiProfileClassification",
+    "ApiProfileCmsAgentConstraintsHashNormalizationEnum",
+    "ApiProfileCmsAgentDraftProposalSchemaEnum",
     "ApiProfileCmsAgentPatchValidationResultSchemaEnum",
+    "ApiProfileCmsAgentProposalStatusEnum",
+    "ApiProfileCmsAgentProposalSummaryStatusEnum",
     "ApiProfileCmsAgentSchemaBundleSchemaEnum",
     "ApiProfileCmsAgentSchemaBundleDataClassesEnum",
     "ApiProfileCmsAgentSchemaBundleEndpointAuthSourcePacketEnum",
@@ -1723,6 +1749,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiRedeemConnectionShareRequestTargetClientTypeEnum",
     "ApiRedeemConnectionShareResponseClientTypeEnum",
     "ApiRepDirection",
+    "ApiReviewProfileCmsAgentProposalRequestStatusEnum",
     "ApiSessionLoginRequestClientTypeEnum",
     "ApiSessionLoginRequestWalletKindHintEnum",
     "ApiSessionLoginRequestSignatureVersionEnum",
@@ -2027,12 +2054,14 @@ let typeMap: {[index: string]: any} = {
     "ApiCreateNewWaveVotingConfigBase": ApiCreateNewWaveVotingConfigBase,
     "ApiCreateOrUpdateProfileRequest": ApiCreateOrUpdateProfileRequest,
     "ApiCreateProfileCicStatement": ApiCreateProfileCicStatement,
+    "ApiCreateProfileCmsAgentGrantRequest": ApiCreateProfileCmsAgentGrantRequest,
     "ApiCreateProfileCmsWalletGallerySnapshotRequest": ApiCreateProfileCmsWalletGallerySnapshotRequest,
     "ApiCreateWaveConfig": ApiCreateWaveConfig,
     "ApiCreateWaveDropRequest": ApiCreateWaveDropRequest,
     "ApiCreateWaveMetadataRequest": ApiCreateWaveMetadataRequest,
     "ApiCreateWaveOutcome": ApiCreateWaveOutcome,
     "ApiCreateWaveOutcomeDistributionItem": ApiCreateWaveOutcomeDistributionItem,
+    "ApiCreatedProfileCmsAgentGrant": ApiCreatedProfileCmsAgentGrant,
     "ApiCuratedProfileWaveDropsPage": ApiCuratedProfileWaveDropsPage,
     "ApiCurationDrop": ApiCurationDrop,
     "ApiCurationDropsPage": ApiCurationDropsPage,
@@ -2222,8 +2251,14 @@ let typeMap: {[index: string]: any} = {
     "ApiPageWithoutCount": ApiPageWithoutCount,
     "ApiPaymentDetails": ApiPaymentDetails,
     "ApiProfileBlockState": ApiProfileBlockState,
+    "ApiProfileCmsAgentCandidateValidation": ApiProfileCmsAgentCandidateValidation,
+    "ApiProfileCmsAgentConstraints": ApiProfileCmsAgentConstraints,
+    "ApiProfileCmsAgentDraft": ApiProfileCmsAgentDraft,
+    "ApiProfileCmsAgentGrant": ApiProfileCmsAgentGrant,
     "ApiProfileCmsAgentPatchValidationResult": ApiProfileCmsAgentPatchValidationResult,
     "ApiProfileCmsAgentPatchValidationResultTarget": ApiProfileCmsAgentPatchValidationResultTarget,
+    "ApiProfileCmsAgentProposal": ApiProfileCmsAgentProposal,
+    "ApiProfileCmsAgentProposalSummary": ApiProfileCmsAgentProposalSummary,
     "ApiProfileCmsAgentSchemaBundle": ApiProfileCmsAgentSchemaBundle,
     "ApiProfileCmsAgentSchemaBundleEndpointAuth": ApiProfileCmsAgentSchemaBundleEndpointAuth,
     "ApiProfileCmsAgentSchemaBundleEndpoints": ApiProfileCmsAgentSchemaBundleEndpoints,
@@ -2283,6 +2318,7 @@ let typeMap: {[index: string]: any} = {
     "ApiReplyToDropAuthor": ApiReplyToDropAuthor,
     "ApiReplyToDropResponse": ApiReplyToDropResponse,
     "ApiReplyToDropV2": ApiReplyToDropV2,
+    "ApiReviewProfileCmsAgentProposalRequest": ApiReviewProfileCmsAgentProposalRequest,
     "ApiRollbackProfileCmsPackageRequest": ApiRollbackProfileCmsPackageRequest,
     "ApiSaveEulaConsentRequest": ApiSaveEulaConsentRequest,
     "ApiSaveEulaConsentResponse": ApiSaveEulaConsentResponse,
@@ -2303,6 +2339,7 @@ let typeMap: {[index: string]: any} = {
     "ApiSubmissionDropContext": ApiSubmissionDropContext,
     "ApiSubmissionDropVoting": ApiSubmissionDropVoting,
     "ApiSubmissionDropVotingContextProfileContext": ApiSubmissionDropVotingContextProfileContext,
+    "ApiSubmitProfileCmsAgentProposalRequest": ApiSubmitProfileCmsAgentProposalRequest,
     "ApiSubscriptionCoverage": ApiSubscriptionCoverage,
     "ApiSubscriptionCoverageForecast": ApiSubscriptionCoverageForecast,
     "ApiSubscriptionCoverageMinimumTopUp": ApiSubscriptionCoverageMinimumTopUp,
@@ -2341,6 +2378,7 @@ let typeMap: {[index: string]: any} = {
     "ApiUploadPartOfMultipartUploadRequest": ApiUploadPartOfMultipartUploadRequest,
     "ApiUploadPartOfMultipartUploadResponse": ApiUploadPartOfMultipartUploadResponse,
     "ApiUploadsPage": ApiUploadsPage,
+    "ApiValidateProfileCmsAgentCandidateRequest": ApiValidateProfileCmsAgentCandidateRequest,
     "ApiValidateProfileCmsAgentPatchRequest": ApiValidateProfileCmsAgentPatchRequest,
     "ApiValidateProfileCmsPackageRequest": ApiValidateProfileCmsPackageRequest,
     "ApiWallet": ApiWallet,
