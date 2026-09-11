@@ -123,6 +123,25 @@ current revision. Registration and revocation lock the same database row.
 Revocation and final push recipient validation/submission also share the Redis
 device lock. Already accepted FCM/APNs pushes cannot be recalled by this fence.
 
+Installation credentials are two independently generated UUIDv4 values (244 random
+bits), stored only in native secure storage. Their SHA-256 digest is a verifier,
+never an accepted bearer value. A read-only database leak therefore does not
+supply a usable installation credential, and password-style dictionary guessing
+is not the threat model. Retaining this independent verifier also avoids coupling
+long-lived installation ownership to the auth-session HMAC key configuration or
+rotation. Native session proofs still use the existing keyed `hashSecret` format
+to match their session records; that authentication policy is unchanged.
+
+A mixed-session logout checks every supplied address/token pair independently.
+Authenticating one native session for an early installation claim does not
+authorize revoking another session without its exact refresh token. Redis busy
+or unavailable errors leave the client outbox intact for a later activation,
+reconnect, or pre-registration retry. Both iOS and Android final alert delivery
+use this same coordination so a logout cannot race the last recipient check.
+The added Android Redis lookup and recipient query are an intentional latency
+and availability tradeoff; a failed lock requeues the alert instead of sending
+against an unchecked registration.
+
 The installation refresh worker reads the latest token and whole-device count,
 including profiles whose rows retain older tokens during rotation. It sends no
 numeric badge update on Android. Failed counts do not become zero. Invalid FCM

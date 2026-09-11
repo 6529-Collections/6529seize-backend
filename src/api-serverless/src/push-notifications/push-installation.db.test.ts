@@ -269,6 +269,48 @@ describeWithSeed('push installation logout', [], () => {
     expect(result.secret_hash).toHaveLength(64);
   });
 
+  it('mixed-session early logout cannot revoke another account without its token', async () => {
+    process.env.AUTH_SESSION_HASH_SECRET = 'push-logout-test-secret';
+    const owner = '0x' + '1'.repeat(40);
+    const other = '0x' + '2'.repeat(40);
+    for (const [id, address, token] of [
+      ['owner-session', owner, 'owner-token'],
+      ['other-session', other, 'other-token']
+    ]) {
+      await sqlExecutor.execute(
+        `INSERT INTO ${WALLET_AUTH_SESSIONS_TABLE} (id, address, client_type, refresh_token_hash, expires_at) VALUES (:id, :address, 'native', :hash, :expires)`,
+        {
+          id,
+          address,
+          hash: hashSecret(token),
+          expires: new Date(Date.now() + 60000)
+        }
+      );
+    }
+    await revokeInstallation(
+      {
+        device_id: 'phone',
+        installation_secret: secret,
+        revision: 1,
+        all_profiles: true,
+        sessions: [
+          { address: other, native_refresh_token: 'guessed-token' },
+          { address: owner, native_refresh_token: 'owner-token' },
+          { address: other, native_refresh_token: 'owner-token' }
+        ]
+      },
+      {}
+    );
+    expect(
+      await sqlExecutor.execute(
+        `SELECT id, revoked_at IS NOT NULL AS revoked FROM ${WALLET_AUTH_SESSIONS_TABLE} ORDER BY id`
+      )
+    ).toEqual([
+      { id: 'other-session', revoked: 0 },
+      { id: 'owner-session', revoked: 1 }
+    ]);
+  });
+
   it('revokes only supplied native refresh sessions, not other devices or web sessions', async () => {
     process.env.AUTH_SESSION_HASH_SECRET = 'push-logout-test-secret';
     const address = '0x' + '1'.repeat(40);
