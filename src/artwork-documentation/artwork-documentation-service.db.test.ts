@@ -81,6 +81,197 @@ const answer = (
 ): Answer => ({ status: 'provided', value, intended_visibility });
 
 describe('artwork documentation transactional persistence', () => {
+  describe('context summary identity and source receipt', () => {
+    async function source(
+      record: ContextRecord,
+      receipt: string,
+      options: { excerpt?: boolean; createdAt?: number } = {}
+    ) {
+      const sourceId = randomUUID();
+      const dropId = randomUUID();
+      const waveId = randomUUID();
+      await db.insert(
+        AD_SOURCES,
+        {
+          id: sourceId,
+          context_id: record.id,
+          drop_id: dropId,
+          receipt_text: receipt,
+          sha256: 'a'.repeat(64),
+          is_excerpt: options.excerpt ?? false,
+          importer_profile_id: actor,
+          created_at: options.createdAt ?? Date.now()
+        },
+        ctx
+      );
+      await db.insert(
+        AD_DROP_LINKS,
+        {
+          drop_id: dropId,
+          context_id: record.id,
+          work_id: record.work_id,
+          author_profile_id: actor,
+          wave_id: waveId,
+          source_receipt_id: sourceId
+        },
+        ctx
+      );
+      return { drop_id: dropId, wave_id: waveId, source_receipt_id: sourceId };
+    }
+    it('returns authorized identity and earliest original titles with one source query per page', async () => {
+      const first = await readyContext();
+      const second = await readyContext();
+      first.modules.identity.display_name = answer('Artist name');
+      first.modules.identity.preferred_credit = answer('Preferred credit');
+      first.modules.artwork.title = answer('Current documented title');
+      await db.saveContext(first, ctx);
+      const original = await source(
+        first,
+        JSON.stringify({ title: 'Original submission' }),
+        { createdAt: 1 }
+      );
+      await source(first, JSON.stringify({ title: 'Later submission' }), {
+        createdAt: 2
+      });
+      const secondSource = await source(
+        second,
+        JSON.stringify({ title: 'Second submission' })
+      );
+      const withoutSourceAccess = await readyContext();
+      await source(
+        withoutSourceAccess,
+        JSON.stringify({ title: 'Hidden source' })
+      );
+      const readerId = randomUUID();
+      await assign(first, readerId, { read_source_receipts: true });
+      await assign(second, readerId, { read_source_receipts: true });
+      await assign(withoutSourceAccess, readerId, {});
+      const query = jest.spyOn(db, 'query');
+      try {
+        const page = await reviews.listContexts(makeContext(readerId), {});
+        expect(page.data.find((item) => item.id === first.id)).toMatchObject({
+          owner_profile_id: actor,
+          artist_display_name: 'Artist name',
+          artist_preferred_credit: 'Preferred credit',
+          title: 'Current documented title',
+          source_submission: { ...original, title: 'Original submission' }
+        });
+        expect(
+          page.data.find((item) => item.id === second.id)?.source_submission
+        ).toEqual({ ...secondSource, title: 'Second submission' });
+        expect(
+          page.data.find((item) => item.id === withoutSourceAccess.id)
+            ?.source_submission
+        ).toBeNull();
+        const sourceQueries = query.mock.calls.filter(([sql]) =>
+          sql.includes('ranked_sources')
+        );
+        expect(sourceQueries).toHaveLength(1);
+        expect(sourceQueries[0][1]).toEqual({
+          ids: expect.arrayContaining([first.id, second.id])
+        });
+        expect(sourceQueries[0][1]?.ids).toHaveLength(2);
+      } finally {
+        query.mockRestore();
+      }
+    });
+    it('preserves current and historical restrictions, source-read scope and grant revocation', async () => {
+      const record = await readyContext();
+      record.modules.identity.display_name = answer(
+        'Restricted artist',
+        'restricted'
+      );
+      record.modules.identity.preferred_credit = answer(
+        'Historically restricted credit'
+      );
+      record.modules.artwork.title = answer('Historically restricted title');
+      record.restricted_paths = ['identity.preferred_credit', 'artwork.title'];
+      await db.saveContext(record, ctx);
+      const original = await source(
+        record,
+        JSON.stringify({ title: 'Separate original title' })
+      );
+      const readerId = randomUUID();
+      await assign(record, readerId, {});
+      const reader = makeContext(readerId);
+      const first = (await reviews.listContexts(reader, {})).data[0];
+      expect(first).toMatchObject({
+        owner_profile_id: actor,
+        artist_display_name: null,
+        artist_preferred_credit: null,
+        title: null,
+        source_submission: null
+      });
+      await db.query(
+        `UPDATE ${AD_GRANTS} SET capabilities_json=:caps WHERE context_id=:id AND subject_profile_id=:reader`,
+        {
+          id: record.id,
+          reader: readerId,
+          caps: JSON.stringify({
+            ...emptyCapabilities(),
+            read_context: true,
+            read_source_receipts: true
+          })
+        },
+        ctx
+      );
+      const withSource = (await reviews.listContexts(reader, {})).data[0];
+      expect(withSource).toMatchObject({
+        artist_display_name: null,
+        artist_preferred_credit: null,
+        title: null,
+        source_submission: { ...original, title: 'Separate original title' }
+      });
+      await db.query(
+        `UPDATE ${AD_GRANTS} SET capabilities_json=:caps WHERE context_id=:id AND subject_profile_id=:reader`,
+        {
+          id: record.id,
+          reader: readerId,
+          caps: JSON.stringify({
+            ...emptyCapabilities(),
+            read_context: true,
+            read_restricted_fields: true
+          })
+        },
+        ctx
+      );
+      expect((await reviews.listContexts(reader, {})).data[0]).toMatchObject({
+        artist_display_name: 'Restricted artist',
+        artist_preferred_credit: 'Historically restricted credit',
+        source_submission: null
+      });
+      await db.query(
+        `UPDATE ${AD_GRANTS} SET revoked_at=:now WHERE context_id=:id AND subject_profile_id=:reader`,
+        { id: record.id, reader: readerId, now: Date.now() },
+        ctx
+      );
+      expect((await reviews.listContexts(reader, {})).data).toEqual([]);
+    });
+    it.each([
+      ['excerpt', '{"title":"Partial', true],
+      ['marked excerpt', '{"title":"Not a complete receipt"}', true],
+      ['malformed', '{"title":', false],
+      ['missing title', '{}', false],
+      ['unsupported title', '{"title":{"value":"Nested"}}', false]
+    ] as const)(
+      'retains only source IDs for an %s receipt',
+      async (_label, receipt, excerpt) => {
+        const record = await readyContext();
+        const original = await source(record, receipt, { excerpt });
+        expect(
+          (await reviews.listContexts(ctx, {})).data[0].source_submission
+        ).toEqual({ ...original, title: null });
+      }
+    );
+    it('returns null source information for a draft with no linked submission', async () => {
+      const record = await readyContext();
+      expect(
+        (await reviews.listContexts(ctx, {})).data.find(
+          (item) => item.id === record.id
+        )?.source_submission
+      ).toBeNull();
+    });
+  });
   async function programViewer(
     subject: string,
     type: 'profile' | 'group' = 'profile'
