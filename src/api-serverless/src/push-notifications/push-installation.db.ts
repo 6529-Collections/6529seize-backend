@@ -28,6 +28,14 @@ export interface InstallationRevocation extends InstallationProof {
 // these are random bearer credentials, not user-chosen passwords.
 const digest = (value: string) =>
   createHash('sha256').update(value).digest('hex');
+/** Compare legacy ownership proofs without exposing token prefixes or throwing on unequal lengths. */
+function matchesToken(stored: string, provided: string | undefined): boolean {
+  if (!provided) return false;
+  return timingSafeEqual(
+    Buffer.from(digest(stored), 'hex'),
+    Buffer.from(digest(provided), 'hex')
+  );
+}
 const conflict = () =>
   new CustomApiCompliantException(409, 'Stale push installation revision');
 
@@ -110,10 +118,10 @@ async function lockInstallation(
     const retainedTokenMismatch =
       !legacy.length &&
       installation.token &&
-      installation.token !== proof.token;
+      !matchesToken(installation.token, proof.token);
     if (
       retainedTokenMismatch ||
-      legacy.some((row) => !proof.token || row.token !== proof.token)
+      legacy.some((row) => !matchesToken(row.token, proof.token))
     ) {
       throw new ForbiddenException(
         'Legacy installation token ownership is ambiguous'

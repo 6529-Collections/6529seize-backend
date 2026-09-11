@@ -215,6 +215,12 @@ describeWithSeed('push installation logout', [], () => {
   it('claims matching legacy registrations but rejects ambiguous token ownership', async () => {
     await registerInstallationDevice(device('A'), {}, {});
     await registerInstallationDevice(device('B'), {}, {});
+    for (const token of ['fcm-tokeN', 'fcm-token-extra']) {
+      await expect(
+        registerInstallationDevice({ ...device('A'), token }, credential, {})
+      ).rejects.toThrow('ambiguous');
+    }
+    expect(await registrations()).toHaveLength(2);
     await registerInstallationDevice(device('A'), credential, {});
     await revoke(1);
     expect(await registrations()).toEqual([]);
@@ -237,13 +243,15 @@ describeWithSeed('push installation logout', [], () => {
       { device_id: 'phone' }
     );
     await expect(revoke(1)).rejects.toThrow('ambiguous');
-    await expect(
-      registerInstallationDevice(
-        { ...device('attacker'), token: 'wrong-token' },
-        credential,
-        {}
-      )
-    ).rejects.toThrow('ambiguous');
+    for (const token of ['fcm-tokeN', 'fcm-token-extra']) {
+      await expect(
+        registerInstallationDevice(
+          { ...device('attacker'), token },
+          credential,
+          {}
+        )
+      ).rejects.toThrow('ambiguous');
+    }
     expect(await registrations()).toEqual([]);
     const unclaimed = await sqlExecutor.oneOrNull(
       `SELECT secret_hash, revision FROM ${PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE} WHERE device_id = :device_id`,
