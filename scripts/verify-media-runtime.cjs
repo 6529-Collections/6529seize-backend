@@ -9,13 +9,13 @@ const { pipeline } = require('node:stream/promises');
 
 // Resolve only from the supplied install/extracted ZIP, never the verifier's modules.
 const root = fs.realpathSync(path.resolve(process.argv[2] || '.'));
-const allowedRoots = [process.cwd(), os.tmpdir()].map((directory) =>
-  fs.realpathSync(directory)
-);
+const workspaceRoot = fs.realpathSync(process.cwd());
+const temporaryRoot = fs.realpathSync(os.tmpdir());
 if (
-  !allowedRoots.some(
-    (directory) => root === directory || root.startsWith(directory + path.sep)
-  )
+  root !== workspaceRoot &&
+  !root.startsWith(workspaceRoot + path.sep) &&
+  root !== temporaryRoot &&
+  !root.startsWith(temporaryRoot + path.sep)
 ) {
   throw new Error(
     'Media verification requires a workspace or temporary artifact directory'
