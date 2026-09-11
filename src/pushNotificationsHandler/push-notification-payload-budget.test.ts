@@ -18,6 +18,26 @@ function size(message: Message): number {
 }
 
 describe('push notification payload budget', () => {
+  it('fits title and body together exactly at the byte boundary', () => {
+    const message = makeMessage('body'.repeat(2000), '"界👋\\'.repeat(1000));
+    const fitted = fitPushNotificationPayload(message);
+
+    expect(fitted.notification?.title?.endsWith('...')).toBe(true);
+    expect(fitted.notification?.body?.endsWith('...')).toBe(true);
+    expect(size(fitted)).toBe(BUDGET);
+    for (const field of ['title', 'body'] as const) {
+      expect(
+        size({
+          ...message,
+          notification: {
+            ...message.notification,
+            [field]: message.notification[field] + 'a'
+          }
+        })
+      ).toBe(BUDGET + 1);
+    }
+  });
+
   it.each([-1, 0, 1])(
     'handles an ASCII payload at budget %+i bytes',
     (delta) => {

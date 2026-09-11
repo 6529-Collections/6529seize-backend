@@ -8,6 +8,7 @@ import {
 // keys/platform translation. The recipient token is transport, not payload.
 const APPLICATION_PAYLOAD_BUDGET_BYTES = 4096 - 512;
 const ELLIPSIS = '...';
+const ELLIPSIS_BYTES = jsonTextBytes(ELLIPSIS);
 
 type NotificationMessage = Message & { notification: Notification };
 
@@ -16,13 +17,15 @@ function payloadBytes(message: NotificationMessage): number {
 }
 
 function jsonTextBytes(text: string): number {
+  // The envelope already counts the empty string's two surrounding quotes.
+  // Only the escaped content adds bytes when that field is filled in.
   return Buffer.byteLength(JSON.stringify(text)) - 2;
 }
 
 function fitText(text: string, budget: number): string {
   if (jsonTextBytes(text) <= budget) return text;
 
-  let bytes = ELLIPSIS.length;
+  let bytes = ELLIPSIS_BYTES;
   const prefix: string[] = [];
   for (const character of Array.from(text)) {
     const characterBytes = jsonTextBytes(character);
@@ -33,7 +36,10 @@ function fitText(text: string, budget: number): string {
   return prefix.join('') + ELLIPSIS;
 }
 
-/** Fit visible text without changing routing data, badge, or sound settings. */
+/**
+ * Mutate this freshly built message's visible text/image to fit the budget.
+ * Routing data, badge, and sound settings are unchanged, including on failure.
+ */
 export function fitPushNotificationPayload(
   message: NotificationMessage
 ): Message {
@@ -42,8 +48,8 @@ export function fitPushNotificationPayload(
   const notification = message.notification;
   const title = notification.title ?? '';
   const body = notification.body ?? '';
-  notification.title = fitText(title, ELLIPSIS.length);
-  notification.body = fitText(body, ELLIPSIS.length);
+  notification.title = fitText(title, ELLIPSIS_BYTES);
+  notification.body = fitText(body, ELLIPSIS_BYTES);
 
   // An optional oversized image must not prevent delivery of the text.
   if (payloadBytes(message) > APPLICATION_PAYLOAD_BUDGET_BYTES) {

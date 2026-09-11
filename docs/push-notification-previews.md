@@ -28,6 +28,10 @@ only when necessary after reducing the body. An image that cannot fit even
 with minimal text is omitted. Routing data is never truncated; if metadata
 alone cannot fit, that notification is reported as failed without preventing
 other notifications in the batch from being sent.
+This retains the existing queue failure policy: when no device succeeds, the
+notification is retried and persistent failures go to the dead-letter queue
+after the configured maximum of 10 receives. A local budget failure does not
+trigger an immediate Firebase image retry or delete the recipient's device token.
 
 The formatter enforces the existing 25,000 UTF-16-code-unit drop-part limit
 before parsing. Oversized historical content and parser failures use the
