@@ -1,7 +1,7 @@
 import { getRedisClient } from '@/redis';
 import { Time } from '@/time';
 import { fetchOpenSeaPricePage } from '@/marketStatsLoop/opensea-price-fetch';
-import { OpenSeaClient } from './opensea-client';
+import { OpenSeaClient, OpenSeaDeadlineError } from './opensea-client';
 import { OpenSeaRateLimiter } from './opensea-rate-limiter';
 
 jest.mock('@/redis', () => ({ getRedisClient: jest.fn() }));
@@ -40,10 +40,45 @@ describe('shared OpenSea request pacing', () => {
     expect(sleep).not.toHaveBeenCalled();
     await limiter.acquire(10_000);
     expect(sleep).toHaveBeenCalledWith(interval);
-    await expect(limiter.acquire(now + 100)).rejects.toThrow(
-      'deadline exceeded'
+    await expect(limiter.acquire(now + 100)).rejects.toBeInstanceOf(
+      OpenSeaDeadlineError
     );
     expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves typed shared-quota exhaustion through the OpenSea client without making a provider request', async () => {
+    jest.mocked(getRedisClient).mockReturnValue({
+      eval: jest.fn().mockResolvedValue(1000)
+    } as unknown as ReturnType<typeof getRedisClient>);
+    const fetchImpl = jest.fn();
+    const client = new OpenSeaClient({
+      apiKey: 'fixture-key',
+      fetchImpl,
+      now: () => 1000
+    });
+
+    await expect(
+      client.getEventsPage('fixture', 0, 1, null, 1500)
+    ).rejects.toBeInstanceOf(OpenSeaDeadlineError);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('preserves an actual Redis failure instead of classifying it as planned deferral', async () => {
+    const failure = new Error('fixture Redis failure');
+    jest.mocked(getRedisClient).mockReturnValue({
+      eval: jest.fn().mockRejectedValue(failure)
+    } as unknown as ReturnType<typeof getRedisClient>);
+    const fetchImpl = jest.fn();
+    const client = new OpenSeaClient({
+      apiKey: 'fixture-key',
+      fetchImpl,
+      now: () => 1000
+    });
+
+    await expect(
+      client.getEventsPage('fixture', 0, 1, null, 10000)
+    ).rejects.toBe(failure);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('uses the same Redis quota for market-depth and legacy price requests', async () => {
