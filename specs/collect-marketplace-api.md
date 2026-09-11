@@ -30,6 +30,10 @@ transaction and signature paths are verified.
   `POST /collect/plans/{id}/advance` checks the next batch. Refresh after a
   profile, catalog or recipient change. Asset-scan completion does not mean
   exhaustive market coverage or guaranteed executable inventory.
+  Its optional `options.budget_wei` caps the analyzed acquisition cost including
+  estimated gas. Omission estimates the goal without a cost cap; an explicit
+  zero remains a zero cap. Neither grants spending authority nor changes the
+  exact price, recipient, review or wallet approval required for execution.
 - `POST /collect/tdh-scenarios` projects an exact acquisition allocation.
 - `POST /collect/tdh-ranking` compares the current listing pool or a saved plan,
   including the nonlinear basket effect on existing holdings. Cost estimates
