@@ -35,7 +35,7 @@
     "mcache": "^0.4.0",
     "merkletreejs": "^0.6.0",
     "mp4box": "^2.3.0",
-    "multer": "^2.0.2",
+    "multer": "2.3.0",
     "node-fetch": "^2.7.0",
     "passport": "^0.7.0",
     "passport-anonymous": "^1.0.1",

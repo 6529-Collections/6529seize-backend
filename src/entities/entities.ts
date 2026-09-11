@@ -1,4 +1,12 @@
 export { AbusivenessDetectionResult } from './IAbusivenessDetectionResult';
+export { CollectPlanEntity } from './ICollectPlan';
+export { CollectRuleEntity, CollectRuleOperationEntity } from './ICollectRule';
+export {
+  MarketOperationEntity,
+  MarketOperationEventEntity,
+  MarketWalletExposureLockEntity,
+  MarketReviewedTransactionEntity
+} from './IMarketOperation';
 export {
   ArtCurationTokenWatchEntity,
   ArtCurationTokenWatchStatus
@@ -263,6 +271,9 @@ export {
 } from './IXTdhTokenGrantStats';
 export { XTdhTokenStatsA, XTdhTokenStatsB } from './IXTdhTokenStats';
 export * from './IArtworkDocumentation';
+export { ProfileCmsAgentGrantEntity } from './IProfileCmsAgentGrant';
+export { ProfileCmsAgentProposalEntity } from './IProfileCmsAgentProposal';
+export { ProfileCmsAgentEventEntity } from './IProfileCmsAgentEvent';
 
 export {
   ArtworkDocumentationAssetEntity,

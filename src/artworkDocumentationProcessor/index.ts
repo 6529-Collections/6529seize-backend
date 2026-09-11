@@ -1,3 +1,4 @@
+import { withMediaDependencySmoke } from '@/media/media-dependency-smoke';
 import { artworkAssetsProcessor } from '@/artwork-documentation/assets/artwork-assets.processor';
 import { Logger } from '@/logging';
 import { doInDbContext } from '@/secrets';
@@ -9,7 +10,7 @@ import {
 } from './artwork-documentation-operator';
 
 const logger = Logger.get('ARTWORK_DOCUMENTATION_PROCESSOR');
-export const handler = sentryContext.wrapLambdaHandler(
+const liveHandler = sentryContext.wrapLambdaHandler(
   async (event: unknown) => {
     return doInDbContext(
       () =>
@@ -26,3 +27,5 @@ export const handler = sentryContext.wrapLambdaHandler(
   },
   { enrichEvent: enrichDocumentationOperatorError }
 );
+
+export const handler = withMediaDependencySmoke(liveHandler);

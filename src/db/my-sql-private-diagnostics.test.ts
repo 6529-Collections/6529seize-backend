@@ -18,6 +18,21 @@ describe('private SQL diagnostics', () => {
   });
   it.each([
     {
+      table: 'profile_cms_agent_grants',
+      inline: 'private-candidate-copy',
+      bound: 'private-grant-value'
+    },
+    {
+      table: 'profile_cms_agent_proposals',
+      inline: 'private-candidate-copy',
+      bound: 'private-grant-value'
+    },
+    {
+      table: 'profile_cms_agent_events',
+      inline: 'private-candidate-copy',
+      bound: 'private-grant-value'
+    },
+    {
       table: 'artwork_documentation_assets',
       inline: 'private-image.tif',
       bound: 'private-contact@example.test'

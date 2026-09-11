@@ -1,3 +1,4 @@
+import { withMediaDependencySmoke } from '@/media/media-dependency-smoke';
 import { dropMediaSanitizerService } from '@/drops/drop-media-sanitizer.service';
 import { Logger } from '@/logging';
 import { doInDbContext } from '@/secrets';
@@ -50,4 +51,6 @@ const sqsHandler: SQSHandler = async (event): Promise<SQSBatchResponse> => {
   return { batchItemFailures };
 };
 
-export const handler = sentryContext.wrapLambdaHandler(sqsHandler);
+export const handler = withMediaDependencySmoke(
+  sentryContext.wrapLambdaHandler(sqsHandler)
+);

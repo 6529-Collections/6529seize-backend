@@ -27,6 +27,7 @@ import gasRoutes from './gas/gas.routes';
 import generatedOpenApiRoutes from './generated/routes/openapi-generated.routes';
 import { validateDocumentationRawJson } from '@/artwork-documentation/artwork-documentation.raw-json';
 import { documentationErrorMiddleware } from '@/api/artwork-documentation/artwork-documentation.http';
+import { marketErrorMiddleware } from '@/api/marketplace/marketplace.http';
 import identitiesRoutes from './identities/identities.routes';
 import contentModerationRoutes from './content-moderation/content-moderation.routes';
 import identitySubscriptionsRoutes from './identity-subscriptions/identity-subscriptions.routes';
@@ -144,6 +145,12 @@ import {
   rateLimitingMiddleware
 } from './rate-limiting/rate-limiting.middleware';
 import { setNoStoreHeaders } from '@/api/response-headers';
+import {
+  isCmsAgentRequest,
+  validateCmsAgentRawBody,
+  cmsAgentErrorMiddleware,
+  cmsAgentPrivateHeadersMiddleware
+} from '@/api/profile-cms/profile-cms-agent.http';
 import { cacheRequest, isRequestCacheEntry } from './request-cache';
 import rpcRoutes from './rpc/rpc.routes';
 import sitemapRoutes from './sitemap/sitemap.routes';
@@ -617,7 +624,10 @@ function requestLogMiddleware() {
   return (request: Request, response: Response, next: NextFunction) => {
     const requestId =
       request.apiGateway?.context?.awsRequestId ?? ids.uniqueShortId();
-    if (request.path.startsWith('/api/artwork-documentation')) {
+    if (
+      request.path.startsWith('/api/artwork-documentation') ||
+      isCmsAgentRequest(request.path)
+    ) {
       response.setHeader('X-Request-Id', requestId);
       response.setHeader('Cache-Control', 'private, no-store');
       response.setHeader('X-Robots-Tag', 'noindex, nofollow');
@@ -625,9 +635,11 @@ function requestLogMiddleware() {
     }
     loggerContext.run({ requestId }, () => {
       const { method } = request;
-      const url = request.path.startsWith('/api/artwork-documentation')
-        ? request.path
-        : request.originalUrl;
+      const url =
+        request.path.startsWith('/api/artwork-documentation') ||
+        isCmsAgentRequest(request.path)
+          ? request.path
+          : request.originalUrl;
       const uqKey = `${method} ${url}`;
       const timer = new Timer(uqKey);
       (request as any).timer = timer;
@@ -732,6 +744,7 @@ async function initializeApp() {
     // Only enabled in AWS Lambda
     app.use(awsServerlessExpressMiddleware.eventContext());
   }
+  app.use(cmsAgentPrivateHeadersMiddleware);
   app.use(requestLogMiddleware());
   app.use(compression());
   app.use(
@@ -758,6 +771,7 @@ async function initializeApp() {
     express.json({
       limit: '5mb',
       verify: (req: any, _res: any, buf: Buffer) => {
+        validateCmsAgentRawBody(req.url ?? '', buf.length);
         if (req.url?.startsWith('/api/artwork-documentation')) {
           validateDocumentationRawJson(buf);
         }
@@ -1726,6 +1740,8 @@ async function initializeApp() {
   );
 
   app.use(documentationErrorMiddleware);
+  app.use(marketErrorMiddleware);
+  app.use(cmsAgentErrorMiddleware);
   if (sentryContext.isConfigured()) {
     app.use(Sentry.Handlers.errorHandler());
     app.use(sentryFlusherMiddleware());

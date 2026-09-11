@@ -1,0 +1,93 @@
+name: Media dependency compatibility
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'package*.json'
+      - 'src/api-serverless/package*.json'
+      - 'src/api-serverless/src/multer-middleware*'
+      - 'src/media/**'
+      - 'src/drops/drop-media-sanitizer*'
+      - 'src/artwork-documentation/assets/**'
+      - 'src/nft-links/nft-link-media-preview*'
+      - 'src/artworkDocumentationProcessor/**'
+      - 'src/dropMediaSanitizer/**'
+      - 'src/mediaResizerLoop/**'
+      - 'src/nftLinkMediaPreviewLoop/**'
+      - 'src/rememesLoop/**'
+      - 'src/s3Uploader/**'
+      - 'src/s3.ts'
+      - 'src/s3_rememes.ts'
+      - 'scripts/*media*'
+      - 'scripts/check-package-lock.mjs'
+      - 'scripts/media-fixtures/**'
+      - '.github/workflows/media-compatibility.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: media-compatibility-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: Native media (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, macos-15-intel, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      SHARP_IGNORE_GLOBAL_LIBVIPS: '1'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.17.1'
+      - name: Install native dependencies
+        run: |
+          ./bin/6529 ci
+          (cd src/api-serverless && ../../bin/6529 ci)
+      - name: Verify lockfile platforms and real media/upload behavior
+        run: |
+          ./bin/6529 exec node scripts/check-package-lock.mjs
+          ./bin/6529 exec node scripts/verify-media-runtime.cjs .
+          ./bin/6529 exec jest --config scripts/media-jest.config.cjs
+      - name: Verify each media package installs and loads natively
+        run: |
+          for service in artworkDocumentationProcessor dropMediaSanitizer mediaResizerLoop nftLinkMediaPreviewLoop rememesLoop s3Uploader; do
+            (cd "src/$service" && ../../bin/6529 ci)
+            ./bin/6529 exec node scripts/verify-media-runtime.cjs "src/$service"
+          done
+
+  artifacts:
+    name: Lambda media ZIPs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.17.1'
+      - name: Install build dependencies
+        run: ./bin/6529 ci
+      - name: Build and execute every packaged native dependency in Lambda Node 22
+        shell: bash
+        run: |
+          set -euo pipefail
+          for service in artworkDocumentationProcessor dropMediaSanitizer mediaResizerLoop nftLinkMediaPreviewLoop rememesLoop s3Uploader; do
+            (cd "src/$service" && ../../bin/6529 run build)
+            extracted="${RUNNER_TEMP}/media-${service}"
+            mkdir -p "$extracted"
+            unzip -q "src/$service/dist/index.zip" -d "$extracted"
+            docker run --rm --platform linux/amd64 --network none \
+              -v "$extracted:/var/task:ro" -v "$PWD/scripts:/checks:ro" \
+              --entrypoint /var/lang/bin/node \
+              public.ecr.aws/lambda/nodejs:22@sha256:214c26cdbb7eeb1b942a16e0910c6c07de5d2a750b23eb4a907cd6864949edbf \
+              /checks/verify-media-runtime.cjs /var/task --lambda
+          done

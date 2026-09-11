@@ -1,5 +1,9 @@
-import { randomInt, randomUUID } from 'node:crypto';
-import { getRedisClient } from '@/redis';
+import { randomInt } from 'node:crypto';
+import {
+  OpenSeaDeadlineError,
+  OpenSeaRateLimiter
+} from '@/market-depth/opensea-rate-limiter';
+export { OpenSeaDeadlineError } from '@/market-depth/opensea-rate-limiter';
 
 const API_BASE = 'https://api.opensea.io/api/v2';
 const PAGE_LIMIT = 200;
@@ -22,19 +26,10 @@ const RETRYABLE_NETWORK_CODES = new Set([
   'UND_ERR_BODY_TIMEOUT',
   'UND_ERR_SOCKET'
 ]);
-const DISTRIBUTED_WINDOW_MS = 60_000;
-const DISTRIBUTED_LIMIT = 60;
 
 export interface OpenSeaPage<T> {
   readonly entries: T[];
   readonly next: string | null;
-}
-
-export class OpenSeaDeadlineError extends Error {
-  constructor(message: string) {
-    super(message);
-    Object.setPrototypeOf(this, OpenSeaDeadlineError.prototype);
-  }
 }
 
 export interface OpenSeaClientOptions {
@@ -158,11 +153,6 @@ function providerResetAt(reset: number, now: number): number {
   return now + reset * 1000;
 }
 
-function envPositiveInteger(name: string, fallback: number): number {
-  const value = Number(process.env[name]);
-  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
-}
-
 function isTransientNetworkError(error: unknown): boolean {
   const visited = new Set<unknown>();
   let current = error;
@@ -194,7 +184,7 @@ export class OpenSeaClient {
   private readonly sleep: (milliseconds: number) => Promise<void>;
   private readonly now: () => number;
   private readonly baseUrl: string;
-  private localNextRequestAt = 0;
+  private readonly rateLimiter: OpenSeaRateLimiter;
   private providerBlockedUntil = 0;
 
   constructor(options: OpenSeaClientOptions = {}) {
@@ -206,6 +196,10 @@ export class OpenSeaClient {
       ((milliseconds) =>
         new Promise((resolve) => setTimeout(resolve, milliseconds)));
     this.now = options.now ?? Date.now;
+    this.rateLimiter = new OpenSeaRateLimiter({
+      sleep: this.sleep,
+      now: this.now
+    });
     if (options.baseUrl && process.env.NODE_ENV !== 'test') {
       throw new Error('OpenSea base URL overrides are only allowed in tests');
     }
@@ -316,60 +310,6 @@ export class OpenSeaClient {
     return entries;
   }
 
-  private async distributedAcquire(deadlineMs: number): Promise<void> {
-    const redis = getRedisClient();
-    const limit = envPositiveInteger(
-      'OPENSEA_SHARED_REQUESTS_PER_MINUTE',
-      DISTRIBUTED_LIMIT
-    );
-    if (!redis) {
-      const interval = Math.ceil(DISTRIBUTED_WINDOW_MS / limit);
-      const wait = Math.max(0, this.localNextRequestAt - this.now());
-      if (this.now() + wait >= deadlineMs)
-        throw new OpenSeaDeadlineError(
-          'OpenSea request deadline exceeded while rate limited'
-        );
-      if (wait > 0) await this.sleep(wait);
-      this.localNextRequestAt = this.now() + interval;
-      return;
-    }
-
-    for (;;) {
-      const now = this.now();
-      const result = (await redis.eval(
-        `local key=KEYS[1]
-         local now=tonumber(ARGV[1])
-         local window=tonumber(ARGV[2])
-         local limit=tonumber(ARGV[3])
-         redis.call('ZREMRANGEBYSCORE', key, '-inf', now-window)
-         local count=redis.call('ZCARD', key)
-         if count < limit then
-           redis.call('ZADD', key, now, ARGV[4])
-           redis.call('PEXPIRE', key, window)
-           return 0
-         end
-         local oldest=redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
-         return math.max(1, window-(now-tonumber(oldest[2])))`,
-        {
-          keys: ['opensea:market-depth:requests'],
-          arguments: [
-            String(now),
-            String(DISTRIBUTED_WINDOW_MS),
-            String(limit),
-            randomUUID()
-          ]
-        }
-      )) as number;
-      const wait = Number(result);
-      if (wait <= 0) return;
-      if (now + wait >= deadlineMs)
-        throw new OpenSeaDeadlineError(
-          'OpenSea request deadline exceeded while rate limited'
-        );
-      await this.sleep(wait);
-    }
-  }
-
   private updateProviderLimit(response: Response): void {
     const remaining = Number(response.headers.get('x-ratelimit-remaining'));
     const reset = Number(response.headers.get('x-ratelimit-reset'));
@@ -384,7 +324,7 @@ export class OpenSeaClient {
     if (this.now() + providerWait >= deadlineMs)
       throw new OpenSeaDeadlineError('OpenSea request deadline exceeded');
     if (providerWait > 0) await this.sleep(providerWait);
-    await this.distributedAcquire(deadlineMs);
+    await this.rateLimiter.acquire(deadlineMs);
     const remaining = deadlineMs - this.now();
     if (remaining <= 0)
       throw new OpenSeaDeadlineError('OpenSea request deadline exceeded');

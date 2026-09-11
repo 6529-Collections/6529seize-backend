@@ -10,6 +10,63 @@ The main runtime pieces are:
 - SQS and EventBridge as the async execution fabric.
 - S3, CloudFront, Arweave, Ethereum/RPC providers, Firebase, Sentry, CloudWatch, Discord, and SNS around the core.
 
+The six Sharp media packages also accept the exact direct-invocation payload
+`{"operator_action":"verify_media_dependencies_v1"}` for release diagnostics.
+This IAM-invoked path runs fixed synthetic codec operations in memory and
+returns native versions before entering database, queue, storage or notification
+processing. It adds no HTTP route; ordinary SQS, schedule and API Gateway
+events keep their existing handlers. This lets operators verify each deployed
+Lambda, including production-only media resizing and the three rememes
+functions, without invoking whole production loops.
+The resizer's HTTP API uses AWS_PROXY payload 1.0 without request templates;
+request bodies remain inside the HTTP event envelope and cannot become this
+top-level operator payload.
+
+## Profile collecting and marketplace operations
+
+The API owns `/collect/*` and `/market/*`. Collecting derives versioned catalogs
+and set requirements for The Memes, Gradients and Pebbles, using the profile's
+confirmed consolidated wallets. Existing Pebbles trait rankings use that same
+profile scope. TDH projections reuse the production calculation kernel and
+first verify parity with the official snapshot.
+
+The marketplace adapter obtains unsigned OpenSea Seaport actions server-side.
+Closed schemas, a protocol/spender registry, independent action decoding and
+chain simulation bind the exact artwork, quantity, wallet, recipient, fees and
+economic limits. The client independently validates before asking its wallet
+to sign or send. Purchase fulfillment delivers directly to a reviewed profile
+or third-party recipient. The backend never holds user signing keys.
+
+`market_operations` and `market_operation_events` persist idempotent operations
+and state transitions. A per-wallet/currency lock serializes potential offer
+exposure before signable terms are revealed. `market_reviewed_transactions`
+retains immutable execution payloads so an earlier reviewed transaction can be
+recovered after refresh. A unique transaction-hash binding prevents duplicate
+settlement attribution. Receipt reconciliation verifies canonical blocks,
+Seaport events and NFT transfers; potential exposure persists until verified
+fill, cancellation or safe-chain expiry.
+
+Before the client opens a transaction prompt, a durable send attempt binds the
+reviewed payload and operation revision. An unresolved attempt blocks another
+send for that operation across browsers and devices. Hash recovery validates
+the original approval or fulfillment; only a positively identified pre-broadcast
+rejection can release an attempt without a verified transaction outcome.
+
+`collect_plans` stores incremental listing scans with renewable leases and
+profile/catalog invalidation. It distinguishes a completed asset scan from
+incomplete market coverage. `collect_rules` and `collect_rule_operations` store
+fixed targets, review limits, one outstanding operation and monotonic verified
+acquisitions. Rules only prepare transactions for owner approval. Their limits
+are not a smart-contract-enforced mandate or authority to broadcast unattended.
+
+Deploy the additive entity changes through `dbMigrationsLoop` before the API,
+then deploy the dependent frontend. The exported TDH helper does not change the
+scheduled TDH calculation and does not require a TDH loop deployment.
+`MARKETPLACE_TRADING_ENABLED=false` stops new trade preparation/publication;
+inspection, transaction reconciliation and direct cancellation remain available.
+The default enables supported actions when provider/RPC configuration exists.
+Keep operation history and exposure tables when disabling or rolling back trading.
+
 ## High-Level Diagram
 
 This is the compact map. Lambda boxes are intentionally just service names; trigger type is shown by the surrounding group or the queue/topic feeding the Lambda. The tables below carry the longer descriptions so the diagram stays readable.
@@ -226,7 +283,36 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 6. S3 and CloudFront serve media. Drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception.
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
+### NFT link refresh bounds
+
+`nftLinkRefresherLoop` applies a 90-second resolution budget, reduced to leave
+10 seconds before the Lambda deadline and processing-lock expiry. Its RPC
+transport cancels connections and response bodies after five seconds; metadata
+HTTP requests also observe the overall budget. Retries stop when the remaining
+budget cannot cover their backoff and another RPC. Failed resolution preserves
+cached metadata and releases the existing processing lock.
+
+After persistence, a worker-specific notifier reads active WebSocket recipients
+once and sends the existing `MEDIA_LINK_UPDATED` payload with concurrency 10,
+five-second request limits, and a 15-second broadcast deadline. Notification
+failure cannot change a successful metadata refresh. The notification metadata
+read is bounded to five seconds; both notification queries also use a three-second
+database execution limit. Late read results cannot trigger delivery.
+Cancelled preview-queue sends leave their source retryable, without overwriting
+newer previews or active consumers. Expired or disconnected
+clients are skipped; normal WebSocket lifecycle handling retains ownership of
+stale-connection deletion. The API and other resolver callers retain their
+existing policy. Request IDs, message IDs, and stage durations connect these
+operations to CloudWatch invocation reports. Sentry's existing warning timer is
+unchanged. No API, schema, queue, or frontend deployment dependency is added.
+
 ### NFT market depth and activity
+
+`marketStatsLoop` legacy price pagination and market-depth REST requests share
+the existing Redis OpenSea request quota, with local pacing when Redis is
+unavailable. Successful price pages proceed as quota permits; retries and the
+shared refresh deadline remain bounded, and incomplete scans never replace stored
+prices.
 
 `marketStatsLoop` publishes complete OpenSea order snapshots atomically with
 current orders and a persistent queue for reconciling disappeared orders.
@@ -527,6 +613,20 @@ restoring a prior publication checks the caller's expected current state. Schema
 rollout is additive: deploy `dbMigrationsLoop`, then `api`; existing published
 packages remain readable without retroactive manifest generation.
 
+Connected CMS agents use a separate opaque capability boundary. An owner grants
+read and proposal-only access to one immutable saved draft/profile/version/hash;
+wallet JWTs and publish rights are not delegated. `profile_cms_agent_grants`
+stores only token digests and expiring/revocable scopes and quotas.
+`profile_cms_agent_proposals` stores bounded full-package candidates and terminal
+owner review states, while `profile_cms_agent_events` records issuance, revocation,
+submission and disposition. Writer transactions serialize profile quotas,
+revocation, idempotency and proposal audit. The service performs no uploads,
+external fetches, model inference, saves or publication. Applied review state
+requires an independently saved newer draft with the exact candidate hash.
+Owner lists return summaries and individual reads return one candidate. This
+adds no Lambda or queue; deploy `dbMigrationsLoop` before `api`. See
+[external-agent proposal API](profile-cms-agent-proposals.md).
+
 Profile CMS wallet gallery snapshots are read-only API projections over
 `nft_owners`, `ens`, `nfts`, `nfts_meme_lab`, and `nextgen_tokens`. ENS inputs use
 bounded onchain forward resolution through an isolated provider for the
@@ -666,6 +766,22 @@ source batch size stays at `1` and Lambda reserved concurrency stays at `1` to
 avoid parallel xTDH work across groups. The stats phase rebuilds the inactive
 xTDH stats slot and activates it only after the rebuild succeeds; a redelivered
 stats message truncates and refills the inactive slot again before activation.
+Each grant/token stats `INSERT ... SELECT` runs in a dedicated `READ COMMITTED`
+transaction after its table is truncated, so source reads do not take shared
+row locks against ownership indexing, grants, or consolidation writes. The
+source snapshot contains values committed when that insert begins; an
+in-flight source writer is excluded instead of blocking the insert. Grant and
+token inserts have separate statement snapshots, as the staged rebuild has
+always used separate statements rather than one shared source snapshot. The
+transaction isolation setting applies only to that insert; session defaults
+and universe transaction semantics stay unchanged. `TRUNCATE` commits
+independently and is not rolled back when an insert fails: the inactive slot
+may remain empty or partially rebuilt until SQS retries. Readers resolve their
+stats tables from the unchanged active-slot metadata; only a completed rebuild
+switches that metadata. Failed inserts roll back before SQS redelivery retries
+the entire inactive-slot rebuild, without classifying database error codes.
+Stats refills reject a supplied transaction because `TRUNCATE` would implicitly
+commit it.
 
 ## 6529 Help Bot Flow
 
