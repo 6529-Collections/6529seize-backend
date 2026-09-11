@@ -91,7 +91,7 @@ describe('HelpBotBedrockRenderer', () => {
         },
         canonicalUrl: 'https://6529.io/about/6529-apps'
       })
-    ).rejects.toThrow();
+    ).rejects.toThrow('stopped before completion at max_tokens');
   });
 
   it('renders text from an Anthropic Bedrock response', async () => {

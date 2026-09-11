@@ -615,10 +615,14 @@ source-link suppression rather than constructing public `/core` links.
 
 Explicit local-Desktop support questions and scoped follow-ups retrieve the
 corpus before calendar/public-data planning. A public total-TDH query cannot
-diagnose local node state. If Desktop knowledge is unavailable, fail closed and
-escalate rather than substitute public database values. Explicit mobile/browser
-questions do not inherit Desktop scope. Ordinary desktop-browser layout and
-website TDH questions retain normal routing.
+diagnose local node state. If the loaded corpus has no matching Desktop knowledge,
+fail closed and escalate rather than substitute public database values. A cold
+corpus-load failure propagates to the processor technical-failure/refund path.
+Explicit mobile/browser
+questions do not inherit Desktop scope, including Core questions aimed at those
+platforms. Desktop-versus-website comparisons retain local-node scope. Pass the
+validated scope to retrieval so prior answer text cannot change it. Ordinary
+desktop-browser layout and website TDH questions retain normal routing.
 
 Desktop topic scoring excludes bare platform terms and requires a topic match;
 non-Desktop queries exclude Core records. A Desktop answer retains the complete

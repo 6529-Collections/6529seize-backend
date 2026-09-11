@@ -247,11 +247,12 @@ export class HelpBotBedrockRenderer implements HelpBotLlmRenderer {
   }): Promise<string> {
     const isStreamKnowledge = input.record.kind === 'public_review_knowledge';
     const isDesktopKnowledge = isDesktopKnowledgeRecord(input.record);
-    const maxTokens = isDesktopKnowledge
-      ? MAX_DESKTOP_ANSWER_TOKENS
-      : isStreamKnowledge
-        ? 320
-        : 220;
+    let maxTokens = 220;
+    if (isDesktopKnowledge) {
+      maxTokens = MAX_DESKTOP_ANSWER_TOKENS;
+    } else if (isStreamKnowledge) {
+      maxTokens = 320;
+    }
     return this.invokePrompt(
       buildPrompt(input),
       maxTokens,

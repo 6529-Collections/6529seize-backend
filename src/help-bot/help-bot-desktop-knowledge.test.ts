@@ -7,6 +7,7 @@ import { HelpBotCalendarService } from './help-bot-calendar.service';
 import { HelpBotStreamKnowledgeSource } from './help-bot-stream-knowledge';
 import {
   desktopQuestionWithContext,
+  isDesktopSupportQuestion,
   MAX_DESKTOP_ANSWER_CHARACTERS
 } from './help-bot-desktop-knowledge';
 
@@ -42,8 +43,21 @@ describe('Desktop corpus retrieval and answers', () => {
     ['what does TestNet Mode Phase 1 mean in 6529 Desktop?', 'tdh-calculation'],
     ['how do I reconcile transactions in Core?', 'transaction-reconciliation'],
     ['how do I reset trx worker in Core?', 'transaction-reset'],
+    ['Reset to Block in 6529 Desktop', 'transaction-reset'],
+    ['Reset to Block Min Block in Core', 'transaction-reset'],
+    ['NFT Full Refresh in Core', 'nft-recovery'],
+    ['NFT Reset in Core', 'nft-recovery'],
+    ['Recalculate TDH Now in Core', 'tdh-calculation'],
+    [
+      'why is my Desktop app TDH different from the website?',
+      'tdh-out-of-sync'
+    ],
     ['how do I rebuild ownership in Core?', 'transaction-reset'],
     ['how do I do nfts full recovery in Core?', 'nft-recovery'],
+    [
+      'why is my Desktop app TDH different from TDH on 6529.io?',
+      'tdh-out-of-sync'
+    ],
     ['how do I import a Core wallet?', 'wallets'],
     ['I forgot my Core wallet password', 'wallet-backup'],
     ['how do I download a Core recovery file?', 'wallet-backup'],
@@ -88,6 +102,9 @@ describe('Desktop corpus retrieval and answers', () => {
     expect(result.answer).toContain('deletes local NFT records');
     expect(result.answer).toContain('never share wallet secrets');
     expect(result.answer).not.toContain('https://6529.io/core');
+    for (const sourceRef of result.record.sourceRefs) {
+      expect(result.answer).not.toContain(sourceRef);
+    }
     expect(result.answer.length).toBeLessThanOrEqual(
       MAX_DESKTOP_ANSWER_CHARACTERS
     );
@@ -189,6 +206,75 @@ describe('Desktop corpus retrieval and answers', () => {
         'Open 6529 Desktop.'
       )
     ).toBeNull();
+    expect(
+      desktopQuestionWithContext(
+        'how do I do that on web?',
+        'Open 6529 Desktop.'
+      )
+    ).toBeNull();
+  });
+
+  it.each([
+    'How do I use Core wallets on mobile?',
+    'How do I use Core wallets on Android?',
+    'How do I use Core wallets on iOS?',
+    'How do I use Core wallets in my browser?',
+    'How do I use Core wallets on the website?',
+    'How do I use Core wallets on 6529.io?',
+    'How do I use Core wallets for mobile?',
+    'How do I use Core wallets on web?'
+  ])(
+    'excludes explicit platform targets even when Core is mentioned: %s',
+    async (question) => {
+      expect(isDesktopSupportQuestion(question)).toBe(false);
+      expect(
+        desktopQuestionWithContext(question, 'Open 6529 Desktop.')
+      ).toBeNull();
+      expect((await source().findMatch(question))?.record.id ?? '').not.toMatch(
+        /^desktop\./
+      );
+      const { answerer } = makeAnswerer();
+      const result = await answerer.answer({
+        question,
+        previousBotAnswer: 'Open 6529 Desktop > Wallets.',
+        baseUrl: 'https://6529.io'
+      });
+      if (result.type === 'ANSWER') {
+        expect(result.record.id).not.toMatch(/^desktop\./);
+      }
+    }
+  );
+
+  it('keeps the validated follow-up scope when the previous answer mentions other platforms', async () => {
+    const { answerer } = makeAnswerer();
+    const result = await answerer.answer({
+      question: 'How do I fix it?',
+      previousBotAnswer:
+        'Your 6529 Desktop TDH is out of sync. Core tools are unavailable on mobile and in a browser.',
+      baseUrl: 'https://6529.io'
+    });
+    expect(result.type === 'ANSWER' && result.record.id).toBe(
+      'desktop.tdh-out-of-sync'
+    );
+  });
+
+  it('propagates a cold corpus failure to the processor instead of escalating as missing knowledge', async () => {
+    const fetcher = jest
+      .fn()
+      .mockRejectedValue(new Error('temporary corpus outage'));
+    const knowledge = new FrontendHelpBotKnowledgeSource(fetcher);
+    const publicAnswer = jest.fn();
+    const answerer = new HelpBotAnswerer(null, knowledge, {
+      answer: publicAnswer
+    } as unknown as HelpBotPublicDataService);
+    await expect(
+      answerer.answer({
+        question: 'why is my Desktop app total TDH different?',
+        baseUrl: 'https://6529.io'
+      })
+    ).rejects.toThrow('Frontend help index is currently unavailable');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(publicAnswer).not.toHaveBeenCalled();
   });
 
   it('falls back to complete corpus steps when the model fails or returns an oversized reply', async () => {

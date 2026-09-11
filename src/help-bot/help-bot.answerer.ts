@@ -7,6 +7,7 @@ import { Logger } from '@/logging';
 import {
   frontendHelpBotKnowledgeSource,
   HelpBotKnowledgeSource,
+  HelpBotKnowledgeQueryOptions,
   HelpBotKnowledgeRecord,
   HelpBotKnowledgeMatch,
   isAmbiguousWalletManagementQuestion,
@@ -1584,24 +1585,9 @@ export class HelpBotAnswerer {
       };
     }
 
-    const desktopQuestion = desktopQuestionWithContext(
-      parseHelpBotQuestionContext(request.question).primaryQuestion,
-      request.previousBotAnswer ??
-        parseHelpBotQuestionContext(request.question).repliedToDropContext
-    );
-    if (desktopQuestion) {
-      const desktopMatch = await this.findKnowledgeMatches(
-        desktopQuestion
-      ).catch(() => null);
-      if (
-        desktopMatch &&
-        (isDesktopKnowledgeRecord(desktopMatch.record) ||
-          desktopMatch.record.tags.includes('desktop'))
-      ) {
-        return this.answerFromKnowledgeMatch(request, desktopMatch);
-      }
-      // Local-node state cannot be replaced with a public database answer.
-      return { type: 'NO_RELIABLE_SOURCE', escalateToTechTeam: true };
+    const desktopAnswer = await this.answerFromDesktopKnowledge(request);
+    if (desktopAnswer) {
+      return desktopAnswer;
     }
 
     const streamMatch = await this.findStreamKnowledgeMatch(request);
@@ -1666,6 +1652,33 @@ export class HelpBotAnswerer {
     }
 
     return this.answerFromKnowledgeMatch(request, match);
+  }
+
+  /** Keep local-node knowledge separate from public data and propagate source failures. */
+  private async answerFromDesktopKnowledge(
+    request: HelpBotAnswerRequest
+  ): Promise<HelpBotAnswerResult | null> {
+    const context = parseHelpBotQuestionContext(request.question);
+    const desktopQuestion = desktopQuestionWithContext(
+      context.primaryQuestion,
+      request.previousBotAnswer ?? context.repliedToDropContext
+    );
+    if (!desktopQuestion) {
+      return null;
+    }
+    // A thrown load error reaches the processor's technical-failure/refund path.
+    const match = await this.findKnowledgeMatches(desktopQuestion, {
+      desktopScope: true
+    });
+    if (
+      match &&
+      (isDesktopKnowledgeRecord(match.record) ||
+        match.record.tags.includes('desktop'))
+    ) {
+      return this.answerFromKnowledgeMatch(request, match);
+    }
+    // Local-node state cannot be replaced with a public database answer.
+    return { type: 'NO_RELIABLE_SOURCE', escalateToTechTeam: true };
   }
 
   private async answerFromKnowledgeMatch(
@@ -1827,16 +1840,18 @@ export class HelpBotAnswerer {
   }
 
   private async findKnowledgeMatches(
-    question: string
+    question: string,
+    options?: HelpBotKnowledgeQueryOptions
   ): Promise<HelpBotKnowledgeMatch | null> {
     if (this.knowledgeSource.findMatches) {
       return mergeKnowledgeMatches(
         await this.knowledgeSource.findMatches(
           question,
-          MAX_KNOWLEDGE_CONTEXT_MATCHES
+          MAX_KNOWLEDGE_CONTEXT_MATCHES,
+          options
         )
       );
     }
-    return await this.knowledgeSource.findMatch(question);
+    return await this.knowledgeSource.findMatch(question, options);
   }
 }

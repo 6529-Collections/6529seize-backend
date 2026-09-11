@@ -38,11 +38,20 @@ export interface HelpBotKnowledgeMatch {
   readonly score: number;
 }
 
+export interface HelpBotKnowledgeQueryOptions {
+  /** Scope already established from the current question, before adding prior answer text. */
+  readonly desktopScope?: boolean;
+}
+
 export interface HelpBotKnowledgeSource {
-  findMatch(question: string): Promise<HelpBotKnowledgeMatch | null>;
+  findMatch(
+    question: string,
+    options?: HelpBotKnowledgeQueryOptions
+  ): Promise<HelpBotKnowledgeMatch | null>;
   findMatches?(
     question: string,
-    limit?: number
+    limit?: number,
+    options?: HelpBotKnowledgeQueryOptions
   ): Promise<HelpBotKnowledgeMatch[]>;
 }
 
@@ -1044,7 +1053,8 @@ function desktopRecordScore(
 function findMatchesInRecords(
   question: string,
   records: readonly HelpBotKnowledgeRecord[],
-  limit: number
+  limit: number,
+  options?: HelpBotKnowledgeQueryOptions
 ): HelpBotKnowledgeMatch[] {
   const normalizedQuestion = normalizeText(question);
   if (!normalizedQuestion) {
@@ -1052,7 +1062,8 @@ function findMatchesInRecords(
   }
   const questionTokens = tokenize(question);
   const routedScores = routedRecordScores(normalizedQuestion);
-  const desktopQuestion = isDesktopSupportQuestion(question);
+  const desktopQuestion =
+    options?.desktopScope ?? isDesktopSupportQuestion(question);
   return records
     .filter((record) => desktopQuestion || !isDesktopKnowledgeRecord(record))
     .map((record) => ({
@@ -1072,9 +1083,10 @@ function findMatchesInRecords(
 
 function findMatchInRecords(
   question: string,
-  records: readonly HelpBotKnowledgeRecord[]
+  records: readonly HelpBotKnowledgeRecord[],
+  options?: HelpBotKnowledgeQueryOptions
 ): HelpBotKnowledgeMatch | null {
-  const matches = findMatchesInRecords(question, records, 1);
+  const matches = findMatchesInRecords(question, records, 1, options);
   return matches[0] ?? null;
 }
 
@@ -1082,16 +1094,18 @@ export class StaticHelpBotKnowledgeSource implements HelpBotKnowledgeSource {
   constructor(private readonly index: HelpBotKnowledgeIndex) {}
 
   public async findMatch(
-    question: string
+    question: string,
+    options?: HelpBotKnowledgeQueryOptions
   ): Promise<HelpBotKnowledgeMatch | null> {
-    return findMatchInRecords(question, this.index.records);
+    return findMatchInRecords(question, this.index.records, options);
   }
 
   public async findMatches(
     question: string,
-    limit = 1
+    limit = 1,
+    options?: HelpBotKnowledgeQueryOptions
   ): Promise<HelpBotKnowledgeMatch[]> {
-    return findMatchesInRecords(question, this.index.records, limit);
+    return findMatchesInRecords(question, this.index.records, limit, options);
   }
 }
 
@@ -1104,18 +1118,22 @@ export class FrontendHelpBotKnowledgeSource implements HelpBotKnowledgeSource {
   ) {}
 
   public async findMatch(
-    question: string
+    question: string,
+    options?: HelpBotKnowledgeQueryOptions
   ): Promise<HelpBotKnowledgeMatch | null> {
     const index = await this.loadIndex();
-    return index ? findMatchInRecords(question, index.records) : null;
+    return index ? findMatchInRecords(question, index.records, options) : null;
   }
 
   public async findMatches(
     question: string,
-    limit = 1
+    limit = 1,
+    options?: HelpBotKnowledgeQueryOptions
   ): Promise<HelpBotKnowledgeMatch[]> {
     const index = await this.loadIndex();
-    return index ? findMatchesInRecords(question, index.records, limit) : [];
+    return index
+      ? findMatchesInRecords(question, index.records, limit, options)
+      : [];
   }
 
   private async loadIndex(): Promise<HelpBotKnowledgeIndex | null> {
