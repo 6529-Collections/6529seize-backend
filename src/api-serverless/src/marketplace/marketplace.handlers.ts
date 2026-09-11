@@ -1,11 +1,8 @@
 import { executeMarketRequest as execute } from './marketplace.http';
 import { z } from 'zod';
 import * as Operations from '@/api/generated/routes/operations';
-import { ApiMarketTradeOrderSideEnum } from '@/api/generated/models/ApiMarketTradeOrder';
-import {
-  marketCatalogAsset,
-  marketPrepareSchema
-} from '@/marketplace/market-preparation';
+import * as BatchCapabilities from '@/api/generated/models/ApiMarketBatchCapabilities';
+import { marketCatalogAsset } from '@/marketplace/market-preparation';
 import { marketHashSchema } from '@/marketplace/seaport.schema';
 import {
   continueMarketOperation,
@@ -18,8 +15,33 @@ import {
   beginMarketTransactionAttempt,
   rejectMarketTransactionAttempt
 } from './marketplace.service';
+import { MARKET_BATCH_LIMITS } from '@/marketplace/market-batch.schema';
+import { marketOperationPrepareSchema } from '@/marketplace/market-operation.types';
+import { discoveredOrderDto } from '@/api/marketplace/marketplace.dto';
 
 const idSchema = z.string().uuid();
+
+export function handleGetMarketBatchCapabilities(
+  req: Operations.GetMarketBatchCapabilitiesRequest
+): Promise<Operations.GetMarketBatchCapabilitiesResponse> {
+  return execute(req, async () => ({
+    available:
+      !!process.env.OPENSEA_API_KEY &&
+      (process.env.MARKETPLACE_TRADING_ENABLED ?? 'true') === 'true',
+    execution_policy:
+      BatchCapabilities.ApiMarketBatchCapabilitiesExecutionPolicyEnum
+        .AllOrRevert,
+    currency:
+      BatchCapabilities.ApiMarketBatchCapabilitiesCurrencyEnum
+        ._0x0000000000000000000000000000000000000000,
+    payer_type: BatchCapabilities.ApiMarketBatchCapabilitiesPayerTypeEnum.Eoa,
+    ...MARKET_BATCH_LIMITS,
+    restricted_erc1155_max_order_quantity:
+      BatchCapabilities
+        .ApiMarketBatchCapabilitiesRestrictedErc1155MaxOrderQuantityEnum._1,
+    requires_complete_simulation: true
+  }));
+}
 
 export function handleBeginMarketTransactionAttempt(
   req: Operations.BeginMarketTransactionAttemptRequest
@@ -90,26 +112,7 @@ export async function handleGetMarketOrders(
       source: 'OpenSea',
       observed_at: Date.now(),
       complete: false,
-      orders: orders.map((order) => ({
-        identity: {
-          protocol_address: order.identity.protocolAddress,
-          order_hash: order.identity.orderHash
-        },
-        asset_key: asset.asset_key,
-        maker: order.maker,
-        recipient: order.recipient,
-        side: order.side as ApiMarketTradeOrderSideEnum,
-        quantity: order.quantity,
-        currency: order.currency,
-        total_wei: order.totalWei,
-        net_wei: order.netWei,
-        fees: order.fees.map((fee) => ({
-          recipient: fee.recipient,
-          amount_wei: fee.amountWei
-        })),
-        start_time: order.startTime,
-        end_time: order.endTime
-      }))
+      orders: orders.map((order) => discoveredOrderDto(order, asset.asset_key))
     };
   });
 }
@@ -120,7 +123,7 @@ export function handlePrepareMarketOperation(
   return execute(req, (auth) =>
     prepareMarketOperation(
       auth,
-      marketPrepareSchema.parse(req.body),
+      marketOperationPrepareSchema.parse(req.body),
       idSchema.parse(req.get('Idempotency-Key'))
     )
   );
@@ -141,7 +144,13 @@ export function handleGetMyMarketOperations(
       z
         .object({
           limit: z.coerce.number().int().min(1).max(50).default(20),
-          cursor: z.string().min(1).max(200).optional()
+          cursor: z.string().min(1).max(200).optional(),
+          include_batches: z
+            .union([
+              z.boolean(),
+              z.enum(['true', 'false']).transform((value) => value === 'true')
+            ])
+            .optional()
         })
         .strict()
         .parse(req.query)

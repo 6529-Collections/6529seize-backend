@@ -127,10 +127,11 @@ export class MarketOperationsDb {
     profileId: string,
     limit: number,
     before?: { created_at: number; id: string },
-    wallet?: string
+    wallet?: string,
+    includeBatches = false
   ) {
     return this.getDb().execute<MarketOperationRow>(
-      `SELECT * FROM market_operations WHERE (profile_id=:profileId ${wallet ? 'OR wallet=:wallet' : ''}) ${before ? 'AND (created_at<:createdAt OR (created_at=:createdAt AND id<:id))' : ''} ORDER BY created_at DESC,id DESC LIMIT :limit`,
+      `SELECT * FROM market_operations WHERE (profile_id=:profileId ${wallet ? 'OR wallet=:wallet' : ''}) ${includeBatches ? '' : "AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(request_json, '$.kind')), '') <> 'BUY_BATCH'"} ${before ? 'AND (created_at<:createdAt OR (created_at=:createdAt AND id<:id))' : ''} ORDER BY created_at DESC,id DESC LIMIT :limit`,
       {
         profileId,
         wallet: wallet?.toLowerCase(),

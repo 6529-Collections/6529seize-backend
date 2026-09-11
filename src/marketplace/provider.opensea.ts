@@ -262,7 +262,11 @@ export function describeMarketOrder(
 export class OpenSeaMarketplaceProvider {
   private readonly fetcher: typeof fetch;
   constructor(
-    private readonly options: { apiKey: string; fetch?: typeof fetch }
+    private readonly options: {
+      apiKey: string;
+      fetch?: typeof fetch;
+      signal?: AbortSignal;
+    }
   ) {
     this.fetcher = options.fetch ?? fetch;
   }
@@ -277,6 +281,9 @@ export class OpenSeaMarketplaceProvider {
         'The marketplace provider is not configured.'
       );
     const controller = new AbortController();
+    const abort = () => controller.abort();
+    this.options.signal?.addEventListener('abort', abort, { once: true });
+    if (this.options.signal?.aborted) controller.abort();
     const timeout = setTimeout(
       () => controller.abort(),
       OPENSEA_REQUEST_TIMEOUT_MS
@@ -304,6 +311,7 @@ export class OpenSeaMarketplaceProvider {
       );
     } finally {
       clearTimeout(timeout);
+      this.options.signal?.removeEventListener('abort', abort);
       controller.abort();
     }
   }

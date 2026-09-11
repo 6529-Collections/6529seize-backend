@@ -23,6 +23,12 @@ import {
 import { prepareMarketCancel } from '@/marketplace/seaport.builder';
 import { operationSendAttempt } from './market-operation-state';
 import { CustomApiCompliantException } from '@/exceptions';
+import {
+  MarketOperationPrepared,
+  isMarketBatchPrepared
+} from '@/marketplace/market-operation.types';
+import { MarketBatchSettlement } from '@/marketplace/market-batch.types';
+import { validateMarketBatchReceipt } from '@/marketplace/market-batch-receipt';
 
 export interface MarketSettlement {
   filledQuantity: string;
@@ -273,7 +279,7 @@ export function validateMarketReceipt(
   };
 }
 
-function preparedFrom(row: MarketOperationRow): MarketPrepared | null {
+function preparedFrom(row: MarketOperationRow): MarketOperationPrepared | null {
   let value = row.prepared_json;
   if (typeof value === 'string') {
     try {
@@ -283,7 +289,7 @@ function preparedFrom(row: MarketOperationRow): MarketPrepared | null {
     }
   }
   if (!value || typeof value !== 'object' || !('intent' in value)) return null;
-  return value as MarketPrepared;
+  return value as MarketOperationPrepared;
 }
 function kindFrom(row: MarketOperationRow): string | null {
   let value = row.request_json;
@@ -319,7 +325,7 @@ async function persist(
 
 async function reconcileSubmitted(
   row: MarketOperationRow,
-  prepared: MarketPrepared,
+  prepared: MarketOperationPrepared,
   kind: string,
   deps: MarketReconcileDependencies
 ): Promise<void> {
@@ -369,9 +375,14 @@ async function reconcileSubmitted(
       ...(safeIncluded ? { liabilityWei: '0' } : {})
     });
   }
-  let settlement: MarketSettlement;
+  let settlement: MarketSettlement | MarketBatchSettlement;
   try {
-    settlement = validateMarketReceipt(prepared, kind, transaction, receipt);
+    if (isMarketBatchPrepared(prepared)) {
+      if (kind !== 'BUY_BATCH')
+        mismatch('The operation kind does not match its batch review.');
+      settlement = validateMarketBatchReceipt(prepared, transaction, receipt);
+    } else
+      settlement = validateMarketReceipt(prepared, kind, transaction, receipt);
   } catch {
     return persist(row, deps, 'UNKNOWN', { errorCode: 'SETTLEMENT_MISMATCH' });
   }
@@ -505,7 +516,10 @@ export async function reconcileMarketOperation(
   try {
     if (row.transaction_hash && submittedStates.includes(row.state))
       await reconcileSubmitted(row, prepared, kind, deps);
-    else if (signedStates.includes(row.state))
+    else if (
+      signedStates.includes(row.state) &&
+      !isMarketBatchPrepared(prepared)
+    )
       await reconcileSigned(row, prepared, deps);
   } catch (error) {
     // A competing reconciliation may already have committed a newer state. Never
