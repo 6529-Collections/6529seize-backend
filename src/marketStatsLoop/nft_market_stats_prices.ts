@@ -1,13 +1,9 @@
 import { Logger } from '../logging';
 import { Time } from '../time';
-import {
-  fetchOpenSeaPricePage,
-  waitForOpenSeaPage
-} from '@/marketStatsLoop/opensea-price-fetch';
+import { fetchOpenSeaPricePage } from '@/marketStatsLoop/opensea-price-fetch';
+import { OpenSeaRateLimiter } from '@/market-depth/opensea-rate-limiter';
 
 const logger = Logger.get('NFT_MARKET_STATS_PRICES_PRICES');
-
-const RETRY_DELAY_MS = 5000;
 
 export type PriceResponse = {
   price: number;
@@ -66,13 +62,14 @@ async function fetchBestPricesForCollection<T>(
   deadlineMs: number
 ): Promise<Map<string, PriceResponse>> {
   const results = new Map<string, PriceResponse>();
+  const rateLimiter = new OpenSeaRateLimiter();
   const baseUrl = config.baseUrl.replace('{slug}', collectionSlug);
   let next: string | null = null;
   const seenCursors = new Set<string>();
 
   do {
     const url = buildUrl(baseUrl, next);
-    const data = await fetchOpenSeaPricePage(url, deadlineMs);
+    const data = await fetchOpenSeaPricePage(url, deadlineMs, rateLimiter);
     const { entries, next: nextCursor } = parsePricePage<T>(
       data,
       config.itemLabel,
@@ -89,7 +86,6 @@ async function fetchBestPricesForCollection<T>(
         throw new Error(`[OPENSEA] Repeated pagination cursor for ${url}`);
       }
       seenCursors.add(next);
-      await waitForOpenSeaPage(RETRY_DELAY_MS, deadlineMs, url);
     }
   } while (next);
 
