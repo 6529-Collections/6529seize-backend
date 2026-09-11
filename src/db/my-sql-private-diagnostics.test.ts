@@ -6,7 +6,7 @@ import { Logger } from '../logging';
 const warn = jest.fn();
 const error = jest.fn();
 
-describe('private artwork SQL diagnostics', () => {
+describe('private SQL diagnostics', () => {
   beforeEach(() => {
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(warn);
     jest.spyOn(Logger.prototype, 'error').mockImplementation(error);
@@ -16,13 +16,18 @@ describe('private artwork SQL diagnostics', () => {
     warn.mockClear();
     error.mockClear();
   });
-  it('omits bound and inline private values from slow and failed queries', async () => {
+  it.each([
+    'artwork_documentation_assets',
+    'profile_cms_agent_grants',
+    'profile_cms_agent_proposals',
+    'profile_cms_agent_events'
+  ])('omits bound and inline private values for %s', async (table) => {
     jest.spyOn(Time.prototype, 'diffFromNow').mockReturnValue(Time.seconds(2));
     const failure = Object.assign(
       new Error('private-contact@example.test in SQL error'),
       {
         code: 'ER_DUP_ENTRY',
-        sql: "INSERT INTO artwork_documentation_assets VALUES ('private-image.tif')"
+        sql: `INSERT INTO ${table} VALUES ('private-image.tif')`
       }
     );
     const connection = {
@@ -32,7 +37,7 @@ describe('private artwork SQL diagnostics', () => {
       release: jest.fn()
     } as unknown as PoolConnection;
     const rejected = await execSQLWithParams(
-      "INSERT INTO artwork_documentation_assets (filename) VALUES ('private-image.tif')",
+      `INSERT INTO ${table} (filename) VALUES ('private-image.tif')`,
       connection,
       true,
       { contact: 'private-contact@example.test' }

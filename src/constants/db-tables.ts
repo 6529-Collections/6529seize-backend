@@ -245,3 +245,6 @@ export const WS_NOTIFICATION_SUBSCRIPTIONS_TABLE =
   'ws_notification_subscriptions';
 export const RELEASE_NOTE_STREAM_STATES_TABLE = 'release_note_stream_states';
 export const RELEASE_NOTE_PUBLICATIONS_TABLE = 'release_note_publications';
+export const PROFILE_CMS_AGENT_GRANTS_TABLE = 'profile_cms_agent_grants';
+export const PROFILE_CMS_AGENT_PROPOSALS_TABLE = 'profile_cms_agent_proposals';
+export const PROFILE_CMS_AGENT_EVENTS_TABLE = 'profile_cms_agent_events';
