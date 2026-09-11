@@ -273,6 +273,12 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 
 ### NFT market depth and activity
 
+`marketStatsLoop` legacy price pagination and market-depth REST requests share
+the existing Redis OpenSea request quota, with local pacing when Redis is
+unavailable. Successful price pages proceed as quota permits; retries and the
+shared refresh deadline remain bounded, and incomplete scans never replace stored
+prices.
+
 `marketStatsLoop` publishes complete OpenSea order snapshots atomically with
 current orders and a persistent queue for reconciling disappeared orders.
 `marketDepthStreamLoop` records live order lifecycle events, while REST event
