@@ -1,5 +1,11 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { RequestContext } from '@/request.context';
+import { canWriteDocumentation } from './artwork-documentation.access';
+import {
+  ProgramViewerGroups,
+  programViewerCapabilities,
+  readableViewerPrograms
+} from './artwork-documentation.program-viewers';
 import {
   publicationAssetAccess,
   validatePublicationAssetLink
@@ -207,7 +213,8 @@ export class ArtworkDocumentationService {
   constructor(
     readonly db: ArtworkDocumentationDb = artworkDocumentationDb,
     private assets: AssetGateway = noAssetGateway,
-    private readonly featurePolicy: DocumentationFeaturePolicy = environmentFeaturePolicy
+    private readonly featurePolicy: DocumentationFeaturePolicy = environmentFeaturePolicy,
+    private readonly viewerGroups?: ProgramViewerGroups
   ) {}
   setAssetGateway(gateway: AssetGateway): void {
     this.assets = gateway;
@@ -259,15 +266,38 @@ export class ArtworkDocumentationService {
     actor: string,
     contextId: string | null,
     programId: string | null,
-    ctx: RequestContext
+    ctx: RequestContext,
+    includeProgramViewers = true
   ): Promise<Capabilities> {
     const rows = await this.db.query<{ capabilities_json: unknown }>(
       `SELECT capabilities_json FROM ${AD_GRANTS} WHERE subject_profile_id=:actor AND revoked_at IS NULL AND ((context_id=:contextId AND context_id IS NOT NULL) OR (program_id=:programId AND context_id IS NULL AND program_id IS NOT NULL))`,
       { actor, contextId, programId },
       ctx
     );
-    return mergeCapabilities(
-      rows.map((row) => parseJson<Partial<Capabilities>>(row.capabilities_json))
+    const grants = rows.map((row) =>
+      parseJson<Partial<Capabilities>>(row.capabilities_json)
+    );
+    if (
+      includeProgramViewers &&
+      programId &&
+      (await this.readableViewerPrograms(actor, ctx, programId)).includes(
+        programId
+      )
+    )
+      grants.push(programViewerCapabilities());
+    return mergeCapabilities(grants);
+  }
+  readableViewerPrograms(
+    actor: string,
+    ctx: RequestContext,
+    programId?: string
+  ) {
+    return readableViewerPrograms(
+      this.db,
+      actor,
+      ctx,
+      programId,
+      this.viewerGroups
     );
   }
   async profiles(ctx: RequestContext) {
@@ -307,13 +337,20 @@ export class ArtworkDocumentationService {
     content = true
   ): Promise<T> {
     const actor = this.actor(ctx);
-    await this.authorizeContext(id, ctx);
+    if (
+      !canWriteDocumentation(
+        (await this.authorizeContext(id, ctx)).capabilities
+      )
+    )
+      fail(403, 'EDIT_NOT_ALLOWED');
     return this.db.idempotent(
       digest([actor, mutation.route, mutation.key]),
       digest(mutation.body),
       ctx,
       async (transaction) => {
         const access = await this.authorizeContext(id, transaction, true);
+        if (!canWriteDocumentation(access.capabilities))
+          fail(403, 'EDIT_NOT_ALLOWED');
         if (
           content &&
           mutation.expectedVersion !== access.context.draft_version
@@ -486,7 +523,8 @@ export class ArtworkDocumentationService {
             actor,
             null,
             profile.program_id,
-            transaction
+            transaction,
+            false
           );
           if (!caps.read_context) fail(403, 'PROGRAM_INVITATION_REQUIRED');
         } else if (!this.featurePolicy.selfServiceEnabled())

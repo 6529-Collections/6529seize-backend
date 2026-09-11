@@ -191,15 +191,20 @@ export class ArtworkDocumentationReviewService {
         programId,
         ctx
       );
-      if (!caps.manage_context && !caps.manage_assignments)
-        fail(404, 'UNAVAILABLE');
+      if (!caps.read_context) fail(404, 'UNAVAILABLE');
     }
     const { limit, cursor } = pageParameters(raw);
     const filters = queueFilters(raw);
+    const viewerPrograms = await this.core.readableViewerPrograms(
+      actor,
+      ctx,
+      programId
+    );
     const rows = await this.core.db.query<{ id: string; updated_at: number }>(
-      `SELECT c.id,c.updated_at FROM ${AD_CONTEXTS} c LEFT JOIN ${AD_REVISIONS} r ON r.id=c.latest_revision_id WHERE (c.owner_profile_id=:actor OR EXISTS (SELECT 1 FROM ${AD_GRANTS} g WHERE g.subject_profile_id=:actor AND g.revoked_at IS NULL AND (g.context_id=c.id OR (g.context_id IS NULL AND g.program_id=c.program_id)))) AND (:programId IS NULL OR c.program_id=:programId) AND (:workId IS NULL OR c.work_id=:workId) AND (:cursorId IS NULL OR c.updated_at<:updated OR (c.updated_at=:updated AND c.id<:cursorId))${filters.sql} ORDER BY c.updated_at DESC,c.id DESC LIMIT :limit`,
+      `SELECT c.id,c.updated_at FROM ${AD_CONTEXTS} c LEFT JOIN ${AD_REVISIONS} r ON r.id=c.latest_revision_id WHERE (c.owner_profile_id=:actor OR EXISTS (SELECT 1 FROM ${AD_GRANTS} g WHERE g.subject_profile_id=:actor AND g.revoked_at IS NULL AND (g.context_id=c.id OR (g.context_id IS NULL AND g.program_id=c.program_id)))${viewerPrograms.length ? ' OR c.program_id IN (:viewerPrograms)' : ''}) AND (:programId IS NULL OR c.program_id=:programId) AND (:workId IS NULL OR c.work_id=:workId) AND (:cursorId IS NULL OR c.updated_at<:updated OR (c.updated_at=:updated AND c.id<:cursorId))${filters.sql} ORDER BY c.updated_at DESC,c.id DESC LIMIT :limit`,
       {
         actor,
+        viewerPrograms,
         ...filters.params,
         programId: programId ?? null,
         workId: workId ?? null,

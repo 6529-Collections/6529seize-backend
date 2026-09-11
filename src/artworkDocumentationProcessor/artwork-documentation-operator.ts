@@ -10,8 +10,14 @@ import { fail } from '@/artwork-documentation/artwork-documentation.validation';
 import { KeysAndGatesSourceDropsMissingError } from '@/artwork-documentation/artwork-documentation-import.errors';
 import { setKeysAndGatesCoordinatorReadAccess } from '@/artwork-documentation/artwork-documentation-coordinator-access';
 import { upgradeEmptyKeysAndGatesPublication } from '@/artwork-documentation/artwork-documentation-publication-upgrade';
+import {
+  parseProgramViewersEvent,
+  ProgramViewersEvent,
+  setProgramViewers
+} from '@/artwork-documentation/artwork-documentation-program-viewer-operator';
 
 export type DocumentationOperatorEvent =
+  | ProgramViewersEvent
   | {
       operator_action:
         | 'import_keys_and_gates_v1'
@@ -37,6 +43,8 @@ export function parseDocumentationOperatorEvent(
     return null;
   const input = event as Record<string, unknown>;
   if (!isUuid(input.correlation_id)) fail(422, 'INVALID_OPERATOR_REQUEST');
+  if (input.operator_action === 'set_program_viewers_v1')
+    return parseProgramViewersEvent(input);
   const common = ['operator_action', 'correlation_id'];
   if (input.operator_action === 'create_smoke_context_v1') {
     if (Object.keys(input).some((key) => !common.includes(key)))
@@ -86,6 +94,8 @@ export async function runDocumentationOperator(
         event.operator_action === 'create_smoke_context_v1'
     }
   );
+  if (event.operator_action === 'set_program_viewers_v1')
+    return setProgramViewers(event, service);
   if (event.operator_action === 'set_keys_and_gates_coordinator_read_access_v1')
     return setKeysAndGatesCoordinatorReadAccess(event, service);
   if (event.operator_action === 'upgrade_empty_keys_and_gates_publication_v2')
