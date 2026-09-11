@@ -21,6 +21,7 @@ export class MarketOperationEntity {
   @Column({ type: 'varchar', length: 32 }) state!: string;
   @Column({ type: 'json' }) request_json!: string;
   @Column({ type: 'json', nullable: true }) prepared_json!: string | null;
+  @Column({ type: 'json', nullable: true }) send_attempt_json?: string | null;
   @Column({ type: 'varchar', length: 66, nullable: true }) transaction_hash!:
     | string
     | null;

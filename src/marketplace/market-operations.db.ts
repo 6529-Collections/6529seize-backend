@@ -2,6 +2,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { MarketOperationEntity } from '@/entities/IMarketOperation';
 import { CustomApiCompliantException, NotFoundException } from '@/exceptions';
 import { ConnectionWrapper, dbSupplier, SqlExecutor } from '@/sql-executor';
+import {
+  MarketSendAttempt,
+  marketOperationRevision,
+  operationSendAttempt
+} from './market-operation-state';
 
 export type MarketOperationState =
   | 'PREPARING'
@@ -20,10 +25,11 @@ export type MarketOperationState =
   | 'EXPIRED';
 export interface MarketOperationRow extends Omit<
   MarketOperationEntity,
-  'request_json' | 'prepared_json' | 'state'
+  'request_json' | 'prepared_json' | 'send_attempt_json' | 'state'
 > {
   request_json: unknown;
   prepared_json: unknown;
+  send_attempt_json?: unknown;
   state: MarketOperationState;
 }
 
@@ -164,6 +170,10 @@ export class MarketOperationsDb {
       fundingBalanceWei?: string;
       beforeCommit?: (connection: ConnectionWrapper<unknown>) => Promise<void>;
       reviewedTransaction?: { digest: string; prepared: unknown };
+      expectedRevision?: string;
+      expectedAttemptId?: string;
+      sendAttempt?: MarketSendAttempt;
+      requireUnexpiredReview?: boolean;
     } = {}
   ) {
     return this.getDb().executeNativeQueriesInTransaction(
@@ -193,6 +203,22 @@ export class MarketOperationsDb {
             'The trade changed. Refresh before continuing.',
             'OPERATION_CHANGED'
           );
+        const activeAttempt = operationSendAttempt(row);
+        if (
+          (patch.requireUnexpiredReview &&
+            Number(row.expires_at) <= Date.now()) ||
+          (patch.expectedRevision &&
+            patch.expectedRevision !== marketOperationRevision(row)) ||
+          (activeAttempt?.status === 'ACTIVE' &&
+            patch.expectedAttemptId !== activeAttempt.attempt_id) ||
+          (patch.expectedAttemptId &&
+            activeAttempt?.attempt_id !== patch.expectedAttemptId)
+        )
+          throw new CustomApiCompliantException(
+            409,
+            'The trade changed. Refresh before continuing.',
+            'OPERATION_CHANGED'
+          );
         if (
           patch.liabilityWei !== undefined &&
           BigInt(patch.liabilityWei) > BigInt(row.liability_wei)
@@ -208,7 +234,7 @@ export class MarketOperationsDb {
         const values = {
           id,
           state,
-          updatedAt: Date.now(),
+          updatedAt: Math.max(Date.now(), Number(row.updated_at) + 1),
           prepared:
             patch.prepared === undefined
               ? null
@@ -217,11 +243,14 @@ export class MarketOperationsDb {
           orderHash: patch.orderHash ?? null,
           liabilityWei: patch.liabilityWei ?? null,
           errorCode: patch.errorCode ?? null,
-          expiresAt: patch.expiresAt ?? null
+          expiresAt: patch.expiresAt ?? null,
+          sendAttempt: patch.sendAttempt
+            ? JSON.stringify(patch.sendAttempt)
+            : null
         };
         try {
           await this.getDb().execute(
-            `UPDATE market_operations SET state = :state, updated_at = :updatedAt, prepared_json = COALESCE(:prepared,prepared_json), transaction_hash = COALESCE(:transactionHash,transaction_hash), order_hash = COALESCE(:orderHash,order_hash), liability_wei = COALESCE(:liabilityWei,liability_wei), error_code = :errorCode, expires_at = COALESCE(:expiresAt,expires_at) WHERE id = :id`,
+            `UPDATE market_operations SET state = :state, updated_at = :updatedAt, prepared_json = COALESCE(:prepared,prepared_json), send_attempt_json = COALESCE(:sendAttempt,send_attempt_json), transaction_hash = COALESCE(:transactionHash,transaction_hash), order_hash = COALESCE(:orderHash,order_hash), liability_wei = COALESCE(:liabilityWei,liability_wei), error_code = :errorCode, expires_at = COALESCE(:expiresAt,expires_at) WHERE id = :id`,
             values,
             opts
           );

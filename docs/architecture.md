@@ -34,6 +34,12 @@ settlement attribution. Receipt reconciliation verifies canonical blocks,
 Seaport events and NFT transfers; potential exposure persists until verified
 fill, cancellation or safe-chain expiry.
 
+Before the client opens a transaction prompt, a durable send attempt binds the
+reviewed payload and operation revision. An unresolved attempt blocks another
+send for that operation across browsers and devices. Hash recovery validates
+the original approval or fulfillment; only a positively identified pre-broadcast
+rejection can release an attempt without a verified transaction outcome.
+
 `collect_plans` stores incremental listing scans with renewable leases and
 profile/catalog invalidation. It distinguishes a completed asset scan from
 incomplete market coverage. `collect_rules` and `collect_rule_operations` store

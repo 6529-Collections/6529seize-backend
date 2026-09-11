@@ -11,12 +11,12 @@
  */
 
 import { ApiCollectAsset } from '../models/ApiCollectAsset';
-import { ApiMarketOrder } from '../models/ApiMarketOrder';
+import { ApiMarketTradeOrder } from '../models/ApiMarketTradeOrder';
 import { HttpFile } from '../http/http';
 
 export class ApiMarketListingEntry {
     'asset': ApiCollectAsset;
-    'order': ApiMarketOrder;
+    'order': ApiMarketTradeOrder;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -32,7 +32,7 @@ export class ApiMarketListingEntry {
         {
             "name": "order",
             "baseName": "order",
-            "type": "ApiMarketOrder",
+            "type": "ApiMarketTradeOrder",
             "format": ""
         }    ];
 

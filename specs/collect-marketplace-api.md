@@ -45,12 +45,25 @@ transaction and signature paths are verified.
 3. Use `/continue` to recheck ownership, approvals, order counter, recipient
    membership and simulation. A new order must reach `AWAITING_SIGNATURE`
    before signing its EIP-712 payload. The wallet remains the only signer.
-4. Post its signature to `/signature`, or the exact sent transaction hash to
+4. Before any transaction wallet request, persist a unique attempt locally and
+   call `/send-attempts` with the reviewed revision, purpose and exact transaction
+   digest. Wait for acknowledgement before opening the wallet. This atomically
+   records `UNKNOWN` and blocks another send for the operation across clients.
+5. Post its signature to `/signature`, or the exact sent transaction hash to
    `/submissions`. A signature is a bearer capability: do not log or retain it
    in analytics. The server does not accept arbitrary wallet transactions.
-5. Read `/market/operations/{id}` to reconcile. `UNKNOWN` requires recovery of
+6. Read `/market/operations/{id}` to reconcile. `UNKNOWN` requires recovery of
    the original order/transaction, never blind resubmission. List history with
    the opaque cursor from `/market/me/operations`.
+
+The optional `send_attempt` exposes the exact pending action for recovery even
+without local storage. `/submissions` also accepts an approval hash for that
+attempt and verifies its sender, target, calldata, value and canonical receipt.
+An unknown send never expires merely because a timer or connection fails.
+`/send-attempts/rejection` can release only the matching attempt after an explicit
+wallet rejection or when the wallet request was never invoked. It must never
+be used for an ambiguous wallet/RPC response. Keep retrying a lost acknowledgement
+with the same attempt ID; do not create a replacement attempt.
 
 An order freshness timer does not invalidate a revealed signature. Potential
 offer liability starts before signable terms leave the server and persists

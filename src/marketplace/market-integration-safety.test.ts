@@ -9,6 +9,12 @@ import { collectingDb } from '@/collecting/collecting.db';
 import { marketChain } from '@/marketplace/market-chain';
 import { operationDto } from '@/api/marketplace/marketplace.dto';
 import {
+  marketOperationRevision,
+  reviewedTransactionDigest
+} from './market-operation-state';
+import {
+  beginMarketTransactionAttempt,
+  rejectMarketTransactionAttempt,
   assertMarketActor,
   continueMarketOperation,
   listMarketOperations,
@@ -17,6 +23,7 @@ import {
   readMarketOperation,
   submitMarketOperation
 } from '@/api/marketplace/marketplace.service';
+import { reconcileMarketOperation } from './market-reconciliation';
 import { MARKET_WETH, MARKET_SEAPORT } from '@/marketplace/seaport.registry';
 
 jest.mock('@/marketplace/market-preparation', () => ({
@@ -258,17 +265,23 @@ describe('market service authorization and first payload exposure', () => {
     return { historical, tx, getTransaction, row };
   }
   it('attaches the exact previously reviewed transaction after another tab refreshes the quote', async () => {
-    const { historical, tx } = submittedFixture();
+    const { historical, tx, row } = submittedFixture();
     await submitMarketOperation('operation', auth, tx.hash);
     expect(marketOperationsDb.reviewedTransaction).toHaveBeenCalledWith(
       'operation',
-      'transaction-digest'
+      reviewedTransactionDigest({ ...tx, value: tx.value.toString() })
     );
     expect(marketOperationsDb.transition).toHaveBeenCalledWith(
       'operation',
-      ['REVIEW', 'APPROVAL'],
+      ['REVIEW', 'APPROVAL', 'UNKNOWN'],
       'SUBMITTED',
-      { transactionHash: tx.hash, prepared: historical }
+      {
+        transactionHash: tx.hash,
+        prepared: historical,
+        expectedRevision: marketOperationRevision(
+          row as Parameters<typeof marketOperationRevision>[0]
+        )
+      }
     );
   });
   it('cannot attach a transaction whose reviewed payload belongs to a different operation', async () => {
@@ -279,6 +292,131 @@ describe('market service authorization and first payload exposure', () => {
     await expect(
       submitMarketOperation('operation', auth, tx.hash)
     ).rejects.toThrow(/reviewed trade/);
+    expect(marketOperationsDb.transition).not.toHaveBeenCalled();
+  });
+  function attemptedFixture(
+    purpose: 'APPROVAL' | 'TRANSACTION' = 'TRANSACTION'
+  ) {
+    const fixture = submittedFixture();
+    const attempt = {
+      attempt_id: 'attempt',
+      purpose,
+      transaction_digest: reviewedTransactionDigest(
+        fixture.historical.transaction!
+      ),
+      transaction: fixture.historical.transaction!,
+      snapshot_block: 100,
+      previous_state: 'REVIEW',
+      status: 'ACTIVE'
+    };
+    const active = {
+      ...fixture.row,
+      state: 'UNKNOWN',
+      send_attempt_json: attempt
+    };
+    (marketOperationsDb.get as jest.Mock).mockResolvedValue(active);
+    (marketOperationsDb.getForActor as jest.Mock).mockResolvedValue(active);
+    return { ...fixture, active, attempt };
+  }
+  it('attaches a final send only through both its durable attempt and immutable reviewed payload', async () => {
+    const { tx } = attemptedFixture();
+    await submitMarketOperation('operation', auth, tx.hash);
+    expect(marketOperationsDb.transition).toHaveBeenCalledWith(
+      'operation',
+      ['REVIEW', 'APPROVAL', 'UNKNOWN'],
+      'SUBMITTED',
+      expect.objectContaining({
+        expectedAttemptId: 'attempt',
+        sendAttempt: expect.objectContaining({
+          status: 'RESOLVED',
+          transaction_hash: tx.hash
+        })
+      })
+    );
+  });
+  it('does not accept another historical reviewed payload for an active final attempt', async () => {
+    const { tx, active, attempt } = attemptedFixture();
+    (marketOperationsDb.getForActor as jest.Mock).mockResolvedValue({
+      ...active,
+      send_attempt_json: { ...attempt, transaction_digest: 'different' }
+    });
+    await expect(
+      submitMarketOperation('operation', auth, tx.hash)
+    ).rejects.toThrow(/recorded wallet request/);
+    expect(marketOperationsDb.transition).not.toHaveBeenCalled();
+  });
+  it('never runs normal order reconciliation while an approval request has no known hash', async () => {
+    attemptedFixture('APPROVAL');
+    await readMarketOperation('operation', auth);
+    expect(reconcileMarketOperation).not.toHaveBeenCalled();
+    expect(marketOperationsDb.transition).not.toHaveBeenCalled();
+  });
+  it('allows the original wallet to acknowledge rejection after profile migration but blocks siblings', async () => {
+    attemptedFixture('APPROVAL');
+    await rejectMarketTransactionAttempt(
+      'operation',
+      {
+        ...auth,
+        authenticatedProfileId: 'new-profile'
+      } as AuthenticationContext,
+      'attempt',
+      'USER_REJECTED'
+    );
+    expect(marketOperationsDb.transition).toHaveBeenCalledWith(
+      'operation',
+      ['UNKNOWN'],
+      'REVIEW',
+      expect.objectContaining({
+        expectedAttemptId: 'attempt',
+        sendAttempt: expect.objectContaining({ status: 'REJECTED' })
+      })
+    );
+    await expect(
+      rejectMarketTransactionAttempt(
+        'operation',
+        {
+          ...auth,
+          authenticatedWallet: MARKET_SEAPORT
+        } as AuthenticationContext,
+        'attempt',
+        'USER_REJECTED'
+      )
+    ).rejects.toThrow(/wallet that created/);
+  });
+  it('requires current profile membership for a new wallet prompt after migration', async () => {
+    const { tx } = submittedFixture();
+    await expect(
+      beginMarketTransactionAttempt(
+        'operation',
+        {
+          ...auth,
+          authenticatedProfileId: 'new-profile'
+        } as AuthenticationContext,
+        {
+          attempt_id: 'attempt',
+          expected_revision: 'revision',
+          purpose: 'TRANSACTION',
+          transaction_digest: reviewedTransactionDigest({
+            ...tx,
+            value: tx.value.toString()
+          })
+        }
+      )
+    ).rejects.toThrow(/authorized by/);
+    expect(marketOperationsDb.transition).not.toHaveBeenCalled();
+  });
+  it('idempotently returns a resolved approval when its submission acknowledgment was lost', async () => {
+    const { tx, active, attempt } = attemptedFixture('APPROVAL');
+    (marketOperationsDb.getForActor as jest.Mock).mockResolvedValue({
+      ...active,
+      state: 'REVIEW',
+      send_attempt_json: {
+        ...attempt,
+        status: 'RESOLVED',
+        transaction_hash: tx.hash
+      }
+    });
+    await submitMarketOperation('operation', auth, tx.hash);
     expect(marketOperationsDb.transition).not.toHaveBeenCalled();
   });
   it.each([
@@ -321,7 +459,7 @@ describe('market service authorization and first payload exposure', () => {
     );
     expect(marketOperationsDb.transition).toHaveBeenCalledWith(
       'operation',
-      ['REVIEW', 'APPROVAL'],
+      ['REVIEW', 'APPROVAL', 'UNKNOWN'],
       'SUBMITTED',
       expect.objectContaining({ transactionHash: tx.hash })
     );

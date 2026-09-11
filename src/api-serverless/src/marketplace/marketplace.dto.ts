@@ -8,10 +8,15 @@ import {
   ApiMarketTransactionApprovalScopeEnum,
   ApiMarketTransactionPurposeEnum
 } from '@/api/generated/models/ApiMarketTransaction';
+import { MarketOperationRow } from '@/marketplace/market-operations.db';
 import {
-  MarketOperationRow,
-  marketRequestHash
-} from '@/marketplace/market-operations.db';
+  marketOperationRevision,
+  operationSendAttempt
+} from '@/marketplace/market-operation-state';
+import {
+  ApiMarketSendAttemptPurposeEnum,
+  ApiMarketSendAttemptStatusEnum
+} from '@/api/generated/models/ApiMarketSendAttempt';
 import {
   MarketPrepared,
   MarketPrepareRequest,
@@ -22,9 +27,9 @@ import {
   MarketDiscoveredOrder
 } from '@/marketplace/provider.types';
 import {
-  ApiMarketOrder,
-  ApiMarketOrderSideEnum
-} from '@/api/generated/models/ApiMarketOrder';
+  ApiMarketTradeOrder,
+  ApiMarketTradeOrderSideEnum
+} from '@/api/generated/models/ApiMarketTradeOrder';
 import { MarketSettlement } from '@/marketplace/market-reconciliation';
 
 function json(value: unknown): unknown {
@@ -64,7 +69,7 @@ export function transactionDto(
 export function discoveredOrderDto(
   order: MarketDiscoveredOrder,
   assetKey: string
-): ApiMarketOrder {
+): ApiMarketTradeOrder {
   return {
     identity: {
       protocol_address: order.identity.protocolAddress,
@@ -73,7 +78,7 @@ export function discoveredOrderDto(
     asset_key: assetKey,
     maker: order.maker,
     recipient: order.recipient,
-    side: order.side as ApiMarketOrderSideEnum,
+    side: order.side as ApiMarketTradeOrderSideEnum,
     quantity: order.quantity,
     currency: order.currency,
     total_wei: order.totalWei,
@@ -117,17 +122,27 @@ export function operationDto(row: MarketOperationRow): ApiMarketOperation {
   const request = operationRequest(row),
     prepared = operationPrepared(row);
   const intent = prepared?.intent;
+  const attempt = operationSendAttempt(row);
   const signed = prepared?.signedOrder?.order ?? prepared?.reviewOrder;
   const settlement = (
     prepared as (MarketPrepared & { settlement?: MarketSettlement }) | undefined
   )?.settlement;
   return {
     id: row.id,
-    revision: marketRequestHash({
-      requestHash: row.request_hash,
-      prepared: row.prepared_json,
-      updatedAt: row.updated_at
-    }),
+    revision: marketOperationRevision(row),
+    ...(attempt
+      ? {
+          send_attempt: {
+            attempt_id: attempt.attempt_id,
+            purpose: attempt.purpose as ApiMarketSendAttemptPurposeEnum,
+            status: attempt.status as ApiMarketSendAttemptStatusEnum,
+            transaction_digest: attempt.transaction_digest,
+            snapshot_block: attempt.snapshot_block,
+            transaction: transactionDto(attempt.transaction),
+            transaction_hash: attempt.transaction_hash ?? null
+          }
+        }
+      : {}),
     state: row.state as ApiMarketOperationStateEnum,
     profile_id: row.profile_id,
     kind: request.kind as ApiMarketKind,

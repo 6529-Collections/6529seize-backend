@@ -17,7 +17,19 @@ import {
 } from '@/marketplace/market-preparation';
 import { OpenSeaMarketplaceProvider } from '@/marketplace/provider.opensea';
 import { MarketValidationError } from '@/marketplace/provider.types';
-import type { MarketTransaction } from '@/marketplace/provider.types';
+import {
+  marketOperationRevision,
+  operationSendAttempt,
+  reviewedTransactionDigest
+} from '@/marketplace/market-operation-state';
+import {
+  BeginMarketSendAttempt,
+  beginMarketSendAttempt,
+  rejectMarketSendAttempt,
+  reconcileApprovalAttempt,
+  submitApprovalAttempt,
+  verifyAttemptTransaction
+} from '@/marketplace/market-send-attempts';
 import { reconcileMarketOperation } from '@/marketplace/market-reconciliation';
 import {
   operationDto,
@@ -31,17 +43,6 @@ export function marketplaceProvider() {
   });
 }
 
-function reviewedTransactionDigest(
-  tx: Pick<MarketTransaction, 'from' | 'to' | 'data' | 'value'>
-) {
-  return marketRequestHash({
-    chain_id: 1,
-    from: tx.from.toLowerCase(),
-    to: tx.to.toLowerCase(),
-    data: tx.data.toLowerCase(),
-    value: BigInt(tx.value).toString()
-  });
-}
 function reviewedTransactionPatch(prepared: MarketPrepared) {
   return prepared.transaction && !prepared.approvalTransactions.length
     ? {
@@ -340,6 +341,7 @@ export async function continueMarketOperation(
     ['REVIEW', 'APPROVAL', 'AWAITING_SIGNATURE'],
     next,
     {
+      expectedRevision: marketOperationRevision(row),
       prepared,
       ...reviewedTransactionPatch(prepared),
       ...(await ruleContinuationPatch(row, request, prepared)),
@@ -398,6 +400,48 @@ export async function publishMarketOperation(
   return operationDto(await marketOperationsDb.get(id, request.profile_id));
 }
 
+export async function beginMarketTransactionAttempt(
+  id: string,
+  auth: AuthenticationContext,
+  input: BeginMarketSendAttempt
+) {
+  const row = await ownedOperation(id, auth),
+    request = operationRequest(row);
+  assertMarketActor(auth, request);
+  assertMarketEnabled(request.kind === 'CANCEL');
+  const recipientInProfile = await recipientMembership(request);
+  if (!recipientInProfile && !request.acknowledge_external_recipient)
+    throw new CustomApiCompliantException(
+      409,
+      'Review the changed recipient profile before requesting the wallet.',
+      'RECIPIENT_SCOPE_CHANGED'
+    );
+  const prepared = operationPrepared(row);
+  const guard = prepared
+    ? await ruleContinuationPatch(row, request, prepared)
+    : {};
+  return operationDto(
+    await beginMarketSendAttempt(row, input, guard.beforeCommit)
+  );
+}
+
+export async function rejectMarketTransactionAttempt(
+  id: string,
+  auth: AuthenticationContext,
+  attemptId: string,
+  reason: 'USER_REJECTED' | 'WALLET_NOT_REQUESTED',
+  expectedRevision?: string
+) {
+  return operationDto(
+    await rejectMarketSendAttempt(
+      await ownedOperation(id, auth),
+      attemptId,
+      reason,
+      expectedRevision
+    )
+  );
+}
+
 export async function readMarketOperation(
   id: string,
   auth: AuthenticationContext
@@ -421,7 +465,9 @@ export async function readMarketOperation(
       row = await marketOperationsDb.get(id, row.profile_id);
     }
   }
-  await reconcileMarketOperation(row);
+  if (operationSendAttempt(row)?.status === 'ACTIVE') {
+    await reconcileApprovalAttempt(row);
+  } else await reconcileMarketOperation(row);
   return operationDto(await marketOperationsDb.get(id, row.profile_id));
 }
 export async function listMarketOperations(
@@ -473,22 +519,58 @@ export async function submitMarketOperation(
   transactionHash: string
 ) {
   const row = await ownedOperation(id, auth);
+  const attempt = operationSendAttempt(row);
+  if (
+    attempt?.purpose === 'APPROVAL' &&
+    attempt.status === 'RESOLVED' &&
+    attempt.transaction_hash === transactionHash.toLowerCase()
+  )
+    return operationDto(row);
+  if (attempt?.status === 'ACTIVE' && attempt.purpose === 'APPROVAL') {
+    await submitApprovalAttempt(row, transactionHash);
+    return operationDto(await marketOperationsDb.get(id, row.profile_id));
+  }
   if (
     row.transaction_hash === transactionHash &&
     ['SUBMITTED', 'MINED', 'CONFIRMED', 'UNKNOWN'].includes(row.state)
   )
     return operationDto(row);
-  if (!['REVIEW', 'APPROVAL'].includes(row.state))
+  if (
+    !['REVIEW', 'APPROVAL'].includes(row.state) &&
+    !(
+      row.state === 'UNKNOWN' &&
+      attempt?.status === 'ACTIVE' &&
+      attempt.purpose === 'TRANSACTION'
+    )
+  )
     throw new CustomApiCompliantException(
       409,
       'This trade cannot accept a new transaction.',
       'OPERATION_CHANGED'
     );
   const prepared = await assertSubmittedTransaction(row, transactionHash);
-  await marketOperationsDb.transition(id, ['REVIEW', 'APPROVAL'], 'SUBMITTED', {
-    transactionHash,
-    prepared
-  });
+  if (attempt?.status === 'ACTIVE')
+    await verifyAttemptTransaction(row, attempt, transactionHash);
+  await marketOperationsDb.transition(
+    id,
+    ['REVIEW', 'APPROVAL', 'UNKNOWN'],
+    'SUBMITTED',
+    {
+      transactionHash,
+      prepared,
+      expectedRevision: marketOperationRevision(row),
+      ...(attempt?.status === 'ACTIVE'
+        ? {
+            expectedAttemptId: attempt.attempt_id,
+            sendAttempt: {
+              ...attempt,
+              status: 'RESOLVED',
+              transaction_hash: transactionHash.toLowerCase()
+            }
+          }
+        : {})
+    }
+  );
   return operationDto(await marketOperationsDb.get(id, row.profile_id));
 }
 

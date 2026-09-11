@@ -1,7 +1,7 @@
 import { executeMarketRequest as execute } from './marketplace.http';
 import { z } from 'zod';
 import * as Operations from '@/api/generated/routes/operations';
-import { ApiMarketOrderSideEnum } from '@/api/generated/models/ApiMarketOrder';
+import { ApiMarketTradeOrderSideEnum } from '@/api/generated/models/ApiMarketTradeOrder';
 import {
   marketCatalogAsset,
   marketPrepareSchema
@@ -14,10 +14,57 @@ import {
   prepareMarketOperation,
   publishMarketOperation,
   readMarketOperation,
-  submitMarketOperation
+  submitMarketOperation,
+  beginMarketTransactionAttempt,
+  rejectMarketTransactionAttempt
 } from './marketplace.service';
 
 const idSchema = z.string().uuid();
+
+export function handleBeginMarketTransactionAttempt(
+  req: Operations.BeginMarketTransactionAttemptRequest
+): Promise<Operations.BeginMarketTransactionAttemptResponse> {
+  return execute(req, (auth) =>
+    beginMarketTransactionAttempt(
+      idSchema.parse(req.params.id),
+      auth,
+      z
+        .object({
+          expected_revision: z.string().regex(/^[0-9a-f]{64}$/),
+          attempt_id: idSchema,
+          purpose: z.enum(['APPROVAL', 'TRANSACTION']),
+          transaction_digest: z.string().regex(/^[0-9a-f]{64}$/)
+        })
+        .strict()
+        .parse(req.body)
+    )
+  );
+}
+
+export function handleRejectMarketTransactionAttempt(
+  req: Operations.RejectMarketTransactionAttemptRequest
+): Promise<Operations.RejectMarketTransactionAttemptResponse> {
+  return execute(req, (auth) => {
+    const input = z
+      .object({
+        attempt_id: idSchema,
+        reason: z.enum(['USER_REJECTED', 'WALLET_NOT_REQUESTED']),
+        expected_revision: z
+          .string()
+          .regex(/^[0-9a-f]{64}$/)
+          .optional()
+      })
+      .strict()
+      .parse(req.body);
+    return rejectMarketTransactionAttempt(
+      idSchema.parse(req.params.id),
+      auth,
+      input.attempt_id,
+      input.reason,
+      input.expected_revision
+    );
+  });
+}
 
 export async function handleGetMarketOrders(
   req: Operations.GetMarketOrdersRequest
@@ -51,7 +98,7 @@ export async function handleGetMarketOrders(
         asset_key: asset.asset_key,
         maker: order.maker,
         recipient: order.recipient,
-        side: order.side as ApiMarketOrderSideEnum,
+        side: order.side as ApiMarketTradeOrderSideEnum,
         quantity: order.quantity,
         currency: order.currency,
         total_wei: order.totalWei,

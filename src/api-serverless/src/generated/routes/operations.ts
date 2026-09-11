@@ -107,6 +107,8 @@ import { ApiMarketMyOperations } from '@/api/generated/models/ApiMarketMyOperati
 import { ApiMarketOperation } from '@/api/generated/models/ApiMarketOperation';
 import { ApiMarketOrders } from '@/api/generated/models/ApiMarketOrders';
 import { ApiMarketPrepareRequest } from '@/api/generated/models/ApiMarketPrepareRequest';
+import { ApiMarketSendAttemptRejection } from '@/api/generated/models/ApiMarketSendAttemptRejection';
+import { ApiMarketSendAttemptRequest } from '@/api/generated/models/ApiMarketSendAttemptRequest';
 import { ApiMarketSignature } from '@/api/generated/models/ApiMarketSignature';
 import { ApiMarketSubmission } from '@/api/generated/models/ApiMarketSubmission';
 import { ApiMediaResolveRequest } from '@/api/generated/models/ApiMediaResolveRequest';
@@ -1153,6 +1155,38 @@ export type ContinueMarketOperationRequest = Request<
   ApiResponse<ContinueMarketOperationResponse>,
   never,
   ContinueMarketOperationQuery,
+  Record<string, never>
+>;
+
+export interface BeginMarketTransactionAttemptPathParams {
+  "id": string;
+}
+
+export type BeginMarketTransactionAttemptQuery = Record<string, never>;
+
+export type BeginMarketTransactionAttemptResponse = ApiMarketOperation;
+
+export type BeginMarketTransactionAttemptRequest = Request<
+  BeginMarketTransactionAttemptPathParams,
+  ApiResponse<BeginMarketTransactionAttemptResponse>,
+  ApiMarketSendAttemptRequest,
+  BeginMarketTransactionAttemptQuery,
+  Record<string, never>
+>;
+
+export interface RejectMarketTransactionAttemptPathParams {
+  "id": string;
+}
+
+export type RejectMarketTransactionAttemptQuery = Record<string, never>;
+
+export type RejectMarketTransactionAttemptResponse = ApiMarketOperation;
+
+export type RejectMarketTransactionAttemptRequest = Request<
+  RejectMarketTransactionAttemptPathParams,
+  ApiResponse<RejectMarketTransactionAttemptResponse>,
+  ApiMarketSendAttemptRejection,
+  RejectMarketTransactionAttemptQuery,
   Record<string, never>
 >;
 

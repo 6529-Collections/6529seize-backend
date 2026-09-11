@@ -10,14 +10,16 @@
  * Do not edit the class manually.
  */
 
-import { ApiMarketTradeOrder } from '../models/ApiMarketTradeOrder';
 import { HttpFile } from '../http/http';
 
-export class ApiMarketOrders {
-    'orders': Array<ApiMarketTradeOrder>;
-    'observed_at': number;
-    'source': string;
-    'complete': boolean;
+export class ApiMarketSendAttemptRequest {
+    'expected_revision': string;
+    'attempt_id': string;
+    'purpose': ApiMarketSendAttemptRequestPurposeEnum;
+    /**
+    * SHA-256 of the canonical reviewed chain, sender, target, calldata and value
+    */
+    'transaction_digest': string;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -25,34 +27,40 @@ export class ApiMarketOrders {
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "orders",
-            "baseName": "orders",
-            "type": "Array<ApiMarketTradeOrder>",
-            "format": ""
-        },
-        {
-            "name": "observed_at",
-            "baseName": "observed_at",
-            "type": "number",
-            "format": "int64"
-        },
-        {
-            "name": "source",
-            "baseName": "source",
+            "name": "expected_revision",
+            "baseName": "expected_revision",
             "type": "string",
             "format": ""
         },
         {
-            "name": "complete",
-            "baseName": "complete",
-            "type": "boolean",
+            "name": "attempt_id",
+            "baseName": "attempt_id",
+            "type": "string",
+            "format": "uuid"
+        },
+        {
+            "name": "purpose",
+            "baseName": "purpose",
+            "type": "ApiMarketSendAttemptRequestPurposeEnum",
+            "format": ""
+        },
+        {
+            "name": "transaction_digest",
+            "baseName": "transaction_digest",
+            "type": "string",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiMarketOrders.attributeTypeMap;
+        return ApiMarketSendAttemptRequest.attributeTypeMap;
     }
 
     public constructor() {
     }
 }
+
+export enum ApiMarketSendAttemptRequestPurposeEnum {
+    Approval = 'APPROVAL',
+    Transaction = 'TRANSACTION'
+}
+

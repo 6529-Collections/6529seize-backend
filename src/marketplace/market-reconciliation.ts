@@ -21,6 +21,7 @@ import {
   parseMarketValue
 } from '@/marketplace/seaport.schema';
 import { prepareMarketCancel } from '@/marketplace/seaport.builder';
+import { operationSendAttempt } from './market-operation-state';
 
 export interface MarketSettlement {
   filledQuantity: string;
@@ -483,6 +484,9 @@ export async function reconcileMarketOperation(
   row: MarketOperationRow,
   dependencies?: MarketReconcileDependencies
 ): Promise<void> {
+  // Approval sends have their own receipt/permission reconciler. An unknown
+  // final send cannot be inferred from unrelated order status either.
+  if (operationSendAttempt(row)?.status === 'ACTIVE') return;
   const prepared = preparedFrom(row),
     kind = kindFrom(row);
   if (!prepared || !kind) return;
