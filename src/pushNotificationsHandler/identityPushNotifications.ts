@@ -1,5 +1,4 @@
 import { In, Like } from 'typeorm';
-import { userGroupsService } from '../api-serverless/src/community-members/user-groups.service';
 import { ApiIdentity } from '../api-serverless/src/generated/models/ApiIdentity';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
 import {
@@ -26,10 +25,11 @@ import {
 import { WaveEntity } from '../entities/IWave';
 import { WaveReaderMetricEntity } from '../entities/IWaveReaderMetric';
 import { Logger } from '../logging';
-import { IdentityNotificationsDb } from '../notifications/identity-notifications.db';
 import type { SubscriptionCoverageNotificationData } from '@/notifications/user-notification.types';
-import { dbSupplier } from '../sql-executor';
-import { sumBadgeContributions } from './badge-count';
+import {
+  sendIdentityPushGroups,
+  type IdentityPushNotificationMessage
+} from './identity-push-delivery';
 import {
   buildDropVotePushBody,
   buildDropVotePushTitle,
@@ -41,19 +41,12 @@ import {
   truncatePushNotificationFileName
 } from '@/pushNotificationsHandler/push-notification-text';
 import type { PushNotificationFileInfo } from '@/pushNotificationsHandler/push-notification-text';
-import {
-  PushNotificationMessageInput,
-  PushNotificationSendResult,
-  sendMessages
-} from '@/pushNotificationsHandler/sendPushNotifications';
+import { PushNotificationSendResult } from '@/pushNotificationsHandler/sendPushNotifications';
 import { identityMutesDb } from '../api-serverless/src/identity-mutes/identity-mutes.db';
 import { contentModerationDb } from '@/content-moderation/content-moderation.db';
 import { wsListenersNotifier } from '../api-serverless/src/ws/ws-listeners-notifier';
 import { identityPushNotificationAccess } from '@/pushNotificationsHandler/identity-push-notification-access';
-import {
-  getEnabledCauses,
-  isNotificationEnabledForDevice
-} from '@/pushNotificationsHandler/identity-push-notification-settings';
+import { isNotificationEnabledForDevice } from '@/pushNotificationsHandler/identity-push-notification-settings';
 import { buildSubscriptionCoveragePushNotificationData } from '@/pushNotificationsHandler/subscription-coverage-push-notification';
 import {
   appendWavePushNotificationContext,
@@ -65,14 +58,6 @@ import type { WavePushNotificationContext } from '@/pushNotificationsHandler/wav
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_IDENTITY');
 const SKIP_NOTIFICATION_PUSH = Symbol('SKIP_NOTIFICATION_PUSH');
-
-const identityNotificationsDb = new IdentityNotificationsDb(dbSupplier);
-
-interface IdentityPushNotificationMessage {
-  input: PushNotificationMessageInput;
-  identityId: string;
-  device: PushNotificationDevice;
-}
 
 interface WavePresentation {
   readonly context: WavePushNotificationContext;
@@ -340,15 +325,9 @@ export async function sendIdentityNotificationsBatch(
     return failedIds;
   }
 
-  try {
-    const results = await sendMessages(
-      messages.map((message) => message.input)
-    );
-    failedIds.push(...(await handleSendResults(messages, results)));
-  } catch (error) {
-    logger.error(`Failed to send notification messages: ${error}`);
-    failedIds.push(...messages.map((message) => message.input.notification_id));
-  }
+  failedIds.push(
+    ...(await sendIdentityPushGroups(messages, handleSendResults))
+  );
 
   return Array.from(new Set(failedIds));
 }
@@ -491,33 +470,6 @@ async function buildIdentityNotificationMessages(
           }
 
           const deviceKey = getDeviceTokenKey(device.device_id, device.token);
-          const relevantProfiles =
-            profileIdsByDeviceToken.get(deviceKey) ??
-            new Set([notification.identity_id]);
-
-          const contributions = await Promise.allSettled(
-            Array.from(relevantProfiles).map(async (profileId) => {
-              const settings = await getDeviceSettings(
-                profileId,
-                device.device_id
-              );
-              const enabledCauses = getEnabledCauses(settings);
-              if (enabledCauses.length === 0) return 0;
-              const eligibleGroupIds =
-                await userGroupsService.getGroupsUserIsEligibleFor(profileId);
-              const options: {
-                enabledCauses?: IdentityNotificationCause[];
-              } = { enabledCauses };
-              return identityNotificationsDb.countUnreadNotificationsForIdentity(
-                profileId,
-                eligibleGroupIds,
-                undefined,
-                options
-              );
-            })
-          );
-          const badge = sumBadgeContributions(contributions);
-
           const shouldPrefixTitle =
             multiProfileTitlePrefix !== null &&
             sharedDeviceTokenKeys.has(deviceKey);
@@ -535,7 +487,6 @@ async function buildIdentityNotificationMessages(
                 target_profile_id: notification.identity_id,
                 target_profile_handle: targetProfileHandle
               },
-              badge,
               imageUrl: imageUrl ?? undefined
             },
             identityId: notification.identity_id,

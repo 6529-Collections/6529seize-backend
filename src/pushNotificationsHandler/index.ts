@@ -1,3 +1,4 @@
+import { refreshProfileBadges } from './badge-refresh';
 import { SQSBatchResponse, SQSHandler } from 'aws-lambda';
 import {
   AttachmentEntity,
@@ -23,12 +24,22 @@ const sqsHandler: SQSHandler = async (event): Promise<SQSBatchResponse> => {
         messageId: string;
         identityNotificationId: number;
       }[] = [];
+      const badgeRecords: { messageId: string; profileId: string }[] = [];
       const failures: { itemIdentifier: string }[] = [];
 
       for (const record of event.Records) {
         try {
           const notification = JSON.parse(record.body);
-          if (notification.identity_notification_id) {
+          if (
+            notification.type === 'badge_refresh' &&
+            typeof notification.profile_id === 'string' &&
+            notification.profile_id.trim()
+          ) {
+            badgeRecords.push({
+              messageId: record.messageId,
+              profileId: notification.profile_id
+            });
+          } else if (notification.identity_notification_id) {
             identityNotificationRecords.push({
               messageId: record.messageId,
               identityNotificationId: notification.identity_notification_id
@@ -60,6 +71,28 @@ const sqsHandler: SQSHandler = async (event): Promise<SQSBatchResponse> => {
               itemIdentifier: record.messageId
             }))
         );
+      }
+
+      if (badgeRecords.length) {
+        try {
+          const failedProfiles = new Set(
+            await refreshProfileBadges(
+              badgeRecords.map((record) => record.profileId)
+            )
+          );
+          failures.push(
+            ...badgeRecords
+              .filter((record) => failedProfiles.has(record.profileId))
+              .map((record) => ({ itemIdentifier: record.messageId }))
+          );
+        } catch (error) {
+          logger.error(`Badge refresh batch failed: ${error}`);
+          failures.push(
+            ...badgeRecords.map((record) => ({
+              itemIdentifier: record.messageId
+            }))
+          );
+        }
       }
 
       return {
