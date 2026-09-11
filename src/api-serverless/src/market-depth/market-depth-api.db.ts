@@ -16,6 +16,8 @@ import { marketDepthDb } from '@/market-depth/market-depth.db';
 import {
   CurrentMarketDepthOrder,
   CurrentMarketDepthSnapshot,
+  MAX_MARKET_DEPTH_COLLECTION_ASKS,
+  MAX_MARKET_DEPTH_COLLECTION_PARTITIONS,
   MarketDepthOrderStatus
 } from '@/market-depth/market-depth.types';
 import { DbPoolName } from '@/db-query.options';
@@ -139,12 +141,17 @@ export class MarketDepthApiDb extends LazyDbAccessCompatibleService {
     collectionListings = false
   ): Promise<CurrentMarketDepthSnapshot[]> {
     const partitions = await this.getPartitions(token);
-    if (collectionListings && partitions.length > 8)
+    if (
+      collectionListings &&
+      partitions.length > MAX_MARKET_DEPTH_COLLECTION_PARTITIONS
+    )
       throw new CustomApiCompliantException(
         503,
         'The indexed collection is temporarily unavailable.'
       );
-    const collectionLimit = Math.floor(10000 / Math.max(1, partitions.length));
+    const collectionLimit = Math.floor(
+      MAX_MARKET_DEPTH_COLLECTION_ASKS / Math.max(1, partitions.length)
+    );
     const books = await Promise.all(
       partitions.map((partition) =>
         marketDepthDb.getLatestCompletedSnapshot(

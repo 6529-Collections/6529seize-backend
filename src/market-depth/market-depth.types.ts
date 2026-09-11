@@ -1,5 +1,7 @@
 export const MARKET_DEPTH_CHAIN = 'ethereum' as const;
 export const MARKET_DEPTH_CHAIN_ID = '1' as const;
+export const MAX_MARKET_DEPTH_COLLECTION_ASKS = 10000;
+export const MAX_MARKET_DEPTH_COLLECTION_PARTITIONS = 8;
 
 export const MARKET_DEPTH_SNAPSHOT_SCHEMA_VERSION = 1;
 /**

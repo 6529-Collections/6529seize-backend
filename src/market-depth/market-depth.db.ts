@@ -23,6 +23,7 @@ import {
   MARKET_DEPTH_SNAPSHOT_SCHEMA_VERSION,
   MAX_MARKET_DEPTH_ARCHIVE_BYTES,
   MAX_MARKET_DEPTH_ARCHIVES_TOTAL_BYTES,
+  MAX_MARKET_DEPTH_COLLECTION_ASKS,
   MarketDepthCursor,
   MarketDepthJsonValue,
   MarketDepthReconciliation,
@@ -481,7 +482,7 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
       options.limit !== undefined &&
       (!Number.isSafeInteger(options.limit) ||
         options.limit < 1 ||
-        options.limit > 10001)
+        options.limit > MAX_MARKET_DEPTH_COLLECTION_ASKS)
     ) {
       throw new Error('Invalid market-depth read limit');
     }

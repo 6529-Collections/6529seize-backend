@@ -37,7 +37,9 @@ applies observed cancellations and fills before ranking. Comparison uses exact
 wei against the indexed base accrual rate rounded to production hundredths,
 without inheriting seller holding time or applying profile multipliers. Reads
 are bounded across collection partitions; freshness and index coverage remain
-explicit. A short-lived cache contains only public discovery DTOs, and cursors
+explicit. A short-lived cache contains only public discovery DTOs. An expiring
+Redis refresh lease limits concurrent cold-cache work across API instances;
+only its current owner can publish a result. Cursors
 bind the ranked content, catalog and collection. Checkout still obtains a fresh
 executable quote. This read-only endpoint adds no table or loop dependency and
 requires only the API deployment, followed by its frontend consumer.

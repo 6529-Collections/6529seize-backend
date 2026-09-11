@@ -1,4 +1,5 @@
 import * as Operations from '@/api/generated/routes/operations';
+import { ApiCollectFamily } from '@/api/generated/models/ApiCollectFamily';
 import { handleGetCollectTdhListings } from './collect-tdh-listings.handlers';
 import { getCollectTdhListings } from './collect-tdh-listings.service';
 
@@ -29,6 +30,14 @@ it('passes the validated collection, cursor and page size', async () => {
   );
   expect(getCollectTdhListings).toHaveBeenCalledWith('pebbles', 12, 'cursor');
 });
+
+it.each(Object.values(ApiCollectFamily))(
+  'accepts every documented family: %s',
+  async (family) => {
+    await handleGetCollectTdhListings(request({ family }));
+    expect(getCollectTdhListings).toHaveBeenCalledWith(family, 24, undefined);
+  }
+);
 
 it.each([
   { family: 'all' },

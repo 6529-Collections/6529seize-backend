@@ -20,7 +20,7 @@ import {
 } from './collect-tdh-listings.service';
 import { collectingService } from '@/collecting/collecting.service';
 import { marketDepthApiDb } from '@/api/market-depth/market-depth-api.db';
-import { redisCached } from '@/redis';
+import { redisCachedWithRefreshLease } from '@/redis';
 
 jest.mock('@/collecting/collecting.service', () => ({
   collectingService: { getCatalog: jest.fn() }
@@ -30,7 +30,7 @@ jest.mock('@/api/market-depth/market-depth-api.db', () => ({
 }));
 jest.mock('@/redis', () => ({
   getRedisCacheKeyForPath: (key: string) => key,
-  redisCached: jest.fn((_key, _ttl, work) => work())
+  redisCachedWithRefreshLease: jest.fn((_key, _ttl, work) => work())
 }));
 
 const now = new Date('2026-09-11T22:00:00Z');
@@ -274,7 +274,12 @@ describe('indexed base TDH listing discovery', () => {
         [bounded],
         now.getTime() + 3600001
       )
-    ).toMatchObject({ status: 'stale', coverage_complete: false });
+    ).toMatchObject({
+      status: 'stale',
+      coverage_complete: false,
+      indexed_ask_count: 10002,
+      evaluated_ask_count: 1
+    });
   });
   it('bounds evaluated asks across partitions and marks omitted liquidity incomplete', () => {
     const cancelled = { ...order(), status: 'CANCELLED' as const };
@@ -302,17 +307,17 @@ describe('indexed base TDH listing discovery', () => {
     );
     for (const entry of snapshot.entries.slice(0, 2))
       entry.order.end_time = String(now.getTime() / 1000 - 1);
-    jest.mocked(redisCached).mockResolvedValueOnce(snapshot);
+    jest.mocked(redisCachedWithRefreshLease).mockResolvedValueOnce(snapshot);
     const first = await getCollectTdhListings('memes', 1);
     expect(first.entries.map((entry) => entry.asset.token_id)).toEqual(['3']);
     expect(first.next).not.toBeNull();
-    jest.mocked(redisCached).mockResolvedValueOnce(snapshot);
+    jest.mocked(redisCachedWithRefreshLease).mockResolvedValueOnce(snapshot);
     const second = await getCollectTdhListings('memes', 1, first.next!);
     expect(second.entries.map((entry) => entry.asset.token_id)).toEqual(['4']);
     expect(second.next).toBeNull();
     for (const entry of snapshot.entries)
       entry.order.end_time = String(now.getTime() / 1000 - 1);
-    jest.mocked(redisCached).mockResolvedValueOnce(snapshot);
+    jest.mocked(redisCachedWithRefreshLease).mockResolvedValueOnce(snapshot);
     const empty = await getCollectTdhListings('memes', 1);
     expect(empty.entries).toEqual([]);
     expect(empty.next).toBeNull();
@@ -344,5 +349,20 @@ describe('indexed base TDH listing discovery', () => {
     await expect(
       getCollectTdhListings('memes', 1, first.next!)
     ).rejects.toMatchObject({ code: 'LISTINGS_CHANGED' });
+  });
+  it('does not advertise a continuation when only expired entries remain', async () => {
+    const snapshot = rank([asset('1'), asset('2')], [order('1'), order('2')]);
+    snapshot.entries[1].order.end_time = String(now.getTime() / 1000 - 1);
+    jest.mocked(redisCachedWithRefreshLease).mockResolvedValueOnce(snapshot);
+    const page = await getCollectTdhListings('memes', 1);
+    expect(page.entries.map((entry) => entry.asset.token_id)).toEqual(['1']);
+    expect(page.next).toBeNull();
+  });
+  it('reports a bounded retry when another instance is refreshing the index', async () => {
+    jest.mocked(redisCachedWithRefreshLease).mockResolvedValueOnce(undefined);
+    await expect(getCollectTdhListings('memes', 24)).rejects.toMatchObject({
+      code: 'LISTINGS_REFRESHING'
+    });
+    expect(marketDepthApiDb.getBooks).not.toHaveBeenCalled();
   });
 });

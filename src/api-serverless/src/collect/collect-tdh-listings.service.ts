@@ -8,7 +8,8 @@ import {
 import { marketDepthApiDb } from '@/api/market-depth/market-depth-api.db';
 import {
   CurrentMarketDepthOrder,
-  CurrentMarketDepthSnapshot
+  CurrentMarketDepthSnapshot,
+  MAX_MARKET_DEPTH_COLLECTION_ASKS
 } from '@/market-depth/market-depth.types';
 import { describeIndexedMarketListing } from '@/marketplace/provider.opensea';
 import { MarketValidationError } from '@/marketplace/provider.types';
@@ -28,10 +29,10 @@ import {
   encodeMarketCursor
 } from '@/api/market-depth/market-depth.validation';
 import { CustomApiCompliantException } from '@/exceptions';
-import { getRedisCacheKeyForPath, redisCached } from '@/redis';
+import { getRedisCacheKeyForPath, redisCachedWithRefreshLease } from '@/redis';
 import { Time } from '@/time';
 
-const MAX_INDEXED_ASKS = 10000;
+const MAX_INDEXED_ASKS = MAX_MARKET_DEPTH_COLLECTION_ASKS;
 const FRESH_MILLIS = 3600000;
 type RankedSnapshot = Omit<ApiCollectTdhListings, 'next'>;
 const pendingSnapshots = new Map<CollectingFamily, Promise<RankedSnapshot>>();
@@ -41,6 +42,16 @@ function snapshotStatus(observedAt: string | null, now: number) {
   return now - new Date(observedAt).getTime() > FRESH_MILLIS
     ? ApiCollectTdhListingsStatusEnum.Stale
     : ApiCollectTdhListingsStatusEnum.Fresh;
+}
+
+function considerBestListing(
+  bestByAsset: Map<string, ApiCollectTdhListing>,
+  listing: ApiCollectTdhListing | null
+) {
+  if (listing === null) return;
+  const prior = bestByAsset.get(listing.asset.asset_key);
+  if (!prior || compareTdhListings(listing, prior) < 0)
+    bestByAsset.set(listing.asset.asset_key, listing);
 }
 
 /** Production TDH accrual rounds the indexed per-copy rate to hundredths. */
@@ -144,10 +155,7 @@ export function rankIndexedTdhListings(
       const asset =
         indexed.token_id === null ? undefined : byId.get(indexed.token_id);
       const listing = asset ? listingForAsset(indexed, asset, now) : null;
-      if (!listing) continue;
-      const prior = bestByAsset.get(listing.asset.asset_key);
-      if (!prior || compareTdhListings(listing, prior) < 0)
-        bestByAsset.set(listing.asset.asset_key, listing);
+      considerBestListing(bestByAsset, listing);
     }
   }
   const entries = Array.from(bestByAsset.values()).sort(compareTdhListings);
@@ -233,11 +241,17 @@ export async function getCollectTdhListings(
   limit: number,
   cursor?: string
 ): Promise<ApiCollectTdhListings> {
-  const snapshot = await redisCached(
+  const snapshot = await redisCachedWithRefreshLease(
     getRedisCacheKeyForPath(`collect/tdh-listings/v1/${family}`),
     Time.seconds(60),
     () => sharedSnapshot(family)
   );
+  if (snapshot === undefined)
+    throw new CustomApiCompliantException(
+      503,
+      'Indexed listings are refreshing. Please try again shortly.',
+      'LISTINGS_REFRESHING'
+    );
   let offset = 0;
   if (cursor) {
     const value = z
@@ -265,6 +279,11 @@ export async function getCollectTdhListings(
     const entry = snapshot.entries[end++];
     if (Number(entry.order.end_time) * 1000 > now) entries.push(entry);
   }
+  while (
+    end < snapshot.entries.length &&
+    Number(snapshot.entries[end].order.end_time) * 1000 <= now
+  )
+    end++;
   return {
     ...snapshot,
     status: snapshotStatus(snapshot.observed_at, now),
