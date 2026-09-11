@@ -104,3 +104,39 @@ it('keeps two profiles separate even when their Android native notification IDs 
     )
   ).toEqual(['6529:v1:A:42:', '6529:v1:B:42:']);
 });
+
+it.each([false, true])(
+  'preserves profile identity and badge policy while fitting oversized previews, omitBadge=%s',
+  async (omitBadge) => {
+    const body = 'Large notification preview '.repeat(1000);
+    await sendMessages([
+      {
+        title: 'Hello',
+        body,
+        token: 'token',
+        notification_id: 42,
+        extra_data: { target_profile_id: 'profile:A', wave_id: 'wave/1' },
+        badge: 2,
+        omitBadge
+      }
+    ]);
+    const message = sendEach.mock.calls[0][0][0];
+    expect(message.notification.body.length).toBeLessThan(body.length);
+    expect(message.android.notification).toEqual({
+      sound: 'default',
+      tag: '6529:v1:profile%3AA:42:wave%2F1'
+    });
+    expect(message.data).toEqual({
+      notification_id: '42',
+      target_profile_id: 'profile:A',
+      wave_id: 'wave/1'
+    });
+    expect(message.apns.payload.aps).toEqual(
+      omitBadge ? { sound: 'default' } : { badge: 2, sound: 'default' }
+    );
+    const { token: _token, ...payload } = message;
+    expect(Buffer.byteLength(JSON.stringify(payload))).toBeLessThanOrEqual(
+      3584
+    );
+  }
+);

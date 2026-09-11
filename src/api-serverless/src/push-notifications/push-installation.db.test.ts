@@ -109,87 +109,93 @@ describeWithSeed('push installation logout', [], () => {
     ]);
   });
 
-  it('authenticates early logout with a native session, fences late registration and allows a fresh login', async () => {
-    process.env.AUTH_SESSION_HASH_SECRET = 'push-logout-test-secret';
-    const address = '0x' + 'a'.repeat(40);
-    await sqlExecutor.execute(
-      `INSERT INTO ${WALLET_AUTH_SESSIONS_TABLE} (id, address, client_type, refresh_token_hash, expires_at) VALUES (:id, :address, :client, :hash, :expires)`,
-      {
-        id: 'early-native',
-        address,
-        client: 'native',
-        hash: hashSecret('native-proof'),
-        expires: new Date(Date.now() + 60000)
-      }
-    );
-    const request = {
-      device_id: 'phone',
-      installation_secret: secret,
-      revision: 1,
-      all_profiles: true,
-      sessions: [
-        { address: '0x' + 'A'.repeat(40), native_refresh_token: 'wrong-proof' }
-      ]
-    };
-    await expect(revokeInstallation(request, {})).rejects.toThrow(
-      'native session'
-    );
-    request.sessions[0].native_refresh_token = 'native-proof';
-    for (const invalid of [
-      { client: 'web', expires: new Date(Date.now() + 60000), revoked: null },
-      {
-        client: 'native',
-        expires: new Date(Date.now() - 60000),
-        revoked: null
-      },
-      {
-        client: 'native',
-        expires: new Date(Date.now() + 60000),
-        revoked: new Date()
-      }
-    ]) {
+  it.each(['a'.repeat(40), 'aA'.repeat(20)])(
+    'authenticates early logout for stored address %s, fences late registration and allows a fresh login',
+    async (storedAddress) => {
+      process.env.AUTH_SESSION_HASH_SECRET = 'push-logout-test-secret';
+      const address = '0x' + storedAddress;
       await sqlExecutor.execute(
-        `UPDATE ${WALLET_AUTH_SESSIONS_TABLE} SET client_type = :client, expires_at = :expires, revoked_at = :revoked WHERE id = 'early-native'`,
-        invalid
+        `INSERT INTO ${WALLET_AUTH_SESSIONS_TABLE} (id, address, client_type, refresh_token_hash, expires_at) VALUES (:id, :address, :client, :hash, :expires)`,
+        {
+          id: 'early-native',
+          address,
+          client: 'native',
+          hash: hashSecret('native-proof'),
+          expires: new Date(Date.now() + 60000)
+        }
       );
+      const request = {
+        device_id: 'phone',
+        installation_secret: secret,
+        revision: 1,
+        all_profiles: true,
+        sessions: [
+          {
+            address: '0x' + 'A'.repeat(40),
+            native_refresh_token: 'wrong-proof'
+          }
+        ]
+      };
       await expect(revokeInstallation(request, {})).rejects.toThrow(
         'native session'
       );
+      request.sessions[0].native_refresh_token = 'native-proof';
+      for (const invalid of [
+        { client: 'web', expires: new Date(Date.now() + 60000), revoked: null },
+        {
+          client: 'native',
+          expires: new Date(Date.now() - 60000),
+          revoked: null
+        },
+        {
+          client: 'native',
+          expires: new Date(Date.now() + 60000),
+          revoked: new Date()
+        }
+      ]) {
+        await sqlExecutor.execute(
+          `UPDATE ${WALLET_AUTH_SESSIONS_TABLE} SET client_type = :client, expires_at = :expires, revoked_at = :revoked WHERE id = 'early-native'`,
+          invalid
+        );
+        await expect(revokeInstallation(request, {})).rejects.toThrow(
+          'native session'
+        );
+      }
+      await sqlExecutor.execute(
+        `UPDATE ${WALLET_AUTH_SESSIONS_TABLE} SET client_type = 'native', expires_at = :expires, revoked_at = NULL WHERE id = 'early-native'`,
+        { expires: new Date(Date.now() + 60000) }
+      );
+      const result = await revokeInstallation(request, {});
+      expect(result).toEqual({ device_id: 'phone', revision: 1 });
+      expect(await storedInstallation()).toMatchObject({
+        revision: 1,
+        token: null,
+        platform: null
+      });
+      expect(
+        await sqlExecutor.oneOrNull(
+          `SELECT revoked_at IS NOT NULL AS revoked FROM ${WALLET_AUTH_SESSIONS_TABLE} WHERE id = 'early-native'`
+        )
+      ).toEqual({ revoked: 1 });
+      // A retry is authorized by the now-established installation secret, even
+      // after the session was revoked by the first successful request.
+      expect(await revokeInstallation(request, {})).toEqual({
+        device_id: 'phone',
+        revision: 1
+      });
+      await expect(
+        registerInstallationDevice(device('A'), credential, {})
+      ).rejects.toThrow('Stale');
+      await registerInstallationDevice(
+        device('A'),
+        { ...credential, installation_revision: 1 },
+        {}
+      );
+      expect(await registrations()).toEqual([
+        { device_id: 'phone', profile_id: 'A' }
+      ]);
     }
-    await sqlExecutor.execute(
-      `UPDATE ${WALLET_AUTH_SESSIONS_TABLE} SET client_type = 'native', expires_at = :expires, revoked_at = NULL WHERE id = 'early-native'`,
-      { expires: new Date(Date.now() + 60000) }
-    );
-    const result = await revokeInstallation(request, {});
-    expect(result).toEqual({ device_id: 'phone', revision: 1 });
-    expect(await storedInstallation()).toMatchObject({
-      revision: 1,
-      token: null,
-      platform: null
-    });
-    expect(
-      await sqlExecutor.oneOrNull(
-        `SELECT revoked_at IS NOT NULL AS revoked FROM ${WALLET_AUTH_SESSIONS_TABLE} WHERE id = 'early-native'`
-      )
-    ).toEqual({ revoked: 1 });
-    // A retry is authorized by the now-established installation secret, even
-    // after the session was revoked by the first successful request.
-    expect(await revokeInstallation(request, {})).toEqual({
-      device_id: 'phone',
-      revision: 1
-    });
-    await expect(
-      registerInstallationDevice(device('A'), credential, {})
-    ).rejects.toThrow('Stale');
-    await registerInstallationDevice(
-      device('A'),
-      { ...credential, installation_revision: 1 },
-      {}
-    );
-    expect(await registrations()).toEqual([
-      { device_id: 'phone', profile_id: 'A' }
-    ]);
-  });
+  );
 
   it('removes A from this phone, preserving B and another device', async () => {
     await registerInstallationDevice(device('A'), credential, {});
@@ -433,9 +439,9 @@ describeWithSeed('push installation logout', [], () => {
     }
   );
 
-  it('revokes only supplied native refresh sessions, not other devices or web sessions', async () => {
+  it('revokes only supplied native refresh sessions for a mixed-case stored address, not other devices or web sessions', async () => {
     process.env.AUTH_SESSION_HASH_SECRET = 'push-logout-test-secret';
-    const address = '0x' + '1'.repeat(40);
+    const address = '0x' + 'aA'.repeat(20);
     await registerInstallationDevice(device('A'), credential, {});
     for (const [id, token, client] of [
       ['this-native', 'this-token', 'native'],
@@ -484,6 +490,64 @@ describeWithSeed('push installation logout', [], () => {
       revoke(1)
     ]);
     expect(outcomes[1].status).toBe('fulfilled');
+    expect(await registrations()).toEqual([]);
+  });
+  it('allows only one credential to win concurrent first-time installation claims', async () => {
+    const claims = [
+      { profile: 'A', secret: 'a'.repeat(64) },
+      { profile: 'B', secret: 'b'.repeat(64) }
+    ];
+    const outcomes = await Promise.allSettled(
+      claims.map((claim) =>
+        registerInstallationDevice(
+          device(claim.profile),
+          { installation_secret: claim.secret, installation_revision: 0 },
+          {}
+        )
+      )
+    );
+    expect(
+      outcomes.filter((outcome) => outcome.status === 'fulfilled')
+    ).toHaveLength(1);
+    const winnerIndex = outcomes.findIndex(
+      (outcome) => outcome.status === 'fulfilled'
+    );
+    const winner = claims[winnerIndex];
+    const loser = claims[1 - winnerIndex];
+    const rejected = outcomes[1 - winnerIndex];
+    expect(rejected.status).toBe('rejected');
+    if (rejected.status === 'rejected')
+      expect(rejected.reason.message).toContain('credential');
+    expect(await registrations()).toEqual([
+      { device_id: 'phone', profile_id: winner.profile }
+    ]);
+    await expect(
+      revokeInstallation(
+        {
+          device_id: 'phone',
+          installation_secret: loser.secret,
+          revision: 1,
+          all_profiles: true,
+          sessions: []
+        },
+        {}
+      )
+    ).rejects.toThrow('credential');
+    expect(await registrations()).toEqual([
+      { device_id: 'phone', profile_id: winner.profile }
+    ]);
+    await expect(
+      revokeInstallation(
+        {
+          device_id: 'phone',
+          installation_secret: winner.secret,
+          revision: 1,
+          all_profiles: true,
+          sessions: []
+        },
+        {}
+      )
+    ).resolves.toEqual({ device_id: 'phone', revision: 1 });
     expect(await registrations()).toEqual([]);
   });
   it.each([false, true])(

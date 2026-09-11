@@ -118,8 +118,10 @@ is unavailable.
 Registration preserves the previous device upsert: only token and platform
 change on an existing profile/device row. It does not seed or overwrite settings;
 missing settings continue to use `DEFAULT_PUSH_NOTIFICATION_SETTINGS` at read
-time. Session creation normalizes addresses to lowercase, as do the matching
-logout lookups. The early-claim session lookup intentionally holds its matching
+time. Session creation normalizes addresses to lowercase. Logout comparisons
+normalize both stored and supplied addresses, so older mixed-case rows match
+independently of database collation. The unique refresh-token-hash lookup still
+restricts the candidate session. The early-claim session lookup intentionally holds its matching
 row lock until commit against concurrent revocation/rotation; the refresh hash
 is unique and the search stops on its first valid session.
 
@@ -145,6 +147,10 @@ that recovery path. This limitation applies to logout separately from read-event
 publication failures.
 Revocation and final push recipient validation/submission also share the Redis
 device lock. Already accepted FCM/APNs pushes cannot be recalled by this fence.
+The revocation transaction holds that Redis lock through the primary database
+commit. A slow write therefore delays concurrent alert delivery for the same
+device; contention retries through SQS. Enqueueing happens after releasing the
+lock, before the worker acquires it separately for the badge refresh.
 
 The Redis lock ends before enqueueing; it does not span the asynchronous refresh.
 Registration uses the database row lock and revision fence, while the refresh
@@ -183,6 +189,12 @@ The installation refresh worker reads the latest token and whole-device count,
 including profiles whose rows retain older tokens during rotation. It sends no
 numeric badge update on Android. Failed counts do not become zero. Invalid FCM
 tokens are retired conditionally without deleting a concurrent replacement.
+Retirement applies only to `messaging/invalid-registration-token` and
+`messaging/registration-token-not-registered`. These identify an invalid delivery
+token, not a profile-specific refusal: storing the same token again does not make
+it valid for another connected profile. Transient, authentication, and generic
+payload errors do not delete registrations. See
+[Firebase's Admin SDK error semantics](https://firebase.google.com/docs/cloud-messaging/error-codes#admin_sdk_error_codes).
 
 For an unclaimed legacy device, the first credential must prove knowledge of the
 FCM token on every existing registration row, or the retained installation token

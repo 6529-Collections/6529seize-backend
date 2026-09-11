@@ -63,7 +63,7 @@ async function authorizeFreshClaim(
   for (const session of authorization) {
     const authenticated = await sqlExecutor.oneOrNull<{ id: string }>(
       `SELECT id FROM ${WALLET_AUTH_SESSIONS_TABLE}
-       WHERE address = :address AND refresh_token_hash = :hash
+       WHERE LOWER(address) = :address AND refresh_token_hash = :hash
        AND client_type = 'native' AND revoked_at IS NULL AND expires_at > :now
        LIMIT 1 FOR UPDATE`,
       {
@@ -87,6 +87,8 @@ async function lockInstallation(
   authorization: FreshClaimAuthorization
 ) {
   const options = { wrappedConnection: ctx.connection };
+  // Create the row when absent; the explicit locking read below fences every
+  // existing-row claim regardless of whether the duplicate-key update changes it.
   await sqlExecutor.execute(
     `INSERT INTO ${PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE} (device_id, revision) VALUES (:device_id, 0)
      ON DUPLICATE KEY UPDATE device_id = VALUES(device_id)`,
@@ -227,7 +229,7 @@ export async function revokeInstallation(
         for (const session of request.sessions) {
           await sqlExecutor.execute(
             `UPDATE ${WALLET_AUTH_SESSIONS_TABLE} SET revoked_at = COALESCE(revoked_at, :now)
-           WHERE address = :address AND refresh_token_hash = :hash AND client_type = 'native'`,
+           WHERE LOWER(address) = :address AND refresh_token_hash = :hash AND client_type = 'native'`,
             {
               address: session.address.toLowerCase(),
               hash: hashSecret(session.native_refresh_token),
