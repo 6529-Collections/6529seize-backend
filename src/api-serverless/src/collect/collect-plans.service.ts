@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
   CollectingAnalysis,
@@ -25,6 +25,7 @@ import {
 import { marketplaceProvider } from '@/api/marketplace/marketplace.service';
 import { marketRequestHash } from '@/marketplace/market-operations.db';
 import { CollectingQuotedTdhCandidate } from '@/collecting/collecting-tdh-ranking';
+import { canonicalizeJson } from '@/profile-cms/protocol/v1/canonical-json';
 
 const MAX_CANDIDATES = 2000;
 // Each artwork may need discovery and order reads. Keep one concurrent pair
@@ -64,31 +65,18 @@ const data = (row: PlanRow): PlanData =>
     ? JSON.parse(row.payload_json)
     : row.payload_json;
 const collectingStateHash = (analysis: CollectingAnalysis) =>
-  marketRequestHash({
-    catalog_version: analysis.catalog_version,
-    // MySQL JSON storage can reorder object properties. Rebuild the compared
-    // state explicitly so unchanged holdings survive a database round trip.
-    account: {
-      profile_id: analysis.account.profile_id,
-      consolidation_key: analysis.account.consolidation_key,
-      wallets: analysis.account.wallets,
-      membership_hash: analysis.account.membership_hash
-    },
-    requirements: analysis.requirements.map((requirement) => ({
-      id: requirement.id,
-      label: requirement.label,
-      target_quantity: requirement.target_quantity,
-      owned_quantity: requirement.owned_quantity,
-      missing_quantity: requirement.missing_quantity,
-      asset_keys: requirement.asset_keys,
-      holdings: requirement.holdings.map((holding) => ({
-        asset_key: holding.asset_key,
-        wallet: holding.wallet,
-        quantity: holding.quantity
-      }))
-    })),
-    recipient: analysis.recipient
-  });
+  createHash('sha256')
+    .update(
+      // MySQL JSON storage can reorder object properties. Preserve every field
+      // within the existing invalidation boundary, independent of key order.
+      canonicalizeJson({
+        catalog_version: analysis.catalog_version,
+        account: analysis.account,
+        requirements: analysis.requirements,
+        recipient: analysis.recipient
+      })
+    )
+    .digest('hex');
 
 export function collectPlanView(row: PlanRow) {
   const payload = data(row);

@@ -325,6 +325,16 @@ describe('persisted collecting scans', () => {
   it.each<[string, (current: CollectingAnalysis) => CollectingAnalysis]>([
     ['recipient', (current) => ({ ...current, recipient: 'other-wallet' })],
     [
+      'additional account state',
+      (current) => {
+        const extended = {
+          ...current,
+          account: { ...current.account, membership_revision: 2 }
+        };
+        return extended;
+      }
+    ],
+    [
       'owned quantity',
       (current) => ({
         ...current,
