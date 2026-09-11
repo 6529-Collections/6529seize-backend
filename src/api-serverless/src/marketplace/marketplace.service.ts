@@ -330,11 +330,9 @@ export async function continueMarketOperation(
       await knownCancellationOrder(request, previous)
     );
   }
-  const next = prepared.approvalTransactions.length
-    ? 'APPROVAL'
-    : prepared.signedOrder
-      ? 'AWAITING_SIGNATURE'
-      : 'REVIEW';
+  let next: MarketOperationRow['state'] = 'REVIEW';
+  if (prepared.approvalTransactions.length) next = 'APPROVAL';
+  else if (prepared.signedOrder) next = 'AWAITING_SIGNATURE';
   // A signature can leave the browser even if publication is never acknowledged.
   // Keep potential offer exposure until effective chain expiry/cancellation/fill.
   await marketOperationsDb.transition(
@@ -428,11 +426,13 @@ export async function readMarketOperation(
 }
 export async function listMarketOperations(
   auth: AuthenticationContext,
-  options: { limit: number; cursor?: string } = { limit: 20 }
+  options?: { limit: number; cursor?: string }
 ) {
   const actor = assertMarketActor(auth);
+  const limit = options?.limit ?? 20;
+  const cursor = options?.cursor;
   let before: { created_at: number; id: string } | undefined;
-  if (options.cursor) {
+  if (cursor) {
     try {
       before = z
         .object({
@@ -440,9 +440,7 @@ export async function listMarketOperations(
           id: z.string().uuid()
         })
         .strict()
-        .parse(
-          JSON.parse(Buffer.from(options.cursor, 'base64url').toString('utf8'))
-        );
+        .parse(JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')));
     } catch {
       throw new CustomApiCompliantException(
         400,
@@ -452,16 +450,16 @@ export async function listMarketOperations(
   }
   const rows = await marketOperationsDb.page(
     actor.profileId,
-    options.limit,
+    limit,
     before,
     actor.wallet
   );
-  const shown = rows.slice(0, options.limit),
+  const shown = rows.slice(0, limit),
     last = shown.at(-1);
   return {
     operations: shown.map(operationDto),
     next:
-      rows.length > options.limit && last
+      rows.length > limit && last
         ? Buffer.from(
             JSON.stringify({ created_at: Number(last.created_at), id: last.id })
           ).toString('base64url')

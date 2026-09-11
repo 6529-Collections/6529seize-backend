@@ -2,13 +2,10 @@ import { executeMarketRequest as execute } from './marketplace.http';
 import { z } from 'zod';
 import * as Operations from '@/api/generated/routes/operations';
 import { ApiMarketOrderSideEnum } from '@/api/generated/models/ApiMarketOrder';
-import { getAuthenticationContext } from '@/api/auth/auth';
-import { AuthenticationContext } from '@/auth-context';
 import {
   marketCatalogAsset,
   marketPrepareSchema
 } from '@/marketplace/market-preparation';
-import { MarketValidationError } from '@/marketplace/provider.types';
 import { marketHashSchema } from '@/marketplace/seaport.schema';
 import {
   continueMarketOperation,

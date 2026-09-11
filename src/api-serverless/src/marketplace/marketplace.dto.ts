@@ -52,7 +52,7 @@ export function transactionDto(
     value: transaction.value,
     data: transaction.data,
     purpose: transaction.purpose as ApiMarketTransactionPurposeEnum,
-    ...(transaction.gas ?? {}),
+    ...transaction.gas,
     ...(transaction.approvalScope
       ? {
           approval_scope:

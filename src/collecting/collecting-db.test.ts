@@ -5,6 +5,7 @@ import { assertCollectingTdhParity } from '@/collecting/collecting-tdh-projectio
 import {
   ADDRESS_CONSOLIDATION_KEY,
   ARTISTS_TABLE,
+  CONSOLIDATED_WALLETS_TDH_TABLE,
   MEMES_CONTRACT,
   NFTS_TABLE,
   NFT_OWNERS_TABLE,
@@ -256,6 +257,24 @@ describeWithSeed(
         'membership is updating'
       );
     });
+
+    it.each([{}, 1.5, -1, Number.MAX_SAFE_INTEGER + 1])(
+      'rejects malformed official token identifiers as unavailable server data: %j',
+      async (id) => {
+        await sqlExecutor.execute(
+          `UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE} SET memes = :memes WHERE consolidation_key = :key`,
+          {
+            key,
+            memes: JSON.stringify([
+              { id, balance: 2, tdh: 49, hodl_rate: 1.24, tdh__raw: 40 }
+            ])
+          }
+        );
+        await expect(db.readTdhProjectionSource('profile')).rejects.toThrow(
+          'Official TDH token snapshot is invalid'
+        );
+      }
+    );
 
     it('does not forecast from source inputs that differ from official token-level output', async () => {
       await sqlExecutor.execute(

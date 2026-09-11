@@ -11,6 +11,7 @@ import { operationDto } from '@/api/marketplace/marketplace.dto';
 import {
   assertMarketActor,
   continueMarketOperation,
+  listMarketOperations,
   prepareMarketOperation,
   publishMarketOperation,
   readMarketOperation,
@@ -28,6 +29,7 @@ jest.mock('@/marketplace/market-operations.db', () => ({
     transition: jest.fn(),
     get: jest.fn(),
     getForActor: jest.fn(),
+    page: jest.fn(),
     reviewedTransaction: jest.fn()
   }
 }));
@@ -153,6 +155,50 @@ describe('market service authorization and first payload exposure', () => {
     ).resolves.toBe(existing);
     expect(MarketPreparation).not.toHaveBeenCalled();
     expect(marketOperationsDb.transition).not.toHaveBeenCalled();
+  });
+  it('defaults history to twenty operations without losing historical-wallet scope', async () => {
+    const rows = Array.from({ length: 21 }, (_, index) => ({
+      id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+      created_at: String(1000 - index)
+    }));
+    (marketOperationsDb.page as jest.Mock).mockResolvedValue(rows);
+    (operationDto as jest.Mock).mockImplementation((row) => row);
+    const page = await listMarketOperations(auth);
+    expect(marketOperationsDb.page).toHaveBeenCalledWith(
+      'profile',
+      20,
+      undefined,
+      wallet
+    );
+    expect(page.operations).toHaveLength(20);
+    expect(
+      JSON.parse(Buffer.from(page.next!, 'base64url').toString('utf8'))
+    ).toEqual({
+      id: rows[19].id,
+      created_at: Number(rows[19].created_at)
+    });
+  });
+  it('honors an explicit history limit and cursor and rejects malformed cursors before querying', async () => {
+    const before = {
+      created_at: 123,
+      id: '00000000-0000-4000-8000-000000000001'
+    };
+    const cursor = Buffer.from(JSON.stringify(before)).toString('base64url');
+    (marketOperationsDb.page as jest.Mock).mockResolvedValue([]);
+    await expect(
+      listMarketOperations(auth, { limit: 5, cursor })
+    ).resolves.toEqual({ operations: [], next: null });
+    expect(marketOperationsDb.page).toHaveBeenCalledWith(
+      'profile',
+      5,
+      before,
+      wallet
+    );
+    (marketOperationsDb.page as jest.Mock).mockClear();
+    await expect(
+      listMarketOperations(auth, { limit: 5, cursor: 'not-a-cursor' })
+    ).rejects.toThrow(/Invalid order history cursor/);
+    expect(marketOperationsDb.page).not.toHaveBeenCalled();
   });
   function submittedFixture() {
     const tx = {

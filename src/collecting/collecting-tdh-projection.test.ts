@@ -80,6 +80,36 @@ function input(
 }
 
 describe('canonical TDH projection', () => {
+  it('keeps distinct acquisition lots across profile wallets and acquisition dates', () => {
+    const result = projectCollectingTdh(
+      input({
+        evaluated_at: '2026-02-10T00:00:00Z',
+        transfers: [
+          {
+            contract: MEMES_CONTRACT,
+            token_id: 1,
+            from_address: seller,
+            to_address: walletA,
+            quantity: 1,
+            timestamp: '2026-01-31T00:00:00Z'
+          },
+          {
+            contract: MEMES_CONTRACT,
+            token_id: 1,
+            from_address: seller,
+            to_address: walletB,
+            quantity: 2,
+            timestamp: '2026-02-01T00:00:00Z'
+          }
+        ]
+      })
+    );
+    expect(result.baseline.base_tdh).toBe(40);
+    expect(result.proposed.base_tdh).toBe(68);
+    expect(result.proposed.tokens[0].balance).toBe(4);
+    expect(result.additional_base_tdh).toBe(28);
+  });
+
   it('fails closed when replay cannot reproduce the published baseline', () => {
     const scenario = input();
     const baseline = projectCollectingTdh(scenario).baseline;

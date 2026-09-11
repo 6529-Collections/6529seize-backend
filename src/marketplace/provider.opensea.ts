@@ -17,7 +17,6 @@ import {
   MARKET_ASSET_STANDARDS,
   MARKET_OPENSEA_CONDUIT_KEY,
   MARKET_SEAPORT,
-  MARKET_ZERO_ADDRESS,
   assertMarketProtocol
 } from '@/marketplace/seaport.registry';
 import {

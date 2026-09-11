@@ -436,7 +436,11 @@ export function createCollectingTdhProjector(
       ? calculateAccount(
           input,
           evaluation,
-          input.transactions.concat(transfers.map(hypotheticalTransaction))
+          input.transactions.concat(
+            transfers.map((transfer, index) =>
+              hypotheticalTransaction(transfer, index)
+            )
+          )
         )
       : baseline;
     return projectionResult(input, evaluation, baseline, proposed);

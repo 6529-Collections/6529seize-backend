@@ -105,17 +105,16 @@ function officialTokens(
       !value ||
       typeof value !== 'object' ||
       !('id' in value) ||
+      typeof value.id !== 'number' ||
+      !Number.isSafeInteger(value.id) ||
+      value.id < 0 ||
       !('balance' in value) ||
       !('tdh__raw' in value) ||
       !('hodl_rate' in value) ||
       !('tdh' in value) ||
-      ![
-        value.id,
-        value.balance,
-        value.tdh__raw,
-        value.hodl_rate,
-        value.tdh
-      ].every((number) => typeof number === 'number' && Number.isFinite(number))
+      ![value.balance, value.tdh__raw, value.hodl_rate, value.tdh].every(
+        (number) => typeof number === 'number' && Number.isFinite(number)
+      )
     )
       throw new CustomApiCompliantException(
         503,
