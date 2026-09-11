@@ -69,6 +69,41 @@ operation-specific checks. A grant containing only read permissions cannot
 create, reply to, or resolve questions. Program viewer access alone also does
 not invite the viewer to create another program context for an existing work.
 
+### Read and mutation projections
+
+Context responses expose the combined read permissions in `capabilities` and
+the original artist/collaborator permissions in the required
+`mutation_capabilities` object. Program viewer reads never augment mutation
+authority. Frontend write controls must use `mutation_capabilities`, retaining
+the operation-specific field, asset, review and discussion checks.
+
+The required `mutation_restricted_paths` array preserves historical restriction
+gates for already visible fields and asset links. It omits paths whose answers
+or referenced assets are redacted from the caller's read projection. A currently
+public-looking value can therefore remain outside a collaborator's original
+write scope. The array contains paths only, never hidden values.
+
+Upload-session responses include the required `can_mutate` boolean, computed
+from original write permissions and the stored session's ownership, reference
+and lifecycle state. A readable upload does not imply permission to resume or
+change it. Authorized recovery of an uploader's own unreferenced file remains
+available; clients must require `can_mutate: true` for recovery controls.
+
+Context list summaries include `owner_profile_id`, nullable
+`artist_display_name` and `artist_preferred_credit`, and nullable
+`source_submission`. Artist names come from the documented identity answers
+and retain their current and historical restriction gates. The owner profile ID
+identifies the already authorized record; it is not a substitute artist credit.
+
+`source_submission` contains `drop_id`, `wave_id`, `source_receipt_id` and a
+nullable original `title`. It is returned only with `read_source_receipts`
+permission and a linked source, using one batched lookup for the authorized
+records on the current page. The earliest receipt is selected by creation time
+and then receipt ID. Excerpted, malformed, missing, non-string or over-255-codepoint
+titles return null while the authorized source identifiers remain available.
+The original title is separate from the documented artwork `title`; neither
+replaces the other. No live Drop join or media lookup is performed.
+
 ### Publication-only intake
 
 The latest version of each profile is version 2, with `intake_mode:
@@ -282,8 +317,15 @@ observes the changed criteria; no additional viewer membership cache is added.
 For this viewer feature, deploy and invoke `dbMigrationsLoop` to create the
 additive TypeORM viewer table, then deploy `artworkDocumentationProcessor` and
 `api`. Existing storage is unchanged. Configure viewers only after the runtime
-units are verified, starting with a dry-run. The public OpenAPI response shapes
-remain unchanged; frontend writer controls use the existing capabilities.
+units are verified, starting with a dry-run. The API adds the context
+`mutation_capabilities` and `mutation_restricted_paths` fields and upload-session
+`can_mutate` field described above. Deploy these backend changes before the
+paired frontend consumes the regenerated models and separates read and write
+controls.
+
+The later context-summary enrichment adds the identity and source fields
+described above without a database or storage change. Once the viewer release
+is deployed, this follow-up requires only `api` before its dependent frontend.
 
 ## Retention and recovery
 

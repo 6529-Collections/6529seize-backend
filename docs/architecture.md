@@ -967,6 +967,13 @@ coordinator authority. Deploy and invoke `dbMigrationsLoop` for the additive
 table, then the processor and API; no new storage infrastructure or HTTP
 operator endpoint is introduced.
 
+Context summaries include the authorized owner profile and visible artist
+identity answers. A single page-level query adds the earliest linked source
+receipt's identifiers and original title for readers with source-receipt access.
+The original title stays separate from the documented title; excerpted or
+malformed receipts expose no title. Summary enrichment does not query live Drop
+content, issue media URLs or change the database schema.
+
 Version 2 profiles collect only artwork answers and selected materials intended
 for eventual public publication; legacy private intake remains protected. Team
 questions use existing context discussion threads and are excluded from every
