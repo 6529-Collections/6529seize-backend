@@ -138,6 +138,19 @@ describe('NFT link refresh retries and persistence', () => {
     expect(jest.getTimerCount()).toBe(0);
   });
 
+  it('notifies immediately with the primary metadata without a replica catch-up wait', async () => {
+    const { db, notifier, service } = setup();
+    db.findByCanonicalId.mockResolvedValue({ canonical_id: 'test' });
+    const operation = withNftLinkResolutionBudget(90_000, () =>
+      service.attemptResolve(url, {})
+    );
+    await jest.advanceTimersByTimeAsync(0);
+    expect(notifier.notifyAboutNftLinkUpdate).toHaveBeenCalledTimes(1);
+    await operation;
+    expect(db.updateWithSuccess).toHaveBeenCalledTimes(1);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
   it('keeps persisted success when the notification data read stalls, and ignores its late result', async () => {
     const { db, resolver, notifier, service } = setup();
     let completeRead: ((value: object) => void) | undefined;

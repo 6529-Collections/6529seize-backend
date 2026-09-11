@@ -173,7 +173,10 @@ export class NftLinkResolvingService {
           )
       );
       if (dataAfterUpdate) {
-        await giveReadReplicaTimeToCatchUp();
+        // The worker reads the primary and sends the complete cached payload.
+        if (!getNftLinkResolutionBudget()) {
+          await giveReadReplicaTimeToCatchUp();
+        }
         await nftLinkResolutionStage('notify', () =>
           this.wsListenersNotifier.notifyAboutNftLinkUpdate(
             this.entityToApiLink(dataAfterUpdate),
