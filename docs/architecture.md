@@ -271,6 +271,29 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 6. S3 and CloudFront serve media. Drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception.
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
+### NFT link refresh bounds
+
+`nftLinkRefresherLoop` applies a 90-second resolution budget, reduced to leave
+10 seconds before the Lambda deadline and processing-lock expiry. Its RPC
+transport cancels connections and response bodies after five seconds; metadata
+HTTP requests also observe the overall budget. Retries stop when the remaining
+budget cannot cover their backoff and another RPC. Failed resolution preserves
+cached metadata and releases the existing processing lock.
+
+After persistence, a worker-specific notifier reads active WebSocket recipients
+once and sends the existing `MEDIA_LINK_UPDATED` payload with concurrency 10,
+five-second request limits, and a 15-second broadcast deadline. Notification
+failure cannot change a successful metadata refresh. The notification metadata
+read is bounded to five seconds; both notification queries also use a three-second
+database execution limit. Late read results cannot trigger delivery.
+Cancelled preview-queue sends leave their source retryable, without overwriting
+newer previews or active consumers. Expired or disconnected
+clients are skipped; normal WebSocket lifecycle handling retains ownership of
+stale-connection deletion. The API and other resolver callers retain their
+existing policy. Request IDs, message IDs, and stage durations connect these
+operations to CloudWatch invocation reports. Sentry's existing warning timer is
+unchanged. No API, schema, queue, or frontend deployment dependency is added.
+
 ### NFT market depth and activity
 
 `marketStatsLoop` legacy price pagination and market-depth REST requests share
@@ -727,6 +750,22 @@ source batch size stays at `1` and Lambda reserved concurrency stays at `1` to
 avoid parallel xTDH work across groups. The stats phase rebuilds the inactive
 xTDH stats slot and activates it only after the rebuild succeeds; a redelivered
 stats message truncates and refills the inactive slot again before activation.
+Each grant/token stats `INSERT ... SELECT` runs in a dedicated `READ COMMITTED`
+transaction after its table is truncated, so source reads do not take shared
+row locks against ownership indexing, grants, or consolidation writes. The
+source snapshot contains values committed when that insert begins; an
+in-flight source writer is excluded instead of blocking the insert. Grant and
+token inserts have separate statement snapshots, as the staged rebuild has
+always used separate statements rather than one shared source snapshot. The
+transaction isolation setting applies only to that insert; session defaults
+and universe transaction semantics stay unchanged. `TRUNCATE` commits
+independently and is not rolled back when an insert fails: the inactive slot
+may remain empty or partially rebuilt until SQS retries. Readers resolve their
+stats tables from the unchanged active-slot metadata; only a completed rebuild
+switches that metadata. Failed inserts roll back before SQS redelivery retries
+the entire inactive-slot rebuild, without classifying database error codes.
+Stats refills reject a supplied transaction because `TRUNCATE` would implicitly
+commit it.
 
 ## 6529 Help Bot Flow
 

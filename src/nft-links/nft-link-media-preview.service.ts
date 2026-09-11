@@ -83,8 +83,12 @@ export class NftLinkMediaPreviewService {
 
   public async onResolvedCard(
     card: NormalizedNftCard,
-    ctx: RequestContext
+    ctx: RequestContext,
+    abortSignal?: AbortSignal
   ): Promise<void> {
+    if (abortSignal?.aborted) {
+      throw new Error('Preview enqueue cancelled before starting');
+    }
     const prepared = this.preparePreviewSourceFromCard(card);
     if (!prepared) {
       const sourceMediaKind = card.asset.media?.kind ?? 'unknown';
@@ -119,13 +123,27 @@ export class NftLinkMediaPreviewService {
       return;
     }
 
-    await this.sqs.send({
-      queue: queueUrl,
-      message: {
-        canonicalId: prepared.canonicalId,
-        sourceHash: prepared.sourceHash
-      } satisfies NftLinkMediaPreviewJobMessage
-    });
+    try {
+      await this.sqs.send({
+        queue: queueUrl,
+        ...(abortSignal ? { abortSignal } : {}),
+        message: {
+          canonicalId: prepared.canonicalId,
+          sourceHash: prepared.sourceHash
+        } satisfies NftLinkMediaPreviewJobMessage
+      });
+    } catch (error) {
+      if (abortSignal) {
+        // A cancelled send must not strand this source in PENDING forever.
+        // Conditional recovery leaves newer sources and active consumers alone.
+        await this.nftLinksDb.markMediaPreviewEnqueueFailed(
+          prepared.canonicalId,
+          prepared.sourceHash,
+          ctx
+        );
+      }
+      throw error;
+    }
   }
 
   public async processQueueMessage(
