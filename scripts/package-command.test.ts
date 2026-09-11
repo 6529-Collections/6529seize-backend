@@ -372,7 +372,7 @@ process.exitCode = ${exitCode};
     ]);
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain('59 package.json files');
+    expect(result.stdout).toContain('60 package.json files');
     expect(result.stdout).toContain('guarded by 6529');
   });
 

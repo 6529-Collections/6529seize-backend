@@ -17,45 +17,68 @@ describe('private SQL diagnostics', () => {
     error.mockClear();
   });
   it.each([
-    'artwork_documentation_assets',
-    'profile_cms_agent_grants',
-    'profile_cms_agent_proposals',
-    'profile_cms_agent_events'
-  ])('omits bound and inline private values for %s', async (table) => {
-    jest.spyOn(Time.prototype, 'diffFromNow').mockReturnValue(Time.seconds(2));
-    const failure = Object.assign(
-      new Error('private-contact@example.test in SQL error'),
-      {
+    {
+      table: 'profile_cms_agent_grants',
+      inline: 'private-candidate-copy',
+      bound: 'private-grant-value'
+    },
+    {
+      table: 'profile_cms_agent_proposals',
+      inline: 'private-candidate-copy',
+      bound: 'private-grant-value'
+    },
+    {
+      table: 'profile_cms_agent_events',
+      inline: 'private-candidate-copy',
+      bound: 'private-grant-value'
+    },
+    {
+      table: 'artwork_documentation_assets',
+      inline: 'private-image.tif',
+      bound: 'private-contact@example.test'
+    },
+    {
+      table: 'market_depth_events',
+      inline: 'private-provider-payload',
+      bound: 'private-order-payload'
+    }
+  ])(
+    'omits bound and inline private values from slow and failed $table queries',
+    async ({ table, inline, bound }) => {
+      jest
+        .spyOn(Time.prototype, 'diffFromNow')
+        .mockReturnValue(Time.seconds(2));
+      const failure = Object.assign(new Error(`${bound} in SQL error`), {
         code: 'ER_DUP_ENTRY',
-        sql: `INSERT INTO ${table} VALUES ('private-image.tif')`
-      }
-    );
-    const connection = {
-      config: {},
-      query: (_query: unknown, callback: (error: Error) => void) =>
-        callback(failure),
-      release: jest.fn()
-    } as unknown as PoolConnection;
-    const rejected = await execSQLWithParams(
-      `INSERT INTO ${table} (filename) VALUES ('private-image.tif')`,
-      connection,
-      true,
-      { contact: 'private-contact@example.test' }
-    ).catch((caught: unknown) => caught);
-    expect(rejected).toBeInstanceOf(Error);
-    expect(rejected).toMatchObject({ code: 'ER_DUP_ENTRY' });
-    expect(rejected).not.toBe(failure);
-    expect(String(rejected)).not.toContain('private-contact@example.test');
-    expect(JSON.stringify(rejected)).not.toContain('private-image.tif');
-    expect(rejected).not.toHaveProperty('sql');
-    expect(warn).toHaveBeenCalled();
-    expect(error).toHaveBeenCalled();
-    const diagnostics = JSON.stringify([warn.mock.calls, error.mock.calls]);
-    expect(diagnostics).not.toContain('private-contact@example.test');
-    expect(diagnostics).not.toContain('private-image.tif');
-    expect(diagnostics).not.toContain('INSERT INTO');
-    expect(connection.release).toHaveBeenCalled();
-  });
+        sql: `INSERT INTO ${table} VALUES ('${inline}')`
+      });
+      const connection = {
+        config: {},
+        query: (_query: unknown, callback: (error: Error) => void) =>
+          callback(failure),
+        release: jest.fn()
+      } as unknown as PoolConnection;
+      const rejected = await execSQLWithParams(
+        `INSERT INTO ${table} (payload) VALUES ('${inline}')`,
+        connection,
+        true,
+        { payload: bound }
+      ).catch((caught: unknown) => caught);
+      expect(rejected).toBeInstanceOf(Error);
+      expect(rejected).toMatchObject({ code: 'ER_DUP_ENTRY' });
+      expect(rejected).not.toBe(failure);
+      expect(String(rejected)).not.toContain(bound);
+      expect(JSON.stringify(rejected)).not.toContain(inline);
+      expect(rejected).not.toHaveProperty('sql');
+      expect(warn).toHaveBeenCalled();
+      expect(error).toHaveBeenCalled();
+      const diagnostics = JSON.stringify([warn.mock.calls, error.mock.calls]);
+      expect(diagnostics).not.toContain(bound);
+      expect(diagnostics).not.toContain(inline);
+      expect(diagnostics).not.toContain('INSERT INTO');
+      expect(connection.release).toHaveBeenCalled();
+    }
+  );
   it('preserves the original error for other database queries', async () => {
     const failure = new Error('ordinary database error');
     const connection = {

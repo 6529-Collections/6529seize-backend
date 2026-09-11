@@ -87,9 +87,11 @@ import { ApiGlobalRepCategoryWaveContributorsPage } from '@/api/generated/models
 import { ApiGlobalRepCategoryWaveOverview } from '@/api/generated/models/ApiGlobalRepCategoryWaveOverview';
 import { ApiGlobalRepCategoryWavesPage } from '@/api/generated/models/ApiGlobalRepCategoryWavesPage';
 import { ApiGroupMembersPreviewRequest } from '@/api/generated/models/ApiGroupMembersPreviewRequest';
+import { ApiMarketDepth } from '@/api/generated/models/ApiMarketDepth';
 import { ApiMediaResolveRequest } from '@/api/generated/models/ApiMediaResolveRequest';
 import { ApiMediaResolveResponse } from '@/api/generated/models/ApiMediaResolveResponse';
 import { ApiMemeCardDropMapping } from '@/api/generated/models/ApiMemeCardDropMapping';
+import { ApiNftActivityPage } from '@/api/generated/models/ApiNftActivityPage';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
 import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
 import { ApiProfileCmsAgentCandidateValidation } from '@/api/generated/models/ApiProfileCmsAgentCandidateValidation';
@@ -834,6 +836,26 @@ export type PreviewGroupMembersRequest = Request<
   Record<string, never>
 >;
 
+export interface GetNftMarketDepthPathParams {
+  "contract": string;
+  "token_id": string;
+}
+
+export interface GetNftMarketDepthQuery {
+  "page_size"?: number;
+  "cursor"?: string;
+}
+
+export type GetNftMarketDepthResponse = ApiMarketDepth;
+
+export type GetNftMarketDepthRequest = Request<
+  GetNftMarketDepthPathParams,
+  ApiResponse<GetNftMarketDepthResponse>,
+  never,
+  GetNftMarketDepthQuery,
+  Record<string, never>
+>;
+
 export type ResolveDecentralizedMediaPathParams = Record<string, never>;
 
 export type ResolveDecentralizedMediaQuery = Record<string, never>;
@@ -861,6 +883,27 @@ export type GetMemeCardDropMappingRequest = Request<
   ApiResponse<GetMemeCardDropMappingResponse>,
   never,
   GetMemeCardDropMappingQuery,
+  Record<string, never>
+>;
+
+export type GetNftMarketActivityPathParams = Record<string, never>;
+
+export interface GetNftMarketActivityQuery {
+  "contract"?: string;
+  "token_id"?: string;
+  "wallet"?: string;
+  "filter"?: "all" | "sales" | "purchases" | "mints" | "airdrops" | "transfers" | "burns" | "listings" | "offers" | "cancellations" | "expirations" | "invalidations" | "revalidations";
+  "page_size"?: number;
+  "cursor"?: string;
+}
+
+export type GetNftMarketActivityResponse = ApiNftActivityPage;
+
+export type GetNftMarketActivityRequest = Request<
+  GetNftMarketActivityPathParams,
+  ApiResponse<GetNftMarketActivityResponse>,
+  never,
+  GetNftMarketActivityQuery,
   Record<string, never>
 >;
 
