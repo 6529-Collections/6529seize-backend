@@ -93,7 +93,8 @@ flowchart TD
     TdhHistoryLoop ~~~ OwnersBalancesLoop["ownersBalancesLoop"]
     OwnersBalancesLoop ~~~ AggregatedActivityLoop["aggregatedActivityLoop"]
     AggregatedActivityLoop ~~~ MarketStatsLoop["marketStatsLoop"]
-    MarketStatsLoop ~~~ RateEventProcessingLoop["rateEventProcessingLoop"]
+    MarketStatsLoop ~~~ MarketDepthStreamLoop["marketDepthStreamLoop"]
+    MarketDepthStreamLoop ~~~ RateEventProcessingLoop["rateEventProcessingLoop"]
     RateEventProcessingLoop ~~~ WaveDecisionExecutionLoop["waveDecisionExecutionLoop"]
     WaveDecisionExecutionLoop ~~~ WaveLeaderboardSnapshotterLoop["waveLeaderboardSnapshotterLoop"]
     WaveLeaderboardSnapshotterLoop ~~~ WaveDropMetricsRefreshLoop["waveDropMetricsRefreshLoop"]
@@ -190,7 +191,8 @@ flowchart TD
 | `tdhHistoryLoop`                         | Write historical TDH snapshots.                                                                                                                                     |
 | `ownersBalancesLoop`                     | Project owner balance aggregates.                                                                                                                                   |
 | `aggregatedActivityLoop`                 | Calculate activity aggregates.                                                                                                                                      |
-| `marketStatsLoop`                        | Aggregate market stats for MEMES, Lab, Gradients, and NextGen.                                                                                                      |
+| `marketStatsLoop`                        | Aggregate market stats and archive full OpenSea order books for MEMES, Lab, Gradients, and each NextGen project.                                                   |
+| `marketDepthStreamLoop`                  | Capture OpenSea order lifecycle events with overlapping scheduled subscriptions and idempotent persistence.                                                       |
 | `rateEventProcessingLoop`                | Process DB-backed rating events.                                                                                                                                    |
 | `waveDecisionExecutionLoop`              | Execute wave decisions and enqueue claim builds.                                                                                                                    |
 | `waveLeaderboardSnapshotterLoop`         | Snapshot wave leaderboards.                                                                                                                                         |
@@ -268,6 +270,22 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 
 6. S3 and CloudFront serve media. Drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception.
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
+
+### NFT market depth and activity
+
+`marketStatsLoop` publishes complete OpenSea order snapshots atomically with
+current orders and a persistent queue for reconciling disappeared orders.
+`marketDepthStreamLoop` records live order lifecycle events, while REST event
+catch-up and per-order status checks recover supported missed observations.
+Six `market_depth_*` tables retain immutable compressed archives, current orders,
+collection state, events, cursors and retry work. All amounts and quantities
+needed for normalization preserve exact integer strings.
+
+The API exposes currency-specific quoted depth for an individual token and a
+merged feed of canonical transactions and market actions. Quoted quantities can
+share inventory or funding and are not a verified executable security budget.
+See the [market depth runbook](../ops/runbooks/market-depth.md) for interpretation,
+provider limitations, deployment order and verification.
 
 ### Alchemy NFT metadata proxy
 

@@ -405,6 +405,10 @@ export * from '../models/ApiMarkWaveReadRequest';
 export * from '../models/ApiMarkWaveReadResponse';
 export * from '../models/ApiMarketComponents';
 export * from '../models/ApiMarketConsiderationItem';
+export * from '../models/ApiMarketCurrency';
+export * from '../models/ApiMarketCurrencyBook';
+export * from '../models/ApiMarketDepth';
+export * from '../models/ApiMarketDepthLevel';
 export * from '../models/ApiMarketFee';
 export * from '../models/ApiMarketIdentity';
 export * from '../models/ApiMarketKind';
@@ -413,6 +417,7 @@ export * from '../models/ApiMarketListings';
 export * from '../models/ApiMarketMyOperations';
 export * from '../models/ApiMarketOfferItem';
 export * from '../models/ApiMarketOperation';
+export * from '../models/ApiMarketOrder';
 export * from '../models/ApiMarketOrderToSign';
 export * from '../models/ApiMarketOrders';
 export * from '../models/ApiMarketPrepareRequest';
@@ -421,6 +426,7 @@ export * from '../models/ApiMarketSendAttemptRejection';
 export * from '../models/ApiMarketSendAttemptRequest';
 export * from '../models/ApiMarketSettlement';
 export * from '../models/ApiMarketSignature';
+export * from '../models/ApiMarketSnapshot';
 export * from '../models/ApiMarketSubmission';
 export * from '../models/ApiMarketTradeOrder';
 export * from '../models/ApiMarketTransaction';
@@ -448,6 +454,8 @@ export * from '../models/ApiMintingClaimActionsResponse';
 export * from '../models/ApiMintingClaimsPhaseTotalItem';
 export * from '../models/ApiModeratedProfileStatus';
 export * from '../models/ApiNft';
+export * from '../models/ApiNftActivityEvent';
+export * from '../models/ApiNftActivityPage';
 export * from '../models/ApiNftLinkData';
 export * from '../models/ApiNftLinkMediaPreview';
 export * from '../models/ApiNftLinkResponse';
@@ -1182,6 +1190,10 @@ import { ApiMarkWaveReadRequest } from '../models/ApiMarkWaveReadRequest';
 import { ApiMarkWaveReadResponse } from '../models/ApiMarkWaveReadResponse';
 import { ApiMarketComponents } from '../models/ApiMarketComponents';
 import { ApiMarketConsiderationItem } from '../models/ApiMarketConsiderationItem';
+import { ApiMarketCurrency } from '../models/ApiMarketCurrency';
+import { ApiMarketCurrencyBook } from '../models/ApiMarketCurrencyBook';
+import { ApiMarketDepth  , ApiMarketDepthStatusEnum           } from '../models/ApiMarketDepth';
+import { ApiMarketDepthLevel } from '../models/ApiMarketDepthLevel';
 import { ApiMarketFee } from '../models/ApiMarketFee';
 import { ApiMarketIdentity } from '../models/ApiMarketIdentity';
 import { ApiMarketKind } from '../models/ApiMarketKind';
@@ -1190,6 +1202,7 @@ import { ApiMarketListings } from '../models/ApiMarketListings';
 import { ApiMarketMyOperations } from '../models/ApiMarketMyOperations';
 import { ApiMarketOfferItem } from '../models/ApiMarketOfferItem';
 import { ApiMarketOperation  , ApiMarketOperationStateEnum                            } from '../models/ApiMarketOperation';
+import { ApiMarketOrder     , ApiMarketOrderSideEnum  , ApiMarketOrderScopeEnum            , ApiMarketOrderApplicabilityEnum     } from '../models/ApiMarketOrder';
 import { ApiMarketOrderToSign } from '../models/ApiMarketOrderToSign';
 import { ApiMarketOrders } from '../models/ApiMarketOrders';
 import { ApiMarketPrepareRequest            } from '../models/ApiMarketPrepareRequest';
@@ -1198,6 +1211,7 @@ import { ApiMarketSendAttemptRejection  , ApiMarketSendAttemptRejectionReasonEnu
 import { ApiMarketSendAttemptRequest  , ApiMarketSendAttemptRequestPurposeEnum    } from '../models/ApiMarketSendAttemptRequest';
 import { ApiMarketSettlement } from '../models/ApiMarketSettlement';
 import { ApiMarketSignature } from '../models/ApiMarketSignature';
+import { ApiMarketSnapshot } from '../models/ApiMarketSnapshot';
 import { ApiMarketSubmission } from '../models/ApiMarketSubmission';
 import { ApiMarketTradeOrder   , ApiMarketTradeOrderSideEnum           } from '../models/ApiMarketTradeOrder';
 import { ApiMarketTransaction    , ApiMarketTransactionPurposeEnum  , ApiMarketTransactionApprovalScopeEnum       } from '../models/ApiMarketTransaction';
@@ -1225,6 +1239,8 @@ import { ApiMintingClaimActionsResponse } from '../models/ApiMintingClaimActions
 import { ApiMintingClaimsPhaseTotalItem } from '../models/ApiMintingClaimsPhaseTotalItem';
 import { ApiModeratedProfileStatus } from '../models/ApiModeratedProfileStatus';
 import { ApiNft      , ApiNftTokenTypeEnum                               } from '../models/ApiNft';
+import { ApiNftActivityEvent , ApiNftActivityEventKindEnum                   } from '../models/ApiNftActivityEvent';
+import { ApiNftActivityPage } from '../models/ApiNftActivityPage';
 import { ApiNftLinkData } from '../models/ApiNftLinkData';
 import { ApiNftLinkMediaPreview, ApiNftLinkMediaPreviewStatusEnum          } from '../models/ApiNftLinkMediaPreview';
 import { ApiNftLinkResponse } from '../models/ApiNftLinkResponse';
@@ -1655,8 +1671,12 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiGroupTdhInclusionStrategy",
     "ApiIdentitySubscriptionTargetAction",
     "ApiIdentitySubscriptionTargetType",
+    "ApiMarketDepthStatusEnum",
     "ApiMarketKind",
     "ApiMarketOperationStateEnum",
+    "ApiMarketOrderSideEnum",
+    "ApiMarketOrderScopeEnum",
+    "ApiMarketOrderApplicabilityEnum",
     "ApiMarketSendAttemptPurposeEnum",
     "ApiMarketSendAttemptStatusEnum",
     "ApiMarketSendAttemptRejectionReasonEnum",
@@ -1668,6 +1688,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiMemesExtendedDataTokenTypeEnum",
     "ApiModeratedProfileStatus",
     "ApiNftTokenTypeEnum",
+    "ApiNftActivityEventKindEnum",
     "ApiNftLinkMediaPreviewStatusEnum",
     "ApiNotificationCause",
     "ApiOgMetadataEntityType",
@@ -2123,6 +2144,10 @@ let typeMap: {[index: string]: any} = {
     "ApiMarkWaveReadResponse": ApiMarkWaveReadResponse,
     "ApiMarketComponents": ApiMarketComponents,
     "ApiMarketConsiderationItem": ApiMarketConsiderationItem,
+    "ApiMarketCurrency": ApiMarketCurrency,
+    "ApiMarketCurrencyBook": ApiMarketCurrencyBook,
+    "ApiMarketDepth": ApiMarketDepth,
+    "ApiMarketDepthLevel": ApiMarketDepthLevel,
     "ApiMarketFee": ApiMarketFee,
     "ApiMarketIdentity": ApiMarketIdentity,
     "ApiMarketListingEntry": ApiMarketListingEntry,
@@ -2130,6 +2155,7 @@ let typeMap: {[index: string]: any} = {
     "ApiMarketMyOperations": ApiMarketMyOperations,
     "ApiMarketOfferItem": ApiMarketOfferItem,
     "ApiMarketOperation": ApiMarketOperation,
+    "ApiMarketOrder": ApiMarketOrder,
     "ApiMarketOrderToSign": ApiMarketOrderToSign,
     "ApiMarketOrders": ApiMarketOrders,
     "ApiMarketPrepareRequest": ApiMarketPrepareRequest,
@@ -2138,6 +2164,7 @@ let typeMap: {[index: string]: any} = {
     "ApiMarketSendAttemptRequest": ApiMarketSendAttemptRequest,
     "ApiMarketSettlement": ApiMarketSettlement,
     "ApiMarketSignature": ApiMarketSignature,
+    "ApiMarketSnapshot": ApiMarketSnapshot,
     "ApiMarketSubmission": ApiMarketSubmission,
     "ApiMarketTradeOrder": ApiMarketTradeOrder,
     "ApiMarketTransaction": ApiMarketTransaction,
@@ -2163,6 +2190,8 @@ let typeMap: {[index: string]: any} = {
     "ApiMintingClaimActionsResponse": ApiMintingClaimActionsResponse,
     "ApiMintingClaimsPhaseTotalItem": ApiMintingClaimsPhaseTotalItem,
     "ApiNft": ApiNft,
+    "ApiNftActivityEvent": ApiNftActivityEvent,
+    "ApiNftActivityPage": ApiNftActivityPage,
     "ApiNftLinkData": ApiNftLinkData,
     "ApiNftLinkMediaPreview": ApiNftLinkMediaPreview,
     "ApiNftLinkResponse": ApiNftLinkResponse,
