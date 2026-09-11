@@ -653,7 +653,7 @@ function getFullDaysBetweenDates(t1: Date, t2: Date) {
   return Math.floor(diff / (1000 * 3600 * 24));
 }
 
-function getTokenTdh(
+export function getTokenTdh(
   timestamp: Date,
   id: number,
   hodlRate: number,

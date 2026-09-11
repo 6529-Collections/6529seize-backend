@@ -6,9 +6,15 @@ import { cacheRequest } from '@/api/request-cache';
 import { Time } from '@/time';
 import { Response } from 'express';
 import { ArtworkDocumentationCancelDocumentationUploadRequest, ArtworkDocumentationCancelDocumentationUploadResponse, ArtworkDocumentationCommentDocumentationThreadRequest, ArtworkDocumentationCommentDocumentationThreadResponse, ArtworkDocumentationCompleteDocumentationUploadRequest, ArtworkDocumentationCompleteDocumentationUploadResponse, ArtworkDocumentationConfirmDocumentationRequest, ArtworkDocumentationConfirmDocumentationResponse, ArtworkDocumentationCreateDocumentationContextRequest, ArtworkDocumentationCreateDocumentationContextResponse, ArtworkDocumentationCreateDocumentationThreadRequest, ArtworkDocumentationCreateDocumentationThreadResponse, ArtworkDocumentationCreateDocumentationWorkRequest, ArtworkDocumentationCreateDocumentationWorkResponse, ArtworkDocumentationDownloadDocumentationAssetRequest, ArtworkDocumentationDownloadDocumentationAssetResponse, ArtworkDocumentationGetDocumentationContextRequest, ArtworkDocumentationGetDocumentationContextResponse, ArtworkDocumentationGetDocumentationProfilesRequest, ArtworkDocumentationGetDocumentationProfilesResponse, ArtworkDocumentationGetDocumentationPublicPreviewRequest, ArtworkDocumentationGetDocumentationPublicPreviewResponse, ArtworkDocumentationGetDocumentationRevisionRequest, ArtworkDocumentationGetDocumentationRevisionResponse, ArtworkDocumentationGetDocumentationUploadRequest, ArtworkDocumentationGetDocumentationUploadResponse, ArtworkDocumentationGetDocumentationWorkRequest, ArtworkDocumentationGetDocumentationWorkResponse, ArtworkDocumentationGrantDocumentationAccessRequest, ArtworkDocumentationGrantDocumentationAccessResponse, ArtworkDocumentationImportDocumentationSourceRequest, ArtworkDocumentationImportDocumentationSourceResponse, ArtworkDocumentationLinkDocumentationAssetRequest, ArtworkDocumentationLinkDocumentationAssetResponse, ArtworkDocumentationLinkDocumentationSourceRequest, ArtworkDocumentationLinkDocumentationSourceResponse, ArtworkDocumentationListDocumentationGrantsRequest, ArtworkDocumentationListDocumentationGrantsResponse, ArtworkDocumentationListDocumentationProgramRequest, ArtworkDocumentationListDocumentationProgramResponse, ArtworkDocumentationListDocumentationRevisionsRequest, ArtworkDocumentationListDocumentationRevisionsResponse, ArtworkDocumentationListDocumentationThreadsRequest, ArtworkDocumentationListDocumentationThreadsResponse, ArtworkDocumentationListDocumentationWorksRequest, ArtworkDocumentationListDocumentationWorksResponse, ArtworkDocumentationPatchDocumentationAssetLinkRequest, ArtworkDocumentationPatchDocumentationAssetLinkResponse, ArtworkDocumentationPatchDocumentationContextRequest, ArtworkDocumentationPatchDocumentationContextResponse, ArtworkDocumentationPatchDocumentationModuleRequest, ArtworkDocumentationPatchDocumentationModuleResponse, ArtworkDocumentationPatchDocumentationThreadRequest, ArtworkDocumentationPatchDocumentationThreadResponse, ArtworkDocumentationPinDocumentationArtistRequest, ArtworkDocumentationPinDocumentationArtistResponse, ArtworkDocumentationPreviewDocumentationSourceRequest, ArtworkDocumentationPreviewDocumentationSourceResponse, ArtworkDocumentationPreviewDocumentationUpgradeRequest, ArtworkDocumentationPreviewDocumentationUpgradeResponse, ArtworkDocumentationReviewDocumentationRequest, ArtworkDocumentationReviewDocumentationResponse, ArtworkDocumentationRevokeDocumentationAccessRequest, ArtworkDocumentationRevokeDocumentationAccessResponse, ArtworkDocumentationSignDocumentationPartsRequest, ArtworkDocumentationSignDocumentationPartsResponse, ArtworkDocumentationStartDocumentationUploadRequest, ArtworkDocumentationStartDocumentationUploadResponse, ArtworkDocumentationUnlinkDocumentationAssetRequest, ArtworkDocumentationUnlinkDocumentationAssetResponse, ArtworkDocumentationUpgradeDocumentationProfileRequest, ArtworkDocumentationUpgradeDocumentationProfileResponse } from './operations';
+import { AdvanceCollectPlanRequest, AdvanceCollectPlanResponse, AnalyzeCollectGoalRequest, AnalyzeCollectGoalResponse, CreateCollectPlanRequest, CreateCollectPlanResponse, CreateCollectRuleRequest, CreateCollectRuleResponse, GetCollectAssetsRequest, GetCollectAssetsResponse, GetCollectCapabilitiesRequest, GetCollectCapabilitiesResponse, GetCollectCatalogRequest, GetCollectCatalogResponse, GetCollectPlanRequest, GetCollectPlanResponse, GetCollectRuleRequest, GetCollectRuleResponse, GetCollectRulesRequest, GetCollectRulesResponse, GetMarketListingsRequest, GetMarketListingsResponse, PauseCollectRuleRequest, PauseCollectRuleResponse, PrepareCollectRuleRequest, PrepareCollectRuleResponse, ProjectCollectPurchasesRequest, ProjectCollectPurchasesResponse, RankCollectTdhPurchasesRequest, RankCollectTdhPurchasesResponse, ReconcileCollectRuleRequest, ReconcileCollectRuleResponse } from './operations';
 import { GetCompetitionEntryV3Request, GetCompetitionEntryV3Response, GetWaveCompetitionV3Request, GetWaveCompetitionV3Response, GetWaveHubV3Request, GetWaveHubV3Response, ListCompetitionDecisionsV3Request, ListCompetitionDecisionsV3Response, ListCompetitionEntriesV3Request, ListCompetitionEntriesV3Response, ListCompetitionEntryVotesV3Request, ListCompetitionEntryVotesV3Response, ListCompetitionLeaderboardV3Request, ListCompetitionLeaderboardV3Response, ListCompetitionOutcomeDistributionV3Request, ListCompetitionOutcomeDistributionV3Response, ListCompetitionOutcomesV3Request, ListCompetitionOutcomesV3Response, ListCompetitionPausesV3Request, ListCompetitionPausesV3Response, ListCompetitionVersionsV3Request, ListCompetitionVersionsV3Response, ListCompetitionVotersV3Request, ListCompetitionVotersV3Response, ListCompetitionWinnersV3Request, ListCompetitionWinnersV3Response, ListWaveCompetitionsV3Request, ListWaveCompetitionsV3Response } from './operations';
+import { BeginMarketTransactionAttemptRequest, BeginMarketTransactionAttemptResponse, ContinueMarketOperationRequest, ContinueMarketOperationResponse, GetMarketOperationRequest, GetMarketOperationResponse, GetMarketOrdersRequest, GetMarketOrdersResponse, GetMyMarketOperationsRequest, GetMyMarketOperationsResponse, PrepareMarketOperationRequest, PrepareMarketOperationResponse, PublishMarketOperationRequest, PublishMarketOperationResponse, RejectMarketTransactionAttemptRequest, RejectMarketTransactionAttemptResponse, SubmitMarketOperationRequest, SubmitMarketOperationResponse } from './operations';
 import { GetProfilePreferencesRequest, GetProfilePreferencesResponse, PutProfilePreferencesRequest, PutProfilePreferencesResponse } from './operations';
 import { handleCancelDocumentationUpload, handleCommentDocumentationThread, handleCompleteDocumentationUpload, handleConfirmDocumentation, handleCreateDocumentationContext, handleCreateDocumentationThread, handleCreateDocumentationWork, handleDownloadDocumentationAsset, handleGetDocumentationContext, handleGetDocumentationProfiles, handleGetDocumentationPublicPreview, handleGetDocumentationRevision, handleGetDocumentationUpload, handleGetDocumentationWork, handleGrantDocumentationAccess, handleImportDocumentationSource, handleLinkDocumentationAsset, handleLinkDocumentationSource, handleListDocumentationGrants, handleListDocumentationProgram, handleListDocumentationRevisions, handleListDocumentationThreads, handleListDocumentationWorks, handlePatchDocumentationAssetLink, handlePatchDocumentationContext, handlePatchDocumentationModule, handlePatchDocumentationThread, handlePinDocumentationArtist, handlePreviewDocumentationSource, handlePreviewDocumentationUpgrade, handleReviewDocumentation, handleRevokeDocumentationAccess, handleSignDocumentationParts, handleStartDocumentationUpload, handleUnlinkDocumentationAsset, handleUpgradeDocumentationProfile } from '@/api/artwork-documentation/artwork-documentation.handlers';
+import { handleGetMarketListings, handleRankCollectTdhPurchases } from '@/api/collect/collect-discovery.handlers';
+import { handleAdvanceCollectPlan, handleCreateCollectPlan, handleGetCollectPlan, handleProjectCollectPurchases } from '@/api/collect/collect-plan.handlers';
+import { handleCreateCollectRule, handleGetCollectRule, handleGetCollectRules, handlePauseCollectRule, handlePrepareCollectRule, handleReconcileCollectRule } from '@/api/collect/collect-rules.handlers';
+import { handleAnalyzeCollectGoal, handleGetCollectAssets, handleGetCollectCapabilities, handleGetCollectCatalog } from '@/api/collect/collect.handlers';
 import { handlePreviewGroupMembers } from '@/api/community-members/group-members-preview.handler';
 import { handleGetCompetitionEntryV3, handleGetWaveCompetitionV3, handleGetWaveHubV3, handleListCompetitionDecisionsV3, handleListCompetitionEntriesV3, handleListCompetitionEntryVotesV3, handleListCompetitionLeaderboardV3, handleListCompetitionOutcomeDistributionV3, handleListCompetitionOutcomesV3, handleListCompetitionPausesV3, handleListCompetitionVersionsV3, handleListCompetitionVotersV3, handleListCompetitionWinnersV3, handleListWaveCompetitionsV3 } from '@/api/competitions/competitions-v3.handlers';
 import { handleGetContentModerationBlockActivity } from '@/api/content-moderation/get-block-activity.handler';
@@ -19,6 +25,7 @@ import { handleGetDropPollOptionVotersV2, handleGetWavePollsV2, handleVoteDropPo
 import { handleDownloadDropV2VotersById, handleGetBoostedDropsV2, handleGetCuratedProfileWaveDropsV2, handleGetDropsV2, handleGetDropV2BoostsById, handleGetDropV2ById, handleGetDropV2MetadataById, handleGetDropV2PartById, handleGetDropV2ReactionsById, handleGetDropV2VoteEditLogsById, handleGetDropV2VotersById } from '@/api/drops/drops-v2.handlers';
 import { handleGetDropV2VoteSummaryById } from '@/api/drops/get-drop-vote-summary.handler';
 import { handleGetNftMarketActivity, handleGetNftMarketDepth } from '@/api/market-depth/market-depth.handlers';
+import { handleBeginMarketTransactionAttempt, handleContinueMarketOperation, handleGetMarketOperation, handleGetMarketOrders, handleGetMyMarketOperations, handlePrepareMarketOperation, handlePublishMarketOperation, handleRejectMarketTransactionAttempt, handleSubmitMarketOperation } from '@/api/marketplace/marketplace.handlers';
 import { handleResolveDecentralizedMedia } from '@/api/media/decentralized-media.handlers';
 import { handleGetMemeCardDropMapping } from '@/api/memes/meme-card-drop-mappings.handlers';
 import { handleGetNotificationsV2 } from '@/api/notifications/notifications-v2.handlers';
@@ -434,6 +441,167 @@ router.post(
   }
 );
 
+router.post(
+  '/collect/analyses',
+  async (
+    req: AnalyzeCollectGoalRequest,
+    res: Response<ApiResponse<AnalyzeCollectGoalResponse>>
+  ) => {
+    res.send(await handleAnalyzeCollectGoal(req));
+  }
+);
+
+router.get(
+  '/collect/assets',
+  async (
+    req: GetCollectAssetsRequest,
+    res: Response<ApiResponse<GetCollectAssetsResponse>>
+  ) => {
+    res.send(await handleGetCollectAssets(req));
+  }
+);
+
+router.get(
+  '/collect/capabilities',
+  async (
+    req: GetCollectCapabilitiesRequest,
+    res: Response<ApiResponse<GetCollectCapabilitiesResponse>>
+  ) => {
+    res.send(await handleGetCollectCapabilities(req));
+  }
+);
+
+router.get(
+  '/collect/catalog',
+  async (
+    req: GetCollectCatalogRequest,
+    res: Response<ApiResponse<GetCollectCatalogResponse>>
+  ) => {
+    res.send(await handleGetCollectCatalog(req));
+  }
+);
+
+router.post(
+  '/collect/plans',
+  needsAuthenticatedUser(),
+  async (
+    req: CreateCollectPlanRequest,
+    res: Response<ApiResponse<CreateCollectPlanResponse>>
+  ) => {
+    res.send(await handleCreateCollectPlan(req));
+  }
+);
+
+router.get(
+  '/collect/plans/:id',
+  needsAuthenticatedUser(),
+  async (
+    req: GetCollectPlanRequest,
+    res: Response<ApiResponse<GetCollectPlanResponse>>
+  ) => {
+    res.send(await handleGetCollectPlan(req));
+  }
+);
+
+router.post(
+  '/collect/plans/:id/advance',
+  needsAuthenticatedUser(),
+  async (
+    req: AdvanceCollectPlanRequest,
+    res: Response<ApiResponse<AdvanceCollectPlanResponse>>
+  ) => {
+    res.send(await handleAdvanceCollectPlan(req));
+  }
+);
+
+router.get(
+  '/collect/rules',
+  needsAuthenticatedUser(),
+  async (
+    req: GetCollectRulesRequest,
+    res: Response<ApiResponse<GetCollectRulesResponse>>
+  ) => {
+    res.send(await handleGetCollectRules(req));
+  }
+);
+
+router.post(
+  '/collect/rules',
+  needsAuthenticatedUser(),
+  async (
+    req: CreateCollectRuleRequest,
+    res: Response<ApiResponse<CreateCollectRuleResponse>>
+  ) => {
+    res.send(await handleCreateCollectRule(req));
+  }
+);
+
+router.get(
+  '/collect/rules/:id',
+  needsAuthenticatedUser(),
+  async (
+    req: GetCollectRuleRequest,
+    res: Response<ApiResponse<GetCollectRuleResponse>>
+  ) => {
+    res.send(await handleGetCollectRule(req));
+  }
+);
+
+router.post(
+  '/collect/rules/:id/pause',
+  needsAuthenticatedUser(),
+  async (
+    req: PauseCollectRuleRequest,
+    res: Response<ApiResponse<PauseCollectRuleResponse>>
+  ) => {
+    res.send(await handlePauseCollectRule(req));
+  }
+);
+
+router.post(
+  '/collect/rules/:id/prepare',
+  needsAuthenticatedUser(),
+  async (
+    req: PrepareCollectRuleRequest,
+    res: Response<ApiResponse<PrepareCollectRuleResponse>>
+  ) => {
+    res.send(await handlePrepareCollectRule(req));
+  }
+);
+
+router.post(
+  '/collect/rules/:id/reconcile',
+  needsAuthenticatedUser(),
+  async (
+    req: ReconcileCollectRuleRequest,
+    res: Response<ApiResponse<ReconcileCollectRuleResponse>>
+  ) => {
+    res.send(await handleReconcileCollectRule(req));
+  }
+);
+
+router.post(
+  '/collect/tdh-ranking',
+  needsAuthenticatedUser(),
+  async (
+    req: RankCollectTdhPurchasesRequest,
+    res: Response<ApiResponse<RankCollectTdhPurchasesResponse>>
+  ) => {
+    res.send(await handleRankCollectTdhPurchases(req));
+  }
+);
+
+router.post(
+  '/collect/tdh-scenarios',
+  needsAuthenticatedUser(),
+  async (
+    req: ProjectCollectPurchasesRequest,
+    res: Response<ApiResponse<ProjectCollectPurchasesResponse>>
+  ) => {
+    res.send(await handleProjectCollectPurchases(req));
+  }
+);
+
 router.get(
   '/content-moderation/block-activity',
   needsAuthenticatedUser(),
@@ -496,6 +664,114 @@ router.post(
     res: Response<ApiResponse<PreviewGroupMembersResponse>>
   ) => {
     res.send(await handlePreviewGroupMembers(req));
+  }
+);
+
+router.get(
+  '/market/listings',
+  async (
+    req: GetMarketListingsRequest,
+    res: Response<ApiResponse<GetMarketListingsResponse>>
+  ) => {
+    res.send(await handleGetMarketListings(req));
+  }
+);
+
+router.get(
+  '/market/me/operations',
+  needsAuthenticatedUser(),
+  async (
+    req: GetMyMarketOperationsRequest,
+    res: Response<ApiResponse<GetMyMarketOperationsResponse>>
+  ) => {
+    res.send(await handleGetMyMarketOperations(req));
+  }
+);
+
+router.post(
+  '/market/operations',
+  needsAuthenticatedUser(),
+  async (
+    req: PrepareMarketOperationRequest,
+    res: Response<ApiResponse<PrepareMarketOperationResponse>>
+  ) => {
+    res.send(await handlePrepareMarketOperation(req));
+  }
+);
+
+router.get(
+  '/market/operations/:id',
+  needsAuthenticatedUser(),
+  async (
+    req: GetMarketOperationRequest,
+    res: Response<ApiResponse<GetMarketOperationResponse>>
+  ) => {
+    res.send(await handleGetMarketOperation(req));
+  }
+);
+
+router.post(
+  '/market/operations/:id/continue',
+  needsAuthenticatedUser(),
+  async (
+    req: ContinueMarketOperationRequest,
+    res: Response<ApiResponse<ContinueMarketOperationResponse>>
+  ) => {
+    res.send(await handleContinueMarketOperation(req));
+  }
+);
+
+router.post(
+  '/market/operations/:id/send-attempts',
+  needsAuthenticatedUser(),
+  async (
+    req: BeginMarketTransactionAttemptRequest,
+    res: Response<ApiResponse<BeginMarketTransactionAttemptResponse>>
+  ) => {
+    res.send(await handleBeginMarketTransactionAttempt(req));
+  }
+);
+
+router.post(
+  '/market/operations/:id/send-attempts/rejection',
+  needsAuthenticatedUser(),
+  async (
+    req: RejectMarketTransactionAttemptRequest,
+    res: Response<ApiResponse<RejectMarketTransactionAttemptResponse>>
+  ) => {
+    res.send(await handleRejectMarketTransactionAttempt(req));
+  }
+);
+
+router.post(
+  '/market/operations/:id/signature',
+  needsAuthenticatedUser(),
+  async (
+    req: PublishMarketOperationRequest,
+    res: Response<ApiResponse<PublishMarketOperationResponse>>
+  ) => {
+    res.send(await handlePublishMarketOperation(req));
+  }
+);
+
+router.post(
+  '/market/operations/:id/submissions',
+  needsAuthenticatedUser(),
+  async (
+    req: SubmitMarketOperationRequest,
+    res: Response<ApiResponse<SubmitMarketOperationResponse>>
+  ) => {
+    res.send(await handleSubmitMarketOperation(req));
+  }
+);
+
+router.get(
+  '/market/orders',
+  async (
+    req: GetMarketOrdersRequest,
+    res: Response<ApiResponse<GetMarketOrdersResponse>>
+  ) => {
+    res.send(await handleGetMarketOrders(req));
   }
 );
 
