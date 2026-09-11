@@ -41,6 +41,7 @@ export type Capabilities = {
   read_rights_evidence: boolean;
   read_source_receipts: boolean;
   read_contact: boolean;
+  read_restricted_fields: boolean;
   confirm_as_artist: boolean;
   review_lanes: ReviewLane[];
   manage_assignments: boolean;
@@ -73,6 +74,7 @@ export type FieldDefinition = {
 export type DocumentationProfile = {
   profile_id: string;
   version: number;
+  intake_mode?: 'publication_only';
   program_id: string | null;
   wave_id: string | null;
   required_for_review: string[];

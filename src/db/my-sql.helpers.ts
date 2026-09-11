@@ -39,19 +39,41 @@ const TinyIntToBooleanCaster: TypeCast = function castField(field, next) {
 export const CustomTypeCaster: TypeCast = (field, next) =>
   TinyIntToBooleanCaster(field, () => BigIntToNumberCaster(field, next));
 
-function describeQuery(sql: string, params?: Record<string, unknown>): string {
+type PrivateQueryFamily =
+  | 'artwork documentation'
+  | 'market depth'
+  | 'CMS agent';
+
+function privateQueryFamily(sql: string): PrivateQueryFamily | null {
   if (/\bartwork_documentation_[a-z_]+\b/i.test(sql)) {
+    return 'artwork documentation';
+  }
+  if (/\bmarket_depth_[a-z_]+\b/i.test(sql)) {
+    return 'market depth';
+  }
+  if (/\bprofile_cms_agent_(?:grants|proposals|events)\b/i.test(sql)) {
+    return 'CMS agent';
+  }
+  return null;
+}
+
+function describeQuery(sql: string, params?: Record<string, unknown>): string {
+  const family = privateQueryFamily(sql);
+  if (family === 'artwork documentation') {
     return '[private artwork documentation query]';
   }
+  if (family === 'market depth') return '[private market depth query]';
+  if (family === 'CMS agent') return '[private CMS agent query]';
   const normalized = sql.replace('\n', ' ');
   if (!params) return normalized;
   return `${normalized} with params ${JSON.stringify(params)}`;
 }
 
-function privateQueryError(original: unknown): Error {
-  const sanitized = new Error(
-    'Private artwork documentation database operation failed'
-  );
+function privateQueryError(
+  original: unknown,
+  family: PrivateQueryFamily
+): Error {
+  const sanitized = new Error(`Private ${family} database operation failed`);
   if (original && typeof original === 'object' && 'code' in original) {
     const code = original.code;
     if (typeof code === 'string' && /^(ER_|PROTOCOL_)[A-Z0-9_]+$/.test(code)) {
@@ -101,9 +123,7 @@ export async function execSQLWithParams<T>(
       // Artwork records and archival metadata are private even in infrastructure
       // logs. Bulk inserts can embed values directly in SQL, so hide both the
       // statement and parameters for every query touching this table family.
-      const privateArtworkQuery = /\bartwork_documentation_[a-z_]+\b/i.test(
-        sql
-      );
+      const privateFamily = privateQueryFamily(sql);
       const queryDescription = describeQuery(sql, params);
       const queryTook = timer.diffFromNow();
       if (queryTook.gt(Time.seconds(1))) {
@@ -116,11 +136,11 @@ export async function execSQLWithParams<T>(
       }
       if (err) {
         logger.error(
-          privateArtworkQuery
-            ? 'Database error executing private artwork documentation query'
+          privateFamily
+            ? `Database error executing private ${privateFamily} query`
             : `Error "${err}" executing SQL query ${queryDescription}\n`
         );
-        reject(privateArtworkQuery ? privateQueryError(err) : err);
+        reject(privateFamily ? privateQueryError(err, privateFamily) : err);
       } else {
         resolve(Object.values(JSON.parse(JSON.stringify(result))));
       }

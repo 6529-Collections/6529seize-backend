@@ -14,13 +14,73 @@ import {
   ARTWORK_ASSET_QUOTAS_TABLE
 } from '@/artwork-documentation/assets/artwork-assets.types';
 import { ARTWORK_UPLOAD_POLICY } from '@/artwork-documentation/assets/artwork-assets.policy';
+import { AD_CONTEXTS } from '@/artwork-documentation/artwork-documentation.tables';
 
 describe('artwork archive reservations and leases', () => {
   let db: ArtworkAssetsDb;
   beforeEach(async () => {
     await sqlExecutor.execute(`delete from ${ARTWORK_ASSETS_TABLE}`);
     await sqlExecutor.execute(`delete from ${ARTWORK_ASSET_QUOTAS_TABLE}`);
+    await sqlExecutor.execute(
+      `delete from ${AD_CONTEXTS} where id = 'context-1'`
+    );
+    await sqlExecutor.execute(
+      `insert into ${AD_CONTEXTS} (id, work_id, owner_profile_id, program_id, profile_json, draft_version, artist_record_revision_id, latest_revision_id, lifecycle, modules_json, asset_links_json, restricted_paths_json, created_at, updated_at) values ('context-1', 'work-1', 'artist-1', null, :profile, 1, null, null, 'active', :modules, '[]', '[]', :now, :now)`,
+      {
+        profile: JSON.stringify({
+          profile_id: 'photography_documentation_v1',
+          version: 1
+        }),
+        modules: JSON.stringify({ interview: {} }),
+        now: Date.now()
+      }
+    );
     db = new ArtworkAssetsDb(() => sqlExecutor);
+  });
+
+  it('rechecks a newly upgraded profile before stale upload authorization reserves bytes', async () => {
+    let releaseUpgrade!: () => void;
+    let signalLocked!: () => void;
+    const locked = new Promise<void>((resolve) => {
+      signalLocked = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseUpgrade = resolve;
+    });
+    const upgrading = sqlExecutor.executeNativeQueriesInTransaction(
+      async (connection) => {
+        await sqlExecutor.execute(
+          `select id from ${AD_CONTEXTS} where id = 'context-1' for update`,
+          {},
+          { wrappedConnection: connection }
+        );
+        signalLocked();
+        await release;
+        await sqlExecutor.execute(
+          `update ${AD_CONTEXTS} set profile_json = :profile where id = 'context-1'`,
+          { profile: JSON.stringify({ intake_mode: 'publication_only' }) },
+          { wrappedConnection: connection }
+        );
+      }
+    );
+    await locked;
+    const reservation = db.reserve(
+      anArtworkAsset({
+        role: 'working_file',
+        intended_visibility: 'restricted'
+      })
+    );
+    const rejected = expect(reservation).rejects.toMatchObject({
+      code: 'PUBLICATION_ASSET_ROLE_REQUIRED'
+    });
+    releaseUpgrade();
+    await upgrading;
+    await rejected;
+    expect(await db.list('context-1')).toEqual([]);
+    const rows = await sqlExecutor.execute(
+      `select context_id from ${ARTWORK_ASSET_QUOTAS_TABLE} where context_id = 'context-1'`
+    );
+    expect(rows).toEqual([]);
   });
 
   it('serializes simultaneous reservations at the 20GiB context boundary', async () => {

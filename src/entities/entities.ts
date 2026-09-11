@@ -1,4 +1,12 @@
 export { AbusivenessDetectionResult } from './IAbusivenessDetectionResult';
+export { CollectPlanEntity } from './ICollectPlan';
+export { CollectRuleEntity, CollectRuleOperationEntity } from './ICollectRule';
+export {
+  MarketOperationEntity,
+  MarketOperationEventEntity,
+  MarketWalletExposureLockEntity,
+  MarketReviewedTransactionEntity
+} from './IMarketOperation';
 export {
   ArtCurationTokenWatchEntity,
   ArtCurationTokenWatchStatus
@@ -106,6 +114,14 @@ export { MentionAliasEntity, MentionAliasMemberEntity } from './IMentionAlias';
 export { MintingClaimEntity } from './IMintingClaim';
 export { MetricRollupHourEntity } from './IMetricRollupHour';
 export {
+  MarketDepthCollectionStateEntity,
+  MarketDepthCurrentOrderEntity,
+  MarketDepthCursorEntity,
+  MarketDepthEventEntity,
+  MarketDepthReconciliationEntity,
+  MarketDepthSnapshotEntity
+} from './IMarketDepth';
+export {
   NextGenAllowlist,
   NextGenAllowlistBurn,
   NextGenAllowlistCollection,
@@ -153,6 +169,7 @@ export {
   ProfileCmsPointerEventType
 } from './IProfileCmsPointerEvent';
 export { ProfileCmsPublishSignatureEntity } from './IProfileCmsPublishSignature';
+export { ProfileCmsUploadEntity } from './IProfileCmsUpload';
 export { PushNotificationDevice } from './IPushNotification';
 export { PushNotificationSettingsEntity } from './IPushNotificationSettings';
 export { Rating } from './IRating';
@@ -254,6 +271,9 @@ export {
 } from './IXTdhTokenGrantStats';
 export { XTdhTokenStatsA, XTdhTokenStatsB } from './IXTdhTokenStats';
 export * from './IArtworkDocumentation';
+export { ProfileCmsAgentGrantEntity } from './IProfileCmsAgentGrant';
+export { ProfileCmsAgentProposalEntity } from './IProfileCmsAgentProposal';
+export { ProfileCmsAgentEventEntity } from './IProfileCmsAgentEvent';
 
 export {
   ArtworkDocumentationAssetEntity,
