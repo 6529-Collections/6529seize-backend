@@ -197,6 +197,11 @@ Those records should be short, curated records or generated summaries from
 backend docs and tests. Raw code lookup should happen offline during indexing or
 authoring, not during a user request.
 
+Backend-authored facts for Markdown push previews are maintained in
+[`docs/push-notification-previews.md`](../docs/push-notification-previews.md).
+They are source material for a future frontend help-index update; adding that
+document alone does not make the facts available to the live help bot.
+
 ### 4.5 Backend-owned public data query mode
 
 Some questions should be answered from public indexed data, not from the
