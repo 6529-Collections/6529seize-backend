@@ -119,9 +119,9 @@ describeWithSeed('push installation logout', [], () => {
     expect(result).toMatchObject({ revision: 1, token: null, platform: null });
     expect(
       await sqlExecutor.oneOrNull(
-        `SELECT revoked_at FROM ${WALLET_AUTH_SESSIONS_TABLE} WHERE id = 'early-native'`
+        `SELECT revoked_at IS NOT NULL AS revoked FROM ${WALLET_AUTH_SESSIONS_TABLE} WHERE id = 'early-native'`
       )
-    ).toEqual({ revoked_at: expect.any(Date) });
+    ).toEqual({ revoked: 1 });
     // A retry is authorized by the now-established installation secret, even
     // after the session was revoked by the first successful request.
     expect((await revokeInstallation(request, {})).revision).toBe(1);
