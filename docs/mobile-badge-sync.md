@@ -123,6 +123,16 @@ current revision. Registration and revocation lock the same database row.
 Revocation and final push recipient validation/submission also share the Redis
 device lock. Already accepted FCM/APNs pushes cannot be recalled by this fence.
 
+The Redis lock ends before enqueueing; it does not span the asynchronous refresh.
+Registration uses the database row lock and revision fence, while the refresh
+worker reads the latest registrations and token. A deliberate login before the
+refresh is therefore included in its count. Revocation must not bypass Redis
+during an outage: a pending alert could otherwise submit after its last recipient
+check and after logout. The client keeps that revocation queued until coordination
+recovers. Installation lookups use the `device_id` primary key; the additional
+token predicate during invalid-token cleanup protects a concurrent replacement,
+so there is no token-only lookup requiring another index.
+
 Installation credentials are two independently generated UUIDv4 values (244 random
 bits), stored only in native secure storage. Their SHA-256 digest is a verifier,
 never an accepted bearer value. A read-only database leak therefore does not
@@ -153,6 +163,12 @@ when those rows have already been removed. Authenticated registration can establ
 registrations nor a retained token. Logout before the first registration instead
 requires a matching, unexpired, unrevoked native refresh session. Anonymous requests
 cannot pre-claim an installation using only its device ID and a new secret.
+Native-session proof never substitutes for an existing installation secret or
+legacy FCM-token proof. It authorizes only the initial binding when no registration
+or retained token exists; the legacy token checks still run after the session
+helper returns. A caller's valid native session cannot claim another registered
+installation, including one whose final registration was removed but whose token
+was retained.
 Successful early logout stores its revision fence and later retries use the
 installation secret, even after that logout revoked the native session. If the
 initial request has no valid session proof, cleanup remains pending; this also
