@@ -11,6 +11,25 @@ import type {
 } from '@/nft-links/nft-link-media-preview.types';
 
 export class NftLinksDb extends LazyDbAccessCompatibleService {
+  public async findByCanonicalIdForNotification(
+    canonicalId: string,
+    ctx: RequestContext
+  ): Promise<NftLinkEntity | null> {
+    const timerName = `${this.constructor.name}->findByCanonicalIdForNotification`;
+    ctx.timer?.start(timerName);
+    try {
+      const row = await this.db.oneOrNull<NftLinkEntity>(
+        `select /*+ MAX_EXECUTION_TIME(3000) */ * from ${NFT_LINKS_TABLE}
+         where canonical_id = :canonicalId`,
+        { canonicalId },
+        { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
+      );
+      return this.deserializeDullData(row);
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   public async findByCanonicalId(
     canonicalId: string,
     ctx: RequestContext
@@ -340,6 +359,31 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
       ctx.timer?.stop(
         `${this.constructor.name}->markMediaPreviewPendingIfNeeded`
       );
+    }
+  }
+
+  public async markMediaPreviewEnqueueFailed(
+    canonicalId: string,
+    sourceHash: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    const timerName = `${this.constructor.name}->markMediaPreviewEnqueueFailed`;
+    ctx.timer?.start(timerName);
+    try {
+      await this.db.execute(
+        `update ${NFT_LINKS_TABLE}
+         set media_preview_status = 'FAILED',
+             media_preview_error_message = 'Preview enqueue failed',
+             media_preview_failed_since = ifnull(media_preview_failed_since, :now)
+         where canonical_id = :canonicalId
+           and media_preview_source_hash = :sourceHash
+           and media_preview_status = 'PENDING'
+           and media_preview_locked_since is null`,
+        { canonicalId, sourceHash, now: Time.currentMillis() },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
     }
   }
 
