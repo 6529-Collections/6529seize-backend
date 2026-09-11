@@ -44,6 +44,7 @@ import type { PushNotificationFileInfo } from '@/pushNotificationsHandler/push-n
 import { PushNotificationSendResult } from '@/pushNotificationsHandler/sendPushNotifications';
 import { identityMutesDb } from '../api-serverless/src/identity-mutes/identity-mutes.db';
 import { contentModerationDb } from '@/content-moderation/content-moderation.db';
+import { formatDropMarkdownForPush } from '@/pushNotificationsHandler/markdown-push-notification-text';
 import { wsListenersNotifier } from '../api-serverless/src/ws/ws-listeners-notifier';
 import { identityPushNotificationAccess } from '@/pushNotificationsHandler/identity-push-notification-access';
 import { isNotificationEnabledForDevice } from '@/pushNotificationsHandler/identity-push-notification-settings';
@@ -1093,7 +1094,8 @@ async function getDropBodyTextForPush(
   }
 
   if (hasText) {
-    return rawContentTrimmed;
+    const preview = formatDropMarkdownForPush(rawContentTrimmed);
+    if (preview) return preview;
   }
 
   const mediaInfos = mediaRows.map((row) =>
