@@ -23,6 +23,9 @@ export enum ProfileCmsPackageStatus {
   { unique: true }
 )
 export class ProfileCmsPackageEntity {
+  @Column({ type: 'json', nullable: true })
+  readonly recovery_receipt?: unknown;
+
   @PrimaryColumn({ type: 'varchar', length: 100 })
   readonly id!: string;
 
