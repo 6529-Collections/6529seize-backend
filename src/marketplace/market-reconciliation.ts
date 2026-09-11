@@ -22,6 +22,7 @@ import {
 } from '@/marketplace/seaport.schema';
 import { prepareMarketCancel } from '@/marketplace/seaport.builder';
 import { operationSendAttempt } from './market-operation-state';
+import { CustomApiCompliantException } from '@/exceptions';
 
 export interface MarketSettlement {
   filledQuantity: string;
@@ -509,9 +510,20 @@ export async function reconcileMarketOperation(
   } catch (error) {
     // A competing reconciliation may already have committed a newer state. Never
     // overwrite it or reinterpret RPC/provider failures as an economic release.
-    if (error instanceof MarketValidationError)
-      await persist(row, deps, 'UNKNOWN', {
-        errorCode: 'RECONCILIATION_MISMATCH'
-      });
+    if (error instanceof MarketValidationError) {
+      try {
+        await persist(row, deps, 'UNKNOWN', {
+          errorCode: 'RECONCILIATION_MISMATCH'
+        });
+      } catch (persistError) {
+        if (
+          !(persistError instanceof CustomApiCompliantException) ||
+          persistError.getStatusCode() !== 409 ||
+          persistError.code !== 'OPERATION_CHANGED'
+        )
+          throw persistError;
+        // Another reconciler advanced the row. The caller reads its current state.
+      }
+    }
   }
 }

@@ -179,4 +179,30 @@ describe('collecting listing discovery', () => {
       jest.mocked(collectingService.rankTdhPurchases).mock.calls[0][1]
     ).toEqual([]);
   });
+  it('skips unrepresentable or malformed candidate expiries without failing valid observed quotes', async () => {
+    provider([
+      order({ endTime: '8640000000001' }),
+      order({ endTime: '9'.repeat(78) }),
+      order({ endTime: 'Infinity' }),
+      order({ endTime: 'NaN' }),
+      order({ identity: { protocolAddress: 'protocol', orderHash: 'valid' } }),
+      order({
+        endTime: '8640000000000',
+        identity: { protocolAddress: 'protocol', orderHash: 'date-boundary' }
+      })
+    ]);
+    await rankCollectPurchases(request);
+    const candidates = jest.mocked(collectingService.rankTdhPurchases).mock
+      .calls[0][1];
+    expect(candidates.map((candidate) => candidate.candidate_id)).toEqual([
+      'valid',
+      'date-boundary'
+    ]);
+    expect(
+      candidates.every((candidate) =>
+        Number.isFinite(Date.parse(candidate.valid_until))
+      )
+    ).toBe(true);
+    expect(candidates[1].valid_until).toBe('+275760-09-13T00:00:00.000Z');
+  });
 });

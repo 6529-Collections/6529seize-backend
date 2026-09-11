@@ -531,7 +531,7 @@ export async function submitMarketOperation(
     return operationDto(await marketOperationsDb.get(id, row.profile_id));
   }
   if (
-    row.transaction_hash === transactionHash &&
+    row.transaction_hash === transactionHash.toLowerCase() &&
     ['SUBMITTED', 'MINED', 'CONFIRMED', 'UNKNOWN'].includes(row.state)
   )
     return operationDto(row);

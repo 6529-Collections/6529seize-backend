@@ -1,4 +1,5 @@
 import fc from 'fast-check';
+import { getAddress } from 'ethers';
 import {
   analyzeCollectingGoal,
   collectingAssetKey
@@ -198,6 +199,35 @@ describe('account collecting analysis', () => {
     expect(result.requirements.map((requirement) => requirement.id)).toEqual([
       card1.asset_key
     ]);
+  });
+  it('credits recipients in checksum-cased account wallets while preserving third-party delivery semantics', () => {
+    const checksummed = getAddress(
+      '0x1234567890abcdef1234567890abcdef12345678'
+    );
+    const mixedAccount = { ...account, wallets: [checksummed] };
+    for (const recipient of [checksummed, checksummed.toLowerCase()]) {
+      const result = analyzeCollectingGoal(
+        catalog,
+        mixedAccount,
+        [],
+        snapshot,
+        { profile_id: account.profile_id, kind: 'memes_full_set', recipient }
+      );
+      expect(result).toMatchObject({
+        recipient: checksummed.toLowerCase(),
+        recipient_in_profile: true,
+        counts_toward_profile: true
+      });
+    }
+    const gift = analyzeCollectingGoal(catalog, mixedAccount, [], snapshot, {
+      profile_id: account.profile_id,
+      kind: 'memes_full_set',
+      recipient: outside
+    });
+    expect(gift).toMatchObject({
+      recipient_in_profile: false,
+      counts_toward_profile: false
+    });
   });
 
   it('distinguishes released and TDH-eligible full collections', () => {

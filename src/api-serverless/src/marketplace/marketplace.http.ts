@@ -48,7 +48,7 @@ export const marketErrorMiddleware: ErrorRequestHandler = (
   res,
   next
 ) => {
-  if (!/^\/api\/(market|collect)(?:\/|$)/.test(req.path)) return next(error);
+  if (!/^\/api\/(market|collect)(?:\/|$)/i.test(req.path)) return next(error);
   req.body = undefined;
   req.query = {};
   res.set('Cache-Control', 'private, no-store');

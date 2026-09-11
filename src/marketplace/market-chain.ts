@@ -1,4 +1,4 @@
-import { Interface, JsonRpcProvider } from 'ethers';
+import { Interface, isError, JsonRpcProvider } from 'ethers';
 import { getRpcUrl } from '@/alchemy';
 import {
   MarketTradeIntent,
@@ -30,6 +30,24 @@ const seaport = new Interface([
   'function getCounter(address) view returns (uint256)',
   'function getOrderStatus(bytes32) view returns (bool isValidated,bool isCancelled,uint256 totalFilled,uint256 totalSize)'
 ]);
+
+function simulationMismatch(): MarketValidationError {
+  return new MarketValidationError(
+    'ORDER_MISMATCH',
+    'The transaction could not be simulated safely. Refresh balances and approvals.'
+  );
+}
+
+function hasExecutionFailure(error: unknown): boolean {
+  // ethers also wraps JSON-RPC outages as CALL_EXCEPTION without revert data.
+  // Only a known execution failure supports telling the caller to refresh state.
+  return (
+    isError(error, 'INSUFFICIENT_FUNDS') ||
+    (isError(error, 'CALL_EXCEPTION') &&
+      typeof error.data === 'string' &&
+      /^0x(?:[\da-f]{2})*$/i.test(error.data))
+  );
+}
 
 export class MarketChain {
   constructor(readonly rpc: JsonRpcProvider) {}
@@ -240,20 +258,22 @@ export class MarketChain {
         fee.maxFeePerGas === null ||
         fee.maxFeePerGas <= BigInt(0)
       )
-        throw new Error('fee');
+        throw simulationMismatch();
       const gasLimit = (gas * BigInt(120)) / BigInt(100);
       const reserve = gasLimit * fee.maxFeePerGas;
       if ((await this.rpc.getBalance(from)) < BigInt(value) + reserve)
-        throw new Error('funding');
+        throw simulationMismatch();
       return {
         gas_limit: gasLimit.toString(),
         max_fee_per_gas: fee.maxFeePerGas.toString(),
         gas_reserve_wei: reserve.toString()
       };
-    } catch {
+    } catch (error) {
+      if (error instanceof MarketValidationError) throw error;
+      if (hasExecutionFailure(error)) throw simulationMismatch();
       throw new MarketValidationError(
-        'ORDER_MISMATCH',
-        'The transaction could not be simulated safely. Refresh balances and approvals.'
+        'PROVIDER_UNAVAILABLE',
+        'The chain provider could not simulate this transaction. Try again when the connection is available.'
       );
     }
   }

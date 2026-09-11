@@ -176,8 +176,56 @@ it.each(['call', 'estimate', 'gas-zero', 'fee-null', 'fee-zero', 'funding'])(
     if (failure === 'fee-zero')
       rpc.getFeeData.mockResolvedValue({ maxFeePerGas: BigInt(0) });
     if (failure === 'funding') rpc.getBalance.mockResolvedValue(BigInt(599999));
-    await expect(chain.approvals(intent)).rejects.toThrow(
-      'The transaction could not be simulated safely. Refresh balances and approvals.'
+    await expect(chain.approvals(intent)).rejects.toMatchObject({
+      code: ['call', 'estimate'].includes(failure)
+        ? 'PROVIDER_UNAVAILABLE'
+        : 'ORDER_MISMATCH'
+    });
+  }
+);
+
+it.each(['call', 'estimateGas', 'getFeeData', 'getBalance'] as const)(
+  'classifies a transport outage during %s as unavailable without exposing RPC details',
+  async (method) => {
+    const { chain, rpc } = fixture();
+    rpc[method].mockRejectedValue(new Error('private RPC URL and API key'));
+    await expect(
+      chain.simulate({
+        kind: 'TRANSACTION',
+        chainId: 1,
+        from: wallet,
+        to: intent.asset.contract,
+        value: '0',
+        data: abi.encodeFunctionData('setApprovalForAll', [spender, true]),
+        purpose: 'APPROVE_NFT',
+        approvalScope: 'COLLECTION'
+      })
+    ).rejects.toMatchObject({
+      code: 'PROVIDER_UNAVAILABLE',
+      message:
+        'The chain provider could not simulate this transaction. Try again when the connection is available.'
+    });
+  }
+);
+
+it.each([
+  { code: 'CALL_EXCEPTION', data: null, expected: 'PROVIDER_UNAVAILABLE' },
+  { code: 'CALL_EXCEPTION', data: '0x', expected: 'ORDER_MISMATCH' },
+  { code: 'CALL_EXCEPTION', data: '0x1234', expected: 'ORDER_MISMATCH' },
+  { code: 'INSUFFICIENT_FUNDS', data: null, expected: 'ORDER_MISMATCH' }
+])(
+  'requires execution evidence before treating $code/$data as a state mismatch',
+  async (failure) => {
+    const { chain, rpc } = fixture();
+    rpc.estimateGas.mockRejectedValue(
+      Object.assign(new Error('private RPC details'), {
+        code: failure.code,
+        data: failure.data,
+        info: { error: { code: -32005, message: 'rate limited' } }
+      })
     );
+    await expect(chain.approvals(intent)).rejects.toMatchObject({
+      code: failure.expected
+    });
   }
 );

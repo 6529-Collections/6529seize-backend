@@ -245,7 +245,8 @@ export function analyzeCollectingGoal(
   if (request.recipient && !isAddress(request.recipient))
     throw new BadRequestException('Invalid recipient address');
   const recipientInProfile =
-    recipient !== null && account.wallets.includes(recipient);
+    recipient !== null &&
+    account.wallets.some((wallet) => wallet.toLowerCase() === recipient);
   validateHoldings(account, holdings);
   const definitions = buildDefinitions(catalog, request);
   const requirements = definitions.map((definition) =>

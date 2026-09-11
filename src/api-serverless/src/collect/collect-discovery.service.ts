@@ -7,6 +7,8 @@ import { marketChain } from '@/marketplace/market-chain';
 import { MARKET_ZERO_ADDRESS } from '@/marketplace/seaport.registry';
 import { CustomApiCompliantException } from '@/exceptions';
 import { collectPlanRankingCandidates } from './collect-plans.service';
+import { parseMarketTimestampSeconds } from '@/marketplace/seaport.schema';
+import type { MarketDiscoveredOrder } from '@/marketplace/provider.types';
 
 export async function discoverCollectListings(
   family: CollectingFamily,
@@ -86,8 +88,7 @@ async function rankingCandidates(
       asset.tdh_eligible &&
       order.currency === MARKET_ZERO_ADDRESS &&
       !wallets.has(order.maker.toLowerCase()) &&
-      Number(order.startTime) <= nowSeconds &&
-      Number(order.endTime) > nowSeconds
+      hasCurrentListingTime(order, nowSeconds)
   );
   const result: CollectingQuotedTdhCandidate[] = [];
   for (const { asset, order } of eligible) {
@@ -105,6 +106,22 @@ async function rankingCandidates(
     });
   }
   return result;
+}
+
+function hasCurrentListingTime(
+  order: MarketDiscoveredOrder,
+  nowSeconds: number
+): boolean {
+  try {
+    return (
+      Number(parseMarketTimestampSeconds(order.startTime)) <= nowSeconds &&
+      Number(parseMarketTimestampSeconds(order.endTime)) > nowSeconds
+    );
+  } catch {
+    // Preserve the provider's strict timestamp rules if another adapter supplies
+    // this typed boundary. Skip an invalid candidate instead of inventing expiry.
+    return false;
+  }
 }
 
 export async function rankCollectPurchases(input: {

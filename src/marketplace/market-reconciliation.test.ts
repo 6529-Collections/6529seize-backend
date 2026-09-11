@@ -20,6 +20,7 @@ import {
 } from '@/marketplace/seaport.registry';
 import { MARKET_SEAPORT_EVENTS } from '@/marketplace/seaport.events';
 import { MarketTradeIntent } from '@/marketplace/provider.types';
+import { CustomApiCompliantException } from '@/exceptions';
 
 const maker = '0x1111111111111111111111111111111111111111';
 const buyer = '0x2222222222222222222222222222222222222222';
@@ -136,6 +137,48 @@ function deps(value: ReturnType<typeof fixture>, safeNumber = 99) {
 }
 
 describe('safe marketplace reconciliation', () => {
+  it.each([
+    { status: 409, code: 'OPERATION_CHANGED', conflict: true },
+    { status: 409, code: 'OTHER_CONFLICT', conflict: false },
+    { status: 503, code: 'DB_UNAVAILABLE', conflict: false }
+  ])(
+    'contains only the expected concurrent recovery transition ($status/$code)',
+    async ({ status, code, conflict }) => {
+      const f = fixture(),
+        d = deps(f);
+      const failure = new CustomApiCompliantException(
+        status,
+        'transition failed',
+        code
+      );
+      (d.transition as jest.Mock).mockRejectedValue(failure);
+      const recovery = reconcileMarketOperation(
+        {
+          ...f.row,
+          state: 'LIVE',
+          transaction_hash: null,
+          order_hash: '0x' + 'ff'.repeat(32),
+          prepared_json: {
+            ...f.prepared,
+            intent: listing,
+            signedOrder: buildMarketOrder(listing, '4', '5')
+          }
+        },
+        d
+      );
+      if (conflict) await expect(recovery).resolves.toBeUndefined();
+      else await expect(recovery).rejects.toBe(failure);
+      expect(d.transition).toHaveBeenCalledTimes(1);
+      expect(d.transition).toHaveBeenCalledWith(
+        'operation',
+        ['LIVE'],
+        'UNKNOWN',
+        {
+          errorCode: 'RECONCILIATION_MISMATCH'
+        }
+      );
+    }
+  );
   it('requires both exact OrderFulfilled flows and actual NFT delivery', () => {
     const f = fixture();
     expect(

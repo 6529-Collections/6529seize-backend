@@ -264,6 +264,40 @@ describe('market service authorization and first payload exposure', () => {
     (marketChain as jest.Mock).mockReturnValue({ rpc: { getTransaction } });
     return { historical, tx, getTransaction, row };
   }
+  it.each(['SUBMITTED', 'MINED', 'CONFIRMED', 'UNKNOWN'])(
+    'idempotently accepts mixed-case resubmission in %s without another RPC lookup',
+    async (state) => {
+      const { row, getTransaction } = submittedFixture();
+      const hash = '0x' + 'a1b2c3d4'.repeat(8);
+      const submitted = { ...row, state, transaction_hash: hash };
+      (marketOperationsDb.getForActor as jest.Mock).mockResolvedValue(
+        submitted
+      );
+      (operationDto as jest.Mock).mockImplementation((value) => value);
+      await expect(
+        submitMarketOperation(
+          'operation',
+          auth,
+          '0x' + hash.slice(2).toUpperCase()
+        )
+      ).resolves.toBe(submitted);
+      expect(getTransaction).not.toHaveBeenCalled();
+      expect(marketOperationsDb.transition).not.toHaveBeenCalled();
+    }
+  );
+  it('rejects a different transaction hash after submission', async () => {
+    const { row, getTransaction } = submittedFixture();
+    (marketOperationsDb.getForActor as jest.Mock).mockResolvedValue({
+      ...row,
+      state: 'SUBMITTED',
+      transaction_hash: '0x' + 'ab'.repeat(32)
+    });
+    await expect(
+      submitMarketOperation('operation', auth, '0x' + 'cd'.repeat(32))
+    ).rejects.toMatchObject({ code: 'OPERATION_CHANGED' });
+    expect(getTransaction).not.toHaveBeenCalled();
+    expect(marketOperationsDb.transition).not.toHaveBeenCalled();
+  });
   it('attaches the exact previously reviewed transaction after another tab refreshes the quote', async () => {
     const { historical, tx, row } = submittedFixture();
     await submitMarketOperation('operation', auth, tx.hash);

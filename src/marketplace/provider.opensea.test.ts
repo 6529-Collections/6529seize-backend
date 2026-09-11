@@ -12,6 +12,7 @@ import {
   describeMarketOrder
 } from '@/marketplace/provider.opensea';
 import { validateMarketOrder } from '@/marketplace/quote-validation';
+import * as quoteValidation from '@/marketplace/quote-validation';
 import {
   MARKET_SEAPORT,
   MARKET_OPENSEA_CONDUIT_KEY,
@@ -48,6 +49,38 @@ const response = (value: unknown) =>
   });
 
 describe('OpenSea boundary', () => {
+  it('does not turn unexpected discovery validation errors into a successful empty market', async () => {
+    const order = buildMarketOrder(intent, '0', '1').order;
+    const mock = jest
+      .fn()
+      .mockResolvedValueOnce(response({ collection: 'thememes6529' }))
+      .mockResolvedValueOnce(
+        response({
+          chain: 'ethereum',
+          protocol_address: MARKET_SEAPORT,
+          order_hash: order.orderHash,
+          protocol_data: { parameters: order.components },
+          remaining_quantity: '2'
+        })
+      );
+    const unexpected = new TypeError('unexpected validator failure');
+    const validate = jest
+      .spyOn(quoteValidation, 'validateMarketOrder')
+      .mockImplementation(() => {
+        throw unexpected;
+      });
+    try {
+      const provider = new OpenSeaMarketplaceProvider({
+        apiKey: 'test-placeholder',
+        fetch: mock
+      });
+      await expect(
+        provider.discoverOrders(intent.asset, 'LISTING')
+      ).rejects.toBe(unexpected);
+    } finally {
+      validate.mockRestore();
+    }
+  });
   it.each([
     'timestamp-text',
     'timestamp-overflow',
@@ -527,6 +560,14 @@ describe('OpenSea boundary', () => {
         protocol_address: MARKET_SEAPORT,
         signature
       });
+      mock.mockResolvedValue(
+        response({
+          order_hash: '0x' + order.orderHash.slice(2).toUpperCase()
+        })
+      );
+      await expect(
+        provider.publishOrder(publishIntent, order, signature)
+      ).resolves.toEqual({ orderHash: order.orderHash });
       mock.mockClear();
       const stranger = Wallet.createRandom();
       const wrongSignature = await stranger.signTypedData(
@@ -543,6 +584,10 @@ describe('OpenSea boundary', () => {
         provider.publishOrder(publishIntent, order, signature)
       ).rejects.toThrow(/could not be confirmed/);
       expect(mock).toHaveBeenCalledTimes(1);
+      mock.mockResolvedValue(response({ order_hash: 123 }));
+      await expect(
+        provider.publishOrder(publishIntent, order, signature)
+      ).rejects.toMatchObject({ code: 'PROVIDER_UNAVAILABLE' });
     }
   );
   it('treats a best-listing 404 as empty while authentication errors remain unavailable', async () => {

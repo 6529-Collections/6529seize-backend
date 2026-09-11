@@ -417,11 +417,7 @@ export class OpenSeaMarketplaceProvider {
         const quantity = providerQuantity(record(value).remaining_quantity);
         found.push(describeMarketOrder(provider, asset, side, quantity));
       } catch (error) {
-        if (
-          !(error instanceof MarketValidationError) &&
-          !(error instanceof Error)
-        )
-          throw error;
+        if (!(error instanceof MarketValidationError)) throw error;
       }
     }
     return found;
@@ -751,7 +747,10 @@ export class OpenSeaMarketplaceProvider {
       )
     );
     const result = record(response.order ?? response);
-    if (result.order_hash !== checked.orderHash)
+    if (
+      typeof result.order_hash !== 'string' ||
+      result.order_hash.toLowerCase() !== checked.orderHash.toLowerCase()
+    )
       throw new MarketValidationError(
         'PROVIDER_UNAVAILABLE',
         'Publication could not be confirmed. Reconcile this order hash before retrying.'
