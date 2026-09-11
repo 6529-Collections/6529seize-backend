@@ -230,6 +230,10 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 
 `marketStatsLoop` publishes complete OpenSea order snapshots atomically with
 current orders and a persistent queue for reconciling disappeared orders.
+Existing price statistics run concurrently with an independent deadline; both
+tasks finish before the database context closes. Collection books are attempted
+before lifecycle maintenance, which prioritizes status reconciliation and
+checkpoints bounded REST catch-up batches.
 `marketDepthStreamLoop` records live order lifecycle events, while REST event
 catch-up and per-order status checks recover supported missed observations.
 Six `market_depth_*` tables retain immutable compressed archives, current orders,

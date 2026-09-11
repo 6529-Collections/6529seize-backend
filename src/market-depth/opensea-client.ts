@@ -30,6 +30,13 @@ export interface OpenSeaPage<T> {
   readonly next: string | null;
 }
 
+export class OpenSeaDeadlineError extends Error {
+  constructor(message: string) {
+    super(message);
+    Object.setPrototypeOf(this, OpenSeaDeadlineError.prototype);
+  }
+}
+
 export interface OpenSeaClientOptions {
   readonly apiKey?: string;
   readonly fetchImpl?: typeof fetch;
@@ -319,7 +326,9 @@ export class OpenSeaClient {
       const interval = Math.ceil(DISTRIBUTED_WINDOW_MS / limit);
       const wait = Math.max(0, this.localNextRequestAt - this.now());
       if (this.now() + wait >= deadlineMs)
-        throw new Error('OpenSea request deadline exceeded while rate limited');
+        throw new OpenSeaDeadlineError(
+          'OpenSea request deadline exceeded while rate limited'
+        );
       if (wait > 0) await this.sleep(wait);
       this.localNextRequestAt = this.now() + interval;
       return;
@@ -354,7 +363,9 @@ export class OpenSeaClient {
       const wait = Number(result);
       if (wait <= 0) return;
       if (now + wait >= deadlineMs)
-        throw new Error('OpenSea request deadline exceeded while rate limited');
+        throw new OpenSeaDeadlineError(
+          'OpenSea request deadline exceeded while rate limited'
+        );
       await this.sleep(wait);
     }
   }
@@ -371,11 +382,12 @@ export class OpenSeaClient {
   private async acquireRequestBudget(deadlineMs: number): Promise<number> {
     const providerWait = Math.max(0, this.providerBlockedUntil - this.now());
     if (this.now() + providerWait >= deadlineMs)
-      throw new Error('OpenSea request deadline exceeded');
+      throw new OpenSeaDeadlineError('OpenSea request deadline exceeded');
     if (providerWait > 0) await this.sleep(providerWait);
     await this.distributedAcquire(deadlineMs);
     const remaining = deadlineMs - this.now();
-    if (remaining <= 0) throw new Error('OpenSea request deadline exceeded');
+    if (remaining <= 0)
+      throw new OpenSeaDeadlineError('OpenSea request deadline exceeded');
     return remaining;
   }
 
@@ -419,8 +431,9 @@ export class OpenSeaClient {
       error instanceof OpenSeaHttpError ? error.retryAfterMs : 0;
     const backoff = Math.min(30_000, 500 * 2 ** (attempt - 1));
     const wait = Math.max(serverWait, backoff + randomInt(backoff));
-    if (this.now() + wait >= deadlineMs)
-      throw new Error('OpenSea request deadline exceeded during retry');
+    // A provider/network failure remains a failure even when its retry cannot
+    // fit. Only waiting for an unused request budget is a planned deferral.
+    if (this.now() + wait >= deadlineMs) throw error;
     await this.sleep(wait);
   }
 
@@ -432,11 +445,18 @@ export class OpenSeaClient {
     const url = new URL(`${this.baseUrl}${path}`);
     for (const [key, value] of Object.entries(query))
       url.searchParams.set(key, value);
+    let retryError: unknown;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      const remaining = await this.acquireRequestBudget(deadlineMs);
+      let remaining: number;
+      try {
+        remaining = await this.acquireRequestBudget(deadlineMs);
+      } catch (error) {
+        throw retryError ?? error;
+      }
       try {
         return await this.requestJson(url, remaining);
       } catch (error) {
+        retryError = error;
         await this.waitForRetry(error, attempt, deadlineMs);
       }
     }
