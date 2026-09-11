@@ -20,6 +20,13 @@ const OPENSEA_COLLECTION_LISTINGS_LIMIT = 100;
 const PROVIDER_REQUEST_TIMEOUT_MS = 15_000;
 const DATABASE_QUERY_TIMEOUT_MS = 5_000;
 
+class NextgenProviderHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`NextGen market stats provider HTTP ${status}`);
+    Object.setPrototypeOf(this, NextgenProviderHttpError.prototype);
+  }
+}
+
 function remainingBudget(deadlineMs: number, requiredMs = 0): number {
   const remainingMs = deadlineMs - Date.now();
   if (remainingMs <= requiredMs) {
@@ -197,7 +204,7 @@ async function fetchProviderJson<T>(
   try {
     response = await fetch(url, { headers, signal: controller.signal });
     if (!response.ok) {
-      throw new Error(`NextGen market stats provider HTTP ${response.status}`);
+      throw new NextgenProviderHttpError(response.status);
     }
     const data = (await response.json()) as T;
     remainingBudget(deadlineMs);
@@ -558,14 +565,24 @@ async function getBlurListings(
   deadlineMs: number
 ): Promise<any[]> {
   const url = `https://blur.p.rapidapi.com/v1/collections/${contract}/tokens?filters=%7B%22marketplace%22%3A%22BLUR%22%7D`;
-  const jsonResponse = await fetchProviderJson<{ tokens?: any[] }>(
-    url,
-    {
-      'X-RapidAPI-Key': process.env.RAPID_API_KEY!
-    },
-    deadlineMs
-  );
-  return jsonResponse?.tokens ?? [];
+  try {
+    const jsonResponse = await fetchProviderJson<{ tokens?: any[] }>(
+      url,
+      {
+        'X-RapidAPI-Key': process.env.RAPID_API_KEY!
+      },
+      deadlineMs
+    );
+    return jsonResponse?.tokens ?? [];
+  } catch (error) {
+    if (!(error instanceof NextgenProviderHttpError)) throw error;
+    // Preserve legacy optional-provider behavior without hiding deadline,
+    // transport, or database failures, and never log the provider response.
+    logger.warn(
+      `[BLUR] Optional listings provider returned HTTP ${error.status}; using empty Blur listings`
+    );
+    return [];
+  }
 }
 
 async function getMagicEdenListings(contract: string): Promise<any[]> {
