@@ -1,5 +1,8 @@
 import { fetchOpenSeaPricePage } from '@/marketStatsLoop/opensea-price-fetch';
 import { Time } from '@/time';
+import { getRedisClient } from '@/redis';
+
+jest.mock('@/redis', () => ({ getRedisClient: jest.fn() }));
 
 jest.mock('node:crypto', () => ({
   ...jest.requireActual('node:crypto'),
@@ -19,6 +22,9 @@ describe('OpenSea price requests', () => {
   const delays: number[] = [];
 
   beforeEach(() => {
+    jest.mocked(getRedisClient).mockReturnValue({
+      eval: jest.fn().mockResolvedValue(0)
+    } as unknown as ReturnType<typeof getRedisClient>);
     fetchMock = jest.spyOn(global, 'fetch');
     delays.length = 0;
     jest.spyOn(Time.prototype, 'sleep').mockImplementation(async function (

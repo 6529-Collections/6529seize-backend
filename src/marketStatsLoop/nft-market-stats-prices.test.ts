@@ -17,6 +17,9 @@ import {
   fetchBestOffersForCollection
 } from '@/marketStatsLoop/nft_market_stats_prices';
 import { Time } from '@/time';
+import { getRedisClient } from '@/redis';
+
+jest.mock('@/redis', () => ({ getRedisClient: jest.fn() }));
 
 jest.mock('@/db', () => ({
   fetchAllMemeLabNFTs: jest.fn(),
@@ -59,6 +62,7 @@ describe('OpenSea price pagination and persistence', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(getRedisClient).mockReturnValue(null);
     fetchMock = jest.spyOn(global, 'fetch');
     jest.spyOn(Time.prototype, 'sleep').mockResolvedValue();
     nft = Object.assign(new NFT(), {
@@ -187,11 +191,11 @@ describe('OpenSea price pagination and persistence', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('stops before another page when the pagination wait exceeds the deadline', async () => {
+  it('stops before another page when rate limiting exceeds the deadline', async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({ offers: [], next: 'page2' })
     );
-    await expect(fetchPrices('offers', Date.now() + 1000)).rejects.toThrow(
+    await expect(fetchPrices('offers', Date.now() + 500)).rejects.toThrow(
       'deadline exceeded'
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -263,6 +267,70 @@ describe('OpenSea price pagination and persistence', () => {
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(persistNFTs).not.toHaveBeenCalled();
+  });
+
+  it('refreshes a large collection within the four-minute legacy budget', async () => {
+    let now = Date.now();
+    const startedAt = now;
+    jest.spyOn(Date, 'now').mockImplementation(() => now);
+    jest.spyOn(Time.prototype, 'sleep').mockImplementation(async function (
+      this: Time
+    ) {
+      now += this.toMillis();
+    });
+    const pages = { offers: 40, listings: 30 };
+    fetchMock.mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      const source = url.pathname.includes('/offers/') ? 'offers' : 'listings';
+      const page = Number(url.searchParams.get('next') ?? 0);
+      now += 50;
+      return Response.json({
+        [source]: [
+          order(
+            source,
+            '1',
+            source === 'offers' ? '1000000000000000000' : '2000000000000000000'
+          )
+        ],
+        next: page + 1 < pages[source] ? String(page + 1) : null
+      });
+    });
+
+    await findNftMarketStats(MEMES_CONTRACT, startedAt + 4 * 60_000);
+
+    expect(fetchMock).toHaveBeenCalledTimes(70);
+    expect(now - startedAt).toBeLessThan(4 * 60_000);
+    expect(persistNFTs).toHaveBeenCalledWith([
+      expect.objectContaining({
+        floor_price: 2,
+        highest_offer: 1,
+        market_cap: 20
+      })
+    ]);
+  });
+
+  it('preserves stored prices when the shared quota exhausts the refresh budget', async () => {
+    const acquire = jest
+      .fn()
+      .mockResolvedValueOnce(0)
+      .mockResolvedValue(60_000);
+    jest
+      .mocked(getRedisClient)
+      .mockReturnValue({ eval: acquire } as unknown as ReturnType<
+        typeof getRedisClient
+      >);
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ offers: [], next: 'page2' })
+    );
+
+    await expect(
+      findNftMarketStats(MEMES_CONTRACT, Date.now() + 1000)
+    ).rejects.toThrow('deadline exceeded');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(persistNFTs).not.toHaveBeenCalled();
+    expect(nft.floor_price).toBe(5);
+    expect(nft.highest_offer).toBe(3);
   });
 
   it('clears old prices only after both complete collections are successfully empty', async () => {
