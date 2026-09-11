@@ -8,6 +8,7 @@ jest.mock('../metrics/MetricsRecorder', () => ({
 
 import { RequestContext } from '../request.context';
 import { RecalculateXTdhStatsUseCase } from './recalculate-xtdh-stats.use-case';
+import { QueryFailedError } from 'typeorm';
 
 describe('RecalculateXTdhStatsUseCase', () => {
   const makeRepository = () => ({
@@ -84,5 +85,35 @@ describe('RecalculateXTdhStatsUseCase', () => {
     ).rejects.toThrow('token rebuild failed');
 
     expect(repository.markStatsJustReindexed).not.toHaveBeenCalled();
+  });
+
+  it('keeps the active slot after a grant lock timeout and rebuilds it on redelivery', async () => {
+    const repository = makeRepository();
+    const error = new QueryFailedError(
+      'INSERT ... SELECT',
+      [],
+      Object.assign(new Error('Lock wait timeout'), {
+        code: 'ER_LOCK_WAIT_TIMEOUT'
+      })
+    );
+    repository.refillXTdhGrantStats.mockRejectedValueOnce(error);
+    const useCase = new RecalculateXTdhStatsUseCase(repository as any);
+
+    await expect(useCase.handle({})).rejects.toBe(error);
+    expect(repository.refillXTdhTokenStats).not.toHaveBeenCalled();
+    expect(mockRecordXtdhGranted).not.toHaveBeenCalled();
+    expect(repository.markStatsJustReindexed).not.toHaveBeenCalled();
+
+    await useCase.handle({});
+    expect(repository.refillXTdhGrantStats).toHaveBeenNthCalledWith(
+      2,
+      { slot: 'b' },
+      {}
+    );
+    expect(repository.markStatsJustReindexed).toHaveBeenCalledTimes(1);
+    expect(repository.markStatsJustReindexed).toHaveBeenCalledWith(
+      { slot: 'b' },
+      {}
+    );
   });
 });
