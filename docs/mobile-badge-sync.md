@@ -60,9 +60,9 @@ Updates depend on APNs delivery and the user's badge permission.
   asynchronous reconciliation, not a synchronous device acknowledgement.
 - Delivery grouping and locking have different scopes: `deviceBadgeKey` groups
   each device/token target, while `withDeviceBadgeLock` hashes only the device ID.
-  Different token groups for one device can contend within the same batch as well
-  as across workers. The losing group intentionally retries through SQS and
-  recalculates the whole-device count. It can proceed once the lock is released;
+  Token groups for one device run sequentially within a refresh batch, while
+  distinct devices run concurrently. Across workers, a losing group retries
+  through SQS and recalculates the whole-device count. It can proceed once the lock is released;
   it does not need to wait for a stale-token registration to disappear. Repeated
   contention remains subject to the existing dead-letter policy.
 

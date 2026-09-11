@@ -33,7 +33,8 @@ const conflict = () =>
 async function lockInstallation(proof: InstallationProof, ctx: RequestContext) {
   const options = { wrappedConnection: ctx.connection };
   await sqlExecutor.execute(
-    `INSERT IGNORE INTO ${PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE} (device_id, revision) VALUES (:device_id, 0)`,
+    `INSERT INTO ${PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE} (device_id, revision) VALUES (:device_id, 0)
+     ON DUPLICATE KEY UPDATE device_id = VALUES(device_id)`,
     { device_id: proof.device_id },
     options
   );
@@ -54,7 +55,7 @@ async function lockInstallation(proof: InstallationProof, ctx: RequestContext) {
       throw new ForbiddenException('Invalid push installation credential');
   } else if (proof.installation_secret) {
     const legacy = await sqlExecutor.execute<PushNotificationDevice>(
-      `SELECT * FROM ${PUSH_NOTIFICATION_DEVICES_TABLE} WHERE device_id = :device_id FOR UPDATE`,
+      `SELECT * FROM ${PUSH_NOTIFICATION_DEVICES_TABLE} WHERE device_id = :device_id ORDER BY profile_id FOR UPDATE`,
       { device_id: proof.device_id },
       options
     );

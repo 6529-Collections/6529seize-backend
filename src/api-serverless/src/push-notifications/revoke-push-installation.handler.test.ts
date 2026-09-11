@@ -69,3 +69,18 @@ it('propagates queue failure so the persisted client request can retry', async (
   });
   expect(requestInstallationBadgeRefresh).toHaveBeenCalledTimes(2);
 });
+
+it('accepts the maximum unsigned revision and rejects overflow before deletion', async () => {
+  await handleRevokePushInstallation(
+    request({ ...body, revision: 4294967295 })
+  );
+  expect(revokeInstallation).toHaveBeenCalledWith(
+    { ...body, revision: 4294967295 },
+    {}
+  );
+  jest.mocked(revokeInstallation).mockClear();
+  await expect(
+    handleRevokePushInstallation(request({ ...body, revision: 4294967296 }))
+  ).rejects.toThrow();
+  expect(revokeInstallation).not.toHaveBeenCalled();
+});

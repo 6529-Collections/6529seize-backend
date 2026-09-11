@@ -14,19 +14,7 @@ import { deleteDevice, getDevicesForProfile } from './push-notifications.db';
 
 import { registerInstallationDevice } from './push-installation.db';
 
-const registerPushNotificationTokenRequestSchema: Joi.ObjectSchema<ApiRegisterPushNotificationTokenRequest> =
-  Joi.object({
-    device_id: Joi.string().required(),
-    token: Joi.string().required(),
-    profile_id: Joi.string().optional(),
-    platform: Joi.string().optional(),
-    installation_secret: Joi.string().hex().length(64).optional(),
-    installation_revision: Joi.number()
-      .integer()
-      .min(0)
-      .max(4294967294)
-      .optional()
-  });
+import { registerPushNotificationTokenRequestSchema } from './register-push-notification.schema';
 
 const router = asyncRouter();
 

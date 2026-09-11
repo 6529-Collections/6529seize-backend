@@ -31,6 +31,9 @@ jest.mock('./device-badge', () => ({
 const phone = { device_id: 'phone', token: 'token', platform: 'ios' };
 beforeEach(() => {
   jest.clearAllMocks();
+  jest
+    .mocked(withDeviceBadgeLock)
+    .mockImplementation(async (_device, action) => action());
   findInstallation.mockResolvedValue(phone);
   findDevices.mockResolvedValue([
     { ...phone, profile_id: 'a' },
@@ -156,4 +159,47 @@ describe('installation logout badge refresh', () => {
       { token: null }
     );
   });
+});
+
+it('sequences rotated tokens on one device while another device progresses', async () => {
+  findDevices.mockResolvedValue([
+    { ...phone, token: 'old', profile_id: 'a' },
+    { ...phone, token: 'new', profile_id: 'b' },
+    { ...phone, device_id: 'other-phone', token: 'other', profile_id: 'a' }
+  ]);
+  let releaseOld!: () => void;
+  const oldPending = new Promise<void>((resolve) => {
+    releaseOld = resolve;
+  });
+  let markOtherStarted!: () => void;
+  const otherStarted = new Promise<void>((resolve) => {
+    markOtherStarted = resolve;
+  });
+  const heldDevices = new Set<string>();
+  jest
+    .mocked(withDeviceBadgeLock)
+    .mockImplementation(async (device, action) => {
+      if (heldDevices.has(device.device_id))
+        throw new Error('Device badge delivery is busy');
+      heldDevices.add(device.device_id);
+      try {
+        return await action();
+      } finally {
+        heldDevices.delete(device.device_id);
+      }
+    });
+  jest.mocked(sendBadgeUpdate).mockImplementation(async (token) => {
+    if (token === 'old') await oldPending;
+    if (token === 'other') markOtherStarted();
+  });
+  const work = refreshProfileBadges(['a', 'b']);
+  try {
+    await otherStarted;
+    expect(sendBadgeUpdate).not.toHaveBeenCalledWith('new', 1);
+  } finally {
+    releaseOld();
+  }
+  expect(await work).toEqual([]);
+  expect(sendBadgeUpdate).toHaveBeenCalledWith('new', 1);
+  expect(sendBadgeUpdate).toHaveBeenCalledTimes(3);
 });

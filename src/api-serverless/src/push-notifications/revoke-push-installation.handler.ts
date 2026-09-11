@@ -10,7 +10,7 @@ import { requestInstallationBadgeRefresh } from './push-notifications.service';
 const schema: Joi.ObjectSchema<ApiRevokePushInstallationRequest> = Joi.object({
   device_id: Joi.string().max(100).required(),
   installation_secret: Joi.string().hex().length(64).required(),
-  revision: Joi.number().integer().min(1).max(4294967294).required(),
+  revision: Joi.number().integer().min(1).max(4294967295).required(),
   token: Joi.string().max(4096).optional(),
   profile_id: Joi.string().max(100).optional(),
   all_profiles: Joi.boolean().required(),

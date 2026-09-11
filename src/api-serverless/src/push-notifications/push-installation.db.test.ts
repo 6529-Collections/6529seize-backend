@@ -183,4 +183,42 @@ describeWithSeed('push installation logout', [], () => {
     expect(outcomes[1].status).toBe('fulfilled');
     expect(await registrations()).toEqual([]);
   });
+  it.each([false, true])(
+    'serializes concurrent registration with existing installation=%s',
+    async (existing) => {
+      if (existing)
+        await registerInstallationDevice(device('initial'), credential, {});
+      await Promise.all(
+        ['A', 'B', 'C', 'D'].map((profile) =>
+          registerInstallationDevice(device(profile), credential, {})
+        )
+      );
+      expect(await registrations()).toHaveLength(existing ? 5 : 4);
+    }
+  );
+
+  it('claims a legacy installation during logout using its token proof', async () => {
+    await registerInstallationDevice(device('A'), {}, {});
+    await registerInstallationDevice(device('B'), {}, {});
+    await expect(revoke(1)).rejects.toThrow('ambiguous');
+    expect(await registrations()).toHaveLength(2);
+    const result = await revokeInstallation(
+      {
+        device_id: 'phone',
+        installation_secret: secret,
+        token: 'fcm-token',
+        revision: 1,
+        all_profiles: true,
+        sessions: []
+      },
+      {}
+    );
+    expect(await registrations()).toEqual([]);
+    expect(result).toMatchObject({
+      revision: 1,
+      token: 'fcm-token',
+      platform: 'ios'
+    });
+    expect(result.secret_hash).toHaveLength(64);
+  });
 });
