@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
   CollectingAnalysis,
@@ -11,6 +11,7 @@ import {
 } from '@/collecting/collecting-planner';
 import { CustomApiCompliantException, NotFoundException } from '@/exceptions';
 import { dbSupplier } from '@/sql-executor';
+import { DbPoolName } from '@/db-query.options';
 import { marketChain } from '@/marketplace/market-chain';
 import {
   marketUintSchema,
@@ -24,6 +25,7 @@ import {
 import { marketplaceProvider } from '@/api/marketplace/marketplace.service';
 import { marketRequestHash } from '@/marketplace/market-operations.db';
 import { CollectingQuotedTdhCandidate } from '@/collecting/collecting-tdh-ranking';
+import { canonicalizeJson } from '@/profile-cms/protocol/v1/canonical-json';
 
 const MAX_CANDIDATES = 2000;
 // Each artwork may need discovery and order reads. Keep one concurrent pair
@@ -63,12 +65,18 @@ const data = (row: PlanRow): PlanData =>
     ? JSON.parse(row.payload_json)
     : row.payload_json;
 const collectingStateHash = (analysis: CollectingAnalysis) =>
-  marketRequestHash({
-    catalog_version: analysis.catalog_version,
-    account: analysis.account,
-    requirements: analysis.requirements,
-    recipient: analysis.recipient
-  });
+  createHash('sha256')
+    .update(
+      // MySQL JSON storage can reorder object properties. Preserve every field
+      // within the existing invalidation boundary, independent of key order.
+      canonicalizeJson({
+        catalog_version: analysis.catalog_version,
+        account: analysis.account,
+        requirements: analysis.requirements,
+        recipient: analysis.recipient
+      })
+    )
+    .digest('hex');
 
 export function collectPlanView(row: PlanRow) {
   const payload = data(row);
@@ -183,9 +191,11 @@ export async function createCollectPlan(
 }
 
 async function rowFor(id: string, profileId: string): Promise<PlanRow> {
+  // Creation, lease checks and checkpoints must observe the latest primary state.
   const row = await dbSupplier().oneOrNull<PlanRow>(
     'SELECT * FROM collect_plans WHERE id=:id AND profile_id=:profileId',
-    { id, profileId }
+    { id, profileId },
+    { forcePool: DbPoolName.WRITE }
   );
   if (!row) throw new NotFoundException('Collecting plan not found.');
   return row;
