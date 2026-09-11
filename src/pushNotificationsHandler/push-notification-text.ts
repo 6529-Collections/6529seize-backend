@@ -152,7 +152,7 @@ export function getDropMediaInfoForPush(
   return getMediaInfoForUrl(url);
 }
 
-function isSupportedMediaUrl(url: string): boolean {
+export function isSupportedMediaUrl(url: string): boolean {
   const cleanUrl = url.split(/[?#]/)[0].toLowerCase();
   return Object.keys(SUPPORTED_MEDIA_EXTENSIONS_BY_LABEL).some((extension) =>
     cleanUrl.endsWith(extension)
