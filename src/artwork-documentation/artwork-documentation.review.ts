@@ -184,22 +184,30 @@ export class ArtworkDocumentationReviewService {
     workId?: string
   ) {
     const actor = this.core.actor(ctx);
+    // Reuse only within this list read; subsequent requests resolve membership again.
+    const viewerPrograms = await this.core.readableViewerPrograms(
+      actor,
+      ctx,
+      programId
+    );
     if (programId) {
       const caps = await this.core.grantCapabilities(
         actor,
         null,
         programId,
-        ctx
+        ctx,
+        true,
+        viewerPrograms
       );
-      if (!caps.manage_context && !caps.manage_assignments)
-        fail(404, 'UNAVAILABLE');
+      if (!caps.read_context) fail(404, 'UNAVAILABLE');
     }
     const { limit, cursor } = pageParameters(raw);
     const filters = queueFilters(raw);
     const rows = await this.core.db.query<{ id: string; updated_at: number }>(
-      `SELECT c.id,c.updated_at FROM ${AD_CONTEXTS} c LEFT JOIN ${AD_REVISIONS} r ON r.id=c.latest_revision_id WHERE (c.owner_profile_id=:actor OR EXISTS (SELECT 1 FROM ${AD_GRANTS} g WHERE g.subject_profile_id=:actor AND g.revoked_at IS NULL AND (g.context_id=c.id OR (g.context_id IS NULL AND g.program_id=c.program_id)))) AND (:programId IS NULL OR c.program_id=:programId) AND (:workId IS NULL OR c.work_id=:workId) AND (:cursorId IS NULL OR c.updated_at<:updated OR (c.updated_at=:updated AND c.id<:cursorId))${filters.sql} ORDER BY c.updated_at DESC,c.id DESC LIMIT :limit`,
+      `SELECT c.id,c.updated_at FROM ${AD_CONTEXTS} c LEFT JOIN ${AD_REVISIONS} r ON r.id=c.latest_revision_id WHERE (c.owner_profile_id=:actor OR EXISTS (SELECT 1 FROM ${AD_GRANTS} g WHERE g.subject_profile_id=:actor AND g.revoked_at IS NULL AND (g.context_id=c.id OR (g.context_id IS NULL AND g.program_id=c.program_id)))${viewerPrograms.length ? ' OR c.program_id IN (:viewerPrograms)' : ''}) AND (:programId IS NULL OR c.program_id=:programId) AND (:workId IS NULL OR c.work_id=:workId) AND (:cursorId IS NULL OR c.updated_at<:updated OR (c.updated_at=:updated AND c.id<:cursorId))${filters.sql} ORDER BY c.updated_at DESC,c.id DESC LIMIT :limit`,
       {
         actor,
+        viewerPrograms,
         ...filters.params,
         programId: programId ?? null,
         workId: workId ?? null,
@@ -212,7 +220,10 @@ export class ArtworkDocumentationReviewService {
     const visible = rows.slice(0, limit);
     const data = await Promise.all(
       visible.map(async (row) =>
-        this.summary(await this.core.authorizeContext(row.id, ctx), ctx)
+        this.summary(
+          await this.core.authorizeContext(row.id, ctx, false, viewerPrograms),
+          ctx
+        )
       )
     );
     const last = visible[visible.length - 1];
@@ -534,8 +545,13 @@ export class ArtworkDocumentationReviewService {
         .map((row) => this.projectThread(row))
     };
   }
-  async thread(id: string, threadId: string, ctx: RequestContext) {
-    const access = await this.core.authorizeContext(id, ctx);
+  async thread(
+    id: string,
+    threadId: string,
+    ctx: RequestContext,
+    access?: ContextAccess
+  ) {
+    access ??= await this.core.authorizeContext(id, ctx);
     const row = await this.core.db.one<ThreadRow>(
       `SELECT * FROM ${AD_THREADS} WHERE context_id=:id AND id=:threadId`,
       { id, threadId },
@@ -629,7 +645,7 @@ export class ArtworkDocumentationReviewService {
       mutation,
       ctx,
       async (access, transaction) => {
-        const row = await this.thread(id, threadId, transaction);
+        const row = await this.thread(id, threadId, transaction, access);
         const comments = parseJson<Comment[]>(row.comments_json);
         if (comments.length >= 200) fail(413, 'COMMENT_LIMIT');
         comments.push({
@@ -661,7 +677,7 @@ export class ArtworkDocumentationReviewService {
       mutation,
       ctx,
       async (access, transaction) => {
-        const row = await this.thread(id, threadId, transaction);
+        const row = await this.thread(id, threadId, transaction, access);
         if (row.thread_version !== body.expected_thread_version)
           fail(409, 'THREAD_CONFLICT');
         if (

@@ -50,6 +50,74 @@ function setup(patch: Partial<StoredAsset> = {}) {
 }
 
 describe('archive upload and access service', () => {
+  it('keeps upload metadata readable without borrowing viewer flags for mutation', async () => {
+    const { service, asset, storage, db } = setup({
+      intended_visibility: 'restricted'
+    });
+    const readAccess = { ...artistAssetAccess, actorProfileId: 'viewer' };
+    const originalAccess = {
+      ...readAccess,
+      canReadArchivalFiles: false,
+      canReadRightsEvidence: false,
+      canReadRestricted: false
+    };
+    for (const canEdit of [false, true]) {
+      const session = await service.getUpload(
+        'context-1',
+        asset.id,
+        readAccess,
+        {
+          ...originalAccess,
+          canEdit
+        }
+      );
+      expect(session.asset.id).toBe(asset.id);
+      expect(session.received_parts).toHaveLength(1);
+      expect(session.can_mutate).toBe(false);
+    }
+    expect(storage.parts).toHaveBeenCalledTimes(2);
+    expect(db.update).not.toHaveBeenCalled();
+  });
+  it.each(['uploading', 'ready'] as const)(
+    'preserves an original uploader recovering their own %s unreferenced file',
+    async (state) => {
+      const { service, asset } = setup({
+        state,
+        intended_visibility: 'restricted'
+      });
+      const access = {
+        ...artistAssetAccess,
+        canReadArchivalFiles: false,
+        canReadRightsEvidence: false,
+        canReadRestricted: false
+      };
+      expect(
+        (await service.getUpload('context-1', asset.id, access)).can_mutate
+      ).toBe(true);
+    }
+  );
+  it.each([
+    { referenced: 1 },
+    { state: 'cancelled' as const },
+    { state: 'expired' as const },
+    { expires_at: 1 }
+  ])(
+    'does not advertise mutation of an unavailable upload %j',
+    async (patch) => {
+      const { service, asset } = setup(patch);
+      expect(
+        (await service.getUpload('context-1', asset.id, artistAssetAccess))
+          .can_mutate
+      ).toBe(false);
+    }
+  );
+  it('keeps missing and foreign-context upload sessions unavailable', async () => {
+    const { service, asset, storage } = setup();
+    await expect(
+      service.getUpload('different-context', asset.id, artistAssetAccess)
+    ).rejects.toMatchObject({ code: 'ASSET_NOT_FOUND' });
+    expect(storage.parts).not.toHaveBeenCalled();
+  });
   it('rejects excluded publication uploads before reserving storage', async () => {
     const { service, db, storage } = setup();
     await expect(
