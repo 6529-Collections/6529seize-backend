@@ -77,12 +77,13 @@ export function createResolutionRpcTransport(
     } catch {
       // RPC URLs can contain provider credentials. Never pass transport errors
       // (which include the full URL) into persistence, logs, or Sentry.
+      const transportMessage = httpFailureStatus
+        ? `NFT link RPC HTTP ${httpFailureStatus}`
+        : 'NFT link RPC transport failed';
       const error = new Error(
         controller.signal.aborted
           ? 'NFT link RPC request timed out or cancelled'
-          : httpFailureStatus
-            ? `NFT link RPC HTTP ${httpFailureStatus}`
-            : 'NFT link RPC transport failed'
+          : transportMessage
       );
       if (controller.signal.aborted) error.name = 'AbortError';
       throw error;
