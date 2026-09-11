@@ -252,6 +252,7 @@ export class ArtworkDocumentationService {
     const isArtist =
       context.owner_profile_id === actorProfileId &&
       !ctx.authenticationContext?.isAuthenticatedAsProxy();
+    const readablePrograms = lock ? undefined : viewerPrograms;
     const capabilities = isArtist
       ? artistCapabilities()
       : await this.grantCapabilities(
@@ -260,7 +261,7 @@ export class ArtworkDocumentationService {
           context.program_id,
           ctx,
           true,
-          lock ? undefined : viewerPrograms
+          readablePrograms
         );
     if (!capabilities.read_context) fail(404, 'UNAVAILABLE');
     return { context, capabilities, isArtist, actorProfileId };
