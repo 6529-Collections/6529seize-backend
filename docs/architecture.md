@@ -52,7 +52,16 @@ then deploy the dependent frontend. The exported TDH helper does not change the
 scheduled TDH calculation and does not require a TDH loop deployment.
 `MARKETPLACE_TRADING_ENABLED=false` stops new trade preparation/publication;
 inspection, transaction reconciliation and direct cancellation remain available.
-The default enables supported actions when provider/RPC configuration exists.
+Action availability follows
+[`handleGetCollectCapabilities`](../src/api-serverless/src/collect/collect.handlers.ts):
+
+- `TdhScenario` is always enabled.
+- `Cancel` requires `ALCHEMY_API_KEY`, independently of the trading flag or
+  `OPENSEA_API_KEY`.
+- Other actions require both `ALCHEMY_API_KEY` and `OPENSEA_API_KEY`, with
+  `MARKETPLACE_TRADING_ENABLED` either unset (defaults to `true`) or exactly `true`.
+- `RuleExecution` is always disabled; rules only prepare purchases for review.
+
 Keep operation history and exposure tables when disabling or rolling back trading.
 
 ## High-Level Diagram
