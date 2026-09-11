@@ -952,6 +952,23 @@ contexts pin profiles, artist-record revisions, module answers and disclosure
 choices. Context row locks guard all content versions, and immutable revisions
 retain confirmation receipts and independent reviewer decisions. Explicit
 context/program grants are separate from Wave roles and proxy authentication.
+The additive `artwork_documentation_program_viewers` table holds profile or
+existing-group subjects for read-only program access. Access resolution uses
+the current site group eligibility evaluator scoped to granted IDs, with no
+copied member roster. Queue, draft, history, file and discussion reads share
+the existing authorization boundary. Every mutation uses the original artist
+and collaborator grants, so additional viewer reads cannot widen field, asset,
+discussion, assignment or review authority. Context responses expose original
+`mutation_capabilities` and visible `mutation_restricted_paths` for accurate
+editing controls. Upload-session reads retain viewer access and report
+`can_mutate` using original grants and the stored upload ownership, reference
+and lifecycle state. The IAM-only
+`set_program_viewers_v1` action inventories original grants and managed viewers,
+requires the reviewed inventory hash before replacing viewer configuration,
+and records a permanent replay fence. It preserves artist/context grants and
+coordinator authority. Deploy and invoke `dbMigrationsLoop` for the additive
+table, then the processor and API; no new storage infrastructure or HTTP
+operator endpoint is introduced.
 
 Version 2 profiles collect only artwork answers and selected materials intended
 for eventual public publication; legacy private intake remains protected. Team
@@ -959,8 +976,9 @@ questions use existing context discussion threads and are excluded from every
 artwork confirmation snapshot and public preview. Profile-aware server validation
 covers edits, identity pins, source imports, upgrades and confirmation. Asset
 reservation locks the context before its quota so it cannot race a publication
-profile upgrade using stale private-intake permissions. No new table or storage
-boundary is introduced by this follow-up; deploy the processor before the API.
+profile upgrade using stale private-intake permissions. Publication-only intake
+uses the existing storage boundary; the viewer table above is a separate
+additive schema change.
 The public-record preview removes restricted answers on the server; creating
 another context for a work requires an explicit artist choice and starts empty.
 See [the application contract and pilot runbook](artwork-documentation.md).

@@ -8,6 +8,7 @@ import {
   AD_DROP_LINKS,
   AD_REVISIONS,
   AD_GRANTS,
+  AD_PROGRAM_VIEWERS,
   AD_REVIEWS,
   AD_THREADS,
   AD_EVENTS,
@@ -119,6 +120,21 @@ export class ArtworkDocumentationGrantEntity extends DocumentationRow {
     | null;
   @Column({ type: 'varchar', length: 100 }) subject_profile_id!: string;
   @Column({ type: 'json' }) capabilities_json!: string;
+  @Column({ type: 'varchar', length: 100 }) grantor_profile_id!: string;
+  @Column({ type: 'bigint', nullable: true }) revoked_at!: number | null;
+}
+@Entity(AD_PROGRAM_VIEWERS)
+@Index(
+  'ad_program_viewer_subject',
+  ['program_id', 'subject_type', 'subject_id'],
+  {
+    unique: true
+  }
+)
+export class ArtworkDocumentationProgramViewerEntity extends DocumentationRow {
+  @Column({ type: 'varchar', length: 100 }) program_id!: string;
+  @Column({ type: 'varchar', length: 10 }) subject_type!: 'profile' | 'group';
+  @Column({ type: 'varchar', length: 200 }) subject_id!: string;
   @Column({ type: 'varchar', length: 100 }) grantor_profile_id!: string;
   @Column({ type: 'bigint', nullable: true }) revoked_at!: number | null;
 }

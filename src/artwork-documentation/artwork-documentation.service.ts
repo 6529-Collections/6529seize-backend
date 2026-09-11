@@ -1,6 +1,11 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { RequestContext } from '@/request.context';
 import {
+  ProgramViewerGroups,
+  programViewerCapabilities,
+  readableViewerPrograms
+} from './artwork-documentation.program-viewers';
+import {
   publicationAssetAccess,
   validatePublicationAssetLink
 } from '@/artwork-documentation/assets/artwork-assets.policy';
@@ -45,6 +50,7 @@ import {
 } from './artwork-documentation.types';
 import {
   artistCapabilities,
+  canWriteDocumentation,
   canReadField,
   laneForModule,
   mergeCapabilities,
@@ -207,7 +213,8 @@ export class ArtworkDocumentationService {
   constructor(
     readonly db: ArtworkDocumentationDb = artworkDocumentationDb,
     private assets: AssetGateway = noAssetGateway,
-    private readonly featurePolicy: DocumentationFeaturePolicy = environmentFeaturePolicy
+    private readonly featurePolicy: DocumentationFeaturePolicy = environmentFeaturePolicy,
+    private readonly viewerGroups?: ProgramViewerGroups
   ) {}
   setAssetGateway(gateway: AssetGateway): void {
     this.assets = gateway;
@@ -225,7 +232,7 @@ export class ArtworkDocumentationService {
     ctx: RequestContext
   ): Promise<void> {
     const actor = this.actor(ctx);
-    await this.authorizeContext(id, ctx);
+    await this.authorizeMutationContext(id, ctx);
     await this.db.idempotent(
       digest([actor, mutation.route, mutation.key]),
       digest(mutation.body),
@@ -236,7 +243,9 @@ export class ArtworkDocumentationService {
   async authorizeContext(
     id: string,
     ctx: RequestContext,
-    lock = false
+    lock = false,
+    viewerPrograms?: readonly string[],
+    includeProgramViewers = true
   ): Promise<ContextAccess> {
     const actorProfileId = this.actor(ctx);
     const context = await this.db.context(id, ctx, lock);
@@ -244,30 +253,83 @@ export class ArtworkDocumentationService {
     const isArtist =
       context.owner_profile_id === actorProfileId &&
       !ctx.authenticationContext?.isAuthenticatedAsProxy();
+    const readablePrograms = lock ? undefined : viewerPrograms;
     const capabilities = isArtist
       ? artistCapabilities()
       : await this.grantCapabilities(
           actorProfileId,
           context.id,
           context.program_id,
-          ctx
+          ctx,
+          includeProgramViewers,
+          readablePrograms
         );
     if (!capabilities.read_context) fail(404, 'UNAVAILABLE');
     return { context, capabilities, isArtist, actorProfileId };
+  }
+  /** Mutations use original artist/collaborator grants, without viewer read augmentation. */
+  async authorizeMutationContext(
+    id: string,
+    ctx: RequestContext,
+    lock = false
+  ) {
+    const access = await this.authorizeContext(id, ctx, lock, undefined, false);
+    if (!canWriteDocumentation(access.capabilities))
+      fail(403, 'EDIT_NOT_ALLOWED');
+    return access;
+  }
+  mutationCapabilities(
+    access: ContextAccess,
+    ctx: RequestContext
+  ): Promise<Capabilities> {
+    return access.isArtist
+      ? Promise.resolve(access.capabilities)
+      : this.grantCapabilities(
+          access.actorProfileId,
+          access.context.id,
+          access.context.program_id,
+          ctx,
+          false
+        );
   }
   async grantCapabilities(
     actor: string,
     contextId: string | null,
     programId: string | null,
-    ctx: RequestContext
+    ctx: RequestContext,
+    includeProgramViewers = true,
+    viewerPrograms?: readonly string[]
   ): Promise<Capabilities> {
     const rows = await this.db.query<{ capabilities_json: unknown }>(
       `SELECT capabilities_json FROM ${AD_GRANTS} WHERE subject_profile_id=:actor AND revoked_at IS NULL AND ((context_id=:contextId AND context_id IS NOT NULL) OR (program_id=:programId AND context_id IS NULL AND program_id IS NOT NULL))`,
       { actor, contextId, programId },
       ctx
     );
-    return mergeCapabilities(
-      rows.map((row) => parseJson<Partial<Capabilities>>(row.capabilities_json))
+    const grants = rows.map((row) =>
+      parseJson<Partial<Capabilities>>(row.capabilities_json)
+    );
+    if (
+      includeProgramViewers &&
+      programId &&
+      (
+        viewerPrograms ??
+        (await this.readableViewerPrograms(actor, ctx, programId))
+      ).includes(programId)
+    )
+      grants.push(programViewerCapabilities());
+    return mergeCapabilities(grants);
+  }
+  readableViewerPrograms(
+    actor: string,
+    ctx: RequestContext,
+    programId?: string
+  ) {
+    return readableViewerPrograms(
+      this.db,
+      actor,
+      ctx,
+      programId,
+      this.viewerGroups
     );
   }
   async profiles(ctx: RequestContext) {
@@ -307,13 +369,22 @@ export class ArtworkDocumentationService {
     content = true
   ): Promise<T> {
     const actor = this.actor(ctx);
-    await this.authorizeContext(id, ctx);
+    if (
+      !canWriteDocumentation(
+        (await this.authorizeContext(id, ctx)).capabilities
+      )
+    )
+      fail(403, 'EDIT_NOT_ALLOWED');
     return this.db.idempotent(
       digest([actor, mutation.route, mutation.key]),
       digest(mutation.body),
       ctx,
       async (transaction) => {
-        const access = await this.authorizeContext(id, transaction, true);
+        const access = await this.authorizeMutationContext(
+          id,
+          transaction,
+          true
+        );
         if (
           content &&
           mutation.expectedVersion !== access.context.draft_version
@@ -343,29 +414,31 @@ export class ArtworkDocumentationService {
   async getContext(id: string, ctx: RequestContext) {
     const access = await this.authorizeContext(id, ctx);
     const context = access.context;
-    const [artist, latest, assets, sourceLinks, reviews] = await Promise.all([
-      this.db.one<ArtistRow>(
-        `SELECT * FROM ${AD_ARTISTS} WHERE owner_profile_id=:owner`,
-        { owner: context.owner_profile_id },
-        ctx
-      ),
-      context.latest_revision_id
-        ? this.db.one<RevisionRow>(
-            `SELECT * FROM ${AD_REVISIONS} WHERE id=:id AND context_id=:contextId`,
-            { id: context.latest_revision_id, contextId: id },
-            ctx
-          )
-        : null,
-      this.assets.listAssets(id, access, ctx),
-      this.db.query<Record<string, unknown>>(
-        `SELECT * FROM ${AD_DROP_LINKS} WHERE context_id=:id`,
-        { id },
-        ctx
-      ),
-      context.latest_revision_id
-        ? this.reviews(context.latest_revision_id, access, ctx)
-        : []
-    ]);
+    const [artist, latest, assets, sourceLinks, reviews, mutationCapabilities] =
+      await Promise.all([
+        this.db.one<ArtistRow>(
+          `SELECT * FROM ${AD_ARTISTS} WHERE owner_profile_id=:owner`,
+          { owner: context.owner_profile_id },
+          ctx
+        ),
+        context.latest_revision_id
+          ? this.db.one<RevisionRow>(
+              `SELECT * FROM ${AD_REVISIONS} WHERE id=:id AND context_id=:contextId`,
+              { id: context.latest_revision_id, contextId: id },
+              ctx
+            )
+          : null,
+        this.assets.listAssets(id, access, ctx),
+        this.db.query<Record<string, unknown>>(
+          `SELECT * FROM ${AD_DROP_LINKS} WHERE context_id=:id`,
+          { id },
+          ctx
+        ),
+        context.latest_revision_id
+          ? this.reviews(context.latest_revision_id, access, ctx)
+          : [],
+        this.mutationCapabilities(access, ctx)
+      ]);
     const availableArtist =
       access.isArtist && artist?.latest_revision_id
         ? await this.db.one<{
@@ -392,6 +465,8 @@ export class ArtworkDocumentationService {
       artist_record_revision_id: context.artist_record_revision_id,
       modules: this.projectModules(context, access),
       capabilities: access.capabilities,
+      mutation_capabilities: mutationCapabilities,
+      mutation_restricted_paths: this.projectMutationRestrictedPaths(access),
       available_artist_record: availableArtist
         ? {
             id: availableArtist.id,
@@ -486,7 +561,8 @@ export class ArtworkDocumentationService {
             actor,
             null,
             profile.program_id,
-            transaction
+            transaction,
+            false
           );
           if (!caps.read_context) fail(403, 'PROGRAM_INVITATION_REQUIRED');
         } else if (!this.featurePolicy.selfServiceEnabled())
@@ -637,6 +713,27 @@ export class ArtworkDocumentationService {
       })
     );
   }
+  projectMutationRestrictedPaths(access: ContextAccess): string[] {
+    const projectedModules = this.projectModules(access.context, access);
+    const visibleAssets = new Set(
+      access.context.asset_links
+        .filter((link) => this.canReadAssetLink(link, access))
+        .map((link) => link.asset_id)
+    );
+    return access.context.restricted_paths.filter((path) => {
+      if (path.startsWith('asset:') || path.startsWith('asset-rights:'))
+        return visibleAssets.has(path.substring(path.indexOf(':') + 1));
+      const [moduleId, field] = path.split('.') as [ModuleId, string];
+      const answer = projectedModules[moduleId]?.answers[field];
+      return (
+        profileFields(access.context.profile, moduleId).some(
+          (item) => item.id === field
+        ) &&
+        (!answer || !('redacted' in answer)) &&
+        canReadField(access, path, true)
+      );
+    });
+  }
   projectAssetLinks(
     context: ContextRecord,
     access: ContextAccess
@@ -701,7 +798,8 @@ export class ArtworkDocumentationService {
           actor,
           null,
           profile.program_id,
-          transaction
+          transaction,
+          false
         );
         const coordinator =
           body.start_mode === 'coordinator_import' && caps.manage_assignments;
@@ -1411,8 +1509,13 @@ export class ArtworkDocumentationService {
         : row
     );
   }
-  async sourcePreview(id: string, receiptId: string, ctx: RequestContext) {
-    const access = await this.authorizeContext(id, ctx);
+  async sourcePreview(
+    id: string,
+    receiptId: string,
+    ctx: RequestContext,
+    access?: ContextAccess
+  ) {
+    access ??= await this.authorizeContext(id, ctx);
     if (!access.capabilities.read_source_receipts)
       fail(403, 'SOURCE_RECEIPT_ACCESS_REQUIRED');
     const source = await this.db.one<SourceRow>(
@@ -1507,7 +1610,8 @@ export class ArtworkDocumentationService {
       const preview = await this.sourcePreview(
         id,
         body.source_receipt_id,
-        transaction
+        transaction,
+        access
       );
       for (const selected of body.fields) {
         const proposed = preview.fields.find(

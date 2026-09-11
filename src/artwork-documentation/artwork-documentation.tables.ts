@@ -6,6 +6,7 @@ export const AD_SOURCES = 'artwork_documentation_sources';
 export const AD_DROP_LINKS = 'artwork_documentation_drop_links';
 export const AD_REVISIONS = 'artwork_documentation_revisions';
 export const AD_GRANTS = 'artwork_documentation_grants';
+export const AD_PROGRAM_VIEWERS = 'artwork_documentation_program_viewers';
 export const AD_REVIEWS = 'artwork_documentation_reviews';
 export const AD_THREADS = 'artwork_documentation_threads';
 export const AD_EVENTS = 'artwork_documentation_events';

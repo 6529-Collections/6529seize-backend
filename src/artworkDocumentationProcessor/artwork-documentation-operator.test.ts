@@ -32,6 +32,39 @@ afterEach(() => {
 });
 
 describe('IAM-only artwork documentation operator', () => {
+  it('accepts explicit program viewer subjects only and requires a reviewed inventory for application', () => {
+    const event = {
+      operator_action: 'set_program_viewers_v1',
+      correlation_id: randomUUID(),
+      coordinator_profile_id: randomUUID(),
+      program_id: '6529NM-AP-01',
+      viewers: { profiles: [randomUUID()], groups: ['existing-team-group'] }
+    };
+    expect(parseDocumentationOperatorEvent(event)).toEqual({
+      ...event,
+      apply: false
+    });
+    expect(
+      parseDocumentationOperatorEvent({
+        ...event,
+        apply: true,
+        expected_inventory_sha256: 'a'.repeat(64)
+      })
+    ).toMatchObject({ apply: true });
+    for (const invalid of [
+      { ...event, apply: true },
+      { ...event, capabilities: { manage_context: true } },
+      { ...event, program_id: 'unknown-program' },
+      { ...event, viewers: { profiles: ['not-a-profile'], groups: [] } },
+      { ...event, viewers: { profiles: [], groups: ['group with spaces'] } },
+      { ...event, viewers: { profiles: [], groups: ['same', 'same'] } },
+      { ...event, viewers: { profiles: [], groups: [], all: true } },
+      { ...event, expected_inventory_sha256: 'bad' }
+    ])
+      expect(() => parseDocumentationOperatorEvent(invalid)).toThrow(
+        expect.objectContaining({ code: 'INVALID_OPERATOR_REQUEST' })
+      );
+  });
   it('preserves ordinary scheduled processing', async () => {
     const tick = jest.fn(async () => undefined);
     const operator = jest.fn();

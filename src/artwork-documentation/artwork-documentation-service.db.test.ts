@@ -3,9 +3,20 @@ import { randomUUID } from 'crypto';
 import { AuthenticationContext } from '@/auth-context';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
-import { DROPS_TABLE, PROFILES_TABLE } from '@/constants';
+import {
+  DROPS_TABLE,
+  PROFILES_TABLE,
+  USER_GROUPS_TABLE,
+  IDENTITIES_TABLE,
+  PROFILE_GROUPS_TABLE,
+  RATINGS_TABLE
+} from '@/constants';
+import { DbPoolName } from '@/db-query.options';
 import { ArtworkDocumentationDb, parseJson } from './artwork-documentation.db';
-import { ArtworkDocumentationService } from './artwork-documentation.service';
+import {
+  ArtworkDocumentationService,
+  artworkDocumentationService
+} from './artwork-documentation.service';
 import { ArtworkDocumentationReviewService } from './artwork-documentation.review';
 import {
   AD_CONTEXTS,
@@ -41,6 +52,19 @@ import { emptyCapabilities } from './artwork-documentation.access';
 import { ArtworkAssetsDb } from './assets/artwork-assets.db';
 import { anArtworkAsset } from './assets/artwork-assets.test-support';
 import { digest } from './artwork-documentation.validation';
+import { AD_PROGRAM_VIEWERS } from './artwork-documentation.tables';
+import { programViewerCapabilities } from './artwork-documentation.program-viewers';
+import {
+  ProgramViewersEvent,
+  setProgramViewers
+} from './artwork-documentation-program-viewer-operator';
+import {
+  toAssetAccess,
+  writeAssetLink,
+  removeAssetLink
+} from './artwork-documentation.asset-links';
+import { artworkAssetsService } from './assets/artwork-assets.service';
+import { requireAssetWrite } from './assets/artwork-assets.policy';
 
 const makeContext = (actor: string): RequestContext => ({
   authenticationContext: AuthenticationContext.fromProfileId(actor)
@@ -57,6 +81,936 @@ const answer = (
 ): Answer => ({ status: 'provided', value, intended_visibility });
 
 describe('artwork documentation transactional persistence', () => {
+  async function programViewer(
+    subject: string,
+    type: 'profile' | 'group' = 'profile'
+  ) {
+    const id = randomUUID();
+    await db.insert(
+      AD_PROGRAM_VIEWERS,
+      {
+        id,
+        program_id: '6529NM-AP-01',
+        subject_type: type,
+        subject_id: subject,
+        grantor_profile_id: actor,
+        revoked_at: null,
+        created_at: Date.now()
+      },
+      ctx
+    );
+    return id;
+  }
+  describe('program viewers', () => {
+    afterEach(async () => {
+      jest.restoreAllMocks();
+      await db.query(
+        `DELETE FROM ${AD_PROGRAM_VIEWERS} WHERE grantor_profile_id=:actor`,
+        { actor },
+        ctx
+      );
+    });
+    it.each(['profile', 'group'] as const)(
+      'keeps assignment and rights-review authority unchanged for a %s viewer',
+      async (type) => {
+        const record = await readyContext();
+        await setProgram(record);
+        const collaborator = randomUUID();
+        const original = {
+          manage_assignments: true,
+          review_lanes: ['rights'] as const
+        };
+        await assign(record, collaborator, {
+          ...original,
+          review_lanes: ['rights']
+        });
+        const group = `authority-${randomUUID()}`;
+        await programViewer(type === 'profile' ? collaborator : group, type);
+        const mixed = new ArtworkDocumentationService(db, assets, undefined, {
+          getGroupsUserIsEligibleForByIds: async (profile, ids) =>
+            profile === collaborator ? ids.filter((id) => id === group) : []
+        });
+        const mixedReviews = new ArtworkDocumentationReviewService(mixed);
+        const collaboratorContext = makeContext(collaborator);
+        const projected = await mixed.getContext(
+          record.id,
+          collaboratorContext
+        );
+        expect(projected.capabilities.read_rights_evidence).toBe(true);
+        expect(projected.mutation_capabilities.read_rights_evidence).toBe(
+          false
+        );
+        for (const flag of [
+          'read_contact',
+          'read_restricted_fields'
+        ] as const) {
+          await expect(
+            mixedReviews.grant(
+              record.id,
+              randomUUID(),
+              {
+                ...emptyCapabilities(),
+                read_context: true,
+                [flag]: true
+              },
+              mutation('mixed-grant', {}, 1),
+              collaboratorContext
+            )
+          ).rejects.toMatchObject({ code: 'CANNOT_ELEVATE_GRANT' });
+        }
+        await expect(
+          mixedReviews.review(
+            record.id,
+            randomUUID(),
+            'rights',
+            {
+              expected_review_version: 1,
+              status: 'accepted'
+            },
+            mutation('mixed-review', {}, 1),
+            collaboratorContext
+          )
+        ).rejects.toMatchObject({ code: 'RIGHTS_EVIDENCE_ACCESS_REQUIRED' });
+        expect(await db.context(record.id, ctx)).toEqual(record);
+      }
+    );
+    it('omits restriction history for answers redacted by hidden asset references', async () => {
+      const record = await readyContext();
+      record.asset_links[0].intended_visibility = 'restricted';
+      record.restricted_paths = [
+        'artwork.canonical_asset_id',
+        `asset:${record.asset_links[0].asset_id}`
+      ];
+      await db.saveContext(record, ctx);
+      const reader = randomUUID();
+      await assign(record, reader, { read_restricted_fields: true });
+      const projected = await service.getContext(
+        record.id,
+        makeContext(reader)
+      );
+      expect(projected.modules.artwork.answers.canonical_asset_id).toEqual({
+        redacted: true
+      });
+      expect(projected.asset_links).toEqual([]);
+      expect(projected.mutation_restricted_paths).toEqual([]);
+    });
+    it.each(['profile', 'group'] as const)(
+      'preserves original writer scope alongside a %s viewer grant',
+      async (subjectType) => {
+        const record = await readyContext();
+        record.modules.context.making_context = answer(
+          'A public-looking answer with restricted history'
+        );
+        record.modules.identity.private_contact = answer(
+          'Contact evidence',
+          'restricted'
+        );
+        record.restricted_paths = [
+          'context.making_context',
+          'identity.private_contact',
+          `asset-rights:${record.asset_links[0].asset_id}`,
+          `asset:${record.asset_links[0].asset_id}`,
+          'unknown.hidden',
+          `asset:${randomUUID()}`
+        ];
+        await setProgram(record);
+        const editor = randomUUID();
+        const editorContext = makeContext(editor);
+        await assign(record, editor, {
+          edit_modules: ['context', 'files', 'identity', 'artwork', 'rights']
+        });
+        const groupId = `mixed-${randomUUID()}`;
+        const mixed = new ArtworkDocumentationService(db, assets, undefined, {
+          getGroupsUserIsEligibleForByIds: async (profile, ids) =>
+            profile === editor ? [...ids] : []
+        });
+        const mixedReviews = new ArtworkDocumentationReviewService(mixed);
+        const before = await mixed.getContext(record.id, editorContext);
+        expect(before.modules.context.answers.making_context).toEqual({
+          redacted: true
+        });
+        expect(before.mutation_restricted_paths).not.toContain(
+          'context.making_context'
+        );
+        await programViewer(
+          subjectType === 'profile' ? editor : groupId,
+          subjectType
+        );
+        const projected = await mixed.getContext(record.id, editorContext);
+        expect(projected.modules.context.answers.making_context).toEqual(
+          record.modules.context.making_context
+        );
+        expect(projected.asset_links).toHaveLength(1);
+        expect(projected.capabilities.read_restricted_fields).toBe(true);
+        expect(projected.mutation_capabilities).toEqual(before.capabilities);
+        expect(projected.mutation_restricted_paths).toEqual(
+          expect.arrayContaining([
+            'context.making_context',
+            'identity.private_contact',
+            `asset-rights:${record.asset_links[0].asset_id}`
+          ])
+        );
+        expect(projected.mutation_restricted_paths).not.toContain(
+          'unknown.hidden'
+        );
+        expect(projected.mutation_restricted_paths).toHaveLength(4);
+        for (const [moduleId, field, value] of [
+          ['context', 'making_context', answer('Overwrite latched answer')],
+          [
+            'identity',
+            'private_contact',
+            answer('Overwrite contact', 'restricted')
+          ],
+          ['rights', 'people_depicted', answer('includes_minors', 'restricted')]
+        ] as const) {
+          const patch = {
+            schema_version: 1,
+            operations: [{ op: 'set' as const, field, answer: value }]
+          };
+          await expect(
+            mixed.patchModule(
+              record.id,
+              moduleId,
+              patch,
+              mutation('mixed-patch', patch, 1),
+              editorContext
+            )
+          ).rejects.toMatchObject({ code: 'FIELD_EDIT_NOT_ALLOWED' });
+        }
+        const sourceId = randomUUID();
+        await db.insert(
+          AD_SOURCES,
+          {
+            id: sourceId,
+            context_id: record.id,
+            drop_id: randomUUID(),
+            receipt_text: JSON.stringify({
+              title: 'Imported title',
+              parts: [],
+              metadata: []
+            }),
+            sha256: 'b'.repeat(64),
+            is_excerpt: false,
+            importer_profile_id: actor,
+            created_at: Date.now()
+          },
+          ctx
+        );
+        expect(
+          (await mixed.sourcePreview(record.id, sourceId, editorContext)).fields
+        ).toHaveLength(1);
+        const source = {
+          source_receipt_id: sourceId,
+          fields: [
+            {
+              source_path: 'title',
+              target_field: 'artwork.title',
+              overwrite: true
+            }
+          ]
+        };
+        await expect(
+          mixed.importSource(
+            record.id,
+            source,
+            mutation('mixed-import', source, 1),
+            editorContext
+          )
+        ).rejects.toMatchObject({ code: 'SOURCE_RECEIPT_ACCESS_REQUIRED' });
+        const restrictedThread = await mixedReviews.createThread(
+          record.id,
+          {
+            audience: 'artist_and_reviewers',
+            restricted_class: 'ordinary',
+            field_path: 'context.making_context',
+            text: 'Restricted-history discussion'
+          },
+          mutation('thread', {}),
+          ctx
+        );
+        expect(
+          (await mixedReviews.listThreads(record.id, editorContext)).data.map(
+            (thread) => thread.id
+          )
+        ).toContain(restrictedThread.id);
+        await expect(
+          mixedReviews.comment(
+            record.id,
+            restrictedThread.id,
+            'Denied comment',
+            mutation('mixed-comment', {}),
+            editorContext
+          )
+        ).rejects.toMatchObject({ code: 'UNAVAILABLE' });
+        await expect(
+          mixedReviews.patchThread(
+            record.id,
+            restrictedThread.id,
+            { expected_thread_version: 1, resolved: true },
+            mutation('mixed-resolve', {}),
+            editorContext
+          )
+        ).rejects.toMatchObject({ code: 'UNAVAILABLE' });
+        await expect(
+          mixedReviews.createThread(
+            record.id,
+            {
+              audience: 'artist_and_reviewers',
+              restricted_class: 'rights',
+              text: 'Denied rights discussion'
+            },
+            mutation('mixed-thread', {}),
+            editorContext
+          )
+        ).rejects.toMatchObject({ code: 'THREAD_AUDIENCE_NOT_ALLOWED' });
+        const writeAccess = await mixed.authorizeMutationContext(
+          record.id,
+          editorContext
+        );
+        expect(writeAccess.capabilities).toEqual(before.capabilities);
+        expect(mixed.canReadAssetLink(record.asset_links[0], writeAccess)).toBe(
+          false
+        );
+        jest
+          .spyOn(artworkDocumentationService, 'mutate')
+          .mockImplementation(mixed.mutate.bind(mixed));
+        const link = record.asset_links[0];
+        await expect(
+          writeAssetLink(
+            record.id,
+            link,
+            mutation('mixed-link', link, 1),
+            editorContext,
+            link.id
+          )
+        ).rejects.toMatchObject({ code: 'UNAVAILABLE' });
+        await expect(
+          removeAssetLink(
+            record.id,
+            link.id,
+            mutation('mixed-unlink', {}, 1),
+            editorContext
+          )
+        ).rejects.toMatchObject({ code: 'UNAVAILABLE' });
+        await expect(
+          artworkAssetsService.startUpload(
+            record.id,
+            toAssetAccess(writeAccess),
+            {
+              filename: 'rights.pdf',
+              size_bytes: 9,
+              declared_mime: 'application/pdf',
+              role: 'consent_instrument',
+              intended_visibility: 'restricted'
+            },
+            randomUUID()
+          )
+        ).rejects.toMatchObject({ code: 'RIGHTS_EVIDENCE_FORBIDDEN' });
+        await expect(
+          sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+            artworkAssetsService.updateDisclosure(
+              record.id,
+              link.asset_id,
+              toAssetAccess(writeAccess),
+              { role: 'consent_instrument', intended_visibility: 'restricted' },
+              connection
+            )
+          )
+        ).rejects.toMatchObject({ code: 'RIGHTS_EVIDENCE_FORBIDDEN' });
+        expect(await db.context(record.id, ctx)).toEqual(record);
+        const publicPatch = {
+          schema_version: 1,
+          operations: [
+            {
+              op: 'set' as const,
+              field: 'caption',
+              answer: answer({
+                primary_language: 'en',
+                versions: [
+                  {
+                    language: 'en',
+                    text: 'An ordinary authorized caption',
+                    authorship: 'original',
+                    approved_by_artist: true
+                  }
+                ]
+              })
+            }
+          ]
+        };
+        await expect(
+          mixed.patchModule(
+            record.id,
+            'context',
+            publicPatch,
+            mutation('mixed-public-patch', publicPatch, 1),
+            editorContext
+          )
+        ).resolves.toMatchObject({ draft_version: 2 });
+        const ordinary = await mixedReviews.createThread(
+          record.id,
+          {
+            audience: 'artist_and_reviewers',
+            restricted_class: 'ordinary',
+            text: 'Allowed team question'
+          },
+          mutation('mixed-public-thread', {}),
+          editorContext
+        );
+        await expect(
+          mixedReviews.comment(
+            record.id,
+            ordinary.id,
+            'Allowed ordinary reply',
+            mutation('mixed-public-reply', {}),
+            editorContext
+          )
+        ).resolves.toMatchObject({ id: ordinary.id });
+      }
+    );
+    it('reads the program queue, draft, files, confirmed revision and team questions without mutation authority', async () => {
+      const record = await readyContext();
+      const revision = await service.confirm(
+        record.id,
+        {
+          accepted: true,
+          confirmation_copy_version: CONFIRMATION_COPY_VERSION
+        },
+        mutation('confirm', {}, 1),
+        ctx
+      );
+      record.latest_revision_id = revision.id;
+      await setProgram(record);
+      const thread = await reviews.createThread(
+        record.id,
+        {
+          audience: 'artist_and_reviewers',
+          restricted_class: 'ordinary',
+          text: 'Question for the team'
+        },
+        mutation('thread', {}),
+        ctx
+      );
+      const viewer = makeContext(randomUUID());
+      await programViewer(
+        viewer.authenticationContext!.authenticatedProfileId!
+      );
+      const projected = await service.getContext(record.id, viewer);
+      expect(projected.capabilities).toEqual(programViewerCapabilities());
+      expect(projected.modules.artwork.answers.title).toMatchObject({
+        value: 'Image'
+      });
+      expect(projected.asset_links).toHaveLength(1);
+      expect(JSON.stringify(projected)).not.toContain('subject_type');
+      expect(
+        (await reviews.listContexts(viewer, {}, '6529NM-AP-01')).data.map(
+          (item) => item.id
+        )
+      ).toContain(record.id);
+      expect(
+        (await reviews.listContexts(viewer, {})).data.map((item) => item.id)
+      ).toContain(record.id);
+      expect(
+        (await service.getRevision(record.id, revision.id, viewer)).id
+      ).toBe(revision.id);
+      expect(
+        (await reviews.listThreads(record.id, viewer)).data.map(
+          (item) => item.id
+        )
+      ).toContain(thread.id);
+      await expect(reviews.listGrants(record.id, viewer)).rejects.toMatchObject(
+        { code: 'ASSIGNMENT_ACCESS_REQUIRED' }
+      );
+    });
+    it('evaluates only granted group IDs and loses access on the next read after membership removal', async () => {
+      const record = await readyContext();
+      await setProgram(record);
+      const member = randomUUID();
+      const group = 'group-' + randomUUID();
+      await programViewer(group, 'group');
+      let eligible = true;
+      const matcher = jest.fn(
+        async (profile: string, ids: readonly string[]) =>
+          eligible && profile === member ? ids.filter((id) => id === group) : []
+      );
+      const grouped = new ArtworkDocumentationService(db, assets, undefined, {
+        getGroupsUserIsEligibleForByIds: matcher
+      });
+      const groupedReviews = new ArtworkDocumentationReviewService(grouped);
+      const viewer = makeContext(member);
+      expect(
+        (await grouped.getContext(record.id, viewer)).capabilities
+      ).toEqual(programViewerCapabilities());
+      expect(matcher).toHaveBeenCalledWith(member, [group], undefined);
+      const second = await readyContext();
+      await setProgram(second);
+      matcher.mockClear();
+      const queue = await groupedReviews.listContexts(
+        viewer,
+        {},
+        '6529NM-AP-01'
+      );
+      expect(queue.data.map((item) => item.id)).toEqual(
+        expect.arrayContaining([record.id, second.id])
+      );
+      expect(matcher).toHaveBeenCalledTimes(1);
+      await expect(
+        grouped.getContext(record.id, makeContext(randomUUID()))
+      ).rejects.toMatchObject({ code: 'UNAVAILABLE' });
+      const proxy = {
+        authenticationContext: new AuthenticationContext({
+          authenticatedWallet: null,
+          authenticatedProfileId: randomUUID(),
+          roleProfileId: member,
+          activeProxyActions: []
+        })
+      };
+      await expect(grouped.getContext(record.id, proxy)).rejects.toMatchObject({
+        code: 'UNAVAILABLE'
+      });
+      const unrelated = await readyContext();
+      await expect(
+        grouped.getContext(unrelated.id, viewer)
+      ).rejects.toMatchObject({ code: 'UNAVAILABLE' });
+      eligible = false;
+      matcher.mockClear();
+      await expect(grouped.getContext(record.id, viewer)).rejects.toMatchObject(
+        { code: 'UNAVAILABLE' }
+      );
+      expect(matcher).toHaveBeenCalledTimes(1);
+      await expect(
+        groupedReviews.listContexts(viewer, {}, '6529NM-AP-01')
+      ).rejects.toMatchObject({ code: 'UNAVAILABLE' });
+      expect((await groupedReviews.listContexts(viewer, {})).data).toEqual([]);
+      await db.query(
+        `UPDATE ${AD_PROGRAM_VIEWERS} SET revoked_at=:now WHERE subject_id=:group`,
+        { now: Date.now(), group },
+        ctx
+      );
+      eligible = true;
+      await expect(grouped.getContext(record.id, viewer)).rejects.toMatchObject(
+        { code: 'UNAVAILABLE' }
+      );
+    });
+    it('uses primary reads for the real identity and reputation group criteria and sees both removal paths', async () => {
+      const record = await readyContext();
+      await setProgram(record);
+      const member = randomUUID();
+      const group = 'dynamic-' + randomUUID();
+      const identityGroup = randomUUID();
+      await db.insert(
+        IDENTITIES_TABLE,
+        {
+          consolidation_key: member,
+          profile_id: member,
+          primary_address: '0x' + member.replace(/-/g, '').padEnd(40, '0'),
+          tdh: 0,
+          rep: 0,
+          cic: 0,
+          level_raw: 0
+        },
+        ctx
+      );
+      await db.insert(
+        USER_GROUPS_TABLE,
+        {
+          id: group,
+          name: 'Dynamic group test',
+          created_by: actor,
+          created_at: new Date(),
+          visible: true,
+          is_private: true,
+          profile_group_id: identityGroup,
+          rep_min: 1,
+          rep_user: actor,
+          rep_category: 'Documentation team',
+          rep_direction: 'RECEIVED',
+          owns_meme: false,
+          owns_gradient: false,
+          owns_nextgen: false,
+          owns_lab: false
+        },
+        ctx
+      );
+      await db.insert(
+        PROFILE_GROUPS_TABLE,
+        { profile_group_id: identityGroup, profile_id: member },
+        ctx
+      );
+      await db.insert(
+        RATINGS_TABLE,
+        {
+          rater_profile_id: actor,
+          matter_target_id: member,
+          matter: 'REP',
+          matter_category: 'Documentation team',
+          rating: 1,
+          last_modified: new Date()
+        },
+        ctx
+      );
+      await programViewer(group, 'group');
+      const viewer = makeContext(member);
+      const execute = jest.spyOn(sqlExecutor, 'execute');
+      try {
+        await db.executeNativeQueriesInTransaction(async (connection) => {
+          execute.mockClear();
+          expect(
+            (await service.getContext(record.id, { ...viewer, connection }))
+              .capabilities
+          ).toEqual(programViewerCapabilities());
+          const eligibilityReads = execute.mock.calls.filter(([sql]) =>
+            [
+              USER_GROUPS_TABLE,
+              PROFILE_GROUPS_TABLE,
+              IDENTITIES_TABLE,
+              RATINGS_TABLE
+            ].some((table) => sql.includes(table))
+          );
+          expect(eligibilityReads.length).toBeGreaterThanOrEqual(5);
+          for (const call of eligibilityReads)
+            expect(call[2]).toMatchObject({
+              forcePool: DbPoolName.WRITE,
+              wrappedConnection: connection
+            });
+        });
+      } finally {
+        execute.mockRestore();
+      }
+      await db.query(
+        `DELETE FROM ${PROFILE_GROUPS_TABLE} WHERE profile_group_id=:group AND profile_id=:member`,
+        { group: identityGroup, member },
+        ctx
+      );
+      expect(
+        (await service.authorizeContext(record.id, viewer)).capabilities
+          .read_context
+      ).toBe(true);
+      await db.query(
+        `DELETE FROM ${RATINGS_TABLE} WHERE rater_profile_id=:actor AND matter_target_id=:member AND matter_category=:category`,
+        { actor, member, category: 'Documentation team' },
+        ctx
+      );
+      await expect(
+        service.authorizeContext(record.id, viewer)
+      ).rejects.toMatchObject({ code: 'UNAVAILABLE' });
+    });
+    it('denies every context write including discussions, uploads and new program contexts to pure viewers', async () => {
+      const record = await readyContext();
+      await setProgram(record);
+      const viewer = makeContext(randomUUID());
+      await programViewer(
+        viewer.authenticationContext!.authenticatedProfileId!
+      );
+      const write = () => mutation(randomUUID(), {}, 1);
+      const actions = [
+        () =>
+          service.patchModule(
+            record.id,
+            'artwork',
+            {
+              schema_version: 1,
+              operations: [
+                {
+                  op: 'set' as const,
+                  field: 'title',
+                  answer: answer('Changed')
+                }
+              ]
+            },
+            write(),
+            viewer
+          ),
+        () =>
+          service.confirm(
+            record.id,
+            {
+              accepted: true,
+              confirmation_copy_version: CONFIRMATION_COPY_VERSION
+            },
+            write(),
+            viewer
+          ),
+        () => service.pinArtist(record.id, randomUUID(), write(), viewer),
+        () =>
+          service.importSource(
+            record.id,
+            { source_receipt_id: randomUUID(), fields: [] },
+            write(),
+            viewer
+          ),
+        () => reviews.lifecycle(record.id, 'archived', write(), viewer),
+        () =>
+          reviews.grant(
+            record.id,
+            randomUUID(),
+            { read_context: true },
+            write(),
+            viewer
+          ),
+        () => reviews.revoke(record.id, randomUUID(), write(), viewer),
+        () =>
+          reviews.review(
+            record.id,
+            randomUUID(),
+            'curatorial',
+            { expected_review_version: 0, status: 'accepted' },
+            write(),
+            viewer
+          ),
+        () =>
+          reviews.createThread(
+            record.id,
+            {
+              audience: 'artist_and_reviewers',
+              restricted_class: 'ordinary',
+              text: 'A write'
+            },
+            write(),
+            viewer
+          ),
+        () =>
+          reviews.comment(record.id, randomUUID(), 'A reply', write(), viewer),
+        () =>
+          reviews.patchThread(
+            record.id,
+            randomUUID(),
+            { expected_thread_version: 1, resolved: true },
+            write(),
+            viewer
+          )
+      ];
+      for (const action of actions)
+        await expect(action()).rejects.toMatchObject({
+          code: 'EDIT_NOT_ALLOWED'
+        });
+      const access = toAssetAccess(
+        await service.authorizeContext(record.id, viewer)
+      );
+      expect(access.canEdit).toBe(false);
+      expect(() => requireAssetWrite(access, 'artwork_final')).toThrow();
+      const own = await service.createWork(
+        {
+          profile_id: 'stream_artwork_basic_v1',
+          profile_version: 1,
+          start_mode: 'standalone'
+        },
+        write(),
+        viewer
+      );
+      await expect(
+        service.createContextForWork(
+          own.work_id,
+          {
+            profile_id: 'keys_and_gates_v1',
+            profile_version: 1,
+            program_id: '6529NM-AP-01',
+            acknowledge_empty_context: true
+          },
+          write(),
+          viewer
+        )
+      ).rejects.toMatchObject({ code: 'PROGRAM_INVITATION_REQUIRED' });
+      expect((await db.context(record.id, ctx))!.draft_version).toBe(1);
+    });
+    it('preserves artist, editor, reviewer and coordinator capabilities when viewer access is also present', async () => {
+      const record = await readyContext();
+      await setProgram(record);
+      const editor = randomUUID();
+      const reviewer = randomUUID();
+      const coordinator = await programCoordinator();
+      await assign(record, editor, { edit_modules: ['artwork'] });
+      await assign(record, reviewer, { review_lanes: ['curatorial'] });
+      for (const profile of [actor, editor, reviewer, coordinator.id])
+        await programViewer(profile);
+      expect(
+        (await service.authorizeContext(record.id, ctx)).capabilities
+          .confirm_as_artist
+      ).toBe(true);
+      expect(
+        (await service.authorizeContext(record.id, makeContext(editor)))
+          .capabilities.edit_modules
+      ).toEqual(['artwork']);
+      expect(
+        (await service.authorizeContext(record.id, makeContext(reviewer)))
+          .capabilities.review_lanes
+      ).toEqual(['curatorial']);
+      const coordinatorCaps = (
+        await service.authorizeContext(record.id, makeContext(coordinator.id))
+      ).capabilities;
+      expect(coordinatorCaps).toMatchObject({
+        manage_context: true,
+        manage_assignments: true,
+        confirm_as_artist: false
+      });
+      for (const profile of [actor, editor, reviewer, coordinator.id]) {
+        await expect(
+          reviews.createThread(
+            record.id,
+            {
+              audience: 'artist_and_reviewers',
+              restricted_class: 'ordinary',
+              text: 'Collaborator question'
+            },
+            mutation(randomUUID(), {}),
+            makeContext(profile)
+          )
+        ).resolves.toHaveProperty('id');
+      }
+    });
+    it('inventories before applying viewer configuration and preserves coordinator grants through replay and replacement', async () => {
+      const coordinator = await programCoordinator();
+      const target = await programCoordinator();
+      await db.query(
+        `UPDATE ${AD_GRANTS} SET revoked_at=1 WHERE id=:id`,
+        { id: target.grantId },
+        ctx
+      );
+      const group = 'viewer-group-' + randomUUID();
+      await db.insert(
+        USER_GROUPS_TABLE,
+        {
+          id: group,
+          name: 'Viewer test group',
+          created_by: coordinator.id,
+          created_at: new Date(),
+          visible: true,
+          is_private: true,
+          owns_meme: false,
+          owns_gradient: false,
+          owns_nextgen: false,
+          owns_lab: false
+        },
+        ctx
+      );
+      const event: ProgramViewersEvent = {
+        operator_action: 'set_program_viewers_v1',
+        correlation_id: randomUUID(),
+        coordinator_profile_id: coordinator.id,
+        program_id: '6529NM-AP-01',
+        viewers: { profiles: [target.id], groups: [group] },
+        apply: false
+      };
+      const before = await db.query(
+        `SELECT * FROM ${AD_GRANTS} WHERE id IN (:ids) ORDER BY id`,
+        { ids: [coordinator.grantId, target.grantId] },
+        ctx
+      );
+      const dry = await setProgramViewers(event, service);
+      expect(dry.mode).toBe('dry_run');
+      expect(
+        await db.query(
+          `SELECT * FROM ${AD_PROGRAM_VIEWERS} WHERE subject_id=:id`,
+          { id: target.id },
+          ctx
+        )
+      ).toEqual([]);
+      const input = {
+        ...event,
+        apply: true,
+        expected_inventory_sha256: (
+          dry.inventory as { inventory_sha256: string }
+        ).inventory_sha256
+      };
+      const applied = await setProgramViewers(input, service);
+      expect(applied.mode).toBe('applied');
+      expect(applied.profile_verification).toEqual([
+        {
+          profile_id: target.id,
+          effective_capabilities: programViewerCapabilities()
+        }
+      ]);
+      expect(
+        await db.query(
+          `SELECT subject_type,subject_id FROM ${AD_PROGRAM_VIEWERS} WHERE subject_id=:group AND revoked_at IS NULL`,
+          { group },
+          ctx
+        )
+      ).toEqual([{ subject_type: 'group', subject_id: group }]);
+      expect(await setProgramViewers(input, service)).toEqual(applied);
+      await db.query(
+        `DELETE FROM ${AD_IDEMPOTENCY} WHERE id=:id`,
+        { id: digest(['set_program_viewers_v1', event.correlation_id]) },
+        ctx
+      );
+      expect(await setProgramViewers(input, service)).toEqual(applied);
+      await expect(
+        setProgramViewers(
+          { ...input, viewers: { profiles: [coordinator.id], groups: [] } },
+          service
+        )
+      ).rejects.toMatchObject({ code: 'IDEMPOTENCY_MISMATCH' });
+      expect(
+        await db.query(
+          `SELECT * FROM ${AD_GRANTS} WHERE id IN (:ids) ORDER BY id`,
+          { ids: [coordinator.grantId, target.grantId] },
+          ctx
+        )
+      ).toEqual(before);
+      const remove = {
+        ...event,
+        correlation_id: randomUUID(),
+        viewers: { profiles: [], groups: [] }
+      };
+      const removalDry = await setProgramViewers(remove, service);
+      await setProgramViewers(
+        {
+          ...remove,
+          apply: true,
+          expected_inventory_sha256: (
+            removalDry.inventory as { inventory_sha256: string }
+          ).inventory_sha256
+        },
+        service
+      );
+      expect(
+        (await db.one<{ revoked_at: number | null }>(
+          `SELECT revoked_at FROM ${AD_PROGRAM_VIEWERS} WHERE subject_id=:id`,
+          { id: target.id },
+          ctx
+        ))!.revoked_at
+      ).not.toBeNull();
+      expect(
+        await db.query(
+          `SELECT * FROM ${AD_GRANTS} WHERE id IN (:ids) ORDER BY id`,
+          { ids: [coordinator.grantId, target.grantId] },
+          ctx
+        )
+      ).toEqual(before);
+    });
+    it('rejects stale inventory and nonexistent viewer profiles without changing grants', async () => {
+      const coordinator = await programCoordinator();
+      const event: ProgramViewersEvent = {
+        operator_action: 'set_program_viewers_v1',
+        correlation_id: randomUUID(),
+        coordinator_profile_id: coordinator.id,
+        program_id: '6529NM-AP-01',
+        viewers: { profiles: [coordinator.id], groups: [] },
+        apply: true,
+        expected_inventory_sha256: '0'.repeat(64)
+      };
+      await expect(setProgramViewers(event, service)).rejects.toMatchObject({
+        code: 'PROGRAM_ACCESS_CHANGED'
+      });
+      await expect(
+        setProgramViewers(
+          {
+            ...event,
+            apply: false,
+            viewers: { profiles: [randomUUID()], groups: [] }
+          },
+          service
+        )
+      ).rejects.toMatchObject({ code: 'VIEWER_PROFILE_NOT_FOUND' });
+      expect(
+        await db.query(
+          `SELECT * FROM ${AD_PROGRAM_VIEWERS} WHERE subject_id=:id`,
+          { id: coordinator.id },
+          ctx
+        )
+      ).toEqual([]);
+    });
+  });
   async function programCoordinator() {
     const id = randomUUID();
     await db.insert(

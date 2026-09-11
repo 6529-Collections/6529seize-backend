@@ -62,7 +62,7 @@ export function handleStartDocumentationUpload(
   return execute(req, async (ctx) =>
     artworkAssetsService.startUpload(
       req.params.id,
-      toAssetAccess(await core.authorizeContext(req.params.id, ctx)),
+      toAssetAccess(await core.authorizeMutationContext(req.params.id, ctx)),
       body(
         req,
         Joi.object({
@@ -80,13 +80,16 @@ export function handleStartDocumentationUpload(
 export function handleGetDocumentationUpload(
   req: Operations.ArtworkDocumentationGetDocumentationUploadRequest
 ): Promise<Operations.ArtworkDocumentationGetDocumentationUploadResponse> {
-  return execute(req, async (ctx) =>
-    artworkAssetsService.getUpload(
+  return execute(req, async (ctx) => {
+    const access = await core.authorizeContext(req.params.id, ctx);
+    const mutationCapabilities = await core.mutationCapabilities(access, ctx);
+    return artworkAssetsService.getUpload(
       req.params.id,
       req.params.uploadId,
-      toAssetAccess(await core.authorizeContext(req.params.id, ctx))
-    )
-  );
+      toAssetAccess(access),
+      toAssetAccess({ ...access, capabilities: mutationCapabilities })
+    );
+  });
 }
 export function handleSignDocumentationParts(
   req: Operations.ArtworkDocumentationSignDocumentationPartsRequest
@@ -96,7 +99,7 @@ export function handleSignDocumentationParts(
     return artworkAssetsService.signParts(
       req.params.id,
       req.params.uploadId,
-      toAssetAccess(await core.authorizeContext(req.params.id, ctx)),
+      toAssetAccess(await core.authorizeMutationContext(req.params.id, ctx)),
       body(
         req,
         Joi.object({ parts: Joi.array().items(part).min(1).max(3).required() })
@@ -109,7 +112,7 @@ export function handleCompleteDocumentationUpload(
 ): Promise<Operations.ArtworkDocumentationCompleteDocumentationUploadResponse> {
   return execute(req, async (ctx) => {
     const access = toAssetAccess(
-      await core.authorizeContext(req.params.id, ctx)
+      await core.authorizeMutationContext(req.params.id, ctx)
     );
     const input = body<
       Parameters<typeof artworkAssetsService.completeUpload>[3]
@@ -150,7 +153,7 @@ export function handleCancelDocumentationUpload(
     await artworkAssetsService.cancelUpload(
       req.params.id,
       req.params.uploadId,
-      toAssetAccess(await core.authorizeContext(req.params.id, ctx))
+      toAssetAccess(await core.authorizeMutationContext(req.params.id, ctx))
     );
     return { success: true };
   });

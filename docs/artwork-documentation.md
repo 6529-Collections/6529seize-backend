@@ -46,6 +46,29 @@ artist confirmation authority. Artists can invite documentation editors;
 program coordinators assign reviewers. Artists cannot appoint institutional
 reviewers and coordinators cannot assign themselves extra evidence access.
 
+Program viewers can read the program queue, current drafts, confirmed history,
+publication files, and Questions for the team. Their profile IDs or existing
+group IDs are stored separately in `artwork_documentation_program_viewers`.
+Group eligibility is evaluated using the site's current criteria for the
+explicitly granted group IDs; membership is never copied into individual grants.
+The dedicated eligibility reader uses the documentation write pool (and current
+transaction when present), so a lagging read replica cannot retain removed access.
+The list endpoint evaluates group eligibility once for that list request;
+subsequent requests and mutation authorization evaluate the current state again.
+These viewer rows deliberately provide all read capabilities, including legacy
+archival files, rights evidence, source receipts, contact and restricted answers,
+and no editing, artist
+confirmation, review, assignment, or lifecycle authority. Existing artist,
+context collaborator, reviewer, and coordinator grants retain their permissions.
+The API does not return the viewer roster or group membership to readers.
+
+Discussion writes require at least one existing writer capability:
+`confirm_as_artist`, a nonempty `edit_modules` or `review_lanes` array,
+`manage_context`, or `manage_assignments`. All mutations retain their narrower
+operation-specific checks. A grant containing only read permissions cannot
+create, reply to, or resolve questions. Program viewer access alone also does
+not invite the viewer to create another program context for an existing work.
+
 ### Publication-only intake
 
 The latest version of each profile is version 2, with `intake_mode:
@@ -217,6 +240,50 @@ No table, storage-stack or migration deployment is required. Invoke the read
 grant and publication upgrade only after both runtime units are verified in the
 target environment. The existing public preview always retains its own
 restricted projection even for a coordinator with full read access.
+
+### Program viewer configuration
+
+`set_program_viewers_v1` is a separate IAM-only operator. It accepts a known
+documentation program, a verified existing program coordinator, and bounded
+explicit profile/group IDs. It never changes original program/context grants,
+artist ownership, answers, or confirmation authority. An empty viewer roster
+revokes only entries managed by this operator.
+
+```json
+{
+  "operator_action": "set_program_viewers_v1",
+  "correlation_id": "<request-UUID>",
+  "coordinator_profile_id": "<existing-coordinator-profile-UUID>",
+  "program_id": "6529NM-AP-01",
+  "viewers": {"profiles": ["<verified-profile-UUID>"], "groups": ["<verified-existing-group-ID>"]},
+  "apply": false
+}
+```
+
+Dry-run validates that the profiles/groups exist and inventories every original
+program-wide grant (including its capabilities and revoked status) and every
+managed viewer row. Review unexpected existing program-wide access separately;
+the viewer operator deliberately preserves those grants and all context-level
+collaborator access. The inventory contains no artist answers or filenames.
+
+Apply the same request with `apply: true` and
+`expected_inventory_sha256` set to the returned `inventory.inventory_sha256`.
+The transaction locks the program grants and viewer rows, rejects changed
+inventory, replaces only the viewer configuration, and records the result under
+the correlation UUID. Its response includes before/after inventories and
+effective capabilities for explicitly named profiles. The permanent audit
+prevents an old request from restoring access after a later revocation, even
+after the short-lived idempotency cache expires. A changed request using the
+same correlation UUID is rejected. Apply replays return the original audited
+response; perform a fresh dry-run and authenticated reads to verify current
+state. A group removal takes effect when the existing group eligibility service
+observes the changed criteria; no additional viewer membership cache is added.
+
+For this viewer feature, deploy and invoke `dbMigrationsLoop` to create the
+additive TypeORM viewer table, then deploy `artworkDocumentationProcessor` and
+`api`. Existing storage is unchanged. Configure viewers only after the runtime
+units are verified, starting with a dry-run. The public OpenAPI response shapes
+remain unchanged; frontend writer controls use the existing capabilities.
 
 ## Retention and recovery
 
