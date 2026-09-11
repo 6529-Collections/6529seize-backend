@@ -625,18 +625,28 @@ validated scope to retrieval so prior answer text cannot change it. Ordinary
 desktop-browser layout and website TDH questions retain normal routing.
 
 Desktop retrieval filters to Core records and existing Desktop-tagged app handoffs
-before ranking. Shorthand Desktop TDH/Merkle comparisons also retain local scope.
-Desktop topic scoring excludes bare platform terms and requires a topic match;
-non-Desktop queries exclude Core records. A Desktop answer retains the complete
-primary record rather than merging/truncating recovery procedures with the
-normal eight-fact context limit. Desktop rendering permits 1600 tokens and a
-6000-character answer; the prompt asks for at most 5500 characters and complete
-ordered steps with each destructive action's consequences. Token-limit responses
-are rejected and fall back to complete numbered corpus facts; oversized rendered
-answers also fall back rather than cutting off a warning. If even the complete
-fallback exceeds the Desktop limit, ask for a narrower question without emitting
-a partial recovery procedure. Ordinary answers retain
-their existing 220-token/1200-character behavior and Stream retains its own policy.
+before ranking. Bare RPC/reconciliation terminology without local-app context asks
+which application the user means. Node/reference mismatch symptoms retain Desktop
+scope even without the words Core or TDH. Current symptoms and reported completed
+steps select the appropriate corpus record; previous answer prose is not appended
+to ranking queries. Negated completion reports do not advance recovery.
+
+Normal Desktop replies use a 350-token budget, target two to four short sentences,
+and are bounded to 1200 characters including links. Only explicit requests for
+detail permit 1600 tokens/6000 characters. Generation failures, empty output, token
+truncation, and oversized replies fall back to the corpus `brief_answer`, never a
+full fact dump by default. Older records without a short answer use a concise
+clarification fallback. Explicit detailed fallback keeps complete facts and warns
+by asking for a narrower topic if the complete procedure cannot fit.
+
+The frontend-owned `answer_links` metadata supplies named public 6529.io links.
+The backend removes inline model URLs and appends approved links once in a final
+`More info` footer. No irrelevant Apps link is added to native troubleshooting.
+Definitions, onboarding and later troubleshooting stages are separate records.
+`desktop-dialogue` records render their short response directly on normal turns,
+so acknowledged progress remains stable across replies. Do not repeat steps the
+user reports completing or infer missing diagnostic values.
+Ordinary answers retain their 220-token/1200-character policy; Stream is unchanged.
 
 The bot must distinguish Reconcile, Rebuild Ownership, Reset to Block, Reset to Block with Min Block, NFT Full Refresh, NFT Reset, and Recalculate TDH Now. Recovery changes local
 indexed data, not on-chain holdings. Wallet secrets and credential-bearing RPC

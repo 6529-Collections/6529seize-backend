@@ -1,4 +1,5 @@
 import {
+  desktopRecordIdForQuestion,
   isDesktopKnowledgeRecord,
   isDesktopSupportQuestion
 } from './help-bot-desktop-knowledge';
@@ -20,6 +21,8 @@ export interface HelpBotKnowledgeRecord {
   readonly aliases: string[];
   readonly keywords: string[];
   readonly facts: string[];
+  readonly briefAnswer?: string;
+  readonly answerLinks?: readonly { label: string; url: string }[];
   readonly relatedPaths: string[];
   readonly tags: string[];
   readonly sourceRefs: string[];
@@ -41,6 +44,7 @@ export interface HelpBotKnowledgeMatch {
 export interface HelpBotKnowledgeQueryOptions {
   /** Scope already established from the current question, before adding prior answer text. */
   readonly desktopScope?: boolean;
+  readonly desktopRecordId?: string;
 }
 
 export interface HelpBotKnowledgeSource {
@@ -397,6 +401,20 @@ function readSourceRefs(raw: Record<string, unknown>): string[] {
   );
 }
 
+function readAnswerLinks(value: unknown): { label: string; url: string }[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .flatMap((item) => {
+      const link = asRecord(item);
+      const label = readString(link?.label);
+      const url = readString(link?.url);
+      if (!label || !url || !/^https:\/\/6529\.io\/[a-zA-Z0-9/_-]*$/.test(url))
+        return [];
+      return [{ label, url }];
+    })
+    .slice(0, 3);
+}
+
 function normalizeRecord(value: unknown): HelpBotKnowledgeRecord | null {
   const raw = asRecord(value);
   if (!raw) {
@@ -424,6 +442,8 @@ function normalizeRecord(value: unknown): HelpBotKnowledgeRecord | null {
     aliases: aliases.length ? aliases : [title],
     keywords: keywords.length ? keywords : aliases.concat([title]),
     facts,
+    briefAnswer: readString(raw.brief_answer) ?? undefined,
+    answerLinks: readAnswerLinks(raw.answer_links),
     relatedPaths: readStringArray(raw.relatedPaths).concat(
       readStringArray(raw.related_paths)
     ),
@@ -1064,22 +1084,28 @@ function findMatchesInRecords(
   const routedScores = routedRecordScores(normalizedQuestion);
   const desktopQuestion =
     options?.desktopScope ?? isDesktopSupportQuestion(question);
+  const desktopRecordId = desktopQuestion
+    ? (options?.desktopRecordId ?? desktopRecordIdForQuestion(question))
+    : undefined;
   return records
+    .filter((record) => !desktopRecordId || record.id === desktopRecordId)
     .filter((record) =>
       desktopQuestion
         ? isDesktopKnowledgeRecord(record) || record.tags.includes('desktop')
         : !isDesktopKnowledgeRecord(record)
     )
-    .map((record) => ({
-      record,
-      score:
-        desktopQuestion &&
-        (isDesktopKnowledgeRecord(record) || record.tags.includes('desktop'))
-          ? desktopRecordScore(normalizedQuestion, questionTokens, record)
-          : phraseScore(normalizedQuestion, record) +
-            keywordScore(questionTokens, record) +
-            routedScore(routedScores, record)
-    }))
+    .map((record) => {
+      let score: number;
+      if (desktopRecordId) score = 100;
+      else if (desktopQuestion)
+        score = desktopRecordScore(normalizedQuestion, questionTokens, record);
+      else
+        score =
+          phraseScore(normalizedQuestion, record) +
+          keywordScore(questionTokens, record) +
+          routedScore(routedScores, record);
+      return { record, score };
+    })
     .filter((match) => match.score >= MINIMUM_MATCH_SCORE)
     .sort((a, b) => b.score - a.score || a.record.id.localeCompare(b.record.id))
     .slice(0, Math.max(1, limit));

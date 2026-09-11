@@ -8,7 +8,8 @@ import { HelpBotStreamKnowledgeSource } from './help-bot-stream-knowledge';
 import {
   desktopQuestionWithContext,
   isDesktopSupportQuestion,
-  MAX_DESKTOP_ANSWER_CHARACTERS
+  MAX_DESKTOP_ANSWER_CHARACTERS,
+  MAX_DESKTOP_BRIEF_CHARACTERS
 } from './help-bot-desktop-knowledge';
 
 // Snapshot of frontend-owned records, including competing web/mobile topics.
@@ -29,8 +30,8 @@ describe('Desktop corpus retrieval and answers', () => {
   const cases = [
     ['how to get started with 6529 desktop app', 'getting-started'],
     ['how do I get started in Core?', 'getting-started'],
-    ['explain Core in depth', 'getting-started'],
-    ['how does 6529 desktop work?', 'getting-started'],
+    ['explain Core in depth', 'overview'],
+    ['how does 6529 desktop work?', 'overview'],
     ['my tdh in desktop app is out of sync what can i do', 'tdh-out-of-sync'],
     ['why is my Desktop app total TDH different?', 'tdh-out-of-sync'],
     ['how do I enable RPC providers in Core?', 'rpc-providers'],
@@ -60,6 +61,8 @@ describe('Desktop corpus retrieval and answers', () => {
       'why is my Desktop app TDH different from TDH on 6529.io?',
       'tdh-out-of-sync'
     ],
+    ['my node does not match 6529.io', 'tdh-out-of-sync'],
+    ['what is Core', 'overview'],
     ['how do I import a Core wallet?', 'wallets'],
     ['I forgot my Core wallet password', 'wallet-backup'],
     ['how do I download a Core recovery file?', 'wallet-backup'],
@@ -95,7 +98,7 @@ describe('Desktop corpus retrieval and answers', () => {
     'Why is my Desktop TDH different from the website?',
     'Why does Desktop Merkle differ from the website?'
   ])(
-    'uses complete recovery facts instead of public total-TDH data: %s',
+    'starts with a short diagnostic question instead of public TDH or recovery steps: %s',
     async (question) => {
       const { answerer, publicAnswer } = makeAnswerer();
       const result = await answerer.answer({
@@ -107,9 +110,10 @@ describe('Desktop corpus retrieval and answers', () => {
         throw new Error('Expected a Desktop answer');
       expect(result.record.id).toBe('desktop.tdh-out-of-sync');
       expect(publicAnswer).not.toHaveBeenCalled();
-      expect(result.answer).toContain('Reconcile');
-      expect(result.answer).toContain('deletes local NFT records');
-      expect(result.answer).toContain('never share wallet secrets');
+      expect(result.answer).toContain('Last Block');
+      expect(result.answer).not.toContain('Reconcile');
+      expect(result.answer).not.toContain('Reset');
+      expect(result.answer.length).toBeLessThan(500);
       expect(result.answer).not.toContain('https://6529.io/core');
       for (const sourceRef of result.record.sourceRefs) {
         expect(result.answer).not.toContain(sourceRef);
@@ -119,6 +123,175 @@ describe('Desktop corpus retrieval and answers', () => {
       );
     }
   );
+
+  it('progresses through the reported conversation without dumping or repeating instructions', async () => {
+    const renderAnswer = jest.fn().mockRejectedValue(new Error('timeout'));
+    const { answerer, publicAnswer } = makeAnswerer({ renderAnswer });
+    let previousBotAnswer: string | undefined;
+    const turns = [
+      ['what is Core', 'overview'],
+      ['Where do I enable an RPC provider?', 'rpc-providers'],
+      ['my tdh calculation is out of sync', 'tdh-out-of-sync'],
+      [
+        'both caught up, i recalculated, still does not match 6529.io',
+        'tdh-after-recalculation'
+      ],
+      [
+        'same Last Block, TDH and Merkle Root differ',
+        'tdh-same-block-mismatch'
+      ],
+      [
+        'I reconciled and recalculated, same block, still does not match',
+        'tdh-repair-diagnostics'
+      ]
+    ];
+    for (const [question, id] of turns) {
+      const result = await answerer.answer({
+        question,
+        previousBotAnswer,
+        baseUrl: 'https://6529.io'
+      });
+      expect(result.type).toBe('ANSWER');
+      if (result.type !== 'ANSWER')
+        throw new Error('Expected a conversation answer');
+      expect(result.record.id).toBe(`desktop.${id}`);
+      expect(result.answer.length).toBeLessThanOrEqual(
+        MAX_DESKTOP_BRIEF_CHARACTERS
+      );
+      expect(result.answer).not.toBe(previousBotAnswer);
+      if (id === 'overview') {
+        expect(result.answer).not.toContain('Set Active');
+        expect(result.answer).toMatch(
+          /More info: \[6529 Apps\]\(https:\/\/6529\.io\/about\/6529-apps\)$/
+        );
+      }
+      if (id === 'tdh-after-recalculation') {
+        expect(result.answer).toContain('already recalculated');
+        expect(result.answer).not.toContain('Recalculate TDH Now');
+        expect(result.answer).not.toContain('00:15');
+        expect(result.answer).not.toContain('Reconcile');
+      }
+      if (id === 'tdh-same-block-mismatch')
+        expect(result.answer).toContain('Reconcile');
+      if (id === 'tdh-repair-diagnostics')
+        expect(result.answer).toContain('version/OS');
+      previousBotAnswer = result.answer;
+    }
+    expect(publicAnswer).not.toHaveBeenCalled();
+    expect(renderAnswer).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses checkpoint and worker replies to advance troubleshooting', async () => {
+    const { answerer } = makeAnswerer();
+    let previousBotAnswer =
+      'In 6529 Desktop, your node does not match 6529.io. Are the Last Block values identical?';
+    for (const [question, id] of [
+      ['the Last Block values are different', 'tdh-block-mismatch'],
+      ['now same Last Block but TDH still does not match', 'tdh-check-workers'],
+      ['both caught up', 'tdh-recalculate'],
+      [
+        'I recalculated, still does not match 6529.io',
+        'tdh-after-recalculation'
+      ]
+    ]) {
+      const result = await answerer.answer({
+        question,
+        previousBotAnswer,
+        baseUrl: 'https://6529.io'
+      });
+      expect(result.type === 'ANSWER' && result.record.id).toBe(
+        `desktop.${id}`
+      );
+      if (result.type !== 'ANSWER') throw new Error('Expected a next step');
+      expect(result.answer).not.toBe(previousBotAnswer);
+      previousBotAnswer = result.answer;
+    }
+  });
+
+  it.each([
+    'Where do I enable an RPC provider?',
+    'How do I reconcile transactions?'
+  ])(
+    'asks for the application when terminology alone is ambiguous: %s',
+    async (question) => {
+      const { answerer } = makeAnswerer();
+      const result = await answerer.answer({
+        question,
+        baseUrl: 'https://6529.io'
+      });
+      expect(result.type === 'ANSWER' && result.record.id).toBe(
+        'desktop.clarify-context'
+      );
+      expect(result.type === 'ANSWER' && result.answer).toContain(
+        'or another app?'
+      );
+    }
+  );
+
+  it.each([
+    'I have not recalculated, my node still does not match 6529.io',
+    "I haven't yet recalculated, my node still does not match 6529.io"
+  ])(
+    'does not infer completed actions from a negated report: %s',
+    async (question) => {
+      const { answerer } = makeAnswerer();
+      const result = await answerer.answer({
+        question,
+        previousBotAnswer:
+          'In 6529 Desktop, have you recalculated TDH? Your node is out of sync.',
+        baseUrl: 'https://6529.io'
+      });
+      expect(result.type === 'ANSWER' && result.record.id).toBe(
+        'desktop.tdh-out-of-sync'
+      );
+      expect(result.type === 'ANSWER' && result.answer).not.toContain(
+        'already recalculated'
+      );
+    }
+  );
+
+  it('does not treat a wallet mismatch as a TDH mismatch', async () => {
+    const { answerer } = makeAnswerer();
+    const result = await answerer.answer({
+      question: 'My Core wallet password does not match',
+      baseUrl: 'https://6529.io'
+    });
+    expect(result.type === 'ANSWER' && result.record.id).toBe(
+      'desktop.wallet-backup'
+    );
+  });
+
+  it('keeps full instructions and warnings when detail is explicitly requested', async () => {
+    const { answerer } = makeAnswerer();
+    const result = await answerer.answer({
+      question: 'Explain in detail how to reset trx worker in Core',
+      baseUrl: 'https://6529.io'
+    });
+    expect(result.type === 'ANSWER' && result.answer).toContain(
+      'Reset to Block'
+    );
+    expect(result.type === 'ANSWER' && result.answer).toContain('are deleted');
+    expect(result.type === 'ANSWER' && result.answer.length).toBeGreaterThan(
+      1200
+    );
+  });
+
+  it('moves approved links to the footer and discards invented links', async () => {
+    const { answerer } = makeAnswerer({
+      renderAnswer: jest
+        .fn()
+        .mockResolvedValue(
+          'Get the [app](https://6529.io/about/6529-apps). Read [this](https://example.com/wrong) or [that](/core).'
+        )
+    });
+    const result = await answerer.answer({
+      question: 'what is Core',
+      baseUrl: 'https://staging.6529.io'
+    });
+    expect(result.type === 'ANSWER' && result.answer).toBe(
+      'Get the app. Read this or that.\n\nMore info: [6529 Apps](https://6529.io/about/6529-apps)'
+    );
+  });
 
   it('retains Desktop scope for a specific follow-up without mixing old instructions', async () => {
     const { answerer } = makeAnswerer();
@@ -156,7 +329,7 @@ describe('Desktop corpus retrieval and answers', () => {
       'Reset to Block > Min Block'
     );
     expect(result.type === 'ANSWER' && result.answer).toContain(
-      'does not expose a standalone Reset button'
+      'no standalone Reset button'
     );
   });
 
@@ -335,21 +508,20 @@ describe('Desktop corpus retrieval and answers', () => {
     expect(publicAnswer).not.toHaveBeenCalled();
   });
 
-  it('falls back to complete corpus steps when the model fails or returns an oversized reply', async () => {
+  it('falls back to a short answer when the model fails or returns an oversized reply', async () => {
     for (const renderAnswer of [
       jest.fn().mockRejectedValue(new Error('token limit')),
       jest.fn().mockResolvedValue('x'.repeat(7000))
     ]) {
       const { answerer } = makeAnswerer({ renderAnswer });
       const result = await answerer.answer({
-        question: 'my tdh in desktop app is out of sync',
+        question: 'Where do I enable an RPC provider in Core?',
         baseUrl: 'https://6529.io'
       });
-      expect(result.type === 'ANSWER' && result.answer).toContain(
-        'deletes local NFT records'
-      );
-      expect(result.type === 'ANSWER' && result.answer).toContain(
-        'never share wallet secrets'
+      expect(renderAnswer).toHaveBeenCalledTimes(1);
+      expect(result.type === 'ANSWER' && result.answer).toContain('Set Active');
+      expect(result.type === 'ANSWER' && result.answer.length).toBeLessThan(
+        500
       );
     }
   });
@@ -399,12 +571,10 @@ describe('Desktop corpus retrieval and answers', () => {
     }));
     const answerer = new HelpBotAnswerer(null, knowledge);
     const result = await answerer.answer({
-      question: 'reset trx worker in Core',
+      question: 'give me a full guide to reset trx worker in Core',
       baseUrl: 'https://6529.io'
     });
-    expect(result.type === 'ANSWER' && result.answer).toContain(
-      'narrow the question'
-    );
+    expect(result.type === 'ANSWER' && result.answer).toContain('focus on');
     expect(
       result.type === 'ANSWER' && result.answer.length
     ).toBeLessThanOrEqual(MAX_DESKTOP_ANSWER_CHARACTERS);
