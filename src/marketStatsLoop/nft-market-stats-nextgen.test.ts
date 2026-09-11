@@ -3,18 +3,18 @@ jest.mock('../nextgen/nextgen.db', () => ({
   fetchNextgenTokens: jest.fn(),
   persitNextgenTokenListings: jest.fn()
 }));
-jest.mock('../logging', () => ({
-  Logger: {
-    get: () => ({
-      info: jest.fn(),
-      warn: jest.fn(),
-      error: jest.fn(),
-      debug: jest.fn()
-    })
-  }
-}));
+jest.mock('../logging', () => {
+  const logger = {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    debug: jest.fn()
+  };
+  return { Logger: { get: () => logger } };
+});
 
 import { getDataSource } from '../db';
+import { Logger } from '../logging';
 import { DataSource, EntityManager, QueryRunner } from 'typeorm';
 import {
   fetchNextgenTokens,
@@ -82,6 +82,7 @@ describe('NextGen OpenSea market stats helpers', () => {
     process.env.OPENSEA_API_KEY = 'opensea-key';
     fetchMock.mockReset();
     jest.mocked(persitNextgenTokenListings).mockReset();
+    jest.mocked(Logger.get('NEXTGEN_MARKET_STATS').warn).mockClear();
     global.fetch = fetchMock as unknown as typeof fetch;
   });
 
@@ -229,6 +230,91 @@ describe('NextGen OpenSea market stats helpers', () => {
       'NextGen market stats provider HTTP 500'
     );
   });
+
+  it('continues valid OpenSea stats with empty optional Blur listings on HTTP 401', async () => {
+    jest.useFakeTimers();
+    const blurResponse = jsonResponse(
+      { message: 'fixture provider body' },
+      { ok: false, status: 401 }
+    );
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ collection: 'slug' }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          listings: [listing('1', '1000000000000000000', 'order')]
+        })
+      )
+      .mockResolvedValueOnce(blurResponse);
+    const transaction = jest.fn(async (callback) =>
+      callback({
+        queryRunner: {
+          isTransactionActive: true,
+          connect: async () => ({ query: jest.fn(), destroy: jest.fn() })
+        }
+      })
+    );
+    jest
+      .mocked(getDataSource)
+      .mockReturnValue({ transaction } as unknown as ReturnType<
+        typeof getDataSource
+      >);
+    jest
+      .mocked(fetchNextgenTokens)
+      .mockResolvedValue([{ id: 1 }] as Awaited<
+        ReturnType<typeof fetchNextgenTokens>
+      >);
+    jest.mocked(persitNextgenTokenListings).mockResolvedValue(undefined);
+
+    const completed = expect(
+      findNextgenMarketStats('0xabc', Date.now() + 5_000)
+    ).resolves.toBeUndefined();
+    await jest.advanceTimersByTimeAsync(500);
+    await completed;
+    expect(persitNextgenTokenListings).toHaveBeenCalledWith(expect.anything(), [
+      expect.objectContaining({
+        id: 1,
+        opensea_price: 1,
+        blur_price: 0,
+        price: 1
+      })
+    ]);
+    expect(Logger.get('NEXTGEN_MARKET_STATS').warn).toHaveBeenCalledWith(
+      '[BLUR] Optional listings provider returned HTTP 401; using empty Blur listings'
+    );
+    expect(blurResponse.json).not.toHaveBeenCalled();
+  });
+
+  it('still fails the refresh on mandatory OpenSea HTTP 401', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({}, { ok: false, status: 401 })
+    );
+    await expect(
+      findNextgenMarketStats('0xabc', Date.now() + 5_000)
+    ).rejects.toThrow('provider HTTP 401');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(persitNextgenTokenListings).not.toHaveBeenCalled();
+  });
+
+  it.each(['deadline', 'abort'])(
+    'does not swallow an optional Blur %s failure',
+    async (failure) => {
+      jest.useFakeTimers();
+      const deadline = Date.now() + 1_000;
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({ collection: 'slug' }))
+        .mockResolvedValueOnce(jsonResponse({ listings: [] }))
+        .mockImplementationOnce(async () => {
+          if (failure === 'abort') throw new Error('fixture request aborted');
+          jest.setSystemTime(deadline);
+          return jsonResponse({ tokens: [] });
+        });
+      await expect(findNextgenMarketStats('0xabc', deadline)).rejects.toThrow(
+        failure === 'abort' ? 'fixture request aborted' : 'deadline exceeded'
+      );
+      expect(persitNextgenTokenListings).not.toHaveBeenCalled();
+      expect(Logger.get('NEXTGEN_MARKET_STATS').warn).not.toHaveBeenCalled();
+    }
+  );
 
   it('does not start legacy work after the invocation deadline', async () => {
     await expect(findNextgenMarketStats('0xabc', Date.now())).rejects.toThrow(
