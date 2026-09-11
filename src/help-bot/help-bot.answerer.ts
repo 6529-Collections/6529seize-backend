@@ -1,3 +1,8 @@
+import {
+  desktopQuestionWithContext,
+  isDesktopKnowledgeRecord,
+  MAX_DESKTOP_ANSWER_CHARACTERS
+} from './help-bot-desktop-knowledge';
 import { Logger } from '@/logging';
 import {
   frontendHelpBotKnowledgeSource,
@@ -640,11 +645,20 @@ function buildDeterministicAnswer(
   if (record.kind === 'public_review_knowledge') {
     return buildStreamEvidenceAnswer(record, baseUrl);
   }
-  return ensureKnowledgeMarkdownLinks({
-    text: record.facts.join(' '),
+  const answer = ensureKnowledgeMarkdownLinks({
+    text: isDesktopKnowledgeRecord(record)
+      ? record.facts.map((fact, index) => `${index + 1}. ${fact}`).join('\n\n')
+      : record.facts.join(' '),
     record,
     baseUrl
   });
+  if (
+    isDesktopKnowledgeRecord(record) &&
+    answer.length > MAX_DESKTOP_ANSWER_CHARACTERS
+  ) {
+    return 'I could not fit a complete Desktop procedure into this reply. Please narrow the question to one setup or recovery action so its steps and data-loss warnings can stay together. Do not reset local data based on an incomplete procedure.';
+  }
+  return answer;
 }
 
 function normalizeRenderedAnswer(
@@ -660,6 +674,12 @@ function normalizeRenderedAnswer(
     record,
     baseUrl
   });
+  if (isDesktopKnowledgeRecord(record)) {
+    // Never cut a recovery instruction before its data-loss warning.
+    return withUrl.length <= MAX_DESKTOP_ANSWER_CHARACTERS
+      ? withUrl
+      : buildDeterministicAnswer(record, baseUrl);
+  }
   return withUrl.length <= MAX_RENDERED_ANSWER_CHARACTERS
     ? withUrl
     : `${withUrl.slice(0, MAX_RENDERED_ANSWER_CHARACTERS - 3)}...`;
@@ -1262,14 +1282,17 @@ function mergeKnowledgeMatches(
   if (!primary) {
     return null;
   }
-  if (matches.length === 1) {
+  if (matches.length === 1 || isDesktopKnowledgeRecord(primary.record)) {
     return primary;
   }
 
   const relatedRecords = matches
     .slice(1)
     .map((match) => match.record)
-    .filter((record) => record.id !== primary.record.id);
+    .filter(
+      (record) =>
+        record.id !== primary.record.id && !isDesktopKnowledgeRecord(record)
+    );
   if (!relatedRecords.length) {
     return primary;
   }
@@ -1559,6 +1582,26 @@ export class HelpBotAnswerer {
         answer: socialAnswer,
         record: buildSocialRecord()
       };
+    }
+
+    const desktopQuestion = desktopQuestionWithContext(
+      parseHelpBotQuestionContext(request.question).primaryQuestion,
+      request.previousBotAnswer ??
+        parseHelpBotQuestionContext(request.question).repliedToDropContext
+    );
+    if (desktopQuestion) {
+      const desktopMatch = await this.findKnowledgeMatches(
+        desktopQuestion
+      ).catch(() => null);
+      if (
+        desktopMatch &&
+        (isDesktopKnowledgeRecord(desktopMatch.record) ||
+          desktopMatch.record.tags.includes('desktop'))
+      ) {
+        return this.answerFromKnowledgeMatch(request, desktopMatch);
+      }
+      // Local-node state cannot be replaced with a public database answer.
+      return { type: 'NO_RELIABLE_SOURCE', escalateToTechTeam: true };
     }
 
     const streamMatch = await this.findStreamKnowledgeMatch(request);

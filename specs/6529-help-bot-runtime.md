@@ -603,3 +603,43 @@ private user data beyond what is needed for debugging and abuse controls.
 - Should the default Bedrock model move from the US geo inference profile to a
   global or region-specific profile once production access, residency, and
   latency are verified?
+
+## 6529 Desktop (Core) support
+
+The frontend help index owns `desktop.*` records tagged `desktop-core`, including
+native menu labels, RPC activation, automatic workers, TDH validation and repair,
+Core wallets, IPFS, and diagnostics. Immutable Core source references establish
+provenance; the runtime consumes record facts and does not read Core source or
+inspect a user's machine. These records use a real Apps canonical route with
+source-link suppression rather than constructing public `/core` links.
+
+Explicit local-Desktop support questions and scoped follow-ups retrieve the
+corpus before calendar/public-data planning. A public total-TDH query cannot
+diagnose local node state. If Desktop knowledge is unavailable, fail closed and
+escalate rather than substitute public database values. Explicit mobile/browser
+questions do not inherit Desktop scope. Ordinary desktop-browser layout and
+website TDH questions retain normal routing.
+
+Desktop topic scoring excludes bare platform terms and requires a topic match;
+non-Desktop queries exclude Core records. A Desktop answer retains the complete
+primary record rather than merging/truncating recovery procedures with the
+normal eight-fact context limit. Desktop rendering permits 1600 tokens and a
+6000-character answer; the prompt asks for at most 5500 characters and complete
+ordered steps with each destructive action's consequences. Token-limit responses
+are rejected and fall back to complete numbered corpus facts; oversized rendered
+answers also fall back rather than cutting off a warning. If even the complete
+fallback exceeds the Desktop limit, ask for a narrower question without emitting
+a partial recovery procedure. Ordinary answers retain
+their existing 220-token/1200-character behavior and Stream retains its own policy.
+
+The bot must distinguish Reconcile, Rebuild Ownership, Reset to Block, Reset to Block with Min Block, NFT Full Refresh, NFT Reset, and Recalculate TDH Now. Recovery changes local
+indexed data, not on-chain holdings. Wallet secrets and credential-bearing RPC
+URLs are never requested. Test fixtures are snapshots only; the published frontend
+index remains the sole runtime source of Desktop product knowledge.
+
+Rollout: deploy `helpBotReplyLoop` first for the new routing and answer policy,
+then publish the companion frontend corpus. The backend safely declines unsupported
+Core procedures until the corpus arrives. Publishing the new records into an old
+runtime first can misroute generic wallet questions or truncate recovery answers. No API, database migration, new service,
+or Core application release is required. Older runtimes can read the additional
+records, but need this renderer/routing update for full procedural answers.

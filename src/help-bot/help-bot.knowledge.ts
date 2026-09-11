@@ -1,3 +1,7 @@
+import {
+  isDesktopKnowledgeRecord,
+  isDesktopSupportQuestion
+} from './help-bot-desktop-knowledge';
 import { Logger } from '@/logging';
 import { CONSOLIDATIONS_LIMIT } from '@/constants';
 import {
@@ -1005,6 +1009,38 @@ function routedScore(
   );
 }
 
+function desktopRecordScore(
+  question: string,
+  questionTokens: Set<string>,
+  record: HelpBotKnowledgeRecord
+): number {
+  const matchingPhrases = uniqueStrings([
+    record.title,
+    ...record.aliases
+  ]).filter(
+    (phrase) =>
+      !/^(?:6529 )?(?:desktop|core|mobile)(?: app)?$/.test(
+        normalizeText(phrase)
+      ) && containsNormalizedPhrase(question, phrase)
+  );
+  const specificPhraseScore = matchingPhrases.reduce(
+    (score, phrase) =>
+      score + 3 + Math.min(3, normalizedPhraseTokens(phrase).length - 1),
+    0
+  );
+  const topicScore =
+    specificPhraseScore +
+    keywordScore(questionTokens, {
+      ...record,
+      keywords: record.keywords.filter(
+        (word) => word !== 'desktop' && word !== 'core'
+      ),
+      tags: []
+    });
+  // Mentioning the application alone must not make every recovery procedure a match.
+  return topicScore > 0 ? topicScore + 12 : 0;
+}
+
 function findMatchesInRecords(
   question: string,
   records: readonly HelpBotKnowledgeRecord[],
@@ -1016,13 +1052,18 @@ function findMatchesInRecords(
   }
   const questionTokens = tokenize(question);
   const routedScores = routedRecordScores(normalizedQuestion);
+  const desktopQuestion = isDesktopSupportQuestion(question);
   return records
+    .filter((record) => desktopQuestion || !isDesktopKnowledgeRecord(record))
     .map((record) => ({
       record,
       score:
-        phraseScore(normalizedQuestion, record) +
-        keywordScore(questionTokens, record) +
-        routedScore(routedScores, record)
+        desktopQuestion &&
+        (isDesktopKnowledgeRecord(record) || record.tags.includes('desktop'))
+          ? desktopRecordScore(normalizedQuestion, questionTokens, record)
+          : phraseScore(normalizedQuestion, record) +
+            keywordScore(questionTokens, record) +
+            routedScore(routedScores, record)
     }))
     .filter((match) => match.score >= MINIMUM_MATCH_SCORE)
     .sort((a, b) => b.score - a.score || a.record.id.localeCompare(b.record.id))
