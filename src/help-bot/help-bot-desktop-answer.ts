@@ -11,9 +11,19 @@ export function composeDesktopAnswer(
   text: string,
   record: HelpBotKnowledgeRecord
 ): string {
-  const body = text
-    .replace(/\n*More info:[^\n]*/gi, '')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+  const lines = text.trimEnd().split('\n');
+  if (lines.length > 1 && /^More info:/i.test(lines[lines.length - 1]))
+    lines.pop();
+  // Anchor each candidate to avoid rescanning runs of unmatched opening brackets.
+  const body = lines
+    .join('\n')
+    .split('[')
+    .map((part, index) => {
+      if (index === 0) return part;
+      const link = /^([^\]]*)\]\([^)]*\)/.exec(part);
+      return link ? link[1] + part.slice(link[0].length) : `[${part}`;
+    })
+    .join('')
     .replace(/https?:\/\/[^\s)]+/g, '')
     .trim();
   if (!body) return '';

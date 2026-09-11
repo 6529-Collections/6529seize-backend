@@ -7,6 +7,7 @@ import { HelpBotCalendarService } from './help-bot-calendar.service';
 import { HelpBotStreamKnowledgeSource } from './help-bot-stream-knowledge';
 import {
   desktopQuestionWithContext,
+  desktopRecordIdForQuestion,
   isDesktopSupportQuestion,
   MAX_DESKTOP_ANSWER_CHARACTERS,
   MAX_DESKTOP_BRIEF_CHARACTERS
@@ -230,7 +231,11 @@ describe('Desktop corpus retrieval and answers', () => {
 
   it.each([
     'I have not recalculated, my node still does not match 6529.io',
-    "I haven't yet recalculated, my node still does not match 6529.io"
+    "I haven't yet recalculated, my node still does not match 6529.io",
+    'I have not actually even once recalculated, my node still does not match 6529.io',
+    'I have never in fact recalculated, my node still does not match 6529.io',
+    'Maybe it recalculated, my node still does not match 6529.io',
+    'If I recalculated, would my node still not match 6529.io?'
   ])(
     'does not infer completed actions from a negated report: %s',
     async (question) => {
@@ -249,6 +254,56 @@ describe('Desktop corpus retrieval and answers', () => {
       );
     }
   );
+
+  it.each([
+    'I have not actually even once recalculated, same block, TDH still differs',
+    'I did not really ever recalculate, same block, TDH still differs',
+    'I recalculated, I am not sure the blocks are the same, TDH still differs',
+    'I recalculated, are the blocks the same? TDH still differs'
+  ])('does not advance to repair on uncertain progress: %s', (question) => {
+    const id = desktopRecordIdForQuestion(
+      question,
+      'In 6529 Desktop, you have already recalculated. Your node does not match 6529.io.'
+    );
+    expect(id).not.toBe('desktop.tdh-same-block-mismatch');
+    expect(id).not.toBe('desktop.tdh-repair-diagnostics');
+  });
+
+  it.each([
+    'I have not actually even once reconciled, TDH still differs',
+    'If I reconciled, would TDH still differ?',
+    'Have I reconciled? TDH still differs'
+  ])('does not infer reconciliation from uncertainty: %s', (question) => {
+    expect(desktopRecordIdForQuestion(question)).toBe(
+      'desktop.tdh-out-of-sync'
+    );
+  });
+
+  it('accepts an affirmative block comparison after recalculation', () => {
+    expect(
+      desktopRecordIdForQuestion(
+        'I recalculated, the Last Block values are the same, TDH differs'
+      )
+    ).toBe('desktop.tdh-same-block-mismatch');
+  });
+
+  it('lets current uncertainty override an earlier block confirmation', () => {
+    expect(
+      desktopRecordIdForQuestion(
+        'I am not sure the blocks match, both caught up',
+        'In 6529 Desktop, your node still does not match 6529.io at the same Last Block.'
+      )
+    ).toBe('desktop.tdh-out-of-sync');
+  });
+
+  it('does not turn a block definition into another mismatch step', () => {
+    expect(
+      desktopRecordIdForQuestion(
+        'What is an Ethereum block?',
+        'In 6529 Desktop, your node does not match 6529.io. Compare Last Block.'
+      )
+    ).toBeUndefined();
+  });
 
   it('does not treat a wallet mismatch as a TDH mismatch', async () => {
     const { answerer } = makeAnswerer();
@@ -291,6 +346,41 @@ describe('Desktop corpus retrieval and answers', () => {
     expect(result.type === 'ANSWER' && result.answer).toBe(
       'Get the app. Read this or that.\n\nMore info: [6529 Apps](https://6529.io/about/6529-apps)'
     );
+  });
+
+  it('preserves mid-body More info text while replacing only a trailing footer', async () => {
+    const { answerer } = makeAnswerer({
+      renderAnswer: jest
+        .fn()
+        .mockResolvedValue(
+          'Core runs locally.\nMore info: workers index Ethereum.\nKeep the app open.\n\nMore info: [bad](https://example.com)'
+        )
+    });
+    const result = await answerer.answer({
+      question: 'what is Core',
+      baseUrl: 'https://6529.io'
+    });
+    expect(result.type === 'ANSWER' && result.answer).toBe(
+      'Core runs locally.\nMore info: workers index Ethereum.\nKeep the app open.\n\nMore info: [6529 Apps](https://6529.io/about/6529-apps)'
+    );
+  });
+
+  it('bounds the entire deterministic reply including a long link footer', async () => {
+    const match = await source().findMatch('what is Core');
+    if (!match) throw new Error('Expected overview record');
+    const { desktopFallbackAnswer } = await import('./help-bot-desktop-answer');
+    const answer = desktopFallbackAnswer(
+      {
+        ...match.record,
+        briefAnswer: 'a'.repeat(900),
+        answerLinks: [
+          { label: 'b'.repeat(400), url: 'https://6529.io/about/6529-apps' }
+        ]
+      },
+      'what is Core'
+    );
+    expect(answer.length).toBeLessThanOrEqual(MAX_DESKTOP_BRIEF_CHARACTERS);
+    expect(answer).toContain('focus on');
   });
 
   it('retains Desktop scope for a specific follow-up without mixing old instructions', async () => {
@@ -549,6 +639,29 @@ describe('Desktop corpus retrieval and answers', () => {
     } as unknown as HelpBotPublicDataService);
     const result = await answerer.answer({
       question: 'my desktop app total TDH is different',
+      baseUrl: 'https://6529.io'
+    });
+    expect(result.type).toBe('NO_RELIABLE_SOURCE');
+    expect(publicAnswer).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for a missing dialogue stage in an older Desktop corpus', async () => {
+    const older = JSON.parse(corpus);
+    older.records = older.records.filter(
+      (record: { id: string }) =>
+        record.id !== 'desktop.tdh-after-recalculation'
+    );
+    const knowledge = new FrontendHelpBotKnowledgeSource(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(older)
+    }));
+    const publicAnswer = jest.fn();
+    const answerer = new HelpBotAnswerer(null, knowledge, {
+      answer: publicAnswer
+    } as unknown as HelpBotPublicDataService);
+    const result = await answerer.answer({
+      question: 'My node still does not match 6529.io, I recalculated',
       baseUrl: 'https://6529.io'
     });
     expect(result.type).toBe('NO_RELIABLE_SOURCE');

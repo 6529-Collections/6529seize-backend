@@ -21,9 +21,13 @@ export function wantsDetailedDesktopAnswer(question: string): boolean {
 }
 
 function hasDesktopSupportTopic(question: string): boolean {
-  return /\b(?:6529\s+(?:desktop|core)|desktop\s+(?:app|application|node|wallets?|tdh|merkle)|core\s+(?:app|wallets?|workers?|rpc|tdh|ipfs|recovery)|(?:in|with|using|about|start|setup|explain|describe|what is)\s+core|my\s+node)\b/i.test(
-    question
-  );
+  return [
+    /\b6529\s+(?:desktop|core)\b/i,
+    /\bdesktop\s+(?:app|application|node|wallets?|tdh|merkle)\b/i,
+    /\bcore\s+(?:app|wallets?|workers?|rpc|tdh|ipfs|recovery)\b/i,
+    /\b(?:in|with|using|about|start|setup|explain|describe|what is)\s+core\b/i,
+    /\bmy\s+node\b/i
+  ].some((pattern) => pattern.test(question));
 }
 
 function hasMismatch(question: string): boolean {
@@ -76,35 +80,42 @@ export function desktopQuestionWithContext(
   if (hasDesktopSupportTopic(question)) return question;
   if (
     !hasContext ||
-    !/\b(?:it|that|this|there|these|those|both|same|still|reset|reconcil\w*|rebuild|refresh|worker|rpc|tdh|ipfs|wallet|sync|merkle|block|caught up|missing)\b/i.test(
-      question
-    )
+    ![
+      /\b(?:it|that|this|there|these|those|both|same|still)\b/i,
+      /\b(?:reset|reconcil\w*|rebuild|refresh|worker|rpc|tdh|ipfs)\b/i,
+      /\b(?:wallet|sync|merkle|block|caught up|missing)\b/i
+    ].some((pattern) => pattern.test(question))
   )
     return null;
   return `6529 Desktop Core: ${question}`;
 }
 
-/** A suggestion, question, or negated action is not evidence of completion. */
-function reportsRecalculation(question: string): boolean {
-  const text = question.replace(/’/g, "'");
+/** Inspect clauses conservatively: uncertain or negated reports cannot advance repair. */
+function affirmativeReport(question: string, action: RegExp): boolean {
+  const clauses = question.replace(/’/g, "'").split(/[,;.!?]|\bbut\b/i);
+  const matching = clauses.filter((clause) => action.test(clause));
+  const uncertain =
+    /\b(?:not|never|no|if|should|can|could|would|maybe|unsure|whether)\b|n't\b/i;
   return (
-    /\brecalculated\b/i.test(text) &&
-    !/\b(?:not|never|haven't|didn't|have not|did not)(?:\s+\w+){0,2}\s+recalculated\b/i.test(
-      text
-    ) &&
-    !/\b(?:have (?:i|you)|should|can|if)\b[^.?!]*\brecalculated\b/i.test(text)
+    matching.length > 0 &&
+    matching.every(
+      (clause) =>
+        !uncertain.test(clause) &&
+        !/^\s*(?:have|has|did|are|is) (?:i|you|it|the)\b/i.test(clause)
+    )
   );
 }
 
+/** A suggestion, question, or negated action is not evidence of completion. */
+function reportsRecalculation(question: string): boolean {
+  return affirmativeReport(question, /\brecalculated\b/i);
+}
+
 function confirmsSameBlock(question: string): boolean {
-  const text = question.replace(/’/g, "'");
-  return (
-    /\b(?:same (?:last )?block|(?:last )?blocks? (?:are |is )?(?:identical|same|matches|match))\b/i.test(
-      text
-    ) &&
-    !/\b(?:not (?:the )?same (?:last )?block|(?:last )?blocks? (?:are |is )?(?:not|different)|(?:last )?blocks? (?:don't|doesn't|aren't|isn't))\b/i.test(
-      text
-    )
+  const text = question.replace(/\b(?:last|values)\s+/gi, '');
+  return affirmativeReport(
+    text,
+    /\b(?:same block|blocks? (?:are |is )?(?:the )?(?:identical|same|matches|match))\b/i
   );
 }
 
@@ -115,6 +126,13 @@ function isDesktopMismatchQuestion(
   if (
     /\b(?:wallet|ipfs|rpc)\b/i.test(question) &&
     !/\b(?:tdh|merkle|node)\b/i.test(question)
+  )
+    return false;
+  // Definition/navigation questions about blocks are not diagnostic progress reports.
+  if (
+    /^(?:what|where|explain|define)\b/i.test(question.trim()) &&
+    /\bblocks?\b/i.test(question) &&
+    !hasMismatch(question)
   )
     return false;
   const context = `${previousBotAnswer} ${question}`;
@@ -133,23 +151,24 @@ function initialMismatchRecord(
   previousBotAnswer: string
 ): string {
   if (
-    /\b(?:(?:last )?blocks? (?:values )?(?:are |is )?different|different (?:last )?blocks?|(?:last )?blocks? (?:do not|don't|does not|doesn't) match)\b/i.test(
-      question
-    )
+    [
+      /\bblocks? (?:values )?(?:are |is )?different\b/i,
+      /\bdifferent (?:last )?blocks?\b/i,
+      /\bblocks? (?:do not|don't|does not|doesn't) match\b/i
+    ].some((pattern) => pattern.test(question))
   )
     return 'desktop.tdh-block-mismatch';
   const sameBlock =
     confirmsSameBlock(question) ||
-    /\b(?:the Last Block values match|at the same Last Block)\b/i.test(
-      previousBotAnswer
-    );
+    (!/\bblocks?\b/i.test(question) &&
+      /\b(?:the Last Block values match|at the same Last Block)\b/i.test(
+        previousBotAnswer
+      ));
   if (!sameBlock) return 'desktop.tdh-out-of-sync';
   if (
-    /\b(?:both caught up|both (?:are )?(?:synced|caught up)|workers (?:are )?(?:synced|caught up))\b/i.test(
-      question
-    ) &&
-    !/\b(?:(?:both|workers)\s+(?:are\s+)?(?:not|aren't|aren’t)|not\s+(?:both\s+)?(?:synced|caught up))\b/i.test(
-      question
+    affirmativeReport(
+      question,
+      /\b(?:both|workers) (?:are )?(?:synced|caught up)\b/i
     )
   )
     return 'desktop.tdh-recalculate';
@@ -171,14 +190,15 @@ export function desktopRecordIdForQuestion(
     return undefined;
   const recalculated =
     reportsRecalculation(question) ||
-    /\b(?:you have already recalculated|since recalculation did not resolve)\b/i.test(
-      previousBotAnswer ?? ''
-    );
+    (!/\brecalculat\w*\b/i.test(question) &&
+      /\b(?:you have already recalculated|since recalculation did not resolve)\b/i.test(
+        previousBotAnswer ?? ''
+      ));
   if (
-    /\b(?:reconciled|reconciliation (?:has )?(?:finished|completed|done)|ran (?:the )?reconciliation)\b/i.test(
-      question
-    ) &&
-    !/\b(?:not|never|haven't|haven’t)(?:\s+\w+){0,2}\s+reconcil/i.test(question)
+    affirmativeReport(
+      question,
+      /\b(?:reconciled|reconciliation (?:has )?(?:finished|completed|done)|ran (?:the )?reconciliation)\b/i
+    )
   ) {
     return reportsRecalculation(question)
       ? 'desktop.tdh-repair-diagnostics'
