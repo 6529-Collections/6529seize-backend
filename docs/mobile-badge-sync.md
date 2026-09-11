@@ -71,11 +71,19 @@ Updates depend on APNs delivery and the user's badge permission.
   registrations. Null/unsupported platforms cannot safely be inferred: corrective
   updates are skipped, and ordinary alerts omit the badge instead of guessing a
   count. A later canonical iOS registration restores badge synchronization.
-- This backend feature changes iOS badges only. Android notification payloads and
-  launcher behavior remain unchanged. No Android numeric badge guarantee is made.
+- Exact badge refreshes apply only to iOS. Android visible pushes with a target
+  profile carry `android.notification.tag` as
+  `6529:v1:<encoded-profile-id>:<notification-id>:<encoded-wave-id>` (the final
+  field is empty outside a wave; string fields use URI component encoding).
+  This preserves payload identity through the native delivered-tray API, which
+  may omit FCM custom data. Native removal must retain both the returned ID and
+  tag. Distinct profiles/notifications have distinct tags; a retry of the same
+  notification replaces that entry. No Android numeric badge guarantee is made.
 - Badge-only pushes do not implement selective removal of already delivered
-  notifications. Frontend global cleanup can still remove another profile's
-  notification; profile-scoped cleanup remains separate follow-up work.
+  notifications. Pair this change with
+  [frontend profile-scoped cleanup](https://github.com/6529-Collections/6529seize-frontend/pull/3948).
+  That client reconciles confirmed read entries while it executes, without
+  overwriting the iOS badge. Older clients retain their global-cleanup behavior.
 - No native package or mobile release is introduced. Before production rollout,
   verify badge-only behavior on an existing installed iOS app in foreground and
   background with badge permission enabled: 2 → 1, single-profile 1 → 0, and a
