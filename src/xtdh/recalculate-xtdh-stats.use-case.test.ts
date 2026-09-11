@@ -8,6 +8,7 @@ jest.mock('../metrics/MetricsRecorder', () => ({
 
 import { RequestContext } from '../request.context';
 import { RecalculateXTdhStatsUseCase } from './recalculate-xtdh-stats.use-case';
+import { QueryFailedError } from 'typeorm';
 
 describe('RecalculateXTdhStatsUseCase', () => {
   const makeRepository = () => ({
@@ -88,9 +89,13 @@ describe('RecalculateXTdhStatsUseCase', () => {
 
   it('keeps the active slot after a grant lock timeout and rebuilds it on redelivery', async () => {
     const repository = makeRepository();
-    const error = Object.assign(new Error('Lock wait timeout'), {
-      code: 'ER_LOCK_WAIT_TIMEOUT'
-    });
+    const error = new QueryFailedError(
+      'INSERT ... SELECT',
+      [],
+      Object.assign(new Error('Lock wait timeout'), {
+        code: 'ER_LOCK_WAIT_TIMEOUT'
+      })
+    );
     repository.refillXTdhGrantStats.mockRejectedValueOnce(error);
     const useCase = new RecalculateXTdhStatsUseCase(repository as any);
 

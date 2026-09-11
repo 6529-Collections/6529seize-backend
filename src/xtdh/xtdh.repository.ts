@@ -824,17 +824,9 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
       ctx.timer?.start(`${this.constructor.name}->refillXTdhTokenStats`);
 
       const cutoffSql = `SELECT UNIX_TIMESTAMP(DATE(UTC_TIMESTAMP())) * 1000 AS cut_ms`;
-      const [{ cut_ms }] = await this.db.execute<{ cut_ms: number }>(
-        cutoffSql,
-        {},
-        { wrappedConnection: ctx.connection }
-      );
+      const [{ cut_ms }] = await this.db.execute<{ cut_ms: number }>(cutoffSql);
 
-      await this.db.execute(
-        `TRUNCATE TABLE ${TABLE}`,
-        {},
-        { wrappedConnection: ctx.connection }
-      );
+      await this.db.execute(`TRUNCATE TABLE ${TABLE}`);
 
       const sql = `
         INSERT INTO ${TABLE} (
@@ -973,9 +965,7 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
       const epochMs = this.getXTdhEpochMillis();
 
       // Clear existing stats
-      await this.db.execute(`TRUNCATE TABLE ${TABLE}`, undefined, {
-        wrappedConnection: ctx.connection
-      });
+      await this.db.execute(`TRUNCATE TABLE ${TABLE}`);
 
       const sql =
         `INSERT INTO ${TABLE} (

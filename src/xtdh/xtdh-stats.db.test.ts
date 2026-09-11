@@ -74,6 +74,18 @@ const seeds: Seed[] = [
     rows: [{ address: OWNER, consolidation_key: OWNER }]
   },
   {
+    table: `${XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX}a`,
+    rows: [
+      {
+        grant_id: 'published-grant',
+        partition: PARTITION,
+        token_id: 1,
+        xtdh_total: 99,
+        xtdh_rate_daily: 5
+      }
+    ]
+  },
+  {
     table: XTDH_STATS_META_TABLE,
     rows: [
       {
@@ -134,6 +146,7 @@ describeWithSeed('xTDH stats nonlocking inserts', seeds, () => {
       // Configure the other pool connection. A locking source read would fail
       // promptly instead of hanging this regression test for MySQL's default.
       await dataSource.query('SET SESSION innodb_lock_wait_timeout = 1');
+      const [before] = await dataSource.query('SELECT CONNECTION_ID() AS id');
 
       await repository.refillXTdhGrantStats({ slot: 'b' }, {});
       await repository.refillXTdhTokenStats({ slot: 'b' }, {});
@@ -155,8 +168,11 @@ describeWithSeed('xTDH stats nonlocking inserts', seeds, () => {
         active_slot: 'a'
       });
       const [session] = await dataSource.query(
-        'SELECT @@SESSION.transaction_isolation AS isolation_level'
+        'SELECT CONNECTION_ID() AS id, @@SESSION.transaction_isolation AS isolation_level'
       );
+      // Pool size is two and the writer still holds the first connection.
+      // Both inserts and this query must use the remaining connection.
+      expect(session.id).toBe(before.id);
       expect(session.isolation_level).toBe('REPEATABLE-READ');
     } finally {
       await writer.rollbackTransaction();
@@ -183,6 +199,14 @@ describeWithSeed('xTDH stats nonlocking inserts', seeds, () => {
       expect(await sqlExecutor.execute(`SELECT * FROM ${GRANT_TABLE}`)).toEqual(
         []
       );
+      expect(await repository.getStatsMetaOrNull({})).toMatchObject({
+        active_slot: 'a'
+      });
+      expect(
+        await sqlExecutor.execute(
+          `SELECT xtdh_total FROM ${XTDH_TOKEN_GRANT_STATS_TABLE_PREFIX}a`
+        )
+      ).toEqual([{ xtdh_total: 99 }]);
       await repository.refillXTdhGrantStats({ slot: 'b' }, {});
       expect(
         await sqlExecutor.execute(`SELECT * FROM ${GRANT_TABLE}`)
@@ -190,6 +214,16 @@ describeWithSeed('xTDH stats nonlocking inserts', seeds, () => {
     } finally {
       runnerFactory.mockRestore();
     }
+  });
+
+  it('reports an uninitialized loop database before attempting an insert', async () => {
+    const uninitialized = new DataSource(dataSource.options);
+    const db = new XTdhStatsDb(() => uninitialized);
+    await expect(
+      db.insertFromSelect('INSERT ... SELECT', {}, {})
+    ).rejects.toThrow(
+      'xTDH stats inserts require an initialized loop database'
+    );
   });
 
   it.each(['refillXTdhGrantStats', 'refillXTdhTokenStats'] as const)(

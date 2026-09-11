@@ -19,6 +19,11 @@ export class XTdhStatsDb {
     try {
       ctx.timer?.start(timerName);
       const db = await this.dataSource();
+      if (!db?.isInitialized) {
+        throw new Error(
+          'xTDH stats inserts require an initialized loop database'
+        );
+      }
       const [statement, values] = db.driver.escapeQueryWithParameters(
         sql,
         params,
