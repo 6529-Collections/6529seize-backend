@@ -2121,6 +2121,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     direct_message?: boolean;
     pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
+    if (pinned === ApiWavesPinFilter.Pinned && !authenticated_user_id) {
+      return [];
+    }
     return this.db
       .execute<
         Omit<
@@ -3121,6 +3124,12 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     direct_message?: boolean;
     pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
+    if (
+      param.pinned === ApiWavesPinFilter.Pinned &&
+      !param.authenticated_user_id
+    ) {
+      return [];
+    }
     const candidateResult =
       await this.findRecentlyDroppedToWavesFromCandidates(param);
     if (candidateResult !== null) {
@@ -3253,6 +3262,12 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       throw new Error(
         'Cannot request followed-only waves and exclude-followed waves together'
       );
+    }
+    if (
+      param.pinned === ApiWavesPinFilter.Pinned &&
+      !param.authenticated_user_id
+    ) {
+      return [];
     }
     const candidateResult =
       await this.findScoredRecentlyDroppedToWavesFromCandidates(param);
