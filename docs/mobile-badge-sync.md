@@ -130,9 +130,15 @@ tokens are retired conditionally without deleting a concurrent replacement.
 
 For an unclaimed legacy device, the first credential must prove knowledge of the
 FCM token on every existing registration row, or the retained installation token
-when those rows have already been removed. A fresh installation with neither
-registrations nor a retained token has no prior ownership to prove. Device IDs are visible to profiles
-and do not authorize device-wide deletion by themselves. Conflicting legacy
+when those rows have already been removed. Authenticated registration can establish a fresh installation with neither
+registrations nor a retained token. Logout before the first registration instead
+requires a matching, unexpired, unrevoked native refresh session. Anonymous requests
+cannot pre-claim an installation using only its device ID and a new secret.
+Successful early logout stores its revision fence and later retries use the
+installation secret, even after that logout revoked the native session. If the
+initial request has no valid session proof, cleanup remains pending; this also
+covers a never-registered client's session expiring before offline reconciliation.
+Device IDs are visible to profiles and do not authorize device-wide deletion by themselves. Conflicting legacy
 tokens or a lost installation credential require operator-assisted reconciliation
 after ownership verification; the client keeps cleanup pending and blocks new
 registration rather than taking over another profile's rows. Once claimed, legacy

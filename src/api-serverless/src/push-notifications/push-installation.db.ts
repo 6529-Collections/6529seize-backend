@@ -24,13 +24,58 @@ export interface InstallationRevocation extends InstallationProof {
   profile_id?: string;
   sessions: { address: string; native_refresh_token: string }[];
 }
+// Clients generate high-entropy installation credentials from two UUIDv4s;
+// these are random bearer credentials, not user-chosen passwords.
 const digest = (value: string) =>
   createHash('sha256').update(value).digest('hex');
 const conflict = () =>
   new CustomApiCompliantException(409, 'Stale push installation revision');
 
+type FreshClaimAuthorization =
+  | 'authenticated-registration'
+  | InstallationRevocation['sessions'];
+
+async function authorizeFreshClaim(
+  installation: PushInstallationEntity,
+  legacy: PushNotificationDevice[],
+  authorization: FreshClaimAuthorization,
+  ctx: RequestContext
+): Promise<void> {
+  // Existing installations prove ownership through their retained token/rows.
+  if (
+    legacy.length ||
+    installation.token ||
+    authorization === 'authenticated-registration'
+  )
+    return;
+  // Logout can precede the first push registration. Require an actual native
+  // credential in that case; an arbitrary device ID and new secret are not auth.
+  for (const session of authorization) {
+    const authenticated = await sqlExecutor.oneOrNull<{ id: string }>(
+      `SELECT id FROM ${WALLET_AUTH_SESSIONS_TABLE}
+       WHERE address = :address AND refresh_token_hash = :hash
+       AND client_type = 'native' AND revoked_at IS NULL AND expires_at > :now
+       LIMIT 1 FOR UPDATE`,
+      {
+        address: session.address.toLowerCase(),
+        hash: hashSecret(session.native_refresh_token),
+        now: new Date()
+      },
+      { wrappedConnection: ctx.connection }
+    );
+    if (authenticated) return;
+  }
+  throw new ForbiddenException(
+    'A native session is required to claim an unregistered push installation'
+  );
+}
+
 /** Every registration/revocation locks the same durable row, including legacy clients. */
-async function lockInstallation(proof: InstallationProof, ctx: RequestContext) {
+async function lockInstallation(
+  proof: InstallationProof,
+  ctx: RequestContext,
+  authorization: FreshClaimAuthorization
+) {
   const options = { wrappedConnection: ctx.connection };
   await sqlExecutor.execute(
     `INSERT INTO ${PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE} (device_id, revision) VALUES (:device_id, 0)
@@ -59,6 +104,7 @@ async function lockInstallation(proof: InstallationProof, ctx: RequestContext) {
       { device_id: proof.device_id },
       options
     );
+    await authorizeFreshClaim(installation, legacy, authorization, ctx);
     // Device IDs are public to registered profiles. A caller must know the
     // existing FCM token, and cannot add its own token row to claim others.
     const retainedTokenMismatch =
@@ -98,7 +144,8 @@ export async function registerInstallationDevice(
     await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
       const installation = await lockInstallation(
         { ...device, ...credential },
-        { ...ctx, connection }
+        { ...ctx, connection },
+        'authenticated-registration'
       );
       if (
         installation.secret_hash &&
@@ -137,10 +184,11 @@ export async function revokeInstallation(
   try {
     return await sqlExecutor.executeNativeQueriesInTransaction(
       async (connection) => {
-        const installation = await lockInstallation(request, {
-          ...ctx,
-          connection
-        });
+        const installation = await lockInstallation(
+          request,
+          { ...ctx, connection },
+          request.sessions
+        );
         // A retry must never delete a profile deliberately reconnected later.
         if (request.revision <= installation.revision) return installation;
         if (request.revision !== installation.revision + 1) throw conflict();
