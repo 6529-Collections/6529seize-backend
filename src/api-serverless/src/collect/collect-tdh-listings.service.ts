@@ -36,6 +36,13 @@ const FRESH_MILLIS = 3600000;
 type RankedSnapshot = Omit<ApiCollectTdhListings, 'next'>;
 const pendingSnapshots = new Map<CollectingFamily, Promise<RankedSnapshot>>();
 
+function snapshotStatus(observedAt: string | null, now: number) {
+  if (observedAt === null) return ApiCollectTdhListingsStatusEnum.Unavailable;
+  return now - new Date(observedAt).getTime() > FRESH_MILLIS
+    ? ApiCollectTdhListingsStatusEnum.Stale
+    : ApiCollectTdhListingsStatusEnum.Fresh;
+}
+
 /** Production TDH accrual rounds the indexed per-copy rate to hundredths. */
 export function baseTdhRateHundredths(rate: number | null): bigint | null {
   if (rate === null || !Number.isFinite(rate) || rate <= 0) return null;
@@ -170,12 +177,7 @@ export function rankIndexedTdhListings(
     snapshot_id: snapshotId,
     catalog_version: catalogVersion,
     observed_at: observedAt,
-    status:
-      oldest === null
-        ? ApiCollectTdhListingsStatusEnum.Unavailable
-        : now - oldest > FRESH_MILLIS
-          ? ApiCollectTdhListingsStatusEnum.Stale
-          : ApiCollectTdhListingsStatusEnum.Fresh,
+    status: snapshotStatus(observedAt, now),
     indexed_ask_count: indexedAskCount,
     evaluated_ask_count: evaluated,
     ranked_nft_count: entries.length,
@@ -218,7 +220,7 @@ async function buildSnapshot(
 
 function sharedSnapshot(family: CollectingFamily): Promise<RankedSnapshot> {
   const existing = pendingSnapshots.get(family);
-  if (existing) return existing;
+  if (existing !== undefined) return existing;
   const pending = buildSnapshot(family).finally(() =>
     pendingSnapshots.delete(family)
   );
@@ -265,12 +267,7 @@ export async function getCollectTdhListings(
   }
   return {
     ...snapshot,
-    status:
-      snapshot.observed_at === null
-        ? ApiCollectTdhListingsStatusEnum.Unavailable
-        : now - new Date(snapshot.observed_at).getTime() > FRESH_MILLIS
-          ? ApiCollectTdhListingsStatusEnum.Stale
-          : ApiCollectTdhListingsStatusEnum.Fresh,
+    status: snapshotStatus(snapshot.observed_at, now),
     entries,
     next:
       end < snapshot.entries.length
