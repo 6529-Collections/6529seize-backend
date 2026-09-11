@@ -58,6 +58,8 @@ async function authorizeFreshClaim(
     return;
   // Logout can precede the first push registration. Require an actual native
   // credential in that case; an arbitrary device ID and new secret are not auth.
+  // Keep the matched session valid until the claim commits against concurrent
+  // revocation/rotation. The refresh hash is unique; stop at the first match.
   for (const session of authorization) {
     const authenticated = await sqlExecutor.oneOrNull<{ id: string }>(
       `SELECT id FROM ${WALLET_AUTH_SESSIONS_TABLE}
@@ -186,11 +188,11 @@ export async function registerInstallationDevice(
 export async function revokeInstallation(
   request: InstallationRevocation,
   ctx: RequestContext
-): Promise<PushInstallationEntity> {
+): Promise<Pick<PushInstallationEntity, 'device_id' | 'revision'>> {
   const timer = 'PushInstallationDb->revoke';
   ctx.timer?.start(timer);
   try {
-    return await sqlExecutor.executeNativeQueriesInTransaction(
+    const revoked = await sqlExecutor.executeNativeQueriesInTransaction(
       async (connection) => {
         const installation = await lockInstallation(
           request,
@@ -242,6 +244,9 @@ export async function revokeInstallation(
         return { ...installation, revision: request.revision };
       }
     );
+    // Keep the verifier and delivery token inside the persistence boundary,
+    // including on the idempotent retry path.
+    return { device_id: revoked.device_id, revision: revoked.revision };
   } finally {
     ctx.timer?.stop(timer);
   }

@@ -106,6 +106,23 @@ cleanup without a live wallet JWT, allowing the secure client outbox to finish
 an offline logout after local accounts are removed. Each supplied refresh token
 revokes only its matching native session; other devices and web sessions remain.
 
+This route runs behind the shared API rate-limiting middleware, including for
+requests without a wallet JWT. With `API_RATE_LIMIT_ENABLED=true` and Redis
+available, ordinary anonymous requests use the IP-based limits (defaults: 30
+burst, 10 sustained requests/second). The shared middleware has its existing
+fail-open behavior; this is not a claim about deployed API Gateway throttles.
+Verify the API rate-limit configuration during rollout. Installation credentials
+are still required, and the device lock rejects revocation if Redis coordination
+is unavailable.
+
+Registration preserves the previous device upsert: only token and platform
+change on an existing profile/device row. It does not seed or overwrite settings;
+missing settings continue to use `DEFAULT_PUSH_NOTIFICATION_SETTINGS` at read
+time. Session creation normalizes addresses to lowercase, as do the matching
+logout lookups. The early-claim session lookup intentionally holds its matching
+row lock until commit against concurrent revocation/rotation; the refresh hash
+is unique and the search stops on its first valid session.
+
 A single logout deletes `push_notification_devices` and settings for the selected
 profile/device. Sign-out-all deletes every registration/settings row for that
 device, including forgotten local profiles. A sessions-only revocation omits the
@@ -120,6 +137,12 @@ Revocation commits first, then enqueues `installation_badge_refresh` by device I
 A failed queue handoff returns an error for client retry. Repeated revisions are
 idempotent and cannot erase a later login; new registration must present the
 current revision. Registration and revocation lock the same database row.
+If the client never retries a failed logout queue handoff, the registrations
+remain deleted but the badge can stay stale. The retained installation record
+does not schedule its own reconciliation. Recovery requires the client to retry
+its saved revision and complete the enqueue; deleting the secure outbox loses
+that recovery path. This limitation applies to logout separately from read-event
+publication failures.
 Revocation and final push recipient validation/submission also share the Redis
 device lock. Already accepted FCM/APNs pushes cannot be recalled by this fence.
 
@@ -141,6 +164,10 @@ is not the threat model. Retaining this independent verifier also avoids couplin
 long-lived installation ownership to the auth-session HMAC key configuration or
 rotation. Native session proofs still use the existing keyed `hashSecret` format
 to match their session records; that authentication policy is unchanged.
+The revocation database operation returns only device ID and revision on both
+first execution and retries. Neither the stored verifier nor FCM token leaves
+that persistence boundary through the revocation result; the public response
+contains only the revision.
 
 A mixed-session logout checks every supplied address/token pair independently.
 Authenticating one native session for an early installation claim does not
