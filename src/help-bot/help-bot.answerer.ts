@@ -1,7 +1,13 @@
+import {
+  desktopQuestionWithContext,
+  isDesktopKnowledgeRecord,
+  MAX_DESKTOP_ANSWER_CHARACTERS
+} from './help-bot-desktop-knowledge';
 import { Logger } from '@/logging';
 import {
   frontendHelpBotKnowledgeSource,
   HelpBotKnowledgeSource,
+  HelpBotKnowledgeQueryOptions,
   HelpBotKnowledgeRecord,
   HelpBotKnowledgeMatch,
   isAmbiguousWalletManagementQuestion,
@@ -640,11 +646,20 @@ function buildDeterministicAnswer(
   if (record.kind === 'public_review_knowledge') {
     return buildStreamEvidenceAnswer(record, baseUrl);
   }
-  return ensureKnowledgeMarkdownLinks({
-    text: record.facts.join(' '),
+  const answer = ensureKnowledgeMarkdownLinks({
+    text: isDesktopKnowledgeRecord(record)
+      ? record.facts.map((fact, index) => `${index + 1}. ${fact}`).join('\n\n')
+      : record.facts.join(' '),
     record,
     baseUrl
   });
+  if (
+    isDesktopKnowledgeRecord(record) &&
+    answer.length > MAX_DESKTOP_ANSWER_CHARACTERS
+  ) {
+    return 'I could not fit a complete Desktop procedure into this reply. Please narrow the question to one setup or recovery action so its steps and data-loss warnings can stay together. Do not reset local data based on an incomplete procedure.';
+  }
+  return answer;
 }
 
 function normalizeRenderedAnswer(
@@ -660,6 +675,12 @@ function normalizeRenderedAnswer(
     record,
     baseUrl
   });
+  if (isDesktopKnowledgeRecord(record)) {
+    // Never cut a recovery instruction before its data-loss warning.
+    return withUrl.length <= MAX_DESKTOP_ANSWER_CHARACTERS
+      ? withUrl
+      : buildDeterministicAnswer(record, baseUrl);
+  }
   return withUrl.length <= MAX_RENDERED_ANSWER_CHARACTERS
     ? withUrl
     : `${withUrl.slice(0, MAX_RENDERED_ANSWER_CHARACTERS - 3)}...`;
@@ -1262,14 +1283,17 @@ function mergeKnowledgeMatches(
   if (!primary) {
     return null;
   }
-  if (matches.length === 1) {
+  if (matches.length === 1 || isDesktopKnowledgeRecord(primary.record)) {
     return primary;
   }
 
   const relatedRecords = matches
     .slice(1)
     .map((match) => match.record)
-    .filter((record) => record.id !== primary.record.id);
+    .filter(
+      (record) =>
+        record.id !== primary.record.id && !isDesktopKnowledgeRecord(record)
+    );
   if (!relatedRecords.length) {
     return primary;
   }
@@ -1561,6 +1585,11 @@ export class HelpBotAnswerer {
       };
     }
 
+    const desktopAnswer = await this.answerFromDesktopKnowledge(request);
+    if (desktopAnswer) {
+      return desktopAnswer;
+    }
+
     const streamMatch = await this.findStreamKnowledgeMatch(request);
     if (streamMatch) {
       return this.answerFromKnowledgeMatch(request, streamMatch);
@@ -1623,6 +1652,33 @@ export class HelpBotAnswerer {
     }
 
     return this.answerFromKnowledgeMatch(request, match);
+  }
+
+  /** Keep local-node knowledge separate from public data and propagate source failures. */
+  private async answerFromDesktopKnowledge(
+    request: HelpBotAnswerRequest
+  ): Promise<HelpBotAnswerResult | null> {
+    const context = parseHelpBotQuestionContext(request.question);
+    const desktopQuestion = desktopQuestionWithContext(
+      context.primaryQuestion,
+      request.previousBotAnswer ?? context.repliedToDropContext
+    );
+    if (!desktopQuestion) {
+      return null;
+    }
+    // A thrown load error reaches the processor's technical-failure/refund path.
+    const match = await this.findKnowledgeMatches(desktopQuestion, {
+      desktopScope: true
+    });
+    if (
+      match &&
+      (isDesktopKnowledgeRecord(match.record) ||
+        match.record.tags.includes('desktop'))
+    ) {
+      return this.answerFromKnowledgeMatch(request, match);
+    }
+    // Local-node state cannot be replaced with a public database answer.
+    return { type: 'NO_RELIABLE_SOURCE', escalateToTechTeam: true };
   }
 
   private async answerFromKnowledgeMatch(
@@ -1784,16 +1840,18 @@ export class HelpBotAnswerer {
   }
 
   private async findKnowledgeMatches(
-    question: string
+    question: string,
+    options?: HelpBotKnowledgeQueryOptions
   ): Promise<HelpBotKnowledgeMatch | null> {
     if (this.knowledgeSource.findMatches) {
       return mergeKnowledgeMatches(
         await this.knowledgeSource.findMatches(
           question,
-          MAX_KNOWLEDGE_CONTEXT_MATCHES
+          MAX_KNOWLEDGE_CONTEXT_MATCHES,
+          options
         )
       );
     }
-    return await this.knowledgeSource.findMatch(question);
+    return await this.knowledgeSource.findMatch(question, options);
   }
 }

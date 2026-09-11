@@ -1,3 +1,7 @@
+import {
+  isDesktopKnowledgeRecord,
+  MAX_DESKTOP_ANSWER_TOKENS
+} from './help-bot-desktop-knowledge';
 import { getBedrockClient } from '@/bedrock';
 import {
   BedrockRuntimeClient,
@@ -73,7 +77,16 @@ function buildPrompt({
     `You are ${HELP_BOT_MENTION}, a concise helper bot for 6529.io.`,
     'Answer only from the provided facts.',
     'Do not invent details.',
-    'Use one or two short paragraphs.',
+    ...(isDesktopKnowledgeRecord(record)
+      ? [
+          'For onboarding or troubleshooting, give an ordered, actionable guide. For a narrow question, answer just the relevant steps and caveats.',
+          'Keep the answer under 5500 characters. Preserve complete recovery steps and include each destructive action’s data-loss warning in the same step.',
+          'Use the supplied native menu and button labels. Do not turn Core-only paths or localhost addresses into public website links.',
+          'Distinguish local indexed data from on-chain holdings, local node TDH from profile TDH, and current behavior from future phases.',
+          'Explain the least disruptive relevant action first; do not prescribe every reset for every error. Ask for version, checkpoint or redacted error when needed.',
+          'You cannot inspect or operate the user’s computer. Never request passwords, recovery phrases, private keys, or credential-bearing RPC URLs.'
+        ]
+      : ['Use one or two short paragraphs.']),
     TONE_GUIDANCE,
     NO_SELF_INTRO_GUIDANCE,
     ...streamGrounding,
@@ -233,12 +246,18 @@ export class HelpBotBedrockRenderer implements HelpBotLlmRenderer {
     readonly canonicalUrl: string;
   }): Promise<string> {
     const isStreamKnowledge = input.record.kind === 'public_review_knowledge';
-    const maxTokens = isStreamKnowledge ? 320 : 220;
+    const isDesktopKnowledge = isDesktopKnowledgeRecord(input.record);
+    let maxTokens = 220;
+    if (isDesktopKnowledge) {
+      maxTokens = MAX_DESKTOP_ANSWER_TOKENS;
+    } else if (isStreamKnowledge) {
+      maxTokens = 320;
+    }
     return this.invokePrompt(
       buildPrompt(input),
       maxTokens,
       undefined,
-      isStreamKnowledge
+      isStreamKnowledge || isDesktopKnowledge
     );
   }
 
