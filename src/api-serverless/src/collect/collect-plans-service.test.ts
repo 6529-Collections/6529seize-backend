@@ -2,7 +2,9 @@ import { CollectingAnalysis } from '@/collecting/collecting.types';
 import {
   collectPlanView,
   advanceCollectPlan,
-  collectPlanRankingCandidates
+  collectPlanRankingCandidates,
+  createCollectPlan,
+  readCollectPlan
 } from './collect-plans.service';
 import { collectingService } from '@/collecting/collecting.service';
 import { dbSupplier } from '@/sql-executor';
@@ -10,6 +12,8 @@ import { marketplaceProvider } from '@/api/marketplace/marketplace.service';
 import * as planner from '@/collecting/collecting-planner';
 import { MEMES_CONTRACT } from '@/constants';
 import { MARKET_ZERO_ADDRESS } from '@/marketplace/seaport.registry';
+import { DbPoolName, DbQueryOptions } from '@/db-query.options';
+import { marketChain } from '@/marketplace/market-chain';
 
 jest.mock('@/collecting/collecting.service', () => ({
   collectingService: { analyze: jest.fn(), getCatalog: jest.fn() }
@@ -151,9 +155,147 @@ function scanFixture(current = analysis) {
   return { saved, listing, provider, execute };
 }
 
+function holdPlanReplica(
+  primary: ReturnType<typeof row>,
+  replica: ReturnType<typeof row> | null = { ...primary }
+) {
+  const db = dbSupplier();
+  // Writes continue updating primary; the replica never catches up during the test.
+  const oneOrNull = jest.fn(
+    async (
+      _sql: string,
+      params: Record<string, unknown>,
+      options?: DbQueryOptions
+    ) => {
+      const selected =
+        options?.forcePool === DbPoolName.WRITE ? primary : replica;
+      if (
+        !selected ||
+        selected.id !== params.id ||
+        selected.profile_id !== params.profileId
+      )
+        return null;
+      return { ...selected };
+    }
+  );
+  jest.mocked(dbSupplier).mockReturnValue({
+    ...db,
+    oneOrNull
+  } as unknown as ReturnType<typeof dbSupplier>);
+}
+
 describe('persisted collecting scans', () => {
   beforeEach(() => jest.clearAllMocks());
   afterEach(() => jest.restoreAllMocks());
+
+  it('creates and immediately reads a saved plan before its row reaches the replica', async () => {
+    const { saved, execute } = scanFixture();
+    const original = execute.getMockImplementation()!;
+    execute.mockImplementation(async (sql, params) => {
+      if (sql.startsWith('INSERT INTO collect_plans')) {
+        Object.assign(saved, params);
+        return [{ affected: 1 }];
+      }
+      return original(sql, params);
+    });
+    holdPlanReplica(saved, null);
+    jest.mocked(marketChain).mockReturnValue({
+      rpc: {
+        getFeeData: jest.fn().mockResolvedValue({ maxFeePerGas: BigInt(1) })
+      }
+    } as unknown as ReturnType<typeof marketChain>);
+
+    const created = await createCollectPlan(
+      'p',
+      { profile_id: 'p', kind: 'exact' },
+      { recipient: 'w', budget_wei: '1000000' }
+    );
+    expect(created).toMatchObject({
+      id: saved.id,
+      profile_id: 'p',
+      state: 'SCANNING',
+      checked_asset_count: 0,
+      total_asset_count: 1
+    });
+    await expect(readCollectPlan(created.id, 'p')).resolves.toMatchObject({
+      id: created.id,
+      analysis
+    });
+  });
+
+  it('observes its acquired lease and returns the new checkpoint while the replica retains the previous scan', async () => {
+    const { saved, provider } = scanFixture();
+    holdPlanReplica(saved);
+
+    const result = await advanceCollectPlan('plan', 'p');
+
+    expect(provider.discoverOrders).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      state: 'READY',
+      checked_asset_count: 1,
+      asset_scan_complete: true
+    });
+    expect(result.result.legs).toHaveLength(1);
+    await expect(readCollectPlan('plan', 'p')).resolves.toMatchObject({
+      state: 'READY',
+      checked_asset_count: 1
+    });
+    await expect(
+      collectPlanRankingCandidates('plan', 'p', 'w')
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          acquisitions: [{ asset_key: 'asset', quantity: '1', recipient: 'w' }]
+        })
+      ])
+    );
+    await advanceCollectPlan('plan', 'p');
+    expect(provider.discoverOrders).toHaveBeenCalledTimes(1);
+    expect(saved.lease_token).toBeNull();
+  });
+
+  it('returns a membership-invalidated plan even while the replica still has a scanning row', async () => {
+    const { saved, execute, provider } = scanFixture();
+    const original = execute.getMockImplementation()!;
+    execute.mockImplementation(async (sql, params) => {
+      if (sql.includes("SET state='STALE'")) {
+        saved.state = 'STALE';
+        saved.lease_token = null;
+        saved.lease_until = 0;
+      }
+      return original(sql, params);
+    });
+    holdPlanReplica(saved);
+    jest.mocked(collectingService.analyze).mockResolvedValue({
+      ...analysis,
+      account: { ...analysis.account, membership_hash: 'changed' }
+    });
+
+    await expect(advanceCollectPlan('plan', 'p')).resolves.toMatchObject({
+      state: 'STALE'
+    });
+    expect(provider.discoverOrders).not.toHaveBeenCalled();
+    expect(saved.lease_token).toBeNull();
+  });
+
+  it.each<[string, () => Promise<unknown>]>([
+    ['read', () => readCollectPlan('plan', 'other-profile')],
+    ['advance', () => advanceCollectPlan('plan', 'other-profile')],
+    ['rank', () => collectPlanRankingCandidates('plan', 'other-profile', 'w')]
+  ])(
+    "does not %s another profile's plan from the primary",
+    async (_name, work) => {
+      const { saved, execute, provider } = scanFixture();
+      holdPlanReplica(saved, null);
+
+      await expect(work()).rejects.toMatchObject({
+        message: 'Collecting plan not found.'
+      });
+      expect(execute).not.toHaveBeenCalled();
+      expect(collectingService.analyze).not.toHaveBeenCalled();
+      expect(provider.discoverOrders).not.toHaveBeenCalled();
+    }
+  );
 
   it('checkpoints a final pair without exceeding the persisted candidate bound', async () => {
     const current = {

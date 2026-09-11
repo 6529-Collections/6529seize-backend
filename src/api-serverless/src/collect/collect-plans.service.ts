@@ -11,6 +11,7 @@ import {
 } from '@/collecting/collecting-planner';
 import { CustomApiCompliantException, NotFoundException } from '@/exceptions';
 import { dbSupplier } from '@/sql-executor';
+import { DbPoolName } from '@/db-query.options';
 import { marketChain } from '@/marketplace/market-chain';
 import {
   marketUintSchema,
@@ -183,9 +184,11 @@ export async function createCollectPlan(
 }
 
 async function rowFor(id: string, profileId: string): Promise<PlanRow> {
+  // Creation, lease checks and checkpoints must observe the latest primary state.
   const row = await dbSupplier().oneOrNull<PlanRow>(
     'SELECT * FROM collect_plans WHERE id=:id AND profile_id=:profileId',
-    { id, profileId }
+    { id, profileId },
+    { forcePool: DbPoolName.WRITE }
   );
   if (!row) throw new NotFoundException('Collecting plan not found.');
   return row;
