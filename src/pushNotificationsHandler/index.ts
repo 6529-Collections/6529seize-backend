@@ -21,6 +21,21 @@ import { sendIdentityNotificationsBatch } from '@/pushNotificationsHandler/ident
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER');
 
+async function refreshInstallationRecords(
+  records: { messageId: string; deviceId: string }[]
+): Promise<{ itemIdentifier: string }[]> {
+  const failures: { itemIdentifier: string }[] = [];
+  for (const record of records) {
+    try {
+      await refreshInstallationBadge(record.deviceId);
+    } catch (error) {
+      logger.error(`Installation badge refresh failed: ${error}`);
+      failures.push({ itemIdentifier: record.messageId });
+    }
+  }
+  return failures;
+}
+
 const sqsHandler: SQSHandler = async (event): Promise<SQSBatchResponse> => {
   return doInDbContext(
     async () => {
@@ -109,14 +124,7 @@ const sqsHandler: SQSHandler = async (event): Promise<SQSBatchResponse> => {
         }
       }
 
-      for (const record of installationRecords) {
-        try {
-          await refreshInstallationBadge(record.deviceId);
-        } catch (error) {
-          logger.error(`Installation badge refresh failed: ${error}`);
-          failures.push({ itemIdentifier: record.messageId });
-        }
-      }
+      failures.push(...(await refreshInstallationRecords(installationRecords)));
       return {
         batchItemFailures: failures
       };
