@@ -66,8 +66,27 @@ const data = (row: PlanRow): PlanData =>
 const collectingStateHash = (analysis: CollectingAnalysis) =>
   marketRequestHash({
     catalog_version: analysis.catalog_version,
-    account: analysis.account,
-    requirements: analysis.requirements,
+    // MySQL JSON storage can reorder object properties. Rebuild the compared
+    // state explicitly so unchanged holdings survive a database round trip.
+    account: {
+      profile_id: analysis.account.profile_id,
+      consolidation_key: analysis.account.consolidation_key,
+      wallets: analysis.account.wallets,
+      membership_hash: analysis.account.membership_hash
+    },
+    requirements: analysis.requirements.map((requirement) => ({
+      id: requirement.id,
+      label: requirement.label,
+      target_quantity: requirement.target_quantity,
+      owned_quantity: requirement.owned_quantity,
+      missing_quantity: requirement.missing_quantity,
+      asset_keys: requirement.asset_keys,
+      holdings: requirement.holdings.map((holding) => ({
+        asset_key: holding.asset_key,
+        wallet: holding.wallet,
+        quantity: holding.quantity
+      }))
+    })),
     recipient: analysis.recipient
   });
 

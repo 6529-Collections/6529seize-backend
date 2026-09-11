@@ -142,6 +142,11 @@ function scanFixture(current = analysis) {
         saved.lease_token = null;
         saved.lease_until = 0;
       }
+      if (sql.includes("SET state='STALE'")) {
+        saved.state = 'STALE';
+        saved.lease_token = null;
+        saved.lease_until = 0;
+      }
       return [{ affected: 1 }];
     }
   );
@@ -182,6 +187,17 @@ function holdPlanReplica(
     ...db,
     oneOrNull
   } as unknown as ReturnType<typeof dbSupplier>);
+}
+
+function reorderJsonProperties(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(reorderJsonProperties);
+  if (value !== null && typeof value === 'object')
+    return Object.fromEntries(
+      Object.entries(value)
+        .reverse()
+        .map(([key, item]) => [key, reorderJsonProperties(item)])
+    );
+  return value;
 }
 
 describe('persisted collecting scans', () => {
@@ -277,6 +293,83 @@ describe('persisted collecting scans', () => {
     expect(provider.discoverOrders).not.toHaveBeenCalled();
     expect(saved.lease_token).toBeNull();
   });
+
+  it('scans and ranks unchanged holdings after JSON storage reorders nested object properties', async () => {
+    const withHolding: CollectingAnalysis = {
+      ...analysis,
+      requirements: analysis.requirements.map((requirement) => ({
+        ...requirement,
+        target_quantity: '2',
+        owned_quantity: '1',
+        holdings: [{ asset_key: 'asset', wallet: 'w', quantity: '1' }]
+      }))
+    };
+    const { saved, provider } = scanFixture(withHolding);
+    saved.payload_json = JSON.stringify(
+      reorderJsonProperties(JSON.parse(saved.payload_json))
+    );
+    holdPlanReplica(saved);
+
+    const advanced = await advanceCollectPlan('plan', 'p');
+    expect(advanced).toMatchObject({ state: 'READY', checked_asset_count: 1 });
+    expect(provider.discoverOrders).toHaveBeenCalledTimes(1);
+
+    saved.payload_json = JSON.stringify(
+      reorderJsonProperties(JSON.parse(saved.payload_json))
+    );
+    await expect(
+      collectPlanRankingCandidates('plan', 'p', 'w')
+    ).resolves.toHaveLength(2);
+  });
+
+  it.each<[string, (current: CollectingAnalysis) => CollectingAnalysis]>([
+    ['recipient', (current) => ({ ...current, recipient: 'other-wallet' })],
+    [
+      'owned quantity',
+      (current) => ({
+        ...current,
+        requirements: current.requirements.map((requirement) => ({
+          ...requirement,
+          owned_quantity: '1',
+          missing_quantity: '0',
+          holdings: [{ asset_key: 'asset', wallet: 'w', quantity: '1' }]
+        }))
+      })
+    ],
+    [
+      'required asset',
+      (current) => ({
+        ...current,
+        requirements: current.requirements.map((requirement) => ({
+          ...requirement,
+          asset_keys: ['different-asset']
+        }))
+      })
+    ]
+  ])(
+    'still invalidates a stored plan when its %s changes',
+    async (_name, change) => {
+      const { saved, provider } = scanFixture();
+      saved.payload_json = JSON.stringify(
+        reorderJsonProperties(JSON.parse(saved.payload_json))
+      );
+      jest
+        .mocked(collectingService.analyze)
+        .mockResolvedValue(change(analysis));
+
+      await expect(advanceCollectPlan('plan', 'p')).resolves.toMatchObject({
+        state: 'STALE',
+        checked_asset_count: 0
+      });
+      expect(provider.discoverOrders).not.toHaveBeenCalled();
+      await expect(
+        collectPlanRankingCandidates('plan', 'p', 'w')
+      ).rejects.toMatchObject({
+        message:
+          'Finish or refresh the collecting plan before comparing its TDH.'
+      });
+    }
+  );
 
   it.each<[string, () => Promise<unknown>]>([
     ['read', () => readCollectPlan('plan', 'other-profile')],
