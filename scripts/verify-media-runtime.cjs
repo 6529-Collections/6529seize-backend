@@ -1,13 +1,26 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const { createRequire } = require('node:module');
 const { execFileSync } = require('node:child_process');
 const { Readable, Writable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 
 // Resolve only from the supplied install/extracted ZIP, never the verifier's modules.
-const root = path.resolve(process.argv[2] || '.');
+const root = fs.realpathSync(path.resolve(process.argv[2] || '.'));
+const allowedRoots = [process.cwd(), os.tmpdir()].map((directory) =>
+  fs.realpathSync(directory)
+);
+if (
+  !allowedRoots.some(
+    (directory) => root === directory || root.startsWith(directory + path.sep)
+  )
+) {
+  throw new Error(
+    'Media verification requires a workspace or temporary artifact directory'
+  );
+}
 const load = createRequire(path.join(root, 'index.js'));
 assert.ok(
   load.resolve('sharp').startsWith(path.join(root, 'node_modules') + path.sep)
