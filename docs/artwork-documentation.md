@@ -53,7 +53,11 @@ Group eligibility is evaluated using the site's current criteria for the
 explicitly granted group IDs; membership is never copied into individual grants.
 The dedicated eligibility reader uses the documentation write pool (and current
 transaction when present), so a lagging read replica cannot retain removed access.
-These viewer rows provide all read capabilities and no editing, artist
+The list endpoint evaluates group eligibility once for that list request;
+subsequent requests and mutation authorization evaluate the current state again.
+These viewer rows deliberately provide all read capabilities, including legacy
+archival files, rights evidence, source receipts, contact and restricted answers,
+and no editing, artist
 confirmation, review, assignment, or lifecycle authority. Existing artist,
 context collaborator, reviewer, and coordinator grants retain their permissions.
 The API does not return the viewer roster or group membership to readers.

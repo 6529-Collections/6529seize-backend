@@ -1,6 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { RequestContext } from '@/request.context';
-import { canWriteDocumentation } from './artwork-documentation.access';
 import {
   ProgramViewerGroups,
   programViewerCapabilities,
@@ -51,6 +50,7 @@ import {
 } from './artwork-documentation.types';
 import {
   artistCapabilities,
+  canWriteDocumentation,
   canReadField,
   laneForModule,
   mergeCapabilities,
@@ -243,7 +243,8 @@ export class ArtworkDocumentationService {
   async authorizeContext(
     id: string,
     ctx: RequestContext,
-    lock = false
+    lock = false,
+    viewerPrograms?: readonly string[]
   ): Promise<ContextAccess> {
     const actorProfileId = this.actor(ctx);
     const context = await this.db.context(id, ctx, lock);
@@ -257,7 +258,9 @@ export class ArtworkDocumentationService {
           actorProfileId,
           context.id,
           context.program_id,
-          ctx
+          ctx,
+          true,
+          lock ? undefined : viewerPrograms
         );
     if (!capabilities.read_context) fail(404, 'UNAVAILABLE');
     return { context, capabilities, isArtist, actorProfileId };
@@ -267,7 +270,8 @@ export class ArtworkDocumentationService {
     contextId: string | null,
     programId: string | null,
     ctx: RequestContext,
-    includeProgramViewers = true
+    includeProgramViewers = true,
+    viewerPrograms?: readonly string[]
   ): Promise<Capabilities> {
     const rows = await this.db.query<{ capabilities_json: unknown }>(
       `SELECT capabilities_json FROM ${AD_GRANTS} WHERE subject_profile_id=:actor AND revoked_at IS NULL AND ((context_id=:contextId AND context_id IS NOT NULL) OR (program_id=:programId AND context_id IS NULL AND program_id IS NOT NULL))`,
@@ -280,9 +284,10 @@ export class ArtworkDocumentationService {
     if (
       includeProgramViewers &&
       programId &&
-      (await this.readableViewerPrograms(actor, ctx, programId)).includes(
-        programId
-      )
+      (
+        viewerPrograms ??
+        (await this.readableViewerPrograms(actor, ctx, programId))
+      ).includes(programId)
     )
       grants.push(programViewerCapabilities());
     return mergeCapabilities(grants);

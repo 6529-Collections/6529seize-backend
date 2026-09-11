@@ -175,6 +175,18 @@ describe('artwork documentation transactional persistence', () => {
         (await grouped.getContext(record.id, viewer)).capabilities
       ).toEqual(programViewerCapabilities());
       expect(matcher).toHaveBeenCalledWith(member, [group], undefined);
+      const second = await readyContext();
+      await setProgram(second);
+      matcher.mockClear();
+      const queue = await groupedReviews.listContexts(
+        viewer,
+        {},
+        '6529NM-AP-01'
+      );
+      expect(queue.data.map((item) => item.id)).toEqual(
+        expect.arrayContaining([record.id, second.id])
+      );
+      expect(matcher).toHaveBeenCalledTimes(1);
       await expect(
         grouped.getContext(record.id, makeContext(randomUUID()))
       ).rejects.toMatchObject({ code: 'UNAVAILABLE' });
@@ -194,9 +206,11 @@ describe('artwork documentation transactional persistence', () => {
         grouped.getContext(unrelated.id, viewer)
       ).rejects.toMatchObject({ code: 'UNAVAILABLE' });
       eligible = false;
+      matcher.mockClear();
       await expect(grouped.getContext(record.id, viewer)).rejects.toMatchObject(
         { code: 'UNAVAILABLE' }
       );
+      expect(matcher).toHaveBeenCalledTimes(1);
       await expect(
         groupedReviews.listContexts(viewer, {}, '6529NM-AP-01')
       ).rejects.toMatchObject({ code: 'UNAVAILABLE' });

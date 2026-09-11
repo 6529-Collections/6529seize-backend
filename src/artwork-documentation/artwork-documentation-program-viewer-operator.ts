@@ -55,7 +55,7 @@ function subjectIds(value: unknown, isProfile: boolean): string[] {
 export function parseProgramViewersEvent(
   input: Record<string, unknown>
 ): ProgramViewersEvent {
-  const allowed = [
+  const allowed = new Set([
     'operator_action',
     'correlation_id',
     'coordinator_profile_id',
@@ -63,10 +63,10 @@ export function parseProgramViewersEvent(
     'viewers',
     'expected_inventory_sha256',
     'apply'
-  ];
+  ]);
   const viewers = input.viewers as Record<string, unknown> | undefined;
   if (
-    Object.keys(input).some((key) => !allowed.includes(key)) ||
+    Object.keys(input).some((key) => !allowed.has(key)) ||
     typeof input.coordinator_profile_id !== 'string' ||
     !uuid.test(input.coordinator_profile_id) ||
     typeof input.program_id !== 'string' ||

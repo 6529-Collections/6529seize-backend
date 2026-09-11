@@ -184,22 +184,25 @@ export class ArtworkDocumentationReviewService {
     workId?: string
   ) {
     const actor = this.core.actor(ctx);
-    if (programId) {
-      const caps = await this.core.grantCapabilities(
-        actor,
-        null,
-        programId,
-        ctx
-      );
-      if (!caps.read_context) fail(404, 'UNAVAILABLE');
-    }
-    const { limit, cursor } = pageParameters(raw);
-    const filters = queueFilters(raw);
+    // Reuse only within this list read; subsequent requests resolve membership again.
     const viewerPrograms = await this.core.readableViewerPrograms(
       actor,
       ctx,
       programId
     );
+    if (programId) {
+      const caps = await this.core.grantCapabilities(
+        actor,
+        null,
+        programId,
+        ctx,
+        true,
+        viewerPrograms
+      );
+      if (!caps.read_context) fail(404, 'UNAVAILABLE');
+    }
+    const { limit, cursor } = pageParameters(raw);
+    const filters = queueFilters(raw);
     const rows = await this.core.db.query<{ id: string; updated_at: number }>(
       `SELECT c.id,c.updated_at FROM ${AD_CONTEXTS} c LEFT JOIN ${AD_REVISIONS} r ON r.id=c.latest_revision_id WHERE (c.owner_profile_id=:actor OR EXISTS (SELECT 1 FROM ${AD_GRANTS} g WHERE g.subject_profile_id=:actor AND g.revoked_at IS NULL AND (g.context_id=c.id OR (g.context_id IS NULL AND g.program_id=c.program_id)))${viewerPrograms.length ? ' OR c.program_id IN (:viewerPrograms)' : ''}) AND (:programId IS NULL OR c.program_id=:programId) AND (:workId IS NULL OR c.work_id=:workId) AND (:cursorId IS NULL OR c.updated_at<:updated OR (c.updated_at=:updated AND c.id<:cursorId))${filters.sql} ORDER BY c.updated_at DESC,c.id DESC LIMIT :limit`,
       {
@@ -217,7 +220,10 @@ export class ArtworkDocumentationReviewService {
     const visible = rows.slice(0, limit);
     const data = await Promise.all(
       visible.map(async (row) =>
-        this.summary(await this.core.authorizeContext(row.id, ctx), ctx)
+        this.summary(
+          await this.core.authorizeContext(row.id, ctx, false, viewerPrograms),
+          ctx
+        )
       )
     );
     const last = visible[visible.length - 1];
