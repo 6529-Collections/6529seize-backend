@@ -1,9 +1,13 @@
 # Push notification previews
 
 Push previews of drop and DM content use compact plain text. Headings retain
-their text on a separate line, emphasis and code delimiters are removed, lists
-retain bullets or numbering, and ordinary links show their labels. Blank lines
-are collapsed. Code content and escaped punctuation remain readable.
+their text on a separate line, emphasis delimiters are removed, lists retain
+bullets or numbering, and ordinary links show their labels. Blank lines are
+collapsed. Blockquotes are enclosed in curly double quotation marks (“quoted
+text”), and inline code uses curly single quotation marks (‘npm test’). Nested
+blockquotes alternate double and single quotation marks. Multiline code blocks
+remain plain text without added quotation marks. Code content and escaped
+punctuation remain readable.
 
 Image references and links to uploaded media are omitted from the text, as in
 the existing push sanitizer. When Markdown produces no text, the handler uses

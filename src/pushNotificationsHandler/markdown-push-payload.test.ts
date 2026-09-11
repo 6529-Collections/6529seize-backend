@@ -26,7 +26,8 @@ describe('Markdown push payload', () => {
 
   it('sends readable text before the length limit while retaining title and routing', async () => {
     const text =
-      '# Heading\n\n**Hello** @[prxt0] :wave: ' + '**👋**'.repeat(260);
+      '# Heading\n\n> Run `npm test`\n\n**Hello** @[prxt0] :wave: ' +
+      '**👋**'.repeat(260);
     const body = formatDropMarkdownForPush(text);
     await sendMessages([
       {
@@ -40,7 +41,8 @@ describe('Markdown push payload', () => {
     ]);
 
     const message = sendEach.mock.calls[0][0][0];
-    const expectedText = 'Heading\nHello @prxt0 👋 ' + '👋'.repeat(260);
+    const expectedText =
+      'Heading\n“Run ‘npm test’”\nHello @prxt0 👋 ' + '👋'.repeat(260);
     expect(message.notification).toEqual({
       title: '[prxt0] snake_case messaged you · DM',
       body: Array.from(expectedText).slice(0, 247).join('') + '...'

@@ -1,5 +1,8 @@
 import MarkdownIt from 'markdown-it';
-import { isSupportedMediaUrl } from '@/pushNotificationsHandler/push-notification-text';
+import {
+  isSupportedMediaUrl,
+  sanitizePushNotificationText
+} from '@/pushNotificationsHandler/push-notification-text';
 
 // Parse Markdown without rendering HTML or enabling typographic substitutions.
 const markdown = new MarkdownIt({ html: false, linkify: false });
@@ -23,8 +26,11 @@ function inlineText(tokens: MarkdownIt.Token[]): string {
 function inlineTokenText(token: MarkdownIt.Token): string {
   switch (token.type) {
     case 'text':
-    case 'code_inline':
       return token.content;
+    case 'code_inline':
+      return sanitizePushNotificationText(token.content)
+        ? `‘${token.content}’`
+        : ' ';
     case 'softbreak':
     case 'hardbreak':
       return '\n';
@@ -35,12 +41,29 @@ function inlineTokenText(token: MarkdownIt.Token): string {
   }
 }
 
+function closeBlockquote(parts: string[], quotes: number[]): void {
+  const start = quotes.pop();
+  if (start === undefined) return;
+  const content = parts.splice(start).join('').trim();
+  // Media-only quotes should still reach the existing empty-preview fallback.
+  if (!sanitizePushNotificationText(content)) return;
+  const [open, close] = quotes.length % 2 === 0 ? ['“', '”'] : ['‘', '’'];
+  parts.push(`${open}${content}${close}\n`);
+}
+
 function blockText(tokens: MarkdownIt.Token[]): string {
   const parts: string[] = [];
   const lists: Array<{ next: number | null }> = [];
+  const quotes: number[] = [];
   let tableCell = 0;
   for (const token of tokens) {
     switch (token.type) {
+      case 'blockquote_open':
+        quotes.push(parts.length);
+        break;
+      case 'blockquote_close':
+        closeBlockquote(parts, quotes);
+        break;
       case 'bullet_list_open':
         lists.push({ next: null });
         break;

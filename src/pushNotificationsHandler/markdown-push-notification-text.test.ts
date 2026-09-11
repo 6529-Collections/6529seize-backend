@@ -9,7 +9,7 @@ describe('formatDropMarkdownForPush', () => {
         '# A Little Markdown Playground\n\nHere is some **bold text**, a touch of *italic text*, and a bit of `inline code`.\n\n- Make something useful\n- Enjoy a coffee break\n\n> Progress starts with a small experiment.'
       )
     ).toBe(
-      'A Little Markdown Playground\nHere is some bold text, a touch of italic text, and a bit of inline code.\n• Make something useful\n• Enjoy a coffee break\nProgress starts with a small experiment.'
+      'A Little Markdown Playground\nHere is some bold text, a touch of italic text, and a bit of ‘inline code’.\n• Make something useful\n• Enjoy a coffee break\n“Progress starts with a small experiment.”'
     );
   });
 
@@ -20,7 +20,20 @@ describe('formatDropMarkdownForPush', () => {
       '***bold italic*** and __bold__ and ~~deleted~~',
       'bold italic and bold and deleted'
     ],
-    ['> First\n>\n> Second', 'First\nSecond'],
+    ['> First\n>\n> Second', '“First\nSecond”'],
+    [
+      'Before\n\n> Small steps count\n\nAfter',
+      'Before\n“Small steps count”\nAfter'
+    ],
+    ['> Outer\n>\n>> Inner', '“Outer\n‘Inner’”'],
+    ['> **Run** `npm test`', '“Run ‘npm test’”'],
+    ['> - First\n> - Second', '“• First\n• Second”'],
+    ['> First\n\nOutside\n\n> Second', '“First”\nOutside\n“Second”'],
+    ['>\n> ![image](https://example.com/a.png)', ''],
+    ['> https://example.com/a.png', ''],
+    ['> `https://example.com/a.png`', ''],
+    ['>\n>>', ''],
+    ['- > Quote in a list', '• “Quote in a list”'],
     ['| Name | Value |\n| --- | --- |\n| **A** | 2 |', 'Name | Value\nA | 2'],
     ['3. First\n4. Second', '3. First\n4. Second'],
     [
@@ -43,7 +56,12 @@ describe('formatDropMarkdownForPush', () => {
       String.raw`\# literal \*stars\* and \_underscores\_`,
       '# literal *stars* and _underscores_'
     ],
-    ['`**literal** snake_case`', '**literal** snake_case'],
+    ['`**literal** snake_case`', '‘**literal** snake_case’'],
+    [
+      'Run `npm test` then `npm run lint`.',
+      'Run ‘npm test’ then ‘npm run lint’.'
+    ],
+    ['``a `backtick` here``', '‘a `backtick` here’'],
     [
       '```ts\nconst value = "**literal**";\n```\n\nAfter',
       'const value = "**literal**";\nAfter'
