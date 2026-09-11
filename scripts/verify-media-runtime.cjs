@@ -114,16 +114,22 @@ async function main() {
     assert.equal(process.arch, 'x64');
     assert.equal(process.versions.node.split('.')[0], '22');
     assert.ok(process.report.getReport().header.glibcVersionRuntime);
+    assert.equal(
+      load('@img/sharp-linux-x64/package').version,
+      sharp.versions.sharp
+    );
+    const nativeRoot =
+      path.join(root, 'node_modules/@img/sharp-linux-x64') + path.sep;
     assert.ok(
-      fs.existsSync(
-        path.join(
-          root,
-          'node_modules/@img/sharp-linux-x64/lib/sharp-linux-x64.node'
-        )
+      Object.keys(require.cache).some(
+        (file) => file.startsWith(nativeRoot) && file.endsWith('.node')
       )
     );
     if (fs.existsSync(path.join(root, 'node_modules/esbuild'))) {
-      assert.match(load('esbuild').transformSync('const value = 1').code, /value/);
+      assert.match(
+        load('esbuild').transformSync('const value = 1').code,
+        /value/
+      );
     }
   }
   await verifyImages();
