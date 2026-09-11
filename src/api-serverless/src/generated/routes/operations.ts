@@ -54,6 +54,8 @@ import { ApiCompetitionPausePage } from '@/api/generated/models/ApiCompetitionPa
 import { ApiCompetitionVoterPage } from '@/api/generated/models/ApiCompetitionVoterPage';
 import { ApiContentModerationBlockActivityItem } from '@/api/generated/models/ApiContentModerationBlockActivityItem';
 import { ApiContentModerationProfileStatusResponse } from '@/api/generated/models/ApiContentModerationProfileStatusResponse';
+import { ApiCreatedProfileCmsAgentGrant } from '@/api/generated/models/ApiCreatedProfileCmsAgentGrant';
+import { ApiCreateProfileCmsAgentGrantRequest } from '@/api/generated/models/ApiCreateProfileCmsAgentGrantRequest';
 import { ApiCreateProfileCmsWalletGallerySnapshotRequest } from '@/api/generated/models/ApiCreateProfileCmsWalletGallerySnapshotRequest';
 import { ApiCreateWaveMetadataRequest } from '@/api/generated/models/ApiCreateWaveMetadataRequest';
 import { ApiDeleteEulaConsentRequest } from '@/api/generated/models/ApiDeleteEulaConsentRequest';
@@ -92,7 +94,12 @@ import { ApiMemeCardDropMapping } from '@/api/generated/models/ApiMemeCardDropMa
 import { ApiNftActivityPage } from '@/api/generated/models/ApiNftActivityPage';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
 import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
+import { ApiProfileCmsAgentCandidateValidation } from '@/api/generated/models/ApiProfileCmsAgentCandidateValidation';
+import { ApiProfileCmsAgentDraft } from '@/api/generated/models/ApiProfileCmsAgentDraft';
+import { ApiProfileCmsAgentGrant } from '@/api/generated/models/ApiProfileCmsAgentGrant';
 import { ApiProfileCmsAgentPatchValidationResult } from '@/api/generated/models/ApiProfileCmsAgentPatchValidationResult';
+import { ApiProfileCmsAgentProposal } from '@/api/generated/models/ApiProfileCmsAgentProposal';
+import { ApiProfileCmsAgentProposalSummary } from '@/api/generated/models/ApiProfileCmsAgentProposalSummary';
 import { ApiProfileCmsAgentSchemaBundle } from '@/api/generated/models/ApiProfileCmsAgentSchemaBundle';
 import { ApiProfileCmsAgentSourcePacket } from '@/api/generated/models/ApiProfileCmsAgentSourcePacket';
 import { ApiProfileCmsPackage } from '@/api/generated/models/ApiProfileCmsPackage';
@@ -104,14 +111,17 @@ import { ApiProfileCmsWalletGallerySnapshot } from '@/api/generated/models/ApiPr
 import { ApiProfilePreferences } from '@/api/generated/models/ApiProfilePreferences';
 import { ApiProfileWaveActivityPage } from '@/api/generated/models/ApiProfileWaveActivityPage';
 import { ApiPublishProfileCmsPackageRequest } from '@/api/generated/models/ApiPublishProfileCmsPackageRequest';
+import { ApiReviewProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiReviewProfileCmsAgentProposalRequest';
 import { ApiRollbackProfileCmsPackageRequest } from '@/api/generated/models/ApiRollbackProfileCmsPackageRequest';
 import { ApiSaveEulaConsentRequest } from '@/api/generated/models/ApiSaveEulaConsentRequest';
 import { ApiSaveEulaConsentResponse } from '@/api/generated/models/ApiSaveEulaConsentResponse';
 import { ApiSaveProfileCmsPackageDraftRequest } from '@/api/generated/models/ApiSaveProfileCmsPackageDraftRequest';
+import { ApiSubmitProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiSubmitProfileCmsAgentProposalRequest';
 import { ApiSubscriptionCoverage } from '@/api/generated/models/ApiSubscriptionCoverage';
 import { ApiTdhRules } from '@/api/generated/models/ApiTdhRules';
 import { ApiUnpublishProfileCmsPackageRequest } from '@/api/generated/models/ApiUnpublishProfileCmsPackageRequest';
 import { ApiUpdateProfilePreferences } from '@/api/generated/models/ApiUpdateProfilePreferences';
+import { ApiValidateProfileCmsAgentCandidateRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentCandidateRequest';
 import { ApiValidateProfileCmsAgentPatchRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentPatchRequest';
 import { ApiValidateProfileCmsPackageRequest } from '@/api/generated/models/ApiValidateProfileCmsPackageRequest';
 import { ApiWalletDistributionAllocations } from '@/api/generated/models/ApiWalletDistributionAllocations';
@@ -1005,6 +1015,112 @@ export type GetPrimaryProfileCmsPackageRequest = Request<
   Record<string, never>
 >;
 
+export interface RevokeProfileCmsAgentGrantPathParams {
+  "id": string;
+}
+
+export type RevokeProfileCmsAgentGrantQuery = Record<string, never>;
+
+export type RevokeProfileCmsAgentGrantResponse = ApiProfileCmsAgentGrant;
+
+export type RevokeProfileCmsAgentGrantRequest = Request<
+  RevokeProfileCmsAgentGrantPathParams,
+  ApiResponse<RevokeProfileCmsAgentGrantResponse>,
+  never,
+  RevokeProfileCmsAgentGrantQuery,
+  Record<string, never>
+>;
+
+export interface GetOwnerProfileCmsAgentProposalPathParams {
+  "id": string;
+}
+
+export type GetOwnerProfileCmsAgentProposalQuery = Record<string, never>;
+
+export type GetOwnerProfileCmsAgentProposalResponse = ApiProfileCmsAgentProposal;
+
+export type GetOwnerProfileCmsAgentProposalRequest = Request<
+  GetOwnerProfileCmsAgentProposalPathParams,
+  ApiResponse<GetOwnerProfileCmsAgentProposalResponse>,
+  never,
+  GetOwnerProfileCmsAgentProposalQuery,
+  Record<string, never>
+>;
+
+export interface ReviewProfileCmsAgentProposalPathParams {
+  "id": string;
+}
+
+export type ReviewProfileCmsAgentProposalQuery = Record<string, never>;
+
+export type ReviewProfileCmsAgentProposalResponse = ApiProfileCmsAgentProposal;
+
+export type ReviewProfileCmsAgentProposalRequest = Request<
+  ReviewProfileCmsAgentProposalPathParams,
+  ApiResponse<ReviewProfileCmsAgentProposalResponse>,
+  ApiReviewProfileCmsAgentProposalRequest,
+  ReviewProfileCmsAgentProposalQuery,
+  Record<string, never>
+>;
+
+export type GetProfileCmsAgentDraftPathParams = Record<string, never>;
+
+export type GetProfileCmsAgentDraftQuery = Record<string, never>;
+
+export type GetProfileCmsAgentDraftResponse = ApiProfileCmsAgentDraft;
+
+export type GetProfileCmsAgentDraftRequest = Request<
+  GetProfileCmsAgentDraftPathParams,
+  ApiResponse<GetProfileCmsAgentDraftResponse>,
+  never,
+  GetProfileCmsAgentDraftQuery,
+  Record<string, never>
+>;
+
+export type SubmitProfileCmsAgentProposalPathParams = Record<string, never>;
+
+export type SubmitProfileCmsAgentProposalQuery = Record<string, never>;
+
+export type SubmitProfileCmsAgentProposalResponse = ApiProfileCmsAgentProposal;
+
+export type SubmitProfileCmsAgentProposalRequest = Request<
+  SubmitProfileCmsAgentProposalPathParams,
+  ApiResponse<SubmitProfileCmsAgentProposalResponse>,
+  ApiSubmitProfileCmsAgentProposalRequest,
+  SubmitProfileCmsAgentProposalQuery,
+  Record<string, never>
+>;
+
+export interface GetProfileCmsAgentProposalPathParams {
+  "id": string;
+}
+
+export type GetProfileCmsAgentProposalQuery = Record<string, never>;
+
+export type GetProfileCmsAgentProposalResponse = ApiProfileCmsAgentProposal;
+
+export type GetProfileCmsAgentProposalRequest = Request<
+  GetProfileCmsAgentProposalPathParams,
+  ApiResponse<GetProfileCmsAgentProposalResponse>,
+  never,
+  GetProfileCmsAgentProposalQuery,
+  Record<string, never>
+>;
+
+export type ValidateProfileCmsAgentCandidatePathParams = Record<string, never>;
+
+export type ValidateProfileCmsAgentCandidateQuery = Record<string, never>;
+
+export type ValidateProfileCmsAgentCandidateResponse = ApiProfileCmsAgentCandidateValidation;
+
+export type ValidateProfileCmsAgentCandidateRequest = Request<
+  ValidateProfileCmsAgentCandidatePathParams,
+  ApiResponse<ValidateProfileCmsAgentCandidateResponse>,
+  ApiValidateProfileCmsAgentCandidateRequest,
+  ValidateProfileCmsAgentCandidateQuery,
+  Record<string, never>
+>;
+
 export type GetProfileCmsAgentSchemaBundlePathParams = Record<string, never>;
 
 export type GetProfileCmsAgentSchemaBundleQuery = Record<string, never>;
@@ -1046,6 +1162,60 @@ export type GetProfileCmsPackageByIdRequest = Request<
   ApiResponse<GetProfileCmsPackageByIdResponse>,
   never,
   GetProfileCmsPackageByIdQuery,
+  Record<string, never>
+>;
+
+export interface ListProfileCmsAgentGrantsPathParams {
+  "id": string;
+}
+
+export interface ListProfileCmsAgentGrantsQuery {
+  "offset"?: number;
+  "limit"?: number;
+}
+
+export type ListProfileCmsAgentGrantsResponse = ApiProfileCmsAgentGrant[];
+
+export type ListProfileCmsAgentGrantsRequest = Request<
+  ListProfileCmsAgentGrantsPathParams,
+  ApiResponse<ListProfileCmsAgentGrantsResponse>,
+  never,
+  ListProfileCmsAgentGrantsQuery,
+  Record<string, never>
+>;
+
+export interface CreateProfileCmsAgentGrantPathParams {
+  "id": string;
+}
+
+export type CreateProfileCmsAgentGrantQuery = Record<string, never>;
+
+export type CreateProfileCmsAgentGrantResponse = ApiCreatedProfileCmsAgentGrant;
+
+export type CreateProfileCmsAgentGrantRequest = Request<
+  CreateProfileCmsAgentGrantPathParams,
+  ApiResponse<CreateProfileCmsAgentGrantResponse>,
+  ApiCreateProfileCmsAgentGrantRequest,
+  CreateProfileCmsAgentGrantQuery,
+  Record<string, never>
+>;
+
+export interface ListProfileCmsAgentProposalsPathParams {
+  "id": string;
+}
+
+export interface ListProfileCmsAgentProposalsQuery {
+  "offset"?: number;
+  "limit"?: number;
+}
+
+export type ListProfileCmsAgentProposalsResponse = ApiProfileCmsAgentProposalSummary[];
+
+export type ListProfileCmsAgentProposalsRequest = Request<
+  ListProfileCmsAgentProposalsPathParams,
+  ApiResponse<ListProfileCmsAgentProposalsResponse>,
+  never,
+  ListProfileCmsAgentProposalsQuery,
   Record<string, never>
 >;
 

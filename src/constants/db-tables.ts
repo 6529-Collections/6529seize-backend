@@ -253,3 +253,6 @@ export const MARKET_DEPTH_EVENTS_TABLE = 'market_depth_events';
 export const MARKET_DEPTH_CURSORS_TABLE = 'market_depth_cursors';
 export const MARKET_DEPTH_RECONCILIATION_QUEUE_TABLE =
   'market_depth_reconciliation_queue';
+export const PROFILE_CMS_AGENT_GRANTS_TABLE = 'profile_cms_agent_grants';
+export const PROFILE_CMS_AGENT_PROPOSALS_TABLE = 'profile_cms_agent_proposals';
+export const PROFILE_CMS_AGENT_EVENTS_TABLE = 'profile_cms_agent_events';

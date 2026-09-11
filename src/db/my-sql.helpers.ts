@@ -39,7 +39,10 @@ const TinyIntToBooleanCaster: TypeCast = function castField(field, next) {
 export const CustomTypeCaster: TypeCast = (field, next) =>
   TinyIntToBooleanCaster(field, () => BigIntToNumberCaster(field, next));
 
-type PrivateQueryFamily = 'artwork documentation' | 'market depth';
+type PrivateQueryFamily =
+  | 'artwork documentation'
+  | 'market depth'
+  | 'CMS agent';
 
 function privateQueryFamily(sql: string): PrivateQueryFamily | null {
   if (/\bartwork_documentation_[a-z_]+\b/i.test(sql)) {
@@ -47,6 +50,9 @@ function privateQueryFamily(sql: string): PrivateQueryFamily | null {
   }
   if (/\bmarket_depth_[a-z_]+\b/i.test(sql)) {
     return 'market depth';
+  }
+  if (/\bprofile_cms_agent_(?:grants|proposals|events)\b/i.test(sql)) {
+    return 'CMS agent';
   }
   return null;
 }
@@ -57,6 +63,7 @@ function describeQuery(sql: string, params?: Record<string, unknown>): string {
     return '[private artwork documentation query]';
   }
   if (family === 'market depth') return '[private market depth query]';
+  if (family === 'CMS agent') return '[private CMS agent query]';
   const normalized = sql.replace('\n', ' ');
   if (!params) return normalized;
   return `${normalized} with params ${JSON.stringify(params)}`;
