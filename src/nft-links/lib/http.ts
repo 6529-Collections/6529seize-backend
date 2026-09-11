@@ -2,6 +2,7 @@ import fetch, { Response } from 'node-fetch';
 import type { AbortSignal as NodeFetchAbortSignal } from 'node-fetch/externals';
 import { numbers } from '@/numbers';
 import { env } from '@/env';
+import { getNftLinkResolutionBudget } from '@/nft-links/resolution-budget';
 
 export class HttpError extends Error {
   constructor(
@@ -51,7 +52,11 @@ export async function fetchTextWithTimeout(
   url: string,
   opts: FetchOptions
 ): Promise<string> {
+  const budget = getNftLinkResolutionBudget();
+  budget?.check();
   const controller = new AbortController();
+  const abort = () => controller.abort();
+  budget?.signal.addEventListener('abort', abort, { once: true });
   const t = setTimeout(() => controller.abort(), opts.timeoutMs);
   try {
     const res = await fetch(url, {
@@ -70,6 +75,8 @@ export async function fetchTextWithTimeout(
     return await readTextWithLimit(res, url, getMaxBytes(opts));
   } finally {
     clearTimeout(t);
+    if (budget) controller.abort();
+    budget?.signal.removeEventListener('abort', abort);
   }
 }
 

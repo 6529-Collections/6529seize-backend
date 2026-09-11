@@ -343,6 +343,31 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  public async markMediaPreviewEnqueueFailed(
+    canonicalId: string,
+    sourceHash: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    const timerName = `${this.constructor.name}->markMediaPreviewEnqueueFailed`;
+    ctx.timer?.start(timerName);
+    try {
+      await this.db.execute(
+        `update ${NFT_LINKS_TABLE}
+         set media_preview_status = 'FAILED',
+             media_preview_error_message = 'Preview enqueue failed',
+             media_preview_failed_since = ifnull(media_preview_failed_since, :now)
+         where canonical_id = :canonicalId
+           and media_preview_source_hash = :sourceHash
+           and media_preview_status = 'PENDING'
+           and media_preview_locked_since is null`,
+        { canonicalId, sourceHash, now: Time.currentMillis() },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   public async markMediaPreviewSkipped(
     {
       canonicalId,

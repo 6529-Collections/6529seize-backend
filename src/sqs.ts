@@ -28,12 +28,14 @@ export class SQS {
     message,
     queue,
     messageGroupId,
-    delaySeconds
+    delaySeconds,
+    abortSignal
   }: {
     message: any;
     queue: string;
     messageGroupId?: string;
     delaySeconds?: number;
+    abortSignal?: AbortSignal;
   }): Promise<SendMessageCommandOutput> {
     const needsMessageGroupId = queue.endsWith('.fifo');
     const resolvedMessageGroupId =
@@ -48,7 +50,8 @@ export class SQS {
         ...(resolvedMessageGroupId && {
           MessageGroupId: resolvedMessageGroupId
         })
-      })
+      }),
+      ...(abortSignal ? [{ abortSignal }] : [])
     );
     this.logger.info(
       `Sent SQS message ${response.MessageId} to queue ${queue}  Message sent: ${response.MessageId}`
