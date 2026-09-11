@@ -511,9 +511,73 @@ describeWithSeed(
           profile_id: author.profile_id!
         }
       ]
+    },
+    {
+      table: IDENTITY_SUBSCRIPTIONS_TABLE,
+      rows: [pinnedCandidateWave, unpinnedCandidateWave].map((wave) => ({
+        subscriber_id: author.profile_id!,
+        target_id: wave.id,
+        target_type: ActivityEventTargetType.WAVE,
+        target_action: ActivityEventAction.DROP_CREATED,
+        wave_id: wave.id,
+        subscribed_to_all_drops: false
+      }))
     }
   ],
   () => {
+    describe.each([
+      ['candidate queries', () => repo],
+      ['SQL fallback', buildLegacyOverviewRepo]
+    ] as const)('anonymous pinned waves with %s', (_, createRepo) => {
+      it.each([
+        'findMostSubscribedWaves',
+        'findRecentlyDroppedToWaves',
+        'findScoredRecentlyDroppedToWaves'
+      ] as const)(
+        '%s returns no pins without an authenticated profile',
+        async (method) => {
+          const overviewRepo = createRepo();
+          const params = {
+            authenticated_user_id: null,
+            only_waves_followed_by_authenticated_user: false,
+            offset: 0,
+            limit: 10,
+            eligibleGroups: [],
+            direct_message: false,
+            score_sort: ApiWaveScoreSort.Balanced,
+            exclude_followed: false
+          };
+
+          const publicWaves = await overviewRepo[method]({
+            ...params,
+            pinned: null
+          });
+          expect(publicWaves.length).toBeGreaterThan(0);
+          await expect(
+            overviewRepo[method]({
+              ...params,
+              pinned: ApiWavesPinFilter.Pinned
+            })
+          ).resolves.toEqual([]);
+          await expect(
+            overviewRepo[method]({
+              ...params,
+              pinned: ApiWavesPinFilter.NotPinned
+            })
+          ).resolves.toEqual(publicWaves);
+          await expect(
+            overviewRepo[method]({
+              ...params,
+              authenticated_user_id: author.profile_id!,
+              pinned: ApiWavesPinFilter.Pinned
+            })
+          ).resolves.toEqual([
+            expect.objectContaining({ id: pinnedCandidateWave.id })
+          ]);
+        }
+      );
+    });
+
     it('keeps scored candidate results behind current visibility groups', async () => {
       await expect(
         repo.findScoredRecentlyDroppedToWaves({
