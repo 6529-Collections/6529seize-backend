@@ -91,7 +91,7 @@ Updates depend on APNs delivery and the user's badge permission.
   rapid read followed by a new push. This includes the badge-only `alert` push
   type. Confirm no alert or sound is produced and record what remains in Notification Center. Backend tests cannot establish
   the behavior of the installed native delegate or APNs delivery.
-- Deploy `dbMigrationsLoop` first to synchronize `push_installations`, then
+- Deploy `dbMigrationsLoop` first to synchronize `push_notification_device_installations`, then
   `pushNotificationsHandler`, then `api`, then the frontend. Older workers do not
   understand installation refresh messages. No new queue or Lambda is needed.
   The existing `PUSH_NOTIFICATIONS_ACTIVATED` API switch controls enqueueing.
@@ -113,7 +113,7 @@ profile when another connected wallet still owns it or the account has no profil
 The frontend removes identifiable profile tray entries for a single logout and
 uses global native tray removal only for explicit sign-out-all.
 
-The durable `push_installations` row stores a SHA-256 installation-secret hash,
+The durable `push_notification_device_installations` row stores a SHA-256 installation-secret hash,
 revocation revision, and latest FCM token/platform. It survives profile deletion
 so the worker can send badge zero after the last registration disappears.
 Revocation commits first, then enqueues `installation_badge_refresh` by device ID.

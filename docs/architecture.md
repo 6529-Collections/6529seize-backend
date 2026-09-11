@@ -945,7 +945,7 @@ Media and edge processing are the most heterogeneous deployment area. S3, CloudF
 The native frontend persists an installation-authenticated logout outbox before
 clearing local credentials. The API revokes one profile/device or every profile
 on an installation, including rows absent from the client account list, while
-preserving other devices. `push_installations` retains a hashed installation
+preserving other devices. `push_notification_device_installations` retains a hashed installation
 credential, monotonic revision and latest delivery target after registration
 removal. Database row locking rejects stale registration requests and makes
 revocation retries idempotent. An `installation_badge_refresh` SQS event lets the

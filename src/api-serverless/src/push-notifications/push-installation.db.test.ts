@@ -3,7 +3,7 @@ import { describeWithSeed } from '@/tests/_setup/seed';
 import { sqlExecutor } from '@/sql-executor';
 import {
   PUSH_NOTIFICATION_DEVICES_TABLE,
-  PUSH_INSTALLATIONS_TABLE,
+  PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE,
   WALLET_AUTH_SESSIONS_TABLE
 } from '@/constants';
 import {
@@ -68,7 +68,9 @@ describeWithSeed('push installation logout', [], () => {
       revision: 1
     });
     expect(
-      await sqlExecutor.execute(`SELECT * FROM ${PUSH_INSTALLATIONS_TABLE}`)
+      await sqlExecutor.execute(
+        `SELECT * FROM ${PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE}`
+      )
     ).toHaveLength(1);
   });
 

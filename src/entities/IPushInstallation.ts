@@ -1,8 +1,8 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
-import { PUSH_INSTALLATIONS_TABLE } from '@/constants';
+import { PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE } from '@/constants';
 
 /** Installation credential and revocation fence survive removal of every profile. */
-@Entity(PUSH_INSTALLATIONS_TABLE)
+@Entity(PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE)
 export class PushInstallationEntity {
   @PrimaryColumn({ type: 'varchar', length: 100 })
   device_id!: string;

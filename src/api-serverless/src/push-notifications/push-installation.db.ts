@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import {
-  PUSH_INSTALLATIONS_TABLE,
+  PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE,
   PUSH_NOTIFICATION_DEVICES_TABLE,
   PUSH_NOTIFICATION_SETTINGS_TABLE,
   WALLET_AUTH_SESSIONS_TABLE
@@ -33,12 +33,12 @@ const conflict = () =>
 async function lockInstallation(proof: InstallationProof, ctx: RequestContext) {
   const options = { wrappedConnection: ctx.connection };
   await sqlExecutor.execute(
-    `INSERT IGNORE INTO ${PUSH_INSTALLATIONS_TABLE} (device_id, revision) VALUES (:device_id, 0)`,
+    `INSERT IGNORE INTO ${PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE} (device_id, revision) VALUES (:device_id, 0)`,
     { device_id: proof.device_id },
     options
   );
   const installation = await sqlExecutor.oneOrNull<PushInstallationEntity>(
-    `SELECT * FROM ${PUSH_INSTALLATIONS_TABLE} WHERE device_id = :device_id FOR UPDATE`,
+    `SELECT * FROM ${PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE} WHERE device_id = :device_id FOR UPDATE`,
     { device_id: proof.device_id },
     options
   );
@@ -69,7 +69,7 @@ async function lockInstallation(proof: InstallationProof, ctx: RequestContext) {
     installation.token = legacy[0]?.token ?? proof.token ?? null;
     installation.platform = legacy[0]?.platform ?? null;
     await sqlExecutor.execute(
-      `UPDATE ${PUSH_INSTALLATIONS_TABLE} SET secret_hash = :secret_hash, token = :token, platform = :platform WHERE device_id = :device_id`,
+      `UPDATE ${PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE} SET secret_hash = :secret_hash, token = :token, platform = :platform WHERE device_id = :device_id`,
       { ...installation },
       options
     );
@@ -104,7 +104,7 @@ export async function registerInstallationDevice(
         options
       );
       await sqlExecutor.execute(
-        `UPDATE ${PUSH_INSTALLATIONS_TABLE} SET token = :token, platform = :platform WHERE device_id = :device_id`,
+        `UPDATE ${PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE} SET token = :token, platform = :platform WHERE device_id = :device_id`,
         {
           device_id: device.device_id,
           token: device.token,
@@ -169,7 +169,7 @@ export async function revokeInstallation(
           );
         }
         await sqlExecutor.execute(
-          `UPDATE ${PUSH_INSTALLATIONS_TABLE} SET revision = :revision WHERE device_id = :device_id`,
+          `UPDATE ${PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE} SET revision = :revision WHERE device_id = :device_id`,
           { device_id: request.device_id, revision: request.revision },
           options
         );
