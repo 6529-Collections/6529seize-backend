@@ -15,6 +15,12 @@ the existing attachment summary or the notification's fallback text. Mentions
 and emoji still use the existing push formatting. Preview conversion happens
 before notification length limits are applied.
 
+The formatter enforces the existing 25,000 UTF-16-code-unit drop-part limit
+before parsing. Oversized historical content and parser failures use the
+attachment summary or fallback text instead of retrying Markdown formatting or
+cutting through a link destination. Bare media URLs are removed before choosing
+that fallback, including when they appear in quotes or code.
+
 The original drop keeps its Markdown and renders normally inside the app.
 Notification titles, attachment filenames, permissions, and delivery settings
 are unaffected.

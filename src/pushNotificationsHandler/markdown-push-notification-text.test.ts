@@ -1,8 +1,15 @@
 import fc from 'fast-check';
+import MarkdownIt from 'markdown-it';
+import { DROP_PART_MAX_UTF16_CODE_UNITS } from '@/drops/drop-content-limits';
 import { formatDropMarkdownForPush } from '@/pushNotificationsHandler/markdown-push-notification-text';
 import { sanitizePushNotificationText } from '@/pushNotificationsHandler/push-notification-text';
 
+jest.mock('@/logging', () => ({
+  Logger: { get: () => ({ warn: jest.fn() }) }
+}));
+
 describe('formatDropMarkdownForPush', () => {
+  afterEach(() => jest.restoreAllMocks());
   it('turns the notification example into a compact readable preview', () => {
     expect(
       formatDropMarkdownForPush(
@@ -34,8 +41,16 @@ describe('formatDropMarkdownForPush', () => {
     ['> `https://example.com/a.png`', ''],
     ['>\n>>', ''],
     ['- > Quote in a list', '• “Quote in a list”'],
+    ['- Intro\n  > Quote\n\nAfter', '• Intro\n“Quote”\nAfter'],
+    ['> - Intro\n>   > Nested\n>\n> After', '“• Intro\n‘Nested’\nAfter”'],
     ['| Name | Value |\n| --- | --- |\n| **A** | 2 |', 'Name | Value\nA | 2'],
     ['3. First\n4. Second', '3. First\n4. Second'],
+    ['999999999. Last valid start', '999999999. Last valid start'],
+    ['9999999999. Not a list', '9999999999. Not a list'],
+    [
+      '| A | B |\n| --- | --- |\n| **one** | `two` |\n| three | four |',
+      'A | B\none | ‘two’\nthree | four'
+    ],
     [
       '- First\n  1. Nested\n  2. Again\n- Last',
       '• First\n1. Nested\n2. Again\n• Last'
@@ -77,6 +92,11 @@ describe('formatDropMarkdownForPush', () => {
     ],
     ['before![alt](https://example.com/a_(b).png)after', 'before after'],
     ['before [report](https://example.com/a_(b).pdf) after', 'before after'],
+    ['https://example.com/a.png', ''],
+    ['https://example.com/a.png?token=secret', ''],
+    ['**Before** https://example.com/a.png *after*', 'Before after'],
+    ['> Before https://example.com/a.png', '“Before”'],
+    ['```\nhttps://example.com/a.png\n```', ''],
     ['![alt][image]\n\n[image]: https://example.com/a.png', ''],
     ['#\n\n---\n\n![image](https://example.com/a.png)', ''],
     ['', '']
@@ -102,5 +122,28 @@ describe('formatDropMarkdownForPush', () => {
         }
       )
     );
+  });
+
+  it('rejects oversized content before parsing rather than cutting a media reference', () => {
+    const parse = jest.spyOn(MarkdownIt.prototype, 'parse');
+    const input =
+      '![image](https://example.com/' +
+      'x'.repeat(DROP_PART_MAX_UTF16_CODE_UNITS) +
+      '.png)';
+    expect(formatDropMarkdownForPush(input)).toBe('');
+    expect(parse).not.toHaveBeenCalled();
+  });
+
+  it('supports content at the existing drop-part limit', () => {
+    const input = 'x'.repeat(DROP_PART_MAX_UTF16_CODE_UNITS);
+    expect(formatDropMarkdownForPush(input)).toBe(input);
+  });
+
+  it('falls back on a parser exception and still formats the next notification', () => {
+    jest.spyOn(MarkdownIt.prototype, 'parse').mockImplementationOnce(() => {
+      throw new Error('parser failure');
+    });
+    expect(formatDropMarkdownForPush('**First**')).toBe('');
+    expect(formatDropMarkdownForPush('**Next**')).toBe('Next');
   });
 });

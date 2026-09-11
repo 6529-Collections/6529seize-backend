@@ -269,8 +269,12 @@ function replaceMarkdownMediaReferences(input: string): string {
 }
 
 export function sanitizePushNotificationText(input: string): string {
-  return replaceMarkdownMediaReferences(input)
-    .replace(MEDIA_URL_PATTERN, ' ')
+  return removePushNotificationMediaUrls(replaceMarkdownMediaReferences(input))
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
+}
+
+/** Remove bare media destinations without trimming adjacent readable text. */
+export function removePushNotificationMediaUrls(input: string): string {
+  return input.replace(MEDIA_URL_PATTERN, ' ');
 }

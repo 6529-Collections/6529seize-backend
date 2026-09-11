@@ -1,11 +1,14 @@
 import MarkdownIt from 'markdown-it';
+import { DROP_PART_MAX_UTF16_CODE_UNITS } from '@/drops/drop-content-limits';
+import { Logger } from '@/logging';
 import {
   isSupportedMediaUrl,
-  sanitizePushNotificationText
+  removePushNotificationMediaUrls
 } from '@/pushNotificationsHandler/push-notification-text';
 
 // Parse Markdown without rendering HTML or enabling typographic substitutions.
 const markdown = new MarkdownIt({ html: false, linkify: false });
+const logger = Logger.get('MARKDOWN_PUSH_PREVIEW');
 
 function inlineText(tokens: MarkdownIt.Token[]): string {
   const parts: string[] = [];
@@ -26,11 +29,11 @@ function inlineText(tokens: MarkdownIt.Token[]): string {
 function inlineTokenText(token: MarkdownIt.Token): string {
   switch (token.type) {
     case 'text':
-      return token.content;
-    case 'code_inline':
-      return sanitizePushNotificationText(token.content)
-        ? `‘${token.content}’`
-        : ' ';
+      return removePushNotificationMediaUrls(token.content);
+    case 'code_inline': {
+      const content = removePushNotificationMediaUrls(token.content).trim();
+      return content ? `‘${content}’` : ' ';
+    }
     case 'softbreak':
     case 'hardbreak':
       return '\n';
@@ -46,7 +49,7 @@ function closeBlockquote(parts: string[], quotes: number[]): void {
   if (start === undefined) return;
   const content = parts.splice(start).join('').trim();
   // Media-only quotes should still reach the existing empty-preview fallback.
-  if (!sanitizePushNotificationText(content)) return;
+  if (!content) return;
   const [open, close] = quotes.length % 2 === 0 ? ['“', '”'] : ['‘', '’'];
   parts.push(`${open}${content}${close}\n`);
 }
@@ -84,7 +87,7 @@ function blockText(tokens: MarkdownIt.Token[]): string {
         break;
       case 'code_block':
       case 'fence':
-        parts.push(token.content, '\n');
+        parts.push(removePushNotificationMediaUrls(token.content), '\n');
         break;
       case 'tr_open':
         tableCell = 0;
@@ -105,9 +108,17 @@ function blockText(tokens: MarkdownIt.Token[]): string {
 
 /** Plain-text preview only; the stored drop and its in-app Markdown are unchanged. */
 export function formatDropMarkdownForPush(input: string): string {
-  return blockText(markdown.parse(input, {}))
-    .split('\n')
-    .map((line) => line.replace(/[ \t]+/g, ' ').trim())
-    .filter((line) => line.length > 0)
-    .join('\n');
+  // Apply the API's part limit here too for historical or non-API content.
+  // Do not slice Markdown: a cut inside a link could expose its destination.
+  if (input.length > DROP_PART_MAX_UTF16_CODE_UNITS) return '';
+  try {
+    return blockText(markdown.parse(input, {}))
+      .split('\n')
+      .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+      .filter((line) => line.length > 0)
+      .join('\n');
+  } catch {
+    logger.warn('Unable to format Markdown push preview; using fallback text');
+    return '';
+  }
 }
