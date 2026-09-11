@@ -44,12 +44,16 @@ function setup() {
     updateWithFailure: jest.fn().mockResolvedValue(undefined),
     findByCanonicalId: jest.fn().mockResolvedValue(null)
   };
+  const notificationDb = {
+    ...db,
+    findByCanonicalIdForNotification: db.findByCanonicalId
+  };
   const notifier = {
     notifyAboutNftLinkUpdate: jest.fn().mockResolvedValue(undefined)
   };
   const service = new NftLinkResolvingService(
     resolver as unknown as NftLinkResolver,
-    db as unknown as NftLinksDb,
+    notificationDb as unknown as NftLinksDb,
     notifier,
     {} as SQS
   );

@@ -2,6 +2,7 @@ import { WS_CONNECTIONS_TABLE } from '@/constants/db-tables';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { sqlExecutor } from '@/sql-executor';
 import { NftLinkRefreshNotifierDb } from '@/nftLinkRefresherLoop/nft-link-refresh-notifier.db';
+import { ANON_USER_ID } from '@/api/ws/ws';
 
 describeWithSeed(
   'NFT link notification recipients',
@@ -21,7 +22,7 @@ describeWithSeed(
       },
       {
         connection_id: 'anonymous',
-        identity_id: '$ANONONYMOUS_USER$',
+        identity_id: ANON_USER_ID,
         jwt_expiry: 4_000_000_000
       }
     ]

@@ -44,6 +44,13 @@ describeWithSeed(
         )
       ).toBe(true);
       await expect(
+        db.findByCanonicalIdForNotification('pending', {})
+      ).resolves.toMatchObject({
+        canonical_id: 'pending',
+        media_uri: 'https://example.com/previous.png',
+        media_preview_status: 'FAILED'
+      });
+      await expect(
         db.markMediaPreviewPendingIfNeeded(
           { canonicalId: 'pending', sourceHash: 'old', kind: 'image' },
           {}

@@ -50,6 +50,7 @@ export function createResolutionRpcTransport(
       abort,
       Math.min(request.timeout, budget.remainingMs())
     );
+    let httpFailureStatus: number | undefined;
     try {
       return await nftLinkResolutionStage('rpc', async () => {
         const response = await fetch(request.url, {
@@ -63,6 +64,7 @@ export function createResolutionRpcTransport(
         // Ethers redirects create a new request without this bounded transport.
         // RPC endpoints must respond directly; the resolver owns all retries.
         if (response.status < 200 || response.status >= 300) {
+          httpFailureStatus = response.status;
           throw new Error('RPC HTTP request failed');
         }
         return {
@@ -78,7 +80,9 @@ export function createResolutionRpcTransport(
       const error = new Error(
         controller.signal.aborted
           ? 'NFT link RPC request timed out or cancelled'
-          : 'NFT link RPC transport failed'
+          : httpFailureStatus
+            ? `NFT link RPC HTTP ${httpFailureStatus}`
+            : 'NFT link RPC transport failed'
       );
       if (controller.signal.aborted) error.name = 'AbortError';
       throw error;

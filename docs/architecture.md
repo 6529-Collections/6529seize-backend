@@ -284,7 +284,8 @@ After persistence, a worker-specific notifier reads active WebSocket recipients
 once and sends the existing `MEDIA_LINK_UPDATED` payload with concurrency 10,
 five-second request limits, and a 15-second broadcast deadline. Notification
 failure cannot change a successful metadata refresh. The notification metadata
-read is bounded to five seconds; late read results cannot trigger delivery.
+read is bounded to five seconds; both notification queries also use a three-second
+database execution limit. Late read results cannot trigger delivery.
 Cancelled preview-queue sends leave their source retryable, without overwriting
 newer previews or active consumers. Expired or disconnected
 clients are skipped; normal WebSocket lifecycle handling retains ownership of

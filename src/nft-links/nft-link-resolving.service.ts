@@ -161,7 +161,15 @@ export class NftLinkResolvingService {
         'notification_data',
         () =>
           nftLinkNotificationRead(() =>
-            this.nftLinksDb.findByCanonicalId(canonicalLink.canonicalId, ctx)
+            getNftLinkResolutionBudget()
+              ? this.nftLinksDb.findByCanonicalIdForNotification(
+                  canonicalLink.canonicalId,
+                  ctx
+                )
+              : this.nftLinksDb.findByCanonicalId(
+                  canonicalLink.canonicalId,
+                  ctx
+                )
           )
       );
       if (dataAfterUpdate) {
@@ -231,7 +239,9 @@ export class NftLinkResolvingService {
         {
           canonicalId,
           message:
-            lastError instanceof Error ? lastError.message : String(lastError)
+            lastError instanceof Error
+              ? lastError.message
+              : 'NFT link resolution failed'
         },
         ctx
       )

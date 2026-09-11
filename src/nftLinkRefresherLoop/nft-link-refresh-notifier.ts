@@ -62,7 +62,10 @@ export class NftLinkRefreshNotifier {
       NOTIFICATION_TIMEOUT_MS,
       budget?.remainingMs() ?? NOTIFICATION_TIMEOUT_MS
     );
-    if (timeoutMs <= 0 || budget?.signal.aborted) return;
+    if (timeoutMs <= 0 || budget?.signal.aborted) {
+      logger.info({ event: 'notification_skipped', reason: 'deadline' });
+      return;
+    }
     budget?.signal.addEventListener('abort', abort, { once: true });
     const timer = setTimeout(abort, timeoutMs);
     let onAbort: (() => void) | undefined;
@@ -75,7 +78,9 @@ export class NftLinkRefreshNotifier {
       // Only the read and cancellable sends are raced. No DB writes or stale
       // connection deletion can resume after this best-effort stage returns.
       await Promise.race([this.broadcast(data, controller.signal), aborted]);
-    } catch (error) {
+    } catch {
+      // Recipient lookup errors can contain connection details. Report only the
+      // failure category because notification is best-effort after persistence.
       logger.warn({
         event: 'notification_incomplete',
         reason: controller.signal.aborted

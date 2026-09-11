@@ -51,7 +51,7 @@ export class SQS {
           MessageGroupId: resolvedMessageGroupId
         })
       }),
-      ...(abortSignal ? [{ abortSignal }] : [])
+      abortSignal ? { abortSignal } : undefined
     );
     this.logger.info(
       `Sent SQS message ${response.MessageId} to queue ${queue}  Message sent: ${response.MessageId}`

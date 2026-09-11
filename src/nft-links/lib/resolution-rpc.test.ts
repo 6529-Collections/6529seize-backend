@@ -23,8 +23,14 @@ describe('NFT link network cancellation', () => {
         request.socket.destroy();
         return;
       }
-      if (['/http-error', '/redirect'].includes(request.url ?? '')) {
-        response.writeHead(request.url === '/redirect' ? 302 : 500, {
+      const errorStatus: Record<string, number> = {
+        '/http-error': 500,
+        '/redirect': 302,
+        '/throttle': 429,
+        '/unavailable': 503
+      };
+      if (errorStatus[request.url ?? '']) {
+        response.writeHead(errorStatus[request.url!], {
           location: url + '/body'
         });
         response.write('unfinished error body');
@@ -83,12 +89,14 @@ describe('NFT link network cancellation', () => {
   });
 
   it.each([
-    ['rpc', '/http-error'],
-    ['metadata', '/http-error'],
-    ['rpc', '/redirect']
+    ['rpc', '/http-error', 500],
+    ['metadata', '/http-error', 500],
+    ['rpc', '/redirect', 302],
+    ['rpc', '/throttle', 429],
+    ['rpc', '/unavailable', 503]
   ])(
     'closes unread %s %s response bodies before the resolution ends',
-    async (transport, path) => {
+    async (transport, path, status) => {
       await withNftLinkResolutionBudget(2000, async () => {
         if (transport === 'rpc') {
           const request = new FetchRequest(url + path);
@@ -96,7 +104,7 @@ describe('NFT link network cancellation', () => {
             getNftLinkResolutionBudget()!
           );
           await expect(request.send()).rejects.toThrow(
-            'NFT link RPC transport failed'
+            `NFT link RPC HTTP ${status}`
           );
         } else {
           await expect(

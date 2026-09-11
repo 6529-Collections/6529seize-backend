@@ -11,6 +11,25 @@ import type {
 } from '@/nft-links/nft-link-media-preview.types';
 
 export class NftLinksDb extends LazyDbAccessCompatibleService {
+  public async findByCanonicalIdForNotification(
+    canonicalId: string,
+    ctx: RequestContext
+  ): Promise<NftLinkEntity | null> {
+    const timerName = `${this.constructor.name}->findByCanonicalIdForNotification`;
+    ctx.timer?.start(timerName);
+    try {
+      const row = await this.db.oneOrNull<NftLinkEntity>(
+        `select /*+ MAX_EXECUTION_TIME(3000) */ * from ${NFT_LINKS_TABLE}
+         where canonical_id = :canonicalId`,
+        { canonicalId },
+        { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
+      );
+      return this.deserializeDullData(row);
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   public async findByCanonicalId(
     canonicalId: string,
     ctx: RequestContext
