@@ -37,6 +37,9 @@ export interface AssetAccess {
   canReadArchivalFiles: boolean;
   canReadRightsEvidence: boolean;
   canReadRestricted: boolean;
+  publicationOnly?: boolean;
+  canPublishInterviewRecording?: boolean;
+  canPublishInterviewTranscript?: boolean;
 }
 
 export interface StartArtworkUpload {

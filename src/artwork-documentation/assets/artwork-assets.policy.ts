@@ -1,4 +1,5 @@
 import { CustomApiCompliantException } from '@/exceptions';
+import type { ContextRecord } from '@/artwork-documentation/artwork-documentation.types';
 import {
   ARTWORK_ASSET_ROLES,
   AssetAccess,
@@ -70,6 +71,74 @@ export function assetClass(role: string): AssetClass {
   return role === 'consent_instrument' || role === 'rights_instrument'
     ? 'rights_evidence'
     : 'artwork';
+}
+const PUBLICATION_ASSET_ROLES = new Set<string>([
+  'artwork_final',
+  'preservation_master',
+  'process_evidence',
+  'display_derivative',
+  'interview_recording',
+  'interview_transcript',
+  'other_supporting'
+]);
+type PublicationAssetAccess = Pick<
+  AssetAccess,
+  | 'publicationOnly'
+  | 'canPublishInterviewRecording'
+  | 'canPublishInterviewTranscript'
+>;
+export function publicationAssetAccess(
+  context: Pick<ContextRecord, 'profile' | 'modules'>
+): PublicationAssetAccess {
+  const interview = context.modules.interview ?? {};
+  return {
+    publicationOnly: context.profile.intake_mode === 'publication_only',
+    canPublishInterviewRecording:
+      interview.recording_permission?.status === 'provided' &&
+      interview.recording_permission.value === 'intended_public_record',
+    canPublishInterviewTranscript:
+      interview.transcript_permission?.status === 'provided' &&
+      interview.transcript_permission.value === 'intended_public_record'
+  };
+}
+export function requirePublicationAsset(
+  access: PublicationAssetAccess,
+  input: { role: string; intended_visibility: string }
+): void {
+  if (!access.publicationOnly) return;
+  if (!PUBLICATION_ASSET_ROLES.has(input.role))
+    assetError(422, 'PUBLICATION_ASSET_ROLE_REQUIRED');
+  if (input.intended_visibility !== 'public_record')
+    assetError(422, 'PUBLICATION_VISIBILITY_REQUIRED');
+  if (
+    (input.role === 'interview_recording' &&
+      !access.canPublishInterviewRecording) ||
+    (input.role === 'interview_transcript' &&
+      !access.canPublishInterviewTranscript)
+  )
+    assetError(422, 'INTERVIEW_PUBLICATION_PERMISSION_REQUIRED');
+}
+export function validatePublicationAssetLink(
+  access: PublicationAssetAccess,
+  input: {
+    role: string;
+    intended_visibility: string;
+    intended_terms: { kind: string };
+    manifest?: Record<string, unknown>;
+  }
+): void {
+  if (!access.publicationOnly) return;
+  requirePublicationAsset(access, input);
+  if (input.intended_terms.kind === 'private_deposit')
+    assetError(422, 'PUBLICATION_ASSET_TERMS_REQUIRED');
+  if (input.manifest)
+    requirePublicationAsset(access, {
+      role: typeof input.manifest.role === 'string' ? input.manifest.role : '',
+      intended_visibility:
+        typeof input.manifest.intended_visibility === 'string'
+          ? input.manifest.intended_visibility
+          : ''
+    });
 }
 export function validateStartUpload(input: StartArtworkUpload): string {
   if (
