@@ -75,6 +75,40 @@ send for that operation across browsers and devices. Hash recovery validates
 the original approval or fulfillment; only a positively identified pre-broadcast
 rejection can release an attempt without a verified transaction outcome.
 
+Atomic Collect purchases use a separate `BUY_BATCH` request and response while
+preserving the existing single-artwork contract. Each selected seller order has
+an exact quantity, native-ETH cost and recipient allocations. The API builds a
+Seaport 1.6 `matchAdvancedOrders` transaction with an unsigned payer mirror;
+every selected order must fill or the transaction reverts. No router deployment,
+new approval, automatic substitution or automatic splitting is involved.
+Profile membership labels collecting and recipient scope; the directly
+authenticated EOA pays, and profile or third-party wallets receive the NFTs.
+
+`GET /market/batch-capabilities` reports bounds of 128 seller orders, 256
+recipient allocations and 1 MiB of calldata. These bound parser, provider and
+validator work rather than spend or editions. Preparation uses at most eight
+concurrent selected-order tasks and a 20-second deadline. Complete simulation,
+balance and padded gas checks must pass before review and before opening the
+durable send attempt, including the current block limit and mainnet's
+[EIP-7825 transaction gas limit](https://eips.ethereum.org/EIPS/eip-7825).
+Exceeding a bound requires the user to reduce the selection explicitly.
+
+Restricted ERC1155 seller orders currently support original and filled quantity
+one. Open partial orders support multiple editions and recipients only when
+every individual NFT/payment amount has an exact fill fraction. Discovery
+publishes `purchase_quantity`, `quantity_step` and `available_quantity` so the
+UI can distinguish an executable unit quote from a required whole lot. Batch
+receipt reconciliation additionally requires every seller event, the exact
+buyer mirror, complete `OrdersMatched` membership and every recipient transfer.
+Uncertain evidence retains the recovery fence. Batch state and immutable mirror
+terms use the existing JSON operation journal; there is no schema change.
+History includes batches only with `include_batches=true`, and saved rules
+continue to support single purchases only. This addition requires the API to
+deploy before the dependent frontend; no indexing or migration loop changes.
+Opt-in history omits batch calldata, send-attempt payloads and seller components
+and bounds page bytes; clients follow its cursor and fetch the operation by ID
+for complete review or recovery evidence.
+
 `collect_plans` stores incremental listing scans with renewable leases and
 profile/catalog invalidation. It distinguishes a completed asset scan from
 incomplete market coverage. `collect_rules` and `collect_rule_operations` store

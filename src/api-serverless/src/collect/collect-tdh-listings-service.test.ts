@@ -196,7 +196,14 @@ describe('indexed base TDH listing discovery', () => {
       purchase_quantity: '1',
       purchase_cost_wei: '100',
       base_tdh_per_day_hundredths: '100',
-      order: { quantity: '1', total_wei: '100', fees: [{ amount_wei: '1' }] }
+      order: {
+        quantity: '1',
+        purchase_quantity: '1',
+        quantity_step: '1',
+        available_quantity: '2',
+        total_wei: '100',
+        fees: [{ amount_wei: '1' }]
+      }
     });
   });
   it('preserves an indivisible lot when a signed fee cannot divide into a one-copy fill', () => {
@@ -206,7 +213,29 @@ describe('indexed base TDH listing discovery', () => {
       purchase_quantity: '2',
       purchase_cost_wei: '200',
       base_tdh_per_day_hundredths: '400',
-      order: { quantity: '2' }
+      order: {
+        quantity: '2',
+        purchase_quantity: '2',
+        quantity_step: '2',
+        available_quantity: '2'
+      }
+    });
+  });
+  it('preserves actual remaining availability independently from the unit quote and original quantity', () => {
+    const indexed = order('1', '400', '4', '4', true);
+    indexed.remaining_quantity = '3';
+    const result = rank([asset()], [indexed]);
+    expect(result.entries[0]).toMatchObject({
+      available_quantity: '3',
+      purchase_quantity: '1',
+      purchase_cost_wei: '100',
+      order: {
+        quantity: '1',
+        purchase_quantity: '1',
+        quantity_step: '1',
+        available_quantity: '3',
+        total_wei: '100'
+      }
     });
   });
   it('shows the best supported listing once per NFT', () => {

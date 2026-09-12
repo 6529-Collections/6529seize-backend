@@ -49,6 +49,37 @@ const response = (value: unknown) =>
   });
 
 describe('OpenSea boundary', () => {
+  it('aborts in-flight quotes when the complete batch deadline expires without exposing provider inputs', async () => {
+    const controller = new AbortController();
+    let requestSignal: AbortSignal | undefined;
+    const mock = jest.fn(
+      (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          requestSignal = init.signal;
+          requestSignal!.addEventListener(
+            'abort',
+            () => reject(new Error('synthetic-private-provider-body')),
+            { once: true }
+          );
+        })
+    );
+    const provider = new OpenSeaMarketplaceProvider({
+      apiKey: 'synthetic-placeholder',
+      fetch: mock,
+      signal: controller.signal
+    });
+    const request = provider.getOrder({
+      protocolAddress: MARKET_SEAPORT,
+      orderHash: `0x${'11'.repeat(32)}`
+    });
+    const failure = expect(request).rejects.toMatchObject({
+      code: 'PROVIDER_UNAVAILABLE',
+      message: 'The marketplace provider could not complete the request.'
+    });
+    controller.abort();
+    await failure;
+    expect(requestSignal?.aborted).toBe(true);
+  });
   it('does not turn unexpected discovery validation errors into a successful empty market', async () => {
     const order = buildMarketOrder(intent, '0', '1').order;
     const mock = jest

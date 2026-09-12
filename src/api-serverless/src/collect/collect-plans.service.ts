@@ -26,6 +26,10 @@ import { marketplaceProvider } from '@/api/marketplace/marketplace.service';
 import { marketRequestHash } from '@/marketplace/market-operations.db';
 import { CollectingQuotedTdhCandidate } from '@/collecting/collecting-tdh-ranking';
 import { canonicalizeJson } from '@/profile-cms/protocol/v1/canonical-json';
+import {
+  CollectIndexedPlanSeed,
+  seedCollectPlanFromIndex
+} from '@/api/collect/collect-indexed-plan-seed';
 
 const MAX_CANDIDATES = 2000;
 // Each artwork may need discovery and order reads. Keep one concurrent pair
@@ -34,7 +38,7 @@ const BATCH_SIZE = 2;
 const SCAN_BUDGET_MS = 20000;
 export const collectPlanOptionsSchema = z
   .object({
-    budget_wei: marketUintSchema,
+    budget_wei: marketUintSchema.optional(),
     recipient: marketAddressSchema,
     expected_analysis_id: z.string().max(100).optional()
   })
@@ -43,13 +47,17 @@ export type CollectPlanOptions = z.infer<typeof collectPlanOptionsSchema>;
 interface PlanData {
   goal: CollectingAnalysisRequest;
   analysis: CollectingAnalysis;
-  budget_wei: string;
+  budget_wei?: string;
   asset_keys: string[];
   cursor: number;
   candidates: CollectingCandidate[];
   unavailable: number;
   failed: number;
   gas_reserve_per_order_wei: string;
+  indexed_source?: Pick<
+    CollectIndexedPlanSeed,
+    'source' | 'source_snapshot_ids' | 'observed_at' | 'indexed_ask_count'
+  >;
 }
 interface PlanRow {
   id: string;
@@ -85,7 +93,9 @@ export function collectPlanView(row: PlanRow) {
     payload.candidates,
     {
       evaluated_at: new Date().toISOString(),
-      budget_wei: payload.budget_wei,
+      ...(payload.budget_wei === undefined
+        ? {}
+        : { budget_wei: payload.budget_wei }),
       max_states: 20000
     }
   );
@@ -118,7 +128,9 @@ export function collectPlanView(row: PlanRow) {
       payload.cursor === payload.asset_keys.length && payload.failed === 0,
     gas_reserve_per_order_wei: payload.gas_reserve_per_order_wei,
     assumptions: [
-      'One best exact OpenSea listing per artwork was checked; this does not exhaust market depth, and additional copies may need other listings.',
+      payload.indexed_source
+        ? `One best supported exact OpenSea listing per NFT was taken from the complete collection index observed at ${payload.indexed_source.observed_at}; this does not exhaust live market depth, and additional copies may need other listings.`
+        : 'One best exact OpenSea listing per artwork was checked; this does not exhaust market depth, and additional copies may need other listings.',
       'Listings and seller inventory are rechecked before purchase.',
       'The plan reserves estimated gas for each separate purchase transaction. Actual gas can change.',
       'Plan purchases require your review and wallet approval.'
@@ -164,21 +176,41 @@ export async function createCollectPlan(
         .flatMap((item) => item.asset_keys)
     )
   ).sort((a, b) => a.localeCompare(b));
+  // A non-null seed accounts for every asset; partial coverage always scans.
+  const seed = assetKeys.length
+    ? await seedCollectPlanFromIndex({
+        analysis,
+        assetKeys,
+        gasReservePerOrderWei: gasReserve.toString()
+      })
+    : null;
   const payload: PlanData = {
     goal,
     analysis,
-    budget_wei: options.budget_wei,
+    ...(options.budget_wei === undefined
+      ? {}
+      : { budget_wei: options.budget_wei }),
     asset_keys: assetKeys,
-    cursor: 0,
-    candidates: [],
-    unavailable: 0,
+    cursor: seed?.checked_asset_count ?? 0,
+    candidates: seed?.candidates ?? [],
+    unavailable: seed?.unavailable_asset_count ?? 0,
     failed: 0,
-    gas_reserve_per_order_wei: gasReserve.toString()
+    gas_reserve_per_order_wei: gasReserve.toString(),
+    ...(seed
+      ? {
+          indexed_source: {
+            source: seed.source,
+            source_snapshot_ids: seed.source_snapshot_ids,
+            observed_at: seed.observed_at,
+            indexed_ask_count: seed.indexed_ask_count
+          }
+        }
+      : {})
   };
   const row = {
     id: randomUUID(),
     profile_id: profileId,
-    state: assetKeys.length ? 'SCANNING' : 'READY',
+    state: payload.cursor === assetKeys.length ? 'READY' : 'SCANNING',
     payload_json: JSON.stringify(payload),
     created_at: Date.now(),
     updated_at: Date.now()

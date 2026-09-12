@@ -26,6 +26,14 @@ import { marketChain } from '@/marketplace/market-chain';
 import { readCollectPlan } from './collect-plans.service';
 
 type Actor = ReturnType<typeof assertMarketActor>;
+async function readRuleOperation(id: string, auth: AuthenticationContext) {
+  const operation = await readMarketOperation(id, auth);
+  if (operation.kind === 'BUY_BATCH')
+    throw new ForbiddenException(
+      'Atomic selections cannot execute a saved rule.'
+    );
+  return operation;
+}
 export async function requireRuleWallet(id: string, actor: Actor) {
   const rule = await collectingRulesService.get(id, actor.profileId);
   if (
@@ -97,7 +105,7 @@ export async function prepareRule(
       pending.idempotency_key === key &&
       pending.request_hash === marketRequestHash(trade)
     )
-      return { rule, operation: await readMarketOperation(pending.id, auth) };
+      return { rule, operation: await readRuleOperation(pending.id, auth) };
     throw new CustomApiCompliantException(
       409,
       'Recover the outstanding purchase before preparing another.',
@@ -177,7 +185,7 @@ export async function reconcileRule(id: string, auth: AuthenticationContext) {
     rule = await requireRuleWallet(id, actor),
     pending = rule.pending_review;
   if (!pending) return rule;
-  const operation = await readMarketOperation(pending.operation_id, auth);
+  const operation = await readRuleOperation(pending.operation_id, auth);
   if (
     !['CONFIRMED', 'FAILED'].includes(operation.state) ||
     !operation.transaction_hash
