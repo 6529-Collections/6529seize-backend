@@ -44,6 +44,15 @@ bind the ranked content, catalog and collection. Checkout still obtains a fresh
 executable quote. This read-only endpoint adds no table or loop dependency and
 requires only the API deployment, followed by its frontend consumer.
 
+Private `POST /collect/offer-analyses` prices explicitly selected exact NFTs
+with manual pins or transparent WETH formulas. It reuses bounded indexed books
+and lifecycle observations; references remain explicitly unverified for live
+funding and fulfillment. One payer funding snapshot and primary tracked
+liabilities bound recommendations, while existing single-offer preparation
+still performs fresh review and reserves actual exposure. The conservative
+goal policy never signs, spends, or implies atomic group offers. It adds no
+table or loop dependency. See [per-NFT offer analysis](../specs/collect-offer-analysis.md).
+
 The marketplace adapter obtains unsigned OpenSea Seaport actions server-side.
 Closed schemas, a protocol/spender registry, independent action decoding and
 chain simulation bind the exact artwork, quantity, wallet, recipient, fees and

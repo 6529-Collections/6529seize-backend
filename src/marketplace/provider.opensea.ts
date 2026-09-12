@@ -260,6 +260,16 @@ export function describeMarketOrder(
 }
 
 /** Recheck indexed discovery with the same signed-order boundary as live orders. */
+export function describeIndexedMarketOrder(
+  value: unknown,
+  asset: MarketAsset,
+  side: 'LISTING' | 'OFFER',
+  quantity: string
+): MarketDiscoveredOrder {
+  return describeMarketOrder(parseProviderOrder(value), asset, side, quantity);
+}
+
+/** Recheck indexed discovery with the same signed-order boundary as live orders. */
 export function describeIndexedMarketListing(
   value: unknown,
   asset: MarketAsset,

@@ -138,7 +138,7 @@ export class MarketDepthApiDb extends LazyDbAccessCompatibleService {
 
   async getBooks(
     token: MarketTokenContext,
-    collectionListings = false
+    collectionListings: boolean | 'all' = false
   ): Promise<CurrentMarketDepthSnapshot[]> {
     const partitions = await this.getPartitions(token);
     if (
@@ -159,7 +159,12 @@ export class MarketDepthApiDb extends LazyDbAccessCompatibleService {
           token.contract,
           partition.collection_slug,
           collectionListings
-            ? { side: 'ask', limit: collectionLimit }
+            ? {
+                ...(collectionListings === true
+                  ? { side: 'ask' as const }
+                  : {}),
+                limit: collectionLimit
+              }
             : { token_id: token.token_id, include_payloads: false }
         )
       )
