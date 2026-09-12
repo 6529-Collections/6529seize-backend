@@ -121,6 +121,12 @@ describe('Sentry telemetry privacy', () => {
   it('covers encoded private route names and drops malformed request URLs safely', () => {
     expect(
       sanitizeSentryEvent({
+        request: { url: '/API/CONTENT-MODERATION/checks/123' },
+        extra: { raw: 'private' }
+      }).extra
+    ).toBeUndefined();
+    expect(
+      sanitizeSentryEvent({
         request: { url: '/api/%63ontent-moderation/checks/123' },
         extra: { raw: 'private' }
       }).extra

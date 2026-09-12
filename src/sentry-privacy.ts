@@ -5,7 +5,7 @@ type Exception = NonNullable<NonNullable<Event['exception']>['values']>[number];
 type StackFrame = NonNullable<
   NonNullable<Exception['stacktrace']>['frames']
 >[number];
-const PRIVATE_ROUTE = /(?:^|\/)content-moderation(?:\/|$)/;
+const PRIVATE_ROUTE = /(?:^|\/)content-moderation(?:\/|$)/i;
 
 function requestUrl(value: string | undefined): URL | undefined {
   if (!value) return undefined;

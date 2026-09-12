@@ -499,7 +499,12 @@
                     "cloudformation:ValidateTemplate",
                     "cloudformation:GetTemplateSummary"
                   ],
-                  "Resource": "*"
+                  "Resource": "*",
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:RequestedRegion": { "Ref": "AWS::Region" }
+                    }
+                  }
                 },
                 {
                   "Effect": "Allow",
@@ -932,7 +937,12 @@
                     "cloudformation:ValidateTemplate",
                     "cloudformation:GetTemplateSummary"
                   ],
-                  "Resource": "*"
+                  "Resource": "*",
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:RequestedRegion": { "Ref": "AWS::Region" }
+                    }
+                  }
                 },
                 {
                   "Effect": "Allow",
