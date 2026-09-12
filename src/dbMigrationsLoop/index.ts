@@ -6,6 +6,7 @@ import { appFeatures } from '../app-features';
 import { competitionRepository } from '../competitions/competition.repository';
 import { contentModerationDb } from '../content-moderation/content-moderation.db';
 import { Time } from '../time';
+import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
 
 const DBMigrate = require('db-migrate');
 
@@ -72,6 +73,7 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
         await deleteExpiredContentModerationChecksInBatches(
           Time.currentMillis() - Time.days(30).toMillis()
         );
+      await moderationReviewDb.retain({});
       logger.info(
         `Deleted ${deletedModerationChecks} expired content moderation pre-publication checks`
       );

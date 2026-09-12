@@ -174,6 +174,7 @@ function buildUserGroupsDbMock() {
     deleteById: jest.fn().mockResolvedValue(undefined),
     changeVisibilityAndSetId: jest.fn().mockResolvedValue(undefined),
     getByIds: jest.fn().mockResolvedValue([]),
+    getByIdWithoutVisibilityCheck: jest.fn().mockResolvedValue(aGroupEntity()),
     findUserGroupsIdentityGroupProfileIds: jest.fn().mockResolvedValue({}),
     insertGroupChanges: jest.fn().mockResolvedValue(undefined)
   };
@@ -271,9 +272,12 @@ describe('UserGroupsService eligibility cache invalidation scoping', () => {
       { name: 'Only creator-handle', handle: 'creator-handle' },
       { name: 'Only Me', handle: undefined }
     ])(
-      'skips the abusiveness check for the exact safe personal group name "$name"',
+      'records the exact safe personal group name "$name" for moderation',
       async ({ name, handle }) => {
         const userGroupsDb = buildUserGroupsDbMock();
+        userGroupsDb.getByIdWithoutVisibilityCheck.mockResolvedValue(
+          aGroupEntity({ name })
+        );
         const checkFilterName = jest
           .fn()
           .mockResolvedValue({ status: 'ALLOWED' });
@@ -301,7 +305,9 @@ describe('UserGroupsService eligibility cache invalidation scoping', () => {
           ctx
         );
 
-        expect(checkFilterName).not.toHaveBeenCalled();
+        expect(checkFilterName).toHaveBeenCalledWith(
+          expect.objectContaining({ text: name, handle: handle ?? '' })
+        );
       }
     );
 
@@ -315,6 +321,9 @@ describe('UserGroupsService eligibility cache invalidation scoping', () => {
       'checks the name "$name" when it is not an exact canonical personal group name',
       async ({ name, handle }) => {
         const userGroupsDb = buildUserGroupsDbMock();
+        userGroupsDb.getByIdWithoutVisibilityCheck.mockResolvedValue(
+          aGroupEntity({ name })
+        );
         const checkFilterName = jest
           .fn()
           .mockResolvedValue({ status: 'ALLOWED' });
@@ -342,10 +351,12 @@ describe('UserGroupsService eligibility cache invalidation scoping', () => {
           ctx
         );
 
-        expect(checkFilterName).toHaveBeenCalledWith({
-          text: name,
-          handle: handle ?? ''
-        });
+        expect(checkFilterName).toHaveBeenCalledWith(
+          expect.objectContaining({
+            text: name,
+            handle: handle ?? ''
+          })
+        );
       }
     );
 
@@ -426,6 +437,7 @@ describe('UserGroupsService eligibility cache invalidation scoping', () => {
       );
       jest
         .spyOn(service, 'getByIdOrThrow')
+        .mockResolvedValueOnce(newGroupInitial)
         .mockResolvedValueOnce(newGroupInitial)
         .mockResolvedValueOnce(oldGroup)
         .mockResolvedValueOnce(updatedGroupAfterSwap);

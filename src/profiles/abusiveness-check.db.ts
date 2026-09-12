@@ -1,9 +1,20 @@
 import { dbSupplier, LazyDbAccessCompatibleService } from '../sql-executor';
-import { ABUSIVENESS_DETECTION_RESULTS_TABLE } from '@/constants';
+import {
+  ABUSIVENESS_DETECTION_RESULTS_TABLE,
+  CONTENT_MODERATION_ITEMS_TABLE
+} from '@/constants';
 import { AbusivenessDetectionResult } from '../entities/IAbusivenessDetectionResult';
 import { RequestContext } from '../request.context';
 
 export class AbusivenessCheckDb extends LazyDbAccessCompatibleService {
+  async saveVersionedResult(result: AbusivenessDetectionResult) {
+    await this.db.execute(
+      `insert into ${ABUSIVENESS_DETECTION_RESULTS_TABLE} (text,status,explanation,external_check_performed_at,policy_version,model)
+      values (:text,:status,:explanation,:external_check_performed_at,:policy_version,:model)
+      on duplicate key update status=values(status),explanation=values(explanation),external_check_performed_at=values(external_check_performed_at),policy_version=values(policy_version),model=values(model)`,
+      result
+    );
+  }
   async searchAllowedTextsLike({
     text,
     limit
@@ -16,7 +27,11 @@ export class AbusivenessCheckDb extends LazyDbAccessCompatibleService {
     }
     return await this.db
       .execute(
-        `select text from ${ABUSIVENESS_DETECTION_RESULTS_TABLE} where lower(text) like concat('%', :text, '%') and status = 'ALLOWED' order by CHAR_LENGTH(text) limit :limit`,
+        `select text from (
+          select a.text from ${ABUSIVENESS_DETECTION_RESULTS_TABLE} a where a.status='ALLOWED'
+            and not exists (select 1 from ${CONTENT_MODERATION_ITEMS_TABLE} i where i.subject_type='REP_CATEGORY' and i.subject_id=a.text and i.override='BLOCK')
+          union select subject_id text from ${CONTENT_MODERATION_ITEMS_TABLE} where subject_type='REP_CATEGORY' and override='ALLOW'
+        ) allowed_categories where lower(text) like concat('%', :text, '%') order by CHAR_LENGTH(text) limit :limit`,
         { text: text.toLowerCase(), limit }
       )
       .then((results) =>

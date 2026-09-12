@@ -211,6 +211,7 @@ export interface AiModerationAssessment {
 }
 
 export interface PrePublicationCheckRecord {
+  readonly itemId?: string | null;
   readonly dropId: string;
   readonly authorProfileId: string;
   readonly operation: 'CREATE' | 'UPDATE';
@@ -1686,6 +1687,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
           outcome,
           evaluator_version,
           evaluator_result,
+          item_id,
           created_at
         ) values (
           :id,
@@ -1698,12 +1700,14 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
           :outcome,
           :evaluatorVersion,
           cast(:evaluatorResult as json),
+          :itemId,
           :createdAt
         )
       `,
       {
         id: randomUUID(),
         ...input,
+        itemId: input.itemId ?? null,
         evaluatorResult: input.evaluatorResult
           ? JSON.stringify(input.evaluatorResult)
           : null,

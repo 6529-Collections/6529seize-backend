@@ -27,11 +27,14 @@ import {
 import { PrePublicationModerationService } from '@/content-moderation/pre-publication-moderation.service';
 
 type ModerationServiceMock = jest.Mocked<
-  Pick<PrePublicationModerationService, 'evaluate'>
+  Pick<PrePublicationModerationService, 'evaluate' | 'assertPostingAllowed'>
 >;
 
 function createModerationServiceMock(): ModerationServiceMock {
-  return { evaluate: jest.fn().mockResolvedValue(undefined) };
+  return {
+    evaluate: jest.fn().mockResolvedValue(undefined),
+    assertPostingAllowed: jest.fn().mockResolvedValue(undefined)
+  };
 }
 
 describe('CreateOrUpdateDropUseCase', () => {
@@ -227,7 +230,8 @@ describe('CreateOrUpdateDropUseCase', () => {
 
   it('prepares moderation before the caller opens the write transaction', async () => {
     const moderationService = {
-      evaluate: jest.fn().mockResolvedValue(undefined)
+      evaluate: jest.fn().mockResolvedValue(undefined),
+      assertPostingAllowed: jest.fn().mockResolvedValue(undefined)
     };
     const useCase = createUseCaseWithMocks({ moderationService });
 

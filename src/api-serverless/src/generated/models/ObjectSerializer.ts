@@ -1326,7 +1326,7 @@ import { ApiModerationAction } from '../models/ApiModerationAction';
 import { ApiModerationActionRequest     } from '../models/ApiModerationActionRequest';
 import { ApiModerationAudit } from '../models/ApiModerationAudit';
 import { ApiModerationCheck , ApiModerationCheckSubjectTypeEnum      , ApiModerationCheckPolicyFamilyEnum     , ApiModerationCheckOutcomeEnum   , ApiModerationCheckReviewStatusEnum  , ApiModerationCheckOverrideEnum            } from '../models/ApiModerationCheck';
-import { ApiModerationCheckDetail        , ApiModerationCheckDetailActionEffectEnum   } from '../models/ApiModerationCheckDetail';
+import { ApiModerationCheckDetail       , ApiModerationCheckDetailActionEffectEnum    } from '../models/ApiModerationCheckDetail';
 import { ApiModerationCheckPage } from '../models/ApiModerationCheckPage';
 import { ApiModerationCounts } from '../models/ApiModerationCounts';
 import { ApiModerationCurrentState, ApiModerationCurrentStateProfileStatusEnum  , ApiModerationCurrentStateDropStatusEnum      } from '../models/ApiModerationCurrentState';

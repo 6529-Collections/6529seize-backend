@@ -8,6 +8,8 @@ import { CicStatement, CicStatementGroup } from '../entities/ICICStatement';
 import { DbPoolName } from '../db-query.options';
 import { ids } from '../ids';
 import { RequestContext } from '../request.context';
+import { ModerationPresentationService } from '@/content-moderation/moderation-presentation.service';
+import { ModerationReviewDb } from '@/content-moderation/moderation-review.db';
 
 export interface ProfileBioRow {
   readonly profile_id: string;
@@ -15,6 +17,10 @@ export interface ProfileBioRow {
 }
 
 export class CicDb extends LazyDbAccessCompatibleService {
+  private readonly moderationPresentation = new ModerationPresentationService(
+    new ModerationReviewDb(() => this.db)
+  );
+
   async lockProfileForCicStatementMutation(
     profileId: string,
     connectionHolder: ConnectionWrapper<any>
@@ -103,10 +109,11 @@ export class CicDb extends LazyDbAccessCompatibleService {
     }
     ctx.timer?.start(`${this.constructor.name}->getLatestBiosByProfileIds`);
     try {
-      return await this.db.execute<ProfileBioRow>(
+      const bios = await this.db.execute<ProfileBioRow & { id: string }>(
         `
           with ranked_bios as (
             select
+              id,
               profile_id,
               statement_value as bio,
               row_number() over (
@@ -118,7 +125,7 @@ export class CicDb extends LazyDbAccessCompatibleService {
               and statement_group = :statementGroup
               and statement_type = :statementType
           )
-          select profile_id, bio
+          select id, profile_id, bio
           from ranked_bios
           where ranking = 1
         `,
@@ -132,6 +139,11 @@ export class CicDb extends LazyDbAccessCompatibleService {
           forcePool: DbPoolName.WRITE
         }
       );
+      const visibleBios = await this.moderationPresentation.profileBios(
+        bios,
+        ctx
+      );
+      return visibleBios.map(({ profile_id, bio }) => ({ profile_id, bio }));
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->getLatestBiosByProfileIds`);
     }

@@ -94,11 +94,18 @@ import { xTdhGrantsFinder } from '@/xtdh/xtdh-grants.finder';
 import { xTdhGrantApiConverter } from '../xtdh/grants/xtdh-grant.api-converter';
 import { Logger } from '@/logging';
 import {
+  moderationReviewDb,
+  moderationConflict,
+  assertModerationPermitReplay
+} from '@/content-moderation/moderation-review.db';
+import { moderationFingerprint } from '@/content-moderation/moderation-review.types';
+import {
   profilePreferencesDb,
   ProfilePreferencesDb
 } from '@/profile-preferences/profile-preferences.db';
 import { ProfileDirectMessagePolicy } from '@/entities/IProfilePreferences';
 import { ConnectionWrapper } from '@/sql-executor';
+import { moderationPresentationService } from '@/content-moderation/moderation-presentation.service';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -1441,10 +1448,118 @@ export class UserGroupsService {
         ) => Promise<void>)
       | undefined
   ): Promise<ApiGroupFull> {
+    const replay = await moderationReviewDb.savedRequest(
+      profile_id,
+      'GROUP_NAME',
+      ctx.moderationRequestId,
+      ctx
+    );
+    if (replay) {
+      if (
+        replay.scope.save_subject_id !== group_id ||
+        replay.scope.old_version_id !== (old_version_id ?? null) ||
+        replay.scope.visible !== visible ||
+        !replay.published_subject_id
+      )
+        moderationConflict();
+      return this.getByIdOrThrow(replay.published_subject_id, ctx);
+    }
+    const initialGroup = await this.getByIdOrThrow(group_id, ctx);
+    if (initialGroup.created_by?.id !== profile_id)
+      throw new ForbiddenException(
+        'Only the group creator can save this group'
+      );
+    const rawGroup =
+      await this.userGroupsDb.getByIdWithoutVisibilityCheck(group_id);
+    if (!rawGroup) throw new NotFoundException('Group not found');
+    const rawOld = old_version_id
+      ? await this.userGroupsDb.getByIdWithoutVisibilityCheck(old_version_id)
+      : null;
+    if (rawOld && rawOld.created_by !== profile_id)
+      throw new ForbiddenException(
+        'Only the group creator can replace this group'
+      );
+    const writeFingerprint = moderationFingerprint({
+      group: rawGroup,
+      replaced: rawOld,
+      visible
+    });
+    const proposedDefinition = await moderationReviewDb.groupDefinition(
+      group_id,
+      ctx
+    );
+    const replacedDefinition = old_version_id
+      ? await moderationReviewDb.groupDefinition(old_version_id, ctx)
+      : null;
+    const contextFingerprint = moderationFingerprint({
+      definition: proposedDefinition,
+      visible
+    });
+    const nameReview = await this.abusivenessCheckService.checkFilterName({
+      text: rawGroup.name,
+      handle: initialGroup.created_by?.handle ?? '',
+      group_id,
+      profile_id,
+      current_revision: replacedDefinition
+        ? moderationFingerprint(replacedDefinition)
+        : null,
+      old_version_id: old_version_id ?? null,
+      visible,
+      context_fingerprint: contextFingerprint,
+      previously_reviewed:
+        !!rawOld && rawOld.visible && rawOld.name === rawGroup.name
+    });
+    if (nameReview.status !== 'ALLOWED')
+      throw new BadRequestException(
+        `Group name is not allowed: ${nameReview.explanation}`
+      );
     const { updatedGroup, replacedGroup } =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
         async (connection) => {
           const ctxWithConnection = { ...ctx, connection };
+          await moderationReviewDb.lockGroup(group_id, ctxWithConnection);
+          if (old_version_id)
+            await moderationReviewDb.lockGroup(
+              old_version_id,
+              ctxWithConnection
+            );
+          if (nameReview.moderation_item_id) {
+            const reviewed = await moderationReviewDb.get(
+              nameReview.moderation_item_id,
+              ctxWithConnection,
+              true
+            );
+            if (reviewed.permit_consumed_at) {
+              assertModerationPermitReplay(reviewed, ctx.moderationRequestId);
+              if (!reviewed.published_subject_id) moderationConflict();
+              return {
+                updatedGroup: await this.getByIdOrThrow(
+                  reviewed.published_subject_id,
+                  ctxWithConnection
+                ),
+                replacedGroup: null
+              };
+            }
+          }
+          const currentGroup =
+            await this.userGroupsDb.getByIdWithoutVisibilityCheck(
+              group_id,
+              connection
+            );
+          const currentOld = old_version_id
+            ? await this.userGroupsDb.getByIdWithoutVisibilityCheck(
+                old_version_id,
+                connection
+              )
+            : null;
+          if (
+            moderationFingerprint({
+              group: currentGroup,
+              replaced: currentOld,
+              visible
+            }) !== writeFingerprint
+          )
+            moderationConflict();
           const groupEntity = await this.getByIdOrThrow(
             group_id,
             ctxWithConnection
@@ -1470,12 +1585,6 @@ export class UserGroupsService {
                 `You are not allowed to change group ${old_version_id}. You can save a new one instead.`
               );
             }
-            if (
-              oldGroupEntity.name !== groupEntity.name ||
-              !oldGroupEntity.visible
-            ) {
-              await this.doNameAbusivenessCheck(groupEntity);
-            }
             await beforeReplace?.(
               {
                 currentGroup: groupEntity,
@@ -1484,8 +1593,6 @@ export class UserGroupsService {
               ctxWithConnection
             );
             await this.userGroupsDb.deleteById(old_version_id, connection);
-          } else {
-            await this.doNameAbusivenessCheck(groupEntity);
           }
           await this.userGroupsDb.changeVisibilityAndSetId(
             {
@@ -1495,6 +1602,19 @@ export class UserGroupsService {
             },
             connection
           );
+          if (nameReview.moderation_item_id) {
+            await moderationReviewDb.consume(
+              nameReview.moderation_item_id,
+              old_version_id ?? group_id,
+              ctxWithConnection,
+              group_id
+            );
+            await moderationReviewDb.setPublishedRevision(
+              nameReview.moderation_item_id,
+              moderationFingerprint({ text: rawGroup.name }),
+              ctxWithConnection
+            );
+          }
           await this.metricsRecorder.recordActiveIdentity(
             { identityId: profile_id },
             ctxWithConnection
@@ -1636,30 +1756,6 @@ export class UserGroupsService {
         .map((it) => it.profile_group_id)
         .filter((it): it is string => it !== null)
     );
-  }
-
-  private async doNameAbusivenessCheck(groupEntity: ApiGroupFull) {
-    if (this.isKnownSafePersonalGroupName(groupEntity)) {
-      return;
-    }
-    const abusivenessDetectionResult =
-      await this.abusivenessCheckService.checkFilterName({
-        text: groupEntity.name,
-        handle: groupEntity.created_by?.handle ?? ''
-      });
-    if (abusivenessDetectionResult.status !== 'ALLOWED') {
-      throw new BadRequestException(
-        `Group name is not allowed: ${abusivenessDetectionResult.explanation}`
-      );
-    }
-  }
-
-  private isKnownSafePersonalGroupName(groupEntity: ApiGroupFull): boolean {
-    if (groupEntity.name === 'Only Me') {
-      return true;
-    }
-    const creatorHandle = groupEntity.created_by?.handle;
-    return !!creatorHandle && groupEntity.name === `Only ${creatorHandle}`;
   }
 
   public async getByIdOrThrow(
@@ -2659,6 +2755,10 @@ export class UserGroupsService {
     ctx: RequestContext
   ): Promise<ApiGroupFull[]> {
     ctx.timer?.start('userGroupsService->mapForApi');
+    const displayNames = await moderationPresentationService.groupNames(
+      groups,
+      ctx
+    );
     const relatedProfiles = await identityFetcher.getOverviewsByIds(
       collections.distinct(
         groups
@@ -2698,7 +2798,7 @@ export class UserGroupsService {
       );
     const result = groups.map<ApiGroupFull>((it) => ({
       id: it.id,
-      name: it.name,
+      name: displayNames[it.id],
       visible: it.visible,
       is_private: !!it.is_private,
       created_at: new Date(it.created_at).getTime(),

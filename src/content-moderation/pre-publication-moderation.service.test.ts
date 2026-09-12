@@ -8,6 +8,7 @@ import {
   PROFILE_SUSPENDED_REJECTION_CODE,
   PrePublicationModerationService
 } from './pre-publication-moderation.service';
+import { ModerationReviewDb } from './moderation-review.db';
 
 function createService() {
   const moderationDb = {
@@ -25,13 +26,23 @@ function createService() {
       rationale: 'Allowed'
     })
   };
+  const reviews = {
+    find: jest.fn().mockResolvedValue(null),
+    start: jest.fn().mockResolvedValue({
+      item: { id: 'review-item' },
+      evaluationId: 'evaluation'
+    }),
+    finish: jest.fn().mockResolvedValue(undefined)
+  };
   return {
     service: new PrePublicationModerationService(
       moderationDb as any,
-      aiService as any
+      aiService as any,
+      reviews as unknown as ModerationReviewDb
     ),
     moderationDb,
-    aiService
+    aiService,
+    reviews
   };
 }
 
@@ -110,9 +121,9 @@ describe('PrePublicationModerationService', () => {
       rationale: 'Not certain enough'
     });
 
-    await expect(
-      service.evaluate(input('I will kill you'), {})
-    ).resolves.toBeUndefined();
+    await expect(service.evaluate(input('I will kill you'), {})).resolves.toBe(
+      'review-item'
+    );
 
     expect(aiService.assessPrePublication).toHaveBeenCalledTimes(1);
     expect(moderationDb.recordPrePublicationCheck).toHaveBeenCalledWith(
@@ -171,9 +182,9 @@ describe('PrePublicationModerationService', () => {
     const { service, moderationDb, aiService } = createService();
     aiService.assessPrePublication.mockRejectedValue(new Error('unavailable'));
 
-    await expect(
-      service.evaluate(input('I will kill you'), {})
-    ).resolves.toBeUndefined();
+    await expect(service.evaluate(input('I will kill you'), {})).resolves.toBe(
+      'review-item'
+    );
 
     expect(moderationDb.recordPrePublicationCheck).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -265,6 +276,12 @@ describe('PrePublicationModerationService', () => {
         'This profile is currently suspended from posting. Contact support if you believe this is an error.'
     });
     expect(aiService.assessPrePublication).not.toHaveBeenCalled();
-    expect(moderationDb.recordPrePublicationCheck).not.toHaveBeenCalled();
+    expect(moderationDb.recordPrePublicationCheck).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deterministicSignal: 'PROFILE_SUSPENDED',
+        outcome: 'REJECT'
+      }),
+      undefined
+    );
   });
 });

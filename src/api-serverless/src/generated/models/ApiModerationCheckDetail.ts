@@ -21,12 +21,12 @@ export class ApiModerationCheckDetail {
     'check': ApiModerationCheck;
     'evidence': { [key: string]: any; } | null;
     'current_revision_matches': boolean;
-    'current_state': ApiModerationCurrentState;
     'evidence_expired': boolean;
     'evaluations': Array<ApiModerationEvaluation>;
     'audit': Array<ApiModerationAudit>;
     'allowed_actions': Array<ApiModerationAction>;
     'action_effect': ApiModerationCheckDetailActionEffectEnum;
+    'current_state': ApiModerationCurrentState;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -49,12 +49,6 @@ export class ApiModerationCheckDetail {
             "name": "current_revision_matches",
             "baseName": "current_revision_matches",
             "type": "boolean",
-            "format": ""
-        },
-        {
-            "name": "current_state",
-            "baseName": "current_state",
-            "type": "ApiModerationCurrentState",
             "format": ""
         },
         {
@@ -85,6 +79,12 @@ export class ApiModerationCheckDetail {
             "name": "action_effect",
             "baseName": "action_effect",
             "type": "ApiModerationCheckDetailActionEffectEnum",
+            "format": ""
+        },
+        {
+            "name": "current_state",
+            "baseName": "current_state",
+            "type": "ApiModerationCurrentState",
             "format": ""
         }    ];
 

@@ -279,6 +279,9 @@ router.post(
       req.body,
       ChangeProfileRepRatingSchema
     );
+    timer.start(`getRaterInfoFromRequest`);
+    const { authContext, targetProfileId } = await getRaterInfoFromRequest(req);
+    timer.stop(`getRaterInfoFromRequest`);
     timer.start(`abusivenessDetection`);
     const proposedCategory = category?.trim() ?? '';
     if (proposedCategory !== '') {
@@ -288,7 +291,10 @@ router.post(
         );
       }
       const abusivenessDetectionResult =
-        await abusivenessCheckService.checkRepPhrase(category);
+        await abusivenessCheckService.checkRepPhrase(category, {
+          authenticationContext: authContext,
+          timer
+        });
       if (abusivenessDetectionResult.status === 'DISALLOWED') {
         throw new BadRequestException(
           abusivenessDetectionResult.explanation ??
@@ -297,9 +303,6 @@ router.post(
       }
     }
     timer.stop(`abusivenessDetection`);
-    timer.start(`getRaterInfoFromRequest`);
-    const { authContext, targetProfileId } = await getRaterInfoFromRequest(req);
-    timer.stop(`getRaterInfoFromRequest`);
     await ratingsService.updateRating(
       {
         authenticationContext: authContext,

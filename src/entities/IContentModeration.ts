@@ -98,6 +98,10 @@ export class ContentModerationHiddenDropEntity {
 ])
 @Index(`${CONTENT_MODERATION_REPORTS_TABLE}_drop_idx`, ['drop_id'])
 export class ContentModerationReportEntity {
+  @Index()
+  @Column({ type: 'char', length: 64, nullable: true })
+  readonly item_id!: string | null;
+
   @PrimaryColumn({ type: 'varchar', length: 36 })
   readonly id!: string;
 
@@ -212,6 +216,17 @@ export class ContentModerationProfileStateEntity {
   'id'
 ])
 export class ContentModerationAuditLogEntity {
+  @Index('moderation_audit_item_idx')
+  @Column({ type: 'char', length: 64, nullable: true })
+  readonly item_id!: string | null;
+
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  readonly evaluation_id!: string | null;
+
+  @Index('moderation_audit_action_id_idx', { unique: true })
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  readonly action_id!: string | null;
+
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
   readonly id!: string;
 
@@ -251,6 +266,9 @@ export class ContentModerationAuditLogEntity {
   'created_at'
 ])
 export class ContentModerationPrePublicationCheckEntity {
+  @Column({ type: 'char', length: 64, nullable: true })
+  readonly item_id!: string | null;
+
   @PrimaryColumn({ type: 'varchar', length: 36 })
   readonly id!: string;
 

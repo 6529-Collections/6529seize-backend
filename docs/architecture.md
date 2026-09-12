@@ -474,12 +474,25 @@ block profiles through `/content-moderation`. Reports, private evidence
 snapshots, and requested personal hide/block actions commit atomically before
 the reported-content Bedrock assessment runs. Only a high-confidence urgent
 recommendation can temporarily quarantine a drop; ordinary results remain in
-the occasional moderator queue. Authorized moderators can restore,
+the developer review queue. Authorized developers can restore,
 quarantine, or remove drops and suspend or reinstate posting profiles.
-Moderator access is read from explicit configured profile IDs or a durable
-role; access checks never create roles. The prioritized queue uses opaque
+Privileged access requires the exact `DEVS_6529_MENTION_PROFILE_IDS` set and
+an authenticated non-proxy profile; broader roles do not grant access.
+The prioritized queue uses opaque
 stable cursors. There is no continuous review queue or hold-before-publish
 state.
+
+The developer [moderation review API](../ops/docs/developer/moderation-review.md)
+captures REP, About, group-name, signaled pre-publication and reported-content
+evaluations in `content_moderation_items` and `content_moderation_evaluations`.
+It replaces moderation's Discord notifications with database evidence and
+versioned, idempotent human actions. Existing stricter public-field prompts
+remain separate from permissive wave-content prompts. Exact rejected content
+can receive a seven-day single-use resubmission permit; approval never publishes
+an archived draft. About and group-name suppression uses an exact-revision
+presentation overlay while preserving source values. Routine successes expire
+after 30 days, resolved evidence after 90 days, and compact history after one
+year; unresolved evidence and active rules retain their required provenance.
 
 MySQL stores viewer blocks and hides, reports, global drop and profile states,
 moderator roles, pre-publication decisions, and an append-only audit history.

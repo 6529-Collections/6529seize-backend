@@ -8,6 +8,12 @@ import {
   abusivenessCheckService,
   AbusivenessCheckService
 } from '../profiles/abusiveness-check.service';
+import {
+  moderationReviewDb,
+  moderationConflict,
+  assertModerationPermitReplay
+} from '@/content-moderation/moderation-review.db';
+import { moderationFingerprint } from '@/content-moderation/moderation-review.types';
 import { ProfileClassification } from '../entities/IProfile';
 import {
   MAX_ART_LINK_LENGTH,
@@ -233,7 +239,8 @@ export class CicService {
 
   public async addCicStatement({
     statement,
-    profile
+    profile,
+    moderationRequestId
   }: {
     statement: Omit<CicStatement, 'id' | 'crated_at' | 'updated_at'>;
     profile: {
@@ -241,9 +248,53 @@ export class CicService {
       profile_id: string;
       classification: ProfileClassification | null;
     };
+    moderationRequestId?: string;
   }) {
     const statementToInsert = prepareCicStatementForInsert(statement);
     this.validateCicStatement(statementToInsert);
+    const isBio =
+      statementToInsert.statement_group === CicStatementGroup.GENERAL &&
+      statementToInsert.statement_type === 'BIO';
+    const initialBio = isBio
+      ? this.latestBio(
+          await this.cicDb.getCicStatementsByProfileId(statement.profile_id)
+        )
+      : undefined;
+    const currentRevision = initialBio
+      ? moderationFingerprint({
+          id: initialBio.id,
+          text: initialBio.statement_value
+        })
+      : null;
+    const replay = isBio
+      ? await moderationReviewDb.savedRequest(
+          profile.profile_id,
+          'PROFILE_BIO',
+          moderationRequestId
+        )
+      : null;
+    if (replay) {
+      if (
+        replay.evidence?.text !== statementToInsert.statement_value.trim() ||
+        initialBio?.id !== replay.published_subject_id
+      )
+        moderationConflict();
+      return initialBio;
+    }
+    const review = isBio
+      ? await this.abusivenessCheckService.checkBio({
+          handle: profile.handle,
+          profile_type:
+            profile.classification ?? ProfileClassification.PSEUDONYM,
+          text: statementToInsert.statement_value,
+          profile_id: profile.profile_id,
+          current_revision: currentRevision
+        })
+      : null;
+    if (review?.status === 'DISALLOWED')
+      throw new BadRequestException(
+        `Bio is not allowed: ${review.explanation}`
+      );
     return await this.cicDb.executeNativeQueriesInTransaction(
       async (connection) => {
         await this.cicDb.lockProfileForCicStatementMutation(
@@ -269,21 +320,27 @@ export class CicService {
           statementToInsert.statement_group === CicStatementGroup.GENERAL &&
           statementToInsert.statement_type === 'BIO'
         ) {
-          const abusivenessDetectionResult =
-            await this.abusivenessCheckService.checkBio({
-              handle: profile.handle,
-              profile_type:
-                profile.classification ?? ProfileClassification.PSEUDONYM,
-              text: statementToInsert.statement_value
-            });
-          if (abusivenessDetectionResult.status === 'DISALLOWED') {
-            throw new BadRequestException(
-              `Bio is not allowed: ${abusivenessDetectionResult.explanation}`
+          const existingBioStatement = this.latestBio(existingStatements);
+          if (review?.moderation_item_id) {
+            const reviewed = await moderationReviewDb.get(
+              review.moderation_item_id,
+              { connection },
+              true
             );
+            if (reviewed.permit_consumed_at) {
+              assertModerationPermitReplay(reviewed, moderationRequestId);
+              if (existingBioStatement?.id !== reviewed.published_subject_id)
+                moderationConflict();
+              return existingBioStatement;
+            }
           }
-          const existingBioStatement = existingStatements.find(
-            (existingStatement) => existingStatement.statement_type === 'BIO'
-          );
+          const actualRevision = existingBioStatement
+            ? moderationFingerprint({
+                id: existingBioStatement.id,
+                text: existingBioStatement.statement_value
+              })
+            : null;
+          if (actualRevision !== currentRevision) moderationConflict();
           if (existingBioStatement) {
             await this.deleteStatement(existingBioStatement, connection);
           }
@@ -292,9 +349,42 @@ export class CicService {
             `Statement of type ${statementToInsert.statement_type} with value ${statementToInsert.statement_value} already exists`
           );
         }
-        return await this.insertStatement(statementToInsert, connection);
+        const inserted = await this.insertStatement(
+          statementToInsert,
+          connection
+        );
+        if (review?.moderation_item_id) {
+          await moderationReviewDb.consume(
+            review.moderation_item_id,
+            inserted.id,
+            { connection, moderationRequestId }
+          );
+          await moderationReviewDb.setPublishedRevision(
+            review.moderation_item_id,
+            moderationFingerprint({
+              id: inserted.id,
+              text: inserted.statement_value
+            }),
+            { connection }
+          );
+        }
+        return inserted;
       }
     );
+  }
+
+  private latestBio(statements: CicStatement[]): CicStatement | undefined {
+    return statements
+      .filter(
+        (row) =>
+          row.statement_type === 'BIO' &&
+          row.statement_group === CicStatementGroup.GENERAL
+      )
+      .sort(
+        (a, b) =>
+          new Date(b.crated_at).getTime() - new Date(a.crated_at).getTime() ||
+          b.id.localeCompare(a.id)
+      )[0];
   }
 
   public async insertStatement(
@@ -329,6 +419,10 @@ export class CicService {
     const cicStatement =
       await this.getCicStatementByIdAndProfileIdOrThrow(props);
     await this.cicDb.executeNativeQueriesInTransaction(async (connection) => {
+      await this.cicDb.lockProfileForCicStatementMutation(
+        props.profile_id,
+        connection
+      );
       await this.deleteStatement(cicStatement, connection);
     });
   }
