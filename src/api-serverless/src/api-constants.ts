@@ -18,6 +18,7 @@ type ApiCorsOptions = {
   methods: string[];
   allowedHeaders: string[];
   credentials?: true;
+  exposedHeaders?: string[];
 };
 
 export const corsOptions: ApiCorsOptions = {
@@ -42,11 +43,35 @@ const WEB_AUTH_CREDENTIAL_ROUTE_PATHS = new Set([
   '/api/auth/connection-share/redeem'
 ]);
 
+// Match only the routes whose existing contract requires this request header.
+// Express routing is case-insensitive and accepts one trailing slash by default.
+const MARKET_IDEMPOTENT_ROUTE =
+  /^\/api\/(?:market\/operations|collect\/rules(?:\/[^/]+\/prepare)?)\/?$/i;
+
 export function getCorsOptionsForRequest(
   path: string,
   originHeader: unknown,
   apiHostHeader: unknown
 ): ApiCorsOptions {
+  if (path.startsWith('/api/artwork-documentation')) {
+    return {
+      ...corsOptions,
+      origin:
+        getAllowedWebAuthCredentialOrigin(originHeader, apiHostHeader) ?? false,
+      allowedHeaders: [
+        ...corsOptions.allowedHeaders,
+        'If-Match',
+        'Idempotency-Key'
+      ],
+      exposedHeaders: ['ETag', 'X-Request-Id']
+    };
+  }
+  if (MARKET_IDEMPOTENT_ROUTE.test(path)) {
+    return {
+      ...corsOptions,
+      allowedHeaders: [...corsOptions.allowedHeaders, 'Idempotency-Key']
+    };
+  }
   if (!WEB_AUTH_CREDENTIAL_ROUTE_PATHS.has(path)) {
     return corsOptions;
   }

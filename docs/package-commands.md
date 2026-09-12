@@ -85,9 +85,60 @@ cd src/transactionsLoop
 6529 run build
 ```
 
+### Media packages
+
+Use Node 22 for the backend and media checks (Sharp requires at least Node
+20.9.0). A normal `6529 ci` selects native optional packages for the host.
+Do not omit optional dependencies. The media compatibility workflow exercises
+Linux x64, macOS Intel/ARM64 and Windows x64 installs using the existing Bash
+wrapper convention, plus real codec and multipart tests.
+
+The six Sharp Lambda packages build deployment ZIPs only on Linux x64 with
+glibc. On macOS or Windows, use a Linux x64 container or the GitHub deployment
+workflow. The build checks the host before removing outputs, explicitly selects
+Linux x64/glibc optional packages, ignores global libvips for deployment, and
+extracts the final ZIP to verify codecs and handler loading. PR CI repeats this
+verification in the official Lambda Node 22 image without network access.
+
+Developer installs may use custom libvips; Sharp 0.35.4 requires libvips >=8.18.6
+and such builds are developer-managed. Set `SHARP_IGNORE_GLOBAL_LIBVIPS=1` to
+use the tested bundled binaries. Windows ARM64 optional packages remain in the
+lockfiles but that developer runtime is not covered by this workflow.
+
+Run the database-independent real-image and upload checks with:
+
+```bash
+./bin/6529 exec jest --config scripts/media-jest.config.cjs
+./bin/6529 exec node scripts/verify-media-runtime.cjs .
+```
+
 For diagnostics, `6529 npm:version` prints the npm version that Corepack
 resolves from the current package's `packageManager` pin. It is not required
 for normal setup, installs, or script execution.
+
+## Coordinator Release CLI
+
+The root devDependency `@6529-collections/release-request` is pinned to `0.0.4`
+from public npm in `package.json` and `package-lock.json`. It requires Node 20
+or newer and has no install-time scripts. Normal `./bin/6529 ci` installs it;
+no GitHub Packages token or private registry configuration is needed.
+
+From the repository root, inspect the installed version and current template:
+
+```bash
+./bin/6529 exec 6529-release-request --version
+./bin/6529 exec 6529-release-request template
+```
+
+For this CLI, the wrapper directly executes the root package's installed entry
+point. It fails if that entry point is missing or not executable, without npm
+exec, a PATH fallback, or downloading a replacement. Other `6529 exec` commands
+retain their existing behavior.
+
+Follow [Coordinator release recording](../ops/skills/deploy-6529/SKILL.md#coordinator-release-recording)
+for authorized submission and outcome handling. The CLI owns its local records
+under `.release-coordinator/runs/` and `.release-coordinator/outbox/`; both are
+ignored by Git.
 
 ## Command Policy
 

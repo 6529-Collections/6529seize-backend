@@ -1,51 +1,40 @@
-# Simple Release Bus v2
+# AGENTS.md
 
-- Before staging, production, promotion, or release mutation, run
-  `node ops/scripts/release-bus-status.mjs` and follow `deploy-6529`.
-- Route only from the helper's two effective lane states. When the target lane
-  is `ON`, use v2. When it is `OFF`, use serialized manual fallback only when
-  `changeable: true`, no hidden emergency fence blocks fallback, the target
-  environment lock is free, no mutation/E2E workflow is active, and every
-  already-dispatched exact operation is terminal. Both lanes `OFF` means full
-  manual fallback.
-- There is no inferred control-plane or self-upgrade exception. While a target
-  lane is `ON`, every deploy for that environment—including API, `releaseBus`,
-  cleaner/reconciler, and other control-plane changes—must carry a valid
-  Release Bus operation identity. A manual workflow must fail before checkout,
-  build, ref, credential, or deployment mutation unless the affected lane is
-  authoritatively `OFF` and its fallback gate passes. If the bus cannot safely
-  self-deploy while `ON`, stop for explicit owner direction.
-- Staging `ON` accepts exact candidates. Production `ON` requires a separate
-  exact-SHA production action after `STAGING_VALIDATED`.
-- Raw mode and `ALL` are internal emergency fences, not normal routing or UI
-  controls. Never bypass them. Use `release-bus-v2-fast-off.mjs` only for an
-  emergency hard stop.
-- In manual fallback, dispatch backend `Deploy a service` workflows one at a
-  time and wait for exact success before starting the next. Shared concurrency
-  can cancel sibling service runs, including independent DAG-frontier units.
-- For coupled work, declare backend dependencies and preserve backend-before-
-  frontend ordering. Within v2, only independent backend DAG frontier units run
-  together.
-- `STAGING_DEPLOYED` is not validation. Do not mutate staging during manifest-
-  bound E2E, and never infer production readiness from staging validation.
-- Production readiness is an explicit dependency-closed selection. Every
-  selected unchanged SHA must carry successful staging manifest/E2E evidence;
-  unrelated staging candidates and the current shared-staging combination are
-  not production gates.
-- New production trains use `CANDIDATE_STAGING_EVIDENCE_V1`: compose and build
-  freshly from both current production bases, do not create a
-  `PRODUCTION_QUALIFICATION` child, and require terminal read-only production
-  E2E before `PRODUCTION_DEPLOYED`. Null-policy legacy trains retain their
-  immutable claimed behavior.
-- Normal train preflight reuses exact-head/merge-tree PR CI evidence, not
-  environment-incompatible artifact bytes. It installs dependencies once,
-  builds/packages only the selected backend units, and emits immutable
-  environment-bound manifests. Repository-wide lint, typecheck, test inventory,
-  and full Jest matrices remain PR CI gates and must not return to the normal
-  staging or production train critical path.
-- Never cancel another actor's workflow, force-push a shared ref, or bypass exact
-  SHA/artifact checks. Never author or post release notes manually; preserve the
-  autonomous bot's complete grouping metadata and finalize signal.
+## Deployment
+
+- Follow `ops/skills/deploy-6529/SKILL.md` for authorized staging and production
+  work, using ordinary Git merges and the existing GitHub Actions workflows.
+- Follow [Coordinator release recording](ops/skills/deploy-6529/SKILL.md#coordinator-release-recording)
+  before release mutations, and preserve this current Coordinator integration
+  when changing deployment instructions.
+- For staging, merge the development branch into the latest `1a-staging` and
+  push. Frontend changes automatically start `Web Deploy - STAGING`; backend
+  changes require dispatching `Deploy a service` for the required services.
+- For production, merge the development branch into `main`, then dispatch
+  `Web Deploy - PROD` for frontend or `Deploy a service` with `environment=prod`
+  for backend. A staging request alone does not authorize production.
+- Run backend service deployments sequentially in dependency order. Wait for
+  each run to succeed, then continue the next service in the same task without
+  asking for repeated authorization already covered by the requested phase.
+- Deploy backend dependencies before merging or deploying dependent frontend
+  changes in each environment. Read the backend service catalog and the change
+  to determine the units and order; avoid deploying unrelated services.
+- Fetch shared refs before merging. Preserve other developers' changes, resolve
+  conflicts normally, and never force-push or overwrite a moved shared ref.
+  Do not cancel another developer's deployment; coordinate through GitHub run
+  visibility and wait when the work would conflict.
+- Complete deployments after build, artifact integrity, runtime version, and
+  health checks pass. Automatic E2E runs separately and does not hold up a
+  merge, deployment, or promotion to the next authorized environment.
+- Unrelated PR E2E failures or pending runs do not block releases. Keep relevant
+  build, unit/contract, and security checks intact; report E2E status separately.
+  Fix known regressions attributable to the change on the development branch.
+- CI wave notifications carry deploy run IDs through E2E and reruns. The
+  backend alone resolves the drop reply target; notification failures remain
+  best effort. Keep receiver and sender contracts compatible during rollout.
+- Never author or post release notes manually. Preserve the autonomous bot's
+  PR/service grouping metadata and final publication signal; use the release-note opt-out
+  only when the user explicitly requests suppressing release notes.
 
 # Commiting to Git
 

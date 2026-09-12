@@ -2,6 +2,7 @@ const mockRouterGet = jest.fn();
 const mockRouterPost = jest.fn();
 const createWebSessionMock = jest.fn();
 const createNativeSessionMock = jest.fn();
+const refreshWebSessionForAddressMock = jest.fn();
 const getProfileIdByIdentityKeyMock = jest.fn();
 
 jest.mock('../async.router', () => ({
@@ -24,8 +25,6 @@ jest.mock('./auth', () => ({
 }));
 
 jest.mock('./auth-session-v2', () => ({
-  clearWalletSessionCookieForAddressAndOrigin: jest.fn(),
-  clearWalletSessionCookieForOrigin: jest.fn(),
   createConnectionShare: jest.fn(),
   createNativeSession: createNativeSessionMock,
   createWebSession: createWebSessionMock,
@@ -37,7 +36,7 @@ jest.mock('./auth-session-v2', () => ({
   logoutWebSession: jest.fn(),
   redeemConnectionShare: jest.fn(),
   refreshNativeSession: jest.fn(),
-  refreshWebSessionForAddress: jest.fn()
+  refreshWebSessionForAddress: refreshWebSessionForAddressMock
 }));
 
 jest.mock('./auth.db', () => ({
@@ -85,6 +84,10 @@ const wallet = new ethers.Wallet(
 
 const sessionNonceHandler = getRouteHandler(mockRouterGet, '/session-nonce');
 const sessionLoginHandler = getRouteHandler(mockRouterPost, '/session-login');
+const sessionRefreshHandler = getRouteHandler(
+  mockRouterPost,
+  '/session-refresh'
+);
 const legacyLoginHandler = getRouteHandler(mockRouterPost, '/login');
 
 describe('wallet auth SIWE routes', () => {
@@ -320,6 +323,31 @@ describe('wallet auth SIWE routes', () => {
       token: 'web-access-token',
       token_expiry: 123
     });
+  });
+
+  it('does not clear browser cookies when a web session refresh is invalid', async () => {
+    refreshWebSessionForAddressMock.mockResolvedValueOnce(null);
+    const response = makeResponse();
+
+    await expect(
+      sessionRefreshHandler(
+        makeRequest({
+          body: {
+            client_type: 'web',
+            client_address: wallet.address
+          },
+          cookie: '6529_session_scoped=session.secret',
+          origin: 'https://6529.io',
+          host: 'api.6529.io'
+        }),
+        response
+      )
+    ).rejects.toThrow('Invalid session');
+
+    expect(response.setHeader).not.toHaveBeenCalledWith(
+      'Set-Cookie',
+      expect.anything()
+    );
   });
 
   it('accepts SIWE even when strict structured signatures are required', async () => {
@@ -678,11 +706,13 @@ function sessionLoginBody({
 function makeRequest({
   query = {},
   body = {},
+  cookie,
   origin,
   host
 }: {
   readonly query?: Record<string, unknown>;
   readonly body?: Record<string, unknown>;
+  readonly cookie?: string;
   readonly origin?: string;
   readonly host?: string;
 }) {
@@ -690,6 +720,7 @@ function makeRequest({
     query,
     body,
     headers: {
+      ...(cookie ? { cookie } : {}),
       ...(origin ? { origin } : {}),
       ...(host ? { host } : {})
     },

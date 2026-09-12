@@ -1,5 +1,17 @@
 import { ReleaseNoteGenerationRequest } from '@/release-notes/release-note-generation-queue';
-import { parseReleaseNoteMessage, processRequest } from './index';
+import {
+  NonRetryableReleaseNoteError,
+  UntrustedReleaseNoteMetadataError
+} from '@/release-notes/release-note-errors';
+import {
+  buildReleaseNoteFailureAlert,
+  parseReleaseNoteMessage,
+  prepareReleaseNoteErrorForRetry,
+  processRequest,
+  processRequestWithRetryPolicy,
+  shouldCaptureReleaseNoteError,
+  shouldRetryReleaseNoteError
+} from './index';
 
 const request: ReleaseNoteGenerationRequest = {
   repo: '6529seize-backend',
@@ -61,7 +73,8 @@ describe('parseReleaseNoteMessage', () => {
   });
 
   it('rejects a missing prompt path', () => {
-    expect(() =>
+    let error: unknown;
+    try {
       parseReleaseNoteMessage(
         JSON.stringify({
           repo: '6529-Collections/6529seize-frontend',
@@ -71,8 +84,16 @@ describe('parseReleaseNoteMessage', () => {
           sha: 'abc123',
           environment: 'prod'
         })
-      )
-    ).toThrow('prompt_path is required');
+      );
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(NonRetryableReleaseNoteError);
+    expect(error).toHaveProperty(
+      'message',
+      expect.stringContaining('prompt_path is required')
+    );
   });
 
   it('rejects deployment dates without a full timestamp', () => {
@@ -101,6 +122,267 @@ describe('parseReleaseNoteMessage', () => {
       )
     ).toThrow('contributor_github_logins must be an array');
   });
+
+  it('requires exact Desktop version and Frontend source metadata', () => {
+    const desktopMessage = {
+      ...request,
+      repo: '6529-core',
+      workflow: 'Publish',
+      sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      service: 'desktop',
+      prompt_path: 'ops/release-notes/desktop-release-notes.prompt.md',
+      release_group_services: ['desktop'],
+      release_version: '0.3.13',
+      frontend_sha: '63630a3e27c37296bbe39d9813b014a824265a56'
+    };
+
+    expect(parseReleaseNoteMessage(JSON.stringify(desktopMessage))).toEqual(
+      expect.objectContaining({
+        release_version: '0.3.13',
+        frontend_sha: '63630a3e27c37296bbe39d9813b014a824265a56'
+      })
+    );
+    const { frontend_sha: _frontendSha, ...missingFrontendSha } =
+      desktopMessage;
+    expect(() =>
+      parseReleaseNoteMessage(JSON.stringify(missingFrontendSha))
+    ).toThrow('release_version and frontend_sha are required for 6529-core');
+  });
+});
+
+describe('Desktop retry policy', () => {
+  const desktopRequest: ReleaseNoteGenerationRequest = {
+    ...request,
+    repo: '6529-core',
+    workflow: 'Publish',
+    service: 'desktop',
+    release_group_services: ['desktop'],
+    release_version: '0.3.13',
+    frontend_sha: '63630a3e27c37296bbe39d9813b014a824265a56'
+  };
+
+  it('rethrows the first three failures without posting an alert', async () => {
+    const error = new Error('Frontend release note was not found');
+    const postFailure = jest.fn();
+
+    await expect(
+      processRequestWithRetryPolicy(desktopRequest, 3, {
+        process: jest.fn().mockRejectedValue(error),
+        postFailure
+      })
+    ).rejects.toThrow(error);
+    expect(postFailure).not.toHaveBeenCalled();
+  });
+
+  it('posts one terminal failure after the initial attempt and three retries', async () => {
+    const error = new Error('Frontend release note was not found');
+    const postFailure = jest.fn().mockResolvedValue(undefined);
+
+    await expect(
+      processRequestWithRetryPolicy(desktopRequest, 4, {
+        process: jest.fn().mockRejectedValue(error),
+        postFailure
+      })
+    ).resolves.toBeUndefined();
+    expect(postFailure).toHaveBeenCalledWith(desktopRequest, error, 4);
+  });
+
+  it('posts deterministic Desktop failures immediately without retrying', async () => {
+    const error = new NonRetryableReleaseNoteError(
+      'Desktop release history is malformed'
+    );
+    const postFailure = jest.fn().mockResolvedValue(undefined);
+
+    await expect(
+      processRequestWithRetryPolicy(desktopRequest, 1, {
+        process: jest.fn().mockRejectedValue(error),
+        postFailure
+      })
+    ).resolves.toBeUndefined();
+    expect(postFailure).toHaveBeenCalledWith(desktopRequest, error, 1);
+  });
+
+  it('describes deterministic Desktop failures without a zero-retry count', () => {
+    const alert = buildReleaseNoteFailureAlert(
+      desktopRequest,
+      new NonRetryableReleaseNoteError('Desktop release history is malformed'),
+      1
+    );
+
+    expect(alert.description).toContain(
+      'could not be published because the failure is not retryable'
+    );
+    expect(alert.description).not.toContain('after 0 retries');
+  });
+
+  it('does not duplicate the terminal alert before moving to the DLQ', async () => {
+    const process = jest.fn();
+    const postFailure = jest.fn();
+
+    await expect(
+      processRequestWithRetryPolicy(desktopRequest, 5, {
+        process,
+        postFailure
+      })
+    ).rejects.toThrow('terminal alert failed and must move to the DLQ');
+    expect(process).not.toHaveBeenCalled();
+    expect(postFailure).not.toHaveBeenCalled();
+  });
+});
+
+describe('Frontend and Backend terminal failure policy', () => {
+  it('rethrows transient failures before the fifth attempt', async () => {
+    const error = new Error('Temporary GitHub comparison failure');
+    const postFailure = jest.fn();
+
+    await expect(
+      processRequestWithRetryPolicy(request, 4, {
+        process: jest.fn().mockRejectedValue(error),
+        postFailure
+      })
+    ).rejects.toThrow(error);
+    expect(postFailure).not.toHaveBeenCalled();
+  });
+
+  it('posts the production alert and preserves DLQ failure on attempt five', async () => {
+    const error = new Error('Persistent GitHub comparison failure');
+    const postFailure = jest.fn().mockResolvedValue(undefined);
+
+    await expect(
+      processRequestWithRetryPolicy(request, 5, {
+        process: jest.fn().mockRejectedValue(error),
+        postFailure
+      })
+    ).rejects.toThrow(error);
+    expect(postFailure).toHaveBeenCalledWith(request, error, 5);
+  });
+
+  it('alerts and drains a deterministic failure on its first attempt', async () => {
+    const error = new NonRetryableReleaseNoteError(
+      'Release history does not reach the production baseline'
+    );
+    const postFailure = jest.fn().mockResolvedValue(undefined);
+
+    await expect(
+      processRequestWithRetryPolicy(request, 1, {
+        process: jest.fn().mockRejectedValue(error),
+        postFailure
+      })
+    ).resolves.toBeUndefined();
+    expect(postFailure).toHaveBeenCalledWith(request, error, 1);
+  });
+
+  it('reports untrusted run metadata without posting an alert', async () => {
+    const error = new UntrustedReleaseNoteMetadataError(
+      'GitHub release run 123 does not match the queued release metadata'
+    );
+    const postFailure = jest.fn();
+
+    await expect(
+      processRequestWithRetryPolicy(request, 1, {
+        process: jest.fn().mockRejectedValue(error),
+        postFailure
+      })
+    ).resolves.toBeUndefined();
+    expect(postFailure).not.toHaveBeenCalled();
+  });
+
+  it('retries when a deterministic failure alert cannot be delivered', async () => {
+    const error = new NonRetryableReleaseNoteError(
+      'Release history does not reach the production baseline'
+    );
+    const alertError = new Error('Production CI alert failed');
+
+    await expect(
+      processRequestWithRetryPolicy(request, 1, {
+        process: jest.fn().mockRejectedValue(error),
+        postFailure: jest.fn().mockRejectedValue(alertError)
+      })
+    ).rejects.toThrow(alertError);
+  });
+
+  it('targets deterministic Frontend failures at the production CI wave', () => {
+    const error = new NonRetryableReleaseNoteError(
+      'Release history does not reach the production baseline'
+    );
+
+    expect(
+      buildReleaseNoteFailureAlert(
+        {
+          ...request,
+          repo: '6529seize-frontend',
+          workflow: 'Web Deploy - PROD',
+          service: 'web'
+        },
+        error,
+        1
+      )
+    ).toEqual(
+      expect.objectContaining({
+        repo: '6529seize-frontend',
+        status: 'failure',
+        title: 'Frontend release note failed',
+        environment: 'prod',
+        service: 'web',
+        description: expect.stringContaining(
+          'could not be published because the failure is not retryable'
+        )
+      })
+    );
+  });
+
+  it('describes the fifth Frontend attempt as four exhausted retries', () => {
+    expect(
+      buildReleaseNoteFailureAlert(
+        {
+          ...request,
+          repo: '6529seize-frontend',
+          workflow: 'Web Deploy - PROD',
+          service: 'web'
+        },
+        new Error('Persistent GitHub comparison failure'),
+        5
+      )
+    ).toEqual(
+      expect.objectContaining({
+        title: 'Frontend release note failed',
+        environment: 'prod',
+        description: expect.stringContaining(
+          'could not be published after 4 retries'
+        )
+      })
+    );
+  });
+});
+
+describe('release-note Sentry retry policy', () => {
+  it('suppresses Sentry reporting while an SQS request will retry', () => {
+    const error = new Error('Temporary GitHub comparison failure');
+    const thrown = prepareReleaseNoteErrorForRetry(error, 4);
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe(error.message);
+    expect((thrown as Error & { cause: unknown }).cause).toBe(error);
+    expect(shouldCaptureReleaseNoteError(thrown)).toBe(false);
+  });
+
+  it('reports the original error to Sentry on the final SQS attempt', () => {
+    const error = new Error('Persistent GitHub comparison failure');
+    const thrown = prepareReleaseNoteErrorForRetry(error, 5);
+
+    expect(thrown).toBe(error);
+    expect(shouldCaptureReleaseNoteError(thrown)).toBe(true);
+  });
+
+  it('does not retry deterministic frontend failures', () => {
+    const error = new NonRetryableReleaseNoteError(
+      'Release history does not reach the production baseline'
+    );
+
+    expect(prepareReleaseNoteErrorForRetry(error, 1)).toBe(error);
+    expect(shouldRetryReleaseNoteError(error)).toBe(false);
+    expect(shouldCaptureReleaseNoteError(error)).toBe(true);
+  });
 });
 
 describe('processRequest', () => {
@@ -125,6 +407,22 @@ describe('processRequest', () => {
           }
         ),
       del: jest.fn().mockResolvedValue(1),
+      eval: jest
+        .fn()
+        .mockImplementation(
+          (
+            _script: string,
+            options: { keys: string[]; arguments: string[] }
+          ) => {
+            const [key] = options.keys;
+            const [token] = options.arguments;
+            if (values.get(key) !== token) {
+              return Promise.resolve(0);
+            }
+            values.delete(key);
+            return Promise.resolve(1);
+          }
+        ),
       sAdd: jest.fn().mockImplementation((key: string, value: string) => {
         const members = sets.get(key) ?? new Set<string>();
         members.add(value);
@@ -176,7 +474,7 @@ describe('processRequest', () => {
     expect(redis.set).toHaveBeenCalledWith(
       'release-note-group:6529seize-backend:pr-1749:run:api',
       expect.any(String),
-      { EX: 7776000 }
+      { EX: 604800 }
     );
     expect(generateAndPost).not.toHaveBeenCalled();
   });
@@ -244,29 +542,30 @@ describe('processRequest', () => {
         run_number: '45',
         run_url: 'https://github.com/example/actions/runs/123'
       }),
-      { EX: 7776000 }
+      { EX: 604800 }
     );
     expect(redis.set).toHaveBeenCalledWith(
       'release-note-group:6529seize-backend:pr-1749:publish-requested',
       '1',
-      { EX: 7776000 }
+      { EX: 604800 }
     );
     expect(redis.set).toHaveBeenCalledWith(
       'release-note:6529seize-backend:pr-1749:processing',
-      '1',
-      { NX: true, EX: 1200 }
+      expect.any(String),
+      { NX: true, EX: 240 }
     );
     expect(redis.set).toHaveBeenCalledWith(
       'release-note:6529seize-backend:pr-1749',
       '1',
-      { EX: 7776000 }
+      { EX: 604800 }
     );
-    expect(redis.del).toHaveBeenCalledWith(
-      'release-note:6529seize-backend:pr-1749:processing'
-    );
+    expect(redis.eval).toHaveBeenCalledWith(expect.any(String), {
+      keys: ['release-note:6529seize-backend:pr-1749:processing'],
+      arguments: [expect.any(String)]
+    });
   });
 
-  it('uses the processing lock as the sole winner for concurrent completion', async () => {
+  it('keeps the losing concurrent delivery retryable', async () => {
     const redis = buildRedis();
     const generateAndPost = jest.fn().mockResolvedValue(undefined);
     const completedRequest = {
@@ -275,7 +574,7 @@ describe('processRequest', () => {
       publish_release_note: true
     };
 
-    await Promise.all([
+    const results = await Promise.allSettled([
       processRequest(completedRequest, {
         redis: redis as any,
         generateAndPost
@@ -287,10 +586,13 @@ describe('processRequest', () => {
     ]);
 
     expect(generateAndPost).toHaveBeenCalledTimes(1);
+    expect(
+      results.filter((result) => result.status === 'rejected')
+    ).toHaveLength(1);
     expect(redis.set).toHaveBeenCalledWith(
       'release-note:6529seize-backend:pr-1749:processing',
-      '1',
-      { NX: true, EX: 1200 }
+      expect.any(String),
+      { NX: true, EX: 240 }
     );
   });
 
@@ -334,11 +636,34 @@ describe('processRequest', () => {
     expect(redis.set).not.toHaveBeenCalledWith(
       'release-note:6529seize-backend:pr-1749',
       '1',
-      { EX: 7776000 }
+      { EX: 604800 }
     );
-    expect(redis.del).toHaveBeenCalledWith(
-      'release-note:6529seize-backend:pr-1749:processing'
+    expect(redis.eval).toHaveBeenCalledWith(expect.any(String), {
+      keys: ['release-note:6529seize-backend:pr-1749:processing'],
+      arguments: [expect.any(String)]
+    });
+  });
+
+  it('preserves the generation error when lock cleanup fails', async () => {
+    const redis = buildRedis();
+    const generationError = new NonRetryableReleaseNoteError(
+      'invalid release range'
     );
+    redis.eval.mockRejectedValue(new Error('Redis cleanup failed'));
+
+    await expect(
+      processRequest(
+        {
+          ...request,
+          release_group_services: ['api'],
+          publish_release_note: true
+        },
+        {
+          redis: redis as any,
+          generateAndPost: jest.fn().mockRejectedValue(generationError)
+        }
+      )
+    ).rejects.toBe(generationError);
   });
 
   it('keeps the latest successful run for a service before publication', async () => {
@@ -357,8 +682,113 @@ describe('processRequest', () => {
     });
 
     expect(redis.set).toHaveBeenCalledWith(runKey, expect.any(String), {
-      EX: 7776000
+      EX: 604800
     });
     await expect(redis.get(runKey)).resolves.toContain('"run_id":"123"');
+  });
+
+  it('persists publication progress and completes the durable cursor', async () => {
+    const redis = buildRedis();
+    const frontendRequest: ReleaseNoteGenerationRequest = {
+      ...request,
+      repo: '6529seize-frontend',
+      workflow: 'Web Deploy - PROD',
+      run_id: '32471443637',
+      run_number: '1660',
+      sha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      service: 'web',
+      release_group_id: 'frontend-production',
+      release_group_services: ['web'],
+      pull_request_number: null,
+      publish_release_note: true
+    };
+    const publicationState = {
+      prepare: jest.fn().mockResolvedValue({
+        publicationId: 'publication-id',
+        previousSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        completed: false
+      }),
+      recordPlan: jest.fn().mockResolvedValue(undefined),
+      recordPart: jest.fn().mockResolvedValue(undefined),
+      complete: jest.fn().mockResolvedValue(undefined)
+    };
+    const generateAndPost = jest
+      .fn()
+      .mockImplementation(async (_request, _ctx, options) => {
+        expect(options.previousSha).toBe(
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+        );
+        await options.onPlan(11);
+        await options.onPartCompleted({
+          partNumber: 7,
+          totalParts: 11,
+          dropId: 'part-seven-drop'
+        });
+        return 'published';
+      });
+
+    await processRequest(frontendRequest, {
+      redis: redis as any,
+      publicationState: publicationState as any,
+      generateAndPost
+    });
+
+    expect(publicationState.recordPlan).toHaveBeenCalledWith(
+      'publication-id',
+      11,
+      {}
+    );
+    expect(publicationState.recordPart).toHaveBeenCalledWith(
+      {
+        publicationId: 'publication-id',
+        partNumber: 7,
+        totalParts: 11,
+        dropId: 'part-seven-drop'
+      },
+      {}
+    );
+    expect(publicationState.complete).toHaveBeenCalledWith(
+      'publication-id',
+      {}
+    );
+  });
+
+  it('retries cleanly before starting a part without enough Lambda time', async () => {
+    const redis = buildRedis();
+    const frontendRequest: ReleaseNoteGenerationRequest = {
+      ...request,
+      repo: '6529seize-frontend',
+      workflow: 'Web Deploy - PROD',
+      service: 'web',
+      release_group_id: 'frontend-production',
+      release_group_services: ['web'],
+      pull_request_number: null
+    };
+    const publicationState = {
+      prepare: jest.fn().mockResolvedValue({
+        publicationId: 'publication-id',
+        previousSha: 'previous-sha',
+        completed: false
+      }),
+      recordPlan: jest.fn(),
+      recordPart: jest.fn(),
+      complete: jest.fn()
+    };
+    const generateAndPost = jest
+      .fn()
+      .mockImplementation(async (_request, _ctx, options) => {
+        options.assertCanStartPart(7, 11);
+      });
+
+    await expect(
+      processRequest(frontendRequest, {
+        redis: redis as any,
+        publicationState: publicationState as any,
+        generateAndPost,
+        getRemainingTimeInMillis: () => 30_000
+      })
+    ).rejects.toThrow('Deferring release-note part 7/11');
+    expect(publicationState.complete).not.toHaveBeenCalled();
+    expect(redis.eval).toHaveBeenCalled();
   });
 });

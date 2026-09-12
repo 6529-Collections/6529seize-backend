@@ -56,7 +56,9 @@ function createService() {
     })
   };
   const userGroupsService = {
-    getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue([])
+    getGroupsUserIsEligibleFor: jest
+      .fn()
+      .mockResolvedValue(['visibility-group'])
   };
   const identityFetcher = {
     getApiIdentityOverviewsByIds: jest.fn()
@@ -425,7 +427,8 @@ describe('DropPollsApiService', () => {
       chat_group_id: 'chat-group'
     });
     deps.userGroupsService.getGroupsUserIsEligibleFor.mockResolvedValue([
-      'chat-group'
+      'chat-group',
+      'visibility-group'
     ]);
     deps.dropPollsDb.replaceVoterVotes.mockResolvedValue(false);
     deps.dropPollsDb.findPollByDropIdForUpdate.mockResolvedValue({
@@ -577,7 +580,8 @@ describe('DropPollsApiService', () => {
       chat_group_id: 'chat-group'
     });
     deps.userGroupsService.getGroupsUserIsEligibleFor.mockResolvedValue([
-      'admin-group'
+      'admin-group',
+      'visibility-group'
     ]);
     deps.dropPollsDb.replaceVoterVotes.mockResolvedValue(false);
     deps.dropPollsDb.findPollByDropIdForUpdate.mockResolvedValue({

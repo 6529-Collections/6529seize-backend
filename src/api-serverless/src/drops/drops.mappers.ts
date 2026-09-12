@@ -97,6 +97,13 @@ import {
   DropPollWithOptions
 } from '@/api/drops/drop-polls.db';
 import { mapDropPollToApi } from '@/api/drops/drop-polls.mappers';
+import {
+  contentModerationDb,
+  ContentModerationDb,
+  ContentModerationPresentation
+} from '@/content-moderation/content-moderation.db';
+import { DropModerationStatus } from '@/entities/IContentModeration';
+import { ApiDropModerationStatus } from '@/api/generated/models/ApiDropModerationStatus';
 
 export class DropsMappers {
   constructor(
@@ -114,7 +121,8 @@ export class DropsMappers {
     private readonly nftLinksDb: NftLinksDb,
     private readonly nftLinkResolvingService: NftLinkResolvingService,
     private readonly attachmentsDb: AttachmentsDb,
-    private readonly dropPollsDb: DropPollsDb
+    private readonly dropPollsDb: DropPollsDb,
+    private readonly moderationDb: ContentModerationDb = contentModerationDb
   ) {}
 
   public createDropApiToUseCaseModel({
@@ -821,8 +829,13 @@ export class DropsMappers {
       },
       {} as Record<string, ApiProfileMin>
     );
+    const moderationPresentations = await this.moderationDb.getPresentations(
+      allEntities,
+      contextProfileId ?? null,
+      ctx.connection
+    );
     return entities.map<ApiDropWithoutWave>((dropEntity) => {
-      return this.toDrop({
+      const drop = this.toDrop({
         dropEntity,
         deletedDrops,
         profilesByIds,
@@ -861,7 +874,73 @@ export class DropsMappers {
         rootDropNftLinksByDropId,
         rootDropIds
       });
+      return this.applyModerationPresentation(
+        drop,
+        moderationPresentations,
+        new Set<string>()
+      );
     });
+  }
+
+  private applyModerationPresentation(
+    drop: ApiDropWithoutWave,
+    presentations: Record<string, ContentModerationPresentation>,
+    visited: Set<string>
+  ): ApiDropWithoutWave {
+    const presentation =
+      presentations[drop.id] ?? this.getDefaultModerationPresentation();
+    drop.viewer_context = presentation.viewer;
+    drop.moderation = {
+      status: presentation.moderation
+        .status as unknown as ApiDropModerationStatus,
+      can_view: presentation.moderation.can_view
+    };
+    const shouldRecurse = !visited.has(drop.id);
+    const nextVisited = shouldRecurse ? new Set(visited).add(drop.id) : visited;
+    if (shouldRecurse && drop.reply_to?.drop) {
+      drop.reply_to.drop = this.applyModerationPresentation(
+        drop.reply_to.drop,
+        presentations,
+        nextVisited
+      );
+    }
+    drop.parts = drop.parts.map((part) => {
+      if (shouldRecurse && part.quoted_drop?.drop) {
+        part.quoted_drop.drop = this.applyModerationPresentation(
+          part.quoted_drop.drop,
+          presentations,
+          nextVisited
+        );
+      }
+      if (presentation.moderation.can_view) {
+        return part;
+      }
+      return {
+        ...part,
+        content: null,
+        media: [],
+        attachments: []
+      };
+    });
+    if (!presentation.moderation.can_view) {
+      drop.title = null;
+      drop.referenced_nfts = [];
+      drop.mentioned_users = [];
+      drop.mentioned_groups = [];
+      drop.mentioned_waves = [];
+      drop.metadata = [];
+      drop.reactions = [];
+      drop.nft_links = [];
+      delete drop.poll;
+    }
+    return drop;
+  }
+
+  private getDefaultModerationPresentation(): ContentModerationPresentation {
+    return {
+      viewer: { author_blocked: false, drop_hidden: false },
+      moderation: { status: DropModerationStatus.VISIBLE, can_view: true }
+    };
   }
 
   private toDrop({

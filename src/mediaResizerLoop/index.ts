@@ -1,3 +1,4 @@
+import { withMediaDependencySmoke } from '@/media/media-dependency-smoke';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import Sharp from 'sharp';
@@ -17,7 +18,7 @@ const s3Client = new S3Client({
   region: BUCKET_REGION
 });
 
-export const handler = wrapLambdaHandler(async (event: any) => {
+const liveHandler = wrapLambdaHandler(async (event: any) => {
   let path = event.queryStringParameters?.path;
   if (!path) {
     return notFound();
@@ -120,3 +121,5 @@ function notFound() {
     statusCode: 404
   };
 }
+
+export const handler = withMediaDependencySmoke(liveHandler);

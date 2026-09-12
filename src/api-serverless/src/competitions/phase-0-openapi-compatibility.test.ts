@@ -9,6 +9,7 @@ type JsonObject = Record<string, any>;
 
 const ACCEPTED_ADDITIVE_ENUM_EXTENSIONS: Readonly<Record<string, string[]>> = {
   'schema ApiNotificationCause.enum': ['SUBSCRIPTION_COVERAGE'],
+  'schema ApiProfileCmsPointerEvent.properties.event_type.enum': ['unpublish'],
   'schema ApiPushNotificationSettings.required': ['subscription_coverage']
 };
 
@@ -30,6 +31,11 @@ const ACCEPTED_REMOVED_SCHEMA_PROPERTIES = new Set([
 const ACCEPTED_REMOVED_RESPONSE_MAX_LENGTHS = new Set([
   'schema ApiDropPart.properties.content.maxLength',
   'schema ApiDropPartV2.properties.content.maxLength'
+]);
+
+const ACCEPTED_RELAXED_REQUIRED_FLAGS = new Set([
+  'GET /v2/waves/{waveId}/search.parameters.query:term.required',
+  'GET /identities.parameters.query:handle.required'
 ]);
 
 const fixtureRoot = path.resolve(
@@ -65,6 +71,13 @@ function assertSchemaCompatible(
     return;
   }
   if (baseline === null || typeof baseline !== 'object') {
+    if (
+      baseline === true &&
+      current === false &&
+      ACCEPTED_RELAXED_REQUIRED_FLAGS.has(location)
+    ) {
+      return;
+    }
     expect(current).toEqual(baseline);
     return;
   }
@@ -181,6 +194,19 @@ describe('Phase 0 permanent OpenAPI GET compatibility', () => {
     }
     expect(operationCount).toBe(baseline.baseline.operation_count);
     expect(operationCount).toBe(183);
+  });
+
+  it('retains the unread count contract in the extended DM unread snapshot', () => {
+    const baselineCountSchema =
+      baseline.components.schemas.ApiDmDropsUnreadCount;
+    const currentSnapshotSchema =
+      current.components.schemas.ApiDmUnreadSnapshot;
+    expect(currentSnapshotSchema.required).toContain('count');
+    assertSchemaCompatible(
+      baselineCountSchema.properties.count,
+      currentSnapshotSchema.properties.count,
+      'accepted DM unread snapshot extension.properties.count'
+    );
   });
 
   it('retains every schema reachable from the accepted snapshot', () => {

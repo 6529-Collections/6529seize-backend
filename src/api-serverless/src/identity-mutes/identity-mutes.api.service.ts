@@ -9,11 +9,32 @@ import {
 import { ApiIdentityMuteState } from '@/api/generated/models/ApiIdentityMuteState';
 import { BadRequestException, ForbiddenException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
+import { Logger } from '@/logging';
+import { DbPoolName } from '@/db-query.options';
+import {
+  wavesApiDb as defaultWavesApiDb,
+  WavesApiDb
+} from '@/api/waves/waves.api.db';
+import {
+  wsListenersNotifier as defaultWsListenersNotifier,
+  WsListenersNotifier
+} from '@/api/ws/ws-listeners-notifier';
+import {
+  userGroupsService as defaultUserGroupsService,
+  UserGroupsService
+} from '@/api/community-members/user-groups.service';
+
+const DM_UNREAD_SYNC_PAGE_SIZE = 500;
 
 export class IdentityMutesApiService {
+  private readonly logger = Logger.get(this.constructor.name);
+
   constructor(
     private readonly identityMutesDb: IdentityMutesDb,
-    private readonly identityFetcher: IdentityFetcher
+    private readonly identityFetcher: IdentityFetcher,
+    private readonly wavesApiDb: WavesApiDb = defaultWavesApiDb,
+    private readonly wsListenersNotifier: WsListenersNotifier = defaultWsListenersNotifier,
+    private readonly userGroupsService: UserGroupsService = defaultUserGroupsService
   ) {}
 
   async getIdentityMuteState(
@@ -32,6 +53,7 @@ export class IdentityMutesApiService {
   ): Promise<ApiIdentityMuteState> {
     const pair = await this.resolveIdentityMutePair(identityKey, ctx);
     await this.identityMutesDb.muteIdentity(pair, ctx);
+    await this.synchronizeDmUnreadStatesBestEffort(pair, ctx);
     return { muted: true };
   }
 
@@ -41,7 +63,68 @@ export class IdentityMutesApiService {
   ): Promise<ApiIdentityMuteState> {
     const pair = await this.resolveIdentityMutePair(identityKey, ctx);
     await this.identityMutesDb.unmuteIdentity(pair, ctx);
+    await this.synchronizeDmUnreadStatesBestEffort(pair, ctx);
     return { muted: false };
+  }
+
+  private async synchronizeDmUnreadStatesBestEffort(
+    pair: { muter_id: string; muted_identity_id: string },
+    ctx: RequestContext
+  ): Promise<void> {
+    try {
+      const recipients =
+        await this.wsListenersNotifier.findConnectedNotificationRecipients([
+          pair.muter_id
+        ]);
+      const eligibleGroups =
+        await this.userGroupsService.getGroupsUserIsEligibleFor(
+          pair.muter_id,
+          ctx.timer
+        );
+      let afterWaveId: string | undefined;
+      let hasMore = true;
+      while (hasMore) {
+        const waveIds =
+          await this.wavesApiDb.findDmWaveIdsForReaderWithDropsByAuthor(
+            {
+              readerId: pair.muter_id,
+              authorId: pair.muted_identity_id,
+              eligibleGroups,
+              limit: DM_UNREAD_SYNC_PAGE_SIZE,
+              ...(afterWaveId ? { afterWaveId } : {})
+            },
+            ctx
+          );
+        if (!waveIds.length) {
+          return;
+        }
+        await this.wavesApiDb.incrementDmUnreadStateVersionsForReaderWaves(
+          { readerId: pair.muter_id, waveIds },
+          ctx
+        );
+        if (!recipients.length) {
+          afterWaveId = waveIds.at(-1);
+          hasMore = waveIds.length === DM_UNREAD_SYNC_PAGE_SIZE;
+          continue;
+        }
+        const states = await this.wavesApiDb.findDmUnreadConversationStates(
+          { identityId: pair.muter_id, eligibleGroups, waveIds },
+          ctx,
+          DbPoolName.WRITE
+        );
+        await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged(
+          states,
+          recipients
+        );
+        afterWaveId = waveIds.at(-1);
+        hasMore = waveIds.length === DM_UNREAD_SYNC_PAGE_SIZE;
+      }
+    } catch (error) {
+      this.logger.warn(
+        'Failed to synchronize DM unread state after identity mute change',
+        { pair, error }
+      );
+    }
   }
 
   private async resolveIdentityMutePair(
@@ -67,5 +150,8 @@ export class IdentityMutesApiService {
 
 export const identityMutesApiService = new IdentityMutesApiService(
   identityMutesDb,
-  identityFetcher
+  identityFetcher,
+  defaultWavesApiDb,
+  defaultWsListenersNotifier,
+  defaultUserGroupsService
 );

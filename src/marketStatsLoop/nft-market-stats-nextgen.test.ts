@@ -1,10 +1,34 @@
+jest.mock('../db', () => ({ getDataSource: jest.fn() }));
+jest.mock('../nextgen/nextgen.db', () => ({
+  fetchNextgenTokens: jest.fn(),
+  persitNextgenTokenListings: jest.fn()
+}));
+jest.mock('../logging', () => {
+  const logger = {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    debug: jest.fn()
+  };
+  return { Logger: { get: () => logger } };
+});
+
+import { getDataSource } from '../db';
+import { Logger } from '../logging';
+import { DataSource, EntityManager, QueryRunner } from 'typeorm';
+import {
+  fetchNextgenTokens,
+  persitNextgenTokenListings
+} from '../nextgen/nextgen.db';
 import { NEXTGEN_ROYALTIES_ADDRESS } from '../nextgen/nextgen_constants';
 import {
   fetchOpenSeaCollectionListings,
+  findNextgenMarketStats,
   getOpenSeaCollectionSlug,
   getOpenSeaListingStats,
   indexBestOpenSeaListingsByTokenId,
-  OpenSeaListing
+  OpenSeaListing,
+  withNextgenDatabaseDeadline
 } from './nft_market_stats_nextgen';
 
 const fetchMock = jest.fn();
@@ -57,6 +81,8 @@ describe('NextGen OpenSea market stats helpers', () => {
   beforeEach(() => {
     process.env.OPENSEA_API_KEY = 'opensea-key';
     fetchMock.mockReset();
+    jest.mocked(persitNextgenTokenListings).mockReset();
+    jest.mocked(Logger.get('NEXTGEN_MARKET_STATS').warn).mockClear();
     global.fetch = fetchMock as unknown as typeof fetch;
   });
 
@@ -66,6 +92,8 @@ describe('NextGen OpenSea market stats helpers', () => {
 
   afterEach(() => {
     delete process.env.OPENSEA_API_KEY;
+    jest.useRealTimers();
+    jest.restoreAllMocks();
   });
 
   it('resolves the OpenSea collection slug from the contract endpoint', async () => {
@@ -83,7 +111,8 @@ describe('NextGen OpenSea market stats helpers', () => {
         headers: {
           accept: 'application/json',
           'x-api-key': 'opensea-key'
-        }
+        },
+        signal: expect.any(AbortSignal)
       }
     );
   });
@@ -198,7 +227,390 @@ describe('NextGen OpenSea market stats helpers', () => {
     );
 
     await expect(fetchOpenSeaCollectionListings('slug')).rejects.toThrow(
-      '[OPENSEA ERROR] 500 Server Error: failed'
+      'NextGen market stats provider HTTP 500'
     );
+  });
+
+  it('continues valid OpenSea stats with empty optional Blur listings on HTTP 401', async () => {
+    jest.useFakeTimers();
+    const blurResponse = jsonResponse(
+      { message: 'fixture provider body' },
+      { ok: false, status: 401 }
+    );
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ collection: 'slug' }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          listings: [listing('1', '1000000000000000000', 'order')]
+        })
+      )
+      .mockResolvedValueOnce(blurResponse);
+    const transaction = jest.fn(async (callback) =>
+      callback({
+        queryRunner: {
+          isTransactionActive: true,
+          connect: async () => ({ query: jest.fn(), destroy: jest.fn() })
+        }
+      })
+    );
+    jest
+      .mocked(getDataSource)
+      .mockReturnValue({ transaction } as unknown as ReturnType<
+        typeof getDataSource
+      >);
+    jest
+      .mocked(fetchNextgenTokens)
+      .mockResolvedValue([{ id: 1 }] as Awaited<
+        ReturnType<typeof fetchNextgenTokens>
+      >);
+    jest.mocked(persitNextgenTokenListings).mockResolvedValue(undefined);
+
+    const completed = expect(
+      findNextgenMarketStats('0xabc', Date.now() + 5_000)
+    ).resolves.toBeUndefined();
+    await jest.advanceTimersByTimeAsync(500);
+    await completed;
+    expect(persitNextgenTokenListings).toHaveBeenCalledWith(expect.anything(), [
+      expect.objectContaining({
+        id: 1,
+        opensea_price: 1,
+        blur_price: 0,
+        price: 1
+      })
+    ]);
+    expect(Logger.get('NEXTGEN_MARKET_STATS').warn).toHaveBeenCalledWith(
+      '[BLUR] Optional listings provider returned HTTP 401; using empty Blur listings'
+    );
+    expect(blurResponse.json).not.toHaveBeenCalled();
+  });
+
+  it('still fails the refresh on mandatory OpenSea HTTP 401', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({}, { ok: false, status: 401 })
+    );
+    await expect(
+      findNextgenMarketStats('0xabc', Date.now() + 5_000)
+    ).rejects.toThrow('provider HTTP 401');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(persitNextgenTokenListings).not.toHaveBeenCalled();
+  });
+
+  it.each(['deadline', 'abort'])(
+    'does not swallow an optional Blur %s failure',
+    async (failure) => {
+      jest.useFakeTimers();
+      const deadline = Date.now() + 1_000;
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({ collection: 'slug' }))
+        .mockResolvedValueOnce(jsonResponse({ listings: [] }))
+        .mockImplementationOnce(async () => {
+          if (failure === 'abort') throw new Error('fixture request aborted');
+          jest.setSystemTime(deadline);
+          return jsonResponse({ tokens: [] });
+        });
+      await expect(findNextgenMarketStats('0xabc', deadline)).rejects.toThrow(
+        failure === 'abort' ? 'fixture request aborted' : 'deadline exceeded'
+      );
+      expect(persitNextgenTokenListings).not.toHaveBeenCalled();
+      expect(Logger.get('NEXTGEN_MARKET_STATS').warn).not.toHaveBeenCalled();
+    }
+  );
+
+  it('does not start legacy work after the invocation deadline', async () => {
+    await expect(findNextgenMarketStats('0xabc', Date.now())).rejects.toThrow(
+      'NextGen market stats deadline exceeded'
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['headers', 'body'])(
+    'aborts provider %s waits at the remaining invocation budget',
+    async (stage) => {
+      jest.useFakeTimers();
+      fetchMock.mockImplementation((_url, options: RequestInit) => {
+        const pending = new Promise((_resolve, reject) => {
+          options.signal?.addEventListener('abort', () =>
+            reject(new Error('request aborted'))
+          );
+        });
+        return stage === 'headers'
+          ? pending
+          : Promise.resolve({ ok: true, json: () => pending });
+      });
+      const result = expect(
+        getOpenSeaCollectionSlug('0xabc', Date.now() + 250)
+      ).rejects.toThrow('request aborted');
+      await jest.advanceTimersByTimeAsync(250);
+      await result;
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
+      expect(jest.getTimerCount()).toBe(0);
+    }
+  );
+
+  it('does not request another listing page after the shared deadline', async () => {
+    jest.useFakeTimers();
+    const deadline = Date.now() + 100;
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => {
+        jest.setSystemTime(deadline);
+        return { listings: [], next: 'next-page' };
+      }
+    });
+    await expect(
+      fetchOpenSeaCollectionListings('slug', deadline)
+    ).rejects.toThrow('deadline exceeded');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['batch', 'delay'])(
+    'stops the transaction before further batches when the %s consumes the budget',
+    async (stage) => {
+      jest.useFakeTimers();
+      const deadline = Date.now() + 1000;
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({ collection: 'slug' }))
+        .mockResolvedValueOnce(jsonResponse({ listings: [] }))
+        .mockResolvedValueOnce(jsonResponse({ tokens: [] }));
+      const transaction = jest.fn(async (callback) =>
+        callback({
+          queryRunner: {
+            isTransactionActive: true,
+            connect: async () => ({ query: jest.fn(), destroy: jest.fn() })
+          }
+        })
+      );
+      jest
+        .mocked(getDataSource)
+        .mockReturnValue({ transaction } as unknown as ReturnType<
+          typeof getDataSource
+        >);
+      jest
+        .mocked(fetchNextgenTokens)
+        .mockResolvedValue(
+          Array.from({ length: 31 }, (_, id) => ({ id })) as Awaited<
+            ReturnType<typeof fetchNextgenTokens>
+          >
+        );
+      jest.mocked(persitNextgenTokenListings).mockImplementation(async () => {
+        jest.setSystemTime(stage === 'batch' ? deadline : deadline - 400);
+      });
+
+      await expect(findNextgenMarketStats('0xabc', deadline)).rejects.toThrow(
+        'deadline exceeded'
+      );
+      expect(persitNextgenTokenListings).toHaveBeenCalledTimes(1);
+      expect(jest.getTimerCount()).toBe(0);
+    }
+  );
+});
+
+describe('NextGen transaction query deadlines', () => {
+  afterEach(() => jest.useRealTimers());
+
+  it.each([10_000, 1_234])(
+    'caps the native query timeout at the remaining %ims and restores the connection method',
+    async (budget) => {
+      jest.useFakeTimers();
+      const originalQuery = jest.fn((_sql, _parameters, callback) =>
+        callback(null, ['result'])
+      );
+      const connection = { query: originalQuery, destroy: jest.fn() };
+      const manager = {
+        queryRunner: {
+          isTransactionActive: true,
+          connect: async () => connection
+        }
+      } as unknown as EntityManager;
+      const result = await withNextgenDatabaseDeadline(
+        manager,
+        Date.now() + budget,
+        () =>
+          new Promise((resolve, reject) => {
+            connection.query(
+              { sql: 'SELECT id FROM nextgen_tokens', timeout: 90_000 },
+              [],
+              (error: Error | null, rows: unknown) =>
+                error ? reject(error) : resolve(rows)
+            );
+          })
+      );
+      expect(result).toEqual(['result']);
+      expect(originalQuery.mock.calls[0][0].timeout).toBeLessThanOrEqual(
+        Math.min(5_000, budget)
+      );
+      expect(originalQuery.mock.calls[0][0].timeout).toBeGreaterThan(0);
+      expect(connection.query).toBe(originalQuery);
+      expect(connection.destroy).not.toHaveBeenCalled();
+      expect(jest.getTimerCount()).toBe(0);
+    }
+  );
+
+  it.each([
+    'SELECT id FROM nextgen_tokens',
+    'INSERT INTO nextgen_token_listings VALUES (?)'
+  ])(
+    'discards a timed-out connection and lets TypeORM roll back and release for %s',
+    async (sql) => {
+      jest.useFakeTimers();
+      const cleanup: string[] = [];
+      const originalQuery = jest.fn((options, _parameters, callback) => {
+        setTimeout(
+          () =>
+            callback(
+              Object.assign(new Error('query timed out'), {
+                code: 'PROTOCOL_SEQUENCE_TIMEOUT'
+              })
+            ),
+          Math.min(50, options.timeout)
+        );
+      });
+      const connection = {
+        query: originalQuery,
+        destroy: jest.fn(() => {
+          cleanup.push('destroy');
+        })
+      };
+      const runner = {
+        isTransactionActive: true,
+        connect: async () => connection,
+        startTransaction: jest.fn(),
+        commitTransaction: jest.fn(),
+        rollbackTransaction: jest.fn(async () => {
+          cleanup.push('rollback');
+          throw new Error('connection closed');
+        }),
+        release: jest.fn(async () => {
+          cleanup.push('release');
+        }),
+        manager: undefined as unknown as EntityManager
+      };
+      const dataSource = {
+        createQueryRunner: () => runner
+      } as unknown as DataSource;
+      runner.manager = new EntityManager(
+        dataSource,
+        runner as unknown as QueryRunner
+      );
+      const afterQuery = jest.fn();
+      const transaction = new EntityManager(dataSource).transaction(
+        async (manager) => {
+          await withNextgenDatabaseDeadline(
+            manager,
+            Date.now() + 250,
+            () =>
+              new Promise((resolve, reject) => {
+                connection.query(
+                  sql,
+                  [],
+                  (error: Error | null, rows: unknown) =>
+                    error ? reject(error) : resolve(rows)
+                );
+              })
+          );
+          afterQuery();
+        }
+      );
+      const rejected = expect(transaction).rejects.toThrow('query timed out');
+      await jest.advanceTimersByTimeAsync(250);
+      await rejected;
+      expect(afterQuery).not.toHaveBeenCalled();
+      expect(runner.commitTransaction).not.toHaveBeenCalled();
+      expect(cleanup).toEqual(['destroy', 'rollback', 'release']);
+      expect(connection.query).toBe(originalQuery);
+      expect(jest.getTimerCount()).toBe(0);
+    }
+  );
+
+  it('enforces the wall-clock deadline when the driver does not report a timeout and ignores late callbacks', async () => {
+    jest.useFakeTimers();
+    let nativeCallback:
+      | ((error: Error | null, result?: unknown) => void)
+      | undefined;
+    const originalQuery = jest.fn((_sql, _parameters, callback) => {
+      nativeCallback = callback;
+    });
+    const cleanup: string[] = [];
+    const connection = {
+      query: originalQuery,
+      destroy: jest.fn(() => {
+        cleanup.push('destroy');
+      })
+    };
+    const manager = {
+      queryRunner: {
+        isTransactionActive: true,
+        connect: async () => connection
+      }
+    } as unknown as EntityManager;
+    const callback = jest.fn();
+    const operation = withNextgenDatabaseDeadline(
+      manager,
+      Date.now() + 250,
+      () =>
+        new Promise((resolve, reject) => {
+          connection.query(
+            'SELECT slowly_streamed_rows',
+            [],
+            (error: Error | null, result: unknown) => {
+              cleanup.push('callback');
+              callback(error);
+              if (error) reject(error);
+              else resolve(result);
+            }
+          );
+        })
+    );
+    const rejected = expect(operation).rejects.toThrow(
+      'NextGen database query deadline exceeded'
+    );
+    await jest.advanceTimersByTimeAsync(250);
+    await rejected;
+    nativeCallback?.(null, ['late row']);
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(cleanup).toEqual(['destroy', 'callback']);
+    expect(connection.query).toBe(originalQuery);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('clears the wall-clock timer on a synchronous native query failure', async () => {
+    jest.useFakeTimers();
+    const originalQuery = jest.fn(() => {
+      throw new Error('driver failure');
+    });
+    const connection = { query: originalQuery, destroy: jest.fn() };
+    const manager = {
+      queryRunner: {
+        isTransactionActive: true,
+        connect: async () => connection
+      }
+    } as unknown as EntityManager;
+    await expect(
+      withNextgenDatabaseDeadline(manager, Date.now() + 250, async () => {
+        connection.query();
+      })
+    ).rejects.toThrow('driver failure');
+    expect(connection.query).toBe(originalQuery);
+    expect(jest.getTimerCount()).toBe(0);
+    expect(connection.destroy).not.toHaveBeenCalled();
+  });
+
+  it('does not dispatch a native query once the deadline has elapsed', async () => {
+    const originalQuery = jest.fn();
+    const connection = { query: originalQuery, destroy: jest.fn() };
+    const manager = {
+      queryRunner: {
+        isTransactionActive: true,
+        connect: async () => connection
+      }
+    } as unknown as EntityManager;
+    await expect(
+      withNextgenDatabaseDeadline(manager, Date.now(), async () => {
+        connection.query('SELECT 1', [], jest.fn());
+      })
+    ).rejects.toThrow('deadline exceeded');
+    expect(originalQuery).not.toHaveBeenCalled();
+    expect(connection.query).toBe(originalQuery);
   });
 });

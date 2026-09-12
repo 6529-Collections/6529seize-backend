@@ -11,6 +11,7 @@ import {
   SqlExecutor
 } from '../../../sql-executor';
 import { ApiCommunityMemberOverview } from '../generated/models/ApiCommunityMemberOverview';
+import { ApiCreateGroupDescription } from '../generated/models/ApiCreateGroupDescription';
 import { CommunityMembersQuery } from './community-members.types';
 import { UserGroupsService, userGroupsService } from './user-groups.service';
 
@@ -29,14 +30,35 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
     super(dbSupplier);
   }
 
+  private getMemberSearch(memberSearchInput: string | null | undefined): {
+    clause: string;
+    params: Record<string, string>;
+  } {
+    const memberSearch = memberSearchInput?.trim().toLowerCase();
+    if (!memberSearch) {
+      return { clause: '', params: {} };
+    }
+    return {
+      clause:
+        'where (instr(lower(ifnull(cm.handle, cm.primary_address)), :member_search) > 0 or instr(lower(cm.primary_address), :member_search) > 0)',
+      params: { member_search: memberSearch }
+    };
+  }
+
   async getCommunityMembers(
     query: CommunityMembersQuery,
-    ctx: RequestContext
+    ctx: RequestContext,
+    previewGroup?: ApiCreateGroupDescription
   ): Promise<CommunityMemberFromDb[]> {
-    const viewResult = await this.userGroupsService.getSqlAndParamsByGroupId(
-      query.group_id,
-      ctx
-    );
+    const viewResult = previewGroup
+      ? await this.userGroupsService.getSqlAndParamsForPreview(
+          previewGroup,
+          ctx
+        )
+      : await this.userGroupsService.getSqlAndParamsByGroupId(
+          query.group_id,
+          ctx
+        );
     if (viewResult === null) {
       return [];
     }
@@ -56,11 +78,13 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
       sort = '(cm.xtdh - (cm.produced_xtdh - cm.granted_xtdh))';
     }
     const expressionSorts = [
+      'display',
       '(cm.tdh + cm.xtdh)',
       '(cm.basetdh_rate + cm.xtdh_rate)',
       '(cm.xtdh - (cm.produced_xtdh - cm.granted_xtdh))'
     ];
     const orderByClause = expressionSorts.includes(sort) ? sort : `cm.${sort}`;
+    const memberSearch = this.getMemberSearch(query.param);
     const sql = `
       ${viewResult.sql} 
       select
@@ -80,9 +104,12 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
         cm.rep as rep,
         cm.pfp as pfp,
         cm.consolidation_key as consolidation_key
-      from ${UserGroupsService.GENERATED_VIEW} cm order by ${orderByClause} ${query.sort_direction} limit ${query.page_size} offset ${offset}
+      from ${UserGroupsService.GENERATED_VIEW} cm ${memberSearch.clause} order by ${orderByClause} ${query.sort_direction} limit ${query.page_size} offset ${offset}
     `;
-    const params = viewResult.params;
+    const params = {
+      ...viewResult.params,
+      ...memberSearch.params
+    };
     ctx.timer?.start(`${this.constructor.name}->getCommunityMembers`);
     const result = await this.db.execute<CommunityMemberFromDb>(sql, params);
     ctx?.timer?.stop(`${this.constructor.name}->getCommunityMembers`);
@@ -91,24 +118,34 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
 
   async countCommunityMembers(
     query: CommunityMembersQuery,
-    ctx: RequestContext
+    ctx: RequestContext,
+    previewGroup?: ApiCreateGroupDescription
   ): Promise<number> {
-    const viewResult = await this.userGroupsService.getSqlAndParamsByGroupId(
-      query.group_id,
-      ctx
-    );
+    const viewResult = previewGroup
+      ? await this.userGroupsService.getSqlAndParamsForPreview(
+          previewGroup,
+          ctx
+        )
+      : await this.userGroupsService.getSqlAndParamsByGroupId(
+          query.group_id,
+          ctx
+        );
     if (viewResult === null) {
       return 0;
     }
+    const memberSearch = this.getMemberSearch(query.param);
     return this.db
       .execute(
         `
       ${viewResult.sql} 
-      select count(*) as cnt from ${UserGroupsService.GENERATED_VIEW} cm
+      select count(*) as cnt from ${UserGroupsService.GENERATED_VIEW} cm ${memberSearch.clause}
     `,
-        viewResult.params
+        {
+          ...viewResult.params,
+          ...memberSearch.params
+        }
       )
-      .then((rows) => rows[0].cnt as number);
+      .then((rows) => (rows[0]?.cnt as number | undefined) ?? 0);
   }
 
   async getCommunityMembersLastActivitiesByConsolidationKeys(

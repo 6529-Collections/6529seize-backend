@@ -15,6 +15,7 @@ import {
 import { NftLinkEntity } from '@/entities/INftLink';
 import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
 import { RequestContext } from '@/request.context';
+import { Logger } from '@/logging';
 import { collections } from '@/collections';
 import { enums } from '@/enums';
 import { env } from '@/env';
@@ -32,7 +33,9 @@ import { ApiDropNftLink } from '@/api/generated/models/ApiDropNftLink';
 import { ApiDropReactionCounter } from '@/api/generated/models/ApiDropReactionCounter';
 import { ApiDropReferencedNFT } from '@/api/generated/models/ApiDropReferencedNFT';
 import { ApiDropV2 } from '@/api/generated/models/ApiDropV2';
+import { ApiIdentityOverview } from '@/api/generated/models/ApiIdentityOverview';
 import { ApiDropV2ContextProfileContext } from '@/api/generated/models/ApiDropV2ContextProfileContext';
+import { ApiDropModerationStatus } from '@/api/generated/models/ApiDropModerationStatus';
 import { ApiIdentityWaveParticipation } from '@/api/generated/models/ApiIdentityWaveParticipation';
 import { ApiMentionedWaveV2 } from '@/api/generated/models/ApiMentionedWaveV2';
 import { ApiReplyToDropV2 } from '@/api/generated/models/ApiReplyToDropV2';
@@ -100,6 +103,12 @@ import {
   memeCardDropMappingsDb,
   MemeCardDropMappingsDb
 } from '@/minting-claims/meme-card-drop-mappings.db';
+import {
+  contentModerationDb,
+  ContentModerationDb,
+  ContentModerationPresentation
+} from '@/content-moderation/content-moderation.db';
+import { DropModerationStatus } from '@/entities/IContentModeration';
 
 type VoteRangeByDropId = Record<
   string,
@@ -110,9 +119,12 @@ const PRIORITY_METADATA_ADDITIONAL_MEDIA_KEY = 'additional_media';
 
 export interface ApiDropMapperOptions {
   readonly groupIdsUserIsEligibleFor?: string[];
+  readonly includeLargestVote?: boolean;
 }
 
 export class ApiDropMapper {
+  private readonly logger = Logger.get(this.constructor.name);
+
   constructor(
     private readonly identityFetcher: IdentityFetcher,
     private readonly identitiesDb: IdentitiesDb,
@@ -131,7 +143,8 @@ export class ApiDropMapper {
     private readonly nftLinksDb: NftLinksDb,
     private readonly nftLinkResolvingService: NftLinkResolvingService,
     private readonly memeCardDropMappingsDb: MemeCardDropMappingsDb,
-    private readonly getMainStageWaveId: () => string | null
+    private readonly getMainStageWaveId: () => string | null,
+    private readonly moderationDb: ContentModerationDb = contentModerationDb
   ) {}
 
   public async mapDrops(
@@ -184,6 +197,15 @@ export class ApiDropMapper {
       const visibleCompetitionDropContexts = mainStageWaveId
         ? entities.filter((drop) => drop.wave_id !== mainStageWaveId)
         : entities;
+      const moderationPresentationsPromise = this.dropsDb
+        .getDropsByIds(replyDropIds, ctx.connection)
+        .then((replyEntities) =>
+          this.moderationDb.getPresentations(
+            [...entities, ...replyEntities],
+            contextProfileId,
+            ctx.connection
+          )
+        );
 
       const dropAttachmentsPromise =
         this.attachmentsDb.getDropPartOneAttachments(dropIds, ctx);
@@ -240,7 +262,8 @@ export class ApiDropMapper {
         votingRanges,
         winningDropsRatingsByVoter,
         pollsByDropId,
-        memeCardIdsByDropId
+        memeCardIdsByDropId,
+        moderationPresentations
       ] = await Promise.all([
         this.identityFetcher.getApiIdentityOverviewsByIds(authorIds, ctx),
         this.dropsDb.findAuthorWaveParticipationByDropContexts(
@@ -318,7 +341,8 @@ export class ApiDropMapper {
               mainStageWaveId,
               ctx
             )
-          : Promise.resolve({} as Record<string, number>)
+          : Promise.resolve({} as Record<string, number>),
+        moderationPresentationsPromise
       ]);
 
       const referencedNftsByDropId = this.groupByDropId(referencedNfts);
@@ -329,7 +353,7 @@ export class ApiDropMapper {
       const priorityMetadataByDropId =
         this.mapPriorityMetadataByDropId(priorityMetadataRows);
 
-      return entities.reduce(
+      const dropsById = entities.reduce(
         (acc, drop) => {
           const participation = authorWaveParticipationByWave[drop.wave_id]?.[
             drop.author_id
@@ -374,14 +398,76 @@ export class ApiDropMapper {
             winningDropsRatingsByVoter,
             poll: pollsByDropId[drop.id],
             memeCardId: memeCardIdsByDropId[drop.id],
-            contextProfileId
+            contextProfileId,
+            moderationPresentation: this.getModerationPresentation(
+              moderationPresentations,
+              drop.id
+            ),
+            replyModerationPresentation: drop.reply_to_drop_id
+              ? this.getModerationPresentation(
+                  moderationPresentations,
+                  drop.reply_to_drop_id
+                )
+              : undefined
           });
           return acc;
         },
         {} as Record<string, ApiDropV2>
       );
+      if (options.includeLargestVote) {
+        await this.enrichLargestVotes(dropsById, authorsById, ctx);
+      }
+      return dropsById;
     } finally {
       ctx.timer?.stop(timerKey);
+    }
+  }
+
+  private async enrichLargestVotes(
+    dropsById: Record<string, ApiDropV2>,
+    knownIdentities: Record<string, ApiIdentityOverview>,
+    ctx: RequestContext
+  ): Promise<void> {
+    // Only mapped, visible submissions are eligible. SQL also checks RANK.
+    const dropIds = Object.values(dropsById)
+      .filter(
+        (drop) =>
+          drop.submission_context?.status === ApiSubmissionDropStatus.Active
+      )
+      .map((drop) => drop.id);
+    if (!dropIds.length) {
+      return;
+    }
+    try {
+      const rows = await this.dropVotingDb.getLargestDropVotes(dropIds, ctx);
+      const missingIdentityIds = collections.distinct(
+        rows.map((row) => row.voter_id).filter((id) => !knownIdentities[id])
+      );
+      const identities = {
+        ...knownIdentities,
+        ...(missingIdentityIds.length
+          ? await this.identityFetcher.getApiIdentityOverviewsByIds(
+              missingIdentityIds,
+              ctx
+            )
+          : {})
+      };
+      for (const row of rows) {
+        const voting = dropsById[row.drop_id]?.submission_context?.voting;
+        const voter = identities[row.voter_id];
+        if (
+          !voting ||
+          !voter ||
+          !Number.isSafeInteger(row.vote) ||
+          row.vote === 0
+        ) {
+          continue;
+        }
+        voting.largest_vote = { voter, vote: row.vote };
+      }
+    } catch {
+      // Optional highlights must not prevent reading the underlying drops.
+      this.logger.warn('Drop vote summary unavailable');
     }
   }
 
@@ -412,7 +498,9 @@ export class ApiDropMapper {
     winningDropsRatingsByVoter,
     poll,
     memeCardId,
-    contextProfileId
+    contextProfileId,
+    moderationPresentation,
+    replyModerationPresentation
   }: {
     drop: DropEntity;
     author: ApiDropV2['author'];
@@ -441,6 +529,8 @@ export class ApiDropMapper {
     poll?: DropPollWithOptions;
     memeCardId?: number;
     contextProfileId: string | null;
+    moderationPresentation: ContentModerationPresentation;
+    replyModerationPresentation?: ContentModerationPresentation;
   }): ApiDropV2 {
     const apiDrop: ApiDropV2 = {
       id: drop.id,
@@ -451,11 +541,27 @@ export class ApiDropMapper {
       parts_count: drop.parts_count,
       author,
       drop_type: this.mapDropType(drop.drop_type),
-      boosts
+      boosts,
+      viewer_context: moderationPresentation.viewer,
+      moderation: {
+        status: moderationPresentation.moderation
+          .status as unknown as ApiDropModerationStatus,
+        can_view: moderationPresentation.moderation.can_view
+      }
     };
     const updatedAt = numbers.parseIntOrNull(drop.updated_at);
     if (updatedAt !== null) {
       apiDrop.updated_at = updatedAt;
+    }
+    if (drop.reply_to_drop_id) {
+      apiDrop.reply_to_drop = this.mapReplyToDrop(
+        drop.reply_to_drop_id,
+        replyPreview,
+        replyModerationPresentation
+      );
+    }
+    if (!moderationPresentation.moderation.can_view) {
+      return apiDrop;
     }
     if (drop.title !== null) {
       apiDrop.title = drop.title;
@@ -537,12 +643,6 @@ export class ApiDropMapper {
     if (reactionCounters.length) {
       apiDrop.reactions = reactionCounters;
     }
-    if (drop.reply_to_drop_id) {
-      apiDrop.reply_to_drop = this.mapReplyToDrop(
-        drop.reply_to_drop_id,
-        replyPreview
-      );
-    }
     if (submissionVotingSummary) {
       apiDrop.submission_context = this.mapSubmissionContext({
         drop,
@@ -573,13 +673,27 @@ export class ApiDropMapper {
 
   private mapReplyToDrop(
     dropId: string,
-    replyPreview?: DropReplyPreview
+    replyPreview?: DropReplyPreview,
+    presentation?: ContentModerationPresentation
   ): ApiReplyToDropV2 {
-    const apiReply: ApiReplyToDropV2 = { id: dropId };
+    const resolvedPresentation =
+      presentation ?? this.getDefaultModerationPresentation();
+    const apiReply: ApiReplyToDropV2 = {
+      id: dropId,
+      viewer_context: resolvedPresentation.viewer,
+      moderation: {
+        status: resolvedPresentation.moderation
+          .status as unknown as ApiDropModerationStatus,
+        can_view: resolvedPresentation.moderation.can_view
+      }
+    };
     if (!replyPreview) {
       return apiReply;
     }
     apiReply.serial_no = Number(replyPreview.serial_no);
+    if (!resolvedPresentation.moderation.can_view) {
+      return apiReply;
+    }
     if (replyPreview.content !== null) {
       apiReply.content = replyPreview.content;
     }
@@ -892,6 +1006,20 @@ export class ApiDropMapper {
       : ApiDropMainType.Submission;
   }
 
+  private getModerationPresentation(
+    presentations: Record<string, ContentModerationPresentation>,
+    dropId: string
+  ): ContentModerationPresentation {
+    return presentations[dropId] ?? this.getDefaultModerationPresentation();
+  }
+
+  private getDefaultModerationPresentation(): ContentModerationPresentation {
+    return {
+      viewer: { author_blocked: false, drop_hidden: false },
+      moderation: { status: DropModerationStatus.VISIBLE, can_view: true }
+    };
+  }
+
   private isSubmissionDrop(drop: DropEntity): boolean {
     return (
       drop.drop_type === DropType.PARTICIPATORY ||
@@ -918,5 +1046,6 @@ export const apiDropMapper = new ApiDropMapper(
   nftLinksDb,
   nftLinkResolvingService,
   memeCardDropMappingsDb,
-  () => env.getStringOrNull('MAIN_STAGE_WAVE_ID')
+  () => env.getStringOrNull('MAIN_STAGE_WAVE_ID'),
+  contentModerationDb
 );

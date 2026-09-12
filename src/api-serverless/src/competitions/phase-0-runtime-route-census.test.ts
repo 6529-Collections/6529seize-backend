@@ -17,11 +17,33 @@ type GetCall = {
   readonly cache: ManifestRoute['cache'] | null;
 };
 
-const RETIRED_RELEASE_BUS_V1_ROUTES = new Set([
+const RETIRED_OPERATIONAL_ROUTES = new Set([
   '/deploy/release-bus/controls',
   '/deploy/release-candidates',
   '/deploy/release-trains',
-  '/deploy/release-trains/:id'
+  '/deploy/release-trains/:id',
+  '/deploy/ui/branch-head',
+  '/deploy/ui/bus',
+  '/deploy/ui/bus/app.js'
+]);
+
+const HAND_WRITTEN_ROUTE_SOURCE_LINE_DRIFT = 250;
+
+// The address-only Alchemy migration retains this route as an uncached 410.
+// Keep checking its mount/auth and every other baseline cache expectation.
+const ACCEPTED_ROUTE_CACHE_CHANGES = new Map<string, ManifestRoute['cache']>([
+  ['/alchemy-proxy/collections', 'uncached']
+]);
+
+const ACCEPTED_ROUTE_SOURCE_MOVES = new Map<string, string>([
+  [
+    '/api/policies/eula-consent/:deviceId',
+    'src/api-serverless/src/generated/routes/openapi-generated.routes.ts:149'
+  ],
+  [
+    '/api/waves/:id/subwaves',
+    'src/api-serverless/src/generated/routes/openapi-generated.routes.ts:938'
+  ]
 ]);
 
 const repositoryRoot = path.resolve(__dirname, '../../../..');
@@ -125,21 +147,26 @@ describe('Phase 0 permanent mounted GET route census', () => {
     expect(new Set(manifest.routes.map((route) => route.path)).size).toBe(296);
     expect(
       manifest.routes.filter(
-        (route) => !RETIRED_RELEASE_BUS_V1_ROUTES.has(route.path)
+        (route) => !RETIRED_OPERATIONAL_ROUTES.has(route.path)
       )
-    ).toHaveLength(292);
+    ).toHaveLength(289);
   });
 
   it('keeps every non-retired route declaration mounted in its owning source', () => {
     const callsBySource = new Map<string, GetCall[]>();
     const failures: string[] = [];
     for (const route of manifest.routes.filter(
-      (entry) => !RETIRED_RELEASE_BUS_V1_ROUTES.has(entry.path)
+      (entry) => !RETIRED_OPERATIONAL_ROUTES.has(entry.path)
     )) {
-      const separator = route.source.lastIndexOf(':');
-      const relativeFile = route.source.slice(0, separator);
-      const baselineLine = Number(route.source.slice(separator + 1));
+      const acceptedSource =
+        ACCEPTED_ROUTE_SOURCE_MOVES.get(route.path) ?? route.source;
+      const separator = acceptedSource.lastIndexOf(':');
+      const relativeFile = acceptedSource.slice(0, separator);
+      const baselineLine = Number(acceptedSource.slice(separator + 1));
       const sourcePath = path.join(repositoryRoot, relativeFile);
+      const generatedRouteSource = relativeFile.endsWith(
+        '/generated/routes/openapi-generated.routes.ts'
+      );
       if (!fs.existsSync(sourcePath)) {
         failures.push(`${route.path}: missing ${relativeFile}`);
         continue;
@@ -154,7 +181,9 @@ describe('Phase 0 permanent mounted GET route census', () => {
       const matching = calls
         .filter((call) =>
           call.paths.some((localPath) =>
-            localPathMatches(route.path, localPath)
+            generatedRouteSource
+              ? route.path === `/api${localPath}`
+              : localPathMatches(route.path, localPath)
           )
         )
         .sort(
@@ -163,9 +192,22 @@ describe('Phase 0 permanent mounted GET route census', () => {
             Math.abs(right.line - baselineLine)
         );
       const best = matching[0];
-      if (!best || Math.abs(best.line - baselineLine) > 250) {
+      // Generated routes move when unrelated operations are added. Their exact
+      // mounted path and uniqueness identify them more reliably than line offsets.
+      if (generatedRouteSource && matching.length !== 1) {
         failures.push(
-          `${route.path}: GET declaration missing near ${route.source}`
+          `${route.path}: expected one exact generated GET declaration`
+        );
+        continue;
+      }
+      if (
+        !best ||
+        (!generatedRouteSource &&
+          Math.abs(best.line - baselineLine) >
+            HAND_WRITTEN_ROUTE_SOURCE_LINE_DRIFT)
+      ) {
+        failures.push(
+          `${route.path}: GET declaration missing near ${acceptedSource}`
         );
         continue;
       }
@@ -180,9 +222,11 @@ describe('Phase 0 permanent mounted GET route census', () => {
       ) {
         failures.push(`${route.path}: required auth has no static evidence`);
       }
-      if (best.cache !== route.cache) {
+      const expectedCache =
+        ACCEPTED_ROUTE_CACHE_CHANGES.get(route.path) ?? route.cache;
+      if (best.cache !== expectedCache) {
         failures.push(
-          `${route.path}: cache changed from ${route.cache} to ${best.cache}`
+          `${route.path}: cache changed from ${expectedCache} to ${best.cache}`
         );
       }
     }

@@ -249,6 +249,7 @@ async function postSubscriptionWaveDropBestEffort({
           const { drop_id, pending_push_notification_ids } =
             await createOrUpdateDrop.execute(model, false, {
               connection,
+              prePublication: { trustedSystem: true },
               bypassChatLinkRestrictions: true,
               bypassChatSlowModeRestrictions: true
             });

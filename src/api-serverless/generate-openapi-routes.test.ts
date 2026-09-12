@@ -14,6 +14,52 @@ function getFile(document: OpenApiDocument, relativePath: string): string {
 }
 
 describe('generateOpenApiRouteFiles', () => {
+  it('permits documented headers while preserving Express request header access', () => {
+    const document: OpenApiDocument = {
+      paths: {
+        '/private-records/{id}': {
+          patch: {
+            operationId: 'patchPrivateRecord',
+            'x-6529-router': {
+              enabled: true,
+              auth: 'required',
+              handler: {
+                import: '@/api/private-records',
+                name: 'handlePatchPrivateRecord'
+              }
+            },
+            parameters: [
+              {
+                name: 'id',
+                in: 'path',
+                required: true,
+                schema: { type: 'string' }
+              },
+              {
+                name: 'If-Match',
+                in: 'header',
+                required: true,
+                schema: { type: 'string' }
+              }
+            ],
+            responses: {
+              '200': {
+                content: {
+                  'application/json': {
+                    schema: { $ref: '#/components/schemas/ApiPrivateRecord' }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    };
+    expect(getFile(document, 'openapi-generated.routes.ts')).toContain(
+      'handlePatchPrivateRecord(req)'
+    );
+    expect(getFile(document, 'operations.ts')).not.toContain('"If-Match"');
+  });
   it('generates typed route wiring only for opted-in operations', () => {
     const document: OpenApiDocument = {
       paths: {

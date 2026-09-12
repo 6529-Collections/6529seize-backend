@@ -32,6 +32,8 @@ const WALLET_SESSION_ADDRESS_COOKIE_PREFIX = `${WALLET_SESSION_COOKIE_NAME}_`;
 
 const DEFAULT_SESSION_REFRESH_DAYS = 30;
 const DEFAULT_CONNECTION_SHARE_CODE_TTL_SECONDS = 5 * 60;
+const IDEMPOTENT_WEB_SESSION_REFRESH_WINDOW_MS = Time.seconds(30).toMillis();
+const IDEMPOTENT_WEB_SESSION_REFRESH_CLOCK_SKEW_MS = Time.seconds(5).toMillis();
 
 export interface IssuedAccessToken {
   readonly token: string;
@@ -304,6 +306,9 @@ export async function refreshWebSession({
     return null;
   }
   const now = new Date();
+  const previousSecretHash = hashSecret(cookie.secret);
+  const nextSecret = deriveRotatedWebSessionSecret(cookie);
+  const nextSecretHash = hashSecret(nextSecret);
   const existing = await getActiveWebSessionRecord({
     cookie,
     requestOrigin,
@@ -311,29 +316,117 @@ export async function refreshWebSession({
     now
   });
   if (!existing) {
-    return null;
+    return await recoverIdempotentWebSessionRefresh({
+      cookie,
+      expectedAddress,
+      requestOrigin,
+      apiHost,
+      nextSecret,
+      nextSecretHash,
+      now
+    });
   }
-  const nextSecret = createOpaqueSecret();
   const expiresAt = getSessionRefreshExpiresAt();
   const rotated = await authDb.rotateWebSessionSecret({
     sessionId: existing.id,
-    previousSecretHash: hashSecret(cookie.secret),
-    nextSecretHash: hashSecret(nextSecret),
+    previousSecretHash,
+    nextSecretHash,
     expiresAt,
     now
   });
   if (!rotated) {
+    return await recoverIdempotentWebSessionRefresh({
+      cookie,
+      expectedAddress,
+      requestOrigin,
+      apiHost,
+      nextSecret,
+      nextSecretHash,
+      now
+    });
+  }
+  return toRefreshedWebSession({
+    session: rotated,
+    secret: nextSecret,
+    expiresAt,
+    clientOrigin: existing.client_origin,
+    apiHost
+  });
+}
+
+async function recoverIdempotentWebSessionRefresh({
+  cookie,
+  expectedAddress,
+  requestOrigin,
+  apiHost,
+  nextSecret,
+  nextSecretHash,
+  now
+}: {
+  readonly cookie: NonNullable<ParsedSessionCookie>;
+  readonly expectedAddress?: string | null;
+  readonly requestOrigin: string | null;
+  readonly apiHost: unknown;
+  readonly nextSecret: string;
+  readonly nextSecretHash: string;
+  readonly now: Date;
+}): Promise<CreatedWebSession | null> {
+  const current = await authDb.getActiveWebSessionById(cookie.sessionId, now);
+  if (
+    !current ||
+    !isMatchingSessionContext({
+      session: current,
+      requestOrigin,
+      expectedAddress
+    }) ||
+    current.secret_hash !== nextSecretHash ||
+    !wasWebSessionRecentlyUsed(current.last_used_at, now)
+  ) {
     return null;
   }
-  const accessToken = issueAccessToken(rotated.address, rotated.role);
+
+  return toRefreshedWebSession({
+    session: current,
+    secret: nextSecret,
+    expiresAt: toDate(current.expires_at),
+    clientOrigin: current.client_origin,
+    apiHost
+  });
+}
+
+function wasWebSessionRecentlyUsed(
+  lastUsedAt: Date | string,
+  now: Date
+): boolean {
+  const elapsedMs = now.getTime() - toDate(lastUsedAt).getTime();
+  return (
+    elapsedMs >= -IDEMPOTENT_WEB_SESSION_REFRESH_CLOCK_SKEW_MS &&
+    elapsedMs <= IDEMPOTENT_WEB_SESSION_REFRESH_WINDOW_MS
+  );
+}
+
+function toRefreshedWebSession({
+  session,
+  secret,
+  expiresAt,
+  clientOrigin,
+  apiHost
+}: {
+  readonly session: WalletAuthSessionEntity;
+  readonly secret: string;
+  readonly expiresAt: Date;
+  readonly clientOrigin: string | null;
+  readonly apiHost: unknown;
+}): CreatedWebSession {
+  const accessToken = issueAccessToken(session.address, session.role);
   return {
-    response: toWebSessionResponse(rotated.address, rotated.role, accessToken),
+    response: toWebSessionResponse(session.address, session.role, accessToken),
     setCookie: serializeSessionCookies({
-      address: rotated.address,
-      sessionId: rotated.id,
-      secret: nextSecret,
+      address: session.address,
+      sessionId: session.id,
+      secret,
       expiresAt,
-      clientOrigin: existing.client_origin,
+      clientOrigin,
       apiHost
     })
   };
@@ -464,16 +557,34 @@ async function getActiveWebSessionRecord({
   if (!existing) {
     return null;
   }
-  if (!isMatchingSessionOrigin(existing.client_origin, requestOrigin)) {
-    return null;
-  }
   if (
-    expectedAddress &&
-    existing.address.toLowerCase() !== expectedAddress.toLowerCase()
+    !isMatchingSessionContext({
+      session: existing,
+      requestOrigin,
+      expectedAddress
+    })
   ) {
     return null;
   }
   return existing;
+}
+
+function isMatchingSessionContext({
+  session,
+  requestOrigin,
+  expectedAddress
+}: {
+  readonly session: WalletAuthSessionEntity;
+  readonly requestOrigin: string | null;
+  readonly expectedAddress?: string | null;
+}): boolean {
+  if (!isMatchingSessionOrigin(session.client_origin, requestOrigin)) {
+    return false;
+  }
+  return (
+    !expectedAddress ||
+    session.address.toLowerCase() === expectedAddress.toLowerCase()
+  );
 }
 
 function getWebSessionCookieCandidates(
@@ -993,6 +1104,18 @@ function isMatchingSessionOrigin(
 
 function createOpaqueSecret(bytes = 32): string {
   return randomBytes(bytes).toString('hex');
+}
+
+function deriveRotatedWebSessionSecret({
+  sessionId,
+  secret
+}: NonNullable<ParsedSessionCookie>): string {
+  return createHmac('sha256', getSessionHashSecret())
+    .update('wallet-auth-session-v2-refresh\0', 'utf8')
+    .update(sessionId, 'utf8')
+    .update('\0', 'utf8')
+    .update(secret, 'utf8')
+    .digest('hex');
 }
 
 function hashSecret(secret: string): string {

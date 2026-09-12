@@ -149,6 +149,34 @@ function toNftQueryParams(
   return out;
 }
 
+function serializeNftQueryValue(value: unknown): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    typeof value === 'bigint'
+  ) {
+    return value.toString();
+  }
+  throw new TypeError('Unsupported Alchemy NFT query parameter value');
+}
+
+function serializeNftQueryParams(params: Record<string, unknown>): string {
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        searchParams.append(`${key}[]`, serializeNftQueryValue(item));
+      }
+      continue;
+    }
+    searchParams.append(key, serializeNftQueryValue(value));
+  }
+  return searchParams.toString();
+}
+
 type JsonRpcEnvelope<T> = {
   result?: T;
   error?: {
@@ -354,10 +382,8 @@ async function getNftRest<T>(
       `${getNftApiBaseUrl(network, apiKey)}/${path}`,
       {
         params: toNftQueryParams(params),
-        // Repeat array params (e.g. contractAddresses) as `key=a&key=b`,
-        // which is what Alchemy's NFT REST API expects.
         paramsSerializer: {
-          indexes: null
+          serialize: serializeNftQueryParams
         }
       }
     );
@@ -556,15 +582,6 @@ class AlchemyNftClient {
       'getContractMetadata',
       { contractAddress }
     );
-  }
-
-  async searchContractMetadata(query: string): Promise<NftContract[]> {
-    const response = await getNftRest<
-      NftContract[] | { contracts?: NftContract[] }
-    >(this.http, this.network, this.apiKey, 'searchContractMetadata', {
-      query
-    });
-    return Array.isArray(response) ? response : (response.contracts ?? []);
   }
 
   async getNftsForOwner(

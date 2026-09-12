@@ -39,4 +39,18 @@ describe('isWaveCreatorOrAdmin', () => {
       })
     ).toBe(false);
   });
+
+  it('rejects creator and admin privileges without View membership', () => {
+    expect(
+      isWaveCreatorOrAdmin({
+        authenticatedProfileId: 'creator',
+        wave: {
+          created_by: 'creator',
+          admin_group_id: 'admin-group',
+          visibility_group_id: 'view-group'
+        },
+        groupIdsUserIsEligibleFor: ['admin-group']
+      })
+    ).toBe(false);
+  });
 });

@@ -1,5 +1,12 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -22,14 +29,15 @@ function envWithoutAuthorization(
 function run(
   command: string,
   args: string[],
-  options: { cwd?: string; env?: NodeJS.ProcessEnv } = {}
+  options: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string } = {}
 ): CommandResult {
   const result = spawnSync(command, args, {
     cwd: options.cwd ?? repoRoot,
     encoding: 'utf8',
     env: options.env ?? envWithoutAuthorization(),
     shell: false,
-    stdio: ['ignore', 'pipe', 'pipe']
+    input: options.input,
+    stdio: ['pipe', 'pipe', 'pipe']
   });
 
   if (result.error) {
@@ -90,6 +98,97 @@ printf 'arg=%s\\n' "$@"
       `${JSON.stringify(manifest, null, 2)}\n`
     );
   }
+
+  function createReleaseRequestFixture(): string {
+    const directory = mkdtempSync(
+      path.join(repoRoot, 'release-request-fixture-')
+    );
+    temporaryDirectories.push(directory);
+    mkdirSync(path.join(directory, 'bin'));
+    copyFileSync(
+      path.join(repoBin, '6529'),
+      path.join(directory, 'bin', '6529')
+    );
+    writeFileSync(path.join(directory, 'package.json'), '{}\n');
+    return directory;
+  }
+
+  it('rejects a missing release CLI without npm or PATH fallback', () => {
+    const fakeCorepack = createFakeCorepack();
+    const directory = createReleaseRequestFixture();
+    const fallback = path.join(fakeCorepack.directory, '6529-release-request');
+    writeFileSync(fallback, '#!/usr/bin/env bash\necho unexpected-fallback\n');
+    chmodSync(fallback, 0o755);
+    mkdirSync(path.join(directory, 'node_modules', '.bin'), {
+      recursive: true
+    });
+    copyFileSync(
+      fallback,
+      path.join(directory, 'node_modules', '.bin', '6529-release-request')
+    );
+
+    const result = run(
+      path.join(directory, 'bin', '6529'),
+      ['exec', '6529-release-request', 'template'],
+      {
+        cwd: directory,
+        env: { ...fakeCorepack.environment, npm_config_yes: 'true' }
+      }
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain(
+      'The local release-request CLI is missing.'
+    );
+    expect(result.stderr).toContain('./bin/6529 ci');
+  });
+
+  it.each([0, 1, 130])(
+    'runs the installed release CLI with unchanged stdin, arguments, and exit %s',
+    (exitCode) => {
+      const fakeCorepack = createFakeCorepack();
+      const directory = createReleaseRequestFixture();
+      const cliDirectory = path.join(
+        directory,
+        'node_modules',
+        '@6529-collections',
+        'release-request',
+        'bin'
+      );
+      mkdirSync(cliDirectory, { recursive: true });
+      const cliPath = path.join(cliDirectory, '6529-release-request.mjs');
+      writeFileSync(
+        cliPath,
+        `#!/usr/bin/env node
+import { readFileSync } from 'node:fs';
+process.stdout.write(JSON.stringify({
+  args: process.argv.slice(2),
+  input: readFileSync(0, 'utf8'),
+  cwd: process.cwd()
+}));
+process.exitCode = ${exitCode};
+`
+      );
+      chmodSync(cliPath, 0o755);
+      const args = ['submit', '--input', '-'];
+      const input = '{ "requested_by": "release test" }\n';
+
+      const result = run(
+        path.join(directory, 'bin', '6529'),
+        ['exec', '6529-release-request', ...args],
+        { cwd: directory, env: fakeCorepack.environment, input }
+      );
+
+      expect(result.status).toBe(exitCode);
+      expect(result.stderr).toBe('');
+      expect(JSON.parse(result.stdout)).toEqual({
+        args,
+        input,
+        cwd: directory
+      });
+    }
+  );
 
   it.each([
     ['npm', ['ci'], '6529 ci'],
@@ -273,7 +372,7 @@ printf 'arg=%s\\n' "$@"
     ]);
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain('58 package.json files');
+    expect(result.stdout).toContain('60 package.json files');
     expect(result.stdout).toContain('guarded by 6529');
   });
 

@@ -49,10 +49,160 @@ export interface IdentityGroupMembershipPage {
   readonly nextCursor: IdentityGroupMembership | null;
 }
 
+export interface GroupMembershipSql {
+  readonly key: string;
+  /** Internally generated SQL only; all group-controlled values stay bound. */
+  readonly sql: string;
+  readonly params: Readonly<Record<string, unknown>>;
+}
+
 const IDENTITY_GROUP_MEMBERSHIP_PAGE_SIZE = 500;
 const IDENTITY_GROUP_MEMBERSHIP_LOOKUP_BATCH_SIZE = 500;
 
+type SqlQuote = "'" | '"' | '`';
+
+function isSqlQuote(character: string): character is SqlQuote {
+  return character === "'" || character === '"' || character === '`';
+}
+
+function readQuotedSql(
+  sql: string,
+  start: number,
+  membershipKey: string
+): { text: string; nextIndex: number } {
+  const quote = sql[start] as SqlQuote;
+  let index = start + 1;
+  while (index < sql.length) {
+    const character = sql[index];
+    if (quote !== '`' && character === '\\' && index + 1 < sql.length) {
+      index += 2;
+    } else if (character !== quote) {
+      index++;
+    } else if (sql[index + 1] === quote) {
+      index += 2;
+    } else {
+      return { text: sql.slice(start, index + 1), nextIndex: index + 1 };
+    }
+  }
+  throw new Error(`Membership SQL for ${membershipKey} has an open quote`);
+}
+
+function isParameterTokenStart(sql: string, index: number): boolean {
+  const parameterStart = sql[index + 1];
+  return (
+    sql[index] === ':' &&
+    sql[index - 1] !== ':' &&
+    parameterStart !== undefined &&
+    (parameterStart === '_' || /[A-Za-z]/.test(parameterStart))
+  );
+}
+
+function readParameterKey(
+  sql: string,
+  start: number
+): { key: string; nextIndex: number } {
+  let nextIndex = start + 2;
+  while (nextIndex < sql.length && /\w/.test(sql[nextIndex])) {
+    nextIndex++;
+  }
+  return { key: sql.slice(start + 1, nextIndex), nextIndex };
+}
+
+function namespaceMembershipParams(
+  membership: GroupMembershipSql,
+  namespace: string
+): { sql: string; params: Record<string, unknown> } {
+  if (!/^[A-Za-z_]\w*$/.test(namespace)) {
+    throw new Error('Membership SQL namespace is invalid');
+  }
+  const usedParams = new Set<string>();
+  let sql = '';
+  let index = 0;
+  while (index < membership.sql.length) {
+    const character = membership.sql[index];
+    if (isSqlQuote(character)) {
+      const quoted = readQuotedSql(membership.sql, index, membership.key);
+      sql += quoted.text;
+      index = quoted.nextIndex;
+      continue;
+    }
+    if (!isParameterTokenStart(membership.sql, index)) {
+      sql += character;
+      index++;
+      continue;
+    }
+    const parameter = readParameterKey(membership.sql, index);
+    if (
+      Object.getOwnPropertyDescriptor(membership.params, parameter.key) ===
+      undefined
+    ) {
+      throw new Error(
+        `Membership SQL for ${membership.key} contains an unbound parameter`
+      );
+    }
+    usedParams.add(parameter.key);
+    sql += `:${namespace}_${parameter.key}`;
+    index = parameter.nextIndex;
+  }
+  return {
+    sql,
+    params: Object.fromEntries(
+      Array.from(usedParams).map((key) => [
+        `${namespace}_${key}`,
+        membership.params[key]
+      ])
+    )
+  };
+}
+
 export class UserGroupsDb extends LazyDbAccessCompatibleService {
+  async findMembershipKeysOutsideContainingGroup(
+    containingGroup: GroupMembershipSql,
+    containedGroups: readonly GroupMembershipSql[],
+    ctx: RequestContext
+  ): Promise<string[]> {
+    if (!containedGroups.length) {
+      return [];
+    }
+
+    const timerName = `${this.constructor.name}->findMembershipKeysOutsideContainingGroup`;
+    ctx.timer?.start(timerName);
+    try {
+      // Each generated WITH block is scoped inside its own derived table, so
+      // repeated CTE names cannot collide. Bind names do share the outer
+      // statement scope and therefore must be namespaced.
+      const containing = namespaceMembershipParams(
+        containingGroup,
+        'containing'
+      );
+      const params: Record<string, unknown> = { ...containing.params };
+      const containedQueries = containedGroups.map((membership, index) => {
+        const namespace = `contained_${index}`;
+        const namespaced = namespaceMembershipParams(membership, namespace);
+        const keyParam = `${namespace}_key`;
+        params[keyParam] = membership.key;
+        Object.assign(params, namespaced.params);
+        return `select :${keyParam} as membership_key, members.profile_id
+                  from (${namespaced.sql}
+                        select profile_id from user_groups_view) members`;
+      });
+
+      const rows = await this.db.execute<{ membership_key: string }>(
+        `select distinct contained.membership_key
+           from (${containedQueries.join(' union all ')}) contained
+           left join (${containing.sql}
+                      select profile_id from user_groups_view) containing
+             on containing.profile_id = contained.profile_id
+          where containing.profile_id is null`,
+        params,
+        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+      );
+      return rows.map((row) => row.membership_key);
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   async save(
     entity: Omit<UserGroupEntity, 'is_pure_profile_group'>,
     connection: ConnectionWrapper<any>

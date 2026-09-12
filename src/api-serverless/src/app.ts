@@ -25,7 +25,11 @@ import lightDropsRoutes from './drops/light-drops.routes';
 import feedRoutes from './feed/feed.routes';
 import gasRoutes from './gas/gas.routes';
 import generatedOpenApiRoutes from './generated/routes/openapi-generated.routes';
+import { validateDocumentationRawJson } from '@/artwork-documentation/artwork-documentation.raw-json';
+import { documentationErrorMiddleware } from '@/api/artwork-documentation/artwork-documentation.http';
+import { marketErrorMiddleware } from '@/api/marketplace/marketplace.http';
 import identitiesRoutes from './identities/identities.routes';
+import contentModerationRoutes from './content-moderation/content-moderation.routes';
 import identitySubscriptionsRoutes from './identity-subscriptions/identity-subscriptions.routes';
 import mintingClaimsRoutes from './minting-claims/api.minting-claims.routes';
 import nextgenRoutes from './nextgen/nextgen.routes';
@@ -73,12 +77,13 @@ import { ApiCompliantException } from '@/exceptions';
 import * as sentryContext from '../../sentry.context';
 import { Time, Timer } from '@/time';
 import { DropType } from '@/entities/IDrop';
-import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import { dropsDb } from '@/drops/drops.db';
 import { identitiesDb } from '@/identities/identities.db';
-import { identityNotificationsDb } from '@/notifications/identity-notifications.db';
+import { userNotifier } from '@/notifications/user.notifier';
 import { dbSupplier } from '@/sql-executor';
 import { identitySubscriptionsDb } from '@/api/identity-subscriptions/identity-subscriptions.db';
+import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
+import { selectSentryAlertAllDropsSubscriberIds } from '@/api/sentry-alerts/sentry-alert-notification-recipients';
 import { asyncRouter } from './async.router';
 import { getJwtSecret } from './auth/auth';
 
@@ -140,6 +145,12 @@ import {
   rateLimitingMiddleware
 } from './rate-limiting/rate-limiting.middleware';
 import { setNoStoreHeaders } from '@/api/response-headers';
+import {
+  isCmsAgentRequest,
+  validateCmsAgentRawBody,
+  cmsAgentErrorMiddleware,
+  cmsAgentPrivateHeadersMiddleware
+} from '@/api/profile-cms/profile-cms-agent.http';
 import { cacheRequest, isRequestCacheEntry } from './request-cache';
 import rpcRoutes from './rpc/rpc.routes';
 import sitemapRoutes from './sitemap/sitemap.routes';
@@ -517,93 +528,118 @@ async function postSentryAlertDrop({
   const dropId = randomUUID();
   const now = Time.currentMillis();
 
-  await dbSupplier().executeNativeQueriesInTransaction(async (connection) => {
-    const [wave, senderIdentity] = await Promise.all([
-      dropsDb.findWaveByIdOrNull(waveId, connection),
-      identitiesDb.getIdentityByProfileId(senderId, connection)
-    ]);
-    if (!wave) {
-      throw new Error(`Configured ALERTS_WAVE_ID ${waveId} not found`);
-    }
-    if (!senderIdentity) {
-      throw new Error(`Configured ALERTS_BOT_PROFILE_ID ${senderId} not found`);
-    }
+  const pendingPushNotificationIds =
+    await dbSupplier().executeNativeQueriesInTransaction(async (connection) => {
+      const [wave, senderIdentity] = await Promise.all([
+        dropsDb.findWaveByIdOrNull(waveId, connection),
+        identitiesDb.getIdentityByProfileId(senderId, connection)
+      ]);
+      if (!wave) {
+        throw new Error(`Configured ALERTS_WAVE_ID ${waveId} not found`);
+      }
+      if (!senderIdentity) {
+        throw new Error(
+          `Configured ALERTS_BOT_PROFILE_ID ${senderId} not found`
+        );
+      }
 
-    await dropsDb.insertDrop(
-      {
-        id: dropId,
-        author_id: senderId,
-        title,
-        parts_count: 1,
-        wave_id: waveId,
-        reply_to_drop_id: null,
-        reply_to_part_id: null,
-        created_at: now,
-        updated_at: null,
-        serial_no: null,
-        drop_type: DropType.CHAT,
-        signature: null,
-        is_additional_action_promised: null
-      },
-      connection
-    );
+      await dropsDb.insertDrop(
+        {
+          id: dropId,
+          author_id: senderId,
+          title,
+          parts_count: 1,
+          wave_id: waveId,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          created_at: now,
+          updated_at: null,
+          serial_no: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          is_additional_action_promised: null
+        },
+        connection
+      );
 
-    await dropsDb.insertDropParts(
-      [
+      await dropsDb.insertDropParts(
+        [
+          {
+            drop_id: dropId,
+            drop_part_id: 1,
+            content,
+            quoted_drop_id: null,
+            quoted_drop_part_id: null,
+            wave_id: waveId
+          }
+        ],
+        connection
+      );
+
+      await dropsDb.updateHideLinkPreview(
         {
           drop_id: dropId,
-          drop_part_id: 1,
-          content,
-          quoted_drop_id: null,
-          quoted_drop_part_id: null,
-          wave_id: waveId
-        }
-      ],
-      connection
-    );
+          hide_link_preview: true
+        },
+        { connection }
+      );
 
-    await dropsDb.updateHideLinkPreview(
-      {
-        drop_id: dropId,
-        hide_link_preview: true
-      },
-      { connection }
-    );
-
-    const followerIds = await identitySubscriptionsDb.findWaveSubscribers(
-      waveId,
-      connection
-    );
-    const followerIdsToNotify = followerIds.filter((id) => id !== senderId);
-
-    await Promise.all(
-      followerIdsToNotify.map((id) =>
-        identityNotificationsDb.insertNotification(
+      const followerRecipients =
+        await identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications(
           {
-            identity_id: id,
-            additional_identity_id: senderId,
-            related_drop_id: dropId,
-            related_drop_part_no: null,
-            related_drop_2_id: null,
-            related_drop_2_part_no: null,
-            wave_id: waveId,
-            cause: IdentityNotificationCause.PRIORITY_ALERT,
-            additional_data: {},
-            visibility_group_id: null
+            waveId,
+            authorId: senderId,
+            mentionedGroups: []
           },
           connection
-        )
-      )
+        );
+      const allDropsSubscriberIds =
+        selectSentryAlertAllDropsSubscriberIds(followerRecipients);
+
+      return userNotifier.notifyWaveDropCreatedRecipients(
+        {
+          waveId,
+          dropId,
+          relatedIdentityId: senderId,
+          replyNotification: null,
+          quoteNotifications: [],
+          mentionedIdentityIds: [],
+          allDropsSubscriberIds
+        },
+        wave.visibility_group_id,
+        { connection }
+      );
+    });
+
+  try {
+    await sendIdentityPushNotifications(pendingPushNotificationIds);
+  } catch (error) {
+    logger.error(
+      `Failed to enqueue Sentry alert push notifications for drop ${dropId}: ${error}`
     );
-  });
+  }
 }
 
 function requestLogMiddleware() {
   return (request: Request, response: Response, next: NextFunction) => {
     const requestId =
       request.apiGateway?.context?.awsRequestId ?? ids.uniqueShortId();
+    if (
+      request.path.startsWith('/api/artwork-documentation') ||
+      isCmsAgentRequest(request.path)
+    ) {
+      response.setHeader('X-Request-Id', requestId);
+      response.setHeader('Cache-Control', 'private, no-store');
+      response.setHeader('X-Robots-Tag', 'noindex, nofollow');
+      response.setHeader('X-Content-Type-Options', 'nosniff');
+    }
     loggerContext.run({ requestId }, () => {
-      const { method, originalUrl: url } = request;
+      const { method } = request;
+      const url =
+        request.path.startsWith('/api/artwork-documentation') ||
+        isCmsAgentRequest(request.path)
+          ? request.path
+          : request.originalUrl;
       const uqKey = `${method} ${url}`;
       const timer = new Timer(uqKey);
       (request as any).timer = timer;
@@ -637,7 +673,10 @@ function requestLogMiddleware() {
 function customErrorMiddleware() {
   return (err: Error, _: Request, res: Response, next: NextFunction) => {
     if (err instanceof ApiCompliantException) {
-      res.status(err.getStatusCode()).send({ error: err.message });
+      res.status(err.getStatusCode()).send({
+        error: err.message,
+        ...(err.code ? { code: err.code } : {})
+      });
       next();
     } else {
       res.status(500).send({ error: 'Something went wrong...' });
@@ -705,6 +744,7 @@ async function initializeApp() {
     // Only enabled in AWS Lambda
     app.use(awsServerlessExpressMiddleware.eventContext());
   }
+  app.use(cmsAgentPrivateHeadersMiddleware);
   app.use(requestLogMiddleware());
   app.use(compression());
   app.use(
@@ -731,6 +771,10 @@ async function initializeApp() {
     express.json({
       limit: '5mb',
       verify: (req: any, _res: any, buf: Buffer) => {
+        validateCmsAgentRawBody(req.url ?? '', buf.length);
+        if (req.url?.startsWith('/api/artwork-documentation')) {
+          validateDocumentationRawJson(buf);
+        }
         // Store raw body only for webhook endpoints that need signature verification
         if (shouldCaptureRawBody(req.url)) {
           req.rawBody = buf;
@@ -1619,6 +1663,7 @@ async function initializeApp() {
   apiRouter.use(`/identity-subscriptions`, identitySubscriptionsRoutes);
   apiRouter.use(`/waves-overview`, wavesOverviewRoutes);
   apiRouter.use(`/identities`, identitiesRoutes);
+  apiRouter.use(`/content-moderation`, contentModerationRoutes);
   apiRouter.use(`/profiles`, profilesRoutes);
   apiRouter.use(`/community-members`, communityMembersRoutes);
   apiRouter.use(`/community-metrics`, communityMetricsRoutes);
@@ -1694,6 +1739,9 @@ async function initializeApp() {
     )
   );
 
+  app.use(documentationErrorMiddleware);
+  app.use(marketErrorMiddleware);
+  app.use(cmsAgentErrorMiddleware);
   if (sentryContext.isConfigured()) {
     app.use(Sentry.Handlers.errorHandler());
     app.use(sentryFlusherMiddleware());

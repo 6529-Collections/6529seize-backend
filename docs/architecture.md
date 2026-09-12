@@ -10,6 +10,171 @@ The main runtime pieces are:
 - SQS and EventBridge as the async execution fabric.
 - S3, CloudFront, Arweave, Ethereum/RPC providers, Firebase, Sentry, CloudWatch, Discord, and SNS around the core.
 
+The six Sharp media packages also accept the exact direct-invocation payload
+`{"operator_action":"verify_media_dependencies_v1"}` for release diagnostics.
+This IAM-invoked path runs fixed synthetic codec operations in memory and
+returns native versions before entering database, queue, storage or notification
+processing. It adds no HTTP route; ordinary SQS, schedule and API Gateway
+events keep their existing handlers. This lets operators verify each deployed
+Lambda, including production-only media resizing and the three rememes
+functions, without invoking whole production loops.
+The resizer's HTTP API uses AWS_PROXY payload 1.0 without request templates;
+request bodies remain inside the HTTP event envelope and cannot become this
+top-level operator payload.
+
+## Profile collecting and marketplace operations
+
+The API owns `/collect/*` and `/market/*`. Collecting derives versioned catalogs
+and set requirements for The Memes, Gradients and Pebbles, using the profile's
+confirmed consolidated wallets. Existing Pebbles trait rankings use that same
+profile scope. TDH projections reuse the production calculation kernel and
+first verify parity with the official snapshot.
+
+Authenticated `POST /collect/tdh-target-plans` estimates a purchase subtotal for
+a profile's total boosted TDH at a 1/30/90/365-day deadline, or an explicit
+increase over its future no-purchase baseline. Its selected recipient must be a
+confirmed wallet of that profile. It verifies official snapshot parity and
+reuses one canonical projector for complete candidate portfolios, including
+nonlinear set-completion bundles. Search is bounded to 128 replays, 10 million
+modeled replay-work units and a 20-second request window; inventory validation
+and hypothetical per-edition work are charged before each replay. It preserves
+exact captured listing identities, fee-divisible steps, remaining quantities and
+the atomic checkout's supported order shapes. Results distinguish best found,
+no purchase needed and an unresolved target gap; captured index coverage never
+claims complete live market coverage or a global minimum. Purchase subtotals
+include signed fees, while gas and total funding remain unquoted until batch
+review. Analysis adds no operation row, cache, table, migration, economic action
+or loop dependency. Deploy `api`, then its frontend consumer. The frontend Help
+Bot corpus must describe this new screen in the coupled frontend release.
+
+Anonymous `GET /collect/tdh-listings` compares supported ETH asks across the
+completed market-depth collection index. It reuses the marketplace adapter to
+validate stored signed order identities, exact fill quantities and fees, and
+applies observed cancellations and fills before ranking. Comparison uses exact
+wei against the indexed base accrual rate rounded to production hundredths,
+without inheriting seller holding time or applying profile multipliers. Reads
+are bounded across collection partitions; freshness and index coverage remain
+explicit. A short-lived cache contains only public discovery DTOs. An expiring
+Redis refresh lease limits concurrent cold-cache work across API instances;
+only its current owner can publish a result. Cursors
+bind the ranked content, catalog and collection. Checkout still obtains a fresh
+executable quote. This read-only endpoint adds no table or loop dependency and
+requires only the API deployment, followed by its frontend consumer.
+
+Private `POST /collect/offer-analyses` prices explicitly selected exact NFTs
+with manual pins or transparent WETH formulas. It reuses bounded indexed books
+and lifecycle observations; references remain explicitly unverified for live
+funding and fulfillment. One payer funding snapshot and primary tracked
+liabilities bound recommendations, while existing single-offer preparation
+still performs fresh review and reserves actual exposure. The conservative
+goal policy never signs, spends, or implies atomic group offers. It adds no
+table or loop dependency. See [per-NFT offer analysis](../specs/collect-offer-analysis.md).
+
+Collecting request budgets use a monotonic clock, with 20 seconds shared across
+reads and parsing. The optional set-plan seed and TDH browse parser each receive
+at most eight seconds within that budget. Seed expiry discards partial results
+and preserves time for scanner-row persistence; browse expiry marks retained
+results incomplete or returns a retryable refresh response when empty. Checks
+inside synchronous order loops bound CPU work, while read wait bounds prevent
+late responses from starting subsequent parsing. They do not claim to cancel
+an already-issued database request. Market quote expiry still uses wall time.
+
+The marketplace adapter obtains unsigned OpenSea Seaport actions server-side.
+Closed schemas, a protocol/spender registry, independent action decoding and
+chain simulation bind the exact artwork, quantity, wallet, recipient, fees and
+economic limits. The client independently validates before asking its wallet
+to sign or send. Purchase fulfillment delivers directly to a reviewed profile
+or third-party recipient. The backend never holds user signing keys.
+
+Browser preflights allow the required `Idempotency-Key` header only on
+`POST /market/operations`, `POST /collect/rules` and
+`POST /collect/rules/{id}/prepare`. These routes retain the public API's
+non-credentialed CORS policy; their bearer authentication, mandatory
+idempotency keys and financial validation remain enforced on actual requests.
+Artwork documentation and credentialed session routes retain their separate
+origin policies. This CORS repair requires only the `api` deployment.
+
+Public `GET /market/orders/{order_hash}` resolves an exact supported Seaport
+listing or offer outside the limited best-order discovery results. Required
+asset, side and protocol parameters bind the requested identity. The API checks
+signed terms, a fresh mainnet snapshot, maker counter and remaining fill fraction
+under one request budget, returning the existing sanitized trade-order DTO.
+It does not expose signatures, reserve inventory or create an operation;
+authenticated preparation still revalidates financial execution. This additive
+API boundary requires only the `api` deployment and no database migration.
+
+`market_operations` and `market_operation_events` persist idempotent operations
+and state transitions. A per-wallet/currency lock serializes potential offer
+exposure before signable terms are revealed. `market_reviewed_transactions`
+retains immutable execution payloads so an earlier reviewed transaction can be
+recovered after refresh. A unique transaction-hash binding prevents duplicate
+settlement attribution. Receipt reconciliation verifies canonical blocks,
+Seaport events and NFT transfers; potential exposure persists until verified
+fill, cancellation or safe-chain expiry.
+
+Before the client opens a transaction prompt, a durable send attempt binds the
+reviewed payload and operation revision. An unresolved attempt blocks another
+send for that operation across browsers and devices. Hash recovery validates
+the original approval or fulfillment; only a positively identified pre-broadcast
+rejection can release an attempt without a verified transaction outcome.
+
+Atomic Collect purchases use a separate `BUY_BATCH` request and response while
+preserving the existing single-artwork contract. Each selected seller order has
+an exact quantity, native-ETH cost and recipient allocations. The API builds a
+Seaport 1.6 `matchAdvancedOrders` transaction with an unsigned payer mirror;
+every selected order must fill or the transaction reverts. No router deployment,
+new approval, automatic substitution or automatic splitting is involved.
+Profile membership labels collecting and recipient scope; the directly
+authenticated EOA pays, and profile or third-party wallets receive the NFTs.
+
+`GET /market/batch-capabilities` reports bounds of 128 seller orders, 256
+recipient allocations and 1 MiB of calldata. These bound parser, provider and
+validator work rather than spend or editions. Preparation uses at most eight
+concurrent selected-order tasks and a 20-second deadline. Complete simulation,
+balance and padded gas checks must pass before review and before opening the
+durable send attempt, including the current block limit and mainnet's
+[EIP-7825 transaction gas limit](https://eips.ethereum.org/EIPS/eip-7825).
+Exceeding a bound requires the user to reduce the selection explicitly.
+
+Restricted ERC1155 seller orders currently support original and filled quantity
+one. Open partial orders support multiple editions and recipients only when
+every individual NFT/payment amount has an exact fill fraction. Discovery
+publishes `purchase_quantity`, `quantity_step` and `available_quantity` so the
+UI can distinguish an executable unit quote from a required whole lot. Batch
+receipt reconciliation additionally requires every seller event, the exact
+buyer mirror, complete `OrdersMatched` membership and every recipient transfer.
+Uncertain evidence retains the recovery fence. Batch state and immutable mirror
+terms use the existing JSON operation journal; there is no schema change.
+History includes batches only with `include_batches=true`, and saved rules
+continue to support single purchases only. This addition requires the API to
+deploy before the dependent frontend; no indexing or migration loop changes.
+Opt-in history omits batch calldata, send-attempt payloads and seller components
+and bounds page bytes; clients follow its cursor and fetch the operation by ID
+for complete review or recovery evidence.
+
+`collect_plans` stores incremental listing scans with renewable leases and
+profile/catalog invalidation. It distinguishes a completed asset scan from
+incomplete market coverage. Plan responses optionally include `available_result`,
+an uncapped comparison over the same captured candidates and evaluation instant,
+alongside the result constrained by an explicitly echoed `budget_wei`. Without
+a cap the same result is reused; otherwise one additional search is bounded to
+20,000 states. Both use the same observed unit prices and estimated gas, make no
+additional market reads and preserve incomplete coverage. Neither authorizes
+spending or claims a global minimum. This additive response requires the API
+before its frontend consumer, without database or loop changes.
+`collect_rules` and `collect_rule_operations` store
+fixed targets, review limits, one outstanding operation and monotonic verified
+acquisitions. Rules only prepare transactions for owner approval. Their limits
+are not a smart-contract-enforced mandate or authority to broadcast unattended.
+
+Deploy the additive entity changes through `dbMigrationsLoop` before the API,
+then deploy the dependent frontend. The exported TDH helper does not change the
+scheduled TDH calculation and does not require a TDH loop deployment.
+`MARKETPLACE_TRADING_ENABLED=false` stops new trade preparation/publication;
+inspection, transaction reconciliation and direct cancellation remain available.
+The default enables supported actions when provider/RPC configuration exists.
+Keep operation history and exposure tables when disabling or rolling back trading.
+
 ## High-Level Diagram
 
 This is the compact map. Lambda boxes are intentionally just service names; trigger type is shown by the surrounding group or the queue/topic feeding the Lambda. The tables below carry the longer descriptions so the diagram stays readable.
@@ -48,7 +213,8 @@ flowchart TD
     TdhHistoryLoop ~~~ OwnersBalancesLoop["ownersBalancesLoop"]
     OwnersBalancesLoop ~~~ AggregatedActivityLoop["aggregatedActivityLoop"]
     AggregatedActivityLoop ~~~ MarketStatsLoop["marketStatsLoop"]
-    MarketStatsLoop ~~~ RateEventProcessingLoop["rateEventProcessingLoop"]
+    MarketStatsLoop ~~~ MarketDepthStreamLoop["marketDepthStreamLoop"]
+    MarketDepthStreamLoop ~~~ RateEventProcessingLoop["rateEventProcessingLoop"]
     RateEventProcessingLoop ~~~ WaveDecisionExecutionLoop["waveDecisionExecutionLoop"]
     WaveDecisionExecutionLoop ~~~ WaveLeaderboardSnapshotterLoop["waveLeaderboardSnapshotterLoop"]
     WaveLeaderboardSnapshotterLoop ~~~ WaveDropMetricsRefreshLoop["waveDropMetricsRefreshLoop"]
@@ -81,11 +247,14 @@ flowchart TD
     NftLinkRefresherLoop --> NftLinkPreviewQueue["SQS: nft-link-media-previews"] --> NftLinkMediaPreviewLoop["nftLinkMediaPreviewLoop"]
     SeizeAPI --> PushQueue["SQS: firebase-push-notifications"] --> PushNotificationsHandler["pushNotificationsHandler"]
     SeizeAPI --> HelpBotQueue["SQS: help-bot-replies"] --> HelpBotReplyLoop["helpBotReplyLoop"]
+    SeizeAPI --> HelpBotDailyCreditsQueue["SQS: help-bot-daily-activity-credits.fifo"] --> HelpBotDailyActivityCreditLoop["helpBotDailyActivityCreditLoop"]
+    EventBridge --> HelpBotDailyCreditsQueue
     SeizeAPI --> ReleaseNotesQueue["SQS: release-note-generation"] --> ReleaseNotesGenerationLoop["releaseNotesGenerationLoop"]
     SeizeAPI --> WaveDropMetricsDirtyQueue["SQS: wave-drop-metrics-refresh-dirty.fifo"] --> WaveDropMetricsRefreshLoop
     SeizeAPI --> WaveScoreDirtyQueue["SQS: wave-score-refresh-dirty.fifo"] --> WaveScoreRefreshLoop
     TdhLoop --> TdhDoneTopic["SNS: tdh-calculation-done.fifo"]
     TdhDoneTopic --> XTdhQueue["SQS: xtdh-start.fifo"] --> XTdhLoop["xTdhLoop"]
+    DelegationsLoop -->|partial TDH persisted| XTdhQueue
     XTdhLoop --> XTdhQueue
     TdhDoneTopic --> OverRatesQueue["SQS: over-rates-revocation-start.fifo"] --> OverRatesRevocationLoop["overRatesRevocationLoop"]
     TdhDoneTopic --> WaveScoreRefreshQueue["SQS: wave-score-refresh-start.fifo"] --> WaveScoreRefreshLoop["waveScoreRefreshLoop"]
@@ -142,7 +311,8 @@ flowchart TD
 | `tdhHistoryLoop`                         | Write historical TDH snapshots.                                                                                                                                     |
 | `ownersBalancesLoop`                     | Project owner balance aggregates.                                                                                                                                   |
 | `aggregatedActivityLoop`                 | Calculate activity aggregates.                                                                                                                                      |
-| `marketStatsLoop`                        | Aggregate market stats for MEMES, Lab, Gradients, and NextGen.                                                                                                      |
+| `marketStatsLoop`                        | Aggregate market stats and archive full OpenSea order books for MEMES, Lab, Gradients, and each NextGen project.                                                   |
+| `marketDepthStreamLoop`                  | Capture OpenSea order lifecycle events with overlapping scheduled subscriptions and idempotent persistence.                                                       |
 | `rateEventProcessingLoop`                | Process DB-backed rating events.                                                                                                                                    |
 | `waveDecisionExecutionLoop`              | Execute wave decisions and enqueue claim builds.                                                                                                                    |
 | `waveLeaderboardSnapshotterLoop`         | Snapshot wave leaderboards.                                                                                                                                         |
@@ -162,8 +332,6 @@ flowchart TD
 | `dbDumpsDaily`                           | Create daily database dumps.                                                                                                                                        |
 | `nextgenMediaUploader`                   | Upload NextGen media.                                                                                                                                               |
 | `nextgenMediaImageResolutions`           | Generate NextGen image resolutions.                                                                                                                                 |
-| `releaseBusV2Reconciler`                 | Claim and reconcile exact Simple Release Bus v2 trains.                                                                                                             |
-| `releaseBusCleaner`                      | Remove expired temporary v2 release branches that no active train owns.                                                                                             |
 
 `transactionsLoop` receipt verification fails closed and raises per-function
 error alarms. See the [transactions ingestion runbook](transactions-loop-ingestion-runbook.md)
@@ -171,28 +339,29 @@ for alert triage and recovery.
 
 ### Triggered Lambdas
 
-| Lambda                           | Trigger                                                                                                                            | Purpose                                                                                                                                    |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `api` / `seizeAPI`               | API Gateway HTTP/WebSocket                                                                                                         | Public REST API and WebSocket boundary.                                                                                                    |
-| `claimsBuilder`                  | SQS `claims-builder`                                                                                                               | Build minting claims from winning drops.                                                                                                   |
-| `claimsMediaArweaveUploader`     | SQS `claims-media-arweave-upload`                                                                                                  | Upload claim media and metadata to Arweave.                                                                                                |
-| `s3Uploader`                     | SQS `s3-uploader-jobs`                                                                                                             | Mirror, compress, and upload NFT media.                                                                                                    |
-| `attachmentsOrchestrator`        | SQS `attachments-orchestration` and S3 object-created event                                                                        | Find uploaded attachment objects, retry, and enqueue processing.                                                                           |
-| `attachmentsProcessor`           | SQS `attachments-processing`                                                                                                       | Scan/process attachments.                                                                                                                  |
-| `dropMediaSanitizer`             | SQS `drop-media-sanitizer`                                                                                                         | Strip metadata from private-ingest drop/wave image uploads and publish sanitized originals.                                                |
-| `nftLinkRefresherLoop`           | SQS `nft-link-refreshes`                                                                                                           | Resolve external NFT links.                                                                                                                |
-| `nftLinkMediaPreviewLoop`        | SQS `nft-link-media-previews`                                                                                                      | Generate media previews for NFT links.                                                                                                     |
-| `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                  | Deliver Firebase pushes and recipient-scoped WebSocket notification invalidations after notification rows are durable.                     |
-| `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                             | Answer `@help6529` mentions and direct follow-ups to bot replies.                                                                          |
-| `releaseNotesGenerationLoop`     | SQS `release-note-generation`                                                                                                      | Production only: accumulate successful backend service runs by PR, then publish one repository-prompted note per completed PR as `ci6529`. |
-| `waveDropMetricsRefreshLoop`     | SQS `wave-drop-metrics-refresh-dirty.fifo`; EventBridge fallback                                                                   | Repair materialized wave/dropper drop counts and latest-drop timestamps after drop deletes.                                                |
-| `xTdhLoop`                       | SNS `tdh-calculation-done.fifo` via SQS `xtdh-start.fifo`; self-queued stats phase                                                 | Recalculate the xTDH universe after TDH finishes, then rebuild and publish xTDH stats in a follow-up queue message.                        |
-| `overRatesRevocationLoop`        | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo`                                                         | Revoke over-rates after TDH changes.                                                                                                       |
-| `waveScoreRefreshLoop`           | SNS `tdh-calculation-done.fifo` via SQS `wave-score-refresh-start.fifo`; SQS `wave-score-refresh-dirty.fifo`; EventBridge fallback | Refresh materialized wave REP and Wave Score discovery fields after TDH changes or wave/drop/rating/subscription mutations.                |
-| `mediaResizerLoop`               | CloudFront/request path                                                                                                            | Resize images on demand.                                                                                                                   |
-| `nextgenMediaProxyInterceptor`   | Lambda@Edge / CloudFront request                                                                                                   | Provide NextGen metadata fallback.                                                                                                         |
-| `dropVideoConversionInvokerLoop` | S3 object-created event for `drops/`                                                                                               | Invoke MediaConvert for uploaded drop videos.                                                                                              |
-| `cloudwatchAlarmsToDiscordLoop`  | SNS `cloudwatch-alarms`                                                                                                            | Post CloudWatch alarms to Discord.                                                                                                         |
+| Lambda                           | Trigger                                                                                                                            | Purpose                                                                                                                     |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `api` / `seizeAPI`               | API Gateway HTTP/WebSocket                                                                                                         | Public REST API and WebSocket boundary.                                                                                     |
+| `claimsBuilder`                  | SQS `claims-builder`                                                                                                               | Build minting claims from winning drops.                                                                                    |
+| `claimsMediaArweaveUploader`     | SQS `claims-media-arweave-upload`                                                                                                  | Upload claim media and metadata to Arweave.                                                                                 |
+| `s3Uploader`                     | SQS `s3-uploader-jobs`                                                                                                             | Mirror, compress, and upload NFT media.                                                                                     |
+| `attachmentsOrchestrator`        | SQS `attachments-orchestration` and S3 object-created event                                                                        | Find uploaded attachment objects, retry, and enqueue processing.                                                            |
+| `attachmentsProcessor`           | SQS `attachments-processing`                                                                                                       | Scan/process attachments.                                                                                                   |
+| `dropMediaSanitizer`             | SQS `drop-media-sanitizer`                                                                                                         | Strip metadata from private-ingest drop/wave image uploads and publish sanitized originals.                                 |
+| `nftLinkRefresherLoop`           | SQS `nft-link-refreshes`                                                                                                           | Resolve external NFT links.                                                                                                 |
+| `nftLinkMediaPreviewLoop`        | SQS `nft-link-media-previews`                                                                                                      | Generate media previews for NFT links.                                                                                      |
+| `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                  | Deliver Firebase pushes and recipient-scoped WebSocket notification invalidations after notification rows are durable.      |
+| `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                             | Answer `@help6529` interactions and direct follow-ups to bot replies.                                                       |
+| `helpBotDailyActivityCreditLoop` | SQS `help-bot-daily-activity-credits.fifo` with EventBridge wakeup fallback                                                        | Grant idempotent once-per-UTC-day activity credits from durable post-drop requests.                                        |
+| `releaseNotesGenerationLoop`     | SQS `release-note-generation`                                                                                                      | Publish production Backend, Frontend, and Desktop release notes as `ci6529`.                                                |
+| `waveDropMetricsRefreshLoop`     | SQS `wave-drop-metrics-refresh-dirty.fifo`; EventBridge fallback                                                                   | Repair materialized wave/dropper drop counts and latest-drop timestamps after drop deletes.                                 |
+| `xTdhLoop`                       | SNS `tdh-calculation-done.fifo` or a direct post-persistence partial-TDH enqueue via SQS `xtdh-start.fifo`; self-queued stats phase | Recalculate the xTDH universe after TDH finishes, then rebuild and publish xTDH stats in a follow-up queue message.         |
+| `overRatesRevocationLoop`        | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo`                                                         | Revoke over-rates after TDH changes.                                                                                        |
+| `waveScoreRefreshLoop`           | SNS `tdh-calculation-done.fifo` via SQS `wave-score-refresh-start.fifo`; SQS `wave-score-refresh-dirty.fifo`; EventBridge fallback | Refresh materialized wave REP and Wave Score discovery fields after TDH changes or wave/drop/rating/subscription mutations. |
+| `mediaResizerLoop`               | CloudFront/request path                                                                                                            | Resize images on demand.                                                                                                    |
+| `nextgenMediaProxyInterceptor`   | Lambda@Edge / CloudFront request                                                                                                   | Provide NextGen metadata fallback.                                                                                          |
+| `dropVideoConversionInvokerLoop` | S3 object-created event for `drops/`                                                                                               | Invoke MediaConvert for uploaded drop videos.                                                                               |
+| `cloudwatchAlarmsToDiscordLoop`  | SNS `cloudwatch-alarms`                                                                                                            | Post CloudWatch alarms to Discord.                                                                                          |
 
 ### Manual Or One-Off Lambdas
 
@@ -218,8 +387,120 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 3. Scheduled ingestion Lambdas poll Ethereum/RPC/Alchemy/Etherscan, normalize chain state, and write canonical rows into MySQL.
 4. Derived-data Lambdas read canonical tables and write projections such as TDH, owner balances, aggregated activity, wave decisions, leaderboards, metrics, and reputation aggregates.
 5. SQS workers handle slow or retryable side effects through named queues: claim building, claim media Arweave uploads, S3 media mirroring, attachment orchestration/processing, NFT link resolution/previews, xTDH recalculation, Wave Score dirty refreshes, and notification delivery through Firebase plus recipient-scoped WebSocket invalidations.
+
 6. S3 and CloudFront serve media. Drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception.
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
+
+### NFT link refresh bounds
+
+`nftLinkRefresherLoop` applies a 90-second resolution budget, reduced to leave
+10 seconds before the Lambda deadline and processing-lock expiry. Its RPC
+transport cancels connections and response bodies after five seconds; metadata
+HTTP requests also observe the overall budget. Retries stop when the remaining
+budget cannot cover their backoff and another RPC. Failed resolution preserves
+cached metadata and releases the existing processing lock.
+
+After persistence, a worker-specific notifier reads active WebSocket recipients
+once and sends the existing `MEDIA_LINK_UPDATED` payload with concurrency 10,
+five-second request limits, and a 15-second broadcast deadline. Notification
+failure cannot change a successful metadata refresh. The notification metadata
+read is bounded to five seconds; both notification queries also use a three-second
+database execution limit. Late read results cannot trigger delivery.
+Cancelled preview-queue sends leave their source retryable, without overwriting
+newer previews or active consumers. Expired or disconnected
+clients are skipped; normal WebSocket lifecycle handling retains ownership of
+stale-connection deletion. The API and other resolver callers retain their
+existing policy. Request IDs, message IDs, and stage durations connect these
+operations to CloudWatch invocation reports. Sentry's existing warning timer is
+unchanged. No API, schema, queue, or frontend deployment dependency is added.
+
+### NFT market depth and activity
+
+`marketStatsLoop` legacy price pagination and market-depth REST requests share
+the existing Redis OpenSea request quota, with local pacing when Redis is
+unavailable. Successful price pages proceed as quota permits; retries and the
+shared refresh deadline remain bounded, and incomplete scans never replace stored
+prices.
+
+`marketStatsLoop` publishes complete OpenSea order snapshots atomically with
+current orders and a persistent queue for reconciling disappeared orders.
+Existing price statistics run concurrently with an independent deadline; both
+tasks finish before the database context closes. Collection books are attempted
+before lifecycle maintenance, which prioritizes status reconciliation and
+checkpoints bounded REST catch-up batches.
+`marketDepthStreamLoop` records live order lifecycle events, while REST event
+catch-up and per-order status checks recover supported missed observations.
+Six `market_depth_*` tables retain immutable compressed archives, current orders,
+collection state, events, cursors and retry work. All amounts and quantities
+needed for normalization preserve exact integer strings.
+
+The API exposes currency-specific quoted depth for an individual token and a
+merged feed of canonical transactions and market actions. Quoted quantities can
+share inventory or funding and are not a verified executable security budget.
+See the [market depth runbook](../ops/runbooks/market-depth.md) for interpretation,
+provider limitations, deployment order and verification.
+
+### Alchemy NFT metadata proxy
+
+`GET /alchemy-proxy/contract` retains its existing address lookup: `address`
+must be `0x` followed by 40 hexadecimal characters; missing or malformed input
+returns HTTP 400. It uses V3 `getContractMetadata` and returns the provider
+metadata with `_checksum`, or JSON `null` when the provider returns 404. The
+route retains its five-minute request-cache middleware. FE uses this endpoint
+as fallback for its address-only picker.
+
+Collection-name search is retired: `GET /alchemy-proxy/collections` returns
+HTTP 410 with `Cache-Control: no-store` and the error message
+`Collection name search is no longer available. Use a contract address.`
+It makes no upstream or cache request, including for missing or empty queries.
+The removed search wrapper has no remaining callers; ingestion, ownership
+queries, and token metadata continue using their existing supported endpoints.
+
+### Content moderation
+
+See [Content moderation](./content-moderation.md) for the complete feature
+policy, publication decision flow, API surface, posting-suspension lifecycle,
+data ownership, retention, and rollout contract.
+
+Drop text passes a permissive pre-publication gate for new posts and edits. It
+checks profile suspension and narrow deterministic signals first; only
+signaled, ambiguous text is sent to a dedicated Bedrock evaluator. Known
+malicious destinations may be rejected directly, while evaluator errors and
+uncertain classifications fail open. Drop attachment contents remain in the
+existing asynchronous attachment safety pipeline rather than this text gate.
+
+Authenticated non-proxy viewers can report drops, hide individual drops, and
+block profiles through `/content-moderation`. Reports, private evidence
+snapshots, and requested personal hide/block actions commit atomically before
+the reported-content Bedrock assessment runs. Only a high-confidence urgent
+recommendation can temporarily quarantine a drop; ordinary results remain in
+the occasional moderator queue. Authorized moderators can restore,
+quarantine, or remove drops and suspend or reinstate posting profiles.
+Moderator access is read from explicit configured profile IDs or a durable
+role; access checks never create roles. The prioritized queue uses opaque
+stable cursors. There is no continuous review queue or hold-before-publish
+state.
+
+MySQL stores viewer blocks and hides, reports, global drop and profile states,
+moderator roles, pre-publication decisions, and an append-only audit history.
+Pre-publication decision records are retained for 30 days and pruned daily by
+`dbMigrationsLoop` in bounded batches of 1,000 rows, capped at ten batches per
+invocation; this exceeds the ten-minute duplicate-detection window.
+Drop API mappers retain structural graph metadata but redact globally
+unavailable content across V1, V2, light-drop, reply, quote, and WebSocket
+surfaces. Notification writes, reads, badge counts, and push delivery suppress
+blocked authors and globally unavailable drops. Global state takes precedence
+over viewer block and hide state; authors retain access to their own globally
+moderated content, while other clients may locally reveal personal tombstones
+but never globally quarantined or moderator-removed content.
+
+CI deploy and WEB E2E signals enter the API through the signed pipeline-alert
+route. The API renders and posts the deploy drop, then retains successful WEB
+deploy reply targets in Redis by deploy run ID. Terminal E2E signals carry those durable identities back to the API; only
+an unambiguous match becomes a drop reply, while missing or inconsistent state
+falls back to a standalone result. Workflows never own Seize drop IDs. See
+[CI Pipeline Alerts](./ci-pipeline-alerts.md) for the request, formatting,
+retention, rerun, and rollout contract.
 
 Notification invalidation is emitted only after the push worker loads durable notification rows. It intentionally remains independent from mobile push registration, mute settings, and delivery success because those controls affect Firebase delivery only; the durable row remains visible through the authenticated REST feed. Duplicate SQS deliveries may repeat this idempotent invalidation without duplicating notification data.
 
@@ -228,6 +509,26 @@ WebSocket notification subscription replacement is transactional. New connection
 ## API Boundary
 
 The API is organized by domain routers under `src/api-serverless/src`. The OpenAPI file defines the public contract and generated models. Legacy routes are wired manually, while newer OpenAPI operations can opt into generated route wiring through `x-6529-router` and thin domain handlers.
+
+`GET /tdh/rules` publishes current TDH boost definitions evaluated against the
+latest completed snapshot's eligible Meme card range. The latest row in
+`tdh_blocks` is the completion marker because consolidation persists its TDH
+rows before publishing that block. The API combines the block timestamp with
+Meme mint dates and current season definitions, then applies the calculator's
+shared eligibility and boost helpers. Rule definitions are current server
+configuration, not historical or versioned inputs persisted with the snapshot.
+The public current-season rules and configured future schedule remain
+independent of any collector identity.
+
+Authenticated profiles can delete their own chat history from one wave through
+`DELETE /waves/{id}/my-chat-history`. The API locks the wave and the profile's
+matching `CHAT` drops in one transaction, preserves the current pinned drop,
+and delegates each remaining drop to the canonical deletion use case so
+submission/winner drops and dependent drop data are unaffected. After commit,
+the API requests the normal wave metric/score repairs, invalidates unread state,
+and broadcasts the deleted drop identities to connected wave clients. Because
+this is self-service privacy cleanup scoped to the authenticated author ID, it
+remains available if the author is no longer eligible to enter the wave.
 
 Waves have an additive competition read boundary under `/v3/waves`. A wave is
 the chat/visibility hub and owns zero, one, or many competition resources. The
@@ -264,7 +565,21 @@ Important API responsibilities:
   complete all semantic and wallet-signature checks before a final atomic nonce
   consumption. The full auth contract is documented in
   [Wallet Authentication](auth/wallet-auth.md).
-- Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics, subscriptions, and notifications.
+- Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics,
+  subscriptions, and notifications. Wallet distribution allocation reads
+  combine Phase 0–2 distribution rows with Public subscription airdrops, while
+  returning card-level publication state without exposing the full Public
+  subscription list. They intentionally accept any wallet address without
+  authentication because distribution plans are public and the home page must
+  render before wallet authentication. Responses use a 60-second route cache
+  to limit repeated database reads while keeping publication changes timely.
+- Paginated group-member inspection uses `GET /community-members/top` for a
+  saved group and supports parameterized handle or wallet search. Authenticated
+  `POST /groups/preview-members` evaluates an unsaved group description through
+  the same membership SQL without creating a group, identity group, or other
+  persistent record. Draft identity-address and NFT-token criteria remain bind
+  parameters, and results reflect the current indexed metrics and ownership
+  state.
 - Wave mention autocomplete under `/v2/waves/{waveId}/mention-search`, which
   derives visibility eligibility from a persisted wave, and the authenticated
   `/v2/waves/mention-search` draft endpoint, which applies the selected
@@ -281,8 +596,8 @@ Important API responsibilities:
   checks, rollback/archive endpoints, and package export data for future
   standalone renderers and mirrors.
 - Authenticated profile-native CMS wallet gallery snapshots under
-  `/profile-cms/wallet-gallery/snapshot`, gated by
-  `FEATURE_PROFILE_CMS_WALLET_GALLERY`, reading current indexed NFT ownership
+  `/profile-cms/wallet-gallery/snapshot`, enabled by default with an explicit
+  `FEATURE_PROFILE_CMS_WALLET_GALLERY=false` override, reading indexed NFT ownership
   and normalized media from MySQL for deterministic gallery generation.
 - Profile-native CMS BYO-agent affordances under `/profile-cms/agent` and
   `/profile-cms/packages/{id}/agent`, including a public schema bundle,
@@ -295,17 +610,53 @@ Important API responsibilities:
   URLs to canonical native URIs, `media.6529.io` resolver URLs, and explicit
   external fallback URLs. This v1 API does not proxy media bytes.
 - Authenticated direct-message unread summary under `/dm-drops/unread`,
-  returning only `{ count }` for unread drops across the acting profile's
-  direct-message waves.
+  retaining the lightweight `{ count }` contract for legacy clients, plus the
+  authoritative per-conversation state under `/dm-drops/unread/snapshot` for
+  clients that synchronize unread state through WebSockets.
 - Authenticated social writes: drops, votes, reactions, curations, subscriptions, groups, proxies, profile CMS package drafts/publish actions, minting claims, and push settings.
 - `@help6529` trigger detection after drop creation. The API writes a durable `help_bot_interactions` row, reacts with the bot's seen marker, and enqueues the reply worker when the `help6529` profile exists.
-- Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments. When `DROP_MEDIA_SANITIZE_IMAGES=true`, drop/wave image multipart uploads complete into private ingest storage, return `media_status=processing`, and publish a `DROP_UPDATE` websocket event with reason `MEDIA_STATUS` after the sanitizer marks the media ready or failed.
+- Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments. When `DROP_MEDIA_SANITIZE_IMAGES=true`, drop/wave image multipart uploads complete into private ingest storage, return `media_status=processing`, and publish a `DROP_UPDATE` websocket event with reason `MEDIA_STATUS` after the sanitizer marks the media ready or failed. Participatory drops in the configured Main Stage wave accept managed-CDN GLB media and verify each stored S3 object's authoritative size is no more than 250 MB (250,000,000 bytes) before attachment.
 - WebSocket connection registration and real-time wave-related messages.
 - Operational endpoints such as health, docs, RPC/proxy routes, webhooks, and deploy-related routes.
 
 Wave rows can be top-level waves or subwaves through the nullable `parent_wave_id` column. Top-level wave discovery endpoints exclude subwaves, while `/waves/{id}/subwaves` lists child wave overviews. Subwave read access also requires the parent wave to be visible, and deleting a parent wave cascades through the API service to delete its subwaves.
 
+Wave writes enforce that every active Drop, Vote, Chat, and Admin membership is
+contained by the Wave View membership. The generated
+`POST /wave-group-validation` boundary exposes the same privacy-preserving
+preflight result to clients as failing scope names only. Dynamic group
+membership is evaluated with one batched anti-join query, group-version swaps
+are checked before replacing a Wave-referenced group, and runtime privilege
+flags remain intersected with View eligibility if group criteria later drift.
+
 The waves v2 read boundary keeps timeline, reply-thread, and curation feeds as separate contracts. `/v2/waves/{id}/drops` returns the wave timeline feed, `/v2/drops/{id}/replies` returns the reply thread for a root drop after resolving its owning visible wave, and `/v2/waves/{id}/curations/{curation_id}/drops` returns drops for one wave curation.
+
+Current vote-allocation summaries use separate card and detail read paths.
+V2 rank-wave leaderboard responses can add an optional
+`submission_context.voting.largest_vote` to visible active participatory
+submissions. This is one voter's current signed allocation with the greatest
+absolute size, not necessarily a positive vote. The mapper batches the
+extrema lookup for the page and hydrates the selected voter identities;
+unavailable highlights do not prevent reading the leaderboard.
+
+`GET /v2/drops/{id}/vote-summary` returns an optional `vote_distribution` with
+complete signed positive and negative totals and at most three individual
+allocations per direction. It checks the existing wave-read eligibility and
+drop moderation presentation before querying voter state. Missing or
+inaccessible drops return 404; unsupported drops, content the viewer cannot
+see, and drops without nonzero allocations omit the distribution. Both
+summary paths are limited to `PARTICIPATORY` drops in `RANK` waves, excluding
+winner snapshots. Ordinary single-drop GETs and voter-list endpoints remain
+unchanged. These amounts are current allocations, not vote-edit deltas or
+time-weighted scores; vote writes, ranking, and score calculations are
+unchanged.
+
+These read-only summaries query `drop_voter_states`; the schema already
+defines a `(drop_id, votes, voter_id)` index. They add no tables, jobs, writes,
+or backend cache. The detail response is bounded to six voter entries, but
+exact totals still aggregate the drop's current nonzero allocations. Query-plan and
+production-load performance have not been measured; bounded response size is
+not a constant-cost query guarantee.
 
 For the wave configured by `MAIN_STAGE_WAVE_ID`, v2 winning-drop responses can
 also expose an optional Meme card ID through their submission context. The
@@ -349,18 +700,79 @@ consumes the verified typed-data hash to prevent publish-intent replay, and
 supersedes the previous primary package in one transaction.
 
 Profile CMS pointer history is stored in `profile_cms_pointer_events`. Publish,
-set-primary, supersede, rollback, and archive events keep package hashes,
+set-primary, supersede, rollback, unpublish, and archive events keep package hashes,
 previous-primary links, actor profile ids, signature metadata, and canonical
 storage receipts. `event_sequence` preserves logical ordering for events written
 in the same millisecond so the primary pointer history can be reconstructed and
 exported for future mirrors. Consumed publish intent hashes are stored in
 `profile_cms_publish_signatures`.
 
+CMS storage upload uses `profile_cms_uploads` for durable receipt reuse, expiring
+upload leases, and profile upload quotas. Its nullable `upload_state` checkpoints
+the signed public Arweave transaction, original bytes, and chunk progress before
+submission, allowing retries to resume the same transaction after a lost provider
+or database acknowledgement. A final receipt atomically clears the checkpoint.
+The content core is stored separately
+from a `6529.cms.publication.v1` signed recovery manifest containing the complete
+EIP-712 intent and signature envelope. `profile_cms_packages.recovery_receipt`
+locates that manifest. The API fetches and hashes both remote objects before
+atomically activating a primary pointer. Unpublish removes only that pointer;
+restoring a prior publication checks the caller's expected current state. Schema
+rollout is additive: deploy `dbMigrationsLoop`, then `api`; existing published
+packages remain readable without retroactive manifest generation.
+
+Connected CMS agents use a separate opaque capability boundary. An owner grants
+read and proposal-only access to one immutable saved draft/profile/version/hash;
+wallet JWTs and publish rights are not delegated. `profile_cms_agent_grants`
+stores only token digests and expiring/revocable scopes and quotas.
+`profile_cms_agent_proposals` stores bounded full-package candidates and terminal
+owner review states, while `profile_cms_agent_events` records issuance, revocation,
+submission and disposition. Writer transactions serialize profile quotas,
+revocation, idempotency and proposal audit. The service performs no uploads,
+external fetches, model inference, saves or publication. Applied review state
+requires an independently saved newer draft with the exact candidate hash.
+Owner lists return summaries and individual reads return one candidate. This
+adds no Lambda or queue; deploy `dbMigrationsLoop` before `api`. See
+[external-agent proposal API](profile-cms-agent-proposals.md).
+
 Profile CMS wallet gallery snapshots are read-only API projections over
-`nft_owners`, `ens`, `nfts`, `nfts_meme_lab`, and `nextgen_tokens`. They do not
-create schema, run migrations, enqueue indexers, or fetch chain/metadata data
-live. Request-side asset/contract exclusions are applied in the API service and
+`nft_owners`, `ens`, `nfts`, `nfts_meme_lab`, and `nextgen_tokens`. ENS inputs use
+bounded onchain forward resolution through an isolated provider for the
+configured Alchemy RPC and a one-minute cache. Shared provider settings remain
+unchanged; indexed reverse displays are not proof of the current ENS address.
+Raw addresses retain indexed display labels. Snapshots do not create
+schema, run migrations, enqueue indexers, or fetch NFT holdings/metadata live.
+Request-side asset/contract exclusions are applied in the API service and
 reported in the response for generator auditability.
+
+Profile privacy and notification preferences are stored in
+`profile_preferences`, keyed by profile id. Missing rows preserve the legacy
+defaults: anyone may start a new direct-message conversation, all notification
+categories are enabled, and the notification level is `ALL`. Preference PUTs
+update only the supplied columns in one transaction, so concurrent partial
+updates do not restore unrelated stale values. New direct-message admission
+locks stable recipient profile rows and rechecks every recipient inside the
+same transaction that creates the group. Preference updates take the same
+profile-row lock before writing, which serializes first-time preference changes
+without creating default preference rows as a side effect of another user's DM;
+existing exact conversations bypass that admission check. Notification writers
+consult the same table before the in-app row is created. When preference
+filtering succeeds, suppressed notifications are not inserted and cannot reach
+the downstream push pipeline. If preference filtering fails, notification
+delivery fails open and the unfiltered notifications are inserted. The
+`direct_messages` API field intentionally represents the
+combined user-facing “Direct messages and wave activity” category, including
+new-wave, all-drops subscription, and priority-alert causes.
+
+Roll out this table and its dependent workloads in this order:
+
+1. `dbMigrationsLoop` creates `profile_preferences` with legacy-compatible
+   defaults.
+2. Deploy `api` for preference endpoints, direct-message admission, and API
+   notification writers.
+3. Deploy the `subscriptionsDaily` stack (including
+   `subscriptionCoverageReconciliationLoop`) and `pushNotificationsHandler`;
+   these may proceed in parallel after the schema and API are live.
 
 Wallet auth session v2 state is stored in `wallet_auth_sessions` and one-time
 connection share state is stored in `wallet_connection_shares`. Web sessions
@@ -382,11 +794,21 @@ There are three async patterns:
 
 Most long-running scheduled jobs have reserved concurrency set low, usually `1`, which protects shared tables from concurrent writer races. SQS workers use queue visibility timeouts, DLQs, and batch failure reporting where configured.
 
-Production CI notifications also feed the release-note queue; staging notifications never carry release-note fields. The API first posts the normal CI status drop. For a successful production notification with an allowlisted repository prompt path, it accepts either the legacy single release group or a v2 array of PR-scoped groups and enqueues one message per group. Each group contains its merged PR number and complete canonical service set, so one service deployment may update multiple overlapping PR groups. A frontend deploy is a one-service group. Each successful backend service deploy records its workflow run under the merged PR number; runs may use different descendant SHAs. Every applicable successful service persists the group-level publish request, so no particular service or completion order owns finalization. The canonical completed-service set gates generation, and the Redis processing lock is the sole concurrent publication winner. `releaseNotesGenerationLoop` loads the reviewed prompt from the deployed repository SHA through GitHub, finds the previous matching successful production workflow run while excluding other runs at the current grouped SHA, associates commits in the deployed range with merged pull requests, calls Amazon Bedrock using `RELEASE_NOTES_BEDROCK_MODEL_ID` or the Claude Sonnet 4.5 US geo inference profile by default, resolves configured GitHub contributors to 6529 profile mentions, and posts one line per pull request with deterministic service labels for backend PRs to `CI_RELEASES_WAVE_ID` as the profile configured by `CI_PIPELINES_BOT_PROFILE_ID`. Single-service headings link their workflow run; grouped backend notes list the run for every deployed service and omit that optional line if the run metadata is incomplete. Each published drop carries a deterministic release-note metadata id; the worker checks it before generation so a crash after drop creation but before the Redis completion write cannot publish the same release twice. Redis is required; PR-scoped group, publish-request, and dedupe state is retained for 90 days, and the SQS DLQ retains repeated processing failures.
+Production CI notifications also feed the release-note queue; staging notifications never carry release-note fields. The API first posts the normal CI status drop. For a successful production notification with an allowlisted repository prompt path, it accepts either the legacy single release group or a v2 array of PR-scoped groups and enqueues one message per group. The queue defers initial delivery for 15 seconds so GitHub can settle the notifying workflow before validation. Each group contains its merged PR number and complete canonical service set, so one service deployment may update multiple overlapping PR groups. Frontend and Desktop publishes are one-service groups. Each successful backend service deploy records its workflow run under the merged PR number; runs may use different descendant SHAs. Every applicable successful service persists the group-level publish request, so no particular service or completion order owns finalization. The canonical completed-service set gates generation. Redis retains that group coordination and supplies a short-lived publication mutex, while MySQL owns durable run-range publication state.
+
+`releaseNotesGenerationLoop` validates the completed successful GitHub run, then freezes its baseline in `release_note_publications` from the per-workflow cursor in `release_note_stream_states`. A trusted notifying run that GitHub still reports as queued or in progress remains retryable, because the success-notification step can finish just before GitHub settles the enclosing workflow. Immutable run identity, SHA, workflow, branch, and terminal-conclusion mismatches still fail closed. Only an empty stream performs workflow-history bootstrap: it requests newest-first pages of 100 runs without GitHub's broken status, conclusion, or branch filters, validates production status, workflow identity, and branch locally, and fails closed after 1,000 candidates. Completing all parts, or determining that the range contains no PRs, advances the stream cursor in the same transaction that completes the publication. A partial or failed publication leaves the cursor unchanged and blocks later runs in that stream until it resumes. The worker loads the reviewed prompt from the deployed repository SHA and calls Amazon Bedrock using `RELEASE_NOTES_BEDROCK_MODEL_ID` or the Claude Sonnet 4.5 US geo inference profile by default. A Bedrock system instruction treats the tagged release context as untrusted data and rejects instructions embedded in pull requests, commits, or filenames. Frontend PR discovery follows only first-parent mainline commits between production SHAs, while contributor enrichment still loads every commit author and committer from each selected PR. Backend and Frontend notes resolve configured GitHub contributors to 6529 profile mentions and render deterministic repository-specific headings and service links. Backend headings include every distinct grouped workflow run number as a link, ordered by run number. Genuine large releases are published in resumable groups of at most 20 PRs, with a distinct deterministic metadata id for every part. Desktop notes are requested only by the production `Publish` flow after its S3 download pages exist. They retain the Core first-parent change history so imported Frontend history is not summarized twice and resolve the exact Frontend release-note drop from the renderer-source SHA. New release drops carry repository, SHA, run, and deployment metadata; historical Frontend notes are matched only when their content contains the exact full commit URL. Desktop output has a deterministic heading, Frontend release link, and platform download links around compact model-generated user-facing bullets, with no PR or contributor lines.
+
+Deploy `dbMigrationsLoop` first so TypeORM creates the durable release-note tables, then deploy `releaseNotesGenerationLoop`, which depends on those tables.
+
+All notes publish to `CI_RELEASES_WAVE_ID` as the profile configured by `CI_PIPELINES_BOT_PROFILE_ID`. Each published drop or multi-part batch carries a deterministic release-note metadata id. The worker reconciles those drop receipts with `next_part`, so a crash after drop creation but before the publication progress update still resumes without duplicating the part. Redis is required; PR-scoped group, publish-request, and dedupe state is retained for 7 days. The deterministic metadata on published drops remains the durable PR-scoped publication receipt, while MySQL is the durable publication and stream authority for non-PR releases. The processing lock lasts four minutes, shorter than the five-minute SQS visibility timeout, uses an owner token for release, and lock contention fails the invocation so SQS retains the message. Before starting another part, the worker leaves a 45-second Lambda budget and retries cleanly instead of relying on the three-minute hard timeout. A failed Desktop queue handoff immediately posts a normal production CI failure with the shared 🚨 heading and `@devs6529` mention. Deterministic queued failures post that same class of alert to `CI_PIPELINES_PROD_WAVE_ID`, report to Sentry, and stop retrying once the alert succeeds. Transient Desktop failures retain three SQS retries and post the terminal alert on attempt four; an alert-delivery failure uses the fifth receive to fail closed into the DLQ. Transient Backend and Frontend failures use four SQS retries, post the terminal production alert on attempt five, and then move to the DLQ. Malformed messages and GitHub run-metadata mismatches that cannot supply trusted run metadata are reported to Sentry and drained without attempting a CI alert.
 
 Wave Score refreshes use a hybrid DB-backed/SQS pattern. Request-path mutations write `wave_score_refresh_requests` rows inside the same primary-DB transaction as the drop, rating, or subscription change, then publish a small wakeup message to `wave-score-refresh-dirty.fifo` after commit. `waveScoreRefreshLoop` drains dirty rows from the write pool, recalculates scores, and deletes a row only if its selected `(wave_id, dirty_at)` version still matches, so a wave dirtied again during processing remains queued. A one-minute EventBridge fallback invokes the same dirty drain in case enqueueing fails after the transaction commits.
 
 Wave drop metric repairs use the same DB-backed/SQS pattern. Drop deletes apply a bounded in-transaction counter decrement, write `wave_drop_metrics_refresh_requests`, and publish to `wave-drop-metrics-refresh-dirty.fifo` after commit. `waveDropMetricsRefreshLoop` drains from the write pool and runs the full wave/dropper metric reconciliation outside the API path, with an EventBridge fallback for missed wakeups.
+
+Help6529 daily activity credits use the same durable handoff shape. Drop creation inserts one `help_bot_daily_activity_credit_requests` row per profile and UTC date inside the drop transaction, then publishes a small wakeup to `help-bot-daily-activity-credits.fifo` only after commit. `helpBotDailyActivityCreditLoop` grants outside the request path, records retry state and errors on the durable row, prioritizes untouched requests over retrying failures, retains completed rows for 30 days to suppress repeated daily work, and parks repeatedly failing rows as `DEAD`. A single FIFO message group and reserved concurrency of one serialize credit processing in a Lambda isolated from normal bot replies. The queue DLQ surfaces unhandled worker failures and a dead-row log metric alarm surfaces exhausted durable retries; a one-minute EventBridge rule wakes the same queue after a recorded retry or when post-commit SQS publication fails. The existing unique `help_bot_credit_events` grant key remains the final idempotency barrier if processing is redelivered or crashes between granting and marking the request complete.
+
+The zero-downtime rollout order is mandatory: deploy `dbMigrationsLoop` first to create the request table and indexes, deploy `helpBotReplyLoop` second to create the queue and worker, and deploy `api` last to begin inserting requests and publishing wakeups. Follow the same `dbMigrationsLoop -> helpBotReplyLoop -> api` dependency chain when dispatching the services.
 
 Subscription coverage uses a DB-backed scheduled reconciliation pattern without
 a cross-service dirty-event queue. Top-up, redemption, subscription
@@ -397,7 +819,7 @@ paths. Notification delivery still uses the existing post-commit SQS-backed
 push pipeline.
 `subscriptionCoverageReconciliationLoop` is a separate Lambda function in the
 existing allowlisted `subscriptionsDaily` Serverless stack. Deploying that unit
-updates both handlers and verifies both Lambda versions; its release-bus
+updates both handlers and verifies both Lambda versions; its service-catalog
 dependencies place the stack after schema, API, push, top-up, transaction, and
 owner-balance prerequisites. The function drains versioned dirty rows every
 minute and performs an hourly bounded full sweep to cover projected calendar
@@ -439,20 +861,41 @@ changing alert or dirty state, while
 No request cache is used for the coverage read boundary, so a confirmed top-up
 or redemption can be reflected immediately.
 
-`xTdhLoop` uses a two-phase FIFO queue flow. The TDH completion SNS topic
-delivers the universe phase through `xtdh-start.fifo`; after the universe
-transaction commits, the same Lambda enqueues a stats phase back to that FIFO
-queue, using the same FIFO message group as the universe message when one is
-available and the queue's default FIFO group otherwise. That shared message
+`xTdhLoop` uses a two-phase FIFO queue flow. A full nightly TDH run relies only
+on the TDH completion SNS topic, published after the remaining TDH work
+finishes, to deliver the universe phase through `xtdh-start.fifo`. A partial TDH
+reconsolidation from `delegationsLoop` instead enqueues one universe phase
+directly after its persistence and checkpoint writes complete. After either
+universe transaction commits, `xTdhLoop` enqueues a stats phase back to that
+FIFO queue, using the same FIFO message group as the universe message when one
+is available and the queue's default FIFO group otherwise. That shared message
 group is what orders each universe phase before its stats phase; the SQS event
 source batch size stays at `1` and Lambda reserved concurrency stays at `1` to
 avoid parallel xTDH work across groups. The stats phase rebuilds the inactive
 xTDH stats slot and activates it only after the rebuild succeeds; a redelivered
 stats message truncates and refills the inactive slot again before activation.
+Each grant/token stats `INSERT ... SELECT` runs in a dedicated `READ COMMITTED`
+transaction after its table is truncated, so source reads do not take shared
+row locks against ownership indexing, grants, or consolidation writes. The
+source snapshot contains values committed when that insert begins; an
+in-flight source writer is excluded instead of blocking the insert. Grant and
+token inserts have separate statement snapshots, as the staged rebuild has
+always used separate statements rather than one shared source snapshot. The
+transaction isolation setting applies only to that insert; session defaults
+and universe transaction semantics stay unchanged. `TRUNCATE` commits
+independently and is not rolled back when an insert fails: the inactive slot
+may remain empty or partially rebuilt until SQS retries. Readers resolve their
+stats tables from the unchanged active-slot metadata; only a completed rebuild
+switches that metadata. Failed inserts roll back before SQS redelivery retries
+the entire inactive-slot rebuild, without classifying database error codes.
+Stats refills reject a supplied transaction because `TRUNCATE` would implicitly
+commit it.
 
 ## 6529 Help Bot Flow
 
 The V1 6529 Help Bot is intentionally bounded and fast. Drop creation remains the synchronous user write. After a drop is created, the API checks for an explicit `@help6529` mention or a direct reply to a prior bot-authored reply. When matched, it inserts one `help_bot_interactions` row keyed by `trigger_drop_id`, stores `target_drop_id` for the drop that should receive reactions/replies, reacts with the bot's seen marker, and sends `{ interaction_id }` to `help-bot-replies`.
+
+The daily activity-credit side effect is separate from reply generation. The drop and its durable daily-credit request commit together, and the API never performs the credit rating or identity updates. A dedicated FIFO worker in the same deployable service processes those updates asynchronously, so identities-table locks cannot hold the drop response open or consume reply-worker concurrency.
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 44, "curve": "basis"}} }%%
@@ -526,7 +969,22 @@ Important details:
 - `claimsBuilder` consumes `{ drop_id }`, then calls the minting-claim service to create the missing claim from the winning drop.
 - `claims-media-arweave-upload` messages are produced by the API only after the claim row is locked with `media_uploading=true`.
 - If media upload enqueueing fails, the API tries to roll `media_uploading` back to `false`.
-- `claimsMediaArweaveUploader` consumes `{ contract, claim_id }`, re-fetches the claim, uploads media and metadata to Arweave, then stores Arweave transaction ids back on the claim row.
+- Media inspection, claim creation, and MEMES publication readiness share media-detail validation: binary media needs positive bytes within the limit and a SHA-256 digest; images/video need positive dimensions, and video also needs positive duration and non-empty codecs. Inspection and publication share the same 250 MB (250,000,000 bytes) ceiling as Main Stage submission attachment.
+
+#### Sequential APPROVE waves (`reset_votes_after_win`)
+
+When `reset_votes_after_win = true` on an APPROVE wave, after a winner is formalized:
+
+1. `waveDecisionExecutionLoop` calls `formalizeDecision` which commits the decision and enqueues the claim build.
+2. `formalizeDecision` invokes `resetVotesForParticipatoryDropsInWave`, which deletes all vote state (voter state, ranks, real votes, credit spendings, leaderboard entries) for the wave's remaining PARTICIPATORY drops via joined DELETEs.
+3. `formalizeDecision` returns `didReset = true`, causing `createApproveDecisions` to **break** out of the candidate loop — the remaining candidates' pre-reset vote counts are stale.
+4. The next `waveDecisionExecutionLoop` cycle re-fetches candidates with fresh (zeroed) vote counts, enforcing sequential community approval.
+
+**Deployment order:** `dbMigrationsLoop` → `api` → `waveDecisionExecutionLoop`
+- `claimsMediaArweaveUploader` consumes `{ contract, claim_id }`, re-fetches the claim, uploads media and metadata to Arweave, and checkpoints image and animation transaction ids before uploading metadata. On SQS redelivery it re-downloads each source to verify the stored SHA-256 and reuses a matching checkpoint transaction instead of uploading a duplicate. Retryable failures keep `media_uploading=true`; terminal validation failures and the final configured queue attempt clear the flag.
+- Claim building completes image and animation inspection and validates the computed results before inserting the claim row. Invalid results fail creation even if the inspector returned successfully. Inspection failures are alerted by `claimsBuilder` and retried by SQS; they do not create a row containing placeholder details. This is a media-only gate, not final publication readiness: editable draft fields can remain incomplete, and HTML retains its format-only details.
+- GLB inspection validates the actual binary container (magic, version, declared length, aligned/bounded chunks, JSON asset version, and embedded BIN length/padding), rather than trusting the filename or MIME type. Publication repeats this check on fetched GLB bytes before animation upload or checkpoint reuse, including for older claims. This does not validate scene semantics or fetch/validate external dependencies. Spec-permitted unknown chunks and external references remain supported.
+- Roll out this media contract downstream-first: `claimsMediaArweaveUploader`, then `claimsBuilder`, then `api`, then the matching frontend. This updates the consumers' ceiling and validation before producers admit larger media. There is no schema migration or automatic repair of old invalid claims.
 
 ## Deployment Model
 
@@ -542,173 +1000,37 @@ shims. Bootstrap or `direnv` exposes the command only inside this repository
 tree; it does not alter the machine-wide npm installation. See
 [`docs/package-commands.md`](package-commands.md) for the command contract.
 
-Simple Release Bus v2 is an additive MySQL-backed control plane shared by the
-production API and the production-region `releaseBusV2Reconciler` Lambda. Ten
-versioned tables store immutable candidates, dependency edges, staging and
-production trains, memberships, exact operations, environment/scheduler locks,
-manifests, controls, and events. The reconciler has reserved concurrency one
-and an EventBridge one-minute fallback, but it advances several internal row
-transitions per invocation and exits at an actual external wait.
+Staging and production use ordinary Git merges and GitHub Actions. Backend
+staging merges to `1a-staging`, followed by a `Deploy a service` dispatch for
+each required service with `environment=staging`. Production merges to `main`
+and uses the same workflow with `environment=prod`. Services deploy
+sequentially in dependency order, with each run observed to completion before
+the next dispatch. The service catalog records allowed environments and
+default dependencies. The workflow's environment concurrency avoids overlapping
+backend deployment runs; it does not create a cross-repository scheduler.
 
-The v2 API exposes candidate, train, train-detail, manifest, control, lock, and
-authoritative staging-state GET routes publicly under
-`/deploy/release-bus-v2`. These read-only responses are uncached and expose the
-same raw operational state used by `/deploy/ui/bus`, which loads as a public
-read-only dashboard. They remain covered by the API's existing anonymous/IP
-rate-limiting middleware. GitHub authentication is optional in the dashboard
-and is used only to request operator actions. Every mutation retains its
-route-specific GitHub repository-write, organization-operator,
-workflow-credential, or webhook signature authorization before state can
-change.
-`RELEASE_BUS_V2_MODE` supports `OFF`, `STAGING`, and `PRODUCTION`, with separate
-staging and production queues. Staging validation never schedules production:
-an unchanged exact candidate SHA must be explicitly marked ready. An
-operator-only maintenance route can transactionally yield legacy stalled
-production qualifications while v2 is `OFF` with `ALL` paused, or in `STAGING`
-mode with `PRODUCTION` paused. Every v2 lock must be free and a double staging
-workflow/ref handshake must be stable. Recovery then owns the scheduler fence,
-re-verifies every lock inside the yield transaction, and processes at most one
-qualification per request so committed progress is always reported. Every
-committed yield requires a follow-up drain check; only an empty recovery
-response proves there are no further live qualifications to yield. A separate
-operator-only maintenance route can idempotently restore a candidate's derived
-staging status only when its exact repository, PR, and head are uniquely
-included in the authoritative current validated staging manifest. The repair
-acquires the scheduler and staging fences, rejects active trains or production
-ownership, and cannot infer validation from candidate rows alone. Its
-mutation-free discovery mode enumerates exact current-manifest mismatches; an
-executing request must repeat the bounded repository/PR/head identities from
-that report, so historical superseded heads outside the manifest stay
-untouched.
+Frontend staging continues to deploy automatically on application/workflow
+pushes to `1a-staging`; frontend production is dispatched through
+`Web Deploy - PROD` on `main`. Both frontend deployment workflows include
+automatic E2E validation. For coupled releases, complete backend dependencies
+before merging and deploying dependent frontend changes. Workflows resolve the
+source commit and verify artifact and runtime versions automatically.
 
-The API also exposes a two-phase operator-only logical candidate
-deregistration boundary. Its read-only preparation returns one complete
-candidate/control/lock/staging-state row-version inventory and digest.
-Execution requires both independently changeable lanes paused while `ALL`
-remains unpaused, all three exact locks wholly free, every train/operation
-terminal, and all backend/frontend staging/production mutation and E2E
-workflows inactive. It temporarily owns all three locks and transactionally
-marks candidates `DEREGISTERED` with detached rather than absent staging
-presence, clears scheduling/admission/production intent, and moves the
-singleton to `DETACHED_MANUAL_OWNERSHIP`. Existing dependency, train,
-operation, manifest, and event history remains immutable. A detached singleton
-blocks registration and claims; it can become clean main only when both exact
-staging refs equal the corresponding current main bases. Matching an older
-validated manifest never restores its prior candidate membership.
-Terminal candidate history is byte-for-byte immutable, except that a
-`SUPERSEDED` row with the exact deleted-branch event and retained production
-request/staging evidence is still active intent because the reconciler can
-restore it; deregistration must consume that narrow recoverable case.
-These additive values fit the existing varchar widths and require no database
-migration. Execution is forbidden during mixed API/reconciler runtime; both
-lane controls remain paused until every runtime and generated/UI contract
-understands the detached states.
+The API's authenticated `/deploy/ui` remains a convenience for viewing refs
+and runs and dispatching the ordinary workflows. GitHub authentication and
+repository permissions remain in place. It has no release queue, candidate
+registry, environment-state ledger, or separate deployment authority.
 
-GitHub Actions performs exact composition, fast preflight, immutable packaging,
-backend DAG deployment, frontend deployment, and manifest-bound E2E. Train
-preflight consumes exact-head/merge-tree PR CI evidence instead of repeating
-repository-wide lint, typecheck, test inventory, or full test matrices. It
-installs backend dependencies once and builds/packages only selected deploy
-units. Frontend builds only the target environment profile. Every artifact is
-environment-, composition-SHA-, unit-, and digest-bound; ordinary production
-freshly composes and builds its exact dependency-closed selection and never
-reuses staging artifact bytes. Frontend/backend preparation and independent
-backend DAG frontiers run concurrently; only shared environment mutation plus
-E2E ownership is serialized. Operation keys, workflow titles, workflow
-authorization, SHA/artifact checks, row versions, and callback identity make
-retries and duplicate reconciliation idempotent.
-Operation reads normally use the read pool. When reconciliation has just
-CAS-written a dispatch reservation and must decide whether it may call GitHub,
-it rereads that immutable operation from the writer pool. An explicit
-transaction connection already identifies the writer and takes precedence over
-pool selection. Only an authoritative `DISPATCHED` reservation permits the
-external dispatch; missing or concurrently advanced state fails closed without
-dispatching.
+For backend production, each service notification carries the merged PR and
+canonical service group. Earlier services hold publication; the final
+successful service supplies the publication signal. Internal operations may
+explicitly opt out. The independent `releaseNotesGenerationLoop` remains
+downstream of those notifications and writes/publishes the autonomous release
+note. CI wave E2E replies correlate to the successful frontend deployment by
+GitHub run ID.
 
-One-click production workflows use the production authority ledger described in
-[`docs/release-bus-v2-production-authority.md`](release-bus-v2-production-authority.md).
-Frontend and backend operations intentionally share the existing
-`production-environment` lock and production control epoch. A GitHub entry
-point verifies its exact in-progress run before atomically acquiring that lock
-and a `BOUND` authority; an external controller may instead create a short-lived
-unbound `PREPARED` row before dispatch. Artifact discovery is deliberately
-after prepare/bind: only immediate pre-mutation reauthorization freezes the
-selection digest. Completion additionally requires repository-specific trusted
-evidence: a frontend authority needs the exact successful Production E2E run
-(bound by persisted deploy ID/title, not by E2E head SHA) and isolated verifier
-digest, while a backend authority needs the exact successful deploy-bound
-`Deploy a service` run (including service/title/path, repository, attempt, and
-target SHA) plus its evidence digest. Deploy success alone cannot release a
-frontend authority, and an unrelated or mismatched backend run cannot release
-the backend authority. The DB lease token remains persisted server-side and is
-never part of an API response or workflow output.
-
-The authority schema follows the repository's entities-first contract. For the
-API-only rollout, deploy `dbMigrationsLoop` first and `api` second, then verify
-the table plus its unique operation and indexed status keys on the writer
-database. Workflow consumers are merged later and are not deployed in this
-rollout. Drain callers before a rollback and retain the authority table as audit
-history; do not drop it while any operation may still reference the lease
-record.
-
-For cumulative staging, each affected repository's immutable release commit
-has the recorded `1a-staging` head as its first parent and the composed
-candidate tree as its second parent. After preparation and the staging fence,
-the reconciler advances only affected `1a-staging` refs through dedicated,
-operation-owned workflows before deployment. Each workflow authorizes the
-exact train/attempt before reading or mutating the ref, proves the recorded
-old SHA is an ancestor of the immutable target, applies an exact leased
-fast-forward, and reports the observed postcondition. It uses the workflow
-`GITHUB_TOKEN`, so this Release Bus-owned branch advance cannot recursively
-start the legacy staging deployment workflow. Branch heads, deployed runtime,
-manifest identity, and E2E inputs therefore describe the same combined state.
-A retry observes a completed ref operation and continues idempotently; an
-unexpected ref move fails closed and pauses only the staging lane. Rollback
-uses the same forward-only pattern with an immutable restore commit instead of
-rewinding a shared ref.
-
-Each staging reconcile rechecks every mutable NEW candidate against its open
-PR's current exact head, including candidates already building or deploying.
-Once a newer registered/current head supersedes a candidate, no additional
-operation is dispatched for the obsolete head. Already-dispatched workflows
-are observed to completion without cancellation, then unrelated NEW candidates
-return immediately to the queue for the next train. An ordinary combined
-staging preflight failure likewise fails the affected repository's NEW group
-once and requeues independent repositories after current workflows drain;
-subset-isolation diagnostics are reserved for production qualification and
-never extend the ordinary staging critical path. A grouped failure retries only
-after an explicit unchanged-head registration revalidates the exact green PR
-evidence and immutable dependency/plan identity against the terminal failure's
-candidate row version; reconciliation alone never loops it.
-
-The staging manifest distinguishes deployed from validated state and binds E2E
-to exact frontend/backend tree SHAs, environment-bound artifact digests,
-service operations, and workflow runs. Staging evidence qualifies unchanged
-candidate source and E2E history; it never qualifies staging artifact bytes for
-ordinary production. Production records the selected candidates' exact staging
-evidence, freshly composes the dependency-closed set onto the current production
-main bases, freshly builds production-bound artifacts, and advances only those
-tested SHAs by compare-and-swap. A moved `main` is never overwritten and
-triggers bounded production-only replan/coalescence without mutating the
-admitted staging set.
-
-Infrastructure and retryable deployment failures retry only the same operation.
-Control-plane defects pause automated claiming without blaming candidates, and
-the serialized manual workflow remains available after v2 is deliberately set
-`OFF`. The cleaner removes expired unowned v2 release refs.
-
-The GitHub App private key and workflow authorization token use the existing
-`prod/lambdas` secret bootstrap. Production API and releaseBus deployments copy
-only the non-secret v2 mode and App identity into Lambda configuration.
-
-For successful production backend operations, v2 emits one canonical group per
-candidate PR and fans overlapping service deployments into each applicable
-group. Every applicable successful service persists publication intent; the
-consumer waits for the canonical completion set and elects one publisher with
-its Redis processing lock. Candidates may explicitly opt out only for internal
-operations. The independent
-`releaseNotesGenerationLoop` remains downstream of these signals; the Release
-Bus never authors or posts release notes itself.
+See [Deployment](deployment.md) for the direct workflow process and
+[CI Pipeline Alerts](ci-pipeline-alerts.md) for notification contracts.
 
 Deployment is service-by-service through the generated GitHub Actions workflow. The workflow exposes `api` and each Lambda service as a deploy choice.
 
@@ -724,6 +1046,92 @@ Typical deployment order when schema or generated API contracts change:
 For a documentation-only change, no Lambda redeploy is required.
 
 ## Architecture Notes
+
+### Private artwork documentation archive
+
+The dedicated processor also exposes closed IAM-only invocation actions for release
+operators inside the VPC: the code-pinned Keys and Gates roster dry-run/import,
+and an idempotent empty nonprogram smoke context for the existing `punk6529bot`
+identity. Additional dry-run-first actions update only the five read permissions
+of one existing program coordinator grant and upgrade only empty Keys contexts
+to publication-only profile version 2. They use fixed program scope and audited
+correlation replay protection, without creating grants or changing artist authority.
+These actions use an isolated service feature policy, accept no arbitrary
+SQL, roster or grants, and leave public API feature flags unchanged. Scheduled
+events continue through the archival tick. See the closed event schemas in
+[`artwork-documentation.md`](artwork-documentation.md#operator-access-inside-the-vpc).
+
+Artwork documentation uses a dedicated authenticated API boundary under
+`/artwork-documentation`, with private MySQL drafts and immutable confirmed
+records. `artwork_documentation_works` keeps stable work identity, while separate
+contexts pin profiles, artist-record revisions, module answers and disclosure
+choices. Context row locks guard all content versions, and immutable revisions
+retain confirmation receipts and independent reviewer decisions. Explicit
+context/program grants are separate from Wave roles and proxy authentication.
+The additive `artwork_documentation_program_viewers` table holds profile or
+existing-group subjects for read-only program access. Access resolution uses
+the current site group eligibility evaluator scoped to granted IDs, with no
+copied member roster. Queue, draft, history, file and discussion reads share
+the existing authorization boundary. Every mutation uses the original artist
+and collaborator grants, so additional viewer reads cannot widen field, asset,
+discussion, assignment or review authority. Context responses expose original
+`mutation_capabilities` and visible `mutation_restricted_paths` for accurate
+editing controls. Upload-session reads retain viewer access and report
+`can_mutate` using original grants and the stored upload ownership, reference
+and lifecycle state. The IAM-only
+`set_program_viewers_v1` action inventories original grants and managed viewers,
+requires the reviewed inventory hash before replacing viewer configuration,
+and records a permanent replay fence. It preserves artist/context grants and
+coordinator authority. Deploy and invoke `dbMigrationsLoop` for the additive
+table, then the processor and API; no new storage infrastructure or HTTP
+operator endpoint is introduced.
+
+Context summaries include the authorized owner profile and visible artist
+identity answers. A single page-level query adds the earliest linked source
+receipt's identifiers and original title for readers with source-receipt access.
+The original title stays separate from the documented title; excerpted or
+malformed receipts expose no title. Summary enrichment does not query live Drop
+content, issue media URLs or change the database schema.
+
+Version 2 profiles collect only artwork answers and selected materials intended
+for eventual public publication; legacy private intake remains protected. Team
+questions use existing context discussion threads and are excluded from every
+artwork confirmation snapshot and public preview. Profile-aware server validation
+covers edits, identity pins, source imports, upgrades and confirmation. Asset
+reservation locks the context before its quota so it cannot race a publication
+profile upgrade using stale private-intake permissions. Publication-only intake
+uses the existing storage boundary; the viewer table above is a separate
+additive schema change.
+The public-record preview removes restricted answers on the server; creating
+another context for a work requires an explicit artist choice and starts empty.
+See [the application contract and pilot runbook](artwork-documentation.md).
+Its file path is separate from public drop uploads and their sanitizer.
+`artworkDocumentationStorage` provisions a private regional versioned S3 bucket
+and GuardDuty Malware Protection plan for `originals/`; it has no CloudFront
+origin. The same stack enrolls only this archive in a daily AWS Backup plan with
+a 35-day recovery window and provisions an isolated private restore destination;
+backup/restore roles have bucket-specific byte access. Multipart part URLs bind byte lengths and SHA-256 checksums. Context quota
+mutex rows serialize reservations in `artwork_documentation_asset_quotas`, while
+`artwork_documentation_assets` stores upload state, immutable object version,
+fixity, access class and a durable processing lease.
+
+`artworkDocumentationProcessor` runs every minute with reserved concurrency one.
+It requires a successful real GuardDuty scan before streaming byte-size/SHA-256
+verification and bounded format inspection. Small supported images can produce
+stripped private previews; large/vendor originals remain intact with honest
+inspection support status. The worker never publishes to the social CDN,
+IPFS/Arweave or Stream. Cleanup commits an expired-state lease under the same
+row lock used by reference/confirmation transactions, then deletes from S3
+outside the transaction. Retained originals cannot be claimed, expired claims
+cannot gain references, and quota is released only after successful deletion;
+failed deletion and interrupted leases retry durably. Original downloads require
+archival access, and rights instruments require their separate evidence capability.
+
+Deploy storage and schema before processor/API, then dependent frontend.
+Feature flags are off by default and can be enabled through environment-specific
+repository variables in the existing deployment pipeline. See
+[archive operations](artwork-documentation-assets-operations.md) for exact units,
+limits, access, recovery, backup/restore and cleanup procedures.
 
 The strongest part of the architecture is its operational decomposition. Expensive, slow, and retryable work is mostly outside the request path, and the loop structure makes individual jobs independently deployable.
 

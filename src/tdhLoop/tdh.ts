@@ -22,7 +22,7 @@ import {
 import { NextGenToken } from '../entities/INextGen';
 import { NFT } from '../entities/INFT';
 import { MemesSeason } from '../entities/ISeason';
-import { DefaultBoost, TDH, TDHMemes, TokenTDH } from '../entities/ITDH';
+import { TDH, TDHMemes, TokenTDH } from '../entities/ITDH';
 import { Transaction } from '../entities/ITransaction';
 import { Logger } from '../logging';
 import { getCalculationEditionSize } from '../memes-edition-size-floor';
@@ -31,102 +31,39 @@ import {
   getNextgenNetwork,
   NEXTGEN_CORE_CONTRACT
 } from '../nextgen/nextgen_constants';
-import { numbers } from '@/numbers';
 import { ConnectionWrapper, sqlExecutor } from '../sql-executor';
 import { equalIgnoreCase } from '../strings';
 import { Time } from '../time';
 import { calculateTdhEditions } from './tdh_editions';
 import { calculateMemesTdh } from './tdh_memes';
 import { extractMemesEditionSizes, extractNFTOwners } from './tdh_objects';
+import {
+  ADDITIONAL_CARD_SET_BOOST,
+  ADDITIONAL_CARD_SET_RATIO,
+  BASE_TDH_MULTIPLIER,
+  GENESIS_SET_BOOST,
+  getAdditionalCardSetsBoost,
+  getAdjustedSeasons,
+  getBoostableSeasons,
+  getDefaultBoost,
+  getFullCollectionSetBoost,
+  GRADIENT_BOOST_PER_TOKEN,
+  MAX_BOOSTED_GRADIENTS,
+  MAX_GRADIENT_BOOST,
+  NAKAMOTO_BOOST,
+  roundBoostValue,
+  TDH_BOOST_ROUNDING_DECIMALS
+} from './tdh-rules';
+
+export {
+  ADDITIONAL_CARD_SET_BOOST,
+  ADDITIONAL_CARD_SET_RATIO,
+  getDefaultBoost
+} from './tdh-rules';
 
 const logger = Logger.get('TDH');
 
 let alchemy: Alchemy;
-
-export const ADDITIONAL_CARD_SET_BOOST = 0.05;
-export const ADDITIONAL_CARD_SET_RATIO = 0.6529;
-
-function roundBoostValue(value: number): number {
-  return numbers.roundDecimals(value, 6);
-}
-
-function getBoostableSeasons(seasons: MemesSeason[]): MemesSeason[] {
-  const maxSeasonId =
-    seasons.length > 0 ? Math.max(...seasons.map((s) => s.id)) : 0;
-  return seasons.filter((s) => s.id < maxSeasonId && s.boost > 0);
-}
-
-function getFullCollectionSetBoost(seasons: MemesSeason[]): number {
-  return roundBoostValue(
-    getBoostableSeasons(seasons).reduce((sum, season) => sum + season.boost, 0)
-  );
-}
-
-function getAdditionalCardSetsBoost(additionalCardSets: number): number {
-  if (additionalCardSets <= 0) {
-    return 0;
-  }
-
-  return roundBoostValue(
-    (ADDITIONAL_CARD_SET_BOOST *
-      (1 - Math.pow(ADDITIONAL_CARD_SET_RATIO, additionalCardSets))) /
-      (1 - ADDITIONAL_CARD_SET_RATIO)
-  );
-}
-
-function getAdditionalCardSetsBoostLimit(): number {
-  return roundBoostValue(
-    ADDITIONAL_CARD_SET_BOOST / (1 - ADDITIONAL_CARD_SET_RATIO)
-  );
-}
-
-export function getDefaultBoost(seasons: MemesSeason[] = []): DefaultBoost {
-  const fullCollectionSetBoost = getFullCollectionSetBoost(seasons);
-  const boost: DefaultBoost = {
-    memes_card_sets: {
-      available: roundBoostValue(
-        fullCollectionSetBoost + getAdditionalCardSetsBoostLimit()
-      ),
-      available_info: [
-        `${fullCollectionSetBoost} for Full Collection Set`,
-        `${ADDITIONAL_CARD_SET_BOOST} * ${ADDITIONAL_CARD_SET_RATIO}^(n-1) for each additional set (unlimited)`
-      ],
-      acquired: 0,
-      acquired_info: []
-    },
-    memes_genesis: {
-      available: 0.01,
-      available_info: ['0.01 for Meme Cards #1, #2, #3 (Genesis Set)'],
-      acquired: 0,
-      acquired_info: []
-    },
-    memes_nakamoto: {
-      available: 0.01,
-      available_info: ['0.01 for Meme Card #4 (NakamotoFreedom)'],
-      acquired: 0,
-      acquired_info: []
-    },
-    gradients: {
-      available: 0.1,
-      available_info: ['0.02 for each Gradient up to 5'],
-      acquired: 0,
-      acquired_info: []
-    }
-  };
-
-  const seasonsForBoost = getBoostableSeasons(seasons);
-
-  seasonsForBoost.forEach((season) => {
-    boost[`memes_szn${season.id}` as keyof DefaultBoost] = {
-      available: season.boost,
-      available_info: [`${season.boost} for Season ${season.id} Set`],
-      acquired: 0,
-      acquired_info: []
-    };
-  });
-
-  return boost;
-}
 
 export async function getWalletsTdhs(
   {
@@ -191,9 +128,7 @@ export const getAdjustedMemesAndSeasons = async (timestamp: Date) => {
     equalIgnoreCase(nft.contract, MEMES_CONTRACT)
   );
 
-  const ADJUSTED_SEASONS = seasons.filter(
-    (s) => memeNfts.length >= s.start_index
-  );
+  const ADJUSTED_SEASONS = getAdjustedSeasons(seasons, memeNfts.length);
 
   return {
     ADJUSTED_NFTS,
@@ -570,7 +505,7 @@ function calculateMemesBoostsCardSets(
   cardSets: number,
   seasons: MemesSeason[]
 ) {
-  let boost = 1;
+  let boost = BASE_TDH_MULTIPLIER;
   const breakdown = getDefaultBoost(seasons);
 
   const fullSetBoost = getFullCollectionSetBoost(seasons);
@@ -609,7 +544,7 @@ function calculateMemesBoostsSeasons(
   },
   memes: TokenTDH[]
 ) {
-  let boost = 1;
+  let boost = BASE_TDH_MULTIPLIER;
   const seasonsForBoost = getBoostableSeasons(seasons);
   const breakdown = getDefaultBoost(seasons);
 
@@ -632,17 +567,17 @@ function calculateMemesBoostsSeasons(
         applySeasonBoost(1);
       } else {
         if (s1Extra.genesis) {
-          boost += 0.01;
-          breakdown.memes_genesis.acquired = 0.01;
+          boost += GENESIS_SET_BOOST;
+          breakdown.memes_genesis.acquired = GENESIS_SET_BOOST;
           breakdown.memes_genesis.acquired_info = [
-            '0.01 for holding Meme Cards #1, #2, #3 (Genesis Set)'
+            `${GENESIS_SET_BOOST} for holding Meme Cards #1, #2, #3 (Genesis Set)`
           ];
         }
         if (s1Extra.nakamoto) {
-          boost += 0.01;
-          breakdown.memes_nakamoto.acquired = 0.01;
+          boost += NAKAMOTO_BOOST;
+          breakdown.memes_nakamoto.acquired = NAKAMOTO_BOOST;
           breakdown.memes_nakamoto.acquired_info = [
-            '0.01 for holding Meme Cards #4 (NakamotoFreedom)'
+            `${NAKAMOTO_BOOST} for holding Meme Cards #4 (NakamotoFreedom)`
           ];
         }
       }
@@ -691,8 +626,11 @@ export function calculateBoost(
   const breakdown = memesBoosts.breakdown;
 
   // GRADIENTS up to 5
-  const countedGradients = Math.min(gradients.length, 5);
-  const gradientsBoost = Math.min(gradients.length * 0.02, 0.1);
+  const countedGradients = Math.min(gradients.length, MAX_BOOSTED_GRADIENTS);
+  const gradientsBoost = Math.min(
+    gradients.length * GRADIENT_BOOST_PER_TOKEN,
+    MAX_GRADIENT_BOOST
+  );
   if (gradientsBoost > 0) {
     breakdown.gradients.acquired = gradientsBoost;
     breakdown.gradients.acquired_info = [
@@ -701,7 +639,8 @@ export function calculateBoost(
     boost += gradientsBoost;
   }
 
-  const total = Math.round(boost * 100) / 100;
+  const roundingFactor = 10 ** TDH_BOOST_ROUNDING_DECIMALS;
+  const total = Math.round(boost * roundingFactor) / roundingFactor;
 
   return {
     total: total,
@@ -714,7 +653,7 @@ function getFullDaysBetweenDates(t1: Date, t2: Date) {
   return Math.floor(diff / (1000 * 3600 * 24));
 }
 
-function getTokenTdh(
+export function getTokenTdh(
   timestamp: Date,
   id: number,
   hodlRate: number,

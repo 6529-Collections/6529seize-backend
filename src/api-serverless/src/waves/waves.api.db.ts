@@ -9,12 +9,15 @@ import {
   DROPS_MENTIONS_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
+  CONTENT_MODERATION_PROFILE_BLOCKS_TABLE,
   IDENTITY_MUTES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   NFTS_TABLE,
   OFFICIAL_WAVES_TABLE,
   PINNED_WAVES_TABLE,
+  PROFILE_GROUPS_TABLE,
+  USER_GROUPS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_CHAT_DROP_COOLDOWNS_TABLE,
   WAVE_METRICS_TABLE,
@@ -62,6 +65,7 @@ import {
   UserGroupsService
 } from '../community-members/user-groups.service';
 import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
+import { ApiDmUnreadConversationState } from '../generated/models/ApiDmUnreadConversationState';
 import { ApiWaveScoreSort } from '../generated/models/ApiWaveScoreSort';
 import { ApiWaveVisibilityTier } from '../generated/models/ApiWaveVisibilityTier';
 import {
@@ -80,6 +84,7 @@ import {
 } from './wave-overview-candidate-cache';
 import { compareCacheStrings } from './wave-cache-key';
 import { competitionRepository } from '@/competitions/competition.repository';
+import { DbPoolName } from '@/db-query.options';
 
 const logger = Logger.get('WAVES_API_DB');
 
@@ -147,8 +152,62 @@ type WaveIdRow = {
   wave_id: string;
 };
 
+type RawProfileWaveActivityRow = {
+  wave_id: string;
+  wave_name: string;
+  wave_picture: string | null;
+  is_private: number | string;
+  total_drops_count: number | string;
+  target_latest_post_timestamp: number | string | null;
+};
+
+type RawCreatedProfileWaveActivityRow = RawProfileWaveActivityRow & {
+  has_qualifying_post: number | string;
+  wave_serial_no: number | string;
+};
+
+export interface CreatedProfileWaveActivityCursor {
+  readonly hasQualifyingPost: number;
+  readonly latestPostTimestamp: number;
+  readonly waveSerialNo: number;
+  readonly waveId: string;
+}
+
+export interface RecentProfileWaveActivityCursor {
+  readonly latestPostTimestamp: number;
+  readonly waveId: string;
+}
+
+export interface ProfileWaveActivityDbItem {
+  readonly waveId: string;
+  readonly waveName: string;
+  readonly wavePicture: string | null;
+  readonly isPrivate: boolean;
+  readonly totalDropsCount: number;
+  readonly latestPostTimestamp: number | null;
+}
+
+export interface CreatedProfileWaveActivityDbItem extends ProfileWaveActivityDbItem {
+  readonly hasQualifyingPost: boolean;
+  readonly waveSerialNo: number;
+}
+
+export interface RecentProfileWaveActivityDbItem extends ProfileWaveActivityDbItem {
+  readonly latestPostTimestamp: number;
+}
+
 type UnreadDmDropsCountRow = {
   count: number | string;
+};
+
+type DmUnreadConversationStateRow = {
+  reader_id: string;
+  wave_id: string;
+  unread_count: number | string;
+  first_unread_drop_serial_no: number | string | null;
+  latest_drop_serial_no: number | string | null;
+  latest_read_serial_no: number | string;
+  unread_state_version: number | string;
 };
 
 export interface FollowedSubwaveOverviewContext {
@@ -347,25 +406,67 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
 
   private async findMutedCandidateWaveIds({
     authenticated_user_id,
-    waveIds
+    waveIds,
+    connection
   }: {
     authenticated_user_id: string | null;
     waveIds: string[];
+    connection?: ConnectionWrapper<any>;
   }): Promise<Set<string>> {
     if (!authenticated_user_id || !waveIds.length) {
       return new Set();
     }
     const rows = await this.db.execute<WaveIdRow>(
       `
-        select wave_id
-        from ${WAVE_READER_METRICS_TABLE}
-        where reader_id = :authenticated_user_id
-          and wave_id in (:waveIds)
-          and coalesce(muted, false) = true
+        select w.id as wave_id
+        from ${WAVES_TABLE} w
+        left join ${WAVE_READER_METRICS_TABLE} wrm
+          on wrm.wave_id = w.id
+         and wrm.reader_id = :authenticated_user_id
+        where w.id in (:waveIds)
+          and (
+            coalesce(wrm.muted, false) = true
+            or ${this.getBlockedOneToOneDirectMessageExpression(
+              'w',
+              'authenticated_user_id'
+            )}
+          )
       `,
-      { authenticated_user_id, waveIds }
+      { authenticated_user_id, waveIds },
+      connection ? { wrappedConnection: connection } : undefined
     );
     return new Set(rows.map((row) => row.wave_id));
+  }
+
+  private getBlockedOneToOneDirectMessageExpression(
+    waveAlias: string,
+    readerIdParam: string
+  ): string {
+    return `(
+      ${waveAlias}.is_direct_message = true
+      and ${waveAlias}.chat_group_id is not null
+      and exists (
+        select 1
+        from ${USER_GROUPS_TABLE} dm_group
+        join ${PROFILE_GROUPS_TABLE} blocked_member
+          on blocked_member.profile_group_id = dm_group.profile_group_id
+        join ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} profile_block
+          on profile_block.blocker_profile_id = :${readerIdParam}
+         and profile_block.blocked_profile_id = blocked_member.profile_id
+        where dm_group.id = ${waveAlias}.chat_group_id
+          and exists (
+            select 1
+            from ${PROFILE_GROUPS_TABLE} reader_member
+            where reader_member.profile_group_id = dm_group.profile_group_id
+              and reader_member.profile_id = :${readerIdParam}
+          )
+          and 2 = (
+            select count(distinct dm_member.profile_id)
+            from ${PROFILE_GROUPS_TABLE} dm_member
+            where dm_member.profile_group_id = dm_group.profile_group_id
+          )
+      )
+    )`;
   }
 
   private async findFollowedCandidateWaveIds({
@@ -876,6 +977,20 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       decisions_strategy: entity.decisions_strategy
         ? JSON.parse(entity.decisions_strategy)
         : null
+    };
+  }
+
+  private parseProfileWaveActivityRow(
+    row: RawProfileWaveActivityRow
+  ): ProfileWaveActivityDbItem {
+    const parsedTimestamp = Number(row.target_latest_post_timestamp ?? 0);
+    return {
+      waveId: row.wave_id,
+      waveName: row.wave_name,
+      wavePicture: row.wave_picture,
+      isPrivate: Number(row.is_private) === 1,
+      totalDropsCount: Number(row.total_drops_count),
+      latestPostTimestamp: parsedTimestamp > 0 ? parsedTimestamp : null
     };
   }
 
@@ -1729,7 +1844,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                 child.parent_wave_id,
                 count(
                   case
-                    when d.author_id != :identityId and muted_author.id is null
+                    when d.author_id != :identityId
+                      and muted_author.id is null
+                      and blocked_author.id is null
                       then d.id
                   end
                 ) as subwave_unread_drops,
@@ -1738,6 +1855,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                     when child_follow.id is not null
                       and d.author_id != :identityId
                       and muted_author.id is null
+                      and blocked_author.id is null
                       then d.id
                   end
                 ) as hidden_followed_subwave_unread_drops,
@@ -1746,6 +1864,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                     when child_follow.id is not null
                       and d.author_id != :identityId
                       and muted_author.id is null
+                      and blocked_author.id is null
                       then d.serial_no
                   end
                 ) as first_hidden_followed_subwave_unread_drop_serial_no
@@ -1772,6 +1891,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               left join ${IDENTITY_MUTES_TABLE} muted_author
                 on muted_author.muter_id = :identityId
                and muted_author.muted_identity_id = d.author_id
+              left join ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} blocked_author
+                on blocked_author.blocker_profile_id = :identityId
+               and blocked_author.blocked_profile_id = d.author_id
               where child.parent_wave_id in (:parentWaveIds)
                 and coalesce(parent_reader.muted, false) = false
                 and ${this.getWaveVisibilityFilter(
@@ -2003,6 +2125,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     direct_message?: boolean;
     pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
+    if (pinned === ApiWavesPinFilter.Pinned && !authenticated_user_id) {
+      return [];
+    }
     return this.db
       .execute<
         Omit<
@@ -2169,6 +2294,193 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         .then((result) => result.map((it) => this.parseWaveEntity(it)));
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->findFavouriteWavesOfIdentity`);
+    }
+  }
+
+  public async findCreatedProfileWaveActivity(
+    {
+      profileId,
+      eligibleGroups,
+      limit,
+      cursor
+    }: {
+      readonly profileId: string;
+      readonly eligibleGroups: string[];
+      readonly limit: number;
+      readonly cursor: CreatedProfileWaveActivityCursor | null;
+    },
+    ctx: RequestContext
+  ): Promise<CreatedProfileWaveActivityDbItem[]> {
+    const timerKey = `${this.constructor.name}->findCreatedProfileWaveActivity`;
+    ctx.timer?.start(timerKey);
+    try {
+      const latestPostTimestamp = 'coalesce(wdm.latest_drop_timestamp, 0)';
+      const hasQualifyingPost = `case when ${latestPostTimestamp} > 0 then 1 else 0 end`;
+      const cursorFilter = cursor
+        ? `and (
+            ${hasQualifyingPost} < :cursorHasQualifyingPost
+            or (
+              ${hasQualifyingPost} = :cursorHasQualifyingPost
+              and ${latestPostTimestamp} < :cursorLatestPostTimestamp
+            )
+            or (
+              ${hasQualifyingPost} = :cursorHasQualifyingPost
+              and ${latestPostTimestamp} = :cursorLatestPostTimestamp
+              and w.serial_no < :cursorWaveSerialNo
+            )
+            or (
+              ${hasQualifyingPost} = :cursorHasQualifyingPost
+              and ${latestPostTimestamp} = :cursorLatestPostTimestamp
+              and w.serial_no = :cursorWaveSerialNo
+              and w.id < :cursorWaveId
+            )
+          )`
+        : '';
+      const rows = await this.db.execute<RawCreatedProfileWaveActivityRow>(
+        `
+          select
+            w.id as wave_id,
+            w.name as wave_name,
+            w.picture as wave_picture,
+            case
+              when w.visibility_group_id is not null
+                or parent.visibility_group_id is not null
+              then 1 else 0
+            end as is_private,
+            coalesce(wm.drops_count, 0) as total_drops_count,
+            ${latestPostTimestamp} as target_latest_post_timestamp,
+            ${hasQualifyingPost} as has_qualifying_post,
+            w.serial_no as wave_serial_no
+          from ${WAVES_TABLE} w
+          left join ${WAVE_DROPPER_METRICS_TABLE} wdm
+            on wdm.wave_id = w.id
+            and wdm.dropper_id = :profileId
+          left join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
+          left join ${WAVES_TABLE} parent on parent.id = w.parent_wave_id
+          where w.created_by = :profileId
+            and (w.is_direct_message = false or w.is_direct_message is null)
+            and (
+              w.parent_wave_id is null
+              or parent.is_direct_message = false
+              or parent.is_direct_message is null
+            )
+            and ${this.getWaveAndParentVisibilityFilter(
+              'w',
+              'parent',
+              eligibleGroups,
+              'eligibleGroups'
+            )}
+            ${cursorFilter}
+          order by
+            has_qualifying_post desc,
+            target_latest_post_timestamp desc,
+            w.serial_no desc,
+            w.id desc
+          limit :limit
+        `,
+        {
+          profileId,
+          eligibleGroups,
+          limit,
+          cursorHasQualifyingPost: cursor?.hasQualifyingPost,
+          cursorLatestPostTimestamp: cursor?.latestPostTimestamp,
+          cursorWaveSerialNo: cursor?.waveSerialNo,
+          cursorWaveId: cursor?.waveId
+        },
+        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+      );
+      return rows.map((row) => ({
+        ...this.parseProfileWaveActivityRow(row),
+        hasQualifyingPost: Number(row.has_qualifying_post) === 1,
+        waveSerialNo: Number(row.wave_serial_no)
+      }));
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  public async findRecentProfileWaveActivity(
+    {
+      profileId,
+      eligibleGroups,
+      limit,
+      cursor
+    }: {
+      readonly profileId: string;
+      readonly eligibleGroups: string[];
+      readonly limit: number;
+      readonly cursor: RecentProfileWaveActivityCursor | null;
+    },
+    ctx: RequestContext
+  ): Promise<RecentProfileWaveActivityDbItem[]> {
+    const timerKey = `${this.constructor.name}->findRecentProfileWaveActivity`;
+    ctx.timer?.start(timerKey);
+    try {
+      const cursorFilter = cursor
+        ? `and (
+            wdm.latest_drop_timestamp < :cursorLatestPostTimestamp
+            or (
+              wdm.latest_drop_timestamp = :cursorLatestPostTimestamp
+              and wdm.wave_id < :cursorWaveId
+            )
+          )`
+        : '';
+      const rows = await this.db.execute<RawProfileWaveActivityRow>(
+        `
+          select
+            w.id as wave_id,
+            w.name as wave_name,
+            w.picture as wave_picture,
+            case
+              when w.visibility_group_id is not null
+                or parent.visibility_group_id is not null
+              then 1 else 0
+            end as is_private,
+            coalesce(wm.drops_count, 0) as total_drops_count,
+            wdm.latest_drop_timestamp as target_latest_post_timestamp
+          from ${WAVE_DROPPER_METRICS_TABLE} wdm
+          join ${WAVES_TABLE} w on w.id = wdm.wave_id
+          left join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
+          left join ${WAVES_TABLE} parent on parent.id = w.parent_wave_id
+          where wdm.dropper_id = :profileId
+            and wdm.latest_drop_timestamp > 0
+            and (w.is_direct_message = false or w.is_direct_message is null)
+            and (
+              w.parent_wave_id is null
+              or parent.is_direct_message = false
+              or parent.is_direct_message is null
+            )
+            and ${this.getWaveAndParentVisibilityFilter(
+              'w',
+              'parent',
+              eligibleGroups,
+              'eligibleGroups'
+            )}
+            ${cursorFilter}
+          order by wdm.latest_drop_timestamp desc, wdm.wave_id desc
+          limit :limit
+        `,
+        {
+          profileId,
+          eligibleGroups,
+          limit,
+          cursorLatestPostTimestamp: cursor?.latestPostTimestamp,
+          cursorWaveId: cursor?.waveId
+        },
+        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+      );
+      return rows.map((row) => {
+        const item = this.parseProfileWaveActivityRow(row);
+        if (item.latestPostTimestamp === null) {
+          throw new Error('Recent profile wave activity requires a timestamp');
+        }
+        return {
+          ...item,
+          latestPostTimestamp: item.latestPostTimestamp
+        };
+      });
+    } finally {
+      ctx.timer?.stop(timerKey);
     }
   }
 
@@ -2461,14 +2773,15 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
 
   async findById(
     wave_id: string,
-    connection?: ConnectionWrapper<any>
+    connection?: ConnectionWrapper<any>,
+    forcePool?: DbPoolName
   ): Promise<WaveEntity | null> {
     return this.db
       .oneOrNull<WaveEntity>(
         `
         select * from ${WAVES_TABLE} where id = :wave_id`,
         { wave_id },
-        { wrappedConnection: connection }
+        { wrappedConnection: connection, forcePool }
       )
       .then((it) =>
         it
@@ -2815,6 +3128,12 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     direct_message?: boolean;
     pinned: ApiWavesPinFilter | null;
   }): Promise<WaveEntity[]> {
+    if (
+      param.pinned === ApiWavesPinFilter.Pinned &&
+      !param.authenticated_user_id
+    ) {
+      return [];
+    }
     const candidateResult =
       await this.findRecentlyDroppedToWavesFromCandidates(param);
     if (candidateResult !== null) {
@@ -2823,8 +3142,14 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const useFollowedSubwaveActivity =
       !!param.authenticated_user_id &&
       param.only_waves_followed_by_authenticated_user;
+    const effectivelyMuted = param.authenticated_user_id
+      ? `(coalesce(wrm.muted, false) = true or ${this.getBlockedOneToOneDirectMessageExpression(
+          'w',
+          'authenticated_user_id'
+        )})`
+      : 'false';
     const rootSortExpr = param.authenticated_user_id
-      ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN 0 ELSE wm.latest_drop_timestamp END`
+      ? `CASE WHEN ${effectivelyMuted} THEN 0 ELSE wm.latest_drop_timestamp END`
       : `wm.latest_drop_timestamp`;
     const sortExpr = useFollowedSubwaveActivity
       ? `GREATEST(${rootSortExpr}, COALESCE(fsa.latest_followed_subwave_activity_timestamp, 0))`
@@ -2942,6 +3267,12 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         'Cannot request followed-only waves and exclude-followed waves together'
       );
     }
+    if (
+      param.pinned === ApiWavesPinFilter.Pinned &&
+      !param.authenticated_user_id
+    ) {
+      return [];
+    }
     const candidateResult =
       await this.findScoredRecentlyDroppedToWavesFromCandidates(param);
     if (candidateResult !== null) {
@@ -2951,13 +3282,19 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       !!param.authenticated_user_id &&
       (param.only_waves_followed_by_authenticated_user ||
         param.exclude_followed);
+    const effectivelyMuted = param.authenticated_user_id
+      ? `(coalesce(wrm.muted, false) = true or ${this.getBlockedOneToOneDirectMessageExpression(
+          'w',
+          'authenticated_user_id'
+        )})`
+      : 'false';
     const applyMutedScoreFloor = (column: string) =>
       param.authenticated_user_id
-        ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN 0 ELSE ${column} END`
+        ? `CASE WHEN ${effectivelyMuted} THEN 0 ELSE ${column} END`
         : column;
     const scoreColumn = this.getWaveScoreSortColumn(param.score_sort);
     const tierRankExpr = param.authenticated_user_id
-      ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN 999 ELSE wm.wave_visibility_rank END`
+      ? `CASE WHEN ${effectivelyMuted} THEN 999 ELSE wm.wave_visibility_rank END`
       : `wm.wave_visibility_rank`;
     const scoreExpr = applyMutedScoreFloor(scoreColumn);
     const visibilityScoreExpr = applyMutedScoreFloor(
@@ -2967,7 +3304,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const hotnessScoreExpr = applyMutedScoreFloor(`wm.wave_hotness_score`);
     const repSortScoreExpr = applyMutedScoreFloor(`wm.wave_rep_sort_score`);
     const visibilityTierExpr = param.authenticated_user_id
-      ? `CASE WHEN COALESCE(wrm.muted, false) = true THEN NULL ELSE wm.wave_visibility_tier END`
+      ? `CASE WHEN ${effectivelyMuted} THEN NULL ELSE wm.wave_visibility_tier END`
       : `wm.wave_visibility_tier`;
     const latestActivityExpr =
       useFollowedSubwaveActivity &&
@@ -3115,6 +3452,44 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     return result.length ? result[0] : null;
+  }
+
+  public async findWavesUsingGroupId(
+    groupId: string,
+    ctx: RequestContext
+  ): Promise<WaveEntity[]> {
+    if (!ctx.connection) {
+      throw new Error('findWavesUsingGroupId requires a connection');
+    }
+    const timerName = `${this.constructor.name}->findWavesUsingGroupId`;
+    ctx.timer?.start(timerName);
+    try {
+      // Each branch uses its dedicated Wave group index. The outer lock is
+      // acquired in Wave-id order and covers exactly the rows whose invariant
+      // the group replacement must preserve. Wave updates lock one Wave and
+      // only read group rows, so there is no reverse group-row lock dependency.
+      return await this.db.execute<WaveEntity>(
+        `select waves.*
+           from ${WAVES_TABLE} waves
+           join (
+             select id from ${WAVES_TABLE} where visibility_group_id = :groupId
+             union
+             select id from ${WAVES_TABLE} where participation_group_id = :groupId
+             union
+             select id from ${WAVES_TABLE} where chat_group_id = :groupId
+             union
+             select id from ${WAVES_TABLE} where admin_group_id = :groupId
+             union
+             select id from ${WAVES_TABLE} where voting_group_id = :groupId
+           ) referenced on referenced.id = waves.id
+          order by waves.id
+          for update`,
+        { groupId },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
   }
 
   async getWavesPauses(
@@ -3412,35 +3787,46 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       return {};
     }
     timer?.start('wavesApiDb->findWaveReaderMetricsByWaveIds');
-    const result = await this.db
-      .execute<WaveReaderMetricEntity>(
+    const [result, effectivelyMutedWaveIds] = await Promise.all([
+      this.db.execute<WaveReaderMetricEntity>(
         `select * from ${WAVE_READER_METRICS_TABLE} where wave_id in (:waveIds) and reader_id = :readerId`,
         params,
         { wrappedConnection: connection }
-      )
-      .then((results) => {
-        const existingMetricsByWaveId = results.reduce(
-          (acc, metric) => {
-            acc[metric.wave_id] = metric;
-            return acc;
-          },
-          {} as Record<string, WaveReaderMetricEntity>
-        );
-        return params.waveIds.reduce(
-          (acc, waveId) => {
-            acc[waveId] = existingMetricsByWaveId[waveId] ?? {
-              wave_id: waveId,
-              reader_id: params.readerId,
-              latest_read_timestamp: 0,
-              muted: false
-            };
-            return acc;
-          },
-          {} as Record<string, WaveReaderMetricEntity>
-        );
-      });
+      ),
+      this.findMutedCandidateWaveIds({
+        authenticated_user_id: params.readerId,
+        waveIds: params.waveIds,
+        connection
+      })
+    ]);
+    const metricsByWaveId = result
+      .map((metric) => ({
+        ...metric,
+        muted: metric.muted || effectivelyMutedWaveIds.has(metric.wave_id)
+      }))
+      .reduce(
+        (acc, metric) => {
+          acc[metric.wave_id] = metric;
+          return acc;
+        },
+        {} as Record<string, WaveReaderMetricEntity>
+      );
+    const resultByWaveId = params.waveIds.reduce(
+      (acc, waveId) => {
+        acc[waveId] = metricsByWaveId[waveId] ?? {
+          wave_id: waveId,
+          reader_id: params.readerId,
+          latest_read_timestamp: 0,
+          latest_read_serial_no: null,
+          unread_state_version: 0,
+          muted: effectivelyMutedWaveIds.has(waveId)
+        };
+        return acc;
+      },
+      {} as Record<string, WaveReaderMetricEntity>
+    );
     timer?.stop('wavesApiDb->findWaveReaderMetricsByWaveIds');
-    return result;
+    return resultByWaveId;
   }
 
   async updateWaveReaderMetricLatestReadTimestamp(
@@ -3464,6 +3850,134 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async markDirectMessageReadThroughSerial(
+    param: {
+      waveId: string;
+      readerId: string;
+      readThroughSerialNo?: number;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    const timerLabel = `${this.constructor.name}->markDirectMessageReadThroughSerial`;
+    ctx.timer?.start(timerLabel);
+    try {
+      const serialLimit = Math.max(
+        0,
+        Math.floor(param.readThroughSerialNo ?? Number.MAX_SAFE_INTEGER)
+      );
+      const targetDrop = await this.db.oneOrNull<{
+        serial_no: number | string;
+        created_at: number | string;
+      }>(
+        `select serial_no, created_at
+         from ${DROPS_TABLE}
+         where wave_id = :waveId
+           and serial_no <= :serialLimit
+         order by serial_no desc
+         limit 1`,
+        { waveId: param.waveId, serialLimit },
+        {
+          wrappedConnection: ctx.connection,
+          forcePool: DbPoolName.WRITE
+        }
+      );
+      if (!targetDrop) {
+        return;
+      }
+      const latestReadSerialNo = Number(targetDrop.serial_no);
+      const latestReadTimestamp = Number(targetDrop.created_at);
+      await this.db.execute(
+        `insert into ${WAVE_READER_METRICS_TABLE}
+           (wave_id, reader_id, latest_read_timestamp, latest_read_serial_no, unread_state_version)
+         values
+           (:waveId, :readerId, :latestReadTimestamp, :latestReadSerialNo, 1)
+         on duplicate key update
+           unread_state_version = unread_state_version +
+             if(
+               :latestReadSerialNo > coalesce(
+                 latest_read_serial_no,
+                 (
+                   select max(legacy_drop.serial_no)
+                   from ${DROPS_TABLE} legacy_drop
+                   where legacy_drop.wave_id = ${WAVE_READER_METRICS_TABLE}.wave_id
+                     and legacy_drop.created_at <= ${WAVE_READER_METRICS_TABLE}.latest_read_timestamp
+                 ),
+                 0
+               ),
+               1,
+               0
+             ),
+           latest_read_serial_no = greatest(
+             coalesce(
+               latest_read_serial_no,
+               (
+                 select max(legacy_drop.serial_no)
+                 from ${DROPS_TABLE} legacy_drop
+                 where legacy_drop.wave_id = ${WAVE_READER_METRICS_TABLE}.wave_id
+                   and legacy_drop.created_at <= ${WAVE_READER_METRICS_TABLE}.latest_read_timestamp
+               ),
+               0
+             ),
+             :latestReadSerialNo
+           ),
+           latest_read_timestamp = greatest(latest_read_timestamp, :latestReadTimestamp)`,
+        {
+          waveId: param.waveId,
+          readerId: param.readerId,
+          latestReadTimestamp,
+          latestReadSerialNo
+        },
+        {
+          wrappedConnection: ctx.connection,
+          forcePool: DbPoolName.WRITE
+        }
+      );
+    } finally {
+      ctx.timer?.stop(timerLabel);
+    }
+  }
+
+  async recordDirectMessageUnreadDrop(
+    param: {
+      waveId: string;
+      recipientIds: string[];
+      dropSerialNo: number;
+      dropCreatedAt: number;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    const recipientIds = Array.from(new Set(param.recipientIds));
+    if (!recipientIds.length) {
+      return;
+    }
+    const timerLabel = `${this.constructor.name}->recordDirectMessageUnreadDrop`;
+    ctx.timer?.start(timerLabel);
+    try {
+      const params: Record<string, string | number> = {
+        waveId: param.waveId,
+        // Preserve the legacy contract: a reader without metrics starts with
+        // the event that creates their row, not the wave's full history.
+        latestReadTimestamp: Math.max(0, param.dropCreatedAt - 1),
+        latestReadSerialNo: Math.max(0, param.dropSerialNo - 1)
+      };
+      const values = recipientIds.map((recipientId, index) => {
+        params[`recipientId${index}`] = recipientId;
+        return `(:waveId, :recipientId${index}, :latestReadTimestamp, :latestReadSerialNo, 1)`;
+      });
+      await this.db.execute(
+        `insert into ${WAVE_READER_METRICS_TABLE}
+           (wave_id, reader_id, latest_read_timestamp, latest_read_serial_no, unread_state_version)
+         values ${values.join(', ')}
+         on duplicate key update
+           unread_state_version = unread_state_version + 1`,
+        params,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerLabel);
+    }
+  }
+
   async setWaveReaderMetricLatestReadTimestamp(
     waveId: string,
     readerId: string,
@@ -3482,6 +3996,156 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     );
     ctx.timer?.stop(
       `${this.constructor.name}->setWaveReaderMetricLatestReadTimestamp`
+    );
+  }
+
+  async setDirectMessageUnreadFromSerial(
+    param: {
+      waveId: string;
+      readerId: string;
+      firstUnreadSerialNo: number;
+      latestReadTimestamp: number;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    const timerLabel = `${this.constructor.name}->setDirectMessageUnreadFromSerial`;
+    ctx.timer?.start(timerLabel);
+    try {
+      const latestReadSerialNo = Math.max(
+        0,
+        Math.floor(param.firstUnreadSerialNo) - 1
+      );
+      await this.db.execute(
+        `insert into ${WAVE_READER_METRICS_TABLE}
+           (wave_id, reader_id, latest_read_timestamp, latest_read_serial_no, unread_state_version)
+         values
+           (:waveId, :readerId, :latestReadTimestamp, :latestReadSerialNo, 1)
+         on duplicate key update
+           latest_read_timestamp = :latestReadTimestamp,
+           latest_read_serial_no = :latestReadSerialNo,
+           unread_state_version = unread_state_version + 1`,
+        {
+          waveId: param.waveId,
+          readerId: param.readerId,
+          latestReadTimestamp: param.latestReadTimestamp,
+          latestReadSerialNo
+        },
+        {
+          wrappedConnection: ctx.connection,
+          forcePool: DbPoolName.WRITE
+        }
+      );
+    } finally {
+      ctx.timer?.stop(timerLabel);
+    }
+  }
+
+  async incrementDmUnreadStateVersionsForWaveReaders(
+    param: { waveId: string; readerIds: string[] },
+    ctx: RequestContext
+  ): Promise<string[]> {
+    const readerIds = Array.from(new Set(param.readerIds));
+    if (!readerIds.length) {
+      return [];
+    }
+    const timerLabel = `${this.constructor.name}->incrementDmUnreadStateVersionsForWaveReaders`;
+    ctx.timer?.start(timerLabel);
+    try {
+      const readers = await this.db.execute<{ reader_id: string }>(
+        `select r.reader_id
+         from ${WAVE_READER_METRICS_TABLE} r
+         join ${WAVES_TABLE} w
+           on w.id = r.wave_id
+          and w.is_direct_message = true
+         where r.wave_id = :waveId
+           and r.reader_id in (:readerIds)`,
+        { waveId: param.waveId, readerIds },
+        {
+          wrappedConnection: ctx.connection,
+          forcePool: DbPoolName.WRITE
+        }
+      );
+      if (!readers.length) {
+        return [];
+      }
+      await this.db.execute(
+        `update ${WAVE_READER_METRICS_TABLE}
+         set unread_state_version = unread_state_version + 1
+         where wave_id = :waveId
+           and reader_id in (:readerIds)`,
+        { waveId: param.waveId, readerIds },
+        {
+          wrappedConnection: ctx.connection,
+          forcePool: DbPoolName.WRITE
+        }
+      );
+      return readers.map((reader) => reader.reader_id);
+    } finally {
+      ctx.timer?.stop(timerLabel);
+    }
+  }
+
+  async findDmWaveIdsForReaderWithDropsByAuthor(
+    param: {
+      readerId: string;
+      authorId: string;
+      eligibleGroups: string[];
+      limit: number;
+      afterWaveId?: string;
+    },
+    ctx: RequestContext
+  ): Promise<string[]> {
+    const rows = await this.db.execute<{ wave_id: string }>(
+      `select r.wave_id
+       from ${WAVE_READER_METRICS_TABLE} r
+       join ${WAVES_TABLE} w
+         on w.id = r.wave_id
+        and w.is_direct_message = true
+       left join ${WAVES_TABLE} parent
+         on parent.id = w.parent_wave_id
+       where r.reader_id = :readerId
+         and r.wave_id > :afterWaveId
+         and ${this.getWaveAndParentVisibilityFilter(
+           'w',
+           'parent',
+           param.eligibleGroups,
+           'eligibleGroups'
+         )}
+         and exists (
+           select 1
+           from ${DROPS_TABLE} d
+           where d.wave_id = r.wave_id
+             and d.author_id = :authorId
+         )
+       order by r.wave_id asc
+       limit :limit`,
+      { ...param, afterWaveId: param.afterWaveId ?? '' },
+      {
+        wrappedConnection: ctx.connection,
+        forcePool: DbPoolName.WRITE
+      }
+    );
+    return rows.map((row) => row.wave_id);
+  }
+
+  async incrementDmUnreadStateVersionsForReaderWaves(
+    param: { readerId: string; waveIds: string[] },
+    ctx: RequestContext
+  ): Promise<void> {
+    const waveIds = Array.from(new Set(param.waveIds));
+    if (!waveIds.length) {
+      return;
+    }
+    await this.db.execute(
+      `update ${WAVE_READER_METRICS_TABLE}
+       set unread_state_version = unread_state_version + 1
+       where reader_id = :readerId
+         and wave_id in (:waveIds)`,
+      { readerId: param.readerId, waveIds },
+      {
+        wrappedConnection: ctx.connection,
+        forcePool: DbPoolName.WRITE
+      }
     );
   }
 
@@ -3554,9 +4218,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
   ) {
     ctx.timer?.start(`${this.constructor.name}->setWaveMuted`);
     await this.db.execute(
-      `insert into ${WAVE_READER_METRICS_TABLE} (wave_id, reader_id, muted, latest_read_timestamp)
-       values (:waveId, :readerId, :muted, ROUND(UNIX_TIMESTAMP(NOW(3)) * 1000))
-       on duplicate key update muted = :muted`,
+      `insert into ${WAVE_READER_METRICS_TABLE}
+         (wave_id, reader_id, muted, latest_read_timestamp, unread_state_version)
+       values
+         (:waveId, :readerId, :muted, ROUND(UNIX_TIMESTAMP(NOW(3)) * 1000), 1)
+       on duplicate key update
+         unread_state_version = unread_state_version + if(muted != :muted, 1, 0),
+         muted = :muted`,
       param,
       { wrappedConnection: ctx.connection }
     );
@@ -3602,9 +4270,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                 LEFT JOIN ${IDENTITY_MUTES_TABLE} im
                   ON im.muter_id = :identityId
                   AND im.muted_identity_id = d.author_id
+                LEFT JOIN ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} profile_block
+                  ON profile_block.blocker_profile_id = :identityId
+                  AND profile_block.blocked_profile_id = d.author_id
                 WHERE d.wave_id IN (:waveIds)
                   AND d.author_id != :identityId
                   AND im.id IS NULL
+                  AND profile_block.id IS NULL
                   AND d.created_at > r.latest_read_timestamp
                   AND r.muted = false
                 GROUP BY d.wave_id
@@ -3686,6 +4358,175 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async findDmUnreadConversationStates(
+    param: {
+      identityId: string;
+      eligibleGroups?: string[];
+      waveIds?: string[];
+    },
+    ctx: RequestContext,
+    forcePool: DbPoolName = DbPoolName.READ
+  ): Promise<ApiDmUnreadConversationState[]> {
+    return await this.findDmUnreadConversationStatesForReaders(
+      {
+        identityIds: [param.identityId],
+        eligibleGroups: param.eligibleGroups,
+        waveIds: param.waveIds
+      },
+      ctx,
+      forcePool
+    );
+  }
+
+  async findDmUnreadConversationStatesForIdentities(
+    param: {
+      identityIds: string[];
+      waveIds?: string[];
+    },
+    ctx: RequestContext,
+    forcePool: DbPoolName = DbPoolName.READ
+  ): Promise<ApiDmUnreadConversationState[]> {
+    return await this.findDmUnreadConversationStatesForReaders(
+      param,
+      ctx,
+      forcePool
+    );
+  }
+
+  private async findDmUnreadConversationStatesForReaders(
+    param: {
+      identityIds: string[];
+      eligibleGroups?: string[];
+      waveIds?: string[];
+    },
+    ctx: RequestContext,
+    forcePool: DbPoolName
+  ): Promise<ApiDmUnreadConversationState[]> {
+    const identityIds = Array.from(
+      new Set(param.identityIds.filter((identityId) => !!identityId))
+    );
+    if (!identityIds.length) {
+      return [];
+    }
+    const waveIds = param.waveIds
+      ? Array.from(new Set(param.waveIds.filter((waveId) => !!waveId)))
+      : undefined;
+    if (waveIds?.length === 0) {
+      return [];
+    }
+    const timerLabel = `${this.constructor.name}->findDmUnreadConversationStatesForReaders`;
+    ctx.timer?.start(timerLabel);
+    try {
+      const waveFilter = waveIds ? 'and w.id in (:waveIds)' : '';
+      const visibilityFilter = param.eligibleGroups
+        ? `and ${this.getWaveAndParentVisibilityFilter(
+            'w',
+            'parent',
+            param.eligibleGroups,
+            'eligibleGroups'
+          )}`
+        : '';
+      const rows = await this.db.execute<DmUnreadConversationStateRow>(
+        `with dm_reader_state as (
+           select r.wave_id,
+                  r.reader_id,
+                  r.muted,
+                  r.unread_state_version,
+                  coalesce(
+                    r.latest_read_serial_no,
+                    (
+                      select max(legacy_drop.serial_no)
+                      from ${DROPS_TABLE} legacy_drop
+                      where legacy_drop.wave_id = r.wave_id
+                        and legacy_drop.created_at <= r.latest_read_timestamp
+                    ),
+                    0
+                  ) as latest_read_serial_no
+           from ${WAVE_READER_METRICS_TABLE} r
+           join ${WAVES_TABLE} w
+             on w.id = r.wave_id
+            and w.is_direct_message = true
+           left join ${WAVES_TABLE} parent
+             on parent.id = w.parent_wave_id
+           where r.reader_id in (:identityIds)
+             ${waveFilter}
+             ${visibilityFilter}
+         )
+         select state.reader_id,
+                state.wave_id,
+                sum(
+                  case
+                    when state.muted = false
+                     and d.author_id != state.reader_id
+                     and im.id is null
+                     and profile_block.id is null
+                     and d.serial_no > state.latest_read_serial_no
+                    then 1
+                    else 0
+                  end
+                ) as unread_count,
+                min(
+                  case
+                    when state.muted = false
+                     and d.author_id != state.reader_id
+                     and im.id is null
+                     and profile_block.id is null
+                     and d.serial_no > state.latest_read_serial_no
+                    then d.serial_no
+                    else null
+                  end
+                ) as first_unread_drop_serial_no,
+                coalesce(
+                  (
+                    select max(latest_drop.serial_no)
+                    from ${DROPS_TABLE} latest_drop
+                    where latest_drop.wave_id = state.wave_id
+                  ),
+                  0
+                ) as latest_drop_serial_no,
+                state.latest_read_serial_no,
+                state.unread_state_version
+         from dm_reader_state state
+         left join ${DROPS_TABLE} d
+           on d.wave_id = state.wave_id
+          and d.serial_no > state.latest_read_serial_no
+         left join ${IDENTITY_MUTES_TABLE} im
+           on im.muter_id = state.reader_id
+          and im.muted_identity_id = d.author_id
+         left join ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} profile_block
+           on profile_block.blocker_profile_id = state.reader_id
+          and profile_block.blocked_profile_id = d.author_id
+         group by state.reader_id,
+                  state.wave_id,
+                  state.muted,
+                  state.latest_read_serial_no,
+                  state.unread_state_version`,
+        {
+          identityIds,
+          eligibleGroups: param.eligibleGroups ?? [],
+          waveIds: waveIds ?? []
+        },
+        {
+          wrappedConnection: ctx.connection,
+          forcePool
+        }
+      );
+      return rows.map((row) => ({
+        profile_id: row.reader_id,
+        wave_id: row.wave_id,
+        unread_count: Number(row.unread_count),
+        first_unread_drop_serial_no: this.toNullableNumber(
+          row.first_unread_drop_serial_no
+        ),
+        latest_drop_serial_no: Number(row.latest_drop_serial_no ?? 0),
+        latest_read_serial_no: Number(row.latest_read_serial_no),
+        version: Number(row.unread_state_version)
+      }));
+    } finally {
+      ctx.timer?.stop(timerLabel);
+    }
+  }
+
   async countIdentityUnreadDmDrops(
     param: {
       identityId: string;
@@ -3709,10 +4550,14 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           LEFT JOIN ${IDENTITY_MUTES_TABLE} im
             ON im.muter_id = :identityId
            AND im.muted_identity_id = d.author_id
+          LEFT JOIN ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} profile_block
+            ON profile_block.blocker_profile_id = :identityId
+           AND profile_block.blocked_profile_id = d.author_id
           LEFT JOIN ${WAVES_TABLE} parent
             ON parent.id = w.parent_wave_id
           WHERE d.author_id != :identityId
             AND im.id IS NULL
+            AND profile_block.id IS NULL
             AND d.created_at > COALESCE(r.latest_read_timestamp, 0)
             AND r.muted = false
             AND ${this.getWaveAndParentVisibilityFilter(

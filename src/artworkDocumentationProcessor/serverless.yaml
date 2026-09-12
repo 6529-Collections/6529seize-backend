@@ -1,0 +1,87 @@
+service: artworkDocumentationProcessor
+
+package:
+  artifact: dist/index.zip
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  memorySize: 2048
+  timeout: 900
+  architecture: x86_64
+  logRetentionInDays: 60
+
+functions:
+  artworkDocumentationProcessor:
+    handler: index.handler
+    name: artworkDocumentationProcessor
+    description: ${env:VERSION_DESCRIPTION, ''}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
+    ephemeralStorageSize: 1024
+    events:
+      - schedule: rate(1 minute)
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN, ''}
+      SENTRY_ENVIRONMENT: artworkDocumentationProcessor_${opt:stage, self:provider.stage}
+      ARTWORK_DOCUMENTATION_S3_BUCKET: !Sub '6529-artwork-documentation-${AWS::AccountId}-${AWS::Region}'
+      ARTWORK_DOCUMENTATION_S3_REGION: ${opt:region}
+
+resources:
+  Resources:
+    ArtworkDocumentationMetricsPolicy:
+      Type: AWS::IAM::Policy
+      Properties:
+        PolicyName: artwork-documentation-metrics-${opt:stage, self:provider.stage}
+        Roles: [lambda-vpc-role]
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: cloudwatch:PutMetricData
+              Resource: '*'
+              Condition:
+                StringEquals:
+                  cloudwatch:namespace: 6529/ArtworkDocumentation
+    ArtworkDocumentationProcessingFailures:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: Artwork archive verification failed or quarantined an upload; inspect restricted operations queue.
+        Namespace: 6529/ArtworkDocumentation
+        MetricName: FailuresLastHour
+        Statistic: Maximum
+        Period: 300
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+    ArtworkDocumentationQueueDelay:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: Artwork verification queue exceeds one hour; check GuardDuty and worker health.
+        Namespace: 6529/ArtworkDocumentation
+        MetricName: OldestPendingAge
+        Statistic: Maximum
+        Period: 300
+        EvaluationPeriods: 2
+        Threshold: 3600
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+    ArtworkDocumentationProcessorErrors:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: Artwork documentation worker failed; check durable processing queue before enabling uploads.
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: artworkDocumentationProcessor
+        Statistic: Sum
+        Period: 300
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching

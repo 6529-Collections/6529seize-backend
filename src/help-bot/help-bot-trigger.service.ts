@@ -227,7 +227,10 @@ export class HelpBotTriggerService {
     waveId: string,
     ctx: RequestContext
   ): Promise<boolean> {
-    const wave = await this.wavesDb.findWaveById(waveId, ctx.connection);
+    // Public help must not process a public child beneath a restricted parent.
+    const wave = (
+      await this.wavesDb.findWavesByIds([waveId], [], ctx.connection)
+    ).at(0);
     if (!wave) {
       this.logger.warn(`Could not resolve wave ${waveId} for help bot trigger`);
       return false;

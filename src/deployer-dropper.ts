@@ -88,6 +88,7 @@ export class DeployerDropper {
             await this.createDrop.execute(model, false, {
               timer: ctx.timer,
               connection: ctx.connection!,
+              prePublication: { trustedSystem: true },
               bypassChatLinkRestrictions: true,
               bypassChatSlowModeRestrictions: true
             });

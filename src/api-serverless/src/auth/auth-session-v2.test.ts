@@ -26,6 +26,7 @@ jest.mock('./auth.db', () => ({
   authDb: {
     createWalletAuthSession: jest.fn(),
     getActiveNativeSessionByRefreshHash: jest.fn(),
+    getActiveWebSessionById: jest.fn(),
     getActiveWebSessionBySecretHash: jest.fn(),
     rotateNativeSessionRefreshToken: jest.fn(),
     rotateWebSessionSecret: jest.fn(),
@@ -538,6 +539,227 @@ describe('auth-session-v2', () => {
     expect(authDbMock.rotateWebSessionSecret).not.toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: 'session-b' })
     );
+  });
+
+  it('returns the same rotated cookie to concurrent web refreshes', async () => {
+    const originalSession = webSession({
+      id: 'session-a',
+      address: '0xaaa',
+      role: 'profile-a'
+    });
+    let currentSession = originalSession;
+    let didRotate = false;
+
+    authDbMock.getActiveWebSessionBySecretHash.mockImplementation(async () =>
+      didRotate ? null : originalSession
+    );
+    authDbMock.rotateWebSessionSecret.mockImplementation(async (params) => {
+      if (didRotate) {
+        return null;
+      }
+      didRotate = true;
+      currentSession = {
+        ...originalSession,
+        secret_hash: params.nextSecretHash,
+        last_used_at: params.now,
+        expires_at: params.expiresAt
+      };
+      return currentSession;
+    });
+    authDbMock.getActiveWebSessionById.mockImplementation(
+      async () => currentSession
+    );
+
+    const request = {
+      cookie: {
+        sessionId: 'session-a',
+        secret: 'original-secret'
+      },
+      expectedAddress: '0xaaa',
+      requestOrigin: 'https://6529.io',
+      apiHost: 'api.6529.io'
+    } as const;
+    const [first, second] = await Promise.all([
+      refreshWebSession(request),
+      refreshWebSession(request)
+    ]);
+
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(toCookieRequestHeader(first?.setCookie ?? [])).toBe(
+      toCookieRequestHeader(second?.setCookie ?? [])
+    );
+    expect(authDbMock.rotateWebSessionSecret).toHaveBeenCalledTimes(2);
+    expect(authDbMock.getActiveWebSessionById).toHaveBeenCalledTimes(1);
+  });
+
+  describe('idempotent web refresh recovery boundaries', () => {
+    const request = {
+      cookie: {
+        sessionId: 'session-a',
+        secret: 'original-secret'
+      },
+      expectedAddress: '0xaaa',
+      requestOrigin: 'https://6529.io',
+      apiHost: 'api.6529.io'
+    } as const;
+    let currentSession: ReturnType<typeof webSession>;
+    let rotatedCookieHeader: string;
+
+    beforeEach(async () => {
+      jest.useFakeTimers({ now: new Date('2026-09-03T12:00:00.000Z') });
+      currentSession = webSession({ id: 'session-a', address: '0xaaa' });
+      authDbMock.getActiveWebSessionBySecretHash.mockResolvedValue(
+        currentSession
+      );
+      authDbMock.rotateWebSessionSecret.mockImplementation(async (params) => {
+        currentSession = {
+          ...currentSession,
+          secret_hash: params.nextSecretHash,
+          last_used_at: params.now,
+          expires_at: params.expiresAt
+        };
+        return currentSession;
+      });
+
+      const refreshed = await refreshWebSession(request);
+      expect(refreshed).not.toBeNull();
+      rotatedCookieHeader = toCookieRequestHeader(refreshed?.setCookie ?? []);
+
+      // Replay the previous cookie against the genuine successor produced above.
+      authDbMock.getActiveWebSessionBySecretHash.mockResolvedValue(null);
+      authDbMock.getActiveWebSessionById.mockResolvedValue(currentSession);
+      authDbMock.rotateWebSessionSecret.mockClear();
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it.each([
+      { context: 'address', overrides: { address: '0xbbb' } },
+      {
+        context: 'origin',
+        overrides: { client_origin: 'https://staging.6529.io' }
+      }
+    ])('rejects recovery with a mismatched $context', async ({ overrides }) => {
+      authDbMock.getActiveWebSessionById.mockResolvedValue({
+        ...currentSession,
+        ...overrides
+      });
+
+      // A rejection returns neither an access token nor replacement cookies.
+      await expect(refreshWebSession(request)).resolves.toBeNull();
+      expect(authDbMock.getActiveWebSessionById).toHaveBeenCalledWith(
+        request.cookie.sessionId,
+        new Date()
+      );
+      expect(authDbMock.rotateWebSessionSecret).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { elapsedMs: -5_001, accepted: false },
+      { elapsedMs: -5_000, accepted: true },
+      { elapsedMs: -4_999, accepted: true },
+      { elapsedMs: 0, accepted: true },
+      { elapsedMs: 29_999, accepted: true },
+      { elapsedMs: 30_000, accepted: true },
+      { elapsedMs: 30_001, accepted: false }
+    ])(
+      'recovery accepted=$accepted when last use was $elapsedMs ms ago',
+      async ({ elapsedMs, accepted }) => {
+        authDbMock.getActiveWebSessionById.mockResolvedValue({
+          ...currentSession,
+          last_used_at: new Date(Date.now() - elapsedMs)
+        });
+
+        const recovered = await refreshWebSession(request);
+
+        if (accepted) {
+          expect(recovered?.response).toMatchObject({
+            address: request.expectedAddress,
+            client_type: 'web',
+            access_token: expect.any(String)
+          });
+          expect(toCookieRequestHeader(recovered?.setCookie ?? [])).toBe(
+            rotatedCookieHeader
+          );
+        } else {
+          expect(recovered).toBeNull();
+        }
+        expect(authDbMock.getActiveWebSessionById).toHaveBeenCalledWith(
+          request.cookie.sessionId,
+          new Date()
+        );
+        expect(authDbMock.rotateWebSessionSecret).not.toHaveBeenCalled();
+      }
+    );
+  });
+
+  it('rejects an old web cookie outside the idempotent refresh window', async () => {
+    const originalSession = webSession({
+      id: 'session-a',
+      address: '0xaaa'
+    });
+    let currentSession = originalSession;
+    let didRotate = false;
+
+    authDbMock.getActiveWebSessionBySecretHash.mockImplementation(async () =>
+      didRotate ? null : originalSession
+    );
+    authDbMock.rotateWebSessionSecret.mockImplementation(async (params) => {
+      didRotate = true;
+      currentSession = {
+        ...originalSession,
+        secret_hash: params.nextSecretHash,
+        last_used_at: params.now,
+        expires_at: params.expiresAt
+      };
+      return currentSession;
+    });
+    authDbMock.getActiveWebSessionById.mockImplementation(async () => ({
+      ...currentSession,
+      last_used_at: new Date(Date.now() - 31_000)
+    }));
+
+    const request = {
+      cookie: {
+        sessionId: 'session-a',
+        secret: 'original-secret'
+      },
+      expectedAddress: '0xaaa',
+      requestOrigin: 'https://6529.io',
+      apiHost: 'api.6529.io'
+    } as const;
+
+    await expect(refreshWebSession(request)).resolves.not.toBeNull();
+    await expect(refreshWebSession(request)).resolves.toBeNull();
+  });
+
+  it('rejects a non-successor web cookie inside the idempotent refresh window', async () => {
+    const currentSession = webSession({
+      id: 'session-a',
+      address: '0xaaa'
+    });
+    authDbMock.getActiveWebSessionBySecretHash.mockResolvedValue(null);
+    authDbMock.getActiveWebSessionById.mockResolvedValue({
+      ...currentSession,
+      secret_hash: 'not-the-derived-successor-hash',
+      last_used_at: new Date()
+    });
+
+    await expect(
+      refreshWebSession({
+        cookie: {
+          sessionId: 'session-a',
+          secret: 'wrong-secret'
+        },
+        expectedAddress: '0xaaa',
+        requestOrigin: 'https://6529.io',
+        apiHost: 'api.6529.io'
+      })
+    ).resolves.toBeNull();
+    expect(authDbMock.rotateWebSessionSecret).not.toHaveBeenCalled();
   });
 
   it('does not refresh another account from the compatibility cookie when the requested scoped session is missing', async () => {

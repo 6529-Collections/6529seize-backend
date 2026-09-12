@@ -3,7 +3,7 @@ import {
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '../sql-executor';
-import { CIC_STATEMENTS_TABLE } from '@/constants';
+import { CIC_STATEMENTS_TABLE, PROFILES_TABLE } from '@/constants';
 import { CicStatement, CicStatementGroup } from '../entities/ICICStatement';
 import { DbPoolName } from '../db-query.options';
 import { ids } from '../ids';
@@ -15,6 +15,17 @@ export interface ProfileBioRow {
 }
 
 export class CicDb extends LazyDbAccessCompatibleService {
+  async lockProfileForCicStatementMutation(
+    profileId: string,
+    connectionHolder: ConnectionWrapper<any>
+  ): Promise<void> {
+    await this.db.execute(
+      `select external_id from ${PROFILES_TABLE} where external_id = :profileId for update`,
+      { profileId },
+      { wrappedConnection: connectionHolder }
+    );
+  }
+
   async insertCicStatement(
     newCicStatement: Omit<CicStatement, 'id' | 'crated_at'>,
     connectionHolder: ConnectionWrapper<any>

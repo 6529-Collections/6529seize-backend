@@ -49,6 +49,7 @@ describe('DeployerDropper', () => {
       {
         timer: undefined,
         connection: {},
+        prePublication: { trustedSystem: true },
         bypassChatLinkRestrictions: true,
         bypassChatSlowModeRestrictions: true
       }

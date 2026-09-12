@@ -9,7 +9,8 @@ import { RequestContext } from '../../../request.context';
 import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
 import {
   createOrUpdateDrop,
-  CreateOrUpdateDropUseCase
+  CreateOrUpdateDropUseCase,
+  PrePublicationPreparation
 } from '../../../drops/create-or-update-drop.use-case';
 import {
   CreateOrUpdateDropModel,
@@ -33,6 +34,7 @@ import {
   NftLinkResolvingService
 } from '@/nft-links/nft-link-resolving.service';
 import { Logger } from '@/logging';
+import { DbPoolName } from '@/db-query.options';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 import {
   CreateDropPollRequest,
@@ -40,6 +42,7 @@ import {
   DropPollsApiService
 } from '@/api/drops/drop-polls.api.service';
 import { ApiCreateDropPollRequest } from '@/api/generated/models/ApiCreateDropPollRequest';
+import { ApiDeleteMyWaveChatHistoryResponse } from '@/api/generated/models/ApiDeleteMyWaveChatHistoryResponse';
 import { invalidateWaveUnreadCacheForWave } from '@/api/waves/wave-unread-cache';
 import {
   waveScoreService,
@@ -49,6 +52,14 @@ import {
   waveDropMetricsRefreshService,
   WaveDropMetricsDirtyRefreshReason
 } from '@/drops/wave-drop-metrics-refresh.service';
+import {
+  wavesApiDb as defaultWavesApiDb,
+  WavesApiDb
+} from '@/api/waves/waves.api.db';
+import {
+  helpBotDailyActivityCreditQueueService,
+  HelpBotDailyActivityCreditQueueService
+} from '@/help-bot/help-bot-daily-activity-credit-queue.service';
 
 function normalizeCreateDropPollRequest(
   poll: ApiCreateDropPollRequest | null | undefined
@@ -74,7 +85,9 @@ export class DropCreationApiService {
     private readonly wsListenersNotifier: WsListenersNotifier,
     private readonly dropNftLinksDb: DropNftLinksDb,
     private readonly nftLinkResolvingService: NftLinkResolvingService,
-    private readonly dropPollsApiService: DropPollsApiService
+    private readonly dropPollsApiService: DropPollsApiService,
+    private readonly wavesApiDb: WavesApiDb = defaultWavesApiDb,
+    private readonly dailyActivityCreditQueueService: HelpBotDailyActivityCreditQueueService = helpBotDailyActivityCreditQueueService
   ) {}
 
   public async createDrop(
@@ -82,12 +95,14 @@ export class DropCreationApiService {
       createDropRequest,
       authorId,
       representativeId,
-      hideLinkPreview
+      hideLinkPreview,
+      requestDailyActivityCredit = false
     }: {
       createDropRequest: ApiCreateDropRequest;
       authorId: string;
       representativeId: string;
       hideLinkPreview?: boolean;
+      requestDailyActivityCredit?: boolean;
     },
     ctx: RequestContext
   ): Promise<ApiDrop> {
@@ -109,16 +124,33 @@ export class DropCreationApiService {
       await this.createOrUpdateDrop.preResolveIdentityNomination(createModel, {
         timer: ctx.timer
       });
-    const { drop, pendingPushNotificationIds } =
-      await this.dropsDb.executeNativeQueriesInTransaction(
-        async (connection) => {
-          return await this.createDropWithGivenConnection(
-            { model: createModel, authorId, preResolvedIdentityNomination },
-            normalizeCreateDropPollRequest(createDropRequest.poll),
-            { timer: ctx.timer!, connection }
-          );
-        }
-      );
+    const prePublication = await this.createOrUpdateDrop.preparePrePublication(
+      createModel,
+      ctx
+    );
+    const {
+      drop,
+      pendingPushNotificationIds,
+      dmUnreadRecipientIds,
+      dailyActivityCreditRequestEnqueued
+    } = await this.dropsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        return await this.createDropWithGivenConnection(
+          {
+            model: createModel,
+            authorId,
+            preResolvedIdentityNomination,
+            prePublication,
+            requestDailyActivityCredit
+          },
+          normalizeCreateDropPollRequest(createDropRequest.poll),
+          { timer: ctx.timer!, connection }
+        );
+      }
+    );
+    if (dailyActivityCreditRequestEnqueued) {
+      await this.dailyActivityCreditQueueService.sendWakeupBestEffort(ctx);
+    }
     await waveScoreService.requestWaveScoreRefreshBestEffort(
       [createModel.wave_id],
       WaveScoreDirtyRefreshReason.DROP_CHANGED,
@@ -131,6 +163,11 @@ export class DropCreationApiService {
     });
     void this.ensureNftLinkTrackingForDrop(drop.id, ctx);
     await this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx);
+    await this.notifyDmUnreadStateChanged({
+      waveId: createModel.wave_id,
+      recipientIds: dmUnreadRecipientIds,
+      ctx
+    });
     return drop;
   }
 
@@ -138,22 +175,32 @@ export class DropCreationApiService {
     {
       model,
       authorId,
-      preResolvedIdentityNomination
+      preResolvedIdentityNomination,
+      prePublication,
+      requestDailyActivityCredit
     }: {
       model: CreateOrUpdateDropModel;
       authorId: string;
       preResolvedIdentityNomination: Awaited<
         ReturnType<CreateOrUpdateDropUseCase['preResolveIdentityNomination']>
       > | null;
+      prePublication: PrePublicationPreparation;
+      requestDailyActivityCredit: boolean;
     },
     poll: CreateDropPollRequest | null | undefined,
     { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
-  ): Promise<{ drop: ApiDrop; pendingPushNotificationIds: number[] }> {
-    const { drop_id, pending_push_notification_ids } =
+  ): Promise<{
+    drop: ApiDrop;
+    pendingPushNotificationIds: number[];
+    dmUnreadRecipientIds: string[];
+    dailyActivityCreditRequestEnqueued: boolean;
+  }> {
+    const { drop_id, pending_push_notification_ids, dm_unread_recipient_ids } =
       await this.createOrUpdateDrop.execute(model, false, {
         timer,
         connection,
-        preResolvedIdentityNomination
+        preResolvedIdentityNomination,
+        prePublication
       });
     await this.dropPollsApiService.createPollForDrop(
       {
@@ -169,6 +216,12 @@ export class DropCreationApiService {
         authenticationContext: AuthenticationContext.fromProfileId(authorId)
       }
     );
+    const dailyActivityCreditRequestEnqueued = requestDailyActivityCredit
+      ? await this.dailyActivityCreditQueueService.enqueueRequest(
+          { profileId: authorId },
+          { timer, connection }
+        )
+      : false;
     const drop = await this.dropsService.findDropByIdOrThrow(
       {
         dropId: drop_id,
@@ -182,8 +235,51 @@ export class DropCreationApiService {
     );
     return {
       drop,
-      pendingPushNotificationIds: pending_push_notification_ids
+      pendingPushNotificationIds: pending_push_notification_ids,
+      dmUnreadRecipientIds: dm_unread_recipient_ids ?? [],
+      dailyActivityCreditRequestEnqueued
     };
+  }
+
+  private async notifyDmUnreadStateChanged({
+    waveId,
+    recipientIds,
+    ctx
+  }: {
+    waveId: string;
+    recipientIds: string[];
+    ctx: RequestContext;
+  }): Promise<void> {
+    if (!recipientIds.length) {
+      return;
+    }
+    try {
+      const recipients =
+        await this.wsListenersNotifier.findConnectedNotificationRecipients(
+          recipientIds
+        );
+      const connectedRecipientIds = Array.from(
+        new Set(recipients.map((recipient) => recipient.identityId))
+      );
+      if (!connectedRecipientIds.length) {
+        return;
+      }
+      const states =
+        await this.wavesApiDb.findDmUnreadConversationStatesForIdentities(
+          { identityIds: connectedRecipientIds, waveIds: [waveId] },
+          ctx,
+          DbPoolName.WRITE
+        );
+      await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged(
+        states,
+        recipients
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to broadcast DM unread state for wave ${waveId}`,
+        error
+      );
+    }
   }
 
   public async deleteDropById(
@@ -238,8 +334,165 @@ export class DropCreationApiService {
         deleteResponse.visibility_group_id,
         { timer, authenticationContext }
       );
+      await this.notifyDmUnreadStateChanged({
+        waveId: deleteResponse.wave_id,
+        recipientIds: deleteResponse.dm_unread_recipient_ids,
+        ctx: { timer, authenticationContext }
+      });
     }
     timer?.stop('dropCreationApiService->deleteDrop');
+  }
+
+  public async deleteMyWaveChatHistory(
+    { waveId }: { readonly waveId: string },
+    ctx: RequestContext
+  ): Promise<ApiDeleteMyWaveChatHistoryResponse> {
+    const timerName = `${this.constructor.name}->deleteMyWaveChatHistory`;
+    ctx.timer?.start(timerName);
+    try {
+      const authenticationContext = ctx.authenticationContext;
+      const authenticatedProfileId = authenticationContext?.getActingAsId();
+      if (!authenticationContext || !authenticatedProfileId) {
+        throw new ForbiddenException(`Please create a profile first`);
+      }
+      if (authenticationContext.isAuthenticatedAsProxy()) {
+        throw new ForbiddenException(
+          `Proxy is not allowed to delete chat history`
+        );
+      }
+
+      const { deleteResponses, preservedPinnedDropId } =
+        await this.dropsDb.executeNativeQueriesInTransaction(
+          async (connection) => {
+            const transactionContext: RequestContext = {
+              ...ctx,
+              connection
+            };
+            const wave = await this.wavesApiDb.findWaveByIdForUpdate(
+              waveId,
+              transactionContext
+            );
+            if (!wave) {
+              throw new NotFoundException(`Wave ${waveId} not found`);
+            }
+
+            const chatDrops =
+              await this.dropsDb.findWaveChatDropsByAuthorForUpdate(
+                {
+                  waveId,
+                  authorId: authenticatedProfileId
+                },
+                transactionContext
+              );
+            const pinnedDrop = chatDrops.find(
+              (drop) => drop.id === wave.description_drop_id
+            );
+            const responses: Array<{
+              id: string;
+              visibility_group_id: string | null;
+              serial_no: number;
+              wave_id: string;
+              dm_unread_recipient_ids: string[];
+            }> = [];
+
+            for (const drop of chatDrops) {
+              if (drop.id === pinnedDrop?.id) {
+                continue;
+              }
+              const deleteResponse = await this.deleteDrop.execute(
+                {
+                  drop_id: drop.id,
+                  deleter_identity: authenticatedProfileId,
+                  deleter_id: authenticatedProfileId,
+                  deletion_purpose: 'DELETE'
+                },
+                { timer: ctx.timer, connection }
+              );
+              if (deleteResponse) {
+                responses.push(deleteResponse);
+              }
+            }
+
+            return {
+              deleteResponses: responses,
+              preservedPinnedDropId: pinnedDrop?.id ?? null
+            };
+          }
+        );
+
+      if (deleteResponses.length) {
+        const postCommitEffects = [
+          {
+            name: 'wave drop metrics refresh',
+            run: () =>
+              waveDropMetricsRefreshService.requestWaveDropMetricsRefreshBestEffort(
+                [waveId],
+                WaveDropMetricsDirtyRefreshReason.DROP_DELETED,
+                ctx
+              )
+          },
+          {
+            name: 'wave score refresh',
+            run: () =>
+              waveScoreService.requestWaveScoreRefreshBestEffort(
+                [waveId],
+                WaveScoreDirtyRefreshReason.DROP_DELETED,
+                ctx
+              )
+          },
+          {
+            name: 'wave unread cache invalidation',
+            run: () => invalidateWaveUnreadCacheForWave(waveId)
+          },
+          {
+            name: 'drop deletion websocket broadcast',
+            run: () =>
+              this.wsListenersNotifier.notifyAboutDropDeletes(
+                deleteResponses.map((response) => ({
+                  drop_id: response.id,
+                  drop_serial: response.serial_no,
+                  wave_id: response.wave_id
+                })),
+                deleteResponses[0]!.visibility_group_id,
+                ctx
+              )
+          },
+          {
+            name: 'direct-message unread notification',
+            run: () =>
+              this.notifyDmUnreadStateChanged({
+                waveId,
+                recipientIds: Array.from(
+                  new Set(
+                    deleteResponses.flatMap(
+                      (response) => response.dm_unread_recipient_ids
+                    )
+                  )
+                ),
+                ctx
+              })
+          }
+        ] as const;
+        const results = await Promise.allSettled(
+          postCommitEffects.map((effect) => effect.run())
+        );
+        results.forEach((result, index) => {
+          if (result.status === 'rejected') {
+            this.logger.error(
+              `Wave chat history deletion ${postCommitEffects[index]!.name} failed after commit for wave ${waveId}`,
+              result.reason
+            );
+          }
+        });
+      }
+
+      return {
+        deleted_drop_ids: deleteResponses.map((response) => response.id),
+        preserved_pinned_drop_id: preservedPinnedDropId
+      };
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
   }
 
   async toggleHideLinkPreview(
@@ -299,6 +552,9 @@ export class DropCreationApiService {
     if (!drop) {
       throw new NotFoundException(`Drop ${dropId} not found`);
     }
+    if (drop.author_id !== authorId) {
+      throw new ForbiddenException(`Only the author can update drop ${dropId}`);
+    }
     const waveId = drop.wave_id;
     const replyTo: DropPartIdentifierModel | null =
       drop.reply_to_drop_id !== null
@@ -329,6 +585,10 @@ export class DropCreationApiService {
       await this.createOrUpdateDrop.preResolveIdentityNomination(model, {
         timer: ctx.timer
       });
+    const prePublication = await this.createOrUpdateDrop.preparePrePublication(
+      model,
+      ctx
+    );
     const { apiDrop, pendingPushNotificationIds } =
       await this.dropsDb.executeNativeQueriesInTransaction(
         async (connection) => {
@@ -336,7 +596,8 @@ export class DropCreationApiService {
             await this.createOrUpdateDrop.execute(model, false, {
               timer: ctx.timer!,
               connection,
-              preResolvedIdentityNomination
+              preResolvedIdentityNomination,
+              prePublication
             });
           const apiDrop = await this.dropsService.findDropByIdOrThrow(
             {

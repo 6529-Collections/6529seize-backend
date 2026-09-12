@@ -210,6 +210,7 @@ describe('subscription wave notifier message formatting', () => {
       false,
       {
         connection: { connection: 'connection' },
+        prePublication: { trustedSystem: true },
         bypassChatLinkRestrictions: true,
         bypassChatSlowModeRestrictions: true
       }

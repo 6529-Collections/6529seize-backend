@@ -1,5 +1,7 @@
 import { randomUUID } from 'crypto';
 import { GRADIENT_CONTRACT, MEMES_CONTRACT } from '@/constants';
+import { DbPoolName } from '@/db-query.options';
+import { Logger } from '@/logging';
 import {
   activityRecorder,
   ActivityRecorder
@@ -65,6 +67,8 @@ import { ApiWaveSubscriptionTargetAction } from '../generated/models/ApiWaveSubs
 import { ApiWaveType } from '../generated/models/ApiWaveType';
 import { ApiWavesOverviewType } from '../generated/models/ApiWavesOverviewType';
 import { ApiWaveScoreSort } from '../generated/models/ApiWaveScoreSort';
+import { ApiWaveGroupRole } from '../generated/models/ApiWaveGroupRole';
+import { ApiWaveGroupValidationRequest } from '../generated/models/ApiWaveGroupValidationRequest';
 import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
 import {
   IdentityFetcher,
@@ -111,6 +115,10 @@ import {
   waveScoreService,
   WaveScoreDirtyRefreshReason
 } from '@/api/waves/wave-score.service';
+import {
+  wsListenersNotifier as defaultWsListenersNotifier,
+  WsListenersNotifier
+} from '@/api/ws/ws-listeners-notifier';
 
 const CARD_SET_TDH_SUPPORTED_CONTRACTS = new Set(
   [MEMES_CONTRACT, GRADIENT_CONTRACT].map((contract) => contract.toLowerCase())
@@ -127,7 +135,21 @@ type RequestContextWithConnection = RequestContext & {
   connection: NonNullable<RequestContext['connection']>;
 };
 
+type WavePrivilegeGroup = {
+  readonly role: ApiWaveGroupRole;
+  readonly groupId: string | null;
+};
+
+const WAVE_GROUP_ROLE_ORDER: readonly ApiWaveGroupRole[] = [
+  ApiWaveGroupRole.Participation,
+  ApiWaveGroupRole.Voting,
+  ApiWaveGroupRole.Chat,
+  ApiWaveGroupRole.Admin
+];
+
 export class WaveApiService {
+  private readonly logger = Logger.get(this.constructor.name);
+
   constructor(
     private readonly wavesApiDb: WavesApiDb,
     private readonly userGroupsService: UserGroupsService,
@@ -143,7 +165,8 @@ export class WaveApiService {
     private readonly metricsRecorder: MetricsRecorder,
     private readonly curationsDb: CurationsDb,
     private readonly dropsDb: DropsDb,
-    private readonly waveGroupNotificationSubscriptionsDb: WaveGroupNotificationSubscriptionsDb
+    private readonly waveGroupNotificationSubscriptionsDb: WaveGroupNotificationSubscriptionsDb,
+    private readonly wsListenersNotifier: WsListenersNotifier = defaultWsListenersNotifier
   ) {}
 
   private getRequiredTimer(
@@ -178,6 +201,169 @@ export class WaveApiService {
 
   private isSupportedCardSetTdhContract(contract: string): boolean {
     return CARD_SET_TDH_SUPPORTED_CONTRACTS.has(contract.toLowerCase());
+  }
+
+  private getActivePrivilegeGroups(
+    request: ApiCreateNewWave | ApiUpdateWaveRequest
+  ): WavePrivilegeGroup[] {
+    const groups: WavePrivilegeGroup[] = [];
+    const adminGroupId = request.wave.admin_group?.group_id ?? null;
+    if (adminGroupId !== null) {
+      groups.push({
+        role: ApiWaveGroupRole.Admin,
+        groupId: adminGroupId
+      });
+    }
+    if (request.chat.enabled) {
+      groups.push({
+        role: ApiWaveGroupRole.Chat,
+        groupId: request.chat.scope.group_id
+      });
+    }
+    if (request.wave.type !== ApiWaveType.Chat) {
+      groups.push(
+        {
+          role: ApiWaveGroupRole.Participation,
+          groupId: request.participation.scope.group_id
+        },
+        {
+          role: ApiWaveGroupRole.Voting,
+          groupId: request.voting.scope.group_id
+        }
+      );
+    }
+    return groups;
+  }
+
+  private getReferencedGroupIds(
+    request: ApiCreateNewWave | ApiUpdateWaveRequest
+  ): string[] {
+    return collections.distinct(
+      [
+        request.visibility.scope.group_id,
+        ...this.getActivePrivilegeGroups(request).map((group) => group.groupId)
+      ].filter((id): id is string => id !== null)
+    );
+  }
+
+  private getPreviousGroupId(
+    role: ApiWaveGroupRole,
+    wave: WaveEntity
+  ): string | null {
+    switch (role) {
+      case ApiWaveGroupRole.Participation:
+        return wave.participation_group_id;
+      case ApiWaveGroupRole.Voting:
+        return wave.voting_group_id;
+      case ApiWaveGroupRole.Chat:
+        return wave.chat_group_id;
+      case ApiWaveGroupRole.Admin:
+        return wave.admin_group_id;
+    }
+  }
+
+  private async findInvalidWaveGroupRoles(
+    {
+      visibilityGroupId,
+      privilegeGroups,
+      referencedGroupIds,
+      authenticatedAdminProfileId,
+      enforceRequesterVisibility = false,
+      preloadedGroups = []
+    }: {
+      readonly visibilityGroupId: string | null;
+      readonly privilegeGroups: readonly WavePrivilegeGroup[];
+      readonly referencedGroupIds: readonly string[];
+      readonly authenticatedAdminProfileId?: string | null;
+      readonly enforceRequesterVisibility?: boolean;
+      readonly preloadedGroups?: readonly ApiGroupFull[];
+    },
+    ctx: RequestContext
+  ): Promise<ApiWaveGroupRole[]> {
+    const preloadedGroupsById = new Map(
+      preloadedGroups.map((group) => [group.id, group])
+    );
+    const groupIdsToLoad = Array.from(referencedGroupIds).filter(
+      (groupId) => !preloadedGroupsById.has(groupId)
+    );
+    const groupEntities = enforceRequesterVisibility
+      ? await this.userGroupsService.getApiGroupsVisibleToRequesterByIds(
+          groupIdsToLoad,
+          ctx
+        )
+      : await this.userGroupsService.getApiGroupsByIds(groupIdsToLoad, ctx);
+    const groupsById = new Map<string, ApiGroupFull>(
+      preloadedGroups.map((group) => [group.id, group])
+    );
+    groupEntities.forEach((group) => groupsById.set(group.id, group));
+    const missingGroupIds = referencedGroupIds.filter(
+      (groupId) => !groupsById.has(groupId)
+    );
+    if (missingGroupIds.length) {
+      throw new BadRequestException(
+        enforceRequesterVisibility
+          ? `One or more Wave groups were not found or aren't available`
+          : `Group(s) not found: ${missingGroupIds.join(', ')}`
+      );
+    }
+    if (visibilityGroupId === null) {
+      return [];
+    }
+
+    const invalidRoles = new Set<ApiWaveGroupRole>();
+    const explicitPrivilegeGroups = new Map<string, ApiGroupFull>();
+    for (const privilegeGroup of privilegeGroups) {
+      if (privilegeGroup.groupId === null) {
+        invalidRoles.add(privilegeGroup.role);
+      } else if (privilegeGroup.groupId !== visibilityGroupId) {
+        explicitPrivilegeGroups.set(
+          privilegeGroup.groupId,
+          groupsById.get(privilegeGroup.groupId)!
+        );
+      }
+    }
+
+    if (explicitPrivilegeGroups.size) {
+      const outsideGroupIds = new Set(
+        await this.userGroupsService.findGroupIdsWithMembersOutsideContainingGroup(
+          groupsById.get(visibilityGroupId)!,
+          Array.from(explicitPrivilegeGroups.values()),
+          ctx
+        )
+      );
+      privilegeGroups.forEach((privilegeGroup) => {
+        if (
+          privilegeGroup.groupId !== null &&
+          outsideGroupIds.has(privilegeGroup.groupId)
+        ) {
+          invalidRoles.add(privilegeGroup.role);
+        }
+      });
+    }
+
+    if (authenticatedAdminProfileId) {
+      const eligibleGroupIds =
+        await this.userGroupsService.getGroupsUserIsEligibleForByIds(
+          authenticatedAdminProfileId,
+          [visibilityGroupId],
+          ctx.timer
+        );
+      if (!eligibleGroupIds.includes(visibilityGroupId)) {
+        invalidRoles.add(ApiWaveGroupRole.Admin);
+      }
+    }
+    return WAVE_GROUP_ROLE_ORDER.filter((role) => invalidRoles.has(role));
+  }
+
+  private assertNoInvalidWaveGroupRoles(
+    invalidRoles: readonly ApiWaveGroupRole[]
+  ): void {
+    if (!invalidRoles.length) {
+      return;
+    }
+    throw new BadRequestException(
+      `Wave ${invalidRoles.join(', ')} group members must also belong to the View group`
+    );
   }
 
   private assertImmutableWaveUpdateFieldsUnchanged({
@@ -370,7 +556,26 @@ export class WaveApiService {
     timer.start(`${this.constructor.name}->createWave`);
     await this.validateWaveRelations(createWaveRequest, ctx);
     this.validateOutcomes(createWaveRequest);
-    const { createdWave, pendingPushNotificationIds } =
+    await this.validateSubwaveCreationParent({
+      request: createWaveRequest,
+      actingAsId,
+      ctx: { ...ctx, connection: undefined }
+    });
+    const id = randomUUID();
+    const descriptionDropModel = this.dropsMappers.createDropApiToUseCaseModel({
+      request: {
+        ...createWaveRequest.description_drop,
+        wave_id: id,
+        drop_type: ApiDropType.Chat
+      },
+      authorId: actingAsId
+    });
+    const descriptionPrePublication =
+      await this.createOrUpdateDrop.preparePrePublication(
+        descriptionDropModel,
+        ctx
+      );
+    const { createdWave, pendingPushNotificationIds, dmUnreadRecipientIds } =
       await this.wavesApiDb.executeNativeQueriesInTransaction(
         async (connection) => {
           const ctxWithConnection = { ...ctx, connection };
@@ -379,7 +584,6 @@ export class WaveApiService {
             actingAsId,
             ctx: ctxWithConnection
           });
-          const id = randomUUID();
           const waveCreationTime = Time.currentMillis();
           const newEntity = await this.waveMappers.createWaveToNewWaveEntity({
             id,
@@ -452,20 +656,19 @@ export class WaveApiService {
             distiributionItemEntities,
             ctxWithConnection
           );
-          const descriptionDropModel =
-            this.dropsMappers.createDropApiToUseCaseModel({
-              request: {
-                ...createWaveRequest.description_drop,
-                wave_id: id,
-                drop_type: ApiDropType.Chat
-              },
-              authorId: actingAsId
-            });
-          const { drop_id: descriptionDropId, pending_push_notification_ids } =
-            await this.createOrUpdateDrop.execute(descriptionDropModel, true, {
+          const {
+            drop_id: descriptionDropId,
+            pending_push_notification_ids,
+            dm_unread_recipient_ids
+          } = await this.createOrUpdateDrop.execute(
+            descriptionDropModel,
+            true,
+            {
               timer: ctxWithConnection.timer,
-              connection: ctxWithConnection.connection
-            });
+              connection: ctxWithConnection.connection,
+              prePublication: descriptionPrePublication
+            }
+          );
           await this.wavesApiDb.updateDescriptionDropId(
             {
               waveId: id,
@@ -567,7 +770,8 @@ export class WaveApiService {
               },
               ctxWithConnection
             ),
-            pendingPushNotificationIds: pending_push_notification_ids
+            pendingPushNotificationIds: pending_push_notification_ids,
+            dmUnreadRecipientIds: dm_unread_recipient_ids ?? []
           };
         }
       );
@@ -577,6 +781,11 @@ export class WaveApiService {
       ctx
     );
     await invalidateWaveUnreadCacheForWave(createdWave.id);
+    await this.broadcastDmUnreadStates(
+      dmUnreadRecipientIds,
+      createdWave.id,
+      ctx
+    );
     await giveReadReplicaTimeToCatchUp();
     await this.userGroupsService.onWaveRelatedGroupsChanged(
       [
@@ -807,10 +1016,6 @@ export class WaveApiService {
     if (visibleParentWave.parent_wave_id !== null) {
       throw new BadRequestException(`Subwaves cannot be parent waves`);
     }
-    this.assertSubwaveVisibilityMatchesParent({
-      requestedVisibilityGroupId: request.visibility.scope.group_id,
-      parentWave: visibleParentWave
-    });
     if (
       !isWaveCreatorOrAdmin({
         authenticatedProfileId: actingAsId,
@@ -824,35 +1029,15 @@ export class WaveApiService {
     }
   }
 
-  private assertSubwaveVisibilityMatchesParent({
-    requestedVisibilityGroupId,
-    parentWave
-  }: {
-    requestedVisibilityGroupId: string | null;
-    parentWave: Pick<WaveEntity, 'visibility_group_id'>;
-  }) {
-    if (requestedVisibilityGroupId !== parentWave.visibility_group_id) {
-      throw new BadRequestException(
-        `Subwave visibility must match parent wave visibility`
-      );
-    }
-  }
-
-  private async validateWaveVisibilityInheritanceOnUpdate({
-    request,
+  private async validateWaveParentOnUpdate({
     waveBeforeUpdate,
     groupIdsUserIsEligibleFor,
     ctx
   }: {
-    request: ApiUpdateWaveRequest;
-    waveBeforeUpdate: Pick<
-      WaveEntity,
-      'id' | 'parent_wave_id' | 'visibility_group_id'
-    >;
+    waveBeforeUpdate: Pick<WaveEntity, 'id' | 'parent_wave_id'>;
     groupIdsUserIsEligibleFor: string[];
     ctx: RequestContextWithConnection;
   }) {
-    const requestedVisibilityGroupId = request.visibility.scope.group_id;
     const parentWaveId = waveBeforeUpdate.parent_wave_id;
     if (parentWaveId) {
       const parentWave = await assertWaveAndParentVisibleOrThrow({
@@ -865,24 +1050,6 @@ export class WaveApiService {
       if (parentWave.parent_wave_id !== null) {
         throw new BadRequestException(`Subwaves cannot be parent waves`);
       }
-      this.assertSubwaveVisibilityMatchesParent({
-        requestedVisibilityGroupId,
-        parentWave
-      });
-      return;
-    }
-
-    if (requestedVisibilityGroupId === waveBeforeUpdate.visibility_group_id) {
-      return;
-    }
-    const subwaveIds = await this.wavesApiDb.findSubwaveIdsByParentWaveId(
-      waveBeforeUpdate.id,
-      ctx
-    );
-    if (subwaveIds.length) {
-      throw new BadRequestException(
-        `Parent wave visibility cannot be changed while it has subwaves`
-      );
     }
   }
 
@@ -974,9 +1141,136 @@ export class WaveApiService {
     return await this.createWave(waveRequest, true, ctx);
   }
 
+  public async validateWaveGroupContainmentPreview(
+    request: ApiWaveGroupValidationRequest,
+    authenticatedProfileId: string | null,
+    ctx: RequestContext
+  ): Promise<ApiWaveGroupRole[]> {
+    const privilegeGroups: WavePrivilegeGroup[] = [];
+    if (request.participation_group_id !== undefined) {
+      privilegeGroups.push({
+        role: ApiWaveGroupRole.Participation,
+        groupId: request.participation_group_id
+      });
+    }
+    if (request.voting_group_id !== undefined) {
+      privilegeGroups.push({
+        role: ApiWaveGroupRole.Voting,
+        groupId: request.voting_group_id
+      });
+    }
+    if (request.chat_group_id !== undefined) {
+      privilegeGroups.push({
+        role: ApiWaveGroupRole.Chat,
+        groupId: request.chat_group_id
+      });
+    }
+    if (
+      request.admin_group_id !== undefined &&
+      request.admin_group_id !== null
+    ) {
+      privilegeGroups.push({
+        role: ApiWaveGroupRole.Admin,
+        groupId: request.admin_group_id
+      });
+    }
+    const referencedGroupIds = collections.distinct(
+      [
+        request.visibility_group_id,
+        ...privilegeGroups.map((group) => group.groupId)
+      ].filter((groupId): groupId is string => groupId !== null)
+    );
+    return await this.findInvalidWaveGroupRoles(
+      {
+        visibilityGroupId: request.visibility_group_id,
+        privilegeGroups,
+        referencedGroupIds,
+        enforceRequesterVisibility: true,
+        authenticatedAdminProfileId: request.include_authenticated_user_as_admin
+          ? authenticatedProfileId
+          : null
+      },
+      ctx
+    );
+  }
+
+  public async assertGroupReplacementPreservesWaveViewAccess(
+    {
+      currentGroup,
+      replacedGroupId
+    }: {
+      readonly currentGroup: ApiGroupFull;
+      readonly replacedGroupId: string;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    const affectedWaves = await this.wavesApiDb.findWavesUsingGroupId(
+      replacedGroupId,
+      ctx
+    );
+    for (const wave of affectedWaves) {
+      const replaceGroupId = (groupId: string | null): string | null =>
+        groupId === replacedGroupId ? currentGroup.id : groupId;
+      const privilegeGroups: WavePrivilegeGroup[] = [];
+      const adminGroupId = replaceGroupId(wave.admin_group_id);
+      if (adminGroupId !== null) {
+        privilegeGroups.push({
+          role: ApiWaveGroupRole.Admin,
+          groupId: adminGroupId
+        });
+      }
+      if (wave.chat_enabled) {
+        privilegeGroups.push({
+          role: ApiWaveGroupRole.Chat,
+          groupId: replaceGroupId(wave.chat_group_id)
+        });
+      }
+      if (wave.type !== WaveType.CHAT) {
+        privilegeGroups.push(
+          {
+            role: ApiWaveGroupRole.Participation,
+            groupId: replaceGroupId(wave.participation_group_id)
+          },
+          {
+            role: ApiWaveGroupRole.Voting,
+            groupId: replaceGroupId(wave.voting_group_id)
+          }
+        );
+      }
+      const rolesToValidate =
+        wave.visibility_group_id === replacedGroupId
+          ? privilegeGroups
+          : privilegeGroups.filter(
+              (group) =>
+                this.getPreviousGroupId(group.role, wave) === replacedGroupId
+            );
+      if (!rolesToValidate.length) {
+        continue;
+      }
+      const visibilityGroupId = replaceGroupId(wave.visibility_group_id);
+      const referencedGroupIds = collections.distinct(
+        [
+          visibilityGroupId,
+          ...rolesToValidate.map((group) => group.groupId)
+        ].filter((groupId): groupId is string => groupId !== null)
+      );
+      const invalidRoles = await this.findInvalidWaveGroupRoles(
+        {
+          visibilityGroupId,
+          privilegeGroups: rolesToValidate,
+          referencedGroupIds,
+          preloadedGroups: [currentGroup]
+        },
+        ctx
+      );
+      this.assertNoInvalidWaveGroupRoles(invalidRoles);
+    }
+  }
+
   private async validateWaveRelations(
     request: ApiCreateNewWave | ApiUpdateWaveRequest,
-    ctx: RequestContext
+    ctx: RequestContext,
+    waveBeforeUpdate?: WaveEntity | undefined
   ) {
     const timer = ctx.timer;
     timer?.start(`${this.constructor.name}->validateWaveRelations`);
@@ -1079,43 +1373,44 @@ export class WaveApiService {
       request.participation.submission_strategy,
       request.wave.type
     );
-    if (request.wave.decisions_strategy !== null) {
+    const decisionStrategy = request.wave.decisions_strategy;
+    if (decisionStrategy !== null) {
       if (request.wave.type !== ApiWaveType.Rank) {
         throw new BadRequestException(
           `Only waves of type RANK support a decision strategy.`
         );
       }
       if (
-        request.wave.decisions_strategy.is_rolling &&
-        !request.wave.decisions_strategy.subsequent_decisions.length
+        decisionStrategy.is_rolling &&
+        !decisionStrategy.subsequent_decisions.length
       ) {
         throw new BadRequestException(
           `On rolling decision strategy subsequent decisions is mandatory`
         );
       }
     }
-    const referencedGroupIds = collections.distinct(
-      [
-        request.visibility.scope.group_id,
-        request.participation.scope.group_id,
-        request.voting.scope.group_id
-      ].filter((id) => id !== null) as string[]
-    );
-    timer?.start(`${this.constructor.name}->userGroupsService->getByIds`);
-    const groupEntities = await this.userGroupsService.getByIds(
-      referencedGroupIds,
+    const activePrivilegeGroups = this.getActivePrivilegeGroups(request);
+    const privilegeGroupsToValidate =
+      waveBeforeUpdate?.visibility_group_id !==
+      request.visibility.scope.group_id
+        ? activePrivilegeGroups
+        : activePrivilegeGroups.filter(
+            (group) =>
+              (group.role === ApiWaveGroupRole.Chat &&
+                request.chat.enabled &&
+                !waveBeforeUpdate.chat_enabled) ||
+              this.getPreviousGroupId(group.role, waveBeforeUpdate) !==
+                group.groupId
+          );
+    const invalidGroupRoles = await this.findInvalidWaveGroupRoles(
+      {
+        visibilityGroupId: request.visibility.scope.group_id,
+        privilegeGroups: privilegeGroupsToValidate,
+        referencedGroupIds: this.getReferencedGroupIds(request)
+      },
       ctx
     );
-    timer?.stop(`${this.constructor.name}->userGroupsService->getByIds`);
-    const missingGroupIds = referencedGroupIds.filter(
-      (it) => !groupEntities.find((e) => e.id === it)
-    );
-    if (missingGroupIds.length) {
-      timer?.stop(`${this.constructor.name}->validateWaveRelations`);
-      throw new BadRequestException(
-        `Group(s) not found: ${missingGroupIds.join(', ')}`
-      );
-    }
+    this.assertNoInvalidWaveGroupRoles(invalidGroupRoles);
     const referencedCreditorIdentity = request.voting.creditor_id;
     if (referencedCreditorIdentity) {
       const profileId = await this.identityFetcher.getProfileIdByIdentityKey(
@@ -1839,9 +2134,9 @@ export class WaveApiService {
     return await this.wavesApiDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
-        const waveBeforeUpdate = await this.wavesApiDb.findWaveById(
+        const waveBeforeUpdate = await this.wavesApiDb.findWaveByIdForUpdate(
           waveId,
-          connection
+          ctxWithConnection
         );
         if (!waveBeforeUpdate) {
           throw new NotFoundException(`Wave ${waveId} not found`);
@@ -1853,6 +2148,16 @@ export class WaveApiService {
         ) {
           throw new ForbiddenException(
             `Wave has unresolved decisions and can't be edited at the moment. Try again later`
+          );
+        }
+        if (
+          waveBeforeUpdate.visibility_group_id !== null &&
+          !groupsUserIsEligibleFor.includes(
+            waveBeforeUpdate.visibility_group_id
+          )
+        ) {
+          throw new ForbiddenException(
+            `You can't update a wave you can't view`
           );
         }
         if (waveBeforeUpdate.created_by !== authenticatedProfileId) {
@@ -1900,9 +2205,12 @@ export class WaveApiService {
           request,
           waveBeforeUpdate
         });
-        await this.validateWaveRelations(request, ctxWithConnection);
-        await this.validateWaveVisibilityInheritanceOnUpdate({
+        await this.validateWaveRelations(
           request,
+          ctxWithConnection,
+          waveBeforeUpdate
+        );
+        await this.validateWaveParentOnUpdate({
           waveBeforeUpdate,
           groupIdsUserIsEligibleFor: groupsUserIsEligibleFor,
           ctx: ctxWithConnection
@@ -2171,13 +2479,15 @@ export class WaveApiService {
 
   async muteWave({ waveId }: { waveId: string }, ctx: RequestContext) {
     let readerId: string | null = null;
+    let isDirectMessage = false;
     await this.wavesApiDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
-        await this.assertWaveExistsForAuthenticatedUser(
+        const wave = await this.assertWaveExistsForAuthenticatedUser(
           waveId,
           ctxWithConnection
         );
+        isDirectMessage = wave.is_direct_message === true;
         const actingAsId = ctx.authenticationContext?.getActingAsId();
         if (!actingAsId) {
           throw new ForbiddenException(`Please create a profile first`);
@@ -2204,18 +2514,23 @@ export class WaveApiService {
         identityId: readerId,
         waveId
       });
+      if (isDirectMessage) {
+        await this.broadcastDmUnreadState(readerId, waveId, ctx);
+      }
     }
   }
 
   async unmuteWave({ waveId }: { waveId: string }, ctx: RequestContext) {
     let readerId: string | null = null;
+    let isDirectMessage = false;
     await this.wavesApiDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
-        await this.assertWaveExistsForAuthenticatedUser(
+        const wave = await this.assertWaveExistsForAuthenticatedUser(
           waveId,
           ctxWithConnection
         );
+        isDirectMessage = wave.is_direct_message === true;
         const actingAsId = ctx.authenticationContext?.getActingAsId();
         if (!actingAsId) {
           throw new ForbiddenException(`Please create a profile first`);
@@ -2242,13 +2557,61 @@ export class WaveApiService {
         identityId: readerId,
         waveId
       });
+      if (isDirectMessage) {
+        await this.broadcastDmUnreadState(readerId, waveId, ctx);
+      }
+    }
+  }
+
+  private async broadcastDmUnreadState(
+    identityId: string,
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.broadcastDmUnreadStates([identityId], waveId, ctx);
+  }
+
+  private async broadcastDmUnreadStates(
+    identityIds: string[],
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (!identityIds.length) {
+      return;
+    }
+    try {
+      const recipients =
+        await this.wsListenersNotifier.findConnectedNotificationRecipients(
+          identityIds
+        );
+      const connectedIdentityIds = Array.from(
+        new Set(recipients.map((recipient) => recipient.identityId))
+      );
+      if (!connectedIdentityIds.length) {
+        return;
+      }
+      const states =
+        await this.wavesApiDb.findDmUnreadConversationStatesForIdentities(
+          { identityIds: connectedIdentityIds, waveIds: [waveId] },
+          ctx,
+          DbPoolName.WRITE
+        );
+      await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged(
+        states,
+        recipients
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to broadcast DM unread state for wave ${waveId}`,
+        error
+      );
     }
   }
 
   private async assertWaveExistsForAuthenticatedUser(
     waveId: string,
     ctx: RequestContext
-  ) {
+  ): Promise<WaveEntity> {
     const waveEntity = await this.wavesApiDb.findWaveById(
       waveId,
       ctx.connection
@@ -2272,6 +2635,7 @@ export class WaveApiService {
       wavesApiDb: this.wavesApiDb,
       ctx
     });
+    return waveEntity;
   }
 }
 
