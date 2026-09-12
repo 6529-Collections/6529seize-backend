@@ -258,10 +258,6 @@
                   "Arn"
                 ]
               }
-            },
-            "RetryPolicy": {
-              "MaximumEventAgeInSeconds": 86400,
-              "MaximumRetryAttempts": 185
             }
           }
         ]
@@ -337,6 +333,44 @@
             ]
           }
         ]
+      }
+    },
+    "RelayDeadLettersAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-relay-dead-letters"
+        },
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateNumberOfMessagesVisible",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "RelayDeadLetters",
+                "QueueName"
+              ]
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        }
       }
     },
     "seizeAPIErrorLogs": {

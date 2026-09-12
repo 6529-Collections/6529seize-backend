@@ -273,7 +273,7 @@ function dashboard(environmentName) {
       {
         ...source,
         title:
-          'Website routed requests and pre-target server errors (per minute)',
+          'Website routed requests and load-balancer server errors (per minute)',
         metrics: [
           alb('RequestCount', { stat: 'Sum', label: 'Routed requests' }),
           alb(

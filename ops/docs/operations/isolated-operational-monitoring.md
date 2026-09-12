@@ -72,6 +72,9 @@ before enabling a new fallback destination.
    installs/tests/builds only this package, obtains its dedicated OIDC session,
    verifies the monitoring account and artifact-bucket owner, and deploys through
    the separate CloudFormation role. Artifacts use `{environment}/{sha}` prefixes.
+   After a successful deploy, the script enables termination protection on the
+   exact runtime stack. A protection failure fails the command and requires
+   repair before acceptance, even though the infrastructure update succeeded.
 2. In each source account/region, deploy `source-bootstrap.json` as
    `seize-monitoring-source-bootstrap` with the authorized source identity and
    enable termination protection. Its retained, encrypted, private, versioned
@@ -83,7 +86,8 @@ before enabling a new fallback destination.
    available. Preserve every existing email subscription and existing alarm.
    The guarded `../../bin/6529 run deploy:source` command performs account,
    region, artifact ownership and coverage/subscription preflight before packaging
-   and deploying `seize-monitoring-{env}-source`. Run `generate:check` and `check`
+   and deploying `seize-monitoring-{env}-source`, then enables termination
+   protection on that exact stack. Run `generate:check` and `check`
    first. It requires `MONITORING_ENVIRONMENT`, `MONITORING_COMMIT_SHA`,
    `SOURCE_ACCOUNT_ID`, `MONITORING_ACCOUNT_ID`, `MONITORING_EVENT_BUS_ARN`,
    `SOURCE_ARTIFACT_BUCKET`, optional `SOURCE_ALARM_TOPIC_ARN`, and optional
@@ -97,6 +101,11 @@ before enabling a new fallback destination.
    ARN's region, so a production source in `us-east-1` can target `eu-west-1`.
    Leaving `SOURCE_ALARM_TOPIC_ARN` undefined preserves an existing stack's topic;
    explicitly setting it to an empty string disables that optional alarm action.
+   The source event-bus target uses AWS-managed retries and its retained regional
+   dead-letter queue; it must not set a custom `RetryPolicy`, which EventBridge
+   rejects for event-bus targets. Its queue backlog alarm also uses this optional
+   source topic. Confirm that topic has an independently reachable subscriber;
+   a topic with no subscriptions provides no fallback delivery.
    Source and monitoring artifact buckets expire current objects after 90 days
    and noncurrent versions after 30 days. Older rollbacks require rebuilding the
    exact commit and uploading a new verified artifact.

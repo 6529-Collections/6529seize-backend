@@ -937,11 +937,8 @@ function sourceTemplate(environment) {
           Id: 'Monitoring',
           Arn: ref('MonitoringEventBusArn'),
           RoleArn: attr('AlarmForwardRole'),
-          DeadLetterConfig: { Arn: attr('RelayDeadLetters') },
-          RetryPolicy: {
-            MaximumEventAgeInSeconds: 86400,
-            MaximumRetryAttempts: 185
-          }
+          // Event-bus targets support a DLQ but reject custom retry policies.
+          DeadLetterConfig: { Arn: attr('RelayDeadLetters') }
         }
       ]
     }
@@ -969,6 +966,24 @@ function sourceTemplate(environment) {
     'LogRelay',
     when('HasAlarmTopic', ref('ExistingAlarmTopicArn'))
   );
+  r.RelayDeadLettersAlarm = {
+    Type: 'AWS::CloudWatch::Alarm',
+    Properties: {
+      AlarmName: sub('seize-monitoring-${Environment}-relay-dead-letters'),
+      Namespace: 'AWS/SQS',
+      MetricName: 'ApproximateNumberOfMessagesVisible',
+      Dimensions: [
+        { Name: 'QueueName', Value: attr('RelayDeadLetters', 'QueueName') }
+      ],
+      Statistic: 'Maximum',
+      Period: 60,
+      EvaluationPeriods: 1,
+      Threshold: 1,
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+      TreatMissingData: 'notBreaching',
+      AlarmActions: when('HasAlarmTopic', [ref('ExistingAlarmTopicArn')], [])
+    }
+  };
   for (const name of functions) {
     const id = name.replace(/[^a-zA-Z0-9]/g, '');
     r[`${id}ErrorLogs`] = {
