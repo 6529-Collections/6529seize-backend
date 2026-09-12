@@ -230,9 +230,15 @@
             {
               "Id": "AccessLogRetention",
               "Status": "Enabled",
-              "ExpirationInDays": 90
+              "ExpirationInDays": 90,
+              "NoncurrentVersionExpiration": {
+                "NoncurrentDays": 90
+              }
             }
           ]
+        },
+        "VersioningConfiguration": {
+          "Status": "Enabled"
         }
       }
     },

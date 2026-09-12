@@ -82,7 +82,11 @@ outside-AWS provider is necessary for independent fallback.
    first. It requires `MONITORING_ENVIRONMENT`, `MONITORING_COMMIT_SHA`,
    `SOURCE_ACCOUNT_ID`, `MONITORING_ACCOUNT_ID`, `MONITORING_EVENT_BUS_ARN`,
    `SOURCE_ARTIFACT_BUCKET`, optional `SOURCE_ALARM_TOPIC_ARN`, and optional
-   `SOURCE_CLOUDFORMATION_ROLE_ARN`. Its AWS session must belong to the source
+   `SOURCE_CLOUDFORMATION_ROLE_ARN`. Set `AWS_CLI_PATH` to the absolute path of the
+   operator-approved AWS CLI installation outside the checkout (for example,
+   `/usr/local/bin/aws` on the hosted Linux runner). Scripts resolve symlinks and
+   reject binaries inside the checkout; they never search npm/repository `PATH`.
+   Its AWS session must belong to the source
    account; the monitoring OIDC role cannot deploy this stack. The region is
    derived from the catalog. Cross-region forwarding uses the monitoring bus
    ARN's region, so a production source in `us-east-1` can target `eu-west-1`.

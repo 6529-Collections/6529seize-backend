@@ -90,6 +90,7 @@ test('probe configuration bounds targets, property paths, and scalar assertions'
   for (const value of [
     '{private invalid JSON',
     JSON.stringify(Array.from({ length: 11 }, () => target)),
+    JSON.stringify([target, target]),
     JSON.stringify([{ ...target, status: 0 }]),
     JSON.stringify([{ ...target, jsonEquals: { 'redis.constructor': true } }]),
     JSON.stringify([{ ...target, jsonEquals: { redis: { healthy: true } } }]),

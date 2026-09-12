@@ -1,8 +1,11 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { approvedAwsCli } from './aws-cli.mjs';
+
+const awsCli = approvedAwsCli();
 
 function run(args, capture = false) {
-  const result = spawnSync('aws', args, {
+  const result = spawnSync(awsCli, args, {
     shell: false,
     encoding: 'utf8',
     stdio: capture ? 'pipe' : 'inherit'

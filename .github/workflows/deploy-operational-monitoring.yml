@@ -52,6 +52,7 @@ jobs:
       - name: Deploy monitoring infrastructure
         working-directory: ops/monitoring
         env:
+          AWS_CLI_PATH: /usr/local/bin/aws
           MONITORING_ENVIRONMENT: ${{ inputs.environment }}
           MONITORING_COMMIT_SHA: ${{ inputs.commit_sha }}
           MONITORING_ACCOUNT_ID: ${{ vars.AWS_MONITORING_ACCOUNT_ID }}

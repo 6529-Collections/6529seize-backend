@@ -140,9 +140,15 @@ test('archive logging and encrypted fallback preserve narrowly scoped delivery p
     );
     const logSink = resources.ArchiveAccessLogs;
     assert.equal(logSink.DeletionPolicy, 'Retain');
+    assert.equal(logSink.Properties.VersioningConfiguration.Status, 'Enabled');
     assert.equal(logSink.Properties.LoggingConfiguration, undefined);
     assert.equal(
       logSink.Properties.LifecycleConfiguration.Rules[0].ExpirationInDays,
+      90
+    );
+    assert.equal(
+      logSink.Properties.LifecycleConfiguration.Rules[0]
+        .NoncurrentVersionExpiration.NoncurrentDays,
       90
     );
     const write =

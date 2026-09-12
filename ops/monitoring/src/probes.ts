@@ -36,7 +36,7 @@ function assertions(value: unknown): Record<string, Scalar> | undefined {
     throw new Error('INVALID_PROBE_ASSERTIONS');
   for (const [path, expected] of entries) {
     if (
-      !/^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*){0,5}$/.test(path) ||
+      !/^[a-zA-Z]\w*(\.[a-zA-Z]\w*){0,5}$/.test(path) ||
       path.length > 100 ||
       path
         .split('.')
@@ -64,7 +64,7 @@ export function parseProbeTargets(serialized: string): ProbeTarget[] {
   }
   if (!Array.isArray(input) || input.length > 10)
     throw new Error('INVALID_PROBE_TARGETS');
-  return input.map((raw) => {
+  const targets = input.map((raw) => {
     const value = record(raw);
     const name = token(value.name, 80);
     if (!name || typeof value.url !== 'string')
@@ -84,6 +84,9 @@ export function parseProbeTargets(serialized: string): ProbeTarget[] {
       jsonEquals: assertions(value.jsonEquals)
     };
   });
+  if (new Set(targets.map((target) => target.name)).size !== targets.length)
+    throw new Error('INVALID_PROBE_TARGETS');
+  return targets;
 }
 
 async function boundedJson(response: Response): Promise<unknown> {

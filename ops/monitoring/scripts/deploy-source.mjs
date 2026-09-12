@@ -1,5 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { approvedAwsCli } from './aws-cli.mjs';
+
+const awsCli = approvedAwsCli();
 
 const environment = process.env.MONITORING_ENVIRONMENT;
 const account = process.env.SOURCE_ACCOUNT_ID;
@@ -24,7 +27,7 @@ if (regions.size !== 1)
   );
 const region = [...regions][0];
 function run(args, capture = false) {
-  const result = spawnSync('aws', [...args, '--region', region], {
+  const result = spawnSync(awsCli, [...args, '--region', region], {
     shell: false,
     encoding: 'utf8',
     stdio: capture ? 'pipe' : 'inherit'

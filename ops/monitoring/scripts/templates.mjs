@@ -115,9 +115,15 @@ function archiveResources(r) {
       },
       LifecycleConfiguration: {
         Rules: [
-          { Id: 'AccessLogRetention', Status: 'Enabled', ExpirationInDays: 90 }
+          {
+            Id: 'AccessLogRetention',
+            Status: 'Enabled',
+            ExpirationInDays: 90,
+            NoncurrentVersionExpiration: { NoncurrentDays: 90 }
+          }
         ]
-      }
+      },
+      VersioningConfiguration: { Status: 'Enabled' }
     }
   };
   r.ArchiveAccessLogsPolicy = {
