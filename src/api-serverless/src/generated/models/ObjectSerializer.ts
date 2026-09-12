@@ -493,6 +493,7 @@ export * from '../models/ApiModerationCheck';
 export * from '../models/ApiModerationCheckDetail';
 export * from '../models/ApiModerationCheckPage';
 export * from '../models/ApiModerationCounts';
+export * from '../models/ApiModerationCurrentState';
 export * from '../models/ApiModerationEvaluation';
 export * from '../models/ApiNft';
 export * from '../models/ApiNftActivityEvent';
@@ -1325,9 +1326,10 @@ import { ApiModerationAction } from '../models/ApiModerationAction';
 import { ApiModerationActionRequest     } from '../models/ApiModerationActionRequest';
 import { ApiModerationAudit } from '../models/ApiModerationAudit';
 import { ApiModerationCheck , ApiModerationCheckSubjectTypeEnum      , ApiModerationCheckPolicyFamilyEnum     , ApiModerationCheckOutcomeEnum   , ApiModerationCheckReviewStatusEnum  , ApiModerationCheckOverrideEnum            } from '../models/ApiModerationCheck';
-import { ApiModerationCheckDetail       , ApiModerationCheckDetailActionEffectEnum   } from '../models/ApiModerationCheckDetail';
+import { ApiModerationCheckDetail        , ApiModerationCheckDetailActionEffectEnum   } from '../models/ApiModerationCheckDetail';
 import { ApiModerationCheckPage } from '../models/ApiModerationCheckPage';
 import { ApiModerationCounts } from '../models/ApiModerationCounts';
+import { ApiModerationCurrentState, ApiModerationCurrentStateProfileStatusEnum  , ApiModerationCurrentStateDropStatusEnum      } from '../models/ApiModerationCurrentState';
 import { ApiModerationEvaluation    , ApiModerationEvaluationOutcomeEnum           } from '../models/ApiModerationEvaluation';
 import { ApiNft      , ApiNftTokenTypeEnum                               } from '../models/ApiNft';
 import { ApiNftActivityEvent , ApiNftActivityEventKindEnum                   } from '../models/ApiNftActivityEvent';
@@ -1829,6 +1831,8 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiModerationCheckReviewStatusEnum",
     "ApiModerationCheckOverrideEnum",
     "ApiModerationCheckDetailActionEffectEnum",
+    "ApiModerationCurrentStateProfileStatusEnum",
+    "ApiModerationCurrentStateDropStatusEnum",
     "ApiModerationEvaluationOutcomeEnum",
     "ApiNftTokenTypeEnum",
     "ApiNftActivityEventKindEnum",
@@ -2376,6 +2380,7 @@ let typeMap: {[index: string]: any} = {
     "ApiModerationCheckDetail": ApiModerationCheckDetail,
     "ApiModerationCheckPage": ApiModerationCheckPage,
     "ApiModerationCounts": ApiModerationCounts,
+    "ApiModerationCurrentState": ApiModerationCurrentState,
     "ApiModerationEvaluation": ApiModerationEvaluation,
     "ApiNft": ApiNft,
     "ApiNftActivityEvent": ApiNftActivityEvent,

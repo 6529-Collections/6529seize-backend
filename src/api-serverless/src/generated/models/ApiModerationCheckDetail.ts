@@ -13,6 +13,7 @@
 import { ApiModerationAction } from '../models/ApiModerationAction';
 import { ApiModerationAudit } from '../models/ApiModerationAudit';
 import { ApiModerationCheck } from '../models/ApiModerationCheck';
+import { ApiModerationCurrentState } from '../models/ApiModerationCurrentState';
 import { ApiModerationEvaluation } from '../models/ApiModerationEvaluation';
 import { HttpFile } from '../http/http';
 
@@ -20,6 +21,7 @@ export class ApiModerationCheckDetail {
     'check': ApiModerationCheck;
     'evidence': { [key: string]: any; } | null;
     'current_revision_matches': boolean;
+    'current_state': ApiModerationCurrentState;
     'evidence_expired': boolean;
     'evaluations': Array<ApiModerationEvaluation>;
     'audit': Array<ApiModerationAudit>;
@@ -47,6 +49,12 @@ export class ApiModerationCheckDetail {
             "name": "current_revision_matches",
             "baseName": "current_revision_matches",
             "type": "boolean",
+            "format": ""
+        },
+        {
+            "name": "current_state",
+            "baseName": "current_state",
+            "type": "ApiModerationCurrentState",
             "format": ""
         },
         {
@@ -92,6 +100,7 @@ export enum ApiModerationCheckDetailActionEffectEnum {
     GlobalCategoryRule = 'GLOBAL_CATEGORY_RULE',
     ExactResubmissionPermit = 'EXACT_RESUBMISSION_PERMIT',
     PublishedDrop = 'PUBLISHED_DROP',
-    PublishedField = 'PUBLISHED_FIELD'
+    PublishedField = 'PUBLISHED_FIELD',
+    ProfileStatus = 'PROFILE_STATUS'
 }
 
