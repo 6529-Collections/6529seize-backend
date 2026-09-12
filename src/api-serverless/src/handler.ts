@@ -20,6 +20,7 @@ import {
 import { ids } from '../../ids';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 import { redactWebSocketMessageForLog } from './ws/ws-log-redaction';
+import { operationalResponse } from '../../operational-errors';
 
 const serverlessHttp = require('serverless-http');
 const logger = Logger.get('API_HANDLER');
@@ -60,11 +61,11 @@ export const handler = sentryContext.wrapLambdaHandler(
     );
 
     if (event.requestContext && event.requestContext.routeKey) {
-      return wsHandler(event);
+      return operationalResponse(await wsHandler(event));
     } else {
       return normalizeSetCookieResponse(
         event,
-        await httpHandler(event, context)
+        operationalResponse(await httpHandler(event, context))
       );
     }
   }

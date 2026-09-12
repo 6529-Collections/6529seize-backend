@@ -1,6 +1,7 @@
 import * as Sentry from '@sentry/serverless';
 import { Logger } from '@/logging';
 import type { Handler } from 'aws-lambda';
+import { operationalError, withOperationalContext } from '@/operational-errors';
 
 const logger = Logger.get('SENTRY_CONTEXT');
 
@@ -19,6 +20,7 @@ export function isConfigured() {
 }
 
 export function captureException(error: unknown): void {
+  operationalError('SENTRY_CONTEXT', [error]);
   if (!isConfigured()) {
     return;
   }
@@ -33,6 +35,41 @@ export function wrapLambdaHandler(
   handler: Handler,
   options: LambdaSentryOptions = {}
 ): Handler {
+  const capture: Handler = (event, context, callback) =>
+    withOperationalContext(context.awsRequestId, () => {
+      const report = (error: unknown) => {
+        let shouldCapture = true;
+        try {
+          shouldCapture = options.shouldCaptureException?.(error) !== false;
+        } catch {
+          // Diagnostic filtering must never replace the original invocation failure.
+        }
+        if (shouldCapture) {
+          operationalError(
+            'LAMBDA_HANDLER',
+            [error],
+            context.awsRequestId,
+            'LAMBDA_FAILURE'
+          );
+        }
+      };
+      try {
+        const result = handler(event, context, (error, value) => {
+          if (error) report(error);
+          callback(error, value);
+        });
+        if (result && typeof result.then === 'function') {
+          return result.catch((error: unknown) => {
+            report(error);
+            throw error;
+          });
+        }
+        return result;
+      } catch (error) {
+        report(error);
+        throw error;
+      }
+    });
   if (isConfigured()) {
     Sentry.init({
       dsn: process.env.SENTRY_DSN,
@@ -43,7 +80,7 @@ export function wrapLambdaHandler(
           ? null
           : (options.enrichEvent?.(event, hint.originalException) ?? event)
     });
-    return Sentry.AWSLambda.wrapHandler(handler);
+    return Sentry.AWSLambda.wrapHandler(capture);
   }
-  return handler;
+  return capture;
 }

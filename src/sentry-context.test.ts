@@ -6,17 +6,77 @@ jest.mock('@sentry/serverless', () => ({
 
 import * as Sentry from '@sentry/serverless';
 import { captureException, wrapLambdaHandler } from './sentry.context';
+import type { Context } from 'aws-lambda';
 
 describe('Sentry context', () => {
   const originalDsn = process.env.SENTRY_DSN;
+  const originalFunction = process.env.AWS_LAMBDA_FUNCTION_NAME;
 
   afterEach(() => {
     jest.clearAllMocks();
+    jest.restoreAllMocks();
+    if (originalFunction === undefined)
+      delete process.env.AWS_LAMBDA_FUNCTION_NAME;
+    else process.env.AWS_LAMBDA_FUNCTION_NAME = originalFunction;
     if (originalDsn === undefined) {
       delete process.env.SENTRY_DSN;
     } else {
       process.env.SENTRY_DSN = originalDsn;
     }
+  });
+
+  it('still emits and preserves rejected invocation errors without configured Sentry', async () => {
+    delete process.env.SENTRY_DSN;
+    process.env.AWS_LAMBDA_FUNCTION_NAME = 'worker';
+    const output = jest.spyOn(process.stdout, 'write').mockReturnValue(true);
+    const error = new Error('private request data');
+    const wrapped = wrapLambdaHandler(async () => {
+      throw error;
+    });
+    await expect(
+      wrapped({}, { awsRequestId: 'request-123' } as Context, jest.fn())
+    ).rejects.toBe(error);
+    expect(output).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(output.mock.calls[0][0]))).toMatchObject({
+      code: 'LAMBDA_FAILURE',
+      correlationId: 'request-123'
+    });
+    expect(String(output.mock.calls[0][0])).not.toContain('private');
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+
+  it('preserves callback errors and intentional capture filtering', () => {
+    delete process.env.SENTRY_DSN;
+    process.env.AWS_LAMBDA_FUNCTION_NAME = 'worker';
+    const output = jest.spyOn(process.stdout, 'write').mockReturnValue(true);
+    const error = new Error('expected validation');
+    const callback = jest.fn();
+    const wrapped = wrapLambdaHandler((_event, _context, done) => done(error), {
+      shouldCaptureException: () => false
+    });
+    wrapped({}, { awsRequestId: 'request-123' } as Context, callback);
+    expect(callback).toHaveBeenCalledWith(error, undefined);
+    expect(output).not.toHaveBeenCalled();
+  });
+
+  it('preserves the invocation failure when a diagnostic filter throws', async () => {
+    delete process.env.SENTRY_DSN;
+    process.env.AWS_LAMBDA_FUNCTION_NAME = 'worker';
+    jest.spyOn(process.stdout, 'write').mockReturnValue(true);
+    const original = new Error('original failure');
+    const wrapped = wrapLambdaHandler(
+      async () => {
+        throw original;
+      },
+      {
+        shouldCaptureException: () => {
+          throw new Error('filter failure');
+        }
+      }
+    );
+    await expect(
+      wrapped({}, { awsRequestId: 'request' } as Context, jest.fn())
+    ).rejects.toBe(original);
   });
 
   it('does not let capture failures change worker retry behavior', () => {
