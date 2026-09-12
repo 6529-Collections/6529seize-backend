@@ -1117,53 +1117,62 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     );
 
     // Sub-query: PARTICIPATORY drop IDs in this wave (excludes WINNER drops)
-    const participatoryDropIds = await this.db
-      .execute<{ id: string }>(
-        `select id from ${DROPS_TABLE}
+    const participatoryDropIds = await this.db.execute<{ id: string }>(
+      `select id from ${DROPS_TABLE}
          where wave_id = :waveId
            and drop_type = '${DropType.PARTICIPATORY}'`,
-        { waveId },
-        { wrappedConnection: ctx.connection }
-      );
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
 
-    const dropIds = participatoryDropIds.map((row) => row.id);
-
-    if (dropIds.length === 0) {
+    if (participatoryDropIds.length === 0) {
       ctx.timer?.stop(
         `${this.constructor.name}->resetVotesForParticipatoryDropsInWave`
       );
       return;
     }
 
-    // Clear vote state across all relevant tables for remaining participatory drops
+    // Clear vote state across all relevant tables for remaining participatory drops.
+    // Use joined DELETEs to avoid unbounded IN (:dropIds) lists that could exceed
+    // query/packet limits on large waves.
+    const participatoryDropSubquery = `select id from ${DROPS_TABLE}
+      where wave_id = :waveId
+        and drop_type = '${DropType.PARTICIPATORY}'`;
+
     await this.db.execute(
-      `delete from ${DROP_VOTER_STATE_TABLE} where drop_id in (:dropIds)`,
-      { dropIds },
+      `delete dvs from ${DROP_VOTER_STATE_TABLE} dvs
+       inner join (${participatoryDropSubquery}) d on dvs.drop_id = d.id`,
+      { waveId },
       { wrappedConnection: ctx.connection }
     );
     await this.db.execute(
-      `delete from ${DROP_RANK_TABLE} where drop_id in (:dropIds)`,
-      { dropIds },
+      `delete dr from ${DROP_RANK_TABLE} dr
+       inner join (${participatoryDropSubquery}) d on dr.drop_id = d.id`,
+      { waveId },
       { wrappedConnection: ctx.connection }
     );
     await this.db.execute(
-      `delete from ${DROP_REAL_VOTE_IN_TIME_TABLE} where drop_id in (:dropIds)`,
-      { dropIds },
+      `delete rvit from ${DROP_REAL_VOTE_IN_TIME_TABLE} rvit
+       inner join (${participatoryDropSubquery}) d on rvit.drop_id = d.id`,
+      { waveId },
       { wrappedConnection: ctx.connection }
     );
     await this.db.execute(
-      `delete from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} where drop_id in (:dropIds)`,
-      { dropIds },
+      `delete rvvit from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} rvvit
+       inner join (${participatoryDropSubquery}) d on rvvit.drop_id = d.id`,
+      { waveId },
       { wrappedConnection: ctx.connection }
     );
     await this.db.execute(
-      `delete from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} where drop_id in (:dropIds)`,
-      { dropIds },
+      `delete vcs from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} vcs
+       inner join (${participatoryDropSubquery}) d on vcs.drop_id = d.id`,
+      { waveId },
       { wrappedConnection: ctx.connection }
     );
     await this.db.execute(
-      `delete from ${WAVE_LEADERBOARD_ENTRIES_TABLE} where drop_id in (:dropIds)`,
-      { dropIds },
+      `delete wle from ${WAVE_LEADERBOARD_ENTRIES_TABLE} wle
+       inner join (${participatoryDropSubquery}) d on wle.drop_id = d.id`,
+      { waveId },
       { wrappedConnection: ctx.connection }
     );
 

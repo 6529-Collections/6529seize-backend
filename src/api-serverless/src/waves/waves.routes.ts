@@ -1260,13 +1260,15 @@ const UpdateWaveDecisionsStrategySchema = createWaveDecisionsStrategySchema({
 });
 
 function createWaveConfigSchema(
-  decisionsStrategySchema: Joi.ObjectSchema<ApiWaveDecisionsStrategy>
+  decisionsStrategySchema: Joi.ObjectSchema<ApiWaveDecisionsStrategy>,
+  options?: { readonly isUpdate?: boolean }
 ): Joi.ObjectSchema<
   ApiWaveConfig & {
     period?: ApiIntRange | null;
     winning_thresholds?: unknown[] | null;
   }
 > {
+  const isUpdate = options?.isUpdate ?? false;
   return Joi.object<
     ApiWaveConfig & {
       period?: ApiIntRange | null;
@@ -1312,8 +1314,12 @@ function createWaveConfigSchema(
     admin_drop_deletion_enabled: Joi.boolean().optional().default(false),
     reset_votes_after_win: Joi.when('type', {
       is: Joi.string().valid(ApiWaveType.Approve),
-      then: Joi.boolean().optional().default(false),
-      otherwise: Joi.valid(false).optional().default(false)
+      then: isUpdate
+        ? Joi.boolean().optional()
+        : Joi.boolean().optional().default(false),
+      otherwise: isUpdate
+        ? Joi.valid(false).optional()
+        : Joi.valid(false).optional().default(false)
     })
   });
 }
@@ -1322,11 +1328,12 @@ const WaveConfigSchema = createWaveConfigSchema(
   CreateWaveDecisionsStrategySchema
 );
 
-// For updates, do not default reset_votes_after_win to false —
-// preserve the existing value if the field is omitted.
+// For updates, do not default reset_votes_after_win — preserve the existing
+// stored value if the field is omitted (the mapper handles the fallback).
 const UpdateWaveConfigSchema = createWaveConfigSchema(
-  UpdateWaveDecisionsStrategySchema
-).fork('reset_votes_after_win', (schema) => schema.optional());
+  UpdateWaveDecisionsStrategySchema,
+  { isUpdate: true }
+);
 
 const WaveOutcomeDistributionItemSchema =
   Joi.object<ApiWaveOutcomeDistributionItem>({

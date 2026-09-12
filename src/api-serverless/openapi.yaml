@@ -15770,6 +15770,14 @@ components:
             - $ref: "#/components/schemas/ApiWaveDecisionsStrategy"
         admin_drop_deletion_enabled:
           type: boolean
+        reset_votes_after_win:
+          description: >-
+            When true on an APPROVE wave, after a submission is formalized as a
+            winner, all remaining participatory drops have their votes reset to
+            zero, forcing the community to re-vote on the next candidate in
+            sequence. Defaults to false. Only effective on APPROVE waves.
+          type: boolean
+          default: false
     ApiCreateWaveDropRequest:
       type: object
       required:
@@ -22764,6 +22772,13 @@ components:
           nullable: true
         admin_drop_deletion_enabled:
           type: boolean
+        reset_votes_after_win:
+          description: >-
+            When true on an APPROVE wave, after a submission is formalized as a
+            winner, all remaining participatory drops have their votes reset to
+            zero, forcing the community to re-vote on the next candidate in
+            sequence. Only effective on APPROVE waves.
+          type: boolean
         total_no_of_decisions:
           type: integer
           format: int64
@@ -23242,6 +23257,13 @@ components:
               items:
                 $ref: "#/components/schemas/ApiWaveCreditNft"
         admin_drop_deletion_enabled:
+          type: boolean
+        reset_votes_after_win:
+          description: >-
+            When true on an APPROVE wave, after a submission is formalized as a
+            winner, all remaining participatory drops have their votes reset to
+            zero, forcing the community to re-vote on the next candidate in
+            sequence. Only effective on APPROVE waves.
           type: boolean
         forbid_negative_votes:
           type: boolean
