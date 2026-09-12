@@ -205,7 +205,7 @@ async function generateExtendedData<T, M extends ExtendedBase>(
   // Ascending: smaller is better
   assignRanks(rankedResults, 'edition_size', 'asc', 'competition');
   assignRanks(rankedResults, 'museum_holdings', 'asc');
-  assignRanks(rankedResults, 'research_holdings', 'asc');
+  assignRanks(rankedResults, 'research_holdings', 'asc', 'competition');
   assignRanks(rankedResults, 'edition_size_not_burnt', 'asc', 'competition');
   assignRanks(rankedResults, 'edition_size_cleaned', 'asc', 'competition');
   assignRanks(rankedResults, 'edition_size_ex_research', 'asc', 'competition');

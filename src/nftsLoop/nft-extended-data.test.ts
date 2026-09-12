@@ -267,11 +267,11 @@ describe('nft extended data', () => {
     });
   });
 
-  it('shares lower-is-better supply ranks and leaves non-TDH Memes unranked', async () => {
+  it('shares lower-is-better supply and research ranks and leaves non-TDH Memes unranked', async () => {
     const ownersById = new Map<number, Owner[]>([
-      [1, [owner(1, '0xone', 5)]],
-      [2, [owner(2, '0xtwo', 5)]],
-      [3, [owner(3, '0xthree', 7)]],
+      [1, [owner(1, '0xone', 5), owner(1, RESEARCH_6529_ADDRESS, 2)]],
+      [2, [owner(2, '0xtwo', 5), owner(2, RESEARCH_6529_ADDRESS, 2)]],
+      [3, [owner(3, '0xthree', 7), owner(3, RESEARCH_6529_ADDRESS, 4)]],
       [4, [owner(4, '0xfour', 1)]]
     ]);
     mockOwners(ownersById);
@@ -293,14 +293,14 @@ describe('nft extended data', () => {
       'edition_size_not_burnt_rank',
       'edition_size_cleaned_rank',
       'edition_size_ex_research_rank',
-      'edition_size_ex_museum_and_research_rank'
+      'edition_size_ex_museum_and_research_rank',
+      'research_holdings_rank'
     ] as const) {
       expect(saved[1][field]).toBe(1);
       expect(saved[2][field]).toBe(1);
       expect(saved[3][field]).toBe(3);
       expect(saved[4][field]).toBe(-1);
     }
-    expect(saved[4].research_holdings_rank).toBe(-1);
   });
 });
 
