@@ -122,8 +122,9 @@ function recompute(
   });
 }
 
-beforeEach(() => jest.useFakeTimers().setSystemTime(now));
-afterEach(() => jest.useRealTimers());
+// Keep pool-cleanup callbacks active while the solver sees a fixed deadline clock.
+beforeEach(() => jest.spyOn(Date, 'now').mockReturnValue(now));
+afterEach(() => jest.restoreAllMocks());
 
 it('uses the future holding-only baseline and spends zero when the total target is already met', () => {
   const fixture = source();
