@@ -225,27 +225,49 @@ describe('per-NFT offer pricing', () => {
 
 describe('conservative group allocation', () => {
   it('bounds goal allocations and every partial-fill subset while preserving pinned prices', () => {
-    fc.assert(fc.property(
-      fc.array(fc.record({ ask: fc.integer({ min: 100, max: 100000 }), quantity: fc.integer({ min: 1, max: 100 }), pin: fc.boolean(), fill: fc.boolean() }), { minLength: 1, maxLength: 20 }),
-      fc.integer({ min: 1, max: 1000000 }), fc.integer({ min: 0, max: 1000000 }),
-      (items, budget, balance) => {
-        const input = request({ method: { kind: 'goal' }, max_total_weth_wei: String(budget), assets: items.map((item, index) => ({
-          asset_key: `nft-${index}`, quantity: String(item.quantity), ...(item.pin ? { manual_unit_amount_wei: String(item.ask) } : {})
-        })) });
-        const book = signals(input.assets.map((item) => item.asset_key));
-        items.forEach((item, index) => { book.get(`nft-${index}`)!.ask = reference('ask', String(item.ask)); });
-        const result = allocateCollectOffers(input, book, BigInt(balance));
-        const total = BigInt(result.proposed_weth_wei);
-        expect(total).toBeLessThanOrEqual(BigInt(Math.min(budget, balance)));
-        let partial = BigInt(0);
-        result.rows.forEach((row, index) => {
-          if (items[index].pin) expect(row.unit_amount_wei).toBe(String(items[index].ask));
-          expect(row.quantity).toBe(String(items[index].quantity));
-          if (row.selected && items[index].fill) partial += BigInt(row.total_amount_wei!);
-        });
-        expect(partial).toBeLessThanOrEqual(total);
-      }
-    ), { numRuns: 100 });
+    fc.assert(
+      fc.property(
+        fc.array(
+          fc.record({
+            ask: fc.integer({ min: 100, max: 100000 }),
+            quantity: fc.integer({ min: 1, max: 100 }),
+            pin: fc.boolean(),
+            fill: fc.boolean()
+          }),
+          { minLength: 1, maxLength: 20 }
+        ),
+        fc.integer({ min: 1, max: 1000000 }),
+        fc.integer({ min: 0, max: 1000000 }),
+        (items, budget, balance) => {
+          const input = request({
+            method: { kind: 'goal' },
+            max_total_weth_wei: String(budget),
+            assets: items.map((item, index) => ({
+              asset_key: `nft-${index}`,
+              quantity: String(item.quantity),
+              ...(item.pin ? { manual_unit_amount_wei: String(item.ask) } : {})
+            }))
+          });
+          const book = signals(input.assets.map((item) => item.asset_key));
+          items.forEach((item, index) => {
+            book.get(`nft-${index}`)!.ask = reference('ask', String(item.ask));
+          });
+          const result = allocateCollectOffers(input, book, BigInt(balance));
+          const total = BigInt(result.proposed_weth_wei);
+          expect(total).toBeLessThanOrEqual(BigInt(Math.min(budget, balance)));
+          let partial = BigInt(0);
+          result.rows.forEach((row, index) => {
+            if (items[index].pin)
+              expect(row.unit_amount_wei).toBe(String(items[index].ask));
+            expect(row.quantity).toBe(String(items[index].quantity));
+            if (row.selected && items[index].fill)
+              partial += BigInt(row.total_amount_wei!);
+          });
+          expect(partial).toBeLessThanOrEqual(total);
+        }
+      ),
+      { numRuns: 100 }
+    );
   });
 
   it('keeps pins and chooses the largest affordable count at fixed supported openings, leaving spare capacity', () => {

@@ -50,15 +50,36 @@ describe('bounded collection index reads', () => {
     return db;
   }
 
-  it('rejects a collection read when any expected partition is missing', async () => {
+  it.each([true, 'all'] as const)(
+    'rejects a %s collection read when any expected partition is missing',
+    async (scope) => {
+      const db = fixture();
+      jest
+        .mocked(marketDepthDb.getLatestCompletedSnapshot)
+        .mockResolvedValueOnce(emptyBook)
+        .mockResolvedValueOnce(null);
+      await expect(db.getBooks(token, scope)).rejects.toMatchObject({
+        message: 'The indexed collection is temporarily unavailable.'
+      });
+    }
+  );
+
+  it('keeps both bid and ask terms within a bounded all-orders collection read', async () => {
     const db = fixture();
     jest
       .mocked(marketDepthDb.getLatestCompletedSnapshot)
-      .mockResolvedValueOnce(emptyBook)
-      .mockResolvedValueOnce(null);
-    await expect(db.getBooks(token, true)).rejects.toMatchObject({
-      message: 'The indexed collection is temporarily unavailable.'
-    });
+      .mockResolvedValue(emptyBook);
+    await expect(db.getBooks(token, 'all')).resolves.toHaveLength(2);
+    expect(marketDepthDb.getLatestCompletedSnapshot).toHaveBeenCalledWith(
+      'opensea',
+      token.contract,
+      'collection-a',
+      { limit: expect.any(Number) }
+    );
+    const options = jest.mocked(marketDepthDb.getLatestCompletedSnapshot).mock
+      .calls[0][3];
+    expect(options?.limit).toBeGreaterThan(0);
+    expect(options).not.toHaveProperty('side');
   });
 
   it('preserves token-depth partial reads during a partition refresh', async () => {
