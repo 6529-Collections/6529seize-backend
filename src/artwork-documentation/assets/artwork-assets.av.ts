@@ -1,6 +1,7 @@
-import * as MP4Box from 'mp4box';
+import { execFile } from 'node:child_process';
 import { ArchiveRangeReader } from '@/artwork-documentation/assets/artwork-assets.archive';
 import { AssetInspectionError } from '@/artwork-documentation/assets/artwork-assets.inspection';
+import { validateMp4Tables } from '@/artwork-documentation/assets/artwork-assets-mp4-budget';
 
 type Track = {
   id: number;
@@ -17,6 +18,73 @@ type Track = {
   };
 };
 type Movie = { duration?: number; timescale?: number; tracks?: Track[] };
+
+// Static child source. Untrusted bytes arrive only on stdin; no artwork is executed.
+// MP4Box expands compressed sample counts, so its heap and synchronous work must
+// not share the Lambda process. A budget failure leaves characterization partial.
+const MP4_READER_SCRIPT = `
+const { createFile } = require('mp4box');
+const chunks = [];
+let length = 0;
+process.stdin.on('data', chunk => {
+  length += chunk.length;
+  if (length > 8 * 1024 ** 2 + 65536) process.exit(2);
+  chunks.push(chunk);
+});
+process.stdin.on('end', () => {
+  try {
+    const bytes = Buffer.concat(chunks);
+    const file = createFile(false);
+    let result = null;
+    file.onError = () => { process.exit(2); };
+    file.onReady = info => {
+      if (info.tracks.length > 64) return;
+      result = { duration: info.duration, timescale: info.timescale, tracks: info.tracks.map(track => ({
+        id: track.id, type: track.type, codec: String(track.codec ?? '').slice(0, 400),
+        duration: track.duration, timescale: track.timescale, nb_samples: track.nb_samples,
+        video: track.video, audio: track.audio
+      })) };
+    };
+    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length);
+    buffer.fileStart = 0;
+    file.appendBuffer(buffer);
+    file.flush();
+    process.stdout.write(JSON.stringify(result));
+  } catch { process.exit(2); }
+});
+`;
+
+async function inspectMovie(bytes: Buffer): Promise<Movie | null> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(
+      process.execPath,
+      ['--max-old-space-size=128', '-e', MP4_READER_SCRIPT],
+      {
+        windowsHide: true,
+        timeout: 10_000,
+        killSignal: 'SIGKILL',
+        maxBuffer: 64 * 1024,
+        encoding: 'utf8'
+      },
+      (error, stdout) => {
+        if (error?.code === 2) {
+          reject(new AssetInspectionError('INVALID_MEDIA_CONTAINER'));
+        } else if (error) {
+          resolve(null);
+        } else {
+          try {
+            resolve(JSON.parse(stdout) as Movie | null);
+          } catch {
+            resolve(null);
+          }
+        }
+      }
+    );
+    // A parser that exits early can close the pipe before the bounded input is sent.
+    child.stdin?.on('error', () => undefined);
+    child.stdin?.end(bytes);
+  });
+}
 
 function properties(info: Movie): Record<string, string | number | null> {
   const result: Record<string, string | number | null> = {
@@ -60,6 +128,8 @@ export async function characterizeMp4(
   let fileType: Buffer | undefined;
   for (let count = 0; offset + 8 <= size && count < 1024; count++) {
     const header = await read(offset, Math.min(16, size - offset));
+    if (header.length < 8)
+      throw new AssetInspectionError('INVALID_MEDIA_CONTAINER');
     const shortSize = header.readUInt32BE(0);
     if (shortSize === 1 && header.length < 16)
       throw new AssetInspectionError('INVALID_MEDIA_CONTAINER');
@@ -81,28 +151,9 @@ export async function characterizeMp4(
       if (length > 8 * 1024 ** 2) return null;
       if (!fileType) return null;
       const bytes = Buffer.concat([fileType, await read(offset, length)]);
-      const file = MP4Box.createFile(false);
-      let result: Record<string, string | number | null> | null = null;
-      let invalid = false;
-      file.onReady = (info: Movie) => {
-        result = properties(info);
-      };
-      file.onError = () => {
-        invalid = true;
-      };
-      const buffer = bytes.buffer.slice(
-        bytes.byteOffset,
-        bytes.byteOffset + bytes.length
-      ) as ArrayBuffer & { fileStart: number };
-      buffer.fileStart = 0;
-      try {
-        file.appendBuffer(buffer as never);
-        file.flush();
-      } catch {
-        throw new AssetInspectionError('INVALID_MEDIA_CONTAINER');
-      }
-      if (invalid) throw new AssetInspectionError('INVALID_MEDIA_CONTAINER');
-      return result;
+      validateMp4Tables(bytes, size);
+      const result = await inspectMovie(bytes);
+      return result ? properties(result) : null;
     }
     offset += length;
   }

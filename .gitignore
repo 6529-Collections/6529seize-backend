@@ -14,6 +14,7 @@ src/*/.serverless-offline
 *.zip
 !src/artwork-documentation/museum/fixtures/synthetic-installation.zip
 .museum-corpus-fixtures/
+/scripts/__pycache__/
 *.ignore
 /temp
 .staging-db-dump/

@@ -19,6 +19,7 @@ const choice = (title: string, ...values: string[]): ValueSchema => ({
 });
 const date = (title: string): ValueSchema => ({
   ...text(title, 10),
+  description: 'Use YYYY, YYYY-MM or YYYY-MM-DD.',
   format: 'partial-date'
 });
 const fields = (

@@ -134,10 +134,59 @@ function verifyC2pa() {
     if (reader !== null) throw new Error('Unsigned smoke fixture unexpectedly has credentials');
     process.stdout.write('c2pa-native-reader-ok');
   `;
-  const output = execFileSync(process.execPath, [
-    '--input-type=module', '-e', script, pathToFileURL(entry).href, path.join(fixtures, 'jpeg')
-  ], { timeout: 60000, encoding: 'utf8', windowsHide: true, maxBuffer: 1024 * 1024 });
+  const output = execFileSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      script,
+      pathToFileURL(entry).href,
+      path.join(fixtures, 'jpeg')
+    ],
+    {
+      timeout: 60000,
+      encoding: 'utf8',
+      windowsHide: true,
+      maxBuffer: 1024 * 1024
+    }
+  );
   assert.equal(output, 'c2pa-native-reader-ok');
+}
+
+function verifyMp4() {
+  const entry = load.resolve('mp4box');
+  assert.ok(entry.startsWith(path.join(root, 'node_modules') + path.sep));
+  const script = `
+    const { createFile } = require(process.argv[1]);
+    const bytes = require('node:fs').readFileSync(process.argv[2]);
+    const file = createFile(false);
+    let tracks = 0;
+    file.onReady = info => { tracks = info.tracks.length; };
+    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length);
+    buffer.fileStart = 0;
+    file.appendBuffer(buffer);
+    file.flush();
+    if (!tracks) process.exit(2);
+    process.stdout.write('mp4-child-reader-ok');
+  `;
+  const output = execFileSync(
+    process.execPath,
+    [
+      '--max-old-space-size=128',
+      '-e',
+      script,
+      entry,
+      path.join(fixtures, 'mp4')
+    ],
+    {
+      timeout: 10000,
+      killSignal: 'SIGKILL',
+      encoding: 'utf8',
+      windowsHide: true,
+      maxBuffer: 65536
+    }
+  );
+  assert.equal(output, 'mp4-child-reader-ok');
 }
 
 async function main() {
@@ -174,6 +223,7 @@ async function main() {
   if (manifest.dependencies?.imagescript) await verifyImageScript();
   if (manifest.dependencies?.['fluent-ffmpeg']) verifyFfmpeg();
   if (manifest.dependencies?.['@contentauth/c2pa-node']) verifyC2pa();
+  if (manifest.dependencies?.mp4box) verifyMp4();
   if (process.argv.includes('--lambda')) {
     const handler = load(path.join(root, 'index.js')).handler;
     assert.equal(typeof handler, 'function');

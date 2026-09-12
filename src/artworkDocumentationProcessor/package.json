@@ -16,6 +16,7 @@
   "dependencies": {
     "@contentauth/c2pa-node": "0.9.5",
     "esbuild": "^0.28.1",
+    "mp4box": "2.3.0",
     "sharp": "0.35.4"
   },
   "devDependencies": {

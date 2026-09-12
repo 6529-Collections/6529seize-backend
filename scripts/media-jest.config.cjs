@@ -13,6 +13,7 @@ module.exports = {
     '<rootDir>/src/mediaResizerLoop/media-resizer-runtime.test.ts',
     '<rootDir>/src/nft-links/nft-link-media-preview.test.ts',
     '<rootDir>/src/artwork-documentation/assets/artwork-assets-processor.test.ts',
+    '<rootDir>/src/artwork-documentation/assets/artwork-assets-av.test.ts',
     '<rootDir>/src/api-serverless/src/multer-middleware.test.ts'
   ],
   testTimeout: 30000,
