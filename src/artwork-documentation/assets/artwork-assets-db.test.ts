@@ -183,6 +183,87 @@ describe('artwork archive reservations and leases', () => {
     expect((await db.find(row.id))?.state).toBe('ready');
   });
 
+  it('claims due processing rows in order while retaining large technical payloads', async () => {
+    const now = Date.now();
+    const technical = JSON.stringify({ warnings: ['x'.repeat(300000)] });
+    const parts = JSON.stringify({ receipts: 'y'.repeat(100000) });
+    const later = await db.reserve(
+      anArtworkAsset({ state: 'processing', next_attempt_at: now - 100 })
+    );
+    const first = await db.reserve(
+      anArtworkAsset({
+        state: 'processing',
+        next_attempt_at: now - 200,
+        attempts: 2,
+        technical_metadata_json: technical,
+        parts_json: parts
+      })
+    );
+    await db.reserve(
+      anArtworkAsset({ state: 'processing', next_attempt_at: now + 1 })
+    );
+    await db.reserve(
+      anArtworkAsset({
+        state: 'processing',
+        next_attempt_at: now - 300,
+        lease_until: now + 1
+      })
+    );
+
+    expect(await db.claimProcessing(now)).toMatchObject({
+      id: first.id,
+      attempts: 3,
+      technical_metadata_json: technical,
+      parts_json: parts
+    });
+    expect(await db.claimProcessing(now)).toMatchObject({ id: later.id });
+    expect(await db.claimProcessing(now)).toBeNull();
+    expect((await db.find(first.id))?.technical_metadata_json).toBe(technical);
+  });
+
+  it('claims only eligible cleanup rows in expiry order with large technical payloads', async () => {
+    const now = Date.now();
+    const technical = JSON.stringify({ warnings: ['x'.repeat(300000)] });
+    const first = await db.reserve(
+      anArtworkAsset({
+        state: 'expired',
+        expires_at: now - 200,
+        attempts: 2,
+        technical_metadata_json: technical
+      })
+    );
+    const later = await db.reserve(
+      anArtworkAsset({ state: 'ready', expires_at: now - 100, attempts: 7 })
+    );
+    for (const patch of [
+      { referenced: 1 },
+      { reserved_bytes: 0 },
+      { expires_at: now + 1 },
+      { lease_until: now + 1 },
+      { next_attempt_at: now + 1 }
+    ]) {
+      await db.reserve(
+        anArtworkAsset({ state: 'ready', expires_at: now - 300, ...patch })
+      );
+    }
+    await db.reserve(
+      anArtworkAsset({ state: 'processing', expires_at: now - 300 })
+    );
+
+    expect(await db.claimCleanup(now)).toMatchObject({
+      id: first.id,
+      attempts: 3,
+      technical_metadata_json: technical
+    });
+    expect(await db.claimCleanup(now)).toMatchObject({
+      id: later.id,
+      state: 'expired',
+      attempts: 1
+    });
+    expect(await db.claimCleanup(now)).toBeNull();
+    expect((await db.find(first.id))?.technical_metadata_json).toBe(technical);
+  });
+
   it('retains originals referenced by any committed revision', async () => {
     const row = await db.reserve(
       anArtworkAsset({ state: 'ready', expires_at: Date.now() - 1000 })

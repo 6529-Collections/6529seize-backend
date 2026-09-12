@@ -1,6 +1,7 @@
 import { Readable } from 'node:stream';
 import { RequestContext } from '@/request.context';
 import { ArtworkDocumentationDb } from '../../artwork-documentation.db';
+import { AD_DOSSIER_EXPORTS } from '@/artwork-documentation/artwork-documentation.tables';
 import { artworkAssetStorage } from '../../assets/artwork-assets.storage';
 import { dossierSourceHash } from './dossier';
 import { dossierFixture } from './dossier-fixture';
@@ -33,7 +34,12 @@ function fixture() {
         run(connection)
     ),
     query: jest.fn(async () => []),
-    one: jest.fn(async (): Promise<DossierExportRow | null> => row)
+    one: jest.fn(
+      async (
+        sql: string
+      ): Promise<DossierExportRow | Pick<DossierExportRow, 'id'> | null> =>
+        sql.startsWith('SELECT id ') ? { id: row.id } : row
+    )
   };
   const chunks: Buffer[] = [];
   const storage = {
@@ -129,6 +135,56 @@ it('does not start storage work when no eligible lease exists', async () => {
   const f = fixture();
   f.db.one.mockResolvedValue(null);
   expect(await f.service.tick()).toBe(false);
+  expect(f.storage.upload).not.toHaveBeenCalled();
+  expect(f.read).not.toHaveBeenCalled();
+  expect(f.db.one).toHaveBeenCalledTimes(1);
+});
+
+it('sorts only queue IDs, then loads the locked snapshot on the same transaction before incrementing its lease', async () => {
+  const f = fixture();
+  const now = Date.now();
+  jest.spyOn(Date, 'now').mockReturnValue(now);
+  f.row.state = 'processing';
+  f.row.attempts = 2;
+  f.row.lease_until = now - 1;
+  expect(await f.service.tick()).toBe(true);
+  expect(f.db.one).toHaveBeenNthCalledWith(
+    1,
+    `SELECT id FROM ${AD_DOSSIER_EXPORTS} WHERE state IN ('queued','processing') AND lease_until<:now AND expires_at>:now AND attempts<3 ORDER BY created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`,
+    { now },
+    { connection: f.connection }
+  );
+  expect(f.db.one).toHaveBeenNthCalledWith(
+    2,
+    `SELECT * FROM ${AD_DOSSIER_EXPORTS} WHERE id=:id FOR UPDATE`,
+    { id: f.row.id },
+    { connection: f.connection }
+  );
+  const lease = now + 18 * 60 * 1000;
+  expect(f.db.query).toHaveBeenNthCalledWith(
+    2,
+    expect.stringContaining(
+      "SET state='processing',lease_until=:lease,attempts=attempts+1 WHERE id=:id"
+    ),
+    { id: f.row.id, lease },
+    { connection: f.connection }
+  );
+  expect(f.db.one.mock.invocationCallOrder[1]).toBeLessThan(
+    f.db.query.mock.invocationCallOrder[1]
+  );
+  expect(f.db.query).toHaveBeenLastCalledWith(
+    expect.stringContaining("SET state='ready'"),
+    expect.objectContaining({ id: f.row.id, lease }),
+    {}
+  );
+});
+
+it('does not acquire a lease or process a snapshot if its locked detail read fails', async () => {
+  const f = fixture();
+  const error = new Error('Database detail read failed');
+  f.db.one.mockResolvedValueOnce({ id: f.row.id }).mockRejectedValueOnce(error);
+  await expect(f.service.tick()).rejects.toBe(error);
+  expect(f.db.query).toHaveBeenCalledTimes(1);
   expect(f.storage.upload).not.toHaveBeenCalled();
   expect(f.read).not.toHaveBeenCalled();
 });

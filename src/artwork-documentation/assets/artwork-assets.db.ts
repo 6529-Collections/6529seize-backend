@@ -183,11 +183,14 @@ export class ArtworkAssetsDb extends LazyDbAccessCompatibleService {
   }
   async claimProcessing(now: number): Promise<StoredAsset | null> {
     return this.db.executeNativeQueriesInTransaction(async (connection) => {
-      const asset = await this.db.oneOrNull<StoredAsset>(
-        `select * from ${ARTWORK_ASSETS_TABLE} where state = 'processing' and next_attempt_at <= :now and lease_until < :now order by next_attempt_at asc limit 1 for update skip locked`,
+      // Keep characterization and multipart payloads out of the queue sort.
+      const candidate = await this.db.oneOrNull<Pick<StoredAsset, 'id'>>(
+        `select id from ${ARTWORK_ASSETS_TABLE} where state = 'processing' and next_attempt_at <= :now and lease_until < :now order by next_attempt_at asc limit 1 for update skip locked`,
         { now },
         { wrappedConnection: connection }
       );
+      if (!candidate) return null;
+      const asset = await this.find(candidate.id, undefined, connection, true);
       if (!asset) return null;
       const lease = now + 15 * 60_000;
       await this.update(
@@ -221,11 +224,14 @@ export class ArtworkAssetsDb extends LazyDbAccessCompatibleService {
   }
   async claimCleanup(now: number): Promise<StoredAsset | null> {
     return this.db.executeNativeQueriesInTransaction(async (connection) => {
-      const asset = await this.db.oneOrNull<StoredAsset>(
-        `select * from ${ARTWORK_ASSETS_TABLE} where referenced = 0 and reserved_bytes > 0 and expires_at > 0 and expires_at < :now and state <> 'processing' and lease_until < :now and next_attempt_at <= :now order by expires_at asc limit 1 for update skip locked`,
+      // Hydrate the full row only after its bounded candidate is locked.
+      const candidate = await this.db.oneOrNull<Pick<StoredAsset, 'id'>>(
+        `select id from ${ARTWORK_ASSETS_TABLE} where referenced = 0 and reserved_bytes > 0 and expires_at > 0 and expires_at < :now and state <> 'processing' and lease_until < :now and next_attempt_at <= :now order by expires_at asc limit 1 for update skip locked`,
         { now },
         { wrappedConnection: connection }
       );
+      if (!candidate) return null;
+      const asset = await this.find(candidate.id, undefined, connection, true);
       if (!asset) return null;
       const claimed: StoredAsset = {
         ...asset,
