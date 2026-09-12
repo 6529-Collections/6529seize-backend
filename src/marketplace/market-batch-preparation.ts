@@ -263,7 +263,7 @@ export class MarketBatchPreparation {
         components: order.components
       })),
       feePolicyVersion: 'EXACT_SELECTED_SIGNED_ORDERS',
-      validUntil: Math.min(Date.now() + 20000, end * 1000)
+      validUntil: end * 1000
     };
   }
 }

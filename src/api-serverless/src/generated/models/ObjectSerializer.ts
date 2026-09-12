@@ -414,8 +414,10 @@ export * from '../models/ApiMarketBatchItemRequest';
 export * from '../models/ApiMarketBatchMirrorTerms';
 export * from '../models/ApiMarketBatchOperation';
 export * from '../models/ApiMarketBatchPrepareRequest';
+export * from '../models/ApiMarketBatchSendAttempt';
 export * from '../models/ApiMarketBatchSettlement';
 export * from '../models/ApiMarketBatchSettlementItem';
+export * from '../models/ApiMarketBatchTransaction';
 export * from '../models/ApiMarketComponents';
 export * from '../models/ApiMarketConsiderationItem';
 export * from '../models/ApiMarketCurrency';
@@ -1223,8 +1225,10 @@ import { ApiMarketBatchItemRequest } from '../models/ApiMarketBatchItemRequest';
 import { ApiMarketBatchMirrorTerms } from '../models/ApiMarketBatchMirrorTerms';
 import { ApiMarketBatchOperation  , ApiMarketBatchOperationStateEnum               , ApiMarketBatchOperationKindEnum  , ApiMarketBatchOperationExecutionPolicyEnum        } from '../models/ApiMarketBatchOperation';
 import { ApiMarketBatchPrepareRequest, ApiMarketBatchPrepareRequestKindEnum    , ApiMarketBatchPrepareRequestCurrencyEnum  , ApiMarketBatchPrepareRequestExecutionPolicyEnum     } from '../models/ApiMarketBatchPrepareRequest';
+import { ApiMarketBatchSendAttempt , ApiMarketBatchSendAttemptPurposeEnum    , ApiMarketBatchSendAttemptStatusEnum     } from '../models/ApiMarketBatchSendAttempt';
 import { ApiMarketBatchSettlement, ApiMarketBatchSettlementOutcomeEnum        } from '../models/ApiMarketBatchSettlement';
 import { ApiMarketBatchSettlementItem } from '../models/ApiMarketBatchSettlementItem';
+import { ApiMarketBatchTransaction    , ApiMarketBatchTransactionPurposeEnum  , ApiMarketBatchTransactionApprovalScopeEnum       } from '../models/ApiMarketBatchTransaction';
 import { ApiMarketComponents } from '../models/ApiMarketComponents';
 import { ApiMarketConsiderationItem } from '../models/ApiMarketConsiderationItem';
 import { ApiMarketCurrency } from '../models/ApiMarketCurrency';
@@ -1732,7 +1736,11 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiMarketBatchPrepareRequestKindEnum",
     "ApiMarketBatchPrepareRequestCurrencyEnum",
     "ApiMarketBatchPrepareRequestExecutionPolicyEnum",
+    "ApiMarketBatchSendAttemptPurposeEnum",
+    "ApiMarketBatchSendAttemptStatusEnum",
     "ApiMarketBatchSettlementOutcomeEnum",
+    "ApiMarketBatchTransactionPurposeEnum",
+    "ApiMarketBatchTransactionApprovalScopeEnum",
     "ApiMarketDepthStatusEnum",
     "ApiMarketKind",
     "ApiMarketOperationStateEnum",
@@ -2226,8 +2234,10 @@ let typeMap: {[index: string]: any} = {
     "ApiMarketBatchMirrorTerms": ApiMarketBatchMirrorTerms,
     "ApiMarketBatchOperation": ApiMarketBatchOperation,
     "ApiMarketBatchPrepareRequest": ApiMarketBatchPrepareRequest,
+    "ApiMarketBatchSendAttempt": ApiMarketBatchSendAttempt,
     "ApiMarketBatchSettlement": ApiMarketBatchSettlement,
     "ApiMarketBatchSettlementItem": ApiMarketBatchSettlementItem,
+    "ApiMarketBatchTransaction": ApiMarketBatchTransaction,
     "ApiMarketComponents": ApiMarketComponents,
     "ApiMarketConsiderationItem": ApiMarketConsiderationItem,
     "ApiMarketCurrency": ApiMarketCurrency,

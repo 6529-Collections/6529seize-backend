@@ -120,8 +120,32 @@ describe('atomic batch preparation', () => {
     );
     expect(prepared.approvalTransactions).toEqual([]);
     expect(prepared.transaction.value).toBe('300');
-    expect(prepared.validUntil).toBe(1520000);
+    expect(prepared.validUntil).toBe(1590000);
     expect(prepared.mirrorTerms.endTime).toBe('1590');
+  });
+  test('caps review by the earliest seller expiry instead of the preparation work budget', async () => {
+    jest.setSystemTime(2950000);
+    const s = setup();
+    s.chain.snapshot.mockResolvedValue({
+      block_number: 10,
+      block_hash: `0x${'11'.repeat(32)}`,
+      block_timestamp: 2950
+    });
+    s.chain.rpc.getBlock.mockResolvedValue({
+      hash: `0x${'11'.repeat(32)}`,
+      timestamp: 2950,
+      gasLimit: BigInt(60000000)
+    });
+    const prepared = await s.prepare();
+    expect(prepared.mirrorTerms.endTime).toBe('3000');
+    expect(prepared.validUntil).toBe(3000000);
+    expect(s.chain.simulate).toHaveBeenCalledTimes(1);
+  });
+  test('still refuses authorizations with insufficient review time', async () => {
+    jest.setSystemTime(2980000);
+    const s = setup();
+    await expect(s.prepare()).rejects.toThrow('expires too soon');
+    expect(s.chain.simulate).not.toHaveBeenCalled();
   });
   test('never substitutes an exact order after its remaining quantity becomes insufficient', async () => {
     const s = setup();

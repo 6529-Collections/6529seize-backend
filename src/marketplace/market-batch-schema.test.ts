@@ -11,6 +11,39 @@ import {
   MARKET_SEAPORT,
   MARKET_ZERO_ADDRESS
 } from '@/marketplace/seaport.registry';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { parse } from 'yaml';
+
+it('keeps the public batch calldata bound aligned without widening legacy transactions', () => {
+  const spec = parse(
+    readFileSync(join(__dirname, '../api-serverless/openapi.yaml'), 'utf8')
+  ) as {
+    components: {
+      schemas: Record<
+        string,
+        { properties: Record<string, { maxLength?: number; $ref?: string }> }
+      >;
+    };
+  };
+  const schemas = spec.components.schemas;
+  expect(schemas.ApiMarketTransaction.properties.data.maxLength).toBe(100000);
+  expect(schemas.ApiMarketBatchTransaction.properties.data.maxLength).toBe(
+    2 + 2 * MARKET_BATCH_LIMITS.max_calldata_bytes
+  );
+  expect(schemas.ApiMarketBatchOperation.properties.transaction.$ref).toBe(
+    '#/components/schemas/ApiMarketBatchTransaction'
+  );
+  expect(schemas.ApiMarketBatchOperation.properties.send_attempt.$ref).toBe(
+    '#/components/schemas/ApiMarketBatchSendAttempt'
+  );
+  expect(schemas.ApiMarketBatchSendAttempt.properties.transaction.$ref).toBe(
+    '#/components/schemas/ApiMarketBatchTransaction'
+  );
+  expect(schemas.ApiMarketSendAttempt.properties.transaction.$ref).toBe(
+    '#/components/schemas/ApiMarketTransaction'
+  );
+});
 
 function request() {
   return {

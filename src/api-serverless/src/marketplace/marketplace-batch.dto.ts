@@ -6,9 +6,15 @@ import {
 } from '@/api/generated/models/ApiMarketBatchOperation';
 import { ApiMarketBatchSettlementOutcomeEnum } from '@/api/generated/models/ApiMarketBatchSettlement';
 import {
-  ApiMarketSendAttemptPurposeEnum,
-  ApiMarketSendAttemptStatusEnum
-} from '@/api/generated/models/ApiMarketSendAttempt';
+  ApiMarketBatchSendAttemptPurposeEnum,
+  ApiMarketBatchSendAttemptStatusEnum
+} from '@/api/generated/models/ApiMarketBatchSendAttempt';
+import {
+  ApiMarketBatchTransaction,
+  ApiMarketBatchTransactionPurposeEnum,
+  ApiMarketBatchTransactionApprovalScopeEnum
+} from '@/api/generated/models/ApiMarketBatchTransaction';
+import { MarketTransaction } from '@/marketplace/provider.types';
 import { MarketBatchPrepareRequest } from '@/marketplace/market-batch.schema';
 import { MarketBatchPrepared } from '@/marketplace/market-batch.types';
 import { MarketOperationRow } from '@/marketplace/market-operations.db';
@@ -20,6 +26,26 @@ import {
   transactionDto,
   componentsDto
 } from '@/api/marketplace/marketplace-shared.dto';
+
+function batchTransactionDto(
+  transaction: MarketTransaction
+): ApiMarketBatchTransaction {
+  const {
+    purpose: _purpose,
+    approval_scope: _scope,
+    ...dto
+  } = transactionDto(transaction);
+  return {
+    ...dto,
+    purpose: transaction.purpose as ApiMarketBatchTransactionPurposeEnum,
+    ...(transaction.approvalScope
+      ? {
+          approval_scope:
+            transaction.approvalScope as ApiMarketBatchTransactionApprovalScopeEnum
+        }
+      : {})
+  };
+}
 
 export function batchOperationDto(
   row: MarketOperationRow,
@@ -78,7 +104,7 @@ export function batchOperationDto(
     ...(prepared
       ? {
           transaction: {
-            ...transactionDto(prepared.transaction),
+            ...batchTransactionDto(prepared.transaction),
             ...prepared.gas
           },
           mirror_terms: {
@@ -95,11 +121,11 @@ export function batchOperationDto(
       ? {
           send_attempt: {
             attempt_id: attempt.attempt_id,
-            purpose: attempt.purpose as ApiMarketSendAttemptPurposeEnum,
-            status: attempt.status as ApiMarketSendAttemptStatusEnum,
+            purpose: attempt.purpose as ApiMarketBatchSendAttemptPurposeEnum,
+            status: attempt.status as ApiMarketBatchSendAttemptStatusEnum,
             transaction_digest: attempt.transaction_digest,
             snapshot_block: attempt.snapshot_block,
-            transaction: transactionDto(attempt.transaction),
+            transaction: batchTransactionDto(attempt.transaction),
             transaction_hash: attempt.transaction_hash ?? null
           }
         }
