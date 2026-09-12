@@ -9,7 +9,9 @@ on:
       - 'src/api-serverless/src/multer-middleware*'
       - 'src/media/**'
       - 'src/drops/drop-media-sanitizer*'
-      - 'src/artwork-documentation/assets/**'
+      - 'src/artwork-documentation/**'
+      - 'scripts/*artwork*'
+      - 'scripts/*museum*'
       - 'src/nft-links/nft-link-media-preview*'
       - 'src/artworkDocumentationProcessor/**'
       - 'src/dropMediaSanitizer/**'
@@ -32,6 +34,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  museum-standards:
+    name: Museum dossier standards
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.17.1'
+      - name: Install validation dependencies
+        run: |
+          ./bin/6529 ci
+          python3 -m venv "$RUNNER_TEMP/museum-validator"
+          "$RUNNER_TEMP/museum-validator/bin/pip" install --disable-pip-version-check lxml==6.1.1 jsonschema==4.25.1
+      - name: Validate portable artwork records independently
+        run: |
+          ./bin/6529 exec node scripts/build-artwork-schema-bundle.cjs --check
+          ./bin/6529 exec ts-node --transpile-only -r tsconfig-paths/register scripts/write-artwork-dossier-fixture.ts "$RUNNER_TEMP/artwork-dossier"
+          "$RUNNER_TEMP/museum-validator/bin/python" scripts/validate-artwork-dossier.py "$RUNNER_TEMP/artwork-dossier"
+          ./bin/6529 exec ts-node --transpile-only -r tsconfig-paths/register scripts/write-museum-corpus.ts "$RUNNER_TEMP/museum-corpus"
+          "$RUNNER_TEMP/museum-validator/bin/python" scripts/validate-museum-corpus.py "$RUNNER_TEMP/museum-corpus"
+
   native:
     name: Native media (${{ matrix.os }})
     strategy:

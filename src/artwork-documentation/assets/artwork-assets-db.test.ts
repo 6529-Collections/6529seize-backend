@@ -38,6 +38,26 @@ describe('artwork archive reservations and leases', () => {
     db = new ArtworkAssetsDb(() => sqlExecutor);
   });
 
+  it('loads compact file lists without large characterization or multipart payloads while preserving detail bytes', async () => {
+    const technical = JSON.stringify({ warnings: ['x'.repeat(200000)] });
+    const asset = await db.reserve(
+      anArtworkAsset({
+        technical_metadata_json: technical,
+        parts_json: JSON.stringify({ receipts: 'y'.repeat(100000) })
+      })
+    );
+    const list = await db.listSummaries('context-1');
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({
+      id: asset.id,
+      filename: asset.filename,
+      size_bytes: 9
+    });
+    expect(list[0]).not.toHaveProperty('technical_metadata_json');
+    expect(list[0]).not.toHaveProperty('parts_json');
+    expect((await db.find(asset.id))?.technical_metadata_json).toBe(technical);
+  });
+
   it('rechecks a newly upgraded profile before stale upload authorization reserves bytes', async () => {
     let releaseUpgrade!: () => void;
     let signalLocked!: () => void;
@@ -83,25 +103,42 @@ describe('artwork archive reservations and leases', () => {
     expect(rows).toEqual([]);
   });
 
-  it('serializes simultaneous reservations at the 20GiB context boundary', async () => {
-    const fourGiB = 4 * 1024 ** 3;
+  it('serializes simultaneous reservations at the 128GiB context boundary', async () => {
+    const eightGiB = 8 * 1024 ** 3;
     const results = await Promise.allSettled(
-      Array.from({ length: 6 }, () =>
+      Array.from({ length: 17 }, () =>
         db.reserve(
-          anArtworkAsset({ size_bytes: fourGiB, reserved_bytes: fourGiB })
+          anArtworkAsset({
+            state: 'ready',
+            size_bytes: eightGiB,
+            reserved_bytes: eightGiB
+          })
         )
       )
     );
     expect(
       results.filter((result) => result.status === 'fulfilled')
-    ).toHaveLength(5);
+    ).toHaveLength(16);
     expect(
       results.filter((result) => result.status === 'rejected')
     ).toHaveLength(1);
     const rows = await db.list('context-1');
     expect(rows.reduce((sum, row) => sum + Number(row.reserved_bytes), 0)).toBe(
-      20 * 1024 ** 3
+      128 * 1024 ** 3
     );
+  });
+
+  it('independently caps simultaneous active uploads at five below the context byte quota', async () => {
+    const results = await Promise.allSettled(
+      Array.from({ length: 6 }, () => db.reserve(anArtworkAsset()))
+    );
+    expect(
+      results.filter((result) => result.status === 'fulfilled')
+    ).toHaveLength(5);
+    const rejected = results.find(
+      (result) => result.status === 'rejected'
+    ) as PromiseRejectedResult;
+    expect(rejected.reason).toMatchObject({ code: 'TOO_MANY_ACTIVE_UPLOADS' });
   });
 
   it('replays an identical upload request without a second reservation', async () => {

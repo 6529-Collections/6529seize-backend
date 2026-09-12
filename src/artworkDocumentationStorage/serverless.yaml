@@ -51,6 +51,17 @@ resources:
               Prefix: previews/
               NoncurrentVersionExpiration:
                 NoncurrentDays: 7
+            - Id: RemoveReplacedValidationReportVersions
+              Status: Enabled
+              Prefix: validation-reports/
+              NoncurrentVersionExpiration:
+                NoncurrentDays: 7
+            - Id: ExpireDownloadableDossiers
+              Status: Enabled
+              Prefix: exports/
+              ExpirationInDays: 8
+              NoncurrentVersionExpiration:
+                NoncurrentDays: 1
 
     ArtworkArchiveBucketPolicy:
       Type: AWS::S3::BucketPolicy
@@ -89,6 +100,8 @@ resources:
               Resource:
                 - !Sub '${ArtworkArchiveBucket.Arn}/originals/*'
                 - !Sub '${ArtworkArchiveBucket.Arn}/previews/*'
+                - !Sub '${ArtworkArchiveBucket.Arn}/validation-reports/*'
+                - !Sub '${ArtworkArchiveBucket.Arn}/exports/*'
 
     ArtworkMalwareScanRole:
       Type: AWS::IAM::Role

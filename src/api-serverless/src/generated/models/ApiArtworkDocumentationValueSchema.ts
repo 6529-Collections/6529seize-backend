@@ -13,6 +13,8 @@
 import { HttpFile } from '../http/http';
 
 export class ApiArtworkDocumentationValueSchema {
+    'title'?: string;
+    'unique_items'?: boolean;
     'type'?: string;
     '_enum'?: Array<any>;
     'properties'?: { [key: string]: ApiArtworkDocumentationValueSchema; };
@@ -34,6 +36,18 @@ export class ApiArtworkDocumentationValueSchema {
     static readonly mapping: {[index: string]: string} | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
+        {
+            "name": "title",
+            "baseName": "title",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "unique_items",
+            "baseName": "uniqueItems",
+            "type": "boolean",
+            "format": ""
+        },
         {
             "name": "type",
             "baseName": "type",
@@ -98,13 +112,13 @@ export class ApiArtworkDocumentationValueSchema {
             "name": "minimum",
             "baseName": "minimum",
             "type": "number",
-            "format": "int64"
+            "format": ""
         },
         {
             "name": "maximum",
             "baseName": "maximum",
             "type": "number",
-            "format": "int64"
+            "format": ""
         },
         {
             "name": "format",

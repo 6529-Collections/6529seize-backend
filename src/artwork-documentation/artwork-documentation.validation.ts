@@ -65,6 +65,15 @@ function validateFormat(value: string, format?: string): boolean {
   if (!format) return true;
   if (format === 'uuid')
     return /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(value);
+  if (format === 'ethereum-address') return /^0x[a-f\d]{40}$/i.test(value);
+  if (format === 'uint256-string') {
+    const maximum =
+      '115792089237316195423570985008687907853269984665640564039457584007913129639935';
+    return (
+      /^(0|[1-9]\d{0,77})$/.test(value) &&
+      (value.length < maximum.length || value <= maximum)
+    );
+  }
   if (format === 'bcp47') {
     try {
       return Intl.getCanonicalLocales(value).length === 1;
@@ -77,6 +86,18 @@ function validateFormat(value: string, format?: string): boolean {
       const url = new URL(value);
       return (
         ['https:', 'ipfs:', 'ar:'].includes(url.protocol) &&
+        !url.username &&
+        !url.password
+      );
+    } catch {
+      return false;
+    }
+  }
+  if (format === 'authority-uri') {
+    try {
+      const url = new URL(value);
+      return (
+        ['http:', 'https:'].includes(url.protocol) &&
         !url.username &&
         !url.password
       );
@@ -117,6 +138,9 @@ export function matchesSchema(value: unknown, schema: ValueSchema): boolean {
         Array.isArray(value) &&
         value.length >= (schema.minItems ?? 0) &&
         value.length <= (schema.maxItems ?? 30) &&
+        (!schema.uniqueItems ||
+          new Set(value.map((item) => JSON.stringify(item))).size ===
+            value.length) &&
         value.every((item) => matchesSchema(item, schema.items!))
       );
     case 'object': {

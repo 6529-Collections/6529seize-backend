@@ -1,6 +1,7 @@
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
+import { PDFDocument } from 'pdf-lib';
 import { ArtworkAssetsDb } from '@/artwork-documentation/assets/artwork-assets.db';
 import { ArtworkAssetStorage } from '@/artwork-documentation/assets/artwork-assets.storage';
 import { ArtworkAssetsProcessor } from '@/artwork-documentation/assets/artwork-assets.processor';
@@ -71,6 +72,46 @@ describe('archive verification worker', () => {
       expect.objectContaining({
         state: 'quarantined',
         failure_code: 'UPLOAD_SIZE_MISMATCH'
+      })
+    );
+  });
+  it('validates object-stream PDFs while recording the digest of the untouched original', async () => {
+    const document = await PDFDocument.create();
+    document.addPage([100, 100]);
+    const bytes = Buffer.from(await document.save());
+    const { processor, asset, db, storage } = setup('NO_THREATS_FOUND', bytes);
+    asset.extension = 'pdf';
+    await processor.process(asset);
+    expect(db.finishProcessing).toHaveBeenCalledWith(
+      asset,
+      expect.objectContaining({
+        state: 'ready',
+        sha256: createHash('sha256').update(bytes).digest('hex')
+      })
+    );
+    expect(storage.putPreview).not.toHaveBeenCalled();
+    const patch = (
+      db.finishProcessing.mock.calls as unknown as [unknown, unknown][]
+    )[0][1] as {
+      technical_metadata_json: string;
+    };
+    expect(JSON.parse(patch.technical_metadata_json).properties).toMatchObject({
+      page_count: 1,
+      pdf_object_stream_normalization_required: true
+    });
+  });
+  it('quarantines a PDF rejected by website policy even after a clean malware scan', async () => {
+    const { processor, asset, db } = setup(
+      'NO_THREATS_FOUND',
+      Buffer.from('%PDF-1.7\n/JavaScript')
+    );
+    asset.extension = 'pdf';
+    await processor.process(asset);
+    expect(db.finishProcessing).toHaveBeenCalledWith(
+      asset,
+      expect.objectContaining({
+        state: 'quarantined',
+        failure_code: 'PDF_CONTENT_REJECTED'
       })
     );
   });

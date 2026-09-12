@@ -6,7 +6,7 @@
   "scripts": {
     "preinstall": "node ../../scripts/require-6529-command.cjs",
     "prebuild": "node ../../scripts/require-6529-command.cjs && node ../../scripts/require-lambda-media-build.cjs && rm -rf dist && mkdir -p dist && rm -rf node_modules",
-    "build": "node ../../scripts/require-6529-command.cjs && SHARP_IGNORE_GLOBAL_LIBVIPS=1 ../../bin/6529 ci --os=linux --cpu=x64 --libc=glibc --include=optional && esbuild --external:sharp index.ts --bundle --sourcemap --platform=node --target=es2020 --outfile=dist/index.js --metafile=dist/esbuild-meta.json",
+    "build": "node ../../scripts/require-6529-command.cjs && SHARP_IGNORE_GLOBAL_LIBVIPS=1 ../../bin/6529 ci --os=linux --cpu=x64 --libc=glibc --include=optional && esbuild --external:sharp --external:@contentauth/c2pa-node index.ts --bundle --sourcemap --platform=node --target=es2020 --outfile=dist/index.js --metafile=dist/esbuild-meta.json",
     "postbuild": "node ../../scripts/require-6529-command.cjs && cp -r node_modules dist/ && cp package.json dist/ && cd dist && zip -rq index.zip index.js index.js.map node_modules package.json && rm -rf node_modules && rm package.json && cd .. && node ../../scripts/verify-media-zip.cjs dist/index.zip",
     "sls-deploy:prod": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/bin/serverless.js deploy --stage=prod --region=us-east-1",
     "sls-deploy:staging": "node ../../scripts/require-6529-command.cjs && node ../../node_modules/serverless/bin/serverless.js deploy --stage=staging --region=eu-west-1"
@@ -14,6 +14,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@contentauth/c2pa-node": "0.9.5",
     "esbuild": "^0.28.1",
     "sharp": "0.35.4"
   },

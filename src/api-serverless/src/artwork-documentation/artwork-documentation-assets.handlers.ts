@@ -2,6 +2,7 @@ import * as Operations from '@/api/generated/routes/operations';
 import * as Joi from 'joi';
 import { artworkAssetsService } from '@/artwork-documentation/assets/artwork-assets.service';
 import { ARTWORK_ASSET_ROLES } from '@/artwork-documentation/assets/artwork-assets.types';
+import { ARTWORK_UPLOAD_POLICY } from '@/artwork-documentation/assets/artwork-assets.policy';
 import { artworkDocumentationService as core } from '@/artwork-documentation/artwork-documentation.service';
 import {
   toAssetAccess,
@@ -15,6 +16,9 @@ import {
 } from './artwork-documentation.handlers';
 
 const uuid = Joi.string().guid();
+const maxParts = Math.ceil(
+  ARTWORK_UPLOAD_POLICY.max_asset_bytes / ARTWORK_UPLOAD_POLICY.part_size_bytes
+);
 const visibility = Joi.string().valid('public_record', 'restricted').required();
 const role = Joi.string()
   .valid(...ARTWORK_ASSET_ROLES)
@@ -52,7 +56,7 @@ const assetLink = Joi.object({
   }).required()
 });
 const part = Joi.object({
-  part_number: Joi.number().integer().min(1).max(256).required(),
+  part_number: Joi.number().integer().min(1).max(maxParts).required(),
   checksum_sha256: Joi.string().base64().length(44).required()
 });
 
@@ -67,7 +71,11 @@ export function handleStartDocumentationUpload(
         req,
         Joi.object({
           filename: Joi.string().min(1).max(255).required(),
-          size_bytes: Joi.number().integer().min(1).max(4294967296).required(),
+          size_bytes: Joi.number()
+            .integer()
+            .min(1)
+            .max(ARTWORK_UPLOAD_POLICY.max_asset_bytes)
+            .required(),
           declared_mime: Joi.string().min(1).max(150).required(),
           role,
           intended_visibility: visibility
@@ -102,7 +110,13 @@ export function handleSignDocumentationParts(
       toAssetAccess(await core.authorizeMutationContext(req.params.id, ctx)),
       body(
         req,
-        Joi.object({ parts: Joi.array().items(part).min(1).max(3).required() })
+        Joi.object({
+          parts: Joi.array()
+            .items(part)
+            .min(1)
+            .max(ARTWORK_UPLOAD_POLICY.parallel_parts)
+            .required()
+        })
       )
     );
   });
@@ -122,7 +136,7 @@ export function handleCompleteDocumentationUpload(
         parts: Joi.array()
           .items(part.keys({ etag: Joi.string().min(1).max(200).required() }))
           .min(1)
-          .max(256)
+          .max(maxParts)
           .required()
       })
     );
@@ -170,7 +184,9 @@ export function handleDownloadDocumentationAsset(
       body(
         req,
         Joi.object({
-          variant: Joi.string().valid('original', 'preview').required()
+          variant: Joi.string()
+            .valid('original', 'preview', 'media', 'c2pa_report')
+            .required()
         })
       )
     );

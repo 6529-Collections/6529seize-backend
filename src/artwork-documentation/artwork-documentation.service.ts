@@ -73,6 +73,13 @@ import {
   fail,
   normalizeJson
 } from './artwork-documentation.validation';
+import { bindMuseumProgram } from './museum/museum-catalogue';
+import { documentationContextBytes } from './museum/museum-response-budget';
+import {
+  museumAssetReferences,
+  museumRecordIssues,
+  validateMuseumDraft
+} from './museum/museum-validation';
 
 export type RevisionRow = {
   id: string;
@@ -140,7 +147,15 @@ function moduleAssetReferences(
     )?.entries ?? [])
       if (entry.asset_id)
         result.push({ field: 'ingredients', id: entry.asset_id });
-  return result;
+  const existing = new Set(
+    result.map((reference) => `${reference.field}:${reference.id}`)
+  );
+  return [
+    ...result,
+    ...museumAssetReferences(answers).filter(
+      (reference) => !existing.has(`${reference.field}:${reference.id}`)
+    )
+  ];
 }
 function validateInterview(
   answers: Answers,
@@ -393,8 +408,9 @@ export class ArtworkDocumentationService {
         const result = await run(access, transaction);
         if (content) {
           if (
-            Buffer.byteLength(JSON.stringify(access.context.modules), 'utf8') >
-            DOCUMENTATION_LIMITS.context_payload_bytes
+            documentationContextBytes(access.context) >
+            (access.context.profile.limits.context_payload_bytes ??
+              DOCUMENTATION_LIMITS.context_payload_bytes)
           )
             fail(413, 'CONTEXT_PAYLOAD_LIMIT');
           access.context.draft_version++;
@@ -446,7 +462,7 @@ export class ArtworkDocumentationService {
             record_version: number;
             answers_json: unknown;
           }>(
-            `SELECT id,record_version,answers_json FROM ${AD_ARTIST_REVISIONS} WHERE id=:revisionId AND owner_profile_id=:owner`,
+            `SELECT id,record_version${context.profile.version === 3 ? '' : ',answers_json'} FROM ${AD_ARTIST_REVISIONS} WHERE id=:revisionId AND owner_profile_id=:owner`,
             {
               revisionId: artist.latest_revision_id,
               owner: context.owner_profile_id
@@ -471,7 +487,11 @@ export class ArtworkDocumentationService {
         ? {
             id: availableArtist.id,
             record_version: availableArtist.record_version,
-            answers: parseJson<Answers>(availableArtist.answers_json)
+            answers:
+              context.profile.version === 3
+                ? {}
+                : parseJson<Answers>(availableArtist.answers_json),
+            ...(context.profile.version === 3 ? { deferred: true } : {})
           }
         : null,
       confirmation_status: confirmationStatus(
@@ -542,7 +562,10 @@ export class ArtworkDocumentationService {
       body.acknowledge_empty_context !== true
     )
       fail(403, 'DIRECT_ARTIST_REQUIRED');
-    const profile = getProfile(body.profile_id, body.profile_version);
+    const profile = bindMuseumProgram(
+      getProfile(body.profile_id, body.profile_version),
+      body.program_id ?? null
+    );
     if ((body.program_id ?? null) !== profile.program_id)
       fail(422, 'INVALID_PROGRAM');
     const reference = await this.db.idempotent(
@@ -758,6 +781,15 @@ export class ArtworkDocumentationService {
   }
   canReadAssetLink(link: AssetLink, access: ContextAccess): boolean {
     if (access.isArtist) return true;
+    // V3 is a publication-only record. Legacy evidence-role classifications
+    // must not hide a public instrument from the authorized publication preview.
+    if (
+      access.context.profile.version >= 3 &&
+      access.context.profile.intake_mode === 'publication_only' &&
+      link.intended_visibility === 'public_record' &&
+      !access.context.restricted_paths.includes(`asset:${link.asset_id}`)
+    )
+      return true;
     if (
       ['consent_instrument', 'rights_instrument'].includes(link.role) ||
       access.context.restricted_paths.includes(`asset-rights:${link.asset_id}`)
@@ -783,7 +815,10 @@ export class ArtworkDocumentationService {
     const actor = this.actor(ctx);
     if (ctx.authenticationContext?.isAuthenticatedAsProxy())
       fail(403, 'DIRECT_ARTIST_REQUIRED');
-    const profile = getProfile(body.profile_id, body.profile_version);
+    const profile = bindMuseumProgram(
+      getProfile(body.profile_id, body.profile_version),
+      body.program_id ?? null
+    );
     if ((body.program_id ?? null) !== profile.program_id)
       fail(422, 'INVALID_PROGRAM');
     const reference = await this.db.idempotent(
@@ -1078,6 +1113,7 @@ export class ArtworkDocumentationService {
       )
         fail(422, 'REPLACEMENT_REASON_REQUIRED');
       access.context.modules[moduleId] = answers;
+      validateMuseumDraft(access.context);
       for (const [field, answer] of Object.entries(answers))
         if (answer.intended_visibility === 'restricted')
           access.context.restricted_paths.push(`${moduleId}.${field}`);
@@ -1094,6 +1130,30 @@ export class ArtworkDocumentationService {
       return { context_id: id };
     });
     return this.getContext(id, ctx);
+  }
+  async artistRecordForContext(
+    id: string,
+    revisionId: string,
+    ctx: RequestContext
+  ) {
+    const access = await this.authorizeContext(id, ctx);
+    if (!access.isArtist) fail(404, 'UNAVAILABLE');
+    const revision = await this.db.one<{
+      id: string;
+      record_version: number;
+      answers_json: unknown;
+    }>(
+      `SELECT id,record_version,answers_json FROM ${AD_ARTIST_REVISIONS} WHERE id=:revisionId AND owner_profile_id=:owner`,
+      { revisionId, owner: access.context.owner_profile_id },
+      ctx
+    );
+    if (!revision) fail(404, 'UNAVAILABLE');
+    return {
+      id: revision.id,
+      record_version: Number(revision.record_version),
+      answers: parseJson<Answers>(revision.answers_json),
+      deferred: false
+    };
   }
   async saveArtistRecord(
     access: ContextAccess,
@@ -1188,6 +1248,7 @@ export class ArtworkDocumentationService {
     const references = MODULE_IDS.flatMap((moduleId) =>
       moduleAssetReferences(moduleId, context.modules[moduleId])
     );
+    const readyAssets = new Set<string>();
     for (const reference of references) {
       if (
         !context.asset_links.some(
@@ -1197,21 +1258,28 @@ export class ArtworkDocumentationService {
         )
       )
         fail(422, 'ASSET_ROLE_REQUIRED');
-      await this.assets.validateReadyAsset(
-        context.id,
-        reference.id,
-        validationAccess,
-        ctx
-      );
+      if (!readyAssets.has(reference.id)) {
+        await this.assets.validateReadyAsset(
+          context.id,
+          reference.id,
+          validationAccess,
+          ctx
+        );
+        readyAssets.add(reference.id);
+      }
     }
     if (!confirmation) return;
-    for (const link of context.asset_links)
-      await this.assets.validateReadyAsset(
-        context.id,
-        link.asset_id,
-        validationAccess,
-        ctx
-      );
+    for (const link of context.asset_links) {
+      if (!readyAssets.has(link.asset_id)) {
+        await this.assets.validateReadyAsset(
+          context.id,
+          link.asset_id,
+          validationAccess,
+          ctx
+        );
+        readyAssets.add(link.asset_id);
+      }
+    }
     const master = answerValue<{ kind: string }>(
       context.modules.files.master_availability
     )?.kind;
@@ -1248,6 +1316,7 @@ export class ArtworkDocumentationService {
     if (context.restricted_paths.length)
       fail(422, 'PUBLICATION_RECORD_RESTRICTED');
     validateInterview(context.modules.interview, context.profile);
+    validateMuseumDraft(context);
     for (const link of context.asset_links)
       validatePublicationAssetLink(publicationAssetAccess(context), link);
   }
@@ -1313,8 +1382,8 @@ export class ArtworkDocumentationService {
       !answerValue(context.modules.context.caption)
     )
       add('context.theme_connection', 'CAPTION_REQUIRED');
-    if (context.profile.profile_id === 'keys_and_gates_v1')
-      this.programIssues(context, add);
+    result.push(...museumRecordIssues(context));
+    if (context.program_id === '6529NM-AP-01') this.programIssues(context, add);
     return result;
   }
   private programIssues(
@@ -1323,8 +1392,9 @@ export class ArtworkDocumentationService {
   ): void {
     const rights = context.modules.rights;
     if (
+      context.profile.version !== 3 &&
       answerValue<{ uri: string }>(rights.intended_license)?.uri !==
-      'https://creativecommons.org/publicdomain/zero/1.0/'
+        'https://creativecommons.org/publicdomain/zero/1.0/'
     )
       add('rights.intended_license', 'PROGRAM_CC0_REQUIRED');
     if (answerValue(context.modules.artwork.edition_statement) !== '1/1')
@@ -1371,6 +1441,8 @@ export class ArtworkDocumentationService {
         )
           fail(422, 'REQUIRED_ANSWERS_MISSING');
         await this.validateAssetReferences(access, transaction, true);
+        if (museumRecordIssues(access.context).length)
+          fail(422, 'MUSEUM_RECORD_INCOMPLETE');
         const existing = await this.db.one<RevisionRow>(
           `SELECT * FROM ${AD_REVISIONS} WHERE context_id=:id AND source_draft_version=:version`,
           { id, version: access.context.draft_version },

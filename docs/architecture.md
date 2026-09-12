@@ -1106,6 +1106,15 @@ repository variables in the existing deployment pipeline. See
 [archive operations](artwork-documentation-assets-operations.md) for exact units,
 limits, access, recovery, backup/restore and cleanup procedures.
 
+The generic version 3 artwork profile adds composable media descriptions, typed
+museum entities and an independently attributed institutional journal. Its
+asynchronous dossier exporter shares the single artwork worker: one long asset
+or export job is claimed per invocation. Dossiers contain original files,
+confirmation/review history and validated standards projections in BagIt/OCFL.
+Detailed technical reports and artist-record comparisons load separately from
+bounded context lists. See [reusable museum records](artwork-museum-record.md)
+for the model, permissions, standards and deployment dependencies.
+
 The strongest part of the architecture is its operational decomposition. Expensive, slow, and retryable work is mostly outside the request path, and the loop structure makes individual jobs independently deployable.
 
 The biggest tradeoff is the DB-centered coupling. Many services share tables directly, so changes need to be treated as cross-service contracts even when they look local. The safest pattern is additive schema changes first, backward-compatible writers/readers second, and cleanup only after all dependent Lambdas are deployed.

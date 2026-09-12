@@ -6,6 +6,7 @@ const { createRequire } = require('node:module');
 const { execFileSync } = require('node:child_process');
 const { Readable, Writable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
+const { pathToFileURL } = require('node:url');
 
 // Resolve only from the supplied install/extracted ZIP, never the verifier's modules.
 const root = fs.realpathSync(path.resolve(process.argv[2] || '.'));
@@ -121,6 +122,24 @@ function verifyFfmpeg() {
   );
 }
 
+function verifyC2pa() {
+  const entry = load.resolve('@contentauth/c2pa-node');
+  assert.ok(entry.startsWith(path.join(root, 'node_modules') + path.sep));
+  const script = `
+    const { Reader } = await import(process.argv[1]);
+    const reader = await Reader.fromAsset({ path: process.argv[2], mimeType: 'image/jpeg' }, {
+      version: 1, verify: { verify_after_reading: true, verify_trust: false,
+        verify_timestamp_trust: false, remote_manifest_fetch: false, ocsp_fetch: false }
+    });
+    if (reader !== null) throw new Error('Unsigned smoke fixture unexpectedly has credentials');
+    process.stdout.write('c2pa-native-reader-ok');
+  `;
+  const output = execFileSync(process.execPath, [
+    '--input-type=module', '-e', script, pathToFileURL(entry).href, path.join(fixtures, 'jpeg')
+  ], { timeout: 60000, encoding: 'utf8', windowsHide: true, maxBuffer: 1024 * 1024 });
+  assert.equal(output, 'c2pa-native-reader-ok');
+}
+
 async function main() {
   assert.equal(sharp.versions.sharp, '0.35.4');
   assert.equal(sharp.versions.vips, '8.18.6');
@@ -154,6 +173,7 @@ async function main() {
   );
   if (manifest.dependencies?.imagescript) await verifyImageScript();
   if (manifest.dependencies?.['fluent-ffmpeg']) verifyFfmpeg();
+  if (manifest.dependencies?.['@contentauth/c2pa-node']) verifyC2pa();
   if (process.argv.includes('--lambda')) {
     const handler = load(path.join(root, 'index.js')).handler;
     assert.equal(typeof handler, 'function');

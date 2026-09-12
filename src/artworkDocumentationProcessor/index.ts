@@ -1,5 +1,6 @@
 import { withMediaDependencySmoke } from '@/media/media-dependency-smoke';
 import { artworkAssetsProcessor } from '@/artwork-documentation/assets/artwork-assets.processor';
+import { dossierProcessor } from '@/artwork-documentation/museum/export/dossier.processor';
 import { Logger } from '@/logging';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
@@ -15,7 +16,14 @@ const liveHandler = sentryContext.wrapLambdaHandler(
     return doInDbContext(
       () =>
         dispatchDocumentationProcessorEvent(event, async () => {
-          await artworkAssetsProcessor.tick();
+          // Each queue can use most of one Lambda invocation. Alternate priority
+          // without running two long jobs inside the same 900-second budget.
+          if (Math.floor(Date.now() / 60000) % 2 === 0) {
+            if (!(await dossierProcessor.tick()))
+              await artworkAssetsProcessor.tick();
+          } else if (!(await artworkAssetsProcessor.tick())) {
+            await dossierProcessor.tick();
+          }
           try {
             await publishArtworkAssetMetrics();
           } catch {

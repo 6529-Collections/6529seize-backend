@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import {
   ARTWORK_FORMATS,
   ARTWORK_UPLOAD_POLICY,
+  assetClass,
+  publicationAssetAccess,
   canReadAsset,
   canReadOriginal,
   expectedPartSize,
@@ -14,12 +16,44 @@ import {
   anArtworkAsset,
   artistAssetAccess
 } from '@/artwork-documentation/assets/artwork-assets.test-support';
+import { dossierFixture } from '@/artwork-documentation/museum/export/dossier-fixture';
 
 const checksum = createHash('sha256')
   .update('last short part')
   .digest('base64');
 describe('artwork archive policy', () => {
   const publicationAccess = { publicationOnly: true };
+  it.each(['consent_instrument', 'rights_instrument'] as const)(
+    'accepts a public v3 %s before a media profile has been answered',
+    (role) => {
+      const context = dossierFixture().snapshot.context;
+      delete context.modules.artwork.media_profiles;
+      const access = publicationAssetAccess(context);
+      const input = {
+        filename: 'instrument.pdf',
+        size_bytes: 9,
+        declared_mime: 'application/pdf',
+        role,
+        intended_visibility: 'public_record' as const
+      };
+      expect(access.publicationOnlyV3).toBe(true);
+      expect(assetClass(role, access)).toBe('artwork');
+      expect(validateStartUpload(input, access)).toBe('pdf');
+      expect(() => requirePublicationAsset(access, input)).not.toThrow();
+      expect(() =>
+        requirePublicationAsset(access, {
+          ...input,
+          intended_visibility: 'restricted'
+        })
+      ).toThrow('publication_visibility_required');
+      context.profile = { ...context.profile, version: 2 };
+      const legacy = publicationAssetAccess(context);
+      expect(assetClass(role, legacy)).toBe('rights_evidence');
+      expect(() => validateStartUpload(input, legacy)).toThrow(
+        'rights_evidence_is_restricted'
+      );
+    }
+  );
   it.each([
     'camera_original',
     'working_file',
@@ -100,10 +134,10 @@ describe('artwork archive policy', () => {
       )
     ).toThrow('interview_publication_permission_required');
   });
-  it('permits real 4GiB masters and rejects one byte beyond', () => {
+  it('permits 8GiB masters and rejects one byte beyond', () => {
     const input = {
       filename: 'master.tiff',
-      size_bytes: 4 * 1024 ** 3,
+      size_bytes: 8 * 1024 ** 3,
       declared_mime: 'image/tiff',
       role: 'preservation_master' as const,
       intended_visibility: 'restricted' as const
