@@ -40,8 +40,12 @@ Ordinary 4xx responses and moderation decisions are not operational errors. Sile
 catches, console-only handled errors outside the shared logger, failures before
 telemetry reaches AWS, and unconfigured frontend/external providers remain gaps.
 Platform alarms can detect a failed invocation even when JavaScript cannot log it.
-An application endpoint probe checks status and does not prove a business workflow
-or database query succeeded. API Gateway/CloudFront failures that prevent Lambda
+An application endpoint probe checks status and optional bounded JSON assertions.
+Configure API health with `jsonEquals: {"db":"ok","redis.healthy":true}`: its
+HTTP 200 alone also covers degraded dependencies. Assertions use exact scalar
+equality on at most ten dotted property paths; responses are limited to 64 KiB
+and are never logged or retained. Status-only website probes do not prove a
+business workflow succeeded. API Gateway/CloudFront failures that prevent Lambda
 invocation require their existing platform alarms or external endpoint probes;
 the generated per-function alarms alone cannot see them.
 
@@ -96,7 +100,13 @@ SQS/EventBridge/Lambda delivery is at least once. An ambiguous timeout after
 Discord accepted a message can cause a duplicate; this is not an exactly-once
 protocol. Normalized event IDs and deterministic summary IDs deduplicate ordinary
 retries. Both queues retain for 14 days; exhausted retries move to a 14-day DLQ
-and an independent archiver persists sanitized records for 365 days. A backend
+and an independent archiver persists sanitized records for 365 days. Its access
+logs go to a separate private encrypted bucket with 90-day retention. That sink
+does not log to itself, which avoids recursive log generation. The fallback SNS
+topic uses a rotating customer-managed key owned by the bootstrap stack. Only
+CloudWatch alarms in this environment and the authorized dispatcher/archiver
+roles can encrypt fallback publications; runtime roles cannot administer the key.
+A backend
 exception reported through both Sentry and CloudWatch can form separate groups;
 cross-source deduplication is not claimed. Receipts
 expire after 45 days. Monitor DLQ/archiver alarms: a prolonged failure of the

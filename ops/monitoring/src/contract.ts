@@ -44,7 +44,7 @@ export function record(value: unknown): Record<string, unknown> {
 export function token(value: unknown, max = 128): string | undefined {
   return typeof value === 'string' &&
     value.length <= max &&
-    /^[a-zA-Z0-9_.:\/-]+$/.test(value)
+    /^[a-zA-Z0-9_.:/-]+$/.test(value)
     ? value
     : undefined;
 }

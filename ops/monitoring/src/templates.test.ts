@@ -79,3 +79,81 @@ test('source catalog coverage is complete and monitoring delivery has no applica
     }
   }
 });
+
+test('archive logging and encrypted fallback preserve narrowly scoped delivery permissions', () => {
+  for (const env of ['prod', 'staging']) {
+    const monitor = JSON.parse(
+      readFileSync(
+        new URL(`../monitoring-${env}.json`, import.meta.url),
+        'utf8'
+      )
+    );
+    const resources = monitor.Resources;
+    assert.deepEqual(resources.FallbackTopic.Properties.KmsMasterKeyId, {
+      Ref: 'FallbackKmsKeyArn'
+    });
+    assert.equal(
+      Object.values(resources).some(
+        (r: unknown) => (r as { Type: string }).Type === 'AWS::KMS::Key'
+      ),
+      false
+    );
+    for (const name of ['NormalDispatcher', 'CriticalDispatcher', 'Archiver']) {
+      const statements = resources[name].Properties.Policies[0].Statement;
+      const kms = statements.find((s: { Action: string[] }) =>
+        s.Action.includes('kms:GenerateDataKey')
+      );
+      assert.deepEqual(kms.Resource, { Ref: 'FallbackKmsKeyArn' });
+      assert.deepEqual(kms.Action, ['kms:GenerateDataKey', 'kms:Decrypt']);
+      assert.deepEqual(kms.Condition.StringEquals['kms:ViaService'], {
+        'Fn::Sub': 'sns.${AWS::Region}.${AWS::URLSuffix}'
+      });
+    }
+    for (const name of [
+      'NormalCollector',
+      'CriticalCollector',
+      'SentryIngress',
+      'Health',
+      'Probe'
+    ]) {
+      assert.equal(
+        JSON.stringify(resources[name].Properties.Policies).includes('kms:'),
+        false
+      );
+    }
+    const alarmPublish =
+      resources.FallbackTopicPolicy.Properties.PolicyDocument.Statement[0];
+    assert.deepEqual(alarmPublish.Principal, {
+      Service: 'cloudwatch.amazonaws.com'
+    });
+    assert.deepEqual(alarmPublish.Condition.StringEquals['aws:SourceAccount'], {
+      Ref: 'AWS::AccountId'
+    });
+    assert.match(
+      alarmPublish.Condition.ArnLike['aws:SourceArn']['Fn::Sub'],
+      /alarm:seize-monitoring-\$\{Environment\}-\*/
+    );
+    assert.equal(resources.Archive.DependsOn, 'ArchiveAccessLogsPolicy');
+    assert.deepEqual(
+      resources.Archive.Properties.LoggingConfiguration.DestinationBucketName,
+      { Ref: 'ArchiveAccessLogs' }
+    );
+    const logSink = resources.ArchiveAccessLogs;
+    assert.equal(logSink.DeletionPolicy, 'Retain');
+    assert.equal(logSink.Properties.LoggingConfiguration, undefined);
+    assert.equal(
+      logSink.Properties.LifecycleConfiguration.Rules[0].ExpirationInDays,
+      90
+    );
+    const write =
+      resources.ArchiveAccessLogsPolicy.Properties.PolicyDocument.Statement[0];
+    assert.deepEqual(write.Principal, { Service: 'logging.s3.amazonaws.com' });
+    assert.deepEqual(write.Condition.StringEquals['aws:SourceAccount'], {
+      Ref: 'AWS::AccountId'
+    });
+    assert.equal(
+      JSON.stringify(write.Condition.ArnEquals).includes('*'),
+      false
+    );
+  }
+});

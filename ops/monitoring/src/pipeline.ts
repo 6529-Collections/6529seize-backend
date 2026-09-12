@@ -109,7 +109,7 @@ export function parseWork(value: unknown): Work {
   if (
     v.kind === 'digest' &&
     typeof v.groupKey === 'string' &&
-    /^group:[a-zA-Z0-9:.\/-]{1,240}$/.test(v.groupKey) &&
+    /^group:[a-zA-Z0-9:./-]{1,240}$/.test(v.groupKey) &&
     typeof v.eventId === 'string' &&
     /^digest:[a-f0-9]{64}$/.test(v.eventId)
   ) {

@@ -45,6 +45,14 @@ if (
   ).test(parameters.RuntimePermissionsBoundaryArn ?? '')
 )
   throw new Error('Invalid runtime permissions boundary');
+const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
+if (
+  !/^[a-z]{2}(-gov)?-[a-z]+-\d$/.test(region ?? '') ||
+  !new RegExp(`^arn:[^:]+:kms:${region}:${account}:key/[a-f0-9-]{36}$`).test(
+    parameters.FallbackKmsKeyArn ?? ''
+  )
+)
+  throw new Error('Invalid monitoring fallback key');
 if (parameters.SourceAccountId === account)
   throw new Error('Monitoring must use a separate account');
 for (const [key, value] of Object.entries(parameters)) {

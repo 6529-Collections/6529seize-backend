@@ -22,6 +22,11 @@
       "Type": "String",
       "AllowedPattern": "^arn:[^:]+:iam::[0-9]{12}:policy/6529-observability-(prod|staging)-runtime-boundary$"
     },
+    "FallbackKmsKeyArn": {
+      "Type": "String",
+      "AllowedPattern": "^arn:[^:]+:kms:[^:]+:[0-9]{12}:key/[a-f0-9-]{36}$",
+      "Description": "Matching environment fallback key ARN from the monitoring bootstrap stack."
+    },
     "WebhookSecretArn": {
       "Type": "String",
       "AllowedPattern": "^arn:[^:]+:secretsmanager:[^:]+:[0-9]{12}:secret:.+$"
@@ -47,7 +52,7 @@
     "ProbeTargets": {
       "Type": "String",
       "Default": "[]",
-      "Description": "JSON array of operator-approved public HTTPS targets: name, url, status."
+      "Description": "JSON array of approved public HTTPS targets: name, url, status, optional jsonEquals scalar property assertions."
     }
   },
   "Conditions": {
@@ -141,8 +146,18 @@
               }
             }
           ]
+        },
+        "BucketName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-archive-${AWS::AccountId}-${AWS::Region}"
+        },
+        "LoggingConfiguration": {
+          "DestinationBucketName": {
+            "Ref": "ArchiveAccessLogs"
+          },
+          "LogFilePrefix": "archive/"
         }
-      }
+      },
+      "DependsOn": "ArchiveAccessLogsPolicy"
     },
     "ArchivePolicy": {
       "Type": "AWS::S3::BucketPolicy",
@@ -181,7 +196,137 @@
     "FallbackTopic": {
       "Type": "AWS::SNS::Topic",
       "Properties": {
-        "DisplayName": "6529 independent monitoring fallback"
+        "DisplayName": "6529 independent monitoring fallback",
+        "KmsMasterKeyId": {
+          "Ref": "FallbackKmsKeyArn"
+        }
+      }
+    },
+    "ArchiveAccessLogs": {
+      "Type": "AWS::S3::Bucket",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Metadata": {
+        "SecurityReview": "Access-log sink intentionally has no self-logging to prevent recursive log generation."
+      },
+      "Properties": {
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "AccessLogRetention",
+              "Status": "Enabled",
+              "ExpirationInDays": 90
+            }
+          ]
+        }
+      }
+    },
+    "ArchiveAccessLogsPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "ArchiveAccessLogs"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "logging.s3.amazonaws.com"
+              },
+              "Action": "s3:PutObject",
+              "Resource": {
+                "Fn::Sub": "${ArchiveAccessLogs.Arn}/archive/*"
+              },
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "ArnEquals": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:s3:::seize-monitoring-${Environment}-archive-${AWS::AccountId}-${AWS::Region}"
+                  }
+                }
+              }
+            },
+            {
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "ArchiveAccessLogs",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Sub": "${ArchiveAccessLogs.Arn}/*"
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "FallbackTopicPolicy": {
+      "Type": "AWS::SNS::TopicPolicy",
+      "Properties": {
+        "Topics": [
+          {
+            "Ref": "FallbackTopic"
+          }
+        ],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudwatch.amazonaws.com"
+              },
+              "Action": "sns:Publish",
+              "Resource": {
+                "Ref": "FallbackTopic"
+              },
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "ArnLike": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:seize-monitoring-${Environment}-*"
+                  }
+                }
+              }
+            }
+          ]
+        }
       }
     },
     "NormalDeadLetters": {
@@ -612,6 +757,23 @@
               {
                 "Effect": "Allow",
                 "Action": [
+                  "kms:GenerateDataKey",
+                  "kms:Decrypt"
+                ],
+                "Resource": {
+                  "Ref": "FallbackKmsKeyArn"
+                },
+                "Condition": {
+                  "StringEquals": {
+                    "kms:ViaService": {
+                      "Fn::Sub": "sns.${AWS::Region}.${AWS::URLSuffix}"
+                    }
+                  }
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
                   "secretsmanager:GetSecretValue"
                 ],
                 "Resource": {
@@ -1026,6 +1188,23 @@
               {
                 "Effect": "Allow",
                 "Action": [
+                  "kms:GenerateDataKey",
+                  "kms:Decrypt"
+                ],
+                "Resource": {
+                  "Ref": "FallbackKmsKeyArn"
+                },
+                "Condition": {
+                  "StringEquals": {
+                    "kms:ViaService": {
+                      "Fn::Sub": "sns.${AWS::Region}.${AWS::URLSuffix}"
+                    }
+                  }
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
                   "secretsmanager:GetSecretValue"
                 ],
                 "Resource": {
@@ -1286,6 +1465,23 @@
                 ],
                 "Resource": {
                   "Ref": "FallbackTopic"
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "kms:GenerateDataKey",
+                  "kms:Decrypt"
+                ],
+                "Resource": {
+                  "Ref": "FallbackKmsKeyArn"
+                },
+                "Condition": {
+                  "StringEquals": {
+                    "kms:ViaService": {
+                      "Fn::Sub": "sns.${AWS::Region}.${AWS::URLSuffix}"
+                    }
+                  }
                 }
               },
               {

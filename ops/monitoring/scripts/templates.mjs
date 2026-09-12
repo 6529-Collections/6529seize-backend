@@ -89,6 +89,243 @@ function lambdaAlarm(resources, id, functionId, topic, metric = 'Errors') {
     }
   };
 }
+
+function archiveResources(r) {
+  const archiveName =
+    'seize-monitoring-${Environment}-archive-${AWS::AccountId}-${AWS::Region}';
+  r.ArchiveAccessLogs = {
+    Type: 'AWS::S3::Bucket',
+    DeletionPolicy: 'Retain',
+    UpdateReplacePolicy: 'Retain',
+    Metadata: {
+      SecurityReview:
+        'Access-log sink intentionally has no self-logging to prevent recursive log generation.'
+    },
+    Properties: {
+      BucketEncryption: {
+        ServerSideEncryptionConfiguration: [
+          { ServerSideEncryptionByDefault: { SSEAlgorithm: 'AES256' } }
+        ]
+      },
+      PublicAccessBlockConfiguration: {
+        BlockPublicAcls: true,
+        BlockPublicPolicy: true,
+        IgnorePublicAcls: true,
+        RestrictPublicBuckets: true
+      },
+      LifecycleConfiguration: {
+        Rules: [
+          { Id: 'AccessLogRetention', Status: 'Enabled', ExpirationInDays: 90 }
+        ]
+      }
+    }
+  };
+  r.ArchiveAccessLogsPolicy = {
+    Type: 'AWS::S3::BucketPolicy',
+    Properties: {
+      Bucket: ref('ArchiveAccessLogs'),
+      PolicyDocument: policy([
+        {
+          Effect: 'Allow',
+          Principal: { Service: 'logging.s3.amazonaws.com' },
+          Action: 's3:PutObject',
+          Resource: sub('${ArchiveAccessLogs.Arn}/archive/*'),
+          Condition: {
+            StringEquals: { 'aws:SourceAccount': ref('AWS::AccountId') },
+            ArnEquals: {
+              'aws:SourceArn': sub('arn:${AWS::Partition}:s3:::' + archiveName)
+            }
+          }
+        },
+        {
+          Effect: 'Deny',
+          Principal: '*',
+          Action: 's3:*',
+          Resource: [
+            attr('ArchiveAccessLogs'),
+            sub('${ArchiveAccessLogs.Arn}/*')
+          ],
+          Condition: { Bool: { 'aws:SecureTransport': 'false' } }
+        }
+      ])
+    }
+  };
+  r.Archive.DependsOn = 'ArchiveAccessLogsPolicy';
+  r.Archive.Properties.BucketName = sub(archiveName);
+  r.Archive.Properties.LoggingConfiguration = {
+    DestinationBucketName: ref('ArchiveAccessLogs'),
+    LogFilePrefix: 'archive/'
+  };
+}
+
+function fallbackEncryption(r) {
+  r.FallbackTopic.Properties.KmsMasterKeyId = ref('FallbackKmsKeyArn');
+  r.FallbackTopicPolicy = {
+    Type: 'AWS::SNS::TopicPolicy',
+    Properties: {
+      Topics: [ref('FallbackTopic')],
+      PolicyDocument: policy([
+        {
+          Effect: 'Allow',
+          Principal: { Service: 'cloudwatch.amazonaws.com' },
+          Action: 'sns:Publish',
+          Resource: ref('FallbackTopic'),
+          Condition: {
+            StringEquals: { 'aws:SourceAccount': ref('AWS::AccountId') },
+            ArnLike: {
+              'aws:SourceArn': sub(
+                'arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:seize-monitoring-${Environment}-*'
+              )
+            }
+          }
+        }
+      ])
+    }
+  };
+}
+
+function processingLane(r, lane, common, collectorEnv, permissions) {
+  const {
+    db,
+    archiveWrite,
+    publish,
+    encryptFallback,
+    getWebhook,
+    sendNormal,
+    sendCritical
+  } = permissions;
+
+  const normal = lane === 'Normal';
+  r[`${lane}Collector`] = functionResource(
+    'collect',
+    collectorEnv,
+    normal ? [db, archiveWrite, sendNormal] : [sendCritical],
+    {},
+    { ReservedConcurrentExecutions: normal ? 4 : 2 }
+  );
+  r[`${lane}Rule`] = {
+    Type: 'AWS::Events::Rule',
+    Properties: {
+      EventBusName: ref('EventBus'),
+      EventPattern: {
+        account: [ref('SourceAccountId')],
+        source: [normal ? '6529.ops' : 'aws.cloudwatch'],
+        ...(normal ? {} : { region: [ref('SourceRegion')] }),
+        'detail-type': [
+          normal ? '6529.ops.error.v1' : 'CloudWatch Alarm State Change'
+        ]
+      },
+      Targets: [
+        {
+          Id: lane,
+          Arn: attr(`${lane}Collector`),
+          DeadLetterConfig: { Arn: attr('EventDeadLetters') },
+          RetryPolicy: {
+            MaximumEventAgeInSeconds: 86400,
+            MaximumRetryAttempts: 185
+          }
+        }
+      ]
+    }
+  };
+  r[`${lane}Invocation`] = {
+    Type: 'AWS::Lambda::Permission',
+    Properties: {
+      Action: 'lambda:InvokeFunction',
+      FunctionName: ref(`${lane}Collector`),
+      Principal: 'events.amazonaws.com',
+      SourceArn: attr(`${lane}Rule`)
+    }
+  };
+  // Lambda's own asynchronous retries are a separate boundary from EventBridge invocation retries.
+  r[`${lane}CollectorInvokeConfig`] = {
+    Type: 'AWS::Lambda::EventInvokeConfig',
+    Properties: {
+      FunctionName: ref(`${lane}Collector`),
+      Qualifier: '$LATEST',
+      MaximumEventAgeInSeconds: 21600,
+      MaximumRetryAttempts: 2,
+      DestinationConfig: {
+        OnFailure: { Destination: attr('EventDeadLetters') }
+      }
+    }
+  };
+  r[`${lane}Collector`].Properties.Policies[0].Statement.push(
+    statement(['sqs:SendMessage'], attr('EventDeadLetters'))
+  );
+  r[`${lane}Dispatcher`] = functionResource(
+    'dispatch',
+    {
+      ...common,
+      LANE: lane.toLowerCase(),
+      WEBHOOK_SECRET_ARN: ref('WebhookSecretArn')
+    },
+    [
+      db,
+      archiveWrite,
+      publish,
+      encryptFallback,
+      getWebhook,
+      ...(normal ? [sendNormal] : []),
+      statement(sqsConsume, attr(`${lane}Queue`))
+    ],
+    {
+      Queue: {
+        Type: 'SQS',
+        Properties: {
+          Queue: attr(`${lane}Queue`),
+          BatchSize: 1,
+          FunctionResponseTypes: ['ReportBatchItemFailures'],
+          ScalingConfig: { MaximumConcurrency: 2 }
+        }
+      }
+    },
+    { ReservedConcurrentExecutions: 3 }
+  );
+  for (const suffix of ['Collector', 'Dispatcher'])
+    lambdaAlarm(
+      r,
+      `${lane}${suffix}Errors`,
+      `${lane}${suffix}`,
+      ref('FallbackTopic')
+    );
+  r[`${lane}QueueAge`] = {
+    Type: 'AWS::CloudWatch::Alarm',
+    Properties: {
+      Namespace: 'AWS/SQS',
+      MetricName: 'ApproximateAgeOfOldestMessage',
+      Dimensions: [
+        { Name: 'QueueName', Value: attr(`${lane}Queue`, 'QueueName') }
+      ],
+      Statistic: 'Maximum',
+      Period: 60,
+      EvaluationPeriods: 2,
+      Threshold: normal ? 600 : 120,
+      ComparisonOperator: 'GreaterThanThreshold',
+      TreatMissingData: 'notBreaching',
+      AlarmActions: [ref('FallbackTopic')]
+    }
+  };
+  r[`${lane}HeartbeatAge`] = {
+    Type: 'AWS::CloudWatch::Alarm',
+    Properties: {
+      Namespace: '6529/OperationalMonitoring',
+      MetricName: 'HeartbeatAge',
+      Dimensions: [
+        { Name: 'Environment', Value: ref('Environment') },
+        { Name: 'Lane', Value: lane.toLowerCase() }
+      ],
+      Statistic: 'Maximum',
+      Period: 60,
+      EvaluationPeriods: 3,
+      Threshold: 180,
+      ComparisonOperator: 'GreaterThanThreshold',
+      TreatMissingData: 'breaching',
+      AlarmActions: [ref('FallbackTopic')]
+    }
+  };
+}
+
 function monitoringTemplate(environment) {
   const functions = catalog.services
     .filter((s) => s.allowed_environments.includes(environment))
@@ -102,11 +339,18 @@ function monitoringTemplate(environment) {
       AllowedValues: [environment],
       Default: environment
     },
-    SourceAccountId: parameter({ AllowedPattern: '^\\d{12}$' }),
-    SourceRegion: parameter({ AllowedPattern: '^[a-z]{2}(-gov)?-[a-z]+-\\d$' }),
+    SourceAccountId: parameter({ AllowedPattern: String.raw`^\d{12}$` }),
+    SourceRegion: parameter({
+      AllowedPattern: String.raw`^[a-z]{2}(-gov)?-[a-z]+-\d$`
+    }),
     RuntimePermissionsBoundaryArn: parameter({
       AllowedPattern:
         '^arn:[^:]+:iam::[0-9]{12}:policy/6529-observability-(prod|staging)-runtime-boundary$'
+    }),
+    FallbackKmsKeyArn: parameter({
+      AllowedPattern: '^arn:[^:]+:kms:[^:]+:[0-9]{12}:key/[a-f0-9-]{36}$',
+      Description:
+        'Matching environment fallback key ARN from the monitoring bootstrap stack.'
     }),
     WebhookSecretArn: parameter({
       AllowedPattern: '^arn:[^:]+:secretsmanager:[^:]+:[0-9]{12}:secret:.+$'
@@ -127,7 +371,7 @@ function monitoringTemplate(environment) {
     ProbeTargets: parameter({
       Default: '[]',
       Description:
-        'JSON array of operator-approved public HTTPS targets: name, url, status.'
+        'JSON array of approved public HTTPS targets: name, url, status, optional jsonEquals scalar property assertions.'
     })
   };
   doc.Conditions = {
@@ -200,6 +444,8 @@ function monitoringTemplate(environment) {
     Type: 'AWS::SNS::Topic',
     Properties: { DisplayName: '6529 independent monitoring fallback' }
   };
+  archiveResources(r);
+  fallbackEncryption(r);
   for (const lane of ['Normal', 'Critical']) {
     r[`${lane}DeadLetters`] = {
       Type: 'AWS::SQS::Queue',
@@ -290,6 +536,17 @@ function monitoringTemplate(environment) {
   const db = statement(tableActions, attr('Receipts'));
   const archiveWrite = statement(['s3:PutObject'], sub('${Archive.Arn}/*'));
   const publish = statement(['sns:Publish'], ref('FallbackTopic'));
+  const encryptFallback = statement(
+    ['kms:GenerateDataKey', 'kms:Decrypt'],
+    ref('FallbackKmsKeyArn'),
+    {
+      Condition: {
+        StringEquals: {
+          'kms:ViaService': sub('sns.${AWS::Region}.${AWS::URLSuffix}')
+        }
+      }
+    }
+  );
   const sendNormal = statement(['sqs:SendMessage'], attr('NormalQueue'));
   const sendCritical = statement(['sqs:SendMessage'], attr('CriticalQueue'));
   const getWebhook = statement(
@@ -304,134 +561,15 @@ function monitoringTemplate(environment) {
     EVENTS_PER_SERVICE_MINUTE: '120'
   };
   for (const lane of ['Normal', 'Critical']) {
-    const normal = lane === 'Normal';
-    r[`${lane}Collector`] = functionResource(
-      'collect',
-      collectorEnv,
-      normal ? [db, archiveWrite, sendNormal] : [sendCritical],
-      {},
-      { ReservedConcurrentExecutions: normal ? 4 : 2 }
-    );
-    r[`${lane}Rule`] = {
-      Type: 'AWS::Events::Rule',
-      Properties: {
-        EventBusName: ref('EventBus'),
-        EventPattern: {
-          account: [ref('SourceAccountId')],
-          source: [normal ? '6529.ops' : 'aws.cloudwatch'],
-          ...(normal ? {} : { region: [ref('SourceRegion')] }),
-          'detail-type': [
-            normal ? '6529.ops.error.v1' : 'CloudWatch Alarm State Change'
-          ]
-        },
-        Targets: [
-          {
-            Id: lane,
-            Arn: attr(`${lane}Collector`),
-            DeadLetterConfig: { Arn: attr('EventDeadLetters') },
-            RetryPolicy: {
-              MaximumEventAgeInSeconds: 86400,
-              MaximumRetryAttempts: 185
-            }
-          }
-        ]
-      }
-    };
-    r[`${lane}Invocation`] = {
-      Type: 'AWS::Lambda::Permission',
-      Properties: {
-        Action: 'lambda:InvokeFunction',
-        FunctionName: ref(`${lane}Collector`),
-        Principal: 'events.amazonaws.com',
-        SourceArn: attr(`${lane}Rule`)
-      }
-    };
-    // Lambda's own asynchronous retries are a separate boundary from EventBridge invocation retries.
-    r[`${lane}CollectorInvokeConfig`] = {
-      Type: 'AWS::Lambda::EventInvokeConfig',
-      Properties: {
-        FunctionName: ref(`${lane}Collector`),
-        Qualifier: '$LATEST',
-        MaximumEventAgeInSeconds: 21600,
-        MaximumRetryAttempts: 2,
-        DestinationConfig: {
-          OnFailure: { Destination: attr('EventDeadLetters') }
-        }
-      }
-    };
-    r[`${lane}Collector`].Properties.Policies[0].Statement.push(
-      statement(['sqs:SendMessage'], attr('EventDeadLetters'))
-    );
-    r[`${lane}Dispatcher`] = functionResource(
-      'dispatch',
-      {
-        ...common,
-        LANE: lane.toLowerCase(),
-        WEBHOOK_SECRET_ARN: ref('WebhookSecretArn')
-      },
-      [
-        db,
-        archiveWrite,
-        publish,
-        getWebhook,
-        ...(normal ? [sendNormal] : []),
-        statement(sqsConsume, attr(`${lane}Queue`))
-      ],
-      {
-        Queue: {
-          Type: 'SQS',
-          Properties: {
-            Queue: attr(`${lane}Queue`),
-            BatchSize: 1,
-            FunctionResponseTypes: ['ReportBatchItemFailures'],
-            ScalingConfig: { MaximumConcurrency: 2 }
-          }
-        }
-      },
-      { ReservedConcurrentExecutions: 3 }
-    );
-    for (const suffix of ['Collector', 'Dispatcher'])
-      lambdaAlarm(
-        r,
-        `${lane}${suffix}Errors`,
-        `${lane}${suffix}`,
-        ref('FallbackTopic')
-      );
-    r[`${lane}QueueAge`] = {
-      Type: 'AWS::CloudWatch::Alarm',
-      Properties: {
-        Namespace: 'AWS/SQS',
-        MetricName: 'ApproximateAgeOfOldestMessage',
-        Dimensions: [
-          { Name: 'QueueName', Value: attr(`${lane}Queue`, 'QueueName') }
-        ],
-        Statistic: 'Maximum',
-        Period: 60,
-        EvaluationPeriods: 2,
-        Threshold: normal ? 600 : 120,
-        ComparisonOperator: 'GreaterThanThreshold',
-        TreatMissingData: 'notBreaching',
-        AlarmActions: [ref('FallbackTopic')]
-      }
-    };
-    r[`${lane}HeartbeatAge`] = {
-      Type: 'AWS::CloudWatch::Alarm',
-      Properties: {
-        Namespace: '6529/OperationalMonitoring',
-        MetricName: 'HeartbeatAge',
-        Dimensions: [
-          { Name: 'Environment', Value: ref('Environment') },
-          { Name: 'Lane', Value: lane.toLowerCase() }
-        ],
-        Statistic: 'Maximum',
-        Period: 60,
-        EvaluationPeriods: 3,
-        Threshold: 180,
-        ComparisonOperator: 'GreaterThanThreshold',
-        TreatMissingData: 'breaching',
-        AlarmActions: [ref('FallbackTopic')]
-      }
-    };
+    processingLane(r, lane, common, collectorEnv, {
+      db,
+      archiveWrite,
+      publish,
+      encryptFallback,
+      getWebhook,
+      sendNormal,
+      sendCritical
+    });
   }
   r.EventDeadLettersPolicy = {
     Type: 'AWS::SQS::QueuePolicy',
@@ -458,6 +596,7 @@ function monitoringTemplate(environment) {
     [
       archiveWrite,
       publish,
+      encryptFallback,
       statement(sqsConsume, [
         attr('NormalDeadLetters'),
         attr('CriticalDeadLetters'),

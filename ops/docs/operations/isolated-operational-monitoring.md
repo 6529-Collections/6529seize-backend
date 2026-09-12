@@ -36,10 +36,22 @@ production routing explicitly if the same channel is chosen.
 `MONITORING_PARAMETERS` needs `SourceAccountId`, `SourceRegion`,
 `WebhookSecretArn`, `SentrySecretArn`, `SentryProjects` (comma-separated project
 slugs or numeric IDs), and `ProbeTargets` (JSON string containing objects with
-`name`, public HTTPS `url`, and expected `status`). Optional
+`name`, public HTTPS `url`, expected `status`, and optional `jsonEquals`). Set API
+health assertions to `{"db":"ok","redis.healthy":true}` because API health can
+return HTTP 200 while dependencies are degraded. Website targets can remain
+status-only. At most ten targets and ten scalar property assertions per target
+are accepted; JSON bodies are limited to 64 KiB, discarded after checking, and
+never included in alerts. Redirects fail; use the final approved public URL.
+Optional
 `ExternalCheckInSecretArn` activates the external dead-man switch.
-`RuntimePermissionsBoundaryArn` must be the matching environment's bootstrap
-runtime boundary output. Every monitoring Lambda role receives that boundary;
+`RuntimePermissionsBoundaryArn` and `FallbackKmsKeyArn` must be the matching
+environment's bootstrap outputs. The retained, rotating fallback key is managed
+by the bootstrap identity; runtime deployment roles cannot change its policy.
+Use `StagingFallbackKmsKeyArn` or `ProdFallbackKmsKeyArn` for the respective
+environment. Both bootstrap artifact buckets and the runtime archive send access
+logs to dedicated private encrypted sinks retained for 90 days. Log sinks do not
+log to themselves, avoiding recursive log generation.
+Every monitoring Lambda role receives the runtime boundary;
 the deployment identity cannot remove or substitute it. Source-account relay
 roles use their own narrow publisher policy and do not use a cross-account boundary.
 `FallbackTargetTopicArn` enables a transitional SNS forwarder to an existing

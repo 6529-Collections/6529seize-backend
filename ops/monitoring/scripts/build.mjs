@@ -36,7 +36,7 @@ if (
 await writeFile(
   'dist/bundle-inputs.json',
   `${JSON.stringify(
-    inputs.sort((a, b) => a.localeCompare(b)),
+    inputs.toSorted((a, b) => a.localeCompare(b)),
     null,
     2
   )}\n`

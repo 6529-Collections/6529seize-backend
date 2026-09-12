@@ -45,6 +45,13 @@ import {
 import { parseWork, processWork, Work } from './pipeline.js';
 import { deliver, DeliveryError, webhookUrl } from './webhook.js';
 import { sentryAlert, verifySignature } from './sentry.js';
+import {
+  checkProbe,
+  parseProbeTargets,
+  probeUrl,
+  ProbeTarget
+} from './probes.js';
+export { probeUrl } from './probes.js';
 
 const environment = (): Environment => {
   const value = setting('ENVIRONMENT');
@@ -172,6 +179,12 @@ export async function collect(
   }
   if (event.region !== setting('SOURCE_REGION'))
     throw new Error('UNAPPROVED_SOURCE_REGION');
+  await collectAlarm(event);
+}
+
+async function collectAlarm(
+  event: EventBridgeEvent<string, unknown>
+): Promise<void> {
   const detail = record(event.detail);
   const state = record(detail.state).value;
   if (state !== 'ALARM' && state !== 'OK') return;
@@ -266,7 +279,8 @@ export function logAlerts(
     }
     // AWS log metadata, not text supplied by application callers, binds the service and identity.
     alert.service = service;
-    alert.eventId = `log:${hash(`${payload.owner}:${payload.logGroup}:${payload.logStream}:${row.id}`)}`;
+    const identity = `${payload.owner}:${payload.logGroup}:${payload.logStream}:${row.id}`;
+    alert.eventId = `log:${hash(identity)}`;
     alert.environment = env;
     alert.severity = 'error';
     if (!['APPLICATION_ERROR', 'LAMBDA_FAILURE'].includes(alert.code)) continue;
@@ -283,26 +297,8 @@ export async function dispatch(
   const lane = setting('LANE');
   for (const row of event.Records) {
     try {
-      let work: Work;
-      try {
-        work = parseWork(JSON.parse(row.body));
-      } catch {
-        // Do not persist malformed, potentially sensitive raw payloads.
-        await archive(
-          { sourceMessageHash: hash(row.body), messageId: row.messageId },
-          'INVALID_WORK'
-        );
-        await backup('INVALID_WORK');
-        continue;
-      }
-      if (work.kind === 'heartbeat' && work.lane !== lane)
-        throw new Error('WRONG_LANE');
-      if (
-        work.kind === 'alert' &&
-        (work.alert.severity === 'error') !== (lane === 'normal')
-      ) {
-        throw new Error('WRONG_LANE');
-      }
+      const work = await dispatchWork(row, lane);
+      if (!work) continue;
       await processWork(
         work,
         `${context.awsRequestId}:${row.messageId}`,
@@ -323,34 +319,68 @@ export async function dispatch(
         }
       );
     } catch (error) {
-      // Log codes only; no SDK exception can leak a webhook URL or vendor response.
-      if (!(error instanceof DeliveryError && error.deferred)) {
-        console.error(
-          JSON.stringify({
-            code: 'DELIVERY_FAILED',
-            lane,
-            messageId: row.messageId
-          })
-        );
-        metric('DeliveryFailures', 1);
-      }
-      if (error instanceof DeliveryError && error.retryAfterSeconds > 0) {
-        await sqs
-          .send(
-            new ChangeMessageVisibilityCommand({
-              QueueUrl: setting(
-                lane === 'critical' ? 'CRITICAL_QUEUE_URL' : 'NORMAL_QUEUE_URL'
-              ),
-              ReceiptHandle: row.receiptHandle,
-              VisibilityTimeout: error.retryAfterSeconds
-            })
-          )
-          .catch(() => undefined);
-      }
+      await deliveryFailure(error, row, lane);
       batchItemFailures.push({ itemIdentifier: row.messageId });
     }
   }
   return { batchItemFailures };
+}
+
+async function dispatchWork(
+  row: SQSEvent['Records'][number],
+  lane: string
+): Promise<Work | null> {
+  let work: Work;
+  try {
+    work = parseWork(JSON.parse(row.body));
+  } catch {
+    // Do not persist malformed, potentially sensitive raw payloads.
+    await archive(
+      { sourceMessageHash: hash(row.body), messageId: row.messageId },
+      'INVALID_WORK'
+    );
+    await backup('INVALID_WORK');
+    return null;
+  }
+  if (work.kind === 'heartbeat' && work.lane !== lane)
+    throw new Error('WRONG_LANE');
+  if (
+    work.kind === 'alert' &&
+    (work.alert.severity === 'error') !== (lane === 'normal')
+  )
+    throw new Error('WRONG_LANE');
+  return work;
+}
+
+async function deliveryFailure(
+  error: unknown,
+  row: SQSEvent['Records'][number],
+  lane: string
+): Promise<void> {
+  // Log codes only; no SDK exception can leak a webhook URL or vendor response.
+  if (!(error instanceof DeliveryError && error.deferred)) {
+    console.error(
+      JSON.stringify({
+        code: 'DELIVERY_FAILED',
+        lane,
+        messageId: row.messageId
+      })
+    );
+    metric('DeliveryFailures', 1);
+  }
+  if (error instanceof DeliveryError && error.retryAfterSeconds > 0) {
+    await sqs
+      .send(
+        new ChangeMessageVisibilityCommand({
+          QueueUrl: setting(
+            lane === 'critical' ? 'CRITICAL_QUEUE_URL' : 'NORMAL_QUEUE_URL'
+          ),
+          ReceiptHandle: row.receiptHandle,
+          VisibilityTimeout: error.retryAfterSeconds
+        })
+      )
+      .catch(() => undefined);
+  }
 }
 
 export async function archiveDeadLetters(
@@ -380,25 +410,6 @@ export async function archiveDeadLetters(
   return { batchItemFailures };
 }
 
-export function probeUrl(value: string): URL {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new Error('INVALID_PROBE_TARGET');
-  }
-  if (
-    url.protocol !== 'https:' ||
-    url.username ||
-    url.password ||
-    url.port ||
-    !/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(url.hostname) ||
-    url.hostname.endsWith('.local')
-  ) {
-    throw new Error('INVALID_PROBE_TARGET');
-  }
-  return url;
-}
 export async function probe(): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
   const metricData = [];
@@ -427,60 +438,51 @@ export async function probe(): Promise<void> {
       lane === 'critical'
     );
   }
-  const targets = JSON.parse(process.env.PROBE_TARGETS ?? '[]') as {
-    name: string;
-    url: string;
-    status?: number;
-  }[];
-  for (const target of targets.slice(0, 10)) {
-    const name = token(target.name, 80);
-    if (!name) throw new Error('INVALID_PROBE_NAME');
-    const url = probeUrl(target.url);
-    let healthy = false;
-    try {
-      const response = await fetch(url, {
-        redirect: 'error',
-        signal: AbortSignal.timeout(5000)
-      });
-      healthy = response.status === (target.status ?? 200);
-      await response.body?.cancel();
-    } catch {
-      /* failure is recorded below */
-    }
-    const previous = await read(`probe:${name}`);
-    const failures = healthy ? 0 : Number(previous?.failures ?? 0) + 1;
-    const down = failures >= 2;
-    const wasDown = previous?.down === true;
-    if (down !== wasDown && (down || healthy)) {
-      await enqueue(
-        {
-          kind: 'alert',
-          alert: {
-            _type: EVENT_TYPE,
-            eventId: `uptime:${name}:${now}`,
-            occurredAt: new Date().toISOString(),
-            environment: environment(),
-            service: `uptime.${name}`,
-            severity: down ? 'critical' : 'recovery',
-            code: down ? 'UPTIME_FAILURE' : 'UPTIME_RECOVERY',
-            fingerprint: hash(`uptime:${name}:${down}`)
-          }
-        },
-        true
-      );
-    }
-    await put(`probe:${name}`, {
-      failures,
-      down: down || (!healthy && wasDown),
-      checkedAt: now
-    });
-  }
+  const targets = parseProbeTargets(process.env.PROBE_TARGETS ?? '[]');
+  for (const target of targets) await probeTarget(target, now);
   await new CloudWatchClient({ maxAttempts: 3 }).send(
     new PutMetricDataCommand({
       Namespace: '6529/OperationalMonitoring',
       MetricData: metricData
     })
   );
+  await webhookHealth(now);
+  await externalCheckIn(metricData.every((metric) => metric.Value < 180));
+}
+
+async function probeTarget(target: ProbeTarget, now: number): Promise<void> {
+  const name = target.name;
+  const healthy = await checkProbe(target);
+  const previous = await read(`probe:${name}`);
+  const failures = healthy ? 0 : Number(previous?.failures ?? 0) + 1;
+  const down = failures >= 2;
+  const wasDown = previous?.down === true;
+  if (down !== wasDown && (down || healthy)) {
+    await enqueue(
+      {
+        kind: 'alert',
+        alert: {
+          _type: EVENT_TYPE,
+          eventId: `uptime:${name}:${now}`,
+          occurredAt: new Date().toISOString(),
+          environment: environment(),
+          service: `uptime.${name}`,
+          severity: down ? 'critical' : 'recovery',
+          code: down ? 'UPTIME_FAILURE' : 'UPTIME_RECOVERY',
+          fingerprint: hash(`uptime:${name}:${down}`)
+        }
+      },
+      true
+    );
+  }
+  await put(`probe:${name}`, {
+    failures,
+    down: down || (!healthy && wasDown),
+    checkedAt: now
+  });
+}
+
+async function webhookHealth(now: number): Promise<void> {
   // Credential/endpoint health does not send a Discord message or expose its response.
   const webhook = new URL(
     webhookUrl(await secret(setting('WEBHOOK_SECRET_ARN')))
@@ -496,8 +498,11 @@ export async function probe(): Promise<void> {
   await response.body?.cancel();
   if (!webhookHealthy) throw new Error('WEBHOOK_HEALTH_FAILED');
   await put('health:delivery', { seenAt: now });
+}
+
+async function externalCheckIn(queuesHealthy: boolean): Promise<void> {
   const checkInArn = process.env.CHECKIN_SECRET_ARN;
-  if (checkInArn && metricData.every((metric) => metric.Value < 180)) {
+  if (checkInArn && queuesHealthy) {
     // Optional dead-man switch owned outside AWS. Never check in from a broken queue pipeline.
     const checkIn = probeUrl(await secret(checkInArn));
     const result = await fetch(checkIn, {
