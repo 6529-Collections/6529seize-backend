@@ -141,8 +141,24 @@ Only after primary delivery is proven, remove the **Lambda subscription only**
 from the old `cloudwatch-alarms` SNS topic. Preserve confirmed email subscriptions.
 Do this before enabling the transitional generic fallback SNS forwarder: the old
 Lambda expects CloudWatch alarm JSON, so a generic fallback message would make it
-fail and potentially produce further operational alerts. Do not delete the old
-function or root Discord dependency while another legacy caller still needs it.
+fail and potentially produce further operational alerts.
+
+The Discord client and old sender are removed from source and the deployment
+catalog after their replacements are integrated. Retire the existing deployed
+sender only after confirming that moderation runs through the review database
+and both operational lanes deliver successfully. Inspect the old CloudFormation
+stack's resources first, preserve its CloudWatch log group and last verified
+artifact, and remove only the sender stack and its own SNS subscription and
+Lambda permission. Do not remove the shared SNS topic, confirmed email
+subscriptions or shared execution role. Re-deploy the monitoring source stack
+from the retirement revision so it removes only the obsolete sender's generated
+alarms and structured-log subscription. Keep other source coverage unchanged.
+
+The separate `notifier-discord` incoming webhooks for successful business events
+remain in place. They do not use a bot session or the removed Discord dependency.
+The old application `/dev-alerts` Sentry receiver is a separate integration: do
+not retire it until the Sentry provider has been moved to the independent ingress
+and that signed delivery has been verified.
 
 ## Failure investigation and replay
 

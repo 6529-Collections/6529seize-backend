@@ -270,14 +270,16 @@ flowchart TD
     Operator --> CustomReplayLoop["customReplayLoop"]
     Operator --> PopulateHistoricConsolidatedTdh["populateHistoricConsolidatedTdh"]
     Operator --> TeamLoop["teamLoop"]
-    CloudwatchTopic["SNS: cloudwatch-alarms"] --> CloudwatchAlarmsToDiscordLoop["cloudwatchAlarmsToDiscordLoop"]
+    CloudwatchTopic["SNS: cloudwatch-alarms"] --> AlarmEmail["confirmed email subscribers"]
+    CloudWatch["CloudWatch alarm state changes"] --> MonitorBus["independent monitoring EventBridge bus"]
   end
 
   BackgroundWorkers["background Lambda runtime"] --> LambdaRuntime["doInDbContext runtime"]
   DropVideoConversionInvokerLoop --> EnvOnlyRuntime["environment-only runtime"]
   LambdaRuntime --> MySQL
   LambdaRuntime --> Redis
-  LambdaRuntime --> Ops["Sentry / CloudWatch / Discord"]
+  LambdaRuntime --> Ops["Sentry / structured CloudWatch errors"]
+  Ops --> MonitorBus
   EnvOnlyRuntime --> Ops
 
   S3Uploader --> S3
@@ -361,7 +363,6 @@ for alert triage and recovery.
 | `mediaResizerLoop`               | CloudFront/request path                                                                                                            | Resize images on demand.                                                                                                    |
 | `nextgenMediaProxyInterceptor`   | Lambda@Edge / CloudFront request                                                                                                   | Provide NextGen metadata fallback.                                                                                          |
 | `dropVideoConversionInvokerLoop` | S3 object-created event for `drops/`                                                                                               | Invoke MediaConvert for uploaded drop videos.                                                                               |
-| `cloudwatchAlarmsToDiscordLoop`  | SNS `cloudwatch-alarms`                                                                                                            | Post CloudWatch alarms to Discord.                                                                                          |
 
 ### Manual Or One-Off Lambdas
 
