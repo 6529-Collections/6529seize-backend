@@ -1,0 +1,752 @@
+{
+  "environment": "prod",
+  "source": "src/config/deploy-services.json",
+  "services": [
+    {
+      "service": "api",
+      "region": "us-east-1",
+      "functions": [
+        "seizeAPI"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "aggregatedActivityLoop",
+      "region": "us-east-1",
+      "functions": [
+        "aggregatedActivityLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "attachmentsOrchestrator",
+      "region": "us-east-1",
+      "functions": [
+        "attachmentsOrchestrator"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "attachmentsProcessor",
+      "region": "us-east-1",
+      "functions": [
+        "attachmentsProcessor"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "artCurationNftWatchLoop",
+      "region": "us-east-1",
+      "functions": [
+        "artCurationNftWatchLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "cloudwatchAlarmsToDiscordLoop",
+      "region": "us-east-1",
+      "functions": [
+        "cloudwatchAlarmsToDiscordLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "claimsBuilder",
+      "region": "us-east-1",
+      "functions": [
+        "claimsBuilder"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "claimsMediaArweaveUploader",
+      "region": "us-east-1",
+      "functions": [
+        "claimsMediaArweaveUploader"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "customReplayLoop",
+      "region": "us-east-1",
+      "functions": [
+        "customReplayLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "dbDumpsDaily",
+      "region": "us-east-1",
+      "functions": [
+        "dbDumpsDaily"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "dbMigrationsLoop",
+      "region": "us-east-1",
+      "functions": [
+        "dbMigrationsLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "delegationsLoop",
+      "region": "us-east-1",
+      "functions": [
+        "delegationsLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "discoverEnsLoop",
+      "region": "us-east-1",
+      "functions": [
+        "discoverEnsLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "dropMediaSanitizer",
+      "region": "us-east-1",
+      "functions": [
+        "dropMediaSanitizer"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "ethPriceLoop",
+      "region": "us-east-1",
+      "functions": [
+        "ethPriceLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "externalCollectionLiveTailingLoop",
+      "region": "us-east-1",
+      "functions": [
+        "externalCollectionLiveTailingLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "externalCollectionSnapshottingLoop",
+      "region": "us-east-1",
+      "functions": [
+        "externalCollectionSnapshottingLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "helpBotReplyLoop",
+      "region": "us-east-1",
+      "functions": [
+        "helpBotReplyLoop",
+        "helpBotDailyActivityCreditLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "marketStatsLoop",
+      "region": "us-east-1",
+      "functions": [
+        "marketStatsMEMES",
+        "marketStatsLAB",
+        "marketStatsGRADIENT",
+        "marketStatsNEXTGEN"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "marketDepthStreamLoop",
+      "region": "us-east-1",
+      "functions": [
+        "marketDepthStreamLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "mediaResizerLoop",
+      "region": "us-east-1",
+      "functions": [
+        "mediaResizerLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "mintAnnouncementsLoop",
+      "region": "us-east-1",
+      "functions": [
+        "mintAnnouncementsLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "nextgenContractLoop",
+      "region": "us-east-1",
+      "functions": [
+        "nextgenContractLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "nextgenMediaImageResolutions",
+      "region": "us-east-1",
+      "functions": [
+        "nextgenMediaImageResolutions"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "nextgenMediaProxyInterceptor",
+      "region": "us-east-1",
+      "functions": [
+        "nextgenMediaProxyInterceptor"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "nextgenMediaUploader",
+      "region": "us-east-1",
+      "functions": [
+        "nextgenMediaUploader"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "nextgenMetadataLoop",
+      "region": "us-east-1",
+      "functions": [
+        "nextgenMetadataLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "nftHistoryLoop",
+      "region": "us-east-1",
+      "functions": [
+        "nftHistoryLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "nftLinkRefresherLoop",
+      "region": "us-east-1",
+      "functions": [
+        "nftLinkRefresherLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "nftLinkMediaPreviewLoop",
+      "region": "us-east-1",
+      "functions": [
+        "nftLinkMediaPreviewLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "nftOwnersLoop",
+      "region": "us-east-1",
+      "functions": [
+        "nftOwnersLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "nftsLoop",
+      "region": "us-east-1",
+      "functions": [
+        "nftsLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "overRatesRevocationLoop",
+      "region": "us-east-1",
+      "functions": [
+        "overRatesRevocationLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "ownersBalancesLoop",
+      "region": "us-east-1",
+      "functions": [
+        "ownersBalancesLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "populateHistoricConsolidatedTdh",
+      "region": "us-east-1",
+      "functions": [
+        "populateHistoricConsolidatedTdh"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "pushNotificationsHandler",
+      "region": "us-east-1",
+      "functions": [
+        "pushNotificationsHandler"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "rateEventProcessingLoop",
+      "region": "us-east-1",
+      "functions": [
+        "rateEventProcessingLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "releaseNotesGenerationLoop",
+      "region": "us-east-1",
+      "functions": [
+        "releaseNotesGenerationLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "refreshEnsLoop",
+      "region": "us-east-1",
+      "functions": [
+        "refreshENS"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "rememesLoop",
+      "region": "us-east-1",
+      "functions": [
+        "rememesS3Loop",
+        "rememesRefreshMetadataLoop",
+        "rememesFileLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "royaltiesLoop",
+      "region": "us-east-1",
+      "functions": [
+        "royaltiesLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "s3Uploader",
+      "region": "us-east-1",
+      "functions": [
+        "s3Uploader"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "subscriptionsDaily",
+      "region": "us-east-1",
+      "functions": [
+        "subscriptionsDaily",
+        "subscriptionCoverageReconciliationLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "subscriptionsTopUpLoop",
+      "region": "us-east-1",
+      "functions": [
+        "subscriptionsTopUpLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "xTdhGrantsReviewerLoop",
+      "region": "us-east-1",
+      "functions": [
+        "xTdhGrantsReviewerLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "tdhHistoryLoop",
+      "region": "us-east-1",
+      "functions": [
+        "tdhHistoryLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "tdhLoop",
+      "region": "us-east-1",
+      "functions": [
+        "tdhLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "teamLoop",
+      "region": "us-east-1",
+      "functions": [
+        "teamLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "transactionsLoop",
+      "region": "us-east-1",
+      "functions": [
+        "memesTransactionsLoop",
+        "gradientsTransactionsLoop",
+        "memeLabTransactionsLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "transactionsProcessingLoop",
+      "region": "us-east-1",
+      "functions": [
+        "transactionsProcessingLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "waveDecisionExecutionLoop",
+      "region": "us-east-1",
+      "functions": [
+        "waveDecisionExecutionLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "waveLeaderboardSnapshotterLoop",
+      "region": "us-east-1",
+      "functions": [
+        "waveLeaderboardSnapshotterLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "waveDropMetricsRefreshLoop",
+      "region": "us-east-1",
+      "functions": [
+        "waveDropMetricsRefreshLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "waveScoreRefreshLoop",
+      "region": "us-east-1",
+      "functions": [
+        "waveScoreRefreshLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "xTdhLoop",
+      "region": "us-east-1",
+      "functions": [
+        "xTdhLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "artworkDocumentationStorage",
+      "region": "us-east-1",
+      "functions": [],
+      "coverage": [
+        "infrastructure-only-no-lambda"
+      ]
+    },
+    {
+      "service": "artworkDocumentationProcessor",
+      "region": "us-east-1",
+      "functions": [
+        "artworkDocumentationProcessor"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    }
+  ],
+  "supplementalSource": "ops/monitoring/platform-functions.json",
+  "platformOnly": [
+    {
+      "name": "allowlist-api",
+      "owner": "external",
+      "coverage": [
+        "lambda-errors",
+        "lambda-throttles"
+      ],
+      "deployCode": false
+    },
+    {
+      "name": "allowlist-worker",
+      "owner": "external",
+      "coverage": [
+        "lambda-errors",
+        "lambda-throttles"
+      ],
+      "deployCode": false
+    },
+    {
+      "name": "allowlist-token-pool-downloader",
+      "owner": "external",
+      "coverage": [
+        "lambda-errors",
+        "lambda-throttles"
+      ],
+      "deployCode": false
+    },
+    {
+      "name": "tdhConsolidationsLoop",
+      "owner": "legacy",
+      "coverage": [
+        "lambda-errors",
+        "lambda-throttles"
+      ],
+      "deployCode": false
+    },
+    {
+      "name": "transactionsReplayLoop",
+      "owner": "legacy",
+      "coverage": [
+        "lambda-errors",
+        "lambda-throttles"
+      ],
+      "deployCode": false
+    },
+    {
+      "name": "rpcProxy",
+      "owner": "external-or-legacy",
+      "coverage": [
+        "lambda-errors",
+        "lambda-throttles"
+      ],
+      "deployCode": false
+    }
+  ]
+}

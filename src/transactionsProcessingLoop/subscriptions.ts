@@ -19,7 +19,6 @@ import { Transaction } from '../entities/ITransaction';
 import { TransactionsProcessedSubscriptionsBlock } from '../entities/ITransactionsProcessing';
 import { ethTools } from '../eth-tools';
 import { Logger } from '../logging';
-import { sendDiscordUpdate } from '../notifier-discord';
 import {
   sendInsufficientBalanceWaveError,
   sendNoBalanceFoundWaveError,
@@ -253,13 +252,7 @@ async function processSubscription(
   if (!finalSubscription) {
     const transactionLink = buildTransactionLink(transaction.transaction);
     const message = `🚨 No subscription found for airdrop address: ${transaction.to_address} \nTransaction: ${transactionLink}`;
-    logger.warn(message);
-    await sendDiscordUpdate(
-      process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
-      message,
-      'Subscriptions',
-      'warn'
-    );
+    logger.errorWithCode('SUBSCRIPTION_NOT_FOUND', message);
     waveNotifications.push({
       kind: 'no-subscription-found',
       airdropAddress: transaction.to_address,
@@ -275,13 +268,7 @@ async function processSubscription(
   if (!balance) {
     const transactionLink = buildTransactionLink(transaction.transaction);
     const message = `🚨 No balance found for consolidation key: ${finalSubscription.consolidation_key} \nTransaction: ${transactionLink}`;
-    logger.error(message);
-    await sendDiscordUpdate(
-      process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
-      message,
-      'Subscriptions',
-      'error'
-    );
+    logger.errorWithCode('SUBSCRIPTION_BALANCE_NOT_FOUND', message);
     waveNotifications.push({
       kind: 'no-balance-found',
       consolidationKey: finalSubscription.consolidation_key,
@@ -294,13 +281,7 @@ async function processSubscription(
   } else if (MEMES_MINT_PRICE > balance.balance) {
     const transactionLink = buildTransactionLink(transaction.transaction);
     const message = `🚨 Insufficient balance for consolidation key: ${finalSubscription.consolidation_key} \nTransaction: ${transactionLink}`;
-    logger.error(message);
-    await sendDiscordUpdate(
-      process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
-      message,
-      'Subscriptions',
-      'error'
-    );
+    logger.errorWithCode('SUBSCRIPTION_BALANCE_INSUFFICIENT', message);
     waveNotifications.push({
       kind: 'insufficient-balance',
       consolidationKey: finalSubscription.consolidation_key,
