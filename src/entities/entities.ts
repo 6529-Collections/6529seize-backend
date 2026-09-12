@@ -279,3 +279,5 @@ export {
   ArtworkDocumentationAssetEntity,
   ArtworkDocumentationAssetQuotaEntity
 } from './IArtworkDocumentationAsset';
+
+export { PushInstallationEntity } from './IPushInstallation';

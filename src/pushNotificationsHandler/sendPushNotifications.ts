@@ -24,6 +24,8 @@ export interface PushNotificationMessageInput {
   notification_id: number;
   extra_data: Record<string, string | number | null | undefined>;
   badge?: number;
+  /** Preserve the existing badge when the registration platform cannot be identified. */
+  omitBadge?: boolean;
   imageUrl?: string;
 }
 
@@ -67,6 +69,30 @@ function init() {
       })
     });
   }
+}
+
+/** A badge update has no alert, sound, feed notification, or background wakeup. */
+export async function sendBadgeUpdate(
+  token: string,
+  count: number
+): Promise<void> {
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new Error('Invalid device badge count');
+  }
+  init();
+  await admin.messaging().send({
+    token,
+    apns: {
+      headers: {
+        'apns-push-type': 'alert',
+        'apns-priority': '5',
+        'apns-collapse-id': 'device-badge-refresh',
+        // Do not store a count for later delivery to an offline device.
+        'apns-expiration': '0'
+      },
+      payload: { aps: { badge: count } }
+    }
+  });
 }
 
 export async function sendMessages(
@@ -157,19 +183,29 @@ function buildMessage(
     notification.imageUrl = input.imageUrl!.trim();
   }
 
+  const data = buildMessageData(input);
+  const targetProfileId = data.target_profile_id;
+  // Android's delivered-notification API exposes the native tag, but may omit
+  // FCM custom data. Keep profile/read identity available without a native update.
+  const tag = targetProfileId
+    ? `6529:v1:${encodeURIComponent(targetProfileId)}:${data.notification_id}:${encodeURIComponent(data.wave_id ?? '')}`
+    : undefined;
   return fitPushNotificationPayload({
     notification,
     token: input.token,
-    data: buildMessageData(input),
+    data,
     android: {
       notification: {
-        sound: 'default'
+        sound: 'default',
+        ...(tag ? { tag } : {})
       }
     },
     apns: {
       payload: {
         aps: {
-          badge: numbers.parseIntOrNull(input.badge) ?? 1,
+          ...(input.omitBadge
+            ? {}
+            : { badge: numbers.parseIntOrNull(input.badge) ?? 1 }),
           sound: 'default'
         }
       }

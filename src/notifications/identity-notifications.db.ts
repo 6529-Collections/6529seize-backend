@@ -1,3 +1,4 @@
+import { DbPoolName } from '@/db-query.options';
 import { optionalWaveReadAccessSql } from '@/waves/wave-read-access-sql';
 import { sendIdentityPushNotification } from '../api-serverless/src/push-notifications/push-notifications.service';
 import {
@@ -496,6 +497,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     connection?: ConnectionWrapper<any>,
     options?: {
       enabledCauses?: IdentityNotificationCause[];
+      forcePool?: DbPoolName;
     }
   ): Promise<number> {
     const enabledCauses = options?.enabledCauses;
@@ -516,6 +518,10 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     if (hasEnabledCauses) {
       queryParams.enabledCauses = enabledCauses;
     }
+
+    const queryOptions = connection
+      ? { wrappedConnection: connection }
+      : undefined;
 
     return this.db
       .oneOrNull<{ cnt: number }>(
@@ -566,7 +572,9 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         )${causeClause}
       `,
         queryParams,
-        connection ? { wrappedConnection: connection } : undefined
+        options?.forcePool
+          ? { ...queryOptions, forcePool: options.forcePool }
+          : queryOptions
       )
       .then((it) => it?.cnt ?? 0);
   }
