@@ -224,6 +224,34 @@ describe('per-NFT offer pricing', () => {
 });
 
 describe('conservative group allocation', () => {
+  it('keeps an invalid pin explicit and blocks optional rows without claiming a budget shortage', () => {
+    const result = allocateCollectOffers(
+      request({
+        method: { kind: 'goal' },
+        max_total_weth_wei: '1000',
+        assets: [
+          {
+            asset_key: 'unknown',
+            quantity: '1',
+            manual_unit_amount_wei: '100'
+          },
+          { asset_key: 'nft-a', quantity: '1' }
+        ]
+      }),
+      signals(),
+      BigInt(1000)
+    );
+    expect(
+      result.rows.every((row) => row.status === 'PIN_CONFLICT' && !row.selected)
+    ).toBe(true);
+    expect(result.rows[0].reason_codes).toContain('UNSUPPORTED_ASSET');
+    expect(result.rows[1].unit_amount_wei).toBe('140');
+    expect(result.rows[1].reason_codes).toContain('PIN_CONFLICT');
+    expect(result.rows[1].reason_codes).not.toContain('BUDGET_EXCEEDED');
+    expect(result.rows[1].prepare_request).toBeUndefined();
+    expect(result.proposed_weth_wei).toBe('0');
+    expect(result.unallocated_weth_wei).toBe('1000');
+  });
   it('bounds goal allocations and every partial-fill subset while preserving pinned prices', () => {
     fc.assert(
       fc.property(

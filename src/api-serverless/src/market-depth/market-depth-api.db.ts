@@ -100,6 +100,45 @@ export function applyOrderStatusObservation(
 }
 
 export class MarketDepthApiDb extends LazyDbAccessCompatibleService {
+  private async readBook(
+    token: MarketTokenContext,
+    partition: { source: string; collection_slug: string },
+    scope: boolean | 'all',
+    limit: number
+  ): Promise<CurrentMarketDepthSnapshot | null> {
+    if (scope !== 'all')
+      return marketDepthDb.getLatestCompletedSnapshot(
+        partition.source,
+        token.contract,
+        partition.collection_slug,
+        scope
+          ? { side: 'ask', limit }
+          : { token_id: token.token_id, include_payloads: false }
+      );
+    // Reserve half of the existing collection bound for each side. An ask-heavy
+    // collection must not consume the bid quota through SQL's side ordering.
+    const [asks, bids] = await Promise.all(
+      (['ask', 'bid'] as const).map((side) =>
+        marketDepthDb.getLatestCompletedSnapshot(
+          partition.source,
+          token.contract,
+          partition.collection_slug,
+          { side, limit: Math.floor(limit / 2) }
+        )
+      )
+    );
+    if (!asks || !bids) return null;
+    if (asks.snapshot.id !== bids.snapshot.id)
+      throw new CustomApiCompliantException(
+        503,
+        'The indexed collection is updating. Refresh before trying again.'
+      );
+    return {
+      snapshot: asks.snapshot,
+      orders: [...asks.orders, ...bids.orders]
+    };
+  }
+
   async getToken(
     contract: string,
     tokenId: string
@@ -154,19 +193,7 @@ export class MarketDepthApiDb extends LazyDbAccessCompatibleService {
     );
     const books = await Promise.all(
       partitions.map((partition) =>
-        marketDepthDb.getLatestCompletedSnapshot(
-          partition.source,
-          token.contract,
-          partition.collection_slug,
-          collectionListings
-            ? {
-                ...(collectionListings === true
-                  ? { side: 'ask' as const }
-                  : {}),
-                limit: collectionLimit
-              }
-            : { token_id: token.token_id, include_payloads: false }
-        )
+        this.readBook(token, partition, collectionListings, collectionLimit)
       )
     );
     const completed = books.filter(

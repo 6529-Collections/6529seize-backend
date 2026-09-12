@@ -21,6 +21,72 @@ function unavailable(
     reason_codes: [...row.reason_codes, reason]
   };
 }
+function formulaUnit(
+  request: OfferAnalysisRequest,
+  signals: OfferAssetSignals,
+  base: bigint,
+  row: OfferAnalysisRow
+): bigint | OfferAnalysisReason {
+  switch (request.method.kind) {
+    case 'match_bid':
+      row.reason_codes.push('MATCH_BID');
+      return base;
+    case 'improve_bid':
+      row.reason_codes.push('IMPROVE_BID');
+      return (
+        (base * (BPS + BigInt(request.method.basis_points!)) +
+          BPS -
+          BigInt(1)) /
+        BPS
+      );
+    case 'discount_ask':
+      row.reason_codes.push('DISCOUNT_ASK');
+      return (base * (BPS - BigInt(request.method.basis_points!))) / BPS;
+    case 'goal': {
+      // Sparse unique works have no validated comparable-sales model. Three
+      // distinct observed sellers are a limited-evidence ERC1155 opening gate,
+      // not a claim of independent control or probability of acceptance.
+      if (
+        signals.standard !== 'ERC1155' ||
+        signals.distinct_ask_makers < 3 ||
+        !signals.coverage_complete
+      )
+        return 'INSUFFICIENT_GOAL_EVIDENCE';
+      const opening = (base * BigInt(7000)) / BPS;
+      row.reason_codes.push('GOAL_PATIENT_OPENING');
+      return signals.distinct_bid_makers < 2
+        ? (opening * BigInt(9500)) / BPS
+        : opening;
+    }
+    default:
+      return 'NO_APPLICABLE_BID';
+  }
+}
+
+function observedUnit(
+  request: OfferAnalysisRequest,
+  signals: OfferAssetSignals,
+  row: OfferAnalysisRow
+): bigint | OfferAnalysisReason {
+  const usesBid = ['match_bid', 'improve_bid'].includes(request.method.kind);
+  const reference = usesBid ? signals.bid : signals.ask;
+  if (!reference) {
+    row.reason_codes.push(...signals.reason_codes);
+    return usesBid ? 'NO_APPLICABLE_BID' : 'NO_APPLICABLE_ASK';
+  }
+  row.references.push(reference);
+  row.reason_codes.push('OBSERVED_REFERENCE_ONLY');
+  const unit = formulaUnit(
+    request,
+    signals,
+    BigInt(reference.unit_amount_wei),
+    row
+  );
+  if (typeof unit === 'bigint' && reference.currency === MARKET_ZERO_ADDRESS)
+    row.reason_codes.push('ETH_ASK_WETH_COMPARISON');
+  return unit;
+}
+
 function priceRow(
   request: OfferAnalysisRequest,
   input: OfferAnalysisRequest['assets'][number],
@@ -37,63 +103,12 @@ function priceRow(
   };
   if (!signals || (signals.standard === 'ERC721' && input.quantity !== '1'))
     return unavailable(row, 'UNSUPPORTED_ASSET');
-  let unit: bigint;
+  let unit: bigint | OfferAnalysisReason;
   if (input.manual_unit_amount_wei) {
     unit = BigInt(input.manual_unit_amount_wei);
     row.reason_codes.push('MANUAL_PRICE');
-  } else {
-    const reference = ['match_bid', 'improve_bid'].includes(request.method.kind)
-      ? signals.bid
-      : signals.ask;
-    if (!reference) {
-      row.reason_codes.push(...signals.reason_codes);
-      return unavailable(
-        row,
-        ['match_bid', 'improve_bid'].includes(request.method.kind)
-          ? 'NO_APPLICABLE_BID'
-          : 'NO_APPLICABLE_ASK'
-      );
-    }
-    row.references.push(reference);
-    row.reason_codes.push('OBSERVED_REFERENCE_ONLY');
-    const base = BigInt(reference.unit_amount_wei);
-    switch (request.method.kind) {
-      case 'match_bid':
-        unit = base;
-        row.reason_codes.push('MATCH_BID');
-        break;
-      case 'improve_bid':
-        unit =
-          (base * (BPS + BigInt(request.method.basis_points!)) +
-            BPS -
-            BigInt(1)) /
-          BPS;
-        row.reason_codes.push('IMPROVE_BID');
-        break;
-      case 'discount_ask':
-        unit = (base * (BPS - BigInt(request.method.basis_points!))) / BPS;
-        row.reason_codes.push('DISCOUNT_ASK');
-        break;
-      case 'goal':
-        // Sparse unique works have no validated comparable-sales model. Three
-        // distinct observed sellers are a limited-evidence ERC1155 opening gate,
-        // not a claim of independent control or probability of acceptance.
-        if (
-          signals.standard !== 'ERC1155' ||
-          signals.distinct_ask_makers < 3 ||
-          !signals.coverage_complete
-        )
-          return unavailable(row, 'INSUFFICIENT_GOAL_EVIDENCE');
-        unit = (base * BigInt(7000)) / BPS;
-        if (signals.distinct_bid_makers < 2) unit = (unit * BigInt(9500)) / BPS;
-        row.reason_codes.push('GOAL_PATIENT_OPENING');
-        break;
-      default:
-        return unavailable(row, 'NO_APPLICABLE_BID');
-    }
-    if (reference.currency === MARKET_ZERO_ADDRESS)
-      row.reason_codes.push('ETH_ASK_WETH_COMPARISON');
-  }
+  } else unit = observedUnit(request, signals, row);
+  if (typeof unit !== 'bigint') return unavailable(row, unit);
   const total = unit * BigInt(input.quantity);
   if (
     unit <= BigInt(0) ||
@@ -124,11 +139,8 @@ function selectGoalRows(rows: OfferAnalysisRow[], capacity: bigint): boolean {
     .sort((a, b) => {
       const left = BigInt(a.total_amount_wei!),
         right = BigInt(b.total_amount_wei!);
-      return left === right
-        ? a.asset_key.localeCompare(b.asset_key)
-        : left < right
-          ? -1
-          : 1;
+      if (left === right) return a.asset_key.localeCompare(b.asset_key);
+      return left < right ? -1 : 1;
     });
   for (const row of optional) {
     const amount = BigInt(row.total_amount_wei!);
@@ -138,6 +150,44 @@ function selectGoalRows(rows: OfferAnalysisRow[], capacity: bigint): boolean {
     }
   }
   return true;
+}
+
+function finishRow(
+  row: OfferAnalysisRow,
+  request: OfferAnalysisRequest,
+  pinConflict: boolean,
+  invalidPin: boolean,
+  limitReason: OfferAnalysisReason
+): void {
+  if (pinConflict) row.selected = false;
+  if (row.status !== 'PRICED') {
+    if (pinConflict && row.pinned) {
+      row.status = 'PIN_CONFLICT';
+      row.reason_codes.push('PIN_CONFLICT');
+    }
+    return;
+  }
+  if (!row.selected) {
+    row.status =
+      pinConflict && (row.pinned || invalidPin)
+        ? 'PIN_CONFLICT'
+        : 'EXCLUDED_BUDGET';
+    if (!invalidPin) row.reason_codes.push(limitReason);
+    if (row.status === 'PIN_CONFLICT') row.reason_codes.push('PIN_CONFLICT');
+    return;
+  }
+  row.prepare_request = {
+    profile_id: request.profile_id,
+    wallet: request.wallet.toLowerCase(),
+    recipient: request.recipient.toLowerCase(),
+    acknowledge_external_recipient: request.acknowledge_external_recipient,
+    kind: 'OFFER',
+    asset_key: row.asset_key,
+    quantity: row.quantity,
+    currency: MARKET_WETH,
+    amount_wei: row.total_amount_wei!,
+    expires_at: request.expires_at
+  };
 }
 
 /** Price the chosen exact NFTs once. Never reserve funds or construct signatures. */
@@ -166,37 +216,9 @@ export function allocateCollectOffers(
     request.max_total_weth_wei !== undefined && budget <= availableWei
       ? 'BUDGET_EXCEEDED'
       : 'INSUFFICIENT_WETH';
-  for (const row of rows) {
-    if (pinConflict) row.selected = false;
-    if (row.status !== 'PRICED') {
-      if (pinConflict && row.pinned) {
-        row.status = 'PIN_CONFLICT';
-        row.reason_codes.push('PIN_CONFLICT');
-      }
-      continue;
-    }
-    if (!row.selected) {
-      row.status =
-        pinConflict && (row.pinned || invalidPin)
-          ? 'PIN_CONFLICT'
-          : 'EXCLUDED_BUDGET';
-      if (!invalidPin) row.reason_codes.push(limitReason);
-      if (row.status === 'PIN_CONFLICT') row.reason_codes.push('PIN_CONFLICT');
-      continue;
-    }
-    row.prepare_request = {
-      profile_id: request.profile_id,
-      wallet: request.wallet.toLowerCase(),
-      recipient: request.recipient.toLowerCase(),
-      acknowledge_external_recipient: request.acknowledge_external_recipient,
-      kind: 'OFFER',
-      asset_key: row.asset_key,
-      quantity: row.quantity,
-      currency: MARKET_WETH,
-      amount_wei: row.total_amount_wei!,
-      expires_at: request.expires_at
-    };
-  }
+  rows.forEach((row) =>
+    finishRow(row, request, pinConflict, invalidPin, limitReason)
+  );
   const proposed = sumRows(rows.filter((row) => row.selected));
   return {
     rows,

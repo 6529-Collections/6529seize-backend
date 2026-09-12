@@ -50,6 +50,10 @@ No sale-comparable model or live-market depth guarantee is claimed.
 
 Analysis uses bounded completed collection snapshots, including the existing
 market event overlay for observed cancellations and other lifecycle changes.
+Each family read retains at most 10,000 indexed orders, divided equally between
+asks and bids across bounded partitions. Both sides must belong to the same
+snapshot generation; neither side can consume the other's quota. Truncated
+coverage remains incomplete, including for goal eligibility.
 It does not issue provider or RPC calls per NFT. References require active,
 public, exact-token, supported fixed-price order terms, canonical currencies,
 matching hash/maker/token identities and an exactly representable requested
@@ -79,7 +83,10 @@ allocated inside that maximum gross debit during fresh review; a unit price
 must never be passed as the total for a multi-copy NFT.
 
 A fresh payer WETH balance is compared with primary-database tracked liabilities
-across all profiles and unresolved states. Tracked liabilities are read with a
+across all profiles, without releasing exposure based on operation state alone.
+Safe-chain reconciliation clears the stored amount after proven cancellation,
+full fill or expiry; unresolved stored liabilities remain counted. The existing
+wallet/currency funding index supports this read. Tracked liabilities use a
 10,001-row sentinel and fail closed if coverage or numeric validity is unknown.
 External signatures are not comprehensively known. Analysis capacity is the
 nonnegative balance minus tracked liabilities, capped by the optional maximum
@@ -90,7 +97,8 @@ Manual/formula budget or funding conflicts retain every explicit price and
 quantity, flag the conflict, and expose no actionable prepare proposal. Goal
 allocation may exclude optional NFTs to fit capacity, but never removes or
 changes a manual pin to make the plan appear feasible. Invalid or unaffordable
-pins require explicit user resolution. Unallocated WETH stays uncommitted.
+pins require explicit user resolution. Unallocated WETH stays uncommitted;
+it is unused capacity, not an assertion that a conflicting plan is feasible.
 
 Each selected proposal enters the existing single-offer preparation, fresh
 review, funding check, liability reservation, explicit signature and publication

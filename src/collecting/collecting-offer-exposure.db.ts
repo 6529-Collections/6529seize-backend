@@ -4,7 +4,9 @@ import { dbSupplier, SqlExecutor } from '@/sql-executor';
 import { MARKET_WETH } from '@/marketplace/seaport.registry';
 import { marketUintSchema } from '@/marketplace/seaport.schema';
 
-/** Read only tracked liabilities; external signatures and balances remain unreserved. */
+/** Safe reconciliation zeros resolved exposure. State labels alone cannot release
+ * signed liabilities; primary reads prevent replica lag understating them.
+ * External signatures and balances remain unreserved. */
 export async function collectOfferExposure(
   wallet: string,
   db: SqlExecutor = dbSupplier()

@@ -215,4 +215,26 @@ describe('indexed offer calculation references', () => {
     expect(truncated.ask).toBeDefined();
     expect(truncated.coverage_complete).toBe(false);
   });
+
+  it.each([
+    new Date(now.getTime() - 3600001),
+    new Date(now.getTime() + 1),
+    new Date('invalid')
+  ])(
+    'does not re-age stale or invalid row observations when a snapshot completes freshly: %s',
+    (observed_at) => {
+      const result = signal([{ ...indexed('bid'), observed_at }]);
+      expect(result.bid).toBeUndefined();
+      expect(result.coverage_complete).toBe(false);
+      expect(result.reason_codes).toContain('STALE_MARKET_DATA');
+    }
+  );
+
+  it('rejects a future snapshot completion even when its start time is in the past', () => {
+    const result = signal([indexed('bid')], request, {
+      completed_at: new Date(now.getTime() + 1)
+    });
+    expect(result.bid).toBeUndefined();
+    expect(result.coverage_complete).toBe(false);
+  });
 });

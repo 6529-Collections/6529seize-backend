@@ -67,6 +67,10 @@ describe('private offer analysis handler boundary', () => {
       )
     ).rejects.toThrow('Invalid collecting or trade request');
     expect(analyzeCollectOffers).not.toHaveBeenCalled();
+    expect(req.res.set).toHaveBeenCalledWith({
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff'
+    });
     expect(req.body).toBeUndefined();
   });
 });

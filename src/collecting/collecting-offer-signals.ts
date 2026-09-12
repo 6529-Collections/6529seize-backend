@@ -102,6 +102,101 @@ function preferReference(
   return candidate.kind === 'bid' ? a > b : a < b;
 }
 
+function initialSignals(
+  catalog: Map<string, CollectingAsset>,
+  books: CurrentMarketDepthSnapshot[]
+) {
+  const signals = new Map<string, OfferAssetSignals>();
+  for (const asset of Array.from(catalog.values())) {
+    const familyBooks = books.filter(
+      (book) =>
+        book.snapshot.contract.toLowerCase() === asset.contract.toLowerCase()
+    );
+    signals.set(asset.asset_key, {
+      asset_key: asset.asset_key,
+      standard: asset.family === 'memes' ? 'ERC1155' : 'ERC721',
+      distinct_ask_makers: 0,
+      distinct_bid_makers: 0,
+      coverage_complete:
+        familyBooks.length > 0 &&
+        familyBooks.every(
+          (book) => book.orders.length === book.snapshot.order_count
+        ),
+      reason_codes: familyBooks.length ? [] : ['NO_MARKET_DATA']
+    });
+  }
+  return signals;
+}
+
+interface SignalRead {
+  requested: Map<string, string>;
+  catalog: Map<string, CollectingAsset>;
+  signals: Map<string, OfferAssetSignals>;
+  makers: Record<'ask' | 'bid', Map<string, Set<string>>>;
+  excludedMakers: Set<string>;
+  now: number;
+  evaluated: number;
+  applicable: number;
+}
+
+function markStale(signal: OfferAssetSignals): void {
+  signal.coverage_complete = false;
+  if (!signal.reason_codes.includes('STALE_MARKET_DATA'))
+    signal.reason_codes.push('STALE_MARKET_DATA');
+}
+
+function freshObservation(times: number[], now: number): boolean {
+  return (
+    times.every((time) => Number.isFinite(time) && time <= now) &&
+    now - Math.min(...times) < OFFER_ANALYSIS_FRESH_MILLIS
+  );
+}
+
+function readOrder(
+  read: SignalRead,
+  order: CurrentMarketDepthOrder,
+  snapshotTime: number
+): void {
+  read.evaluated++;
+  const key = `1:${order.contract.toLowerCase()}:${order.token_id}`;
+  const asset = read.catalog.get(key),
+    signal = read.signals.get(key),
+    quantity = read.requested.get(key);
+  if (!asset || !signal || !quantity) return;
+  const times = [snapshotTime, order.observed_at.getTime()];
+  if (!freshObservation(times, read.now)) {
+    markStale(signal);
+    return;
+  }
+  const reference = applicableReference(
+    order,
+    asset,
+    quantity,
+    read.excludedMakers,
+    Math.min(...times),
+    read.now
+  );
+  if (!reference) return;
+  read.applicable++;
+  read.makers[reference.kind].get(key)!.add(reference.maker);
+  if (preferReference(reference, signal[reference.kind]))
+    signal[reference.kind] = reference;
+}
+
+function readBook(read: SignalRead, book: CurrentMarketDepthSnapshot): void {
+  const times = [
+    book.snapshot.started_at.getTime(),
+    book.snapshot.completed_at.getTime()
+  ];
+  if (!freshObservation(times, read.now)) {
+    for (const asset of Array.from(read.catalog.values()))
+      if (asset.contract.toLowerCase() === book.snapshot.contract.toLowerCase())
+        markStale(read.signals.get(asset.asset_key)!);
+    return;
+  }
+  book.orders.forEach((order) => readOrder(read, order, Math.min(...times)));
+}
+
 /** Applicability of indexed terms is distinct from live funding or fulfillment. */
 export function collectOfferSignals(
   request: OfferAnalysisRequest,
@@ -121,91 +216,29 @@ export function collectOfferSignals(
       .filter((asset) => requested.has(asset.asset_key))
       .map((asset) => [asset.asset_key, asset])
   );
-  const excludedMakers = new Set(
-    [...wallets, request.wallet].map((wallet) => wallet.toLowerCase())
-  );
-  const signals = new Map<string, OfferAssetSignals>();
-  const askMakers = new Map<string, Set<string>>(),
-    bidMakers = new Map<string, Set<string>>();
-  for (const asset of Array.from(catalog.values())) {
-    const familyBooks = books.filter(
-      (book) =>
-        book.snapshot.contract.toLowerCase() === asset.contract.toLowerCase()
-    );
-    signals.set(asset.asset_key, {
-      asset_key: asset.asset_key,
-      standard: asset.family === 'memes' ? 'ERC1155' : 'ERC721',
-      distinct_ask_makers: 0,
-      distinct_bid_makers: 0,
-      coverage_complete:
-        familyBooks.length > 0 &&
-        familyBooks.every(
-          (book) => book.orders.length === book.snapshot.order_count
-        ),
-      reason_codes: familyBooks.length ? [] : ['NO_MARKET_DATA']
-    });
-    askMakers.set(asset.asset_key, new Set());
-    bidMakers.set(asset.asset_key, new Set());
-  }
-  let evaluated = 0,
-    applicable = 0;
-  for (const book of books) {
-    const snapshotTime = Math.min(
-      book.snapshot.started_at.getTime(),
-      book.snapshot.completed_at.getTime()
-    );
-    const stale =
-      !Number.isFinite(snapshotTime) ||
-      snapshotTime > now ||
-      now - snapshotTime >= OFFER_ANALYSIS_FRESH_MILLIS;
-    if (stale) {
-      for (const asset of Array.from(catalog.values()))
-        if (
-          asset.contract.toLowerCase() === book.snapshot.contract.toLowerCase()
-        ) {
-          const signal = signals.get(asset.asset_key)!;
-          signal.coverage_complete = false;
-          if (!signal.reason_codes.includes('STALE_MARKET_DATA'))
-            signal.reason_codes.push('STALE_MARKET_DATA');
-        }
-      continue;
-    }
-    for (const order of book.orders) {
-      evaluated++;
-      const key = `1:${order.contract.toLowerCase()}:${order.token_id}`;
-      const asset = catalog.get(key),
-        signal = signals.get(key),
-        quantity = requested.get(key);
-      if (!asset || !signal || !quantity) continue;
-      const observedAt = Math.min(snapshotTime, order.observed_at.getTime());
-      if (
-        !Number.isFinite(observedAt) ||
-        now - observedAt >= OFFER_ANALYSIS_FRESH_MILLIS
-      )
-        continue;
-      const reference = applicableReference(
-        order,
-        asset,
-        quantity,
-        excludedMakers,
-        observedAt,
-        now
-      );
-      if (!reference) continue;
-      applicable++;
-      const makers = reference.kind === 'ask' ? askMakers : bidMakers;
-      makers.get(key)!.add(reference.maker);
-      if (preferReference(reference, signal[reference.kind]))
-        signal[reference.kind] = reference;
-    }
-  }
+  const signals = initialSignals(catalog, books);
+  const makersFor = () =>
+    new Map(Array.from(catalog.keys(), (key) => [key, new Set<string>()]));
+  const read: SignalRead = {
+    requested,
+    catalog,
+    signals,
+    now,
+    excludedMakers: new Set(
+      [...wallets, request.wallet].map((wallet) => wallet.toLowerCase())
+    ),
+    makers: { ask: makersFor(), bid: makersFor() },
+    evaluated: 0,
+    applicable: 0
+  };
+  books.forEach((book) => readBook(read, book));
   for (const [key, signal] of Array.from(signals.entries())) {
-    signal.distinct_ask_makers = askMakers.get(key)!.size;
-    signal.distinct_bid_makers = bidMakers.get(key)!.size;
+    signal.distinct_ask_makers = read.makers.ask.get(key)!.size;
+    signal.distinct_bid_makers = read.makers.bid.get(key)!.size;
   }
   return {
     signals,
-    evaluated_order_count: evaluated,
-    applicable_order_count: applicable
+    evaluated_order_count: read.evaluated,
+    applicable_order_count: read.applicable
   };
 }
