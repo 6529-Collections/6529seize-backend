@@ -140,6 +140,12 @@ archiver can still exceed finite SQS retention. A failed archive write does not
 acknowledge the queued item. Source-side Logs delivery and asynchronous Lambda
 retries also have finite AWS windows; the source relay DLQ remains in the source
 account and may contain the compressed source log batch. Its access is restricted.
+Alarm forwarding also uses this same-region DLQ. Event-bus targets reject custom
+retry policies; the source template retains the supported DLQ configuration and
+alarms when it has visible messages. This alarm uses the optional existing source
+SNS topic, whose fallback recipients must be confirmed independently of the
+cross-account forwarding path. See the AWS [event-bus target contract](https://docs.aws.amazon.com/cdk/api/v2/docs/aws-cdk-lib.aws_events_targets.EventBusProps.html)
+and [DLQ permissions and regional requirements](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-rule-dlq.html).
 
 `/health` returns only `ok` or `degraded`. It requires fresh receipts from both
 canary queues and a recent successful authenticated GET of the Discord webhook.
@@ -159,7 +165,7 @@ From this package directory:
 ../../bin/6529 run generate
 ../../bin/6529 run generate:check
 ../../bin/6529 run check
-pipx run --spec cfn-lint==1.40.4 cfn-lint bootstrap.json source-bootstrap.json monitoring-prod.json monitoring-staging.json source-prod.json source-staging.json
+pipx run --spec cfn-lint==1.40.4 cfn-lint bootstrap.json source-bootstrap.json monitoring-prod.json monitoring-staging.json source-prod.json source-staging.json access-monitoring.json access-source.json dashboard-prod.json dashboard-staging.json
 ```
 
 The build verifies that every esbuild input stays inside this standalone package.
@@ -175,3 +181,13 @@ without starting MySQL:
 Root Jest/TypeScript exclude this independent package; the dedicated CI job owns
 its tests and compilation. Deployment is described in
 [the operational runbook](../docs/operations/isolated-operational-monitoring.md).
+
+## Health dashboards
+
+Separate generated `dashboard-prod.json` and `dashboard-staging.json` templates
+show monitoring pipeline health, bounded synthetic probe observations and
+verified source-account request metrics. Cross-account console access and role
+grants are independent of runtime delivery. Follow the
+[dashboard runbook](../docs/operations/monitoring-health-dashboard.md) for metric
+semantics, required resource parameters, rollout and validation. Pipeline
+heartbeats do not establish application-job success.

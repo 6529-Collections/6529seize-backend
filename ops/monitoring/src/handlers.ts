@@ -6,7 +6,8 @@ import {
 } from '@aws-sdk/client-eventbridge';
 import {
   CloudWatchClient,
-  PutMetricDataCommand
+  PutMetricDataCommand,
+  type MetricDatum
 } from '@aws-sdk/client-cloudwatch';
 import { ChangeMessageVisibilityCommand } from '@aws-sdk/client-sqs';
 import type {
@@ -46,7 +47,7 @@ import { parseWork, processWork, Work } from './pipeline.js';
 import { deliver, DeliveryError, webhookUrl } from './webhook.js';
 import { sentryAlert, verifySignature } from './sentry.js';
 import {
-  checkProbe,
+  measureProbe,
   parseProbeTargets,
   probeUrl,
   ProbeTarget
@@ -64,6 +65,7 @@ const list = (name: string): string[] =>
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+const probeMetrics = new CloudWatchClient({ maxAttempts: 1 });
 
 async function accept(alert: Alert, critical: boolean): Promise<void> {
   if (!critical && !(await admit(alert))) {
@@ -269,10 +271,11 @@ export function logAlerts(
     const row = record(raw);
     let alert: Alert;
     try {
-      const decoded: unknown = JSON.parse(String(row.message));
-      const nested = record(decoded).message;
+      const decoded = record(JSON.parse(String(row.message)));
+      // A canonical envelope wins over any unknown application-supplied message field.
+      const envelope = decoded._type === EVENT_TYPE ? decoded : decoded.message;
       alert = parseAlert(
-        typeof nested === 'string' ? JSON.parse(nested) : decoded
+        typeof envelope === 'string' ? JSON.parse(envelope) : envelope
       );
     } catch {
       continue;
@@ -444,15 +447,63 @@ export async function probe(): Promise<void> {
       MetricData: metricData
     })
   );
-  const targets = parseProbeTargets(process.env.PROBE_TARGETS ?? '[]');
-  for (const target of targets) await probeTarget(target, now);
-  await webhookHealth(now);
-  await externalCheckIn(metricData.every((metric) => metric.Value < 180));
+  const observations: MetricDatum[] = [];
+  try {
+    const targets = parseProbeTargets(process.env.PROBE_TARGETS ?? '[]');
+    for (const target of targets) await probeTarget(target, now, observations);
+    await webhookHealth(now);
+    await externalCheckIn(metricData.every((metric) => metric.Value < 180));
+  } finally {
+    await publishProbeObservations(observations);
+  }
 }
 
-async function probeTarget(target: ProbeTarget, now: number): Promise<void> {
+async function publishProbeObservations(
+  observations: MetricDatum[]
+): Promise<void> {
+  if (!observations.length) return;
+  await probeMetrics
+    .send(
+      new PutMetricDataCommand({
+        Namespace: '6529/OperationalMonitoring',
+        MetricData: observations
+      }),
+      { abortSignal: AbortSignal.timeout(2000) }
+    )
+    .catch(() => {
+      metric('ProbeMetricPublicationFailures', 1);
+    });
+}
+
+async function probeTarget(
+  target: ProbeTarget,
+  now: number,
+  observations: MetricDatum[]
+): Promise<void> {
   const name = target.name;
-  const healthy = await checkProbe(target);
+  const { healthy, durationMs } = await measureProbe(target);
+  // Capture before state writes. A single bounded flush in finally preserves
+  // observations after state failures without delaying each target's alerts.
+  const measuredAt = new Date();
+  observations.push(
+    ...[
+      { MetricName: 'ProbeSuccess', Value: healthy ? 1 : 0, Unit: 'Count' },
+      { MetricName: 'ProbeFailure', Value: healthy ? 0 : 1, Unit: 'Count' },
+      {
+        MetricName: 'ProbeDurationMilliseconds',
+        Value: durationMs,
+        Unit: 'Milliseconds'
+      }
+    ].map((metric) => ({
+      ...metric,
+      Timestamp: measuredAt,
+      Unit: metric.Unit as 'Count' | 'Milliseconds',
+      Dimensions: [
+        { Name: 'Environment', Value: environment() },
+        { Name: 'Target', Value: name }
+      ]
+    }))
+  );
   const previous = await read(`probe:${name}`);
   const failures = healthy ? 0 : Number(previous?.failures ?? 0) + 1;
   const down = failures >= 2;

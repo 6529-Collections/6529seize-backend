@@ -9,6 +9,11 @@ export interface ProbeTarget {
   jsonEquals?: Record<string, Scalar>;
 }
 
+export interface ProbeMeasurement {
+  healthy: boolean;
+  durationMs: number;
+}
+
 export function probeUrl(value: string): URL {
   let url: URL;
   try {
@@ -141,4 +146,19 @@ export async function checkProbe(target: ProbeTarget): Promise<boolean> {
   } finally {
     await response?.body?.cancel().catch(() => undefined);
   }
+}
+
+export async function measureProbe(
+  target: ProbeTarget,
+  clock: () => number = () => performance.now()
+): Promise<ProbeMeasurement> {
+  const started = clock();
+  const healthy = await checkProbe(target);
+  const elapsed = clock() - started;
+  return {
+    healthy,
+    durationMs: Number.isFinite(elapsed)
+      ? Math.min(60_000, Math.max(0, elapsed))
+      : 60_000
+  };
 }

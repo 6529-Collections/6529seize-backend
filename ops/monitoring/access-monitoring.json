@@ -1,0 +1,343 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Existing developer identities and the CloudWatch cross-account console in the monitoring account.",
+  "Parameters": {
+    "SourceAccountId": {
+      "Type": "String",
+      "AllowedPattern": "^[0-9]{12}$"
+    },
+    "AdminPrincipalArns": {
+      "Type": "CommaDelimitedList",
+      "Description": "Approved existing source-account IAM users with production administrator access; no service identities.",
+      "AllowedPattern": "^arn:aws:iam::[0-9]{12}:user/[A-Za-z0-9+=,.@_/-]+$"
+    },
+    "OperatorPrincipalArns": {
+      "Type": "CommaDelimitedList",
+      "Description": "Approved existing source-account IAM users with monitoring management access.",
+      "AllowedPattern": "^arn:aws:iam::[0-9]{12}:user/[A-Za-z0-9+=,.@_/-]+$"
+    }
+  },
+  "Resources": {
+    "MonitoringAdmin": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "6529-MonitoringAdmin",
+        "Description": "Monitoring account administration for the existing production administrators, using MFA.",
+        "MaxSessionDuration": 3600,
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::Sub": "arn:${AWS::Partition}:iam::${SourceAccountId}:root"
+                }
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "ArnEquals": {
+                  "aws:PrincipalArn": {
+                    "Ref": "AdminPrincipalArns"
+                  }
+                },
+                "Bool": {
+                  "aws:MultiFactorAuthPresent": "true"
+                }
+              }
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/AdministratorAccess"
+          }
+        ]
+      }
+    },
+    "MonitoringOperator": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "6529-MonitoringOperator",
+        "Description": "Dashboards, alarms, browser monitoring and synthetic-monitor management using existing MFA identities.",
+        "MaxSessionDuration": 3600,
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::Sub": "arn:${AWS::Partition}:iam::${SourceAccountId}:root"
+                }
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "ArnEquals": {
+                  "aws:PrincipalArn": {
+                    "Ref": "OperatorPrincipalArns"
+                  }
+                },
+                "Bool": {
+                  "aws:MultiFactorAuthPresent": "true"
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "MonitoringManagement",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "ReadMetricsAndAlarms",
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudwatch:DescribeAlarms",
+                    "cloudwatch:DescribeAlarmsForMetric",
+                    "cloudwatch:DescribeAlarmHistory",
+                    "cloudwatch:DescribeAnomalyDetectors",
+                    "cloudwatch:ListDashboards",
+                    "cloudwatch:GetMetricData",
+                    "cloudwatch:GetMetricStatistics",
+                    "cloudwatch:ListMetrics",
+                    "cloudwatch:GetMetricWidgetImage"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Sid": "ReadAccountMonitoringTags",
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudwatch:ListTagsForResource"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudwatch:*:${AWS::AccountId}:*"
+                  }
+                },
+                {
+                  "Sid": "ReadAccountDashboards",
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudwatch:GetDashboard"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudwatch::${AWS::AccountId}:dashboard/*"
+                  }
+                },
+                {
+                  "Sid": "ManageMonitoringDashboards",
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudwatch:PutDashboard",
+                    "cloudwatch:DeleteDashboards"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudwatch::${AWS::AccountId}:dashboard/seize-monitoring-*"
+                  }
+                },
+                {
+                  "Sid": "ManageAccountAlarms",
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudwatch:PutMetricAlarm",
+                    "cloudwatch:DeleteAlarms",
+                    "cloudwatch:EnableAlarmActions",
+                    "cloudwatch:DisableAlarmActions",
+                    "cloudwatch:TagResource",
+                    "cloudwatch:UntagResource"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudwatch:*:${AWS::AccountId}:alarm:*"
+                  }
+                },
+                {
+                  "Sid": "ManageMetricAnomalyDetection",
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudwatch:PutAnomalyDetector",
+                    "cloudwatch:DeleteAnomalyDetector"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Sid": "ManageBrowserMonitors",
+                  "Effect": "Allow",
+                  "Action": [
+                    "rum:BatchCreateRumMetricDefinitions",
+                    "rum:BatchDeleteRumMetricDefinitions",
+                    "rum:BatchGetRumMetricDefinitions",
+                    "rum:CreateAppMonitor",
+                    "rum:DeleteAppMonitor",
+                    "rum:GetAppMonitor",
+                    "rum:GetAppMonitorData",
+                    "rum:ListRumMetricsDestinations",
+                    "rum:PutRumMetricsDestination",
+                    "rum:DeleteRumMetricsDestination",
+                    "rum:UpdateRumMetricDefinition",
+                    "rum:UpdateAppMonitor",
+                    "rum:PutRumEvents",
+                    "rum:GetResourcePolicy",
+                    "rum:PutResourcePolicy",
+                    "rum:DeleteResourcePolicy",
+                    "rum:TagResource",
+                    "rum:UntagResource"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:rum:*:${AWS::AccountId}:appmonitor/*"
+                  }
+                },
+                {
+                  "Sid": "DiscoverBrowserMonitors",
+                  "Effect": "Allow",
+                  "Action": [
+                    "rum:ListAppMonitors",
+                    "rum:ListTagsForResource"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Sid": "BrowserMonitorServiceRole",
+                  "Effect": "Allow",
+                  "Action": "iam:CreateServiceLinkedRole",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/rum.amazonaws.com/*"
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "iam:AWSServiceName": "rum.amazonaws.com"
+                    }
+                  }
+                },
+                {
+                  "Sid": "ReadNotificationDestinations",
+                  "Effect": "Allow",
+                  "Action": [
+                    "sns:GetTopicAttributes",
+                    "sns:ListSubscriptionsByTopic",
+                    "sns:ListTagsForResource"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:sns:*:${AWS::AccountId}:*"
+                  }
+                },
+                {
+                  "Sid": "ListNotificationDestinations",
+                  "Effect": "Allow",
+                  "Action": [
+                    "sns:ListTopics"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Sid": "ManageSyntheticMonitors",
+                  "Effect": "Allow",
+                  "Action": [
+                    "synthetics:UpdateCanary",
+                    "synthetics:DeleteCanary",
+                    "synthetics:StartCanary",
+                    "synthetics:StopCanary",
+                    "synthetics:GetCanary",
+                    "synthetics:ListTagsForResource",
+                    "synthetics:TagResource",
+                    "synthetics:UntagResource",
+                    "synthetics:GetCanaryRuns"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:synthetics:*:${AWS::AccountId}:canary:*"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:synthetics:*:${AWS::AccountId}:group:*"
+                    }
+                  ]
+                },
+                {
+                  "Sid": "CreateAndDiscoverSyntheticMonitors",
+                  "Effect": "Allow",
+                  "Action": [
+                    "synthetics:CreateCanary",
+                    "synthetics:DescribeCanaries",
+                    "synthetics:DescribeCanariesLastRun"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Sid": "ManageCompositeAlarms",
+                  "Effect": "Allow",
+                  "Action": "cloudwatch:PutCompositeAlarm",
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "CrossAccountConsole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "ServiceRoleForCloudWatchCrossAccountV2",
+        "Path": "/service-role/",
+        "Description": "AWS CloudWatch console access to the exact application account's shared metrics.",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudwatch-crossaccount.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ExactSourceAccountMetrics",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "sts:AssumeRole",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:iam::${SourceAccountId}:role/CloudWatch-CrossAccountSharingRole"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "MonitoringAdminRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "MonitoringAdmin",
+          "Arn"
+        ]
+      }
+    },
+    "MonitoringOperatorRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "MonitoringOperator",
+          "Arn"
+        ]
+      }
+    },
+    "CrossAccountConsoleRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "CrossAccountConsole",
+          "Arn"
+        ]
+      }
+    }
+  }
+}

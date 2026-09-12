@@ -1147,6 +1147,11 @@ receipts and archive exhausted/permanent failures in S3. Queue canaries, endpoin
 probes and SNS fallback do not use application MySQL, Redis or its VPC. An
 outside-AWS uptime/dead-man provider remains a deployment requirement for
 AWS-wide failures. Moderation evidence is excluded from this operational contract.
+Separate monitoring-account CloudWatch dashboards combine bounded synthetic
+probe measurements and pipeline freshness with verified source-account REST API
+and production website ALB request metrics across regions. Dashboard access is
+separate from runtime permissions; queue canaries do not imply business-job
+completion. See the [health dashboard runbook](../ops/docs/operations/monitoring-health-dashboard.md).
 See [the package contract](../ops/monitoring/README.md) and
 [rollout/recovery runbook](../ops/docs/operations/isolated-operational-monitoring.md).
 
