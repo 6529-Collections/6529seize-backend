@@ -210,7 +210,8 @@
       "service": "helpBotReplyLoop",
       "region": "us-east-1",
       "functions": [
-        "helpBotReplyLoop"
+        "helpBotReplyLoop",
+        "helpBotDailyActivityCreditLoop"
       ],
       "coverage": [
         "structured-error-logs",
@@ -689,6 +690,63 @@
         "lambda-errors",
         "lambda-throttles"
       ]
+    }
+  ],
+  "supplementalSource": "ops/monitoring/platform-functions.json",
+  "platformOnly": [
+    {
+      "name": "allowlist-api",
+      "owner": "external",
+      "coverage": [
+        "lambda-errors",
+        "lambda-throttles"
+      ],
+      "deployCode": false
+    },
+    {
+      "name": "allowlist-worker",
+      "owner": "external",
+      "coverage": [
+        "lambda-errors",
+        "lambda-throttles"
+      ],
+      "deployCode": false
+    },
+    {
+      "name": "allowlist-token-pool-downloader",
+      "owner": "external",
+      "coverage": [
+        "lambda-errors",
+        "lambda-throttles"
+      ],
+      "deployCode": false
+    },
+    {
+      "name": "tdhConsolidationsLoop",
+      "owner": "legacy",
+      "coverage": [
+        "lambda-errors",
+        "lambda-throttles"
+      ],
+      "deployCode": false
+    },
+    {
+      "name": "transactionsReplayLoop",
+      "owner": "legacy",
+      "coverage": [
+        "lambda-errors",
+        "lambda-throttles"
+      ],
+      "deployCode": false
+    },
+    {
+      "name": "rpcProxy",
+      "owner": "external-or-legacy",
+      "coverage": [
+        "lambda-errors",
+        "lambda-throttles"
+      ],
+      "deployCode": false
     }
   ]
 }

@@ -6,6 +6,9 @@ const catalog = JSON.parse(
   await readFile(new URL('../../src/config/deploy-services.json', base), 'utf8')
 );
 const ref = (name) => ({ Ref: name });
+const supplemental = JSON.parse(
+  await readFile(new URL('platform-functions.json', base), 'utf8')
+);
 const attr = (name, property = 'Arn') => ({ 'Fn::GetAtt': [name, property] });
 const sub = (value) => ({ 'Fn::Sub': value });
 const when = (condition, yes, no = ref('AWS::NoValue')) => ({
@@ -639,6 +642,19 @@ function sourceTemplate(environment) {
     service.allowed_environments.includes(environment)
   );
   const functions = services.flatMap((service) => service.verification_targets);
+  const platformOnly = supplemental.functions.filter((item) =>
+    item.environments.includes(environment)
+  );
+  const platformFunctions = [
+    ...functions,
+    ...platformOnly.map((item) => item.name)
+  ];
+  if (
+    new Set(platformFunctions).size !== platformFunctions.length ||
+    platformFunctions.some((name) => !/^[a-zA-Z0-9_-]{1,64}$/.test(name))
+  ) {
+    throw new Error('Invalid or duplicate platform function inventory');
+  }
   const doc = document(
     'Application-account log relay and Lambda platform alarms. Preserve existing alarm email subscriptions.'
   );
@@ -820,6 +836,9 @@ function sourceTemplate(environment) {
         FilterPattern: '"6529.ops.error.v1"'
       }
     };
+  }
+  for (const name of platformFunctions) {
+    const id = name.replace(/[^a-zA-Z0-9]/g, '');
     for (const metric of ['Errors', 'Throttles']) {
       r[`${id}${metric}`] = {
         Type: 'AWS::CloudWatch::Alarm',
@@ -851,6 +870,12 @@ function sourceTemplate(environment) {
   };
   return {
     doc,
+    platformOnly: platformOnly.map((item) => ({
+      name: item.name,
+      owner: item.owner,
+      coverage: ['lambda-errors', 'lambda-throttles'],
+      deployCode: false
+    })),
     coverage: services.map((service) => ({
       service: service.name,
       region: service.aws_region[environment],
@@ -870,7 +895,9 @@ for (const environment of ['prod', 'staging']) {
   outputs[`coverage-${environment}.json`] = {
     environment,
     source: 'src/config/deploy-services.json',
-    services: source.coverage
+    services: source.coverage,
+    supplementalSource: 'ops/monitoring/platform-functions.json',
+    platformOnly: source.platformOnly
   };
 }
 for (const [name, doc] of Object.entries(outputs)) {

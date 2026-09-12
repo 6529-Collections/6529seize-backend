@@ -9,6 +9,13 @@ The preferred monitoring region differs from the production application region.
 The infrastructure source is `scripts/templates.mjs`. `monitoring-{env}.json`,
 `source-{env}.json` and `coverage-{env}.json` are generated from the backend service
 catalog; CI fails when their inventory is stale. This separate operational package
+also reads `platform-functions.json`: observed external/legacy Lambdas receive
+Errors/Throttles alarms only. They are not application deploy units, and their
+handled errors require their owning service's telemetry integration. The active
+`helpBotDailyActivityCreditLoop` is a companion of `helpBotReplyLoop` and belongs
+to that service's deploy verification targets and structured-log coverage.
+
+This separate operational package
 is deliberately outside the application deployment catalog and release service
 bundles. `bootstrap.json` provisions its artifact bucket and deployment identities.
 

@@ -38,6 +38,17 @@ test('source catalog coverage is complete and monitoring delivery has no applica
         (r as { Type: string }).Type === 'AWS::Logs::SubscriptionFilter'
     );
     assert.equal(filters.length, targets.length);
+    for (const item of coverage.platformOnly as {
+      name: string;
+      deployCode: boolean;
+    }[]) {
+      const id = item.name.replace(/[^a-zA-Z0-9]/g, '');
+      assert.equal(item.deployCode, false);
+      assert.equal(source.Resources[`${id}ErrorLogs`], undefined);
+      assert.ok(source.Resources[`${id}Errors`]);
+      assert.ok(source.Resources[`${id}Throttles`]);
+      assert.equal(targets.includes(item.name), false);
+    }
     assert.notEqual(
       monitor.Resources.NormalDispatcher,
       monitor.Resources.CriticalDispatcher

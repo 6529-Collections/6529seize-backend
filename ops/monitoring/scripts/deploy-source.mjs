@@ -97,6 +97,10 @@ const groups = JSON.parse(
     true
   )
 );
+for (const item of coverage.platformOnly) {
+  if (!functions.includes(item.name))
+    throw new Error(`Supplemental platform function is missing: ${item.name}`);
+}
 for (const name of coverage.services.flatMap((service) => service.functions)) {
   const group = `/aws/lambda/${name}`;
   if (!functions.includes(name) || !groups.includes(group))
