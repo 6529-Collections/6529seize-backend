@@ -86,6 +86,14 @@ economic limits. The client independently validates before asking its wallet
 to sign or send. Purchase fulfillment delivers directly to a reviewed profile
 or third-party recipient. The backend never holds user signing keys.
 
+Browser preflights allow the required `Idempotency-Key` header only on
+`POST /market/operations`, `POST /collect/rules` and
+`POST /collect/rules/{id}/prepare`. These routes retain the public API's
+non-credentialed CORS policy; their bearer authentication, mandatory
+idempotency keys and financial validation remain enforced on actual requests.
+Artwork documentation and credentialed session routes retain their separate
+origin policies. This CORS repair requires only the `api` deployment.
+
 Public `GET /market/orders/{order_hash}` resolves an exact supported Seaport
 listing or offer outside the limited best-order discovery results. Required
 asset, side and protocol parameters bind the requested identity. The API checks
