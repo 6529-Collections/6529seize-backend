@@ -10,7 +10,10 @@ import { Time } from '@/time';
 import { createHash } from 'node:crypto';
 import { domainToASCII } from 'node:url';
 import { moderationReviewDb, ModerationReviewDb } from './moderation-review.db';
-import { activePermit } from './moderation-review.service';
+import {
+  activePermit,
+  publicationPermitGeneration
+} from './moderation-review.service';
 import { ModerationInput } from './moderation-review.types';
 import {
   DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID,
@@ -44,6 +47,19 @@ export interface PrePublicationDropInput {
   readonly operation: 'CREATE' | 'UPDATE';
   readonly title: string | null;
   readonly parts: ReadonlyArray<{ readonly content: string | null }>;
+}
+
+export interface PrePublicationDecision {
+  readonly itemId: string;
+  readonly permitGeneration?: number;
+}
+function publicationDecision(
+  input: PrePublicationDropInput,
+  permitGeneration?: number
+): PrePublicationDecision | undefined {
+  return input.reviewItemId
+    ? { itemId: input.reviewItemId, permitGeneration }
+    : undefined;
 }
 
 function getPrePublicationTextContent(
@@ -128,7 +144,7 @@ export class PrePublicationModerationService {
   async evaluate(
     input: PrePublicationDropInput,
     ctx: RequestContext
-  ): Promise<string | undefined> {
+  ): Promise<PrePublicationDecision | undefined> {
     const profileStatus = await this.moderationDb.getProfileStatus(
       input.authorProfileId,
       ctx.connection
@@ -234,10 +250,11 @@ export class PrePublicationModerationService {
         },
         ctx
       );
-      return input.reviewItemId;
+      return publicationDecision(input);
     }
 
     if (existingReview && activePermit(existingReview)) {
+      const generation = publicationPermitGeneration(existingReview);
       await this.record(
         input,
         {
@@ -245,11 +262,14 @@ export class PrePublicationModerationService {
           signal: screen.signal,
           outcome: PrePublicationCheckOutcome.ALLOW,
           aiInvoked: false,
-          evaluatorResult: { manual_permit: true }
+          evaluatorResult: {
+            manual_permit: true,
+            permit_generation: generation
+          }
         },
         ctx
       );
-      return input.reviewItemId;
+      return publicationDecision(input, generation);
     }
     let assessment: Awaited<
       ReturnType<ContentModerationAiService['assessPrePublication']>
@@ -277,7 +297,7 @@ export class PrePublicationModerationService {
         },
         ctx
       );
-      return input.reviewItemId;
+      return publicationDecision(input);
     }
 
     const outcome =
@@ -303,7 +323,7 @@ export class PrePublicationModerationService {
         CONTENT_MODERATION_REJECTION_CODE
       );
     }
-    return input.reviewItemId;
+    return publicationDecision(input);
   }
 
   private async runDeterministicScreen(

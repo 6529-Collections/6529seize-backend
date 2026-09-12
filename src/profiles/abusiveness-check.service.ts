@@ -15,6 +15,7 @@ import {
 } from '@/content-moderation/moderation-review.db';
 import {
   activePermit,
+  publicationPermitGeneration,
   PUBLIC_TEXT_POLICY_VERSION,
   publicTextModel
 } from '@/content-moderation/moderation-review.service';
@@ -183,14 +184,26 @@ export class AbusivenessCheckService {
       fallback: string | null = null,
       manual = false
     ) => {
+      const permitGeneration =
+        manual && result.status === 'ALLOWED'
+          ? publicationPermitGeneration(item)
+          : undefined;
       await this.reviews.finish(evaluationId, {
         outcome: result.status === 'ALLOWED' ? 'ALLOW' : 'REJECT',
-        result: { status: result.status, explanation: result.explanation },
+        result: {
+          status: result.status,
+          explanation: result.explanation,
+          permit_generation: permitGeneration
+        },
         model: knownSafe || manual ? null : model,
         cacheHit,
         fallback
       });
-      return { ...result, moderation_item_id: item.id };
+      return {
+        ...result,
+        moderation_item_id: item.id,
+        moderation_permit_generation: permitGeneration
+      };
     };
     if (item.override === 'BLOCK' || activePermit(item))
       return finish(

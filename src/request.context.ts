@@ -8,6 +8,7 @@ export interface RequestScope {
 
 export interface RequestContext {
   readonly moderationRequestId?: string;
+  readonly moderationPermitGeneration?: number;
   readonly connection?: ConnectionWrapper<any>;
   readonly timer?: Timer;
   readonly authenticationContext?: AuthenticationContext;

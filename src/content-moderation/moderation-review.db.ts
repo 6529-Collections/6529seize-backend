@@ -89,6 +89,12 @@ function nextSuppression(item: ModerationItem, action: string): boolean {
   if (action === 'RESTORE') return false;
   return item.suppressed;
 }
+function nextPermitGeneration(item: ModerationItem, action: string): unknown {
+  if (action === 'ALLOW' && item.subject_type !== 'REP_CATEGORY')
+    return item.version + 1;
+  if (action === 'REVOKE_OVERRIDE' || action === 'BLOCK') return null;
+  return item.scope.permit_generation ?? null;
+}
 type RevisionItem = Pick<
   ModerationItem,
   'subject_type' | 'subject_id' | 'published_subject_id'
@@ -641,6 +647,7 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
           : item.permit_expires_at;
       await this.db.execute(
         `update ${ITEMS} set override=:override, permit_expires_at=:expiry,
+      scope=json_set(scope,'$.permit_generation',:generation),
       permit_consumed_at=if(:reset,null,permit_consumed_at),
       review_status='REVIEWED', suppressed=:suppressed, version=version+1, updated_at=:now, evidence_expires_at=if(exists(select 1 from ${CONTENT_MODERATION_REPORTS_TABLE} r where r.item_id=${ITEMS}.id and r.status='OPEN'),null,:evidenceExpiry) where id=:id and version=:version`,
         {
@@ -648,6 +655,7 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
           version: item.version,
           override: nextOverride(item, action),
           expiry,
+          generation: nextPermitGeneration(item, action),
           reset: action === 'ALLOW' || action === 'REVOKE_OVERRIDE',
           suppressed: nextSuppression(item, action),
           now: Date.now(),
@@ -666,6 +674,7 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
     return this.timed('consume', ctx, async () => {
       const item = await this.get(id, ctx, true);
       if (item.override === 'BLOCK') moderationConflict();
+      this.assertEvaluatedPermit(item, ctx);
       if (
         item.override === 'ALLOW' &&
         item.subject_type !== 'REP_CATEGORY' &&
@@ -720,6 +729,19 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
       );
       return null;
     });
+  }
+  private assertEvaluatedPermit(
+    item: ModerationItem,
+    ctx: RequestContext
+  ): void {
+    if (ctx.moderationPermitGeneration === undefined) return;
+    if (
+      item.override !== 'ALLOW' ||
+      item.scope.permit_generation !== ctx.moderationPermitGeneration ||
+      (!item.permit_consumed_at &&
+        (!item.permit_expires_at || item.permit_expires_at <= Date.now()))
+    )
+      moderationConflict();
   }
   async savedRequest(
     authorId: string,

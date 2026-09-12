@@ -121,9 +121,12 @@ describe('PrePublicationModerationService', () => {
       rationale: 'Not certain enough'
     });
 
-    await expect(service.evaluate(input('I will kill you'), {})).resolves.toBe(
-      'review-item'
-    );
+    await expect(
+      service.evaluate(input('I will kill you'), {})
+    ).resolves.toEqual({
+      itemId: 'review-item',
+      permitGeneration: undefined
+    });
 
     expect(aiService.assessPrePublication).toHaveBeenCalledTimes(1);
     expect(moderationDb.recordPrePublicationCheck).toHaveBeenCalledWith(
@@ -182,9 +185,12 @@ describe('PrePublicationModerationService', () => {
     const { service, moderationDb, aiService } = createService();
     aiService.assessPrePublication.mockRejectedValue(new Error('unavailable'));
 
-    await expect(service.evaluate(input('I will kill you'), {})).resolves.toBe(
-      'review-item'
-    );
+    await expect(
+      service.evaluate(input('I will kill you'), {})
+    ).resolves.toEqual({
+      itemId: 'review-item',
+      permitGeneration: undefined
+    });
 
     expect(moderationDb.recordPrePublicationCheck).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -262,6 +268,23 @@ describe('PrePublicationModerationService', () => {
       }),
       undefined
     );
+  });
+
+  it('carries the exact permit generation only when approval bypasses AI', async () => {
+    const { service, reviews, aiService } = createService();
+    reviews.find.mockResolvedValue({
+      override: 'ALLOW',
+      subject_type: 'DROP',
+      permit_expires_at: Date.now() + 60000,
+      scope: { permit_generation: 7 }
+    });
+    await expect(
+      service.evaluate(input('I will kill you'), {})
+    ).resolves.toEqual({
+      itemId: 'review-item',
+      permitGeneration: 7
+    });
+    expect(aiService.assessPrePublication).not.toHaveBeenCalled();
   });
 
   it('blocks posting for a suspended profile before content checks', async () => {

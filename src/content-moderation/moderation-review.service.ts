@@ -46,6 +46,19 @@ export function activePermit(item: ModerationItem): boolean {
       (!!item.permit_expires_at && item.permit_expires_at > Date.now()))
   );
 }
+export function publicationPermitGeneration(
+  item: ModerationItem
+): number | undefined {
+  if (item.subject_type === 'REP_CATEGORY') return undefined;
+  const generation = item.scope.permit_generation;
+  if (
+    typeof generation !== 'number' ||
+    !Number.isSafeInteger(generation) ||
+    generation < 1
+  )
+    moderationConflict();
+  return generation;
+}
 function evidenceExpired(item: ModerationItem): boolean {
   return (
     !item.evidence ||

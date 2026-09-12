@@ -148,6 +148,8 @@ export type PrePublicationPreparation =
       readonly authorProfileId: string;
       readonly contentFingerprint: string;
       readonly reviewItemId?: string;
+      readonly permitGeneration?: number;
+      readonly authenticationContext?: RequestContext['authenticationContext'];
       readonly requestId?: string;
       readonly currentRevision?: string | null;
     }
@@ -471,19 +473,18 @@ export class CreateOrUpdateDropUseCase {
       // asynchronous validation pipeline and are not inspected here.
       parts: sanitizedModel.parts.map((part) => ({ content: part.content }))
     };
-    const reviewItemId = await this.moderationService.evaluate(
-      moderationInput,
-      {
-        ...ctx,
-        connection: undefined
-      }
-    );
+    const review = await this.moderationService.evaluate(moderationInput, {
+      ...ctx,
+      connection: undefined
+    });
     return {
       dropId,
       operation,
       authorProfileId,
       contentFingerprint: getPrePublicationContentFingerprint(moderationInput),
-      reviewItemId,
+      reviewItemId: review?.itemId,
+      permitGeneration: review?.permitGeneration,
+      authenticationContext: ctx.authenticationContext,
       requestId: ctx.moderationRequestId,
       currentRevision
     };
@@ -574,7 +575,9 @@ export class CreateOrUpdateDropUseCase {
       const tx = {
         timer,
         connection,
-        moderationRequestId: prePublication.requestId
+        moderationRequestId: prePublication.requestId,
+        moderationPermitGeneration: prePublication.permitGeneration,
+        authenticationContext: prePublication.authenticationContext
       };
       await moderationReviewDb.lockProfile(this.getRequiredAuthorId(model), tx);
       if (model.drop_id) await moderationReviewDb.lockDrop(model.drop_id, tx);
@@ -685,7 +688,9 @@ export class CreateOrUpdateDropUseCase {
       const tx = {
         timer,
         connection,
-        moderationRequestId: prePublication.requestId
+        moderationRequestId: prePublication.requestId,
+        moderationPermitGeneration: prePublication.permitGeneration,
+        authenticationContext: prePublication.authenticationContext
       };
       const reviewed = await moderationReviewDb.get(
         prePublication.reviewItemId,

@@ -50,6 +50,11 @@ retry returns the saved result. Approval itself never publishes archived content
 After consumption, only the original request-key replay succeeds; a new key
 returns `MODERATION_PERMIT_CONSUMED`. Revoking the override returns later
 attempts to ordinary classification and does not publish content.
+When approval bypasses classification, the save carries that permit's generation
+and checks it under the item lock. Revocation, expiry or replacement before the
+save rejects the delayed attempt. A fresh classifier ALLOW remains independent
+of the old permit; the original consumed-request replay can still return its
+saved result after expiry.
 Posting suspension, ordinary permissions, rate limits and unsafe-host blocks
 remain authoritative.
 

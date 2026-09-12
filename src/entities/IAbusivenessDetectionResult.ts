@@ -4,6 +4,7 @@ import { ABUSIVENESS_DETECTION_RESULTS_TABLE } from '@/constants';
 @Entity(ABUSIVENESS_DETECTION_RESULTS_TABLE)
 export class AbusivenessDetectionResult {
   readonly moderation_item_id?: string;
+  readonly moderation_permit_generation?: number;
   @Column({ type: 'varchar', length: 100, nullable: true })
   readonly policy_version?: string | null;
   @Column({ type: 'varchar', length: 200, nullable: true })

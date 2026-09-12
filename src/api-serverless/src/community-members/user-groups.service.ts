@@ -1595,7 +1595,11 @@ export class UserGroupsService {
             await moderationReviewDb.consume(
               nameReview.moderation_item_id,
               old_version_id ?? group_id,
-              ctxWithConnection,
+              {
+                ...ctxWithConnection,
+                moderationPermitGeneration:
+                  nameReview.moderation_permit_generation
+              },
               group_id
             );
             await moderationReviewDb.setPublishedRevision(

@@ -177,4 +177,23 @@ describe('AbusivenessCheckService durable moderation', () => {
       expect.objectContaining({ outcome: 'ERROR', fallback: 'REQUEST_FAILED' })
     );
   });
+  it('carries the approval generation when a BIO permit bypasses the classifier', async () => {
+    jest.mocked(reviews.start).mockResolvedValue({
+      item: {
+        id: 'item',
+        subject_type: 'PROFILE_BIO',
+        override: 'ALLOW',
+        scope: { permit_generation: 7 },
+        permit_expires_at: Date.now() + 60000
+      } as unknown as ModerationItem,
+      evaluationId: 'evaluation'
+    });
+    const result = await service.checkBio({
+      text: 'bio',
+      handle: 'alice',
+      profile_type: 'PSEUDONYM'
+    });
+    expect(result.moderation_permit_generation).toBe(7);
+    expect(detector.checkBioText).not.toHaveBeenCalled();
+  });
 });

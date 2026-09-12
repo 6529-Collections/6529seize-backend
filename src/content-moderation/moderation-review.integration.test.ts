@@ -280,11 +280,14 @@ describe('Moderation review durable integration', () => {
       );
     });
     const key = randomUUID();
+    const moderationPermitGeneration = (await db.get(check.item.id)).scope
+      .permit_generation as number;
     await expect(
       db.executeNativeQueriesInTransaction(async (connection) => {
         await db.consume(check.item.id, 'new-bio', {
           connection,
-          moderationRequestId: key
+          moderationRequestId: key,
+          moderationPermitGeneration
         });
         throw new Error('content insert failed');
       })
@@ -293,14 +296,20 @@ describe('Moderation review durable integration', () => {
     await db.executeNativeQueriesInTransaction(async (connection) => {
       await db.consume(check.item.id, 'new-bio', {
         connection,
-        moderationRequestId: key
+        moderationRequestId: key,
+        moderationPermitGeneration
       });
     });
+    await sqlExecutor.execute(
+      `update ${CONTENT_MODERATION_ITEMS_TABLE} set permit_expires_at=1 where id=:id`,
+      { id: check.item.id }
+    );
     await expect(
       db.executeNativeQueriesInTransaction((connection) =>
         db.consume(check.item.id, 'duplicate', {
           connection,
-          moderationRequestId: key
+          moderationRequestId: key,
+          moderationPermitGeneration
         })
       )
     ).resolves.toBe('new-bio');
@@ -308,7 +317,8 @@ describe('Moderation review durable integration', () => {
       db.executeNativeQueriesInTransaction((connection) =>
         db.consume(check.item.id, 'duplicate', {
           connection,
-          moderationRequestId: randomUUID()
+          moderationRequestId: randomUUID(),
+          moderationPermitGeneration
         })
       )
     ).rejects.toMatchObject({
@@ -321,6 +331,55 @@ describe('Moderation review durable integration', () => {
       )
     ).toHaveLength(1);
   });
+  it.each(['REVOKED', 'EXPIRED', 'REAPPROVED'] as const)(
+    'rejects an evaluated permit that became %s before publication',
+    async (change) => {
+      const started = await db.start(input(), 'PUBLIC_FIELD');
+      await db.finish(started.evaluationId, { outcome: 'REJECT', result: {} });
+      const decide = async (action: string) =>
+        db.executeNativeQueriesInTransaction(async (connection) => {
+          const item = await db.get(started.item.id, { connection }, true);
+          await db.decide(item, action, { connection });
+        });
+      await decide('ALLOW');
+      const allowed = await db.get(started.item.id);
+      const generation = allowed.scope.permit_generation as number;
+      expect(generation).toBeGreaterThan(0);
+      if (change === 'EXPIRED')
+        await sqlExecutor.execute(
+          `update ${CONTENT_MODERATION_ITEMS_TABLE} set permit_expires_at=1 where id=:id`,
+          { id: started.item.id }
+        );
+      else {
+        await decide('REVOKE_OVERRIDE');
+        if (change === 'REAPPROVED') await decide('ALLOW');
+      }
+      await expect(
+        db.executeNativeQueriesInTransaction((connection) =>
+          db.consume(started.item.id, 'late-publication', {
+            connection,
+            moderationRequestId: randomUUID(),
+            moderationPermitGeneration: generation
+          })
+        )
+      ).rejects.toMatchObject({ code: 'MODERATION_REVISION_CONFLICT' });
+      expect((await db.get(started.item.id)).published_subject_id).toBeNull();
+      if (change !== 'REAPPROVED') {
+        // A separate real classifier ALLOW does not depend on the old permit.
+        const classified = await db.start(input(), 'PUBLIC_FIELD');
+        await db.finish(classified.evaluationId, {
+          outcome: 'ALLOW',
+          result: {}
+        });
+        await db.executeNativeQueriesInTransaction((connection) =>
+          db.consume(started.item.id, 'classifier-approved', { connection })
+        );
+        expect((await db.get(started.item.id)).published_subject_id).toBe(
+          'classifier-approved'
+        );
+      }
+    }
+  );
   it('preserves human override when a late evaluator finishes', async () => {
     const started = await db.start(input(), 'PUBLIC_FIELD');
     await db.executeNativeQueriesInTransaction(async (connection) => {

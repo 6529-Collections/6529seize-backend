@@ -351,7 +351,11 @@ export class CicService {
           await moderationReviewDb.consume(
             review.moderation_item_id,
             inserted.id,
-            { connection, moderationRequestId }
+            {
+              connection,
+              moderationRequestId,
+              moderationPermitGeneration: review.moderation_permit_generation
+            }
           );
           await moderationReviewDb.setPublishedRevision(
             review.moderation_item_id,
