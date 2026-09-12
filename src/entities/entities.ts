@@ -246,6 +246,11 @@ export { WalletAuthSessionEntity } from './IWalletAuthSession';
 export type { WalletAuthClientType } from './IWalletAuthSession';
 export { WalletConnectionShareEntity } from './IWalletConnectionShare';
 export {
+  WalletTransferPairDailyEntity,
+  WalletTransferWalletDailyEntity,
+  WalletTransferAnalysisStateEntity
+} from './IWalletTransferAnalysis';
+export {
   WaveDecisionEntity,
   WaveDecisionWinnerDropEntity
 } from './IWaveDecision';

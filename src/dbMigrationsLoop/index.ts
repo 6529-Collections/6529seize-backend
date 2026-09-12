@@ -7,6 +7,12 @@ import { competitionRepository } from '../competitions/competition.repository';
 import { contentModerationDb } from '../content-moderation/content-moderation.db';
 import { Time } from '../time';
 import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
+import {
+  WalletTransferAnalysisStateEntity,
+  WalletTransferPairDailyEntity,
+  WalletTransferWalletDailyEntity
+} from '@/entities/IWalletTransferAnalysis';
+import { moderationRetentionSchemaDb } from './moderation-retention-schema.db';
 
 const DBMigrate = require('db-migrate');
 
@@ -52,9 +58,42 @@ export function isScheduledInvocation(event: unknown): boolean {
   );
 }
 
+function schemaScope(event: unknown, scheduledInvocation: boolean) {
+  if (
+    !event ||
+    typeof event !== 'object' ||
+    !Object.prototype.hasOwnProperty.call(event, 'schema_scope')
+  ) {
+    return 'full';
+  }
+  const scope = (event as { schema_scope: unknown }).schema_scope;
+  if (
+    scheduledInvocation ||
+    (scope !== 'full' && scope !== 'wallet-transfer-analysis')
+  ) {
+    throw new Error('Unsupported database schema scope for this invocation');
+  }
+  return scope;
+}
+
 export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const scheduledInvocation = isScheduledInvocation(event);
+  const scope = schemaScope(event, scheduledInvocation);
   logger.info(`[RUNNING]`);
+  if (scope === 'wallet-transfer-analysis') {
+    await doInDbContext(async () => undefined, {
+      logger,
+      entities: [
+        WalletTransferAnalysisStateEntity,
+        WalletTransferPairDailyEntity,
+        WalletTransferWalletDailyEntity
+      ],
+      syncEntities: true,
+      skipRedis: true
+    });
+    logger.info('[FINISHED WALLET TRANSFER ANALYSIS SCHEMA]');
+    return { schema_scope: scope };
+  }
   await doInDbContext(
     async () => {
       if (!scheduledInvocation && !appFeatures.isDbMigrateDisabled()) {
@@ -73,7 +112,15 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
         await deleteExpiredContentModerationChecksInBatches(
           Time.currentMillis() - Time.days(30).toMillis()
         );
-      await moderationReviewDb.retain({});
+      const missingRetentionColumns =
+        await moderationRetentionSchemaDb.missingColumns({});
+      if (missingRetentionColumns.length) {
+        logger.info(
+          `[SKIPPED MODERATION REVIEW RETENTION: PENDING SCHEMA] ${missingRetentionColumns.join(', ')}`
+        );
+      } else {
+        await moderationReviewDb.retain({});
+      }
       logger.info(
         `Deleted ${deletedModerationChecks} expired content moderation pre-publication checks`
       );
