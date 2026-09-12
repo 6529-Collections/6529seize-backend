@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { collectingService } from '@/collecting/collecting.service';
+import { CollectingWorkBudget } from '@/collecting/collecting-work-budget';
 import {
   CollectingAsset,
   CollectingFamily
@@ -144,21 +145,34 @@ export function rankIndexedTdhListings(
   catalogVersion: string,
   assets: CollectingAsset[],
   books: CurrentMarketDepthSnapshot[],
-  now = Date.now()
+  now = Date.now(),
+  budget = new CollectingWorkBudget(8000)
 ): RankedSnapshot {
   const byId = new Map(assets.map((asset) => [asset.token_id, asset]));
   const bestByAsset = new Map<string, ApiCollectTdhListing>();
   let evaluated = 0;
+  let interrupted = false;
   for (const book of books) {
     for (const indexed of book.orders.slice(0, MAX_INDEXED_ASKS - evaluated)) {
+      if (budget.expired()) {
+        interrupted = true;
+        break;
+      }
       evaluated++;
       const asset =
         indexed.token_id === null ? undefined : byId.get(indexed.token_id);
       const listing = asset ? listingForAsset(indexed, asset, now) : null;
       considerBestListing(bestByAsset, listing);
     }
+    if (interrupted) break;
   }
   const entries = Array.from(bestByAsset.values()).sort(compareTdhListings);
+  if (interrupted && entries.length === 0)
+    throw new CustomApiCompliantException(
+      503,
+      'Indexed listings are refreshing. Please try again shortly.',
+      'LISTINGS_REFRESHING'
+    );
   const oldest = books.length
     ? Math.min(...books.map((book) => book.snapshot.completed_at.getTime()))
     : null;
@@ -190,6 +204,7 @@ export function rankIndexedTdhListings(
     evaluated_ask_count: evaluated,
     ranked_nft_count: entries.length,
     coverage_complete:
+      !interrupted &&
       books.length > 0 &&
       indexedAskCount <= MAX_INDEXED_ASKS &&
       books.every(
@@ -202,9 +217,10 @@ export function rankIndexedTdhListings(
 }
 
 async function buildSnapshot(
-  family: CollectingFamily
+  family: CollectingFamily,
+  budget: CollectingWorkBudget
 ): Promise<RankedSnapshot> {
-  const catalog = await collectingService.getCatalog();
+  const catalog = await budget.waitFor(() => collectingService.getCatalog());
   const assets = catalog.assets.filter((asset) => asset.family === family);
   const contracts = new Set(
     assets.map((asset) => asset.contract.toLowerCase())
@@ -222,14 +238,28 @@ async function buildSnapshot(
     token_id: assets[0].token_id,
     collection_id: family === 'pebbles' ? 1 : null
   };
-  const books = await marketDepthApiDb.getBooks(context, true);
-  return rankIndexedTdhListings(family, catalog.version, assets, books);
+  const books = await budget.waitFor(() =>
+    marketDepthApiDb.getBooks(context, true)
+  );
+  const result = rankIndexedTdhListings(
+    family,
+    catalog.version,
+    assets,
+    books,
+    Date.now(),
+    budget.child(8000, 2000)
+  );
+  budget.assertAvailable();
+  return result;
 }
 
-function sharedSnapshot(family: CollectingFamily): Promise<RankedSnapshot> {
+function sharedSnapshot(
+  family: CollectingFamily,
+  budget: CollectingWorkBudget
+): Promise<RankedSnapshot> {
   const existing = pendingSnapshots.get(family);
   if (existing !== undefined) return existing;
-  const pending = buildSnapshot(family).finally(() =>
+  const pending = buildSnapshot(family, budget).finally(() =>
     pendingSnapshots.delete(family)
   );
   pendingSnapshots.set(family, pending);
@@ -239,12 +269,15 @@ function sharedSnapshot(family: CollectingFamily): Promise<RankedSnapshot> {
 export async function getCollectTdhListings(
   family: CollectingFamily,
   limit: number,
-  cursor?: string
+  cursor?: string,
+  budget = new CollectingWorkBudget()
 ): Promise<ApiCollectTdhListings> {
-  const snapshot = await redisCachedWithRefreshLease(
-    getRedisCacheKeyForPath(`collect/tdh-listings/v1/${family}`),
-    Time.seconds(60),
-    () => sharedSnapshot(family)
+  const snapshot = await budget.waitFor(() =>
+    redisCachedWithRefreshLease(
+      getRedisCacheKeyForPath(`collect/tdh-listings/v1/${family}`),
+      Time.seconds(60),
+      () => sharedSnapshot(family, budget)
+    )
   );
   if (snapshot === undefined)
     throw new CustomApiCompliantException(
@@ -284,6 +317,7 @@ export async function getCollectTdhListings(
     Number(snapshot.entries[end].order.end_time) * 1000 <= now
   )
     end++;
+  budget.assertAvailable();
   return {
     ...snapshot,
     status: snapshotStatus(snapshot.observed_at, now),

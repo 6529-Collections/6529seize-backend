@@ -20,6 +20,7 @@ import { buildMarketOrder } from '@/marketplace/seaport.builder';
 import { TypedDataEncoder } from 'ethers';
 import { SEAPORT_ORDER_TYPES } from '@/marketplace/seaport.schema';
 import { CustomApiCompliantException } from '@/exceptions';
+import { CollectingWorkBudget } from '@/collecting/collecting-work-budget';
 
 jest.mock('@/collecting/collecting.service', () => ({
   collectingService: { getCatalog: jest.fn() }
@@ -161,6 +162,46 @@ it('accounts for an entire 546-NFT season universe in one indexed read without a
   expect(result?.candidates[0].valid_until).toBe(
     new Date(now - 1000 + 3600000).toISOString()
   );
+});
+
+it('discards every partial candidate when parsing exhausts the shared elapsed budget', async () => {
+  const options = setup(['1', '2', '3']);
+  let elapsed = 0;
+  jest.mocked(describeIndexedMarketListing).mockImplementation((value) => {
+    elapsed += 2;
+    return value as MarketDiscoveredOrder;
+  });
+  expect(
+    await seedCollectPlanFromIndex(
+      options,
+      new CollectingWorkBudget(3, () => elapsed)
+    )
+  ).toBeNull();
+  expect(describeIndexedMarketListing).toHaveBeenCalledTimes(2);
+});
+
+it('retains the scanner without starting index work when no seed time remains', async () => {
+  const options = setup(['1']);
+  expect(
+    await seedCollectPlanFromIndex(options, new CollectingWorkBudget(0))
+  ).toBeNull();
+  expect(marketDepthApiDb.getBooks).not.toHaveBeenCalled();
+});
+
+it('does not parse a slow index result after returning the scanner fallback', async () => {
+  const options = setup(['1']);
+  let finish: (value: CurrentMarketDepthSnapshot[]) => void = () => {};
+  jest.mocked(marketDepthApiDb.getBooks).mockReturnValue(
+    new Promise((resolve) => {
+      finish = resolve;
+    })
+  );
+  expect(
+    await seedCollectPlanFromIndex(options, new CollectingWorkBudget(5))
+  ).toBeNull();
+  finish([book([order('1')])]);
+  await Promise.resolve();
+  expect(describeIndexedMarketListing).not.toHaveBeenCalled();
 });
 
 it('keeps the cheapest exact supported ask, excludes own wallets, and accounts for missing liquidity', async () => {

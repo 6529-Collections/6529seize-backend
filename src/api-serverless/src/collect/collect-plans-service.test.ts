@@ -16,6 +16,10 @@ import { MARKET_ZERO_ADDRESS } from '@/marketplace/seaport.registry';
 import { DbPoolName, DbQueryOptions } from '@/db-query.options';
 import { marketChain } from '@/marketplace/market-chain';
 import {
+  CollectingWorkBudget,
+  CollectingWorkTimeout
+} from '@/collecting/collecting-work-budget';
+import {
   CollectIndexedPlanSeed,
   seedCollectPlanFromIndex
 } from '@/api/collect/collect-indexed-plan-seed';
@@ -341,11 +345,14 @@ describe('persisted collecting scans', () => {
         recipient: 'friend'
       });
       expect(seedCollectPlanFromIndex).toHaveBeenCalledTimes(1);
-      expect(seedCollectPlanFromIndex).toHaveBeenCalledWith({
-        analysis: current,
-        assetKeys: ['asset'],
-        gasReservePerOrderWei: '450000'
-      });
+      expect(seedCollectPlanFromIndex).toHaveBeenCalledWith(
+        {
+          analysis: current,
+          assetKeys: ['asset'],
+          gasReservePerOrderWei: '450000'
+        },
+        expect.any(CollectingWorkBudget)
+      );
       expect(created).toMatchObject({
         state: 'READY',
         checked_asset_count: 1,
@@ -453,6 +460,54 @@ describe('persisted collecting scans', () => {
     });
     expect(provider.discoverOrders).toHaveBeenCalledTimes(1);
     expect(provider.getOrder).toHaveBeenCalledTimes(1);
+  });
+
+  it('reserves persistence time and saves no partial scan progress after the seed budget is exhausted', async () => {
+    const { saved } = createFixture();
+    let elapsed = 0;
+    jest
+      .mocked(seedCollectPlanFromIndex)
+      .mockImplementation(async (_options, budget) => {
+        expect(budget!.remainingMs()).toBe(8000);
+        elapsed = 8000;
+        return null;
+      });
+    const created = await createCollectPlan(
+      'p',
+      { profile_id: 'p', kind: 'exact' },
+      { recipient: 'w' },
+      new CollectingWorkBudget(11000, () => elapsed)
+    );
+    expect(created).toMatchObject({
+      state: 'SCANNING',
+      checked_asset_count: 0,
+      unavailable_asset_count: 0,
+      failed_asset_count: 0
+    });
+    expect(JSON.parse(saved.payload_json)).toMatchObject({
+      cursor: 0,
+      candidates: [],
+      unavailable: 0
+    });
+  });
+
+  it('does not insert a late plan after a source read consumed the request deadline', async () => {
+    const { execute } = createFixture();
+    let elapsed = 0;
+    jest.mocked(collectingService.analyze).mockImplementation(async () => {
+      elapsed = 21;
+      return analysis;
+    });
+    await expect(
+      createCollectPlan(
+        'p',
+        { profile_id: 'p', kind: 'exact' },
+        { recipient: 'w' },
+        new CollectingWorkBudget(20, () => elapsed)
+      )
+    ).rejects.toBeInstanceOf(CollectingWorkTimeout);
+    expect(execute).not.toHaveBeenCalled();
+    expect(seedCollectPlanFromIndex).not.toHaveBeenCalled();
   });
 
   it('does not read the index for an already complete goal', async () => {
