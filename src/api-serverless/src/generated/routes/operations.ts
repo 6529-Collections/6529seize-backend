@@ -57,6 +57,8 @@ import { ApiCollectTdhProjection } from '@/api/generated/models/ApiCollectTdhPro
 import { ApiCollectTdhRanking } from '@/api/generated/models/ApiCollectTdhRanking';
 import { ApiCollectTdhRankingRequest } from '@/api/generated/models/ApiCollectTdhRankingRequest';
 import { ApiCollectTdhRequest } from '@/api/generated/models/ApiCollectTdhRequest';
+import { ApiCollectTdhTargetPlan } from '@/api/generated/models/ApiCollectTdhTargetPlan';
+import { ApiCollectTdhTargetRequest } from '@/api/generated/models/ApiCollectTdhTargetRequest';
 import { ApiCommunityMembersPage } from '@/api/generated/models/ApiCommunityMembersPage';
 import { ApiCompetition } from '@/api/generated/models/ApiCompetition';
 import { ApiCompetitionConfigVersionPage } from '@/api/generated/models/ApiCompetitionConfigVersionPage';
@@ -1005,6 +1007,20 @@ export type ProjectCollectPurchasesRequest = Request<
   ApiResponse<ProjectCollectPurchasesResponse>,
   ApiCollectTdhRequest,
   ProjectCollectPurchasesQuery,
+  Record<string, never>
+>;
+
+export type CreateCollectTdhTargetPlanPathParams = Record<string, never>;
+
+export type CreateCollectTdhTargetPlanQuery = Record<string, never>;
+
+export type CreateCollectTdhTargetPlanResponse = ApiCollectTdhTargetPlan;
+
+export type CreateCollectTdhTargetPlanRequest = Request<
+  CreateCollectTdhTargetPlanPathParams,
+  ApiResponse<CreateCollectTdhTargetPlanResponse>,
+  ApiCollectTdhTargetRequest,
+  CreateCollectTdhTargetPlanQuery,
   Record<string, never>
 >;
 
