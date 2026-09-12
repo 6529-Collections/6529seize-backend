@@ -6,6 +6,7 @@ import {
   TypedDataEncoder
 } from 'ethers';
 import { z } from 'zod';
+import { validateMarketCriteria } from '@/marketplace/seaport-criteria';
 import {
   MarketOrderIdentity,
   MarketTradeIntent,
@@ -200,7 +201,8 @@ export function buildMarketFulfillment(
   order: ValidatedMarketOrder,
   signature: string,
   extraData = '0x',
-  fulfillerConduitKey = MARKET_OPENSEA_CONDUIT_KEY
+  fulfillerConduitKey = MARKET_OPENSEA_CONDUIT_KEY,
+  criteriaResolvers: unknown = []
 ): MarketTransaction {
   const checked = validateMarketOrder(
     intent,
@@ -216,6 +218,7 @@ export function buildMarketFulfillment(
   parseMarketValue(marketBytesSchema, extraData);
   marketSpender(fulfillerConduitKey);
   const c = checked.components;
+  const criteria = validateMarketCriteria(intent, c, criteriaResolvers);
   if (c.orderType >= 2 && extraData === '0x')
     throw new MarketValidationError(
       'UNSUPPORTED_ZONE',
@@ -262,7 +265,7 @@ export function buildMarketFulfillment(
         signature,
         extraData
       },
-      [],
+      criteria,
       fulfillerConduitKey,
       intent.recipient
     ]
