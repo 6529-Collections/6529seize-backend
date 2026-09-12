@@ -2,8 +2,10 @@ import 'reflect-metadata';
 import {
   DROP_RANK_TABLE,
   DROP_REAL_VOTE_IN_TIME_TABLE,
+  DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
   DROP_VOTER_STATE_TABLE,
   DROPS_TABLE,
+  DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
   WAVE_LEADERBOARD_ENTRIES_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WINNER_DROP_VOTER_VOTES_TABLE
@@ -808,6 +810,342 @@ describeWithSeed(
         voters_count: 2,
         place: 2
       });
+    });
+  }
+);
+
+describeWithSeed(
+  'DropVotingDb.resetVotesForParticipatoryDropsInWave',
+  [
+    withWaves([
+      aWave(
+        {
+          type: WaveType.APPROVE,
+          winning_min_threshold: 100,
+          winning_threshold_min_duration_ms: 0,
+          reset_votes_after_win: true
+        },
+        { id: 'reset-wave', name: 'Reset Wave', serial_no: 1 }
+      ),
+      aWave(
+        {
+          type: WaveType.APPROVE,
+          winning_min_threshold: 100,
+          winning_threshold_min_duration_ms: 0,
+          reset_votes_after_win: false
+        },
+        { id: 'no-reset-wave', name: 'No Reset Wave', serial_no: 2 }
+      )
+    ]),
+    {
+      table: DROPS_TABLE,
+      rows: [
+        {
+          id: 'winner-drop',
+          wave_id: 'reset-wave',
+          author_id: 'author-winner',
+          created_at: 1,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.WINNER,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          id: 'participatory-drop-a',
+          wave_id: 'reset-wave',
+          author_id: 'author-a',
+          created_at: 2,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.PARTICIPATORY,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
+          id: 'participatory-drop-b',
+          wave_id: 'reset-wave',
+          author_id: 'author-b',
+          created_at: 3,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.PARTICIPATORY,
+          signature: null,
+          hide_link_preview: false
+        },
+        // Drop in a different wave — should NOT be affected by reset
+        {
+          id: 'other-wave-drop',
+          wave_id: 'no-reset-wave',
+          author_id: 'author-other',
+          created_at: 4,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.PARTICIPATORY,
+          signature: null,
+          hide_link_preview: false
+        }
+      ]
+    },
+    {
+      table: DROP_VOTER_STATE_TABLE,
+      rows: [
+        {
+          voter_id: 'voter-1',
+          drop_id: 'participatory-drop-a',
+          votes: 5,
+          wave_id: 'reset-wave'
+        },
+        {
+          voter_id: 'voter-2',
+          drop_id: 'participatory-drop-a',
+          votes: 3,
+          wave_id: 'reset-wave'
+        },
+        {
+          voter_id: 'voter-1',
+          drop_id: 'participatory-drop-b',
+          votes: -1,
+          wave_id: 'reset-wave'
+        },
+        {
+          voter_id: 'voter-3',
+          drop_id: 'other-wave-drop',
+          votes: 7,
+          wave_id: 'no-reset-wave'
+        }
+      ]
+    },
+    {
+      table: DROP_RANK_TABLE,
+      rows: [
+        {
+          drop_id: 'participatory-drop-a',
+          wave_id: 'reset-wave',
+          vote: 8,
+          last_increased: 100
+        },
+        {
+          drop_id: 'participatory-drop-b',
+          wave_id: 'reset-wave',
+          vote: -1,
+          last_increased: 200
+        },
+        {
+          drop_id: 'other-wave-drop',
+          wave_id: 'no-reset-wave',
+          vote: 7,
+          last_increased: 300
+        }
+      ]
+    },
+    {
+      table: DROP_REAL_VOTE_IN_TIME_TABLE,
+      rows: [
+        {
+          id: 1,
+          drop_id: 'participatory-drop-a',
+          wave_id: 'reset-wave',
+          timestamp: 50,
+          vote: 8
+        },
+        {
+          id: 2,
+          drop_id: 'participatory-drop-b',
+          wave_id: 'reset-wave',
+          timestamp: 60,
+          vote: -1
+        },
+        {
+          id: 3,
+          drop_id: 'other-wave-drop',
+          wave_id: 'no-reset-wave',
+          timestamp: 70,
+          vote: 7
+        }
+      ]
+    },
+    {
+      table: DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
+      rows: [
+        {
+          id: 1,
+          drop_id: 'participatory-drop-a',
+          voter_id: 'voter-1',
+          wave_id: 'reset-wave',
+          timestamp: 50,
+          vote: 5
+        },
+        {
+          id: 2,
+          drop_id: 'participatory-drop-a',
+          voter_id: 'voter-2',
+          wave_id: 'reset-wave',
+          timestamp: 55,
+          vote: 3
+        },
+        {
+          id: 3,
+          drop_id: 'participatory-drop-b',
+          voter_id: 'voter-1',
+          wave_id: 'reset-wave',
+          timestamp: 60,
+          vote: -1
+        },
+        {
+          id: 4,
+          drop_id: 'other-wave-drop',
+          voter_id: 'voter-3',
+          wave_id: 'no-reset-wave',
+          timestamp: 70,
+          vote: 7
+        }
+      ]
+    },
+    {
+      table: DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
+      rows: [
+        {
+          id: 1,
+          voter_id: 'voter-1',
+          drop_id: 'participatory-drop-a',
+          credit_spent: 5,
+          created_at: 50,
+          wave_id: 'reset-wave'
+        },
+        {
+          id: 2,
+          voter_id: 'voter-2',
+          drop_id: 'participatory-drop-a',
+          credit_spent: 3,
+          created_at: 55,
+          wave_id: 'reset-wave'
+        },
+        {
+          id: 3,
+          voter_id: 'voter-3',
+          drop_id: 'other-wave-drop',
+          credit_spent: 7,
+          created_at: 70,
+          wave_id: 'no-reset-wave'
+        }
+      ]
+    },
+    {
+      table: WAVE_LEADERBOARD_ENTRIES_TABLE,
+      rows: [
+        {
+          drop_id: 'participatory-drop-a',
+          wave_id: 'reset-wave',
+          timestamp: 100,
+          vote: 8,
+          vote_on_decision_time: 8,
+          over_threshold_since_ms: 50
+        },
+        {
+          drop_id: 'participatory-drop-b',
+          wave_id: 'reset-wave',
+          timestamp: 200,
+          vote: -1,
+          vote_on_decision_time: -1,
+          over_threshold_since_ms: null
+        },
+        {
+          drop_id: 'other-wave-drop',
+          wave_id: 'no-reset-wave',
+          timestamp: 300,
+          vote: 7,
+          vote_on_decision_time: 7,
+          over_threshold_since_ms: null
+        }
+      ]
+    }
+  ],
+  () => {
+    const db = new DropVotingDb(() => sqlExecutor);
+    const ctx: RequestContext = { timer: undefined };
+
+    it('clears all 6 vote tables for participatory drops in the target wave', async () => {
+      await db.resetVotesForParticipatoryDropsInWave('reset-wave', ctx);
+
+      // drop_voter_states — participatory drops cleared, other-wave drop preserved
+      const voterStates = await sqlExecutor.execute<any>(
+        `select * from ${DROP_VOTER_STATE_TABLE} order by drop_id`
+      );
+      expect(voterStates).toHaveLength(1);
+      expect(voterStates[0].drop_id).toBe('other-wave-drop');
+
+      // drop_ranks — participatory drops cleared, other-wave drop preserved
+      const ranks = await sqlExecutor.execute<any>(
+        `select * from ${DROP_RANK_TABLE} order by drop_id`
+      );
+      expect(ranks).toHaveLength(1);
+      expect(ranks[0].drop_id).toBe('other-wave-drop');
+
+      // drop_real_vote_in_time — participatory drops cleared, other-wave preserved
+      const realVotes = await sqlExecutor.execute<any>(
+        `select * from ${DROP_REAL_VOTE_IN_TIME_TABLE} order by id`
+      );
+      expect(realVotes).toHaveLength(1);
+      expect(realVotes[0].drop_id).toBe('other-wave-drop');
+
+      // drop_real_voter_vote_in_time — participatory drops cleared, other-wave preserved
+      const realVoterVotes = await sqlExecutor.execute<any>(
+        `select * from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} order by id`
+      );
+      expect(realVoterVotes).toHaveLength(1);
+      expect(realVoterVotes[0].drop_id).toBe('other-wave-drop');
+
+      // drops_votes_credit_spendings — participatory drops cleared, other-wave preserved
+      const creditSpendings = await sqlExecutor.execute<any>(
+        `select * from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} order by id`
+      );
+      expect(creditSpendings).toHaveLength(1);
+      expect(creditSpendings[0].drop_id).toBe('other-wave-drop');
+
+      // wave_leaderboard_entries — participatory drops cleared, other-wave preserved
+      const leaderboard = await sqlExecutor.execute<any>(
+        `select * from ${WAVE_LEADERBOARD_ENTRIES_TABLE} order by drop_id`
+      );
+      expect(leaderboard).toHaveLength(1);
+      expect(leaderboard[0].drop_id).toBe('other-wave-drop');
+    });
+
+    it('does not touch WINNER drops in the target wave', async () => {
+      await db.resetVotesForParticipatoryDropsInWave('reset-wave', ctx);
+
+      // The winner-drop should still exist in the drops table
+      const drops = await sqlExecutor.execute<any>(
+        `select id, drop_type from ${DROPS_TABLE} where wave_id = :waveId order by id`,
+        { waveId: 'reset-wave' }
+      );
+      const winnerDrop = drops.find((d: any) => d.id === 'winner-drop');
+      expect(winnerDrop).toBeDefined();
+      expect(winnerDrop.drop_type).toBe(DropType.WINNER);
+    });
+
+    it('is a no-op for a wave with no participatory drops', async () => {
+      // Wave with only a WINNER drop — should not throw and should not delete anything
+      await db.resetVotesForParticipatoryDropsInWave('no-reset-wave', ctx);
+
+      // The other-wave-drop (PARTICIPATORY) should still have its vote state
+      const voterStates = await sqlExecutor.execute<any>(
+        `select * from ${DROP_VOTER_STATE_TABLE} where drop_id = :dropId`,
+        { dropId: 'other-wave-drop' }
+      );
+      expect(voterStates).toHaveLength(1);
     });
   }
 );

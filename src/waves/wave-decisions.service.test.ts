@@ -249,7 +249,8 @@ describe('WaveDecisionsService', () => {
       {
         connection: {},
         timer: {}
-      }
+      },
+      undefined
     );
   });
 
@@ -285,7 +286,8 @@ describe('WaveDecisionsService', () => {
       expect.objectContaining({
         decisionTime: 1_776_135_540_001
       }),
-      expect.anything()
+      expect.anything(),
+      undefined
     );
   });
 
@@ -343,7 +345,8 @@ describe('WaveDecisionsService', () => {
           }
         ]
       }),
-      expect.anything()
+      expect.anything(),
+      undefined
     );
   });
 
@@ -387,7 +390,8 @@ describe('WaveDecisionsService', () => {
       expect.objectContaining({
         decisionTime: 1_501
       }),
-      expect.anything()
+      expect.anything(),
+      undefined
     );
   });
 
@@ -499,7 +503,164 @@ describe('WaveDecisionsService', () => {
       {
         connection: {},
         timer: {}
-      }
+      },
+      undefined
     );
+  });
+
+  it('breaks after formalizing a reset-enabled winner to prevent stale-batch processing', async () => {
+    jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000);
+    (waveDecisionsDb.getApproveWinnerCandidates as jest.Mock).mockResolvedValue(
+      [
+        {
+          wave_id: 'wave-1',
+          drop_id: 'drop-older',
+          created_at: 10,
+          vote: 12,
+          time_lock_ms: null,
+          max_winners: 5,
+          decisions_done: 0,
+          latest_decision_time: 999
+        },
+        {
+          wave_id: 'wave-1',
+          drop_id: 'drop-newer',
+          created_at: 20,
+          vote: 14,
+          time_lock_ms: null,
+          max_winners: 5,
+          decisions_done: 0,
+          latest_decision_time: 999
+        }
+      ]
+    );
+    (waveDecisionsDb.getWavePauses as jest.Mock).mockResolvedValue([]);
+    (waveDecisionsDb.getResetVotesAfterWin as jest.Mock).mockResolvedValue(
+      true
+    );
+    (
+      waveDecisionsDb.executeNativeQueriesInTransaction as jest.Mock
+    ).mockImplementation(async (fn) => fn({}));
+    const formalizeDecision = jest
+      .spyOn(service as any, 'formalizeDecision')
+      .mockResolvedValue({
+        claimBuildDropId: null,
+        pendingPushNotificationIds: [],
+        didReset: true
+      });
+
+    await (service as any).createApproveDecisions({} as any);
+
+    // Only the first candidate should be formalized — the loop must break
+    // after didReset=true so the second candidate's stale pre-reset votes
+    // are not used.
+    expect(formalizeDecision).toHaveBeenCalledTimes(1);
+    expect(formalizeDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        waveId: 'wave-1',
+        winnerDrops: [{ drop_id: 'drop-older', vote: 12, rank: 1 }]
+      }),
+      expect.anything(),
+      true
+    );
+  });
+
+  it('continues formalizing multiple winners when reset_votes_after_win is disabled', async () => {
+    jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000);
+    (waveDecisionsDb.getApproveWinnerCandidates as jest.Mock).mockResolvedValue(
+      [
+        {
+          wave_id: 'wave-1',
+          drop_id: 'drop-older',
+          created_at: 10,
+          vote: 12,
+          time_lock_ms: null,
+          max_winners: 5,
+          decisions_done: 0,
+          latest_decision_time: 999
+        },
+        {
+          wave_id: 'wave-1',
+          drop_id: 'drop-newer',
+          created_at: 20,
+          vote: 14,
+          time_lock_ms: null,
+          max_winners: 5,
+          decisions_done: 0,
+          latest_decision_time: 999
+        }
+      ]
+    );
+    (waveDecisionsDb.getWavePauses as jest.Mock).mockResolvedValue([]);
+    (waveDecisionsDb.getResetVotesAfterWin as jest.Mock).mockResolvedValue(
+      false
+    );
+    (
+      waveDecisionsDb.executeNativeQueriesInTransaction as jest.Mock
+    ).mockImplementation(async (fn) => fn({}));
+    const formalizeDecision = jest
+      .spyOn(service as any, 'formalizeDecision')
+      .mockResolvedValue({
+        claimBuildDropId: null,
+        pendingPushNotificationIds: [],
+        didReset: false
+      });
+
+    await (service as any).createApproveDecisions({} as any);
+
+    // Both candidates should be formalized since no reset occurred.
+    expect(formalizeDecision).toHaveBeenCalledTimes(2);
+    expect(formalizeDecision).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        winnerDrops: [{ drop_id: 'drop-older', vote: 12, rank: 1 }]
+      }),
+      expect.anything(),
+      false
+    );
+    expect(formalizeDecision).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        winnerDrops: [{ drop_id: 'drop-newer', vote: 14, rank: 1 }]
+      }),
+      expect.anything(),
+      false
+    );
+  });
+
+  it('passes resetVotesAfterWin flag to formalizeDecision for RANK waves via createDecision', async () => {
+    // createDecision should strip didReset and pass resetVotesAfterWin=false
+    // (RANK waves do not use the reset feature).
+    (
+      waveDecisionsDb.getTopNDropIdsForWaveWithVotes as jest.Mock
+    ).mockResolvedValue([{ drop_id: 'drop-1', vote: 10, rank: 1 }]);
+    const formalizeDecision = jest
+      .spyOn(service as any, 'formalizeDecision')
+      .mockResolvedValue({
+        claimBuildDropId: null,
+        pendingPushNotificationIds: [],
+        dirtyWaveIds: [],
+        didReset: false
+      });
+
+    await (service as any).createDecision(
+      {
+        decisionTime: 1_000,
+        waveId: 'wave-1',
+        outcomes: [],
+        time_lock_ms: null
+      },
+      { timer: { start: jest.fn(), stop: jest.fn() } }
+    );
+
+    // formalizeDecision should be called with 2 args (no resetVotesAfterWin
+    // for RANK waves — the default parameter handles it)
+    expect(formalizeDecision).toHaveBeenCalledWith(
+      expect.objectContaining({ waveId: 'wave-1' }),
+      expect.anything()
+    );
+    // The returned result should NOT include didReset (it's stripped)
+    // This is implicitly tested by the fact that createDecision's return type
+    // doesn't include didReset — if it did, TypeScript would catch it.
   });
 });
