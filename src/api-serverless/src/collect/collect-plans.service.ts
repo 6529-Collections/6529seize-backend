@@ -7,6 +7,7 @@ import {
 import { collectingService } from '@/collecting/collecting.service';
 import { CollectingWorkBudget } from '@/collecting/collecting-work-budget';
 import {
+  CollectingAcquisitionPlan,
   CollectingCandidate,
   planCollectingAcquisitions
 } from '@/collecting/collecting-planner';
@@ -89,20 +90,36 @@ const collectingStateHash = (analysis: CollectingAnalysis) =>
 
 export function collectPlanView(row: PlanRow) {
   const payload = data(row);
-  const result = planCollectingAcquisitions(
-    payload.analysis,
-    payload.candidates,
-    {
-      evaluated_at: new Date().toISOString(),
-      ...(payload.budget_wei === undefined
-        ? {}
-        : { budget_wei: payload.budget_wei }),
-      max_states: 20000
-    }
-  );
+  const options = { evaluated_at: new Date().toISOString(), max_states: 20000 };
   const candidates = new Map(
     payload.candidates.map((candidate) => [candidate.candidate_id, candidate])
   );
+  const withUnitPrices = (plan: CollectingAcquisitionPlan) => ({
+    ...plan,
+    legs: plan.legs.map((leg) => ({
+      ...leg,
+      unit_price_wei: candidates.get(leg.candidate_id)?.unit_price_wei
+    }))
+  });
+  const result = withUnitPrices(
+    planCollectingAcquisitions(payload.analysis, payload.candidates, {
+      ...options,
+      ...(payload.budget_wei === undefined
+        ? {}
+        : { budget_wei: payload.budget_wei })
+    })
+  );
+  // Compare the same captured orders at one instant; never reuse a spending cap.
+  const availableResult =
+    payload.budget_wei === undefined
+      ? result
+      : withUnitPrices(
+          planCollectingAcquisitions(
+            payload.analysis,
+            payload.candidates,
+            options
+          )
+        );
   return {
     id: row.id,
     state: row.state,
@@ -113,13 +130,11 @@ export function collectPlanView(row: PlanRow) {
     }),
     profile_id: row.profile_id,
     analysis: payload.analysis,
-    result: {
-      ...result,
-      legs: result.legs.map((leg) => ({
-        ...leg,
-        unit_price_wei: candidates.get(leg.candidate_id)?.unit_price_wei
-      }))
-    },
+    result,
+    available_result: availableResult,
+    ...(payload.budget_wei === undefined
+      ? {}
+      : { budget_wei: payload.budget_wei }),
     checked_asset_count: payload.cursor,
     total_asset_count: payload.asset_keys.length,
     unavailable_asset_count: payload.unavailable,

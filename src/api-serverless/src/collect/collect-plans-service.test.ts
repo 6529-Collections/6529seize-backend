@@ -317,6 +317,135 @@ describe('persisted collecting scans', () => {
     const capped = await readCollectPlan('plan', 'p');
     expect(capped.result.legs).toHaveLength(0);
     expect(capped.result.total_cost_wei).toBe('0');
+    expect(capped.budget_wei).toBe('0');
+    expect(capped.available_result.legs).toEqual(uncapped.result.legs);
+    expect(capped.available_result.total_cost_wei).toBe(
+      uncapped.result.total_cost_wei
+    );
+  });
+
+  it('compares full captured availability and an exact budget using identical orders, quantities, prices and gas', () => {
+    const saved = row(2);
+    const candidates = indexedSeed(['asset', 'second']).candidates;
+    candidates[0] = {
+      ...candidates[0],
+      quantity_available: '2',
+      inventory_quantity: '2',
+      group_cost_wei: '5'
+    };
+    candidates[1] = {
+      ...candidates[1],
+      unit_price_wei: '300',
+      group_cost_wei: '7'
+    };
+    const goal = {
+      ...analysis,
+      requirements: [
+        {
+          ...analysis.requirements[0],
+          target_quantity: '2',
+          missing_quantity: '2'
+        },
+        {
+          ...analysis.requirements[0],
+          id: 'second-requirement',
+          asset_keys: ['second']
+        }
+      ],
+      required_count: 2,
+      missing_asset_keys: ['asset', 'second']
+    };
+    saved.payload_json = JSON.stringify({
+      ...JSON.parse(saved.payload_json),
+      analysis: goal,
+      asset_keys: ['asset', 'second'],
+      candidates,
+      budget_wei: '205'
+    });
+    const optimize = jest.spyOn(planner, 'planCollectingAcquisitions');
+
+    const view = collectPlanView(saved);
+
+    expect(view.budget_wei).toBe('205');
+    expect(view.result.status).toBe('partial');
+    expect(view.result.total_cost_wei).toBe('205');
+    expect(view.result.legs).toEqual([
+      {
+        candidate_id: 'candidate-asset',
+        order_id: 'order-asset',
+        asset_key: 'asset',
+        quantity: '2',
+        unit_price_wei: '100'
+      }
+    ]);
+    expect(view.available_result.status).toBe('complete');
+    expect(view.available_result.total_cost_wei).toBe('512');
+    expect(view.available_result.legs).toEqual([
+      ...view.result.legs,
+      {
+        candidate_id: 'candidate-second',
+        order_id: 'order-second',
+        asset_key: 'second',
+        quantity: '1',
+        unit_price_wei: '300'
+      }
+    ]);
+    expect(view.available_result.evaluated_at).toBe(view.result.evaluated_at);
+    expect(view.candidate_universe_complete).toBe(false);
+    expect(optimize).toHaveBeenCalledTimes(2);
+    const [capped, available] = optimize.mock.calls;
+    expect(available[0]).toBe(capped[0]);
+    expect(available[1]).toBe(capped[1]);
+    expect(capped[2]).toEqual({
+      evaluated_at: view.result.evaluated_at,
+      max_states: 20000,
+      budget_wei: '205'
+    });
+    expect(available[2]).toEqual({
+      evaluated_at: view.result.evaluated_at,
+      max_states: 20000
+    });
+  });
+
+  it('reuses the uncapped result with no budget field or second optimization', () => {
+    const saved = row(1);
+    const payload = JSON.parse(saved.payload_json);
+    delete payload.budget_wei;
+    payload.candidates = indexedSeed().candidates;
+    saved.payload_json = JSON.stringify(payload);
+    const optimize = jest.spyOn(planner, 'planCollectingAcquisitions');
+
+    const view = collectPlanView(saved);
+
+    expect(view).not.toHaveProperty('budget_wei');
+    expect(view.available_result).toBe(view.result);
+    expect(view.result.legs[0]).toMatchObject({
+      order_id: 'order-asset',
+      unit_price_wei: '100'
+    });
+    expect(optimize).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses one expiry boundary for both results and removes expired captured orders from each', () => {
+    const saved = row(1);
+    const candidates = indexedSeed().candidates;
+    const at = new Date(Date.now() + 1000).toISOString();
+    candidates[0].valid_until = at;
+    saved.payload_json = JSON.stringify({
+      ...JSON.parse(saved.payload_json),
+      candidates,
+      budget_wei: '1000000'
+    });
+    jest.spyOn(Date.prototype, 'toISOString').mockReturnValue(at);
+
+    const view = collectPlanView(saved);
+
+    expect(view.result.evaluated_at).toBe(at);
+    expect(view.available_result.evaluated_at).toBe(at);
+    expect(view.result.legs).toEqual([]);
+    expect(view.available_result.legs).toEqual([]);
+    expect(view.result.candidate_count).toBe(0);
+    expect(view.available_result.candidate_count).toBe(0);
   });
 
   it.each([undefined, '0', '1000000'])(
@@ -367,6 +496,13 @@ describe('persisted collecting scans', () => {
       expect(created.result.total_cost_wei).toBe(
         budget === '0' ? '0' : '450100'
       );
+      expect(created.available_result.total_cost_wei).toBe('450100');
+      expect(created.available_result.legs).toHaveLength(1);
+      expect(created.available_result.evaluated_at).toBe(
+        created.result.evaluated_at
+      );
+      expect('budget_wei' in created).toBe(budget !== undefined);
+      expect(created.budget_wei).toBe(budget);
       expect(created.assumptions[0]).toContain(seed.observed_at);
       const payload = JSON.parse(saved.payload_json);
       expect('budget_wei' in payload).toBe(budget !== undefined);
