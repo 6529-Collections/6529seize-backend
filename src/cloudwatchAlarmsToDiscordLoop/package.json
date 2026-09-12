@@ -20,7 +20,7 @@
     "discord.js": "^14.26.4"
   },
   "overrides": {
-    "undici": "^6.27.0"
+    "undici": "6.28.1"
   },
   "packageManager": "npm@10.9.8"
 }
