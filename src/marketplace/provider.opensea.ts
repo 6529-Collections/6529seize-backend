@@ -259,6 +259,24 @@ export function describeMarketOrder(
   };
 }
 
+/** Recheck indexed discovery with the same signed-order boundary as live orders. */
+export function describeIndexedMarketListing(
+  value: unknown,
+  asset: MarketAsset,
+  remainingQuantity: string
+): MarketDiscoveredOrder {
+  const provider = parseProviderOrder(value);
+  const available = describeMarketOrder(
+    provider,
+    asset,
+    'LISTING',
+    remainingQuantity
+  );
+  return available.unitTotalWei === undefined
+    ? available
+    : describeMarketOrder(provider, asset, 'LISTING', '1');
+}
+
 export class OpenSeaMarketplaceProvider {
   private readonly fetcher: typeof fetch;
   constructor(

@@ -9,13 +9,15 @@ import {
   NFTS_TABLE
 } from '@/constants';
 import { NEXTGEN_CORE } from '@/api/nextgen/abis';
-import { NotFoundException } from '@/exceptions';
+import { CustomApiCompliantException, NotFoundException } from '@/exceptions';
 import { NEXTGEN_TOKENS_TABLE } from '@/nextgen/nextgen_constants';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { marketDepthDb } from '@/market-depth/market-depth.db';
 import {
   CurrentMarketDepthOrder,
   CurrentMarketDepthSnapshot,
+  MAX_MARKET_DEPTH_COLLECTION_ASKS,
+  MAX_MARKET_DEPTH_COLLECTION_PARTITIONS,
   MarketDepthOrderStatus
 } from '@/market-depth/market-depth.types';
 import { DbPoolName } from '@/db-query.options';
@@ -135,22 +137,43 @@ export class MarketDepthApiDb extends LazyDbAccessCompatibleService {
   }
 
   async getBooks(
-    token: MarketTokenContext
+    token: MarketTokenContext,
+    collectionListings = false
   ): Promise<CurrentMarketDepthSnapshot[]> {
     const partitions = await this.getPartitions(token);
+    if (
+      collectionListings &&
+      partitions.length > MAX_MARKET_DEPTH_COLLECTION_PARTITIONS
+    )
+      throw new CustomApiCompliantException(
+        503,
+        'The indexed collection is temporarily unavailable.'
+      );
+    const collectionLimit = Math.floor(
+      MAX_MARKET_DEPTH_COLLECTION_ASKS / Math.max(1, partitions.length)
+    );
     const books = await Promise.all(
       partitions.map((partition) =>
         marketDepthDb.getLatestCompletedSnapshot(
           partition.source,
           token.contract,
           partition.collection_slug,
-          { token_id: token.token_id, include_payloads: false }
+          collectionListings
+            ? { side: 'ask', limit: collectionLimit }
+            : { token_id: token.token_id, include_payloads: false }
         )
       )
     );
     const completed = books.filter(
       (book): book is CurrentMarketDepthSnapshot => book !== null
     );
+    // A collection-wide read must account for every known partition. Token
+    // depth can still display the partitions available during a refresh.
+    if (collectionListings && completed.length !== partitions.length)
+      throw new CustomApiCompliantException(
+        503,
+        'The indexed collection is temporarily unavailable.'
+      );
     const orderIds = Array.from(
       new Set(
         completed.flatMap((book) => book.orders.map((order) => order.order_id))

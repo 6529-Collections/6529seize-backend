@@ -156,6 +156,8 @@ export * from '../models/ApiCollectRuleTarget';
 export * from '../models/ApiCollectRules';
 export * from '../models/ApiCollectSeason';
 export * from '../models/ApiCollectTdhExcludedCandidate';
+export * from '../models/ApiCollectTdhListing';
+export * from '../models/ApiCollectTdhListings';
 export * from '../models/ApiCollectTdhProjection';
 export * from '../models/ApiCollectTdhRankedCandidate';
 export * from '../models/ApiCollectTdhRankedCandidateCostPerAdditionalTdh';
@@ -967,6 +969,8 @@ import { ApiCollectRuleTarget } from '../models/ApiCollectRuleTarget';
 import { ApiCollectRules } from '../models/ApiCollectRules';
 import { ApiCollectSeason } from '../models/ApiCollectSeason';
 import { ApiCollectTdhExcludedCandidate } from '../models/ApiCollectTdhExcludedCandidate';
+import { ApiCollectTdhListing } from '../models/ApiCollectTdhListing';
+import { ApiCollectTdhListings      , ApiCollectTdhListingsStatusEnum        } from '../models/ApiCollectTdhListings';
 import { ApiCollectTdhProjection } from '../models/ApiCollectTdhProjection';
 import { ApiCollectTdhRankedCandidate } from '../models/ApiCollectTdhRankedCandidate';
 import { ApiCollectTdhRankedCandidateCostPerAdditionalTdh } from '../models/ApiCollectTdhRankedCandidateCostPerAdditionalTdh';
@@ -1680,6 +1684,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiCollectPlanStateEnum",
     "ApiCollectRuleModeEnum",
     "ApiCollectRuleStateEnum",
+    "ApiCollectTdhListingsStatusEnum",
     "ApiCollectTdhRankingOptimalityEnum",
     "ApiCollectTdhRankingCandidateScopeEnum",
     "ApiCollectTdhRankingRequestHorizonDaysEnum",
@@ -2007,6 +2012,8 @@ let typeMap: {[index: string]: any} = {
     "ApiCollectRules": ApiCollectRules,
     "ApiCollectSeason": ApiCollectSeason,
     "ApiCollectTdhExcludedCandidate": ApiCollectTdhExcludedCandidate,
+    "ApiCollectTdhListing": ApiCollectTdhListing,
+    "ApiCollectTdhListings": ApiCollectTdhListings,
     "ApiCollectTdhProjection": ApiCollectTdhProjection,
     "ApiCollectTdhRankedCandidate": ApiCollectTdhRankedCandidate,
     "ApiCollectTdhRankedCandidateCostPerAdditionalTdh": ApiCollectTdhRankedCandidateCostPerAdditionalTdh,

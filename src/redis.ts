@@ -1,4 +1,5 @@
 import { createClient, RedisClientType as Redis } from 'redis';
+import { randomUUID } from 'node:crypto';
 import { Logger } from './logging';
 import { numbers } from './numbers';
 import { Time } from './time';
@@ -88,6 +89,48 @@ export async function redisSetJson<T>(
     await redis.set(key, payload, { EX: ttl.toSeconds() });
   } else {
     await redis.set(key, payload);
+  }
+}
+
+/** Return undefined while another instance owns a cold-cache refresh. */
+export async function redisCachedWithRefreshLease<T>(
+  key: string,
+  ttl: Time,
+  callback: () => Promise<T>
+): Promise<T | undefined> {
+  if (!redis) return callback();
+  const client = redis;
+  const cached = await client.get(key);
+  if (cached !== null) return JSON.parse(cached);
+  const leaseKey = `${key}:refresh-lease`;
+  const token = randomUUID();
+  const acquired = await client.set(leaseKey, token, { NX: true, EX: 60 });
+  if (acquired === null) return undefined;
+  try {
+    // A preceding owner may have published between our initial GET and SET NX.
+    const refreshed = await client.get(key);
+    if (refreshed !== null) return JSON.parse(refreshed);
+    const value = await callback();
+    const published = await client.eval(
+      `if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+       redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])
+       redis.call('DEL', KEYS[1])
+       return 1`,
+      {
+        keys: [leaseKey, key],
+        arguments: [token, JSON.stringify(value), String(ttl.toSeconds())]
+      }
+    );
+    // A slow, expired lease must not overwrite another owner's newer snapshot.
+    return Number(published) === 1 ? value : undefined;
+  } finally {
+    await client.eval(
+      `if redis.call('GET', KEYS[1]) == ARGV[1] then
+         return redis.call('DEL', KEYS[1])
+       end
+       return 0`,
+      { keys: [leaseKey], arguments: [token] }
+    );
   }
 }
 
