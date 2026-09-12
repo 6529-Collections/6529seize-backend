@@ -69,6 +69,44 @@ test('raw stdout and Lambda JSON log envelopes normalize using authenticated AWS
     /UNAPPROVED_LOG_SOURCE/
   );
 });
+test('canonical log envelopes take precedence over unknown message fields and redact both Lambda wrapper forms', () => {
+  const sentinel = 'PRIVATE_UNKNOWN_MESSAGE_AND_EVIDENCE';
+  const direct = { ...event, message: sentinel, evidence: { text: sentinel } };
+  const messages = [
+    direct,
+    { ...direct, message: { text: sentinel } },
+    {
+      timestamp: event.occurredAt,
+      level: 'ERROR',
+      message: JSON.stringify(direct)
+    },
+    { timestamp: event.occurredAt, level: 'ERROR', message: direct }
+  ];
+  const alerts = logAlerts(
+    encode([
+      ...messages.map((value) => JSON.stringify(value)),
+      JSON.stringify({ message: sentinel })
+    ]),
+    '123456789012',
+    [group],
+    'prod'
+  );
+  assert.equal(alerts.length, messages.length);
+  assert.equal(
+    new Set(alerts.map((alert) => alert.eventId)).size,
+    messages.length
+  );
+  for (const alert of alerts) {
+    assert.equal(alert._type, EVENT_TYPE);
+    assert.equal(alert.service, 'seizeAPI');
+    assert.equal(alert.environment, 'prod');
+    assert.equal(alert.severity, 'error');
+    assert.equal(Object.hasOwn(alert, 'message'), false);
+    assert.equal(Object.hasOwn(alert, 'evidence'), false);
+    assert.equal(JSON.stringify(alert).includes(sentinel), false);
+  }
+});
+
 test('operator check-in URLs reject non-HTTPS, IPs, local hosts and credentials without echoing secrets', () => {
   for (const input of [
     'http://example.com',

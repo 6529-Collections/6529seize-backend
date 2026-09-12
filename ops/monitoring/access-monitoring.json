@@ -146,7 +146,6 @@
                     "cloudwatch:DeleteAlarms",
                     "cloudwatch:EnableAlarmActions",
                     "cloudwatch:DisableAlarmActions",
-                    "cloudwatch:SetAlarmState",
                     "cloudwatch:TagResource",
                     "cloudwatch:UntagResource"
                   ],

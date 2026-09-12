@@ -271,10 +271,11 @@ export function logAlerts(
     const row = record(raw);
     let alert: Alert;
     try {
-      const decoded: unknown = JSON.parse(String(row.message));
-      const nested = record(decoded).message;
+      const decoded = record(JSON.parse(String(row.message)));
+      // A canonical envelope wins over any unknown application-supplied message field.
+      const envelope = decoded._type === EVENT_TYPE ? decoded : decoded.message;
       alert = parseAlert(
-        typeof nested === 'string' ? JSON.parse(nested) : decoded
+        typeof envelope === 'string' ? JSON.parse(envelope) : envelope
       );
     } catch {
       continue;
