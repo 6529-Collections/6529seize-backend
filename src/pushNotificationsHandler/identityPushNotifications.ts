@@ -47,6 +47,8 @@ import {
   sendMessages
 } from '@/pushNotificationsHandler/sendPushNotifications';
 import { identityMutesDb } from '../api-serverless/src/identity-mutes/identity-mutes.db';
+import { contentModerationDb } from '@/content-moderation/content-moderation.db';
+import { formatDropMarkdownForPush } from '@/pushNotificationsHandler/markdown-push-notification-text';
 import { wsListenersNotifier } from '../api-serverless/src/ws/ws-listeners-notifier';
 import { identityPushNotificationAccess } from '@/pushNotificationsHandler/identity-push-notification-access';
 import {
@@ -290,7 +292,16 @@ export async function sendIdentityNotificationsBatch(
   await wsListenersNotifier.notifyAboutIdentityNotificationsChanged(
     notifications.map((notification) => notification.identity_id)
   );
-  const mutedNotificationIds = await findMutedNotificationIds(notifications);
+  let mutedNotificationIds: Set<number>;
+  try {
+    mutedNotificationIds = await findMutedNotificationIds(notifications);
+  } catch (error) {
+    logger.error(
+      'Failed to apply notification visibility filters; retrying push notifications',
+      error
+    );
+    return notifications.map((notification) => Number(notification.id));
+  }
 
   uniqueIds
     .filter((id) => !notificationsById.has(id))
@@ -349,27 +360,26 @@ async function findMutedNotificationIds(
   const notificationRows = notifications.map((notification) => ({
     notification_id: Number(notification.id),
     identity_id: notification.identity_id,
-    additional_identity_id: notification.additional_identity_id
+    additional_identity_id: notification.additional_identity_id,
+    related_drop_id: notification.related_drop_id,
+    related_drop_2_id: notification.related_drop_2_id
   }));
-  if (!notificationRows.some((row) => row.additional_identity_id !== null)) {
-    return new Set();
-  }
-
-  try {
-    const unmutedRows =
-      await identityMutesDb.filterMutedNotificationRows(notificationRows);
-    const unmutedNotificationIds = new Set(
-      unmutedRows.map((row) => row.notification_id)
+  const unmutedRows =
+    await identityMutesDb.filterMutedNotificationRows(notificationRows);
+  const deliverableRows =
+    await contentModerationDb.filterBlockedNotificationRows(unmutedRows);
+  const visibleRows =
+    await contentModerationDb.filterUnavailableDropNotificationRows(
+      deliverableRows
     );
-    return new Set(
-      notificationRows
-        .filter((row) => !unmutedNotificationIds.has(row.notification_id))
-        .map((row) => row.notification_id)
-    );
-  } catch (error) {
-    logger.error('Failed to filter muted push notifications', error);
-    return new Set();
-  }
+  const unmutedNotificationIds = new Set(
+    visibleRows.map((row) => row.notification_id)
+  );
+  return new Set(
+    notificationRows
+      .filter((row) => !unmutedNotificationIds.has(row.notification_id))
+      .map((row) => row.notification_id)
+  );
 }
 
 async function buildIdentityNotificationMessages(
@@ -1133,7 +1143,8 @@ async function getDropBodyTextForPush(
   }
 
   if (hasText) {
-    return rawContentTrimmed;
+    const preview = formatDropMarkdownForPush(rawContentTrimmed);
+    if (preview) return preview;
   }
 
   const mediaInfos = mediaRows.map((row) =>

@@ -156,9 +156,13 @@ For web sessions:
 - The request `Origin` must match the `client_origin` stored on the session.
 - The request `Origin` must be allowed for credentialed web auth CORS.
 - The cookie secret is rotated on every successful refresh.
-- On invalid or mismatched address-scoped sessions, the response clears the
-  scoped cookie for the requested address without clearing another account's
-  compatibility cookie.
+- Concurrent requests that present the same valid cookie receive the same
+  rotated credential during a short idempotency window, so response ordering
+  cannot desynchronize the browser and server.
+- Session validation uses authoritative writer state so a newly rotated secret
+  is not rejected because a read replica has not caught up.
+- Invalid or mismatched refresh requests return `401` without changing browser
+  cookies. Cookie clearing remains an explicit logout or replacement action.
 
 For native and desktop sessions:
 

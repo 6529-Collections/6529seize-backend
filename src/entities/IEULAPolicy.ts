@@ -11,4 +11,7 @@ export class EULAConsent {
 
   @Column({ type: 'text' })
   platform!: string;
+
+  @Column({ type: 'varchar', length: 32, nullable: true, default: null })
+  eula_version!: string | null;
 }

@@ -22,8 +22,8 @@ import {
 } from '@/sql-executor';
 import { describeWithSeed, Seed } from '@/tests/_setup/seed';
 import { aTdhConsolidation } from '@/tests/fixtures/tdh_consolidation.fixture';
-import { recalculateXTdhUseCase } from '@/xtdh/recalculate-xtdh.use-case';
 import { DbQueryOptions } from '@/db-query.options';
+import * as waveUnreadCache from '@/api/waves/wave-unread-cache';
 import * as mysql from 'mysql';
 import { DataSource, QueryRunner } from 'typeorm';
 
@@ -202,8 +202,11 @@ async function persistReplacement(replacementKeys: string[]) {
     newMemes,
     newEditions,
     newNft,
-    ['a', 'b', 'c'],
-    replacementKeys
+    {
+      mode: 'PARTIAL',
+      wallets: ['a', 'b', 'c'],
+      consolidationKeysToReplace: replacementKeys
+    }
   );
 }
 
@@ -243,7 +246,9 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
     jest
       .spyOn(identityConsolidationEffects, 'syncIdentitiesMetrics')
       .mockResolvedValue();
-    jest.spyOn(recalculateXTdhUseCase, 'activateLoop').mockResolvedValue();
+    jest
+      .spyOn(waveUnreadCache, 'invalidateWaveUnreadCache')
+      .mockResolvedValue();
   });
 
   afterEach(() => {
@@ -272,7 +277,7 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
 
   it('is idempotent when retrying after commit but before checkpoint completion', async () => {
     jest
-      .mocked(recalculateXTdhUseCase.activateLoop)
+      .mocked(waveUnreadCache.invalidateWaveUnreadCache)
       .mockRejectedValueOnce(new Error('injected post-commit failure'))
       .mockResolvedValueOnce();
 

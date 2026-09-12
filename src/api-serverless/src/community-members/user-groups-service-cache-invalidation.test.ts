@@ -181,11 +181,14 @@ function buildUserGroupsDbMock() {
 
 type UserGroupsDbMock = ReturnType<typeof buildUserGroupsDbMock>;
 
-function buildService(userGroupsDb: UserGroupsDbMock) {
+function buildService(
+  userGroupsDb: UserGroupsDbMock,
+  checkFilterName = jest.fn().mockResolvedValue({ status: 'ALLOWED' })
+) {
   return new UserGroupsService(
     userGroupsDb as unknown as UserGroupsDb,
     {
-      checkFilterName: jest.fn().mockResolvedValue({ status: 'ALLOWED' })
+      checkFilterName
     } as unknown as AbusivenessCheckService,
     {
       recordActiveIdentity: jest.fn().mockResolvedValue(undefined)
@@ -264,6 +267,88 @@ describe('UserGroupsService eligibility cache invalidation scoping', () => {
   });
 
   describe('changeVisibility', () => {
+    it.each([
+      { name: 'Only creator-handle', handle: 'creator-handle' },
+      { name: 'Only Me', handle: undefined }
+    ])(
+      'skips the abusiveness check for the exact safe personal group name "$name"',
+      async ({ name, handle }) => {
+        const userGroupsDb = buildUserGroupsDbMock();
+        const checkFilterName = jest
+          .fn()
+          .mockResolvedValue({ status: 'ALLOWED' });
+        const service = buildService(userGroupsDb, checkFilterName);
+        jest.spyOn(service, 'getByIdOrThrow').mockResolvedValue(
+          anApiGroupFull(
+            {},
+            {
+              name,
+              created_by: {
+                id: CREATOR_ID,
+                handle
+              } as ApiGroupFull['created_by']
+            }
+          )
+        );
+
+        await service.changeVisibility(
+          {
+            group_id: GROUP_ID,
+            old_version_id: null,
+            visible: true,
+            profile_id: CREATOR_ID
+          },
+          ctx
+        );
+
+        expect(checkFilterName).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each([
+      {
+        name: 'Only creator-handle and friends',
+        handle: 'creator-handle'
+      },
+      { name: 'Only somebody', handle: undefined }
+    ])(
+      'checks the name "$name" when it is not an exact canonical personal group name',
+      async ({ name, handle }) => {
+        const userGroupsDb = buildUserGroupsDbMock();
+        const checkFilterName = jest
+          .fn()
+          .mockResolvedValue({ status: 'ALLOWED' });
+        const service = buildService(userGroupsDb, checkFilterName);
+        jest.spyOn(service, 'getByIdOrThrow').mockResolvedValue(
+          anApiGroupFull(
+            {},
+            {
+              name,
+              created_by: {
+                id: CREATOR_ID,
+                handle
+              } as ApiGroupFull['created_by']
+            }
+          )
+        );
+
+        await service.changeVisibility(
+          {
+            group_id: GROUP_ID,
+            old_version_id: null,
+            visible: true,
+            profile_id: CREATOR_ID
+          },
+          ctx
+        );
+
+        expect(checkFilterName).toHaveBeenCalledWith({
+          text: name,
+          handle: handle ?? ''
+        });
+      }
+    );
+
     it('bumps only the members of a pure inclusion-list group instead of the global version', async () => {
       const userGroupsDb = buildUserGroupsDbMock();
       userGroupsDb.findUserGroupsIdentityGroupProfileIds.mockResolvedValue({

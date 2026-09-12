@@ -14,6 +14,7 @@ import {
   WsMessageType
 } from '@/api/ws/ws-message';
 import { Logger } from '@/logging';
+import { contentModerationDb } from '@/content-moderation/content-moderation.db';
 
 function createDrop(content: string, dropType = ApiDropType.Chat) {
   return {
@@ -27,6 +28,8 @@ function createDrop(content: string, dropType = ApiDropType.Chat) {
       voting_credit_type: ApiWaveCreditType.Tdh,
       voting_credit_scope: ApiWaveCreditScope.Wave
     },
+    viewer_context: { author_blocked: false, drop_hidden: false },
+    moderation: { status: 'VISIBLE', can_view: true },
     parts: [{ content }]
   } as any;
 }
@@ -64,6 +67,249 @@ function findMaximumSafeAsciiContentLength(
 }
 
 describe('WsListenersNotifier', () => {
+  beforeEach(() => {
+    jest
+      .spyOn(contentModerationDb, 'getViewerContextsForDrop')
+      .mockResolvedValue({});
+  });
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it('resolves wave listeners once and sends every bulk drop deletion in order', async () => {
+    const appWebSockets = {
+      send: jest.fn().mockResolvedValue(undefined)
+    };
+    const wsConnectionRepository = {
+      getCurrentlyOnlineCommunityMemberConnectionIds: jest
+        .fn()
+        .mockResolvedValue([
+          { connectionId: 'connection-1', profileId: 'profile-1' },
+          { connectionId: 'connection-2', profileId: 'profile-2' }
+        ])
+    };
+    const notifier = new WsListenersNotifier(
+      appWebSockets as any,
+      wsConnectionRepository as any
+    );
+    const deletedDrops = [
+      { drop_id: 'drop-1', wave_id: 'wave-1', drop_serial: 10 },
+      { drop_id: 'drop-2', wave_id: 'wave-1', drop_serial: 12 }
+    ];
+
+    await notifier.notifyAboutDropDeletes(deletedDrops, 'visibility-group', {});
+
+    expect(
+      wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds
+    ).toHaveBeenCalledWith(
+      { groupId: 'visibility-group', waveId: 'wave-1' },
+      {}
+    );
+    expect(appWebSockets.send).toHaveBeenCalledTimes(4);
+    expect(
+      appWebSockets.send.mock.calls.map(([call]) => ({
+        connectionId: call.connectionId,
+        message: JSON.parse(call.message)
+      }))
+    ).toEqual([
+      {
+        connectionId: 'connection-1',
+        message: { type: WsMessageType.DROP_DELETE, data: deletedDrops[0] }
+      },
+      {
+        connectionId: 'connection-2',
+        message: { type: WsMessageType.DROP_DELETE, data: deletedDrops[0] }
+      },
+      {
+        connectionId: 'connection-1',
+        message: { type: WsMessageType.DROP_DELETE, data: deletedDrops[1] }
+      },
+      {
+        connectionId: 'connection-2',
+        message: { type: WsMessageType.DROP_DELETE, data: deletedDrops[1] }
+      }
+    ]);
+  });
+
+  it('caps concurrent bulk drop deletion sends', async () => {
+    let activeSends = 0;
+    let maximumActiveSends = 0;
+    const appWebSockets = {
+      send: jest.fn().mockImplementation(async () => {
+        activeSends += 1;
+        maximumActiveSends = Math.max(maximumActiveSends, activeSends);
+        await Promise.resolve();
+        activeSends -= 1;
+      })
+    };
+    const wsConnectionRepository = {
+      getCurrentlyOnlineCommunityMemberConnectionIds: jest
+        .fn()
+        .mockResolvedValue(
+          Array.from({ length: 11 }, (_, index) => ({
+            connectionId: `connection-${index}`,
+            profileId: `profile-${index}`
+          }))
+        )
+    };
+    const notifier = new WsListenersNotifier(
+      appWebSockets as any,
+      wsConnectionRepository as any
+    );
+    const deletedDrops = Array.from({ length: 20 }, (_, index) => ({
+      drop_id: `drop-${index}`,
+      wave_id: 'wave-1',
+      drop_serial: index
+    }));
+
+    await notifier.notifyAboutDropDeletes(deletedDrops, null, {});
+
+    expect(appWebSockets.send).toHaveBeenCalledTimes(220);
+    expect(maximumActiveSends).toBe(100);
+  });
+
+  it('attempts later bulk deletion batches after a websocket send fails', async () => {
+    const appWebSockets = {
+      send: jest
+        .fn()
+        .mockRejectedValueOnce(new Error('send failed'))
+        .mockResolvedValue(undefined)
+    };
+    const wsConnectionRepository = {
+      getCurrentlyOnlineCommunityMemberConnectionIds: jest
+        .fn()
+        .mockResolvedValue(
+          Array.from({ length: 11 }, (_, index) => ({
+            connectionId: `connection-${index}`,
+            profileId: `profile-${index}`
+          }))
+        )
+    };
+    const notifier = new WsListenersNotifier(
+      appWebSockets as any,
+      wsConnectionRepository as any
+    );
+    const deletedDrops = Array.from({ length: 10 }, (_, index) => ({
+      drop_id: `drop-${index}`,
+      wave_id: 'wave-1',
+      drop_serial: index
+    }));
+
+    await expect(
+      notifier.notifyAboutDropDeletes(deletedDrops, null, {})
+    ).rejects.toThrow('send failed');
+
+    expect(appWebSockets.send).toHaveBeenCalledTimes(110);
+  });
+
+  it('sends each direct-message unread state only to sessions synced for that profile', async () => {
+    const appWebSockets = {
+      send: jest.fn().mockResolvedValue(undefined)
+    };
+    const wsConnectionRepository = {
+      findNotificationConnectionIdsByIdentityIds: jest.fn().mockResolvedValue([
+        { connectionId: 'shared-connection', identityId: 'profile-1' },
+        { connectionId: 'shared-connection', identityId: 'profile-2' },
+        { connectionId: 'profile-1-device-2', identityId: 'profile-1' }
+      ])
+    };
+    const notifier = new WsListenersNotifier(
+      appWebSockets as any,
+      wsConnectionRepository as any
+    );
+    const profileOneState = {
+      profile_id: 'profile-1',
+      wave_id: 'wave-1',
+      unread_count: 2,
+      first_unread_drop_serial_no: 10,
+      latest_drop_serial_no: 11,
+      latest_read_serial_no: 9,
+      version: 3
+    };
+    const profileTwoState = {
+      ...profileOneState,
+      profile_id: 'profile-2',
+      unread_count: 1
+    };
+
+    await notifier.notifyAboutDmUnreadStateChanged([
+      profileOneState,
+      profileTwoState
+    ]);
+
+    expect(
+      wsConnectionRepository.findNotificationConnectionIdsByIdentityIds
+    ).toHaveBeenCalledWith(['profile-1', 'profile-2']);
+    expect(appWebSockets.send).toHaveBeenCalledTimes(3);
+    const sends = appWebSockets.send.mock.calls.map(([call]) => ({
+      connectionId: call.connectionId,
+      message: JSON.parse(call.message)
+    }));
+    expect(sends).toEqual([
+      {
+        connectionId: 'shared-connection',
+        message: {
+          type: 'DM_UNREAD_STATE_CHANGED',
+          data: profileOneState
+        }
+      },
+      {
+        connectionId: 'shared-connection',
+        message: {
+          type: 'DM_UNREAD_STATE_CHANGED',
+          data: profileTwoState
+        }
+      },
+      {
+        connectionId: 'profile-1-device-2',
+        message: {
+          type: 'DM_UNREAD_STATE_CHANGED',
+          data: profileOneState
+        }
+      }
+    ]);
+  });
+
+  it('uses pre-resolved direct-message recipients without repeating the connection lookup', async () => {
+    const appWebSockets = {
+      send: jest.fn().mockResolvedValue(undefined)
+    };
+    const wsConnectionRepository = {
+      findNotificationConnectionIdsByIdentityIds: jest.fn()
+    };
+    const notifier = new WsListenersNotifier(
+      appWebSockets as any,
+      wsConnectionRepository as any
+    );
+    const unreadState = {
+      profile_id: 'profile-1',
+      wave_id: 'wave-1',
+      unread_count: 2,
+      first_unread_drop_serial_no: 10,
+      latest_drop_serial_no: 11,
+      latest_read_serial_no: 9,
+      version: 3
+    };
+
+    await notifier.notifyAboutDmUnreadStateChanged(
+      [unreadState],
+      [{ connectionId: 'connection-1', identityId: 'profile-1' }]
+    );
+
+    expect(
+      wsConnectionRepository.findNotificationConnectionIdsByIdentityIds
+    ).not.toHaveBeenCalled();
+    expect(appWebSockets.send).toHaveBeenCalledWith({
+      connectionId: 'connection-1',
+      message: JSON.stringify({
+        type: 'DM_UNREAD_STATE_CHANGED',
+        data: unreadState
+      })
+    });
+  });
+
   it('sends notification invalidations only to subscribed recipient connections', async () => {
     const appWebSockets = {
       send: jest.fn().mockResolvedValue(undefined)
@@ -310,6 +556,104 @@ describe('WsListenersNotifier', () => {
       }
     });
   });
+
+  it('adds recipient-specific block and hide context to live drop updates', async () => {
+    const appWebSockets = {
+      send: jest.fn().mockResolvedValue(undefined)
+    };
+    const wsConnectionRepository = {
+      getCurrentlyOnlineCommunityMemberConnectionIds: jest
+        .fn()
+        .mockResolvedValue([
+          { connectionId: 'connection-1', profileId: 'viewer-1' },
+          { connectionId: 'connection-2', profileId: 'viewer-2' }
+        ])
+    };
+    const moderationDb = {
+      getViewerContextsForDrop: jest.fn().mockResolvedValue({
+        'viewer-1': { author_blocked: true, drop_hidden: false },
+        'viewer-2': { author_blocked: false, drop_hidden: true }
+      })
+    };
+    const notifier = new WsListenersNotifier(
+      appWebSockets as any,
+      wsConnectionRepository as any,
+      moderationDb as any
+    );
+
+    await notifier.notifyAboutDropUpdate(createDrop('content'), {});
+
+    const sent = Object.fromEntries(
+      appWebSockets.send.mock.calls.map(([call]) => [
+        call.connectionId,
+        JSON.parse(call.message).data.viewer_context
+      ])
+    );
+    expect(sent).toEqual({
+      'connection-1': { author_blocked: true, drop_hidden: false },
+      'connection-2': { author_blocked: false, drop_hidden: true }
+    });
+  });
+
+  it.each([
+    {
+      label: 'DROP_UPDATE',
+      notify: (notifier: WsListenersNotifier, drop: any) =>
+        notifier.notifyAboutDropUpdate(drop, {})
+    },
+    {
+      label: 'DROP_RATING_UPDATE',
+      notify: (notifier: WsListenersNotifier, drop: any) =>
+        notifier.notifyAboutDropRatingUpdate(drop, {})
+    },
+    {
+      label: 'DROP_REACTION_UPDATE',
+      notify: (notifier: WsListenersNotifier, drop: any) =>
+        notifier.notifyAboutDropReactionUpdate(drop, {})
+    }
+  ])(
+    'redacts globally moderated content per recipient for $label',
+    async ({ notify }) => {
+      const appWebSockets = {
+        send: jest.fn().mockResolvedValue(undefined)
+      };
+      const wsConnectionRepository = {
+        getCurrentlyOnlineCommunityMemberConnectionIds: jest
+          .fn()
+          .mockResolvedValue([
+            { connectionId: 'author-connection', profileId: 'author-1' },
+            { connectionId: 'viewer-connection', profileId: 'viewer-1' }
+          ])
+      };
+      const moderationDb = {
+        getViewerContextsForDrop: jest.fn().mockResolvedValue({})
+      };
+      const notifier = new WsListenersNotifier(
+        appWebSockets as any,
+        wsConnectionRepository as any,
+        moderationDb as any
+      );
+      const moderatedDrop = {
+        ...createDrop('private moderated content'),
+        moderation: { status: 'AI_QUARANTINED', can_view: true }
+      };
+
+      await notify(notifier, moderatedDrop);
+
+      const sent = Object.fromEntries(
+        appWebSockets.send.mock.calls.map(([call]) => [
+          call.connectionId,
+          JSON.parse(call.message).data
+        ])
+      );
+      expect(sent['author-connection'].parts[0].content).toBe(
+        'private moderated content'
+      );
+      expect(sent['author-connection'].moderation.can_view).toBe(true);
+      expect(sent['viewer-connection'].parts[0].content).toBeNull();
+      expect(sent['viewer-connection'].moderation.can_view).toBe(false);
+    }
+  );
 
   it('does not reject the notification operation when a recipient send fails', async () => {
     const appWebSockets = {

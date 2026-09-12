@@ -1,3 +1,4 @@
+import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import {
   ConnectionWrapper,
   dbSupplier,
@@ -91,10 +92,7 @@ export class DropBookmarksDb extends LazyDbAccessCompatibleService {
   ): Promise<{ drop_ids: string[]; count: number }> {
     const offset = param.page_size * (param.page - 1);
     const waveFilter = param.wave_id ? 'AND d.wave_id = :wave_id' : '';
-    const visibilityFilter =
-      param.group_ids_user_is_eligible_for.length > 0
-        ? `AND (w.visibility_group_id IS NULL OR w.visibility_group_id IN (:group_ids))`
-        : `AND w.visibility_group_id IS NULL`;
+    const visibilityFilter = `AND ${waveReadAccessSql('w', param.group_ids_user_is_eligible_for.length > 0, 'group_ids')}`;
 
     const [data, countResult] = await Promise.all([
       this.db.execute<{ drop_id: string }>(

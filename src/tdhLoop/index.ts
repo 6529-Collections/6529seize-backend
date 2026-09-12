@@ -147,7 +147,8 @@ async function tdh(force?: boolean) {
     const { block, blockTimestamp, tdh } = await updateTDH(lastTDHCalc);
     const consolidatedTdh = await consolidateAndPersistTDH(
       block,
-      blockTimestamp
+      blockTimestamp,
+      { mode: 'FULL' }
     );
     await recordMetrics();
     await uploadTDH(block, blockTimestamp, tdh, false, true);

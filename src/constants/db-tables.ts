@@ -71,6 +71,8 @@ export const DROP_VOTER_STATE_TABLE = 'drop_voter_states';
 export const DROP_REACTIONS_TABLE = 'drop_reactions';
 export const HELP_BOT_INTERACTIONS_TABLE = 'help_bot_interactions';
 export const HELP_BOT_CREDIT_EVENTS_TABLE = 'help_bot_credit_events';
+export const HELP_BOT_DAILY_ACTIVITY_CREDIT_REQUESTS_TABLE =
+  'help_bot_daily_activity_credit_requests';
 export const DROP_REAL_VOTER_VOTE_IN_TIME_TABLE =
   'drop_real_voter_vote_in_time';
 export const EXTERNAL_INDEXED_CONTRACTS_TABLE = 'external_indexed_contracts';
@@ -131,6 +133,7 @@ export const PROFILE_PROXY_ACTIONS_TABLE = 'profile_proxy_actions';
 export const PROFILE_PROXY_RATING_CREDIT_BALANCES_TABLE =
   'profile_proxy_rating_credit_balances';
 export const PROFILE_CMS_PACKAGES_TABLE = 'profile_cms_packages';
+export const PROFILE_CMS_UPLOADS_TABLE = 'profile_cms_uploads';
 export const PROFILE_CMS_POINTER_EVENTS_TABLE = 'profile_cms_pointer_events';
 export const PROFILE_CMS_PUBLISH_SIGNATURES_TABLE =
   'profile_cms_publish_signatures';
@@ -195,7 +198,22 @@ export const PUSH_NOTIFICATION_DEVICES_TABLE = 'push_notification_devices';
 export const PUSH_NOTIFICATION_SETTINGS_TABLE = 'push_notification_settings';
 export const IDENTITY_SUBSCRIPTIONS_TABLE = 'identity_subscriptions';
 export const IDENTITY_MUTES_TABLE = 'identity_mutes';
+export const CONTENT_MODERATION_PROFILE_BLOCKS_TABLE =
+  'content_moderation_profile_blocks';
+export const CONTENT_MODERATION_HIDDEN_DROPS_TABLE =
+  'content_moderation_hidden_drops';
+export const CONTENT_MODERATION_REPORTS_TABLE = 'content_moderation_reports';
+export const CONTENT_MODERATION_DROP_STATES_TABLE =
+  'content_moderation_drop_states';
+export const CONTENT_MODERATION_ROLES_TABLE = 'content_moderation_roles';
+export const CONTENT_MODERATION_AUDIT_LOG_TABLE =
+  'content_moderation_audit_log';
+export const CONTENT_MODERATION_PROFILE_STATES_TABLE =
+  'content_moderation_profile_states';
+export const CONTENT_MODERATION_PRE_PUBLICATION_CHECKS_TABLE =
+  'content_moderation_pre_publication_checks';
 export const IDENTITY_NOTIFICATIONS_TABLE = 'identity_notifications';
+export const PROFILE_PREFERENCES_TABLE = 'profile_preferences';
 export const WAVE_GROUP_NOTIFICATION_SUBSCRIPTIONS_TABLE =
   'wave_group_notification_subscriptions';
 export const MENTION_ALIASES_TABLE = 'mention_aliases';
@@ -225,18 +243,16 @@ export const XTDH_STATS_META_TABLE = 'xtdh_stats_meta';
 export const WS_CONNECTIONS_TABLE = 'ws_connections';
 export const WS_NOTIFICATION_SUBSCRIPTIONS_TABLE =
   'ws_notification_subscriptions';
-export const RELEASE_BUS_V2_CANDIDATES_TABLE = 'release_bus_v2_candidates';
-export const RELEASE_BUS_V2_CANDIDATE_DEPENDENCIES_TABLE =
-  'release_bus_v2_candidate_dependencies';
-export const RELEASE_BUS_V2_TRAINS_TABLE = 'release_bus_v2_trains';
-export const RELEASE_BUS_V2_TRAIN_CANDIDATES_TABLE =
-  'release_bus_v2_train_candidates';
-export const RELEASE_BUS_V2_OPERATIONS_TABLE = 'release_bus_v2_operations';
-export const RELEASE_BUS_V2_LOCKS_TABLE = 'release_bus_v2_locks';
-export const RELEASE_BUS_V2_MANIFESTS_TABLE = 'release_bus_v2_manifests';
-export const RELEASE_BUS_V2_CONTROLS_TABLE = 'release_bus_v2_controls';
-export const RELEASE_BUS_V2_EVENTS_TABLE = 'release_bus_v2_events';
-export const RELEASE_BUS_V2_STAGING_STATE_TABLE =
-  'release_bus_v2_staging_state';
-export const RELEASE_BUS_V2_PRODUCTION_AUTHORITIES_TABLE =
-  'release_bus_v2_production_authorities';
+export const RELEASE_NOTE_STREAM_STATES_TABLE = 'release_note_stream_states';
+export const RELEASE_NOTE_PUBLICATIONS_TABLE = 'release_note_publications';
+export const MARKET_DEPTH_SNAPSHOTS_TABLE = 'market_depth_snapshots';
+export const MARKET_DEPTH_COLLECTION_STATE_TABLE =
+  'market_depth_collection_state';
+export const MARKET_DEPTH_CURRENT_ORDERS_TABLE = 'market_depth_current_orders';
+export const MARKET_DEPTH_EVENTS_TABLE = 'market_depth_events';
+export const MARKET_DEPTH_CURSORS_TABLE = 'market_depth_cursors';
+export const MARKET_DEPTH_RECONCILIATION_QUEUE_TABLE =
+  'market_depth_reconciliation_queue';
+export const PROFILE_CMS_AGENT_GRANTS_TABLE = 'profile_cms_agent_grants';
+export const PROFILE_CMS_AGENT_PROPOSALS_TABLE = 'profile_cms_agent_proposals';
+export const PROFILE_CMS_AGENT_EVENTS_TABLE = 'profile_cms_agent_events';

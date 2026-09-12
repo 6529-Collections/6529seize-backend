@@ -2,15 +2,19 @@ import {
   buildAbusivenessBedrockInvokeModelInput,
   DEFAULT_ABUSIVENESS_BEDROCK_MODEL_ID
 } from './bedrock-ai.prompter';
+import { DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID } from '@/bedrock.config';
 
 describe('bedrock abusiveness prompter', () => {
-  it('keeps the historical Claude 3 Sonnet default model', () => {
+  it('uses the shared Claude Sonnet 4.5 default model', () => {
     expect(DEFAULT_ABUSIVENESS_BEDROCK_MODEL_ID).toBe(
-      'anthropic.claude-3-sonnet-20240229-v1:0'
+      DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID
+    );
+    expect(DEFAULT_ABUSIVENESS_BEDROCK_MODEL_ID).toBe(
+      'us.anthropic.claude-sonnet-4-5-20250929-v1:0'
     );
   });
 
-  it('keeps the historical Anthropic Bedrock payload settings', () => {
+  it('uses a Sonnet 4.5-compatible Anthropic Bedrock payload', () => {
     const input = buildAbusivenessBedrockInvokeModelInput(
       'anthropic.test-model',
       'is this category okay?'
@@ -20,8 +24,8 @@ describe('bedrock abusiveness prompter', () => {
     expect(input.modelId).toBe('anthropic.test-model');
     expect(body).toMatchObject({
       temperature: 0.7,
-      top_p: 0.8,
       top_k: 30
     });
+    expect(body).not.toHaveProperty('top_p');
   });
 });

@@ -103,7 +103,7 @@ function createService({
     resolveBotProfileId: jest.fn().mockResolvedValue('bot-profile')
   };
   const wavesDb = {
-    findWaveById: jest.fn().mockResolvedValue(wave)
+    findWavesByIds: jest.fn().mockResolvedValue(wave ? [wave] : [])
   };
   const creditsService = {
     chargeQuestionCredit: jest.fn().mockResolvedValue({
@@ -136,6 +136,27 @@ function createService({
 }
 
 describe('HelpBotTriggerService', () => {
+  it('does not process a wave excluded by public parent-aware visibility', async () => {
+    const { service, wavesDb, interactionsDb, sqs } = createService({
+      wave: null
+    });
+    await service.handleCreatedDrop(
+      {
+        createDropRequest: createRequest('@help6529 what is tdh'),
+        createdDrop: createDrop({ id: 'drop-1' }),
+        authorProfileId: 'user-profile'
+      },
+      {} as never
+    );
+    expect(wavesDb.findWavesByIds).toHaveBeenCalledWith(
+      expect.any(Array),
+      [],
+      undefined
+    );
+    expect(interactionsDb.insertSeen).not.toHaveBeenCalled();
+    expect(sqs.sendToQueueName).not.toHaveBeenCalled();
+  });
+
   it('does not process restricted visibility waves', async () => {
     const { service, interactionsDb, dropsService, sqs } = createService({
       wave: {

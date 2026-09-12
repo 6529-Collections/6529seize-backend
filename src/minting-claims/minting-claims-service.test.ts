@@ -1,12 +1,29 @@
 import { DropsDb } from '@/drops/drops.db';
 import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
+import {
+  computeAnimationDetailsGlb,
+  computeAnimationDetailsVideo,
+  computeImageDetails
+} from '@/minting-claims/media-inspector';
 import { RequestContext } from '@/request.context';
+import type { MintingClaimRowInput } from './minting-claim-from-drop.builder';
 import { MemeCardDropMappingsDb } from './meme-card-drop-mappings.db';
 import { MintingClaimsDb } from './minting-claims.db';
 import { MintingClaimsService } from './minting-claims.service';
+import * as claimBuilder from '@/minting-claims/minting-claim-from-drop.builder';
+import type {
+  MintingClaimAnimationDetailsVideo,
+  MintingClaimImageDetails
+} from '@/entities/IMintingClaim';
 
 jest.mock('@/http/safe-fetch', () => ({
   fetchPublicUrlToBuffer: jest.fn()
+}));
+jest.mock('@/minting-claims/media-inspector', () => ({
+  animationDetailsHtml: jest.fn(() => ({ format: 'HTML' })),
+  computeAnimationDetailsGlb: jest.fn(),
+  computeAnimationDetailsVideo: jest.fn(),
+  computeImageDetails: jest.fn()
 }));
 
 type MappingInvoker = {
@@ -23,6 +40,35 @@ type SeasonInvoker = {
     ctx: RequestContext
   ): Promise<number>;
 };
+
+type EnrichmentInvoker = {
+  enrichRowWithComputedDetails(
+    row: MintingClaimRowInput
+  ): Promise<MintingClaimRowInput>;
+};
+
+function claimRowInput(
+  overrides: Partial<MintingClaimRowInput> = {}
+): MintingClaimRowInput {
+  return {
+    drop_id: 'drop-1',
+    contract: '0x0000000000000000000000000000000000000001',
+    claim_id: 1,
+    image_location: null,
+    animation_location: null,
+    metadata_location: null,
+    description: 'description',
+    name: 'name',
+    image_url: null,
+    external_url: null,
+    attributes: [],
+    image_details: null,
+    animation_url: null,
+    animation_details: null,
+    animation_kind: null,
+    ...overrides
+  };
+}
 
 describe('MintingClaimsService Main Stage mapping', () => {
   it('resolves the Main Stage wave after runtime configuration loads', async () => {
@@ -112,5 +158,153 @@ describe('MintingClaimsService claim season resolution', () => {
       16
     );
     expect(getMaxSeasonIdMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('MintingClaimsService media enrichment', () => {
+  const imageDetails: MintingClaimImageDetails = {
+    bytes: 100,
+    format: 'PNG',
+    sha256: 'a'.repeat(64),
+    width: 100,
+    height: 100
+  };
+  const videoDetails: MintingClaimAnimationDetailsVideo = {
+    ...imageDetails,
+    format: 'MP4',
+    duration: 1,
+    codecs: ['avc1']
+  };
+  const service = new MintingClaimsService(
+    {} as DropsDb,
+    {} as MintingClaimsDb,
+    {} as MemeCardDropMappingsDb,
+    () => null
+  ) as unknown as EnrichmentInvoker;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it.each([
+    ['zero bytes', { bytes: 0 }],
+    ['oversize', { bytes: 250_000_001 }],
+    ['empty hash', { sha256: '' }],
+    ['zero dimension', { width: 0 }],
+    ['zero duration', { duration: 0 }],
+    ['empty codecs', { codecs: [] }]
+  ])('does not insert a claim with computed %s', async (_label, overrides) => {
+    jest
+      .mocked(computeAnimationDetailsVideo)
+      .mockResolvedValue({ ...videoDetails, ...overrides });
+    jest.spyOn(claimBuilder, 'buildMintingClaimRowFromDrop').mockReturnValue(
+      claimRowInput({
+        animation_url: 'https://cdn.example.com/art.mp4',
+        animation_kind: 'video'
+      })
+    );
+    const createMintingClaim = jest.fn();
+    const db = {
+      createMintingClaim,
+      getMaxClaimId: jest.fn().mockResolvedValue(520),
+      getMaxSeasonId: jest.fn().mockResolvedValue(16)
+    };
+    const drops = {
+      getDropMedia: jest.fn().mockResolvedValue({}),
+      findMetadataByDropIds: jest.fn().mockResolvedValue([])
+    };
+    const creationService = new MintingClaimsService(
+      drops as unknown as DropsDb,
+      db as unknown as MintingClaimsDb,
+      {} as MemeCardDropMappingsDb,
+      () => null
+    );
+    await expect(
+      creationService.createClaimForDrop('drop-1', {
+        connection: {}
+      } as RequestContext)
+    ).rejects.toThrow('Invalid computed media details');
+    expect(createMintingClaim).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid computed preview metadata', async () => {
+    jest
+      .mocked(computeImageDetails)
+      .mockResolvedValue({ ...imageDetails, sha256: '' });
+    await expect(
+      service.enrichRowWithComputedDetails(
+        claimRowInput({ image_url: 'https://cdn.example.com/art.png' })
+      )
+    ).rejects.toThrow('sha256');
+  });
+
+  it('accepts valid image/video details without requiring finished draft fields', async () => {
+    jest.mocked(computeImageDetails).mockResolvedValue(imageDetails);
+    jest.mocked(computeAnimationDetailsVideo).mockResolvedValue(videoDetails);
+    const row = claimRowInput({
+      image_url: 'https://cdn.example.com/art.png',
+      animation_url: 'https://cdn.example.com/art.mp4',
+      animation_kind: 'video'
+    });
+    await expect(service.enrichRowWithComputedDetails(row)).resolves.toEqual({
+      ...row,
+      image_details: imageDetails,
+      animation_details: videoDetails
+    });
+  });
+
+  it('accepts GLB details without video-only properties', async () => {
+    const details = {
+      bytes: 100,
+      format: 'GLB' as const,
+      sha256: 'a'.repeat(64)
+    };
+    jest.mocked(computeAnimationDetailsGlb).mockResolvedValue(details);
+    await expect(
+      service.enrichRowWithComputedDetails(
+        claimRowInput({
+          animation_url: 'https://cdn.example.com/art.glb',
+          animation_kind: 'glb'
+        })
+      )
+    ).resolves.toMatchObject({ animation_details: details });
+  });
+
+  it('preserves HTML details without fabricated binary properties', async () => {
+    await expect(
+      service.enrichRowWithComputedDetails(
+        claimRowInput({
+          animation_url: 'https://arweave.net/art',
+          animation_kind: 'html'
+        })
+      )
+    ).resolves.toMatchObject({ animation_details: { format: 'HTML' } });
+  });
+
+  it('fails claim creation enrichment when preview inspection fails', async () => {
+    jest.mocked(computeImageDetails).mockRejectedValue(new Error('too large'));
+
+    await expect(
+      service.enrichRowWithComputedDetails(
+        claimRowInput({ image_url: 'https://cdn.example.com/preview.png' })
+      )
+    ).rejects.toThrow('too large');
+  });
+
+  it('fails claim creation enrichment when GLB inspection fails', async () => {
+    jest
+      .mocked(computeAnimationDetailsGlb)
+      .mockRejectedValue(new Error('invalid glb'));
+
+    await expect(
+      service.enrichRowWithComputedDetails(
+        claimRowInput({
+          animation_url: 'https://cdn.example.com/scene.glb',
+          animation_kind: 'glb'
+        })
+      )
+    ).rejects.toThrow('invalid glb');
   });
 });

@@ -48,34 +48,11 @@ exports.up = function (db) {
   });
 };
 
-exports.down = function (db) {
-  var filePath = path.join(
-    __dirname,
-    'sqls',
-    '20260810173657-add-reset-votes-after-win-column-down.sql'
-  );
-  return new Promise(function (resolve, reject) {
-    fs.readFile(filePath, { encoding: 'utf-8' }, function (err, data) {
-      if (err) return reject(err);
-      console.log('received data: ' + data);
-
-      resolve(data);
-    });
-  }).then(function (data) {
-    var statements = data
-      .split(';')
-      .map(function (statement) {
-        return statement.trim();
-      })
-      .filter(function (statement) {
-        return statement.length > 0;
-      });
-    return statements.reduce(function (promiseChain, statement) {
-      return promiseChain.then(function () {
-        return db.runSql(statement);
-      });
-    }, Promise.resolve());
-  });
+exports.down = function () {
+  // Intentionally irreversible: removing the column would break deployed
+  // services that read reset_votes_after_win. The column is NOT NULL DEFAULT 0
+  // and is harmless to older code that doesn't reference it.
+  return Promise.resolve();
 };
 
 exports._meta = {

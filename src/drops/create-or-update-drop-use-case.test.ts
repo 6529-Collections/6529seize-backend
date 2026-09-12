@@ -24,6 +24,15 @@ import {
   sanitizeDropStructuredFields,
   validateDropMediaAttachment
 } from './create-or-update-drop.use-case';
+import { PrePublicationModerationService } from '@/content-moderation/pre-publication-moderation.service';
+
+type ModerationServiceMock = jest.Mocked<
+  Pick<PrePublicationModerationService, 'evaluate'>
+>;
+
+function createModerationServiceMock(): ModerationServiceMock {
+  return { evaluate: jest.fn().mockResolvedValue(undefined) };
+}
 
 describe('CreateOrUpdateDropUseCase', () => {
   afterEach(() => {
@@ -54,7 +63,8 @@ describe('CreateOrUpdateDropUseCase', () => {
       {} as any,
       {} as any,
       {} as any,
-      {} as any
+      {} as any,
+      createModerationServiceMock()
     );
   }
 
@@ -66,8 +76,11 @@ describe('CreateOrUpdateDropUseCase', () => {
       userNotifier?: any;
       identitySubscriptionsDb?: any;
       deleteDropUseCase?: any;
+      metricsRecorder?: any;
       artCurationTokenWatchService?: any;
       attachmentsDb?: any;
+      moderationService?: ModerationServiceMock;
+      moderationDb?: any;
     } = {}
   ) {
     return new CreateOrUpdateDropUseCase(
@@ -80,11 +93,15 @@ describe('CreateOrUpdateDropUseCase', () => {
       overrides.identitySubscriptionsDb ?? ({} as any),
       {} as any,
       overrides.deleteDropUseCase ?? ({} as any),
-      {} as any,
+      overrides.metricsRecorder ?? ({} as any),
       {} as any,
       overrides.artCurationTokenWatchService ?? ({} as any),
       overrides.attachmentsDb ?? ({} as any),
-      {} as any
+      {} as any,
+      overrides.moderationService ?? createModerationServiceMock(),
+      overrides.moderationDb ?? {
+        filterBlockedNotificationRows: jest.fn(async (rows) => rows)
+      }
     );
   }
 
@@ -197,7 +214,10 @@ describe('CreateOrUpdateDropUseCase', () => {
           ]
         }),
         false,
-        { connection: {} as any }
+        {
+          connection: {} as any,
+          prePublication: { trustedSystem: true }
+        }
       )
     ).rejects.toThrow(
       'drop part 1 content must be at most 25000 UTF-16 code units'
@@ -205,7 +225,102 @@ describe('CreateOrUpdateDropUseCase', () => {
     expect(deleteDropUseCase.execute).not.toHaveBeenCalled();
   });
 
+  it('prepares moderation before the caller opens the write transaction', async () => {
+    const moderationService = {
+      evaluate: jest.fn().mockResolvedValue(undefined)
+    };
+    const useCase = createUseCaseWithMocks({ moderationService });
+
+    const preparation = await useCase.preparePrePublication(
+      createChatDropModel({
+        author_id: 'author-1',
+        title: 'title',
+        parts: [{ content: 'content', quoted_drop: null, media: [] }]
+      }),
+      { connection: { transaction: true } as any }
+    );
+
+    expect(preparation).toMatchObject({
+      operation: 'CREATE',
+      authorProfileId: 'author-1',
+      contentFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/)
+    });
+    expect(moderationService.evaluate).toHaveBeenCalledWith(
+      expect.objectContaining({ authorProfileId: 'author-1' }),
+      expect.objectContaining({ connection: undefined })
+    );
+  });
+
+  it.each([
+    {
+      description: 'author',
+      mutate: (model: ReturnType<typeof createChatDropModel>) => ({
+        ...model,
+        author_id: 'different-author',
+        author_identity: 'different-author'
+      })
+    },
+    {
+      description: 'content',
+      mutate: (model: ReturnType<typeof createChatDropModel>) => ({
+        ...model,
+        parts: [
+          {
+            content: 'changed after moderation',
+            quoted_drop: null,
+            media: []
+          }
+        ]
+      })
+    }
+  ])(
+    'rejects a write when its $description differs from the moderated preparation',
+    async ({ mutate }) => {
+      const wavesApiDb = {
+        findById: jest.fn().mockResolvedValue(
+          createSlowModeWave({
+            type: WaveType.CHAT,
+            chat_slow_mode_cooldown_ms: null
+          })
+        )
+      };
+      const useCase = createUseCaseWithMocks({ wavesApiDb });
+      const originalModel = createChatDropModel();
+      const preparation = await useCase.preparePrePublication(
+        originalModel,
+        {}
+      );
+      const persistedModel = mutate(originalModel);
+      jest.spyOn(useCase as any, 'validateReferences').mockResolvedValue({
+        validatedModel: persistedModel,
+        groupIdsUserIsEligibleFor: []
+      });
+      jest
+        .spyOn(useCase as any, 'verifyChatLinksAreAllowed')
+        .mockReturnValue(undefined);
+
+      await expect(
+        (useCase as any).createOrUpdateDrop(originalModel, false, {
+          connection: {} as any,
+          prePublication: preparation
+        })
+      ).rejects.toThrow(
+        'Pre-publication preparation does not match drop write'
+      );
+    }
+  );
+
   it('does not increment inserted-drop metrics when editing a drop', async () => {
+    const editModel = createChatDropModel({
+      drop_id: 'drop-1',
+      parts: [
+        {
+          content: 'legacy @contributors mention',
+          quoted_drop: null,
+          media: []
+        }
+      ]
+    });
     const dropsDb = {
       findDropById: jest.fn().mockResolvedValue({
         id: 'drop-1',
@@ -216,7 +331,9 @@ describe('CreateOrUpdateDropUseCase', () => {
         updated_at: Date.now(),
         serial_no: 1
       }),
-      getDropGroupMentions: jest.fn().mockResolvedValue([]),
+      getDropGroupMentions: jest
+        .fn()
+        .mockResolvedValue([DropGroupMention.CONTRIBUTORS]),
       applyInsertedDropMetricsDelta: jest.fn().mockResolvedValue(undefined)
     };
     const wavesApiDb = {
@@ -238,7 +355,10 @@ describe('CreateOrUpdateDropUseCase', () => {
       artCurationTokenWatchService
     });
     jest.spyOn(useCase as any, 'validateReferences').mockResolvedValue({
-      validatedModel: createChatDropModel({ drop_id: 'drop-1' }),
+      validatedModel: {
+        ...editModel,
+        mentioned_groups: [DropGroupMention.CONTRIBUTORS]
+      },
       groupIdsUserIsEligibleFor: []
     });
     jest
@@ -247,12 +367,21 @@ describe('CreateOrUpdateDropUseCase', () => {
     jest.spyOn(useCase as any, 'insertAllDropComponents').mockResolvedValue([]);
     jest.spyOn(env, 'getIntOrNull').mockReturnValue(60_000);
 
-    await (useCase as any).createOrUpdateDrop(
-      createChatDropModel({ drop_id: 'drop-1' }),
-      false,
-      { connection: {} as any }
-    );
+    await (useCase as any).createOrUpdateDrop(editModel, false, {
+      connection: {} as any,
+      prePublication: { trustedSystem: true }
+    });
 
+    expect(dropsDb.getDropGroupMentions).toHaveBeenCalledWith('drop-1', {});
+    expect((useCase as any).validateReferences).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mentioned_groups: [DropGroupMention.CONTRIBUTORS]
+      }),
+      false,
+      expect.objectContaining({
+        preExistingGroupMentions: [DropGroupMention.CONTRIBUTORS]
+      })
+    );
     expect(deleteDropUseCase.execute).toHaveBeenCalledWith(
       expect.objectContaining({
         drop_id: 'drop-1',
@@ -261,6 +390,52 @@ describe('CreateOrUpdateDropUseCase', () => {
       expect.any(Object)
     );
     expect(dropsDb.applyInsertedDropMetricsDelta).not.toHaveBeenCalled();
+  });
+
+  it('does not re-read newly inserted drops for ordinary waves', async () => {
+    const connection = {} as any;
+    const model = createChatDropModel();
+    const dropsDb = {
+      findDropById: jest.fn(),
+      applyInsertedDropMetricsDelta: jest.fn().mockResolvedValue(undefined)
+    };
+    const wavesApiDb = {
+      findById: jest.fn().mockResolvedValue({
+        ...createSlowModeWave({
+          chat_slow_mode_cooldown_ms: null,
+          is_direct_message: false
+        }),
+        type: WaveType.CHAT
+      })
+    };
+    const metricsRecorder = {
+      recordDrop: jest.fn().mockResolvedValue(undefined),
+      recordActiveIdentity: jest.fn().mockResolvedValue(undefined)
+    };
+    const artCurationTokenWatchService = {
+      registerDrop: jest.fn().mockResolvedValue(undefined)
+    };
+    const useCase = createUseCaseWithMocks({
+      dropsDb,
+      wavesApiDb,
+      metricsRecorder,
+      artCurationTokenWatchService
+    });
+    jest.spyOn(useCase as any, 'validateReferences').mockResolvedValue({
+      validatedModel: model,
+      groupIdsUserIsEligibleFor: []
+    });
+    jest
+      .spyOn(useCase as any, 'verifyChatLinksAreAllowed')
+      .mockReturnValue(undefined);
+    jest.spyOn(useCase as any, 'insertAllDropComponents').mockResolvedValue([]);
+
+    await (useCase as any).createOrUpdateDrop(model, false, {
+      connection,
+      prePublication: { trustedSystem: true }
+    });
+
+    expect(dropsDb.findDropById).not.toHaveBeenCalled();
   });
 
   it('sanitizes structured drop fields without touching part content', () => {
@@ -443,7 +618,13 @@ describe('CreateOrUpdateDropUseCase', () => {
 
     expect(() =>
       (useCase as any).verifyGroupMentions({
-        model: createGroupMentionModel(),
+        model: {
+          ...createGroupMentionModel(),
+          mentioned_groups: [
+            DropGroupMention.ALL,
+            DropGroupMention.CONTRIBUTORS
+          ]
+        },
         wave: {
           created_by: 'author-profile',
           admin_group_id: 'admins'
@@ -581,14 +762,13 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).toEqual([DropGroupMention.CONTRIBUTORS]);
   });
 
-  it('allows chat participants to use permission-derived group mentions', () => {
+  it('allows chat participants to use escalation group mentions', () => {
     const useCase = createUseCase({ existingNominations: [] });
     expect(() =>
       (useCase as any).verifyGroupMentions({
         model: {
           ...createGroupMentionModel(),
           mentioned_groups: [
-            DropGroupMention.CONTRIBUTORS,
             DropGroupMention.ADMINS,
             DropGroupMention.DEVS_6529
           ]
@@ -663,7 +843,13 @@ describe('CreateOrUpdateDropUseCase', () => {
 
     expect(() =>
       (useCase as any).verifyGroupMentions({
-        model: createGroupMentionModel(),
+        model: {
+          ...createGroupMentionModel(),
+          mentioned_groups: [
+            DropGroupMention.ALL,
+            DropGroupMention.CONTRIBUTORS
+          ]
+        },
         wave: {
           created_by: 'another-profile',
           admin_group_id: 'admins'
@@ -690,6 +876,26 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).toThrow(`Only wave creators or admins can mention @all`);
   });
 
+  it('rejects @contributors mentions from non-admins', () => {
+    const useCase = createUseCase({
+      existingNominations: []
+    });
+
+    expect(() =>
+      (useCase as any).verifyGroupMentions({
+        model: {
+          ...createGroupMentionModel(),
+          mentioned_groups: [DropGroupMention.CONTRIBUTORS]
+        },
+        wave: {
+          created_by: 'another-profile',
+          admin_group_id: 'admins'
+        },
+        groupIdsUserIsEligibleFor: ['members']
+      })
+    ).toThrow(`Only wave creators or admins can mention @contributors`);
+  });
+
   it('allows group mentions on drop updates', () => {
     const useCase = createUseCase({
       existingNominations: []
@@ -708,6 +914,50 @@ describe('CreateOrUpdateDropUseCase', () => {
         groupIdsUserIsEligibleFor: ['admins']
       })
     ).not.toThrow();
+  });
+
+  it('allows non-admin authors to retain a legacy @contributors mention on edit', () => {
+    const useCase = createUseCase({
+      existingNominations: []
+    });
+
+    expect(() =>
+      (useCase as any).verifyGroupMentions({
+        model: {
+          ...createGroupMentionModel(),
+          drop_id: 'drop-1',
+          mentioned_groups: [DropGroupMention.CONTRIBUTORS]
+        },
+        wave: {
+          created_by: 'another-profile',
+          admin_group_id: 'admins'
+        },
+        groupIdsUserIsEligibleFor: ['members'],
+        preExistingGroupMentions: [DropGroupMention.CONTRIBUTORS]
+      })
+    ).not.toThrow();
+  });
+
+  it('rejects non-admin authors who add @contributors during an edit', () => {
+    const useCase = createUseCase({
+      existingNominations: []
+    });
+
+    expect(() =>
+      (useCase as any).verifyGroupMentions({
+        model: {
+          ...createGroupMentionModel(),
+          drop_id: 'drop-1',
+          mentioned_groups: [DropGroupMention.CONTRIBUTORS]
+        },
+        wave: {
+          created_by: 'another-profile',
+          admin_group_id: 'admins'
+        },
+        groupIdsUserIsEligibleFor: ['members'],
+        preExistingGroupMentions: []
+      })
+    ).toThrow(`Only wave creators or admins can mention @contributors`);
   });
 
   it('rejects non-admin chat drops with links when links are disabled', () => {
@@ -920,12 +1170,13 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).toBe(true);
   });
 
-  it('seeds missing reader metrics before a new direct-message drop', async () => {
+  it('records a new direct-message drop only for visible recipients other than the author', async () => {
     const connection = {};
     const wave = {
       ...createSlowModeWave({
         chat_slow_mode_cooldown_ms: null,
         is_direct_message: true,
+        parent_wave_id: 'parent-wave',
         visibility_group_id: 'visibility-group',
         participation_group_id: 'participation-group',
         chat_group_id: 'chat-dm-group',
@@ -936,24 +1187,57 @@ describe('CreateOrUpdateDropUseCase', () => {
       next_decision_time: null
     };
     const wavesApiDb = {
-      findExistingWaveReaderMetricReaderIds: jest.fn().mockResolvedValue([]),
-      insertMissingWaveReaderMetrics: jest.fn().mockResolvedValue(undefined)
+      findWaveById: jest.fn().mockResolvedValue({
+        id: 'parent-wave',
+        visibility_group_id: 'parent-visibility-group'
+      }),
+      recordDirectMessageUnreadDrop: jest.fn().mockResolvedValue(undefined)
     };
     const userGroupsService = {
       findIdentitiesInGroups: jest
         .fn()
-        .mockResolvedValue(['author-profile', 'reader-profile'])
+        .mockResolvedValue([
+          'author-profile',
+          'reader-profile',
+          'blocked-reader-profile',
+          'child-only-profile'
+        ]),
+      findIdentityGroupMemberships: jest.fn().mockResolvedValue([
+        { groupId: 'visibility-group', profileId: 'reader-profile' },
+        { groupId: 'parent-visibility-group', profileId: 'reader-profile' },
+        {
+          groupId: 'visibility-group',
+          profileId: 'blocked-reader-profile'
+        },
+        {
+          groupId: 'parent-visibility-group',
+          profileId: 'blocked-reader-profile'
+        },
+        { groupId: 'visibility-group', profileId: 'child-only-profile' }
+      ])
+    };
+    const moderationDb = {
+      filterBlockedNotificationRows: jest.fn(async (rows) =>
+        rows.filter(
+          (row: { identity_id: string }) =>
+            row.identity_id !== 'blocked-reader-profile'
+        )
+      )
     };
     const useCase = createUseCaseWithMocks({
       wavesApiDb,
-      userGroupsService
+      userGroupsService,
+      moderationDb
     });
 
-    await (useCase as any).ensureDirectMessageReaderMetricsForNewDrop(
+    const recipientIds = await (
+      useCase as any
+    ).recordDirectMessageUnreadForNewDrop(
       {
         wave,
         authorId: 'author-profile',
-        createdAt: 1400
+        createdAt: 1400,
+        serialNo: 42
       },
       { connection }
     );
@@ -962,41 +1246,59 @@ describe('CreateOrUpdateDropUseCase', () => {
       ['chat-dm-group'],
       { timer: undefined, connection }
     );
-    expect(
-      wavesApiDb.findExistingWaveReaderMetricReaderIds
-    ).toHaveBeenCalledWith(
+    expect(wavesApiDb.findWaveById).toHaveBeenCalledWith(
+      'parent-wave',
+      connection
+    );
+    expect(userGroupsService.findIdentityGroupMemberships).toHaveBeenCalledWith(
       {
-        waveId: 'wave-1',
-        readerIds: ['reader-profile']
+        groupIds: ['visibility-group', 'parent-visibility-group'],
+        profileIds: [
+          'reader-profile',
+          'blocked-reader-profile',
+          'child-only-profile'
+        ]
       },
       { timer: undefined, connection }
     );
-    expect(wavesApiDb.insertMissingWaveReaderMetrics).toHaveBeenCalledWith(
+    expect(moderationDb.filterBlockedNotificationRows).toHaveBeenCalledWith(
+      [
+        {
+          identity_id: 'reader-profile',
+          additional_identity_id: 'author-profile'
+        },
+        {
+          identity_id: 'blocked-reader-profile',
+          additional_identity_id: 'author-profile'
+        }
+      ],
+      connection
+    );
+    expect(wavesApiDb.recordDirectMessageUnreadDrop).toHaveBeenCalledWith(
       {
         waveId: 'wave-1',
-        readerIds: ['reader-profile'],
-        latestReadTimestamp: 1399
+        recipientIds: ['reader-profile'],
+        dropSerialNo: 42,
+        dropCreatedAt: 1400
       },
       { timer: undefined, connection }
     );
+    expect(recipientIds).toEqual(['reader-profile']);
   });
 
-  it('skips direct-message reader metric seeding when recipients already have metrics', async () => {
+  it('does not record unread state for a non-direct-message wave', async () => {
     const connection = {};
     const wave = {
       ...createSlowModeWave({
         chat_slow_mode_cooldown_ms: null,
-        is_direct_message: true,
+        is_direct_message: false,
         chat_group_id: 'chat-dm-group'
       }),
       type: WaveType.CHAT,
       next_decision_time: null
     };
     const wavesApiDb = {
-      findExistingWaveReaderMetricReaderIds: jest
-        .fn()
-        .mockResolvedValue(['reader-profile']),
-      insertMissingWaveReaderMetrics: jest.fn().mockResolvedValue(undefined)
+      recordDirectMessageUnreadDrop: jest.fn().mockResolvedValue(undefined)
     };
     const userGroupsService = {
       findIdentitiesInGroups: jest
@@ -1008,16 +1310,21 @@ describe('CreateOrUpdateDropUseCase', () => {
       userGroupsService
     });
 
-    await (useCase as any).ensureDirectMessageReaderMetricsForNewDrop(
+    const recipientIds = await (
+      useCase as any
+    ).recordDirectMessageUnreadForNewDrop(
       {
         wave,
         authorId: 'author-profile',
-        createdAt: 1400
+        createdAt: 1400,
+        serialNo: 42
       },
       { connection }
     );
 
-    expect(wavesApiDb.insertMissingWaveReaderMetrics).not.toHaveBeenCalled();
+    expect(userGroupsService.findIdentitiesInGroups).not.toHaveBeenCalled();
+    expect(wavesApiDb.recordDirectMessageUnreadDrop).not.toHaveBeenCalled();
+    expect(recipientIds).toEqual([]);
   });
 
   it('allows scheme-less GIF provider candidates in chat link allowlist', () => {
@@ -1727,7 +2034,7 @@ describe('CreateOrUpdateDropUseCase', () => {
           ...createGroupMentionModel(),
           mentioned_groups: [DropGroupMention.CONTRIBUTORS]
         },
-        wave: { created_by: 'another-profile', admin_group_id: 'admins' },
+        wave: { created_by: 'author-profile', admin_group_id: 'admins' },
         groupIdsUserIsEligibleFor: []
       })
     ).not.toThrow();
@@ -1757,7 +2064,77 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).not.toHaveBeenCalled();
   });
 
-  it('removes muted followers from fully open contributor notifications', async () => {
+  it('notifies only unmuted followers with broadcast mentions enabled for public contributors', async () => {
+    const identitySubscriptionsDb = {
+      findWaveFollowersEligibleForDropNotifications: jest
+        .fn()
+        .mockResolvedValue([
+          {
+            identity_id: 'follower-1',
+            subscribed_to_all_drops: false,
+            has_group_mention: true
+          },
+          {
+            identity_id: 'follower-2',
+            subscribed_to_all_drops: false,
+            has_group_mention: true
+          }
+        ]),
+      findMutedWaveReaders: jest.fn().mockResolvedValue(['follower-2'])
+    };
+    const userNotifier = {
+      notifyWaveDropCreatedRecipients: jest.fn().mockResolvedValue([])
+    };
+    const useCase = createUseCaseWithMocks({
+      identitySubscriptionsDb,
+      userNotifier
+    });
+
+    await (useCase as any).notifyWaveDropRecipients(
+      {
+        model: createNotificationDropModel({
+          mentioned_groups: [DropGroupMention.CONTRIBUTORS]
+        }),
+        wave: {
+          id: 'wave-1',
+          created_by: 'author-1',
+          chat_group_id: null,
+          admin_group_id: null,
+          visibility_group_id: null
+        },
+        directlyMentionedIdentityIds: [],
+        groupMentionNotificationsEnabled: true
+      },
+      { connection: {} }
+    );
+
+    expect(
+      identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications
+    ).toHaveBeenCalledWith(
+      {
+        waveId: 'wave-1',
+        authorId: 'author-1',
+        mentionedGroups: [DropGroupMention.ALL]
+      },
+      {}
+    );
+
+    expect(userNotifier.notifyWaveDropCreatedRecipients).toHaveBeenCalledWith(
+      {
+        waveId: 'wave-1',
+        dropId: 'drop-1',
+        relatedIdentityId: 'author-1',
+        replyNotification: null,
+        quoteNotifications: [],
+        mentionedIdentityIds: ['follower-1'],
+        allDropsSubscriberIds: []
+      },
+      null,
+      { timer: undefined, connection: {} }
+    );
+  });
+
+  it('does not notify public contributors who disabled broadcast mentions', async () => {
     const identitySubscriptionsDb = {
       findWaveFollowersEligibleForDropNotifications: jest
         .fn()
@@ -1766,14 +2143,9 @@ describe('CreateOrUpdateDropUseCase', () => {
             identity_id: 'follower-1',
             subscribed_to_all_drops: false,
             has_group_mention: false
-          },
-          {
-            identity_id: 'follower-2',
-            subscribed_to_all_drops: false,
-            has_group_mention: false
           }
         ]),
-      findMutedWaveReaders: jest.fn().mockResolvedValue(['follower-2'])
+      findMutedWaveReaders: jest.fn().mockResolvedValue([])
     };
     const userNotifier = {
       notifyWaveDropCreatedRecipients: jest.fn().mockResolvedValue([])
@@ -1808,7 +2180,115 @@ describe('CreateOrUpdateDropUseCase', () => {
         relatedIdentityId: 'author-1',
         replyNotification: null,
         quoteNotifications: [],
-        mentionedIdentityIds: ['follower-1'],
+        mentionedIdentityIds: [],
+        allDropsSubscriberIds: []
+      },
+      null,
+      { timer: undefined, connection: {} }
+    );
+  });
+
+  it('requires contributor group members to opt into broadcasts without gating admin mentions', async () => {
+    const identitySubscriptionsDb = {
+      findWaveFollowersEligibleForDropNotifications: jest
+        .fn()
+        .mockResolvedValue([
+          {
+            identity_id: 'contributor-disabled',
+            subscribed_to_all_drops: false,
+            has_group_mention: false
+          },
+          {
+            identity_id: 'contributor-enabled',
+            subscribed_to_all_drops: false,
+            has_group_mention: true
+          },
+          {
+            identity_id: 'admin-disabled',
+            subscribed_to_all_drops: false,
+            has_group_mention: false
+          },
+          {
+            identity_id: 'outsider-enabled',
+            subscribed_to_all_drops: false,
+            has_group_mention: true
+          }
+        ]),
+      findMutedWaveReaders: jest.fn().mockResolvedValue([])
+    };
+    const userGroupsService = {
+      findIdentityGroupMembershipPage: jest
+        .fn()
+        .mockImplementation(({ groupIds }: { groupIds: string[] }) =>
+          Promise.resolve({
+            memberships: [
+              { groupId: 'chatters', profileId: 'contributor-disabled' },
+              { groupId: 'chatters', profileId: 'contributor-enabled' },
+              { groupId: 'chatters', profileId: 'contributor-not-following' },
+              { groupId: 'admins', profileId: 'admin-disabled' }
+            ].filter((membership) => groupIds.includes(membership.groupId)),
+            nextCursor: null
+          })
+        )
+    };
+    const userNotifier = {
+      notifyWaveDropCreatedRecipients: jest.fn().mockResolvedValue([])
+    };
+    const useCase = createUseCaseWithMocks({
+      identitySubscriptionsDb,
+      userGroupsService,
+      userNotifier
+    });
+
+    await (useCase as any).notifyWaveDropRecipients(
+      {
+        model: createNotificationDropModel({
+          mentioned_groups: [
+            DropGroupMention.CONTRIBUTORS,
+            DropGroupMention.ADMINS
+          ]
+        }),
+        wave: {
+          id: 'wave-1',
+          created_by: 'author-1',
+          chat_group_id: 'chatters',
+          admin_group_id: 'admins',
+          visibility_group_id: null
+        },
+        directlyMentionedIdentityIds: [],
+        groupMentionNotificationsEnabled: true
+      },
+      { connection: {} }
+    );
+
+    expect(
+      identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications
+    ).toHaveBeenCalledWith(
+      {
+        waveId: 'wave-1',
+        authorId: 'author-1',
+        mentionedGroups: [DropGroupMention.ALL]
+      },
+      {}
+    );
+
+    const notificationPayload =
+      userNotifier.notifyWaveDropCreatedRecipients.mock.calls[0][0];
+    expect(notificationPayload.mentionedIdentityIds).not.toContain(
+      'contributor-disabled'
+    );
+    expect(notificationPayload.mentionedIdentityIds).not.toContain(
+      'contributor-not-following'
+    );
+
+    expect(userNotifier.notifyWaveDropCreatedRecipients).toHaveBeenCalledWith(
+      {
+        waveId: 'wave-1',
+        dropId: 'drop-1',
+        relatedIdentityId: 'author-1',
+        replyNotification: null,
+        quoteNotifications: [],
+        mentionedIdentityIds: ['contributor-enabled', 'admin-disabled'],
         allDropsSubscriberIds: []
       },
       null,
@@ -2068,6 +2548,36 @@ describe('CreateOrUpdateDropUseCase', () => {
         dropType: DropType.CHAT
       })
     ).toThrow('Unsupported mime type text/csv');
+  });
+
+  it('accepts GLB uploads from the media CDN', () => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'model/gltf-binary',
+        url: `${CLOUDFRONT_LINK}/drops/author_1/file.glb`,
+        dropType: DropType.PARTICIPATORY
+      })
+    ).not.toThrow();
+  });
+
+  it('rejects GLB attachments from an external host', () => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'model/gltf-binary',
+        url: 'https://example.com/file.glb',
+        dropType: DropType.PARTICIPATORY
+      })
+    ).toThrow(`Media needs to come from ${CLOUDFRONT_LINK}`);
+  });
+
+  it('rejects JSON GLTF filenames labeled as binary GLB', () => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'model/gltf-binary',
+        url: `${CLOUDFRONT_LINK}/drops/author_1/file.gltf`,
+        dropType: DropType.PARTICIPATORY
+      })
+    ).toThrow('GLB media must use a .glb filename');
   });
 
   it('preserves html handling', () => {

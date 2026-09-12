@@ -1,3 +1,4 @@
+import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import {
   ConnectionWrapper,
   dbSupplier,
@@ -213,21 +214,13 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
              from ${IDENTITY_SUBSCRIPTIONS_TABLE} s
              ${
                params.target_type === ActivityEventTargetType.WAVE
-                 ? `join ${WAVES_TABLE} w on s.target_id = w.id and (w.visibility_group_id is null ${
-                     eligibleGroupIds.length
-                       ? `or w.visibility_group_id in (:eligibleGroupIds)`
-                       : ``
-                   })`
+                 ? `join ${WAVES_TABLE} w on s.target_id = w.id and ${waveReadAccessSql('w', eligibleGroupIds.length > 0)}`
                  : ''
              }
           ${
             params.target_type === ActivityEventTargetType.DROP
               ? `join ${DROPS_TABLE} d on s.target_id = d.id
-              join ${WAVES_TABLE} w on d.wave_id = w.id and (w.visibility_group_id is null ${
-                eligibleGroupIds.length
-                  ? `or w.visibility_group_id in (:eligibleGroupIds)`
-                  : ``
-              })`
+              join ${WAVES_TABLE} w on d.wave_id = w.id and ${waveReadAccessSql('w', eligibleGroupIds.length > 0)}`
               : ''
           }
              where s.subscriber_id = :subscriber_id
@@ -277,21 +270,13 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
         `select count(distinct s.target_id) as cnt from ${IDENTITY_SUBSCRIPTIONS_TABLE} s 
         ${
           params.target_type === ActivityEventTargetType.WAVE
-            ? `join ${WAVES_TABLE} w on s.target_id = w.id and (w.visibility_group_id is null ${
-                eligibleGroupIds.length
-                  ? `or w.visibility_group_id in (:eligibleGroupIds)`
-                  : ``
-              })`
+            ? `join ${WAVES_TABLE} w on s.target_id = w.id and ${waveReadAccessSql('w', eligibleGroupIds.length > 0)}`
             : ''
         }
           ${
             params.target_type === ActivityEventTargetType.DROP
               ? `join ${DROPS_TABLE} d on s.target_id = d.id
-              join ${WAVES_TABLE} w on d.wave_id = w.id and (w.visibility_group_id is null ${
-                eligibleGroupIds.length
-                  ? `or w.visibility_group_id in (:eligibleGroupIds)`
-                  : ``
-              })`
+              join ${WAVES_TABLE} w on d.wave_id = w.id and ${waveReadAccessSql('w', eligibleGroupIds.length > 0)}`
               : ''
           }
         where s.subscriber_id = :subscriber_id and s.target_type = :target_type`,
@@ -303,28 +288,6 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
         }
       )
       .then((result) => result?.cnt ?? 0);
-  }
-
-  async findWaveSubscribers(
-    waveId: string,
-    connection: ConnectionWrapper<any>
-  ) {
-    return this.db
-      .execute<{
-        subscriber_id: string;
-      }>(
-        `select subscriber_id from ${IDENTITY_SUBSCRIPTIONS_TABLE}
-         where target_id = :waveId
-           and target_type = :target_type
-           and target_action = :target_action`,
-        {
-          waveId,
-          target_type: ActivityEventTargetType.WAVE,
-          target_action: ActivityEventAction.DROP_CREATED
-        },
-        { wrappedConnection: connection }
-      )
-      .then((it) => it.map((it) => it.subscriber_id));
   }
 
   async findWaveSubscribedAllSubscribers(

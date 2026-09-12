@@ -73,7 +73,8 @@ describe('WaveApiService profile wave safeguards', () => {
       executeNativeQueriesInTransaction: jest.fn(
         async (fn) => await fn(connection)
       ),
-      findWaveById: jest.fn().mockResolvedValue(waveBeforeUpdate)
+      findWaveById: jest.fn().mockResolvedValue(waveBeforeUpdate),
+      findWaveByIdForUpdate: jest.fn().mockResolvedValue(waveBeforeUpdate)
     };
     const service = new WaveApiService(
       wavesApiDb as any,

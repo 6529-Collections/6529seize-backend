@@ -26,6 +26,7 @@ import { numbers } from '@/numbers';
 import { identitiesActivityApiService } from './identities.activity.api.service';
 import { cacheRequest } from '@/api/request-cache';
 import { identityMutesApiService } from '@/api/identity-mutes/identity-mutes.api.service';
+import { ProfileClassification } from '@/entities/IProfile';
 
 const router = asyncRouter();
 
@@ -38,11 +39,13 @@ router.get(
       any,
       any,
       {
-        handle: string;
+        handle?: string;
         limit?: string;
         wave_id?: string;
         group_id?: string;
         ignore_authenticated_user?: boolean;
+        classification?: ProfileClassification;
+        subclassification?: string;
       },
       any
     >,
@@ -50,8 +53,8 @@ router.get(
   ) {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req);
-    const handle = (req.query.handle ?? '').trim();
-    if (handle.length < 3) {
+    const handle = req.query.handle?.trim() ?? null;
+    if (handle !== null && handle.length < 3) {
       throw new BadRequestException(`Handle must be at least 3 characters.`);
     }
     const limit = numbers.parseIntOrNull(req.query.limit) ?? 20;
@@ -60,8 +63,22 @@ router.get(
     }
     const wave_id = req.query.wave_id ?? null;
     const group_id = req.query.group_id ?? null;
+    const { classification, subclassification } = getValidatedByJoiOrThrow(
+      {
+        classification: req.query.classification,
+        subclassification: req.query.subclassification
+      },
+      IdentitySearchFiltersSchema
+    );
     const profiles = await identitiesService.searchIdentities(
-      { handle, limit, wave_id, group_id },
+      {
+        handle,
+        limit,
+        wave_id,
+        group_id,
+        classification: classification ?? null,
+        subclassification: subclassification ?? null
+      },
       { authenticationContext, timer }
     );
 
@@ -312,5 +329,17 @@ const IdentintitySubscriptionActionsSchema =
       )
       .required()
   });
+
+interface IdentitySearchFilters {
+  classification?: ProfileClassification;
+  subclassification?: string;
+}
+
+const IdentitySearchFiltersSchema = Joi.object<IdentitySearchFilters>({
+  classification: Joi.string()
+    .valid(...Object.values(ProfileClassification))
+    .optional(),
+  subclassification: Joi.string().trim().min(1).max(255).optional()
+});
 
 export default router;

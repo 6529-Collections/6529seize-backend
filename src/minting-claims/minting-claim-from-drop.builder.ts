@@ -160,36 +160,6 @@ function upsertSeasonTrait(
   return withoutSeason;
 }
 
-function imageDetailsFromMime(mimeType: string): MintingClaimImageDetails {
-  return {
-    format: mimeToFormat(mimeType),
-    bytes: 0,
-    sha256: '',
-    width: 0,
-    height: 0
-  };
-}
-
-function imageDetailsFromPreviewUrl(
-  previewUrl: string
-): MintingClaimImageDetails | null {
-  let path = '';
-  try {
-    path = new URL(previewUrl).pathname;
-  } catch {
-    const noFragment = previewUrl.split('#', 1)[0] ?? '';
-    path = noFragment.split('?', 1)[0] ?? '';
-  }
-  const normalized = path.toLowerCase();
-  if (normalized.endsWith('.png')) return imageDetailsFromMime('image/png');
-  if (normalized.endsWith('.jpg') || normalized.endsWith('.jpeg')) {
-    return imageDetailsFromMime('image/jpeg');
-  }
-  if (normalized.endsWith('.gif')) return imageDetailsFromMime('image/gif');
-  if (normalized.endsWith('.webp')) return imageDetailsFromMime('image/webp');
-  return null;
-}
-
 export type MintingClaimRowInput = {
   drop_id: string;
   contract: string;
@@ -205,6 +175,7 @@ export type MintingClaimRowInput = {
   image_details: MintingClaimImageDetails | null;
   animation_url: string | null;
   animation_details: MintingClaimAnimationDetails | null;
+  animation_kind: 'video' | 'glb' | 'html' | null;
 };
 
 export function buildMintingClaimRowFromDrop(
@@ -263,7 +234,8 @@ export function buildMintingClaimRowFromDrop(
       attributes,
       image_details: null,
       animation_url: null,
-      animation_details: null
+      animation_details: null,
+      animation_kind: null
     };
   }
 
@@ -276,34 +248,25 @@ export function buildMintingClaimRowFromDrop(
   const isImage = !isHtml && !isVideo && !isGlb;
 
   let image_url: string | null = null;
-  let image_details: MintingClaimImageDetails | null = null;
+  const image_details: MintingClaimImageDetails | null = null;
   let animation_url: string | null = null;
   let animation_details: MintingClaimAnimationDetails | null = null;
+  let animation_kind: MintingClaimRowInput['animation_kind'] = null;
 
   if (isImage) {
     image_url = primaryMedia.url;
-    image_details = imageDetailsFromMime(primaryMedia.mime_type);
   } else {
     animation_url = primaryMedia.url;
     if (isHtml) {
       animation_details = { format: 'HTML' };
+      animation_kind = 'html';
     } else if (isGlb) {
-      animation_details = { format: 'GLB', bytes: 0, sha256: '' };
+      animation_kind = 'glb';
     } else {
-      const format = mimeToFormat(primaryMedia.mime_type);
-      animation_details = {
-        format,
-        bytes: 0,
-        duration: 0,
-        sha256: '',
-        width: 0,
-        height: 0,
-        codecs: []
-      };
+      animation_kind = 'video';
     }
     if (previewImageUrl) {
       image_url = previewImageUrl;
-      image_details = imageDetailsFromPreviewUrl(previewImageUrl);
     }
   }
 
@@ -321,6 +284,7 @@ export function buildMintingClaimRowFromDrop(
     attributes,
     image_details,
     animation_url,
-    animation_details
+    animation_details,
+    animation_kind
   };
 }

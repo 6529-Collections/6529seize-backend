@@ -7,12 +7,21 @@ import {
 } from '@/api/community-members/user-groups.service';
 import { ApiDropAndWave } from '@/api/generated/models/ApiDropAndWave';
 import { ApiDropMetadataV2 } from '@/api/generated/models/ApiDropMetadataV2';
+import { ApiDropVoteDistribution } from '@/api/generated/models/ApiDropVoteDistribution';
+import { ApiDropVoteSummary } from '@/api/generated/models/ApiDropVoteSummary';
+import {
+  dropVotingDb as defaultDropVotingDb,
+  DropVotingDb
+} from '@/api/drops/drop-voting.db';
 import { apiDropMapper, ApiDropMapper } from '@/api/drops/api-drop.mapper';
 import {
   apiWaveOverviewMapper,
   ApiWaveOverviewMapper
 } from '@/api/waves/api-wave-overview.mapper';
-import { getGroupsUserIsEligibleForReadContext } from '@/api/waves/wave-access.helpers';
+import {
+  getGroupsUserIsEligibleForReadContext,
+  getWaveReadContextProfileId
+} from '@/api/waves/wave-access.helpers';
 import {
   identityFetcher,
   IdentityFetcher
@@ -34,6 +43,13 @@ import { ApiDropReactionV2 } from '@/api/generated/models/ApiDropReactionV2';
 import { reactionsDb, ReactionsDb } from '@/api/drops/reactions.db';
 import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
+import {
+  contentModerationDb,
+  ContentModerationDb
+} from '@/content-moderation/content-moderation.db';
+import { ApiDropModerationStatus } from '@/api/generated/models/ApiDropModerationStatus';
+import { ApiIdentityOverview } from '@/api/generated/models/ApiIdentityOverview';
+import { Logger } from '@/logging';
 
 export type ApiDropWithWave = ApiDropAndWave;
 export type DropVotersSearchParams = {
@@ -81,6 +97,8 @@ export interface FindCuratedProfileWaveDropsV2Request {
 }
 
 export class ApiDropV2Service {
+  private readonly logger = Logger.get(this.constructor.name);
+
   constructor(
     private readonly dropsDb: DropsDb,
     private readonly userGroupsService: UserGroupsService,
@@ -89,7 +107,9 @@ export class ApiDropV2Service {
     private readonly apiWaveOverviewMapper: ApiWaveOverviewMapper,
     private readonly identityFetcher: IdentityFetcher,
     private readonly attachmentsDb: AttachmentsDb,
-    private readonly reactionsDb: ReactionsDb
+    private readonly reactionsDb: ReactionsDb,
+    private readonly moderationDb: ContentModerationDb = contentModerationDb,
+    private readonly dropVotingDb: DropVotingDb = defaultDropVotingDb
   ) {}
 
   public async findDrops(
@@ -228,6 +248,76 @@ export class ApiDropV2Service {
     }
   }
 
+  public async findVoteSummaryByDropIdOrThrow(
+    id: string,
+    ctx: RequestContext
+  ): Promise<ApiDropVoteSummary> {
+    const timerKey = `${this.constructor.name}->findVoteSummaryByDropIdOrThrow`;
+    ctx.timer?.start(timerKey);
+    try {
+      const dropEntity = await this.findVisibleDropByIdOrThrow(id, ctx);
+      if (dropEntity.drop_type !== DropType.PARTICIPATORY) {
+        return {};
+      }
+      const presentation = await this.getModerationPresentation(
+        dropEntity,
+        ctx
+      );
+      if (!presentation.moderation.can_view) {
+        return {};
+      }
+
+      const rows = await this.dropVotingDb.getDropVoteDistribution(id, ctx);
+      const totals = rows[0];
+      if (
+        !totals ||
+        !Number.isSafeInteger(totals.positive_total) ||
+        !Number.isSafeInteger(totals.negative_total) ||
+        !Number.isSafeInteger(totals.positive_total - totals.negative_total) ||
+        totals.positive_total < 0 ||
+        totals.negative_total > 0 ||
+        rows.some((row) => !Number.isSafeInteger(row.vote) || row.vote === 0)
+      ) {
+        return {};
+      }
+
+      let votersById: Record<string, ApiIdentityOverview> = {};
+      try {
+        votersById = await this.identityFetcher.getApiIdentityOverviewsByIds(
+          rows.map((row) => row.voter_id),
+          ctx
+        );
+      } catch (error) {
+        // Totals come from voter state and must not depend on profile enrichment.
+        this.logger.warn(
+          'Drop vote summary identity enrichment unavailable',
+          error
+        );
+      }
+      const distribution: ApiDropVoteDistribution = {
+        positive_total: totals.positive_total,
+        negative_total: totals.negative_total,
+        positive_votes: [],
+        negative_votes: []
+      };
+      for (const row of rows) {
+        const voter = votersById[row.voter_id];
+        if (!voter) {
+          // Do not mislabel an allocation with another voter's identity.
+          continue;
+        }
+        const side =
+          row.vote > 0
+            ? distribution.positive_votes
+            : distribution.negative_votes;
+        side.push({ voter, vote: row.vote });
+      }
+      return { vote_distribution: distribution };
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
   public async findMetadataByDropIdOrThrow(
     id: string,
     ctx: RequestContext
@@ -235,7 +325,14 @@ export class ApiDropV2Service {
     const timerKey = `${this.constructor.name}->findMetadataByDropIdOrThrow`;
     ctx.timer?.start(timerKey);
     try {
-      await this.findVisibleDropByIdOrThrow(id, ctx);
+      const dropEntity = await this.findVisibleDropByIdOrThrow(id, ctx);
+      const presentation = await this.getModerationPresentation(
+        dropEntity,
+        ctx
+      );
+      if (!presentation.moderation.can_view) {
+        return [];
+      }
 
       const metadata = await this.dropsDb.findMetadataByDropId(id, ctx);
       const identityProfileIds = metadata
@@ -285,6 +382,21 @@ export class ApiDropV2Service {
       if (partNo > dropEntity.parts_count) {
         throw new NotFoundException(`Drop ${id} part ${partNo} not found`);
       }
+      const presentation = await this.getModerationPresentation(
+        dropEntity,
+        ctx
+      );
+      const moderationContext = {
+        viewer_context: presentation.viewer,
+        moderation: {
+          status: presentation.moderation
+            .status as unknown as ApiDropModerationStatus,
+          can_view: presentation.moderation.can_view
+        }
+      };
+      if (!presentation.moderation.can_view) {
+        return { part_no: partNo, ...moderationContext };
+      }
 
       const dropAttachmentsPromise = this.attachmentsDb.getDropPartAttachments(
         id,
@@ -308,7 +420,8 @@ export class ApiDropV2Service {
       }
 
       const apiPart: ApiDropPartV2 = {
-        part_no: part.drop_part_id
+        part_no: part.drop_part_id,
+        ...moderationContext
       };
       if (part.content !== null) {
         apiPart.content = part.content;
@@ -741,6 +854,18 @@ export class ApiDropV2Service {
         return apiAttachment;
       });
   }
+
+  private async getModerationPresentation(
+    drop: DropEntity,
+    ctx: RequestContext
+  ) {
+    const presentations = await this.moderationDb.getPresentations(
+      [drop],
+      getWaveReadContextProfileId(ctx.authenticationContext),
+      ctx.connection
+    );
+    return presentations[drop.id];
+  }
 }
 
 export const apiDropV2Service = new ApiDropV2Service(
@@ -751,5 +876,6 @@ export const apiDropV2Service = new ApiDropV2Service(
   apiWaveOverviewMapper,
   identityFetcher,
   attachmentsDb,
-  reactionsDb
+  reactionsDb,
+  contentModerationDb
 );

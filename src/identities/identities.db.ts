@@ -526,7 +526,12 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
   }
 
   async searchIdentitiesWithDisplays(
-    param: { limit: number; handle: string },
+    param: {
+      limit: number;
+      handle: string | null;
+      classification: ProfileClassification | null;
+      subclassification: string | null;
+    },
     base: {
       sql: string;
       params: Record<string, any>;
@@ -534,50 +539,66 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<(IdentityEntity & { display: string | null })[]> {
     ctx.timer?.start(`${this.constructor.name}->searchIdentities`);
+    try {
+      const handle = param.handle?.toLowerCase() ?? null;
+      const queryParams: Record<string, unknown> = {
+        ...(base?.params ?? {}),
+        limit: param.limit
+      };
+      const whereClauses: string[] = [];
 
-    const likeHandle = `%${param.handle.toLowerCase()}%`;
-    const prefixHandle = `${param.handle.toLowerCase()}%`;
-    const handle = param.handle.toLowerCase();
+      if (handle !== null) {
+        whereClauses.push('i.normalised_handle like :likeHandle');
+        queryParams['likeHandle'] = `%${handle}%`;
+        queryParams['prefixHandle'] = `${handle}%`;
+        queryParams['handle'] = handle;
+      }
+      if (param.classification !== null) {
+        whereClauses.push('i.classification = :classification');
+        queryParams['classification'] = param.classification;
+      }
+      if (param.subclassification !== null) {
+        whereClauses.push('i.sub_classification = :subclassification');
+        queryParams['subclassification'] = param.subclassification;
+      }
 
-    const commonParams = {
-      limit: param.limit,
-      likeHandle,
-      prefixHandle,
-      handle
-    };
-
-    const prelude = base?.sql ?? '';
-    const join = base
-      ? `join user_groups_view ug on i.profile_id = ug.profile_id`
-      : '';
-
-    const query = `
-    ${prelude}
-    select i.*, cwt.consolidation_display as display
-    from ${IDENTITIES_TABLE} i
-    ${join}
-    left join ${CONSOLIDATED_WALLETS_TDH_TABLE} cwt
-      on i.consolidation_key = cwt.consolidation_key
-    where i.normalised_handle like :likeHandle
-    order by
-      (i.normalised_handle = :handle) desc,
+      const prelude = base?.sql ?? '';
+      const join = base
+        ? `join user_groups_view ug on i.profile_id = ug.profile_id`
+        : '';
+      const where = whereClauses.length
+        ? `where ${whereClauses.join('\n        and ')}`
+        : '';
+      const orderBy =
+        handle === null
+          ? 'i.level_raw desc'
+          : `(i.normalised_handle = :handle) desc,
       (i.normalised_handle like :prefixHandle) desc,
-      char_length(i.normalised_handle) asc,
-      locate(:handle, i.normalised_handle) asc
-    limit :limit
-  `;
+      i.level_raw desc,
+      i.normalised_handle asc,
+      i.profile_id asc`;
 
-    const queryParams = {
-      ...(base?.params ?? {}),
-      ...commonParams
-    };
+      const query = `
+      ${prelude}
+      select i.*, cwt.consolidation_display as display
+      from ${IDENTITIES_TABLE} i
+      ${join}
+      left join ${CONSOLIDATED_WALLETS_TDH_TABLE} cwt
+        on i.consolidation_key = cwt.consolidation_key
+      ${where}
+      order by
+        ${orderBy}
+      limit :limit
+    `;
 
-    const results = await this.db.execute<
-      IdentityEntity & { display: string | null }
-    >(query, queryParams, { wrappedConnection: ctx.connection });
-
-    ctx.timer?.stop(`${this.constructor.name}->searchIdentities`);
-    return results;
+      return await this.db.execute<IdentityEntity & { display: string | null }>(
+        query,
+        queryParams,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->searchIdentities`);
+    }
   }
 
   async searchWaveMentionCandidates(
@@ -1152,16 +1173,25 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
   async searchCommunityMembersWhereEnsLike({
     limit,
     onlyProfileOwners,
-    ensCandidate
+    ensCandidate,
+    sortByLevel = false
   }: {
     limit: number;
     onlyProfileOwners: boolean;
     ensCandidate: string;
+    sortByLevel?: boolean;
   }): Promise<(IdentityEntity & { ens: string })[]> {
     if (ensCandidate.endsWith('eth') && ensCandidate.length <= 6) {
       return [];
     }
     {
+      const orderBy = sortByLevel
+        ? `
+          i.level_raw desc,
+          lower(e.display) asc,
+          i.profile_id asc
+        `
+        : 'i.tdh desc';
       const sql = `
       select i.*,
              e.display as ens
@@ -1170,7 +1200,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
                left join ${ENS_TABLE} e on a.address = lower(e.wallet)
       where e.display like concat('%', :ensCandidate ,'%') 
       ${onlyProfileOwners ? ' and i.profile_id is not null ' : ''}
-      order by i.tdh desc
+      order by ${orderBy}
       limit :limit
     `;
       return this.db.execute(sql, { ensCandidate: ensCandidate, limit });
@@ -1179,11 +1209,29 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
 
   async searchCommunityMembersWhereHandleLike({
     limit,
-    handle
+    handle,
+    sortByLevel = false
   }: {
     limit: number;
     handle: string;
+    sortByLevel?: boolean;
   }): Promise<(IdentityEntity & { ens: string })[]> {
+    const orderBy = sortByLevel
+      ? `
+        case
+          when i.normalised_handle not like 'id-0x%'
+            and i.normalised_handle = lower(:handle) then 300
+          when i.normalised_handle not like 'id-0x%'
+            and i.normalised_handle like concat(lower(:handle), '%') then 200
+          when i.normalised_handle not like 'id-0x%' then 100
+          when lower(e.display) like concat('%', lower(:handle), '%') then 50
+          else 0
+        end desc,
+        i.level_raw desc,
+        i.normalised_handle asc,
+        i.profile_id asc
+      `
+      : 'i.tdh desc';
     const sql = `
       select
           i.*,
@@ -1191,7 +1239,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       from ${IDENTITIES_TABLE} i
            left join ${ENS_TABLE} e on lower(e.wallet) = i.primary_address
       where i.normalised_handle like concat('%', lower(:handle), '%')
-      order by i.tdh desc
+      order by ${orderBy}
       limit :limit
     `;
     return this.db.execute(sql, { handle, limit });

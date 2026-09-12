@@ -8,9 +8,12 @@ import {
   TEST_DB_NAME_PREFIX_ENV
 } from '@/tests/_setup/testDatabase';
 
+/** Starts an isolated MySQL container and initializes one database per Jest worker. */
 module.exports = async (globalConfig?: unknown) => {
   // 1️⃣  Start MySQL ⤵
-  const container = await new MySqlContainer('mysql:8.3')
+  const container = await new MySqlContainer(
+    process.env.TEST_MYSQL_IMAGE ?? 'mysql:8.3'
+  )
     .withEnvironment({ MYSQL_ROOT_PASSWORD: 'root' })
     .withTmpFs({ '/var/lib/mysql': 'rw' })
     .withCommand(['--default-authentication-plugin=mysql_native_password'])

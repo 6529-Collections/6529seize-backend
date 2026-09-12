@@ -1,5 +1,6 @@
 import { consolidationTools } from '../consolidation-tools';
 import {
+  ConsolidatedTdhPersistenceScope,
   fetchAllConsolidatedTdh,
   fetchAllTDH,
   fetchConsolidationDisplay,
@@ -20,7 +21,9 @@ import {
 } from '../entities/ITDH';
 import { Logger } from '../logging';
 import { fetchNextgenTokens } from '../nextgen/nextgen.db';
+import { sqs } from '../sqs';
 import { equalIgnoreCase } from '../strings';
+import { XTDH_LOOP_PHASE } from '../xtdh/xtdh-loop-phase';
 import {
   calculateBoosts,
   calculateRanks,
@@ -34,6 +37,15 @@ import { calculateMemesTdh } from './tdh_memes';
 import { calculateNftTDH } from './tdh_nft';
 
 const logger = Logger.get('TDH_CONSOLIDATION');
+const XTDH_LOOP_QUEUE_NAME = 'xtdh-start.fifo';
+
+export type TdhConsolidationRequest =
+  | { readonly mode: 'FULL' }
+  | {
+      readonly mode: 'PARTIAL';
+      readonly wallets: string[];
+      readonly currentConsolidatedTdh: ConsolidatedTDH[];
+    };
 
 export async function consolidateTDHForWallets(
   tdh: TDHENS[],
@@ -259,9 +271,12 @@ export const consolidateMissingWallets = async (
 export const consolidateAndPersistTDH = async (
   block: number,
   blockTimestamp: Date,
-  startingWallets?: string[],
-  currentConsolidatedTdh?: ConsolidatedTDH[]
+  request: TdhConsolidationRequest
 ): Promise<ConsolidatedTDH[]> => {
+  const startingWallets =
+    request.mode === 'PARTIAL' ? request.wallets : undefined;
+  const currentConsolidatedTdh =
+    request.mode === 'PARTIAL' ? request.currentConsolidatedTdh : undefined;
   const { adjustedSeasons, consolidatedTdh, consolidationKeysToReplace } =
     await consolidateTDH(
       block,
@@ -279,19 +294,44 @@ export const consolidateAndPersistTDH = async (
   const nftTdh = calculateNftTDH(consolidatedTdh);
 
   assertNoOverlappingConsolidationWallets(consolidatedTdh);
+  let persistenceScope: ConsolidatedTdhPersistenceScope = { mode: 'FULL' };
+  if (request.mode === 'PARTIAL') {
+    if (!consolidationKeysToReplace) {
+      throw new Error(
+        'Partial TDH consolidation did not resolve exact persistence keys'
+      );
+    }
+    persistenceScope = {
+      mode: 'PARTIAL',
+      wallets: request.wallets,
+      consolidationKeysToReplace
+    };
+  }
   await persistConsolidatedTDH(
     block,
     consolidatedTdh,
     memesTdh,
     tdhEditions,
     nftTdh,
-    startingWallets,
-    consolidationKeysToReplace
+    persistenceScope
   );
   await persistTDHBlock(block, blockTimestamp, consolidatedTdh);
+  if (request.mode === 'PARTIAL') {
+    await enqueuePartialTdhUniverseRecalculation();
+  }
 
   return consolidatedTdh;
 };
+
+async function enqueuePartialTdhUniverseRecalculation(): Promise<void> {
+  await sqs.sendToQueueName({
+    queueName: XTDH_LOOP_QUEUE_NAME,
+    message: {
+      phase: XTDH_LOOP_PHASE.UNIVERSE,
+      queued_at_ms: Date.now()
+    }
+  });
+}
 
 export const consolidateTDH = async (
   block: number,

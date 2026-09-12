@@ -1,4 +1,12 @@
 export { AbusivenessDetectionResult } from './IAbusivenessDetectionResult';
+export { CollectPlanEntity } from './ICollectPlan';
+export { CollectRuleEntity, CollectRuleOperationEntity } from './ICollectRule';
+export {
+  MarketOperationEntity,
+  MarketOperationEventEntity,
+  MarketWalletExposureLockEntity,
+  MarketReviewedTransactionEntity
+} from './IMarketOperation';
 export {
   ArtCurationTokenWatchEntity,
   ArtCurationTokenWatchStatus
@@ -67,6 +75,10 @@ export {
   DropPollVoteEntity
 } from './IDropPoll';
 export { HelpBotCreditEventEntity } from './IHelpBotCreditEvent';
+export {
+  HelpBotDailyActivityCreditRequestEntity,
+  HelpBotDailyActivityCreditRequestStatus
+} from './IHelpBotDailyActivityCreditRequest';
 export { HelpBotInteractionEntity } from './IHelpBotInteraction';
 export { DropRankEntity } from './IDropRank';
 export { DropReactionsEntity } from './IDropReactions';
@@ -85,11 +97,30 @@ export { ExternalIndexedOwnership721HistoryEntity } from './IExternalIndexedOwne
 export { ExternalIndexedTransfersEntity } from './IExternalIndexedTransfer';
 export { IdentityEntity } from './IIdentity';
 export { IdentityMuteEntity } from './IIdentityMute';
+export {
+  ContentModerationAuditLogEntity,
+  ContentModerationDropStateEntity,
+  ContentModerationHiddenDropEntity,
+  ContentModerationPrePublicationCheckEntity,
+  ContentModerationProfileBlockEntity,
+  ContentModerationProfileStateEntity,
+  ContentModerationReportEntity,
+  ContentModerationRoleEntity
+} from './IContentModeration';
 export { IdentityNotificationEntity } from './IIdentityNotification';
 export { IdentitySubscriptionEntity } from './IIdentitySubscription';
+export { ProfilePreferencesEntity } from './IProfilePreferences';
 export { MentionAliasEntity, MentionAliasMemberEntity } from './IMentionAlias';
 export { MintingClaimEntity } from './IMintingClaim';
 export { MetricRollupHourEntity } from './IMetricRollupHour';
+export {
+  MarketDepthCollectionStateEntity,
+  MarketDepthCurrentOrderEntity,
+  MarketDepthCursorEntity,
+  MarketDepthEventEntity,
+  MarketDepthReconciliationEntity,
+  MarketDepthSnapshotEntity
+} from './IMarketDepth';
 export {
   NextGenAllowlist,
   NextGenAllowlistBurn,
@@ -138,10 +169,16 @@ export {
   ProfileCmsPointerEventType
 } from './IProfileCmsPointerEvent';
 export { ProfileCmsPublishSignatureEntity } from './IProfileCmsPublishSignature';
+export { ProfileCmsUploadEntity } from './IProfileCmsUpload';
 export { PushNotificationDevice } from './IPushNotification';
 export { PushNotificationSettingsEntity } from './IPushNotificationSettings';
 export { Rating } from './IRating';
 export { RefreshToken } from './IRefreshToken';
+export {
+  ReleaseNotePublicationEntity,
+  ReleaseNotePublicationStatus
+} from './IReleaseNotePublication';
+export { ReleaseNoteStreamStateEntity } from './IReleaseNoteStreamState';
 export { Rememe, RememeUpload } from './IRememe';
 export { ProfileTotalRepScoreAggregation } from './IRepScoreAggregations';
 export { RoyaltiesUpload } from './IRoyalties';
@@ -225,19 +262,6 @@ export { WaveGroupNotificationSubscriptionEntity } from './IWaveGroupNotificatio
 export { WinnerDropVoterVoteEntity } from './IWinnerDropVoterVote';
 export { WSConnectionEntity } from './IWSConnection';
 export { WSNotificationSubscriptionEntity } from './IWSNotificationSubscription';
-export {
-  ReleaseBusV2CandidateDependencyEntity,
-  ReleaseBusV2CandidateEntity,
-  ReleaseBusV2ControlEntity,
-  ReleaseBusV2EventEntity,
-  ReleaseBusV2LockEntity,
-  ReleaseBusV2ManifestEntity,
-  ReleaseBusV2OperationEntity,
-  ReleaseBusV2ProductionAuthorityEntity,
-  ReleaseBusV2StagingStateEntity,
-  ReleaseBusV2TrainCandidateEntity,
-  ReleaseBusV2TrainEntity
-} from './IReleaseBusV2';
 export { XTdhGrantEntity } from './IXTdhGrant';
 export { XTdhGrantTokenEntity } from './IXTdhGrantToken';
 export { XTdhStatsMetaEntity } from './IXTdhStatsMeta';
@@ -246,3 +270,12 @@ export {
   XTdhTokenGrantStatsB
 } from './IXTdhTokenGrantStats';
 export { XTdhTokenStatsA, XTdhTokenStatsB } from './IXTdhTokenStats';
+export * from './IArtworkDocumentation';
+export { ProfileCmsAgentGrantEntity } from './IProfileCmsAgentGrant';
+export { ProfileCmsAgentProposalEntity } from './IProfileCmsAgentProposal';
+export { ProfileCmsAgentEventEntity } from './IProfileCmsAgentEvent';
+
+export {
+  ArtworkDocumentationAssetEntity,
+  ArtworkDocumentationAssetQuotaEntity
+} from './IArtworkDocumentationAsset';

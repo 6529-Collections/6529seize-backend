@@ -11,6 +11,7 @@ import {
   dropRatingUpdateMessage,
   dropReactionUpdateMessage,
   dropUpdateMessage,
+  dmUnreadStateChangedMessage,
   dropUpdateRefMessage,
   DROP_UPDATE_MAX_UTF8_BYTES,
   DropUpdateRefType,
@@ -32,6 +33,12 @@ import { ApiProfileClassification } from '../generated/models/ApiProfileClassifi
 import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 import { ApiAttachment } from '@/api/generated/models/ApiAttachment';
+import { ApiDropModerationStatus } from '@/api/generated/models/ApiDropModerationStatus';
+import {
+  contentModerationDb,
+  ContentModerationDb
+} from '@/content-moderation/content-moderation.db';
+import { ApiDmUnreadConversationState } from '@/api/generated/models/ApiDmUnreadConversationState';
 
 const scalarForLog = (value: unknown): string =>
   typeof value === 'string' ||
@@ -44,6 +51,13 @@ const dropNotificationIdentityForLog = (drop: ApiDrop): string =>
   `drop_id=${scalarForLog(drop.id)} wave_id=${scalarForLog(
     drop.wave?.id
   )} serial_no=${scalarForLog(drop.serial_no)}`;
+
+const DROP_DELETE_NOTIFICATION_BATCH_SIZE = 100;
+
+export interface NotificationConnectionRecipient {
+  readonly connectionId: string;
+  readonly identityId: string;
+}
 
 const normalizedErrorForLog = (error: unknown): string => {
   if (error instanceof Error) {
@@ -85,6 +99,54 @@ const logDropNotificationFailure = (
     )} error=${normalizedErrorForLog(error)}`
   );
 };
+
+function applyGlobalModerationForRecipient(
+  inputDrop: ApiDrop,
+  profileId: string | null
+): ApiDrop {
+  const recipientDrop = structuredClone(inputDrop);
+  const apply = (
+    drop: ApiDrop | ApiDropWithoutWave,
+    visited: Set<string>
+  ): void => {
+    const status = drop.moderation?.status ?? ApiDropModerationStatus.Visible;
+    const canView =
+      status === ApiDropModerationStatus.Visible ||
+      (profileId !== null && drop.author.id === profileId);
+    drop.moderation = { status, can_view: canView };
+    const shouldRecurse = !visited.has(drop.id);
+    const nextVisited = shouldRecurse ? new Set(visited).add(drop.id) : visited;
+    if (shouldRecurse) {
+      for (const part of drop.parts) {
+        if (part.quoted_drop?.drop) {
+          apply(part.quoted_drop.drop, nextVisited);
+        }
+      }
+      if (drop.reply_to?.drop) {
+        apply(drop.reply_to.drop, nextVisited);
+      }
+    }
+    if (!canView) {
+      drop.title = null;
+      drop.parts = drop.parts.map((part) => ({
+        ...part,
+        content: null,
+        media: [],
+        attachments: []
+      }));
+      drop.referenced_nfts = [];
+      drop.mentioned_users = [];
+      drop.mentioned_groups = [];
+      drop.mentioned_waves = [];
+      drop.metadata = [];
+      drop.reactions = [];
+      drop.nft_links = [];
+      delete drop.poll;
+    }
+  };
+  apply(recipientDrop, new Set<string>());
+  return recipientDrop;
+}
 
 function removeDropsAuthRequestContext(
   drop: ApiDrop | ApiDropWithoutWave,
@@ -213,7 +275,11 @@ export class WsListenersNotifier {
 
   constructor(
     private readonly appWebSockets: AppWebSockets,
-    private readonly wsConnectionRepository: WsConnectionRepository
+    private readonly wsConnectionRepository: WsConnectionRepository,
+    private readonly moderationDb: Pick<
+      ContentModerationDb,
+      'getViewerContextsForDrop'
+    > = contentModerationDb
   ) {}
 
   async notifyAboutIdentityNotificationsChanged(
@@ -248,6 +314,66 @@ export class WsListenersNotifier {
     }
   }
 
+  async notifyAboutDmUnreadStateChanged(
+    states: ApiDmUnreadConversationState[],
+    resolvedRecipients?: readonly NotificationConnectionRecipient[]
+  ): Promise<void> {
+    const statesByProfileId = states.reduce((acc, state) => {
+      const profileStates = acc.get(state.profile_id) ?? [];
+      profileStates.push(state);
+      acc.set(state.profile_id, profileStates);
+      return acc;
+    }, new Map<string, ApiDmUnreadConversationState[]>());
+    if (!statesByProfileId.size) {
+      return;
+    }
+    const profileIds = Array.from(statesByProfileId.keys());
+    try {
+      const recipients =
+        resolvedRecipients ??
+        (await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
+          profileIds
+        ));
+      await Promise.all(
+        recipients.flatMap(({ connectionId, identityId }) =>
+          (statesByProfileId.get(identityId) ?? []).map((state) =>
+            this.appWebSockets.send({
+              connectionId,
+              message: JSON.stringify(dmUnreadStateChangedMessage(state))
+            })
+          )
+        )
+      );
+    } catch (error) {
+      this.logger.error(
+        `Sending DM unread states to websockets failed. Profile ids: ${profileIds.join(',')}`,
+        error
+      );
+    }
+  }
+
+  async findConnectedNotificationRecipients(
+    inputProfileIds: string[]
+  ): Promise<NotificationConnectionRecipient[]> {
+    const profileIds = Array.from(
+      new Set(inputProfileIds.filter((profileId) => !!profileId))
+    );
+    if (!profileIds.length) {
+      return [];
+    }
+    try {
+      return await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
+        profileIds
+      );
+    } catch (error) {
+      this.logger.error(
+        `Resolving DM unread websocket recipients failed. Profile ids: ${profileIds.join(',')}`,
+        error
+      );
+      return [];
+    }
+  }
+
   async notifyAboutDropUpdate(
     inputDrop: ApiDrop,
     ctx: RequestContext,
@@ -278,17 +404,38 @@ export class WsListenersNotifier {
         onlineProfiles,
         inputDrop
       );
+      const viewerContexts = await this.moderationDb.getViewerContextsForDrop(
+        {
+          dropId: inputDrop.id,
+          authorProfileId: inputDrop.author.id,
+          viewerProfileIds: onlineProfiles
+            .map(({ profileId }) => profileId)
+            .filter((profileId): profileId is string => profileId !== null)
+        },
+        ctx.connection
+      );
       await Promise.all(
-        onlineProfiles.map(({ connectionId, profileId }) =>
-          this.appWebSockets.send({
+        onlineProfiles.map(({ connectionId, profileId }) => {
+          const recipientDrop = applyGlobalModerationForRecipient(
+            inputDrop,
+            profileId
+          );
+          recipientDrop.viewer_context =
+            profileId === null
+              ? { author_blocked: false, drop_hidden: false }
+              : (viewerContexts[profileId] ?? {
+                  author_blocked: false,
+                  drop_hidden: false
+                });
+          return this.appWebSockets.send({
             connectionId,
             message: serializeDropUpdateForRecipient(
-              inputDrop,
+              recipientDrop,
               profileId === null ? 0 : (creditLefts[profileId] ?? 0),
               reason
             )
-          })
-        )
+          });
+        })
       );
     } catch (e) {
       logDropNotificationFailure(this.logger, 'DROP_UPDATE', inputDrop, e);
@@ -315,16 +462,37 @@ export class WsListenersNotifier {
         onlineProfiles,
         drop
       );
+      const viewerContexts = await this.moderationDb.getViewerContextsForDrop(
+        {
+          dropId: drop.id,
+          authorProfileId: drop.author.id,
+          viewerProfileIds: onlineProfiles
+            .map(({ profileId }) => profileId)
+            .filter((profileId): profileId is string => profileId !== null)
+        },
+        ctx.connection
+      );
       await Promise.all(
-        onlineProfiles.map(({ connectionId, profileId }) =>
-          this.appWebSockets.send({
+        onlineProfiles.map(({ connectionId, profileId }) => {
+          const recipientDrop = applyGlobalModerationForRecipient(
+            drop,
+            profileId
+          );
+          recipientDrop.viewer_context =
+            profileId === null
+              ? { author_blocked: false, drop_hidden: false }
+              : (viewerContexts[profileId] ?? {
+                  author_blocked: false,
+                  drop_hidden: false
+                });
+          return this.appWebSockets.send({
             connectionId,
             message: serializeDropRatingUpdateForRecipient(
-              drop,
+              recipientDrop,
               profileId === null ? 0 : (creditLefts[profileId] ?? 0)
             )
-          })
-        )
+          });
+        })
       );
     } catch (e) {
       logDropNotificationFailure(this.logger, 'DROP_RATING_UPDATE', drop, e);
@@ -351,16 +519,37 @@ export class WsListenersNotifier {
         onlineProfiles,
         drop
       );
+      const viewerContexts = await this.moderationDb.getViewerContextsForDrop(
+        {
+          dropId: drop.id,
+          authorProfileId: drop.author.id,
+          viewerProfileIds: onlineProfiles
+            .map(({ profileId }) => profileId)
+            .filter((profileId): profileId is string => profileId !== null)
+        },
+        ctx.connection
+      );
       await Promise.all(
-        onlineProfiles.map(({ connectionId, profileId }) =>
-          this.appWebSockets.send({
+        onlineProfiles.map(({ connectionId, profileId }) => {
+          const recipientDrop = applyGlobalModerationForRecipient(
+            drop,
+            profileId
+          );
+          recipientDrop.viewer_context =
+            profileId === null
+              ? { author_blocked: false, drop_hidden: false }
+              : (viewerContexts[profileId] ?? {
+                  author_blocked: false,
+                  drop_hidden: false
+                });
+          return this.appWebSockets.send({
             connectionId,
             message: serializeDropReactionUpdateForRecipient(
-              drop,
+              recipientDrop,
               profileId === null ? 0 : (creditLefts[profileId] ?? 0)
             )
-          })
-        )
+          });
+        })
       );
     } catch (e) {
       logDropNotificationFailure(this.logger, 'DROP_REACTION_UPDATE', drop, e);
@@ -375,8 +564,13 @@ export class WsListenersNotifier {
     waveId: string;
   }) {
     const connectionIds = await this.wsConnectionRepository
-      .findAllByWaveId(waveId)
-      .then((res) => res.map((it) => it.connection_id));
+      .getCurrentlyOnlineCommunityMemberConnectionIds(
+        { waveId, groupId: null },
+        {}
+      )
+      .then((res) =>
+        res.filter((it) => it.wave_id === waveId).map((it) => it.connectionId)
+      );
     if (!connectionIds.length) {
       return;
     }
@@ -478,22 +672,61 @@ export class WsListenersNotifier {
     ctx: RequestContext
   ): Promise<void> {
     ctx.timer?.start(`${this.constructor.name}->notifyAboutDropDelete`);
-    const onlineClients =
-      await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
-        {
-          groupId: visibility_group_id,
-          waveId: dropInfo.wave_id
-        },
-        ctx
-      );
-    const connectionIds = onlineClients.map((it) => it.connectionId);
-    const message = JSON.stringify(dropDeleteMessage(dropInfo));
-    await Promise.all(
-      connectionIds.map((connectionId: string) =>
-        this.appWebSockets.send({ connectionId, message })
-      )
-    );
+    await this.notifyAboutDropDeletes([dropInfo], visibility_group_id, ctx);
     ctx.timer?.stop(`${this.constructor.name}->notifyAboutDropDelete`);
+  }
+
+  async notifyAboutDropDeletes(
+    dropInfos: readonly {
+      drop_id: string;
+      wave_id: string;
+      drop_serial: number;
+    }[],
+    visibility_group_id: string | null,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (!dropInfos.length) {
+      return;
+    }
+    const timerName = `${this.constructor.name}->notifyAboutDropDeletes`;
+    ctx.timer?.start(timerName);
+    try {
+      const onlineClients =
+        await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
+          {
+            groupId: visibility_group_id,
+            waveId: dropInfos[0]!.wave_id
+          },
+          ctx
+        );
+      const connectionIds = onlineClients.map((it) => it.connectionId);
+      let pendingSends: Promise<void>[] = [];
+      const sendFailures: unknown[] = [];
+      const flushPendingSends = async (): Promise<void> => {
+        const results = await Promise.allSettled(pendingSends);
+        sendFailures.push(
+          ...results.flatMap((result) =>
+            result.status === 'rejected' ? [result.reason] : []
+          )
+        );
+        pendingSends = [];
+      };
+      for (const dropInfo of dropInfos) {
+        const message = JSON.stringify(dropDeleteMessage(dropInfo));
+        for (const connectionId of connectionIds) {
+          pendingSends.push(this.appWebSockets.send({ connectionId, message }));
+          if (pendingSends.length === DROP_DELETE_NOTIFICATION_BATCH_SIZE) {
+            await flushPendingSends();
+          }
+        }
+      }
+      await flushPendingSends();
+      if (sendFailures.length) {
+        throw sendFailures[0];
+      }
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
   }
 
   async notifyAboutAttachmentStatusUpdate(

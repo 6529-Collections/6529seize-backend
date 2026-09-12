@@ -1,0 +1,201 @@
+import { ApiMarketOperationResult } from '@/api/generated/models/ApiMarketOperationResult';
+import {
+  MarketOperationPrepareRequest,
+  MarketOperationPrepared,
+  marketOperationPrepareSchema,
+  isMarketBatchPrepared
+} from '@/marketplace/market-operation.types';
+import { batchOperationDto } from '@/api/marketplace/marketplace-batch.dto';
+import {
+  transactionDto,
+  componentsDto
+} from '@/api/marketplace/marketplace-shared.dto';
+export { transactionDto } from '@/api/marketplace/marketplace-shared.dto';
+import { ApiMarketKind } from '@/api/generated/models/ApiMarketKind';
+import {
+  ApiMarketOperation,
+  ApiMarketOperationStateEnum
+} from '@/api/generated/models/ApiMarketOperation';
+import { MarketOperationRow } from '@/marketplace/market-operations.db';
+import {
+  marketOperationRevision,
+  operationSendAttempt
+} from '@/marketplace/market-operation-state';
+import {
+  ApiMarketSendAttemptPurposeEnum,
+  ApiMarketSendAttemptStatusEnum
+} from '@/api/generated/models/ApiMarketSendAttempt';
+import {
+  MarketPrepared,
+  MarketPrepareRequest
+} from '@/marketplace/market-preparation';
+import { MarketDiscoveredOrder } from '@/marketplace/provider.types';
+import {
+  ApiMarketTradeOrder,
+  ApiMarketTradeOrderSideEnum
+} from '@/api/generated/models/ApiMarketTradeOrder';
+import { MarketSettlement } from '@/marketplace/market-reconciliation';
+
+function json(value: unknown): unknown {
+  return typeof value === 'string' ? JSON.parse(value) : value;
+}
+export function operationRequest(
+  row: MarketOperationRow
+): MarketOperationPrepareRequest {
+  return marketOperationPrepareSchema.parse(json(row.request_json));
+}
+export function operationPrepared(
+  row: MarketOperationRow
+): MarketOperationPrepared | undefined {
+  return row.prepared_json
+    ? (json(row.prepared_json) as MarketOperationPrepared)
+    : undefined;
+}
+export function discoveredOrderDto(
+  order: MarketDiscoveredOrder,
+  assetKey: string
+): ApiMarketTradeOrder {
+  return {
+    identity: {
+      protocol_address: order.identity.protocolAddress,
+      order_hash: order.identity.orderHash
+    },
+    asset_key: assetKey,
+    maker: order.maker,
+    recipient: order.recipient,
+    side: order.side as ApiMarketTradeOrderSideEnum,
+    quantity: order.quantity,
+    purchase_quantity:
+      order.unitTotalWei === undefined
+        ? (order.availableQuantity ?? order.quantity)
+        : '1',
+    quantity_step:
+      order.unitTotalWei === undefined
+        ? (order.availableQuantity ?? order.quantity)
+        : '1',
+    available_quantity: order.availableQuantity ?? order.quantity,
+    currency: order.currency,
+    total_wei: order.totalWei,
+    net_wei: order.netWei,
+    fees: order.fees.map((fee) => ({
+      recipient: fee.recipient,
+      amount_wei: fee.amountWei
+    })),
+    start_time: order.startTime,
+    end_time: order.endTime
+  };
+}
+function singleOperationDto(
+  row: MarketOperationRow,
+  request: MarketPrepareRequest,
+  prepared?: MarketPrepared
+): ApiMarketOperation {
+  const intent = prepared?.intent;
+  const attempt = operationSendAttempt(row);
+  const signed = prepared?.signedOrder?.order ?? prepared?.reviewOrder;
+  const settlement = (
+    prepared as (MarketPrepared & { settlement?: MarketSettlement }) | undefined
+  )?.settlement;
+  return {
+    id: row.id,
+    revision: marketOperationRevision(row),
+    ...(attempt
+      ? {
+          send_attempt: {
+            attempt_id: attempt.attempt_id,
+            purpose: attempt.purpose as ApiMarketSendAttemptPurposeEnum,
+            status: attempt.status as ApiMarketSendAttemptStatusEnum,
+            transaction_digest: attempt.transaction_digest,
+            snapshot_block: attempt.snapshot_block,
+            transaction: transactionDto(attempt.transaction),
+            transaction_hash: attempt.transaction_hash ?? null
+          }
+        }
+      : {}),
+    state: row.state as ApiMarketOperationStateEnum,
+    profile_id: row.profile_id,
+    kind: request.kind as ApiMarketKind,
+    wallet: row.wallet,
+    recipient: request.recipient,
+    recipient_in_profile: prepared?.recipientInProfile ?? false,
+    asset_key: request.asset_key,
+    quantity: request.quantity,
+    currency: request.currency,
+    total_wei: intent?.maxTotalWei ?? request.amount_wei,
+    potential_liability_wei: row.liability_wei,
+    net_wei: intent?.minNetWei ?? '0',
+    fees: (intent?.fees ?? []).map((fee) => ({
+      recipient: fee.recipient,
+      amount_wei: fee.amountWei
+    })),
+    approval_transactions: (prepared?.approvalTransactions ?? []).map(
+      transactionDto
+    ),
+    ...(prepared?.transaction
+      ? {
+          transaction: {
+            ...transactionDto(prepared.transaction),
+            ...prepared.gas
+          }
+        }
+      : {}),
+    ...(signed
+      ? {
+          order: {
+            protocol_address: signed.protocolAddress,
+            order_hash: signed.orderHash,
+            digest: signed.digest,
+            components: componentsDto(signed.components)
+          }
+        }
+      : {}),
+    ...(row.transaction_hash ? { transaction_hash: row.transaction_hash } : {}),
+    ...(row.order_hash ? { order_hash: row.order_hash } : {}),
+    ...(prepared?.nftRecipient ? { nft_recipient: prepared.nftRecipient } : {}),
+    ...(settlement
+      ? {
+          settlement: {
+            filled_quantity: settlement.filledQuantity,
+            remaining_quantity: settlement.remainingQuantity,
+            ...(settlement.transactionHash
+              ? { transaction_hash: settlement.transactionHash }
+              : {}),
+            ...(settlement.blockNumber !== undefined
+              ? { block_number: settlement.blockNumber }
+              : {}),
+            ...(settlement.blockHash
+              ? { block_hash: settlement.blockHash }
+              : {}),
+            ...(settlement.safeBlockNumber !== undefined
+              ? { safe_block_number: settlement.safeBlockNumber }
+              : {})
+          }
+        }
+      : {}),
+    expires_at: Number(row.expires_at),
+    updated_at: Number(row.updated_at),
+    ...(row.error_code ? { error_code: row.error_code } : {}),
+    ...(prepared
+      ? {
+          block_number: prepared.snapshot.block_number,
+          block_hash: prepared.snapshot.block_hash
+        }
+      : {})
+  };
+}
+
+export function operationDto(
+  row: MarketOperationRow
+): ApiMarketOperationResult {
+  const request = operationRequest(row),
+    prepared = operationPrepared(row);
+  if (request.kind === 'BUY_BATCH')
+    return batchOperationDto(
+      row,
+      request,
+      prepared && isMarketBatchPrepared(prepared) ? prepared : undefined
+    );
+  if (prepared && isMarketBatchPrepared(prepared))
+    throw new Error('Operation preparation kind mismatch');
+  return singleOperationDto(row, request, prepared);
+}

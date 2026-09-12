@@ -2,6 +2,66 @@
 import { Request } from 'express';
 import { ApiResponse } from '@/api/api-response';
 import { ApiArchiveProfileCmsPackageRequest } from '@/api/generated/models/ApiArchiveProfileCmsPackageRequest';
+import { ApiArtworkDocumentationAssetLinkRequest } from '@/api/generated/models/ApiArtworkDocumentationAssetLinkRequest';
+import { ApiArtworkDocumentationAssetResponse } from '@/api/generated/models/ApiArtworkDocumentationAssetResponse';
+import { ApiArtworkDocumentationCommentRequest } from '@/api/generated/models/ApiArtworkDocumentationCommentRequest';
+import { ApiArtworkDocumentationCompleteUpload } from '@/api/generated/models/ApiArtworkDocumentationCompleteUpload';
+import { ApiArtworkDocumentationConfirmRequest } from '@/api/generated/models/ApiArtworkDocumentationConfirmRequest';
+import { ApiArtworkDocumentationContext } from '@/api/generated/models/ApiArtworkDocumentationContext';
+import { ApiArtworkDocumentationContextListResponse } from '@/api/generated/models/ApiArtworkDocumentationContextListResponse';
+import { ApiArtworkDocumentationCreateContext } from '@/api/generated/models/ApiArtworkDocumentationCreateContext';
+import { ApiArtworkDocumentationCreateThread } from '@/api/generated/models/ApiArtworkDocumentationCreateThread';
+import { ApiArtworkDocumentationCreateWork } from '@/api/generated/models/ApiArtworkDocumentationCreateWork';
+import { ApiArtworkDocumentationDownloadRequest } from '@/api/generated/models/ApiArtworkDocumentationDownloadRequest';
+import { ApiArtworkDocumentationDownloadResponse } from '@/api/generated/models/ApiArtworkDocumentationDownloadResponse';
+import { ApiArtworkDocumentationEmptyResponse } from '@/api/generated/models/ApiArtworkDocumentationEmptyResponse';
+import { ApiArtworkDocumentationGrantRequest } from '@/api/generated/models/ApiArtworkDocumentationGrantRequest';
+import { ApiArtworkDocumentationGrantsResponse } from '@/api/generated/models/ApiArtworkDocumentationGrantsResponse';
+import { ApiArtworkDocumentationIdBody } from '@/api/generated/models/ApiArtworkDocumentationIdBody';
+import { ApiArtworkDocumentationLifecycleRequest } from '@/api/generated/models/ApiArtworkDocumentationLifecycleRequest';
+import { ApiArtworkDocumentationPatchModule } from '@/api/generated/models/ApiArtworkDocumentationPatchModule';
+import { ApiArtworkDocumentationPatchThread } from '@/api/generated/models/ApiArtworkDocumentationPatchThread';
+import { ApiArtworkDocumentationProfilesResponse } from '@/api/generated/models/ApiArtworkDocumentationProfilesResponse';
+import { ApiArtworkDocumentationPublicPreview } from '@/api/generated/models/ApiArtworkDocumentationPublicPreview';
+import { ApiArtworkDocumentationReview } from '@/api/generated/models/ApiArtworkDocumentationReview';
+import { ApiArtworkDocumentationReviewRequest } from '@/api/generated/models/ApiArtworkDocumentationReviewRequest';
+import { ApiArtworkDocumentationRevision } from '@/api/generated/models/ApiArtworkDocumentationRevision';
+import { ApiArtworkDocumentationRevisionListResponse } from '@/api/generated/models/ApiArtworkDocumentationRevisionListResponse';
+import { ApiArtworkDocumentationSignedPartsResponse } from '@/api/generated/models/ApiArtworkDocumentationSignedPartsResponse';
+import { ApiArtworkDocumentationSignPartsRequest } from '@/api/generated/models/ApiArtworkDocumentationSignPartsRequest';
+import { ApiArtworkDocumentationSourceImportPreview } from '@/api/generated/models/ApiArtworkDocumentationSourceImportPreview';
+import { ApiArtworkDocumentationSourceImportRequest } from '@/api/generated/models/ApiArtworkDocumentationSourceImportRequest';
+import { ApiArtworkDocumentationSourceLinkRequest } from '@/api/generated/models/ApiArtworkDocumentationSourceLinkRequest';
+import { ApiArtworkDocumentationStartUpload } from '@/api/generated/models/ApiArtworkDocumentationStartUpload';
+import { ApiArtworkDocumentationThread } from '@/api/generated/models/ApiArtworkDocumentationThread';
+import { ApiArtworkDocumentationThreadsResponse } from '@/api/generated/models/ApiArtworkDocumentationThreadsResponse';
+import { ApiArtworkDocumentationUpgradePreview } from '@/api/generated/models/ApiArtworkDocumentationUpgradePreview';
+import { ApiArtworkDocumentationUpgradeRequest } from '@/api/generated/models/ApiArtworkDocumentationUpgradeRequest';
+import { ApiArtworkDocumentationUploadSession } from '@/api/generated/models/ApiArtworkDocumentationUploadSession';
+import { ApiArtworkDocumentationWork } from '@/api/generated/models/ApiArtworkDocumentationWork';
+import { ApiCollectAnalysis } from '@/api/generated/models/ApiCollectAnalysis';
+import { ApiCollectAnalysisRequest } from '@/api/generated/models/ApiCollectAnalysisRequest';
+import { ApiCollectAssetsPage } from '@/api/generated/models/ApiCollectAssetsPage';
+import { ApiCollectCapabilities } from '@/api/generated/models/ApiCollectCapabilities';
+import { ApiCollectCatalog } from '@/api/generated/models/ApiCollectCatalog';
+import { ApiCollectOfferAnalysis } from '@/api/generated/models/ApiCollectOfferAnalysis';
+import { ApiCollectOfferAnalysisRequest } from '@/api/generated/models/ApiCollectOfferAnalysisRequest';
+import { ApiCollectPlan } from '@/api/generated/models/ApiCollectPlan';
+import { ApiCollectPlanRequest } from '@/api/generated/models/ApiCollectPlanRequest';
+import { ApiCollectRule } from '@/api/generated/models/ApiCollectRule';
+import { ApiCollectRuleDefinition } from '@/api/generated/models/ApiCollectRuleDefinition';
+import { ApiCollectRulePause } from '@/api/generated/models/ApiCollectRulePause';
+import { ApiCollectRulePrepare } from '@/api/generated/models/ApiCollectRulePrepare';
+import { ApiCollectRulePrepared } from '@/api/generated/models/ApiCollectRulePrepared';
+import { ApiCollectRules } from '@/api/generated/models/ApiCollectRules';
+import { ApiCollectTdhListings } from '@/api/generated/models/ApiCollectTdhListings';
+import { ApiCollectTdhProjection } from '@/api/generated/models/ApiCollectTdhProjection';
+import { ApiCollectTdhRanking } from '@/api/generated/models/ApiCollectTdhRanking';
+import { ApiCollectTdhRankingRequest } from '@/api/generated/models/ApiCollectTdhRankingRequest';
+import { ApiCollectTdhRequest } from '@/api/generated/models/ApiCollectTdhRequest';
+import { ApiCollectTdhTargetPlan } from '@/api/generated/models/ApiCollectTdhTargetPlan';
+import { ApiCollectTdhTargetRequest } from '@/api/generated/models/ApiCollectTdhTargetRequest';
+import { ApiCommunityMembersPage } from '@/api/generated/models/ApiCommunityMembersPage';
 import { ApiCompetition } from '@/api/generated/models/ApiCompetition';
 import { ApiCompetitionConfigVersionPage } from '@/api/generated/models/ApiCompetitionConfigVersionPage';
 import { ApiCompetitionDecisionPage } from '@/api/generated/models/ApiCompetitionDecisionPage';
@@ -14,9 +74,17 @@ import { ApiCompetitionOutcomePage } from '@/api/generated/models/ApiCompetition
 import { ApiCompetitionPage } from '@/api/generated/models/ApiCompetitionPage';
 import { ApiCompetitionPausePage } from '@/api/generated/models/ApiCompetitionPausePage';
 import { ApiCompetitionVoterPage } from '@/api/generated/models/ApiCompetitionVoterPage';
+import { ApiContentModerationBlockActivityItem } from '@/api/generated/models/ApiContentModerationBlockActivityItem';
+import { ApiContentModerationProfileStatusResponse } from '@/api/generated/models/ApiContentModerationProfileStatusResponse';
+import { ApiCreatedProfileCmsAgentGrant } from '@/api/generated/models/ApiCreatedProfileCmsAgentGrant';
+import { ApiCreateProfileCmsAgentGrantRequest } from '@/api/generated/models/ApiCreateProfileCmsAgentGrantRequest';
 import { ApiCreateProfileCmsWalletGallerySnapshotRequest } from '@/api/generated/models/ApiCreateProfileCmsWalletGallerySnapshotRequest';
 import { ApiCreateWaveMetadataRequest } from '@/api/generated/models/ApiCreateWaveMetadataRequest';
+import { ApiDeleteEulaConsentRequest } from '@/api/generated/models/ApiDeleteEulaConsentRequest';
+import { ApiDeleteEulaConsentResponse } from '@/api/generated/models/ApiDeleteEulaConsentResponse';
+import { ApiDeleteMyWaveChatHistoryResponse } from '@/api/generated/models/ApiDeleteMyWaveChatHistoryResponse';
 import { ApiDmDropsUnreadCount } from '@/api/generated/models/ApiDmDropsUnreadCount';
+import { ApiDmUnreadSnapshot } from '@/api/generated/models/ApiDmUnreadSnapshot';
 import { ApiDropAndWave } from '@/api/generated/models/ApiDropAndWave';
 import { ApiDropBoostV2 } from '@/api/generated/models/ApiDropBoostV2';
 import { ApiDropMetadataV2 } from '@/api/generated/models/ApiDropMetadataV2';
@@ -31,6 +99,8 @@ import { ApiDropV2Page } from '@/api/generated/models/ApiDropV2Page';
 import { ApiDropV2PageWithoutCount } from '@/api/generated/models/ApiDropV2PageWithoutCount';
 import { ApiDropVoteEditLog } from '@/api/generated/models/ApiDropVoteEditLog';
 import { ApiDropVotersPage } from '@/api/generated/models/ApiDropVotersPage';
+import { ApiDropVoteSummary } from '@/api/generated/models/ApiDropVoteSummary';
+import { ApiEulaConsent } from '@/api/generated/models/ApiEulaConsent';
 import { ApiGlobalRepCategoryGiversPage } from '@/api/generated/models/ApiGlobalRepCategoryGiversPage';
 import { ApiGlobalRepCategoryOverview } from '@/api/generated/models/ApiGlobalRepCategoryOverview';
 import { ApiGlobalRepCategoryRatingsPage } from '@/api/generated/models/ApiGlobalRepCategoryRatingsPage';
@@ -38,32 +108,991 @@ import { ApiGlobalRepCategoryRecipientsPage } from '@/api/generated/models/ApiGl
 import { ApiGlobalRepCategoryWaveContributorsPage } from '@/api/generated/models/ApiGlobalRepCategoryWaveContributorsPage';
 import { ApiGlobalRepCategoryWaveOverview } from '@/api/generated/models/ApiGlobalRepCategoryWaveOverview';
 import { ApiGlobalRepCategoryWavesPage } from '@/api/generated/models/ApiGlobalRepCategoryWavesPage';
+import { ApiGroupMembersPreviewRequest } from '@/api/generated/models/ApiGroupMembersPreviewRequest';
+import { ApiMarketBatchCapabilities } from '@/api/generated/models/ApiMarketBatchCapabilities';
+import { ApiMarketDepth } from '@/api/generated/models/ApiMarketDepth';
+import { ApiMarketListings } from '@/api/generated/models/ApiMarketListings';
+import { ApiMarketMyOperations } from '@/api/generated/models/ApiMarketMyOperations';
+import { ApiMarketOperationPrepareRequest } from '@/api/generated/models/ApiMarketOperationPrepareRequest';
+import { ApiMarketOperationResult } from '@/api/generated/models/ApiMarketOperationResult';
+import { ApiMarketOrders } from '@/api/generated/models/ApiMarketOrders';
+import { ApiMarketSendAttemptRejection } from '@/api/generated/models/ApiMarketSendAttemptRejection';
+import { ApiMarketSendAttemptRequest } from '@/api/generated/models/ApiMarketSendAttemptRequest';
+import { ApiMarketSignature } from '@/api/generated/models/ApiMarketSignature';
+import { ApiMarketSubmission } from '@/api/generated/models/ApiMarketSubmission';
+import { ApiMarketTradeOrder } from '@/api/generated/models/ApiMarketTradeOrder';
 import { ApiMediaResolveRequest } from '@/api/generated/models/ApiMediaResolveRequest';
 import { ApiMediaResolveResponse } from '@/api/generated/models/ApiMediaResolveResponse';
 import { ApiMemeCardDropMapping } from '@/api/generated/models/ApiMemeCardDropMapping';
+import { ApiNftActivityPage } from '@/api/generated/models/ApiNftActivityPage';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
 import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
+import { ApiProfileCmsAgentCandidateValidation } from '@/api/generated/models/ApiProfileCmsAgentCandidateValidation';
+import { ApiProfileCmsAgentDraft } from '@/api/generated/models/ApiProfileCmsAgentDraft';
+import { ApiProfileCmsAgentGrant } from '@/api/generated/models/ApiProfileCmsAgentGrant';
 import { ApiProfileCmsAgentPatchValidationResult } from '@/api/generated/models/ApiProfileCmsAgentPatchValidationResult';
+import { ApiProfileCmsAgentProposal } from '@/api/generated/models/ApiProfileCmsAgentProposal';
+import { ApiProfileCmsAgentProposalSummary } from '@/api/generated/models/ApiProfileCmsAgentProposalSummary';
 import { ApiProfileCmsAgentSchemaBundle } from '@/api/generated/models/ApiProfileCmsAgentSchemaBundle';
 import { ApiProfileCmsAgentSourcePacket } from '@/api/generated/models/ApiProfileCmsAgentSourcePacket';
 import { ApiProfileCmsPackage } from '@/api/generated/models/ApiProfileCmsPackage';
 import { ApiProfileCmsPackageExport } from '@/api/generated/models/ApiProfileCmsPackageExport';
+import { ApiProfileCmsPackageStorageUploadResult } from '@/api/generated/models/ApiProfileCmsPackageStorageUploadResult';
 import { ApiProfileCmsPrimaryPackage } from '@/api/generated/models/ApiProfileCmsPrimaryPackage';
 import { ApiProfileCmsValidationResult } from '@/api/generated/models/ApiProfileCmsValidationResult';
 import { ApiProfileCmsWalletGallerySnapshot } from '@/api/generated/models/ApiProfileCmsWalletGallerySnapshot';
+import { ApiProfilePreferences } from '@/api/generated/models/ApiProfilePreferences';
+import { ApiProfileWaveActivityPage } from '@/api/generated/models/ApiProfileWaveActivityPage';
 import { ApiPublishProfileCmsPackageRequest } from '@/api/generated/models/ApiPublishProfileCmsPackageRequest';
+import { ApiReviewProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiReviewProfileCmsAgentProposalRequest';
 import { ApiRollbackProfileCmsPackageRequest } from '@/api/generated/models/ApiRollbackProfileCmsPackageRequest';
+import { ApiSaveEulaConsentRequest } from '@/api/generated/models/ApiSaveEulaConsentRequest';
+import { ApiSaveEulaConsentResponse } from '@/api/generated/models/ApiSaveEulaConsentResponse';
 import { ApiSaveProfileCmsPackageDraftRequest } from '@/api/generated/models/ApiSaveProfileCmsPackageDraftRequest';
+import { ApiSubmitProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiSubmitProfileCmsAgentProposalRequest';
 import { ApiSubscriptionCoverage } from '@/api/generated/models/ApiSubscriptionCoverage';
+import { ApiTdhRules } from '@/api/generated/models/ApiTdhRules';
+import { ApiUnpublishProfileCmsPackageRequest } from '@/api/generated/models/ApiUnpublishProfileCmsPackageRequest';
+import { ApiUpdateProfilePreferences } from '@/api/generated/models/ApiUpdateProfilePreferences';
+import { ApiValidateProfileCmsAgentCandidateRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentCandidateRequest';
 import { ApiValidateProfileCmsAgentPatchRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentPatchRequest';
 import { ApiValidateProfileCmsPackageRequest } from '@/api/generated/models/ApiValidateProfileCmsPackageRequest';
+import { ApiWalletDistributionAllocations } from '@/api/generated/models/ApiWalletDistributionAllocations';
 import { ApiWaveDecisionsPageV2 } from '@/api/generated/models/ApiWaveDecisionsPageV2';
 import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
+import { ApiWaveGroupValidationRequest } from '@/api/generated/models/ApiWaveGroupValidationRequest';
+import { ApiWaveGroupValidationResponse } from '@/api/generated/models/ApiWaveGroupValidationResponse';
 import { ApiWaveMentionSearchResult } from '@/api/generated/models/ApiWaveMentionSearchResult';
 import { ApiWaveMetadata } from '@/api/generated/models/ApiWaveMetadata';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
+import { ApiWaveSearchAuthor } from '@/api/generated/models/ApiWaveSearchAuthor';
 import { ApiWaveV3 } from '@/api/generated/models/ApiWaveV3';
+
+export interface ArtworkDocumentationGetDocumentationContextPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationGetDocumentationContextQuery = Record<string, never>;
+
+export type ArtworkDocumentationGetDocumentationContextResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationGetDocumentationContextRequest = Request<
+  ArtworkDocumentationGetDocumentationContextPathParams,
+  ApiResponse<ArtworkDocumentationGetDocumentationContextResponse>,
+  never,
+  ArtworkDocumentationGetDocumentationContextQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationPatchDocumentationContextPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationPatchDocumentationContextQuery = Record<string, never>;
+
+export type ArtworkDocumentationPatchDocumentationContextResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationPatchDocumentationContextRequest = Request<
+  ArtworkDocumentationPatchDocumentationContextPathParams,
+  ApiResponse<ArtworkDocumentationPatchDocumentationContextResponse>,
+  ApiArtworkDocumentationLifecycleRequest,
+  ArtworkDocumentationPatchDocumentationContextQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationPinDocumentationArtistPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationPinDocumentationArtistQuery = Record<string, never>;
+
+export type ArtworkDocumentationPinDocumentationArtistResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationPinDocumentationArtistRequest = Request<
+  ArtworkDocumentationPinDocumentationArtistPathParams,
+  ApiResponse<ArtworkDocumentationPinDocumentationArtistResponse>,
+  ApiArtworkDocumentationIdBody,
+  ArtworkDocumentationPinDocumentationArtistQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationLinkDocumentationAssetPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationLinkDocumentationAssetQuery = Record<string, never>;
+
+export type ArtworkDocumentationLinkDocumentationAssetResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationLinkDocumentationAssetRequest = Request<
+  ArtworkDocumentationLinkDocumentationAssetPathParams,
+  ApiResponse<ArtworkDocumentationLinkDocumentationAssetResponse>,
+  ApiArtworkDocumentationAssetLinkRequest,
+  ArtworkDocumentationLinkDocumentationAssetQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationUnlinkDocumentationAssetPathParams {
+  "id": string;
+  "linkId": string;
+}
+
+export type ArtworkDocumentationUnlinkDocumentationAssetQuery = Record<string, never>;
+
+export type ArtworkDocumentationUnlinkDocumentationAssetResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationUnlinkDocumentationAssetRequest = Request<
+  ArtworkDocumentationUnlinkDocumentationAssetPathParams,
+  ApiResponse<ArtworkDocumentationUnlinkDocumentationAssetResponse>,
+  never,
+  ArtworkDocumentationUnlinkDocumentationAssetQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationPatchDocumentationAssetLinkPathParams {
+  "id": string;
+  "linkId": string;
+}
+
+export type ArtworkDocumentationPatchDocumentationAssetLinkQuery = Record<string, never>;
+
+export type ArtworkDocumentationPatchDocumentationAssetLinkResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationPatchDocumentationAssetLinkRequest = Request<
+  ArtworkDocumentationPatchDocumentationAssetLinkPathParams,
+  ApiResponse<ArtworkDocumentationPatchDocumentationAssetLinkResponse>,
+  ApiArtworkDocumentationAssetLinkRequest,
+  ArtworkDocumentationPatchDocumentationAssetLinkQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationDownloadDocumentationAssetPathParams {
+  "id": string;
+  "assetId": string;
+}
+
+export type ArtworkDocumentationDownloadDocumentationAssetQuery = Record<string, never>;
+
+export type ArtworkDocumentationDownloadDocumentationAssetResponse = ApiArtworkDocumentationDownloadResponse;
+
+export type ArtworkDocumentationDownloadDocumentationAssetRequest = Request<
+  ArtworkDocumentationDownloadDocumentationAssetPathParams,
+  ApiResponse<ArtworkDocumentationDownloadDocumentationAssetResponse>,
+  ApiArtworkDocumentationDownloadRequest,
+  ArtworkDocumentationDownloadDocumentationAssetQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationStartDocumentationUploadPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationStartDocumentationUploadQuery = Record<string, never>;
+
+export type ArtworkDocumentationStartDocumentationUploadResponse = ApiArtworkDocumentationUploadSession;
+
+export type ArtworkDocumentationStartDocumentationUploadRequest = Request<
+  ArtworkDocumentationStartDocumentationUploadPathParams,
+  ApiResponse<ArtworkDocumentationStartDocumentationUploadResponse>,
+  ApiArtworkDocumentationStartUpload,
+  ArtworkDocumentationStartDocumentationUploadQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationCancelDocumentationUploadPathParams {
+  "id": string;
+  "uploadId": string;
+}
+
+export type ArtworkDocumentationCancelDocumentationUploadQuery = Record<string, never>;
+
+export type ArtworkDocumentationCancelDocumentationUploadResponse = ApiArtworkDocumentationEmptyResponse;
+
+export type ArtworkDocumentationCancelDocumentationUploadRequest = Request<
+  ArtworkDocumentationCancelDocumentationUploadPathParams,
+  ApiResponse<ArtworkDocumentationCancelDocumentationUploadResponse>,
+  never,
+  ArtworkDocumentationCancelDocumentationUploadQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationGetDocumentationUploadPathParams {
+  "id": string;
+  "uploadId": string;
+}
+
+export type ArtworkDocumentationGetDocumentationUploadQuery = Record<string, never>;
+
+export type ArtworkDocumentationGetDocumentationUploadResponse = ApiArtworkDocumentationUploadSession;
+
+export type ArtworkDocumentationGetDocumentationUploadRequest = Request<
+  ArtworkDocumentationGetDocumentationUploadPathParams,
+  ApiResponse<ArtworkDocumentationGetDocumentationUploadResponse>,
+  never,
+  ArtworkDocumentationGetDocumentationUploadQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationCompleteDocumentationUploadPathParams {
+  "id": string;
+  "uploadId": string;
+}
+
+export type ArtworkDocumentationCompleteDocumentationUploadQuery = Record<string, never>;
+
+export type ArtworkDocumentationCompleteDocumentationUploadResponse = ApiArtworkDocumentationAssetResponse;
+
+export type ArtworkDocumentationCompleteDocumentationUploadRequest = Request<
+  ArtworkDocumentationCompleteDocumentationUploadPathParams,
+  ApiResponse<ArtworkDocumentationCompleteDocumentationUploadResponse>,
+  ApiArtworkDocumentationCompleteUpload,
+  ArtworkDocumentationCompleteDocumentationUploadQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationSignDocumentationPartsPathParams {
+  "id": string;
+  "uploadId": string;
+}
+
+export type ArtworkDocumentationSignDocumentationPartsQuery = Record<string, never>;
+
+export type ArtworkDocumentationSignDocumentationPartsResponse = ApiArtworkDocumentationSignedPartsResponse;
+
+export type ArtworkDocumentationSignDocumentationPartsRequest = Request<
+  ArtworkDocumentationSignDocumentationPartsPathParams,
+  ApiResponse<ArtworkDocumentationSignDocumentationPartsResponse>,
+  ApiArtworkDocumentationSignPartsRequest,
+  ArtworkDocumentationSignDocumentationPartsQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationConfirmDocumentationPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationConfirmDocumentationQuery = Record<string, never>;
+
+export type ArtworkDocumentationConfirmDocumentationResponse = ApiArtworkDocumentationRevision;
+
+export type ArtworkDocumentationConfirmDocumentationRequest = Request<
+  ArtworkDocumentationConfirmDocumentationPathParams,
+  ApiResponse<ArtworkDocumentationConfirmDocumentationResponse>,
+  ApiArtworkDocumentationConfirmRequest,
+  ArtworkDocumentationConfirmDocumentationQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationListDocumentationGrantsPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationListDocumentationGrantsQuery = Record<string, never>;
+
+export type ArtworkDocumentationListDocumentationGrantsResponse = ApiArtworkDocumentationGrantsResponse;
+
+export type ArtworkDocumentationListDocumentationGrantsRequest = Request<
+  ArtworkDocumentationListDocumentationGrantsPathParams,
+  ApiResponse<ArtworkDocumentationListDocumentationGrantsResponse>,
+  never,
+  ArtworkDocumentationListDocumentationGrantsQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationGrantDocumentationAccessPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationGrantDocumentationAccessQuery = Record<string, never>;
+
+export type ArtworkDocumentationGrantDocumentationAccessResponse = ApiArtworkDocumentationGrantsResponse;
+
+export type ArtworkDocumentationGrantDocumentationAccessRequest = Request<
+  ArtworkDocumentationGrantDocumentationAccessPathParams,
+  ApiResponse<ArtworkDocumentationGrantDocumentationAccessResponse>,
+  ApiArtworkDocumentationGrantRequest,
+  ArtworkDocumentationGrantDocumentationAccessQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationRevokeDocumentationAccessPathParams {
+  "id": string;
+  "grantId": string;
+}
+
+export type ArtworkDocumentationRevokeDocumentationAccessQuery = Record<string, never>;
+
+export type ArtworkDocumentationRevokeDocumentationAccessResponse = ApiArtworkDocumentationGrantsResponse;
+
+export type ArtworkDocumentationRevokeDocumentationAccessRequest = Request<
+  ArtworkDocumentationRevokeDocumentationAccessPathParams,
+  ApiResponse<ArtworkDocumentationRevokeDocumentationAccessResponse>,
+  never,
+  ArtworkDocumentationRevokeDocumentationAccessQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationPatchDocumentationModulePathParams {
+  "id": string;
+  "moduleId": string;
+}
+
+export type ArtworkDocumentationPatchDocumentationModuleQuery = Record<string, never>;
+
+export type ArtworkDocumentationPatchDocumentationModuleResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationPatchDocumentationModuleRequest = Request<
+  ArtworkDocumentationPatchDocumentationModulePathParams,
+  ApiResponse<ArtworkDocumentationPatchDocumentationModuleResponse>,
+  ApiArtworkDocumentationPatchModule,
+  ArtworkDocumentationPatchDocumentationModuleQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationUpgradeDocumentationProfilePathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationUpgradeDocumentationProfileQuery = Record<string, never>;
+
+export type ArtworkDocumentationUpgradeDocumentationProfileResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationUpgradeDocumentationProfileRequest = Request<
+  ArtworkDocumentationUpgradeDocumentationProfilePathParams,
+  ApiResponse<ArtworkDocumentationUpgradeDocumentationProfileResponse>,
+  ApiArtworkDocumentationUpgradeRequest,
+  ArtworkDocumentationUpgradeDocumentationProfileQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationPreviewDocumentationUpgradePathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationPreviewDocumentationUpgradeQuery = Record<string, never>;
+
+export type ArtworkDocumentationPreviewDocumentationUpgradeResponse = ApiArtworkDocumentationUpgradePreview;
+
+export type ArtworkDocumentationPreviewDocumentationUpgradeRequest = Request<
+  ArtworkDocumentationPreviewDocumentationUpgradePathParams,
+  ApiResponse<ArtworkDocumentationPreviewDocumentationUpgradeResponse>,
+  ApiArtworkDocumentationUpgradeRequest,
+  ArtworkDocumentationPreviewDocumentationUpgradeQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationGetDocumentationPublicPreviewPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationGetDocumentationPublicPreviewQuery = Record<string, never>;
+
+export type ArtworkDocumentationGetDocumentationPublicPreviewResponse = ApiArtworkDocumentationPublicPreview;
+
+export type ArtworkDocumentationGetDocumentationPublicPreviewRequest = Request<
+  ArtworkDocumentationGetDocumentationPublicPreviewPathParams,
+  ApiResponse<ArtworkDocumentationGetDocumentationPublicPreviewResponse>,
+  never,
+  ArtworkDocumentationGetDocumentationPublicPreviewQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationListDocumentationRevisionsPathParams {
+  "id": string;
+}
+
+export interface ArtworkDocumentationListDocumentationRevisionsQuery {
+  "cursor"?: string;
+  "limit"?: number;
+}
+
+export type ArtworkDocumentationListDocumentationRevisionsResponse = ApiArtworkDocumentationRevisionListResponse;
+
+export type ArtworkDocumentationListDocumentationRevisionsRequest = Request<
+  ArtworkDocumentationListDocumentationRevisionsPathParams,
+  ApiResponse<ArtworkDocumentationListDocumentationRevisionsResponse>,
+  never,
+  ArtworkDocumentationListDocumentationRevisionsQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationGetDocumentationRevisionPathParams {
+  "id": string;
+  "revisionId": string;
+}
+
+export type ArtworkDocumentationGetDocumentationRevisionQuery = Record<string, never>;
+
+export type ArtworkDocumentationGetDocumentationRevisionResponse = ApiArtworkDocumentationRevision;
+
+export type ArtworkDocumentationGetDocumentationRevisionRequest = Request<
+  ArtworkDocumentationGetDocumentationRevisionPathParams,
+  ApiResponse<ArtworkDocumentationGetDocumentationRevisionResponse>,
+  never,
+  ArtworkDocumentationGetDocumentationRevisionQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationReviewDocumentationPathParams {
+  "id": string;
+  "revisionId": string;
+  "lane": string;
+}
+
+export type ArtworkDocumentationReviewDocumentationQuery = Record<string, never>;
+
+export type ArtworkDocumentationReviewDocumentationResponse = ApiArtworkDocumentationReview;
+
+export type ArtworkDocumentationReviewDocumentationRequest = Request<
+  ArtworkDocumentationReviewDocumentationPathParams,
+  ApiResponse<ArtworkDocumentationReviewDocumentationResponse>,
+  ApiArtworkDocumentationReviewRequest,
+  ArtworkDocumentationReviewDocumentationQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationImportDocumentationSourcePathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationImportDocumentationSourceQuery = Record<string, never>;
+
+export type ArtworkDocumentationImportDocumentationSourceResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationImportDocumentationSourceRequest = Request<
+  ArtworkDocumentationImportDocumentationSourcePathParams,
+  ApiResponse<ArtworkDocumentationImportDocumentationSourceResponse>,
+  ApiArtworkDocumentationSourceImportRequest,
+  ArtworkDocumentationImportDocumentationSourceQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationPreviewDocumentationSourcePathParams {
+  "id": string;
+  "receiptId": string;
+}
+
+export type ArtworkDocumentationPreviewDocumentationSourceQuery = Record<string, never>;
+
+export type ArtworkDocumentationPreviewDocumentationSourceResponse = ApiArtworkDocumentationSourceImportPreview;
+
+export type ArtworkDocumentationPreviewDocumentationSourceRequest = Request<
+  ArtworkDocumentationPreviewDocumentationSourcePathParams,
+  ApiResponse<ArtworkDocumentationPreviewDocumentationSourceResponse>,
+  never,
+  ArtworkDocumentationPreviewDocumentationSourceQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationLinkDocumentationSourcePathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationLinkDocumentationSourceQuery = Record<string, never>;
+
+export type ArtworkDocumentationLinkDocumentationSourceResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationLinkDocumentationSourceRequest = Request<
+  ArtworkDocumentationLinkDocumentationSourcePathParams,
+  ApiResponse<ArtworkDocumentationLinkDocumentationSourceResponse>,
+  ApiArtworkDocumentationSourceLinkRequest,
+  ArtworkDocumentationLinkDocumentationSourceQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationListDocumentationThreadsPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationListDocumentationThreadsQuery = Record<string, never>;
+
+export type ArtworkDocumentationListDocumentationThreadsResponse = ApiArtworkDocumentationThreadsResponse;
+
+export type ArtworkDocumentationListDocumentationThreadsRequest = Request<
+  ArtworkDocumentationListDocumentationThreadsPathParams,
+  ApiResponse<ArtworkDocumentationListDocumentationThreadsResponse>,
+  never,
+  ArtworkDocumentationListDocumentationThreadsQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationCreateDocumentationThreadPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationCreateDocumentationThreadQuery = Record<string, never>;
+
+export type ArtworkDocumentationCreateDocumentationThreadResponse = ApiArtworkDocumentationThread;
+
+export type ArtworkDocumentationCreateDocumentationThreadRequest = Request<
+  ArtworkDocumentationCreateDocumentationThreadPathParams,
+  ApiResponse<ArtworkDocumentationCreateDocumentationThreadResponse>,
+  ApiArtworkDocumentationCreateThread,
+  ArtworkDocumentationCreateDocumentationThreadQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationPatchDocumentationThreadPathParams {
+  "id": string;
+  "threadId": string;
+}
+
+export type ArtworkDocumentationPatchDocumentationThreadQuery = Record<string, never>;
+
+export type ArtworkDocumentationPatchDocumentationThreadResponse = ApiArtworkDocumentationThread;
+
+export type ArtworkDocumentationPatchDocumentationThreadRequest = Request<
+  ArtworkDocumentationPatchDocumentationThreadPathParams,
+  ApiResponse<ArtworkDocumentationPatchDocumentationThreadResponse>,
+  ApiArtworkDocumentationPatchThread,
+  ArtworkDocumentationPatchDocumentationThreadQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationCommentDocumentationThreadPathParams {
+  "id": string;
+  "threadId": string;
+}
+
+export type ArtworkDocumentationCommentDocumentationThreadQuery = Record<string, never>;
+
+export type ArtworkDocumentationCommentDocumentationThreadResponse = ApiArtworkDocumentationThread;
+
+export type ArtworkDocumentationCommentDocumentationThreadRequest = Request<
+  ArtworkDocumentationCommentDocumentationThreadPathParams,
+  ApiResponse<ArtworkDocumentationCommentDocumentationThreadResponse>,
+  ApiArtworkDocumentationCommentRequest,
+  ArtworkDocumentationCommentDocumentationThreadQuery,
+  Record<string, never>
+>;
+
+export type ArtworkDocumentationGetDocumentationProfilesPathParams = Record<string, never>;
+
+export type ArtworkDocumentationGetDocumentationProfilesQuery = Record<string, never>;
+
+export type ArtworkDocumentationGetDocumentationProfilesResponse = ApiArtworkDocumentationProfilesResponse;
+
+export type ArtworkDocumentationGetDocumentationProfilesRequest = Request<
+  ArtworkDocumentationGetDocumentationProfilesPathParams,
+  ApiResponse<ArtworkDocumentationGetDocumentationProfilesResponse>,
+  never,
+  ArtworkDocumentationGetDocumentationProfilesQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationListDocumentationProgramPathParams {
+  "programId": string;
+}
+
+export interface ArtworkDocumentationListDocumentationProgramQuery {
+  "cursor"?: string;
+  "limit"?: number;
+  "confirmation_status"?: "unconfirmed" | "current" | "newer_draft";
+  "review_lane"?: "curatorial" | "technical" | "rights";
+  "outstanding_action"?: "artist_confirmation" | "review" | "changes_requested";
+  "profile_id"?: string;
+  "profile_version"?: number;
+}
+
+export type ArtworkDocumentationListDocumentationProgramResponse = ApiArtworkDocumentationContextListResponse;
+
+export type ArtworkDocumentationListDocumentationProgramRequest = Request<
+  ArtworkDocumentationListDocumentationProgramPathParams,
+  ApiResponse<ArtworkDocumentationListDocumentationProgramResponse>,
+  never,
+  ArtworkDocumentationListDocumentationProgramQuery,
+  Record<string, never>
+>;
+
+export type ArtworkDocumentationListDocumentationWorksPathParams = Record<string, never>;
+
+export interface ArtworkDocumentationListDocumentationWorksQuery {
+  "cursor"?: string;
+  "limit"?: number;
+}
+
+export type ArtworkDocumentationListDocumentationWorksResponse = ApiArtworkDocumentationContextListResponse;
+
+export type ArtworkDocumentationListDocumentationWorksRequest = Request<
+  ArtworkDocumentationListDocumentationWorksPathParams,
+  ApiResponse<ArtworkDocumentationListDocumentationWorksResponse>,
+  never,
+  ArtworkDocumentationListDocumentationWorksQuery,
+  Record<string, never>
+>;
+
+export type ArtworkDocumentationCreateDocumentationWorkPathParams = Record<string, never>;
+
+export type ArtworkDocumentationCreateDocumentationWorkQuery = Record<string, never>;
+
+export type ArtworkDocumentationCreateDocumentationWorkResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationCreateDocumentationWorkRequest = Request<
+  ArtworkDocumentationCreateDocumentationWorkPathParams,
+  ApiResponse<ArtworkDocumentationCreateDocumentationWorkResponse>,
+  ApiArtworkDocumentationCreateWork,
+  ArtworkDocumentationCreateDocumentationWorkQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationGetDocumentationWorkPathParams {
+  "workId": string;
+}
+
+export type ArtworkDocumentationGetDocumentationWorkQuery = Record<string, never>;
+
+export type ArtworkDocumentationGetDocumentationWorkResponse = ApiArtworkDocumentationWork;
+
+export type ArtworkDocumentationGetDocumentationWorkRequest = Request<
+  ArtworkDocumentationGetDocumentationWorkPathParams,
+  ApiResponse<ArtworkDocumentationGetDocumentationWorkResponse>,
+  never,
+  ArtworkDocumentationGetDocumentationWorkQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationCreateDocumentationContextPathParams {
+  "workId": string;
+}
+
+export type ArtworkDocumentationCreateDocumentationContextQuery = Record<string, never>;
+
+export type ArtworkDocumentationCreateDocumentationContextResponse = ApiArtworkDocumentationContext;
+
+export type ArtworkDocumentationCreateDocumentationContextRequest = Request<
+  ArtworkDocumentationCreateDocumentationContextPathParams,
+  ApiResponse<ArtworkDocumentationCreateDocumentationContextResponse>,
+  ApiArtworkDocumentationCreateContext,
+  ArtworkDocumentationCreateDocumentationContextQuery,
+  Record<string, never>
+>;
+
+export type AnalyzeCollectGoalPathParams = Record<string, never>;
+
+export type AnalyzeCollectGoalQuery = Record<string, never>;
+
+export type AnalyzeCollectGoalResponse = ApiCollectAnalysis;
+
+export type AnalyzeCollectGoalRequest = Request<
+  AnalyzeCollectGoalPathParams,
+  ApiResponse<AnalyzeCollectGoalResponse>,
+  ApiCollectAnalysisRequest,
+  AnalyzeCollectGoalQuery,
+  Record<string, never>
+>;
+
+export type GetCollectAssetsPathParams = Record<string, never>;
+
+export interface GetCollectAssetsQuery {
+  "family"?: string;
+  "query"?: string;
+  "page"?: number;
+  "page_size"?: number;
+}
+
+export type GetCollectAssetsResponse = ApiCollectAssetsPage;
+
+export type GetCollectAssetsRequest = Request<
+  GetCollectAssetsPathParams,
+  ApiResponse<GetCollectAssetsResponse>,
+  never,
+  GetCollectAssetsQuery,
+  Record<string, never>
+>;
+
+export type GetCollectCapabilitiesPathParams = Record<string, never>;
+
+export type GetCollectCapabilitiesQuery = Record<string, never>;
+
+export type GetCollectCapabilitiesResponse = ApiCollectCapabilities;
+
+export type GetCollectCapabilitiesRequest = Request<
+  GetCollectCapabilitiesPathParams,
+  ApiResponse<GetCollectCapabilitiesResponse>,
+  never,
+  GetCollectCapabilitiesQuery,
+  Record<string, never>
+>;
+
+export type GetCollectCatalogPathParams = Record<string, never>;
+
+export type GetCollectCatalogQuery = Record<string, never>;
+
+export type GetCollectCatalogResponse = ApiCollectCatalog;
+
+export type GetCollectCatalogRequest = Request<
+  GetCollectCatalogPathParams,
+  ApiResponse<GetCollectCatalogResponse>,
+  never,
+  GetCollectCatalogQuery,
+  Record<string, never>
+>;
+
+export type AnalyzeCollectOffersPathParams = Record<string, never>;
+
+export type AnalyzeCollectOffersQuery = Record<string, never>;
+
+export type AnalyzeCollectOffersResponse = ApiCollectOfferAnalysis;
+
+export type AnalyzeCollectOffersRequest = Request<
+  AnalyzeCollectOffersPathParams,
+  ApiResponse<AnalyzeCollectOffersResponse>,
+  ApiCollectOfferAnalysisRequest,
+  AnalyzeCollectOffersQuery,
+  Record<string, never>
+>;
+
+export type CreateCollectPlanPathParams = Record<string, never>;
+
+export type CreateCollectPlanQuery = Record<string, never>;
+
+export type CreateCollectPlanResponse = ApiCollectPlan;
+
+export type CreateCollectPlanRequest = Request<
+  CreateCollectPlanPathParams,
+  ApiResponse<CreateCollectPlanResponse>,
+  ApiCollectPlanRequest,
+  CreateCollectPlanQuery,
+  Record<string, never>
+>;
+
+export interface GetCollectPlanPathParams {
+  "id": string;
+}
+
+export type GetCollectPlanQuery = Record<string, never>;
+
+export type GetCollectPlanResponse = ApiCollectPlan;
+
+export type GetCollectPlanRequest = Request<
+  GetCollectPlanPathParams,
+  ApiResponse<GetCollectPlanResponse>,
+  never,
+  GetCollectPlanQuery,
+  Record<string, never>
+>;
+
+export interface AdvanceCollectPlanPathParams {
+  "id": string;
+}
+
+export type AdvanceCollectPlanQuery = Record<string, never>;
+
+export type AdvanceCollectPlanResponse = ApiCollectPlan;
+
+export type AdvanceCollectPlanRequest = Request<
+  AdvanceCollectPlanPathParams,
+  ApiResponse<AdvanceCollectPlanResponse>,
+  never,
+  AdvanceCollectPlanQuery,
+  Record<string, never>
+>;
+
+export type GetCollectRulesPathParams = Record<string, never>;
+
+export type GetCollectRulesQuery = Record<string, never>;
+
+export type GetCollectRulesResponse = ApiCollectRules;
+
+export type GetCollectRulesRequest = Request<
+  GetCollectRulesPathParams,
+  ApiResponse<GetCollectRulesResponse>,
+  never,
+  GetCollectRulesQuery,
+  Record<string, never>
+>;
+
+export type CreateCollectRulePathParams = Record<string, never>;
+
+export type CreateCollectRuleQuery = Record<string, never>;
+
+export type CreateCollectRuleResponse = ApiCollectRule;
+
+export type CreateCollectRuleRequest = Request<
+  CreateCollectRulePathParams,
+  ApiResponse<CreateCollectRuleResponse>,
+  ApiCollectRuleDefinition,
+  CreateCollectRuleQuery,
+  Record<string, never>
+>;
+
+export interface GetCollectRulePathParams {
+  "id": string;
+}
+
+export type GetCollectRuleQuery = Record<string, never>;
+
+export type GetCollectRuleResponse = ApiCollectRule;
+
+export type GetCollectRuleRequest = Request<
+  GetCollectRulePathParams,
+  ApiResponse<GetCollectRuleResponse>,
+  never,
+  GetCollectRuleQuery,
+  Record<string, never>
+>;
+
+export interface PauseCollectRulePathParams {
+  "id": string;
+}
+
+export type PauseCollectRuleQuery = Record<string, never>;
+
+export type PauseCollectRuleResponse = ApiCollectRule;
+
+export type PauseCollectRuleRequest = Request<
+  PauseCollectRulePathParams,
+  ApiResponse<PauseCollectRuleResponse>,
+  ApiCollectRulePause,
+  PauseCollectRuleQuery,
+  Record<string, never>
+>;
+
+export interface PrepareCollectRulePathParams {
+  "id": string;
+}
+
+export type PrepareCollectRuleQuery = Record<string, never>;
+
+export type PrepareCollectRuleResponse = ApiCollectRulePrepared;
+
+export type PrepareCollectRuleRequest = Request<
+  PrepareCollectRulePathParams,
+  ApiResponse<PrepareCollectRuleResponse>,
+  ApiCollectRulePrepare,
+  PrepareCollectRuleQuery,
+  Record<string, never>
+>;
+
+export interface ReconcileCollectRulePathParams {
+  "id": string;
+}
+
+export type ReconcileCollectRuleQuery = Record<string, never>;
+
+export type ReconcileCollectRuleResponse = ApiCollectRule;
+
+export type ReconcileCollectRuleRequest = Request<
+  ReconcileCollectRulePathParams,
+  ApiResponse<ReconcileCollectRuleResponse>,
+  never,
+  ReconcileCollectRuleQuery,
+  Record<string, never>
+>;
+
+export type GetCollectTdhListingsPathParams = Record<string, never>;
+
+export interface GetCollectTdhListingsQuery {
+  "family"?: string;
+  "cursor"?: string;
+  "limit"?: number;
+}
+
+export type GetCollectTdhListingsResponse = ApiCollectTdhListings;
+
+export type GetCollectTdhListingsRequest = Request<
+  GetCollectTdhListingsPathParams,
+  ApiResponse<GetCollectTdhListingsResponse>,
+  never,
+  GetCollectTdhListingsQuery,
+  Record<string, never>
+>;
+
+export type RankCollectTdhPurchasesPathParams = Record<string, never>;
+
+export type RankCollectTdhPurchasesQuery = Record<string, never>;
+
+export type RankCollectTdhPurchasesResponse = ApiCollectTdhRanking;
+
+export type RankCollectTdhPurchasesRequest = Request<
+  RankCollectTdhPurchasesPathParams,
+  ApiResponse<RankCollectTdhPurchasesResponse>,
+  ApiCollectTdhRankingRequest,
+  RankCollectTdhPurchasesQuery,
+  Record<string, never>
+>;
+
+export type ProjectCollectPurchasesPathParams = Record<string, never>;
+
+export type ProjectCollectPurchasesQuery = Record<string, never>;
+
+export type ProjectCollectPurchasesResponse = ApiCollectTdhProjection;
+
+export type ProjectCollectPurchasesRequest = Request<
+  ProjectCollectPurchasesPathParams,
+  ApiResponse<ProjectCollectPurchasesResponse>,
+  ApiCollectTdhRequest,
+  ProjectCollectPurchasesQuery,
+  Record<string, never>
+>;
+
+export type CreateCollectTdhTargetPlanPathParams = Record<string, never>;
+
+export type CreateCollectTdhTargetPlanQuery = Record<string, never>;
+
+export type CreateCollectTdhTargetPlanResponse = ApiCollectTdhTargetPlan;
+
+export type CreateCollectTdhTargetPlanRequest = Request<
+  CreateCollectTdhTargetPlanPathParams,
+  ApiResponse<CreateCollectTdhTargetPlanResponse>,
+  ApiCollectTdhTargetRequest,
+  CreateCollectTdhTargetPlanQuery,
+  Record<string, never>
+>;
+
+export type GetContentModerationBlockActivityPathParams = Record<string, never>;
+
+export interface GetContentModerationBlockActivityQuery {
+  "include_unblocks"?: boolean;
+  "limit"?: number;
+  "before"?: string;
+}
+
+export type GetContentModerationBlockActivityResponse = ApiContentModerationBlockActivityItem[];
+
+export type GetContentModerationBlockActivityRequest = Request<
+  GetContentModerationBlockActivityPathParams,
+  ApiResponse<GetContentModerationBlockActivityResponse>,
+  never,
+  GetContentModerationBlockActivityQuery,
+  Record<string, never>
+>;
+
+export interface GetPublicContentModerationProfileStatusPathParams {
+  "profile_id": string;
+}
+
+export type GetPublicContentModerationProfileStatusQuery = Record<string, never>;
+
+export type GetPublicContentModerationProfileStatusResponse = ApiContentModerationProfileStatusResponse;
+
+export type GetPublicContentModerationProfileStatusRequest = Request<
+  GetPublicContentModerationProfileStatusPathParams,
+  ApiResponse<GetPublicContentModerationProfileStatusResponse>,
+  never,
+  GetPublicContentModerationProfileStatusQuery,
+  Record<string, never>
+>;
+
+export interface GetWalletDistributionAllocationsPathParams {
+  "contract": string;
+  "card_id": number;
+}
+
+export interface GetWalletDistributionAllocationsQuery {
+  "wallet": string;
+}
+
+export type GetWalletDistributionAllocationsResponse = ApiWalletDistributionAllocations;
+
+export type GetWalletDistributionAllocationsRequest = Request<
+  GetWalletDistributionAllocationsPathParams,
+  ApiResponse<GetWalletDistributionAllocationsResponse>,
+  never,
+  GetWalletDistributionAllocationsQuery,
+  Record<string, never>
+>;
 
 export type GetDmDropsUnreadPathParams = Record<string, never>;
 
@@ -76,6 +1105,257 @@ export type GetDmDropsUnreadRequest = Request<
   ApiResponse<GetDmDropsUnreadResponse>,
   never,
   GetDmDropsUnreadQuery,
+  Record<string, never>
+>;
+
+export type GetDmUnreadSnapshotPathParams = Record<string, never>;
+
+export type GetDmUnreadSnapshotQuery = Record<string, never>;
+
+export type GetDmUnreadSnapshotResponse = ApiDmUnreadSnapshot;
+
+export type GetDmUnreadSnapshotRequest = Request<
+  GetDmUnreadSnapshotPathParams,
+  ApiResponse<GetDmUnreadSnapshotResponse>,
+  never,
+  GetDmUnreadSnapshotQuery,
+  Record<string, never>
+>;
+
+export type PreviewGroupMembersPathParams = Record<string, never>;
+
+export interface PreviewGroupMembersQuery {
+  "page_size"?: number;
+  "page"?: number;
+  "sort_direction"?: "ASC" | "DESC";
+  "sort"?: string;
+  "param"?: string;
+}
+
+export type PreviewGroupMembersResponse = ApiCommunityMembersPage;
+
+export type PreviewGroupMembersRequest = Request<
+  PreviewGroupMembersPathParams,
+  ApiResponse<PreviewGroupMembersResponse>,
+  ApiGroupMembersPreviewRequest,
+  PreviewGroupMembersQuery,
+  Record<string, never>
+>;
+
+export interface GetNftMarketDepthPathParams {
+  "contract": string;
+  "token_id": string;
+}
+
+export interface GetNftMarketDepthQuery {
+  "page_size"?: number;
+  "cursor"?: string;
+}
+
+export type GetNftMarketDepthResponse = ApiMarketDepth;
+
+export type GetNftMarketDepthRequest = Request<
+  GetNftMarketDepthPathParams,
+  ApiResponse<GetNftMarketDepthResponse>,
+  never,
+  GetNftMarketDepthQuery,
+  Record<string, never>
+>;
+
+export type GetMarketBatchCapabilitiesPathParams = Record<string, never>;
+
+export type GetMarketBatchCapabilitiesQuery = Record<string, never>;
+
+export type GetMarketBatchCapabilitiesResponse = ApiMarketBatchCapabilities;
+
+export type GetMarketBatchCapabilitiesRequest = Request<
+  GetMarketBatchCapabilitiesPathParams,
+  ApiResponse<GetMarketBatchCapabilitiesResponse>,
+  never,
+  GetMarketBatchCapabilitiesQuery,
+  Record<string, never>
+>;
+
+export type GetMarketListingsPathParams = Record<string, never>;
+
+export interface GetMarketListingsQuery {
+  "family": string;
+  "cursor"?: string;
+  "limit"?: number;
+}
+
+export type GetMarketListingsResponse = ApiMarketListings;
+
+export type GetMarketListingsRequest = Request<
+  GetMarketListingsPathParams,
+  ApiResponse<GetMarketListingsResponse>,
+  never,
+  GetMarketListingsQuery,
+  Record<string, never>
+>;
+
+export type GetMyMarketOperationsPathParams = Record<string, never>;
+
+export interface GetMyMarketOperationsQuery {
+  "cursor"?: string;
+  "limit"?: number;
+  "include_batches"?: boolean;
+}
+
+export type GetMyMarketOperationsResponse = ApiMarketMyOperations;
+
+export type GetMyMarketOperationsRequest = Request<
+  GetMyMarketOperationsPathParams,
+  ApiResponse<GetMyMarketOperationsResponse>,
+  never,
+  GetMyMarketOperationsQuery,
+  Record<string, never>
+>;
+
+export type PrepareMarketOperationPathParams = Record<string, never>;
+
+export type PrepareMarketOperationQuery = Record<string, never>;
+
+export type PrepareMarketOperationResponse = ApiMarketOperationResult;
+
+export type PrepareMarketOperationRequest = Request<
+  PrepareMarketOperationPathParams,
+  ApiResponse<PrepareMarketOperationResponse>,
+  ApiMarketOperationPrepareRequest,
+  PrepareMarketOperationQuery,
+  Record<string, never>
+>;
+
+export interface GetMarketOperationPathParams {
+  "id": string;
+}
+
+export type GetMarketOperationQuery = Record<string, never>;
+
+export type GetMarketOperationResponse = ApiMarketOperationResult;
+
+export type GetMarketOperationRequest = Request<
+  GetMarketOperationPathParams,
+  ApiResponse<GetMarketOperationResponse>,
+  never,
+  GetMarketOperationQuery,
+  Record<string, never>
+>;
+
+export interface ContinueMarketOperationPathParams {
+  "id": string;
+}
+
+export type ContinueMarketOperationQuery = Record<string, never>;
+
+export type ContinueMarketOperationResponse = ApiMarketOperationResult;
+
+export type ContinueMarketOperationRequest = Request<
+  ContinueMarketOperationPathParams,
+  ApiResponse<ContinueMarketOperationResponse>,
+  never,
+  ContinueMarketOperationQuery,
+  Record<string, never>
+>;
+
+export interface BeginMarketTransactionAttemptPathParams {
+  "id": string;
+}
+
+export type BeginMarketTransactionAttemptQuery = Record<string, never>;
+
+export type BeginMarketTransactionAttemptResponse = ApiMarketOperationResult;
+
+export type BeginMarketTransactionAttemptRequest = Request<
+  BeginMarketTransactionAttemptPathParams,
+  ApiResponse<BeginMarketTransactionAttemptResponse>,
+  ApiMarketSendAttemptRequest,
+  BeginMarketTransactionAttemptQuery,
+  Record<string, never>
+>;
+
+export interface RejectMarketTransactionAttemptPathParams {
+  "id": string;
+}
+
+export type RejectMarketTransactionAttemptQuery = Record<string, never>;
+
+export type RejectMarketTransactionAttemptResponse = ApiMarketOperationResult;
+
+export type RejectMarketTransactionAttemptRequest = Request<
+  RejectMarketTransactionAttemptPathParams,
+  ApiResponse<RejectMarketTransactionAttemptResponse>,
+  ApiMarketSendAttemptRejection,
+  RejectMarketTransactionAttemptQuery,
+  Record<string, never>
+>;
+
+export interface PublishMarketOperationPathParams {
+  "id": string;
+}
+
+export type PublishMarketOperationQuery = Record<string, never>;
+
+export type PublishMarketOperationResponse = ApiMarketOperationResult;
+
+export type PublishMarketOperationRequest = Request<
+  PublishMarketOperationPathParams,
+  ApiResponse<PublishMarketOperationResponse>,
+  ApiMarketSignature,
+  PublishMarketOperationQuery,
+  Record<string, never>
+>;
+
+export interface SubmitMarketOperationPathParams {
+  "id": string;
+}
+
+export type SubmitMarketOperationQuery = Record<string, never>;
+
+export type SubmitMarketOperationResponse = ApiMarketOperationResult;
+
+export type SubmitMarketOperationRequest = Request<
+  SubmitMarketOperationPathParams,
+  ApiResponse<SubmitMarketOperationResponse>,
+  ApiMarketSubmission,
+  SubmitMarketOperationQuery,
+  Record<string, never>
+>;
+
+export type GetMarketOrdersPathParams = Record<string, never>;
+
+export interface GetMarketOrdersQuery {
+  "asset_key": string;
+  "side": "LISTING" | "OFFER";
+}
+
+export type GetMarketOrdersResponse = ApiMarketOrders;
+
+export type GetMarketOrdersRequest = Request<
+  GetMarketOrdersPathParams,
+  ApiResponse<GetMarketOrdersResponse>,
+  never,
+  GetMarketOrdersQuery,
+  Record<string, never>
+>;
+
+export interface GetMarketOrderPathParams {
+  "order_hash": string;
+}
+
+export interface GetMarketOrderQuery {
+  "asset_key": string;
+  "protocol_address": string;
+  "side": "LISTING" | "OFFER";
+}
+
+export type GetMarketOrderResponse = ApiMarketTradeOrder;
+
+export type GetMarketOrderRequest = Request<
+  GetMarketOrderPathParams,
+  ApiResponse<GetMarketOrderResponse>,
+  never,
+  GetMarketOrderQuery,
   Record<string, never>
 >;
 
@@ -106,6 +1386,27 @@ export type GetMemeCardDropMappingRequest = Request<
   ApiResponse<GetMemeCardDropMappingResponse>,
   never,
   GetMemeCardDropMappingQuery,
+  Record<string, never>
+>;
+
+export type GetNftMarketActivityPathParams = Record<string, never>;
+
+export interface GetNftMarketActivityQuery {
+  "contract"?: string;
+  "token_id"?: string;
+  "wallet"?: string;
+  "filter"?: "all" | "sales" | "purchases" | "mints" | "airdrops" | "transfers" | "burns" | "listings" | "offers" | "cancellations" | "expirations" | "invalidations" | "revalidations";
+  "page_size"?: number;
+  "cursor"?: string;
+}
+
+export type GetNftMarketActivityResponse = ApiNftActivityPage;
+
+export type GetNftMarketActivityRequest = Request<
+  GetNftMarketActivityPathParams,
+  ApiResponse<GetNftMarketActivityResponse>,
+  never,
+  GetNftMarketActivityQuery,
   Record<string, never>
 >;
 
@@ -157,6 +1458,50 @@ export type GetOgMetadataWaveRequest = Request<
   Record<string, never>
 >;
 
+export type DeleteEulaConsentPathParams = Record<string, never>;
+
+export type DeleteEulaConsentQuery = Record<string, never>;
+
+export type DeleteEulaConsentResponse = ApiDeleteEulaConsentResponse;
+
+export type DeleteEulaConsentRequest = Request<
+  DeleteEulaConsentPathParams,
+  ApiResponse<DeleteEulaConsentResponse>,
+  ApiDeleteEulaConsentRequest,
+  DeleteEulaConsentQuery,
+  Record<string, never>
+>;
+
+export type SaveEulaConsentPathParams = Record<string, never>;
+
+export type SaveEulaConsentQuery = Record<string, never>;
+
+export type SaveEulaConsentResponse = ApiSaveEulaConsentResponse;
+
+export type SaveEulaConsentRequest = Request<
+  SaveEulaConsentPathParams,
+  ApiResponse<SaveEulaConsentResponse>,
+  ApiSaveEulaConsentRequest,
+  SaveEulaConsentQuery,
+  Record<string, never>
+>;
+
+export interface GetEulaConsentPathParams {
+  "deviceId": string;
+}
+
+export type GetEulaConsentQuery = Record<string, never>;
+
+export type GetEulaConsentResponse = ApiEulaConsent;
+
+export type GetEulaConsentRequest = Request<
+  GetEulaConsentPathParams,
+  ApiResponse<GetEulaConsentResponse>,
+  never,
+  GetEulaConsentQuery,
+  Record<string, never>
+>;
+
 export interface GetPrimaryProfileCmsPackagePathParams {
   "handle": string;
 }
@@ -170,6 +1515,112 @@ export type GetPrimaryProfileCmsPackageRequest = Request<
   ApiResponse<GetPrimaryProfileCmsPackageResponse>,
   never,
   GetPrimaryProfileCmsPackageQuery,
+  Record<string, never>
+>;
+
+export interface RevokeProfileCmsAgentGrantPathParams {
+  "id": string;
+}
+
+export type RevokeProfileCmsAgentGrantQuery = Record<string, never>;
+
+export type RevokeProfileCmsAgentGrantResponse = ApiProfileCmsAgentGrant;
+
+export type RevokeProfileCmsAgentGrantRequest = Request<
+  RevokeProfileCmsAgentGrantPathParams,
+  ApiResponse<RevokeProfileCmsAgentGrantResponse>,
+  never,
+  RevokeProfileCmsAgentGrantQuery,
+  Record<string, never>
+>;
+
+export interface GetOwnerProfileCmsAgentProposalPathParams {
+  "id": string;
+}
+
+export type GetOwnerProfileCmsAgentProposalQuery = Record<string, never>;
+
+export type GetOwnerProfileCmsAgentProposalResponse = ApiProfileCmsAgentProposal;
+
+export type GetOwnerProfileCmsAgentProposalRequest = Request<
+  GetOwnerProfileCmsAgentProposalPathParams,
+  ApiResponse<GetOwnerProfileCmsAgentProposalResponse>,
+  never,
+  GetOwnerProfileCmsAgentProposalQuery,
+  Record<string, never>
+>;
+
+export interface ReviewProfileCmsAgentProposalPathParams {
+  "id": string;
+}
+
+export type ReviewProfileCmsAgentProposalQuery = Record<string, never>;
+
+export type ReviewProfileCmsAgentProposalResponse = ApiProfileCmsAgentProposal;
+
+export type ReviewProfileCmsAgentProposalRequest = Request<
+  ReviewProfileCmsAgentProposalPathParams,
+  ApiResponse<ReviewProfileCmsAgentProposalResponse>,
+  ApiReviewProfileCmsAgentProposalRequest,
+  ReviewProfileCmsAgentProposalQuery,
+  Record<string, never>
+>;
+
+export type GetProfileCmsAgentDraftPathParams = Record<string, never>;
+
+export type GetProfileCmsAgentDraftQuery = Record<string, never>;
+
+export type GetProfileCmsAgentDraftResponse = ApiProfileCmsAgentDraft;
+
+export type GetProfileCmsAgentDraftRequest = Request<
+  GetProfileCmsAgentDraftPathParams,
+  ApiResponse<GetProfileCmsAgentDraftResponse>,
+  never,
+  GetProfileCmsAgentDraftQuery,
+  Record<string, never>
+>;
+
+export type SubmitProfileCmsAgentProposalPathParams = Record<string, never>;
+
+export type SubmitProfileCmsAgentProposalQuery = Record<string, never>;
+
+export type SubmitProfileCmsAgentProposalResponse = ApiProfileCmsAgentProposal;
+
+export type SubmitProfileCmsAgentProposalRequest = Request<
+  SubmitProfileCmsAgentProposalPathParams,
+  ApiResponse<SubmitProfileCmsAgentProposalResponse>,
+  ApiSubmitProfileCmsAgentProposalRequest,
+  SubmitProfileCmsAgentProposalQuery,
+  Record<string, never>
+>;
+
+export interface GetProfileCmsAgentProposalPathParams {
+  "id": string;
+}
+
+export type GetProfileCmsAgentProposalQuery = Record<string, never>;
+
+export type GetProfileCmsAgentProposalResponse = ApiProfileCmsAgentProposal;
+
+export type GetProfileCmsAgentProposalRequest = Request<
+  GetProfileCmsAgentProposalPathParams,
+  ApiResponse<GetProfileCmsAgentProposalResponse>,
+  never,
+  GetProfileCmsAgentProposalQuery,
+  Record<string, never>
+>;
+
+export type ValidateProfileCmsAgentCandidatePathParams = Record<string, never>;
+
+export type ValidateProfileCmsAgentCandidateQuery = Record<string, never>;
+
+export type ValidateProfileCmsAgentCandidateResponse = ApiProfileCmsAgentCandidateValidation;
+
+export type ValidateProfileCmsAgentCandidateRequest = Request<
+  ValidateProfileCmsAgentCandidatePathParams,
+  ApiResponse<ValidateProfileCmsAgentCandidateResponse>,
+  ApiValidateProfileCmsAgentCandidateRequest,
+  ValidateProfileCmsAgentCandidateQuery,
   Record<string, never>
 >;
 
@@ -214,6 +1665,60 @@ export type GetProfileCmsPackageByIdRequest = Request<
   ApiResponse<GetProfileCmsPackageByIdResponse>,
   never,
   GetProfileCmsPackageByIdQuery,
+  Record<string, never>
+>;
+
+export interface ListProfileCmsAgentGrantsPathParams {
+  "id": string;
+}
+
+export interface ListProfileCmsAgentGrantsQuery {
+  "offset"?: number;
+  "limit"?: number;
+}
+
+export type ListProfileCmsAgentGrantsResponse = ApiProfileCmsAgentGrant[];
+
+export type ListProfileCmsAgentGrantsRequest = Request<
+  ListProfileCmsAgentGrantsPathParams,
+  ApiResponse<ListProfileCmsAgentGrantsResponse>,
+  never,
+  ListProfileCmsAgentGrantsQuery,
+  Record<string, never>
+>;
+
+export interface CreateProfileCmsAgentGrantPathParams {
+  "id": string;
+}
+
+export type CreateProfileCmsAgentGrantQuery = Record<string, never>;
+
+export type CreateProfileCmsAgentGrantResponse = ApiCreatedProfileCmsAgentGrant;
+
+export type CreateProfileCmsAgentGrantRequest = Request<
+  CreateProfileCmsAgentGrantPathParams,
+  ApiResponse<CreateProfileCmsAgentGrantResponse>,
+  ApiCreateProfileCmsAgentGrantRequest,
+  CreateProfileCmsAgentGrantQuery,
+  Record<string, never>
+>;
+
+export interface ListProfileCmsAgentProposalsPathParams {
+  "id": string;
+}
+
+export interface ListProfileCmsAgentProposalsQuery {
+  "offset"?: number;
+  "limit"?: number;
+}
+
+export type ListProfileCmsAgentProposalsResponse = ApiProfileCmsAgentProposalSummary[];
+
+export type ListProfileCmsAgentProposalsRequest = Request<
+  ListProfileCmsAgentProposalsPathParams,
+  ApiResponse<ListProfileCmsAgentProposalsResponse>,
+  never,
+  ListProfileCmsAgentProposalsQuery,
   Record<string, never>
 >;
 
@@ -313,6 +1818,38 @@ export type RollbackProfileCmsPackageRequest = Request<
   Record<string, never>
 >;
 
+export interface UploadProfileCmsPackageStoragePathParams {
+  "id": string;
+}
+
+export type UploadProfileCmsPackageStorageQuery = Record<string, never>;
+
+export type UploadProfileCmsPackageStorageResponse = ApiProfileCmsPackageStorageUploadResult;
+
+export type UploadProfileCmsPackageStorageRequest = Request<
+  UploadProfileCmsPackageStoragePathParams,
+  ApiResponse<UploadProfileCmsPackageStorageResponse>,
+  never,
+  UploadProfileCmsPackageStorageQuery,
+  Record<string, never>
+>;
+
+export interface UnpublishProfileCmsPackagePathParams {
+  "id": string;
+}
+
+export type UnpublishProfileCmsPackageQuery = Record<string, never>;
+
+export type UnpublishProfileCmsPackageResponse = ApiProfileCmsPackage;
+
+export type UnpublishProfileCmsPackageRequest = Request<
+  UnpublishProfileCmsPackagePathParams,
+  ApiResponse<UnpublishProfileCmsPackageResponse>,
+  ApiUnpublishProfileCmsPackageRequest,
+  UnpublishProfileCmsPackageQuery,
+  Record<string, never>
+>;
+
 export interface GetProfileCmsPackageByHashPathParams {
   "package_hash": string;
 }
@@ -388,6 +1925,34 @@ export type CreateProfileCmsWalletGallerySnapshotRequest = Request<
   ApiResponse<CreateProfileCmsWalletGallerySnapshotResponse>,
   ApiCreateProfileCmsWalletGallerySnapshotRequest,
   CreateProfileCmsWalletGallerySnapshotQuery,
+  Record<string, never>
+>;
+
+export type GetProfilePreferencesPathParams = Record<string, never>;
+
+export type GetProfilePreferencesQuery = Record<string, never>;
+
+export type GetProfilePreferencesResponse = ApiProfilePreferences;
+
+export type GetProfilePreferencesRequest = Request<
+  GetProfilePreferencesPathParams,
+  ApiResponse<GetProfilePreferencesResponse>,
+  never,
+  GetProfilePreferencesQuery,
+  Record<string, never>
+>;
+
+export type PutProfilePreferencesPathParams = Record<string, never>;
+
+export type PutProfilePreferencesQuery = Record<string, never>;
+
+export type PutProfilePreferencesResponse = ApiProfilePreferences;
+
+export type PutProfilePreferencesRequest = Request<
+  PutProfilePreferencesPathParams,
+  ApiResponse<PutProfilePreferencesResponse>,
+  ApiUpdateProfilePreferences,
+  PutProfilePreferencesQuery,
   Record<string, never>
 >;
 
@@ -544,6 +2109,20 @@ export type GetSubscriptionCoverageRequest = Request<
   ApiResponse<GetSubscriptionCoverageResponse>,
   never,
   GetSubscriptionCoverageQuery,
+  Record<string, never>
+>;
+
+export type GetTdhRulesPathParams = Record<string, never>;
+
+export type GetTdhRulesQuery = Record<string, never>;
+
+export type GetTdhRulesResponse = ApiTdhRules;
+
+export type GetTdhRulesRequest = Request<
+  GetTdhRulesPathParams,
+  ApiResponse<GetTdhRulesResponse>,
+  never,
+  GetTdhRulesQuery,
   Record<string, never>
 >;
 
@@ -743,6 +2322,22 @@ export type GetDropRepliesV2Request = Request<
   ApiResponse<GetDropRepliesV2Response>,
   never,
   GetDropRepliesV2Query,
+  Record<string, never>
+>;
+
+export interface GetDropV2VoteSummaryByIdPathParams {
+  "id": string;
+}
+
+export type GetDropV2VoteSummaryByIdQuery = Record<string, never>;
+
+export type GetDropV2VoteSummaryByIdResponse = ApiDropVoteSummary;
+
+export type GetDropV2VoteSummaryByIdRequest = Request<
+  GetDropV2VoteSummaryByIdPathParams,
+  ApiResponse<GetDropV2VoteSummaryByIdResponse>,
+  never,
+  GetDropV2VoteSummaryByIdQuery,
   Record<string, never>
 >;
 
@@ -1071,12 +2666,34 @@ export type SearchWaveMentionsRequest = Request<
   Record<string, never>
 >;
 
+export interface SearchWaveAuthorsV2PathParams {
+  "waveId": string;
+}
+
+export interface SearchWaveAuthorsV2Query {
+  "handle"?: string;
+  "limit"?: number;
+}
+
+export type SearchWaveAuthorsV2Response = ApiWaveSearchAuthor[];
+
+export type SearchWaveAuthorsV2Request = Request<
+  SearchWaveAuthorsV2PathParams,
+  ApiResponse<SearchWaveAuthorsV2Response>,
+  never,
+  SearchWaveAuthorsV2Query,
+  Record<string, never>
+>;
+
 export interface SearchDropsInWaveV2PathParams {
   "waveId": string;
 }
 
 export interface SearchDropsInWaveV2Query {
-  "term": string;
+  "term"?: string;
+  "author_id"?: string;
+  "after"?: number;
+  "before"?: number;
   "page"?: number;
   "size"?: number;
 }
@@ -1106,6 +2723,26 @@ export type SearchDraftWaveMentionsRequest = Request<
   ApiResponse<SearchDraftWaveMentionsResponse>,
   never,
   SearchDraftWaveMentionsQuery,
+  Record<string, never>
+>;
+
+export interface GetProfileWaveActivityPathParams {
+  "identity": string;
+}
+
+export interface GetProfileWaveActivityQuery {
+  "activity_type": string;
+  "limit"?: number;
+  "cursor"?: string;
+}
+
+export type GetProfileWaveActivityResponse = ApiProfileWaveActivityPage;
+
+export type GetProfileWaveActivityRequest = Request<
+  GetProfileWaveActivityPathParams,
+  ApiResponse<GetProfileWaveActivityResponse>,
+  never,
+  GetProfileWaveActivityQuery,
   Record<string, never>
 >;
 
@@ -1397,6 +3034,36 @@ export type ListCompetitionWinnersV3Request = Request<
   ApiResponse<ListCompetitionWinnersV3Response>,
   never,
   ListCompetitionWinnersV3Query,
+  Record<string, never>
+>;
+
+export type ValidateWaveGroupsPathParams = Record<string, never>;
+
+export type ValidateWaveGroupsQuery = Record<string, never>;
+
+export type ValidateWaveGroupsResponse = ApiWaveGroupValidationResponse;
+
+export type ValidateWaveGroupsRequest = Request<
+  ValidateWaveGroupsPathParams,
+  ApiResponse<ValidateWaveGroupsResponse>,
+  ApiWaveGroupValidationRequest,
+  ValidateWaveGroupsQuery,
+  Record<string, never>
+>;
+
+export interface DeleteMyWaveChatHistoryPathParams {
+  "id": string;
+}
+
+export type DeleteMyWaveChatHistoryQuery = Record<string, never>;
+
+export type DeleteMyWaveChatHistoryResponse = ApiDeleteMyWaveChatHistoryResponse;
+
+export type DeleteMyWaveChatHistoryRequest = Request<
+  DeleteMyWaveChatHistoryPathParams,
+  ApiResponse<DeleteMyWaveChatHistoryResponse>,
+  never,
+  DeleteMyWaveChatHistoryQuery,
   Record<string, never>
 >;
 

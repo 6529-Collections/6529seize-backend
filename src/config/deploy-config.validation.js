@@ -71,16 +71,8 @@ function validateDeployServiceConfig(service, seenNames) {
   }
   if (!DEPLOY_VALIDATION_PROFILES.includes(service.validation_profile))
     throw new Error(`service ${service.name} has invalid validation_profile`);
-  if (!['allowed', 'production-only'].includes(service.staging_policy)) {
-    throw new Error(`service ${service.name} has invalid staging_policy`);
-  }
   if (!Array.isArray(service.default_dependencies)) {
     throw new Error(`service ${service.name} must define default_dependencies`);
-  }
-  if (typeof service.automatic_rollback_supported !== 'boolean') {
-    throw new Error(
-      `service ${service.name} must define automatic_rollback_supported`
-    );
   }
 }
 

@@ -16,6 +16,79 @@ describe('WsConnectionRepository', () => {
     jest.restoreAllMocks();
   });
 
+  it.each([false, true])(
+    'intersects live parent and child websocket recipients (system=%s)',
+    async (system) => {
+      const oneOrNull = jest.fn().mockResolvedValue({
+        visibility_group_id: 'child',
+        parent_wave_id: 'parent',
+        parent_id: 'parent',
+        parent_parent_id: null,
+        parent_group_id: 'parent-group'
+      });
+      const execute = jest
+        .fn()
+        .mockResolvedValueOnce([
+          { connection_id: 'child-only', profile_id: 'a', wave_id: 'wave' },
+          { connection_id: 'both', profile_id: 'b', wave_id: 'wave' }
+        ])
+        .mockResolvedValueOnce([
+          { connection_id: 'both', profile_id: 'b', wave_id: 'wave' },
+          { connection_id: 'parent-only', profile_id: 'c', wave_id: 'wave' }
+        ]);
+      const groupQuery = jest.fn().mockResolvedValue({ sql: '', params: {} });
+      const repo = new WsConnectionRepository(
+        () => ({ oneOrNull, execute }) as never,
+        {
+          getSqlAndParamsByGroupId: groupQuery,
+          getSqlAndParamsByGroupIdForSystemBroadcast: groupQuery
+        } as never
+      );
+      const method = system
+        ? repo.getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast.bind(
+            repo
+          )
+        : repo.getCurrentlyOnlineCommunityMemberConnectionIds.bind(repo);
+      await expect(
+        method({ waveId: 'wave', groupId: null }, {})
+      ).resolves.toEqual([
+        { connectionId: 'both', profileId: 'b', wave_id: 'wave' }
+      ]);
+      expect(groupQuery.mock.calls.map((call) => call[0])).toEqual([
+        'child',
+        'parent-group'
+      ]);
+    }
+  );
+
+  it.each([
+    null,
+    { visibility_group_id: null, parent_wave_id: 'missing', parent_id: null },
+    {
+      visibility_group_id: null,
+      parent_wave_id: 'parent',
+      parent_id: 'parent',
+      parent_parent_id: 'grandparent'
+    }
+  ])(
+    'does not broadcast missing or invalid parent chains: %s',
+    async (wave) => {
+      const execute = jest.fn();
+      const repo = new WsConnectionRepository(
+        () =>
+          ({ oneOrNull: jest.fn().mockResolvedValue(wave), execute }) as never,
+        {} as never
+      );
+      await expect(
+        repo.getCurrentlyOnlineCommunityMemberConnectionIds(
+          { waveId: 'wave', groupId: null },
+          {}
+        )
+      ).resolves.toEqual([]);
+      expect(execute).not.toHaveBeenCalled();
+    }
+  );
+
   it('replaces the notification identities owned by a connection', async () => {
     const execute = jest.fn().mockResolvedValue([]);
     const transactionConnection = { connection: {} };

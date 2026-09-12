@@ -24,6 +24,25 @@ four authenticated operational routes:
 - `/deploy/release-trains`
 - `/deploy/release-trains/:id`
 
+The accepted complete Release Bus removal also retires these three operational
+UI routes. They are excluded from the runtime census while the immutable
+baseline remains unchanged:
+
+- `/deploy/ui/branch-head`
+- `/deploy/ui/bus`
+- `/deploy/ui/bus/app.js`
+
+The ordinary deployment UI and all other mounted GET contracts remain enforced.
+
+## Accepted Alchemy search retirement
+
+The address-only migration in backend PR #1974 retires the deprecated Alchemy
+collection-name search. `/alchemy-proxy/collections` remains mounted but returns
+an uncached HTTP 410 with the legacy `{ error }` payload. The runtime census
+accepts only this route's cache change; its mount/auth checks and all other
+routes remain enforced. The immutable baseline files are unchanged. The Alchemy
+route tests cover the terminal error and absence of upstream/cache middleware.
+
 ## Accepted additive enum extensions
 
 The subscription coverage notification contract adds the

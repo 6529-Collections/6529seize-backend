@@ -55,6 +55,12 @@ describe('DeleteDropUseCase', () => {
     const dropPollsDb = {
       deleteByDropId: jest.fn().mockResolvedValue(undefined)
     };
+    const wavesApiDb = {
+      incrementDmUnreadStateVersionsForWaveReaders: jest
+        .fn()
+        .mockResolvedValue([]),
+      findWaveById: jest.fn().mockResolvedValue(null)
+    };
 
     return {
       useCase: new DeleteDropUseCase(
@@ -65,12 +71,14 @@ describe('DeleteDropUseCase', () => {
         curationsDb as any,
         artCurationTokenWatchService as any,
         attachmentsDb as any,
-        dropPollsDb as any
+        dropPollsDb as any,
+        wavesApiDb as any
       ),
       dropsDb,
       artCurationTokenWatchService,
       attachmentsDb,
-      dropPollsDb
+      dropPollsDb,
+      wavesApiDb
     };
   }
 
@@ -124,7 +132,8 @@ describe('DeleteDropUseCase', () => {
       id: 'drop-1',
       serial_no: 7,
       visibility_group_id: 'group-1',
-      wave_id: 'wave-1'
+      wave_id: 'wave-1',
+      dm_unread_recipient_ids: []
     });
 
     expect(getProfileIdByIdentityKeySpy).not.toHaveBeenCalled();
@@ -184,6 +193,102 @@ describe('DeleteDropUseCase', () => {
         { connection: {} as any }
       )
     ).rejects.toThrow(`deleter_identity is required`);
+  });
+
+  it('increments reader versions when permanently deleting a DM drop', async () => {
+    const connection = {} as any;
+    const { useCase, wavesApiDb } = createUseCase({
+      drop: {
+        id: 'drop-1',
+        wave_id: 'wave-1',
+        serial_no: 7,
+        created_at: 123,
+        author_id: 'drop-author',
+        drop_type: DropType.CHAT
+      },
+      wave: {
+        description_drop_id: 'description-drop',
+        visibility_group_id: null,
+        chat_group_id: 'dm-group',
+        parent_wave_id: null,
+        is_direct_message: true
+      }
+    });
+    jest
+      .spyOn(userGroupsService, 'findIdentitiesInGroups')
+      .mockResolvedValue(['reader-1']);
+    wavesApiDb.incrementDmUnreadStateVersionsForWaveReaders.mockResolvedValue([
+      'reader-1'
+    ]);
+
+    await expect(
+      useCase.execute(
+        {
+          drop_id: 'drop-1',
+          deletion_purpose: 'SYSTEM_DELETE'
+        },
+        { connection }
+      )
+    ).resolves.toMatchObject({
+      dm_unread_recipient_ids: ['reader-1']
+    });
+
+    expect(
+      wavesApiDb.incrementDmUnreadStateVersionsForWaveReaders
+    ).toHaveBeenCalledWith(
+      { waveId: 'wave-1', readerIds: ['reader-1'] },
+      { timer: undefined, connection }
+    );
+  });
+
+  it('excludes readers who no longer satisfy DM and parent visibility', async () => {
+    const connection = {} as any;
+    const { useCase, wavesApiDb } = createUseCase({
+      drop: {
+        id: 'drop-1',
+        wave_id: 'wave-1',
+        serial_no: 7,
+        created_at: 123,
+        author_id: 'drop-author',
+        drop_type: DropType.CHAT
+      },
+      wave: {
+        description_drop_id: 'description-drop',
+        visibility_group_id: 'wave-visible',
+        chat_group_id: 'dm-group',
+        parent_wave_id: 'parent-wave',
+        is_direct_message: true
+      }
+    });
+    wavesApiDb.findWaveById.mockResolvedValue({
+      visibility_group_id: 'parent-visible'
+    });
+    jest
+      .spyOn(userGroupsService, 'findIdentitiesInGroups')
+      .mockImplementation(async ([groupId]) => {
+        if (groupId === 'dm-group') {
+          return ['current-reader', 'former-reader', 'parent-blocked'];
+        }
+        if (groupId === 'wave-visible') {
+          return ['current-reader', 'parent-blocked'];
+        }
+        return ['current-reader'];
+      });
+    wavesApiDb.incrementDmUnreadStateVersionsForWaveReaders.mockResolvedValue([
+      'current-reader'
+    ]);
+
+    await useCase.execute(
+      { drop_id: 'drop-1', deletion_purpose: 'SYSTEM_DELETE' },
+      { connection }
+    );
+
+    expect(
+      wavesApiDb.incrementDmUnreadStateVersionsForWaveReaders
+    ).toHaveBeenCalledWith(
+      { waveId: 'wave-1', readerIds: ['current-reader'] },
+      { timer: undefined, connection }
+    );
   });
 
   it('resolves deleter identity using the caller transaction context', async () => {
@@ -249,7 +354,8 @@ describe('DeleteDropUseCase', () => {
       id: 'drop-1',
       serial_no: 7,
       visibility_group_id: 'group-1',
-      wave_id: 'wave-1'
+      wave_id: 'wave-1',
+      dm_unread_recipient_ids: []
     });
 
     expect(getGroupsUserIsEligibleForSpy).not.toHaveBeenCalled();
@@ -298,7 +404,8 @@ describe('DeleteDropUseCase', () => {
       id: 'drop-1',
       serial_no: 7,
       visibility_group_id: 'group-1',
-      wave_id: 'wave-1'
+      wave_id: 'wave-1',
+      dm_unread_recipient_ids: []
     });
   });
 });

@@ -14,6 +14,7 @@ import { LeaderboardSort } from '@/drops/drops.db';
 import { userNotifier } from '@/notifications/user.notifier';
 import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 import { ApiDrop } from '@/api/generated/models/ApiDrop';
+import { WaveType } from '@/entities/IWave';
 
 afterEach(() => {
   jest.clearAllMocks();
@@ -277,64 +278,74 @@ describe('DropsApiService', () => {
     );
   });
 
-  it('maps leaderboard drops with ApiDropV2 for the V2 leaderboard', async () => {
-    const { service, dropsDb, apiDropMapper, ctx } = createService();
-    const dropEntities = [{ id: 'drop-1' }, { id: 'drop-2' }];
-    dropsDb.countParticipatoryDrops.mockResolvedValue(3);
-    dropsDb.findRealtimeLeaderboardDrops.mockResolvedValue(dropEntities);
-    apiDropMapper.mapDrops.mockResolvedValue({
-      'drop-1': { id: 'drop-1', parts_count: 1 },
-      'drop-2': { id: 'drop-2', parts_count: 1 }
-    });
+  it.each([
+    { waveType: WaveType.APPROVE, includeLargestVote: false },
+    { waveType: WaveType.RANK, includeLargestVote: true }
+  ])(
+    'maps $waveType leaderboard drops with the correct vote enrichment',
+    async ({ waveType, includeLargestVote }) => {
+      const { service, dropsDb, apiDropMapper, ctx } = createService({
+        wave: makeWave({ type: waveType })
+      });
+      const dropEntities = [{ id: 'drop-1' }, { id: 'drop-2' }];
+      dropsDb.countParticipatoryDrops.mockResolvedValue(3);
+      dropsDb.findRealtimeLeaderboardDrops.mockResolvedValue(dropEntities);
+      apiDropMapper.mapDrops.mockResolvedValue({
+        'drop-1': { id: 'drop-1', parts_count: 1 },
+        'drop-2': { id: 'drop-2', parts_count: 1 }
+      });
 
-    const result = await service.findLeaderboardV2(
-      {
-        wave_id: 'wave-1',
-        page_size: 2,
-        page: 1,
-        curation_id: null,
-        unvoted_by_me: false,
-        is_additional_action_promised: true,
-        price_currency: null,
-        min_price: null,
-        max_price: null,
-        sort_direction: PageSortDirection.ASC,
-        sort: LeaderboardSort.RANK
-      },
-      ctx
-    );
+      const result = await service.findLeaderboardV2(
+        {
+          wave_id: 'wave-1',
+          page_size: 2,
+          page: 1,
+          curation_id: null,
+          unvoted_by_me: false,
+          is_additional_action_promised: true,
+          price_currency: null,
+          min_price: null,
+          max_price: null,
+          sort_direction: PageSortDirection.ASC,
+          sort: LeaderboardSort.RANK
+        },
+        ctx
+      );
 
-    expect(dropsDb.findRealtimeLeaderboardDrops).toHaveBeenCalledWith(
-      {
-        wave_id: 'wave-1',
-        limit: 2,
-        offset: 0,
-        sort_order: PageSortDirection.ASC,
-        sort_by_realtime_vote: false,
-        curation_id: null,
-        unvoted_by_me: false,
-        voter_id: 'profile-1',
-        is_additional_action_promised: true,
-        price_currency: null,
-        min_price: null,
-        max_price: null
-      },
-      ctx
-    );
-    expect(apiDropMapper.mapDrops).toHaveBeenCalledWith(dropEntities, ctx);
-    expect(result).toEqual(
-      expect.objectContaining({
-        drops: [
-          { id: 'drop-1', parts_count: 1 },
-          { id: 'drop-2', parts_count: 1 }
-        ],
-        count: 3,
-        page: 1,
-        next: true
-      })
-    );
-    expect(result.wave.id).toBe('wave-1');
-  });
+      expect(dropsDb.findRealtimeLeaderboardDrops).toHaveBeenCalledWith(
+        {
+          wave_id: 'wave-1',
+          limit: 2,
+          offset: 0,
+          sort_order: PageSortDirection.ASC,
+          sort_by_realtime_vote: false,
+          curation_id: null,
+          unvoted_by_me: false,
+          voter_id: 'profile-1',
+          is_additional_action_promised: true,
+          price_currency: null,
+          min_price: null,
+          max_price: null
+        },
+        ctx
+      );
+      expect(apiDropMapper.mapDrops).toHaveBeenCalledWith(dropEntities, ctx, {
+        includeLargestVote
+      });
+      expect(result).toEqual(
+        expect.objectContaining({
+          drops: [
+            { id: 'drop-1', parts_count: 1 },
+            { id: 'drop-2', parts_count: 1 }
+          ],
+          count: 3,
+          page: 1,
+          next: true
+        })
+      );
+      expect(result.wave.id).toBe('wave-1');
+    }
+  );
 
   it('marks realtime leaderboard sorting for non-time-locked waves', async () => {
     const { service, dropsDb, apiDropMapper, ctx } = createService();

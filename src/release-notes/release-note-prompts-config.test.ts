@@ -1,4 +1,5 @@
 import {
+  DESKTOP_RELEASE_NOTES_PROMPT_PATH,
   isAllowedReleaseNotesPrompt,
   RELEASE_NOTES_PROMPT_PATH
 } from './release-note-prompts.config';
@@ -17,6 +18,15 @@ describe('release note prompt configuration', () => {
         RELEASE_NOTES_PROMPT_PATH
       )
     ).toBe(true);
+    expect(
+      isAllowedReleaseNotesPrompt(
+        '6529-Collections/6529-core',
+        DESKTOP_RELEASE_NOTES_PROMPT_PATH
+      )
+    ).toBe(true);
+    expect(
+      isAllowedReleaseNotesPrompt('6529-core', RELEASE_NOTES_PROMPT_PATH)
+    ).toBe(false);
     expect(
       isAllowedReleaseNotesPrompt('other-repo', RELEASE_NOTES_PROMPT_PATH)
     ).toBe(false);

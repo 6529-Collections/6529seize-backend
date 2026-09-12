@@ -90,6 +90,7 @@ export class HelpBotDropWriterService {
             await this.createOrUpdateDrop.execute(model, false, {
               timer: ctx.timer,
               connection,
+              prePublication: { trustedSystem: true },
               bypassChatLinkRestrictions: true,
               bypassChatSlowModeRestrictions: true
             });
