@@ -15,6 +15,7 @@ import {
 } from '@/market-depth/market-depth.types';
 import { normalizeOpenSeaOrder } from '@/market-depth/opensea-normalizer';
 import { collectTdhTargetCandidates } from '@/api/collect/collect-tdh-target-candidates';
+import { CollectingWorkBudget } from '@/collecting/collecting-work-budget';
 
 const now = new Date('2026-09-11T22:00:00Z');
 const maker = '0x1111111111111111111111111111111111111111';
@@ -260,6 +261,39 @@ it('exposes the work deadline instead of reading additional asks indefinitely', 
     listings: [],
     coverage: { index_complete: false, evaluated_ask_count: 0 }
   });
+});
+
+it('shares one monotonic capture window across books and keeps bounded partial coverage', () => {
+  let elapsed = 0;
+  const budget = new CollectingWorkBudget(8000, () => elapsed);
+  const first = order();
+  const original = first.source_data;
+  Object.defineProperty(first, 'source_data', {
+    get: () => {
+      elapsed = 8001;
+      return original;
+    }
+  });
+  const second = order('2');
+  const nextSource = jest.fn(() => second.source_data);
+  const next = { ...second };
+  Object.defineProperty(next, 'source_data', { get: nextSource });
+  const result = collectTdhTargetCandidates(
+    source(),
+    [asset('1'), asset('2')],
+    [{ family: 'memes', books: [book([first]), book([next])] }],
+    now.getTime(),
+    now.getTime() + 20000,
+    budget
+  );
+  expect(result.listings).toHaveLength(1);
+  expect(result.coverage).toMatchObject({
+    index_complete: false,
+    indexed_ask_count: 2,
+    evaluated_ask_count: 1,
+    candidate_count: 1
+  });
+  expect(nextSource).not.toHaveBeenCalled();
 });
 
 it('does not refresh an old row or a long scan merely because snapshot completion is recent', () => {

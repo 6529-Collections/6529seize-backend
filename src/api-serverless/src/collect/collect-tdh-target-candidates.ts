@@ -1,4 +1,5 @@
 import { collectingAssetKey } from '@/collecting/collecting-analysis';
+import { CollectingWorkBudget } from '@/collecting/collecting-work-budget';
 import {
   CollectingAsset,
   CollectingFamily
@@ -131,6 +132,7 @@ interface CandidateCapture {
   observed: number[];
   now: number;
   deadline: number;
+  budget: CollectingWorkBudget;
 }
 
 function captureOrder(
@@ -185,7 +187,8 @@ function captureBook(
   for (const indexed of book.orders) {
     if (
       read >= MAX_MARKET_DEPTH_COLLECTION_ASKS ||
-      Date.now() >= capture.deadline
+      Date.now() >= capture.deadline ||
+      capture.budget.expired()
     ) {
       capture.complete = false;
       break;
@@ -215,7 +218,8 @@ export function collectTdhTargetCandidates(
     books: CurrentMarketDepthSnapshot[];
   }>,
   now: number,
-  deadline: number
+  deadline: number,
+  budget = new CollectingWorkBudget()
 ) {
   const known = new Set(
     source.input.tokens.map((token) =>
@@ -237,7 +241,8 @@ export function collectTdhTargetCandidates(
     complete: groups.length > 0,
     observed: [],
     now,
-    deadline
+    deadline,
+    budget
   };
   for (const group of groups) {
     if (!group.books.length) capture.complete = false;
@@ -245,6 +250,7 @@ export function collectTdhTargetCandidates(
     for (const book of group.books)
       familyRead = captureBook(book, group.family, familyRead, capture);
   }
+  if (Date.now() >= deadline || budget.expired()) capture.complete = false;
   // The retained universe is deterministic. Exclusions never imply complete
   // live market coverage or global optimality.
   const selected = Array.from(capture.listings.values())

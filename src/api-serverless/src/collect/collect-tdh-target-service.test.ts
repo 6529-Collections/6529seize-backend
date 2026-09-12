@@ -15,6 +15,12 @@ import { collectingService } from '@/collecting/collecting.service';
 import { marketDepthApiDb } from '@/api/market-depth/market-depth-api.db';
 import { collectTdhTargetCandidates } from '@/api/collect/collect-tdh-target-candidates';
 import { createCollectTdhTargetPlan } from '@/api/collect/collect-tdh-target.service';
+import * as targetSolver from '@/collecting/collecting-tdh-target';
+import * as tdhProjection from '@/collecting/collecting-tdh-projection';
+import {
+  CollectingWorkBudget,
+  CollectingWorkTimeout
+} from '@/collecting/collecting-work-budget';
 import {
   MARKET_SEAPORT,
   MARKET_ZERO_ADDRESS
@@ -191,6 +197,174 @@ beforeEach(() => {
     .mockReturnValue({ listings: [listing()], coverage });
 });
 afterEach(() => jest.restoreAllMocks());
+
+it('bounds a stalled source read with real timers before starting projection work', async () => {
+  const solver = jest.spyOn(targetSolver, 'createCollectingTdhTargetSolver');
+  const fixture = source();
+  let finish: (value: CollectingTdhSource) => void = () => {};
+  jest.mocked(collectingDb.readTdhProjectionSource).mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve;
+    })
+  );
+  await expect(
+    createCollectTdhTargetPlan(request(), new CollectingWorkBudget(2010))
+  ).rejects.toBeInstanceOf(CollectingWorkTimeout);
+  finish(fixture);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(solver).not.toHaveBeenCalled();
+  expect(collectTdhTargetCandidates).not.toHaveBeenCalled();
+  expect(marketDepthApiDb.getBooks).not.toHaveBeenCalled();
+});
+
+it.each(['source', 'catalog'] as const)(
+  'does not start projection or market parsing after a late %s read',
+  async (kind) => {
+    let elapsed = 0;
+    let finish: () => void = () => {};
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    if (kind === 'source') {
+      jest
+        .mocked(collectingDb.readTdhProjectionSource)
+        .mockImplementationOnce(async () => {
+          await pending;
+          return source();
+        });
+    } else {
+      jest
+        .mocked(collectingService.getCatalog)
+        .mockImplementationOnce(async () => {
+          await pending;
+          return {
+            version: 'late',
+            chain_id: 1,
+            assets: [],
+            seasons: [],
+            artists: [],
+            pebbles_traits: [],
+            tdh_snapshot: null
+          };
+        });
+    }
+    const solver = jest.spyOn(targetSolver, 'createCollectingTdhTargetSolver');
+    const result = createCollectTdhTargetPlan(
+      request(),
+      new CollectingWorkBudget(20000, () => elapsed)
+    );
+    await Promise.resolve();
+    elapsed = 18001;
+    finish();
+    await expect(result).rejects.toBeInstanceOf(CollectingWorkTimeout);
+    expect(solver).not.toHaveBeenCalled();
+    expect(collectTdhTargetCandidates).not.toHaveBeenCalled();
+    expect(marketDepthApiDb.getBooks).not.toHaveBeenCalled();
+  }
+);
+
+it('keeps a verified baseline and honest TIME_LIMIT coverage when market I/O returns too late', async () => {
+  let elapsed = 0;
+  jest.mocked(marketDepthApiDb.getBooks).mockImplementationOnce(async () => {
+    elapsed = 8001;
+    return [];
+  });
+  jest
+    .mocked(collectTdhTargetCandidates)
+    .mockImplementationOnce((_source, _assets, groups) => {
+      expect(groups).toEqual([]);
+      return {
+        listings: [],
+        coverage: {
+          ...coverage,
+          indexed_ask_count: 0,
+          evaluated_ask_count: 0,
+          candidate_count: 0,
+          index_complete: false
+        }
+      };
+    });
+  const result = await createCollectTdhTargetPlan(
+    request(),
+    new CollectingWorkBudget(20000, () => elapsed)
+  );
+  expect(result).toMatchObject({
+    status: 'NOT_FOUND_WITHIN_SEARCH',
+    items: [],
+    purchase_cost_wei: '0',
+    gas_estimate_wei: null,
+    funding_estimate_wei: null,
+    coverage: { index_complete: false, market_complete: false },
+    search: { stop_reason: 'TIME_LIMIT', evaluated_count: 0 }
+  });
+  expect(result.projection.proposed).toEqual(result.projection.baseline);
+  expect(BigInt(result.shortfall_tdh)).toBeGreaterThan(BigInt(0));
+});
+
+it('shares source-read elapsed time with capture and solver instead of restarting either window', async () => {
+  let elapsed = 0;
+  jest
+    .mocked(collectingDb.readTdhProjectionSource)
+    .mockImplementationOnce(async () => {
+      elapsed = 11000;
+      return source();
+    });
+  jest.mocked(marketDepthApiDb.getBooks).mockImplementationOnce(async () => {
+    elapsed = 17000;
+    return [];
+  });
+  jest.mocked(collectTdhTargetCandidates).mockImplementationOnce(() => {
+    elapsed = 18001;
+    return {
+      listings: [listing()],
+      coverage: { ...coverage, index_complete: false }
+    };
+  });
+  const result = await createCollectTdhTargetPlan(
+    request(),
+    new CollectingWorkBudget(20000, () => elapsed)
+  );
+  expect(result).toMatchObject({
+    status: 'NOT_FOUND_WITHIN_SEARCH',
+    items: [],
+    purchase_cost_wei: '0',
+    search: { stop_reason: 'TIME_LIMIT', evaluated_count: 0 }
+  });
+  expect(result.projection.acquisition_timestamp).toBe(
+    new Date(now).toISOString()
+  );
+});
+
+it('returns an exact best-found portfolio at the search limit before the request budget expires', async () => {
+  let elapsed = 0;
+  const budget = new CollectingWorkBudget(20000, () => elapsed);
+  const createProjector = tdhProjection.createCollectingTdhProjector;
+  jest
+    .spyOn(tdhProjection, 'createCollectingTdhProjector')
+    .mockImplementation((input) => {
+      const project = createProjector(input);
+      return (transfers) => {
+        const result = project(transfers);
+        if (transfers.length) elapsed = 18001;
+        return result;
+      };
+    });
+  const result = await createCollectTdhTargetPlan(
+    request({ target_tdh: '61' }),
+    budget
+  );
+  expect(result).toMatchObject({
+    status: 'TARGET_MET_BEST_FOUND',
+    purchase_cost_wei: '100',
+    signed_fees_wei: '5',
+    gas_estimate_wei: null,
+    funding_estimate_wei: null,
+    search: { stop_reason: 'TIME_LIMIT', evaluated_count: 1 }
+  });
+  expect(result.items).toHaveLength(1);
+  expect(result.items[0]).toMatchObject({ recipient: wallet, quantity: '1' });
+  expect(budget.remainingMs()).toBe(1999);
+});
 
 it('returns a profile-bound exact listing portfolio and leaves gas unquoted', async () => {
   const result = await createCollectTdhTargetPlan(

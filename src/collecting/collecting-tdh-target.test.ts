@@ -1,5 +1,7 @@
 import { collectingAssetKey } from '@/collecting/collecting-analysis';
 import { solveCollectingTdhTarget } from '@/collecting/collecting-tdh-target';
+import * as tdhProjection from '@/collecting/collecting-tdh-projection';
+import { CollectingWorkBudget } from '@/collecting/collecting-work-budget';
 import {
   CollectingTdhTargetCandidate,
   CollectingTdhTargetRequest
@@ -122,8 +124,51 @@ function recompute(
   });
 }
 
-beforeEach(() => jest.useFakeTimers().setSystemTime(now));
-afterEach(() => jest.useRealTimers());
+// Keep pool-cleanup callbacks active while the solver sees a fixed deadline clock.
+beforeEach(() => jest.spyOn(Date, 'now').mockReturnValue(now));
+afterEach(() => jest.restoreAllMocks());
+
+it('returns the exact best replay at the monotonic limit with response time reserved', () => {
+  const fixture = source();
+  let elapsed = 0;
+  const budget = new CollectingWorkBudget(20000, () => elapsed);
+  const createProjector = tdhProjection.createCollectingTdhProjector;
+  jest
+    .spyOn(tdhProjection, 'createCollectingTdhProjector')
+    .mockImplementation((input) => {
+      const project = createProjector(input);
+      return (transfers) => {
+        const result = project(transfers);
+        if (transfers.length) elapsed = 18001;
+        return result;
+      };
+    });
+  const result = solveCollectingTdhTarget(
+    fixture,
+    request({ target_tdh: '61' }),
+    [candidate(2)],
+    now,
+    now + 20000,
+    budget.child(20000, 2000)
+  );
+  expect(result).toMatchObject({
+    status: 'TARGET_MET_BEST_FOUND',
+    purchase_cost_wei: '100',
+    signed_fees_wei: '5',
+    search: { stop_reason: 'TIME_LIMIT', evaluated_count: 1 }
+  });
+  expect(result.selected).toEqual([{ candidate: candidate(2), quantity: 1 }]);
+  expect(result.projection).toEqual(recompute(fixture, result));
+  expect(budget.remainingMs()).toBe(1999);
+});
+
+it('does not extend an expired monotonic solver window when the wall clock moves backward', () => {
+  const budget = new CollectingWorkBudget(0);
+  jest.spyOn(Date, 'now').mockReturnValue(now - 60000);
+  expect(() =>
+    solveCollectingTdhTarget(source(), request(), [], now, now + 20000, budget)
+  ).toThrow('work window');
+});
 
 it('uses the future holding-only baseline and spends zero when the total target is already met', () => {
   const fixture = source();
