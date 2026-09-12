@@ -289,6 +289,10 @@ export class WaveDecisionsService {
       const wavePauses = await this.waveDecisionsDb.getWavePauses(waveId, {
         timer
       });
+      const resetVotesAfterWin =
+        await this.waveDecisionsDb.getResetVotesAfterWin(waveId, {
+          timer
+        });
       const remainingSlots =
         firstCandidate.max_winners === null
           ? waveCandidates.length
@@ -351,7 +355,8 @@ export class WaveDecisionsService {
                   }
                 ]
               },
-              { timer, connection }
+              { timer, connection },
+              resetVotesAfterWin
             );
             claimBuildDropId = decisionResult.claimBuildDropId;
             pendingPushNotificationIds =
@@ -379,6 +384,18 @@ export class WaveDecisionsService {
         }
         winnersProcessed++;
         nextDecisionTime++;
+
+        // Sequential APPROVE: if reset_votes_after_win triggered a reset
+        // during formalization, the remaining candidates' vote state has
+        // been cleared. Their pre-reset vote counts are now stale, so we
+        // must stop processing this batch — the next createApproveDecisions
+        // cycle will re-fetch candidates with fresh vote counts.
+        if (decisionResult.didReset) {
+          this.logger.info(
+            `Stopping APPROVE winner formalization for wave ${waveId} after reset_votes_after_win reset`
+          );
+          break;
+        }
       }
     }
   }
@@ -521,7 +538,7 @@ export class WaveDecisionsService {
       { waveId, n, time_lock_ms, decision_time: Time.millis(decisionTime) },
       ctx
     );
-    const result = await this.formalizeDecision(
+    const { didReset, ...result } = await this.formalizeDecision(
       {
         decisionTime,
         waveId,
@@ -531,6 +548,7 @@ export class WaveDecisionsService {
       },
       ctx
     );
+    void didReset;
     ctx?.timer?.stop(`${this.constructor.name}->createDecision`);
     return result;
   }
@@ -549,11 +567,13 @@ export class WaveDecisionsService {
       outcomes: WaveOutcome[];
       time_lock_ms: number | null;
     },
-    ctx: RequestContext
+    ctx: RequestContext,
+    resetVotesAfterWin: boolean = false
   ): Promise<{
     claimBuildDropId: string | null;
     pendingPushNotificationIds: number[];
     dirtyWaveIds: string[];
+    didReset: boolean;
   }> {
     await this.waveDecisionsDb.insertDecision(
       {
@@ -635,6 +655,22 @@ export class WaveDecisionsService {
     await this.waveDecisionsDb.deleteDropsRanks(winnerDropIds, ctx);
     await this.dropsDb.resyncParticipatoryDropCountsForWaves([waveId], ctx);
     await this.dropVotingDb.deleteStaleLeaderboardEntries(ctx);
+
+    // Sequential APPROVE: if reset_votes_after_win is enabled on this wave,
+    // clear all vote state on remaining PARTICIPATORY drops so the community
+    // must re-vote from scratch on the next candidate in sequence.
+    let didReset = false;
+    if (resetVotesAfterWin) {
+      this.logger.info(
+        `Resetting votes for remaining participatory drops in wave ${waveId} after winner formalization`
+      );
+      await this.dropVotingDb.resetVotesForParticipatoryDropsInWave(
+        waveId,
+        ctx
+      );
+      didReset = true;
+    }
+
     const announcementDropResult = await this.createAnnouncementDrop(
       waveId,
       winnerDropIds,
@@ -647,7 +683,8 @@ export class WaveDecisionsService {
       dirtyWaveIds: collections.distinct([
         waveId,
         ...announcementDropResult.waveIds
-      ])
+      ]),
+      didReset
     };
   }
 

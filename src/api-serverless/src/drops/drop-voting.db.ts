@@ -1262,6 +1262,88 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /**
+   * Resets all vote-related state for PARTICIPATORY drops in a wave
+   * (i.e. drops that have NOT yet been formalized as winners).
+   *
+   * Used by the sequential-approve feature: when `reset_votes_after_win`
+   * is enabled on a wave, after a winner is formalized the remaining
+   * submissions have their votes cleared so the community must re-vote
+   * from scratch on the next candidate in sequence.
+   */
+  async resetVotesForParticipatoryDropsInWave(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    ctx.timer?.start(
+      `${this.constructor.name}->resetVotesForParticipatoryDropsInWave`
+    );
+
+    // Sub-query: PARTICIPATORY drop IDs in this wave (excludes WINNER drops)
+    const participatoryDropIds = await this.db.execute<{ id: string }>(
+      `select id from ${DROPS_TABLE}
+         where wave_id = :waveId
+           and drop_type = '${DropType.PARTICIPATORY}'`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+
+    if (participatoryDropIds.length === 0) {
+      ctx.timer?.stop(
+        `${this.constructor.name}->resetVotesForParticipatoryDropsInWave`
+      );
+      return;
+    }
+
+    // Clear vote state across all relevant tables for remaining participatory drops.
+    // Use joined DELETEs to avoid unbounded IN (:dropIds) lists that could exceed
+    // query/packet limits on large waves.
+    const participatoryDropSubquery = `select id from ${DROPS_TABLE}
+      where wave_id = :waveId
+        and drop_type = '${DropType.PARTICIPATORY}'`;
+
+    await this.db.execute(
+      `delete dvs from ${DROP_VOTER_STATE_TABLE} dvs
+       inner join (${participatoryDropSubquery}) d on dvs.drop_id = d.id`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    await this.db.execute(
+      `delete dr from ${DROP_RANK_TABLE} dr
+       inner join (${participatoryDropSubquery}) d on dr.drop_id = d.id`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    await this.db.execute(
+      `delete rvit from ${DROP_REAL_VOTE_IN_TIME_TABLE} rvit
+       inner join (${participatoryDropSubquery}) d on rvit.drop_id = d.id`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    await this.db.execute(
+      `delete rvvit from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} rvvit
+       inner join (${participatoryDropSubquery}) d on rvvit.drop_id = d.id`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    await this.db.execute(
+      `delete vcs from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} vcs
+       inner join (${participatoryDropSubquery}) d on vcs.drop_id = d.id`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    await this.db.execute(
+      `delete wle from ${WAVE_LEADERBOARD_ENTRIES_TABLE} wle
+       inner join (${participatoryDropSubquery}) d on wle.drop_id = d.id`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+
+    ctx.timer?.stop(
+      `${this.constructor.name}->resetVotesForParticipatoryDropsInWave`
+    );
+  }
+
   async getParticipationDropsRealtimeRanks(
     dropIds: string[],
     ctx: RequestContext

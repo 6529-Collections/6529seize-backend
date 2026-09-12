@@ -230,6 +230,20 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(`${this.constructor.name}->deleteDropsRanks`);
   }
 
+  async getResetVotesAfterWin(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    ctx.timer?.start(`${this.constructor.name}->getResetVotesAfterWin`);
+    const result = await this.db.oneOrNull<{ reset_votes_after_win: number }>(
+      `select reset_votes_after_win from ${WAVES_TABLE} where id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(`${this.constructor.name}->getResetVotesAfterWin`);
+    return result?.reset_votes_after_win === 1;
+  }
+
   async updateWavesNextDecisionTime(
     waveId: string,
     decisionTime: number | null,
