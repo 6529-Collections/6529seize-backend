@@ -375,6 +375,14 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 6. S3 and CloudFront serve media. Drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception.
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
+### Ordinary Ethereum RPC foundation
+
+Ordinary Ethereum RPC portability is being introduced separately. The
+[RPC foundation](../ops/workstreams/ethereum-rpc-foundation/README.md) adds an
+unused provider-neutral factory and documents the existing regional shared-secret
+configuration path. Existing callers still use their previous providers; this
+foundation does not migrate runtime traffic or remove indexed Alchemy APIs.
+
 ### NFT link refresh bounds
 
 `nftLinkRefresherLoop` applies a 90-second resolution budget, reduced to leave
