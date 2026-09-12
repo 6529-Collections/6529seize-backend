@@ -41,6 +41,7 @@ import { ProfileClassification } from '../../../entities/IProfile';
 import { enums } from '../../../enums';
 import { RequestContext } from '@/request.context';
 import { profileCicOverviewApiService } from './profile-cic-overview.api.service';
+import { moderationPresentationService } from '@/content-moderation/moderation-presentation.service';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -236,7 +237,11 @@ router.get(
     if (resolvedProfileId) {
       const statements =
         await cicService.getCicStatementsByProfileId(resolvedProfileId);
-      res.status(200).send(statements.map(toApiCicStatement));
+      const visibleStatements =
+        await moderationPresentationService.cicStatements(statements, {
+          timer: Timer.getFromRequest(req)
+        });
+      res.status(200).send(visibleStatements.map(toApiCicStatement));
     } else {
       res.status(200).send([]);
     }
@@ -269,7 +274,11 @@ router.get(
       id: statementId,
       profile_id: resolvedProfileId
     });
-    res.status(200).send(toApiCicStatement(statement));
+    const [visibleStatement] =
+      await moderationPresentationService.cicStatements([statement], {
+        timer: Timer.getFromRequest(req)
+      });
+    res.status(200).send(toApiCicStatement(visibleStatement));
   }
 );
 
@@ -349,6 +358,7 @@ router.post(
       throw new NotFoundException(`No profile found for ${identity}`);
     }
     const updatedStatement = await cicService.addCicStatement({
+      moderationRequestId: req.get('Idempotency-Key'),
       profile: {
         profile_id: profileId,
         classification:

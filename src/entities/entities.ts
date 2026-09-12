@@ -281,3 +281,8 @@ export {
 } from './IArtworkDocumentationAsset';
 
 export { PushInstallationEntity } from './IPushInstallation';
+
+export {
+  ModerationItemEntity,
+  ModerationEvaluationEntity
+} from './IModerationReview';

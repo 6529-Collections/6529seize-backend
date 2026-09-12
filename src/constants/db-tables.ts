@@ -259,3 +259,7 @@ export const PROFILE_CMS_AGENT_EVENTS_TABLE = 'profile_cms_agent_events';
 
 export const PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE =
   'push_notification_device_installations';
+
+export const CONTENT_MODERATION_ITEMS_TABLE = 'content_moderation_items';
+export const CONTENT_MODERATION_EVALUATIONS_TABLE =
+  'content_moderation_evaluations';

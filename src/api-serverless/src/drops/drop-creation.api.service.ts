@@ -10,8 +10,14 @@ import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
 import {
   createOrUpdateDrop,
   CreateOrUpdateDropUseCase,
+  sanitizeDropStructuredFields,
   PrePublicationPreparation
 } from '../../../drops/create-or-update-drop.use-case';
+import {
+  moderationReviewDb,
+  moderationConflict
+} from '@/content-moderation/moderation-review.db';
+import { moderationFingerprint } from '@/content-moderation/moderation-review.types';
 import {
   CreateOrUpdateDropModel,
   DropPartIdentifierModel
@@ -120,6 +126,24 @@ export class DropCreationApiService {
             ...model,
             hide_link_preview: hideLinkPreview
           };
+    const replay = await moderationReviewDb.savedRequest(
+      authorId,
+      'DROP',
+      ctx.moderationRequestId,
+      ctx
+    );
+    if (replay) {
+      if (
+        replay.scope.context_fingerprint !==
+          moderationFingerprint(sanitizeDropStructuredFields(createModel)) ||
+        !replay.published_subject_id
+      )
+        moderationConflict();
+      return this.dropsService.findDropByIdOrThrow(
+        { dropId: replay.published_subject_id },
+        ctx
+      );
+    }
     const preResolvedIdentityNomination =
       await this.createOrUpdateDrop.preResolveIdentityNomination(createModel, {
         timer: ctx.timer
@@ -195,33 +219,39 @@ export class DropCreationApiService {
     dmUnreadRecipientIds: string[];
     dailyActivityCreditRequestEnqueued: boolean;
   }> {
-    const { drop_id, pending_push_notification_ids, dm_unread_recipient_ids } =
-      await this.createOrUpdateDrop.execute(model, false, {
-        timer,
-        connection,
-        preResolvedIdentityNomination,
-        prePublication
-      });
-    await this.dropPollsApiService.createPollForDrop(
-      {
-        poll,
-        dropId: drop_id,
-        waveId: model.wave_id,
-        authorId,
-        dropType: model.drop_type
-      },
-      {
-        timer,
-        connection,
-        authenticationContext: AuthenticationContext.fromProfileId(authorId)
-      }
-    );
-    const dailyActivityCreditRequestEnqueued = requestDailyActivityCredit
-      ? await this.dailyActivityCreditQueueService.enqueueRequest(
-          { profileId: authorId },
-          { timer, connection }
-        )
-      : false;
+    const {
+      drop_id,
+      replayed,
+      pending_push_notification_ids,
+      dm_unread_recipient_ids
+    } = await this.createOrUpdateDrop.execute(model, false, {
+      timer,
+      connection,
+      preResolvedIdentityNomination,
+      prePublication
+    });
+    if (!replayed)
+      await this.dropPollsApiService.createPollForDrop(
+        {
+          poll,
+          dropId: drop_id,
+          waveId: model.wave_id,
+          authorId,
+          dropType: model.drop_type
+        },
+        {
+          timer,
+          connection,
+          authenticationContext: AuthenticationContext.fromProfileId(authorId)
+        }
+      );
+    const dailyActivityCreditRequestEnqueued =
+      requestDailyActivityCredit && !replayed
+        ? await this.dailyActivityCreditQueueService.enqueueRequest(
+            { profileId: authorId },
+            { timer, connection }
+          )
+        : false;
     const drop = await this.dropsService.findDropByIdOrThrow(
       {
         dropId: drop_id,
@@ -581,6 +611,21 @@ export class DropCreationApiService {
         waveId,
         dropId
       });
+    const replay = await moderationReviewDb.savedRequest(
+      authorId,
+      'DROP',
+      ctx.moderationRequestId,
+      ctx
+    );
+    if (replay) {
+      if (
+        replay.scope.context_fingerprint !==
+          moderationFingerprint(sanitizeDropStructuredFields(model)) ||
+        replay.published_subject_id !== dropId
+      )
+        moderationConflict();
+      return this.dropsService.findDropByIdOrThrow({ dropId }, ctx);
+    }
     const preResolvedIdentityNomination =
       await this.createOrUpdateDrop.preResolveIdentityNomination(model, {
         timer: ctx.timer

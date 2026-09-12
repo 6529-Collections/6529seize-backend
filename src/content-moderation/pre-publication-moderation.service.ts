@@ -9,6 +9,16 @@ import { RequestContext } from '@/request.context';
 import { Time } from '@/time';
 import { createHash } from 'node:crypto';
 import { domainToASCII } from 'node:url';
+import { moderationReviewDb, ModerationReviewDb } from './moderation-review.db';
+import {
+  activePermit,
+  publicationPermitGeneration
+} from './moderation-review.service';
+import { ModerationInput } from './moderation-review.types';
+import {
+  DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID,
+  getConfiguredBedrockAnthropicModelId
+} from '@/bedrock.config';
 import {
   contentModerationAiService,
   ContentModerationAiService,
@@ -27,11 +37,29 @@ const DUPLICATE_SIGNAL_THRESHOLD = 4;
 const URL_EDGE_PUNCTUATION = new Set(['.', '!', '?', ';', ':']);
 
 export interface PrePublicationDropInput {
+  readonly waveId?: string;
+  readonly currentRevision?: string | null;
+  readonly contextFingerprint?: string;
+  readonly reviewItemId?: string;
+  readonly reviewEvaluationId?: string;
   readonly dropId: string;
   readonly authorProfileId: string;
   readonly operation: 'CREATE' | 'UPDATE';
   readonly title: string | null;
   readonly parts: ReadonlyArray<{ readonly content: string | null }>;
+}
+
+export interface PrePublicationDecision {
+  readonly itemId: string;
+  readonly permitGeneration?: number;
+}
+function publicationDecision(
+  input: PrePublicationDropInput,
+  permitGeneration?: number
+): PrePublicationDecision | undefined {
+  return input.reviewItemId
+    ? { itemId: input.reviewItemId, permitGeneration }
+    : undefined;
 }
 
 function getPrePublicationTextContent(
@@ -59,23 +87,111 @@ interface DeterministicScreenResult {
   readonly directRejectionReason: string | null;
 }
 
+function makeReviewInput(
+  input: PrePublicationDropInput,
+  signal: string | null,
+  ctx: RequestContext
+): ModerationInput {
+  return {
+    subject_type: 'DROP',
+    subject_id:
+      input.operation === 'CREATE'
+        ? `${input.authorProfileId}:${input.waveId ?? ''}`
+        : input.dropId,
+    author_profile_id: input.authorProfileId,
+    actor_profile_id:
+      ctx.authenticationContext?.getLoggedInUsersProfileId() ??
+      input.authorProfileId,
+    operation: input.operation,
+    policy_family: 'WAVE_CONTENT',
+    policy_version: PRE_PUBLICATION_EVALUATOR_VERSION,
+    scope: {
+      acting_as_profile_id: input.authorProfileId,
+      deterministic_signal: signal,
+      wave_id: input.waveId ?? null,
+      current_revision: input.currentRevision ?? null,
+      context_fingerprint: input.contextFingerprint ?? null
+    },
+    evidence: { title: input.title, parts: input.parts }
+  };
+}
+
 export class PrePublicationModerationService {
   private readonly logger = Logger.get(PrePublicationModerationService.name);
 
   constructor(
     private readonly moderationDb: ContentModerationDb,
-    private readonly aiService: ContentModerationAiService
+    private readonly aiService: ContentModerationAiService,
+    private readonly reviews: ModerationReviewDb = moderationReviewDb
   ) {}
+
+  async assertPostingAllowed(
+    profileId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (
+      (await this.moderationDb.getProfileStatus(profileId, ctx.connection)) ===
+      ModeratedProfileStatus.SUSPENDED
+    ) {
+      throw new CustomApiCompliantException(
+        403,
+        'This profile is currently suspended from posting.',
+        PROFILE_SUSPENDED_REJECTION_CODE
+      );
+    }
+  }
 
   async evaluate(
     input: PrePublicationDropInput,
     ctx: RequestContext
-  ): Promise<void> {
+  ): Promise<PrePublicationDecision | undefined> {
     const profileStatus = await this.moderationDb.getProfileStatus(
       input.authorProfileId,
       ctx.connection
     );
+    const content = getPrePublicationTextContent(input);
+    const contentFingerprint = getPrePublicationContentFingerprint(input);
+    const screen =
+      profileStatus === ModeratedProfileStatus.SUSPENDED
+        ? { signal: 'PROFILE_SUSPENDED', directRejectionReason: null }
+        : await this.runDeterministicScreen(
+            input,
+            content,
+            contentFingerprint,
+            ctx
+          );
+    const reviewInput = makeReviewInput(input, screen.signal, ctx);
+    const existingReview = await this.reviews.find(reviewInput, ctx);
+    const detailed =
+      !!existingReview ||
+      !!screen.signal ||
+      profileStatus === ModeratedProfileStatus.SUSPENDED;
+    if (detailed) {
+      const review = await this.reviews.start(
+        reviewInput,
+        profileStatus === ModeratedProfileStatus.SUSPENDED
+          ? 'PROFILE_SUSPENDED'
+          : (screen.signal ?? 'MANUAL_OVERRIDE'),
+        { ...ctx, connection: undefined }
+      );
+      input = {
+        ...input,
+        reviewItemId: review.item.id,
+        reviewEvaluationId: review.evaluationId
+      };
+    }
     if (profileStatus === ModeratedProfileStatus.SUSPENDED) {
+      await this.record(
+        input,
+        {
+          contentFingerprint,
+          signal: 'PROFILE_SUSPENDED',
+          outcome: PrePublicationCheckOutcome.REJECT,
+          aiInvoked: false,
+          evaluatorResult: { reason: 'PROFILE_SUSPENDED' }
+        },
+        ctx
+      );
       throw new CustomApiCompliantException(
         403,
         'This profile is currently suspended from posting. Contact support if you believe this is an error.',
@@ -83,14 +199,6 @@ export class PrePublicationModerationService {
       );
     }
 
-    const content = getPrePublicationTextContent(input);
-    const contentFingerprint = getPrePublicationContentFingerprint(input);
-    const screen = await this.runDeterministicScreen(
-      input,
-      content,
-      contentFingerprint,
-      ctx
-    );
     if (screen.directRejectionReason) {
       await this.record(
         input,
@@ -112,6 +220,24 @@ export class PrePublicationModerationService {
         CONTENT_MODERATION_REJECTION_CODE
       );
     }
+    if (existingReview?.override === 'BLOCK') {
+      await this.record(
+        input,
+        {
+          contentFingerprint,
+          signal: screen.signal ?? 'MANUAL_OVERRIDE',
+          outcome: PrePublicationCheckOutcome.REJECT,
+          aiInvoked: false,
+          evaluatorResult: { reason: 'DEVELOPER_BLOCKED' }
+        },
+        ctx
+      );
+      throw new CustomApiCompliantException(
+        422,
+        'This exact submission was rejected after review.',
+        CONTENT_MODERATION_REJECTION_CODE
+      );
+    }
     if (!screen.signal) {
       await this.record(
         input,
@@ -124,9 +250,27 @@ export class PrePublicationModerationService {
         },
         ctx
       );
-      return;
+      return publicationDecision(input);
     }
 
+    if (existingReview && activePermit(existingReview)) {
+      const generation = publicationPermitGeneration(existingReview);
+      await this.record(
+        input,
+        {
+          contentFingerprint,
+          signal: screen.signal,
+          outcome: PrePublicationCheckOutcome.ALLOW,
+          aiInvoked: false,
+          evaluatorResult: {
+            manual_permit: true,
+            permit_generation: generation
+          }
+        },
+        ctx
+      );
+      return publicationDecision(input, generation);
+    }
     let assessment: Awaited<
       ReturnType<ContentModerationAiService['assessPrePublication']>
     >;
@@ -135,10 +279,9 @@ export class PrePublicationModerationService {
         signal: screen.signal,
         content
       });
-    } catch (error) {
+    } catch {
       this.logger.error(
-        'Pre-publication evaluator failed; allowing ambiguous content',
-        error
+        'Pre-publication evaluator failed; allowing ambiguous content'
       );
       await this.record(
         input,
@@ -154,7 +297,7 @@ export class PrePublicationModerationService {
         },
         ctx
       );
-      return;
+      return publicationDecision(input);
     }
 
     const outcome =
@@ -180,6 +323,7 @@ export class PrePublicationModerationService {
         CONTENT_MODERATION_REJECTION_CODE
       );
     }
+    return publicationDecision(input);
   }
 
   private async runDeterministicScreen(
@@ -373,6 +517,19 @@ export class PrePublicationModerationService {
     },
     ctx: RequestContext
   ): Promise<void> {
+    if (input.reviewEvaluationId) {
+      await this.reviews.finish(input.reviewEvaluationId, {
+        outcome: result.outcome,
+        result: result.evaluatorResult ?? {},
+        model: result.aiInvoked
+          ? getConfiguredBedrockAnthropicModelId(
+              'CONTENT_MODERATION_BEDROCK_MODEL_ID',
+              DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID
+            )
+          : null,
+        fallback: result.evaluatorResult?.evaluator_error ? 'ALLOW' : null
+      });
+    }
     await this.moderationDb.recordPrePublicationCheck(
       {
         dropId: input.dropId,
@@ -385,7 +542,8 @@ export class PrePublicationModerationService {
         evaluatorVersion: result.aiInvoked
           ? PRE_PUBLICATION_EVALUATOR_VERSION
           : null,
-        evaluatorResult: result.evaluatorResult
+        evaluatorResult: result.evaluatorResult,
+        itemId: input.reviewItemId ?? null
       },
       ctx.connection
     );

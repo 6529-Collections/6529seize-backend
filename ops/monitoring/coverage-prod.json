@@ -63,18 +63,6 @@
       ]
     },
     {
-      "service": "cloudwatchAlarmsToDiscordLoop",
-      "region": "us-east-1",
-      "functions": [
-        "cloudwatchAlarmsToDiscordLoop"
-      ],
-      "coverage": [
-        "structured-error-logs",
-        "lambda-errors",
-        "lambda-throttles"
-      ]
-    },
-    {
       "service": "claimsBuilder",
       "region": "us-east-1",
       "functions": [
