@@ -279,6 +279,36 @@ describe('wallet transfer backfill operator lifecycle', () => {
     expect(mockMetricDestroy).toHaveBeenCalled();
   });
 
+  it('processes the partial target bucket before its final reconciliation', async () => {
+    lastBlock = 999;
+    config.max_invocations = 2;
+    writeConfig();
+    const execution = startRunner();
+
+    await jest.advanceTimersByTimeAsync(0);
+
+    expect(walletTransferAnalysisService.update).toHaveBeenCalledTimes(1);
+    expect(walletTransferAnalysisService.rebuild).not.toHaveBeenCalled();
+    expect(savedState().last_block).toBe(1_999);
+
+    await jest.advanceTimersByTimeAsync(2_000);
+    await execution;
+
+    expect(savedState()).toEqual(
+      expect.objectContaining({
+        status: 'complete',
+        target_block: 1_005,
+        last_block: 1_999,
+        invocations: 1
+      })
+    );
+    expect(walletTransferAnalysisService.rebuild).toHaveBeenCalledWith({
+      fromBlock: 1_005,
+      toBlock: 1_005,
+      maxRows: 10_000
+    });
+  });
+
   it('honors an existing stop file before invoking either mutating service operation', async () => {
     writeFileSync(join(directory, 'stop'), '');
 
@@ -382,6 +412,26 @@ describe('wallet transfer backfill operator lifecycle', () => {
 
     expect(doInDbContext).not.toHaveBeenCalled();
     expect(walletTransferAnalysisService.update).not.toHaveBeenCalled();
+  });
+
+  it('preserves an execution failure when the local lock file was removed', async () => {
+    jest
+      .mocked(walletTransferAnalysisService.update)
+      .mockImplementation(async () => {
+        rmSync(join(directory, 'runner.lock'));
+        throw new WalletTransferAnalysisError('Bucket exceeds max-rows=10000');
+      });
+
+    await expect(startRunner()).rejects.toThrow(
+      'Backfill stopped after an execution failure'
+    );
+
+    expect(savedState()).toEqual(
+      expect.objectContaining({
+        status: 'failed',
+        detail: 'Bucket exceeds max-rows=10000'
+      })
+    );
   });
 
   it.each([

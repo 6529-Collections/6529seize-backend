@@ -9,7 +9,7 @@ import {
   openSync,
   readFileSync,
   renameSync,
-  unlinkSync,
+  rmSync,
   writeFileSync
 } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
@@ -57,6 +57,16 @@ interface BackfillState {
   updated_at: number;
   detail?: unknown;
 }
+
+interface BackfillControls {
+  deadline: number;
+  stopped: () => boolean;
+  paused: () => boolean;
+  persist: (status: string, detail?: unknown) => void;
+  pauseFor: (milliseconds: number) => Promise<void>;
+}
+
+type BackfillGate = ReturnType<typeof backfillLoadGate>;
 
 function readConfig(path: string): BackfillConfig {
   const value = JSON.parse(readFileSync(path, 'utf8')) as BackfillConfig;
@@ -161,23 +171,19 @@ async function rest(
   }
 }
 
-async function run(
-  config: BackfillConfig,
-  statePath: string,
-  assertHeld: () => Promise<void>
-) {
-  const verifyDatabase = async () => {
-    const identity = await walletTransferAnalysisDb.getDatabaseIdentity({});
-    if (
-      identity.server_uuid !== config.database_uuid ||
-      identity.database_name !== config.database_name
-    ) {
-      throw new WalletTransferAnalysisError(
-        'Connected database does not match the monitored backfill target'
-      );
-    }
-  };
-  await verifyDatabase();
+async function verifyDatabase(config: BackfillConfig) {
+  const identity = await walletTransferAnalysisDb.getDatabaseIdentity({});
+  if (
+    identity.server_uuid !== config.database_uuid ||
+    identity.database_name !== config.database_name
+  ) {
+    throw new WalletTransferAnalysisError(
+      'Connected database does not match the monitored backfill target'
+    );
+  }
+}
+
+async function readBackfillState(config: BackfillConfig, statePath: string) {
   const status = await walletTransferAnalysisService.status();
   const state: BackfillState = existsSync(statePath)
     ? JSON.parse(readFileSync(statePath, 'utf8'))
@@ -208,14 +214,122 @@ async function run(
     throw new Error(
       'Previous backfill failed; inspect state before explicitly changing its status to paused'
     );
+  return state;
+}
+
+function createGateReader(client: CloudWatchClient, config: BackfillConfig) {
+  let metrics: Partial<Record<BackfillMetricName, BackfillMetric>> = {};
+  let metricsAt = 0;
+  return async () => {
+    if (Date.now() - metricsAt >= 60_000) {
+      try {
+        metrics = await readMetrics(client, config);
+      } catch {
+        metrics = {};
+      }
+      metricsAt = Date.now();
+    }
+    return backfillLoadGate(metrics, config.limits, Date.now());
+  };
+}
+
+async function reconcileTarget(
+  config: BackfillConfig,
+  state: BackfillState,
+  controls: BackfillControls
+) {
+  if (state.target_block !== null)
+    await walletTransferAnalysisService.rebuild({
+      fromBlock: state.target_block,
+      toBlock: state.target_block,
+      maxRows: config.max_rows
+    });
+  controls.persist('complete', {
+    final_bucket_reconciled: state.target_block !== null
+  });
+}
+
+async function advanceBackfill(
+  config: BackfillConfig,
+  state: BackfillState,
+  controls: BackfillControls,
+  gate: BackfillGate
+) {
+  controls.persist('running', gate);
+  const started = Date.now();
+  const result = await walletTransferAnalysisService.update({
+    maxBatches: 1,
+    maxRows: config.max_rows
+  });
+  const elapsed = Date.now() - started;
+  const nextBlock = result.state?.last_block ?? -1;
+  if (nextBlock <= state.last_block)
+    throw new Error('Backfill made no forward progress');
+  state.last_block = nextBlock;
+  state.invocations++;
+  controls.persist('cooldown', {
+    elapsed_ms: elapsed,
+    buckets: result.refreshed_buckets,
+    load: gate.observed
+  });
+  await controls.pauseFor(backfillCooldown(elapsed, config.duty_percent));
+}
+
+async function runIteration(
+  config: BackfillConfig,
+  state: BackfillState,
+  controls: BackfillControls,
+  assertHeld: () => Promise<void>,
+  readGate: () => Promise<BackfillGate>
+): Promise<'advanced' | 'waiting' | 'finished'> {
+  if (controls.stopped()) {
+    controls.persist('stopped');
+    return 'finished';
+  }
+  if (controls.paused()) {
+    controls.persist('paused_operator');
+    await controls.pauseFor(15_000);
+    return 'waiting';
+  }
+  const gate = await readGate();
+  if (!gate.healthy) {
+    controls.persist('paused_load', gate);
+    await controls.pauseFor(15_000);
+    return 'waiting';
+  }
+  await verifyDatabase(config);
+  await assertHeld();
+  const current = await walletTransferAnalysisService.status();
+  state.last_block = current.state?.last_block ?? -1;
+  // These operations can wait on I/O. Recheck operator controls immediately
+  // before either mutation, even after a healthy monitoring result.
+  if (controls.stopped()) {
+    controls.persist('stopped');
+    return 'finished';
+  }
+  if (controls.paused() || Date.now() >= controls.deadline) return 'waiting';
+  if (state.target_block === null || state.last_block >= state.target_block) {
+    await reconcileTarget(config, state, controls);
+    return 'finished';
+  }
+  await advanceBackfill(config, state, controls, gate);
+  return 'advanced';
+}
+
+async function run(
+  config: BackfillConfig,
+  statePath: string,
+  assertHeld: () => Promise<void>
+) {
+  await verifyDatabase(config);
+  const state = await readBackfillState(config, statePath);
   if (state.status === 'complete') return state;
   const client = new CloudWatchClient({
     region: config.region,
     maxAttempts: 2
   });
   const deadline = Date.now() + config.max_run_minutes * 60_000;
-  let metrics: Partial<Record<BackfillMetricName, BackfillMetric>> = {};
-  let metricsAt = 0;
+  const readGate = createGateReader(client, config);
   let stopRequested = false;
   const requestStop = () => {
     stopRequested = true;
@@ -235,76 +349,25 @@ async function run(
       Math.max(0, Math.min(milliseconds, deadline - Date.now())),
       stopped
     );
+  const controls: BackfillControls = {
+    deadline,
+    stopped,
+    paused: () => existsSync(join(config.state_directory, 'pause')),
+    persist,
+    pauseFor
+  };
   try {
     let count = 0;
     while (count < config.max_invocations && Date.now() < deadline) {
-      if (stopped()) {
-        persist('stopped');
-        return state;
-      }
-      if (existsSync(join(config.state_directory, 'pause'))) {
-        persist('paused_operator');
-        await pauseFor(15_000);
-        continue;
-      }
-      if (Date.now() - metricsAt >= 60_000) {
-        try {
-          metrics = await readMetrics(client, config);
-        } catch {
-          metrics = {};
-        }
-        metricsAt = Date.now();
-      }
-      const gate = backfillLoadGate(metrics, config.limits, Date.now());
-      if (!gate.healthy) {
-        persist('paused_load', gate);
-        await pauseFor(15_000);
-        continue;
-      }
-      await verifyDatabase();
-      await assertHeld();
-      const current = await walletTransferAnalysisService.status();
-      state.last_block = current.state?.last_block ?? -1;
-      if (stopped()) {
-        persist('stopped');
-        return state;
-      }
-      if (existsSync(join(config.state_directory, 'pause'))) continue;
-      if (Date.now() >= deadline) break;
-      if (
-        state.target_block === null ||
-        state.last_block >= state.target_block
-      ) {
-        if (state.target_block !== null)
-          await walletTransferAnalysisService.rebuild({
-            fromBlock: state.target_block,
-            toBlock: state.target_block,
-            maxRows: config.max_rows
-          });
-        persist('complete', {
-          final_bucket_reconciled: state.target_block !== null
-        });
-        return state;
-      }
-      persist('running', gate);
-      const started = Date.now();
-      const result = await walletTransferAnalysisService.update({
-        maxBatches: 1,
-        maxRows: config.max_rows
-      });
-      const elapsed = Date.now() - started;
-      const nextBlock = result.state?.last_block ?? -1;
-      if (nextBlock <= state.last_block)
-        throw new Error('Backfill made no forward progress');
-      state.last_block = nextBlock;
-      state.invocations++;
-      count++;
-      persist('cooldown', {
-        elapsed_ms: elapsed,
-        buckets: result.refreshed_buckets,
-        load: gate.observed
-      });
-      await pauseFor(backfillCooldown(elapsed, config.duty_percent));
+      const outcome = await runIteration(
+        config,
+        state,
+        controls,
+        assertHeld,
+        readGate
+      );
+      if (outcome === 'finished') return state;
+      if (outcome === 'advanced') count++;
     }
     persist(stopped() ? 'stopped' : 'paused_budget');
     return state;
@@ -335,10 +398,10 @@ export async function main(args = process.argv.slice(2)) {
   mkdirSync(config.state_directory, { recursive: true });
   const lockPath = join(config.state_directory, 'runner.lock');
   const lock = openSync(lockPath, 'wx', 0o600);
-  writeFileSync(lock, `${process.pid}\n`);
   const stdoutWrite = process.stdout.write;
   process.stdout.write = process.stderr.write.bind(process.stderr);
   try {
+    writeFileSync(lock, `${process.pid}\n`);
     const result = await doInDbContext(
       () =>
         withBackfillRunnerLock(
@@ -357,7 +420,7 @@ export async function main(args = process.argv.slice(2)) {
   } finally {
     process.stdout.write = stdoutWrite;
     closeSync(lock);
-    unlinkSync(lockPath);
+    rmSync(lockPath, { force: true });
   }
 }
 
