@@ -106,3 +106,46 @@ Tests cover policy/cache behavior, role/proxy denial, stale revisions, manual
 decisions, permit consumption rollback/replay, JSON round trips, late model
 results, retention and revision-specific public overlays. Database tests use an
 isolated MySQL test container; they must not run against a shared application DB.
+
+## Database baseline
+
+An isolated MySQL 8.3 fixture on 2026-09-12 contained 20,000 routine checks,
+2,000 detailed items and 4,000 evaluations. Evidence was 328 characters per
+item; 10% of detailed items needed review. Each operation received three warmup
+calls and 30 measured calls, sequentially, without provider requests or other
+test suites running concurrently. These figures measure local database work,
+not end-to-end requests or production latency.
+
+| Operation                              | Median (ms) | p95 (ms) |
+| -------------------------------------- | ----------: | -------: |
+| Routine check insert                   |        1.62 |     2.91 |
+| Detailed start and finish transactions |        9.23 |    15.74 |
+| First page across both check sources   |       26.16 |    43.47 |
+| Needs-review first page                |        2.58 |     2.93 |
+| Author and public-field first page     |        8.94 |    13.24 |
+| Counts                                 |        3.84 |     4.99 |
+| Evaluation and action history          |        2.74 |     3.66 |
+
+Before limiting each filtered source ahead of the final merge, the unfiltered
+page measured 81.87 ms median and 100.86 ms p95 on the same fixture size. The
+merged cursor still orders by creation time and ID; mixed-source tests cover
+equal timestamps, page boundaries and subject filters.
+
+After warmups and measurements, the tables held 20,033 routine checks, 2,033
+items and 4,033 evaluations, using approximately 24 MiB of allocated table and
+index pages. Allocation includes indexes and page overhead; it is not a
+per-record storage forecast. A retention pass removed 1,000 routine detailed
+items and their 2,000 evaluations in 208.75 ms. Deleting 1,000 expired lightweight
+checks took 20.28 ms. Unresolved and active-rule fixtures remain protected by
+the integration tests.
+
+To repeat the procedure, use the repository's isolated testcontainer setup and
+synthetic rows in the four moderation tables; never point it at an application
+database. Measure monotonic elapsed time around `recordPrePublicationCheck`,
+`start` plus `finish`, filtered `list`, `counts`, and `history`. Inspect allocated
+bytes through `information_schema.tables` after `ANALYZE TABLE`. Mark exactly
+1,000 routine successful items and 1,000 lightweight rows older than 30 days,
+time `retain` and one `deleteExpiredPrePublicationChecks` batch, and verify the
+remaining row counts. Repeat with realistic deployment volume and evidence
+sizes before treating the local numbers as a production capacity or latency
+budget.

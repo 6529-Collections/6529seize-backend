@@ -22,7 +22,9 @@ import {
   ModerationAction,
   ModerationInput,
   ModerationItem,
-  moderationFingerprint
+  moderationFingerprint,
+  moderationText,
+  reportReviewOutcome
 } from './moderation-review.types';
 import { assertModerationDeveloper } from './moderation-developer-access';
 import {
@@ -60,6 +62,63 @@ export function checkPreview(item: ModerationItem): string | null {
 export function itemSummary(item: ModerationItem) {
   const { evidence, ...check } = item;
   return { ...check, preview: checkPreview(item) };
+}
+function actionEffect(item: ModerationItem) {
+  if (item.scope.administrative) return 'PROFILE_STATUS';
+  if (item.subject_type === 'REP_CATEGORY') return 'GLOBAL_CATEGORY_RULE';
+  if (!item.published_subject_id) return 'EXACT_RESUBMISSION_PERMIT';
+  return item.subject_type === 'DROP' ? 'PUBLISHED_DROP' : 'PUBLISHED_FIELD';
+}
+function publishedActions(
+  item: ModerationItem,
+  suppressed: boolean
+): ModerationAction[] {
+  if (item.subject_type === 'DROP') return ['QUARANTINE', 'REMOVE', 'RESTORE'];
+  if (['PROFILE_BIO', 'GROUP_NAME'].includes(item.subject_type))
+    return [suppressed ? 'RESTORE' : 'SUPPRESS'];
+  return [];
+}
+function availableActions(
+  item: ModerationItem,
+  matches: boolean,
+  expired: boolean,
+  suppressed: boolean
+): ModerationAction[] {
+  if (item.id.startsWith('routine:')) return [];
+  if (item.scope.administrative)
+    return ['SUSPEND', 'REINSTATE', 'MARK_REVIEWED'];
+  const actions: ModerationAction[] = ['MARK_REVIEWED'];
+  if (item.override) actions.push('REVOKE_OVERRIDE');
+  if (expired) return actions;
+  actions.push('REEVALUATE');
+  if (
+    item.subject_type === 'REP_CATEGORY' ||
+    (matches && !item.published_subject_id)
+  )
+    actions.push('ALLOW', 'BLOCK');
+  if (item.published_subject_id && matches)
+    actions.push(...publishedActions(item, suppressed));
+  if (item.author_profile_id) actions.push('SUSPEND', 'REINSTATE');
+  return actions;
+}
+function currentPolicy(item: ModerationItem) {
+  if (item.policy_family === 'PUBLIC_FIELDS') return PUBLIC_TEXT_POLICY_VERSION;
+  return item.operation === 'REPORT'
+    ? CONTENT_MODERATION_POLICY_VERSION
+    : PRE_PUBLICATION_EVALUATOR_VERSION;
+}
+function dropDecision(action: string) {
+  if (action === 'REMOVE')
+    return {
+      status: DropModerationStatus.MODERATOR_REMOVED,
+      reportStatus: ContentReportStatus.RESOLVED_REMOVED
+    };
+  if (action === 'QUARANTINE')
+    return { status: DropModerationStatus.AI_QUARANTINED, reportStatus: null };
+  return {
+    status: DropModerationStatus.VISIBLE,
+    reportStatus: ContentReportStatus.RESOLVED_ALLOWED
+  };
 }
 export class ModerationReviewService {
   constructor(private readonly db: ModerationReviewDb) {}
@@ -105,11 +164,7 @@ export class ModerationReviewService {
         await this.db.finish(
           started.evaluationId,
           {
-            outcome: !report.ai_recommendation
-              ? 'ERROR'
-              : report.ai_recommendation === 'NO_VIOLATION_DETECTED'
-                ? 'ALLOW'
-                : 'REJECT',
+            outcome: reportReviewOutcome(report.ai_recommendation),
             fallback: report.ai_recommendation
               ? null
               : 'LEGACY_ASSESSMENT_UNAVAILABLE',
@@ -180,77 +235,30 @@ export class ModerationReviewService {
     const item = await this.db.get(id, ctx);
     const history = await this.db.history(id, ctx);
     const current = await this.db.currentRevision(item, ctx);
-    const publishedRevision = item.scope.published_revision;
+    const publishedRevision = moderationText(item.scope.published_revision);
     const matches = publishedRevision
       ? current === publishedRevision
       : current === (item.scope.current_revision ?? null);
     const expired = evidenceExpired(item);
     const isPublished = !!item.published_subject_id;
-    const suppressed =
-      item.suppressed ||
-      (!!item.published_subject_id &&
-        !!publishedRevision &&
-        ['PROFILE_BIO', 'GROUP_NAME'].includes(item.subject_type) &&
-        (await this.db.isSuppressed(
-          item.subject_type,
-          item.published_subject_id,
-          String(publishedRevision),
-          ctx
-        )));
-    const actions: ModerationAction[] = ['MARK_REVIEWED'];
-    if (item.override) actions.push('REVOKE_OVERRIDE');
-    if (!expired) {
-      actions.push('REEVALUATE');
-      if (item.subject_type === 'REP_CATEGORY' || (matches && !isPublished))
-        actions.push('ALLOW', 'BLOCK');
-      if (
-        isPublished &&
-        matches &&
-        ['PROFILE_BIO', 'GROUP_NAME'].includes(item.subject_type)
-      )
-        actions.push(suppressed ? 'RESTORE' : 'SUPPRESS');
-      if (isPublished && matches && item.subject_type === 'DROP')
-        actions.push('QUARANTINE', 'REMOVE', 'RESTORE');
-      if (item.author_profile_id) actions.push('SUSPEND', 'REINSTATE');
-    }
-    if (item.scope.administrative)
-      actions.splice(
-        0,
-        actions.length,
-        'SUSPEND',
-        'REINSTATE',
-        'MARK_REVIEWED'
-      );
-    if (id.startsWith('routine:')) actions.splice(0, actions.length);
+    const suppressed = await this.effectiveSuppression(
+      item,
+      publishedRevision,
+      ctx
+    );
     const profileStatus = item.author_profile_id
       ? await contentModerationDb.getProfileStatus(
           item.author_profile_id,
           ctx.connection
         )
       : null;
-    const presentations =
-      item.subject_type === 'DROP' && item.published_subject_id
-        ? await contentModerationDb.getPresentations(
-            [
-              {
-                id: item.published_subject_id,
-                author_id: item.author_profile_id ?? ''
-              }
-            ],
-            null,
-            ctx.connection
-          )
-        : {};
     return {
       check: itemSummary(item),
       evidence: expired ? null : item.evidence,
       current_revision_matches: matches,
       current_state: {
         profile_status: profileStatus,
-        drop_status: item.published_subject_id
-          ? (presentations[item.published_subject_id]?.moderation.status ??
-            null)
-          : null,
+        drop_status: await this.currentDropStatus(item, ctx),
         published: isPublished,
         suppressed,
         revision: current
@@ -261,17 +269,42 @@ export class ModerationReviewService {
         ...evaluation,
         result: expired ? null : evaluation.result
       })),
-      allowed_actions: actions,
-      action_effect: item.scope.administrative
-        ? 'PROFILE_STATUS'
-        : item.subject_type === 'REP_CATEGORY'
-          ? 'GLOBAL_CATEGORY_RULE'
-          : isPublished
-            ? item.subject_type === 'DROP'
-              ? 'PUBLISHED_DROP'
-              : 'PUBLISHED_FIELD'
-            : 'EXACT_RESUBMISSION_PERMIT'
+      allowed_actions: availableActions(item, matches, expired, suppressed),
+      action_effect: actionEffect(item)
     };
+  }
+  private async effectiveSuppression(
+    item: ModerationItem,
+    revision: string,
+    ctx: RequestContext
+  ) {
+    if (item.suppressed) return true;
+    if (
+      !item.published_subject_id ||
+      !revision ||
+      !['PROFILE_BIO', 'GROUP_NAME'].includes(item.subject_type)
+    )
+      return false;
+    return this.db.isSuppressed(
+      item.subject_type,
+      item.published_subject_id,
+      revision,
+      ctx
+    );
+  }
+  private async currentDropStatus(item: ModerationItem, ctx: RequestContext) {
+    if (item.subject_type !== 'DROP' || !item.published_subject_id) return null;
+    const presentations = await contentModerationDb.getPresentations(
+      [
+        {
+          id: item.published_subject_id,
+          author_id: item.author_profile_id ?? ''
+        }
+      ],
+      null,
+      ctx.connection
+    );
+    return presentations[item.published_subject_id]?.moderation.status ?? null;
   }
 
   async action(
@@ -405,25 +438,14 @@ export class ModerationReviewService {
       item.published_subject_id &&
       ['ALLOW', 'RESTORE', 'REMOVE', 'QUARANTINE'].includes(action)
     ) {
-      const status =
-        action === 'REMOVE'
-          ? DropModerationStatus.MODERATOR_REMOVED
-          : action === 'QUARANTINE'
-            ? DropModerationStatus.AI_QUARANTINED
-            : DropModerationStatus.VISIBLE;
+      const decision = dropDecision(action);
       await contentModerationDb.applyModeratorDropDecision(
         {
           dropId: item.published_subject_id,
-          status,
+          ...decision,
           actorProfileId: actor,
           action: `DEVELOPER_${action}`,
-          reason,
-          reportStatus:
-            action === 'QUARANTINE'
-              ? null
-              : action === 'REMOVE'
-                ? ContentReportStatus.RESOLVED_REMOVED
-                : ContentReportStatus.RESOLVED_ALLOWED
+          reason
         },
         ctx
       );
@@ -433,12 +455,7 @@ export class ModerationReviewService {
     if (!item.evidence) throw new BadRequestException('Evidence has expired');
     const input: ModerationInput = {
       ...item,
-      policy_version:
-        item.policy_family === 'PUBLIC_FIELDS'
-          ? PUBLIC_TEXT_POLICY_VERSION
-          : item.operation === 'REPORT'
-            ? CONTENT_MODERATION_POLICY_VERSION
-            : PRE_PUBLICATION_EVALUATOR_VERSION,
+      policy_version: currentPolicy(item),
       evidence: item.evidence
     };
     const history = await this.db.history(item.id, ctx);
@@ -466,22 +483,7 @@ export class ModerationReviewService {
   ): Promise<Parameters<ModerationReviewDb['finish']>[1]> {
     const evidence = item.evidence!;
     if (item.policy_family === 'PUBLIC_FIELDS') {
-      const { aiBasedAbusivenessDetector } =
-        await import('@/abusiveness/ai-based-abusiveness.detector');
-      const text = String(evidence.text ?? '');
-      const assessment =
-        item.subject_type === 'REP_CATEGORY'
-          ? await aiBasedAbusivenessDetector.checkRepPhraseText(text)
-          : item.subject_type === 'PROFILE_BIO'
-            ? await aiBasedAbusivenessDetector.checkBioText({
-                text,
-                handle: String(item.scope.handle ?? ''),
-                profile_type: String(item.scope.profile_type ?? '')
-              })
-            : await aiBasedAbusivenessDetector.checkUserGroupName({
-                text,
-                handle: String(item.scope.handle ?? '')
-              });
+      const assessment = await this.assessPublicField(item);
       return {
         outcome: assessment.status === 'ALLOWED' ? 'ALLOW' : 'REJECT',
         result: { ...assessment },
@@ -518,9 +520,9 @@ export class ModerationReviewService {
       ? (evidence.parts as Array<{ content?: string | null }>)
       : [];
     const assessment = await contentModerationAiService.assessPrePublication({
-      signal: String(item.scope.deterministic_signal ?? item.trigger),
+      signal: moderationText(item.scope.deterministic_signal, item.trigger),
       content: [evidence.title, ...parts.map((part) => part.content)]
-        .filter(Boolean)
+        .filter((part): part is string => typeof part === 'string' && !!part)
         .join('\n')
     });
     return {
@@ -531,6 +533,23 @@ export class ModerationReviewService {
       result: { ...assessment },
       model
     };
+  }
+  private async assessPublicField(item: ModerationItem) {
+    const { aiBasedAbusivenessDetector } =
+      await import('@/abusiveness/ai-based-abusiveness.detector');
+    const text = item.evidence?.text;
+    if (typeof text !== 'string')
+      throw new BadRequestException('Text evidence is unavailable');
+    if (item.subject_type === 'REP_CATEGORY')
+      return aiBasedAbusivenessDetector.checkRepPhraseText(text);
+    const handle = moderationText(item.scope.handle);
+    if (item.subject_type === 'PROFILE_BIO')
+      return aiBasedAbusivenessDetector.checkBioText({
+        text,
+        handle,
+        profile_type: moderationText(item.scope.profile_type)
+      });
+    return aiBasedAbusivenessDetector.checkUserGroupName({ text, handle });
   }
 }
 export const moderationReviewService = new ModerationReviewService(

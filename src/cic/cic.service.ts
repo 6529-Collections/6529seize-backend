@@ -321,19 +321,13 @@ export class CicService {
           statementToInsert.statement_type === 'BIO'
         ) {
           const existingBioStatement = this.latestBio(existingStatements);
-          if (review?.moderation_item_id) {
-            const reviewed = await moderationReviewDb.get(
-              review.moderation_item_id,
-              { connection },
-              true
-            );
-            if (reviewed.permit_consumed_at) {
-              assertModerationPermitReplay(reviewed, moderationRequestId);
-              if (existingBioStatement?.id !== reviewed.published_subject_id)
-                moderationConflict();
-              return existingBioStatement;
-            }
-          }
+          const savedBio = await this.replayApprovedBio(
+            review?.moderation_item_id,
+            moderationRequestId,
+            existingBioStatement,
+            connection
+          );
+          if (savedBio) return savedBio;
           const actualRevision = existingBioStatement
             ? moderationFingerprint({
                 id: existingBioStatement.id,
@@ -371,6 +365,24 @@ export class CicService {
         return inserted;
       }
     );
+  }
+
+  private async replayApprovedBio(
+    reviewId: string | undefined,
+    requestId: string | undefined,
+    existing: CicStatement | undefined,
+    connection: ConnectionWrapper<unknown>
+  ) {
+    if (!reviewId) return undefined;
+    const reviewed = await moderationReviewDb.get(
+      reviewId,
+      { connection },
+      true
+    );
+    if (!reviewed.permit_consumed_at) return undefined;
+    assertModerationPermitReplay(reviewed, requestId);
+    if (existing?.id !== reviewed.published_subject_id) moderationConflict();
+    return existing;
   }
 
   private latestBio(statements: CicStatement[]): CicStatement | undefined {

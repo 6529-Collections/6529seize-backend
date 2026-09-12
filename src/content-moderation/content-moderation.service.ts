@@ -2,7 +2,8 @@ import { isModerationDeveloper } from './moderation-developer-access';
 import { moderationReviewDb, ModerationReviewDb } from './moderation-review.db';
 import {
   moderationFingerprint,
-  ModerationInput
+  ModerationInput,
+  reportReviewOutcome
 } from './moderation-review.types';
 import {
   DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID,
@@ -155,13 +156,10 @@ export class ContentModerationService {
     );
     const assessment = await this.assessReport(report, snapshot, parentContext);
     await this.reviews.finish(review.evaluationId, {
-      outcome:
+      outcome: reportReviewOutcome(
+        assessment.recommendation,
         assessment.category === 'CLASSIFIER_UNAVAILABLE'
-          ? 'ERROR'
-          : assessment.recommendation ===
-              ContentModerationRecommendation.NO_VIOLATION_DETECTED
-            ? 'ALLOW'
-            : 'REJECT',
+      ),
       result: {
         ...assessment,
         report: { id: report.id, reason: input.reason, notes: input.notes }

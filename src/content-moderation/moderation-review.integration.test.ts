@@ -5,6 +5,8 @@ import { ModerationReviewDb } from './moderation-review.db';
 import { ModerationReviewService } from './moderation-review.service';
 import { AuthenticationContext } from '@/auth-context';
 import { env } from '@/env';
+import { contentModerationDb } from './content-moderation.db';
+import { PrePublicationCheckOutcome } from '@/entities/IContentModeration';
 import {
   ModerationInput,
   moderationFingerprint
@@ -15,6 +17,7 @@ import {
   CONTENT_MODERATION_ITEMS_TABLE,
   CONTENT_MODERATION_EVALUATIONS_TABLE,
   CONTENT_MODERATION_REPORTS_TABLE,
+  CONTENT_MODERATION_PRE_PUBLICATION_CHECKS_TABLE,
   PROFILE_GROUPS_TABLE
 } from '@/constants';
 
@@ -191,6 +194,51 @@ describe('Moderation review durable integration', () => {
       expect.arrayContaining(['test-policy', 'new-policy'])
     );
     expect((await db.list({ limit: 10 })).items).toHaveLength(1);
+  });
+  it('paginates mixed detailed and routine checks without gaps at shared timestamps', async () => {
+    for (let index = 0; index < 6; index++) {
+      const check = await db.start(
+        { ...input(), subject_id: `profile-${index}` },
+        'PUBLIC_FIELD'
+      );
+      await db.finish(check.evaluationId, { outcome: 'ALLOW', result: {} });
+      await contentModerationDb.recordPrePublicationCheck({
+        dropId: `drop-${index}`,
+        authorProfileId: 'author',
+        operation: 'CREATE',
+        deterministicGateVersion: 'test',
+        contentFingerprint: moderationFingerprint(index),
+        deterministicSignal: null,
+        outcome: PrePublicationCheckOutcome.ALLOW,
+        evaluatorVersion: null,
+        evaluatorResult: null
+      });
+    }
+    await sqlExecutor.execute(
+      `update ${CONTENT_MODERATION_ITEMS_TABLE} set created_at=100`,
+      {}
+    );
+    await sqlExecutor.execute(
+      `update ${CONTENT_MODERATION_PRE_PUBLICATION_CHECKS_TABLE} set created_at=100`,
+      {}
+    );
+    const ids: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await db.list({ limit: 3, before: cursor ?? undefined });
+      ids.push(...page.items.map((item) => item.id));
+      cursor = page.next_cursor;
+    } while (cursor);
+    expect(ids).toHaveLength(12);
+    expect(new Set(ids).size).toBe(12);
+    expect(ids.filter((id) => id.startsWith('routine:'))).toHaveLength(6);
+    const publicFields = await db.list({
+      limit: 20,
+      subject_type: 'PROFILE_BIO',
+      profile_id: 'author'
+    });
+    expect(publicFields.items).toHaveLength(6);
+    expect(publicFields.next_cursor).toBeNull();
   });
   it('rolls a consumed permit back with failed content save, then permits only the same request replay', async () => {
     const check = await db.start(input(), 'PUBLIC_FIELD');

@@ -23,6 +23,16 @@ export const MODERATION_ACTIONS = [
 export type ModerationAction = (typeof MODERATION_ACTIONS)[number];
 export type ModerationOutcome = 'ALLOW' | 'REJECT' | 'ERROR' | 'PENDING';
 export type ModerationPolicyFamily = 'PUBLIC_FIELDS' | 'WAVE_CONTENT';
+export function moderationText(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback;
+}
+export function reportReviewOutcome(
+  recommendation: string | null,
+  unavailable = false
+): ModerationOutcome {
+  if (!recommendation || unavailable) return 'ERROR';
+  return recommendation === 'NO_VIOLATION_DETECTED' ? 'ALLOW' : 'REJECT';
+}
 export interface ModerationInput {
   subject_type: ModerationSubject;
   subject_id: string;

@@ -121,6 +121,12 @@ describe('Developer review guards and evidence', () => {
     );
     expect(db.decide).not.toHaveBeenCalled();
   });
+  it('rejects a valid enum action that does not apply to the current subject', async () => {
+    await expect(
+      service.action('item', { ...action, action: 'REMOVE' }, ctx())
+    ).rejects.toThrow('unavailable');
+    expect(db.decide).not.toHaveBeenCalled();
+  });
   it('makes repeated identical action keys idempotent', async () => {
     jest.mocked(db.priorAction).mockResolvedValue({
       item_id: 'item',

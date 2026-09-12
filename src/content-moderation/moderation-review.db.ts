@@ -15,7 +15,11 @@ import {
   CIC_STATEMENTS_TABLE,
   USER_GROUPS_TABLE,
   DROPS_TABLE,
-  DROPS_PARTS_TABLE
+  DROPS_PARTS_TABLE,
+  CONTENT_MODERATION_REPORTS_TABLE,
+  CONTENT_MODERATION_DROP_STATES_TABLE,
+  PROFILES_TABLE,
+  PROFILE_GROUPS_TABLE
 } from '@/constants';
 import {
   ModerationEvaluation,
@@ -27,12 +31,6 @@ import {
   moderationItemId,
   suppressionKey
 } from './moderation-review.types';
-import {
-  CONTENT_MODERATION_REPORTS_TABLE,
-  CONTENT_MODERATION_DROP_STATES_TABLE,
-  PROFILES_TABLE,
-  PROFILE_GROUPS_TABLE
-} from '@/constants';
 import { UserGroupEntity } from '@/entities/IUserGroup';
 import { ContentModerationReportEntity } from '@/entities/IContentModeration';
 
@@ -74,6 +72,28 @@ function itemRow(row: ModerationItem): ModerationItem {
       row.permit_consumed_at === null ? null : Number(row.permit_consumed_at)
   };
 }
+function nextOverride(
+  item: ModerationItem,
+  action: string
+): ModerationItem['override'] {
+  if (action === 'ALLOW' || action === 'BLOCK') return action;
+  if (action === 'REVOKE_OVERRIDE') return null;
+  if (item.subject_type === 'DROP' && item.published_subject_id) {
+    if (action === 'RESTORE') return 'ALLOW';
+    if (['REMOVE', 'QUARANTINE'].includes(action)) return 'BLOCK';
+  }
+  return item.override;
+}
+function nextSuppression(item: ModerationItem, action: string): boolean {
+  if (action === 'SUPPRESS') return true;
+  if (action === 'RESTORE') return false;
+  return item.suppressed;
+}
+type RevisionItem = Pick<
+  ModerationItem,
+  'subject_type' | 'subject_id' | 'published_subject_id'
+> &
+  Partial<ModerationItem>;
 
 export class ModerationReviewDb extends LazyDbAccessCompatibleService {
   async lockProfile(id: string, ctx: RequestContext) {
@@ -504,7 +524,11 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
         params.beforeId = match[2];
       }
       const rows = await this.db.execute<ModerationItem>(
-        `select * from (${this.itemSelect()} union all ${this.routineSelect()}) checks where ${clauses.join(' and ')} order by created_at desc,id desc limit :limit`,
+        `select * from (
+          (select * from (${this.itemSelect()}) detailed where ${clauses.join(' and ')} order by created_at desc,id desc limit :limit)
+          union all
+          (select * from (${this.routineSelect()}) routine where ${clauses.join(' and ')} order by created_at desc,id desc limit :limit)
+        ) checks order by created_at desc,id desc limit :limit`,
         params,
         this.options(ctx)
       );
@@ -606,18 +630,6 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
           this.options(ctx)
         );
       }
-      const override =
-        action === 'ALLOW' || action === 'BLOCK'
-          ? action
-          : action === 'REVOKE_OVERRIDE'
-            ? null
-            : item.subject_type === 'DROP' && item.published_subject_id
-              ? action === 'RESTORE'
-                ? 'ALLOW'
-                : ['REMOVE', 'QUARANTINE'].includes(action)
-                  ? 'BLOCK'
-                  : item.override
-              : item.override;
       const expiry =
         action === 'ALLOW' && item.subject_type !== 'REP_CATEGORY'
           ? Date.now() + 7 * 86400000
@@ -629,15 +641,10 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
         {
           id: item.id,
           version: item.version,
-          override,
+          override: nextOverride(item, action),
           expiry,
           reset: action === 'ALLOW' || action === 'REVOKE_OVERRIDE',
-          suppressed:
-            action === 'SUPPRESS'
-              ? true
-              : action === 'RESTORE'
-                ? false
-                : item.suppressed,
+          suppressed: nextSuppression(item, action),
           now: Date.now(),
           evidenceExpiry: Date.now() + 90 * 86400000
         },
@@ -726,11 +733,7 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
     });
   }
   async currentRevision(
-    item: Pick<
-      ModerationItem,
-      'subject_type' | 'subject_id' | 'published_subject_id'
-    > &
-      Partial<ModerationItem>,
+    item: RevisionItem,
     ctx: RequestContext = {}
   ): Promise<string | null> {
     return this.timed('currentRevision', ctx, async () => {
@@ -748,20 +751,7 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
           : null;
       }
       if (item.subject_type === 'GROUP_NAME') {
-        if (!item.published_subject_id && item.scope?.group_review) {
-          if (!item.scope.old_version_id) return null;
-          const definition = await this.groupDefinition(
-            String(item.scope.old_version_id),
-            ctx
-          );
-          return definition ? moderationFingerprint(definition) : null;
-        }
-        const row = await this.db.oneOrNull<{ name: string }>(
-          `select name from ${USER_GROUPS_TABLE} where id=:id`,
-          { id: item.published_subject_id ?? item.subject_id },
-          this.options(ctx)
-        );
-        return row ? moderationFingerprint({ text: row.name }) : null;
+        return this.currentGroupRevision(item, ctx);
       }
       if (item.subject_type === 'DROP') {
         const row = await this.db.oneOrNull<{ title: string | null }>(
@@ -778,6 +768,24 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
         return moderationFingerprint({ title: row.title, parts });
       }
       return item.content_fingerprint ?? null;
+    });
+  }
+  private async currentGroupRevision(item: RevisionItem, ctx: RequestContext) {
+    return this.timed('currentGroupRevision', ctx, async () => {
+      if (!item.published_subject_id && item.scope?.group_review) {
+        if (typeof item.scope.old_version_id !== 'string') return null;
+        const definition = await this.groupDefinition(
+          item.scope.old_version_id,
+          ctx
+        );
+        return definition ? moderationFingerprint(definition) : null;
+      }
+      const row = await this.db.oneOrNull<{ name: string }>(
+        `select name from ${USER_GROUPS_TABLE} where id=:id`,
+        { id: item.published_subject_id ?? item.subject_id },
+        this.options(ctx)
+      );
+      return row ? moderationFingerprint({ text: row.name }) : null;
     });
   }
   async setPublishedRevision(

@@ -174,7 +174,9 @@ export class AbusivenessCheckService {
       input,
       knownSafe ? 'KNOWN_SAFE_PERSONAL_NAME' : 'PUBLIC_FIELD'
     );
-    const text = String(input.evidence.text);
+    const text = input.evidence.text;
+    if (typeof text !== 'string')
+      throw new BadRequestException('Text evidence is unavailable');
     const finish = async (
       result: AbusivenessDetectionResult,
       cacheHit = false,

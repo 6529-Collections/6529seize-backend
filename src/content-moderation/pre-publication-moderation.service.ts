@@ -71,6 +71,35 @@ interface DeterministicScreenResult {
   readonly directRejectionReason: string | null;
 }
 
+function makeReviewInput(
+  input: PrePublicationDropInput,
+  signal: string | null,
+  ctx: RequestContext
+): ModerationInput {
+  return {
+    subject_type: 'DROP',
+    subject_id:
+      input.operation === 'CREATE'
+        ? `${input.authorProfileId}:${input.waveId ?? ''}`
+        : input.dropId,
+    author_profile_id: input.authorProfileId,
+    actor_profile_id:
+      ctx.authenticationContext?.getLoggedInUsersProfileId() ??
+      input.authorProfileId,
+    operation: input.operation,
+    policy_family: 'WAVE_CONTENT',
+    policy_version: PRE_PUBLICATION_EVALUATOR_VERSION,
+    scope: {
+      acting_as_profile_id: input.authorProfileId,
+      deterministic_signal: signal,
+      wave_id: input.waveId ?? null,
+      current_revision: input.currentRevision ?? null,
+      context_fingerprint: input.contextFingerprint ?? null
+    },
+    evidence: { title: input.title, parts: input.parts }
+  };
+}
+
 export class PrePublicationModerationService {
   private readonly logger = Logger.get(PrePublicationModerationService.name);
 
@@ -115,28 +144,7 @@ export class PrePublicationModerationService {
             contentFingerprint,
             ctx
           );
-    const reviewInput: ModerationInput = {
-      subject_type: 'DROP',
-      subject_id:
-        input.operation === 'CREATE'
-          ? `${input.authorProfileId}:${input.waveId ?? ''}`
-          : input.dropId,
-      author_profile_id: input.authorProfileId,
-      actor_profile_id:
-        ctx.authenticationContext?.getLoggedInUsersProfileId() ??
-        input.authorProfileId,
-      operation: input.operation,
-      policy_family: 'WAVE_CONTENT',
-      policy_version: PRE_PUBLICATION_EVALUATOR_VERSION,
-      scope: {
-        acting_as_profile_id: input.authorProfileId,
-        deterministic_signal: screen.signal,
-        wave_id: input.waveId ?? null,
-        current_revision: input.currentRevision ?? null,
-        context_fingerprint: input.contextFingerprint ?? null
-      },
-      evidence: { title: input.title, parts: input.parts }
-    };
+    const reviewInput = makeReviewInput(input, screen.signal, ctx);
     const existingReview = await this.reviews.find(reviewInput, ctx);
     const detailed =
       !!existingReview ||

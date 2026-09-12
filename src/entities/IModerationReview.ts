@@ -14,6 +14,12 @@ import type {
 @Index('moderation_items_queue_idx', ['review_status', 'created_at', 'id'])
 @Index('moderation_items_subject_idx', ['subject_type', 'subject_id'])
 @Index('moderation_items_author_idx', ['author_profile_id', 'created_at'])
+@Index('moderation_items_created_idx', ['created_at', 'id'])
+@Index('moderation_items_published_idx', [
+  'subject_type',
+  'published_subject_id',
+  'suppressed'
+])
 export class ModerationItemEntity {
   @PrimaryColumn({ type: 'char', length: 64 }) id!: string;
   @Column({ type: 'varchar', length: 32 }) subject_type!: ModerationSubject;
