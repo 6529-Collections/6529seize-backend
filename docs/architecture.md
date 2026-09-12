@@ -30,6 +30,23 @@ confirmed consolidated wallets. Existing Pebbles trait rankings use that same
 profile scope. TDH projections reuse the production calculation kernel and
 first verify parity with the official snapshot.
 
+Authenticated `POST /collect/tdh-target-plans` estimates a purchase subtotal for
+a profile's total boosted TDH at a 1/30/90/365-day deadline, or an explicit
+increase over its future no-purchase baseline. Its selected recipient must be a
+confirmed wallet of that profile. It verifies official snapshot parity and
+reuses one canonical projector for complete candidate portfolios, including
+nonlinear set-completion bundles. Search is bounded to 128 replays, 10 million
+modeled replay-work units and a 20-second request window; inventory validation
+and hypothetical per-edition work are charged before each replay. It preserves
+exact captured listing identities, fee-divisible steps, remaining quantities and
+the atomic checkout's supported order shapes. Results distinguish best found,
+no purchase needed and an unresolved target gap; captured index coverage never
+claims complete live market coverage or a global minimum. Purchase subtotals
+include signed fees, while gas and total funding remain unquoted until batch
+review. Analysis adds no operation row, cache, table, migration, economic action
+or loop dependency. Deploy `api`, then its frontend consumer. The frontend Help
+Bot corpus must describe this new screen in the coupled frontend release.
+
 Anonymous `GET /collect/tdh-listings` compares supported ETH asks across the
 completed market-depth collection index. It reuses the marketplace adapter to
 validate stored signed order identities, exact fill quantities and fees, and

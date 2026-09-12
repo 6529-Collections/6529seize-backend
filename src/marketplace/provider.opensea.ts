@@ -16,6 +16,7 @@ import {
 import {
   MARKET_ASSET_STANDARDS,
   MARKET_OPENSEA_CONDUIT_KEY,
+  MARKET_OPENSEA_ZONE,
   MARKET_SEAPORT,
   assertMarketProtocol
 } from '@/marketplace/seaport.registry';
@@ -277,6 +278,26 @@ export function describeIndexedMarketListing(
       ? available
       : describeMarketOrder(provider, asset, 'LISTING', '1');
   return { ...quoted, availableQuantity: available.quantity };
+}
+
+/** Target plans must only suggest shapes supported by the atomic review path. */
+export function describeIndexedMarketBatchListing(
+  value: unknown,
+  asset: MarketAsset,
+  remainingQuantity: string
+): MarketDiscoveredOrder {
+  const provider = parseProviderOrder(value);
+  if (
+    asset.standard === 'ERC1155' &&
+    sameMarketAddress(provider.components.zone, MARKET_OPENSEA_ZONE) &&
+    (provider.components.offer[0].startAmount !== '1' ||
+      remainingQuantity !== '1')
+  )
+    throw new MarketValidationError(
+      'UNSUPPORTED_ACTION',
+      'Restricted multi-edition orders are not supported in one batch yet.'
+    );
+  return describeIndexedMarketListing(value, asset, remainingQuantity);
 }
 
 export class OpenSeaMarketplaceProvider {
