@@ -697,6 +697,33 @@ There are two DB access modes:
 
 The core architectural choice is that MySQL is both the system of record and the internal integration layer. This keeps the system understandable, but it makes table contracts, migrations, backfills, indexes, and worker idempotency especially important.
 
+The operational `wallet-transfer-analysis` CLI derives undeclared Memes wallet
+relationship candidates from existing `transactions` rows without inference or
+external chain requests. It maintains `wallet_transfer_pair_days`,
+`wallet_transfer_wallet_days`, and `wallet_transfer_analysis_states`. Daily
+directional counts and wallet denominators are partitioned by fixed 1,000-block
+source buckets, replaced transactionally, and checkpointed. Bounded updates
+reconcile the latest processed bucket and advance through new activity; explicit
+bounded rebuilds repair older processed ranges without skipping history.
+
+Reports score repeated reciprocal or concentrated one-way transfers over stored
+summaries. They exclude currently declared common-ownership pairs while keeping
+their activity in wallet denominators. Outputs include rule version, source and
+summary coverage, sample transaction evidence, and candidate preselection limits;
+scores are investigative rules rather than ownership probabilities. This first
+version has no funding analysis, public API, additional Lambda, or enabled
+schedule. The CLI uses `doInDbContext` with schema synchronization and Redis
+disabled. Its historical supervisor keeps a single connection pool, binds
+CloudWatch monitoring to the verified database identity, pauses on load or
+missing metrics, and uses a dedicated advisory-lock connection without a long
+transaction. It persists a fixed historical target and pause/stop state.
+Deploy `dbMigrationsLoop` with `db_schema_scope=wallet-transfer-analysis` to
+create only its three derived tables, without synchronizing unrelated entities
+or running unrelated data migrations. Daily moderation-review retention checks
+its required schema before running, allowing its separate schema rollout to
+remain pending after a scoped deployment. Then install the reviewed CLI on the
+operator host. See the [wallet transfer analysis runbook](../ops/docs/operations/wallet-transfer-analysis.md).
+
 Main Stage Meme-card associations are stored separately in
 `meme_card_drop_mappings`, with one unique row per Meme card ID and drop ID.
 `dbMigrationsLoop` backfills the table only after minting-claim anchors prove a
