@@ -107,7 +107,11 @@ function availableActions(
     return ['SUSPEND', 'REINSTATE', 'MARK_REVIEWED'];
   const actions: ModerationAction[] = ['MARK_REVIEWED'];
   if (item.override) actions.push('REVOKE_OVERRIDE');
-  if (expired) return actions;
+  if (expired) {
+    if (canRestoreSuppressedField(item, matches, suppressed))
+      actions.push('RESTORE');
+    return actions;
+  }
   actions.push('REEVALUATE');
   if (
     item.subject_type === 'REP_CATEGORY' ||
@@ -118,6 +122,19 @@ function availableActions(
     actions.push(...publishedActions(item, suppressed));
   if (item.author_profile_id) actions.push('SUSPEND', 'REINSTATE');
   return actions;
+}
+function canRestoreSuppressedField(
+  item: ModerationItem,
+  matches: boolean,
+  suppressed: boolean
+): boolean {
+  return (
+    !!item.published_subject_id &&
+    !!moderationText(item.scope.published_revision) &&
+    matches &&
+    suppressed &&
+    ['PROFILE_BIO', 'GROUP_NAME'].includes(item.subject_type)
+  );
 }
 function currentPolicy(item: ModerationItem) {
   if (item.policy_family === 'PUBLIC_FIELDS') return PUBLIC_TEXT_POLICY_VERSION;

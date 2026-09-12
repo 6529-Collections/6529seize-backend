@@ -146,6 +146,65 @@ describe('Developer review guards and evidence', () => {
     expect(result.allowed_actions).not.toContain('ALLOW');
     expect(result.allowed_actions).not.toContain('REEVALUATE');
   });
+  it.each(['PROFILE_BIO', 'GROUP_NAME'] as const)(
+    'restores a current suppressed %s after evidence deletion without recreating it',
+    async (subject) => {
+      record.subject_type = subject;
+      record.published_subject_id = 'published';
+      record.scope.published_revision = revision;
+      record.suppressed = true;
+      record.evidence = null;
+      record.evidence_expires_at = 1;
+      const detail = await service.detail('item', ctx());
+      expect(detail.allowed_actions).toEqual(['MARK_REVIEWED', 'RESTORE']);
+      expect(detail.evidence).toBeNull();
+      await service.action('item', { ...action, action: 'RESTORE' }, ctx());
+      expect(db.decide).toHaveBeenCalledWith(
+        record,
+        'RESTORE',
+        expect.anything()
+      );
+      expect(db.audit).toHaveBeenCalledWith(
+        record,
+        expect.objectContaining({ actor: 'dev', action: 'RESTORE' }),
+        expect.anything()
+      );
+      expect(record.evidence).toBeNull();
+      expect(db.start).not.toHaveBeenCalled();
+    }
+  );
+  it.each(['PROFILE_BIO', 'GROUP_NAME'] as const)(
+    'rejects expired %s restoration after its published revision changes',
+    async (subject) => {
+      record.subject_type = subject;
+      record.published_subject_id = 'published';
+      record.scope.published_revision = revision;
+      record.suppressed = true;
+      record.evidence = null;
+      record.evidence_expires_at = 1;
+      jest.mocked(db.currentRevision).mockResolvedValue('later-revision');
+      const detail = await service.detail('item', ctx());
+      expect(detail.allowed_actions).toEqual(['MARK_REVIEWED']);
+      await expect(
+        service.action('item', { ...action, action: 'RESTORE' }, ctx())
+      ).rejects.toThrow('unavailable');
+      expect(db.decide).not.toHaveBeenCalled();
+    }
+  );
+  it('requires an explicit published revision and current suppression for expired restoration', async () => {
+    record.published_subject_id = 'published';
+    record.suppressed = true;
+    record.evidence = null;
+    record.evidence_expires_at = 1;
+    expect((await service.detail('item', ctx())).allowed_actions).toEqual([
+      'MARK_REVIEWED'
+    ]);
+    record.scope.published_revision = revision;
+    record.suppressed = false;
+    expect((await service.detail('item', ctx())).allowed_actions).toEqual([
+      'MARK_REVIEWED'
+    ]);
+  });
   it('exposes an opaque REP subject ID even after evidence expires', async () => {
     record.subject_type = 'REP_CATEGORY';
     record.subject_id = 'Private category text?';

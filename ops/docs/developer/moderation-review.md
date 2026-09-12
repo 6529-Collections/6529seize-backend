@@ -98,8 +98,11 @@ Historical report expiry uses the actual latest report resolution time.
 Compact action history is retained for one year. Active rules and suppression
 retain authorizing scope/provenance for their lifetime and at least one year
 after the last change. Expired evidence is displayed as unavailable and cannot
-be reevaluated or used to approve an old submission. Old Discord-only history is
-not imported by this change.
+be reevaluated or used to approve an old submission. An unchanged, suppressed
+About/group field can still be restored using its exact published revision and
+the retained action audit. Restoration does not recreate deleted evidence;
+later revisions remain protected. Old Discord-only history is not imported by
+this change.
 
 SQL diagnostics redact moderation statements, parameters and provider errors.
 Evidence is private, inert data; clients must not render its HTML or load linked
