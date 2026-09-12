@@ -38,6 +38,14 @@ import { CreateWalletAuthSession201Response } from '../generated/models/CreateWa
 import { LogoutWalletAuthSessionRequest } from '../generated/models/LogoutWalletAuthSessionRequest';
 import { RefreshWalletAuthSessionRequest } from '../generated/models/RefreshWalletAuthSessionRequest';
 import { assertLegacyRefreshEnabled } from './auth-legacy-refresh';
+import {
+  getCommunityApp,
+  validateRedirectUri,
+  validateCodeChallenge,
+  validateCodeVerifier,
+  createAuthCode,
+  exchangeAuthCode
+} from './community-app-auth.service';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { Timer } from '../../../time';
 import { authDb } from './auth.db';
@@ -658,6 +666,133 @@ router.post(
       throw new UnauthorisedException('Invalid connection share code');
     }
     res.status(201).send(redeemed.response);
+  }
+);
+
+// === Community App Identity Assertion ===
+//
+// "Sign in with 6529.io" for community apps.
+// The flow uses PKCE (RFC 7636) + state to bind each code to the app that
+// initiated the login and to prevent CSRF / code interception. Auth codes are
+// consumed atomically (GETDEL) so simultaneous exchanges cannot both succeed.
+//
+// What this asserts: the signing wallet address of the user's active auth-v2
+// web session. It does NOT assert a selected profile/handle -- the community app
+// receives the wallet address and may look up the public profile separately.
+
+const CommunityAppAuthorizeQuerySchema = Joi.object({
+  app: Joi.string().max(64).required(),
+  redirect_uri: Joi.string().uri().required(),
+  state: Joi.string().max(256).allow('').optional(),
+  // PKCE code_challenge: base64url(sha256(code_verifier)), 43 chars.
+  code_challenge: Joi.string().length(43).required()
+});
+
+router.get('/authorize/app-info', async function (req: Request, res: Response) {
+  const query = getValidatedByJoiOrThrow(
+    req.query,
+    CommunityAppAuthorizeQuerySchema
+  );
+  const app = getCommunityApp(query.app);
+  if (!app) {
+    throw new BadRequestException('Unknown community app');
+  }
+  validateRedirectUri(app, query.redirect_uri);
+  validateCodeChallenge(query.code_challenge);
+  res.status(200).send({
+    app_id: app.id,
+    name: app.name,
+    description: app.description,
+    is_dev: app.isDev
+  });
+});
+
+const CommunityAppApproveSchema = Joi.object({
+  app: Joi.string().max(64).required(),
+  redirect_uri: Joi.string().uri().required(),
+  state: Joi.string().max(256).allow('').optional(),
+  // PKCE code_challenge: base64url(sha256(code_verifier)), 43 chars.
+  code_challenge: Joi.string().length(43).required()
+});
+
+router.post(
+  '/authorize/approve',
+  needsAuthenticatedUser(),
+  async function (req: Request, res: Response) {
+    const body = getValidatedByJoiOrThrow(req.body, CommunityAppApproveSchema);
+    const app = getCommunityApp(body.app);
+    if (!app) {
+      throw new BadRequestException('Unknown community app');
+    }
+    validateRedirectUri(app, body.redirect_uri);
+    validateCodeChallenge(body.code_challenge);
+
+    const address = getAuthenticatedWalletOrNull(req);
+    if (!address) {
+      throw new UnauthorisedException('Authentication required');
+    }
+
+    // Require an active auth-v2 web session, not just a valid JWT.
+    // A user whose session has been logged out may still hold a valid JWT
+    // until it expires -- this check ensures the session is truly active.
+    const authRole = ((req.user as any)?.role ?? null) as string | null;
+    const hasActiveSession = await hasActiveWebSessionForAddressAndRole({
+      cookieHeader: req.headers.cookie,
+      address,
+      role: authRole,
+      requestOrigin: getNormalizedRequestOrigin(req)
+    });
+    if (!hasActiveSession) {
+      throw new UnauthorisedException(
+        'Approving community app access requires an active session'
+      );
+    }
+
+    const code = await createAuthCode({
+      address,
+      appId: app.id,
+      codeChallenge: body.code_challenge,
+      state: body.state ?? ''
+    });
+
+    const redirectUrl = new URL(body.redirect_uri);
+    redirectUrl.searchParams.set('code', code);
+    if (body.state) {
+      redirectUrl.searchParams.set('state', body.state);
+    }
+    res.status(200).send({ redirect_url: redirectUrl.toString() });
+  }
+);
+
+const CommunityAppExchangeSchema = Joi.object({
+  code: Joi.string().hex().length(64).required(),
+  // PKCE code_verifier: 43-128 chars, base64url alphabet (RFC 7636 §4.1).
+  code_verifier: Joi.string().min(43).max(128).required(),
+  state: Joi.string().max(256).allow('').required(),
+  app: Joi.string().max(64).required()
+});
+
+router.post(
+  '/authorize/exchange',
+  async function (req: Request, res: Response) {
+    const body = getValidatedByJoiOrThrow(req.body, CommunityAppExchangeSchema);
+    validateCodeVerifier(body.code_verifier);
+
+    const result = await exchangeAuthCode({
+      code: body.code,
+      codeVerifier: body.code_verifier,
+      state: body.state,
+      app: body.app
+    });
+
+    // Generic error -- do not leak which specific check failed.
+    if (!result) {
+      throw new UnauthorisedException('Invalid or expired authorization code');
+    }
+    res.status(200).send({
+      address: result.address,
+      app: result.app
+    });
   }
 );
 
