@@ -92,11 +92,7 @@ export class ArtworkDossierService {
           params,
           ctx
         ),
-        this.core.db.query<Record<string, unknown>>(
-          dossierSelectionSql(DOSSIER_HISTORY_SELECTIONS.reviews),
-          params,
-          ctx
-        )
+        this.loadReviewHistory(params, ctx)
       ]);
     if (
       museumRecords.length > 10000 ||
@@ -146,6 +142,42 @@ export class ArtworkDossierService {
     snapshot.assets = assets;
     requireDossierBytes(Buffer.byteLength(JSON.stringify(snapshot), 'utf8'));
     return snapshot;
+  }
+
+  private async loadReviewHistory(
+    params: { id: string },
+    ctx: RequestContext
+  ): Promise<Record<string, unknown>[]> {
+    const selection = DOSSIER_HISTORY_SELECTIONS.reviews;
+    // Preserve database ordering without sorting complete decision histories.
+    const keys = await this.core.db.query<Record<string, unknown>>(
+      dossierSelectionSql({
+        ...selection,
+        columns: ['v.revision_id', 'v.lane']
+      }),
+      params,
+      ctx
+    );
+    if (keys.length > selection.limit) fail(413, 'DOSSIER_RECORD_LIMIT');
+    if (!keys.length) return [];
+    const rows = await this.core.db.query<Record<string, unknown>>(
+      `SELECT ${selection.columns.join(',')} FROM ${selection.from} WHERE ${selection.where} LIMIT ${selection.limit + 1}`,
+      params,
+      ctx
+    );
+    if (rows.length > selection.limit) fail(413, 'DOSSIER_RECORD_LIMIT');
+    const key = (row: Record<string, unknown>) =>
+      JSON.stringify([row.revision_id, row.lane]);
+    const byKey = new Map(rows.map((row) => [key(row), row]));
+    if (rows.length !== keys.length || byKey.size !== rows.length)
+      fail(409, 'DOSSIER_HISTORY_INCOMPLETE');
+    return keys.map((item) => {
+      const id = key(item);
+      const row = byKey.get(id);
+      if (!row) fail(409, 'DOSSIER_HISTORY_INCOMPLETE');
+      byKey.delete(id);
+      return row;
+    });
   }
 
   private async loadAssets(
