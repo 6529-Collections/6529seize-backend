@@ -1292,9 +1292,15 @@
               "ExpirationInDays": 90,
               "AbortIncompleteMultipartUpload": {
                 "DaysAfterInitiation": 7
+              },
+              "NoncurrentVersionExpiration": {
+                "NoncurrentDays": 90
               }
             }
           ]
+        },
+        "VersioningConfiguration": {
+          "Status": "Enabled"
         }
       }
     },
