@@ -18,6 +18,10 @@ import {
   MARKET_ZERO_ADDRESS
 } from '@/marketplace/seaport.registry';
 import { marketUintSchema } from '@/marketplace/seaport.schema';
+import {
+  CollectingWorkBudget,
+  CollectingWorkTimeout
+} from '@/collecting/collecting-work-budget';
 
 const FRESH_MILLIS = 3600000;
 // Planner candidates and raw indexed asks have independent bounds: a complete
@@ -163,15 +167,35 @@ function chooseBest(
 }
 
 /** Null retains the resumable provider scan; a seed accounts for every requested asset. */
-export async function seedCollectPlanFromIndex(options: {
-  analysis: Pick<CollectingAnalysis, 'catalog_version' | 'account'>;
-  assetKeys: string[];
-  gasReservePerOrderWei: string;
-  now?: number;
-}): Promise<CollectIndexedPlanSeed | null> {
+export async function seedCollectPlanFromIndex(
+  options: {
+    analysis: Pick<CollectingAnalysis, 'catalog_version' | 'account'>;
+    assetKeys: string[];
+    gasReservePerOrderWei: string;
+    now?: number;
+  },
+  budget = new CollectingWorkBudget(8000)
+): Promise<CollectIndexedPlanSeed | null> {
+  try {
+    return await readIndexedSeed(options, budget);
+  } catch (error) {
+    if (error instanceof CollectingWorkTimeout) return null;
+    throw error;
+  }
+}
+
+async function readIndexedSeed(
+  options: {
+    analysis: Pick<CollectingAnalysis, 'catalog_version' | 'account'>;
+    assetKeys: string[];
+    gasReservePerOrderWei: string;
+    now?: number;
+  },
+  budget: CollectingWorkBudget
+): Promise<CollectIndexedPlanSeed | null> {
   const now = options.now ?? Date.now();
   marketUintSchema.parse(options.gasReservePerOrderWei);
-  const catalog = await collectingService.getCatalog();
+  const catalog = await budget.waitFor(() => collectingService.getCatalog());
   if (catalog.version !== options.analysis.catalog_version) return null;
   const keys = new Set(options.assetKeys);
   const assets = catalog.assets.filter((asset) => keys.has(asset.asset_key));
@@ -179,9 +203,11 @@ export async function seedCollectPlanFromIndex(options: {
   // The canonical catalog maps Memes, Gradients and Pebbles to distinct
   // contracts; Pebbles currently contains only NextGen collection 1.
   const families = Array.from(new Set(assets.map((asset) => asset.family)));
-  const groups = await Promise.all(
-    families.map((family) =>
-      readFamilyBooks(assets.filter((asset) => asset.family === family))
+  const groups = await budget.waitFor(() =>
+    Promise.all(
+      families.map((family) =>
+        readFamilyBooks(assets.filter((asset) => asset.family === family))
+      )
     )
   );
   if (!groups.every((books) => completeFreshBooks(books, now))) return null;
@@ -201,6 +227,7 @@ export async function seedCollectPlanFromIndex(options: {
   const best = new Map<string, CollectingCandidate>();
   for (const book of books) {
     for (const order of book.orders) {
+      budget.assertAvailable();
       const asset = byIdentity.get(
         `${order.contract.toLowerCase()}:${order.token_id}`
       );
@@ -218,6 +245,7 @@ export async function seedCollectPlanFromIndex(options: {
       );
     }
   }
+  budget.assertAvailable();
   if (best.size > MAX_CANDIDATES) return null;
   return {
     candidates: Array.from(best.values()).sort((a, b) =>

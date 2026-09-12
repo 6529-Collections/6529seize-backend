@@ -21,6 +21,7 @@ import {
 import { collectingService } from '@/collecting/collecting.service';
 import { marketDepthApiDb } from '@/api/market-depth/market-depth-api.db';
 import { redisCachedWithRefreshLease } from '@/redis';
+import { CollectingWorkBudget } from '@/collecting/collecting-work-budget';
 
 jest.mock('@/collecting/collecting.service', () => ({
   collectingService: { getCatalog: jest.fn() }
@@ -150,6 +151,58 @@ describe('indexed base TDH listing discovery', () => {
     jest.useFakeTimers().setSystemTime(now);
   });
   afterEach(() => jest.useRealTimers());
+
+  it('retains only visited listings and marks timed-out coverage incomplete on every page', async () => {
+    let elapsed = 0;
+    const snapshot = rankIndexedTdhListings(
+      'memes',
+      'catalog',
+      [asset('1'), asset('2')],
+      [book([order('1'), order('2')])],
+      now.getTime(),
+      new CollectingWorkBudget(2, () => elapsed++)
+    );
+    expect(snapshot).toMatchObject({
+      indexed_ask_count: 2,
+      evaluated_ask_count: 1,
+      coverage_complete: false
+    });
+    expect(snapshot.entries).toHaveLength(1);
+    jest.mocked(redisCachedWithRefreshLease).mockResolvedValueOnce(snapshot);
+    const page = await getCollectTdhListings('memes', 1);
+    expect(page.coverage_complete).toBe(false);
+    expect(page.next).toBeNull();
+  });
+
+  it('reports refreshing instead of claiming an empty market when no row could be checked', () => {
+    expect(() =>
+      rankIndexedTdhListings(
+        'memes',
+        'catalog',
+        [asset('1')],
+        [book([order('1')])],
+        now.getTime(),
+        new CollectingWorkBudget(0)
+      )
+    ).toThrow(expect.objectContaining({ code: 'LISTINGS_REFRESHING' }));
+  });
+
+  it('preserves an actually empty complete index even without parsing time', () => {
+    expect(
+      rankIndexedTdhListings(
+        'memes',
+        'catalog',
+        [asset('1')],
+        [book([])],
+        now.getTime(),
+        new CollectingWorkBudget(0)
+      )
+    ).toMatchObject({
+      entries: [],
+      evaluated_ask_count: 0,
+      coverage_complete: true
+    });
+  });
 
   it.each([null, NaN, Infinity, 0, -1, Number.MAX_SAFE_INTEGER])(
     'excludes unusable rates: %s',
