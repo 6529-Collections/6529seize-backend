@@ -107,10 +107,18 @@ media automatically.
 
 ## Rollout and verification
 
-Deploy the additive entity schema through `dbMigrationsLoop` before API services
+Deploy the entity schema through `dbMigrationsLoop` before API services
 and the frontend. Preserve existing tables during rollback. The API and generated
 frontend models come from the same OpenAPI source. The root Discord package can
 be retired only after the separate operational-alert callers are removed too.
+
+The REP cache text column expands from `utf8_bin` to `utf8mb4_bin`, matching the
+new review subject column. Both retain binary, case-sensitive category identity;
+the expansion also stores supplementary Unicode letters accepted by validation.
+Its type and length stay unchanged. TypeORM's MySQL change-column path preserves
+the column values for this charset/collation change; MySQL may rebuild the index
+or take a metadata lock during schema sync. Verify this schema step before API
+cutover, and retain the expanded charset on application rollback.
 
 Tests cover policy/cache behavior, role/proxy denial, stale revisions, manual
 decisions, permit consumption rollback/replay, JSON round trips, late model

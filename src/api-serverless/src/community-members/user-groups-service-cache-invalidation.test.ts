@@ -18,6 +18,7 @@ import { ApiGroupFull } from '@/api/generated/models/ApiGroupFull';
 import { ApiGroupTdhInclusionStrategy } from '@/api/generated/models/ApiGroupTdhInclusionStrategy';
 import { RequestContext } from '@/request.context';
 import * as mcache from 'memory-cache';
+import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
 
 jest.mock('@/redis', () => ({
   ...jest.requireActual('@/redis'),
@@ -418,6 +419,7 @@ describe('UserGroupsService eligibility cache invalidation scoping', () => {
     });
 
     it('bumps members of both new and replaced pure list groups when publishing a new version', async () => {
+      const lockGroup = jest.spyOn(moderationReviewDb, 'lockGroup');
       const userGroupsDb = buildUserGroupsDbMock();
       userGroupsDb.findUserGroupsIdentityGroupProfileIds.mockResolvedValue({
         'identity-group-new': ['member-1', 'member-2'],
@@ -452,6 +454,11 @@ describe('UserGroupsService eligibility cache invalidation scoping', () => {
         ctx
       );
 
+      expect(lockGroup.mock.calls.map(([id]) => id)).toEqual([
+        OLD_GROUP_ID,
+        GROUP_ID
+      ]);
+      lockGroup.mockRestore();
       expect(clearWaveGroupsCache).not.toHaveBeenCalled();
       expect(evictWaveGroupsEntityCache).toHaveBeenCalledTimes(1);
       expect(

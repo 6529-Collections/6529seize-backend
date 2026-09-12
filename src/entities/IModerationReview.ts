@@ -23,7 +23,13 @@ import type {
 export class ModerationItemEntity {
   @PrimaryColumn({ type: 'char', length: 64 }) id!: string;
   @Column({ type: 'varchar', length: 32 }) subject_type!: ModerationSubject;
-  @Column({ type: 'varchar', length: 200 }) subject_id!: string;
+  @Column({
+    type: 'varchar',
+    length: 200,
+    charset: 'utf8mb4',
+    collation: 'utf8mb4_bin'
+  })
+  subject_id!: string;
   @Column({ type: 'varchar', length: 50, nullable: true }) author_profile_id!:
     | string
     | null;

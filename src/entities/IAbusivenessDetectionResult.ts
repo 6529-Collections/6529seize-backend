@@ -13,7 +13,8 @@ export class AbusivenessDetectionResult {
     type: 'varchar',
     length: 100,
     nullable: false,
-    collation: 'utf8_bin'
+    charset: 'utf8mb4',
+    collation: 'utf8mb4_bin'
   })
   readonly text!: string;
   @Column({ type: 'varchar', length: 50, nullable: false })

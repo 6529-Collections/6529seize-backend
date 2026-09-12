@@ -100,6 +100,23 @@ export class CicDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async getLatestBioForWrite(
+    profileId: string,
+    ctx: RequestContext = {}
+  ): Promise<CicStatement | null> {
+    const timerName = `${this.constructor.name}->getLatestBioForWrite`;
+    ctx.timer?.start(timerName);
+    try {
+      return await this.db.oneOrNull<CicStatement>(
+        `select * from ${CIC_STATEMENTS_TABLE} where profile_id=:profileId and statement_group='GENERAL' and statement_type='BIO' order by crated_at desc,id desc limit 1`,
+        { profileId },
+        { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   async getLatestBiosByProfileIds(
     profileIds: string[],
     ctx: RequestContext

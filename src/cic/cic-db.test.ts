@@ -5,6 +5,7 @@ import { CicDb } from './cic.db';
 import { RequestContext } from '../request.context';
 import { CIC_STATEMENTS_TABLE } from '@/constants';
 import { CicStatementGroup } from '../entities/ICICStatement';
+import { DbPoolName } from '@/db-query.options';
 
 describeWithSeed(
   'CicDb',
@@ -53,6 +54,21 @@ describeWithSeed(
     const repo = new CicDb(() => sqlExecutor);
     const ctx: RequestContext = { timer: undefined };
 
+    it('reads the mutation baseline from the write pool', async () => {
+      const query = jest.spyOn(sqlExecutor, 'oneOrNull');
+      try {
+        expect((await repo.getLatestBioForWrite('target-1'))?.id).toBe(
+          'bio-new'
+        );
+        expect(query).toHaveBeenCalledWith(
+          expect.any(String),
+          { profileId: 'target-1' },
+          { forcePool: DbPoolName.WRITE, wrappedConnection: undefined }
+        );
+      } finally {
+        query.mockRestore();
+      }
+    });
     it('returns the latest general bio per profile', async () => {
       const results = await repo.getLatestBiosByProfileIds(
         ['target-2', 'missing', 'target-1'],

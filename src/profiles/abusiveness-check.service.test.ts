@@ -152,6 +152,7 @@ describe('AbusivenessCheckService durable moderation', () => {
       service.checkFilterName({
         text: 'Only Me',
         handle: 'alice',
+        profile_id: 'profile-alice',
         group_id: 'group'
       })
     ).resolves.toMatchObject({ status: 'ALLOWED' });
@@ -169,6 +170,7 @@ describe('AbusivenessCheckService durable moderation', () => {
       service.checkBio({
         text: 'bio',
         handle: 'alice',
+        profile_id: 'profile-alice',
         profile_type: 'PSEUDONYM'
       })
     ).rejects.toThrow('temporarily unavailable');
@@ -191,9 +193,28 @@ describe('AbusivenessCheckService durable moderation', () => {
     const result = await service.checkBio({
       text: 'bio',
       handle: 'alice',
+      profile_id: 'profile-alice',
       profile_type: 'PSEUDONYM'
     });
     expect(result.moderation_permit_generation).toBe(7);
     expect(detector.checkBioText).not.toHaveBeenCalled();
+  });
+  it('requires stable profile IDs before capturing BIO or group moderation', async () => {
+    await expect(
+      service.checkBio({
+        text: 'bio',
+        handle: 'alice',
+        profile_type: 'PSEUDONYM',
+        profile_id: ''
+      })
+    ).rejects.toThrow('Profile ID is required');
+    await expect(
+      service.checkFilterName({
+        text: 'Only Me',
+        handle: 'alice',
+        profile_id: ''
+      })
+    ).rejects.toThrow('Profile ID is required');
+    expect(reviews.start).not.toHaveBeenCalled();
   });
 });

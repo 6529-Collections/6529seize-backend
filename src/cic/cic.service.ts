@@ -256,9 +256,7 @@ export class CicService {
       statementToInsert.statement_group === CicStatementGroup.GENERAL &&
       statementToInsert.statement_type === 'BIO';
     const initialBio = isBio
-      ? this.latestBio(
-          await this.cicDb.getCicStatementsByProfileId(statement.profile_id)
-        )
+      ? await this.cicDb.getLatestBioForWrite(statement.profile_id)
       : undefined;
     const currentRevision = initialBio
       ? moderationFingerprint({

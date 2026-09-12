@@ -75,14 +75,15 @@ export class AbusivenessCheckService {
     text: string;
     handle: string;
     profile_type: string;
-    profile_id?: string;
+    profile_id: string;
     actor_profile_id?: string | null;
     current_revision?: string | null;
   }): Promise<AbusivenessDetectionResult> {
     const text = query.text.trim();
     if (text.length > 500)
       throw new BadRequestException('Text must be up to 500 characters');
-    const id = query.profile_id ?? query.handle;
+    const id = query.profile_id;
+    if (!id) throw new BadRequestException('Profile ID is required');
     return this.evaluate(
       {
         subject_type: 'PROFILE_BIO',
@@ -113,7 +114,7 @@ export class AbusivenessCheckService {
     text: string;
     handle: string;
     group_id?: string;
-    profile_id?: string;
+    profile_id: string;
     actor_profile_id?: string | null;
     current_revision?: string | null;
     old_version_id?: string | null;
@@ -124,6 +125,8 @@ export class AbusivenessCheckService {
     const text = query.text.trim();
     if (text.length > 100)
       throw new BadRequestException('Text must be up to 100 characters');
+    if (!query.profile_id)
+      throw new BadRequestException('Profile ID is required');
     const safe =
       query.previously_reviewed ||
       text === 'Only Me' ||
@@ -131,16 +134,15 @@ export class AbusivenessCheckService {
     return this.evaluate(
       {
         subject_type: 'GROUP_NAME',
-        subject_id:
-          query.old_version_id ?? `${query.profile_id ?? query.handle}:new`,
-        author_profile_id: query.profile_id ?? null,
-        actor_profile_id: query.actor_profile_id ?? query.profile_id ?? null,
+        subject_id: query.old_version_id ?? `${query.profile_id}:new`,
+        author_profile_id: query.profile_id,
+        actor_profile_id: query.actor_profile_id ?? query.profile_id,
         operation: 'SAVE',
         policy_family: 'PUBLIC_FIELDS',
         policy_version: PUBLIC_TEXT_POLICY_VERSION,
         scope: {
           group_review: true,
-          acting_as_profile_id: query.profile_id ?? null,
+          acting_as_profile_id: query.profile_id,
           handle: query.handle,
           current_revision: query.current_revision ?? null,
           old_version_id: query.old_version_id ?? null,

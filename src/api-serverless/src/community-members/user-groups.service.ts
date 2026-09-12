@@ -1518,12 +1518,13 @@ export class UserGroupsService {
       await this.userGroupsDb.executeNativeQueriesInTransaction(
         async (connection) => {
           const ctxWithConnection = { ...ctx, connection };
-          await moderationReviewDb.lockGroup(group_id, ctxWithConnection);
-          if (old_version_id)
-            await moderationReviewDb.lockGroup(
-              old_version_id,
-              ctxWithConnection
-            );
+          const groupIdsToLock = Array.from(
+            new Set(
+              [group_id, old_version_id].filter((id): id is string => !!id)
+            )
+          ).sort((left, right) => left.localeCompare(right));
+          for (const id of groupIdsToLock)
+            await moderationReviewDb.lockGroup(id, ctxWithConnection);
           const replayedGroup = await this.replayReviewedGroup(
             nameReview.moderation_item_id,
             ctxWithConnection
