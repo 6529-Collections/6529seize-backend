@@ -120,6 +120,7 @@ import { ApiMarketSendAttemptRejection } from '@/api/generated/models/ApiMarketS
 import { ApiMarketSendAttemptRequest } from '@/api/generated/models/ApiMarketSendAttemptRequest';
 import { ApiMarketSignature } from '@/api/generated/models/ApiMarketSignature';
 import { ApiMarketSubmission } from '@/api/generated/models/ApiMarketSubmission';
+import { ApiMarketTradeOrder } from '@/api/generated/models/ApiMarketTradeOrder';
 import { ApiMediaResolveRequest } from '@/api/generated/models/ApiMediaResolveRequest';
 import { ApiMediaResolveResponse } from '@/api/generated/models/ApiMediaResolveResponse';
 import { ApiMemeCardDropMapping } from '@/api/generated/models/ApiMemeCardDropMapping';
@@ -1335,6 +1336,26 @@ export type GetMarketOrdersRequest = Request<
   ApiResponse<GetMarketOrdersResponse>,
   never,
   GetMarketOrdersQuery,
+  Record<string, never>
+>;
+
+export interface GetMarketOrderPathParams {
+  "order_hash": string;
+}
+
+export interface GetMarketOrderQuery {
+  "asset_key": string;
+  "protocol_address": string;
+  "side": "LISTING" | "OFFER";
+}
+
+export type GetMarketOrderResponse = ApiMarketTradeOrder;
+
+export type GetMarketOrderRequest = Request<
+  GetMarketOrderPathParams,
+  ApiResponse<GetMarketOrderResponse>,
+  never,
+  GetMarketOrderQuery,
   Record<string, never>
 >;
 

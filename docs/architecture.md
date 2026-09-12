@@ -86,6 +86,15 @@ economic limits. The client independently validates before asking its wallet
 to sign or send. Purchase fulfillment delivers directly to a reviewed profile
 or third-party recipient. The backend never holds user signing keys.
 
+Public `GET /market/orders/{order_hash}` resolves an exact supported Seaport
+listing or offer outside the limited best-order discovery results. Required
+asset, side and protocol parameters bind the requested identity. The API checks
+signed terms, a fresh mainnet snapshot, maker counter and remaining fill fraction
+under one request budget, returning the existing sanitized trade-order DTO.
+It does not expose signatures, reserve inventory or create an operation;
+authenticated preparation still revalidates financial execution. This additive
+API boundary requires only the `api` deployment and no database migration.
+
 `market_operations` and `market_operation_events` persist idempotent operations
 and state transitions. A per-wallet/currency lock serializes potential offer
 exposure before signable terms are revealed. `market_reviewed_transactions`
