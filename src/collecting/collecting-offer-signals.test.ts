@@ -3,6 +3,11 @@ import { MEMES_CONTRACT } from '@/constants';
 import { collectingAssetKey } from '@/collecting/collecting-analysis';
 import { CollectingAsset } from '@/collecting/collecting.types';
 import { collectOfferSignals } from '@/collecting/collecting-offer-signals';
+import {
+  CollectingWorkBudget,
+  CollectingWorkTimeout
+} from '@/collecting/collecting-work-budget';
+import * as provider from '@/marketplace/provider.opensea';
 import { OfferAnalysisRequest } from '@/collecting/collecting-offer-analysis.types';
 import { buildMarketOrder } from '@/marketplace/seaport.builder';
 import {
@@ -144,6 +149,52 @@ function signal(
 }
 
 describe('indexed offer calculation references', () => {
+  it('discards an incomplete comparison when one shared parsing budget expires across books', () => {
+    let elapsed = 0;
+    const budget = new CollectingWorkBudget(5, () => elapsed);
+    const describeOrder = provider.describeIndexedMarketOrder;
+    const parser = jest
+      .spyOn(provider, 'describeIndexedMarketOrder')
+      .mockImplementation((...args) => {
+        const result = describeOrder(...args);
+        elapsed += 3;
+        return result;
+      });
+    try {
+      expect(() =>
+        collectOfferSignals(
+          request,
+          [asset],
+          [
+            book([indexed('ask', '400')]),
+            book([indexed('ask', '300'), indexed('ask', '200')])
+          ],
+          [payer],
+          now.getTime(),
+          budget
+        )
+      ).toThrow(CollectingWorkTimeout);
+      expect(parser).toHaveBeenCalledTimes(2);
+    } finally {
+      parser.mockRestore();
+    }
+  });
+
+  it('does not return a reference when the last validation exhausts the budget', () => {
+    let checks = 0;
+    const budget = new CollectingWorkBudget(3, () => checks++);
+    expect(() =>
+      collectOfferSignals(
+        request,
+        [asset],
+        [book([indexed('bid')])],
+        [payer],
+        now.getTime(),
+        budget
+      )
+    ).toThrow(CollectingWorkTimeout);
+  });
+
   it('selects top applicable WETH bid and lowest applicable ask, explicitly without live funding claims', () => {
     const result = signal([
       indexed('bid', '100'),

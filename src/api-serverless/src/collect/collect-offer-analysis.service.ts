@@ -4,6 +4,7 @@ import { collectingService } from '@/collecting/collecting.service';
 import { collectingDb } from '@/collecting/collecting.db';
 import { collectingAssetKey } from '@/collecting/collecting-analysis';
 import { CollectingAsset } from '@/collecting/collecting.types';
+import { CollectingWorkBudget } from '@/collecting/collecting-work-budget';
 import { marketChain } from '@/marketplace/market-chain';
 import { marketUintSchema } from '@/marketplace/seaport.schema';
 import { MARKET_WETH } from '@/marketplace/seaport.registry';
@@ -58,7 +59,8 @@ function rowDto(
 
 async function readOfferBooks(
   request: OfferAnalysisRequest,
-  assets: CollectingAsset[]
+  assets: CollectingAsset[],
+  budget: CollectingWorkBudget
 ) {
   if (
     request.assets.every((asset) => asset.manual_unit_amount_wei !== undefined)
@@ -72,15 +74,17 @@ async function readOfferBooks(
       .filter((asset) => requested.has(asset.asset_key))
       .map((asset) => [asset.family, asset])
   );
-  const books = await Promise.all(
-    Array.from(families.values()).map((asset) =>
-      marketDepthApiDb.getBooks(
-        {
-          contract: asset.contract.toLowerCase(),
-          token_id: asset.token_id,
-          collection_id: asset.family === 'pebbles' ? 1 : null
-        },
-        'all'
+  const books = await budget.waitFor(() =>
+    Promise.all(
+      Array.from(families.values()).map((asset) =>
+        marketDepthApiDb.getBooks(
+          {
+            contract: asset.contract.toLowerCase(),
+            token_id: asset.token_id,
+            collection_id: asset.family === 'pebbles' ? 1 : null
+          },
+          'all'
+        )
       )
     )
   );
@@ -118,14 +122,17 @@ function assertAnalysisActor(
 
 export async function analyzeCollectOffers(
   auth: AuthenticationContext,
-  request: OfferAnalysisRequest
+  request: OfferAnalysisRequest,
+  budget = new CollectingWorkBudget()
 ): Promise<ApiCollectOfferAnalysis> {
   const createdAt = Date.now();
   const actor = assertAnalysisActor(auth, request, createdAt);
-  const [catalog, holdings] = await Promise.all([
-    collectingService.getCatalog(),
-    collectingDb.readAccountHoldings(actor.profileId)
-  ]);
+  const [catalog, holdings] = await budget.waitFor(() =>
+    Promise.all([
+      collectingService.getCatalog(),
+      collectingDb.readAccountHoldings(actor.profileId)
+    ])
+  );
   const wallets = holdings.account.wallets.map((wallet) =>
     wallet.toLowerCase()
   );
@@ -141,13 +148,17 @@ export async function analyzeCollectOffers(
       'Review the third-party recipient before continuing.'
     );
   const chain = marketChain();
+  const readBalance = async () => {
+    await budget.waitFor(() => chain.snapshot());
+    return budget.waitFor(() =>
+      chain.currencyBalance(MARKET_WETH, actor.wallet)
+    );
+  };
   const [books, liability, balance, code] = await Promise.all([
-    readOfferBooks(request, catalog.assets),
-    collectOfferExposure(actor.wallet),
-    chain
-      .snapshot()
-      .then(() => chain.currencyBalance(MARKET_WETH, actor.wallet)),
-    chain.rpc.getCode(actor.wallet)
+    readOfferBooks(request, catalog.assets, budget),
+    budget.waitFor(() => collectOfferExposure(actor.wallet)),
+    readBalance(),
+    budget.waitFor(() => chain.rpc.getCode(actor.wallet))
   ]);
   if (code !== '0x')
     throw new BadRequestException(
@@ -167,8 +178,10 @@ export async function analyzeCollectOffers(
     catalog.assets,
     books,
     wallets,
-    now
+    now,
+    budget.child(8000, 2000)
   );
+  budget.assertAvailable();
   const allocation = allocateCollectOffers(
     request,
     observed.signals,
@@ -185,19 +198,13 @@ export async function analyzeCollectOffers(
       )
     )
   );
-  if (validUntil <= now)
-    throw new CustomApiCompliantException(
-      503,
-      'Offer analysis sources changed. Analyze again before reviewing offers.',
-      'ANALYSIS_EXPIRED'
-    );
   const byKey = new Map(
     catalog.assets.map((asset) => [
       collectingAssetKey(asset.contract, asset.token_id),
       asset
     ])
   );
-  return {
+  const response: ApiCollectOfferAnalysis = {
     analysis_id: randomUUID(),
     policy_version: OFFER_ANALYSIS_POLICY,
     created_at: createdAt,
@@ -236,4 +243,12 @@ export async function analyzeCollectOffers(
         ? 'For the supplied exact NFTs, preserve every manual pin, then select the largest number of remaining NFTs within capacity at fixed patient openings, preferring lower total commitments and stable asset order. An automatic opening needs an ERC1155 ask with at least three distinct observed makers and complete indexed coverage: 70% of that ask, reduced a further 5% when fewer than two bid makers are observed. These are conservative policy parameters, not fair value or acceptance probabilities; unallocated WETH stays uncommitted.'
         : 'Every amount follows the selected explicit per-NFT price or one-time formula. Manual pins are preserved. Formula references are indexed, terms-applicable observations; current funding and execution remain unverified until the separate offer review. Offers can be accepted independently and do not guarantee set completion.'
   };
+  budget.assertAvailable();
+  if (validUntil <= Date.now())
+    throw new CustomApiCompliantException(
+      503,
+      'Offer analysis sources changed. Analyze again before reviewing offers.',
+      'ANALYSIS_EXPIRED'
+    );
+  return response;
 }

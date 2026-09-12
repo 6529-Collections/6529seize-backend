@@ -9,6 +9,11 @@ import { marketDepthApiDb } from '@/api/market-depth/market-depth-api.db';
 import { analyzeCollectOffers } from '@/api/collect/collect-offer-analysis.service';
 import { MEMES_CONTRACT } from '@/constants';
 import { ObjectSerializer } from '@/api/generated/models/ObjectSerializer';
+import {
+  CollectingWorkBudget,
+  CollectingWorkTimeout
+} from '@/collecting/collecting-work-budget';
+import * as offerSignals from '@/collecting/collecting-offer-signals';
 
 jest.mock('@/collecting/collecting.service', () => ({
   collectingService: { getCatalog: jest.fn() }
@@ -111,6 +116,63 @@ describe('private group offer analysis service', () => {
     chain.snapshot.mockResolvedValue({ block_number: 1 });
     chain.currencyBalance.mockResolvedValue('1000');
     chain.rpc.getCode.mockResolvedValue('0x');
+  });
+
+  it('does not start market or funding work after a prerequisite consumes the shared request budget', async () => {
+    let elapsed = 0;
+    const catalog = await collectingService.getCatalog();
+    jest
+      .mocked(collectingService.getCatalog)
+      .mockImplementationOnce(async () => {
+        elapsed = 20001;
+        return catalog;
+      });
+    await expect(
+      analyzeCollectOffers(
+        auth,
+        request(),
+        new CollectingWorkBudget(20000, () => elapsed)
+      )
+    ).rejects.toThrow(CollectingWorkTimeout);
+    expect(chain.snapshot).not.toHaveBeenCalled();
+    expect(marketDepthApiDb.getBooks).not.toHaveBeenCalled();
+  });
+
+  it('bounds a slow RPC read and never starts its balance continuation after timeout', async () => {
+    let resolveSnapshot!: (value: unknown) => void;
+    chain.snapshot.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSnapshot = resolve;
+        })
+    );
+    await expect(
+      analyzeCollectOffers(auth, request(), new CollectingWorkBudget(30))
+    ).rejects.toThrow(CollectingWorkTimeout);
+    resolveSnapshot({ block_number: 1 });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(chain.currencyBalance).not.toHaveBeenCalled();
+  });
+
+  it('checks source expiry against fresh wall time after signal analysis', async () => {
+    const start = Date.now();
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(start);
+    const collect = offerSignals.collectOfferSignals;
+    const signals = jest
+      .spyOn(offerSignals, 'collectOfferSignals')
+      .mockImplementation((...args) => {
+        const result = collect(...args);
+        clock.mockReturnValue(start + 60001);
+        return result;
+      });
+    try {
+      await expect(analyzeCollectOffers(auth, request())).rejects.toThrow(
+        'sources changed'
+      );
+    } finally {
+      signals.mockRestore();
+      clock.mockRestore();
+    }
   });
 
   it('returns catalog metadata and exact per-NFT terms, subtracting existing liabilities without reserving funds', async () => {
