@@ -492,13 +492,18 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
         'outcome',
         'policy_family',
         'trigger',
-        'review_status',
-        'subject_id'
+        'review_status'
       ] as const) {
         if (filter[key]) {
           clauses.push(`\`${key}\`=:${key}`);
           params[key] = filter[key];
         }
+      }
+      if (filter.subject_id) {
+        clauses.push(
+          "((subject_type='REP_CATEGORY' and id=:subject_id) or (subject_type<>'REP_CATEGORY' and subject_id=:subject_id))"
+        );
+        params.subject_id = filter.subject_id;
       }
       if (filter.profile_id) {
         clauses.push('author_profile_id=:profile');

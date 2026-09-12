@@ -50,7 +50,9 @@ const filters = Joi.object<ModerationFilter>({
   from: Joi.number().integer().min(0),
   to: Joi.number().integer().min(0),
   profile_id: Joi.string().max(50),
-  subject_id: Joi.string().max(200),
+  subject_id: Joi.string()
+    .max(200)
+    .pattern(/^[a-zA-Z0-9_:-]+$/),
   before: Joi.string().max(150),
   limit: Joi.number().integer().min(1).max(100).default(50)
 }).unknown(false);

@@ -25,6 +25,11 @@ history, evidence expiry and server-computed available actions. Historical
 reports and profile suspension reviews can be opened with `/checks/report/{id}`
 and `/checks/profile/{id}`.
 
+Filter URLs contain identifiers and enums, never submitted text. A REP check's
+public `subject_id` is its opaque check ID; category text is shown only in the
+protected preview/evidence. Other subjects retain their profile, group or drop
+identifier, including author/context identifiers for unpublished submissions.
+
 `POST /checks/{id}/actions` requires an action, reason, expected item version and
 UUID idempotency key. A changed version or conflicting key requires refreshing
 the review. The previous unversioned drop-decision and profile-status POST

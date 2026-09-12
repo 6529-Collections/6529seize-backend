@@ -61,7 +61,12 @@ export function checkPreview(item: ModerationItem): string | null {
 }
 export function itemSummary(item: ModerationItem) {
   const { evidence, ...check } = item;
-  return { ...check, preview: checkPreview(item) };
+  return {
+    ...check,
+    subject_id:
+      item.subject_type === 'REP_CATEGORY' ? item.id : item.subject_id,
+    preview: checkPreview(item)
+  };
 }
 function actionEffect(item: ModerationItem) {
   if (item.scope.administrative) return 'PROFILE_STATUS';

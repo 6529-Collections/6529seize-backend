@@ -146,6 +146,16 @@ describe('Developer review guards and evidence', () => {
     expect(result.allowed_actions).not.toContain('ALLOW');
     expect(result.allowed_actions).not.toContain('REEVALUATE');
   });
+  it('exposes an opaque REP subject ID even after evidence expires', async () => {
+    record.subject_type = 'REP_CATEGORY';
+    record.subject_id = 'Private category text?';
+    record.evidence = { text: record.subject_id };
+    expect(itemSummary(record).subject_id).toBe(record.id);
+    record.evidence_expires_at = 1;
+    const result = await service.detail('item', ctx());
+    expect(result.check.subject_id).toBe(record.id);
+    expect(JSON.stringify(result)).not.toContain('Private category text?');
+  });
   it('keeps expired historical report markers unavailable for content actions', async () => {
     record.evidence = { evidence_expired: true };
     record.operation = 'REPORT';

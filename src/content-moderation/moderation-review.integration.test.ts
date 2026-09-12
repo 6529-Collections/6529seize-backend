@@ -40,6 +40,28 @@ describe('Moderation review durable integration', () => {
     await resetTestDatabase();
     db = new ModerationReviewDb(dbSupplier);
   });
+  it('filters REP categories by opaque ID rather than their private category text', async () => {
+    const category = 'Exact category text?';
+    const { item } = await db.start(
+      {
+        ...input(),
+        subject_type: 'REP_CATEGORY',
+        subject_id: category,
+        evidence: { text: category }
+      },
+      'PUBLIC_FIELD'
+    );
+    expect((await db.list({ subject_id: item.id, limit: 10 })).items).toEqual([
+      expect.objectContaining({ id: item.id })
+    ]);
+    expect((await db.list({ subject_id: category, limit: 10 })).items).toEqual(
+      []
+    );
+    const bio = await db.start(input(), 'PUBLIC_FIELD');
+    expect((await db.list({ subject_id: 'author', limit: 10 })).items).toEqual([
+      expect.objectContaining({ id: bio.item.id })
+    ]);
+  });
   describe('legacy report materialization', () => {
     const ctx = () => ({
       authenticationContext: AuthenticationContext.fromProfileId('dev')

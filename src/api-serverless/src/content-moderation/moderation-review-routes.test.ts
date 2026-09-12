@@ -159,6 +159,16 @@ describe('moderation generated routes and private handlers', () => {
       expect((await fetch(`${base}/access`)).status).toBe(401)
     );
   });
+  it('rejects category text in subject filter URLs before reading private checks', async () => {
+    const read = jest.spyOn(moderationReviewDb, 'list');
+    await withServer(async (base) => {
+      const response = await fetch(
+        `${base}?subject_id=${encodeURIComponent('Category text?')}`
+      );
+      expect(response.status).toBe(400);
+    });
+    expect(read).not.toHaveBeenCalled();
+  });
   it.each([
     { idempotency_key: 'not-a-uuid' },
     { expected_version: 0 },
