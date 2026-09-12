@@ -45,6 +45,22 @@ describe('Sentry context', () => {
     expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 
+  it('preserves local invocations without AWS context or callback', async () => {
+    delete process.env.SENTRY_DSN;
+    delete process.env.AWS_LAMBDA_FUNCTION_NAME;
+    const context = undefined as unknown as Context;
+    const callback = undefined as unknown as Parameters<
+      ReturnType<typeof wrapLambdaHandler>
+    >[2];
+    const success = wrapLambdaHandler(async () => 'completed');
+    await expect(success({}, context, callback)).resolves.toBe('completed');
+    const original = new Error('local worker failure');
+    const failure = wrapLambdaHandler(async () => {
+      throw original;
+    });
+    await expect(failure({}, context, callback)).rejects.toBe(original);
+  });
+
   it('preserves callback errors and intentional capture filtering', () => {
     delete process.env.SENTRY_DSN;
     process.env.AWS_LAMBDA_FUNCTION_NAME = 'worker';

@@ -36,7 +36,7 @@ export function wrapLambdaHandler(
   options: LambdaSentryOptions = {}
 ): Handler {
   const capture: Handler = (event, context, callback) =>
-    withOperationalContext(context.awsRequestId, () => {
+    withOperationalContext(context?.awsRequestId, () => {
       const report = (error: unknown) => {
         let shouldCapture = true;
         try {
@@ -48,7 +48,7 @@ export function wrapLambdaHandler(
           operationalError(
             'LAMBDA_HANDLER',
             [error],
-            context.awsRequestId,
+            context?.awsRequestId,
             'LAMBDA_FAILURE'
           );
         }
@@ -56,7 +56,7 @@ export function wrapLambdaHandler(
       try {
         const result = handler(event, context, (error, value) => {
           if (error) report(error);
-          callback(error, value);
+          callback?.(error, value);
         });
         if (result && typeof result.then === 'function') {
           return result.catch((error: unknown) => {
