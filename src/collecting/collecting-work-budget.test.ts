@@ -23,10 +23,33 @@ it('does not start work after its deadline', async () => {
 });
 
 it('bounds a stalled read without advancing timers or claiming cancellation', async () => {
-  const budget = new CollectingWorkBudget(5);
+  const budget = new CollectingWorkBudget(5.8);
   await expect(
     budget.waitFor(() => new Promise(() => {}))
   ).rejects.toBeInstanceOf(CollectingWorkTimeout);
+  expect(budget.expired()).toBe(true);
+});
+
+it('latches a timed-out child without consuming its parent reserve or allowing late work', async () => {
+  const parent = new CollectingWorkBudget(20, () => 0);
+  const child = parent.child(2, 3);
+  let finish: (value: string) => void = () => {};
+  const read = new Promise<string>((resolve) => {
+    finish = resolve;
+  });
+  const parse = jest.fn();
+  const result = child.waitFor(() => read).then(parse);
+  await expect(result).rejects.toBeInstanceOf(CollectingWorkTimeout);
+  expect(child.remainingMs()).toBe(0);
+  expect(child.expired()).toBe(true);
+  expect(parent.remainingMs()).toBe(20);
+  finish('late value');
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(parse).not.toHaveBeenCalled();
+  await expect(child.waitFor(async () => 'new work')).rejects.toBeInstanceOf(
+    CollectingWorkTimeout
+  );
 });
 
 it('rejects a late read before the caller can parse or persist its value', async () => {

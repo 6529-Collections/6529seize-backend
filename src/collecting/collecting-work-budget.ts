@@ -13,6 +13,7 @@ export class CollectingWorkTimeout extends Error {
 /** Monotonic elapsed work, independent of the wall clock used for order expiry. */
 export class CollectingWorkBudget {
   private readonly deadline: number;
+  private timedOut = false;
 
   constructor(
     durationMs = COLLECTING_REQUEST_BUDGET_MS,
@@ -22,7 +23,7 @@ export class CollectingWorkBudget {
   }
 
   remainingMs(): number {
-    return Math.max(0, this.deadline - this.clock());
+    return this.timedOut ? 0 : Math.max(0, this.deadline - this.clock());
   }
 
   expired(): boolean {
@@ -54,10 +55,12 @@ export class CollectingWorkBudget {
           return value;
         }),
         new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new CollectingWorkTimeout()),
-            this.remainingMs()
-          );
+          timer = setTimeout(() => {
+            // Node may truncate fractional timer delays. Once a wait times
+            // out, this budget must remain expired even before that fraction elapses.
+            this.timedOut = true;
+            reject(new CollectingWorkTimeout());
+          }, this.remainingMs());
         })
       ]);
     } finally {

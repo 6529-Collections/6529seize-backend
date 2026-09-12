@@ -44,6 +44,8 @@ import { ApiCollectAnalysisRequest } from '@/api/generated/models/ApiCollectAnal
 import { ApiCollectAssetsPage } from '@/api/generated/models/ApiCollectAssetsPage';
 import { ApiCollectCapabilities } from '@/api/generated/models/ApiCollectCapabilities';
 import { ApiCollectCatalog } from '@/api/generated/models/ApiCollectCatalog';
+import { ApiCollectDailyTdhPlan } from '@/api/generated/models/ApiCollectDailyTdhPlan';
+import { ApiCollectDailyTdhRequest } from '@/api/generated/models/ApiCollectDailyTdhRequest';
 import { ApiCollectOfferAnalysis } from '@/api/generated/models/ApiCollectOfferAnalysis';
 import { ApiCollectOfferAnalysisRequest } from '@/api/generated/models/ApiCollectOfferAnalysisRequest';
 import { ApiCollectPlan } from '@/api/generated/models/ApiCollectPlan';
@@ -983,6 +985,20 @@ export type ReconcileCollectRuleRequest = Request<
   ApiResponse<ReconcileCollectRuleResponse>,
   never,
   ReconcileCollectRuleQuery,
+  Record<string, never>
+>;
+
+export type CreateCollectDailyTdhPlanPathParams = Record<string, never>;
+
+export type CreateCollectDailyTdhPlanQuery = Record<string, never>;
+
+export type CreateCollectDailyTdhPlanResponse = ApiCollectDailyTdhPlan;
+
+export type CreateCollectDailyTdhPlanRequest = Request<
+  CreateCollectDailyTdhPlanPathParams,
+  ApiResponse<CreateCollectDailyTdhPlanResponse>,
+  ApiCollectDailyTdhRequest,
+  CreateCollectDailyTdhPlanQuery,
   Record<string, never>
 >;
 

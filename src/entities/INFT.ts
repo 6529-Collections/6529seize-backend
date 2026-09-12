@@ -143,11 +143,29 @@ export class ExtendedDataBase {
   @Column({ type: 'int' })
   museum_holdings_rank!: number;
 
+  @Column({ type: 'int', nullable: true })
+  research_holdings?: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  research_holdings_rank?: number | null;
+
   @Column({ type: 'int' })
   edition_size_cleaned!: number;
 
   @Column({ type: 'int' })
   edition_size_cleaned_rank!: number;
+
+  @Column({ type: 'int', nullable: true })
+  edition_size_ex_research?: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  edition_size_ex_research_rank?: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  edition_size_ex_museum_and_research?: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  edition_size_ex_museum_and_research_rank?: number | null;
 
   @Column({ type: 'int' })
   hodlers!: number;

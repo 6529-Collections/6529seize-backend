@@ -19,7 +19,7 @@ export const marketUintSchema = z
   );
 export const marketOfferItemSchema = z
   .object({
-    itemType: z.number().int().min(0).max(3),
+    itemType: z.number().int().min(0).max(5),
     token: marketAddressSchema,
     identifierOrCriteria: marketUintSchema,
     startAmount: marketUintSchema,

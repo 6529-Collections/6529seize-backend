@@ -14,7 +14,10 @@ import { collectingDb } from '@/collecting/collecting.db';
 import { collectingService } from '@/collecting/collecting.service';
 import { marketDepthApiDb } from '@/api/market-depth/market-depth-api.db';
 import { collectTdhTargetCandidates } from '@/api/collect/collect-tdh-target-candidates';
-import { createCollectTdhTargetPlan } from '@/api/collect/collect-tdh-target.service';
+import {
+  createCollectTdhTargetPlan,
+  readTargetBooks
+} from '@/api/collect/collect-tdh-target.service';
 import * as targetSolver from '@/collecting/collecting-tdh-target';
 import * as tdhProjection from '@/collecting/collecting-tdh-projection';
 import {
@@ -197,6 +200,29 @@ beforeEach(() => {
     .mockReturnValue({ listings: [listing()], coverage });
 });
 afterEach(() => jest.restoreAllMocks());
+
+it('keeps an actual timed-out books read expired and incomplete with real monotonic timers', async () => {
+  const budget = new CollectingWorkBudget(5.8);
+  jest
+    .mocked(marketDepthApiDb.getBooks)
+    .mockImplementationOnce(() => new Promise(() => {}));
+  const groups = await readTargetBooks([listing().asset], ['memes'], budget);
+  expect(groups).toEqual([]);
+  expect(budget.expired()).toBe(true);
+  const realCapture = jest.requireActual<
+    typeof import('@/api/collect/collect-tdh-target-candidates')
+  >('@/api/collect/collect-tdh-target-candidates').collectTdhTargetCandidates;
+  const captured = realCapture(
+    source(),
+    [listing().asset],
+    groups,
+    now,
+    now + 1000,
+    budget
+  );
+  expect(captured.coverage.index_complete).toBe(false);
+  expect(captured.listings).toEqual([]);
+});
 
 it('bounds a stalled source read with real timers before starting projection work', async () => {
   const solver = jest.spyOn(targetSolver, 'createCollectingTdhTargetSolver');

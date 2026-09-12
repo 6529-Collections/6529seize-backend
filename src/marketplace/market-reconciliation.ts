@@ -253,9 +253,15 @@ export function validateMarketReceipt(
     amount: scale(item.startAmount)
   }));
   const consideration = c.consideration.map((item) => ({
-    itemType: item.itemType,
+    itemType:
+      kind === 'ACCEPT' && item.itemType >= 4
+        ? item.itemType - 2
+        : item.itemType,
     token: item.token.toLowerCase(),
-    tokenId: item.identifierOrCriteria,
+    tokenId:
+      kind === 'ACCEPT' && item.itemType >= 4
+        ? prepared.intent.asset.tokenId
+        : item.identifierOrCriteria,
     amount: scale(item.startAmount),
     recipient: item.recipient.toLowerCase()
   }));
