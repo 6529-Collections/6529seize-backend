@@ -44,6 +44,8 @@ import { ApiCollectAnalysisRequest } from '@/api/generated/models/ApiCollectAnal
 import { ApiCollectAssetsPage } from '@/api/generated/models/ApiCollectAssetsPage';
 import { ApiCollectCapabilities } from '@/api/generated/models/ApiCollectCapabilities';
 import { ApiCollectCatalog } from '@/api/generated/models/ApiCollectCatalog';
+import { ApiCollectOfferAnalysis } from '@/api/generated/models/ApiCollectOfferAnalysis';
+import { ApiCollectOfferAnalysisRequest } from '@/api/generated/models/ApiCollectOfferAnalysisRequest';
 import { ApiCollectPlan } from '@/api/generated/models/ApiCollectPlan';
 import { ApiCollectPlanRequest } from '@/api/generated/models/ApiCollectPlanRequest';
 import { ApiCollectRule } from '@/api/generated/models/ApiCollectRule';
@@ -52,10 +54,13 @@ import { ApiCollectRulePause } from '@/api/generated/models/ApiCollectRulePause'
 import { ApiCollectRulePrepare } from '@/api/generated/models/ApiCollectRulePrepare';
 import { ApiCollectRulePrepared } from '@/api/generated/models/ApiCollectRulePrepared';
 import { ApiCollectRules } from '@/api/generated/models/ApiCollectRules';
+import { ApiCollectTdhListings } from '@/api/generated/models/ApiCollectTdhListings';
 import { ApiCollectTdhProjection } from '@/api/generated/models/ApiCollectTdhProjection';
 import { ApiCollectTdhRanking } from '@/api/generated/models/ApiCollectTdhRanking';
 import { ApiCollectTdhRankingRequest } from '@/api/generated/models/ApiCollectTdhRankingRequest';
 import { ApiCollectTdhRequest } from '@/api/generated/models/ApiCollectTdhRequest';
+import { ApiCollectTdhTargetPlan } from '@/api/generated/models/ApiCollectTdhTargetPlan';
+import { ApiCollectTdhTargetRequest } from '@/api/generated/models/ApiCollectTdhTargetRequest';
 import { ApiCommunityMembersPage } from '@/api/generated/models/ApiCommunityMembersPage';
 import { ApiCompetition } from '@/api/generated/models/ApiCompetition';
 import { ApiCompetitionConfigVersionPage } from '@/api/generated/models/ApiCompetitionConfigVersionPage';
@@ -104,12 +109,13 @@ import { ApiGlobalRepCategoryWaveContributorsPage } from '@/api/generated/models
 import { ApiGlobalRepCategoryWaveOverview } from '@/api/generated/models/ApiGlobalRepCategoryWaveOverview';
 import { ApiGlobalRepCategoryWavesPage } from '@/api/generated/models/ApiGlobalRepCategoryWavesPage';
 import { ApiGroupMembersPreviewRequest } from '@/api/generated/models/ApiGroupMembersPreviewRequest';
+import { ApiMarketBatchCapabilities } from '@/api/generated/models/ApiMarketBatchCapabilities';
 import { ApiMarketDepth } from '@/api/generated/models/ApiMarketDepth';
 import { ApiMarketListings } from '@/api/generated/models/ApiMarketListings';
 import { ApiMarketMyOperations } from '@/api/generated/models/ApiMarketMyOperations';
-import { ApiMarketOperation } from '@/api/generated/models/ApiMarketOperation';
+import { ApiMarketOperationPrepareRequest } from '@/api/generated/models/ApiMarketOperationPrepareRequest';
+import { ApiMarketOperationResult } from '@/api/generated/models/ApiMarketOperationResult';
 import { ApiMarketOrders } from '@/api/generated/models/ApiMarketOrders';
-import { ApiMarketPrepareRequest } from '@/api/generated/models/ApiMarketPrepareRequest';
 import { ApiMarketSendAttemptRejection } from '@/api/generated/models/ApiMarketSendAttemptRejection';
 import { ApiMarketSendAttemptRequest } from '@/api/generated/models/ApiMarketSendAttemptRequest';
 import { ApiMarketSignature } from '@/api/generated/models/ApiMarketSignature';
@@ -822,6 +828,20 @@ export type GetCollectCatalogRequest = Request<
   Record<string, never>
 >;
 
+export type AnalyzeCollectOffersPathParams = Record<string, never>;
+
+export type AnalyzeCollectOffersQuery = Record<string, never>;
+
+export type AnalyzeCollectOffersResponse = ApiCollectOfferAnalysis;
+
+export type AnalyzeCollectOffersRequest = Request<
+  AnalyzeCollectOffersPathParams,
+  ApiResponse<AnalyzeCollectOffersResponse>,
+  ApiCollectOfferAnalysisRequest,
+  AnalyzeCollectOffersQuery,
+  Record<string, never>
+>;
+
 export type CreateCollectPlanPathParams = Record<string, never>;
 
 export type CreateCollectPlanQuery = Record<string, never>;
@@ -960,6 +980,24 @@ export type ReconcileCollectRuleRequest = Request<
   Record<string, never>
 >;
 
+export type GetCollectTdhListingsPathParams = Record<string, never>;
+
+export interface GetCollectTdhListingsQuery {
+  "family"?: string;
+  "cursor"?: string;
+  "limit"?: number;
+}
+
+export type GetCollectTdhListingsResponse = ApiCollectTdhListings;
+
+export type GetCollectTdhListingsRequest = Request<
+  GetCollectTdhListingsPathParams,
+  ApiResponse<GetCollectTdhListingsResponse>,
+  never,
+  GetCollectTdhListingsQuery,
+  Record<string, never>
+>;
+
 export type RankCollectTdhPurchasesPathParams = Record<string, never>;
 
 export type RankCollectTdhPurchasesQuery = Record<string, never>;
@@ -985,6 +1023,20 @@ export type ProjectCollectPurchasesRequest = Request<
   ApiResponse<ProjectCollectPurchasesResponse>,
   ApiCollectTdhRequest,
   ProjectCollectPurchasesQuery,
+  Record<string, never>
+>;
+
+export type CreateCollectTdhTargetPlanPathParams = Record<string, never>;
+
+export type CreateCollectTdhTargetPlanQuery = Record<string, never>;
+
+export type CreateCollectTdhTargetPlanResponse = ApiCollectTdhTargetPlan;
+
+export type CreateCollectTdhTargetPlanRequest = Request<
+  CreateCollectTdhTargetPlanPathParams,
+  ApiResponse<CreateCollectTdhTargetPlanResponse>,
+  ApiCollectTdhTargetRequest,
+  CreateCollectTdhTargetPlanQuery,
   Record<string, never>
 >;
 
@@ -1109,6 +1161,20 @@ export type GetNftMarketDepthRequest = Request<
   Record<string, never>
 >;
 
+export type GetMarketBatchCapabilitiesPathParams = Record<string, never>;
+
+export type GetMarketBatchCapabilitiesQuery = Record<string, never>;
+
+export type GetMarketBatchCapabilitiesResponse = ApiMarketBatchCapabilities;
+
+export type GetMarketBatchCapabilitiesRequest = Request<
+  GetMarketBatchCapabilitiesPathParams,
+  ApiResponse<GetMarketBatchCapabilitiesResponse>,
+  never,
+  GetMarketBatchCapabilitiesQuery,
+  Record<string, never>
+>;
+
 export type GetMarketListingsPathParams = Record<string, never>;
 
 export interface GetMarketListingsQuery {
@@ -1132,6 +1198,7 @@ export type GetMyMarketOperationsPathParams = Record<string, never>;
 export interface GetMyMarketOperationsQuery {
   "cursor"?: string;
   "limit"?: number;
+  "include_batches"?: boolean;
 }
 
 export type GetMyMarketOperationsResponse = ApiMarketMyOperations;
@@ -1148,12 +1215,12 @@ export type PrepareMarketOperationPathParams = Record<string, never>;
 
 export type PrepareMarketOperationQuery = Record<string, never>;
 
-export type PrepareMarketOperationResponse = ApiMarketOperation;
+export type PrepareMarketOperationResponse = ApiMarketOperationResult;
 
 export type PrepareMarketOperationRequest = Request<
   PrepareMarketOperationPathParams,
   ApiResponse<PrepareMarketOperationResponse>,
-  ApiMarketPrepareRequest,
+  ApiMarketOperationPrepareRequest,
   PrepareMarketOperationQuery,
   Record<string, never>
 >;
@@ -1164,7 +1231,7 @@ export interface GetMarketOperationPathParams {
 
 export type GetMarketOperationQuery = Record<string, never>;
 
-export type GetMarketOperationResponse = ApiMarketOperation;
+export type GetMarketOperationResponse = ApiMarketOperationResult;
 
 export type GetMarketOperationRequest = Request<
   GetMarketOperationPathParams,
@@ -1180,7 +1247,7 @@ export interface ContinueMarketOperationPathParams {
 
 export type ContinueMarketOperationQuery = Record<string, never>;
 
-export type ContinueMarketOperationResponse = ApiMarketOperation;
+export type ContinueMarketOperationResponse = ApiMarketOperationResult;
 
 export type ContinueMarketOperationRequest = Request<
   ContinueMarketOperationPathParams,
@@ -1196,7 +1263,7 @@ export interface BeginMarketTransactionAttemptPathParams {
 
 export type BeginMarketTransactionAttemptQuery = Record<string, never>;
 
-export type BeginMarketTransactionAttemptResponse = ApiMarketOperation;
+export type BeginMarketTransactionAttemptResponse = ApiMarketOperationResult;
 
 export type BeginMarketTransactionAttemptRequest = Request<
   BeginMarketTransactionAttemptPathParams,
@@ -1212,7 +1279,7 @@ export interface RejectMarketTransactionAttemptPathParams {
 
 export type RejectMarketTransactionAttemptQuery = Record<string, never>;
 
-export type RejectMarketTransactionAttemptResponse = ApiMarketOperation;
+export type RejectMarketTransactionAttemptResponse = ApiMarketOperationResult;
 
 export type RejectMarketTransactionAttemptRequest = Request<
   RejectMarketTransactionAttemptPathParams,
@@ -1228,7 +1295,7 @@ export interface PublishMarketOperationPathParams {
 
 export type PublishMarketOperationQuery = Record<string, never>;
 
-export type PublishMarketOperationResponse = ApiMarketOperation;
+export type PublishMarketOperationResponse = ApiMarketOperationResult;
 
 export type PublishMarketOperationRequest = Request<
   PublishMarketOperationPathParams,
@@ -1244,7 +1311,7 @@ export interface SubmitMarketOperationPathParams {
 
 export type SubmitMarketOperationQuery = Record<string, never>;
 
-export type SubmitMarketOperationResponse = ApiMarketOperation;
+export type SubmitMarketOperationResponse = ApiMarketOperationResult;
 
 export type SubmitMarketOperationRequest = Request<
   SubmitMarketOperationPathParams,
