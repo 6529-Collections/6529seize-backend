@@ -154,6 +154,23 @@ interface SessionLockWaits {
   metadata_wait: number;
 }
 
+function normalizeSessionLockWait(value: unknown): number {
+  let normalized = value;
+  if (typeof normalized === 'string' && /^\d+$/.test(normalized)) {
+    normalized = Number(normalized);
+  }
+  if (
+    typeof normalized !== 'number' ||
+    !Number.isSafeInteger(normalized) ||
+    normalized < 0
+  ) {
+    throw new WalletTransferAnalysisError(
+      'Could not read database session lock-wait settings'
+    );
+  }
+  return normalized;
+}
+
 const SESSION_LOCK_WAIT_QUERY = `SELECT
   @@SESSION.innodb_lock_wait_timeout AS row_wait,
   @@SESSION.lock_wait_timeout AS metadata_wait`;
@@ -238,20 +255,14 @@ export class WalletTransferAnalysisDb
     ctx: RequestContext
   ): Promise<T> {
     requireTransaction(ctx);
-    const original = await this.db.oneOrNull<SessionLockWaits>(
-      SESSION_LOCK_WAIT_QUERY,
-      undefined,
-      primaryOptions(ctx)
-    );
-    if (
-      !original ||
-      !Number.isSafeInteger(original.row_wait) ||
-      !Number.isSafeInteger(original.metadata_wait)
-    ) {
-      throw new WalletTransferAnalysisError(
-        'Could not read database session lock-wait settings'
-      );
-    }
+    const stored = await this.db.oneOrNull<{
+      row_wait: unknown;
+      metadata_wait: unknown;
+    }>(SESSION_LOCK_WAIT_QUERY, undefined, primaryOptions(ctx));
+    const original: SessionLockWaits = {
+      row_wait: normalizeSessionLockWait(stored?.row_wait),
+      metadata_wait: normalizeSessionLockWait(stored?.metadata_wait)
+    };
     try {
       await this.setSessionLockWaits(
         ANALYSIS_LOCK_WAIT_SECONDS,

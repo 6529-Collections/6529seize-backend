@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { DataSource } from 'typeorm';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   TRANSACTIONS_TABLE,
@@ -6,8 +7,9 @@ import {
   WALLET_TRANSFER_WALLET_DAYS_TABLE
 } from '@/constants';
 import { RequestContext } from '@/request.context';
-import { DbPoolName } from '@/db-query.options';
-import { sqlExecutor } from '@/sql-executor';
+import { execSQLWithParams } from '@/db';
+import { DbPoolName, DbQueryOptions } from '@/db-query.options';
+import { SqlExecutor, sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { buildTransaction } from '@/tests/test.transactions.helpers';
 import {
@@ -94,6 +96,213 @@ async function insertSourceRows(
 ) {
   await sqlExecutor.bulkInsert(TRANSACTIONS_TABLE, rows, Object.keys(rows[0]));
 }
+
+describe('wallet transfer session wait driver values', () => {
+  class DriverExecutor extends SqlExecutor {
+    readonly query = jest.fn();
+
+    async execute<T>(
+      statement: string,
+      parameters?: Record<string, unknown>,
+      options?: DbQueryOptions
+    ): Promise<T[]> {
+      return this.query(statement, parameters, options);
+    }
+
+    async executeNativeQueriesInTransaction<T>(): Promise<T> {
+      throw new Error('Expected the existing wrapped connection');
+    }
+  }
+
+  const connection = { connection: { query: jest.fn() } };
+  const scopedCtx: RequestContext = { connection };
+  let driver: DriverExecutor;
+  let repository: WalletTransferAnalysisDb;
+
+  beforeEach(() => {
+    driver = new DriverExecutor();
+    driver.query.mockResolvedValue([]);
+    repository = new WalletTransferAnalysisDb(() => driver);
+  });
+
+  it.each([
+    { fail: false, row_wait: '50', metadata_wait: '31536000' },
+    { fail: true, row_wait: '50', metadata_wait: '31536000' },
+    { fail: false, row_wait: 50, metadata_wait: 31_536_000 },
+    { fail: true, row_wait: 0, metadata_wait: '0' }
+  ])(
+    'restores effective settings on the same connection: %p',
+    async (settings) => {
+      driver.query.mockResolvedValueOnce([
+        { row_wait: settings.row_wait, metadata_wait: settings.metadata_wait }
+      ]);
+      const failure = new Error('Synthetic work failure');
+      const execution = repository.inTransaction(async (txCtx) => {
+        expect(txCtx.connection).toBe(connection);
+        if (settings.fail) throw failure;
+        return 'complete';
+      }, scopedCtx);
+
+      if (settings.fail) await expect(execution).rejects.toBe(failure);
+      else await expect(execution).resolves.toBe('complete');
+
+      const options = {
+        wrappedConnection: connection,
+        forcePool: DbPoolName.WRITE
+      };
+      expect(driver.query).toHaveBeenCalledTimes(3);
+      expect(driver.query).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('SET SESSION innodb_lock_wait_timeout'),
+        {
+          rowWait: ANALYSIS_LOCK_WAIT_SECONDS,
+          metadataWait: ANALYSIS_LOCK_WAIT_SECONDS
+        },
+        options
+      );
+      expect(driver.query).toHaveBeenNthCalledWith(
+        3,
+        expect.stringContaining('SET SESSION innodb_lock_wait_timeout'),
+        {
+          rowWait: Number(settings.row_wait),
+          metadataWait: Number(settings.metadata_wait)
+        },
+        options
+      );
+    }
+  );
+
+  it.each([
+    null,
+    '',
+    ' ',
+    -1,
+    '-1',
+    1.5,
+    '1.5',
+    Infinity,
+    '9007199254740992',
+    Number.MAX_SAFE_INTEGER + 1,
+    true
+  ])(
+    'rejects invalid row-wait value %p before work or session changes',
+    async (value) => {
+      driver.query.mockResolvedValueOnce([
+        { row_wait: value, metadata_wait: '31536000' }
+      ]);
+      const work = jest.fn();
+
+      await expect(repository.inTransaction(work, scopedCtx)).rejects.toThrow(
+        'Could not read database session lock-wait settings'
+      );
+
+      expect(work).not.toHaveBeenCalled();
+      expect(driver.query).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each([{ rows: [] }, { rows: [{ row_wait: '50', metadata_wait: null }] }])(
+    'rejects a missing settings row or invalid metadata wait before work: %p',
+    async ({ rows }) => {
+      driver.query.mockResolvedValueOnce(rows);
+      const work = jest.fn();
+
+      await expect(repository.inTransaction(work, scopedCtx)).rejects.toThrow(
+        'Could not read database session lock-wait settings'
+      );
+
+      expect(work).not.toHaveBeenCalled();
+      expect(driver.query).toHaveBeenCalledTimes(1);
+    }
+  );
+});
+
+describe('wallet transfer TypeORM session settings', () => {
+  const dataSource = new DataSource({
+    type: 'mysql',
+    host: process.env.DB_HOST,
+    port: Number(process.env.DB_PORT),
+    username: process.env.DB_USER,
+    password: process.env.DB_PASS,
+    database: process.env.DB_NAME,
+    entities: [],
+    synchronize: false,
+    timezone: 'Etc/UTC'
+  });
+  class LoopExecutor extends SqlExecutor {
+    async execute<T>(
+      statement: string,
+      parameters?: Record<string, unknown>,
+      options?: DbQueryOptions
+    ): Promise<T[]> {
+      return execSQLWithParams(statement, parameters, options);
+    }
+
+    async executeNativeQueriesInTransaction<T>(): Promise<T> {
+      throw new Error('Expected the existing TypeORM QueryRunner');
+    }
+  }
+  const executor = new LoopExecutor();
+  const repository = new WalletTransferAnalysisDb(() => executor);
+
+  beforeAll(async () => {
+    await dataSource.initialize();
+  });
+
+  afterAll(async () => {
+    if (dataSource.isInitialized) await dataSource.destroy();
+  });
+
+  it.each([false, true])(
+    'restores raw TypeORM string settings after work failure=%s',
+    async (fail) => {
+      const runner = dataSource.createQueryRunner();
+      await runner.connect();
+      await runner.startTransaction();
+      const options = { wrappedConnection: { connection: runner } };
+      const readSettings = () =>
+        executor.oneOrNull<{ row_wait: string; metadata_wait: string }>(
+          `SELECT @@SESSION.innodb_lock_wait_timeout AS row_wait,
+            @@SESSION.lock_wait_timeout AS metadata_wait`,
+          undefined,
+          options
+        );
+      try {
+        await runner.query(
+          'SET SESSION innodb_lock_wait_timeout = 41, SESSION lock_wait_timeout = 43'
+        );
+        expect(await readSettings()).toEqual({
+          row_wait: '41',
+          metadata_wait: '43'
+        });
+        const failure = new Error('Synthetic TypeORM work failure');
+        const execution = repository.inTransaction(
+          async (txCtx) => {
+            expect(txCtx.connection).toBe(options.wrappedConnection);
+            expect(await readSettings()).toEqual({
+              row_wait: String(ANALYSIS_LOCK_WAIT_SECONDS),
+              metadata_wait: String(ANALYSIS_LOCK_WAIT_SECONDS)
+            });
+            if (fail) throw failure;
+            return 'complete';
+          },
+          { connection: options.wrappedConnection }
+        );
+
+        if (fail) await expect(execution).rejects.toBe(failure);
+        else await expect(execution).resolves.toBe('complete');
+
+        expect(await readSettings()).toEqual({
+          row_wait: '41',
+          metadata_wait: '43'
+        });
+      } finally {
+        await runner.rollbackTransaction();
+        await runner.release();
+      }
+    }
+  );
+});
 
 describeWithSeed('WalletTransferAnalysisDb', [], () => {
   let repository: WalletTransferAnalysisDb;
