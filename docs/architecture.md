@@ -156,7 +156,16 @@ then deploy the dependent frontend. The exported TDH helper does not change the
 scheduled TDH calculation and does not require a TDH loop deployment.
 `MARKETPLACE_TRADING_ENABLED=false` stops new trade preparation/publication;
 inspection, transaction reconciliation and direct cancellation remain available.
-The default enables supported actions when provider/RPC configuration exists.
+Action availability follows
+[`handleGetCollectCapabilities`](../src/api-serverless/src/collect/collect.handlers.ts):
+
+- `TdhScenario` is always enabled.
+- `Cancel` requires `ALCHEMY_API_KEY`, independently of the trading flag or
+  `OPENSEA_API_KEY`.
+- Other actions require both `ALCHEMY_API_KEY` and `OPENSEA_API_KEY`, with
+  `MARKETPLACE_TRADING_ENABLED` either unset (defaults to `true`) or exactly `true`.
+- `RuleExecution` is always disabled; rules only prepare purchases for review.
+
 Keep operation history and exposure tables when disabling or rolling back trading.
 
 ## High-Level Diagram
@@ -368,7 +377,7 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 
 1. Client requests enter through API Gateway and land in `seizeAPI`.
 2. The API validates input, authenticates JWT or anonymous context, reads/writes MySQL, uses Redis for cache/rate limiting, and sometimes publishes SQS work.
-3. Scheduled ingestion Lambdas poll Ethereum/RPC/Alchemy/Etherscan, normalize chain state, and write canonical rows into MySQL.
+3. Scheduled ingestion Lambdas poll Ethereum/RPC/Alchemy/Etherscan, normalize chain state, and write canonical rows into MySQL. The proposed boundary between provider-neutral Ethereum JSON-RPC and Alchemy-specific indexed APIs is recorded in [Ethereum RPC provider portability](ethereum-rpc-provider-portability.md); until that migration is implemented, standard RPC traffic is not yet configuration-only.
 4. Derived-data Lambdas read canonical tables and write projections such as TDH, owner balances, aggregated activity, wave decisions, leaderboards, metrics, and reputation aggregates.
 5. SQS workers handle slow or retryable side effects through named queues: claim building, claim media Arweave uploads, S3 media mirroring, attachment orchestration/processing, NFT link resolution/previews, xTDH recalculation, Wave Score dirty refreshes, and notification delivery through Firebase plus recipient-scoped WebSocket invalidations.
 
