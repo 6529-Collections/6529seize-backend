@@ -12,11 +12,19 @@
         },
         "BucketEncryption": {
           "ServerSideEncryptionConfiguration": [
-            { "ServerSideEncryptionByDefault": { "SSEAlgorithm": "AES256" } }
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
           ]
         },
         "OwnershipControls": {
-          "Rules": [{ "ObjectOwnership": "BucketOwnerEnforced" }]
+          "Rules": [
+            {
+              "ObjectOwnership": "BucketOwnerEnforced"
+            }
+          ]
         },
         "PublicAccessBlockConfiguration": {
           "BlockPublicAcls": true,
@@ -24,13 +32,26 @@
           "BlockPublicPolicy": true,
           "RestrictPublicBuckets": true
         },
-        "VersioningConfiguration": { "Status": "Enabled" }
-      }
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        },
+        "LoggingConfiguration": {
+          "DestinationBucketName": {
+            "Ref": "ArtifactAccessLogs"
+          },
+          "LogFilePrefix": "artifacts/"
+        }
+      },
+      "DependsOn": [
+        "ArtifactAccessLogPolicy"
+      ]
     },
     "ArtifactPolicy": {
       "Type": "AWS::S3::BucketPolicy",
       "Properties": {
-        "Bucket": { "Ref": "Artifacts" },
+        "Bucket": {
+          "Ref": "Artifacts"
+        },
         "PolicyDocument": {
           "Version": "2012-10-17",
           "Statement": [
@@ -40,10 +61,126 @@
               "Principal": "*",
               "Action": "s3:*",
               "Resource": [
-                { "Fn::GetAtt": ["Artifacts", "Arn"] },
-                { "Fn::Sub": "${Artifacts.Arn}/*" }
+                {
+                  "Fn::GetAtt": [
+                    "Artifacts",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Sub": "${Artifacts.Arn}/*"
+                }
               ],
-              "Condition": { "Bool": { "aws:SecureTransport": "false" } }
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "ArtifactAccessLogs": {
+      "Type": "AWS::S3::Bucket",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Metadata": {
+        "Purpose": "Dedicated access-log sink; recursive server access logging is intentionally disabled."
+      },
+      "Properties": {
+        "BucketName": {
+          "Fn::Sub": "6529-monitoring-source-logs-${AWS::AccountId}-${AWS::Region}"
+        },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "OwnershipControls": {
+          "Rules": [
+            {
+              "ObjectOwnership": "BucketOwnerEnforced"
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "IgnorePublicAcls": true,
+          "BlockPublicPolicy": true,
+          "RestrictPublicBuckets": true
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "ExpireAccessLogs",
+              "Status": "Enabled",
+              "ExpirationInDays": 90,
+              "AbortIncompleteMultipartUpload": {
+                "DaysAfterInitiation": 7
+              }
+            }
+          ]
+        }
+      }
+    },
+    "ArtifactAccessLogPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "ArtifactAccessLogs"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "RequireTLS",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "ArtifactAccessLogs",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Sub": "${ArtifactAccessLogs.Arn}/*"
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            },
+            {
+              "Sid": "AllowExactArtifactLogDelivery",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "logging.s3.amazonaws.com"
+              },
+              "Action": "s3:PutObject",
+              "Resource": {
+                "Fn::Sub": "${ArtifactAccessLogs.Arn}/artifacts/*"
+              },
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "ArnLike": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:s3:::6529-monitoring-source-${AWS::AccountId}-${AWS::Region}"
+                  }
+                }
+              }
             }
           ]
         }
@@ -51,6 +188,10 @@
     }
   },
   "Outputs": {
-    "SourceArtifactBucket": { "Value": { "Ref": "Artifacts" } }
+    "SourceArtifactBucket": {
+      "Value": {
+        "Ref": "Artifacts"
+      }
+    }
   }
 }
