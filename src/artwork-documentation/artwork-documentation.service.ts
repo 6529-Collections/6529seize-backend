@@ -491,7 +491,7 @@ export class ArtworkDocumentationService {
       program_id: context.program_id,
       profile: this.projectProfile(context.profile, access),
       draft_version: context.draft_version,
-      artist_record_version: artist?.record_version ?? 0,
+      artist_record_version: Number(artist?.record_version ?? 0),
       artist_record_revision_id: context.artist_record_revision_id,
       modules: this.projectModules(context, access),
       capabilities: access.capabilities,
@@ -500,7 +500,7 @@ export class ArtworkDocumentationService {
       available_artist_record: availableArtist
         ? {
             id: availableArtist.id,
-            record_version: availableArtist.record_version,
+            record_version: Number(availableArtist.record_version),
             answers:
               context.profile.version === 3
                 ? {}
@@ -1402,7 +1402,11 @@ export class ArtworkDocumentationService {
     )
       add('context.theme_connection', 'CAPTION_REQUIRED');
     result.push(...museumRecordIssues(context));
-    if (context.program_id === '6529NM-AP-01') this.programIssues(context, add);
+    if (
+      context.program_id === '6529NM-AP-01' ||
+      context.profile.profile_id === 'keys_and_gates_v1'
+    )
+      this.programIssues(context, add);
     return result;
   }
   private programIssues(

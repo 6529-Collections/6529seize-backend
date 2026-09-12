@@ -4,10 +4,14 @@ import {
   AssetTechnicalMetadata,
   StoredAsset
 } from '../../assets/artwork-assets.types';
-import { DossierSnapshot } from './dossier.types';
+import { DossierIssue, DossierSnapshot } from './dossier.types';
 import { element as e } from './xml';
 
 type Value = Record<string, unknown>;
+const objectValue = (value: unknown): Value | null =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Value)
+    : null;
 const rows = (value: unknown): Value[] =>
   Array.isArray(value) ? (value as Value[]) : [];
 const strings = (value: unknown): string[] =>
@@ -188,7 +192,8 @@ function journalEvent(
 ): string | null {
   if (record.kind !== 'preservation' || payload.event_status !== 'completed')
     return null;
-  const details = payload.details as Value;
+  const details = objectValue(payload.details);
+  if (!details) return null;
   const recorder = profileUri(record.actor_profile_id);
   agents.set(
     recorder,
@@ -376,7 +381,10 @@ function artistRights(
 }
 
 /** PREMIS 3.0 objects, events, agents and scoped rights; source assertions remain attributable. */
-export function buildPremis(snapshot: DossierSnapshot): string {
+export function buildPremis(
+  snapshot: DossierSnapshot,
+  issues: DossierIssue[] = []
+): string {
   const context = snapshot.context;
   const components = rows(answerValue(context.modules.artwork.components));
   const documents = rows(answerValue(context.modules.context.documents));
@@ -438,7 +446,7 @@ export function buildPremis(snapshot: DossierSnapshot): string {
       .filter(Boolean)
   );
   for (const record of snapshot.museum_records) {
-    const payload = parseJson<Value>(record.payload_json);
+    const payload = objectValue(parseJson<unknown>(record.payload_json)) ?? {};
     const recorder = profileUri(record.actor_profile_id);
     agents.set(
       recorder,
@@ -470,6 +478,20 @@ export function buildPremis(snapshot: DossierSnapshot): string {
         record
       )
     );
+    const details = objectValue(payload.details);
+    if (
+      ['preservation', 'rights'].includes(String(record.kind)) &&
+      payload.event_status === 'completed' &&
+      !superseded.has(record.id) &&
+      !details
+    )
+      issues.push({
+        code: 'PREMIS_INSTITUTIONAL_DETAILS_UNAVAILABLE',
+        path: `museum-record:${record.id}`,
+        severity: 'warning',
+        message:
+          'The institutional record has no usable structured details. Its complete source and recording event are retained; no completed preservation activity or rights statement is inferred.'
+      });
     const preservation = superseded.has(record.id)
       ? null
       : journalEvent(record, payload, objectIds, agents);
@@ -477,9 +499,9 @@ export function buildPremis(snapshot: DossierSnapshot): string {
     if (
       record.kind === 'rights' &&
       payload.event_status === 'completed' &&
-      !superseded.has(record.id)
+      !superseded.has(record.id) &&
+      details
     ) {
-      const details = payload.details as Value;
       agents.set(
         recorder,
         agent(

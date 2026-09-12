@@ -101,10 +101,12 @@ describe('archive verification worker', () => {
     });
   });
   it('quarantines a PDF rejected by website policy even after a clean malware scan', async () => {
-    const { processor, asset, db } = setup(
-      'NO_THREATS_FOUND',
-      Buffer.from('%PDF-1.7\n/JavaScript')
-    );
+    const document = await PDFDocument.create();
+    document.addPage([100, 100]);
+    document.addJavaScript('prohibited-action', 'app.alert("test");');
+    const bytes = Buffer.from(await document.save());
+    await expect(PDFDocument.load(bytes)).resolves.toBeDefined();
+    const { processor, asset, db } = setup('NO_THREATS_FOUND', bytes);
     asset.extension = 'pdf';
     await processor.process(asset);
     expect(db.finishProcessing).toHaveBeenCalledWith(
@@ -115,6 +117,25 @@ describe('archive verification worker', () => {
       })
     );
   });
+  it.each(['icc', 'glb'])(
+    'quarantines a truncated %s signature without retrying',
+    async (extension) => {
+      const { processor, asset, db } = setup(
+        'NO_THREATS_FOUND',
+        Buffer.from([0, 1, 2])
+      );
+      asset.extension = extension;
+      await processor.process(asset);
+      expect(db.finishProcessing).toHaveBeenCalledTimes(1);
+      expect(db.finishProcessing).toHaveBeenCalledWith(
+        asset,
+        expect.objectContaining({
+          state: 'quarantined',
+          failure_code: 'FILE_SIGNATURE_MISMATCH'
+        })
+      );
+    }
+  );
   it('retries a preview storage fault and then marks the valid original ready', async () => {
     const bytes = await sharp({
       create: { width: 3, height: 2, channels: 3, background: '#abcdef' }

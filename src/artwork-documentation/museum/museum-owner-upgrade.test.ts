@@ -63,6 +63,32 @@ function fixture() {
 }
 
 describe('Artist-owned museum profile upgrade', () => {
+  it.each([null, 'another-program'])(
+    'retains legacy program terms and refuses to upgrade inconsistent program binding %s',
+    async (program) => {
+      const { context, core, db, review, request, mutation } = fixture();
+      context.program_id = program;
+      const original = JSON.stringify(context);
+      expect(core.issues(context)).toContainEqual(
+        expect.objectContaining({ code: 'PROGRAM_CC0_REQUIRED' })
+      );
+      await expect(
+        review.upgradePreview(context.id, 'stream_artwork_basic_v1', 3, request)
+      ).rejects.toMatchObject({ code: 'PROGRAM_CHANGE_NOT_ALLOWED' });
+      await expect(
+        review.upgrade(
+          context.id,
+          'stream_artwork_basic_v1',
+          3,
+          mutation,
+          request
+        )
+      ).rejects.toMatchObject({ code: 'PROGRAM_CHANGE_NOT_ALLOWED' });
+      expect(JSON.stringify(context)).toBe(original);
+      expect(db.saveContext).not.toHaveBeenCalled();
+    }
+  );
+
   it('upgrades the owner’s legacy program record using trusted terms and preserves the historical confirmation', async () => {
     const { context, access, db, review, request, mutation } = fixture();
     const originalProfile = JSON.stringify(context.profile);
@@ -197,6 +223,7 @@ describe('Artist-owned museum profile upgrade', () => {
   it('does not waive program binding or v3 downgrade rules', async () => {
     const { context, db, review, request, mutation } = fixture();
     context.program_id = 'client-invented-program';
+    context.profile = { ...context.profile, program_id: context.program_id };
     await expect(
       review.upgrade(
         context.id,
@@ -207,7 +234,10 @@ describe('Artist-owned museum profile upgrade', () => {
       )
     ).rejects.toThrow('UNSUPPORTED_PROGRAM');
     context.program_id = '6529NM-AP-01';
-    context.profile = getProfile('stream_artwork_basic_v1', 3);
+    context.profile = bindMuseumProgram(
+      getProfile('stream_artwork_basic_v1', 3),
+      context.program_id
+    );
     await expect(
       review.upgradePreview(context.id, 'keys_and_gates_v1', 2, request)
     ).rejects.toThrow('PROFILE_DOWNGRADE_NOT_ALLOWED');
@@ -310,9 +340,14 @@ describe('Artist-owned museum profile upgrade', () => {
     expect(preview.blocking_fields).toEqual([]);
   });
 
-  it.each(['cancelled', 'expired'])(
-    'ignores only fully released, unreferenced %s upload receipts in preview and execution',
-    async (state) => {
+  it.each([
+    { state: 'cancelled', reserved_bytes: 0 },
+    { state: 'expired', reserved_bytes: 0 },
+    { state: 'cancelled', reserved_bytes: '0' },
+    { state: 'expired', reserved_bytes: '0' }
+  ])(
+    'ignores only fully released, unreferenced %j upload receipts in preview and execution',
+    async ({ state, reserved_bytes }) => {
       const { context, core, db, review, request, mutation } = fixture();
       const row = {
         id: '10000000-0000-4000-8000-000000000093',
@@ -322,7 +357,7 @@ describe('Artist-owned museum profile upgrade', () => {
         access_class: 'rights_evidence',
         state,
         referenced: 0,
-        reserved_bytes: 0
+        reserved_bytes
       };
       const original = JSON.stringify(row);
       (db.query as jest.Mock).mockResolvedValue([row]);

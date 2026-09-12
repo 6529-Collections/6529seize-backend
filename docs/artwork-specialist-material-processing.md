@@ -20,7 +20,7 @@ Unknown specialist file types can be included as opaque members of a scanned ZIP
 
 ## PDF parity and original fixity
 
-Website attachments and artwork materials call `validatePdfContent`. The shared policy is 25 MiB / 100 pages, a valid PDF signature, parseable content, no encryption and no website-blocked active features. It detects encoded names and inspects normalized object streams. The website preserves its existing normalized-publication behavior. Artwork documentation retains the original bytes and original SHA-256; normalization is a validation step and is reported without silently replacing a master.
+Website attachments and artwork materials call `validatePdfContent`. The shared policy is 25 MiB / 100 pages, a valid PDF signature, parseable content, no encryption and no website-blocked active features. It checks complete parsed names, including objects decoded from object streams; image/content bytes and literal strings may mention those names without rejection. The pinned parser treats lowercase hexadecimal name escapes inconsistently, so ambiguous residual name escapes are explicitly unsupported rather than allowed to hide structural objects. The website preserves its existing normalized-publication behavior. Artwork documentation retains the original bytes and original SHA-256; normalization is a validation step and is reported without silently replacing a master.
 
 ## Packages
 
@@ -65,3 +65,22 @@ Museum records are immutable, attributed statements separate from artist confirm
 ## Remaining capability boundaries
 
 This processing lane does not by itself implement a universal PRONOM engine, full vendor project inspection, source-code execution, playable delivery derivatives for every codec, ICC profile conformance, or trusted signer assessment. The metadata exposes these distinctions so the museum record can assign and review the remaining work. It does not mint, upload to decentralized storage, invent archival receipts or confer physical custody.
+
+## Interview publication clearance
+
+Version 3 allows artists to upload and attach material before completing the
+Conversation chapter. These are access-controlled drafts intended for the public
+record. This staging step does not grant publication permission.
+
+Artist confirmation and dossier export require every interview recording and
+transcript file to be referenced by a typed interview session with publication
+permission, or covered by an explicit publication grant whose subject is that
+asset ID. A permission for another interview or for the artwork does not cover
+the file. Transcript documents and caption files are resolved through their
+session references. An explicit publication denial blocks clearance, and a
+conditional grant must record its conditions. Both the attachment role and the
+stored upload role are checked. Exports apply the same rule to originals retained
+by historical confirmations or journal evidence, including files unlinked from
+the current draft. The history remains unchanged; a missing grant is reported
+as an export-blocking issue. Version 1/2 retain their existing upload/link
+permission gates.

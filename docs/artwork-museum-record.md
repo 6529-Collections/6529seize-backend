@@ -128,6 +128,8 @@ source, source retention, role boundaries, immutable evidence, timing and packag
 reconstruction. The independent Python validator checks actual exported XML
 against the locked LIDO/PREMIS schema closure, IIIF against its pinned upstream
 JSON Schema, and every BagIt/OCFL digest. It performs no network or database reads.
+CI installs the validator toolchain separately from PyPI using the complete
+version and wheel-hash lock in `scripts/museum-validator-requirements.txt`.
 
 Deploy `artworkDocumentationStorage` and `dbMigrationsLoop` before
 `artworkDocumentationProcessor`. Deploy `attachmentsProcessor` for the shared PDF

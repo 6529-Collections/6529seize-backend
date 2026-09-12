@@ -66,6 +66,53 @@ function set(
 }
 
 describe('general museum record profile', () => {
+  it('requires a positive known fixed duration while retaining variable and continuous work', () => {
+    for (const seconds of [undefined, 0]) {
+      const record = context();
+      set(record, 'process', 'audio', {
+        ...(examples.audio as Record<string, Json>),
+        duration: {
+          kind: 'fixed',
+          ...(seconds === undefined ? {} : { seconds })
+        }
+      });
+      expect(() => validateMuseumDraft(record)).toThrow('DURATION_REQUIRED');
+    }
+    for (const duration of [
+      { kind: 'fixed', seconds: 0.25 },
+      { kind: 'variable' },
+      { kind: 'continuous' }
+    ] as Json[]) {
+      const record = context();
+      set(record, 'process', 'audio', {
+        ...(examples.audio as Record<string, Json>),
+        duration
+      });
+      expect(() => validateMuseumDraft(record)).not.toThrow();
+    }
+  });
+  it.each([
+    ['photography', 'bit_depth'],
+    ['audio', 'bit_depth'],
+    ['audio', 'channels']
+  ] as const)(
+    'captures integer %s %s without admitting fractional technical counts',
+    (media, field) => {
+      const record = context();
+      expect(() =>
+        set(record, 'process', media, {
+          ...(examples[media] as Record<string, Json>),
+          [field]: 1.5
+        })
+      ).toThrow('INVALID_VALUE');
+      expect(() =>
+        set(record, 'process', media, {
+          ...(examples[media] as Record<string, Json>),
+          [field]: 2
+        })
+      ).not.toThrow();
+    }
+  );
   it('captures documentary token references without rounding uint256 identifiers or claiming a verified binding', () => {
     const record = context();
     const token = {

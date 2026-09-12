@@ -5,6 +5,7 @@ import { Logger } from '@/logging';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
 import { publishArtworkAssetMetrics } from '@/artwork-documentation/assets/artwork-assets.metrics';
+import { processOldestDocumentationJob } from './artwork-documentation-queue';
 import {
   dispatchDocumentationProcessorEvent,
   enrichDocumentationOperatorError
@@ -16,14 +17,10 @@ const liveHandler = sentryContext.wrapLambdaHandler(
     return doInDbContext(
       () =>
         dispatchDocumentationProcessorEvent(event, async () => {
-          // Each queue can use most of one Lambda invocation. Alternate priority
-          // without running two long jobs inside the same 900-second budget.
-          if (Math.floor(Date.now() / 60000) % 2 === 0) {
-            if (!(await dossierProcessor.tick()))
-              await artworkAssetsProcessor.tick();
-          } else if (!(await artworkAssetsProcessor.tick())) {
-            await dossierProcessor.tick();
-          }
+          await processOldestDocumentationJob({
+            asset: artworkAssetsProcessor,
+            dossier: dossierProcessor
+          });
           try {
             await publishArtworkAssetMetrics();
           } catch {

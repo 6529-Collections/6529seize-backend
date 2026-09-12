@@ -1,7 +1,8 @@
 """Independently verify an exported OCFL/BagIt dossier and its pinned XML schemas.
 
 Usage: python scripts/validate-artwork-dossier.py /path/to/extracted/object
-Requires lxml. No network requests, asset execution, or database access occurs.
+Requires lxml and jsonschema. No network, asset execution or database access occurs.
+This verifies the application's restricted-path dossier format, not arbitrary bags.
 """
 from pathlib import Path
 import hashlib

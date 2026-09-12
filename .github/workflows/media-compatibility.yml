@@ -49,7 +49,7 @@ jobs:
         run: |
           ./bin/6529 ci
           python3 -m venv "$RUNNER_TEMP/museum-validator"
-          "$RUNNER_TEMP/museum-validator/bin/pip" install --disable-pip-version-check lxml==6.1.1 jsonschema==4.25.1
+          "$RUNNER_TEMP/museum-validator/bin/pip" install --disable-pip-version-check --index-url https://pypi.org/simple --require-hashes --only-binary=:all: -r scripts/museum-validator-requirements.txt
       - name: Validate portable artwork records independently
         run: |
           ./bin/6529 exec node scripts/build-artwork-schema-bundle.cjs --check

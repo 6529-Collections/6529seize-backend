@@ -208,6 +208,7 @@ export class ArtworkDossierService {
     )
       fail(422, 'INVALID_DOSSIER_REQUEST');
     const expected = (body as { source_sha256: string }).source_sha256;
+    if (!/^[a-f0-9]{64}$/.test(expected)) fail(422, 'INVALID_DOSSIER_REQUEST');
     const initial = await this.core.authorizeContext(id, ctx);
     requireExportAccess(initial);
     const reference = await this.core.db.idempotent(

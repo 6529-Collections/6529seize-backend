@@ -7,13 +7,19 @@ import { matchesSchema } from '../artwork-documentation.validation';
 /** Cancelled/expired rows remain as receipts after their unreferenced bytes are released. */
 export function publicationUpgradeRequiresAsset(asset: {
   state?: string;
-  referenced?: boolean | number;
-  reserved_bytes?: number;
+  referenced?: boolean | number | string;
+  reserved_bytes?: number | string;
 }): boolean {
-  const unreferenced = asset.referenced === false || asset.referenced === 0;
+  const unreferenced =
+    asset.referenced === false ||
+    asset.referenced === 0 ||
+    asset.referenced === '0';
+  // Raw MySQL BIGINT columns can be canonical decimal strings. Do not treat
+  // missing values, false, whitespace or malformed strings as released bytes.
+  const released = asset.reserved_bytes === 0 || asset.reserved_bytes === '0';
   return !(
     unreferenced &&
-    asset.reserved_bytes === 0 &&
+    released &&
     (asset.state === 'cancelled' || asset.state === 'expired')
   );
 }

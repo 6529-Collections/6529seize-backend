@@ -214,7 +214,6 @@ export function requirePublicationAsset(
     assetError(422, 'PUBLICATION_VISIBILITY_REQUIRED');
   if (
     !access.publicationOnlyV3 &&
-    !access.mediaProfiles?.length &&
     ((input.role === 'interview_recording' &&
       !access.canPublishInterviewRecording) ||
       (input.role === 'interview_transcript' &&

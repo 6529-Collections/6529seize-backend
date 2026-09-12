@@ -61,7 +61,7 @@ Before onboarding, the release coordinator verifies:
   these metrics and failure codes before enabling the pilot. Metrics contain no
   artist identity, filename, object key or instrument text.
 
-The current AWS limit is 100 GB per scanned S3 object; the product limit is 4 GiB.
+The current AWS limit is 100 GB per scanned S3 object; the product limit is 8 GiB.
 See [AWS scan quotas](https://docs.aws.amazon.com/guardduty/latest/ug/malware-protection-s3-quotas-guardduty.html)
 and [GuardDuty role requirements](https://docs.aws.amazon.com/guardduty/latest/ug/malware-protection-s3-iam-policy-prerequisite.html).
 The existing attachments subsystem uses the same GuardDuty scan-result contract,
@@ -71,8 +71,8 @@ but artwork storage, original identity and processing are independent.
 
 Each upload has one asset ID, unique object key, request idempotency key and
 reservation. A context mutex serializes quota checks. Reservations count against
-20 GiB while uploading, processing or retained; at most five active uploads and
-100 retained/unexpired assets are allowed. Repeated start requests do not reserve
+128 GiB while uploading, processing or retained; at most five active uploads and
+1,000 retained/unexpired assets are allowed. Repeated start requests do not reserve
 twice. Quotas are server constants in `ARTWORK_UPLOAD_POLICY`; raising them
 requires a reviewed capacity change, not a request parameter.
 

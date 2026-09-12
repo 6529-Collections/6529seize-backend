@@ -438,6 +438,8 @@ export class ArtworkDocumentationReviewService {
     const access = await this.core.authorizeContext(id, ctx);
     if (!access.capabilities.manage_context)
       fail(403, 'MANAGE_CONTEXT_REQUIRED');
+    if (access.context.profile.program_id !== access.context.program_id)
+      fail(422, 'PROGRAM_CHANGE_NOT_ALLOWED');
     const proposed = bindMuseumProgram(
       getProfile(profileId, version),
       access.context.program_id

@@ -20,6 +20,57 @@ function movieFixture() {
 }
 
 describe('IIIF Presentation 3 source mapping', () => {
+  it('uses measured dimensions for offset paintings in both canvas bounds and target fragments', () => {
+    const { snapshot } = dossierFixture();
+    const asset = snapshot.assets[0];
+    asset.width = 100;
+    asset.height = 80;
+    snapshot.context.modules.preservation.presentation_scenes = answer([
+      {
+        id: 'offset',
+        title: 'Offset image',
+        resources: [{ asset_id: asset.id, role: 'painting', x: 10, y: 5 }]
+      }
+    ]);
+    const result = buildIiif(snapshot.context, snapshot.assets, base);
+    expect(result.manifest.items[0]).toMatchObject({ width: 110, height: 85 });
+    expect(JSON.stringify(result.manifest)).toContain(
+      `${base}/canvas/offset#xywh=10,5,100,80`
+    );
+    expect(result.issues).toEqual([]);
+    snapshot.context.modules.preservation.presentation_scenes = answer([
+      {
+        id: 'offset',
+        title: 'Offset image',
+        width: 105,
+        height: 85,
+        resources: [{ asset_id: asset.id, role: 'painting', x: 10, y: 5 }]
+      }
+    ]);
+    const outside = buildIiif(snapshot.context, snapshot.assets, base);
+    expect(outside.issues).toHaveLength(1);
+    expect(JSON.stringify(outside.manifest.items)).not.toContain(
+      `${base}/originals/${asset.id}`
+    );
+  });
+  it.each([
+    {},
+    { properties: null },
+    { properties: { duration_seconds: 'unknown' } }
+  ])(
+    'retains a time-based original without inventing a canvas for incomplete metadata %p',
+    (metadata) => {
+      const { snapshot, asset } = movieFixture();
+      asset.technical_metadata_json = JSON.stringify(metadata);
+      const result = buildIiif(snapshot.context, snapshot.assets, base);
+      expect(result.manifest.items).toEqual([]);
+      expect(result.manifest.rendering).toContainEqual(
+        expect.objectContaining({ id: `${base}/originals/${asset.id}` })
+      );
+      expect(result.issues).toHaveLength(1);
+      expect(JSON.stringify(result.manifest)).not.toContain('"duration"');
+    }
+  );
   it('preserves selected file order and retains nonpaintable originals as renderings', () => {
     const { snapshot } = dossierFixture();
     const first = snapshot.assets[0];

@@ -62,10 +62,12 @@ describe('bounded TIFF measurements', () => {
     await expect(characterizeTiff(fixture.size, fixture.read)).rejects.toThrow(
       'INVALID_TIFF_DIRECTORY'
     );
-    fixture.header.writeUInt16LE(16, 4);
-    await expect(characterizeTiff(fixture.size, fixture.read)).rejects.toThrow(
-      'INVALID_TIFF_DIRECTORY'
-    );
+    const unsupportedWidth = tiff(true);
+    unsupportedWidth.header.writeUInt16LE(16, 4);
+    await expect(
+      characterizeTiff(unsupportedWidth.size, unsupportedWidth.read)
+    ).rejects.toThrow('INVALID_TIFF_DIRECTORY');
+    expect(unsupportedWidth.read).toHaveBeenCalledTimes(1);
   });
   it('does not allocate attacker-declared unbounded directory sizes', async () => {
     const fixture = tiff(true);

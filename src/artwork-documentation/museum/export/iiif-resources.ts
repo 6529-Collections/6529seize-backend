@@ -36,7 +36,8 @@ export function mediaFacts(asset: StoredAsset) {
         : mime.startsWith('text/') || mime === 'application/pdf'
           ? 'Text'
           : 'Dataset';
-  const duration = Number(metadata?.properties.duration_seconds ?? 0);
+  const measuredDuration = Number(metadata?.properties?.duration_seconds ?? 0);
+  const duration = Number.isFinite(measuredDuration) ? measuredDuration : 0;
   const width = Number(asset.width ?? 0),
     height = Number(asset.height ?? 0);
   const spatial = type === 'Image' || type === 'Video';
@@ -201,8 +202,19 @@ export function paintingResource(
   if (!asset || !body) return null;
   const facts = mediaFacts(asset),
     extent = sceneExtent(scene, env);
+  const placed = {
+    ...resource,
+    ...(facts.spatial
+      ? {
+          x: resource.x ?? 0,
+          y: resource.y ?? 0,
+          width: resource.width ?? facts.width,
+          height: resource.height ?? facts.height
+        }
+      : {})
+  };
   const validTime =
-    validRegion(resource, extent) &&
+    validRegion(placed, extent) &&
     (facts.temporal
       ? (resource.source_start_seconds ?? 0) >= 0 &&
         (resource.source_start_seconds ?? 0) <
@@ -210,13 +222,7 @@ export function paintingResource(
         (resource.source_end_seconds ?? facts.duration) <= facts.duration
       : resource.source_start_seconds === undefined &&
         resource.source_end_seconds === undefined);
-  const validSpace =
-    !facts.spatial ||
-    ((resource.x ?? 0) + (resource.width ?? extent.width ?? 0) <=
-      (extent.width ?? 0) &&
-      (resource.y ?? 0) + (resource.height ?? extent.height ?? 0) <=
-        (extent.height ?? 0));
-  if (!facts.paintable || !validTime || !validSpace) {
+  if (!facts.paintable || !validTime) {
     iiifIssue(
       env,
       `scene:${scene.id}/resource:${index}`,
@@ -231,7 +237,7 @@ export function paintingResource(
   return {
     ...annotation(
       `${env.prefix}/annotation/${scene.id}/resource-${index}`,
-      fragment(`${env.prefix}/canvas/${scene.id}`, resource),
+      fragment(`${env.prefix}/canvas/${scene.id}`, placed),
       body,
       'painting'
     ),

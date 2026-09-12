@@ -2,6 +2,8 @@
 
 Usage: python scripts/validate-museum-corpus.py /path/to/corpus
 Requires lxml and jsonschema. Does not execute artwork, access the database or use the network.
+Fixture-only golden check: thirteen capture cases, each with LIDO, PREMIS and IIIF.
+Use validate-artwork-dossier.py for a portable artwork dossier, not this corpus checker.
 """
 from pathlib import Path
 import hashlib

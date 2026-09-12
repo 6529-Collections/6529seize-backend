@@ -45,7 +45,7 @@ export function characterizeAssetHeader(
 ): AssetTechnicalMetadata {
   const properties: AssetTechnicalMetadata['properties'] = {};
   if (['icc', 'icm'].includes(extension)) {
-    if (bytes.readUInt32BE(0) !== size)
+    if (bytes.length < 128 || bytes.readUInt32BE(0) !== size)
       throw new AssetInspectionError('INVALID_COLOR_PROFILE_SIZE');
     Object.assign(properties, {
       profile_version: `${bytes[8]}.${bytes[9] >> 4}.${bytes[9] & 15}`,
@@ -55,7 +55,7 @@ export function characterizeAssetHeader(
     });
   }
   if (extension === 'glb') {
-    if (bytes.readUInt32LE(8) !== size)
+    if (bytes.length < 12 || bytes.readUInt32LE(8) !== size)
       throw new AssetInspectionError('INVALID_GLB_SIZE');
     properties.container_version = bytes.readUInt32LE(4);
   }

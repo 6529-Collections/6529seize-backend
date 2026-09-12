@@ -8,6 +8,8 @@ import { artworkDocumentationService as core } from './artwork-documentation.ser
 import { ContextAccess } from './artwork-documentation.types';
 import { artworkAssetsService as assets } from './assets/artwork-assets.service';
 import { dossierFixture } from './museum/export/dossier-fixture';
+import { randomUUID } from 'node:crypto';
+import { documentationContextBytes } from './museum/museum-response-budget';
 
 function setup() {
   const { snapshot } = dossierFixture();
@@ -135,4 +137,32 @@ it('requires an actual transaction before updating asset disclosure', async () =
   ).rejects.toMatchObject({ code: 'TRANSACTION_REQUIRED' });
   expect(f.disclose).not.toHaveBeenCalled();
   expect(f.context.asset_links).toEqual([]);
+});
+
+it('fits one thousand ordinary links and rejects the next before touching asset storage', async () => {
+  const f = setup();
+  const template = dossierFixture().snapshot.context.asset_links[0];
+  f.context.asset_links = Array.from({ length: 999 }, () => ({
+    ...template,
+    id: randomUUID(),
+    asset_id: randomUUID(),
+    derived_from_asset_ids: []
+  }));
+  await writeAssetLink(f.context.id, f.input, f.mutation, {});
+  expect(f.context.asset_links).toHaveLength(1000);
+  expect(documentationContextBytes(f.context)).toBeLessThan(
+    f.context.profile.limits.context_payload_bytes
+  );
+  expect(f.ready).toHaveBeenCalledTimes(2);
+  await expect(
+    writeAssetLink(
+      f.context.id,
+      { ...f.input, asset_id: randomUUID() },
+      f.mutation,
+      {}
+    )
+  ).rejects.toMatchObject({ code: 'ASSET_LINK_LIMIT' });
+  expect(f.ready).toHaveBeenCalledTimes(2);
+  expect(f.disclose).toHaveBeenCalledTimes(1);
+  expect(f.context.asset_links).toHaveLength(1000);
 });

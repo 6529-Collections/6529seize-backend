@@ -1,6 +1,7 @@
 import { buildPremis } from './premis';
 import { dossierFixture } from './dossier-fixture';
 import { Answer, Json } from '../../artwork-documentation.types';
+import { compileDossier } from './dossier';
 
 const provided = (value: Json): Answer => ({
   status: 'provided',
@@ -16,6 +17,53 @@ const id = (n: number) =>
   `20000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
 describe('PREMIS preservation record', () => {
+  it.each(['preservation', 'rights'])(
+    'retains malformed %s journal source and reports its omitted projection without aborting the dossier',
+    (kind) => {
+      for (const details of [undefined, null, 'missing', []]) {
+        const { snapshot } = dossierFixture();
+        const row = {
+          id: id(41),
+          context_id: snapshot.context.id,
+          actor_profile_id: 'institutional-recorder',
+          kind,
+          created_at: 10000,
+          payload_json: JSON.stringify({
+            event_status: 'completed',
+            title: 'Original source retained',
+            subject_ids: [snapshot.context.work_id],
+            ...(details === undefined ? {} : { details })
+          })
+        };
+        snapshot.museum_records = [row];
+        const result = compileDossier(snapshot);
+        expect(result.issues).toContainEqual(
+          expect.objectContaining({
+            code: 'PREMIS_INSTITUTIONAL_DETAILS_UNAVAILABLE',
+            path: `museum-record:${row.id}`,
+            severity: 'warning'
+          })
+        );
+        const xml = result.files
+          .find((file) => file.path === 'data/metadata/premis.xml')!
+          .bytes.toString();
+        expect(xml).toContain('Original source retained');
+        expect(xml).toContain('journal-recording');
+        expect(xml).not.toContain(
+          `<premis:rightsStatementIdentifierValue>urn:uuid:${row.id}`
+        );
+        expect(xml).not.toContain(
+          `<premis:eventIdentifierValue>urn:uuid:${row.id}`
+        );
+        const source = JSON.parse(
+          result.files
+            .find((file) => file.path === 'data/museum-records.json')!
+            .bytes.toString()
+        );
+        expect(source[0].payload_json).toEqual(JSON.parse(row.payload_json));
+      }
+    }
+  );
   it('retains intellectual work without files and escapes original artist language', () => {
     const { snapshot } = dossierFixture();
     snapshot.assets = [];

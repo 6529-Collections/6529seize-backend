@@ -94,6 +94,25 @@ describe('composable specialist material policy', () => {
 });
 
 describe('byte-backed specialist characterization', () => {
+  it.each([
+    ['icc', 128, 'INVALID_COLOR_PROFILE_SIZE'],
+    ['icm', 128, 'INVALID_COLOR_PROFILE_SIZE'],
+    ['glb', 12, 'INVALID_GLB_SIZE']
+  ] as const)(
+    'rejects every truncated %s header before reading fixed offsets',
+    (extension, minimum, code) => {
+      for (let length = 0; length < minimum; length++) {
+        expect(() =>
+          characterizeAssetHeader(
+            Buffer.alloc(length),
+            extension,
+            length,
+            'test-digest'
+          )
+        ).toThrow(code);
+      }
+    }
+  );
   it('recognizes Phase One TIFF containers without asserting complete RAW parsing', () => {
     expect(
       inspectAssetHeader(Buffer.from('II*\0\x08\0\0\0'), 'iiq')

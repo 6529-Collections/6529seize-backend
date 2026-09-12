@@ -12,6 +12,7 @@ import {
   validateDateObject
 } from '../artwork-documentation.validation';
 import { MEDIA_PROFILE_IDS, MediaProfileId } from './museum-record.types';
+import { interviewPublicationIssues } from '../assets/artwork-assets.publication';
 
 type ObjectValue = Record<string, Json>;
 const objectValue = (value: Json | undefined): value is ObjectValue =>
@@ -94,7 +95,12 @@ function validateNested(value: Json): void {
     value.source_end_seconds < value.source_start_seconds
   )
     fail(422, 'INVALID_TIME_RANGE');
-  if (value.kind === 'fixed' && !('seconds' in value))
+  if (
+    value.kind === 'fixed' &&
+    (typeof value.seconds !== 'number' ||
+      !Number.isFinite(value.seconds) ||
+      value.seconds <= 0)
+  )
     fail(422, 'DURATION_REQUIRED');
   if (value.unit === 'other' && !value.unit_label)
     fail(422, 'MEASUREMENT_NOTE_REQUIRED');
@@ -323,7 +329,7 @@ function documentIssues(
 
 export function museumRecordIssues(context: ContextRecord): Issue[] {
   if (context.profile.version !== 3) return [];
-  const issues: Issue[] = [];
+  const issues: Issue[] = [...interviewPublicationIssues(context)];
   const add = (field: string, code: string) =>
     issues.push({
       field,

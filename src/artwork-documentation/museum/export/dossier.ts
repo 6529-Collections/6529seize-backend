@@ -18,6 +18,7 @@ import {
 import schemaBundle from './schemas/schema-bundle.json';
 import { publicationHistory } from './dossier-history';
 import { UnsupportedXmlCharacter } from './xml';
+import { interviewPublicationIssues } from '../../assets/artwork-assets.publication';
 
 const hash = (bytes: Buffer) =>
   createHash('sha256').update(bytes).digest('hex');
@@ -68,7 +69,7 @@ function xmlFiles(
 ): DossierTextFile[] {
   const files: DossierTextFile[] = [];
   for (const [name, build] of [
-    ['premis', buildPremis],
+    ['premis', (source: DossierSnapshot) => buildPremis(source, issues)],
     ['lido', buildLido]
   ] as const) {
     try {
@@ -112,12 +113,27 @@ export function compileDossier(snapshot: DossierSnapshot) {
   );
   issues.push(
     ...iiif.issues,
-    ...linked.validation.issues.map((issue) => ({
-      code: issue.code,
-      path: issue.field,
-      severity: 'warning' as const,
-      message: `The draft needs review: ${issue.code}.`
-    }))
+    ...interviewPublicationIssues(context, snapshot.assets).map((issue) => {
+      const asset = snapshot.assets.find(
+        (file) => `asset:${file.id}` === issue.field
+      );
+      return {
+        code: issue.code,
+        path: issue.field,
+        severity: 'error' as const,
+        message: `${asset ? `“${asset.filename}”` : 'This interview file'} needs permission for publication. Record consent for this file in The conversation, or a publication grant in Credits & terms.`
+      };
+    }),
+    ...linked.validation.issues
+      .filter(
+        (issue) => issue.code !== 'INTERVIEW_PUBLICATION_PERMISSION_REQUIRED'
+      )
+      .map((issue) => ({
+        code: issue.code,
+        path: issue.field,
+        severity: 'warning' as const,
+        message: `The draft needs review: ${issue.code}.`
+      }))
   );
   const assets = snapshot.assets.map((asset) => ({
     id: asset.id,

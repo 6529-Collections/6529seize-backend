@@ -121,6 +121,110 @@ function fixture() {
 
 afterEach(() => jest.restoreAllMocks());
 
+it.each(['g'.repeat(64), 'A'.repeat(64), `${'a'.repeat(63)} `])(
+  'rejects a noncanonical source digest before queueing an export: %s',
+  async (source_sha256) => {
+    const f = fixture();
+    const body = { source_sha256 };
+    await expect(
+      f.service.create(f.context.id, body, f.mutation(body), {})
+    ).rejects.toThrow('INVALID_DOSSIER_REQUEST');
+    expect(f.exports).toEqual([]);
+    expect(f.db.idempotent).not.toHaveBeenCalled();
+  }
+);
+
+it('blocks inspection readiness and export queueing for an uncleared interview, then accepts an exact file-scoped public grant', async () => {
+  const f = fixture();
+  const assetId = f.snapshot.assets[0].id;
+  f.context.asset_links[0].role = 'interview_recording';
+  f.context.asset_links[0].manifest.role = 'interview_recording';
+  f.snapshot.assets[0].role = 'interview_recording';
+  const denied = await f.service.inspect(f.context.id, {});
+  expect(denied.can_export).toBe(false);
+  expect(denied.issues).toContainEqual(
+    expect.objectContaining({
+      code: 'INTERVIEW_PUBLICATION_PERMISSION_REQUIRED',
+      path: `asset:${assetId}`,
+      severity: 'error'
+    })
+  );
+  const rejectedBody = { source_sha256: denied.source_sha256 };
+  await expect(
+    f.service.create(f.context.id, rejectedBody, f.mutation(rejectedBody), {})
+  ).rejects.toThrow('DOSSIER_VALIDATION_FAILED');
+  expect(f.exports).toEqual([]);
+  f.context.modules.rights.material_rights = {
+    status: 'provided',
+    intended_visibility: 'public_record',
+    value: [
+      {
+        id: randomUUID(),
+        subject_ids: [assetId],
+        basis: 'license',
+        account:
+          'The participant permits publication of this exact interview recording.',
+        uses: [{ use: 'publication', status: 'granted' }]
+      }
+    ]
+  };
+  const cleared = await f.service.inspect(f.context.id, {});
+  expect(cleared.can_export).toBe(true);
+  expect(
+    cleared.issues.some(
+      (issue) => issue.code === 'INTERVIEW_PUBLICATION_PERMISSION_REQUIRED'
+    )
+  ).toBe(false);
+  const body = { source_sha256: cleared.source_sha256 };
+  await expect(
+    f.service.create(f.context.id, body, f.mutation(body), {})
+  ).resolves.toMatchObject({ state: 'queued' });
+  expect(f.exports).toHaveLength(1);
+});
+
+it('checks interview originals retained by historical revisions even after their current asset links are removed', async () => {
+  const f = fixture();
+  const historicalAsset = {
+    ...f.snapshot.assets[0],
+    id: randomUUID(),
+    role: 'interview_recording' as const
+  };
+  f.snapshot.assets.push(historicalAsset);
+  const historicalSource = {
+    asset_links: [
+      { asset_id: historicalAsset.id, intended_visibility: 'public_record' }
+    ]
+  };
+  f.snapshot.artist_revisions = [
+    {
+      id: randomUUID(),
+      sha256: digest(historicalSource),
+      snapshot_json: JSON.stringify(historicalSource),
+      confirmation_json: '{}',
+      source_draft_version: 1
+    }
+  ];
+  const before = JSON.stringify(f.snapshot.artist_revisions);
+  const inspected = await f.service.inspect(f.context.id, {});
+  expect(
+    f.context.asset_links.some((link) => link.asset_id === historicalAsset.id)
+  ).toBe(false);
+  expect(inspected.can_export).toBe(false);
+  expect(inspected.issues).toContainEqual(
+    expect.objectContaining({
+      code: 'INTERVIEW_PUBLICATION_PERMISSION_REQUIRED',
+      path: `asset:${historicalAsset.id}`,
+      severity: 'error'
+    })
+  );
+  const body = { source_sha256: inspected.source_sha256 };
+  await expect(
+    f.service.create(f.context.id, body, f.mutation(body), {})
+  ).rejects.toThrow('DOSSIER_VALIDATION_FAILED');
+  expect(f.exports).toEqual([]);
+  expect(JSON.stringify(f.snapshot.artist_revisions)).toBe(before);
+});
+
 it.each(['count', 'bytes'])(
   'rejects oversized history %s before fetching any raw history or file payloads',
   async (kind) => {

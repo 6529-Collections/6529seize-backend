@@ -1,6 +1,7 @@
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 import { deflateRawSync } from 'node:zlib';
+import { PDFDocument } from 'pdf-lib';
 import { inspectArtworkArchive } from './artwork-assets.archive';
 
 function checksum(bytes: Buffer): number {
@@ -153,13 +154,14 @@ describe('bounded museum package inspection', () => {
     await expect(inspect(corrupted)).rejects.toThrow('ARCHIVE_CRC_MISMATCH');
   });
   it('runs the same document and XML safety policy on archive members', async () => {
-    await expect(
-      inspect(
-        zip([
-          { path: 'unsafe.pdf', bytes: Buffer.from('%PDF-1.7\n/JavaScript') }
-        ])
-      )
-    ).rejects.toThrow('blocked feature /JavaScript');
+    const document = await PDFDocument.create();
+    document.addPage([100, 100]);
+    document.addJavaScript('blocked-action', 'app.alert("test");');
+    const bytes = Buffer.from(await document.save());
+    await expect(PDFDocument.load(bytes)).resolves.toBeDefined();
+    await expect(inspect(zip([{ path: 'unsafe.pdf', bytes }]))).rejects.toThrow(
+      /blocked feature \/(JS|JavaScript)/
+    );
     await expect(
       inspect(
         zip([
@@ -170,6 +172,22 @@ describe('bounded museum package inspection', () => {
         ])
       )
     ).rejects.toThrow('UNSAFE_XML_DECLARATION');
+  });
+  it('preserves a PDF containing literal feature names inside a deflated archive', async () => {
+    const document = await PDFDocument.create();
+    document.addPage([100, 100]);
+    document.setSubject('/JS /JavaScript /ObjStm');
+    const bytes = Buffer.from(await document.save());
+    const result = await inspect(
+      zip([{ path: 'notes.pdf', bytes, deflated: true }])
+    );
+    expect(result.inventory).toEqual([
+      {
+        path: 'notes.pdf',
+        size_bytes: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex')
+      }
+    ]);
   });
   it('rejects mismatched local and central metadata and missing directory', async () => {
     const bytes = zip([{ path: 'a.txt', bytes: Buffer.from('hello') }]);

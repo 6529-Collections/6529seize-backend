@@ -57,3 +57,39 @@ it('does not expose shared identity writing to a work reviewer or a missing revi
     core.artistRecordForContext(context.id, 'another-artists-revision', {})
   ).rejects.toMatchObject({ code: 'UNAVAILABLE' });
 });
+
+it.each([1, 3])(
+  'keeps identity version numbers numeric in a v%s context response',
+  async (version) => {
+    const { context, db, core } = fixture();
+    context.profile.version = version;
+    context.latest_revision_id = null;
+    db.query = jest.fn().mockResolvedValue([]);
+    jest.mocked(db.one).mockImplementation(async (sql) => {
+      if (sql.startsWith('SELECT id,record_version')) {
+        expect(sql.includes('answers_json')).toBe(version !== 3);
+        return {
+          id: 'revision',
+          record_version: '7',
+          ...(version === 3
+            ? {}
+            : {
+                answers_json:
+                  '{"credit":{"status":"provided","value":"An artist","intended_visibility":"public_record"}}'
+              })
+        } as never;
+      }
+      return { record_version: '9', latest_revision_id: 'revision' } as never;
+    });
+    const result = await core.getContext(context.id, {});
+    expect(result.artist_record_version).toBe(9);
+    expect(result.available_artist_record).toMatchObject({
+      id: 'revision',
+      record_version: 7,
+      answers: version === 3 ? {} : { credit: { value: 'An artist' } },
+      ...(version === 3 ? { deferred: true } : {})
+    });
+    if (version === 3)
+      expect(result.available_artist_record?.answers).toEqual({});
+  }
+);
