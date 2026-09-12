@@ -27969,10 +27969,28 @@ components:
       oneOf:
         - $ref: "#/components/schemas/ApiMarketPrepareRequest"
         - $ref: "#/components/schemas/ApiMarketBatchPrepareRequest"
+      discriminator:
+        propertyName: kind
+        mapping:
+          BUY: "#/components/schemas/ApiMarketPrepareRequest"
+          LIST: "#/components/schemas/ApiMarketPrepareRequest"
+          OFFER: "#/components/schemas/ApiMarketPrepareRequest"
+          ACCEPT: "#/components/schemas/ApiMarketPrepareRequest"
+          CANCEL: "#/components/schemas/ApiMarketPrepareRequest"
+          BUY_BATCH: "#/components/schemas/ApiMarketBatchPrepareRequest"
     ApiMarketOperationResult:
       oneOf:
         - $ref: "#/components/schemas/ApiMarketOperation"
         - $ref: "#/components/schemas/ApiMarketBatchOperation"
+      discriminator:
+        propertyName: kind
+        mapping:
+          BUY: "#/components/schemas/ApiMarketOperation"
+          LIST: "#/components/schemas/ApiMarketOperation"
+          OFFER: "#/components/schemas/ApiMarketOperation"
+          ACCEPT: "#/components/schemas/ApiMarketOperation"
+          CANCEL: "#/components/schemas/ApiMarketOperation"
+          BUY_BATCH: "#/components/schemas/ApiMarketBatchOperation"
     ApiMarketOrder:
       type: object
       required:
