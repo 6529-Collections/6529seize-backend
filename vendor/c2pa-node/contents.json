@@ -1,0 +1,270 @@
+{
+  "upstream_integrity": "sha512-7n2o3UX0rmNL+8LmVhEd3aun2LXLulcI9y02gKhKE1rgqliZgwocmwg8V+vZat3+JLHPvxABtp8Icy1sUEbd1w==",
+  "patched_archive_sha256": "a3bd5a674e8e30e01e29c490e578556cfb833f34e51d9d3e8764b6cc290b700e",
+  "patched_archive_size": 58134,
+  "omitted_native_binaries": [
+    "package/dist/index.node"
+  ],
+  "files": {
+    "package/6529-PATCH.md": {
+      "sha256": "d6d487485465a5a7ddab9557f0a7aa992d950e23b9e128f9abbb4079dae90f1d",
+      "size": 3398,
+      "unchanged_upstream": false
+    },
+    "package/Cargo.toml": {
+      "sha256": "e313a8a882ec6708b91a9acf3362fdd8aa1a4e563606979dc4113cb4e5420074",
+      "size": 869,
+      "unchanged_upstream": true
+    },
+    "package/LICENSE": {
+      "sha256": "5aeea31bc245dd31213e7ff878a40362d6d4d8bc8093e34a0f30ed7639fe93c6",
+      "size": 1083,
+      "unchanged_upstream": true
+    },
+    "package/README.md": {
+      "sha256": "5b44eab0e158162534bc431f59d119dec7de5730aba774432a3d9bbe0cd4e61b",
+      "size": 20496,
+      "unchanged_upstream": true
+    },
+    "package/dist/Builder.js": {
+      "sha256": "eb39331fd29836b54f2984d1498798facd1bfa2e665d3ca5ac08990dac0d7e10",
+      "size": 6574,
+      "unchanged_upstream": true
+    },
+    "package/dist/Builder.spec.js": {
+      "sha256": "7009b09869f6fd59f94df6cd456d41571a71b4308a55b2c8457a31891f7ce8a2",
+      "size": 59054,
+      "unchanged_upstream": true
+    },
+    "package/dist/IdentityAssertion.js": {
+      "sha256": "bc98d1d18e71c0c4425a9a176527d91169f79703011579c41eac7730a5c02004",
+      "size": 2712,
+      "unchanged_upstream": true
+    },
+    "package/dist/IdentityAssertion.spec.js": {
+      "sha256": "496df34d8b5858008cedc46921f0f8b9c293dc63dd77163b2fc32bebeceda7b2",
+      "size": 5325,
+      "unchanged_upstream": true
+    },
+    "package/dist/Reader.js": {
+      "sha256": "aa19b49b4e7e882cd5fd810d8fbdb88dda7cf986add5ffed49cf1a093308418b",
+      "size": 2077,
+      "unchanged_upstream": true
+    },
+    "package/dist/Reader.spec.js": {
+      "sha256": "b7cd3dcb8025918664c7a46bb734eac807efc5766674c714dda8c8a934cf0bec",
+      "size": 10700,
+      "unchanged_upstream": true
+    },
+    "package/dist/Settings.js": {
+      "sha256": "6a330365a20b6c4a79bcfee10498946e7896cb0b3043429e374c725961435770",
+      "size": 1157,
+      "unchanged_upstream": true
+    },
+    "package/dist/Settings.spec.js": {
+      "sha256": "1ab90dc8713e876468db29f3cfa3833ccb49fed74f5c264ff64b920b6ea2efdc",
+      "size": 2061,
+      "unchanged_upstream": true
+    },
+    "package/dist/Signer.js": {
+      "sha256": "4839b0eb4cff0aafe83c39852d5aa2d65c344447c99469d2f03979561d74b1ab",
+      "size": 2692,
+      "unchanged_upstream": true
+    },
+    "package/dist/Signer.spec.js": {
+      "sha256": "fd061de81c202ecf6e0b73ad390ec2f1c0947d1e40eb44ae2df7dc02462ffd60",
+      "size": 6399,
+      "unchanged_upstream": true
+    },
+    "package/dist/Trustmark.js": {
+      "sha256": "6a74b8a2d4bcc228a4b492264ba04fa73a2e3ec82d31e1a66d07d01d80f39b51",
+      "size": 1150,
+      "unchanged_upstream": true
+    },
+    "package/dist/Trustmark.spec.js": {
+      "sha256": "3def14515042ee1620bfc2b28d1f2342c9e96e12aabafc8b7b5eabb5e34d557b",
+      "size": 6754,
+      "unchanged_upstream": true
+    },
+    "package/dist/assertions.js": {
+      "sha256": "bf4b190c317a039607c146848310a05261fd71ad0d2c143b7154b6e3d552069d",
+      "size": 1020,
+      "unchanged_upstream": true
+    },
+    "package/dist/assetSize.js": {
+      "sha256": "e7d86e77c05c36f105aa388c3a17d83ad05be08a9c5fb3562816f7f240447d64",
+      "size": 1655,
+      "unchanged_upstream": true
+    },
+    "package/dist/binary.js": {
+      "sha256": "e1e97c8dab1e31a5a7c3bf4cc67c5182239c15e8da26ed5c6b4cb2dcd0e25338",
+      "size": 1133,
+      "unchanged_upstream": true
+    },
+    "package/dist/index.js": {
+      "sha256": "1d5ea1abf593dc6c03567748910f0e8627e769261a48a6c3428958e793c3863a",
+      "size": 673,
+      "unchanged_upstream": true
+    },
+    "package/dist/types/Builder.d.ts": {
+      "sha256": "0c6fef2d388807ffc65f63b06f1502e7ae5bf6e1ba4c7f1073fa72b13e72401e",
+      "size": 2385,
+      "unchanged_upstream": true
+    },
+    "package/dist/types/Builder.spec.d.ts": {
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "size": 11,
+      "unchanged_upstream": true
+    },
+    "package/dist/types/IdentityAssertion.d.ts": {
+      "sha256": "ff80cb124bc3b1a87e211e87432775417074f0ca4423c7b0a39deff393b0b756",
+      "size": 1675,
+      "unchanged_upstream": true
+    },
+    "package/dist/types/IdentityAssertion.spec.d.ts": {
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "size": 11,
+      "unchanged_upstream": true
+    },
+    "package/dist/types/Reader.d.ts": {
+      "sha256": "3313731d7b1902984db51f9dd86341171799b35b85602f98bc398db965536047",
+      "size": 812,
+      "unchanged_upstream": true
+    },
+    "package/dist/types/Reader.spec.d.ts": {
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "size": 11,
+      "unchanged_upstream": true
+    },
+    "package/dist/types/Settings.d.ts": {
+      "sha256": "6ebee9e3ea5d689d59b8036e85134df151c05f33ef2c2abac7b819c69ab89579",
+      "size": 500,
+      "unchanged_upstream": true
+    },
+    "package/dist/types/Settings.spec.d.ts": {
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "size": 11,
+      "unchanged_upstream": true
+    },
+    "package/dist/types/Signer.d.ts": {
+      "sha256": "92c622d7101455bab813d59128a6e4a57dd793b9b31f1bb472651bfaad664b43",
+      "size": 1143,
+      "unchanged_upstream": true
+    },
+    "package/dist/types/Signer.spec.d.ts": {
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "size": 11,
+      "unchanged_upstream": true
+    },
+    "package/dist/types/Trustmark.d.ts": {
+      "sha256": "eb9e3b3fbec5005c7bd5e9fbdb298ba26babb0aee5844b4b4da2ce49acedf191",
+      "size": 427,
+      "unchanged_upstream": true
+    },
+    "package/dist/types/Trustmark.spec.d.ts": {
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+      "size": 11,
+      "unchanged_upstream": true
+    },
+    "package/dist/types/assertions.d.ts": {
+      "sha256": "b421562b353088a3d4f4fef026cac1a571d998a7dd65460d563e078c148b9a6e",
+      "size": 173,
+      "unchanged_upstream": true
+    },
+    "package/dist/types/assetSize.d.ts": {
+      "sha256": "5b15f492051fca2fec1c7906ff63103581d4faba0ccbef9100f25665809d8ac7",
+      "size": 696,
+      "unchanged_upstream": true
+    },
+    "package/dist/types/binary.d.ts": {
+      "sha256": "a1829559006e32ef3bbe7763854d38fe0d0efc853765680c86a5895a7f65e736",
+      "size": 46,
+      "unchanged_upstream": true
+    },
+    "package/dist/types/index.d.ts": {
+      "sha256": "1c2ea3f20e9fae3b4051a7fd6b9b87ecd87a58a82448a974298d5908af6388a4",
+      "size": 465,
+      "unchanged_upstream": true
+    },
+    "package/dist/types/types.d.ts": {
+      "sha256": "a23d666f7c2d41ed1b267aa16f676410665aeafc648857cb7af02cff8f968be3",
+      "size": 17409,
+      "unchanged_upstream": true
+    },
+    "package/package.json": {
+      "sha256": "b2e44fc5d75b7085513d48d636276b227d02ed99d8713ddb31fc7cf52155dc31",
+      "size": 3135,
+      "unchanged_upstream": false
+    },
+    "package/scripts/native-assets.json": {
+      "sha256": "2535ef1443ce84519d52a86e0555a859eebb801ee08fd3d60b9f4bdd7d85b72f",
+      "size": 2673,
+      "unchanged_upstream": false
+    },
+    "package/scripts/postinstall.cjs": {
+      "sha256": "336ef22d05527b5a94c0b006816e00ec1359557f64a846960deb463b30f8b02b",
+      "size": 9893,
+      "unchanged_upstream": false
+    },
+    "package/src/asset.rs": {
+      "sha256": "15153727958b77aa528ccae3323c509875f1c5f445c252f8e3d07bc0589a052a",
+      "size": 4063,
+      "unchanged_upstream": true
+    },
+    "package/src/error.rs": {
+      "sha256": "99f7097e89a2307e275a8d66e8890c34860ffa2e1051d54eaa42f0ece79f7d89",
+      "size": 2862,
+      "unchanged_upstream": true
+    },
+    "package/src/lib.rs": {
+      "sha256": "122f431d1682fe16065c8802e68093b1d215f8016d5749acf5ecafa81e03f5c0",
+      "size": 7111,
+      "unchanged_upstream": true
+    },
+    "package/src/neon_builder.rs": {
+      "sha256": "4c4cf5125ebc2ecbfad018f41bf09f7a6be75bde983f5ed831302ef4a40a2150",
+      "size": 44751,
+      "unchanged_upstream": true
+    },
+    "package/src/neon_credential_holder.rs": {
+      "sha256": "b9318255ec9714780db5a3a42ada0fcb1c001c7da18d3ebcc2dd339523683c7d",
+      "size": 5920,
+      "unchanged_upstream": true
+    },
+    "package/src/neon_identity_assertion_builder.rs": {
+      "sha256": "d8eee63ef93912e3f2bbd4af6f7788be912499b29ab97bd9a16e2d88c9b5ede1",
+      "size": 7740,
+      "unchanged_upstream": true
+    },
+    "package/src/neon_identity_assertion_signer.rs": {
+      "sha256": "82c65aee8a8540bcfeef8bd6eee5ec141402d92dcc5856a9c42e3b5547d5f067",
+      "size": 7008,
+      "unchanged_upstream": true
+    },
+    "package/src/neon_reader.rs": {
+      "sha256": "12a7d79f8f3f5eb8b9223259f87e063a1880409911463701452871da47c7faea",
+      "size": 8875,
+      "unchanged_upstream": true
+    },
+    "package/src/neon_signer.rs": {
+      "sha256": "465a5f3e80f362aa042270be28fef81f04dabfe094127bd3ceee2629ae342d15",
+      "size": 18320,
+      "unchanged_upstream": true
+    },
+    "package/src/neon_trustmark.rs": {
+      "sha256": "12effc8ae00e6609efa75a8b87dfcbb84156d3b44e99b16e8d31202675b242b2",
+      "size": 10359,
+      "unchanged_upstream": true
+    },
+    "package/src/runtime.rs": {
+      "sha256": "30ef2090ad6a25425c5a8b52b80a74114cf93491ef6225337db0ed8026067070",
+      "size": 695,
+      "unchanged_upstream": true
+    },
+    "package/src/utils.rs": {
+      "sha256": "736063d8c2ff4bee6901a53738b5e90e0cd561df4be472c5e76753491af35982",
+      "size": 2649,
+      "unchanged_upstream": true
+    }
+  }
+}

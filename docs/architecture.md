@@ -1105,6 +1105,11 @@ mutex rows serialize reservations in `artwork_documentation_asset_quotas`, while
 fixity, access class and a durable processing lease.
 
 `artworkDocumentationProcessor` runs every minute with reserved concurrency one.
+Its C2PA reader uses upstream SDK 0.9.5 with a locally maintained installer patch.
+The patch replaces the ZIP extractor and pins native release hashes; SDK reader
+bytes remain unchanged. Both root and worker lockfiles expose its dependencies.
+See [C2PA package reproduction](../vendor/c2pa-node/README.md) for source integrity,
+supported platforms and upgrade checks.
 It requires a successful real GuardDuty scan before streaming byte-size/SHA-256
 verification and bounded format inspection. Small supported images can produce
 stripped private previews; large/vendor originals remain intact with honest

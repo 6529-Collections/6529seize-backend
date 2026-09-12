@@ -12,6 +12,8 @@ on:
       - 'src/artwork-documentation/**'
       - 'scripts/*artwork*'
       - 'scripts/*museum*'
+      - 'scripts/*c2pa*'
+      - 'vendor/c2pa-node/**'
       - 'src/nft-links/nft-link-media-preview*'
       - 'src/artworkDocumentationProcessor/**'
       - 'src/dropMediaSanitizer/**'
@@ -118,7 +120,7 @@ jobs:
             extracted="${RUNNER_TEMP}/media-${service}"
             mkdir -p "$extracted"
             unzip -q "src/$service/dist/index.zip" -d "$extracted"
-            docker run --rm --platform linux/amd64 --network none \
+            docker run --rm --platform linux/amd64 --network none --user 1000:1000 \
               -v "$extracted:/var/task:ro" -v "$PWD/scripts:/checks:ro" \
               --entrypoint /var/lang/bin/node \
               public.ecr.aws/lambda/nodejs:22@sha256:214c26cdbb7eeb1b942a16e0910c6c07de5d2a750b23eb4a907cd6864949edbf \

@@ -98,7 +98,7 @@
     "@aws-sdk/client-sns": "^3.980.0",
     "@aws-sdk/client-sqs": "^3.980.0",
     "@aws-sdk/s3-request-presigner": "^3.980.0",
-    "@contentauth/c2pa-node": "0.9.5",
+    "@contentauth/c2pa-node": "file:vendor/c2pa-node/c2pa-node-0.9.5-6529.1.tgz",
     "@emoji-mart/data": "^1.2.1",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@opensea/sdk": "^12.7.0",

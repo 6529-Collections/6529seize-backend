@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 
-export const C2PA_VALIDATOR_VERSION = '0.9.5';
+export const C2PA_VALIDATOR_VERSION = '0.9.5+6529.1';
 export const C2PA_VALIDATION_SETTINGS = Object.freeze({
   version: 1,
   verify: {
