@@ -109,8 +109,10 @@ media automatically.
 
 Deploy the entity schema through `dbMigrationsLoop` before API services
 and the frontend. Preserve existing tables during rollback. The API and generated
-frontend models come from the same OpenAPI source. The root Discord package can
-be retired only after the separate operational-alert callers are removed too.
+frontend models come from the same OpenAPI source. This change removes the root
+Discord client package and legacy alarm sender after integrating the separate
+operational monitoring replacement. Retire the deployed legacy sender only after
+verifying delivery through that replacement, following its operational runbook.
 
 The REP cache text column expands from `utf8_bin` to `utf8mb4_bin`, matching the
 new review subject column. Both retain binary, case-sensitive category identity;
