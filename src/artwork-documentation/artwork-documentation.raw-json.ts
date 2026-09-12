@@ -1,5 +1,7 @@
 import { fail } from './artwork-documentation.validation';
 
+export const DOCUMENTATION_RAW_WRITE_BYTES = 5000000;
+
 function stringEnd(source: string, start: number): number {
   let end = start;
   while (++end < source.length) {
@@ -31,13 +33,16 @@ function registerKey(
 
 /** Runs before JSON.parse discards duplicate keys. Does not retain request bytes. */
 export function validateDocumentationRawJson(bytes: Buffer): void {
-  if (bytes.length > 524288) fail(413, 'WRITE_REQUEST_LIMIT');
+  if (bytes.length > DOCUMENTATION_RAW_WRITE_BYTES)
+    fail(413, 'WRITE_REQUEST_LIMIT');
   const source = bytes.toString('utf8');
   const stack: (Set<string> | null)[] = [];
   for (let i = 0; i < source.length; i++) {
     const character = source[i];
     if (character === '{' || character === '[') {
       stack.push(character === '{' ? new Set() : null);
+      // Match normalizeJson's maximum container depth before JSON.parse allocates it.
+      if (stack.length > 31) fail(422, 'INVALID_VALUE');
       continue;
     }
     if (character === '}' || character === ']') {

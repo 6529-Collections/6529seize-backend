@@ -16,6 +16,8 @@ import {
   normalizeJson,
   validateDateObject
 } from './artwork-documentation.validation';
+import { museumProfiles } from './museum/museum-catalogue';
+import { museumRequired } from './museum/museum-validation';
 
 const text = (maxLength: number, format?: string): ValueSchema => ({
   type: 'string',
@@ -558,6 +560,9 @@ export const PROFILES: DocumentationProfile[] = [
     })
   )
 ];
+PROFILES.push(
+  ...museumProfiles(PROFILES.filter((profile) => profile.version === 2))
+);
 
 export function profileFields(
   profile: DocumentationProfile,
@@ -626,6 +631,7 @@ export function applyOperations(
     )
       fail(422, 'INVALID_FIELD');
     seen.add(operation.field);
+    if (definition.read_only) fail(422, 'PROGRAM_TERMS_FIXED');
     if (operation.op === 'unset') {
       if (operation.answer !== undefined) fail(422, 'INVALID_ANSWER');
       delete result[operation.field];
@@ -788,7 +794,7 @@ export function getAnswer(
 export function conditionalRequired(
   modules: Record<ModuleId, Answers>
 ): string[] {
-  const paths: string[] = [];
+  const paths: string[] = museumRequired(modules);
   const techniques =
     answerValue<{ kinds: string[] }>(modules.process.techniques)?.kinds ?? [];
   if (techniques.includes('composite') || techniques.includes('collage'))

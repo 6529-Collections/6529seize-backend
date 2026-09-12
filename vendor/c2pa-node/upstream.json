@@ -1,0 +1,14 @@
+{
+  "name": "@contentauth/c2pa-node",
+  "version": "0.9.5",
+  "patched_version": "0.9.5-6529.1",
+  "tarball": "https://registry.npmjs.org/@contentauth/c2pa-node/-/c2pa-node-0.9.5.tgz",
+  "integrity": "sha512-7n2o3UX0rmNL+8LmVhEd3aun2LXLulcI9y02gKhKE1rgqliZgwocmwg8V+vZat3+JLHPvxABtp8Icy1sUEbd1w==",
+  "repository": "https://github.com/contentauth/c2pa-js",
+  "tag": "@contentauth/c2pa-node@0.9.5",
+  "replacement_dependency": {
+    "name": "yauzl",
+    "version": "3.4.0",
+    "integrity": "sha512-jIH9yLR9wqr0wOS0TpBvo/g/2UgZH5qePVbjgRliiF0BYvOZyaBknKsF+x9Iht0O6sqgnB93rCICdOZFecJuDw=="
+  }
+}

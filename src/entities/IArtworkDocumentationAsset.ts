@@ -24,7 +24,7 @@ export class ArtworkDocumentationAssetEntity implements StoredAsset {
   @Column({ type: 'varchar', length: 64 }) request_hash!: string;
   @Column({ type: 'varchar', length: 255 }) filename!: string;
   @Column({ type: 'varchar', length: 100 }) declared_mime!: string;
-  @Column({ type: 'varchar', length: 10 }) extension!: string;
+  @Column({ type: 'varchar', length: 20 }) extension!: string;
   @Column({ type: 'varchar', length: 30 }) role!: ArtworkAssetRole;
   @Column({ type: 'varchar', length: 25 }) access_class!: AssetClass;
   @Column({ type: 'varchar', length: 25 })
@@ -67,6 +67,11 @@ export class ArtworkDocumentationAssetEntity implements StoredAsset {
   @Column({ type: 'bigint', default: 0 }) next_attempt_at!: number;
   @Column({ type: 'bigint', default: 0 }) lease_until!: number;
   @Column({ type: 'int', default: 0 }) attempts!: number;
+  @Column({ type: 'mediumtext', nullable: true }) technical_metadata_json!:
+    | string
+    | null;
+  @Column({ type: 'varchar', length: 500, nullable: true })
+  validation_report_key!: string | null;
 }
 
 /** A mutex row serializes reservations for a context without locking a core entity. */

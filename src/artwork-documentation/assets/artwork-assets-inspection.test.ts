@@ -34,23 +34,24 @@ describe('archive fixity and bounded inspection', () => {
       )
     ).rejects.toThrow('UPLOAD_SIZE_MISMATCH');
   });
-  it('streams a full 4GiB fixture through a 64KiB inspection prefix', async () => {
+  it('streams a full 8GiB fixture through bounded inspection buffers', async () => {
     const chunk = Buffer.alloc(4 * 1024 * 1024, 97);
     const expected = createHash('sha256');
     function* chunks() {
-      for (let index = 0; index < 1024; index++) {
+      for (let index = 0; index < 2048; index++) {
         expected.update(chunk);
         yield chunk;
       }
     }
     const result = await hashAssetStream(
       Readable.from(chunks()),
-      4 * 1024 ** 3,
+      8 * 1024 ** 3,
       'tiff',
       new AbortController().signal
     );
-    expect(result.size).toBe(4 * 1024 ** 3);
+    expect(result.size).toBe(8 * 1024 ** 3);
     expect(result.prefix).toHaveLength(64 * 1024);
+    expect(result.suffix).toHaveLength(64 * 1024);
     expect(result.sha256).toBe(expected.digest('hex'));
   }, 60000);
   it('validates split UTF8 and rejects invalid text or XMP external entities', async () => {

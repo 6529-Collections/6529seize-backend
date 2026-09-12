@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import {
   ARTWORK_FORMATS,
   ARTWORK_UPLOAD_POLICY,
+  assetClass,
+  publicationAssetAccess,
   canReadAsset,
   canReadOriginal,
   expectedPartSize,
@@ -14,12 +16,226 @@ import {
   anArtworkAsset,
   artistAssetAccess
 } from '@/artwork-documentation/assets/artwork-assets.test-support';
+import { dossierFixture } from '@/artwork-documentation/museum/export/dossier-fixture';
+import { interviewPublicationIssues } from '@/artwork-documentation/assets/artwork-assets.publication';
+import {
+  Answer,
+  Json
+} from '@/artwork-documentation/artwork-documentation.types';
 
 const checksum = createHash('sha256')
   .update('last short part')
   .digest('base64');
+
+describe('version 3 per-file interview publication clearance', () => {
+  const provided = (value: Json): Answer => ({
+    status: 'provided',
+    value,
+    intended_visibility: 'public_record'
+  });
+  function contextWithInterview(role = 'interview_recording') {
+    const context = dossierFixture().snapshot.context;
+    const link = context.asset_links[0];
+    link.role = role;
+    link.manifest.role = role;
+    link.manifest.intended_visibility = 'public_record';
+    return { context, link, id: link.asset_id };
+  }
+  it('allows draft staging before Conversation but reports an asset-specific final clearance issue', () => {
+    const { context, link, id } = contextWithInterview();
+    expect(() =>
+      validatePublicationAssetLink(publicationAssetAccess(context), link)
+    ).not.toThrow();
+    expect(interviewPublicationIssues(context)).toEqual([
+      {
+        field: `asset:${id}`,
+        code: 'INTERVIEW_PUBLICATION_PERMISSION_REQUIRED',
+        lane: 'rights'
+      }
+    ]);
+    context.profile.version = 2;
+    expect(interviewPublicationIssues(context)).toEqual([]);
+  });
+  it('requires the exact file and publication permission rather than an unrelated session', () => {
+    const { context, id } = contextWithInterview();
+    context.modules.interview.sessions = provided([
+      {
+        recording_asset_ids: ['another-file'],
+        publication_permission: 'intended_public_record'
+      }
+    ]);
+    expect(interviewPublicationIssues(context)).toHaveLength(1);
+    context.modules.interview.sessions = provided([
+      { recording_asset_ids: [id] }
+    ]);
+    expect(interviewPublicationIssues(context)).toHaveLength(1);
+    context.modules.interview.sessions = provided([
+      {
+        recording_asset_ids: [id],
+        publication_permission: 'intended_public_record'
+      }
+    ]);
+    expect(interviewPublicationIssues(context)).toEqual([]);
+    context.modules.interview.sessions.intended_visibility = 'restricted';
+    expect(interviewPublicationIssues(context)).toHaveLength(1);
+  });
+  it.each([
+    'transcript_asset_id',
+    'caption_asset_ids',
+    'transcript_document_id'
+  ])(
+    'resolves a consenting session %s to the exact transcript asset',
+    (field) => {
+      const { context, id } = contextWithInterview('interview_transcript');
+      context.modules.interview.sessions = provided([
+        {
+          publication_permission: 'intended_public_record',
+          [field]:
+            field === 'caption_asset_ids'
+              ? [id]
+              : field === 'transcript_document_id'
+                ? 'document-id'
+                : id
+        }
+      ]);
+      context.modules.context.documents = provided([
+        { id: 'document-id', asset_id: id }
+      ]);
+      expect(interviewPublicationIssues(context)).toEqual([]);
+      if (field === 'transcript_document_id') {
+        context.modules.context.documents = provided([
+          { id: 'document-id', asset_id: 'another-file' }
+        ]);
+        expect(interviewPublicationIssues(context)).toHaveLength(1);
+      }
+    }
+  );
+  it('cannot evade a stored interview role by relabeling the attachment', () => {
+    const { context, link, id } = contextWithInterview();
+    link.role = 'other_supporting';
+    expect(interviewPublicationIssues(context)).toHaveLength(1);
+    context.modules.interview.sessions = provided([
+      {
+        transcript_asset_id: id,
+        publication_permission: 'intended_public_record'
+      }
+    ]);
+    expect(interviewPublicationIssues(context)).toHaveLength(1);
+  });
+  it('checks additional exported originals after unlinking without changing the current record', () => {
+    const { context, id } = contextWithInterview();
+    context.asset_links = [];
+    const before = JSON.stringify(context);
+    expect(interviewPublicationIssues(context)).toEqual([]);
+    expect(
+      interviewPublicationIssues(context, [{ id, role: 'interview_recording' }])
+    ).toHaveLength(1);
+    expect(JSON.stringify(context)).toBe(before);
+    context.modules.rights.material_rights = provided([
+      { subject_ids: [id], uses: [{ use: 'publication', status: 'granted' }] }
+    ]);
+    expect(
+      interviewPublicationIssues(context, [{ id, role: 'interview_recording' }])
+    ).toEqual([]);
+  });
+  it('unions current and exported roles without duplicate asset issues', () => {
+    const { context, id } = contextWithInterview('interview_transcript');
+    const assets = [
+      { id, role: 'interview_recording' },
+      { id, role: 'interview_recording' }
+    ];
+    expect(interviewPublicationIssues(context, assets)).toHaveLength(1);
+    context.modules.interview.sessions = provided([
+      {
+        transcript_asset_id: id,
+        publication_permission: 'intended_public_record'
+      }
+    ]);
+    expect(interviewPublicationIssues(context, assets)).toHaveLength(1);
+  });
+  it('accepts only asset-scoped publication grants and preserves explicit denials', () => {
+    const { context, id } = contextWithInterview();
+    context.modules.rights.material_rights = provided([
+      {
+        subject_ids: [context.work_id],
+        uses: [{ use: 'publication', status: 'granted' }]
+      }
+    ]);
+    expect(interviewPublicationIssues(context)).toHaveLength(1);
+    context.modules.rights.material_rights = provided([
+      { subject_ids: [id], uses: [{ use: 'exhibition', status: 'granted' }] }
+    ]);
+    expect(interviewPublicationIssues(context)).toHaveLength(1);
+    context.modules.rights.material_rights = provided([
+      { subject_ids: [id], uses: [{ use: 'publication', status: 'granted' }] }
+    ]);
+    expect(interviewPublicationIssues(context)).toEqual([]);
+    context.modules.rights.material_rights = provided([
+      {
+        subject_ids: [id],
+        uses: [{ use: 'publication', status: 'granted_with_conditions' }]
+      }
+    ]);
+    expect(interviewPublicationIssues(context)).toHaveLength(1);
+    context.modules.rights.material_rights = provided([
+      {
+        subject_ids: [id],
+        uses: [
+          {
+            use: 'publication',
+            status: 'granted_with_conditions',
+            conditions: 'Credit the interviewer.'
+          }
+        ]
+      }
+    ]);
+    expect(interviewPublicationIssues(context)).toEqual([]);
+    context.modules.interview.sessions = provided([
+      {
+        recording_asset_ids: [id],
+        publication_permission: 'intended_public_record'
+      }
+    ]);
+    context.modules.rights.material_rights = provided([
+      { subject_ids: [id], uses: [{ use: 'publication', status: 'denied' }] }
+    ]);
+    expect(interviewPublicationIssues(context)).toHaveLength(1);
+  });
+});
+
 describe('artwork archive policy', () => {
   const publicationAccess = { publicationOnly: true };
+  it.each(['consent_instrument', 'rights_instrument'] as const)(
+    'accepts a public v3 %s before a media profile has been answered',
+    (role) => {
+      const context = dossierFixture().snapshot.context;
+      delete context.modules.artwork.media_profiles;
+      const access = publicationAssetAccess(context);
+      const input = {
+        filename: 'instrument.pdf',
+        size_bytes: 9,
+        declared_mime: 'application/pdf',
+        role,
+        intended_visibility: 'public_record' as const
+      };
+      expect(access.publicationOnlyV3).toBe(true);
+      expect(assetClass(role, access)).toBe('artwork');
+      expect(validateStartUpload(input, access)).toBe('pdf');
+      expect(() => requirePublicationAsset(access, input)).not.toThrow();
+      expect(() =>
+        requirePublicationAsset(access, {
+          ...input,
+          intended_visibility: 'restricted'
+        })
+      ).toThrow('publication_visibility_required');
+      context.profile = { ...context.profile, version: 2 };
+      const legacy = publicationAssetAccess(context);
+      expect(assetClass(role, legacy)).toBe('rights_evidence');
+      expect(() => validateStartUpload(input, legacy)).toThrow(
+        'rights_evidence_is_restricted'
+      );
+    }
+  );
   it.each([
     'camera_original',
     'working_file',
@@ -100,10 +316,21 @@ describe('artwork archive policy', () => {
       )
     ).toThrow('interview_publication_permission_required');
   });
-  it('permits real 4GiB masters and rejects one byte beyond', () => {
+  it('does not let a media profile bypass the legacy interview permission gate', () => {
+    expect(() =>
+      requirePublicationAsset(
+        { ...publicationAccess, mediaProfiles: ['video'] },
+        {
+          role: 'interview_recording',
+          intended_visibility: 'public_record'
+        }
+      )
+    ).toThrow('interview_publication_permission_required');
+  });
+  it('permits 8GiB masters and rejects one byte beyond', () => {
     const input = {
       filename: 'master.tiff',
-      size_bytes: 4 * 1024 ** 3,
+      size_bytes: 8 * 1024 ** 3,
       declared_mime: 'image/tiff',
       role: 'preservation_master' as const,
       intended_visibility: 'restricted' as const

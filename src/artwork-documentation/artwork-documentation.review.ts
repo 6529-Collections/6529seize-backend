@@ -1,5 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { RequestContext } from '@/request.context';
+import { CustomApiCompliantException } from '@/exceptions';
+import {
+  canReadAsset,
+  publicationAssetAccess,
+  validatePublicationAssetLink
+} from './assets/artwork-assets.policy';
+import {
+  ARTWORK_ASSET_LIST_COLUMNS,
+  ARTWORK_ASSETS_TABLE,
+  ArtworkAssetListRow
+} from './assets/artwork-assets.types';
 import {
   AD_CONTEXTS,
   AD_GRANTS,
@@ -27,6 +38,11 @@ import { answerValue, fail } from './artwork-documentation.validation';
 import { canReadField, validateGrant } from './artwork-documentation.access';
 import { parseJson } from './artwork-documentation.db';
 import { FIELD_CATALOGUE, getProfile } from './artwork-documentation.catalogue';
+import { bindMuseumProgram } from './museum/museum-catalogue';
+import {
+  museumUpgradePreview,
+  publicationUpgradeRequiresAsset
+} from './museum/museum-upgrade';
 
 type Comment = {
   id: string;
@@ -422,7 +438,17 @@ export class ArtworkDocumentationReviewService {
     const access = await this.core.authorizeContext(id, ctx);
     if (!access.capabilities.manage_context)
       fail(403, 'MANAGE_CONTEXT_REQUIRED');
-    const proposed = getProfile(profileId, version);
+    if (access.context.profile.program_id !== access.context.program_id)
+      fail(422, 'PROGRAM_CHANGE_NOT_ALLOWED');
+    const proposed = bindMuseumProgram(
+      getProfile(profileId, version),
+      access.context.program_id
+    );
+    if (
+      access.context.profile.version >= 3 &&
+      proposed.version < access.context.profile.version
+    )
+      fail(422, 'PROFILE_DOWNGRADE_NOT_ALLOWED');
     if (
       access.context.profile.intake_mode === 'publication_only' &&
       proposed.intake_mode !== 'publication_only'
@@ -430,9 +456,26 @@ export class ArtworkDocumentationReviewService {
       fail(422, 'PUBLICATION_PROFILE_REQUIRED');
     if (proposed.program_id !== access.context.program_id)
       fail(422, 'PROGRAM_CHANGE_NOT_ALLOWED');
+    const compatibility = museumUpgradePreview(access.context, proposed);
+    if (proposed.version === 3) {
+      const uploadBlockers = await this.upgradeAssetBlockers(
+        access,
+        { ...access.context, profile: proposed },
+        ctx
+      );
+      compatibility.blocking_fields = Array.from(
+        new Set([...compatibility.blocking_fields, ...uploadBlockers.fields])
+      );
+      if (uploadBlockers.fields.length)
+        compatibility.notices.push(
+          'Earlier uploads include material that cannot enter a publication-only record. The file restrictions remain in force. Ask the team to resolve these deposits before upgrading; unlinked uploads also need review.',
+          ...uploadBlockers.notices
+        );
+    }
     return {
       current_profile: access.context.profile,
       proposed_profile: proposed,
+      ...compatibility,
       added_required_fields: proposed.required_for_review.filter(
         (field) => !access.context.profile.required_for_review.includes(field)
       ),
@@ -442,6 +485,57 @@ export class ArtworkDocumentationReviewService {
         )
     };
   }
+  private async upgradeAssetBlockers(
+    access: ContextAccess,
+    proposed: ContextRecord,
+    ctx: RequestContext
+  ): Promise<{ fields: string[]; notices: string[] }> {
+    const rows = await this.core.db.query<
+      ArtworkAssetListRow & { reserved_bytes: number }
+    >(
+      `SELECT ${ARTWORK_ASSET_LIST_COLUMNS.join(',')},reserved_bytes FROM ${ARTWORK_ASSETS_TABLE} WHERE context_id=:id`,
+      { id: access.context.id },
+      ctx
+    );
+    const readAccess = {
+      actorProfileId: access.actorProfileId,
+      canEdit:
+        access.context.lifecycle === 'active' &&
+        access.capabilities.edit_modules.includes('files'),
+      canReadArchivalFiles: access.capabilities.read_archival_files,
+      canReadRightsEvidence: access.capabilities.read_rights_evidence,
+      canReadRestricted: access.isArtist
+    };
+    const blockers: string[] = [];
+    const notices: string[] = [];
+    for (const row of rows) {
+      if (!publicationUpgradeRequiresAsset(row)) continue;
+      try {
+        validatePublicationAssetLink(publicationAssetAccess(proposed), {
+          ...row,
+          intended_terms: { kind: 'unspecified' },
+          manifest: row
+        });
+      } catch (error) {
+        if (
+          !(error instanceof CustomApiCompliantException) ||
+          error.getStatusCode() !== 422
+        )
+          throw error;
+        if (canReadAsset(row, readAccess)) {
+          blockers.push(`asset:${row.id}`);
+          const reason =
+            error.code === 'PUBLICATION_VISIBILITY_REQUIRED'
+              ? 'is restricted'
+              : 'has an earlier publication classification that needs review';
+          notices.push(
+            `Earlier upload "${row.filename}" ${reason}. Its existing restrictions will be preserved.`
+          );
+        } else blockers.push('files.restricted_uploads');
+      }
+    }
+    return { fields: Array.from(new Set(blockers)), notices };
+  }
   async upgrade(
     id: string,
     profileId: string,
@@ -450,7 +544,13 @@ export class ArtworkDocumentationReviewService {
     ctx: RequestContext
   ) {
     await this.core.mutate(id, mutation, ctx, async (access, transaction) => {
-      if (access.context.program_id && access.isArtist)
+      const ownerMuseumUpgrade =
+        access.isArtist &&
+        access.actorProfileId === access.context.owner_profile_id &&
+        access.context.profile.version < 3 &&
+        profileId === 'stream_artwork_basic_v1' &&
+        version === 3;
+      if (access.context.program_id && access.isArtist && !ownerMuseumUpgrade)
         fail(403, 'COORDINATOR_REQUIRED');
       const preview = await this.upgradePreview(
         id,
@@ -458,6 +558,11 @@ export class ArtworkDocumentationReviewService {
         version,
         transaction
       );
+      if (
+        preview.proposed_profile.version === 3 &&
+        preview.blocking_fields.length
+      )
+        fail(422, 'PROFILE_UPGRADE_REQUIRES_REVIEW');
       access.context.profile = preview.proposed_profile;
       await this.core.validatePublicationUpgrade(access.context, transaction);
       return { context_id: id };

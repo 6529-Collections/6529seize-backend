@@ -1,18 +1,19 @@
 import { CustomApiCompliantException } from '@/exceptions';
 import type { ContextRecord } from '@/artwork-documentation/artwork-documentation.types';
+import { MAX_PDF_BYTES } from '@/attachments/pdf-content-validator';
 import {
   ARTWORK_ASSET_ROLES,
   AssetAccess,
+  ArtworkAssetListRow,
   AssetClass,
   AssetPart,
-  StartArtworkUpload,
-  StoredAsset
+  StartArtworkUpload
 } from '@/artwork-documentation/assets/artwork-assets.types';
 
 export const ARTWORK_UPLOAD_POLICY = Object.freeze({
-  max_asset_bytes: 4 * 1024 ** 3,
-  context_quota_bytes: 20 * 1024 ** 3,
-  max_assets: 100,
+  max_asset_bytes: 8 * 1024 ** 3,
+  context_quota_bytes: 128 * 1024 ** 3,
+  max_assets: 1000,
   max_concurrent_uploads: 5,
   part_size_bytes: 16 * 1024 ** 2,
   parallel_parts: 3,
@@ -30,6 +31,17 @@ export function assetError(status: number, code: string): never {
   );
 }
 
+export const PASSIVE_MEDIA_MIMES = new Set([
+  'audio/wav',
+  'audio/flac',
+  'audio/mpeg',
+  'audio/mp4',
+  'audio/ogg',
+  'audio/aiff',
+  'video/mp4',
+  'video/quicktime',
+  'video/webm'
+]);
 const IMAGE_MIMES: Record<string, string[]> = {
   jpg: ['image/jpeg'],
   jpeg: ['image/jpeg'],
@@ -39,7 +51,7 @@ const IMAGE_MIMES: Record<string, string[]> = {
   webp: ['image/webp'],
   gif: ['image/gif']
 };
-export const ARTWORK_FORMATS: Readonly<Record<string, readonly string[]>> =
+const LEGACY_FORMATS: Readonly<Record<string, readonly string[]>> =
   Object.freeze({
     ...IMAGE_MIMES,
     heic: ['image/heic', 'image/heif'],
@@ -67,8 +79,77 @@ export const ARTWORK_FORMATS: Readonly<Record<string, readonly string[]>> =
     mov: ['video/quicktime']
   });
 
-export function assetClass(role: string): AssetClass {
-  return role === 'consent_instrument' || role === 'rights_instrument'
+export const ARTWORK_FORMATS: Readonly<Record<string, readonly string[]>> =
+  Object.freeze({
+    ...LEGACY_FORMATS,
+    iiq: ['image/x-phaseone-iiq'],
+    icc: ['application/vnd.iccprofile'],
+    icm: ['application/vnd.iccprofile'],
+    cos: ['application/xml', 'text/xml'],
+    costyle: ['application/xml', 'text/xml'],
+    cop: ['application/xml', 'text/xml'],
+    cosessiondb: ['application/vnd.sqlite3'],
+    zip: ['application/zip', 'application/x-zip-compressed'],
+    html: ['text/html'],
+    htm: ['text/html'],
+    svg: ['image/svg+xml'],
+    css: ['text/css'],
+    js: ['text/javascript', 'application/javascript'],
+    mjs: ['text/javascript', 'application/javascript'],
+    ts: ['text/plain', 'text/typescript'],
+    tsx: ['text/plain'],
+    jsx: ['text/plain'],
+    py: ['text/x-python', 'text/plain'],
+    pde: ['text/plain'],
+    glsl: ['text/plain'],
+    vert: ['text/plain'],
+    frag: ['text/plain'],
+    sol: ['text/plain'],
+    json: ['application/json'],
+    xml: ['application/xml', 'text/xml'],
+    yaml: ['application/yaml', 'text/yaml', 'text/plain'],
+    yml: ['application/yaml', 'text/yaml', 'text/plain'],
+    vtt: ['text/vtt'],
+    srt: ['application/x-subrip', 'text/plain'],
+    ttf: ['font/ttf'],
+    otf: ['font/otf'],
+    woff: ['font/woff'],
+    woff2: ['font/woff2'],
+    glb: ['model/gltf-binary'],
+    gltf: ['model/gltf+json'],
+    obj: ['model/obj', 'text/plain'],
+    mtl: ['text/plain'],
+    blend: ['application/x-blender'],
+    wasm: ['application/wasm'],
+    webm: ['video/webm', 'audio/webm'],
+    ogg: ['audio/ogg', 'video/ogg', 'application/ogg'],
+    opus: ['audio/ogg', 'audio/opus'],
+    aif: ['audio/aiff', 'audio/x-aiff'],
+    aiff: ['audio/aiff', 'audio/x-aiff'],
+    avif: ['image/avif'],
+    exr: ['image/x-exr'],
+    epub: ['application/epub+zip']
+  });
+
+const PROFILE_FINAL_FORMATS: Readonly<Record<string, readonly string[]>> = {
+  photography: ['avif', 'heic', 'heif', 'exr'],
+  digital_art: ['svg', 'avif', 'exr', 'psd', 'psb'],
+  video: ['mp4', 'mov', 'webm', 'ogg'],
+  audio: ['wav', 'flac', 'mp3', 'm4a', 'ogg', 'opus', 'aif', 'aiff', 'webm'],
+  html: ['html', 'htm', 'zip'],
+  generative: ['html', 'htm', 'js', 'mjs', 'py', 'pde', 'zip', 'wasm'],
+  interactive: ['html', 'htm', 'zip', 'wasm'],
+  spatial: ['glb', 'gltf', 'obj', 'blend', 'zip'],
+  text: ['txt', 'md', 'pdf', 'epub', 'html', 'htm'],
+  installation: ['zip']
+};
+
+export function assetClass(
+  role: string,
+  access: Pick<AssetAccess, 'publicationOnlyV3'> = {}
+): AssetClass {
+  return !access.publicationOnlyV3 &&
+    (role === 'consent_instrument' || role === 'rights_instrument')
     ? 'rights_evidence'
     : 'artwork';
 }
@@ -84,14 +165,29 @@ const PUBLICATION_ASSET_ROLES = new Set<string>([
 type PublicationAssetAccess = Pick<
   AssetAccess,
   | 'publicationOnly'
+  | 'publicationOnlyV3'
   | 'canPublishInterviewRecording'
   | 'canPublishInterviewTranscript'
+  | 'mediaProfiles'
 >;
 export function publicationAssetAccess(
   context: Pick<ContextRecord, 'profile' | 'modules'>
 ): PublicationAssetAccess {
   const interview = context.modules.interview ?? {};
+  const media = context.modules.artwork?.media_profiles;
   return {
+    publicationOnlyV3:
+      context.profile.version === 3 &&
+      context.profile.intake_mode === 'publication_only',
+    mediaProfiles:
+      context.profile.version === 3 &&
+      media?.status === 'provided' &&
+      Array.isArray(media.value)
+        ? media.value.filter(
+            (value): value is string =>
+              typeof value === 'string' && Boolean(PROFILE_FINAL_FORMATS[value])
+          )
+        : undefined,
     publicationOnly: context.profile.intake_mode === 'publication_only',
     canPublishInterviewRecording:
       interview.recording_permission?.status === 'provided' &&
@@ -106,15 +202,22 @@ export function requirePublicationAsset(
   input: { role: string; intended_visibility: string }
 ): void {
   if (!access.publicationOnly) return;
-  if (!PUBLICATION_ASSET_ROLES.has(input.role))
+  const publicMaterial =
+    (access.publicationOnlyV3 || access.mediaProfiles?.length) &&
+    ARTWORK_ASSET_ROLES.includes(
+      input.role as (typeof ARTWORK_ASSET_ROLES)[number]
+    ) &&
+    assetClass(input.role, access) !== 'rights_evidence';
+  if (!PUBLICATION_ASSET_ROLES.has(input.role) && !publicMaterial)
     assetError(422, 'PUBLICATION_ASSET_ROLE_REQUIRED');
   if (input.intended_visibility !== 'public_record')
     assetError(422, 'PUBLICATION_VISIBILITY_REQUIRED');
   if (
-    (input.role === 'interview_recording' &&
+    !access.publicationOnlyV3 &&
+    ((input.role === 'interview_recording' &&
       !access.canPublishInterviewRecording) ||
-    (input.role === 'interview_transcript' &&
-      !access.canPublishInterviewTranscript)
+      (input.role === 'interview_transcript' &&
+        !access.canPublishInterviewTranscript))
   )
     assetError(422, 'INTERVIEW_PUBLICATION_PERMISSION_REQUIRED');
 }
@@ -140,7 +243,10 @@ export function validatePublicationAssetLink(
           : ''
     });
 }
-export function validateStartUpload(input: StartArtworkUpload): string {
+export function validateStartUpload(
+  input: StartArtworkUpload,
+  access: Pick<AssetAccess, 'mediaProfiles' | 'publicationOnlyV3'> = {}
+): string {
   if (
     typeof input.filename !== 'string' ||
     input.filename.length > 255 ||
@@ -153,7 +259,9 @@ export function validateStartUpload(input: StartArtworkUpload): string {
   )
     assetError(422, 'INVALID_FILENAME');
   const extension = input.filename.split('.').pop()?.toLowerCase() ?? '';
-  const formats = ARTWORK_FORMATS[extension];
+  const formats = (
+    access.mediaProfiles?.length ? ARTWORK_FORMATS : LEGACY_FORMATS
+  )[extension];
   if (!formats || !ARTWORK_ASSET_ROLES.includes(input.role))
     assetError(422, 'UNSUPPORTED_FILE_FORMAT');
   if (
@@ -170,19 +278,27 @@ export function validateStartUpload(input: StartArtworkUpload): string {
     input.size_bytes > ARTWORK_UPLOAD_POLICY.max_asset_bytes
   )
     assetError(413, 'ASSET_SIZE_LIMIT');
+  if (extension === 'pdf' && input.size_bytes > MAX_PDF_BYTES)
+    assetError(413, 'PDF_SIZE_LIMIT');
   if (
     ['artwork_final', 'display_derivative'].includes(input.role) &&
-    !IMAGE_MIMES[extension]
+    !IMAGE_MIMES[extension] &&
+    !access.mediaProfiles?.some((profile) =>
+      PROFILE_FINAL_FORMATS[profile]?.includes(extension)
+    )
   )
     assetError(422, 'INVALID_FORMAT_FOR_ROLE');
   if (
-    assetClass(input.role) === 'rights_evidence' &&
+    assetClass(input.role, access) === 'rights_evidence' &&
     input.intended_visibility !== 'restricted'
   )
     assetError(422, 'RIGHTS_EVIDENCE_IS_RESTRICTED');
   return extension;
 }
-export function canReadAsset(asset: StoredAsset, access: AssetAccess): boolean {
+export function canReadAsset(
+  asset: ArtworkAssetListRow,
+  access: AssetAccess
+): boolean {
   if (asset.access_class === 'rights_evidence')
     return access.canReadRightsEvidence;
   return (
@@ -195,7 +311,7 @@ export function canReadAsset(asset: StoredAsset, access: AssetAccess): boolean {
   );
 }
 export function canReadOriginal(
-  asset: StoredAsset,
+  asset: ArtworkAssetListRow,
   access: AssetAccess
 ): boolean {
   return (
@@ -209,7 +325,7 @@ export function requireAssetWrite(access: AssetAccess, role?: string): void {
   if (!access.canEdit) assetError(403, 'ASSET_EDIT_FORBIDDEN');
   if (
     role &&
-    assetClass(role) === 'rights_evidence' &&
+    assetClass(role, access) === 'rights_evidence' &&
     !access.canReadRightsEvidence
   )
     assetError(403, 'RIGHTS_EVIDENCE_FORBIDDEN');
