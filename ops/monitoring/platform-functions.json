@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "description": "Supplemental observed application functions outside this repository's deploy catalog. Monitoring adds platform alarms only and never deploys their code.",
+  "functions": [
+    {
+      "name": "allowlist-api",
+      "environments": ["prod", "staging"],
+      "owner": "external"
+    },
+    {
+      "name": "allowlist-worker",
+      "environments": ["prod", "staging"],
+      "owner": "external"
+    },
+    {
+      "name": "allowlist-token-pool-downloader",
+      "environments": ["prod", "staging"],
+      "owner": "external"
+    },
+    {
+      "name": "tdhConsolidationsLoop",
+      "environments": ["prod", "staging"],
+      "owner": "legacy"
+    },
+    {
+      "name": "transactionsReplayLoop",
+      "environments": ["prod", "staging"],
+      "owner": "legacy"
+    },
+    {
+      "name": "rpcProxy",
+      "environments": ["prod"],
+      "owner": "external-or-legacy"
+    },
+    {
+      "name": "dropVideoRenditionsCompletionLoop",
+      "environments": ["staging"],
+      "owner": "legacy"
+    }
+  ]
+}
