@@ -18,6 +18,11 @@ import {
 import { MARKET_BATCH_LIMITS } from '@/marketplace/market-batch.schema';
 import { marketOperationPrepareSchema } from '@/marketplace/market-operation.types';
 import { discoveredOrderDto } from '@/api/marketplace/marketplace.dto';
+import {
+  marketOrderResolutionQuerySchema,
+  marketOrderResolutionSchema,
+  resolveMarketOrder
+} from './marketplace-order-resolution';
 
 const idSchema = z.string().uuid();
 
@@ -115,6 +120,19 @@ export async function handleGetMarketOrders(
       orders: orders.map((order) => discoveredOrderDto(order, asset.asset_key))
     };
   });
+}
+
+export function handleGetMarketOrder(
+  req: Operations.GetMarketOrderRequest
+): Promise<Operations.GetMarketOrderResponse> {
+  return execute(req, () =>
+    resolveMarketOrder(
+      marketOrderResolutionSchema.parse({
+        ...marketOrderResolutionQuerySchema.parse(req.query),
+        order_hash: req.params.order_hash
+      })
+    )
+  );
 }
 
 export function handlePrepareMarketOperation(
