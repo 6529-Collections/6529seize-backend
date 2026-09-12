@@ -23,6 +23,7 @@ import {
   MARKET_DEPTH_SNAPSHOT_SCHEMA_VERSION,
   MAX_MARKET_DEPTH_ARCHIVE_BYTES,
   MAX_MARKET_DEPTH_ARCHIVES_TOTAL_BYTES,
+  MAX_MARKET_DEPTH_COLLECTION_ASKS,
   MarketDepthCursor,
   MarketDepthJsonValue,
   MarketDepthReconciliation,
@@ -477,6 +478,14 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
     collectionSlugValue: string,
     options: MarketDepthSnapshotReadOptions = {}
   ): Promise<CurrentMarketDepthSnapshot | null> {
+    if (
+      options.limit !== undefined &&
+      (!Number.isSafeInteger(options.limit) ||
+        options.limit < 1 ||
+        options.limit > MAX_MARKET_DEPTH_COLLECTION_ASKS)
+    ) {
+      throw new Error('Invalid market-depth read limit');
+    }
     const params = {
       source: normalizePartition(sourceValue),
       chainId: MARKET_DEPTH_CHAIN_ID,
@@ -511,13 +520,22 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
       const tokenFilter = options.token_id
         ? 'AND (token_id=:tokenId OR token_id IS NULL)'
         : '';
+      const sideFilter = options.side ? 'AND side=:side' : '';
+      const limitClause = options.limit === undefined ? '' : 'LIMIT :limit';
       const orders = await this.query<CurrentMarketDepthOrder>(
         `SELECT ${selectedOrderColumns} FROM ${MARKET_DEPTH_CURRENT_ORDERS_TABLE}
          WHERE snapshot_id=:snapshotId AND source=:source AND chain_id=:chainId
            AND contract=:contract AND collection_slug=:collectionSlug
            ${tokenFilter}
-         ORDER BY side ASC, order_key ASC`,
-        { ...params, snapshotId: row.id, tokenId: options.token_id },
+           ${sideFilter}
+         ORDER BY side ASC, order_key ASC ${limitClause}`,
+        {
+          ...params,
+          snapshotId: row.id,
+          tokenId: options.token_id,
+          side: options.side,
+          limit: options.limit
+        },
         connection
       );
       return {

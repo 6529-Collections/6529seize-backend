@@ -143,6 +143,8 @@ export interface MarketDiscoveredOrder {
   totalWei: string;
   /** Present only when one exact unit can fill without rounding any signed item. */
   unitTotalWei?: string;
+  /** Availability independent of the quoted amount's quantity, e.g. a unit-priced TDH result. */
+  availableQuantity?: string;
   netWei: string;
   fees: MarketFee[];
   startTime: string;

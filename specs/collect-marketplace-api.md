@@ -30,6 +30,30 @@ transaction and signature paths are verified.
   `POST /collect/plans/{id}/advance` checks the next batch. Refresh after a
   profile, catalog or recipient change. Asset-scan completion does not mean
   exhaustive market coverage or guaranteed executable inventory.
+  Its optional `options.budget_wei` caps the analyzed acquisition cost including
+  estimated gas. Omission estimates the goal without a cost cap; an explicit
+  zero remains a zero cap. Neither grants spending authority nor changes the
+  exact price, recipient, review or wallet approval required for execution.
+  When every required collection has a complete indexed ask snapshot less than
+  one hour old, creation can return a ready estimate for all missing NFTs in one
+  collection read per family. Missing, stale or truncated coverage retains the
+  incremental provider scan. The saved estimate identifies its index observation
+  time and bounds each candidate to both order expiry and snapshot freshness.
+  It uses one best supported exact unit ask per NFT, excludes every profile
+  wallet's listings, and may need other orders for additional copies. An indexed
+  estimate is not a live executable quote; purchase preparation still rechecks
+  the exact order, inventory, fees, paying wallet and recipient.
+  Creation shares a 20-second elapsed work budget. The optional index seed uses
+  at most eight seconds and reserves time to persist scanner progress. If that
+  seed runs out of time, none of its partial candidates or counts are saved;
+  the plan starts with the normal scanner instead. Slow prerequisite reads
+  return a retryable unavailable response before starting later work.
+- `GET /collect/tdh-listings` shares the same request budget and checks elapsed
+  time between order validations. Nonempty partial results retain
+  `coverage_complete: false` on every cached page. If no listing could be
+  returned before processing stops, `503 LISTINGS_REFRESHING` asks the client
+  to retry; this does not claim that the market is empty. Database wait bounds
+  do not cancel database requests already in flight.
 - `POST /collect/tdh-scenarios` projects an exact acquisition allocation.
 - `POST /collect/tdh-ranking` compares the current listing pool or a saved plan,
   including the nonlinear basket effect on existing holdings. Cost estimates

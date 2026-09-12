@@ -30,6 +30,55 @@ confirmed consolidated wallets. Existing Pebbles trait rankings use that same
 profile scope. TDH projections reuse the production calculation kernel and
 first verify parity with the official snapshot.
 
+Authenticated `POST /collect/tdh-target-plans` estimates a purchase subtotal for
+a profile's total boosted TDH at a 1/30/90/365-day deadline, or an explicit
+increase over its future no-purchase baseline. Its selected recipient must be a
+confirmed wallet of that profile. It verifies official snapshot parity and
+reuses one canonical projector for complete candidate portfolios, including
+nonlinear set-completion bundles. Search is bounded to 128 replays, 10 million
+modeled replay-work units and a 20-second request window; inventory validation
+and hypothetical per-edition work are charged before each replay. It preserves
+exact captured listing identities, fee-divisible steps, remaining quantities and
+the atomic checkout's supported order shapes. Results distinguish best found,
+no purchase needed and an unresolved target gap; captured index coverage never
+claims complete live market coverage or a global minimum. Purchase subtotals
+include signed fees, while gas and total funding remain unquoted until batch
+review. Analysis adds no operation row, cache, table, migration, economic action
+or loop dependency. Deploy `api`, then its frontend consumer. The frontend Help
+Bot corpus must describe this new screen in the coupled frontend release.
+
+Anonymous `GET /collect/tdh-listings` compares supported ETH asks across the
+completed market-depth collection index. It reuses the marketplace adapter to
+validate stored signed order identities, exact fill quantities and fees, and
+applies observed cancellations and fills before ranking. Comparison uses exact
+wei against the indexed base accrual rate rounded to production hundredths,
+without inheriting seller holding time or applying profile multipliers. Reads
+are bounded across collection partitions; freshness and index coverage remain
+explicit. A short-lived cache contains only public discovery DTOs. An expiring
+Redis refresh lease limits concurrent cold-cache work across API instances;
+only its current owner can publish a result. Cursors
+bind the ranked content, catalog and collection. Checkout still obtains a fresh
+executable quote. This read-only endpoint adds no table or loop dependency and
+requires only the API deployment, followed by its frontend consumer.
+
+Private `POST /collect/offer-analyses` prices explicitly selected exact NFTs
+with manual pins or transparent WETH formulas. It reuses bounded indexed books
+and lifecycle observations; references remain explicitly unverified for live
+funding and fulfillment. One payer funding snapshot and primary tracked
+liabilities bound recommendations, while existing single-offer preparation
+still performs fresh review and reserves actual exposure. The conservative
+goal policy never signs, spends, or implies atomic group offers. It adds no
+table or loop dependency. See [per-NFT offer analysis](../specs/collect-offer-analysis.md).
+
+Collecting request budgets use a monotonic clock, with 20 seconds shared across
+reads and parsing. The optional set-plan seed and TDH browse parser each receive
+at most eight seconds within that budget. Seed expiry discards partial results
+and preserves time for scanner-row persistence; browse expiry marks retained
+results incomplete or returns a retryable refresh response when empty. Checks
+inside synchronous order loops bound CPU work, while read wait bounds prevent
+late responses from starting subsequent parsing. They do not claim to cancel
+an already-issued database request. Market quote expiry still uses wall time.
+
 The marketplace adapter obtains unsigned OpenSea Seaport actions server-side.
 Closed schemas, a protocol/spender registry, independent action decoding and
 chain simulation bind the exact artwork, quantity, wallet, recipient, fees and
@@ -51,6 +100,40 @@ reviewed payload and operation revision. An unresolved attempt blocks another
 send for that operation across browsers and devices. Hash recovery validates
 the original approval or fulfillment; only a positively identified pre-broadcast
 rejection can release an attempt without a verified transaction outcome.
+
+Atomic Collect purchases use a separate `BUY_BATCH` request and response while
+preserving the existing single-artwork contract. Each selected seller order has
+an exact quantity, native-ETH cost and recipient allocations. The API builds a
+Seaport 1.6 `matchAdvancedOrders` transaction with an unsigned payer mirror;
+every selected order must fill or the transaction reverts. No router deployment,
+new approval, automatic substitution or automatic splitting is involved.
+Profile membership labels collecting and recipient scope; the directly
+authenticated EOA pays, and profile or third-party wallets receive the NFTs.
+
+`GET /market/batch-capabilities` reports bounds of 128 seller orders, 256
+recipient allocations and 1 MiB of calldata. These bound parser, provider and
+validator work rather than spend or editions. Preparation uses at most eight
+concurrent selected-order tasks and a 20-second deadline. Complete simulation,
+balance and padded gas checks must pass before review and before opening the
+durable send attempt, including the current block limit and mainnet's
+[EIP-7825 transaction gas limit](https://eips.ethereum.org/EIPS/eip-7825).
+Exceeding a bound requires the user to reduce the selection explicitly.
+
+Restricted ERC1155 seller orders currently support original and filled quantity
+one. Open partial orders support multiple editions and recipients only when
+every individual NFT/payment amount has an exact fill fraction. Discovery
+publishes `purchase_quantity`, `quantity_step` and `available_quantity` so the
+UI can distinguish an executable unit quote from a required whole lot. Batch
+receipt reconciliation additionally requires every seller event, the exact
+buyer mirror, complete `OrdersMatched` membership and every recipient transfer.
+Uncertain evidence retains the recovery fence. Batch state and immutable mirror
+terms use the existing JSON operation journal; there is no schema change.
+History includes batches only with `include_batches=true`, and saved rules
+continue to support single purchases only. This addition requires the API to
+deploy before the dependent frontend; no indexing or migration loop changes.
+Opt-in history omits batch calldata, send-attempt payloads and seller components
+and bounds page bytes; clients follow its cursor and fetch the operation by ID
+for complete review or recovery evidence.
 
 `collect_plans` stores incremental listing scans with renewable leases and
 profile/catalog invalidation. It distinguishes a completed asset scan from

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { DbPoolName } from '@/db-query.options';
 import { MarketOperationEntity } from '@/entities/IMarketOperation';
 import { CustomApiCompliantException, NotFoundException } from '@/exceptions';
 import { ConnectionWrapper, dbSupplier, SqlExecutor } from '@/sql-executor';
@@ -95,9 +96,11 @@ export class MarketOperationsDb {
   }
 
   async get(id: string, profileId: string): Promise<MarketOperationRow> {
+    // Immediate follow-up requests must observe committed transitions.
     const row = await this.getDb().oneOrNull<MarketOperationRow>(
       'SELECT * FROM market_operations WHERE id = :id AND profile_id = :profileId',
-      { id, profileId }
+      { id, profileId },
+      { forcePool: DbPoolName.WRITE }
     );
     if (!row) throw new NotFoundException('Trade not found.');
     return row;
@@ -110,7 +113,8 @@ export class MarketOperationsDb {
   ): Promise<MarketOperationRow> {
     const row = await this.getDb().oneOrNull<MarketOperationRow>(
       'SELECT * FROM market_operations WHERE id = :id AND (profile_id = :profileId OR wallet = :wallet)',
-      { id, profileId, wallet: wallet.toLowerCase() }
+      { id, profileId, wallet: wallet.toLowerCase() },
+      { forcePool: DbPoolName.WRITE }
     );
     if (!row) throw new NotFoundException('Trade not found.');
     return row;
@@ -127,10 +131,11 @@ export class MarketOperationsDb {
     profileId: string,
     limit: number,
     before?: { created_at: number; id: string },
-    wallet?: string
+    wallet?: string,
+    includeBatches = false
   ) {
     return this.getDb().execute<MarketOperationRow>(
-      `SELECT * FROM market_operations WHERE (profile_id=:profileId ${wallet ? 'OR wallet=:wallet' : ''}) ${before ? 'AND (created_at<:createdAt OR (created_at=:createdAt AND id<:id))' : ''} ORDER BY created_at DESC,id DESC LIMIT :limit`,
+      `SELECT * FROM market_operations WHERE (profile_id=:profileId ${wallet ? 'OR wallet=:wallet' : ''}) ${includeBatches ? '' : "AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(request_json, '$.kind')), '') <> 'BUY_BATCH'"} ${before ? 'AND (created_at<:createdAt OR (created_at=:createdAt AND id<:id))' : ''} ORDER BY created_at DESC,id DESC LIMIT :limit`,
       {
         profileId,
         wallet: wallet?.toLowerCase(),
@@ -151,7 +156,8 @@ export class MarketOperationsDb {
   async reviewedTransaction(id: string, digest: string): Promise<unknown> {
     const row = await this.getDb().oneOrNull<{ prepared_json: unknown }>(
       'SELECT prepared_json FROM market_reviewed_transactions WHERE operation_id=:id AND transaction_digest=:digest',
-      { id, digest }
+      { id, digest },
+      { forcePool: DbPoolName.WRITE }
     );
     return row?.prepared_json;
   }
