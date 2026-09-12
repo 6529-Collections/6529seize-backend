@@ -44,6 +44,8 @@ import { ApiCollectAnalysisRequest } from '@/api/generated/models/ApiCollectAnal
 import { ApiCollectAssetsPage } from '@/api/generated/models/ApiCollectAssetsPage';
 import { ApiCollectCapabilities } from '@/api/generated/models/ApiCollectCapabilities';
 import { ApiCollectCatalog } from '@/api/generated/models/ApiCollectCatalog';
+import { ApiCollectOfferAnalysis } from '@/api/generated/models/ApiCollectOfferAnalysis';
+import { ApiCollectOfferAnalysisRequest } from '@/api/generated/models/ApiCollectOfferAnalysisRequest';
 import { ApiCollectPlan } from '@/api/generated/models/ApiCollectPlan';
 import { ApiCollectPlanRequest } from '@/api/generated/models/ApiCollectPlanRequest';
 import { ApiCollectRule } from '@/api/generated/models/ApiCollectRule';
@@ -823,6 +825,20 @@ export type GetCollectCatalogRequest = Request<
   ApiResponse<GetCollectCatalogResponse>,
   never,
   GetCollectCatalogQuery,
+  Record<string, never>
+>;
+
+export type AnalyzeCollectOffersPathParams = Record<string, never>;
+
+export type AnalyzeCollectOffersQuery = Record<string, never>;
+
+export type AnalyzeCollectOffersResponse = ApiCollectOfferAnalysis;
+
+export type AnalyzeCollectOffersRequest = Request<
+  AnalyzeCollectOffersPathParams,
+  ApiResponse<AnalyzeCollectOffersResponse>,
+  ApiCollectOfferAnalysisRequest,
+  AnalyzeCollectOffersQuery,
   Record<string, never>
 >;
 
