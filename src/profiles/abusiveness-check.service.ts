@@ -204,12 +204,13 @@ export class AbusivenessCheckService {
         null,
         true
       );
-    const cached = useCache ? await this.cache.findResult(text) : null;
-    if (
-      cached?.policy_version === input.policy_version &&
-      cached.model === model
-    )
-      return finish(cached, true);
+    const cached = await this.findCurrentCachedResult(
+      text,
+      input.policy_version,
+      model,
+      useCache
+    );
+    if (cached) return finish(cached, true);
     let result: AbusivenessDetectionResult;
     try {
       result = await classifier();
@@ -239,6 +240,19 @@ export class AbusivenessCheckService {
         model
       });
     return finish(result);
+  }
+
+  private async findCurrentCachedResult(
+    text: string,
+    policyVersion: string,
+    model: string,
+    useCache: boolean
+  ): Promise<AbusivenessDetectionResult | null> {
+    if (!useCache) return null;
+    const cached = await this.cache.findResult(text);
+    if (cached?.policy_version !== policyVersion || cached.model !== model)
+      return null;
+    return cached;
   }
 }
 export const abusivenessCheckService = new AbusivenessCheckService(

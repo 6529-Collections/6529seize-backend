@@ -1524,24 +1524,12 @@ export class UserGroupsService {
               old_version_id,
               ctxWithConnection
             );
-          if (nameReview.moderation_item_id) {
-            const reviewed = await moderationReviewDb.get(
-              nameReview.moderation_item_id,
-              ctxWithConnection,
-              true
-            );
-            if (reviewed.permit_consumed_at) {
-              assertModerationPermitReplay(reviewed, ctx.moderationRequestId);
-              if (!reviewed.published_subject_id) moderationConflict();
-              return {
-                updatedGroup: await this.getByIdOrThrow(
-                  reviewed.published_subject_id,
-                  ctxWithConnection
-                ),
-                replacedGroup: null
-              };
-            }
-          }
+          const replayedGroup = await this.replayReviewedGroup(
+            nameReview.moderation_item_id,
+            ctxWithConnection
+          );
+          if (replayedGroup)
+            return { updatedGroup: replayedGroup, replacedGroup: null };
           const currentGroup =
             await this.userGroupsDb.getByIdWithoutVisibilityCheck(
               group_id,
@@ -1635,6 +1623,18 @@ export class UserGroupsService {
       replacedGroup
     );
     return updatedGroup;
+  }
+
+  private async replayReviewedGroup(
+    itemId: string | undefined,
+    ctx: RequestContext
+  ): Promise<ApiGroupFull | null> {
+    if (!itemId) return null;
+    const reviewed = await moderationReviewDb.get(itemId, ctx, true);
+    if (!reviewed.permit_consumed_at) return null;
+    assertModerationPermitReplay(reviewed, ctx.moderationRequestId);
+    if (!reviewed.published_subject_id) moderationConflict();
+    return this.getByIdOrThrow(reviewed.published_subject_id, ctx);
   }
 
   /**

@@ -204,25 +204,25 @@ export class PrePublicationModerationService {
         CONTENT_MODERATION_REJECTION_CODE
       );
     }
+    if (existingReview?.override === 'BLOCK') {
+      await this.record(
+        input,
+        {
+          contentFingerprint,
+          signal: screen.signal ?? 'MANUAL_OVERRIDE',
+          outcome: PrePublicationCheckOutcome.REJECT,
+          aiInvoked: false,
+          evaluatorResult: { reason: 'DEVELOPER_BLOCKED' }
+        },
+        ctx
+      );
+      throw new CustomApiCompliantException(
+        422,
+        'This exact submission was rejected after review.',
+        CONTENT_MODERATION_REJECTION_CODE
+      );
+    }
     if (!screen.signal) {
-      if (existingReview?.override === 'BLOCK') {
-        await this.record(
-          input,
-          {
-            contentFingerprint,
-            signal: 'MANUAL_OVERRIDE',
-            outcome: PrePublicationCheckOutcome.REJECT,
-            aiInvoked: false,
-            evaluatorResult: { reason: 'DEVELOPER_BLOCKED' }
-          },
-          ctx
-        );
-        throw new CustomApiCompliantException(
-          422,
-          'This exact submission was rejected after review.',
-          CONTENT_MODERATION_REJECTION_CODE
-        );
-      }
       await this.record(
         input,
         {
@@ -251,25 +251,6 @@ export class PrePublicationModerationService {
       );
       return input.reviewItemId;
     }
-    if (existingReview?.override === 'BLOCK') {
-      await this.record(
-        input,
-        {
-          contentFingerprint,
-          signal: screen.signal,
-          outcome: PrePublicationCheckOutcome.REJECT,
-          aiInvoked: false,
-          evaluatorResult: { reason: 'DEVELOPER_BLOCKED' }
-        },
-        ctx
-      );
-      throw new CustomApiCompliantException(
-        422,
-        'This exact submission was rejected after review.',
-        CONTENT_MODERATION_REJECTION_CODE
-      );
-    }
-
     let assessment: Awaited<
       ReturnType<ContentModerationAiService['assessPrePublication']>
     >;
