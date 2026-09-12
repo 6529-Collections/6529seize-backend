@@ -128,6 +128,22 @@ class ArchiveValidationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Invalid corpus filename'):
             corpus.validate(self.root)
 
+    def test_rejects_symlinked_corpus_file_even_with_matching_digest(self):
+        data = b'Outside the corpus'
+        target = self.write('outside.txt', data)
+        directory = self.root / 'corpus'
+        directory.mkdir()
+        try:
+            (directory / 'linked.txt').symlink_to(target)
+        except OSError as error:
+            self.skipTest('Host does not allow symbolic links: ' + str(error))
+        manifest = {'cases': [{'files': [{
+            'path': 'linked.txt', 'sha256': hashlib.sha256(data).hexdigest()
+        }]}] * 13}
+        (directory / 'corpus-manifest.json').write_bytes(json.dumps(manifest).encode('utf-8'))
+        with self.assertRaisesRegex(ValueError, 'Invalid corpus filename'):
+            corpus.validate(directory)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -58,6 +58,7 @@ describe('bounded audiovisual container characterization', () => {
     const clean = await readFile(join(__dirname, 'fixtures', 'dash-init.mp4'));
     const large = Buffer.from(clean);
     const table = large.indexOf(Buffer.from('stsz'));
+    expect(table).toBeGreaterThan(0);
     large.writeUInt32BE(1, table + 8);
     large.writeUInt32BE(1000000, table + 12);
     // Model metadata from a larger original. Real bytes could back this count;

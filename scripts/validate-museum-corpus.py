@@ -60,7 +60,9 @@ def validate(directory):
     for case in manifest['cases']:
         for item in case['files']:
             check(isinstance(item['path'], str) and item['path'] not in ('.', '..') and '/' not in item['path'] and '\\' not in item['path'] and Path(item['path']).name == item['path'], 'Invalid corpus filename')
-            data = (directory/item['path']).read_bytes()
+            path = directory/item['path']
+            check(not path.is_symlink() and path.resolve().parent == directory.resolve(), 'Invalid corpus filename')
+            data = path.read_bytes()
             check(hashlib.sha256(data).hexdigest() == item['sha256'], 'Corpus file digest mismatch')
             if item['path'].endswith('-iiif.json'):
                 iiif_manifest = json.loads(data)
