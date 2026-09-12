@@ -99,15 +99,33 @@
                     "cloudwatch:DescribeAlarmsForMetric",
                     "cloudwatch:DescribeAlarmHistory",
                     "cloudwatch:DescribeAnomalyDetectors",
-                    "cloudwatch:GetDashboard",
                     "cloudwatch:ListDashboards",
                     "cloudwatch:GetMetricData",
                     "cloudwatch:GetMetricStatistics",
                     "cloudwatch:ListMetrics",
-                    "cloudwatch:GetMetricWidgetImage",
-                    "cloudwatch:ListTagsForResource"
+                    "cloudwatch:GetMetricWidgetImage"
                   ],
                   "Resource": "*"
+                },
+                {
+                  "Sid": "ReadAccountMonitoringTags",
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudwatch:ListTagsForResource"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudwatch:*:${AWS::AccountId}:*"
+                  }
+                },
+                {
+                  "Sid": "ReadAccountDashboards",
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudwatch:GetDashboard"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudwatch::${AWS::AccountId}:dashboard/*"
+                  }
                 },
                 {
                   "Sid": "ManageMonitoringDashboards",
@@ -156,7 +174,6 @@
                     "rum:DeleteAppMonitor",
                     "rum:GetAppMonitor",
                     "rum:GetAppMonitorData",
-                    "rum:ListAppMonitors",
                     "rum:ListRumMetricsDestinations",
                     "rum:PutRumMetricsDestination",
                     "rum:DeleteRumMetricsDestination",
@@ -166,9 +183,19 @@
                     "rum:GetResourcePolicy",
                     "rum:PutResourcePolicy",
                     "rum:DeleteResourcePolicy",
-                    "rum:ListTagsForResource",
                     "rum:TagResource",
                     "rum:UntagResource"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:rum:*:${AWS::AccountId}:appmonitor/*"
+                  }
+                },
+                {
+                  "Sid": "DiscoverBrowserMonitors",
+                  "Effect": "Allow",
+                  "Action": [
+                    "rum:ListAppMonitors",
+                    "rum:ListTagsForResource"
                   ],
                   "Resource": "*"
                 },
@@ -189,10 +216,19 @@
                   "Sid": "ReadNotificationDestinations",
                   "Effect": "Allow",
                   "Action": [
-                    "sns:ListTopics",
                     "sns:GetTopicAttributes",
                     "sns:ListSubscriptionsByTopic",
                     "sns:ListTagsForResource"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:sns:*:${AWS::AccountId}:*"
+                  }
+                },
+                {
+                  "Sid": "ListNotificationDestinations",
+                  "Effect": "Allow",
+                  "Action": [
+                    "sns:ListTopics"
                   ],
                   "Resource": "*"
                 },
@@ -200,18 +236,32 @@
                   "Sid": "ManageSyntheticMonitors",
                   "Effect": "Allow",
                   "Action": [
-                    "synthetics:CreateCanary",
                     "synthetics:UpdateCanary",
                     "synthetics:DeleteCanary",
                     "synthetics:StartCanary",
                     "synthetics:StopCanary",
                     "synthetics:GetCanary",
-                    "synthetics:DescribeCanaries",
-                    "synthetics:DescribeCanariesLastRun",
                     "synthetics:ListTagsForResource",
                     "synthetics:TagResource",
                     "synthetics:UntagResource",
                     "synthetics:GetCanaryRuns"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:synthetics:*:${AWS::AccountId}:canary:*"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:synthetics:*:${AWS::AccountId}:group:*"
+                    }
+                  ]
+                },
+                {
+                  "Sid": "CreateAndDiscoverSyntheticMonitors",
+                  "Effect": "Allow",
+                  "Action": [
+                    "synthetics:CreateCanary",
+                    "synthetics:DescribeCanaries",
+                    "synthetics:DescribeCanariesLastRun"
                   ],
                   "Resource": "*"
                 },

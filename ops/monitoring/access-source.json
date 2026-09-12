@@ -52,14 +52,24 @@
                     "cloudwatch:DescribeAlarmsForMetric",
                     "cloudwatch:DescribeAlarmHistory",
                     "cloudwatch:DescribeAnomalyDetectors",
-                    "cloudwatch:GetDashboard",
                     "cloudwatch:ListDashboards",
                     "cloudwatch:GetMetricData",
                     "cloudwatch:GetMetricStatistics",
                     "cloudwatch:ListMetrics",
                     "cloudwatch:GetMetricWidgetImage"
                   ],
-                  "Resource": "*"
+                  "Resource": "*",
+                  "Sid": "ReadMetricsAndAlarms"
+                },
+                {
+                  "Sid": "ReadAccountDashboards",
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudwatch:GetDashboard"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudwatch::${AWS::AccountId}:dashboard/*"
+                  }
                 }
               ]
             }

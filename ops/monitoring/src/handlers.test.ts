@@ -304,3 +304,83 @@ test('failed probe-metric publication preserves the critical uptime alert and su
       mocked.mock.restore();
   }
 });
+
+test('ten target observations flush once after alert/state work, including a final state failure', async () => {
+  const original = process.env;
+  process.env = {
+    ...original,
+    ENVIRONMENT: 'prod',
+    RECEIPTS_TABLE: 'test',
+    NORMAL_QUEUE_URL: 'normal',
+    CRITICAL_QUEUE_URL: 'critical',
+    PROBE_TARGETS: JSON.stringify(
+      Array.from({ length: 10 }, (_, index) => ({
+        name: `api${index}`,
+        url: 'https://api.example.com/health'
+      }))
+    )
+  };
+  let states = 0;
+  let alerts = 0;
+  let publications = 0;
+  const metricMock = mock.method(
+    CloudWatchClient.prototype,
+    'send',
+    async function (
+      this: CloudWatchClient,
+      command: {
+        input: { MetricData?: { MetricName?: string; Timestamp?: Date }[] };
+      },
+      options?: { abortSignal?: AbortSignal }
+    ) {
+      if (command.input.MetricData?.[0]?.MetricName === 'ProbeSuccess') {
+        publications++;
+        assert.equal(states, 10);
+        assert.equal(alerts, 10);
+        assert.equal(command.input.MetricData.length, 30);
+        assert.ok(
+          command.input.MetricData.every(
+            (item) => item.Timestamp instanceof Date
+          )
+        );
+        assert.ok(options?.abortSignal);
+        assert.equal(await this.config.maxAttempts(), 1);
+      }
+      return {};
+    }
+  );
+  const dbMock = mock.method(
+    ddb,
+    'send',
+    async (command: {
+      input: { Key?: { pk?: string }; Item?: { pk?: string } };
+    }) => {
+      if (command.input.Key?.pk?.startsWith('probe:'))
+        return { Item: { failures: 1, down: false } };
+      if (command.input.Item?.pk?.startsWith('probe:') && ++states === 10)
+        throw new Error('LAST_STATE_FAILURE');
+      return { Item: { seenAt: Math.floor(Date.now() / 1000) } };
+    }
+  );
+  const queueMock = mock.method(
+    sqs,
+    'send',
+    async (command: { input: { MessageBody?: string } }) => {
+      if (command.input.MessageBody?.includes('UPTIME_FAILURE')) alerts++;
+      return {};
+    }
+  );
+  const fetchMock = mock.method(
+    globalThis,
+    'fetch',
+    async () => new Response(null, { status: 503 })
+  );
+  try {
+    await assert.rejects(probe, /LAST_STATE_FAILURE/);
+    assert.equal(publications, 1);
+  } finally {
+    process.env = original;
+    for (const mocked of [metricMock, dbMock, queueMock, fetchMock])
+      mocked.mock.restore();
+  }
+});

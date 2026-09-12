@@ -320,11 +320,11 @@ function template(environmentName) {
     },
     SourceAccountId: parameter(
       'Verified application account owning the native metrics.',
-      '^\\d{12}$'
+      String.raw`^\d{12}$`
     ),
     SourceRegion: parameter(
       'Verified region of the application API and website metrics.',
-      '^[a-z]{2}(-gov)?-[a-z]+-\\d$'
+      String.raw`^[a-z]{2}(-gov)?-[a-z]+-\d$`
     ),
     RestApiName: parameter(
       'Exact observed AWS/ApiGateway ApiName dimension; not the API ID.',

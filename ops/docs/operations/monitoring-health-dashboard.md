@@ -17,6 +17,11 @@ OAM linking alone does not enable the production request widgets.
   measured with a monotonic clock and bounded to 0–60,000 milliseconds; HTTP
   requests retain their five-second timeout. Durations include failed attempts
   and assertion parsing and do not measure real-user page latency.
+  Observations are captured before state changes and flushed once in `finally`,
+  after alert/state work. The reused metrics client makes one attempt with a
+  two-second total publication deadline, even with ten targets. State failures
+  retain already collected observations; publication failures cannot replace
+  the original state failure or interrupt the preceding uptime alerts.
 - **Queue and delivery health:** oldest message age, visible/in-flight/delayed
   backlog, all three DLQs, delivery failures and admission overflow distinguish
   delayed work from rejected work. The archive collector drains DLQs, so zero
@@ -74,6 +79,25 @@ configured source account's `CloudWatch-CrossAccountSharingRole`; the source
 role trusts only that exact broker ARN and grants metric/alarm reads. This
 does not share application logs, secrets or application write access. OAM is
 not substituted for this cross-region console path.
+
+Before creating either access stack, inventory the two fixed broker/sharing role
+names. If either already exists outside the intended stack, inspect its trust,
+permissions and ownership and use a separately reviewed import/adaptation plan.
+Do not delete or replace a console-managed role to make creation succeed. These
+templates create the roles; they do not silently adopt existing resources.
+Principal ARN lists and `OperatorUserNames` must be nonempty, and operator names
+must refer to existing source users; the parameter patterns reject empty entries.
+The deployment configuration is intentionally scoped to the commercial AWS
+partition. Region validation does not claim support for isolated partitions.
+
+Resource-capable reads/writes are scoped to their own account's dashboards,
+CloudWatch tags, RUM app monitors, SNS topics and Synthetics canaries/groups.
+The remaining wildcard-resource statements are explicit AWS API requirements:
+metric/discovery reads and composite-alarm history, anomaly detectors, composite
+alarm creation, RUM list/tag discovery, SNS topic discovery and Synthetics
+creation/discovery. Synthetics creation still requires separately approved
+execution-role passing. CloudWatch composite-alarm APIs need wildcard permission
+even when other alarm operations are scoped to account alarm ARNs.
 
 Policy simulation and template validation do not establish a successful human
 login. After deployment, an intended administrator and operator must separately
@@ -135,3 +159,7 @@ outside-AWS uptime/dead-man coverage or true business-job completion heartbeats.
 - [Dashboard body syntax](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-Dashboard-Body-Structure.html)
 - [REST API metric dimensions and statistics](https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-metrics-and-dimensions.html)
 - [Application Load Balancer metric dimensions and statistics](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-cloudwatch-metrics.html)
+- [CloudWatch IAM actions and resources](https://docs.aws.amazon.com/service-authorization/latest/reference/list_cloudwatch.html)
+- [CloudWatch composite-alarm permission requirements](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/permissions-reference-cw.html)
+- [RUM IAM actions and resources](https://docs.aws.amazon.com/service-authorization/latest/reference/list_rum.html)
+- [Synthetics IAM actions and resources](https://docs.aws.amazon.com/service-authorization/latest/reference/list_synthetics.html)
