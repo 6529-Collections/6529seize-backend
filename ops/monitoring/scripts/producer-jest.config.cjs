@@ -10,6 +10,7 @@ module.exports = {
   testMatch: [
     '<rootDir>/src/operational-errors.test.ts',
     '<rootDir>/src/sentry-context.test.ts',
+    '<rootDir>/src/sentry-privacy.test.ts',
     '<rootDir>/src/tests/subscriptions.test.ts'
   ],
   maxWorkers: 1

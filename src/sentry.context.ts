@@ -2,6 +2,7 @@ import * as Sentry from '@sentry/serverless';
 import { Logger } from '@/logging';
 import type { Handler } from 'aws-lambda';
 import { operationalError, withOperationalContext } from '@/operational-errors';
+import { sanitizeSentryEvent } from '@/sentry-privacy';
 
 const logger = Logger.get('SENTRY_CONTEXT');
 
@@ -75,10 +76,16 @@ export function wrapLambdaHandler(
       dsn: process.env.SENTRY_DSN,
       environment: process.env.SENTRY_ENVIRONMENT,
       debug: process.env.SENTRY_DEBUG === 'true',
-      beforeSend: (event, hint) =>
-        options.shouldCaptureException?.(hint.originalException) === false
-          ? null
-          : (options.enrichEvent?.(event, hint.originalException) ?? event)
+      sendDefaultPii: false,
+      beforeSend: (event, hint) => {
+        const originalRequestUrl = event.request?.url;
+        if (options.shouldCaptureException?.(hint.originalException) === false)
+          return null;
+        return sanitizeSentryEvent(
+          options.enrichEvent?.(event, hint.originalException) ?? event,
+          originalRequestUrl
+        );
+      }
     });
     return Sentry.AWSLambda.wrapHandler(capture);
   }

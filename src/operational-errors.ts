@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomUUID } from 'node:crypto';
 
 const context = new AsyncLocalStorage<{
-  requestId: string;
+  requestId: string | undefined;
   observedErrors: WeakSet<Error>;
   reported?: boolean;
 }>();
@@ -12,7 +12,7 @@ const token = (value: string | undefined, limit: number): string | undefined =>
     : undefined;
 
 export function withOperationalContext<T>(
-  requestId: string,
+  requestId: string | undefined,
   action: () => T
 ): T {
   return context.run(

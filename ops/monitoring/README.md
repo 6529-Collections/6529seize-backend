@@ -51,6 +51,13 @@ the generated per-function alarms alone cannot see them.
 
 The emitter uses `process.stdout.write`, so Lambda TEXT logging does not prepend
 console metadata. The relay also handles JSON logging's nested `message` field.
+
+Shared Sentry error capture removes request bodies, cookies, headers, query
+strings and user data before transport, including moderation fields submitted on
+ordinary content routes. Private `/content-moderation/*` errors additionally
+discard evidence-bearing messages, breadcrumbs, extras, context and stack locals;
+only bounded type, stack location and trace metadata remain. The final scrub runs
+after event enrichment. Existing source logs are still a separate privacy boundary.
 It never parses arbitrary exception text. AWS account/log-group metadata binds
 source identity. The same Error instance is deduplicated within one invocation,
 not across future invocations. Local development emits no operational envelope.

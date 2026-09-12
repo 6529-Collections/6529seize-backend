@@ -145,6 +145,50 @@ describe('Sentry context', () => {
     expect(enrichEvent).not.toHaveBeenCalled();
   });
 
+  it('sanitizes the final enriched event before SDK transport', () => {
+    process.env.SENTRY_DSN = 'https://example.com/sentry';
+    wrapLambdaHandler(async () => undefined, {
+      enrichEvent: (event) => ({
+        ...event,
+        request: {
+          url: 'https://api.example.com/api/drops?private=value',
+          data: 'private evidence'
+        },
+        user: { id: 'private identity' }
+      })
+    });
+    const options = jest.mocked(Sentry.init).mock.calls[0][0]!;
+    expect(options.sendDefaultPii).toBe(false);
+    expect(
+      JSON.stringify(options.beforeSend!({ type: undefined }, {}))
+    ).not.toContain('private');
+  });
+
+  it('preserves private route classification even when enrichment replaces request metadata', () => {
+    process.env.SENTRY_DSN = 'https://example.com/sentry';
+    wrapLambdaHandler(async () => undefined, {
+      enrichEvent: (event) => {
+        event.request = { url: 'https://api.example.com/api/health' };
+        event.extra = { evidence: 'private evidence' };
+        return event;
+      }
+    });
+    const beforeSend = jest.mocked(Sentry.init).mock.calls[0][0]!.beforeSend!;
+    const result = beforeSend(
+      {
+        type: undefined,
+        request: {
+          url: 'https://api.example.com/api/content-moderation/checks/123'
+        }
+      },
+      {}
+    );
+    expect(JSON.stringify(result)).not.toContain('private evidence');
+    expect(result).toMatchObject({
+      transaction: '/content-moderation/[private]'
+    });
+  });
+
   it('preserves events for existing callers without an enricher', () => {
     process.env.SENTRY_DSN = 'https://example.com/sentry';
     wrapLambdaHandler(async () => undefined);
