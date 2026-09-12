@@ -386,6 +386,25 @@ async function run(
   }
 }
 
+function openRunnerLock(path: string): number {
+  try {
+    return openSync(path, 'wx', 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'EEXIST') {
+      throw new WalletTransferAnalysisError(
+        'Backfill runner.lock already exists. Confirm the previous runner has exited before removing a stale lock file, then retry. See the wallet transfer analysis runbook.'
+      );
+    }
+    throw error;
+  }
+}
+
+export function backfillFailureMessage(error: unknown): string {
+  return error instanceof WalletTransferAnalysisError
+    ? error.message
+    : 'Wallet transfer backfill failed. Inspect its private operator state and logs.';
+}
+
 export async function main(args = process.argv.slice(2)) {
   if (args.length !== 1 || args[0] === '--help') {
     process.stdout.write(
@@ -397,7 +416,7 @@ export async function main(args = process.argv.slice(2)) {
   const config = readConfig(args[0]);
   mkdirSync(config.state_directory, { recursive: true });
   const lockPath = join(config.state_directory, 'runner.lock');
-  const lock = openSync(lockPath, 'wx', 0o600);
+  const lock = openRunnerLock(lockPath);
   const stdoutWrite = process.stdout.write;
   process.stdout.write = process.stderr.write.bind(process.stderr);
   try {
@@ -425,9 +444,7 @@ export async function main(args = process.argv.slice(2)) {
 }
 
 if (require.main === module)
-  main().catch(() => {
-    process.stderr.write(
-      'Wallet transfer backfill failed. Inspect its private operator state and logs.\n'
-    );
+  main().catch((error: unknown) => {
+    process.stderr.write(`${backfillFailureMessage(error)}\n`);
     process.exitCode = 1;
   });

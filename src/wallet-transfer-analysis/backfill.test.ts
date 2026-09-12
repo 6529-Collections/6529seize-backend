@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { MEMES_CONTRACT } from '@/constants';
 import { doInDbContext } from '@/secrets';
-import { main } from './backfill';
+import { backfillFailureMessage, main } from './backfill';
 import { BACKFILL_METRICS } from './backfill-policy';
 import { withBackfillRunnerLock } from './backfill-runner.db';
 import {
@@ -473,7 +473,11 @@ describe('wallet transfer backfill operator lifecycle', () => {
     await jest.advanceTimersByTimeAsync(0);
     const originalLock = readFileSync(join(directory, 'runner.lock'), 'utf8');
 
-    await expect(startRunner()).rejects.toThrow();
+    const secondRun = startRunner();
+    await expect(secondRun).rejects.toBeInstanceOf(WalletTransferAnalysisError);
+    await expect(secondRun.catch(backfillFailureMessage)).resolves.toBe(
+      'Backfill runner.lock already exists. Confirm the previous runner has exited before removing a stale lock file, then retry. See the wallet transfer analysis runbook.'
+    );
 
     expect(readFileSync(join(directory, 'runner.lock'), 'utf8')).toBe(
       originalLock
@@ -482,5 +486,13 @@ describe('wallet transfer backfill operator lifecycle', () => {
     expect(walletTransferAnalysisService.update).not.toHaveBeenCalled();
     await stopRunner(firstRun);
     expect(existsSync(join(directory, 'runner.lock'))).toBe(false);
+  });
+
+  it('keeps unexpected filesystem and driver details out of command errors', () => {
+    expect(
+      backfillFailureMessage(new Error('private connection details'))
+    ).toBe(
+      'Wallet transfer backfill failed. Inspect its private operator state and logs.'
+    );
   });
 });

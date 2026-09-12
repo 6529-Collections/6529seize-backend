@@ -717,7 +717,9 @@ missing metrics, and uses a dedicated advisory-lock connection without a long
 transaction. It persists a fixed historical target and pause/stop state.
 Deploy `dbMigrationsLoop` with `db_schema_scope=wallet-transfer-analysis` to
 create only its three derived tables, without synchronizing unrelated entities
-or running unrelated data migrations. Then install the reviewed CLI on the
+or running unrelated data migrations. Daily moderation-review retention checks
+its required schema before running, allowing its separate schema rollout to
+remain pending after a scoped deployment. Then install the reviewed CLI on the
 operator host. See the [wallet transfer analysis runbook](../ops/docs/operations/wallet-transfer-analysis.md).
 
 Main Stage Meme-card associations are stored separately in

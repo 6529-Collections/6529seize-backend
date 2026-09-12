@@ -177,7 +177,7 @@ describeWithSeed('WalletTransferAnalysisDb', [], () => {
     }
   );
 
-  it('preserves the source budget hint in MySQL plans for bounds, advancement, and buckets', async () => {
+  it('preserves the source budget and collection index hints in MySQL plans', async () => {
     await repository.inTransaction(async (txCtx) => {
       const sourceReads = [
         () => repository.getSourceBounds(CONTRACT, txCtx),
@@ -194,6 +194,9 @@ describeWithSeed('WalletTransferAnalysisDb', [], () => {
           executed.mockRestore();
         }
         expect(query).toBeDefined();
+        expect(query![0]).toContain(
+          'FORCE INDEX (idx_transactions_contract_block)'
+        );
         const options = { wrappedConnection: txCtx.connection };
         const readWarnings = () =>
           sqlExecutor.execute<{ Level: string; Message: string }>(

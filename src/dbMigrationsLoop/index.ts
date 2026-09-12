@@ -12,6 +12,7 @@ import {
   WalletTransferPairDailyEntity,
   WalletTransferWalletDailyEntity
 } from '@/entities/IWalletTransferAnalysis';
+import { moderationRetentionSchemaDb } from './moderation-retention-schema.db';
 
 const DBMigrate = require('db-migrate');
 
@@ -111,7 +112,15 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
         await deleteExpiredContentModerationChecksInBatches(
           Time.currentMillis() - Time.days(30).toMillis()
         );
-      await moderationReviewDb.retain({});
+      const missingRetentionColumns =
+        await moderationRetentionSchemaDb.missingColumns({});
+      if (missingRetentionColumns.length) {
+        logger.info(
+          `[SKIPPED MODERATION REVIEW RETENTION: PENDING SCHEMA] ${missingRetentionColumns.join(', ')}`
+        );
+      } else {
+        await moderationReviewDb.retain({});
+      }
       logger.info(
         `Deleted ${deletedModerationChecks} expired content moderation pre-publication checks`
       );

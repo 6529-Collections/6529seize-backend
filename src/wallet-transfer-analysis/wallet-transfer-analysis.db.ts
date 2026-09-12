@@ -50,6 +50,9 @@ const WALLET_COLUMNS = [
 const SOURCE_COLUMNS = `transaction, block,
   CAST(transaction_date AS CHAR) AS transaction_date, from_address,
   to_address, contract, token_id, token_count, value`;
+// Keep each bounded read within the collection's existing contract/block index.
+// Live plans can otherwise choose the broader block-only index.
+const SOURCE_TABLE = `${TRANSACTIONS_TABLE} FORCE INDEX (idx_transactions_contract_block)`;
 
 const METRIC_NUMBER_COLUMNS = [
   'a_to_b_count',
@@ -194,7 +197,7 @@ function validateSourceRowLimit(maxRows: number): void {
 }
 
 const SOURCE_BUCKET_QUERY = `SELECT /*+ MAX_EXECUTION_TIME(${SOURCE_QUERY_BUDGET_MS}) */
-  ${SOURCE_COLUMNS} FROM ${TRANSACTIONS_TABLE}
+  ${SOURCE_COLUMNS} FROM ${SOURCE_TABLE}
   WHERE contract = :contract AND block BETWEEN :start AND :end
   ORDER BY block LIMIT :limit`;
 
@@ -382,7 +385,7 @@ export class WalletTransferAnalysisDb
         }>(
           `SELECT /*+ MAX_EXECUTION_TIME(${SOURCE_QUERY_BUDGET_MS}) */
          MIN(block) AS minBlock, MAX(block) AS maxBlock
-         FROM ${TRANSACTIONS_TABLE} WHERE contract = :contract`,
+         FROM ${SOURCE_TABLE} WHERE contract = :contract`,
           { contract },
           primaryOptions(ctx)
         )
@@ -401,7 +404,7 @@ export class WalletTransferAnalysisDb
       const row = await this.db
         .oneOrNull<{ block: number }>(
           `SELECT /*+ MAX_EXECUTION_TIME(${SOURCE_QUERY_BUDGET_MS}) */
-         block FROM ${TRANSACTIONS_TABLE}
+         block FROM ${SOURCE_TABLE}
          WHERE contract = :contract
            AND block > :afterBlock AND block <= :toBlock
          ORDER BY block ASC LIMIT 1`,

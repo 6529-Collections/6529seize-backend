@@ -27,7 +27,8 @@ advancing the checkpoint beyond rows visible to the worker.
 `update` starts at the first stored Memes activity and resumes from saved
 progress. Each invocation reconciles the latest processed bucket once, then
 processes up to `--max-batches` new buckets. Empty ranges can be skipped using
-the source contract/block index. Historical source corrections outside the
+the source contract/block index. Source reads explicitly select that existing
+index to avoid the broader block-only access path. Historical corrections outside the
 latest processed bucket require an explicit `rebuild` of the affected range.
 Rebuild includes whole intersecting buckets and only accepts already processed
 history; it cannot initialize progress or move the checkpoint past a gap.
@@ -117,6 +118,9 @@ There is no arbitrary SQL command, live schema option, or publication command.
    skips unrelated entity synchronization, data migrations and maintenance.
    A normal unscoped invocation still has its existing full behavior; do not
    use it for this rollout when unrelated changes remain pending.
+   Daily maintenance checks that the moderation-review retention schema is
+   present before running that job, so a scoped rollout can leave its separate
+   schema rollout pending without breaking existing maintenance.
    Then install the matching code on the authorized runner host. No other
    Lambda or API deployment is required, and this change enables no schedule.
 2. Run `status`. Record source bounds, completed summary coverage and the
