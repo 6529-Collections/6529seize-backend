@@ -98,7 +98,6 @@
     "@aws-sdk/client-sns": "^3.980.0",
     "@aws-sdk/client-sqs": "^3.980.0",
     "@aws-sdk/s3-request-presigner": "^3.980.0",
-    "@contentauth/c2pa-node": "0.9.5",
     "@emoji-mart/data": "^1.2.1",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@opensea/sdk": "^12.7.0",
@@ -146,13 +145,11 @@
     "short-uuid": "^6.0.0",
     "siwe": "^3.0.0",
     "slugify": "^1.6.6",
+    "unzipper": "0.12.5",
     "winston": "^3.11.0",
     "zod": "^3.25.76"
   },
   "overrides": {
-    "@contentauth/c2pa-node@0.9.5": {
-      "unzipper": "0.12.5"
-    },
     "adm-zip": "0.6.0",
     "serverless": {
       "tar": "7.5.22",
