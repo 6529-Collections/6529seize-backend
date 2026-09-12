@@ -287,6 +287,40 @@ describe('PrePublicationModerationService', () => {
     expect(aiService.assessPrePublication).not.toHaveBeenCalled();
   });
 
+  it.each([
+    PrePublicationCheckOutcome.ALLOW,
+    PrePublicationCheckOutcome.REJECT
+  ])(
+    'screens an expired permit normally and respects a fresh %s result',
+    async (outcome) => {
+      const { service, reviews, aiService } = createService();
+      reviews.find.mockResolvedValue({
+        override: 'ALLOW',
+        subject_type: 'DROP',
+        permit_expires_at: 1,
+        permit_consumed_at: null,
+        scope: { permit_generation: 7 }
+      });
+      aiService.assessPrePublication.mockResolvedValue({
+        outcome,
+        category: 'THREAT',
+        confidence: 0.99,
+        rationale: 'Fresh classification'
+      });
+      const result = service.evaluate(input('I will kill you'), {});
+      if (outcome === PrePublicationCheckOutcome.REJECT)
+        await expect(result).rejects.toMatchObject({
+          code: CONTENT_MODERATION_REJECTION_CODE
+        });
+      else
+        await expect(result).resolves.toEqual({
+          itemId: 'review-item',
+          permitGeneration: undefined
+        });
+      expect(aiService.assessPrePublication).toHaveBeenCalledTimes(1);
+    }
+  );
+
   it('blocks posting for a suspended profile before content checks', async () => {
     const { service, moderationDb, aiService } = createService();
     moderationDb.getProfileStatus.mockResolvedValue(

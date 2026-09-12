@@ -43,6 +43,23 @@ function item(): ModerationItem {
   };
 }
 describe('Developer review guards and evidence', () => {
+  it('fingerprints keys in a fixed UTF-16 order independently of insertion order or locale', () => {
+    const first = { z: 1, A: { '\u00e9': 2, a: 3 }, a: 4 };
+    const second = { a: 4, A: { a: 3, '\u00e9': 2 }, z: 1 };
+    const locale = jest
+      .spyOn(String.prototype, 'localeCompare')
+      .mockImplementation(() => {
+        throw new Error('Fingerprint ordering must not use locale data');
+      });
+    try {
+      expect(moderationFingerprint(first)).toBe(moderationFingerprint(second));
+      expect(moderationFingerprint(first)).not.toBe(
+        moderationFingerprint({ ...second, z: 2 })
+      );
+    } finally {
+      locale.mockRestore();
+    }
+  });
   let db: ModerationReviewDb;
   let service: ModerationReviewService;
   let record: ModerationItem;

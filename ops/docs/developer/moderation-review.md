@@ -84,11 +84,19 @@ original assessment policy, time, rationale and reporter notes. Concurrent opens
 of one report share one imported evaluation; separate reports preserve separate
 assessments. Submission history distinguishes the authenticated actor from a
 profile they are acting for, without changing the author's approval scope.
+New report review items and both report/publication links commit together.
+Fingerprints use a fixed UTF-16 key order, independent of process locale. This
+format is established before the first deployment of moderation review state;
+changing it after deployment would require an explicit compatibility plan.
 
 Capture is committed before external classification and survives a rejected
 content transaction. Capture failures stop the request; they cannot turn into an
 allowed classifier fallback. Interrupted pending attempts become visible errors
-after ten minutes. Model failures retain their existing behavior: single REP and
+after ten minutes. Interruption processing and evaluation payload expiry each
+process at most 1,000 evaluations per invocation and continue on the next run.
+Transient capture failures return 503 with retry guidance; deterministic capture
+failures return a generic 500 without exposing SQL or suggesting a retry.
+Model failures retain their existing behavior: single REP and
 ambiguous prepublication checks may allow with an explicit failure marker;
 About/group failures stop the save; reports remain for human review.
 

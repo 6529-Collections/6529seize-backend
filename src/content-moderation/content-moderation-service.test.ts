@@ -130,6 +130,7 @@ function createService() {
         evaluationId: 'evaluation'
       }),
       attachPublication: jest.fn(),
+      reportForReview: jest.fn(),
       bindReport: jest.fn(),
       finish: jest.fn(),
       lockSubject: jest.fn(),

@@ -1522,7 +1522,7 @@ export class UserGroupsService {
             new Set(
               [group_id, old_version_id].filter((id): id is string => !!id)
             )
-          ).sort((left, right) => left.localeCompare(right));
+          ).sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
           for (const id of groupIdsToLock)
             await moderationReviewDb.lockGroup(id, ctxWithConnection);
           const replayedGroup = await this.replayReviewedGroup(

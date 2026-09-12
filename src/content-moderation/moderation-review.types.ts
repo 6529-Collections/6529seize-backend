@@ -96,7 +96,7 @@ export function moderationFingerprint(value: unknown): string {
         nested && typeof nested === 'object' && !Array.isArray(nested)
           ? Object.fromEntries(
               Object.entries(nested).sort(([a], [b]) =>
-                a.localeCompare(b, 'en')
+                a < b ? -1 : a > b ? 1 : 0
               )
             )
           : nested
