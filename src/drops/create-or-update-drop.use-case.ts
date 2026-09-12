@@ -124,6 +124,12 @@ import {
   contentModerationDb,
   ContentModerationDb
 } from '@/content-moderation/content-moderation.db';
+import {
+  moderationReviewDb,
+  moderationConflict,
+  assertModerationPermitReplay
+} from '@/content-moderation/moderation-review.db';
+import { moderationFingerprint } from '@/content-moderation/moderation-review.types';
 
 const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
 const GIPHY_CHAT_LINK_HOST_REGEX = /^media\d*\.giphy\.com$/;
@@ -141,6 +147,11 @@ export type PrePublicationPreparation =
       readonly operation: 'CREATE' | 'UPDATE';
       readonly authorProfileId: string;
       readonly contentFingerprint: string;
+      readonly reviewItemId?: string;
+      readonly permitGeneration?: number;
+      readonly authenticationContext?: RequestContext['authenticationContext'];
+      readonly requestId?: string;
+      readonly currentRevision?: string | null;
     }
   | { readonly trustedSystem: true };
 
@@ -312,7 +323,7 @@ export class CreateOrUpdateDropUseCase {
     private readonly dropMediaUploadsDb: DropMediaUploadsDb,
     private readonly moderationService: Pick<
       PrePublicationModerationService,
-      'evaluate'
+      'evaluate' | 'assertPostingAllowed'
     > = prePublicationModerationService,
     private readonly moderationDb: Pick<
       ContentModerationDb,
@@ -379,6 +390,7 @@ export class CreateOrUpdateDropUseCase {
     }
   ): Promise<{
     drop_id: string;
+    replayed?: boolean;
     pending_push_notification_ids: number[];
     dm_unread_recipient_ids: string[];
   }> {
@@ -439,16 +451,29 @@ export class CreateOrUpdateDropUseCase {
       sanitizedModel.drop_id === null ? 'CREATE' : 'UPDATE';
     const dropId = sanitizedModel.drop_id ?? randomUUID();
     const authorProfileId = this.getRequiredAuthorId(sanitizedModel);
+    const currentRevision = sanitizedModel.drop_id
+      ? await moderationReviewDb.currentRevision(
+          {
+            subject_type: 'DROP',
+            subject_id: sanitizedModel.drop_id,
+            published_subject_id: null
+          } as Parameters<typeof moderationReviewDb.currentRevision>[0],
+          ctx
+        )
+      : null;
     const moderationInput = {
       dropId,
       authorProfileId,
       operation,
       title: sanitizedModel.title,
+      waveId: sanitizedModel.wave_id,
+      currentRevision,
+      contextFingerprint: moderationFingerprint(sanitizedModel),
       // File attachment contents intentionally remain in their existing
       // asynchronous validation pipeline and are not inspected here.
       parts: sanitizedModel.parts.map((part) => ({ content: part.content }))
     };
-    await this.moderationService.evaluate(moderationInput, {
+    const review = await this.moderationService.evaluate(moderationInput, {
       ...ctx,
       connection: undefined
     });
@@ -456,7 +481,12 @@ export class CreateOrUpdateDropUseCase {
       dropId,
       operation,
       authorProfileId,
-      contentFingerprint: getPrePublicationContentFingerprint(moderationInput)
+      contentFingerprint: getPrePublicationContentFingerprint(moderationInput),
+      reviewItemId: review?.itemId,
+      permitGeneration: review?.permitGeneration,
+      authenticationContext: ctx.authenticationContext,
+      requestId: ctx.moderationRequestId,
+      currentRevision
     };
   }
 
@@ -536,10 +566,47 @@ export class CreateOrUpdateDropUseCase {
     }
   ): Promise<{
     drop_id: string;
+    replayed?: boolean;
     pending_push_notification_ids: number[];
     dm_unread_recipient_ids: string[];
   }> {
     this.assertDropContentLimits(model.parts);
+    if (!('trustedSystem' in prePublication)) {
+      const tx = {
+        timer,
+        connection,
+        moderationRequestId: prePublication.requestId,
+        moderationPermitGeneration: prePublication.permitGeneration,
+        authenticationContext: prePublication.authenticationContext
+      };
+      await moderationReviewDb.lockProfile(this.getRequiredAuthorId(model), tx);
+      if (model.drop_id) await moderationReviewDb.lockDrop(model.drop_id, tx);
+      if (prePublication.reviewItemId) {
+        const reviewed = await moderationReviewDb.get(
+          prePublication.reviewItemId,
+          tx,
+          true
+        );
+        if (reviewed.permit_consumed_at) {
+          assertModerationPermitReplay(reviewed, prePublication.requestId);
+          if (
+            !reviewed.published_subject_id ||
+            reviewed.author_profile_id !== model.author_id
+          )
+            moderationConflict();
+          return {
+            drop_id: reviewed.published_subject_id,
+            replayed: true,
+            pending_push_notification_ids: [],
+            dm_unread_recipient_ids: []
+          };
+        }
+      }
+      await this.moderationService.assertPostingAllowed(
+        this.getRequiredAuthorId(model),
+        tx
+      );
+    }
     if (model.drop_type === DropType.WINNER) {
       throw new BadRequestException(`Can't modify a winner drop`);
     }
@@ -617,6 +684,37 @@ export class CreateOrUpdateDropUseCase {
       throw new Error('Pre-publication preparation does not match drop write');
     }
     let dropId: string;
+    if (!('trustedSystem' in prePublication) && prePublication.reviewItemId) {
+      const tx = {
+        timer,
+        connection,
+        moderationRequestId: prePublication.requestId,
+        moderationPermitGeneration: prePublication.permitGeneration,
+        authenticationContext: prePublication.authenticationContext
+      };
+      const reviewed = await moderationReviewDb.get(
+        prePublication.reviewItemId,
+        tx,
+        true
+      );
+      const current = preExistingDropId
+        ? await moderationReviewDb.currentRevision(reviewed, tx)
+        : null;
+      if (current !== (prePublication.currentRevision ?? null))
+        moderationConflict();
+      const replay = await moderationReviewDb.consume(
+        prePublication.reviewItemId,
+        candidateDropId,
+        tx
+      );
+      if (replay)
+        return {
+          drop_id: replay,
+          replayed: true,
+          pending_push_notification_ids: [],
+          dm_unread_recipient_ids: []
+        };
+    }
     let pendingPushNotificationIds: number[] = [];
     let dmUnreadRecipientIds: string[] = [];
     if (preExistingDropId) {
@@ -738,6 +836,16 @@ export class CreateOrUpdateDropUseCase {
       );
     }
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->execute`);
+    if (!('trustedSystem' in prePublication) && prePublication.reviewItemId) {
+      await moderationReviewDb.setPublishedRevision(
+        prePublication.reviewItemId,
+        moderationFingerprint({
+          title: validatedModel.title,
+          parts: validatedModel.parts.map((part) => ({ content: part.content }))
+        }),
+        { timer, connection }
+      );
+    }
     return {
       drop_id: dropId,
       pending_push_notification_ids: pendingPushNotificationIds,

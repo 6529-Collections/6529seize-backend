@@ -281,3 +281,8 @@ export {
   ArtworkDocumentationAssetEntity,
   ArtworkDocumentationAssetQuotaEntity
 } from './IArtworkDocumentationAsset';
+
+export {
+  ModerationItemEntity,
+  ModerationEvaluationEntity
+} from './IModerationReview';

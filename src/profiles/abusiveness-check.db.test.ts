@@ -3,6 +3,7 @@ import { sqlExecutor } from '../sql-executor';
 import { describeWithSeed } from '../tests/_setup/seed';
 import { AbusivenessCheckDb } from './abusiveness-check.db';
 import { RequestContext } from '../request.context';
+import { ModerationReviewDb } from '@/content-moderation/moderation-review.db';
 import { AbusivenessDetectionResult } from '../entities/IAbusivenessDetectionResult';
 import {
   anAbusivenessDetectionResult,
@@ -62,6 +63,49 @@ describeWithSeed(
       expect(results).toContain(okResult1.text);
       expect(results).toContain(okResult2.text);
       expect(results).toContain(okResult3.text);
+    });
+    it('keeps exact category overrides case-sensitive and supports supplementary Unicode', async () => {
+      const reviews = new ModerationReviewDb(() => sqlExecutor);
+      for (const text of ['Builder', 'builder', '𐐀 Builder']) {
+        await repo.saveVersionedResult({
+          text,
+          status: text.startsWith('𐐀') ? 'DISALLOWED' : 'ALLOWED',
+          explanation: null,
+          policy_version: 'test',
+          model: 'test',
+          external_check_performed_at: new Date()
+        });
+      }
+      for (const [text, action] of [
+        ['builder', 'BLOCK'],
+        ['𐐀 Builder', 'ALLOW']
+      ]) {
+        const started = await reviews.start(
+          {
+            subject_type: 'REP_CATEGORY',
+            subject_id: text,
+            author_profile_id: null,
+            actor_profile_id: 'dev',
+            operation: 'CLASSIFY',
+            policy_family: 'PUBLIC_FIELDS',
+            policy_version: 'test',
+            scope: {},
+            evidence: { text }
+          },
+          'PUBLIC_FIELD'
+        );
+        await reviews.executeNativeQueriesInTransaction(async (connection) => {
+          const item = await reviews.get(started.item.id, { connection }, true);
+          await reviews.decide(item, action, { connection });
+        });
+      }
+      const results = await repo.searchAllowedTextsLike({
+        text: 'builder',
+        limit: 10
+      });
+      expect(results).toEqual(expect.arrayContaining(['Builder', '𐐀 Builder']));
+      expect(results).not.toContain('builder');
+      expect((await repo.findResult('𐐀 Builder'))?.text).toBe('𐐀 Builder');
     });
 
     it('searches allowed texts with limit', async () => {

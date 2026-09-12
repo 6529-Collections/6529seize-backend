@@ -228,7 +228,11 @@ router.post(
         hideLinkPreview: newDrop.hide_link_preview,
         requestDailyActivityCredit: true
       },
-      { timer, authenticationContext }
+      {
+        timer,
+        authenticationContext,
+        moderationRequestId: req.get('Idempotency-Key')
+      }
     );
     try {
       await helpBotTriggerService.handleCreatedDrop(
@@ -286,7 +290,11 @@ router.post(
         authorId: authorId,
         representativeId: authenticationContext.getLoggedInUsersProfileId()!
       },
-      { timer, authenticationContext }
+      {
+        timer,
+        authenticationContext,
+        moderationRequestId: req.get('Idempotency-Key')
+      }
     );
     res.send(updatedDrop);
   }

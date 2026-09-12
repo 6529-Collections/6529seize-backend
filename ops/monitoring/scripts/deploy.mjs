@@ -150,3 +150,10 @@ run([
   '--parameter-overrides',
   ...Object.entries(parameters).map(([key, value]) => `${key}=${value}`)
 ]);
+run([
+  'cloudformation',
+  'update-termination-protection',
+  '--enable-termination-protection',
+  '--stack-name',
+  `seize-monitoring-${environment}`
+]);

@@ -1,6 +1,6 @@
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkProbe, parseProbeTargets } from './probes.js';
+import { checkProbe, measureProbe, parseProbeTargets } from './probes.js';
 
 const target = {
   name: 'api',
@@ -97,4 +97,39 @@ test('probe configuration bounds targets, property paths, and scalar assertions'
     JSON.stringify([{ ...target, jsonEquals: {} }])
   ])
     assert.throws(() => parseProbeTargets(value), /INVALID_PROBE/);
+});
+
+test('probe observations time health evaluation and bound both successful and failed durations', async () => {
+  const fetchMock = mock.method(globalThis, 'fetch', async () =>
+    Response.json({ db: 'ok', redis: { healthy: true } })
+  );
+  const clock = (end: number) => {
+    const times = [100, end];
+    return () => times.shift()!;
+  };
+  try {
+    assert.deepEqual(await measureProbe(target, clock(125.5)), {
+      healthy: true,
+      durationMs: 25.5
+    });
+    fetchMock.mock.mockImplementation(async () => {
+      throw new Error('private transport failure');
+    });
+    assert.deepEqual(await measureProbe(target, clock(5100)), {
+      healthy: false,
+      durationMs: 5000
+    });
+    for (const [end, durationMs] of [
+      [90, 0],
+      [Infinity, 60_000],
+      [99_999, 60_000]
+    ] as const) {
+      assert.deepEqual(await measureProbe(target, clock(end)), {
+        healthy: false,
+        durationMs
+      });
+    }
+  } finally {
+    fetchMock.mock.restore();
+  }
 });

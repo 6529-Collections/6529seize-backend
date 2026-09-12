@@ -158,3 +158,10 @@ run([
   `MonitoringEventBusArn=${bus}`,
   ...(topic === undefined ? [] : [`ExistingAlarmTopicArn=${topic}`])
 ]);
+run([
+  'cloudformation',
+  'update-termination-protection',
+  '--enable-termination-protection',
+  '--stack-name',
+  `seize-monitoring-${environment}-source`
+]);

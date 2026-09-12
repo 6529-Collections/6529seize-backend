@@ -72,6 +72,9 @@ before enabling a new fallback destination.
    installs/tests/builds only this package, obtains its dedicated OIDC session,
    verifies the monitoring account and artifact-bucket owner, and deploys through
    the separate CloudFormation role. Artifacts use `{environment}/{sha}` prefixes.
+   After a successful deploy, the script enables termination protection on the
+   exact runtime stack. A protection failure fails the command and requires
+   repair before acceptance, even though the infrastructure update succeeded.
 2. In each source account/region, deploy `source-bootstrap.json` as
    `seize-monitoring-source-bootstrap` with the authorized source identity and
    enable termination protection. Its retained, encrypted, private, versioned
@@ -83,7 +86,8 @@ before enabling a new fallback destination.
    available. Preserve every existing email subscription and existing alarm.
    The guarded `../../bin/6529 run deploy:source` command performs account,
    region, artifact ownership and coverage/subscription preflight before packaging
-   and deploying `seize-monitoring-{env}-source`. Run `generate:check` and `check`
+   and deploying `seize-monitoring-{env}-source`, then enables termination
+   protection on that exact stack. Run `generate:check` and `check`
    first. It requires `MONITORING_ENVIRONMENT`, `MONITORING_COMMIT_SHA`,
    `SOURCE_ACCOUNT_ID`, `MONITORING_ACCOUNT_ID`, `MONITORING_EVENT_BUS_ARN`,
    `SOURCE_ARTIFACT_BUCKET`, optional `SOURCE_ALARM_TOPIC_ARN`, and optional
@@ -92,11 +96,23 @@ before enabling a new fallback destination.
    `/usr/local/bin/aws` on the hosted Linux runner). Scripts resolve symlinks and
    reject binaries inside the checkout; they never search npm/repository `PATH`.
    Its AWS session must belong to the source
-   account; the monitoring OIDC role cannot deploy this stack. The region is
+   account; the monitoring OIDC role cannot deploy this stack. The caller also
+   needs `cloudformation:UpdateTerminationProtection` on the exact
+   `seize-monitoring-{env}-source` stack ARN in the source account/region. This
+   operation uses the current AWS CLI identity, not the optional
+   `SOURCE_CLOUDFORMATION_ROLE_ARN` passed only to `cloudformation deploy`.
+   `source-bootstrap.json` provisions artifact storage, not that caller's IAM
+   permissions; its account owner manages the separate deployment identity.
+   The region is
    derived from the catalog. Cross-region forwarding uses the monitoring bus
    ARN's region, so a production source in `us-east-1` can target `eu-west-1`.
    Leaving `SOURCE_ALARM_TOPIC_ARN` undefined preserves an existing stack's topic;
    explicitly setting it to an empty string disables that optional alarm action.
+   The source event-bus target uses AWS-managed retries and its retained regional
+   dead-letter queue; it must not set a custom `RetryPolicy`, which EventBridge
+   rejects for event-bus targets. Its queue backlog alarm also uses this optional
+   source topic. Confirm that topic has an independently reachable subscriber;
+   a topic with no subscriptions provides no fallback delivery.
    Source and monitoring artifact buckets expire current objects after 90 days
    and noncurrent versions after 30 days. Older rollbacks require rebuilding the
    exact commit and uploading a new verified artifact.
@@ -141,8 +157,24 @@ Only after primary delivery is proven, remove the **Lambda subscription only**
 from the old `cloudwatch-alarms` SNS topic. Preserve confirmed email subscriptions.
 Do this before enabling the transitional generic fallback SNS forwarder: the old
 Lambda expects CloudWatch alarm JSON, so a generic fallback message would make it
-fail and potentially produce further operational alerts. Do not delete the old
-function or root Discord dependency while another legacy caller still needs it.
+fail and potentially produce further operational alerts.
+
+The Discord client and old sender are removed from source and the deployment
+catalog after their replacements are integrated. Retire the existing deployed
+sender only after confirming that moderation runs through the review database
+and both operational lanes deliver successfully. Inspect the old CloudFormation
+stack's resources first, preserve its CloudWatch log group and last verified
+artifact, and remove only the sender stack and its own SNS subscription and
+Lambda permission. Do not remove the shared SNS topic, confirmed email
+subscriptions or shared execution role. Re-deploy the monitoring source stack
+from the retirement revision so it removes only the obsolete sender's generated
+alarms and structured-log subscription. Keep other source coverage unchanged.
+
+The separate `notifier-discord` incoming webhooks for successful business events
+remain in place. They do not use a bot session or the removed Discord dependency.
+The old application `/dev-alerts` Sentry receiver is a separate integration: do
+not retire it until the Sentry provider has been moved to the independent ingress
+and that signed delivery has been verified.
 
 ## Failure investigation and replay
 
