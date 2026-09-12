@@ -150,6 +150,9 @@
     "zod": "^3.25.76"
   },
   "overrides": {
+    "@contentauth/c2pa-node@0.9.5": {
+      "unzipper": "0.12.5"
+    },
     "adm-zip": "0.6.0",
     "serverless": {
       "tar": "7.5.22",
