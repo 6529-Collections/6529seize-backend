@@ -39,20 +39,27 @@ function fixture() {
         run: (connection: RequestContext['connection']) => Promise<unknown>
       ) => run(transaction.connection)
     ),
-    query: jest.fn(async (sql: string, params: Record<string, unknown>) => {
-      if (sql.includes(`FROM ${ARTWORK_ASSETS_TABLE} `))
-        return snapshot.assets.filter((asset) =>
-          (params.assetIds as string[]).includes(asset.id)
-        );
-      if (sql.includes(`FROM ${AD_MUSEUM_RECORDS} `))
-        return snapshot.museum_records;
-      if (sql.includes(`FROM ${AD_SOURCES} `)) return snapshot.source_receipts;
-      if (sql.includes(`FROM ${AD_REVIEWS} `))
-        return snapshot.review_history ?? [];
-      if (sql.includes(`FROM ${AD_REVISIONS} `))
-        return snapshot.artist_revisions ?? [];
-      throw new Error('Unexpected snapshot query');
-    }),
+    query: jest.fn(
+      async (
+        sql: string,
+        params: Record<string, unknown>,
+        _ctx: RequestContext
+      ) => {
+        if (sql.includes(`FROM ${ARTWORK_ASSETS_TABLE} `))
+          return snapshot.assets.filter((asset) =>
+            (params.assetIds as string[]).includes(asset.id)
+          );
+        if (sql.includes(`FROM ${AD_MUSEUM_RECORDS} `))
+          return snapshot.museum_records;
+        if (sql.includes(`FROM ${AD_SOURCES} `))
+          return snapshot.source_receipts;
+        if (sql.includes(`FROM ${AD_REVIEWS} `))
+          return snapshot.review_history ?? [];
+        if (sql.includes(`FROM ${AD_REVISIONS} `))
+          return snapshot.artist_revisions ?? [];
+        throw new Error('Unexpected snapshot query');
+      }
+    ),
     one: jest.fn(
       async (
         sql: string,
@@ -117,6 +124,44 @@ function fixture() {
     mutation,
     exports
   };
+}
+
+function mockReviewRows(
+  f: ReturnType<typeof fixture>,
+  keys: Record<string, unknown>[],
+  rows: Record<string, unknown>[]
+) {
+  const query = f.db.query.getMockImplementation()!;
+  f.db.query.mockImplementation(async (sql, params, ctx) => {
+    if (!sql.includes(`FROM ${AD_REVIEWS} `)) return query(sql, params, ctx);
+    if (sql.startsWith('SELECT v.revision_id,v.lane FROM ')) return keys;
+    return rows;
+  });
+}
+
+function reviewRows() {
+  const revision = randomUUID();
+  return [
+    { revision_id: revision, lane: 'rights' },
+    { revision_id: revision, lane: 'technical' },
+    { revision_id: randomUUID(), lane: 'rights' }
+  ].map((key) => ({
+    ...key,
+    review_version: 200,
+    status: 'accepted',
+    reviewer_profile_id: 'test-reviewer',
+    reason: `Complete ${key.lane} history`,
+    updated_at: 200,
+    decision_history_json: JSON.stringify(
+      Array.from({ length: 200 }, (_, index) => ({
+        review_version: index + 1,
+        status: 'accepted',
+        reviewer_profile_id: 'test-reviewer',
+        reason: `${key.revision_id} ${key.lane} decision ${index}: ${'x'.repeat(2000)}`,
+        updated_at: index + 1
+      }))
+    )
+  }));
 }
 
 afterEach(() => jest.restoreAllMocks());
@@ -354,6 +399,89 @@ it('retains removed confirmed files, journal evidence and review history in the 
   expect(captured.artist_revisions).toEqual(f.snapshot.artist_revisions);
   expect(captured.review_history).toEqual(f.snapshot.review_history);
 });
+
+it('restores database review-key order after unsorted hydration without losing large decision histories', async () => {
+  const f = fixture();
+  const rows = reviewRows();
+  const keys = rows.map(({ revision_id, lane }) => ({ revision_id, lane }));
+  mockReviewRows(f, keys, [...rows].reverse());
+  const inspection = await f.service.inspect(f.context.id, {});
+  const body = { source_sha256: inspection.source_sha256 };
+  await f.service.create(f.context.id, body, f.mutation(body), {});
+
+  const queries = f.db.query.mock.calls.filter(([sql]) =>
+    sql.includes(`FROM ${AD_REVIEWS} `)
+  );
+  expect(queries).toHaveLength(4);
+  for (let index = 0; index < queries.length; index += 2) {
+    const [keySql, keyParams, keyContext] = queries[index];
+    const [rowSql, rowParams, rowContext] = queries[index + 1];
+    expect(keySql).toMatch(/^SELECT v\.revision_id,v\.lane FROM /);
+    expect(keySql).not.toContain('decision_history_json');
+    expect(keySql).toContain('ORDER BY r.revision_number,v.lane LIMIT 10001');
+    expect(rowSql).toContain('v.decision_history_json');
+    expect(rowSql).not.toMatch(/ORDER BY/i);
+    expect(rowSql).toContain('LIMIT 10001');
+    expect(rowSql).toContain(`JOIN ${AD_REVISIONS} r ON r.id=v.revision_id`);
+    expect(rowSql).toContain('WHERE r.context_id=:id');
+    expect(keyParams).toEqual({ id: f.context.id });
+    expect(rowParams).toEqual(keyParams);
+    expect(rowContext).toBe(keyContext);
+    expect(rowContext.connection).toBe(f.transaction.connection);
+  }
+  expect(f.exports).toHaveLength(1);
+  const captured = JSON.parse(
+    f.exports[0].snapshot_json as string
+  ) as DossierSnapshot;
+  expect(captured.review_history).toEqual(rows);
+  for (const row of captured.review_history ?? []) {
+    expect(JSON.parse(row.decision_history_json as string)).toHaveLength(200);
+  }
+});
+
+it('rejects too many review keys before loading wide history or queueing an export', async () => {
+  const f = fixture();
+  const keys = Array.from({ length: 10001 }, (_, index) => ({
+    revision_id: String(index),
+    lane: 'rights'
+  }));
+  mockReviewRows(f, keys, []);
+  const body = { source_sha256: 'a'.repeat(64) };
+  await expect(
+    f.service.create(f.context.id, body, f.mutation(body), {})
+  ).rejects.toMatchObject({ code: 'DOSSIER_RECORD_LIMIT' });
+  const reviewQueries = f.db.query.mock.calls.filter(([sql]) =>
+    sql.includes(`FROM ${AD_REVIEWS} `)
+  );
+  expect(reviewQueries).toHaveLength(1);
+  expect(reviewQueries[0][0]).not.toContain('decision_history_json');
+  expect(f.db.insert).not.toHaveBeenCalled();
+  expect(f.exports).toEqual([]);
+});
+
+it.each(['missing row', 'duplicate row', 'mismatched key', 'duplicate key'])(
+  'rejects %s rather than exporting an incomplete review history',
+  async (mismatch) => {
+    const f = fixture();
+    const rows = reviewRows();
+    const keys = rows.map(({ revision_id, lane }) => ({ revision_id, lane }));
+    if (mismatch === 'missing row') rows.pop();
+    if (mismatch === 'duplicate row') rows[1] = rows[0];
+    if (mismatch === 'mismatched key')
+      rows[1] = { ...rows[1], lane: 'curatorial' };
+    if (mismatch === 'duplicate key') keys[1] = keys[0];
+    mockReviewRows(f, keys, rows);
+    await expect(f.service.inspect(f.context.id, {})).rejects.toMatchObject({
+      code: 'DOSSIER_HISTORY_INCOMPLETE'
+    });
+    const body = { source_sha256: 'a'.repeat(64) };
+    await expect(
+      f.service.create(f.context.id, body, f.mutation(body), {})
+    ).rejects.toMatchObject({ code: 'DOSSIER_HISTORY_INCOMPLETE' });
+    expect(f.db.insert).not.toHaveBeenCalled();
+    expect(f.exports).toEqual([]);
+  }
+);
 
 it.each(['draft', 'source', 'permissions'])(
   'rejects changed %s after obtaining the transaction lock',

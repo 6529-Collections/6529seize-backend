@@ -26,9 +26,17 @@ export class DossierProcessor {
         { now: Date.now() },
         ctx
       );
-      const row = await this.db.one<DossierExportRow>(
-        `SELECT * FROM ${AD_DOSSIER_EXPORTS} WHERE state IN ('queued','processing') AND lease_until<:now AND expires_at>:now AND attempts<3 ORDER BY created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`,
+      // Keep the immutable JSON snapshot out of MySQL's queue sort buffer.
+      // The row lock spans both reads and the lease update in this transaction.
+      const candidate = await this.db.one<Pick<DossierExportRow, 'id'>>(
+        `SELECT id FROM ${AD_DOSSIER_EXPORTS} WHERE state IN ('queued','processing') AND lease_until<:now AND expires_at>:now AND attempts<3 ORDER BY created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`,
         { now: Date.now() },
+        ctx
+      );
+      if (!candidate) return null;
+      const row = await this.db.one<DossierExportRow>(
+        `SELECT * FROM ${AD_DOSSIER_EXPORTS} WHERE id=:id FOR UPDATE`,
+        { id: candidate.id },
         ctx
       );
       if (!row) return null;
