@@ -44,6 +44,12 @@ Ordinary 4xx responses and moderation decisions are not operational errors. Sile
 catches, console-only handled errors outside the shared logger, failures before
 telemetry reaches AWS, and unconfigured frontend/external providers remain gaps.
 Platform alarms can detect a failed invocation even when JavaScript cannot log it.
+The NFT link refresher's throttle alarm requires at least one throttle in three
+of the last five one-minute periods. Its SQS event source caps concurrency at the
+function's reserved capacity, preventing the poller from overshooting that limit.
+Isolated throttles therefore do not generate immediate alarm/recovery pairs;
+repeated throttling still alerts. Its invocation-error and OOM alarms remain
+immediate, and other services' alarm thresholds are unchanged.
 An application endpoint probe checks status and optional bounded JSON assertions.
 Configure API health with `jsonEquals: {"db":"ok","redis.healthy":true}`: its
 HTTP 200 alone also covers degraded dependencies. Assertions use exact scalar

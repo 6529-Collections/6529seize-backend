@@ -999,6 +999,8 @@ function sourceTemplate(environment) {
   for (const name of platformFunctions) {
     const id = name.replace(/[^a-zA-Z0-9]/g, '');
     for (const metric of ['Errors', 'Throttles']) {
+      const sustainedThrottling =
+        name === 'nftLinkRefresherLoop' && metric === 'Throttles';
       r[`${id}${metric}`] = {
         Type: 'AWS::CloudWatch::Alarm',
         Properties: {
@@ -1010,7 +1012,9 @@ function sourceTemplate(environment) {
           Dimensions: [{ Name: 'FunctionName', Value: name }],
           Statistic: 'Sum',
           Period: 60,
-          EvaluationPeriods: 1,
+          // Brief SQS bursts must not page while the refresher is keeping up.
+          EvaluationPeriods: sustainedThrottling ? 5 : 1,
+          ...(sustainedThrottling ? { DatapointsToAlarm: 3 } : {}),
           Threshold: 1,
           ComparisonOperator: 'GreaterThanOrEqualToThreshold',
           TreatMissingData: 'notBreaching',
