@@ -5,6 +5,7 @@ const directory = path.join(__dirname, '../src/artwork-documentation/museum/expo
 const lock = JSON.parse(fs.readFileSync(path.join(directory, 'schema-lock.json'), 'utf8'));
 const files = {};
 for (const item of Object.values(lock)) {
+  if (typeof item.file !== 'string' || !/^[a-zA-Z0-9_-][a-zA-Z0-9_.-]*\.(xsd|json)$/.test(item.file)) throw new Error('Invalid museum schema filename');
   const bytes = fs.readFileSync(path.join(directory, item.file));
   if (crypto.createHash('sha256').update(bytes).digest('hex') !== item.sha256) throw new Error('Pinned museum schema changed: '+item.file);
   files[item.file] = bytes.toString('base64');
