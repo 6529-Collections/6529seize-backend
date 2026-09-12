@@ -55,7 +55,11 @@ outside-AWS provider is necessary for independent fallback.
    installs/tests/builds only this package, obtains its dedicated OIDC session,
    verifies the monitoring account and artifact-bucket owner, and deploys through
    the separate CloudFormation role. Artifacts use `{environment}/{sha}` prefixes.
-2. Deploy generated `source-{env}.json` using the source account's separately
+2. In each source account/region, deploy `source-bootstrap.json` as
+   `seize-monitoring-source-bootstrap` with the authorized source identity and
+   enable termination protection. Its retained, encrypted, private, versioned
+   bucket is independent of application stacks. Use its `SourceArtifactBucket`
+   output as `SOURCE_ARTIFACT_BUCKET`. Deploy generated `source-{env}.json` using the source account's separately
    authorized deployment path, in that environment's catalog region. Set
    `MonitoringEventBusArn` from the monitoring stack output. Set
    `ExistingAlarmTopicArn` to the existing regional confirmed email topic where

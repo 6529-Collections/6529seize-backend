@@ -18,6 +18,8 @@ to that service's deploy verification targets and structured-log coverage.
 This separate operational package
 is deliberately outside the application deployment catalog and release service
 bundles. `bootstrap.json` provisions its artifact bucket and deployment identities.
+`source-bootstrap.json` provides retained source-account artifact storage so relay
+deployments do not depend on another application's deployment bucket.
 
 ## What is collected
 
@@ -121,7 +123,7 @@ From this package directory:
 ../../bin/6529 run generate
 ../../bin/6529 run generate:check
 ../../bin/6529 run check
-pipx run --spec cfn-lint==1.40.4 cfn-lint bootstrap.json monitoring-prod.json monitoring-staging.json source-prod.json source-staging.json
+pipx run --spec cfn-lint==1.40.4 cfn-lint bootstrap.json source-bootstrap.json monitoring-prod.json monitoring-staging.json source-prod.json source-staging.json
 ```
 
 The build verifies that every esbuild input stays inside this standalone package.
