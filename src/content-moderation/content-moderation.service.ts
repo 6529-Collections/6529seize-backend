@@ -1,4 +1,18 @@
-import { env } from '@/env';
+import { isModerationDeveloper } from './moderation-developer-access';
+import {
+  moderationReviewDb,
+  ModerationReviewDb,
+  throwModerationCaptureFailure
+} from './moderation-review.db';
+import {
+  moderationFingerprint,
+  ModerationInput,
+  reportReviewOutcome
+} from './moderation-review.types';
+import {
+  DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID,
+  getConfiguredBedrockAnthropicModelId
+} from '@/bedrock.config';
 import {
   ContentModerationRecommendation,
   ContentReportReason,
@@ -66,7 +80,8 @@ export class ContentModerationService {
 
   constructor(
     private readonly db: ContentModerationDbDependency,
-    private readonly aiService: ContentModerationAiDependency
+    private readonly aiService: ContentModerationAiDependency,
+    private readonly reviews: ModerationReviewDb = moderationReviewDb
   ) {}
 
   async submitReport(
@@ -106,20 +121,113 @@ export class ContentModerationService {
       ctx
     );
 
+    const snapshotParts = Array.isArray(snapshot.parts)
+      ? (snapshot.parts as Array<{ content?: string | null }>)
+      : [];
+    const revision = moderationFingerprint({
+      title: snapshot.title ?? null,
+      parts: snapshotParts.map((part) => ({ content: part.content ?? null }))
+    });
+    const reviewInput: ModerationInput = {
+      subject_type: 'DROP',
+      subject_id: input.dropId,
+      author_profile_id: snapshot.author_profile_id,
+      actor_profile_id: input.reporterProfileId,
+      operation: 'REPORT',
+      policy_family: 'WAVE_CONTENT',
+      policy_version: CONTENT_MODERATION_POLICY_VERSION,
+      scope: {
+        report_id: report.id,
+        report_reason: input.reason,
+        wave_id: snapshot.wave_id ?? null,
+        current_revision: revision
+      },
+      evidence: contentSnapshot
+    };
+    const review = await this.reviews
+      .executeNativeQueriesInTransaction(async (connection) => {
+        const tx = { ...ctx, connection };
+        // Match first-review materialization: lock the report before its item.
+        await this.reviews.reportForReview(report.id, tx, true);
+        const started = await this.reviews.start(
+          reviewInput,
+          'CONTENT_REPORTED',
+          tx
+        );
+        await this.reviews.bindReport(report.id, started.item.id, tx);
+        await this.reviews.attachPublication(
+          started.item.id,
+          input.dropId,
+          revision,
+          tx
+        );
+        return started;
+      })
+      .catch(throwModerationCaptureFailure);
     const assessment = await this.assessReport(report, snapshot, parentContext);
+    await this.reviews.finish(review.evaluationId, {
+      outcome: reportReviewOutcome(
+        assessment.recommendation,
+        assessment.category === 'CLASSIFIER_UNAVAILABLE'
+      ),
+      result: {
+        ...assessment,
+        report: { id: report.id, reason: input.reason, notes: input.notes }
+      },
+      model: getConfiguredBedrockAnthropicModelId(
+        'CONTENT_MODERATION_BEDROCK_MODEL_ID',
+        DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID
+      ),
+      fallback:
+        assessment.category === 'CLASSIFIER_UNAVAILABLE' ? 'HUMAN_REVIEW' : null
+    });
     await this.db.saveReportAssessment(report.id, assessment, ctx.connection);
     if (
       assessment.recommendation ===
         ContentModerationRecommendation.URGENT_QUARANTINE &&
       assessment.confidence >= 0.95
     ) {
-      await this.db.tryAiQuarantineForOpenReport(
-        {
-          reportId: report.id,
-          dropId: input.dropId,
-          reason: assessment.rationale
-        },
-        ctx
+      await this.reviews.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const tx = { ...ctx, connection };
+          await this.reviews.lockSubject(
+            { ...review.item, published_subject_id: input.dropId },
+            tx
+          );
+          const latestReview = await this.reviews.get(review.item.id, tx, true);
+          if (
+            latestReview.override ||
+            latestReview.version !== review.item.version + 1 ||
+            (await this.reviews.currentRevision(latestReview, tx)) !== revision
+          )
+            return;
+          const changed = await this.db.tryAiQuarantineForOpenReport(
+            {
+              reportId: report.id,
+              dropId: input.dropId,
+              reason: assessment.rationale
+            },
+            tx
+          );
+          if (changed) {
+            await this.reviews.audit(
+              latestReview,
+              {
+                actor: null,
+                action: 'AI_QUARANTINED',
+                reason: assessment.rationale,
+                evaluationId: review.evaluationId
+              },
+              tx
+            );
+            await this.reviews.bumpVersion(latestReview.id, tx);
+            await this.reviews.invalidateRelatedVersions(
+              latestReview,
+              'QUARANTINE',
+              tx
+            );
+          }
+        }
       );
     }
     const currentPresentation = await this.db.getPresentations(
@@ -138,11 +246,9 @@ export class ContentModerationService {
   }
 
   async getModeratorAccess(profileId: string, ctx: RequestContext) {
-    const moderator = await this.db.isModerator(
-      profileId,
-      this.getConfiguredModeratorProfileIds(),
-      ctx.connection
-    );
+    const moderator =
+      isModerationDeveloper(profileId) &&
+      !ctx.authenticationContext?.isAuthenticatedAsProxy();
     if (!moderator) {
       return {
         moderator: false,
@@ -317,10 +423,9 @@ export class ContentModerationService {
         ...assessment,
         policyVersion: CONTENT_MODERATION_POLICY_VERSION
       };
-    } catch (error) {
+    } catch {
       this.logger.error(
-        `Reported-content evaluator failed for report ${report.id}`,
-        error
+        `Reported-content evaluator failed for report ${report.id}`
       );
       return {
         recommendation: ContentModerationRecommendation.NEEDS_HUMAN_REVIEW,
@@ -354,12 +459,10 @@ export class ContentModerationService {
   }
 
   private async assertModerator(profileId: string, ctx: RequestContext) {
-    const isModerator = await this.db.isModerator(
-      profileId,
-      this.getConfiguredModeratorProfileIds(),
-      ctx.connection
-    );
-    if (!isModerator) {
+    if (
+      !isModerationDeveloper(profileId) ||
+      ctx.authenticationContext?.isAuthenticatedAsProxy()
+    ) {
       throw new ForbiddenException('Moderator access is required');
     }
   }
@@ -395,19 +498,6 @@ export class ContentModerationService {
     return decision === 'ALLOW'
       ? ContentReportStatus.RESOLVED_ALLOWED
       : ContentReportStatus.RESOLVED_REMOVED;
-  }
-
-  private getConfiguredModeratorProfileIds(): string[] {
-    return Array.from(
-      new Set(
-        [
-          ...env.getStringArray('DEVS_6529_MENTION_PROFILE_IDS', ','),
-          ...env.getStringArray('CONTENT_MODERATOR_PROFILE_IDS', ',')
-        ]
-          .map((id) => id.trim())
-          .filter(Boolean)
-      )
-    );
   }
 }
 

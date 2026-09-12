@@ -189,10 +189,9 @@ so the report remains available for human review.
 
 ## Moderator workflow
 
-Moderator access is server-enforced. It comes from the union of profile IDs in
-`DEVS_6529_MENTION_PROFILE_IDS`, additional profile IDs in
-`CONTENT_MODERATOR_PROFILE_IDS`, and existing durable role rows; checking
-access does not create a role. The route `GET
+Moderator access is server-enforced and restricted to authenticated non-proxy
+profile IDs in `DEVS_6529_MENTION_PROFILE_IDS`. Additional configured IDs and
+durable role rows do not grant access. The route `GET
 /content-moderation/moderator-access` exposes the current authenticated
 profile's access state and whether the WatchTower queue has open reports.
 
@@ -206,16 +205,18 @@ Authorized moderators use:
   cursor-paginated history of real profile-block transitions;
 - `GET /content-moderation/profiles/suspended` for the current suspended
   profile list;
-- `POST /content-moderation/drops/{drop_id}/decision` to allow/restore,
-  quarantine, or remove a drop; and
-- `POST /content-moderation/profiles/{profile_id}/status` to suspend or
-  reinstate posting for a profile.
+- `GET /content-moderation/checks` and `/checks/{id}` for public-field,
+  pre-publication and report evidence, evaluations and human history; and
+- `POST /content-moderation/checks/{id}/actions` for versioned decisions,
+  exact resubmission approval, field suppression and posting suspension.
 
-The profile-status endpoint is also used by the moderator-only action on a
-public profile page. That global moderation state is independent of the
-moderator's own personal block state.
+Profile-page suspension controls open a review using `/checks/profile/{id}`.
+That global moderation state is independent of the moderator's own personal
+block state. Previous unversioned drop-decision and profile-status POST routes
+return `MODERATION_REVIEW_REQUIRED` and cannot mutate state.
 
-Moderator notes are optional for both drop and profile actions. Drop decisions
+Every action requires a reason, current item version and UUID idempotency key.
+Drop decisions
 are applied transactionally with report resolution and append-only audit
 history, so a late AI response cannot overwrite a human decision. Allow keeps
 or restores the drop to visible and resolves open reports as allowed;
@@ -284,6 +285,11 @@ MySQL stores:
 - pre-publication decisions; and
 - append-only moderation audit records.
 
+The developer review workstream additionally stores exact review scope and
+evidence in `content_moderation_items`, individual model/cache/fallback attempts
+in `content_moderation_evaluations`, and links reports and pre-publication checks
+to their review item. Moderation evidence is no longer sent to Discord.
+
 The moderator-only block-activity history is built from transition audit
 records. Each item identifies its `PROFILE_BLOCKED` or `PROFILE_UNBLOCKED`
 action. Request `include_unblocks=true` to combine both actions in one
@@ -304,6 +310,13 @@ Pre-publication decision records are retained for 30 days and pruned daily by
 per invocation. The retention period is deliberately longer than the ten-minute
 duplicate-signal window.
 
+Routine successful review histories also expire after 30 days; reviewed
+evidence after 90 days; compact action history after one year. Open reports
+retain evidence, and active rules retain scope and authorizing provenance.
+Expired evidence is shown as unavailable and cannot be reevaluated or approved.
+See [Developer moderation review](../ops/docs/developer/moderation-review.md)
+for the action, single-use permit and retention contracts.
+
 ## Runtime ownership and rollout
 
 No new service is introduced. The affected services are:
@@ -323,8 +336,7 @@ after the backend API is available.
 
 | Variable                              | Purpose                                                                                                                          |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `DEVS_6529_MENTION_PROFILE_IDS`       | Comma-separated `@devs6529` profile IDs. These profiles are also content moderators.                                             |
-| `CONTENT_MODERATOR_PROFILE_IDS`       | Comma-separated additional moderator profile IDs, combined with `DEVS_6529_MENTION_PROFILE_IDS`.                                 |
+| `DEVS_6529_MENTION_PROFILE_IDS`       | Comma-separated `@devs6529` profile IDs; the sole privileged moderation access set.                                              |
 | `CONTENT_MODERATION_BLOCKED_HOSTS`    | Comma-separated exact or parent hosts for deterministic unsafe-destination rejection. Empty disables this direct-rejection list. |
 | `CONTENT_MODERATION_BEDROCK_MODEL_ID` | Optional moderation-specific Bedrock model; otherwise the existing configured/default Anthropic model is used.                   |
 | `CONTENT_MODERATION_REPORTS_PER_HOUR` | Per-profile report ceiling; defaults to `100`.                                                                                   |

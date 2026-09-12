@@ -8,13 +8,39 @@ import { Time, Timer } from '../../../time';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { getWalletFromEns } from '../../../alchemy';
 import { ethTools } from '../../../eth-tools';
+import { AuthenticationContext } from '../../../auth-context';
 
 export async function getRaterInfoFromRequest(
   req: Request<{ identity: string }, any, any, any, any>
 ) {
-  const identity = req.params.identity.toLowerCase();
-  const authContext = await getAuthenticationContext(req);
+  const authContext = await getRaterAuthenticationContext(req);
   const timer = Timer.getFromRequest(req);
+  const targetProfileId = await getRatingTargetProfileId(
+    req.params.identity,
+    authContext,
+    timer
+  );
+  return { authContext, targetProfileId };
+}
+
+export async function getRaterAuthenticationContext(
+  req: Request<{ identity: string }, any, any, any, any>
+) {
+  const authContext = await getAuthenticationContext(req);
+  if (!authContext.authenticatedProfileId) {
+    throw new NotFoundException(
+      `No profile found for authenticated user ${req.params.identity.toLowerCase()}`
+    );
+  }
+  return authContext;
+}
+
+export async function getRatingTargetProfileId(
+  targetIdentity: string,
+  authContext: AuthenticationContext,
+  timer: Timer
+): Promise<string> {
+  const identity = targetIdentity.toLowerCase();
   let targetProfile =
     await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
       { identityKey: identity },
@@ -43,13 +69,7 @@ export async function getRaterInfoFromRequest(
     await giveReadReplicaTimeToCatchUp(Time.seconds(2).toMillis());
     timer.stop(`artificial2SecondLag`);
   }
-  if (!authContext.authenticatedProfileId) {
-    throw new NotFoundException(
-      `No profile found for authenticated user ${identity}`
-    );
-  }
-  const targetProfileId = targetProfile.id!;
-  return { authContext, targetProfileId: targetProfileId };
+  return targetProfile.id!;
 }
 
 export type RateProfileRequest<REQ_BODY> = Request<

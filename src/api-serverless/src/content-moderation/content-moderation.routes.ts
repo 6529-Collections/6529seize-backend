@@ -7,19 +7,20 @@ import { contentModerationService } from '@/content-moderation/content-moderatio
 import { contentModerationDb } from '@/content-moderation/content-moderation.db';
 import {
   ContentReportReason,
-  DropModerationStatus,
-  ModeratedProfileStatus
+  DropModerationStatus
 } from '@/entities/IContentModeration';
-import { BadRequestException, ForbiddenException } from '@/exceptions';
+import {
+  BadRequestException,
+  ForbiddenException,
+  CustomApiCompliantException
+} from '@/exceptions';
 import { Timer } from '@/time';
 import { Request, Response } from 'express';
 import * as Joi from 'joi';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { numbers } from '@/numbers';
 import { dropsService } from '@/api/drops/drops.api.service';
-import { wsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
-import { AuthenticationContext } from '@/auth-context';
-import { Logger } from '@/logging';
+import { broadcastDropModerationChange } from './moderation-broadcast';
 import { ApiBlockedProfile } from '@/api/generated/models/ApiBlockedProfile';
 import { ApiProfileBlockState } from '@/api/generated/models/ApiProfileBlockState';
 import { ApiDropHiddenState } from '@/api/generated/models/ApiDropHiddenState';
@@ -31,9 +32,13 @@ import { ApiContentModerationProfileStatusResponse } from '@/api/generated/model
 import { ApiContentModerationProfileListItem } from '@/api/generated/models/ApiContentModerationProfileListItem';
 import { ApiContentModerationReportWithdrawalResponse } from '@/api/generated/models/ApiContentModerationReportWithdrawalResponse';
 import { ApiContentModerationUserReport } from '@/api/generated/models/ApiContentModerationUserReport';
+import { assertModerationDeveloper } from '@/content-moderation/moderation-developer-access';
 
 const router = asyncRouter();
-const logger = Logger.get('ContentModerationRoutes');
+router.use((_req, res, next) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  next();
+});
 
 async function getRequiredProfileId(req: Request): Promise<{
   profileId: string;
@@ -54,29 +59,6 @@ async function getRequiredProfileId(req: Request): Promise<{
   return { profileId, timer, authenticationContext };
 }
 
-async function broadcastDropModerationChange(
-  dropId: string,
-  timer: Timer
-): Promise<void> {
-  try {
-    const authenticationContext = AuthenticationContext.notAuthenticated();
-    const drop = await dropsService.findDropByIdOrThrow(
-      { dropId, skipEligibilityCheck: true },
-      { timer, authenticationContext }
-    );
-    await wsListenersNotifier.notifyAboutDropUpdate(
-      drop,
-      { timer, authenticationContext },
-      { reason: 'CONTENT_MODERATION', useSystemBroadcastAudience: true }
-    );
-  } catch (error) {
-    logger.error(
-      `Failed to broadcast moderation change for drop ${dropId}`,
-      error
-    );
-  }
-}
-
 const ReportSchema = Joi.object({
   reason: Joi.string()
     .valid(...Object.values(ContentReportReason))
@@ -84,18 +66,6 @@ const ReportSchema = Joi.object({
   notes: Joi.string().trim().max(1000).allow('', null).default(null),
   hide_drop: Joi.boolean().default(true),
   block_author: Joi.boolean().default(false)
-}).required();
-
-const DropDecisionSchema = Joi.object({
-  decision: Joi.string().valid('ALLOW', 'QUARANTINE', 'REMOVE').required(),
-  reason: Joi.string().trim().max(2000).allow(null).empty('').default(null)
-}).required();
-
-const ProfileStatusSchema = Joi.object({
-  status: Joi.string()
-    .valid(...Object.values(ModeratedProfileStatus))
-    .required(),
-  reason: Joi.string().trim().max(2000).allow(null).empty('').default(null)
 }).required();
 
 router.get(
@@ -341,18 +311,15 @@ router.post(
   needsAuthenticatedUser(),
   async (
     req: Request<{ drop_id: string }>,
-    res: Response<ApiContentModerationDropDecisionResponse>
+    _res: Response<ApiContentModerationDropDecisionResponse>
   ) => {
-    const { profileId, timer, authenticationContext } =
-      await getRequiredProfileId(req);
-    const body = getValidatedByJoiOrThrow(req.body, DropDecisionSchema);
-    const result = await contentModerationService.decideDrop(
-      profileId,
-      { dropId: req.params.drop_id, ...body },
-      { timer, authenticationContext }
+    const { timer, authenticationContext } = await getRequiredProfileId(req);
+    assertModerationDeveloper({ timer, authenticationContext });
+    throw new CustomApiCompliantException(
+      409,
+      'Open the moderation check and review its latest revision before acting.',
+      'MODERATION_REVIEW_REQUIRED'
     );
-    await broadcastDropModerationChange(req.params.drop_id, timer);
-    res.send(result as unknown as ApiContentModerationDropDecisionResponse);
   }
 );
 
@@ -361,17 +328,15 @@ router.post(
   needsAuthenticatedUser(),
   async (
     req: Request<{ profile_id: string }>,
-    res: Response<ApiContentModerationProfileStatusResponse>
+    _res: Response<ApiContentModerationProfileStatusResponse>
   ) => {
-    const { profileId, timer, authenticationContext } =
-      await getRequiredProfileId(req);
-    const body = getValidatedByJoiOrThrow(req.body, ProfileStatusSchema);
-    const result = await contentModerationService.setProfileStatus(
-      profileId,
-      { profileId: req.params.profile_id, ...body },
-      { timer, authenticationContext }
+    const { timer, authenticationContext } = await getRequiredProfileId(req);
+    assertModerationDeveloper({ timer, authenticationContext });
+    throw new CustomApiCompliantException(
+      409,
+      'Open the moderation profile check and review its latest revision before acting.',
+      'MODERATION_REVIEW_REQUIRED'
     );
-    res.send(result as unknown as ApiContentModerationProfileStatusResponse);
   }
 );
 

@@ -126,6 +126,11 @@ import { ApiMarketTradeOrder } from '@/api/generated/models/ApiMarketTradeOrder'
 import { ApiMediaResolveRequest } from '@/api/generated/models/ApiMediaResolveRequest';
 import { ApiMediaResolveResponse } from '@/api/generated/models/ApiMediaResolveResponse';
 import { ApiMemeCardDropMapping } from '@/api/generated/models/ApiMemeCardDropMapping';
+import { ApiModerationAccess } from '@/api/generated/models/ApiModerationAccess';
+import { ApiModerationActionRequest } from '@/api/generated/models/ApiModerationActionRequest';
+import { ApiModerationCheckDetail } from '@/api/generated/models/ApiModerationCheckDetail';
+import { ApiModerationCheckPage } from '@/api/generated/models/ApiModerationCheckPage';
+import { ApiModerationCounts } from '@/api/generated/models/ApiModerationCounts';
 import { ApiNftActivityPage } from '@/api/generated/models/ApiNftActivityPage';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
 import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
@@ -1072,6 +1077,124 @@ export type GetContentModerationBlockActivityRequest = Request<
   ApiResponse<GetContentModerationBlockActivityResponse>,
   never,
   GetContentModerationBlockActivityQuery,
+  Record<string, never>
+>;
+
+export type GetModerationChecksPathParams = Record<string, never>;
+
+export interface GetModerationChecksQuery {
+  "subject_type"?: "REP_CATEGORY" | "PROFILE_BIO" | "GROUP_NAME" | "DROP";
+  "outcome"?: "ALLOW" | "REJECT" | "ERROR" | "PENDING";
+  "policy_family"?: "PUBLIC_FIELDS" | "WAVE_CONTENT";
+  "trigger"?: string;
+  "review_status"?: "NEEDS_REVIEW" | "REVIEWED";
+  "from"?: number;
+  "to"?: number;
+  "profile_id"?: string;
+  "subject_id"?: string;
+  "before"?: string;
+  "limit"?: number;
+}
+
+export type GetModerationChecksResponse = ApiModerationCheckPage;
+
+export type GetModerationChecksRequest = Request<
+  GetModerationChecksPathParams,
+  ApiResponse<GetModerationChecksResponse>,
+  never,
+  GetModerationChecksQuery,
+  Record<string, never>
+>;
+
+export interface GetModerationCheckPathParams {
+  "id": string;
+}
+
+export type GetModerationCheckQuery = Record<string, never>;
+
+export type GetModerationCheckResponse = ApiModerationCheckDetail;
+
+export type GetModerationCheckRequest = Request<
+  GetModerationCheckPathParams,
+  ApiResponse<GetModerationCheckResponse>,
+  never,
+  GetModerationCheckQuery,
+  Record<string, never>
+>;
+
+export interface ModerationCheckActionPathParams {
+  "id": string;
+}
+
+export type ModerationCheckActionQuery = Record<string, never>;
+
+export type ModerationCheckActionResponse = ApiModerationCheckDetail;
+
+export type ModerationCheckActionRequest = Request<
+  ModerationCheckActionPathParams,
+  ApiResponse<ModerationCheckActionResponse>,
+  ApiModerationActionRequest,
+  ModerationCheckActionQuery,
+  Record<string, never>
+>;
+
+export type GetModerationAccessPathParams = Record<string, never>;
+
+export type GetModerationAccessQuery = Record<string, never>;
+
+export type GetModerationAccessResponse = ApiModerationAccess;
+
+export type GetModerationAccessRequest = Request<
+  GetModerationAccessPathParams,
+  ApiResponse<GetModerationAccessResponse>,
+  never,
+  GetModerationAccessQuery,
+  Record<string, never>
+>;
+
+export type GetModerationCountsPathParams = Record<string, never>;
+
+export type GetModerationCountsQuery = Record<string, never>;
+
+export type GetModerationCountsResponse = ApiModerationCounts;
+
+export type GetModerationCountsRequest = Request<
+  GetModerationCountsPathParams,
+  ApiResponse<GetModerationCountsResponse>,
+  never,
+  GetModerationCountsQuery,
+  Record<string, never>
+>;
+
+export interface GetModerationProfileCheckPathParams {
+  "profile_id": string;
+}
+
+export type GetModerationProfileCheckQuery = Record<string, never>;
+
+export type GetModerationProfileCheckResponse = ApiModerationCheckDetail;
+
+export type GetModerationProfileCheckRequest = Request<
+  GetModerationProfileCheckPathParams,
+  ApiResponse<GetModerationProfileCheckResponse>,
+  never,
+  GetModerationProfileCheckQuery,
+  Record<string, never>
+>;
+
+export interface GetModerationReportCheckPathParams {
+  "report_id": string;
+}
+
+export type GetModerationReportCheckQuery = Record<string, never>;
+
+export type GetModerationReportCheckResponse = ApiModerationCheckDetail;
+
+export type GetModerationReportCheckRequest = Request<
+  GetModerationReportCheckPathParams,
+  ApiResponse<GetModerationReportCheckResponse>,
+  never,
+  GetModerationReportCheckQuery,
   Record<string, never>
 >;
 

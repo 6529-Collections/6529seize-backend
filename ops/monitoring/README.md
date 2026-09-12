@@ -73,9 +73,10 @@ codes in their fingerprints; dynamic message text never determines a code.
 Existing generic logger calls remain grouped by component and error type.
 The three subscription-processing anomalies and duplicate top-up branch use this
 pipeline. Their existing business Wave updates stay in place. Successful business
-Discord notifications remain separate. The old CloudWatch Discord sender remains
-available only for a controlled cutover; moderation migration removes its own
-legacy callers in a separate change.
+Discord notifications remain separate. The application no longer includes a
+Discord client or CloudWatch-to-Discord Lambda deployment unit. Retiring the
+previously deployed sender requires the controlled cutover in the runbook;
+keep its last verified artifact available until replacement delivery is proven.
 
 Sentry ingress accepts `prod`/`production` and `staging` only. Legacy Lambda
 `<function>_prod`/`<function>_staging` Sentry environments are deliberately ignored.
