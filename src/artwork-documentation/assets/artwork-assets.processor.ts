@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import sharp from 'sharp';
@@ -20,7 +20,24 @@ import {
   PREVIEW_FILE_LIMIT,
   PREVIEW_PIXEL_LIMIT
 } from '@/artwork-documentation/assets/artwork-assets.inspection';
-import { StoredAsset } from '@/artwork-documentation/assets/artwork-assets.types';
+import {
+  AssetTechnicalMetadata,
+  StoredAsset
+} from '@/artwork-documentation/assets/artwork-assets.types';
+import {
+  MAX_PDF_BYTES,
+  PdfContentViolationError,
+  validatePdfContent
+} from '@/attachments/pdf-content-validator';
+import { characterizeAssetHeader } from '@/artwork-documentation/assets/artwork-assets.characterization';
+import { inspectArtworkArchive } from '@/artwork-documentation/assets/artwork-assets.archive';
+import { identifyPronomFormat } from '@/artwork-documentation/assets/artwork-assets.pronom';
+import { characterizeMp4 } from '@/artwork-documentation/assets/artwork-assets.av';
+import { characterizeTiff } from '@/artwork-documentation/assets/artwork-assets.tiff';
+import {
+  C2PA_FILE_EXTENSIONS,
+  validateAssetC2pa
+} from '@/artwork-documentation/assets/artwork-assets.c2pa';
 
 const SCAN_TIMEOUT_MS = 6 * 60 * 60_000;
 const MAX_PROCESSING_ATTEMPTS = 360;
@@ -30,10 +47,11 @@ export class ArtworkAssetsProcessor {
     private readonly db: ArtworkAssetsDb,
     private readonly storage: ArtworkAssetStorage
   ) {}
-  async tick(): Promise<void> {
+  async tick(): Promise<boolean> {
     await this.cleanup();
     const asset = await this.db.claimProcessing(Date.now());
     if (asset) await this.process(asset);
+    return Boolean(asset);
   }
   async process(asset: StoredAsset): Promise<void> {
     try {
@@ -51,11 +69,17 @@ export class ArtworkAssetsProcessor {
         expires_at: Date.now() + ARTWORK_UPLOAD_POLICY.orphan_lifetime_ms
       });
     } catch (error) {
-      if (error instanceof AssetInspectionError) {
+      if (
+        error instanceof AssetInspectionError ||
+        error instanceof PdfContentViolationError
+      ) {
         await this.db.finishProcessing(asset, {
           state: 'quarantined',
           inspection_status: 'failed',
-          failure_code: error.code
+          failure_code:
+            error instanceof AssetInspectionError
+              ? error.code
+              : 'PDF_CONTENT_REJECTED'
         });
         return;
       }
@@ -117,7 +141,13 @@ export class ArtworkAssetsProcessor {
       Number(asset.size_bytes) <= PREVIEW_FILE_LIMIT;
     let directory: string | undefined;
     try {
-      if (previewEligible)
+      if (asset.extension === 'pdf' && Number(asset.size_bytes) > MAX_PDF_BYTES)
+        throw new AssetInspectionError('PDF_SIZE_LIMIT');
+      if (
+        previewEligible ||
+        asset.extension === 'pdf' ||
+        C2PA_FILE_EXTENSIONS.has(asset.extension)
+      )
         directory = await mkdtemp(join(tmpdir(), 'artwork-asset-'));
       const path = directory ? join(directory, 'original') : undefined;
       const stream = await this.storage.read(asset, controller.signal);
@@ -129,15 +159,105 @@ export class ArtworkAssetsProcessor {
         path
       );
       const inspection = inspectAssetHeader(result.prefix, asset.extension);
+      const technical = characterizeAssetHeader(
+        result.prefix,
+        asset.extension,
+        result.size,
+        result.sha256
+      );
+      technical.format_registry = identifyPronomFormat(
+        result.prefix,
+        result.suffix
+      );
+      if (technical.format_registry.status === 'signature_match')
+        technical.warnings = technical.warnings.filter(
+          (warning) => warning !== 'FORMAT_REGISTRY_IDENTIFICATION_PENDING'
+        );
       const dimensions = this.headerDimensions(result.prefix);
       const metadata: Partial<StoredAsset> = {
         ...inspection,
         sha256: result.sha256,
         ...dimensions
       };
-      if (path) Object.assign(metadata, await this.createPreview(asset, path));
+      if (['tif', 'tiff', 'dng'].includes(asset.extension)) {
+        const tiff = await characterizeTiff(result.size, (start, length) =>
+          this.storage.readRange(asset, start, length, controller.signal)
+        );
+        if (tiff) {
+          Object.assign(technical.properties, tiff);
+          if (typeof tiff.width === 'number') metadata.width = tiff.width;
+          if (typeof tiff.height === 'number') metadata.height = tiff.height;
+        } else technical.warnings.push('TIFF_CHARACTERIZATION_LIMIT');
+      }
+      if (asset.extension === 'pdf' && path) {
+        const validated = await validatePdfContent(await readFile(path));
+        technical.properties.page_count = validated.pageCount;
+        technical.properties.pdf_object_stream_normalization_required =
+          validated.normalized;
+        technical.warnings.push(
+          'PDF_ORIGINAL_RETAINED_DISPLAY_DERIVATIVE_NOT_PUBLISHED'
+        );
+        metadata.inspection_status = 'verified';
+      }
+      if (['zip', 'epub'].includes(asset.extension)) {
+        technical.archive = await inspectArtworkArchive(
+          result.size,
+          (start, length) =>
+            this.storage.readRange(asset, start, length, controller.signal),
+          (start, length) =>
+            this.storage.readRangeStream(
+              asset,
+              start,
+              length,
+              controller.signal
+            ),
+          controller.signal
+        );
+        technical.method = 'stream-zip-inspector/1';
+        metadata.inspection_status = 'verified';
+      }
+      if (['mp4', 'mov', 'm4a'].includes(asset.extension)) {
+        const av = await characterizeMp4(result.size, (start, length) =>
+          this.storage.readRange(asset, start, length, controller.signal)
+        );
+        if (av) Object.assign(technical.properties, av);
+        else technical.warnings.push('AV_CHARACTERIZATION_LIMIT');
+      }
+      if (path && previewEligible)
+        Object.assign(
+          metadata,
+          await this.createPreview(asset, path, technical.properties)
+        );
       else if (PREVIEW_EXTENSIONS.includes(asset.extension))
         metadata.inspection_status = 'unsupported';
+      if (path && C2PA_FILE_EXTENSIONS.has(asset.extension)) {
+        const c2pa = await validateAssetC2pa(
+          path,
+          inspection.detected_mime,
+          result.sha256
+        );
+        technical.c2pa = c2pa.metadata;
+        if (c2pa.reportPath)
+          metadata.validation_report_key =
+            await this.storage.putValidationReport(
+              asset,
+              c2pa.reportPath,
+              c2pa.metadata.report_size_bytes!,
+              c2pa.metadata.report_sha256!
+            );
+        if (
+          technical.c2pa.status === 'failed' ||
+          technical.c2pa.status === 'unsupported'
+        )
+          technical.warnings.push(
+            technical.c2pa.error_code ?? 'C2PA_VALIDATION_UNSUPPORTED'
+          );
+      }
+      Object.assign(technical.properties, {
+        width: metadata.width ?? null,
+        height: metadata.height ?? null
+      });
+      metadata.technical_metadata_json = JSON.stringify(technical);
       return metadata;
     } finally {
       clearTimeout(timeout);
@@ -158,7 +278,8 @@ export class ArtworkAssetsProcessor {
   }
   private async createPreview(
     asset: StoredAsset,
-    path: string
+    path: string,
+    properties: AssetTechnicalMetadata['properties']
   ): Promise<Partial<StoredAsset>> {
     let preview: Buffer;
     let dimensions: { width: number | null; height: number | null };
@@ -169,6 +290,27 @@ export class ArtworkAssetsProcessor {
         pages: 1
       }).timeout({ seconds: 25 });
       const info = await pipeline.metadata();
+      const depth: Record<string, number> = {
+        char: 8,
+        uchar: 8,
+        short: 16,
+        ushort: 16,
+        int: 32,
+        uint: 32,
+        float: 32,
+        double: 64
+      };
+      Object.assign(properties, {
+        color_space: info.space ?? null,
+        sample_storage_depth: info.depth ?? null,
+        bit_depth: info.depth ? (depth[info.depth] ?? null) : null,
+        channels: info.channels ?? null,
+        has_alpha: info.hasAlpha ?? false,
+        has_embedded_color_profile: info.hasProfile ?? false,
+        embedded_density_ppi: info.density ?? null,
+        orientation: info.orientation ?? null,
+        image_pages: info.pages ?? 1
+      });
       dimensions = { width: info.width ?? null, height: info.height ?? null };
       preview = await pipeline
         .rotate()

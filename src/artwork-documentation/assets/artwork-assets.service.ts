@@ -8,8 +8,10 @@ import {
   ArtworkAssetStorage
 } from '@/artwork-documentation/assets/artwork-assets.storage';
 import { artworkArchiveBucket } from '@/artwork-documentation/assets/artwork-assets.config';
+import { summarizeTechnicalMetadata } from '@/artwork-documentation/assets/artwork-assets.manifest';
 import {
   ARTWORK_UPLOAD_POLICY,
+  PASSIVE_MEDIA_MIMES,
   assetClass,
   assetError,
   canReadAsset,
@@ -27,6 +29,7 @@ import {
   AssetVisibility,
   ArtworkAssetRole,
   ArtworkAssetManifest,
+  ArtworkAssetListRow,
   CompletedAssetPart,
   StartArtworkUpload,
   StoredAsset
@@ -43,8 +46,9 @@ function hashJson(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 function manifest(
-  asset: StoredAsset,
-  includeDigest = true
+  asset: ArtworkAssetListRow & Pick<StoredAsset, 'technical_metadata_json'>,
+  includeDigest = true,
+  includeTechnicalMetadata = true
 ): ArtworkAssetManifest {
   return {
     id: asset.id,
@@ -60,8 +64,19 @@ function manifest(
     width: asset.width,
     height: asset.height,
     has_preview: Boolean(asset.preview_key),
+    has_validation_report:
+      includeDigest && Boolean(asset.validation_report_key),
+    has_media_preview:
+      includeDigest &&
+      asset.state === 'ready' &&
+      asset.scan_status === 'NO_THREATS_FOUND' &&
+      PASSIVE_MEDIA_MIMES.has(asset.detected_mime ?? ''),
     failure_code: asset.failure_code,
-    expires_at: asset.referenced ? null : Number(asset.expires_at)
+    expires_at: asset.referenced ? null : Number(asset.expires_at),
+    technical_metadata:
+      includeDigest && includeTechnicalMetadata && asset.technical_metadata_json
+        ? summarizeTechnicalMetadata(asset.technical_metadata_json)
+        : null
   };
 }
 function requireTransferAccess(asset: StoredAsset, access: AssetAccess): void {
@@ -124,7 +139,7 @@ export class ArtworkAssetsService {
   ) {
     requireAssetWrite(access, input.role);
     requirePublicationAsset(access, input);
-    const extension = validateStartUpload(input);
+    const extension = validateStartUpload(input, access);
     if (
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
         idempotencyKey
@@ -147,7 +162,7 @@ export class ArtworkAssetsService {
       ]),
       ...input,
       extension,
-      access_class: assetClass(input.role),
+      access_class: assetClass(input.role, access),
       state: 'created',
       reserved_bytes: input.size_bytes,
       bucket: artworkArchiveBucket(),
@@ -356,9 +371,9 @@ export class ArtworkAssetsService {
     contextId: string,
     access: AssetAccess
   ): Promise<ArtworkAssetManifest[]> {
-    return (await this.db.list(contextId))
+    return (await this.db.listSummaries(contextId))
       .filter((asset) => canReadAsset(asset, access))
-      .map((asset) => manifest(asset, canReadOriginal(asset, access)));
+      .map((asset) => manifest(asset, canReadOriginal(asset, access), false));
   }
 
   async validateReadyAsset(
@@ -413,14 +428,17 @@ export class ArtworkAssetsService {
     const role = input.role ?? asset.role;
     requirePublicationAsset(access, asset);
     requirePublicationAsset(access, { ...input, role });
-    validateStartUpload({
-      filename: asset.filename,
-      size_bytes: Number(asset.size_bytes),
-      declared_mime: asset.declared_mime,
-      role,
-      intended_visibility: input.intended_visibility
-    });
-    const nextClass = assetClass(role);
+    validateStartUpload(
+      {
+        filename: asset.filename,
+        size_bytes: Number(asset.size_bytes),
+        declared_mime: asset.declared_mime,
+        role,
+        intended_visibility: input.intended_visibility
+      },
+      access
+    );
+    const nextClass = assetClass(role, access);
     if (
       asset.access_class === 'rights_evidence' &&
       (nextClass !== 'rights_evidence' ||
@@ -444,22 +462,40 @@ export class ArtworkAssetsService {
     contextId: string,
     assetId: string,
     access: AssetAccess,
-    input: { variant: 'original' | 'preview' }
+    input: { variant: 'original' | 'preview' | 'c2pa_report' | 'media' }
   ) {
     const asset = await this.getAsset(contextId, assetId, access);
-    if (!['original', 'preview'].includes(input.variant))
+    if (
+      !['original', 'preview', 'c2pa_report', 'media'].includes(input.variant)
+    )
       assetError(422, 'INVALID_DOWNLOAD_VARIANT');
     const preview = input.variant === 'preview';
     if (
       asset.state !== 'ready' ||
+      asset.scan_status !== 'NO_THREATS_FOUND' ||
+      asset.inspection_status === 'failed' ||
       (!asset.referenced && Number(asset.expires_at) <= Date.now())
     )
       assetError(409, 'ASSET_NOT_READY');
     if (!preview && !canReadOriginal(asset, access))
       assetError(403, 'ARCHIVAL_DOWNLOAD_FORBIDDEN');
     if (preview && !asset.preview_key) assetError(404, 'PREVIEW_UNAVAILABLE');
+    if (input.variant === 'c2pa_report' && !asset.validation_report_key)
+      assetError(404, 'VALIDATION_REPORT_UNAVAILABLE');
+    if (
+      input.variant === 'media' &&
+      !PASSIVE_MEDIA_MIMES.has(asset.detected_mime ?? '')
+    )
+      assetError(404, 'MEDIA_PREVIEW_UNAVAILABLE');
     return {
-      url: await this.storage.download(asset, preview),
+      url:
+        input.variant === 'c2pa_report'
+          ? await this.storage.downloadValidationReport(asset)
+          : await this.storage.download(
+              asset,
+              preview,
+              input.variant === 'media'
+            ),
       expires_at: Date.now() + ARTWORK_UPLOAD_POLICY.download_url_seconds * 1000
     };
   }

@@ -1122,6 +1122,11 @@ mutex rows serialize reservations in `artwork_documentation_asset_quotas`, while
 fixity, access class and a durable processing lease.
 
 `artworkDocumentationProcessor` runs every minute with reserved concurrency one.
+Its C2PA reader uses upstream SDK 0.9.5 with a locally maintained installer patch.
+The patch replaces the ZIP extractor and pins native release hashes; SDK reader
+bytes remain unchanged. Both root and worker lockfiles expose its dependencies.
+See [C2PA package reproduction](../vendor/c2pa-node/README.md) for source integrity,
+supported platforms and upgrade checks.
 It requires a successful real GuardDuty scan before streaming byte-size/SHA-256
 verification and bounded format inspection. Small supported images can produce
 stripped private previews; large/vendor originals remain intact with honest
@@ -1138,6 +1143,15 @@ Feature flags are off by default and can be enabled through environment-specific
 repository variables in the existing deployment pipeline. See
 [archive operations](artwork-documentation-assets-operations.md) for exact units,
 limits, access, recovery, backup/restore and cleanup procedures.
+
+The generic version 3 artwork profile adds composable media descriptions, typed
+museum entities and an independently attributed institutional journal. Its
+asynchronous dossier exporter shares the single artwork worker: one long asset
+or export job is claimed per invocation. Dossiers contain original files,
+confirmation/review history and validated standards projections in BagIt/OCFL.
+Detailed technical reports and artist-record comparisons load separately from
+bounded context lists. See [reusable museum records](artwork-museum-record.md)
+for the model, permissions, standards and deployment dependencies.
 
 The strongest part of the architecture is its operational decomposition. Expensive, slow, and retryable work is mostly outside the request path, and the loop structure makes individual jobs independently deployable.
 

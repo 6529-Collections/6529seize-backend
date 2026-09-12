@@ -2,7 +2,10 @@ import express, { ErrorRequestHandler } from 'express';
 import { Server } from 'node:http';
 import * as Joi from 'joi';
 import { ApiCompliantException } from '@/exceptions';
-import { validateDocumentationRawJson } from '@/artwork-documentation/artwork-documentation.raw-json';
+import {
+  DOCUMENTATION_RAW_WRITE_BYTES,
+  validateDocumentationRawJson
+} from '@/artwork-documentation/artwork-documentation.raw-json';
 import {
   documentationErrorMiddleware,
   sanitizeDocumentationError,
@@ -62,7 +65,7 @@ describe('private documentation HTTP validation', () => {
     ['malformed JSON', '{"title":"private-marker",', 400, 'INVALID_JSON'],
     [
       'documentation limit',
-      JSON.stringify({ title: 'x'.repeat(524288) }),
+      JSON.stringify({ title: 'x'.repeat(DOCUMENTATION_RAW_WRITE_BYTES) }),
       413,
       'WRITE_REQUEST_LIMIT'
     ],
@@ -97,6 +100,45 @@ describe('private documentation HTTP validation', () => {
       });
     }
   );
+  it('accepts a complete long-form body above the historical global gate without changing its text', async () => {
+    const title = 'A complete written account.\n'.repeat(32000);
+    const payload = JSON.stringify({ title });
+    expect(Buffer.byteLength(payload, 'utf8')).toBeGreaterThan(800000);
+    await withServer(async (url, errors) => {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ title });
+      expect(errors).toEqual([]);
+    });
+  });
+  it('keeps duplicate and prototype-key protections after a large text value', () => {
+    const prefix = `{"text":${JSON.stringify('x'.repeat(800000))},`;
+    expect(() =>
+      validateDocumentationRawJson(Buffer.from(`${prefix}"x":1,"\\u0078":2}`))
+    ).toThrow(expect.objectContaining({ code: 'DUPLICATE_JSON_KEY' }));
+    for (const key of ['__proto__', 'prototype', 'constructor'])
+      expect(() =>
+        validateDocumentationRawJson(Buffer.from(`${prefix}"${key}":{}}`))
+      ).toThrow(expect.objectContaining({ code: 'INVALID_FIELD' }));
+    expect(() =>
+      validateDocumentationRawJson(
+        Buffer.from(`${prefix}"nested":${'['.repeat(32)}0${']'.repeat(32)}}`)
+      )
+    ).toThrow(expect.objectContaining({ code: 'INVALID_VALUE' }));
+    expect(() =>
+      validateDocumentationRawJson(
+        Buffer.from(
+          JSON.stringify({
+            text: 'é'.repeat(DOCUMENTATION_RAW_WRITE_BYTES / 2)
+          })
+        )
+      )
+    ).toThrow(expect.objectContaining({ code: 'WRITE_REQUEST_LIMIT' }));
+  });
   it('returns INVALID_REQUEST when a mutation has no body', async () => {
     await withServer(async (url) => {
       const response = await fetch(url, { method: 'POST' });

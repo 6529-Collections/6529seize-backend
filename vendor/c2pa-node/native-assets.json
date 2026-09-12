@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "upstream_version": "0.9.5",
+  "source_release": "https://github.com/contentauth/c2pa-js/releases/tag/%40contentauth/c2pa-node%400.9.5",
+  "tag_object_sha": "8535b7e024c1cc89a098655f0053fed3d02be7ed",
+  "assets": {
+    "darwin-arm64": {
+      "url": "https://github.com/contentauth/c2pa-js/releases/download/%40contentauth/c2pa-node%400.9.5/c2pa-node_aarch64-apple-darwin-v0.9.5.zip",
+      "archive_sha256": "121bf71f025af2396bc40827b1d34761d9f67d826a929b2f196dd77ba372e3db",
+      "archive_size": 13778803,
+      "entry_name": "index.node",
+      "native_sha256": "1458987484e5de9a0159779641f2861d90c0e05140c114b57996ac19fab31325",
+      "native_size": 39140624,
+      "asset_id": 558219882
+    },
+    "linux-arm64": {
+      "url": "https://github.com/contentauth/c2pa-js/releases/download/%40contentauth/c2pa-node%400.9.5/c2pa-node_aarch64-unknown-linux-gnu-v0.9.5.zip",
+      "archive_sha256": "04d004d635b3f22aa184f350a4fbdae139066b8f3b467dff6aecf6fa876bc5ea",
+      "archive_size": 15305875,
+      "entry_name": "index.node",
+      "native_sha256": "ff8c7a57640d27828b3dd9453837cc06bfd9b9f7f984cdfbc66d8517050e5505",
+      "native_size": 43505016,
+      "asset_id": 558217528
+    },
+    "darwin-x64": {
+      "url": "https://github.com/contentauth/c2pa-js/releases/download/%40contentauth/c2pa-node%400.9.5/c2pa-node_x86_64-apple-darwin-v0.9.5.zip",
+      "archive_sha256": "729380c6c1a0703b84de8782171b3476c098df3ab53085582025f45ba69ab43f",
+      "archive_size": 15488959,
+      "entry_name": "index.node",
+      "native_sha256": "a50b0c8b89b7624e0733c6e1991e50a0bce47e027597bdc0d61d4c17ef9e15c8",
+      "native_size": 45753892,
+      "asset_id": 558224649
+    },
+    "win32-x64": {
+      "url": "https://github.com/contentauth/c2pa-js/releases/download/%40contentauth/c2pa-node%400.9.5/c2pa-node_x86_64-pc-windows-msvc-v0.9.5.zip",
+      "archive_sha256": "cf0289f1554deba8e301babe70a07a912d6507222d70d6a9f0f4de15a85219f2",
+      "archive_size": 14264278,
+      "entry_name": "index.node",
+      "native_sha256": "11dbda10d343e454f96beeb3450b246965d807ba7a82458529a187888c5e4c6b",
+      "native_size": 42061312,
+      "asset_id": 558227060
+    },
+    "linux-x64": {
+      "url": "https://github.com/contentauth/c2pa-js/releases/download/%40contentauth/c2pa-node%400.9.5/c2pa-node_x86_64-unknown-linux-gnu-v0.9.5.zip",
+      "archive_sha256": "f1b6dcaf510691451201d843d0fe4e5a66c6d7341c0361eb0b9d0332ef827fac",
+      "archive_size": 17073767,
+      "entry_name": "index.node",
+      "native_sha256": "f9e253cf5df23415ec7657894b41ecb031f7c9fa73da15c2a9ccecdb0141243e",
+      "native_size": 49877936,
+      "asset_id": 558218600
+    }
+  }
+}

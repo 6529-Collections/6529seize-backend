@@ -4,6 +4,11 @@ import { Readable, Transform, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { TextDecoder } from 'node:util';
 import { ARTWORK_FORMATS } from '@/artwork-documentation/assets/artwork-assets.policy';
+import {
+  specialistSignature,
+  TEXT_ASSET_EXTENSIONS,
+  XML_ASSET_EXTENSIONS
+} from '@/artwork-documentation/assets/artwork-assets.formats';
 
 export class AssetInspectionError extends Error {
   constructor(readonly code: string) {
@@ -23,7 +28,7 @@ export const PREVIEW_EXTENSIONS = [
   'webp',
   'gif'
 ];
-const TEXT_EXTENSIONS = new Set(['txt', 'md', 'xmp']);
+const TEXT_EXTENSIONS = TEXT_ASSET_EXTENSIONS;
 
 /** Stream the entire object once. The prefix and decoder buffers are strictly bounded. */
 export async function hashAssetStream(
@@ -32,13 +37,14 @@ export async function hashAssetStream(
   extension: string,
   signal: AbortSignal,
   previewFile?: string
-): Promise<{ sha256: string; size: number; prefix: Buffer }> {
+): Promise<{ sha256: string; size: number; prefix: Buffer; suffix: Buffer }> {
   const hash = createHash('sha256');
   const decoder = TEXT_EXTENSIONS.has(extension)
     ? new TextDecoder('utf-8', { fatal: true })
     : null;
   let size = 0;
   let prefix = Buffer.alloc(0);
+  let suffix = Buffer.alloc(0);
   let textTail = '';
   const decodeText = (bytes?: Buffer): string => {
     try {
@@ -52,7 +58,7 @@ export async function hashAssetStream(
   const inspectText = (text: string) => {
     if (text.includes('\u0000'))
       throw new AssetInspectionError('INVALID_TEXT_ENCODING');
-    if (extension === 'xmp') {
+    if (XML_ASSET_EXTENSIONS.has(extension)) {
       const combined = textTail + text;
       if (/<!\s*(DOCTYPE|ENTITY)\b/i.test(combined))
         throw new AssetInspectionError('UNSAFE_XML_DECLARATION');
@@ -66,6 +72,10 @@ export async function hashAssetStream(
         if (size > expectedSize)
           throw new AssetInspectionError('UPLOAD_SIZE_MISMATCH');
         hash.update(chunk);
+        suffix =
+          chunk.length >= PREFIX_LIMIT
+            ? Buffer.from(chunk.subarray(chunk.length - PREFIX_LIMIT))
+            : Buffer.concat([suffix, chunk]).subarray(-PREFIX_LIMIT);
         if (prefix.length < PREFIX_LIMIT)
           prefix = Buffer.concat([
             prefix,
@@ -97,7 +107,7 @@ export async function hashAssetStream(
   }
   if (size !== expectedSize)
     throw new AssetInspectionError('UPLOAD_SIZE_MISMATCH');
-  return { sha256: hash.digest('hex'), size, prefix };
+  return { sha256: hash.digest('hex'), size, prefix, suffix };
 }
 
 function starts(header: Buffer, text: string, offset = 0): boolean {
@@ -143,6 +153,7 @@ function validSignature(header: Buffer, extension: string): boolean {
     case 'nef':
     case 'nrw':
     case 'arw':
+    case 'iiq':
       return isTiff(header);
     case 'cr2':
       return isTiff(header) && starts(header, 'CR', 8);
@@ -165,6 +176,8 @@ function validSignature(header: Buffer, extension: string): boolean {
     case 'heic':
     case 'heif':
       return hasBrand(header, ['heic', 'heix', 'hevc', 'hevx', 'mif1', 'msf1']);
+    case 'avif':
+      return hasBrand(header, ['avif', 'avis']);
     case 'psd':
       return starts(header, '8BPS') && header[4] === 0 && header[5] === 1;
     case 'psb':
@@ -213,7 +226,7 @@ function validSignature(header: Buffer, extension: string): boolean {
         header.toString('utf8')
       );
     default:
-      return false;
+      return specialistSignature(header, extension);
   }
 }
 

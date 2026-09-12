@@ -25,6 +25,19 @@ CloudFront distribution or public origin permission. Bucket policy also denies
 the CloudFront service principal object reads. An explicit region/bucket pair is
 written to API environment configuration by the release workflow.
 
+The frontend allows passive media from these two exact regional S3 origins in
+`media-src`; a different archive bucket also needs a reviewed frontend policy
+change. Test playback with the browser policy enforced. Do not use a policy
+bypass as evidence that deployed media works.
+
+The single-service deployment workflow does not recursively deploy dependencies.
+For this release, the operator must wait for a successful direct
+`dbMigrationsLoop` deployment and invocation before dispatching
+`artworkDocumentationProcessor`, and retain that run as schema evidence alongside
+the processor run. Its scheduled retention invocation does not apply the schema.
+Keep storage and schema prerequisites in the coupled release dependency graph;
+an independently successful processor build is not migration evidence.
+
 The release pipeline reads repository variables
 `ARTWORK_DOCUMENTATION_ENABLED_STAGING`, `ARTWORK_DOCUMENTATION_ENABLED_PROD`,
 `ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_STAGING`, and
@@ -61,7 +74,7 @@ Before onboarding, the release coordinator verifies:
   these metrics and failure codes before enabling the pilot. Metrics contain no
   artist identity, filename, object key or instrument text.
 
-The current AWS limit is 100 GB per scanned S3 object; the product limit is 4 GiB.
+The current AWS limit is 100 GB per scanned S3 object; the product limit is 8 GiB.
 See [AWS scan quotas](https://docs.aws.amazon.com/guardduty/latest/ug/malware-protection-s3-quotas-guardduty.html)
 and [GuardDuty role requirements](https://docs.aws.amazon.com/guardduty/latest/ug/malware-protection-s3-iam-policy-prerequisite.html).
 The existing attachments subsystem uses the same GuardDuty scan-result contract,
@@ -71,8 +84,8 @@ but artwork storage, original identity and processing are independent.
 
 Each upload has one asset ID, unique object key, request idempotency key and
 reservation. A context mutex serializes quota checks. Reservations count against
-20 GiB while uploading, processing or retained; at most five active uploads and
-100 retained/unexpired assets are allowed. Repeated start requests do not reserve
+128 GiB while uploading, processing or retained; at most five active uploads and
+1,000 retained/unexpired assets are allowed. Repeated start requests do not reserve
 twice. Quotas are server constants in `ARTWORK_UPLOAD_POLICY`; raising them
 requires a reviewed capacity change, not a request parameter.
 

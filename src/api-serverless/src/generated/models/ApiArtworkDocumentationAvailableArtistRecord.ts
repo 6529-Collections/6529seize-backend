@@ -17,6 +17,10 @@ export class ApiArtworkDocumentationAvailableArtistRecord {
     'id': string;
     'record_version': number;
     'answers': { [key: string]: ApiArtworkDocumentationAnswer; };
+    /**
+    * When true, fetch this artist record by its revision ID before presenting or applying it.
+    */
+    'deferred'?: boolean;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -39,6 +43,12 @@ export class ApiArtworkDocumentationAvailableArtistRecord {
             "name": "answers",
             "baseName": "answers",
             "type": "{ [key: string]: ApiArtworkDocumentationAnswer; }",
+            "format": ""
+        },
+        {
+            "name": "deferred",
+            "baseName": "deferred",
+            "type": "boolean",
             "format": ""
         }    ];
 

@@ -271,6 +271,8 @@ export {
 } from './IXTdhTokenGrantStats';
 export { XTdhTokenStatsA, XTdhTokenStatsB } from './IXTdhTokenStats';
 export * from './IArtworkDocumentation';
+export * from './IArtworkMuseumRecord';
+export * from './IArtworkDossierExport';
 export { ProfileCmsAgentGrantEntity } from './IProfileCmsAgentGrant';
 export { ProfileCmsAgentProposalEntity } from './IProfileCmsAgentProposal';
 export { ProfileCmsAgentEventEntity } from './IProfileCmsAgentEvent';

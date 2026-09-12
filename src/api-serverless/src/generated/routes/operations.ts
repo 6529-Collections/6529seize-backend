@@ -4,6 +4,7 @@ import { ApiResponse } from '@/api/api-response';
 import { ApiArchiveProfileCmsPackageRequest } from '@/api/generated/models/ApiArchiveProfileCmsPackageRequest';
 import { ApiArtworkDocumentationAssetLinkRequest } from '@/api/generated/models/ApiArtworkDocumentationAssetLinkRequest';
 import { ApiArtworkDocumentationAssetResponse } from '@/api/generated/models/ApiArtworkDocumentationAssetResponse';
+import { ApiArtworkDocumentationAvailableArtistRecord } from '@/api/generated/models/ApiArtworkDocumentationAvailableArtistRecord';
 import { ApiArtworkDocumentationCommentRequest } from '@/api/generated/models/ApiArtworkDocumentationCommentRequest';
 import { ApiArtworkDocumentationCompleteUpload } from '@/api/generated/models/ApiArtworkDocumentationCompleteUpload';
 import { ApiArtworkDocumentationConfirmRequest } from '@/api/generated/models/ApiArtworkDocumentationConfirmRequest';
@@ -39,6 +40,12 @@ import { ApiArtworkDocumentationUpgradePreview } from '@/api/generated/models/Ap
 import { ApiArtworkDocumentationUpgradeRequest } from '@/api/generated/models/ApiArtworkDocumentationUpgradeRequest';
 import { ApiArtworkDocumentationUploadSession } from '@/api/generated/models/ApiArtworkDocumentationUploadSession';
 import { ApiArtworkDocumentationWork } from '@/api/generated/models/ApiArtworkDocumentationWork';
+import { ApiArtworkDossier } from '@/api/generated/models/ApiArtworkDossier';
+import { ApiArtworkDossierExport } from '@/api/generated/models/ApiArtworkDossierExport';
+import { ApiArtworkDossierExportRequest } from '@/api/generated/models/ApiArtworkDossierExportRequest';
+import { ApiArtworkMuseumRecord } from '@/api/generated/models/ApiArtworkMuseumRecord';
+import { ApiArtworkMuseumRecordInput } from '@/api/generated/models/ApiArtworkMuseumRecordInput';
+import { ApiArtworkMuseumRecords } from '@/api/generated/models/ApiArtworkMuseumRecords';
 import { ApiCollectAnalysis } from '@/api/generated/models/ApiCollectAnalysis';
 import { ApiCollectAnalysisRequest } from '@/api/generated/models/ApiCollectAnalysisRequest';
 import { ApiCollectAssetsPage } from '@/api/generated/models/ApiCollectAssetsPage';
@@ -224,6 +231,23 @@ export type ArtworkDocumentationPinDocumentationArtistRequest = Request<
   Record<string, never>
 >;
 
+export interface ArtworkDocumentationGetArtworkArtistRecordPathParams {
+  "id": string;
+  "revisionId": string;
+}
+
+export type ArtworkDocumentationGetArtworkArtistRecordQuery = Record<string, never>;
+
+export type ArtworkDocumentationGetArtworkArtistRecordResponse = ApiArtworkDocumentationAvailableArtistRecord;
+
+export type ArtworkDocumentationGetArtworkArtistRecordRequest = Request<
+  ArtworkDocumentationGetArtworkArtistRecordPathParams,
+  ApiResponse<ArtworkDocumentationGetArtworkArtistRecordResponse>,
+  never,
+  ArtworkDocumentationGetArtworkArtistRecordQuery,
+  Record<string, never>
+>;
+
 export interface ArtworkDocumentationLinkDocumentationAssetPathParams {
   "id": string;
 }
@@ -391,6 +415,55 @@ export type ArtworkDocumentationConfirmDocumentationRequest = Request<
   Record<string, never>
 >;
 
+export interface ArtworkDocumentationGetArtworkDossierPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationGetArtworkDossierQuery = Record<string, never>;
+
+export type ArtworkDocumentationGetArtworkDossierResponse = ApiArtworkDossier;
+
+export type ArtworkDocumentationGetArtworkDossierRequest = Request<
+  ArtworkDocumentationGetArtworkDossierPathParams,
+  ApiResponse<ArtworkDocumentationGetArtworkDossierResponse>,
+  never,
+  ArtworkDocumentationGetArtworkDossierQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationCreateArtworkDossierExportPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationCreateArtworkDossierExportQuery = Record<string, never>;
+
+export type ArtworkDocumentationCreateArtworkDossierExportResponse = ApiArtworkDossierExport;
+
+export type ArtworkDocumentationCreateArtworkDossierExportRequest = Request<
+  ArtworkDocumentationCreateArtworkDossierExportPathParams,
+  ApiResponse<ArtworkDocumentationCreateArtworkDossierExportResponse>,
+  ApiArtworkDossierExportRequest,
+  ArtworkDocumentationCreateArtworkDossierExportQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationGetArtworkDossierExportPathParams {
+  "id": string;
+  "exportId": string;
+}
+
+export type ArtworkDocumentationGetArtworkDossierExportQuery = Record<string, never>;
+
+export type ArtworkDocumentationGetArtworkDossierExportResponse = ApiArtworkDossierExport;
+
+export type ArtworkDocumentationGetArtworkDossierExportRequest = Request<
+  ArtworkDocumentationGetArtworkDossierExportPathParams,
+  ApiResponse<ArtworkDocumentationGetArtworkDossierExportResponse>,
+  never,
+  ArtworkDocumentationGetArtworkDossierExportQuery,
+  Record<string, never>
+>;
+
 export interface ArtworkDocumentationListDocumentationGrantsPathParams {
   "id": string;
 }
@@ -454,6 +527,40 @@ export type ArtworkDocumentationPatchDocumentationModuleRequest = Request<
   ApiResponse<ArtworkDocumentationPatchDocumentationModuleResponse>,
   ApiArtworkDocumentationPatchModule,
   ArtworkDocumentationPatchDocumentationModuleQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationListMuseumRecordsPathParams {
+  "id": string;
+}
+
+export interface ArtworkDocumentationListMuseumRecordsQuery {
+  "before"?: string;
+}
+
+export type ArtworkDocumentationListMuseumRecordsResponse = ApiArtworkMuseumRecords;
+
+export type ArtworkDocumentationListMuseumRecordsRequest = Request<
+  ArtworkDocumentationListMuseumRecordsPathParams,
+  ApiResponse<ArtworkDocumentationListMuseumRecordsResponse>,
+  never,
+  ArtworkDocumentationListMuseumRecordsQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationAppendMuseumRecordPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationAppendMuseumRecordQuery = Record<string, never>;
+
+export type ArtworkDocumentationAppendMuseumRecordResponse = ApiArtworkMuseumRecord;
+
+export type ArtworkDocumentationAppendMuseumRecordRequest = Request<
+  ArtworkDocumentationAppendMuseumRecordPathParams,
+  ApiResponse<ArtworkDocumentationAppendMuseumRecordResponse>,
+  ApiArtworkMuseumRecordInput,
+  ArtworkDocumentationAppendMuseumRecordQuery,
   Record<string, never>
 >;
 
