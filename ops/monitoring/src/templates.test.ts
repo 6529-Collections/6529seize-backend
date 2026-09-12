@@ -2,6 +2,50 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
+test('NFT refresher throttling requires three breaching minutes out of five while failures remain immediate', () => {
+  for (const env of ['prod', 'staging']) {
+    const resources = JSON.parse(
+      readFileSync(new URL(`../source-${env}.json`, import.meta.url), 'utf8')
+    ).Resources;
+    const throttles = resources.nftLinkRefresherLoopThrottles.Properties;
+    const errors = resources.nftLinkRefresherLoopErrors.Properties;
+    assert.equal(throttles.Namespace, 'AWS/Lambda');
+    assert.equal(throttles.MetricName, 'Throttles');
+    assert.deepEqual(throttles.Dimensions, [
+      { Name: 'FunctionName', Value: 'nftLinkRefresherLoop' }
+    ]);
+    assert.equal(throttles.Period, 60);
+    assert.equal(throttles.EvaluationPeriods, 5);
+    assert.equal(throttles.DatapointsToAlarm, 3);
+    assert.equal(throttles.Threshold, 1);
+    assert.equal(throttles.ComparisonOperator, 'GreaterThanOrEqualToThreshold');
+    assert.equal(throttles.TreatMissingData, 'notBreaching');
+    assert.deepEqual(throttles.AlarmActions, {
+      'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
+    });
+    assert.equal(errors.MetricName, 'Errors');
+    assert.equal(errors.Period, 60);
+    assert.equal(errors.EvaluationPeriods, 1);
+    assert.equal(errors.Threshold, 1);
+    assert.deepEqual(errors.AlarmActions, throttles.AlarmActions);
+
+    // This exception must not weaken other services or monitoring itself.
+    for (const [id, resource] of Object.entries(resources) as [
+      string,
+      { Type: string; Properties: Record<string, unknown> }
+    ][]) {
+      if (
+        id !== 'nftLinkRefresherLoopThrottles' &&
+        resource.Type === 'AWS::CloudWatch::Alarm' &&
+        resource.Properties.Namespace === 'AWS/Lambda'
+      ) {
+        assert.equal(resource.Properties.EvaluationPeriods, 1, id);
+        assert.equal(resource.Properties.DatapointsToAlarm, undefined, id);
+      }
+    }
+  }
+});
+
 test('event-bus forwarding retains its local DLQ and failure alarm without unsupported retry settings', () => {
   for (const env of ['prod', 'staging']) {
     const source = JSON.parse(

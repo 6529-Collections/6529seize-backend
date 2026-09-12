@@ -424,6 +424,12 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 
 ### NFT link refresh bounds
 
+The `nft-link-refreshes` SQS event source caps concurrent invocations at the
+worker's reserved concurrency (20), so polling does not exceed its execution
+capacity. The source monitoring stack requires throttles in three of five
+one-minute periods before raising the refresher throttle alarm; invocation
+errors and OOMs still alarm immediately.
+
 `nftLinkRefresherLoop` applies a 90-second resolution budget, reduced to leave
 10 seconds before the Lambda deadline and processing-lock expiry. Its RPC
 transport cancels connections and response bodies after five seconds; metadata
