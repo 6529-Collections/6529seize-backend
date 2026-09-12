@@ -112,3 +112,11 @@ NFTs, reason codes, exact amounts and reference provenance. Analysis requests
 and responses use private/no-store handling and existing market error/body
 sanitization. No new analytics or persistent strategy records are introduced.
 The frontend owns the corresponding Collect help-index documentation.
+
+One monotonic 20-second work budget covers account, index and funding reads,
+signal parsing and the response. Parsing receives at most eight seconds within
+that shared budget; it never resets between collections or books. A timed-out
+comparison returns a retryable unavailable response instead of a partial top bid
+or lowest ask. Late reads cannot begin subsequent parsing or funding RPCs, though
+already-issued reads are not claimed to be canceled. Reference and analysis
+expiry are checked against fresh wall time after the final response is built.

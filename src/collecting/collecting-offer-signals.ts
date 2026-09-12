@@ -1,4 +1,5 @@
 import { CollectingAsset } from '@/collecting/collecting.types';
+import { CollectingWorkBudget } from '@/collecting/collecting-work-budget';
 import {
   CurrentMarketDepthOrder,
   CurrentMarketDepthSnapshot
@@ -129,6 +130,7 @@ function initialSignals(
 }
 
 interface SignalRead {
+  budget: CollectingWorkBudget;
   requested: Map<string, string>;
   catalog: Map<string, CollectingAsset>;
   signals: Map<string, OfferAssetSignals>;
@@ -157,6 +159,7 @@ function readOrder(
   order: CurrentMarketDepthOrder,
   snapshotTime: number
 ): void {
+  read.budget.assertAvailable();
   read.evaluated++;
   const key = `1:${order.contract.toLowerCase()}:${order.token_id}`;
   const asset = read.catalog.get(key),
@@ -203,8 +206,10 @@ export function collectOfferSignals(
   assets: CollectingAsset[],
   books: CurrentMarketDepthSnapshot[],
   wallets: string[],
-  now: number
+  now: number,
+  budget = new CollectingWorkBudget(8000)
 ) {
+  budget.assertAvailable();
   const requested = new Map(
     request.assets.map((asset) => [
       asset.asset_key.toLowerCase(),
@@ -220,6 +225,7 @@ export function collectOfferSignals(
   const makersFor = () =>
     new Map(Array.from(catalog.keys(), (key) => [key, new Set<string>()]));
   const read: SignalRead = {
+    budget,
     requested,
     catalog,
     signals,
@@ -236,6 +242,7 @@ export function collectOfferSignals(
     signal.distinct_ask_makers = read.makers.ask.get(key)!.size;
     signal.distinct_bid_makers = read.makers.bid.get(key)!.size;
   }
+  budget.assertAvailable();
   return {
     signals,
     evaluated_order_count: read.evaluated,

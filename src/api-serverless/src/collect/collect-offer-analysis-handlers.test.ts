@@ -3,6 +3,8 @@ import { getAuthenticationContext } from '@/api/auth/auth';
 import { analyzeCollectOffers } from '@/api/collect/collect-offer-analysis.service';
 import { handleAnalyzeCollectOffers } from '@/api/collect/collect-offer-analysis.handlers';
 import * as Operations from '@/api/generated/routes/operations';
+import { CollectingWorkTimeout } from '@/collecting/collecting-work-budget';
+import { CustomApiCompliantException } from '@/exceptions';
 
 jest.mock('@/api/auth/auth', () => ({ getAuthenticationContext: jest.fn() }));
 jest.mock('@/api/collect/collect-offer-analysis.service', () => ({
@@ -30,6 +32,21 @@ describe('private offer analysis handler boundary', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.mocked(getAuthenticationContext).mockResolvedValue(auth);
+  });
+
+  it('returns a retryable unavailable error without any partial analysis after a work timeout', async () => {
+    const req = { body: { ...body }, res: { set: jest.fn() } };
+    jest
+      .mocked(analyzeCollectOffers)
+      .mockRejectedValueOnce(new CollectingWorkTimeout());
+    const error = await handleAnalyzeCollectOffers(
+      req as unknown as Operations.AnalyzeCollectOffersRequest
+    ).catch((value) => value);
+    expect(error).toBeInstanceOf(CustomApiCompliantException);
+    expect(error.getStatusCode()).toBe(503);
+    expect(error.code).toBe('MARKET_UNAVAILABLE');
+    expect(error.analysis_id).toBeUndefined();
+    expect(req.body).toBeUndefined();
   });
 
   it('keeps private analysis out of caches and removes input before downstream telemetry', async () => {
