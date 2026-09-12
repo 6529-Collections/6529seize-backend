@@ -55,6 +55,29 @@ export function assertModerationPermitReplay(
 function jsonValue<T>(value: T | string | null): T | null {
   return typeof value === 'string' ? (JSON.parse(value) as T) : value;
 }
+export function throwModerationCaptureFailure(error: unknown): never {
+  const code =
+    error && typeof error === 'object' && 'code' in error ? error.code : null;
+  const transient = [
+    'ER_LOCK_DEADLOCK',
+    'ER_LOCK_WAIT_TIMEOUT',
+    'ER_CON_COUNT_ERROR',
+    'ER_TOO_MANY_USER_CONNECTIONS',
+    'PROTOCOL_CONNECTION_LOST',
+    'PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR',
+    'ECONNRESET',
+    'ECONNREFUSED',
+    'ETIMEDOUT',
+    'EPIPE'
+  ].includes(typeof code === 'string' ? code : '');
+  throw new CustomApiCompliantException(
+    transient ? 503 : 500,
+    transient
+      ? 'Moderation history is temporarily unavailable. Please retry.'
+      : 'Moderation history could not be recorded.',
+    transient ? 'MODERATION_CAPTURE_UNAVAILABLE' : 'MODERATION_CAPTURE_FAILED'
+  );
+}
 function itemRow(row: ModerationItem): ModerationItem {
   return {
     ...row,
@@ -310,13 +333,7 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
     if (!ctx.connection)
       return this.executeNativeQueriesInTransaction((connection) =>
         this.start(input, trigger, { ...ctx, connection }, retryOf)
-      ).catch(() => {
-        throw new CustomApiCompliantException(
-          503,
-          'Moderation history is temporarily unavailable. Please retry.',
-          'MODERATION_CAPTURE_UNAVAILABLE'
-        );
-      });
+      ).catch(throwModerationCaptureFailure);
     return this.timed('start', ctx, async () => {
       const id = moderationItemId(input);
       const now = Date.now();
@@ -372,13 +389,7 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
     if (!ctx.connection)
       return this.executeNativeQueriesInTransaction((connection) =>
         this.finish(id, result, { ...ctx, connection })
-      ).catch(() => {
-        throw new CustomApiCompliantException(
-          503,
-          'Moderation history is temporarily unavailable. Please retry.',
-          'MODERATION_CAPTURE_UNAVAILABLE'
-        );
-      });
+      ).catch(throwModerationCaptureFailure);
     return this.timed('finish', ctx, async () => {
       await this.db.execute(
         `update ${EVALUATIONS} set outcome=:outcome, result=json_merge_patch(coalesce(result,json_object()),cast(:result as json)), provider=:provider, model=:model, cache_hit=:cacheHit, fallback=:fallback, completed_at=:now where id=:id and completed_at is null`,
@@ -903,16 +914,28 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
           this.options(tx)
         );
       });
-      await this.db.execute(
-        `update ${ITEMS} i join ${EVALUATIONS} e on e.item_id=i.id set i.outcome='ERROR',i.review_status='NEEDS_REVIEW',i.version=i.version+1,i.evidence_expires_at=null where e.completed_at is null and e.started_at<:stale and i.override is null`,
-        { stale: Date.now() - 10 * 60000 },
-        this.options(ctx)
-      );
-      await this.db.execute(
-        `update ${EVALUATIONS} set outcome='ERROR',fallback='INTERRUPTED',completed_at=:now where completed_at is null and started_at<:stale limit 1000`,
-        { now: Date.now(), stale: Date.now() - 10 * 60000 },
-        this.options(ctx)
-      );
+      await this.executeNativeQueriesInTransaction(async (connection) => {
+        const tx = { ...ctx, connection };
+        const interrupted = await this.db.execute<{
+          id: string;
+          item_id: string;
+        }>(
+          `select id,item_id from ${EVALUATIONS} where completed_at is null and started_at<:stale order by started_at,id limit 1000 for update`,
+          { stale: Date.now() - 10 * 60000 },
+          this.options(tx)
+        );
+        if (!interrupted.length) return;
+        await this.db.execute(
+          `update ${ITEMS} set outcome='ERROR',review_status='NEEDS_REVIEW',version=version+1,evidence_expires_at=null where id in (:ids) and override is null`,
+          { ids: Array.from(new Set(interrupted.map((row) => row.item_id))) },
+          this.options(tx)
+        );
+        await this.db.execute(
+          `update ${EVALUATIONS} set outcome='ERROR',fallback='INTERRUPTED',completed_at=:now where id in (:ids)`,
+          { now: Date.now(), ids: interrupted.map((row) => row.id) },
+          this.options(tx)
+        );
+      });
       await this.db.execute(
         `update ${ITEMS} i set i.review_status='REVIEWED',i.evidence_expires_at=(select coalesce(max(r.resolved_at),:now)+:retention from ${CONTENT_MODERATION_REPORTS_TABLE} r where r.item_id=i.id)
       where i.operation='REPORT' and exists(select 1 from ${CONTENT_MODERATION_REPORTS_TABLE} r where r.item_id=i.id)
@@ -926,11 +949,20 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
         { now: Date.now() },
         this.options(ctx)
       );
-      await this.db.execute(
-        `update ${EVALUATIONS} e join ${ITEMS} i on i.id=e.item_id set e.result=null where i.evidence is null and i.evidence_expires_at<:now`,
-        { now: Date.now() },
-        this.options(ctx)
-      );
+      await this.executeNativeQueriesInTransaction(async (connection) => {
+        const tx = { ...ctx, connection };
+        const expired = await this.db.execute<{ id: string }>(
+          `select e.id from ${EVALUATIONS} e join ${ITEMS} i on i.id=e.item_id where e.result is not null and i.evidence is null and i.evidence_expires_at<:now order by e.id limit 1000 for update`,
+          { now: Date.now() },
+          this.options(tx)
+        );
+        if (!expired.length) return;
+        await this.db.execute(
+          `update ${EVALUATIONS} set result=null where id in (:ids)`,
+          { ids: expired.map((row) => row.id) },
+          this.options(tx)
+        );
+      });
       await this.db.execute(
         `delete from ${AUDIT} where item_id is not null and created_at<:old and item_id in (select id from ${ITEMS} where override is null and suppressed=false and updated_at<:old) limit 1000`,
         { old: Date.now() - 365 * 86400000 },

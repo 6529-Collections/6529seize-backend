@@ -7,6 +7,9 @@ import { AuthenticationContext } from '@/auth-context';
 import { env } from '@/env';
 import { contentModerationDb } from './content-moderation.db';
 import { PrePublicationCheckOutcome } from '@/entities/IContentModeration';
+import { ContentModerationService } from './content-moderation.service';
+import { ContentModerationDb } from './content-moderation.db';
+import { ContentModerationAiService } from './content-moderation-ai.service';
 import {
   ModerationInput,
   moderationFingerprint
@@ -91,6 +94,53 @@ describe('Moderation review durable integration', () => {
         }
       );
     }
+    it('rolls back new-report item creation and both links if publication binding fails', async () => {
+      await legacyReport('new-report-atomic');
+      const report = await db.reportForReview('new-report-atomic');
+      const snapshot = {
+        ...report.content_snapshot,
+        author_profile_id: 'author',
+        wave_id: 'wave'
+      };
+      const reportDb = {
+        getDropSnapshot: jest.fn().mockResolvedValue(snapshot),
+        createReportWithViewerActions: jest.fn().mockResolvedValue(report)
+      };
+      const ai = { assessReportedContent: jest.fn() };
+      const service = new ContentModerationService(
+        reportDb as unknown as ContentModerationDb,
+        ai as unknown as ContentModerationAiService,
+        db
+      );
+      jest
+        .spyOn(db, 'attachPublication')
+        .mockRejectedValueOnce(
+          new Error('Simulated publication binding failure')
+        );
+      await expect(
+        service.submitReport(
+          {
+            dropId: 'reported-drop',
+            reporterProfileId: 'reporter',
+            reason: report.reason,
+            notes: null,
+            hideDrop: false,
+            blockAuthor: false
+          },
+          {}
+        )
+      ).rejects.toThrow('Moderation history could not be recorded.');
+      expect((await db.reportForReview(report.id)).item_id).toBeNull();
+      expect((await db.list({ limit: 10 })).items).toHaveLength(0);
+      expect(
+        await sqlExecutor.oneOrNull<{ count: number }>(
+          `select count(*) count from ${CONTENT_MODERATION_EVALUATIONS_TABLE}`,
+          {}
+        )
+      ).toEqual({ count: 0 });
+      expect(ai.assessReportedContent).not.toHaveBeenCalled();
+    });
+
     it('rolls back an interrupted import and fully links the retry', async () => {
       const service = new ModerationReviewService(db);
       await legacyReport('legacy-retry');
@@ -487,6 +537,103 @@ describe('Moderation review durable integration', () => {
         .item.id
     ).not.toBe(attempt.item.id);
   });
+  it.each(['start', 'finish'] as const)(
+    'distinguishes transient and deterministic %s failures without leaking SQL content',
+    async (operation) => {
+      for (const [code, status] of [
+        ['ER_LOCK_DEADLOCK', 503],
+        ['ECONNRESET', 503],
+        ['ER_PARSE_ERROR', 500],
+        ['ER_DUP_ENTRY', 500]
+      ] as const) {
+        const transaction = jest
+          .spyOn(db, 'executeNativeQueriesInTransaction')
+          .mockRejectedValueOnce(
+            Object.assign(new Error('PRIVATE_SQL_CONTENT'), { code })
+          );
+        try {
+          const result =
+            operation === 'start'
+              ? db.start(input(), 'PUBLIC_FIELD')
+              : db.finish('evaluation', { outcome: 'ALLOW', result: {} });
+          const error = await result.catch((failure) => failure);
+          expect(error.getStatusCode()).toBe(status);
+          expect(error.message).not.toContain('PRIVATE_SQL_CONTENT');
+          expect(error.message.includes('Please retry')).toBe(status === 503);
+        } finally {
+          transaction.mockRestore();
+        }
+      }
+    }
+  );
+
+  it('caps interrupted and expired evaluation cleanup at 1000 and continues on the next invocation', async () => {
+    const { item } = await db.start(input(), 'PUBLIC_FIELD');
+    await sqlExecutor.execute(
+      `insert into ${CONTENT_MODERATION_EVALUATIONS_TABLE}
+       (id,item_id,\`trigger\`,outcome,policy_version,cache_hit,started_at,result)
+       select rows_to_add.id,:item,'PUBLIC_FIELD','PENDING','test',false,1,json_object('private','evidence')
+       from json_table(cast(:ids as json),'$[*]' columns (id varchar(36) path '$')) rows_to_add`,
+      {
+        item: item.id,
+        ids: JSON.stringify(Array.from({ length: 1001 }, () => randomUUID()))
+      }
+    );
+    const count = async (predicate: string) =>
+      Number(
+        (
+          await sqlExecutor.oneOrNull<{ count: number }>(
+            `select count(*) count from ${CONTENT_MODERATION_EVALUATIONS_TABLE} where ${predicate}`,
+            {}
+          )
+        )?.count
+      );
+    await db.retain();
+    expect(await count("fallback='INTERRUPTED'")).toBe(1000);
+    expect(await count('started_at=1 and completed_at is null')).toBe(1);
+    await db.retain();
+    expect(await count("fallback='INTERRUPTED'")).toBe(1001);
+    await sqlExecutor.execute(
+      `update ${CONTENT_MODERATION_ITEMS_TABLE} set evidence=null,evidence_expires_at=1,review_status='REVIEWED' where id=:id`,
+      { id: item.id }
+    );
+    await db.retain();
+    expect(await count('result is null')).toBe(1000);
+    await db.retain();
+    expect(await count('result is not null')).toBe(0);
+  });
+
+  it('selects stale evaluations through the ordered index without scanning completed history', async () => {
+    const { item, evaluationId } = await db.start(input(), 'PUBLIC_FIELD');
+    await sqlExecutor.execute(
+      `update ${CONTENT_MODERATION_EVALUATIONS_TABLE} set started_at=1 where id=:id`,
+      { id: evaluationId }
+    );
+    await sqlExecutor.execute(
+      `insert into ${CONTENT_MODERATION_EVALUATIONS_TABLE}
+       (id,item_id,\`trigger\`,outcome,policy_version,cache_hit,started_at,completed_at)
+       select history.id,:item,'PUBLIC_FIELD','ALLOW','test',false,1,2
+       from json_table(cast(:ids as json),'$[*]' columns (id varchar(36) path '$')) history`,
+      {
+        item: item.id,
+        ids: JSON.stringify(Array.from({ length: 5000 }, () => randomUUID()))
+      }
+    );
+    await sqlExecutor.execute(
+      `analyze table ${CONTENT_MODERATION_EVALUATIONS_TABLE}`,
+      {}
+    );
+    const selectionPlan = await sqlExecutor.execute<{
+      key: string | null;
+      Extra: string;
+    }>(
+      `explain select id,item_id from ${CONTENT_MODERATION_EVALUATIONS_TABLE} where completed_at is null and started_at<:stale order by started_at,id limit 1000 for update`,
+      { stale: Date.now() - 10 * 60000 }
+    );
+    expect(selectionPlan[0].key).toBe('moderation_evaluations_interrupted_idx');
+    expect(selectionPlan[0].Extra).not.toContain('filesort');
+  });
+
   it('purges wholly routine success history after thirty days without deleting rejected work', async () => {
     const routine = await db.start(input(), 'PUBLIC_FIELD');
     await db.finish(routine.evaluationId, { outcome: 'ALLOW', result: {} });

@@ -69,6 +69,11 @@ export class ModerationItemEntity {
 
 @Entity(CONTENT_MODERATION_EVALUATIONS_TABLE)
 @Index('moderation_evaluations_item_idx', ['item_id', 'started_at'])
+@Index('moderation_evaluations_interrupted_idx', [
+  'completed_at',
+  'started_at',
+  'id'
+])
 export class ModerationEvaluationEntity {
   @PrimaryColumn({ type: 'varchar', length: 36 }) id!: string;
   @Column({ type: 'char', length: 64 }) item_id!: string;

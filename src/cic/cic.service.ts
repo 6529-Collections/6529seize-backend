@@ -182,12 +182,14 @@ export class CicService {
     private readonly abusivenessCheckService: AbusivenessCheckService
   ) {}
 
-  public async getCicStatementByIdAndProfileIdOrThrow(props: {
-    profile_id: string;
-    id: string;
-  }): Promise<CicStatement> {
-    const cicStatement =
-      await this.cicDb.getCicStatementByIdAndProfileId(props);
+  public async getCicStatementByIdAndProfileIdOrThrow(
+    props: { profile_id: string; id: string },
+    connection?: ConnectionWrapper<unknown>
+  ): Promise<CicStatement> {
+    const cicStatement = await this.cicDb.getCicStatementByIdAndProfileId(
+      props,
+      connection
+    );
     if (!cicStatement) {
       throw new NotFoundException(
         `CIC statement ${props.id} not found for profile ${props.profile_id}`
@@ -430,11 +432,13 @@ export class CicService {
   }
 
   public async deleteCicStatement(props: { profile_id: string; id: string }) {
-    const cicStatement =
-      await this.getCicStatementByIdAndProfileIdOrThrow(props);
     await this.cicDb.executeNativeQueriesInTransaction(async (connection) => {
       await this.cicDb.lockProfileForCicStatementMutation(
         props.profile_id,
+        connection
+      );
+      const cicStatement = await this.getCicStatementByIdAndProfileIdOrThrow(
+        props,
         connection
       );
       await this.deleteStatement(cicStatement, connection);

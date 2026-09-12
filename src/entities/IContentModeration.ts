@@ -265,6 +265,7 @@ export class ContentModerationAuditLogEntity {
   'content_fingerprint',
   'created_at'
 ])
+@Index('moderation_pre_publication_queue_idx', ['item_id', 'created_at', 'id'])
 export class ContentModerationPrePublicationCheckEntity {
   @Column({ type: 'char', length: 64, nullable: true })
   readonly item_id!: string | null;

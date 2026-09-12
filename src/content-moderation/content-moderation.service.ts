@@ -1,5 +1,9 @@
 import { isModerationDeveloper } from './moderation-developer-access';
-import { moderationReviewDb, ModerationReviewDb } from './moderation-review.db';
+import {
+  moderationReviewDb,
+  ModerationReviewDb,
+  throwModerationCaptureFailure
+} from './moderation-review.db';
 import {
   moderationFingerprint,
   ModerationInput,
@@ -140,20 +144,26 @@ export class ContentModerationService {
       },
       evidence: contentSnapshot
     };
-    const review = await this.reviews.start(reviewInput, 'CONTENT_REPORTED', {
-      ...ctx,
-      connection: undefined
-    });
-    await this.reviews.bindReport(report.id, review.item.id, {
-      ...ctx,
-      connection: undefined
-    });
-    await this.reviews.attachPublication(
-      review.item.id,
-      input.dropId,
-      revision,
-      { ...ctx, connection: undefined }
-    );
+    const review = await this.reviews
+      .executeNativeQueriesInTransaction(async (connection) => {
+        const tx = { ...ctx, connection };
+        // Match first-review materialization: lock the report before its item.
+        await this.reviews.reportForReview(report.id, tx, true);
+        const started = await this.reviews.start(
+          reviewInput,
+          'CONTENT_REPORTED',
+          tx
+        );
+        await this.reviews.bindReport(report.id, started.item.id, tx);
+        await this.reviews.attachPublication(
+          started.item.id,
+          input.dropId,
+          revision,
+          tx
+        );
+        return started;
+      })
+      .catch(throwModerationCaptureFailure);
     const assessment = await this.assessReport(report, snapshot, parentContext);
     await this.reviews.finish(review.evaluationId, {
       outcome: reportReviewOutcome(
