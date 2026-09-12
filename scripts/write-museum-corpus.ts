@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import {
   CAPTURE_CASES,
@@ -12,13 +12,12 @@ import { buildLinkedArtExport } from '../src/artwork-documentation/museum/export
 import { buildIiif } from '../src/artwork-documentation/museum/export/iiif';
 import { DossierSnapshot } from '../src/artwork-documentation/museum/export/dossier.types';
 
-const directory = process.argv[2];
-if (!directory)
-  throw new Error(
-    'Supply an output directory for the synthetic museum corpus.'
-  );
-const output = resolve(directory);
+// This development command writes only its fixed, ignored fixture directory.
+// It does not accept an arbitrary filesystem destination from CLI input.
+const output = resolve(__dirname, '..', '.museum-corpus-fixtures');
 mkdirSync(output, { recursive: true });
+if (realpathSync(output) !== output)
+  throw new Error('Museum corpus output must not traverse a symbolic link.');
 const cases: [string, DossierSnapshot][] = [
   ...CAPTURE_CASES.map((media): [string, DossierSnapshot] => [
     media.join('-'),

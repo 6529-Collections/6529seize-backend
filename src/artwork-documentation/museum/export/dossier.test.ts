@@ -143,4 +143,34 @@ describe('Portable artwork dossier', () => {
       )
     ).rejects.toThrow('Invalid archive entry');
   });
+  it.each(['data/record.json', 'data/museum-records.json'])(
+    'rejects %s if its bytes change after the initial fixity pass',
+    async (metadataPath) => {
+      const { snapshot, original } = dossierFixture();
+      const compiled = compileDossier(snapshot);
+      const ocfl = wrapDossierInOcfl(snapshot, compiled);
+      const files = new Map(ocfl.files.map((file) => [file.path, file.bytes]));
+      files.set(
+        OCFL_BAG_PREFIX +
+          compiled.manifest.find((entry) => 'asset_id' in entry)!.path,
+        original
+      );
+      let metadataReads = 0;
+      const reader = {
+        async *read(path: string) {
+          const bytes = files.get(path);
+          if (!bytes) throw new Error('Missing package file');
+          if (path === OCFL_BAG_PREFIX + metadataPath && ++metadataReads > 1)
+            yield Buffer.from(
+              metadataPath.endsWith('museum-records.json')
+                ? '[{"changed":true}]'
+                : '{}'
+            );
+          else yield bytes;
+        }
+      };
+      await expect(reconstructDossier(reader)).rejects.toThrow('fixity');
+      expect(metadataReads).toBe(2);
+    }
+  );
 });

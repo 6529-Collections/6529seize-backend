@@ -188,7 +188,7 @@ export function buildIiif(
   });
   const rendering = assets.map((asset) => contentResource(env, asset.id)!);
   const manifest = {
-    '@context': 'http://iiif.io/api/presentation/3/context.json',
+    '@context': 'http://iiif.io/api/presentation/3/context.json', // NOSONAR: Canonical IIIF namespace identifier; this does not perform a network request.
     id: `${env.prefix}/manifest`,
     type: 'Manifest',
     label: {

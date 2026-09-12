@@ -9,6 +9,7 @@ import json
 import sys
 from lxml import etree
 from jsonschema import Draft7Validator
+from museum_iiif_validation import verify_selector_types
 
 
 class LockedResolver(etree.Resolver):
@@ -55,7 +56,9 @@ def validate(directory):
             data = (directory/item['path']).read_bytes()
             assert hashlib.sha256(data).hexdigest() == item['sha256'], item['path']
             if item['path'].endswith('-iiif.json'):
-                iiif_validator.validate(json.loads(data))
+                iiif_manifest = json.loads(data)
+                verify_selector_types(iiif_manifest)
+                iiif_validator.validate(iiif_manifest)
                 iiif_count += 1
             for kind, validator in validators.items():
                 if item['path'].endswith('-'+kind+'.xml'):

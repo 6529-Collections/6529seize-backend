@@ -17,6 +17,7 @@ import {
 } from './dossier.types';
 import schemaBundle from './schemas/schema-bundle.json';
 import { publicationHistory } from './dossier-history';
+import { UnsupportedXmlCharacter } from './xml';
 
 const hash = (bytes: Buffer) =>
   createHash('sha256').update(bytes).digest('hex');
@@ -78,7 +79,8 @@ function xmlFiles(
           build(snapshot)
         )
       );
-    } catch {
+    } catch (error) {
+      if (!(error instanceof UnsupportedXmlCharacter)) throw error;
       issues.push({
         code: 'XML_SOURCE_CHARACTER_UNSUPPORTED',
         path: name,

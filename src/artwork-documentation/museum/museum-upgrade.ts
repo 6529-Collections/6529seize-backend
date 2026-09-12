@@ -4,6 +4,20 @@ import {
 } from '../artwork-documentation.types';
 import { matchesSchema } from '../artwork-documentation.validation';
 
+/** Cancelled/expired rows remain as receipts after their unreferenced bytes are released. */
+export function publicationUpgradeRequiresAsset(asset: {
+  state?: string;
+  referenced?: boolean | number;
+  reserved_bytes?: number;
+}): boolean {
+  const unreferenced = asset.referenced === false || asset.referenced === 0;
+  return !(
+    unreferenced &&
+    asset.reserved_bytes === 0 &&
+    (asset.state === 'cancelled' || asset.state === 'expired')
+  );
+}
+
 export function museumUpgradePreview(
   context: ContextRecord,
   proposed: DocumentationProfile

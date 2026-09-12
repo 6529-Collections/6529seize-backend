@@ -4,16 +4,20 @@ import {
   artistCapabilities,
   emptyCapabilities
 } from '../artwork-documentation.access';
-import { emptyModules, getProfile } from '../artwork-documentation.catalogue';
+import {
+  applyOperations,
+  emptyModules,
+  getProfile
+} from '../artwork-documentation.catalogue';
 import { ArtworkDocumentationDb } from '../artwork-documentation.db';
 import { ArtworkDocumentationReviewService } from '../artwork-documentation.review';
 import {
   ArtworkDocumentationService,
   confirmationStatus
 } from '../artwork-documentation.service';
-import { ContextAccess } from '../artwork-documentation.types';
+import { ContextAccess, Json, Operation } from '../artwork-documentation.types';
 import { dossierFixture } from './export/dossier-fixture';
-import { MUSEUM_CC0_URI } from './museum-catalogue';
+import { bindMuseumProgram, MUSEUM_CC0_URI } from './museum-catalogue';
 
 function fixture() {
   const context = dossierFixture().snapshot.context;
@@ -304,5 +308,184 @@ describe('Artist-owned museum profile upgrade', () => {
       request
     );
     expect(preview.blocking_fields).toEqual([]);
+  });
+
+  it.each(['cancelled', 'expired'])(
+    'ignores only fully released, unreferenced %s upload receipts in preview and execution',
+    async (state) => {
+      const { context, core, db, review, request, mutation } = fixture();
+      const row = {
+        id: '10000000-0000-4000-8000-000000000093',
+        filename: 'Cancelled evidence.pdf',
+        role: 'rights_instrument',
+        intended_visibility: 'restricted',
+        access_class: 'rights_evidence',
+        state,
+        referenced: 0,
+        reserved_bytes: 0
+      };
+      const original = JSON.stringify(row);
+      (db.query as jest.Mock).mockResolvedValue([row]);
+      const preview = await review.upgradePreview(
+        context.id,
+        'stream_artwork_basic_v1',
+        3,
+        request
+      );
+      expect(preview.blocking_fields).toEqual([]);
+      await expect(
+        core.validatePublicationUpgrade(
+          { ...context, profile: preview.proposed_profile },
+          request
+        )
+      ).resolves.toBeUndefined();
+      await review.upgrade(
+        context.id,
+        'stream_artwork_basic_v1',
+        3,
+        mutation,
+        request
+      );
+      expect(context.profile.version).toBe(3);
+      expect(JSON.stringify(row)).toBe(original);
+    }
+  );
+
+  it.each([
+    { state: 'cancelled', referenced: 0, reserved_bytes: 1 },
+    { state: 'expired', referenced: 1, reserved_bytes: 0 },
+    { state: 'ready', referenced: 0, reserved_bytes: 0 },
+    { state: 'processing', referenced: 0, reserved_bytes: 0 },
+    { state: 'failed', referenced: 0, reserved_bytes: 0 },
+    { state: 'cancelled', reserved_bytes: 0 }
+  ])(
+    'continues to block retained, active, referenced or uncertain upload state %j',
+    async (lifecycle) => {
+      const { context, core, db, review, request } = fixture();
+      const row = {
+        id: '10000000-0000-4000-8000-000000000094',
+        filename: 'Retained evidence.pdf',
+        role: 'rights_instrument',
+        intended_visibility: 'restricted',
+        access_class: 'rights_evidence',
+        ...lifecycle
+      };
+      (db.query as jest.Mock).mockResolvedValue([row]);
+      const preview = await review.upgradePreview(
+        context.id,
+        'stream_artwork_basic_v1',
+        3,
+        request
+      );
+      expect(preview.blocking_fields).toContain(`asset:${row.id}`);
+      const proposed = bindMuseumProgram(
+        getProfile('stream_artwork_basic_v1', 3),
+        context.program_id
+      );
+      await expect(
+        core.validatePublicationUpgrade(
+          { ...context, profile: proposed },
+          request
+        )
+      ).rejects.toThrow(
+        expect.objectContaining({ code: 'PUBLICATION_VISIBILITY_REQUIRED' })
+      );
+    }
+  );
+
+  it('accepts an 800KB v3 text work and keeps the older profile write cap effective', async () => {
+    const specimen = 'A'.repeat(400000);
+    const operations: Operation[] = [
+      {
+        op: 'set',
+        field: 'text',
+        answer: {
+          status: 'provided',
+          intended_visibility: 'public_record',
+          value: {
+            authoritative_text: specimen,
+            accessible_text: specimen,
+            languages: ['en'],
+            typography: 'Original letterforms.',
+            layout: 'Single continuous field.',
+            reading_order: 'Top to bottom.',
+            presentation: 'fixed'
+          }
+        }
+      }
+    ];
+    const legacy = fixture();
+    const legacyRun = jest.fn(async () => ({ context_id: legacy.context.id }));
+    await expect(
+      legacy.core.mutate(
+        legacy.context.id,
+        {
+          ...legacy.mutation,
+          body: { operations }
+        },
+        legacy.request,
+        legacyRun
+      )
+    ).rejects.toThrow('WRITE_REQUEST_LIMIT');
+    expect(legacyRun).not.toHaveBeenCalled();
+    expect(legacy.db.idempotent).not.toHaveBeenCalled();
+
+    const modern = fixture();
+    modern.context.program_id = null;
+    modern.context.profile = getProfile('stream_artwork_basic_v1', 3);
+    await modern.core.mutate(
+      modern.context.id,
+      { ...modern.mutation, body: { operations } },
+      modern.request,
+      async (access) => {
+        access.context.modules.process = applyOperations(
+          'process',
+          access.context.modules.process,
+          operations,
+          access.context.profile
+        );
+        return { context_id: modern.context.id };
+      }
+    );
+    expect(
+      (modern.context.modules.process.text.value as Record<string, Json>)
+        .authoritative_text
+    ).toBe(specimen);
+    expect(modern.db.saveContext).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains the depth guard and checks the profile limit again under the mutation lock', async () => {
+    const first = fixture();
+    let nested: Json = 'text';
+    for (let index = 0; index < 32; index++) nested = { nested };
+    const run = jest.fn(async () => ({ context_id: first.context.id }));
+    await expect(
+      first.core.mutate(
+        first.context.id,
+        { ...first.mutation, body: nested },
+        first.request,
+        run
+      )
+    ).rejects.toThrow('INVALID_VALUE');
+    expect(run).not.toHaveBeenCalled();
+    const second = fixture();
+    const initial = {
+      ...second.access,
+      context: {
+        ...second.context,
+        profile: getProfile('stream_artwork_basic_v1', 3)
+      }
+    };
+    second.core.authorizeContext = jest.fn(async () => initial);
+    await expect(
+      second.core.mutate(
+        second.context.id,
+        { ...second.mutation, body: { text: 'é'.repeat(300000) } },
+        second.request,
+        run
+      )
+    ).rejects.toThrow('WRITE_REQUEST_LIMIT');
+    expect(second.db.idempotent).toHaveBeenCalledTimes(1);
+    expect(second.db.saveContext).not.toHaveBeenCalled();
   });
 });

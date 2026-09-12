@@ -9,6 +9,7 @@ import json
 import sys
 from lxml import etree
 from jsonschema import Draft7Validator
+from museum_iiif_validation import verify_selector_types
 
 
 def safe(root, path):
@@ -91,6 +92,7 @@ def verify_iiif(root):
     directory = root/'data'/'metadata'/'schemas'
     schema = json.loads((directory/'iiif-presentation-3.json').read_bytes())
     manifest = json.loads((root/'data'/'metadata'/'iiif-manifest.json').read_bytes())
+    verify_selector_types(manifest)
     Draft7Validator.check_schema(schema)
     validator = Draft7Validator(schema)
     errors = list(validator.iter_errors(manifest))

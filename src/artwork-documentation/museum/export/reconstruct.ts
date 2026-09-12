@@ -192,7 +192,10 @@ export async function reconstructDossier(reader: DossierReader) {
   const local = async (path: string): Promise<Buffer> => {
     const entry = logical.get(`bag/${path}`);
     if (!entry) throw new Error('Incomplete artwork dossier');
-    return readMetadata(reader, entry.physical);
+    const bytes = await readMetadata(reader, entry.physical);
+    if (createHash('sha256').update(bytes).digest('hex') !== entry.digest)
+      throw new Error('Dossier fixity verification failed');
+    return bytes;
   };
   await verifyBag(logical, local);
   const record = JSON.parse(

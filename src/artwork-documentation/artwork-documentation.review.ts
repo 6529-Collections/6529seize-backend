@@ -39,7 +39,10 @@ import { canReadField, validateGrant } from './artwork-documentation.access';
 import { parseJson } from './artwork-documentation.db';
 import { FIELD_CATALOGUE, getProfile } from './artwork-documentation.catalogue';
 import { bindMuseumProgram } from './museum/museum-catalogue';
-import { museumUpgradePreview } from './museum/museum-upgrade';
+import {
+  museumUpgradePreview,
+  publicationUpgradeRequiresAsset
+} from './museum/museum-upgrade';
 
 type Comment = {
   id: string;
@@ -485,8 +488,10 @@ export class ArtworkDocumentationReviewService {
     proposed: ContextRecord,
     ctx: RequestContext
   ): Promise<{ fields: string[]; notices: string[] }> {
-    const rows = await this.core.db.query<ArtworkAssetListRow>(
-      `SELECT ${ARTWORK_ASSET_LIST_COLUMNS.join(',')} FROM ${ARTWORK_ASSETS_TABLE} WHERE context_id=:id`,
+    const rows = await this.core.db.query<
+      ArtworkAssetListRow & { reserved_bytes: number }
+    >(
+      `SELECT ${ARTWORK_ASSET_LIST_COLUMNS.join(',')},reserved_bytes FROM ${ARTWORK_ASSETS_TABLE} WHERE context_id=:id`,
       { id: access.context.id },
       ctx
     );
@@ -502,6 +507,7 @@ export class ArtworkDocumentationReviewService {
     const blockers: string[] = [];
     const notices: string[] = [];
     for (const row of rows) {
+      if (!publicationUpgradeRequiresAsset(row)) continue;
       try {
         validatePublicationAssetLink(publicationAssetAccess(proposed), {
           ...row,

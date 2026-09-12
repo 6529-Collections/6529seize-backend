@@ -68,9 +68,10 @@ reported characterization, preservation provenance and scoped rights accounts.
 Media-specific technical detail without a safe standard correspondence remains
 explicitly covered in the source sidecar, rather than being silently dropped.
 
-Run `scripts/write-museum-corpus.ts <output-directory>` through the repository
+Run `scripts/write-museum-corpus.ts` through the repository
 TypeScript wrapper and `python scripts/validate-museum-corpus.py
-<output-directory>`. The independent validator checks the locked official LIDO
+.museum-corpus-fixtures`. The writer uses that fixed, ignored directory beneath
+the repository. The independent validator checks the locked official LIDO
 and PREMIS XSD closure for all 26 XML projections, the 13 IIIF manifests against
 the pinned official schema, and all output digests.
 This is supported-subset export evidence, not certification by the standards

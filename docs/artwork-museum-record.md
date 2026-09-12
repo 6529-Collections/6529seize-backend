@@ -130,7 +130,8 @@ against the locked LIDO/PREMIS schema closure, IIIF against its pinned upstream
 JSON Schema, and every BagIt/OCFL digest. It performs no network or database reads.
 
 Deploy `artworkDocumentationStorage` and `dbMigrationsLoop` before
-`artworkDocumentationProcessor`, then `api`, followed by the dependent frontend.
+`artworkDocumentationProcessor`. Deploy `attachmentsProcessor` for the shared PDF
+validator, then `api`, followed by the dependent frontend.
 The new entities and asset columns are applied by the existing TypeORM schema
 sync. Use the normal [deployment process](deployment.md) and repeat the upload,
 read/review, export and hash checks in each authorized environment. Local parser

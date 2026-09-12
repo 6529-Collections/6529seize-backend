@@ -1,4 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto';
+import { DOCUMENTATION_RAW_WRITE_BYTES } from './artwork-documentation.raw-json';
+import { publicationUpgradeRequiresAsset } from './museum/museum-upgrade';
 import { RequestContext } from '@/request.context';
 import {
   ProgramViewerGroups,
@@ -384,15 +386,26 @@ export class ArtworkDocumentationService {
     content = true
   ): Promise<T> {
     const actor = this.actor(ctx);
-    if (
-      !canWriteDocumentation(
-        (await this.authorizeContext(id, ctx)).capabilities
-      )
-    )
+    const authorized = await this.authorizeContext(id, ctx);
+    if (!canWriteDocumentation(authorized.capabilities))
       fail(403, 'EDIT_NOT_ALLOWED');
+    const requestHash = digest(mutation.body);
+    const requestBytes = Buffer.byteLength(
+      JSON.stringify(mutation.body),
+      'utf8'
+    );
+    const checkWriteLimit = (context: ContextRecord) => {
+      const limit = Math.min(
+        DOCUMENTATION_RAW_WRITE_BYTES,
+        context.profile.limits.write_request_bytes ??
+          DOCUMENTATION_LIMITS.write_request_bytes
+      );
+      if (requestBytes > limit) fail(413, 'WRITE_REQUEST_LIMIT');
+    };
+    checkWriteLimit(authorized.context);
     return this.db.idempotent(
       digest([actor, mutation.route, mutation.key]),
-      digest(mutation.body),
+      requestHash,
       ctx,
       async (transaction) => {
         const access = await this.authorizeMutationContext(
@@ -400,6 +413,7 @@ export class ArtworkDocumentationService {
           transaction,
           true
         );
+        checkWriteLimit(access.context);
         if (
           content &&
           mutation.expectedVersion !== access.context.draft_version
@@ -1330,17 +1344,22 @@ export class ArtworkDocumentationService {
       role: string;
       intended_visibility: string;
       access_class: string;
+      state: string;
+      referenced: boolean | number;
+      reserved_bytes: number;
     }>(
-      `SELECT role,intended_visibility,access_class FROM ${ARTWORK_ASSETS_TABLE} WHERE context_id=:id FOR UPDATE`,
+      `SELECT role,intended_visibility,access_class,state,referenced,reserved_bytes FROM ${ARTWORK_ASSETS_TABLE} WHERE context_id=:id FOR UPDATE`,
       { id: context.id },
       ctx
     );
-    for (const asset of assets)
+    for (const asset of assets) {
+      if (!publicationUpgradeRequiresAsset(asset)) continue;
       validatePublicationAssetLink(publicationAssetAccess(context), {
         ...asset,
         intended_terms: { kind: 'unspecified' },
         manifest: asset
       });
+    }
     if (context.artist_record_revision_id) {
       const pin = await this.db.one<{ answers_json: unknown }>(
         `SELECT answers_json FROM ${AD_ARTIST_REVISIONS} WHERE id=:id AND owner_profile_id=:owner`,

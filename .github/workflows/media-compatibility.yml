@@ -51,10 +51,11 @@ jobs:
       - name: Validate portable artwork records independently
         run: |
           ./bin/6529 exec node scripts/build-artwork-schema-bundle.cjs --check
+          "$RUNNER_TEMP/museum-validator/bin/python" scripts/test_museum_iiif_validation.py
           ./bin/6529 exec ts-node --transpile-only -r tsconfig-paths/register scripts/write-artwork-dossier-fixture.ts "$RUNNER_TEMP/artwork-dossier"
           "$RUNNER_TEMP/museum-validator/bin/python" scripts/validate-artwork-dossier.py "$RUNNER_TEMP/artwork-dossier"
-          ./bin/6529 exec ts-node --transpile-only -r tsconfig-paths/register scripts/write-museum-corpus.ts "$RUNNER_TEMP/museum-corpus"
-          "$RUNNER_TEMP/museum-validator/bin/python" scripts/validate-museum-corpus.py "$RUNNER_TEMP/museum-corpus"
+          ./bin/6529 exec ts-node --transpile-only -r tsconfig-paths/register scripts/write-museum-corpus.ts
+          "$RUNNER_TEMP/museum-validator/bin/python" scripts/validate-museum-corpus.py .museum-corpus-fixtures
 
   native:
     name: Native media (${{ matrix.os }})

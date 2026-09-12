@@ -67,7 +67,7 @@ export function lidoFixture() {
         {
           authority: 'TGN',
           identifier: '123',
-          uri: 'http://vocab.getty.edu/tgn/123',
+          uri: 'http://vocab.getty.edu/tgn/123', // NOSONAR: Getty's canonical concept identifier, not a network request.
           label: 'Suggested place',
           match: 'suggested',
           evidence: 'Not reviewed.'
