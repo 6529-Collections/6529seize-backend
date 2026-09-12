@@ -44,6 +44,15 @@ bind the ranked content, catalog and collection. Checkout still obtains a fresh
 executable quote. This read-only endpoint adds no table or loop dependency and
 requires only the API deployment, followed by its frontend consumer.
 
+Collecting request budgets use a monotonic clock, with 20 seconds shared across
+reads and parsing. The optional set-plan seed and TDH browse parser each receive
+at most eight seconds within that budget. Seed expiry discards partial results
+and preserves time for scanner-row persistence; browse expiry marks retained
+results incomplete or returns a retryable refresh response when empty. Checks
+inside synchronous order loops bound CPU work, while read wait bounds prevent
+late responses from starting subsequent parsing. They do not claim to cancel
+an already-issued database request. Market quote expiry still uses wall time.
+
 The marketplace adapter obtains unsigned OpenSea Seaport actions server-side.
 Closed schemas, a protocol/spender registry, independent action decoding and
 chain simulation bind the exact artwork, quantity, wallet, recipient, fees and
