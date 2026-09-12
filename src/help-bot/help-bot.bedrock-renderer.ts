@@ -1,3 +1,9 @@
+import {
+  isDesktopKnowledgeRecord,
+  MAX_DESKTOP_ANSWER_TOKENS,
+  MAX_DESKTOP_BRIEF_TOKENS,
+  wantsDetailedDesktopAnswer
+} from './help-bot-desktop-knowledge';
 import { getBedrockClient } from '@/bedrock';
 import {
   BedrockRuntimeClient,
@@ -56,7 +62,11 @@ function buildPrompt({
   const isStreamKnowledge = record.kind === 'public_review_knowledge';
   const streamGrounding = isStreamKnowledge ? STREAM_GROUNDING_GUIDANCE : [];
   let linkGuidance: readonly string[];
-  if (record.suppressSourceLinks) {
+  if (isDesktopKnowledgeRecord(record)) {
+    linkGuidance = [
+      'Do not include URLs, Markdown links, or a More info footer. The backend appends verified links at the end.'
+    ];
+  } else if (record.suppressSourceLinks) {
     linkGuidance = [
       'Do not include source links unless the provided facts explicitly require one.'
     ];
@@ -73,7 +83,19 @@ function buildPrompt({
     `You are ${HELP_BOT_MENTION}, a concise helper bot for 6529.io.`,
     'Answer only from the provided facts.',
     'Do not invent details.',
-    'Use one or two short paragraphs.',
+    ...(isDesktopKnowledgeRecord(record)
+      ? [
+          wantsDetailedDesktopAnswer(question)
+            ? 'The user explicitly requested detail. Give the relevant complete guide, under 5000 characters.'
+            : 'Use two to four short sentences, preferably under 700 characters. Give only the answer or next useful troubleshooting step. Do not enumerate the facts, add background sections, or turn a definition into an onboarding guide.',
+          'Respect the user’s reported progress. Do not repeat steps they have completed or repeat your previous answer. If a check is missing, ask one focused question before suggesting repairs. Do not infer that unreported checks passed.',
+          'Use the suggested short answer as the default response for this stage. Draw on additional facts only to answer a specific detail the user asks about. Keep each destructive action’s data-loss warning in the same step.',
+          'Use the supplied native menu and button labels. Do not turn Core-only paths or localhost addresses into public website links.',
+          'Distinguish local indexed data from on-chain holdings, local node TDH from profile TDH, and current behavior from future phases.',
+          'Explain the least disruptive relevant action first; do not prescribe every reset for every error. Ask for version, checkpoint or redacted error when needed.',
+          'You cannot inspect or operate the user’s computer. Never request passwords, recovery phrases, private keys, or credential-bearing RPC URLs.'
+        ]
+      : ['Use one or two short paragraphs.']),
     TONE_GUIDANCE,
     NO_SELF_INTRO_GUIDANCE,
     ...streamGrounding,
@@ -83,6 +105,9 @@ function buildPrompt({
       : '',
     `User question:\n${question}`,
     `Topic: ${record.title}`,
+    record.briefAnswer
+      ? `Suggested short answer for this stage:\n${record.briefAnswer}`
+      : '',
     `Facts:\n${factLines}`
   ]
     .filter(Boolean)
@@ -233,12 +258,20 @@ export class HelpBotBedrockRenderer implements HelpBotLlmRenderer {
     readonly canonicalUrl: string;
   }): Promise<string> {
     const isStreamKnowledge = input.record.kind === 'public_review_knowledge';
-    const maxTokens = isStreamKnowledge ? 320 : 220;
+    const isDesktopKnowledge = isDesktopKnowledgeRecord(input.record);
+    let maxTokens = 220;
+    if (isDesktopKnowledge) {
+      maxTokens = wantsDetailedDesktopAnswer(input.question)
+        ? MAX_DESKTOP_ANSWER_TOKENS
+        : MAX_DESKTOP_BRIEF_TOKENS;
+    } else if (isStreamKnowledge) {
+      maxTokens = 320;
+    }
     return this.invokePrompt(
       buildPrompt(input),
       maxTokens,
       undefined,
-      isStreamKnowledge
+      isStreamKnowledge || isDesktopKnowledge
     );
   }
 

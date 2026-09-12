@@ -32,6 +32,82 @@ describe('HelpBotBedrockRenderer', () => {
     return body.messages?.[0]?.content?.[0]?.text ?? '';
   }
 
+  it('allows complete Desktop guides while keeping ordinary answers concise', async () => {
+    const send = jest.fn().mockResolvedValue({
+      body: Buffer.from(
+        JSON.stringify({
+          content: [{ type: 'text', text: 'Open 6529 Desktop.' }]
+        })
+      )
+    });
+    const renderer = new HelpBotBedrockRenderer(
+      'test',
+      () => ({ send }) as never
+    );
+    await renderer.renderAnswer({
+      question: 'Give me a detailed guide to getting started in Core',
+      record: {
+        ...RECORD,
+        id: 'desktop.getting-started',
+        tags: ['desktop-core'],
+        suppressSourceLinks: true
+      },
+      canonicalUrl: 'https://6529.io/about/6529-apps'
+    });
+    expect(readBody(send).max_tokens).toBe(1600);
+    expect(readPrompt(send)).toContain('data-loss warning in the same step');
+    expect(readPrompt(send)).toContain('cannot inspect or operate');
+    expect(readPrompt(send)).toContain('Do not turn Core-only paths');
+    send.mockClear();
+    await renderer.renderAnswer({
+      question: 'what is Core',
+      record: { ...RECORD, id: 'desktop.overview', tags: ['desktop-core'] },
+      canonicalUrl: 'https://6529.io/about/6529-apps'
+    });
+    expect(readBody(send).max_tokens).toBe(350);
+    expect(readPrompt(send)).toContain('two to four short sentences');
+    expect(readPrompt(send)).toContain(
+      'Do not repeat steps they have completed'
+    );
+    expect(readPrompt(send)).toContain(
+      'backend appends verified links at the end'
+    );
+    send.mockClear();
+    await renderer.renderAnswer({
+      question: 'What is TDH?',
+      record: RECORD,
+      canonicalUrl: 'https://6529.io/network/tdh'
+    });
+    expect(readBody(send).max_tokens).toBe(220);
+    expect(readPrompt(send)).toContain('one or two short paragraphs');
+  });
+
+  it('rejects a token-truncated Desktop procedure so the answerer can use complete facts', async () => {
+    const send = jest.fn().mockResolvedValue({
+      body: Buffer.from(
+        JSON.stringify({
+          stop_reason: 'max_tokens',
+          content: [{ type: 'text', text: 'Reset deletes' }]
+        })
+      )
+    });
+    const renderer = new HelpBotBedrockRenderer(
+      'test',
+      () => ({ send }) as never
+    );
+    await expect(
+      renderer.renderAnswer({
+        question: 'Reset my Desktop worker?',
+        record: {
+          ...RECORD,
+          id: 'desktop.transaction-reset',
+          tags: ['desktop-core']
+        },
+        canonicalUrl: 'https://6529.io/about/6529-apps'
+      })
+    ).rejects.toThrow('stopped before completion at max_tokens');
+  });
+
   it('renders text from an Anthropic Bedrock response', async () => {
     const send = jest.fn().mockResolvedValue({
       body: Buffer.from(

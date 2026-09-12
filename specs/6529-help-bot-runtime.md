@@ -608,3 +608,66 @@ private user data beyond what is needed for debugging and abuse controls.
 - Should the default Bedrock model move from the US geo inference profile to a
   global or region-specific profile once production access, residency, and
   latency are verified?
+
+## 6529 Desktop (Core) support
+
+The frontend help index owns `desktop.*` records tagged `desktop-core`, including
+native menu labels, RPC activation, automatic workers, TDH validation and repair,
+Core wallets, IPFS, and diagnostics. Immutable Core source references establish
+provenance; the runtime consumes record facts and does not read Core source or
+inspect a user's machine. These records use a real Apps canonical route with
+source-link suppression rather than constructing public `/core` links.
+
+Explicit local-Desktop support questions and scoped follow-ups retrieve the
+corpus before calendar/public-data planning. A public total-TDH query cannot
+diagnose local node state. If the loaded corpus has no matching Desktop knowledge,
+fail closed and escalate rather than substitute public database values. A cold
+corpus-load failure propagates to the processor technical-failure/refund path.
+Explicit mobile/browser
+questions do not inherit Desktop scope, including Core questions aimed at those
+platforms. Desktop-versus-website comparisons retain local-node scope. Pass the
+validated scope to retrieval so prior answer text cannot change it. Ordinary
+desktop-browser layout and website TDH questions retain normal routing.
+
+Desktop retrieval filters to Core records and existing Desktop-tagged app handoffs
+before ranking. Bare RPC/reconciliation terminology without local-app context asks
+which application the user means. Node/reference mismatch symptoms retain Desktop
+scope even without the words Core or TDH. Current symptoms and reported completed
+steps select the appropriate corpus record; previous answer prose is not appended
+to ranking queries. Negated completion reports do not advance recovery.
+
+Normal Desktop replies use a 350-token budget, target two to four short sentences,
+and are bounded to 1200 characters including links. Only explicit requests for
+detail permit 1600 tokens/6000 characters. Generation failures, empty output, token
+truncation, and oversized replies fall back to the corpus `brief_answer`, never a
+full fact dump by default. Older records without a short answer use a concise
+clarification fallback. Explicit detailed fallback keeps complete facts and warns
+by asking for a narrower topic if the complete procedure cannot fit.
+
+The frontend-owned `answer_links` metadata supplies named public 6529.io links.
+The backend removes inline model URLs and appends approved links once in a final
+`More info` footer. No irrelevant Apps link is added to native troubleshooting.
+Definitions, onboarding and later troubleshooting stages are separate records.
+`desktop-dialogue` records render their short response directly on normal turns,
+so acknowledged progress remains stable across replies. Do not repeat steps the
+user reports completing or infer missing diagnostic values.
+Ordinary answers retain their 220-token/1200-character policy; Stream is unchanged.
+
+The bot must distinguish Reconcile, Rebuild Ownership, Reset to Block, Reset to Block with Min Block, NFT Full Refresh, NFT Reset, and Recalculate TDH Now. Recovery changes local
+indexed data, not on-chain holdings. Wallet secrets and credential-bearing RPC
+URLs are never requested. Test fixtures are snapshots only; the published frontend
+index remains the sole runtime source of Desktop product knowledge.
+
+Rollout: deploy `helpBotReplyLoop` first for the new routing and answer policy,
+then publish the companion frontend corpus. The backend safely declines unsupported
+Core procedures until the corpus arrives. Publishing the new records into an old
+runtime first can misroute generic wallet questions or truncate recovery answers. No API, database migration, new service,
+or Core application release is required. Older runtimes can read the additional
+records, but need this renderer/routing update for full procedural answers.
+
+Desktop staged replies require the selected stage to exist in the published corpus.
+A new runtime against an older corpus fails closed for a missing stage, including
+a reported recalculation; it must not replay a generic TDH guide or infer a repair
+procedure from another record. Negated or uncertain completion reports do not
+authorize advancing to reconciliation, and current corrections override earlier
+acknowledgements.
