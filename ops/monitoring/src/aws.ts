@@ -33,10 +33,24 @@ const sns = new SNSClient({ maxAttempts: 3 });
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 const expiry = (): number => nowSeconds() + 45 * 86400;
 const conditional = (error: unknown): boolean =>
-  error instanceof Error &&
-  ['ConditionalCheckFailedException', 'TransactionCanceledException'].includes(
-    error.name
+  error instanceof Error && error.name === 'ConditionalCheckFailedException';
+function duplicateGroupWrite(error: unknown): boolean {
+  if (
+    !(error instanceof Error) ||
+    error.name !== 'TransactionCanceledException'
+  )
+    return false;
+  const reasons = (error as { CancellationReasons?: { Code?: string }[] })
+    .CancellationReasons;
+  // The first item guards receipt.groupKey; the second increments the group count.
+  // Missing reasons, conflicts, capacity errors or a failed count update must retry.
+  return (
+    Array.isArray(reasons) &&
+    reasons.length === 2 &&
+    reasons[0]?.Code === 'ConditionalCheckFailed' &&
+    reasons[1]?.Code === 'None'
   );
+}
 export async function read(
   pk: string
 ): Promise<Record<string, unknown> | undefined> {
@@ -116,7 +130,7 @@ export const store: Store = {
   async group(key, id, alert) {
     // Each event is counted once even when delivery/scheduling retries. A retry keeps its original bucket.
     const receipt = await read(`receipt:${id}`);
-    const effectiveKey =
+    let effectiveKey =
       typeof receipt?.groupKey === 'string' ? receipt.groupKey : key;
     if (!receipt?.groupKey) {
       try {
@@ -151,7 +165,11 @@ export const store: Store = {
           })
         );
       } catch (error) {
-        if (!conditional(error)) throw error;
+        if (!duplicateGroupWrite(error)) throw error;
+        const persisted = await read(`receipt:${id}`);
+        if (typeof persisted?.groupKey !== 'string' || !persisted.groupKey)
+          throw error;
+        effectiveKey = persisted.groupKey;
       }
     }
     const group = await store.readGroup(effectiveKey);
