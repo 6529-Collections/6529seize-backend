@@ -7,6 +7,7 @@ import {
 import { ApiCollectKind } from '@/api/generated/models/ApiCollectKind';
 import { ApiCollectFamily } from '@/api/generated/models/ApiCollectFamily';
 import {
+  ApiCollectAcquisitionPlan,
   ApiCollectAcquisitionPlanOptimalityEnum,
   ApiCollectAcquisitionPlanStatusEnum
 } from '@/api/generated/models/ApiCollectAcquisitionPlan';
@@ -33,17 +34,20 @@ import {
 
 type Plan = Awaited<ReturnType<typeof readCollectPlan>>;
 const idSchema = z.string().uuid();
+function acquisitionPlanDto(plan: Plan['result']): ApiCollectAcquisitionPlan {
+  return {
+    ...plan,
+    status: plan.status as ApiCollectAcquisitionPlanStatusEnum,
+    optimality: plan.optimality as ApiCollectAcquisitionPlanOptimalityEnum
+  };
+}
 function planDto(plan: Plan): ApiCollectPlan {
   return {
     ...plan,
     state: plan.state as ApiCollectPlanStateEnum,
     analysis: { ...plan.analysis, kind: plan.analysis.kind as ApiCollectKind },
-    result: {
-      ...plan.result,
-      status: plan.result.status as ApiCollectAcquisitionPlanStatusEnum,
-      optimality: plan.result
-        .optimality as ApiCollectAcquisitionPlanOptimalityEnum
-    }
+    result: acquisitionPlanDto(plan.result),
+    available_result: acquisitionPlanDto(plan.available_result)
   };
 }
 export function handleCreateCollectPlan(

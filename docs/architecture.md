@@ -154,7 +154,15 @@ for complete review or recovery evidence.
 
 `collect_plans` stores incremental listing scans with renewable leases and
 profile/catalog invalidation. It distinguishes a completed asset scan from
-incomplete market coverage. `collect_rules` and `collect_rule_operations` store
+incomplete market coverage. Plan responses optionally include `available_result`,
+an uncapped comparison over the same captured candidates and evaluation instant,
+alongside the result constrained by an explicitly echoed `budget_wei`. Without
+a cap the same result is reused; otherwise one additional search is bounded to
+20,000 states. Both use the same observed unit prices and estimated gas, make no
+additional market reads and preserve incomplete coverage. Neither authorizes
+spending or claims a global minimum. This additive response requires the API
+before its frontend consumer, without database or loop changes.
+`collect_rules` and `collect_rule_operations` store
 fixed targets, review limits, one outstanding operation and monotonic verified
 acquisitions. Rules only prepare transactions for owner approval. Their limits
 are not a smart-contract-enforced mandate or authority to broadcast unattended.
