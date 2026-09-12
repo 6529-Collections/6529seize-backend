@@ -1,7 +1,14 @@
 import { collectingDb } from '@/collecting/collecting.db';
 import { collectingService } from '@/collecting/collecting.service';
 import { collectingHash } from '@/collecting/collecting-analysis';
-import { CollectingAsset } from '@/collecting/collecting.types';
+import {
+  CollectingAsset,
+  CollectingFamily
+} from '@/collecting/collecting.types';
+import {
+  CollectingWorkBudget,
+  CollectingWorkTimeout
+} from '@/collecting/collecting-work-budget';
 import { ProjectedAccountTdh } from '@/collecting/collecting-tdh-projection';
 import { createCollectingTdhTargetSolver } from '@/collecting/collecting-tdh-target';
 import {
@@ -49,6 +56,30 @@ async function readBooks(assets: CollectingAsset[]) {
   }
 }
 
+async function readTargetBooks(
+  assets: CollectingAsset[],
+  families: CollectingFamily[],
+  budget: CollectingWorkBudget
+) {
+  try {
+    return await budget.waitFor(() =>
+      Promise.all(
+        families.map(async (family) => ({
+          family,
+          books: await readBooks(
+            assets.filter((asset) => asset.family === family)
+          )
+        }))
+      )
+    );
+  } catch (error) {
+    // The verified baseline remains usable; unavailable market coverage does
+    // not establish that the target is impossible or cancel the underlying read.
+    if (error instanceof CollectingWorkTimeout) return [];
+    throw error;
+  }
+}
+
 function accountDto(account: ProjectedAccountTdh) {
   return {
     ...account,
@@ -63,34 +94,48 @@ function accountDto(account: ProjectedAccountTdh) {
 }
 
 export async function createCollectTdhTargetPlan(
-  request: CollectingTdhTargetRequest
+  request: CollectingTdhTargetRequest,
+  budget = new CollectingWorkBudget()
 ): Promise<ApiCollectTdhTargetPlan> {
-  const now = Date.now(),
-    deadline = now + COLLECT_TDH_TARGET_LIMITS.duration_ms;
-  const [source, catalog] = await Promise.all([
-    collectingDb.readTdhProjectionSource(request.profile_id),
-    collectingService.getCatalog()
-  ]);
-  const solve = createCollectingTdhTargetSolver(source, request, now, deadline);
+  // Start once, before I/O, and leave time to serialize the bounded result.
+  const searchBudget = budget.child(
+    COLLECT_TDH_TARGET_LIMITS.duration_ms,
+    2000
+  );
+  const now = Date.now();
+  const deadline = now + searchBudget.remainingMs();
+  const [source, catalog] = await searchBudget.waitFor(() =>
+    Promise.all([
+      collectingDb.readTdhProjectionSource(request.profile_id),
+      collectingService.getCatalog()
+    ])
+  );
+  const solve = createCollectingTdhTargetSolver(
+    source,
+    request,
+    now,
+    deadline,
+    searchBudget
+  );
   const baselineOnly = solve([]);
+  const candidateBudget = searchBudget.child(8000);
   const groups =
     baselineOnly.status === 'NO_PURCHASE_NEEDED'
       ? []
-      : await Promise.all(
-          request.families.map(async (family) => ({
-            family,
-            books: await readBooks(
-              catalog.assets.filter((asset) => asset.family === family)
-            )
-          }))
+      : await readTargetBooks(
+          catalog.assets,
+          request.families,
+          candidateBudget
         );
   const captured = collectTdhTargetCandidates(
     source,
     catalog.assets,
     groups,
     now,
-    deadline
+    deadline,
+    candidateBudget
   );
+  const captureTimedOut = candidateBudget.expired();
   const result =
     baselineOnly.status === 'NO_PURCHASE_NEEDED'
       ? baselineOnly
@@ -178,5 +223,10 @@ export async function createCollectTdhTargetPlan(
       'A gap means no meeting portfolio was found within captured coverage and search bounds, not that the target is impossible.'
     ]
   };
-  return { plan_id: collectingHash(value), ...value };
+  if (!noPurchase && captureTimedOut)
+    value.search.stop_reason =
+      ApiCollectTdhTargetSearchStopReasonEnum.TimeLimit;
+  const planId = collectingHash(value);
+  budget.assertAvailable();
+  return { plan_id: planId, ...value };
 }

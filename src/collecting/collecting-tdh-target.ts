@@ -17,6 +17,11 @@ import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
 import { MARKET_BATCH_LIMITS } from '@/marketplace/market-batch.schema';
 import { NULL_ADDRESS } from '@/constants';
 import { marketUintSchema } from '@/marketplace/seaport.schema';
+import { CollectingWorkBudget } from '@/collecting/collecting-work-budget';
+
+function targetTimeExpired(deadline: number, budget: CollectingWorkBudget) {
+  return Date.now() >= deadline || budget.expired();
+}
 
 interface State {
   key: string;
@@ -140,7 +145,8 @@ function completionSeeds(
   source: CollectingTdhSource,
   baseline: CollectingTdhProjection,
   candidates: CollectingTdhTargetCandidate[],
-  deadline: number
+  deadline: number,
+  budget: CollectingWorkBudget
 ): number[][] {
   const balances = new Map(
     baseline.baseline.tokens.map((token) => [token.asset_key, token.balance])
@@ -155,10 +161,11 @@ function completionSeeds(
     byAsset.set(candidate.asset_key, group);
   });
   return completionGroups(source).flatMap((group) => {
-    if (Date.now() >= deadline) return [];
+    if (targetTimeExpired(deadline, budget)) return [];
     const level = Math.min(...group.map((key) => balances.get(key) ?? 0)) + 1;
     const quantities = candidates.map(() => 0);
     for (const key of group) {
+      if (targetTimeExpired(deadline, budget)) return [];
       const missing = Math.max(0, level - (balances.get(key) ?? 0));
       if (!missing) continue;
       const choices = (byAsset.get(key) ?? [])
@@ -195,7 +202,8 @@ function prepareTargetSearch(
   request: CollectingTdhTargetRequest,
   supplied: CollectingTdhTargetCandidate[],
   now = Date.now(),
-  deadline = now + LIMIT.duration_ms
+  deadline = now + LIMIT.duration_ms,
+  workBudget = new CollectingWorkBudget(LIMIT.duration_ms)
 ) {
   validateRequest(source, request, now);
   const at = new Date(now);
@@ -215,12 +223,13 @@ function prepareTargetSearch(
     historyWork * source.account.wallets.length + source.input.tokens.length
   );
   const workUsed = baseWork * 2; // Published-snapshot parity and the future no-purchase baseline.
-  if (workUsed > LIMIT.replay_work || Date.now() >= deadline)
+  if (workUsed > LIMIT.replay_work || targetTimeExpired(deadline, workBudget))
     throw new CustomApiCompliantException(
       503,
       'The profile exceeds the target analysis work window'
     );
   assertCollectingTdhParity(source.input, source.official);
+  workBudget.assertAvailable();
   const project = createCollectingTdhProjector({
     ...source.input,
     evaluated_at: evaluatedAt,
@@ -251,6 +260,7 @@ function prepareTargetSearch(
     request,
     now,
     deadline,
+    workBudget,
     historyWork,
     baseWork,
     workUsed,
@@ -443,12 +453,12 @@ class TargetSearch {
   }
 
   private expand(state: State, projection: CollectingTdhProjection): void {
-    const { candidates, deadline, target } = this.context;
+    const { candidates, deadline, target, workBudget } = this.context;
     for (
       let index = 0;
       index < candidates.length &&
       this.generated < LIMIT.generated_states &&
-      Date.now() < deadline;
+      !targetTimeExpired(deadline, workBudget);
       index++
     ) {
       for (const quantity of candidateQuantities(
@@ -465,8 +475,16 @@ class TargetSearch {
   }
 
   private seedEfficiency(): void {
-    const { source, candidates, known, target, baseline, request, deadline } =
-      this.context;
+    const {
+      source,
+      candidates,
+      known,
+      target,
+      baseline,
+      request,
+      deadline,
+      workBudget
+    } = this.context;
     const memesIndex = Math.max(
       0,
       ...source.input.tokens
@@ -475,7 +493,10 @@ class TargetSearch {
     );
     const required = Number(target - BigInt(baseline.baseline.boosted_tdh));
     candidates.forEach((candidate, index) => {
-      if (Date.now() >= deadline || this.generated >= LIMIT.generated_states)
+      if (
+        targetTimeExpired(deadline, workBudget) ||
+        this.generated >= LIMIT.generated_states
+      )
         return;
       const token = known.get(candidate.asset_key)!;
       // Frozen base accrual only schedules exploration. It never establishes
@@ -586,11 +607,15 @@ class TargetSearch {
   }
 
   run() {
-    const { source, baseline, candidates, deadline } = this.context;
+    const { source, baseline, candidates, deadline, workBudget } = this.context;
     if (!this.feasible) {
-      completionSeeds(source, baseline, candidates, deadline).forEach(
-        (quantities) => this.enqueue(quantities, true)
-      );
+      completionSeeds(
+        source,
+        baseline,
+        candidates,
+        deadline,
+        workBudget
+      ).forEach((quantities) => this.enqueue(quantities, true));
       this.seedEfficiency();
       this.expand(this.best, baseline);
     }
@@ -603,13 +628,13 @@ class TargetSearch {
         this.stop = 'EVALUATION_LIMIT';
         break;
       }
-      if (Date.now() >= deadline) {
+      if (targetTimeExpired(deadline, workBudget)) {
         this.stop = 'TIME_LIMIT';
         break;
       }
       if (!this.evaluate(this.next())) break;
     }
-    if (Date.now() >= deadline) this.stop = 'TIME_LIMIT';
+    if (targetTimeExpired(deadline, workBudget)) this.stop = 'TIME_LIMIT';
     else if (
       this.generated >= LIMIT.generated_states &&
       this.stop === 'COMPLETE'
@@ -664,9 +689,17 @@ export function createCollectingTdhTargetSolver(
   source: CollectingTdhSource,
   request: CollectingTdhTargetRequest,
   now = Date.now(),
-  deadline = now + LIMIT.duration_ms
+  deadline = now + LIMIT.duration_ms,
+  workBudget = new CollectingWorkBudget(LIMIT.duration_ms)
 ) {
-  const context = prepareTargetSearch(source, request, [], now, deadline);
+  const context = prepareTargetSearch(
+    source,
+    request,
+    [],
+    now,
+    deadline,
+    workBudget
+  );
   return (supplied: CollectingTdhTargetCandidate[]) =>
     new TargetSearch({
       ...context,
@@ -680,12 +713,14 @@ export function solveCollectingTdhTarget(
   request: CollectingTdhTargetRequest,
   supplied: CollectingTdhTargetCandidate[],
   now = Date.now(),
-  deadline = now + LIMIT.duration_ms
+  deadline = now + LIMIT.duration_ms,
+  workBudget = new CollectingWorkBudget(LIMIT.duration_ms)
 ) {
   return createCollectingTdhTargetSolver(
     source,
     request,
     now,
-    deadline
+    deadline,
+    workBudget
   )(supplied);
 }
