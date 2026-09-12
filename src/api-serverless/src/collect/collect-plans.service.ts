@@ -5,6 +5,7 @@ import {
   CollectingAnalysisRequest
 } from '@/collecting/collecting.types';
 import { collectingService } from '@/collecting/collecting.service';
+import { CollectingWorkBudget } from '@/collecting/collecting-work-budget';
 import {
   CollectingCandidate,
   planCollectingAcquisitions
@@ -142,17 +143,20 @@ export function collectPlanView(row: PlanRow) {
 export async function createCollectPlan(
   profileId: string,
   goal: CollectingAnalysisRequest,
-  options: CollectPlanOptions
+  options: CollectPlanOptions,
+  budget = new CollectingWorkBudget()
 ) {
   if (goal.profile_id !== profileId)
     throw new CustomApiCompliantException(
       403,
       'Create a plan for your active profile.'
     );
-  const analysis = await collectingService.analyze({
-    ...goal,
-    recipient: options.recipient
-  });
+  const analysis = await budget.waitFor(() =>
+    collectingService.analyze({
+      ...goal,
+      recipient: options.recipient
+    })
+  );
   if (
     options.expected_analysis_id &&
     options.expected_analysis_id !== analysis.analysis_id
@@ -162,7 +166,7 @@ export async function createCollectPlan(
       'Your collection changed. Refresh the analysis.',
       'HOLDINGS_CHANGED'
     );
-  const fee = await marketChain().rpc.getFeeData();
+  const fee = await budget.waitFor(() => marketChain().rpc.getFeeData());
   if (fee.maxFeePerGas === null || fee.maxFeePerGas <= BigInt(0))
     throw new CustomApiCompliantException(
       503,
@@ -178,11 +182,14 @@ export async function createCollectPlan(
   ).sort((a, b) => a.localeCompare(b));
   // A non-null seed accounts for every asset; partial coverage always scans.
   const seed = assetKeys.length
-    ? await seedCollectPlanFromIndex({
-        analysis,
-        assetKeys,
-        gasReservePerOrderWei: gasReserve.toString()
-      })
+    ? await seedCollectPlanFromIndex(
+        {
+          analysis,
+          assetKeys,
+          gasReservePerOrderWei: gasReserve.toString()
+        },
+        budget.child(8000, 3000)
+      )
     : null;
   const payload: PlanData = {
     goal,
@@ -215,11 +222,16 @@ export async function createCollectPlan(
     created_at: Date.now(),
     updated_at: Date.now()
   };
-  await dbSupplier().execute(
-    'INSERT INTO collect_plans (id,profile_id,state,payload_json,created_at,updated_at) VALUES (:id,:profile_id,:state,:payload_json,:created_at,:updated_at)',
-    row
+  await budget.waitFor(() =>
+    dbSupplier().execute(
+      'INSERT INTO collect_plans (id,profile_id,state,payload_json,created_at,updated_at) VALUES (:id,:profile_id,:state,:payload_json,:created_at,:updated_at)',
+      row
+    )
   );
-  return readCollectPlan(row.id, profileId);
+  const saved = await budget.waitFor(() => rowFor(row.id, profileId));
+  const result = collectPlanView(saved);
+  budget.assertAvailable();
+  return result;
 }
 
 async function rowFor(id: string, profileId: string): Promise<PlanRow> {
