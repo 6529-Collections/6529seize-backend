@@ -77,6 +77,10 @@ on:
           - xTdhLoop
           - artworkDocumentationStorage
           - artworkDocumentationProcessor
+      expected_source_sha:
+        type: string
+        description: 'Exact reviewed source commit; fail if the branch resolves differently'
+        required: false
       release_pull_request:
         type: string
         description: 'Merged PR represented by this production release'
@@ -138,6 +142,7 @@ jobs:
     env:
       INPUT_ENVIRONMENT: ${{ github.event.inputs.environment }}
       INPUT_SERVICE: ${{ github.event.inputs.service }}
+      EXPECTED_SOURCE_SHA: ${{ github.event.inputs.expected_source_sha }}
     steps:
       - name: Validate dispatch inputs before using credentials
         shell: bash
@@ -149,6 +154,16 @@ jobs:
             test "$GITHUB_REF" = refs/heads/main
           else
             test "$GITHUB_REF" = refs/heads/1a-staging
+          fi
+          if [ -n "$EXPECTED_SOURCE_SHA" ]; then
+            if ! [[ "$EXPECTED_SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]; then
+              echo "expected_source_sha must be a full lowercase commit SHA" >&2
+              exit 1
+            fi
+            if [ "$GITHUB_SHA" != "$EXPECTED_SOURCE_SHA" ]; then
+              echo "Source changed after review; refusing deployment" >&2
+              exit 1
+            fi
           fi
       - name: Check production preconditions
         shell: bash
