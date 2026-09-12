@@ -46,7 +46,7 @@ import { parseWork, processWork, Work } from './pipeline.js';
 import { deliver, DeliveryError, webhookUrl } from './webhook.js';
 import { sentryAlert, verifySignature } from './sentry.js';
 import {
-  checkProbe,
+  measureProbe,
   parseProbeTargets,
   probeUrl,
   ProbeTarget
@@ -452,7 +452,37 @@ export async function probe(): Promise<void> {
 
 async function probeTarget(target: ProbeTarget, now: number): Promise<void> {
   const name = target.name;
-  const healthy = await checkProbe(target);
+  const { healthy, durationMs } = await measureProbe(target);
+  // Publish the observation before state writes, so a storage failure cannot
+  // erase the measured endpoint result. Only bounded operator-defined names
+  // become dimensions; endpoint URLs and response data never enter metrics.
+  await new CloudWatchClient({ maxAttempts: 3 })
+    .send(
+      new PutMetricDataCommand({
+        Namespace: '6529/OperationalMonitoring',
+        MetricData: [
+          { MetricName: 'ProbeSuccess', Value: healthy ? 1 : 0, Unit: 'Count' },
+          { MetricName: 'ProbeFailure', Value: healthy ? 0 : 1, Unit: 'Count' },
+          {
+            MetricName: 'ProbeDurationMilliseconds',
+            Value: durationMs,
+            Unit: 'Milliseconds'
+          }
+        ].map((metric) => ({
+          ...metric,
+          Unit: metric.Unit as 'Count' | 'Milliseconds',
+          Dimensions: [
+            { Name: 'Environment', Value: environment() },
+            { Name: 'Target', Value: name }
+          ]
+        }))
+      }),
+      { abortSignal: AbortSignal.timeout(2000) }
+    )
+    .catch(() => {
+      // A dashboard metric failure must not prevent the existing uptime alert.
+      metric('ProbeMetricPublicationFailures', 1);
+    });
   const previous = await read(`probe:${name}`);
   const failures = healthy ? 0 : Number(previous?.failures ?? 0) + 1;
   const down = failures >= 2;

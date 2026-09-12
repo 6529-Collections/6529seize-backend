@@ -205,13 +205,102 @@ test('queue heartbeat metrics survive malformed probe config and endpoint-state 
       }
     ]);
     await assert.rejects(probe, /PROBE_STORAGE_FAILED/);
-    assert.equal(metrics.length, 2);
+    assert.equal(metrics.length, 3);
     assert.equal(JSON.stringify(metrics).includes('HeartbeatAge'), true);
+    const observation = metrics[2] as {
+      MetricData: { MetricName: string; Value: number; Dimensions: unknown }[];
+    };
+    assert.deepEqual(
+      observation.MetricData.map((item) => item.MetricName),
+      ['ProbeSuccess', 'ProbeFailure', 'ProbeDurationMilliseconds']
+    );
+    assert.equal(observation.MetricData[0]?.Value, 1);
+    assert.equal(observation.MetricData[1]?.Value, 0);
+    assert.deepEqual(observation.MetricData[0]?.Dimensions, [
+      { Name: 'Environment', Value: 'prod' },
+      { Name: 'Target', Value: 'api' }
+    ]);
+    assert.equal(
+      JSON.stringify(observation).includes('api.example.com'),
+      false
+    );
   } finally {
     process.env = original;
     metricMock.mock.restore();
     dbMock.mock.restore();
     queueMock.mock.restore();
     fetchMock.mock.restore();
+  }
+});
+
+test('failed probe-metric publication preserves the critical uptime alert and suppresses private diagnostics', async () => {
+  const original = process.env;
+  process.env = {
+    ...original,
+    ENVIRONMENT: 'staging',
+    RECEIPTS_TABLE: 'test',
+    NORMAL_QUEUE_URL: 'normal',
+    CRITICAL_QUEUE_URL: 'critical',
+    PROBE_TARGETS: JSON.stringify([
+      { name: 'api', url: 'https://api.example.com/health' }
+    ])
+  };
+  const queued: { QueueUrl?: string; MessageBody?: string }[] = [];
+  const logged: unknown[] = [];
+  const metricMock = mock.method(
+    CloudWatchClient.prototype,
+    'send',
+    async (command: { input: { MetricData?: { MetricName?: string }[] } }) => {
+      if (command.input.MetricData?.[0]?.MetricName === 'ProbeSuccess')
+        throw new Error('private AWS diagnostic');
+      return {};
+    }
+  );
+  const dbMock = mock.method(
+    ddb,
+    'send',
+    async (command: {
+      input: { Key?: { pk?: string }; Item?: { pk?: string } };
+    }) => {
+      if (command.input.Key?.pk?.startsWith('probe:'))
+        return { Item: { failures: 1, down: false } };
+      if (command.input.Item?.pk?.startsWith('probe:'))
+        throw new Error('PROBE_STATE_WRITE_REACHED');
+      return { Item: { seenAt: Math.floor(Date.now() / 1000) } };
+    }
+  );
+  const queueMock = mock.method(
+    sqs,
+    'send',
+    async (command: { input: { QueueUrl?: string; MessageBody?: string } }) => {
+      queued.push(command.input);
+      return {};
+    }
+  );
+  const logMock = mock.method(console, 'log', (entry: unknown) => {
+    logged.push(entry);
+  });
+  const fetchMock = mock.method(
+    globalThis,
+    'fetch',
+    async () => new Response('private response', { status: 503 })
+  );
+  try {
+    await assert.rejects(probe, /PROBE_STATE_WRITE_REACHED/);
+    assert.ok(
+      queued.some(
+        (message) =>
+          message.QueueUrl === 'critical' &&
+          message.MessageBody?.includes('UPTIME_FAILURE')
+      )
+    );
+    assert.ok(
+      JSON.stringify(logged).includes('ProbeMetricPublicationFailures')
+    );
+    assert.equal(JSON.stringify([queued, logged]).includes('private'), false);
+  } finally {
+    process.env = original;
+    for (const mocked of [metricMock, dbMock, queueMock, logMock, fetchMock])
+      mocked.mock.restore();
   }
 });

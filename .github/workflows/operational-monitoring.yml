@@ -33,4 +33,4 @@ jobs:
       - name: Validate SAM and CloudFormation schemas
         working-directory: ops/monitoring
         run: |
-          pipx run --spec cfn-lint==1.40.4 cfn-lint bootstrap.json source-bootstrap.json monitoring-prod.json monitoring-staging.json source-prod.json source-staging.json
+          pipx run --spec cfn-lint==1.40.4 cfn-lint bootstrap.json source-bootstrap.json monitoring-prod.json monitoring-staging.json source-prod.json source-staging.json dashboard-prod.json dashboard-staging.json access-monitoring.json access-source.json

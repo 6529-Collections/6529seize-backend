@@ -174,3 +174,13 @@ without starting MySQL:
 Root Jest/TypeScript exclude this independent package; the dedicated CI job owns
 its tests and compilation. Deployment is described in
 [the operational runbook](../docs/operations/isolated-operational-monitoring.md).
+
+## Health dashboards
+
+Separate generated `dashboard-prod.json` and `dashboard-staging.json` templates
+show monitoring pipeline health, bounded synthetic probe observations and
+verified source-account request metrics. Cross-account console access and role
+grants are independent of runtime delivery. Follow the
+[dashboard runbook](../docs/operations/monitoring-health-dashboard.md) for metric
+semantics, required resource parameters, rollout and validation. Pipeline
+heartbeats do not establish application-job success.
