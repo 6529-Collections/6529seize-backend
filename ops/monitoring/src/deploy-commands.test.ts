@@ -14,6 +14,14 @@ import { join } from 'node:path';
 
 const cases = [
   { name: 'monitoring without fallback', source: false },
+  { name: 'monitoring failed deploy', source: false, deployFails: true },
+  { name: 'source failed deploy', source: true, deployFails: true },
+  {
+    name: 'monitoring failed protection',
+    source: false,
+    protectionFails: true
+  },
+  { name: 'source failed protection', source: true, protectionFails: true },
   {
     name: 'monitoring exact fallback grant',
     source: false,
@@ -85,6 +93,13 @@ for (const scenario of cases) {
       'spawnSync',
       (_file: string, args: string[]) => {
         calls.push(args);
+        if ('deployFails' in scenario && args[1] === 'deploy')
+          return { status: 1, stdout: '' };
+        if (
+          'protectionFails' in scenario &&
+          args[1] === 'update-termination-protection'
+        )
+          return { status: 1, stdout: '' };
         let stdout = '';
         if (args[0] === 'sts') stdout = source ? sourceAccount : monitorAccount;
         if (args[1] === 'get-policy') stdout = 'v2';
@@ -128,7 +143,20 @@ for (const scenario of cases) {
         );
         return;
       }
-      await load();
+      if ('deployFails' in scenario) {
+        await assert.rejects(load, /AWS cloudformation deploy failed/);
+        assert.equal(
+          calls.some((args) => args[1] === 'update-termination-protection'),
+          false
+        );
+        return;
+      }
+      if ('protectionFails' in scenario)
+        await assert.rejects(
+          load,
+          /AWS cloudformation update-termination-protection failed/
+        );
+      else await load();
       const template = readFileSync(
         new URL(
           `../${source ? 'source' : 'monitoring'}-prod.json`,
@@ -139,9 +167,20 @@ for (const scenario of cases) {
         template.byteLength > 51200,
         'fixture must exercise the AWS inline-template limit'
       );
-      const artifactCommands = calls.filter(
+      const stackCommands = calls.filter(
         (args) => args[0] === 'cloudformation'
       );
+      assert.equal(stackCommands.length, 3);
+      assert.deepEqual(stackCommands[2], [
+        'cloudformation',
+        'update-termination-protection',
+        '--enable-termination-protection',
+        '--stack-name',
+        `seize-monitoring-prod${source ? '-source' : ''}`,
+        ...(source ? ['--region', 'us-east-1'] : [])
+      ]);
+      assert.equal(calls.at(-1), stackCommands[2]);
+      const artifactCommands = stackCommands.slice(0, 2);
       assert.equal(artifactCommands.length, 2);
       for (const args of artifactCommands) {
         assert.equal(args[args.indexOf('--s3-bucket') + 1], bucket);

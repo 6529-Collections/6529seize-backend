@@ -151,6 +151,15 @@
                 {
                   "Effect": "Allow",
                   "Action": [
+                    "cloudformation:CreateChangeSet"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
                     "sqs:*"
                   ],
                   "Resource": {
@@ -594,6 +603,15 @@
                   ],
                   "Resource": {
                     "Fn::Sub": "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:seize-monitoring-prod-*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudformation:CreateChangeSet"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31"
                   }
                 },
                 {

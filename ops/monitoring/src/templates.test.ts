@@ -2,6 +2,63 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
+test('event-bus forwarding retains its local DLQ and failure alarm without unsupported retry settings', () => {
+  for (const env of ['prod', 'staging']) {
+    const source = JSON.parse(
+      readFileSync(new URL(`../source-${env}.json`, import.meta.url), 'utf8')
+    ).Resources;
+    const target = source.AlarmForwardRule.Properties.Targets[0];
+    assert.deepEqual(target.Arn, { Ref: 'MonitoringEventBusArn' });
+    assert.equal(Object.hasOwn(target, 'RetryPolicy'), false);
+    assert.deepEqual(target.DeadLetterConfig.Arn, {
+      'Fn::GetAtt': ['RelayDeadLetters', 'Arn']
+    });
+    assert.equal(source.RelayDeadLetters.DeletionPolicy, 'Retain');
+    assert.equal(source.RelayDeadLetters.Properties.SqsManagedSseEnabled, true);
+    assert.equal(
+      source.RelayDeadLetters.Properties.MessageRetentionPeriod,
+      1209600
+    );
+    const grant =
+      source.RelayDeadLettersPolicy.Properties.PolicyDocument.Statement[0];
+    assert.deepEqual(grant.Principal, { Service: 'events.amazonaws.com' });
+    assert.equal(grant.Action, 'sqs:SendMessage');
+    assert.deepEqual(grant.Resource, target.DeadLetterConfig.Arn);
+    assert.deepEqual(grant.Condition.ArnEquals['aws:SourceArn'], {
+      'Fn::GetAtt': ['AlarmForwardRule', 'Arn']
+    });
+    const alarm = source.RelayDeadLettersAlarm.Properties;
+    assert.equal(alarm.Namespace, 'AWS/SQS');
+    assert.equal(alarm.MetricName, 'ApproximateNumberOfMessagesVisible');
+    assert.equal(alarm.Statistic, 'Maximum');
+    assert.equal(alarm.Threshold, 1);
+    assert.deepEqual(alarm.Dimensions, [
+      {
+        Name: 'QueueName',
+        Value: { 'Fn::GetAtt': ['RelayDeadLetters', 'QueueName'] }
+      }
+    ]);
+    assert.deepEqual(alarm.AlarmActions, {
+      'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
+    });
+    const monitor = JSON.parse(
+      readFileSync(
+        new URL(`../monitoring-${env}.json`, import.meta.url),
+        'utf8'
+      )
+    ).Resources;
+    for (const lane of ['Normal', 'Critical']) {
+      assert.deepEqual(
+        monitor[`${lane}Rule`].Properties.Targets[0].RetryPolicy,
+        {
+          MaximumEventAgeInSeconds: 86400,
+          MaximumRetryAttempts: 185
+        }
+      );
+    }
+  }
+});
+
 test('source catalog coverage is complete and monitoring delivery has no application runtime boundary', () => {
   const catalog = JSON.parse(
     readFileSync(
