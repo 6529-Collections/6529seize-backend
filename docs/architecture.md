@@ -709,10 +709,16 @@ summaries. They exclude currently declared common-ownership pairs while keeping
 their activity in wallet denominators. Outputs include rule version, source and
 summary coverage, sample transaction evidence, and candidate preselection limits;
 scores are investigative rules rather than ownership probabilities. This first
-version has no funding analysis, public API, Lambda, or enabled schedule. The
-CLI uses `doInDbContext` with schema synchronization and Redis disabled. Deploy
-and invoke `dbMigrationsLoop` for its additive tables before installing/running
-the CLI on an operator host. See the [wallet transfer analysis runbook](../ops/docs/operations/wallet-transfer-analysis.md).
+version has no funding analysis, public API, additional Lambda, or enabled
+schedule. The CLI uses `doInDbContext` with schema synchronization and Redis
+disabled. Its historical supervisor keeps a single connection pool, binds
+CloudWatch monitoring to the verified database identity, pauses on load or
+missing metrics, and uses a dedicated advisory-lock connection without a long
+transaction. It persists a fixed historical target and pause/stop state.
+Deploy `dbMigrationsLoop` with `db_schema_scope=wallet-transfer-analysis` to
+create only its three derived tables, without synchronizing unrelated entities
+or running unrelated data migrations. Then install the reviewed CLI on the
+operator host. See the [wallet transfer analysis runbook](../ops/docs/operations/wallet-transfer-analysis.md).
 
 Main Stage Meme-card associations are stored separately in
 `meme_card_drop_mappings`, with one unique row per Meme card ID and drop ID.

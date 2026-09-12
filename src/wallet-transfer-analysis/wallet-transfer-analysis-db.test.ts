@@ -6,13 +6,16 @@ import {
   WALLET_TRANSFER_WALLET_DAYS_TABLE
 } from '@/constants';
 import { RequestContext } from '@/request.context';
+import { DbPoolName } from '@/db-query.options';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { buildTransaction } from '@/tests/test.transactions.helpers';
 import {
+  ANALYSIS_LOCK_WAIT_SECONDS,
   DAY_MS,
   PairDailySummary,
   REPORT_QUERY_BUDGET_MS,
+  SOURCE_QUERY_BUDGET_MS,
   WalletDailySummary,
   WalletTransferAnalysisError
 } from './types';
@@ -97,6 +100,192 @@ describeWithSeed('WalletTransferAnalysisDb', [], () => {
   beforeEach(() => {
     repository = new WalletTransferAnalysisDb(() => sqlExecutor);
   });
+
+  it('reads a validated database identity from the primary with a source-query budget', async () => {
+    const executed = jest.spyOn(sqlExecutor, 'execute');
+    try {
+      const identity = await repository.getDatabaseIdentity(ctx);
+      expect(identity.server_uuid).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+      );
+      expect(identity.database_name).toBe(process.env.DB_NAME);
+      expect(executed).toHaveBeenCalledWith(
+        expect.stringContaining(
+          `MAX_EXECUTION_TIME(${SOURCE_QUERY_BUDGET_MS})`
+        ),
+        undefined,
+        expect.objectContaining({ forcePool: DbPoolName.WRITE })
+      );
+    } finally {
+      executed.mockRestore();
+    }
+  });
+
+  it.each([false, true])(
+    'restores both session lock waits on the same connection after failure=%s',
+    async (fail) => {
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const scopedCtx: RequestContext = { connection };
+          const options = { wrappedConnection: connection };
+          const readSettings = () =>
+            sqlExecutor.oneOrNull<{
+              row_wait: number;
+              metadata_wait: number;
+            }>(
+              `SELECT @@SESSION.innodb_lock_wait_timeout AS row_wait,
+          @@SESSION.lock_wait_timeout AS metadata_wait`,
+              undefined,
+              options
+            );
+          const defaults = (await readSettings())!;
+          await sqlExecutor.execute(
+            'SET SESSION innodb_lock_wait_timeout = 41, SESSION lock_wait_timeout = 43',
+            undefined,
+            options
+          );
+          try {
+            const failure = new Error('Synthetic transaction work failure');
+            const work = repository.inTransaction(async (txCtx) => {
+              expect(txCtx.connection).toBe(connection);
+              expect(await readSettings()).toEqual({
+                row_wait: ANALYSIS_LOCK_WAIT_SECONDS,
+                metadata_wait: ANALYSIS_LOCK_WAIT_SECONDS
+              });
+              if (fail) throw failure;
+              return 'complete';
+            }, scopedCtx);
+            if (fail) await expect(work).rejects.toBe(failure);
+            else await expect(work).resolves.toBe('complete');
+            expect(await readSettings()).toEqual({
+              row_wait: 41,
+              metadata_wait: 43
+            });
+          } finally {
+            await sqlExecutor.execute(
+              `SET SESSION innodb_lock_wait_timeout = :rowWait,
+             SESSION lock_wait_timeout = :metadataWait`,
+              {
+                rowWait: defaults.row_wait,
+                metadataWait: defaults.metadata_wait
+              },
+              options
+            );
+          }
+        }
+      );
+    }
+  );
+
+  it('preserves the source budget hint in MySQL plans for bounds, advancement, and buckets', async () => {
+    await repository.inTransaction(async (txCtx) => {
+      const sourceReads = [
+        () => repository.getSourceBounds(CONTRACT, txCtx),
+        () => repository.findNextBlock(CONTRACT, 0, 1_999, txCtx),
+        () => repository.loadBucket(CONTRACT, 1_000, 1_999, 10, txCtx)
+      ];
+      for (const read of sourceReads) {
+        const executed = jest.spyOn(sqlExecutor, 'execute');
+        let query: Parameters<typeof sqlExecutor.execute> | undefined;
+        try {
+          await read();
+          query = executed.mock.calls[0];
+        } finally {
+          executed.mockRestore();
+        }
+        expect(query).toBeDefined();
+        const options = { wrappedConnection: txCtx.connection };
+        const readWarnings = () =>
+          sqlExecutor.execute<{ Level: string; Message: string }>(
+            'SHOW WARNINGS',
+            undefined,
+            options
+          );
+        expect(
+          (await readWarnings()).filter((warning) => warning.Level !== 'Note')
+        ).toEqual([]);
+        await sqlExecutor.execute(`EXPLAIN ${query![0]}`, query![1], options);
+        const warnings = await readWarnings();
+        expect(warnings.filter((warning) => warning.Level !== 'Note')).toEqual(
+          []
+        );
+        expect(
+          warnings.some((warning) =>
+            warning.Message.includes(
+              `MAX_EXECUTION_TIME(${SOURCE_QUERY_BUDGET_MS})`
+            )
+          )
+        ).toBe(true);
+      }
+      const executed = jest.spyOn(sqlExecutor, 'execute');
+      try {
+        await repository.explainSourceBucket(CONTRACT, 1_000, 1_999, 10, txCtx);
+        expect(executed.mock.calls[0][0]).toContain(
+          `EXPLAIN SELECT /*+ MAX_EXECUTION_TIME(${SOURCE_QUERY_BUDGET_MS}) */`
+        );
+      } finally {
+        executed.mockRestore();
+      }
+    }, ctx);
+  });
+
+  it('discards only the current QueryRunner physical connection if session restoration fails', async () => {
+    const physical = { destroy: jest.fn() };
+    const runner = {
+      connect: jest.fn().mockResolvedValue(physical),
+      rollbackTransaction: jest.fn().mockResolvedValue(undefined)
+    };
+    const read = jest.spyOn(sqlExecutor, 'oneOrNull').mockResolvedValueOnce({
+      row_wait: 41,
+      metadata_wait: 43
+    });
+    const execute = jest
+      .spyOn(sqlExecutor, 'execute')
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error('Synthetic restore failure'));
+    try {
+      await expect(
+        repository.inTransaction(async () => 'complete', {
+          connection: { connection: runner }
+        })
+      ).rejects.toThrow('analysis connection was discarded');
+      expect(runner.rollbackTransaction).toHaveBeenCalledTimes(1);
+      expect(runner.connect).toHaveBeenCalledTimes(1);
+      expect(physical.destroy).toHaveBeenCalledTimes(1);
+    } finally {
+      read.mockRestore();
+      execute.mockRestore();
+    }
+  });
+
+  it.each(['bounds', 'next', 'bucket'] as const)(
+    'reports a safe operator error after a %s source timeout',
+    async (operation) => {
+      const executed = jest
+        .spyOn(sqlExecutor, 'execute')
+        .mockRejectedValueOnce({
+          code: 'ER_QUERY_TIMEOUT',
+          errno: 3024,
+          message: 'private SQL details'
+        });
+      try {
+        const reads = {
+          bounds: () => repository.getSourceBounds(CONTRACT, ctx),
+          next: () => repository.findNextBlock(CONTRACT, 0, 1_999, ctx),
+          bucket: () => repository.loadBucket(CONTRACT, 1_000, 1_999, 10, ctx)
+        };
+        const result = reads[operation]();
+        await expect(result).rejects.toBeInstanceOf(
+          WalletTransferAnalysisError
+        );
+        await expect(result).rejects.toThrow(
+          `Source query exceeded its ${SOURCE_QUERY_BUDGET_MS} ms database budget; stop and inspect the source query plan before retrying`
+        );
+      } finally {
+        executed.mockRestore();
+      }
+    }
+  );
 
   it('replaces one bucket without accumulating retries or deleting other buckets and contracts', async () => {
     const initialWallets = [

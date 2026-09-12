@@ -125,6 +125,32 @@ describe('transfer bucket aggregation', () => {
     expect(result.pairs.every((it) => it.from_address === A)).toBe(true);
   });
 
+  it.each<[string, number]>([
+    ['2026-09-01T23:30:00-02:00', day + DAY_MS + 90 * 60_000],
+    ['2026-09-02T01:30:00+02:00', day + DAY_MS - 30 * 60_000],
+    ['2026-09-01T23:59:59.123456Z', day + DAY_MS - 877],
+    ['2026-09-01 23:59:59.123456', day + DAY_MS - 877]
+  ])('uses a deterministic UTC instant for %s', (value, expectedTimestamp) => {
+    const result = aggregate([row({ transaction_date: value })]);
+
+    expect(result.pairs[0].first_transfer_at).toBe(expectedTimestamp);
+    expect(result.pairs[0].day_start).toBe(
+      Math.floor(expectedTimestamp / DAY_MS) * DAY_MS
+    );
+  });
+
+  it.each([
+    '2026-09-01',
+    '2026-09-01T12:30',
+    '09/01/2026 12:30:00',
+    'September 1, 2026 12:30:00',
+    '2026-09-01T12:30:00+02'
+  ])('rejects unsupported timestamp format %s', (value) => {
+    expect(() => aggregate([row({ transaction_date: value })])).toThrow(
+      'Transfer timestamp format is invalid'
+    );
+  });
+
   it('does not alter denominators based on ownership declarations', () => {
     // Aggregation deliberately receives no consolidation/profile data.
     const result = aggregate([row(), row({ to_address: C })]);

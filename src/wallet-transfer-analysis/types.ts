@@ -7,6 +7,8 @@ export const MAX_SOURCE_ROWS = 100_000;
 export const MAX_ANALYSIS_BLOCK = 2_147_482_000;
 export const CANDIDATE_SCAN_LIMIT = 10_000;
 export const REPORT_QUERY_BUDGET_MS = 5_000;
+export const SOURCE_QUERY_BUDGET_MS = 2_000;
+export const ANALYSIS_LOCK_WAIT_SECONDS = 3;
 export const TRANSFER_RULE_VERSION = 'memes-transfers-v1';
 
 /** Messages contain only operator input/limits, never SQL or connection data. */

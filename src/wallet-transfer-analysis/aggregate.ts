@@ -24,11 +24,20 @@ function addQuantity(left: number, right: number): number {
 
 function sourceTimestamp(value: Date | string): number {
   // MySQL DATETIME strings represent UTC, even on workers in another timezone.
-  const normalized =
-    typeof value === 'string' &&
-    /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(value)
-      ? `${value.replace(' ', 'T')}Z`
-      : value;
+  let normalized = value;
+  if (typeof value === 'string') {
+    if (
+      !/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$/.test(
+        value
+      )
+    ) {
+      throw new Error('Transfer timestamp format is invalid');
+    }
+    normalized = value.replace(' ', 'T');
+    if (!/(?:Z|[+-]\d{2}:\d{2})$/.test(normalized)) {
+      normalized += 'Z';
+    }
+  }
   const timestamp = new Date(normalized).getTime();
   if (!Number.isSafeInteger(timestamp) || timestamp < 0) {
     throw new Error('Transfer timestamp is invalid');

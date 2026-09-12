@@ -44,11 +44,12 @@ export function scoreTransferPair(metrics: PairMetrics) {
   if (concentrated) rules.push('concentrated_outgoing_transfers');
   if (repeated) rules.push('persistent_transfer_relationship');
 
+  const directionWeight = reciprocal ? 30 : 10;
   const priority = repeated
     ? Math.round(
         Math.min(30, metrics.active_days * 3) +
           Math.min(20, (spanDays / 30) * 5) +
-          (reciprocal ? 30 : 10) +
+          directionWeight +
           concentration * 20
       )
     : 0;

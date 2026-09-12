@@ -92,6 +92,8 @@ with `EXPLAIN ANALYZE`.
 | Report window, `--days`                            | 90                      | Supported values: 30, 90, 365, `all`      |
 | Report output, `--limit`                           | 100                     | 1,000                                     |
 | Report SQL execution budget                        | 5,000 ms                | Fixed                                     |
+| Source SELECT execution budget                     | 2,000 ms                | Fixed                                     |
+| Transaction row/metadata lock wait                 | 3 seconds               | Restored before returning the connection  |
 
 The source reader requests one extra row to detect overflow. An over-budget
 bucket fails without committing a partial summary or advancing past that
@@ -108,7 +110,13 @@ There is no arbitrary SQL command, live schema option, or publication command.
 
 ## Performance rollout
 
-1. Deploy and invoke `dbMigrationsLoop` to create the additive summary tables.
+1. Preview the schema diff using TypeORM SQL-memory mode with only the three
+   wallet-transfer entities. Deploy `dbMigrationsLoop` with workflow input
+   `db_schema_scope=wallet-transfer-analysis` to create these additive tables.
+   The workflow invokes the matching scoped payload automatically. This scope
+   skips unrelated entity synchronization, data migrations and maintenance.
+   A normal unscoped invocation still has its existing full behavior; do not
+   use it for this rollout when unrelated changes remain pending.
    Then install the matching code on the authorized runner host. No other
    Lambda or API deployment is required, and this change enables no schedule.
 2. Run `status`. Record source bounds, completed summary coverage and the
@@ -129,9 +137,9 @@ There is no arbitrary SQL command, live schema option, or publication command.
    choose a narrower window and inspect DB load. Keep reports in the
    operational workflow, outside request-serving paths.
 6. Increase batch count only if measurements leave sufficient DB headroom.
-   Run a single scheduled executable directly using the existing host's job
-   scheduler when schedule activation is authorized. Retain a finite batch
-   cap per invocation; no inference-triggered automation is required.
+   Use the throttled historical runner below for sustained processing. Retain
+   finite per-invocation and per-run caps; no inference-triggered automation
+   is required. Continuous live updates require a separate explicit schedule.
 
 Limits bound returned source rows, application memory, and per-bucket writes.
 They are not DB CPU, transaction-duration, or total-backfill runtime guarantees.
@@ -156,6 +164,84 @@ current source bounds. It does not detect new or changed rows inside an already
 covered block. The state's `updated_at` records the latest derived-table write,
 including an older-range rebuild; it is not a last-verification time for every
 historical row. The report's `freshness_note` preserves this distinction.
+
+## Throttled historical runner
+
+`wallet-transfer-backfill` keeps one DB connection pool open while running
+bounded updates. It does not invoke inference or launch a new process for each
+bucket. Configure it after verifying the target writer endpoint, reading its
+`@@server_uuid` and database name, and measuring its CloudWatch baseline:
+
+```json
+{
+  "region": "us-east-1",
+  "db_instance": "reviewed-writer",
+  "database_uuid": "00000000-0000-0000-0000-000000000000",
+  "database_name": "application",
+  "state_directory": "/private/operator-state/memes-backfill",
+  "limits": {
+    "cpu": 35,
+    "connections": 200,
+    "read": 0.005,
+    "write": 0.005,
+    "memory": 2147483648
+  },
+  "duty_percent": 1,
+  "max_invocations": 100,
+  "max_run_minutes": 60,
+  "max_rows": 10000
+}
+```
+
+These values illustrate the format; choose actual thresholds from the target's
+baseline and capacity. `cpu` is percent, `connections` is a count, `read` and
+`write` are latency in seconds, and `memory` is minimum freeable bytes. Always
+bind the instance identifier and region to the endpoint from which the UUID
+was read. The runner rejects a different database UUID or schema before work
+and on every iteration, including after restart.
+
+```bash
+./bin/6529 run --silent wallet-transfer-backfill -- /private/operator-config.json
+```
+
+The runner captures a fixed source target in `state.json`, processes one new
+bucket plus the existing latest-bucket reconciliation, and rests outside
+transactions. At one percent duty, each millisecond of measured update work is
+followed by at least 99 milliseconds of rest; the minimum rest is two seconds.
+Duty is capped at ten percent. This controls application pacing, not an exact
+share of DB CPU. Start at one percent and only adjust after measured trials.
+`max_rows` defaults to 10,000 and shares the CLI's 100,000-row ceiling. If a hot
+bucket exceeds the configured limit, the runner stops; inspect that bucket's
+plan and load before raising the limit and resuming. Never skip it.
+
+Before each iteration, it checks the last three recent CloudWatch samples.
+Metrics are refreshed at most once per minute. Excess load, incomplete samples,
+stale data or monitoring failure pauses work. CPU/connections/read/write use
+the largest of those samples; memory uses the smallest. Publication lag means
+the gate cannot guarantee that brief instantaneous load spikes are detected.
+Server-side source/report budgets and short transaction lock waits provide
+additional limits.
+
+A nonblocking MySQL advisory lock on a dedicated connection prevents another
+supervisor for the same database and collection, even with a different state
+directory or host. That connection holds no long-lived transaction. Ownership
+is checked before work; losing the connection stops further processing. Use
+one designated runner host and keep operator state private. `runner.lock`
+also prevents simultaneous processes sharing a state directory.
+
+Create a file named `pause` in the state directory to pause between invocations;
+remove it to resume. A `stop` file or termination signal requests a graceful
+stop after current work. Processing errors persist `failed` and require
+inspection before explicitly changing that state to `paused`; no automatic
+retry skips or repeatedly hammers a failing bucket. If a process was killed,
+verify it has exited before removing a stale local `runner.lock`. MySQL
+releases its advisory lock when the connection closes.
+
+Runtime and invocation limits exit with `paused_budget`; invoke the same
+configuration again to resume its fixed historical target. Once covered, the
+runner reconciles the target's final bucket and records `complete`. It does
+not chase new live blocks. Resume a completed history with a separately
+reviewed incremental schedule; no schedule is installed by the code change.
 
 ## Recovery and rule changes
 

@@ -31,6 +31,7 @@
     "drop-media:backfill:dry-run": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/dropMediaSanitizer/backfill-existing-drop-media.ts",
     "drop-media:backfill:live": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/dropMediaSanitizer/backfill-existing-drop-media.ts --live",
     "wallet-transfer-analysis": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/wallet-transfer-analysis/cli.ts",
+    "wallet-transfer-backfill": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/wallet-transfer-analysis/backfill.ts",
     "check": "node scripts/require-6529-command.cjs && ./bin/6529 run format && ./bin/6529 run lint && ./bin/6529 run build",
     "check:changed": "node scripts/require-6529-command.cjs && node scripts/check-changed.mjs",
     "ci:assert-source-clean": "node scripts/require-6529-command.cjs && node scripts/assert-pr-ci-source-clean.mjs",

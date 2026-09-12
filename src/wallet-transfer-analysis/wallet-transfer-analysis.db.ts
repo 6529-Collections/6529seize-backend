@@ -9,12 +9,16 @@ import { DbPoolName, DbQueryOptions } from '@/db-query.options';
 import { WalletTransferAnalysisStateEntity } from '@/entities/IWalletTransferAnalysis';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
+import type { PoolConnection } from 'mysql';
+import type { QueryRunner } from 'typeorm';
 import {
+  ANALYSIS_LOCK_WAIT_SECONDS,
   CANDIDATE_SCAN_LIMIT,
   MAX_SOURCE_ROWS,
   PairDailySummary,
   PairMetrics,
   REPORT_QUERY_BUDGET_MS,
+  SOURCE_QUERY_BUDGET_MS,
   SourceTransfer,
   TransferAnalysisStore,
   WalletTransferAnalysisError,
@@ -101,18 +105,72 @@ function normalizeMetrics(row: PairMetricsRow): PairMetrics {
   return result;
 }
 
-function reportQueryFailure(error: unknown): never {
-  if (
+function isQueryTimeout(error: unknown): boolean {
+  return (
     error !== null &&
     typeof error === 'object' &&
     (('code' in error && error.code === 'ER_QUERY_TIMEOUT') ||
       ('errno' in error && error.errno === 3024))
-  ) {
+  );
+}
+
+function reportQueryFailure(error: unknown): never {
+  if (isQueryTimeout(error)) {
     throw new WalletTransferAnalysisError(
       `Report exceeded its ${REPORT_QUERY_BUDGET_MS} ms database budget; try a narrower report window`
     );
   }
   throw error;
+}
+
+function sourceQueryFailure(error: unknown): never {
+  if (isQueryTimeout(error)) {
+    throw new WalletTransferAnalysisError(
+      `Source query exceeded its ${SOURCE_QUERY_BUDGET_MS} ms database budget; stop and inspect the source query plan before retrying`
+    );
+  }
+  throw error;
+}
+
+function transactionQueryFailure(error: unknown): never {
+  if (
+    error !== null &&
+    typeof error === 'object' &&
+    (('code' in error && error.code === 'ER_LOCK_WAIT_TIMEOUT') ||
+      ('errno' in error && error.errno === 1205))
+  ) {
+    throw new WalletTransferAnalysisError(
+      `Analysis exceeded its ${ANALYSIS_LOCK_WAIT_SECONDS} second database lock-wait budget; retry after contention clears`
+    );
+  }
+  throw error;
+}
+
+interface SessionLockWaits {
+  row_wait: number;
+  metadata_wait: number;
+}
+
+const SESSION_LOCK_WAIT_QUERY = `SELECT
+  @@SESSION.innodb_lock_wait_timeout AS row_wait,
+  @@SESSION.lock_wait_timeout AS metadata_wait`;
+const SET_SESSION_LOCK_WAITS = `SET SESSION innodb_lock_wait_timeout = :rowWait,
+  SESSION lock_wait_timeout = :metadataWait`;
+
+async function discardFailedSession(ctx: RequestContext): Promise<void> {
+  const connection = ctx.connection!.connection as QueryRunner | PoolConnection;
+  if ('rollbackTransaction' in connection) {
+    // The loop adapter wraps a QueryRunner; connect() returns this runner's
+    // existing physical connection, not an unrelated pool member.
+    const physical = (await connection.connect()) as PoolConnection;
+    try {
+      await connection.rollbackTransaction();
+    } finally {
+      physical.destroy();
+    }
+  } else {
+    connection.destroy();
+  }
 }
 
 function primaryOptions(ctx: RequestContext): DbQueryOptions {
@@ -135,7 +193,8 @@ function validateSourceRowLimit(maxRows: number): void {
   }
 }
 
-const SOURCE_BUCKET_QUERY = `SELECT ${SOURCE_COLUMNS} FROM ${TRANSACTIONS_TABLE}
+const SOURCE_BUCKET_QUERY = `SELECT /*+ MAX_EXECUTION_TIME(${SOURCE_QUERY_BUDGET_MS}) */
+  ${SOURCE_COLUMNS} FROM ${TRANSACTIONS_TABLE}
   WHERE contract = :contract AND block BETWEEN :start AND :end
   ORDER BY block LIMIT :limit`;
 
@@ -162,11 +221,74 @@ export class WalletTransferAnalysisDb
     ctx: RequestContext
   ): Promise<T> {
     return this.timed('inTransaction', ctx, async () => {
-      if (ctx.connection) return work(ctx);
-      return this.db.executeNativeQueriesInTransaction((connection) =>
-        work({ ...ctx, connection })
-      );
+      const execute = ctx.connection
+        ? this.withSessionLockWaits(work, ctx)
+        : this.db.executeNativeQueriesInTransaction((connection) =>
+            this.withSessionLockWaits(work, { ...ctx, connection })
+          );
+      return execute.catch(transactionQueryFailure);
     });
+  }
+
+  private async withSessionLockWaits<T>(
+    work: (ctx: RequestContext) => Promise<T>,
+    ctx: RequestContext
+  ): Promise<T> {
+    requireTransaction(ctx);
+    const original = await this.db.oneOrNull<SessionLockWaits>(
+      SESSION_LOCK_WAIT_QUERY,
+      undefined,
+      primaryOptions(ctx)
+    );
+    if (
+      !original ||
+      !Number.isSafeInteger(original.row_wait) ||
+      !Number.isSafeInteger(original.metadata_wait)
+    ) {
+      throw new WalletTransferAnalysisError(
+        'Could not read database session lock-wait settings'
+      );
+    }
+    try {
+      await this.setSessionLockWaits(
+        ANALYSIS_LOCK_WAIT_SECONDS,
+        ANALYSIS_LOCK_WAIT_SECONDS,
+        ctx
+      );
+      return await work(ctx);
+    } finally {
+      await this.restoreSessionLockWaits(original, ctx);
+    }
+  }
+
+  private async restoreSessionLockWaits(
+    original: SessionLockWaits,
+    ctx: RequestContext
+  ): Promise<void> {
+    try {
+      await this.setSessionLockWaits(
+        original.row_wait,
+        original.metadata_wait,
+        ctx
+      );
+    } catch {
+      await discardFailedSession(ctx);
+      throw new WalletTransferAnalysisError(
+        'Could not restore database session lock-wait settings; the analysis connection was discarded'
+      );
+    }
+  }
+
+  private async setSessionLockWaits(
+    rowWait: number,
+    metadataWait: number,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.db.execute(
+      SET_SESSION_LOCK_WAITS,
+      { rowWait, metadataWait },
+      primaryOptions(ctx)
+    );
   }
 
   async getState(
@@ -182,6 +304,43 @@ export class WalletTransferAnalysisDb
         primaryOptions(ctx)
       );
       return state ? normalizeState(state) : null;
+    });
+  }
+
+  async getDatabaseIdentity(ctx: RequestContext): Promise<{
+    server_uuid: string;
+    database_name: string;
+  }> {
+    return this.timed('getDatabaseIdentity', ctx, async () => {
+      const identity = await this.db
+        .oneOrNull<{
+          server_uuid: unknown;
+          database_name: unknown;
+        }>(
+          `SELECT /*+ MAX_EXECUTION_TIME(${SOURCE_QUERY_BUDGET_MS}) */
+         @@server_uuid AS server_uuid, DATABASE() AS database_name`,
+          undefined,
+          primaryOptions(ctx)
+        )
+        .catch(sourceQueryFailure);
+      if (
+        !identity ||
+        typeof identity.server_uuid !== 'string' ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          identity.server_uuid
+        ) ||
+        typeof identity.database_name !== 'string' ||
+        identity.database_name.length === 0 ||
+        identity.database_name.length > 64
+      ) {
+        throw new WalletTransferAnalysisError(
+          'Could not verify database identity'
+        );
+      }
+      return {
+        server_uuid: identity.server_uuid.toLowerCase(),
+        database_name: identity.database_name
+      };
     });
   }
 
@@ -216,15 +375,18 @@ export class WalletTransferAnalysisDb
     ctx: RequestContext
   ): Promise<{ minBlock: number | null; maxBlock: number | null }> {
     return this.timed('getSourceBounds', ctx, async () => {
-      const bounds = await this.db.oneOrNull<{
-        minBlock: number | null;
-        maxBlock: number | null;
-      }>(
-        `SELECT MIN(block) AS minBlock, MAX(block) AS maxBlock
+      const bounds = await this.db
+        .oneOrNull<{
+          minBlock: number | null;
+          maxBlock: number | null;
+        }>(
+          `SELECT /*+ MAX_EXECUTION_TIME(${SOURCE_QUERY_BUDGET_MS}) */
+         MIN(block) AS minBlock, MAX(block) AS maxBlock
          FROM ${TRANSACTIONS_TABLE} WHERE contract = :contract`,
-        { contract },
-        primaryOptions(ctx)
-      );
+          { contract },
+          primaryOptions(ctx)
+        )
+        .catch(sourceQueryFailure);
       return bounds ?? { minBlock: null, maxBlock: null };
     });
   }
@@ -236,14 +398,17 @@ export class WalletTransferAnalysisDb
     ctx: RequestContext
   ): Promise<number | null> {
     return this.timed('findNextBlock', ctx, async () => {
-      const row = await this.db.oneOrNull<{ block: number }>(
-        `SELECT block FROM ${TRANSACTIONS_TABLE}
+      const row = await this.db
+        .oneOrNull<{ block: number }>(
+          `SELECT /*+ MAX_EXECUTION_TIME(${SOURCE_QUERY_BUDGET_MS}) */
+         block FROM ${TRANSACTIONS_TABLE}
          WHERE contract = :contract
            AND block > :afterBlock AND block <= :toBlock
          ORDER BY block ASC LIMIT 1`,
-        { contract, afterBlock, toBlock },
-        primaryOptions(ctx)
-      );
+          { contract, afterBlock, toBlock },
+          primaryOptions(ctx)
+        )
+        .catch(sourceQueryFailure);
       return row?.block ?? null;
     });
   }
@@ -257,11 +422,13 @@ export class WalletTransferAnalysisDb
   ): Promise<SourceTransfer[]> {
     return this.timed('loadBucket', ctx, async () => {
       validateSourceRowLimit(maxRows);
-      return this.db.execute<SourceTransfer>(
-        SOURCE_BUCKET_QUERY,
-        { contract, start, end, limit: maxRows + 1 },
-        primaryOptions(ctx)
-      );
+      return this.db
+        .execute<SourceTransfer>(
+          SOURCE_BUCKET_QUERY,
+          { contract, start, end, limit: maxRows + 1 },
+          primaryOptions(ctx)
+        )
+        .catch(sourceQueryFailure);
     });
   }
 
