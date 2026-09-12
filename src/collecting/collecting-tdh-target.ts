@@ -30,7 +30,8 @@ interface EfficiencySeed {
 function compareEfficiency(a: EfficiencySeed, b: EfficiencySeed): number {
   const left = a.state.cost * b.estimatedYield,
     right = b.state.cost * a.estimatedYield;
-  return left < right ? -1 : left > right ? 1 : compareState(a.state, b.state);
+  if (left !== right) return left < right ? -1 : 1;
+  return compareState(a.state, b.state);
 }
 
 function compareState(a: State, b: State): number {
@@ -178,11 +179,8 @@ function completionSeeds(
           const costB =
             BigInt(b.candidate.step_cost_wei) *
             BigInt(b.quantity / b.candidate.quantity_step);
-          return costA < costB
-            ? -1
-            : costA > costB
-              ? 1
-              : a.candidate.id.localeCompare(b.candidate.id);
+          if (costA !== costB) return costA < costB ? -1 : 1;
+          return a.candidate.id.localeCompare(b.candidate.id);
         });
       if (!choices.length) return [];
       quantities[choices[0].index] = choices[0].quantity;
