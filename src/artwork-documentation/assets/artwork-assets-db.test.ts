@@ -38,6 +38,26 @@ describe('artwork archive reservations and leases', () => {
     db = new ArtworkAssetsDb(() => sqlExecutor);
   });
 
+  it('loads compact file lists without large characterization or multipart payloads while preserving detail bytes', async () => {
+    const technical = JSON.stringify({ warnings: ['x'.repeat(200000)] });
+    const asset = await db.reserve(
+      anArtworkAsset({
+        technical_metadata_json: technical,
+        parts_json: JSON.stringify({ receipts: 'y'.repeat(100000) })
+      })
+    );
+    const list = await db.listSummaries('context-1');
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({
+      id: asset.id,
+      filename: asset.filename,
+      size_bytes: 9
+    });
+    expect(list[0]).not.toHaveProperty('technical_metadata_json');
+    expect(list[0]).not.toHaveProperty('parts_json');
+    expect((await db.find(asset.id))?.technical_metadata_json).toBe(technical);
+  });
+
   it('rechecks a newly upgraded profile before stale upload authorization reserves bytes', async () => {
     let releaseUpgrade!: () => void;
     let signalLocked!: () => void;
@@ -83,25 +103,42 @@ describe('artwork archive reservations and leases', () => {
     expect(rows).toEqual([]);
   });
 
-  it('serializes simultaneous reservations at the 20GiB context boundary', async () => {
-    const fourGiB = 4 * 1024 ** 3;
+  it('serializes simultaneous reservations at the 128GiB context boundary', async () => {
+    const eightGiB = 8 * 1024 ** 3;
     const results = await Promise.allSettled(
-      Array.from({ length: 6 }, () =>
+      Array.from({ length: 17 }, () =>
         db.reserve(
-          anArtworkAsset({ size_bytes: fourGiB, reserved_bytes: fourGiB })
+          anArtworkAsset({
+            state: 'ready',
+            size_bytes: eightGiB,
+            reserved_bytes: eightGiB
+          })
         )
       )
     );
     expect(
       results.filter((result) => result.status === 'fulfilled')
-    ).toHaveLength(5);
+    ).toHaveLength(16);
     expect(
       results.filter((result) => result.status === 'rejected')
     ).toHaveLength(1);
     const rows = await db.list('context-1');
     expect(rows.reduce((sum, row) => sum + Number(row.reserved_bytes), 0)).toBe(
-      20 * 1024 ** 3
+      128 * 1024 ** 3
     );
+  });
+
+  it('independently caps simultaneous active uploads at five below the context byte quota', async () => {
+    const results = await Promise.allSettled(
+      Array.from({ length: 6 }, () => db.reserve(anArtworkAsset()))
+    );
+    expect(
+      results.filter((result) => result.status === 'fulfilled')
+    ).toHaveLength(5);
+    const rejected = results.find(
+      (result) => result.status === 'rejected'
+    ) as PromiseRejectedResult;
+    expect(rejected.reason).toMatchObject({ code: 'TOO_MANY_ACTIVE_UPLOADS' });
   });
 
   it('replays an identical upload request without a second reservation', async () => {
@@ -144,6 +181,87 @@ describe('artwork archive reservations and leases', () => {
     expect((await db.find(row.id))?.state).toBe('processing');
     await db.finishProcessing(fresh!, { state: 'ready' });
     expect((await db.find(row.id))?.state).toBe('ready');
+  });
+
+  it('claims due processing rows in order while retaining large technical payloads', async () => {
+    const now = Date.now();
+    const technical = JSON.stringify({ warnings: ['x'.repeat(300000)] });
+    const parts = JSON.stringify({ receipts: 'y'.repeat(100000) });
+    const later = await db.reserve(
+      anArtworkAsset({ state: 'processing', next_attempt_at: now - 100 })
+    );
+    const first = await db.reserve(
+      anArtworkAsset({
+        state: 'processing',
+        next_attempt_at: now - 200,
+        attempts: 2,
+        technical_metadata_json: technical,
+        parts_json: parts
+      })
+    );
+    await db.reserve(
+      anArtworkAsset({ state: 'processing', next_attempt_at: now + 1 })
+    );
+    await db.reserve(
+      anArtworkAsset({
+        state: 'processing',
+        next_attempt_at: now - 300,
+        lease_until: now + 1
+      })
+    );
+
+    expect(await db.claimProcessing(now)).toMatchObject({
+      id: first.id,
+      attempts: 3,
+      technical_metadata_json: technical,
+      parts_json: parts
+    });
+    expect(await db.claimProcessing(now)).toMatchObject({ id: later.id });
+    expect(await db.claimProcessing(now)).toBeNull();
+    expect((await db.find(first.id))?.technical_metadata_json).toBe(technical);
+  });
+
+  it('claims only eligible cleanup rows in expiry order with large technical payloads', async () => {
+    const now = Date.now();
+    const technical = JSON.stringify({ warnings: ['x'.repeat(300000)] });
+    const first = await db.reserve(
+      anArtworkAsset({
+        state: 'expired',
+        expires_at: now - 200,
+        attempts: 2,
+        technical_metadata_json: technical
+      })
+    );
+    const later = await db.reserve(
+      anArtworkAsset({ state: 'ready', expires_at: now - 100, attempts: 7 })
+    );
+    for (const patch of [
+      { referenced: 1 },
+      { reserved_bytes: 0 },
+      { expires_at: now + 1 },
+      { lease_until: now + 1 },
+      { next_attempt_at: now + 1 }
+    ]) {
+      await db.reserve(
+        anArtworkAsset({ state: 'ready', expires_at: now - 300, ...patch })
+      );
+    }
+    await db.reserve(
+      anArtworkAsset({ state: 'processing', expires_at: now - 300 })
+    );
+
+    expect(await db.claimCleanup(now)).toMatchObject({
+      id: first.id,
+      attempts: 3,
+      technical_metadata_json: technical
+    });
+    expect(await db.claimCleanup(now)).toMatchObject({
+      id: later.id,
+      state: 'expired',
+      attempts: 1
+    });
+    expect(await db.claimCleanup(now)).toBeNull();
+    expect((await db.find(first.id))?.technical_metadata_json).toBe(technical);
   });
 
   it('retains originals referenced by any committed revision', async () => {

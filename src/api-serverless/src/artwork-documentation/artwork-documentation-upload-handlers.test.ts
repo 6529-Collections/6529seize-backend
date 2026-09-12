@@ -144,4 +144,41 @@ describe('documentation upload authorization boundary', () => {
     );
     expect(mockAssets.signParts).not.toHaveBeenCalled();
   });
+  it('accepts the full 8 GiB upload and 512-part completion at the HTTP boundary', async () => {
+    const upload = {
+      filename: 'preservation.tiff',
+      size_bytes: 8 * 1024 ** 3,
+      declared_mime: 'image/tiff',
+      role: 'preservation_master',
+      intended_visibility: 'public_record'
+    };
+    await handleStartDocumentationUpload(request(upload));
+    expect(mockAssets.startUpload).toHaveBeenCalledTimes(1);
+    await expect(
+      handleStartDocumentationUpload(
+        request({ ...upload, size_bytes: upload.size_bytes + 1 })
+      )
+    ).rejects.toBeDefined();
+    expect(mockAssets.startUpload).toHaveBeenCalledTimes(1);
+    const parts = Array.from({ length: 512 }, (_, index) => ({
+      part_number: index + 1,
+      checksum_sha256: Buffer.alloc(32).toString('base64'),
+      etag: `part-${index + 1}`
+    }));
+    await handleSignDocumentationParts(
+      request({
+        parts: [
+          { part_number: 512, checksum_sha256: parts[511].checksum_sha256 }
+        ]
+      })
+    );
+    await handleCompleteDocumentationUpload(request({ parts }));
+    expect(mockAssets.completeUpload).toHaveBeenCalledTimes(1);
+    await expect(
+      handleCompleteDocumentationUpload(
+        request({ parts: [...parts, { ...parts[0], part_number: 513 }] })
+      )
+    ).rejects.toBeDefined();
+    expect(mockAssets.completeUpload).toHaveBeenCalledTimes(1);
+  });
 });

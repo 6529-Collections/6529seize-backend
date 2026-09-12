@@ -6,7 +6,7 @@ package:
 provider:
   name: aws
   runtime: nodejs22.x
-  memorySize: 2048
+  memorySize: 3072
   timeout: 900
   architecture: x86_64
   logRetentionInDays: 60
@@ -18,7 +18,7 @@ functions:
     description: ${env:VERSION_DESCRIPTION, ''}
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     reservedConcurrency: 1
-    ephemeralStorageSize: 1024
+    ephemeralStorageSize: 10240
     events:
       - schedule: rate(1 minute)
     vpc:

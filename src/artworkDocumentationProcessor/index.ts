@@ -1,9 +1,11 @@
 import { withMediaDependencySmoke } from '@/media/media-dependency-smoke';
 import { artworkAssetsProcessor } from '@/artwork-documentation/assets/artwork-assets.processor';
+import { dossierProcessor } from '@/artwork-documentation/museum/export/dossier.processor';
 import { Logger } from '@/logging';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
 import { publishArtworkAssetMetrics } from '@/artwork-documentation/assets/artwork-assets.metrics';
+import { processOldestDocumentationJob } from './artwork-documentation-queue';
 import {
   dispatchDocumentationProcessorEvent,
   enrichDocumentationOperatorError
@@ -15,7 +17,10 @@ const liveHandler = sentryContext.wrapLambdaHandler(
     return doInDbContext(
       () =>
         dispatchDocumentationProcessorEvent(event, async () => {
-          await artworkAssetsProcessor.tick();
+          await processOldestDocumentationJob({
+            asset: artworkAssetsProcessor,
+            dossier: dossierProcessor
+          });
           try {
             await publishArtworkAssetMetrics();
           } catch {
