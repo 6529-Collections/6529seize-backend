@@ -162,8 +162,8 @@ function capture(
     now.getTime() + 20000
   );
 }
-beforeEach(() => jest.useFakeTimers().setSystemTime(now));
-afterEach(() => jest.useRealTimers());
+beforeEach(() => jest.spyOn(Date, 'now').mockReturnValue(now.getTime()));
+afterEach(() => jest.restoreAllMocks());
 
 it('preserves exact per-fee-divisible unit basis and independent remaining quantity', () => {
   const result = capture([order('1', '400', '4', '4', true)]);
