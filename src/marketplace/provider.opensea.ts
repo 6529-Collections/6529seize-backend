@@ -427,12 +427,17 @@ export class OpenSeaMarketplaceProvider {
   async getOrder(identity: MarketOrderIdentity): Promise<MarketProviderOrder> {
     assertMarketProtocol(identity.protocolAddress);
     parseMarketValue(marketHashSchema, identity.orderHash);
-    const response = record(
-      await this.request(
-        `/api/v2/orders/chain/ethereum/protocol/${MARKET_SEAPORT}/${identity.orderHash}`
-      )
+    const response = await this.request(
+      `/api/v2/orders/chain/ethereum/protocol/${MARKET_SEAPORT}/${identity.orderHash}`,
+      undefined,
+      true
     );
-    const order = parseProviderOrder(response.order);
+    if (response === null)
+      throw new MarketValidationError(
+        'ORDER_MISMATCH',
+        'This order is no longer available.'
+      );
+    const order = parseProviderOrder(record(response).order);
     if (
       order.identity.orderHash.toLowerCase() !==
       identity.orderHash.toLowerCase()
