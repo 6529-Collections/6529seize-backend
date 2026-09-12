@@ -121,6 +121,91 @@ function candidateFor(
   }
 }
 
+interface CandidateCapture {
+  byKey: Map<string, CollectingAsset>;
+  wallets: Set<string>;
+  listings: Map<string, CollectTdhTargetListing>;
+  indexedCount: number;
+  evaluatedCount: number;
+  complete: boolean;
+  observed: number[];
+  now: number;
+  deadline: number;
+}
+
+function captureOrder(
+  indexed: CurrentMarketDepthOrder,
+  family: CollectingFamily,
+  observedAt: number,
+  capture: CandidateCapture
+): void {
+  capture.evaluatedCount++;
+  const rowObserved = indexed.observed_at.getTime();
+  capture.observed.push(rowObserved);
+  const rowSource = freshObservation([observedAt, rowObserved], capture.now);
+  if (rowSource === null) {
+    capture.complete = false;
+    return;
+  }
+  const key =
+    indexed.token_id === null
+      ? ''
+      : collectingAssetKey(indexed.contract, indexed.token_id);
+  const asset = capture.byKey.get(key);
+  if (asset?.family !== family) return;
+  const listing = candidateFor(
+    indexed,
+    asset,
+    capture.wallets,
+    capture.now,
+    rowSource + FRESH_MILLIS
+  );
+  if (listing !== null) capture.listings.set(listing.candidate.id, listing);
+}
+
+function captureBook(
+  book: CurrentMarketDepthSnapshot,
+  family: CollectingFamily,
+  familyRead: number,
+  capture: CandidateCapture
+): number {
+  capture.indexedCount += book.snapshot.ask_count;
+  const times = [
+    book.snapshot.started_at.getTime(),
+    book.snapshot.completed_at.getTime()
+  ];
+  const observedAt = freshObservation(times, capture.now);
+  capture.observed.push(...times);
+  if (observedAt === null || times[0] > times[1]) {
+    capture.complete = false;
+    return familyRead;
+  }
+  if (book.orders.length !== book.snapshot.ask_count) capture.complete = false;
+  let read = familyRead;
+  for (const indexed of book.orders) {
+    if (
+      read >= MAX_MARKET_DEPTH_COLLECTION_ASKS ||
+      Date.now() >= capture.deadline
+    ) {
+      capture.complete = false;
+      break;
+    }
+    read++;
+    captureOrder(indexed, family, observedAt, capture);
+  }
+  return read;
+}
+
+function compareListingCost(
+  a: CollectTdhTargetListing,
+  b: CollectTdhTargetListing
+): number {
+  const costA = BigInt(a.candidate.step_cost_wei),
+    costB = BigInt(b.candidate.step_cost_wei);
+  if (costA !== costB) return costA < costB ? -1 : 1;
+  return a.candidate.id.localeCompare(b.candidate.id);
+}
+
 /** Captured ask coverage is distinct from live market and supported order coverage. */
 export function collectTdhTargetCandidates(
   source: CollectingTdhSource,
@@ -137,96 +222,46 @@ export function collectTdhTargetCandidates(
       collectingAssetKey(token.contract, String(token.token_id))
     )
   );
-  const byKey = new Map(
-    assets
-      .filter((asset) => known.has(asset.asset_key))
-      .map((asset) => [asset.asset_key, asset])
-  );
-  const wallets = new Set(
-    source.account.wallets.map((wallet) => wallet.toLowerCase())
-  );
-  const listings = new Map<string, CollectTdhTargetListing>();
-  let indexedCount = 0,
-    evaluatedCount = 0,
-    complete = groups.length > 0;
-  const observed: number[] = [];
+  const capture: CandidateCapture = {
+    byKey: new Map(
+      assets
+        .filter((asset) => known.has(asset.asset_key))
+        .map((asset) => [asset.asset_key, asset])
+    ),
+    wallets: new Set(
+      source.account.wallets.map((wallet) => wallet.toLowerCase())
+    ),
+    listings: new Map(),
+    indexedCount: 0,
+    evaluatedCount: 0,
+    complete: groups.length > 0,
+    observed: [],
+    now,
+    deadline
+  };
   for (const group of groups) {
-    if (!group.books.length) complete = false;
+    if (!group.books.length) capture.complete = false;
     let familyRead = 0;
-    for (const book of group.books) {
-      indexedCount += book.snapshot.ask_count;
-      const observationTimes = [
-        book.snapshot.started_at.getTime(),
-        book.snapshot.completed_at.getTime()
-      ];
-      const observedAt = freshObservation(observationTimes, now);
-      observed.push(...observationTimes);
-      if (observedAt === null || observationTimes[0] > observationTimes[1]) {
-        complete = false;
-        continue;
-      }
-      if (book.orders.length !== book.snapshot.ask_count) complete = false;
-      for (const indexed of book.orders) {
-        if (
-          familyRead >= MAX_MARKET_DEPTH_COLLECTION_ASKS ||
-          Date.now() >= deadline
-        ) {
-          complete = false;
-          break;
-        }
-        familyRead++;
-        evaluatedCount++;
-        const rowObserved = indexed.observed_at.getTime();
-        observed.push(rowObserved);
-        const rowSource = freshObservation([observedAt, rowObserved], now);
-        if (rowSource === null) {
-          complete = false;
-          continue;
-        }
-        const key =
-          indexed.token_id === null
-            ? ''
-            : collectingAssetKey(indexed.contract, indexed.token_id);
-        const asset = byKey.get(key);
-        const listing =
-          asset?.family === group.family
-            ? candidateFor(
-                indexed,
-                asset,
-                wallets,
-                now,
-                rowSource + FRESH_MILLIS
-              )
-            : null;
-        if (listing !== null) listings.set(listing.candidate.id, listing);
-      }
-    }
+    for (const book of group.books)
+      familyRead = captureBook(book, group.family, familyRead, capture);
   }
-  // Cost ordering makes the retained universe deterministic. Exclusion is exposed;
-  // no truncation is advertised as complete market coverage or a global optimum.
-  const selected = Array.from(listings.values())
-    .sort((a, b) => {
-      const costA = BigInt(a.candidate.step_cost_wei),
-        costB = BigInt(b.candidate.step_cost_wei);
-      return costA < costB
-        ? -1
-        : costA > costB
-          ? 1
-          : a.candidate.id.localeCompare(b.candidate.id);
-    })
+  // The retained universe is deterministic. Exclusions never imply complete
+  // live market coverage or global optimality.
+  const selected = Array.from(capture.listings.values())
+    .sort(compareListingCost)
     .slice(0, COLLECT_TDH_TARGET_LIMITS.candidates);
   return {
     listings: selected,
     coverage: {
-      indexed_ask_count: indexedCount,
-      evaluated_ask_count: evaluatedCount,
+      indexed_ask_count: capture.indexedCount,
+      evaluated_ask_count: capture.evaluatedCount,
       candidate_count: selected.length,
-      excluded_ask_count: Math.max(0, indexedCount - selected.length),
-      index_complete: complete,
+      excluded_ask_count: Math.max(0, capture.indexedCount - selected.length),
+      index_complete: capture.complete,
       market_complete: false,
       observed_at:
-        observed.length && observed.every(Number.isFinite)
-          ? new Date(Math.min(...observed)).toISOString()
+        capture.observed.length && capture.observed.every(Number.isFinite)
+          ? new Date(Math.min(...capture.observed)).toISOString()
           : null
     }
   };
