@@ -1,0 +1,654 @@
+import { randomUUID } from 'node:crypto';
+import { dbSupplier, sqlExecutor } from '@/sql-executor';
+import { resetTestDatabase } from '@/tests/_setup/testDatabase';
+import { ModerationReviewDb } from './moderation-review.db';
+import { ModerationReviewService } from './moderation-review.service';
+import { AuthenticationContext } from '@/auth-context';
+import { env } from '@/env';
+import { contentModerationDb } from './content-moderation.db';
+import { PrePublicationCheckOutcome } from '@/entities/IContentModeration';
+import { ContentModerationService } from './content-moderation.service';
+import { ContentModerationDb } from './content-moderation.db';
+import { ContentModerationAiService } from './content-moderation-ai.service';
+import {
+  ModerationInput,
+  moderationFingerprint
+} from './moderation-review.types';
+import { aUserGroup } from '@/tests/fixtures/user-group.fixture';
+import { UserGroupsDb } from '@/user-groups/user-groups.db';
+import {
+  CONTENT_MODERATION_ITEMS_TABLE,
+  CONTENT_MODERATION_EVALUATIONS_TABLE,
+  CONTENT_MODERATION_REPORTS_TABLE,
+  CONTENT_MODERATION_PRE_PUBLICATION_CHECKS_TABLE,
+  PROFILE_GROUPS_TABLE
+} from '@/constants';
+
+function input(): ModerationInput {
+  return {
+    subject_type: 'PROFILE_BIO',
+    subject_id: 'author',
+    author_profile_id: 'author',
+    actor_profile_id: 'author',
+    operation: 'UPDATE',
+    policy_family: 'PUBLIC_FIELDS',
+    policy_version: 'test-policy',
+    scope: { current_revision: null },
+    evidence: { text: 'exact submitted text' }
+  };
+}
+describe('Moderation review durable integration', () => {
+  let db: ModerationReviewDb;
+  beforeEach(async () => {
+    await resetTestDatabase();
+    db = new ModerationReviewDb(dbSupplier);
+  });
+  it('filters REP categories by opaque ID rather than their private category text', async () => {
+    const category = 'Exact category text?';
+    const { item } = await db.start(
+      {
+        ...input(),
+        subject_type: 'REP_CATEGORY',
+        subject_id: category,
+        evidence: { text: category }
+      },
+      'PUBLIC_FIELD'
+    );
+    expect((await db.list({ subject_id: item.id, limit: 10 })).items).toEqual([
+      expect.objectContaining({ id: item.id })
+    ]);
+    expect((await db.list({ subject_id: category, limit: 10 })).items).toEqual(
+      []
+    );
+    const bio = await db.start(input(), 'PUBLIC_FIELD');
+    expect((await db.list({ subject_id: 'author', limit: 10 })).items).toEqual([
+      expect.objectContaining({ id: bio.item.id })
+    ]);
+  });
+  describe('legacy report materialization', () => {
+    const ctx = () => ({
+      authenticationContext: AuthenticationContext.fromProfileId('dev')
+    });
+    beforeEach(() => {
+      jest.spyOn(env, 'getStringArray').mockReturnValue(['dev']);
+    });
+    afterEach(() => jest.restoreAllMocks());
+    async function legacyReport(id: string, resolvedAt: number | null = null) {
+      await sqlExecutor.execute(
+        `insert into ${CONTENT_MODERATION_REPORTS_TABLE}
+          (id,drop_id,reporter_profile_id,author_profile_id,reason,notes,content_snapshot,status,ai_recommendation,ai_category,ai_confidence,ai_rationale,ai_evidence,ai_policy_version,ai_assessed_at,created_at,resolved_at)
+          values (:id,'reported-drop','reporter','author','OTHER',:notes,cast(:snapshot as json),:status,'NO_VIOLATION_DETECTED','NONE',0.8,:rationale,cast(:evidence as json),'historical-policy',:assessedAt,:createdAt,:resolvedAt)`,
+        {
+          id,
+          notes: `Original notes ${id}`,
+          snapshot: JSON.stringify({
+            title: 'Original title',
+            parts: [{ content: 'Original content' }]
+          }),
+          status: resolvedAt === null ? 'OPEN' : 'RESOLVED_ALLOWED',
+          rationale: `Original rationale ${id}`,
+          evidence: JSON.stringify(['Original evaluator evidence']),
+          assessedAt: 100,
+          createdAt: 99,
+          resolvedAt
+        }
+      );
+    }
+    it('rolls back new-report item creation and both links if publication binding fails', async () => {
+      await legacyReport('new-report-atomic');
+      const report = await db.reportForReview('new-report-atomic');
+      const snapshot = {
+        ...report.content_snapshot,
+        author_profile_id: 'author',
+        wave_id: 'wave'
+      };
+      const reportDb = {
+        getDropSnapshot: jest.fn().mockResolvedValue(snapshot),
+        createReportWithViewerActions: jest.fn().mockResolvedValue(report)
+      };
+      const ai = { assessReportedContent: jest.fn() };
+      const service = new ContentModerationService(
+        reportDb as unknown as ContentModerationDb,
+        ai as unknown as ContentModerationAiService,
+        db
+      );
+      jest
+        .spyOn(db, 'attachPublication')
+        .mockRejectedValueOnce(
+          new Error('Simulated publication binding failure')
+        );
+      await expect(
+        service.submitReport(
+          {
+            dropId: 'reported-drop',
+            reporterProfileId: 'reporter',
+            reason: report.reason,
+            notes: null,
+            hideDrop: false,
+            blockAuthor: false
+          },
+          {}
+        )
+      ).rejects.toThrow('Moderation history could not be recorded.');
+      expect((await db.reportForReview(report.id)).item_id).toBeNull();
+      expect((await db.list({ limit: 10 })).items).toHaveLength(0);
+      expect(
+        await sqlExecutor.oneOrNull<{ count: number }>(
+          `select count(*) count from ${CONTENT_MODERATION_EVALUATIONS_TABLE}`,
+          {}
+        )
+      ).toEqual({ count: 0 });
+      expect(ai.assessReportedContent).not.toHaveBeenCalled();
+    });
+
+    it('rolls back an interrupted import and fully links the retry', async () => {
+      const service = new ModerationReviewService(db);
+      await legacyReport('legacy-retry');
+      const bind = jest
+        .spyOn(db, 'bindReport')
+        .mockRejectedValueOnce(new Error('Simulated interrupted import'));
+      await expect(service.reportCheck('legacy-retry', ctx())).rejects.toThrow(
+        'Simulated interrupted import'
+      );
+      bind.mockRestore();
+      expect((await db.reportForReview('legacy-retry')).item_id).toBeNull();
+      expect((await db.list({ limit: 10 })).items).toHaveLength(0);
+      const evaluationCount = await sqlExecutor.oneOrNull<{ count: number }>(
+        `select count(*) count from ${CONTENT_MODERATION_EVALUATIONS_TABLE}`,
+        {}
+      );
+      expect(Number(evaluationCount?.count)).toBe(0);
+      const result = await service.reportCheck('legacy-retry', ctx());
+      expect(result.action_effect).toBe('PUBLISHED_DROP');
+      expect(result.check.published_subject_id).toBe('reported-drop');
+      expect((await db.reportForReview('legacy-retry')).item_id).toBe(
+        result.check.id
+      );
+      expect(result.evaluations).toHaveLength(1);
+      expect(result.evaluations[0]).toMatchObject({
+        policy_version: 'historical-policy',
+        result: {
+          assessed_at: 100,
+          rationale: 'Original rationale legacy-retry',
+          report: { notes: 'Original notes legacy-retry' }
+        }
+      });
+    });
+    it('serializes concurrent opens of one report without duplicate evaluations', async () => {
+      const service = new ModerationReviewService(db);
+      await legacyReport('legacy-concurrent');
+      const results = await Promise.all([
+        service.reportCheck('legacy-concurrent', ctx()),
+        service.reportCheck('legacy-concurrent', ctx())
+      ]);
+      expect(results[0].check.id).toBe(results[1].check.id);
+      expect((await db.history(results[0].check.id)).evaluations).toHaveLength(
+        1
+      );
+    });
+    it('links each identical report while preserving original assessments and human override', async () => {
+      const service = new ModerationReviewService(db);
+      await legacyReport('legacy-first');
+      await legacyReport('legacy-second');
+      const first = await service.reportCheck('legacy-first', ctx());
+      await db.executeNativeQueriesInTransaction(async (connection) => {
+        const tx = { ...ctx(), connection };
+        const current = await db.get(first.check.id, tx, true);
+        await db.decide(current, 'BLOCK', tx);
+        await db.audit(
+          current,
+          { actor: 'dev', action: 'BLOCK', reason: 'Preserved human decision' },
+          tx
+        );
+      });
+      const second = await service.reportCheck('legacy-second', ctx());
+      expect(second.check.id).toBe(first.check.id);
+      expect(second.check.override).toBe('BLOCK');
+      expect(second.evaluations).toHaveLength(2);
+      expect(
+        second.evaluations.map((evaluation) => evaluation.result?.rationale)
+      ).toEqual(
+        expect.arrayContaining([
+          'Original rationale legacy-first',
+          'Original rationale legacy-second'
+        ])
+      );
+      expect((await db.reportForReview('legacy-second')).item_id).toBe(
+        first.check.id
+      );
+      expect(second.audit).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            actor_profile_id: 'dev',
+            reason: 'Preserved human decision'
+          })
+        ])
+      );
+    });
+    it('expires closed-report evidence from its actual resolution and preserves an open report sharing it', async () => {
+      const service = new ModerationReviewService(db);
+      const resolvedAt = Date.now() - 100 * 86400000;
+      await legacyReport('legacy-closed', resolvedAt);
+      const closed = await service.reportCheck('legacy-closed', ctx());
+      expect(closed.check.evidence_expires_at).toBe(resolvedAt + 90 * 86400000);
+      expect(closed.evidence_expired).toBe(true);
+      expect(closed.evaluations[0].result).toBeNull();
+      expect(closed.allowed_actions).not.toContain('REEVALUATE');
+      await legacyReport('legacy-open');
+      const open = await service.reportCheck('legacy-open', ctx());
+      expect(open.check.id).toBe(closed.check.id);
+      expect(open.check.evidence_expires_at).toBeNull();
+      await db.retain();
+      expect((await db.get(open.check.id)).evidence).not.toBeNull();
+    });
+  });
+  it('retains every evaluation including cache hits while grouping identical scope', async () => {
+    const first = await db.start(input(), 'PUBLIC_FIELD');
+    await db.finish(first.evaluationId, {
+      outcome: 'REJECT',
+      result: { status: 'DISALLOWED' },
+      model: 'model-one'
+    });
+    const second = await db.start(
+      { ...input(), policy_version: 'new-policy' },
+      'PUBLIC_FIELD'
+    );
+    await db.finish(second.evaluationId, {
+      outcome: 'ALLOW',
+      result: { status: 'ALLOWED' },
+      cacheHit: true,
+      model: 'model-two'
+    });
+    expect(second.item.id).toBe(first.item.id);
+    const history = await db.history(first.item.id);
+    expect(history.evaluations).toHaveLength(2);
+    expect(history.evaluations.map((row) => row.policy_version)).toEqual(
+      expect.arrayContaining(['test-policy', 'new-policy'])
+    );
+    expect((await db.list({ limit: 10 })).items).toHaveLength(1);
+  });
+  it('paginates mixed detailed and routine checks without gaps at shared timestamps', async () => {
+    for (let index = 0; index < 6; index++) {
+      const check = await db.start(
+        { ...input(), subject_id: `profile-${index}` },
+        'PUBLIC_FIELD'
+      );
+      await db.finish(check.evaluationId, { outcome: 'ALLOW', result: {} });
+      await contentModerationDb.recordPrePublicationCheck({
+        dropId: `drop-${index}`,
+        authorProfileId: 'author',
+        operation: 'CREATE',
+        deterministicGateVersion: 'test',
+        contentFingerprint: moderationFingerprint(index),
+        deterministicSignal: null,
+        outcome: PrePublicationCheckOutcome.ALLOW,
+        evaluatorVersion: null,
+        evaluatorResult: null
+      });
+    }
+    await sqlExecutor.execute(
+      `update ${CONTENT_MODERATION_ITEMS_TABLE} set created_at=100`,
+      {}
+    );
+    await sqlExecutor.execute(
+      `update ${CONTENT_MODERATION_PRE_PUBLICATION_CHECKS_TABLE} set created_at=100`,
+      {}
+    );
+    const ids: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await db.list({ limit: 3, before: cursor ?? undefined });
+      ids.push(...page.items.map((item) => item.id));
+      cursor = page.next_cursor;
+    } while (cursor);
+    expect(ids).toHaveLength(12);
+    expect(new Set(ids).size).toBe(12);
+    expect(ids.filter((id) => id.startsWith('routine:'))).toHaveLength(6);
+    const publicFields = await db.list({
+      limit: 20,
+      subject_type: 'PROFILE_BIO',
+      profile_id: 'author'
+    });
+    expect(publicFields.items).toHaveLength(6);
+    expect(publicFields.next_cursor).toBeNull();
+  });
+  it('rolls a consumed permit back with failed content save, then permits only the same request replay', async () => {
+    const check = await db.start(input(), 'PUBLIC_FIELD');
+    await db.finish(check.evaluationId, { outcome: 'REJECT', result: {} });
+    await db.executeNativeQueriesInTransaction(async (connection) => {
+      const item = await db.get(check.item.id, { connection }, true);
+      await db.decide(item, 'ALLOW', { connection });
+      await db.audit(
+        item,
+        {
+          actor: 'dev',
+          action: 'ALLOW',
+          reason: 'Reviewed exact text',
+          actionId: randomUUID()
+        },
+        { connection }
+      );
+    });
+    const key = randomUUID();
+    const moderationPermitGeneration = (await db.get(check.item.id)).scope
+      .permit_generation as number;
+    await expect(
+      db.executeNativeQueriesInTransaction(async (connection) => {
+        await db.consume(check.item.id, 'new-bio', {
+          connection,
+          moderationRequestId: key,
+          moderationPermitGeneration
+        });
+        throw new Error('content insert failed');
+      })
+    ).rejects.toThrow('content insert failed');
+    expect((await db.get(check.item.id)).permit_consumed_at).toBeNull();
+    await db.executeNativeQueriesInTransaction(async (connection) => {
+      await db.consume(check.item.id, 'new-bio', {
+        connection,
+        moderationRequestId: key,
+        moderationPermitGeneration
+      });
+    });
+    await sqlExecutor.execute(
+      `update ${CONTENT_MODERATION_ITEMS_TABLE} set permit_expires_at=1 where id=:id`,
+      { id: check.item.id }
+    );
+    await expect(
+      db.executeNativeQueriesInTransaction((connection) =>
+        db.consume(check.item.id, 'duplicate', {
+          connection,
+          moderationRequestId: key,
+          moderationPermitGeneration
+        })
+      )
+    ).resolves.toBe('new-bio');
+    await expect(
+      db.executeNativeQueriesInTransaction((connection) =>
+        db.consume(check.item.id, 'duplicate', {
+          connection,
+          moderationRequestId: randomUUID(),
+          moderationPermitGeneration
+        })
+      )
+    ).rejects.toMatchObject({
+      status: 409,
+      code: 'MODERATION_PERMIT_CONSUMED'
+    });
+    expect(
+      (await db.history(check.item.id)).audit.filter(
+        (row) => row.action === 'CONTENT_SAVED'
+      )
+    ).toHaveLength(1);
+  });
+  it.each(['REVOKED', 'EXPIRED', 'REAPPROVED'] as const)(
+    'rejects an evaluated permit that became %s before publication',
+    async (change) => {
+      const started = await db.start(input(), 'PUBLIC_FIELD');
+      await db.finish(started.evaluationId, { outcome: 'REJECT', result: {} });
+      const decide = async (action: string) =>
+        db.executeNativeQueriesInTransaction(async (connection) => {
+          const item = await db.get(started.item.id, { connection }, true);
+          await db.decide(item, action, { connection });
+        });
+      await decide('ALLOW');
+      const allowed = await db.get(started.item.id);
+      const generation = allowed.scope.permit_generation as number;
+      expect(generation).toBeGreaterThan(0);
+      if (change === 'EXPIRED')
+        await sqlExecutor.execute(
+          `update ${CONTENT_MODERATION_ITEMS_TABLE} set permit_expires_at=1 where id=:id`,
+          { id: started.item.id }
+        );
+      else {
+        await decide('REVOKE_OVERRIDE');
+        if (change === 'REAPPROVED') await decide('ALLOW');
+      }
+      await expect(
+        db.executeNativeQueriesInTransaction((connection) =>
+          db.consume(started.item.id, 'late-publication', {
+            connection,
+            moderationRequestId: randomUUID(),
+            moderationPermitGeneration: generation
+          })
+        )
+      ).rejects.toMatchObject({ code: 'MODERATION_REVISION_CONFLICT' });
+      expect((await db.get(started.item.id)).published_subject_id).toBeNull();
+      if (change !== 'REAPPROVED') {
+        // A separate real classifier ALLOW does not depend on the old permit.
+        const classified = await db.start(input(), 'PUBLIC_FIELD');
+        await db.finish(classified.evaluationId, {
+          outcome: 'ALLOW',
+          result: {}
+        });
+        await db.executeNativeQueriesInTransaction((connection) =>
+          db.consume(started.item.id, 'classifier-approved', { connection })
+        );
+        expect((await db.get(started.item.id)).published_subject_id).toBe(
+          'classifier-approved'
+        );
+      }
+    }
+  );
+  it('preserves human override when a late evaluator finishes', async () => {
+    const started = await db.start(input(), 'PUBLIC_FIELD');
+    await db.executeNativeQueriesInTransaction(async (connection) => {
+      const item = await db.get(started.item.id, { connection }, true);
+      await db.decide(item, 'BLOCK', { connection });
+      await db.audit(
+        item,
+        { actor: 'dev', action: 'BLOCK', reason: 'Human review' },
+        { connection }
+      );
+    });
+    await db.finish(started.evaluationId, { outcome: 'ALLOW', result: {} });
+    expect(await db.get(started.item.id)).toMatchObject({
+      override: 'BLOCK',
+      review_status: 'REVIEWED'
+    });
+  });
+  it('retains unresolved report evidence and active rule provenance while expiring reviewed payloads', async () => {
+    const report = await db.start(
+      { ...input(), operation: 'REPORT' },
+      'CONTENT_REPORTED'
+    );
+    await db.finish(report.evaluationId, {
+      outcome: 'ALLOW',
+      result: { why: 'none' }
+    });
+    const reviewed = await db.start(input(), 'PUBLIC_FIELD');
+    await db.finish(reviewed.evaluationId, {
+      outcome: 'ALLOW',
+      result: { why: 'none' }
+    });
+    await sqlExecutor.execute(
+      `update ${CONTENT_MODERATION_ITEMS_TABLE} set evidence_expires_at=1 where id=:id`,
+      { id: reviewed.item.id }
+    );
+    await db.retain();
+    expect((await db.get(report.item.id)).evidence).toEqual(input().evidence);
+    expect((await db.get(reviewed.item.id)).evidence).toBeNull();
+    const result = await sqlExecutor.oneOrNull<{ result: unknown }>(
+      `select result from ${CONTENT_MODERATION_EVALUATIONS_TABLE} where id=:id`,
+      { id: reviewed.evaluationId }
+    );
+    expect(result?.result).toBeNull();
+  });
+  it('matches group resubmission after regenerated draft and membership-container IDs', async () => {
+    const groups = new UserGroupsDb(dbSupplier);
+    await groups.executeNativeQueriesInTransaction(async (connection) => {
+      await groups.save(
+        aUserGroup(
+          {
+            created_by: 'author',
+            visible: false,
+            profile_group_id: 'members-one',
+            created_at: new Date(1)
+          },
+          { id: 'draft-one', name: 'Reviewed name' }
+        ),
+        connection
+      );
+      await groups.save(
+        aUserGroup(
+          {
+            created_by: 'author',
+            visible: false,
+            profile_group_id: 'members-two',
+            created_at: new Date(2)
+          },
+          { id: 'draft-two', name: 'Reviewed name' }
+        ),
+        connection
+      );
+      await sqlExecutor.execute(
+        `insert into ${PROFILE_GROUPS_TABLE} (profile_group_id,profile_id) values ('members-one','alice'),('members-one','bob'),('members-two','bob'),('members-two','alice')`,
+        {},
+        { wrappedConnection: connection }
+      );
+    });
+    const first = await db.groupDefinition('draft-one');
+    const second = await db.groupDefinition('draft-two');
+    expect(first).toEqual(second);
+    const groupInput = (
+      definition: Record<string, unknown> | null
+    ): ModerationInput => ({
+      ...input(),
+      subject_type: 'GROUP_NAME',
+      subject_id: 'author:new',
+      operation: 'SAVE',
+      scope: {
+        group_review: true,
+        current_revision: null,
+        old_version_id: null,
+        context_fingerprint: moderationFingerprint({
+          definition,
+          visible: true
+        })
+      },
+      evidence: { text: 'Reviewed name' }
+    });
+    const attempt = await db.start(groupInput(first), 'PUBLIC_FIELD');
+    expect((await db.start(groupInput(second), 'PUBLIC_FIELD')).item.id).toBe(
+      attempt.item.id
+    );
+    expect(
+      (await db.start(groupInput({ ...second, level_min: 5 }), 'PUBLIC_FIELD'))
+        .item.id
+    ).not.toBe(attempt.item.id);
+  });
+  it.each(['start', 'finish'] as const)(
+    'distinguishes transient and deterministic %s failures without leaking SQL content',
+    async (operation) => {
+      for (const [code, status] of [
+        ['ER_LOCK_DEADLOCK', 503],
+        ['ECONNRESET', 503],
+        ['ER_PARSE_ERROR', 500],
+        ['ER_DUP_ENTRY', 500]
+      ] as const) {
+        const transaction = jest
+          .spyOn(db, 'executeNativeQueriesInTransaction')
+          .mockRejectedValueOnce(
+            Object.assign(new Error('PRIVATE_SQL_CONTENT'), { code })
+          );
+        try {
+          const result =
+            operation === 'start'
+              ? db.start(input(), 'PUBLIC_FIELD')
+              : db.finish('evaluation', { outcome: 'ALLOW', result: {} });
+          const error = await result.catch((failure) => failure);
+          expect(error.getStatusCode()).toBe(status);
+          expect(error.message).not.toContain('PRIVATE_SQL_CONTENT');
+          expect(error.message.includes('Please retry')).toBe(status === 503);
+        } finally {
+          transaction.mockRestore();
+        }
+      }
+    }
+  );
+
+  it('caps interrupted and expired evaluation cleanup at 1000 and continues on the next invocation', async () => {
+    const { item } = await db.start(input(), 'PUBLIC_FIELD');
+    await sqlExecutor.execute(
+      `insert into ${CONTENT_MODERATION_EVALUATIONS_TABLE}
+       (id,item_id,\`trigger\`,outcome,policy_version,cache_hit,started_at,result)
+       select rows_to_add.id,:item,'PUBLIC_FIELD','PENDING','test',false,1,json_object('private','evidence')
+       from json_table(cast(:ids as json),'$[*]' columns (id varchar(36) path '$')) rows_to_add`,
+      {
+        item: item.id,
+        ids: JSON.stringify(Array.from({ length: 1001 }, () => randomUUID()))
+      }
+    );
+    const count = async (predicate: string) =>
+      Number(
+        (
+          await sqlExecutor.oneOrNull<{ count: number }>(
+            `select count(*) count from ${CONTENT_MODERATION_EVALUATIONS_TABLE} where ${predicate}`,
+            {}
+          )
+        )?.count
+      );
+    await db.retain();
+    expect(await count("fallback='INTERRUPTED'")).toBe(1000);
+    expect(await count('started_at=1 and completed_at is null')).toBe(1);
+    await db.retain();
+    expect(await count("fallback='INTERRUPTED'")).toBe(1001);
+    await sqlExecutor.execute(
+      `update ${CONTENT_MODERATION_ITEMS_TABLE} set evidence=null,evidence_expires_at=1,review_status='REVIEWED' where id=:id`,
+      { id: item.id }
+    );
+    await db.retain();
+    expect(await count('result is null')).toBe(1000);
+    await db.retain();
+    expect(await count('result is not null')).toBe(0);
+  });
+
+  it('selects stale evaluations through the ordered index without scanning completed history', async () => {
+    const { item, evaluationId } = await db.start(input(), 'PUBLIC_FIELD');
+    await sqlExecutor.execute(
+      `update ${CONTENT_MODERATION_EVALUATIONS_TABLE} set started_at=1 where id=:id`,
+      { id: evaluationId }
+    );
+    await sqlExecutor.execute(
+      `insert into ${CONTENT_MODERATION_EVALUATIONS_TABLE}
+       (id,item_id,\`trigger\`,outcome,policy_version,cache_hit,started_at,completed_at)
+       select history.id,:item,'PUBLIC_FIELD','ALLOW','test',false,1,2
+       from json_table(cast(:ids as json),'$[*]' columns (id varchar(36) path '$')) history`,
+      {
+        item: item.id,
+        ids: JSON.stringify(Array.from({ length: 5000 }, () => randomUUID()))
+      }
+    );
+    await sqlExecutor.execute(
+      `analyze table ${CONTENT_MODERATION_EVALUATIONS_TABLE}`,
+      {}
+    );
+    const selectionPlan = await sqlExecutor.execute<{
+      key: string | null;
+      Extra: string;
+    }>(
+      `explain select id,item_id from ${CONTENT_MODERATION_EVALUATIONS_TABLE} where completed_at is null and started_at<:stale order by started_at,id limit 1000 for update`,
+      { stale: Date.now() - 10 * 60000 }
+    );
+    expect(selectionPlan[0].key).toBe('moderation_evaluations_interrupted_idx');
+    expect(selectionPlan[0].Extra).not.toContain('filesort');
+  });
+
+  it('purges wholly routine success history after thirty days without deleting rejected work', async () => {
+    const routine = await db.start(input(), 'PUBLIC_FIELD');
+    await db.finish(routine.evaluationId, { outcome: 'ALLOW', result: {} });
+    const rejected = await db.start(
+      { ...input(), evidence: { text: 'rejected' } },
+      'PUBLIC_FIELD'
+    );
+    await db.finish(rejected.evaluationId, { outcome: 'REJECT', result: {} });
+    await sqlExecutor.execute(
+      `update ${CONTENT_MODERATION_ITEMS_TABLE} set updated_at=1`
+    );
+    await db.retain();
+    await expect(db.get(routine.item.id)).rejects.toThrow('not found');
+    expect((await db.get(rejected.item.id)).evidence).toEqual({
+      text: 'rejected'
+    });
+  });
+});

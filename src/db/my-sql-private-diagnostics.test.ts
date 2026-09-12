@@ -18,6 +18,26 @@ describe('private SQL diagnostics', () => {
   });
   it.each([
     {
+      table: 'content_moderation_items',
+      inline: 'rejected-about-text',
+      bound: 'private-review-reason'
+    },
+    {
+      table: 'content_moderation_evaluations',
+      inline: 'reported-private-text',
+      bound: 'provider-rationale'
+    },
+    {
+      table: 'content_moderation_reports',
+      inline: 'reported-content',
+      bound: 'reporter-note'
+    },
+    {
+      table: 'abusiveness_detection_results',
+      inline: 'rejected-category',
+      bound: 'private-assessment'
+    },
+    {
       table: 'profile_cms_agent_grants',
       inline: 'private-candidate-copy',
       bound: 'private-grant-value'

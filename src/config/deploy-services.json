@@ -91,22 +91,6 @@
       "default_dependencies": []
     },
     {
-      "name": "cloudwatchAlarmsToDiscordLoop",
-      "allowed_environments": [
-        "prod"
-      ],
-      "deploy_adapter": "serverless",
-      "aws_region": {
-        "staging": "eu-west-1",
-        "prod": "us-east-1"
-      },
-      "verification_targets": [
-        "cloudwatchAlarmsToDiscordLoop"
-      ],
-      "validation_profile": "lambda-version",
-      "default_dependencies": []
-    },
-    {
       "name": "claimsBuilder",
       "allowed_environments": [
         "staging",
@@ -359,7 +343,9 @@
         "marketStatsNEXTGEN"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": ["dbMigrationsLoop"]
+      "default_dependencies": [
+        "dbMigrationsLoop"
+      ]
     },
     {
       "name": "marketDepthStreamLoop",

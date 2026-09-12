@@ -9,6 +9,7 @@ jest.mock('@/alchemy', () => ({
 }));
 
 import { identitiesDb } from '@/identities/identities.db';
+import { AuthenticationContext } from '@/auth-context';
 import { DropType } from '@/entities/IDrop';
 import { AttachmentStatus } from '@/entities/IAttachment';
 import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
@@ -27,11 +28,14 @@ import {
 import { PrePublicationModerationService } from '@/content-moderation/pre-publication-moderation.service';
 
 type ModerationServiceMock = jest.Mocked<
-  Pick<PrePublicationModerationService, 'evaluate'>
+  Pick<PrePublicationModerationService, 'evaluate' | 'assertPostingAllowed'>
 >;
 
 function createModerationServiceMock(): ModerationServiceMock {
-  return { evaluate: jest.fn().mockResolvedValue(undefined) };
+  return {
+    evaluate: jest.fn().mockResolvedValue(undefined),
+    assertPostingAllowed: jest.fn().mockResolvedValue(undefined)
+  };
 }
 
 describe('CreateOrUpdateDropUseCase', () => {
@@ -227,22 +231,34 @@ describe('CreateOrUpdateDropUseCase', () => {
 
   it('prepares moderation before the caller opens the write transaction', async () => {
     const moderationService = {
-      evaluate: jest.fn().mockResolvedValue(undefined)
+      evaluate: jest
+        .fn()
+        .mockResolvedValue({ itemId: 'review-item', permitGeneration: 7 }),
+      assertPostingAllowed: jest.fn().mockResolvedValue(undefined)
     };
     const useCase = createUseCaseWithMocks({ moderationService });
 
+    const authenticationContext = new AuthenticationContext({
+      authenticatedWallet: null,
+      authenticatedProfileId: 'delegate',
+      roleProfileId: 'author-1',
+      activeProxyActions: []
+    });
     const preparation = await useCase.preparePrePublication(
       createChatDropModel({
         author_id: 'author-1',
         title: 'title',
         parts: [{ content: 'content', quoted_drop: null, media: [] }]
       }),
-      { connection: { transaction: true } as any }
+      { connection: { transaction: true } as any, authenticationContext }
     );
 
     expect(preparation).toMatchObject({
       operation: 'CREATE',
       authorProfileId: 'author-1',
+      reviewItemId: 'review-item',
+      permitGeneration: 7,
+      authenticationContext,
       contentFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/)
     });
     expect(moderationService.evaluate).toHaveBeenCalledWith(
