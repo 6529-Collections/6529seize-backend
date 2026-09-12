@@ -1,14 +1,14 @@
 {
   "upstream_integrity": "sha512-7n2o3UX0rmNL+8LmVhEd3aun2LXLulcI9y02gKhKE1rgqliZgwocmwg8V+vZat3+JLHPvxABtp8Icy1sUEbd1w==",
-  "patched_archive_sha256": "a3bd5a674e8e30e01e29c490e578556cfb833f34e51d9d3e8764b6cc290b700e",
-  "patched_archive_size": 58134,
+  "patched_archive_sha256": "626c752a5dc43ea1003ed04deb4478436fe1eb1647ccf0683340cc77b7c6eefe",
+  "patched_archive_size": 58135,
   "omitted_native_binaries": [
     "package/dist/index.node"
   ],
   "files": {
     "package/6529-PATCH.md": {
-      "sha256": "d6d487485465a5a7ddab9557f0a7aa992d950e23b9e128f9abbb4079dae90f1d",
-      "size": 3398,
+      "sha256": "a21be9d0d933de5608f8d1f796d4f65f538092fc2049e25b18660995f5ab663e",
+      "size": 3396,
       "unchanged_upstream": false
     },
     "package/Cargo.toml": {

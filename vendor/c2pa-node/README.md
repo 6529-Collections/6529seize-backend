@@ -41,8 +41,8 @@ python3 scripts/build-c2pa-package.py --check
 
 The generator never executes the downloaded package. It makes a deterministic
 tarball and a file-by-file `contents.json` receipt, asserting byte equality for
-every unchanged upstream member. `--upstream-archive PATH` accepts a previously
-downloaded copy and still verifies its pinned integrity. The tarball is checked
+every unchanged upstream member. It downloads only the pinned registry archive
+and verifies its integrity before reading its contents. The tarball is checked
 in so ordinary frozen npm installs do not require Python or a generator step.
 Root and worker lockfiles expose the replacement's transitive dependencies to
 normal dependency analysis; no Snyk ignore or vulnerability policy is changed.

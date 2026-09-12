@@ -31,19 +31,15 @@ def json_bytes(value):
     return (json.dumps(value, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
-def read_upstream(metadata, local_path):
-    if local_path:
-        with Path(local_path).open("rb") as source:
-            raw = source.read(MAX_ARCHIVE + 1)
-    else:
-        require(
-            metadata["tarball"].startswith(
-                "https://registry.npmjs.org/@contentauth/c2pa-node/-/"
-            ),
-            "Unexpected upstream registry URL",
-        )
-        with urllib.request.urlopen(metadata["tarball"], timeout=60) as response:
-            raw = response.read(MAX_ARCHIVE + 1)
+def read_upstream(metadata):
+    require(
+        metadata["tarball"].startswith(
+            "https://registry.npmjs.org/@contentauth/c2pa-node/-/"
+        ),
+        "Unexpected upstream registry URL",
+    )
+    with urllib.request.urlopen(metadata["tarball"], timeout=60) as response:
+        raw = response.read(MAX_ARCHIVE + 1)
     require(len(raw) <= MAX_ARCHIVE, "Upstream archive exceeds size limit")
     integrity = "sha512-" + base64.b64encode(hashlib.sha512(raw).digest()).decode()
     require(integrity == metadata["integrity"], "Upstream npm integrity mismatch")
@@ -157,10 +153,9 @@ def check_consumers(metadata, result, files):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
-    parser.add_argument("--upstream-archive", help="Optional local npm archive; integrity is still checked")
     args = parser.parse_args()
     metadata = json.loads((VENDOR / "upstream.json").read_text(encoding="utf-8"))
-    original = read_upstream(metadata, args.upstream_archive)
+    original = read_upstream(metadata)
     files, omitted = patched_files(original, metadata)
     result = make_archive(files)
     target = VENDOR / f"c2pa-node-{metadata['patched_version']}.tgz"
@@ -185,6 +180,7 @@ def main():
     }
     for path, content in outputs.items():
         if args.check:
+            require(path.is_file(), f"Generated C2PA artifact is missing: {path.name}")
             require(path.read_bytes() == content, f"Generated C2PA artifact differs: {path.name}")
         else:
             path.write_bytes(content)
