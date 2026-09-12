@@ -335,7 +335,8 @@
         "prod": "us-east-1"
       },
       "verification_targets": [
-        "helpBotReplyLoop"
+        "helpBotReplyLoop",
+        "helpBotDailyActivityCreditLoop"
       ],
       "validation_profile": "lambda-version",
       "default_dependencies": []
