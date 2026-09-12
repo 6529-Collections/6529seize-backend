@@ -1,4 +1,5 @@
 import { mock } from 'ts-jest-mocker';
+import { AuthenticationContext } from '@/auth-context';
 import { AbusivenessCheckService } from './abusiveness-check.service';
 import { AbusivenessCheckDb } from './abusiveness-check.db';
 import { AiBasedAbusivenessDetector } from '@/abusiveness/ai-based-abusiveness.detector';
@@ -30,6 +31,24 @@ describe('AbusivenessCheckService durable moderation', () => {
     });
     jest.mocked(detector.checkRepPhraseText).mockResolvedValue(allowed);
     service = new AbusivenessCheckService(detector, cache, reviews);
+  });
+  it('records the authenticated proxy actor separately from the effective profile', async () => {
+    await service.checkRepPhrase('Builder', {
+      authenticationContext: new AuthenticationContext({
+        authenticatedWallet: null,
+        authenticatedProfileId: 'delegate',
+        roleProfileId: 'author',
+        activeProxyActions: []
+      })
+    });
+    expect(reviews.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        author_profile_id: null,
+        actor_profile_id: 'delegate',
+        scope: { acting_as_profile_id: 'author' }
+      }),
+      'PUBLIC_FIELD'
+    );
   });
   it.each(['', ' '.repeat(2), 'r'.repeat(101)])(
     'retains REP length validation',

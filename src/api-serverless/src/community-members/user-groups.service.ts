@@ -1500,6 +1500,7 @@ export class UserGroupsService {
       handle: initialGroup.created_by?.handle ?? '',
       group_id,
       profile_id,
+      actor_profile_id: ctx.authenticationContext?.getLoggedInUsersProfileId(),
       current_revision: replacedDefinition
         ? moderationFingerprint(replacedDefinition)
         : null,

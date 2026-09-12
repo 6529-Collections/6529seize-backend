@@ -107,6 +107,7 @@ export function moderationItemId(input: ModerationInput): string {
           'published_revision',
           'save_request_id',
           'save_subject_id',
+          'acting_as_profile_id',
           'deterministic_signal'
         ].includes(key)
     )

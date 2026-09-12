@@ -123,11 +123,13 @@ export class PrePublicationModerationService {
           : input.dropId,
       author_profile_id: input.authorProfileId,
       actor_profile_id:
-        ctx.authenticationContext?.getActingAsId() ?? input.authorProfileId,
+        ctx.authenticationContext?.getLoggedInUsersProfileId() ??
+        input.authorProfileId,
       operation: input.operation,
       policy_family: 'WAVE_CONTENT',
       policy_version: PRE_PUBLICATION_EVALUATOR_VERSION,
       scope: {
+        acting_as_profile_id: input.authorProfileId,
         deterministic_signal: screen.signal,
         wave_id: input.waveId ?? null,
         current_revision: input.currentRevision ?? null,

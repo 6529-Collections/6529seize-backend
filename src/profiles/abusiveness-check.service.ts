@@ -53,11 +53,14 @@ export class AbusivenessCheckService {
       subject_type: 'REP_CATEGORY',
       subject_id: txt,
       author_profile_id: null,
-      actor_profile_id: ctx.authenticationContext?.getActingAsId() ?? null,
+      actor_profile_id:
+        ctx.authenticationContext?.getLoggedInUsersProfileId() ?? null,
       operation: 'CLASSIFY',
       policy_family: 'PUBLIC_FIELDS',
       policy_version: PUBLIC_TEXT_POLICY_VERSION,
-      scope: {},
+      scope: {
+        acting_as_profile_id: ctx.authenticationContext?.getActingAsId() ?? null
+      },
       evidence: { text: txt }
     };
     return this.evaluate(
@@ -72,6 +75,7 @@ export class AbusivenessCheckService {
     handle: string;
     profile_type: string;
     profile_id?: string;
+    actor_profile_id?: string | null;
     current_revision?: string | null;
   }): Promise<AbusivenessDetectionResult> {
     const text = query.text.trim();
@@ -83,7 +87,7 @@ export class AbusivenessCheckService {
         subject_type: 'PROFILE_BIO',
         subject_id: id,
         author_profile_id: id,
-        actor_profile_id: id,
+        actor_profile_id: query.actor_profile_id ?? id,
         operation: 'UPDATE',
         policy_family: 'PUBLIC_FIELDS',
         policy_version: PUBLIC_TEXT_POLICY_VERSION,
@@ -109,6 +113,7 @@ export class AbusivenessCheckService {
     handle: string;
     group_id?: string;
     profile_id?: string;
+    actor_profile_id?: string | null;
     current_revision?: string | null;
     old_version_id?: string | null;
     visible?: boolean;
@@ -128,12 +133,13 @@ export class AbusivenessCheckService {
         subject_id:
           query.old_version_id ?? `${query.profile_id ?? query.handle}:new`,
         author_profile_id: query.profile_id ?? null,
-        actor_profile_id: query.profile_id ?? null,
+        actor_profile_id: query.actor_profile_id ?? query.profile_id ?? null,
         operation: 'SAVE',
         policy_family: 'PUBLIC_FIELDS',
         policy_version: PUBLIC_TEXT_POLICY_VERSION,
         scope: {
           group_review: true,
+          acting_as_profile_id: query.profile_id ?? null,
           handle: query.handle,
           current_revision: query.current_revision ?? null,
           old_version_id: query.old_version_id ?? null,

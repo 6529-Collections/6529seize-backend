@@ -156,8 +156,13 @@ describe('Developer review guards and evidence', () => {
     expect(moderationItemId(input)).toBe(
       moderationItemId({
         ...input,
+        actor_profile_id: 'another-delegate',
         policy_version: 'new-policy',
-        scope: { published_revision: 'saved', ...input.scope }
+        scope: {
+          published_revision: 'saved',
+          acting_as_profile_id: 'author',
+          ...input.scope
+        }
       })
     );
   });

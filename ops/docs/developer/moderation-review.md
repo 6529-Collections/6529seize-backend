@@ -69,6 +69,11 @@ attempts, cache hits, fallback outcomes and request provenance. The existing
 moderation audit table retains actor/reason/action history; existing reports and
 prepublication checks link to their review item. Ordinary posts without a signal
 remain lightweight prepublication rows visible through the same listing.
+Legacy reports materialize transactionally on first review, preserving their
+original assessment policy, time, rationale and reporter notes. Concurrent opens
+of one report share one imported evaluation; separate reports preserve separate
+assessments. Submission history distinguishes the authenticated actor from a
+profile they are acting for, without changing the author's approval scope.
 
 Capture is committed before external classification and survives a rejected
 content transaction. Capture failures stop the request; they cannot turn into an
@@ -79,6 +84,7 @@ About/group failures stop the save; reports remain for human review.
 
 Wholly routine successful histories expire after 30 days. Reviewed evidence
 expires 90 days after resolution; unresolved reports retain evidence while open.
+Historical report expiry uses the actual latest report resolution time.
 Compact action history is retained for one year. Active rules and suppression
 retain authorizing scope/provenance for their lifetime and at least one year
 after the last change. Expired evidence is displayed as unavailable and cannot

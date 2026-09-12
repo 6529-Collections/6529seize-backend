@@ -65,66 +65,84 @@ export class ModerationReviewService {
   constructor(private readonly db: ModerationReviewDb) {}
   async reportCheck(reportId: string, ctx: RequestContext) {
     assertModerationDeveloper(ctx);
-    const report = await this.db.reportForReview(reportId, ctx);
-    if (report.item_id) return this.detail(report.item_id, ctx);
-    const evidence = report.content_snapshot;
-    const parts = Array.isArray(evidence.parts)
-      ? evidence.parts.map((part: { content?: string | null }) => ({
-          content: part.content ?? null
-        }))
-      : [];
-    const revision = moderationFingerprint({
-      title: evidence.title ?? null,
-      parts
-    });
-    const input: ModerationInput = {
-      subject_type: 'DROP',
-      subject_id: report.drop_id,
-      author_profile_id: report.author_profile_id,
-      actor_profile_id: report.reporter_profile_id,
-      operation: 'REPORT',
-      policy_family: 'WAVE_CONTENT',
-      policy_version: CONTENT_MODERATION_POLICY_VERSION,
-      scope: {
-        report_id: reportId,
-        report_reason: report.reason,
-        wave_id: evidence.wave_id ?? null,
-        current_revision: revision
-      },
-      evidence
-    };
-    let item = await this.db.find(input, ctx);
-    if (!item) {
-      const started = await this.db.start(input, 'CONTENT_REPORTED', ctx);
-      await this.db.finish(
-        started.evaluationId,
-        {
-          outcome: !report.ai_recommendation
-            ? 'ERROR'
-            : report.ai_recommendation === 'NO_VIOLATION_DETECTED'
-              ? 'ALLOW'
-              : 'REJECT',
-          fallback: report.ai_recommendation
-            ? null
-            : 'LEGACY_ASSESSMENT_UNAVAILABLE',
-          result: {
-            recommendation: report.ai_recommendation,
-            category: report.ai_category,
-            legacy_record: true
-          }
-        },
-        ctx
-      );
-      await this.db.attachPublication(
-        started.item.id,
-        report.drop_id,
-        revision,
-        ctx
-      );
-      await this.db.bindReport(reportId, started.item.id, ctx);
-      item = started.item;
-    }
-    return this.detail(item.id, ctx);
+    const target = await this.db.reportForReview(reportId, ctx);
+    if (target.item_id) return this.detail(target.item_id, ctx);
+    const itemId = await this.db.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const tx = { ...ctx, connection };
+        // Match the publication/action lock order before locking report rows.
+        await this.db.lockProfile(target.author_profile_id, tx);
+        await this.db.lockDrop(target.drop_id, tx);
+        const report = await this.db.reportForReview(reportId, tx, true);
+        if (report.item_id) return report.item_id;
+        const evidence = report.content_snapshot;
+        const parts = Array.isArray(evidence.parts)
+          ? evidence.parts.map((part: { content?: string | null }) => ({
+              content: part.content ?? null
+            }))
+          : [];
+        const revision = moderationFingerprint({
+          title: evidence.title ?? null,
+          parts
+        });
+        const input: ModerationInput = {
+          subject_type: 'DROP',
+          subject_id: report.drop_id,
+          author_profile_id: report.author_profile_id,
+          actor_profile_id: report.reporter_profile_id,
+          operation: 'REPORT',
+          policy_family: 'WAVE_CONTENT',
+          policy_version: report.ai_policy_version ?? 'legacy-unversioned',
+          scope: {
+            report_id: reportId,
+            report_reason: report.reason,
+            wave_id: evidence.wave_id ?? null,
+            current_revision: revision
+          },
+          evidence
+        };
+        const started = await this.db.start(input, 'CONTENT_REPORTED', tx);
+        await this.db.finish(
+          started.evaluationId,
+          {
+            outcome: !report.ai_recommendation
+              ? 'ERROR'
+              : report.ai_recommendation === 'NO_VIOLATION_DETECTED'
+                ? 'ALLOW'
+                : 'REJECT',
+            fallback: report.ai_recommendation
+              ? null
+              : 'LEGACY_ASSESSMENT_UNAVAILABLE',
+            result: {
+              recommendation: report.ai_recommendation,
+              category: report.ai_category,
+              confidence: report.ai_confidence,
+              rationale: report.ai_rationale,
+              evidence: report.ai_evidence,
+              policy_version: report.ai_policy_version,
+              assessed_at: report.ai_assessed_at,
+              report: {
+                id: report.id,
+                reason: report.reason,
+                notes: report.notes
+              },
+              legacy_record: true
+            }
+          },
+          tx
+        );
+        await this.db.attachPublication(
+          started.item.id,
+          report.drop_id,
+          revision,
+          tx
+        );
+        await this.db.bindReport(reportId, started.item.id, tx);
+        await this.db.refreshReportResolution(started.item.id, tx);
+        return started.item.id;
+      }
+    );
+    return this.detail(itemId, ctx);
   }
   async profileCheck(profileId: string, ctx: RequestContext) {
     const actor = assertModerationDeveloper(ctx);
