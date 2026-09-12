@@ -14,7 +14,10 @@ import { DossierSnapshot } from '../src/artwork-documentation/museum/export/doss
 
 // This development command writes only its fixed, ignored fixture directory.
 // It does not accept an arbitrary filesystem destination from CLI input.
-const output = resolve(__dirname, '..', '.museum-corpus-fixtures');
+const output = join(
+  realpathSync(resolve(__dirname, '..')),
+  '.museum-corpus-fixtures'
+);
 mkdirSync(output, { recursive: true });
 if (realpathSync(output) !== output)
   throw new Error('Museum corpus output must not traverse a symbolic link.');

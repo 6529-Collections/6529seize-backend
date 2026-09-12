@@ -12,6 +12,11 @@ from jsonschema import Draft7Validator
 from museum_iiif_validation import verify_selector_types
 
 
+def check(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
 class LockedResolver(etree.Resolver):
     def __init__(self, directory, lock):
         self.directory = directory
@@ -23,7 +28,7 @@ class LockedResolver(etree.Resolver):
             raise ValueError('Unpinned XML schema: '+url)
         path = self.directory/item['file']
         data = path.read_bytes()
-        assert hashlib.sha256(data).hexdigest() == item['sha256'], url
+        check(hashlib.sha256(data).hexdigest() == item['sha256'], 'Pinned schema digest mismatch')
         return self.resolve_string(data, context, base_url=url)
 
 
@@ -38,23 +43,23 @@ def validate(directory):
     for kind, url in urls.items():
         item = lock[url]
         data = (schemas/item['file']).read_bytes()
-        assert hashlib.sha256(data).hexdigest() == item['sha256'], url
+        check(hashlib.sha256(data).hexdigest() == item['sha256'], 'Pinned schema digest mismatch')
         validators[kind] = etree.XMLSchema(etree.fromstring(data, parser, base_url=url))
     manifest = json.loads((directory/'corpus-manifest.json').read_bytes())
     iiif_item = next(item for item in lock.values() if item['file'] == 'iiif-presentation-3.json')
     iiif_bytes = (schemas/iiif_item['file']).read_bytes()
-    assert hashlib.sha256(iiif_bytes).hexdigest() == iiif_item['sha256']
+    check(hashlib.sha256(iiif_bytes).hexdigest() == iiif_item['sha256'], 'Pinned IIIF schema digest mismatch')
     iiif_schema = json.loads(iiif_bytes)
     Draft7Validator.check_schema(iiif_schema)
     iiif_validator = Draft7Validator(iiif_schema)
-    assert len(manifest['cases']) == 13
+    check(len(manifest['cases']) == 13, 'Expected thirteen corpus cases')
     count = 0
     iiif_count = 0
     for case in manifest['cases']:
         for item in case['files']:
-            assert Path(item['path']).name == item['path']
+            check(isinstance(item['path'], str) and item['path'] not in ('.', '..') and '/' not in item['path'] and '\\' not in item['path'] and Path(item['path']).name == item['path'], 'Invalid corpus filename')
             data = (directory/item['path']).read_bytes()
-            assert hashlib.sha256(data).hexdigest() == item['sha256'], item['path']
+            check(hashlib.sha256(data).hexdigest() == item['sha256'], 'Corpus file digest mismatch')
             if item['path'].endswith('-iiif.json'):
                 iiif_manifest = json.loads(data)
                 verify_selector_types(iiif_manifest)
@@ -64,8 +69,8 @@ def validate(directory):
                 if item['path'].endswith('-'+kind+'.xml'):
                     validator.assertValid(etree.fromstring(data, etree.XMLParser(resolve_entities=False, no_network=True)))
                     count += 1
-    assert count == 26
-    assert iiif_count == 13
+    check(count == 26, 'Expected twenty-six XML projections')
+    check(iiif_count == 13, 'Expected thirteen IIIF manifests')
     print('Validated 13 capture cases, 26 official XSD projections, 13 IIIF manifests and all generated file digests.')
 
 

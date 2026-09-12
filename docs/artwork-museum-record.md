@@ -133,6 +133,10 @@ Deploy `artworkDocumentationStorage` and `dbMigrationsLoop` before
 `artworkDocumentationProcessor`. Deploy `attachmentsProcessor` for the shared PDF
 validator, then `api`, followed by the dependent frontend.
 The new entities and asset columns are applied by the existing TypeORM schema
-sync. Use the normal [deployment process](deployment.md) and repeat the upload,
+sync. The deployment workflow directly invokes `dbMigrationsLoop` after deploying
+it; that non-scheduled invocation enables `syncEntities`. Its regular scheduled
+retention runs deliberately disable schema synchronization. Wait for the direct
+deployment invocation to succeed before deploying the dependent workers and API.
+Use the normal [deployment process](deployment.md) and repeat the upload,
 read/review, export and hash checks in each authorized environment. Local parser
 benchmarks are not evidence of AWS upload or GuardDuty throughput.
