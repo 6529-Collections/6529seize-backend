@@ -86,6 +86,14 @@ economic limits. The client independently validates before asking its wallet
 to sign or send. Purchase fulfillment delivers directly to a reviewed profile
 or third-party recipient. The backend never holds user signing keys.
 
+Browser preflights allow the required `Idempotency-Key` header only on
+`POST /market/operations`, `POST /collect/rules` and
+`POST /collect/rules/{id}/prepare`. These routes retain the public API's
+non-credentialed CORS policy; their bearer authentication, mandatory
+idempotency keys and financial validation remain enforced on actual requests.
+Artwork documentation and credentialed session routes retain their separate
+origin policies. This CORS repair requires only the `api` deployment.
+
 Public `GET /market/orders/{order_hash}` resolves an exact supported Seaport
 listing or offer outside the limited best-order discovery results. Required
 asset, side and protocol parameters bind the requested identity. The API checks
@@ -146,7 +154,15 @@ for complete review or recovery evidence.
 
 `collect_plans` stores incremental listing scans with renewable leases and
 profile/catalog invalidation. It distinguishes a completed asset scan from
-incomplete market coverage. `collect_rules` and `collect_rule_operations` store
+incomplete market coverage. Plan responses optionally include `available_result`,
+an uncapped comparison over the same captured candidates and evaluation instant,
+alongside the result constrained by an explicitly echoed `budget_wei`. Without
+a cap the same result is reused; otherwise one additional search is bounded to
+20,000 states. Both use the same observed unit prices and estimated gas, make no
+additional market reads and preserve incomplete coverage. Neither authorizes
+spending or claims a global minimum. This additive response requires the API
+before its frontend consumer, without database or loop changes.
+`collect_rules` and `collect_rule_operations` store
 fixed targets, review limits, one outstanding operation and monotonic verified
 acquisitions. Rules only prepare transactions for owner approval. Their limits
 are not a smart-contract-enforced mandate or authority to broadcast unattended.
