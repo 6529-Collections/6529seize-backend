@@ -35,6 +35,21 @@
         "VersioningConfiguration": {
           "Status": "Enabled"
         },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "ExpireBuildArtifacts",
+              "Status": "Enabled",
+              "ExpirationInDays": 90,
+              "NoncurrentVersionExpiration": {
+                "NoncurrentDays": 30
+              },
+              "AbortIncompleteMultipartUpload": {
+                "DaysAfterInitiation": 7
+              }
+            }
+          ]
+        },
         "LoggingConfiguration": {
           "DestinationBucketName": {
             "Ref": "ArtifactAccessLogs"

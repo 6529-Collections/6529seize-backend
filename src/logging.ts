@@ -6,7 +6,7 @@ import {
 } from 'winston';
 
 import { loggerContext } from './logger-context';
-import { operationalError } from './operational-errors';
+import { OperationalCondition, operationalError } from './operational-errors';
 
 const { combine, timestamp, printf, errors, splat } = format;
 
@@ -107,6 +107,24 @@ export class Logger {
       this.name,
       [arg1, ...rest],
       loggerContext.get()?.requestId
+    );
+    if (this.isLevelEnabled('ERROR')) {
+      getWinstonInstance(this.name).error(arg1, ...rest);
+    }
+  }
+
+  /** Distinguishes known operational conditions without exporting dynamic message text. */
+  errorWithCode(
+    condition: OperationalCondition,
+    arg1: string,
+    ...rest: unknown[]
+  ) {
+    operationalError(
+      this.name,
+      [arg1, ...rest],
+      loggerContext.get()?.requestId,
+      'APPLICATION_ERROR',
+      condition
     );
     if (this.isLevelEnabled('ERROR')) {
       getWinstonInstance(this.name).error(arg1, ...rest);

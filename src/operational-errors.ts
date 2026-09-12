@@ -1,5 +1,19 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomUUID } from 'node:crypto';
+import { ApiCompliantException } from '@/exceptions';
+
+const CONDITIONS = [
+  'SUBSCRIPTION_NOT_FOUND',
+  'SUBSCRIPTION_BALANCE_NOT_FOUND',
+  'SUBSCRIPTION_BALANCE_INSUFFICIENT'
+] as const;
+export type OperationalCondition = (typeof CONDITIONS)[number];
+
+export function isExpectedClientError(value: unknown): boolean {
+  if (!(value instanceof ApiCompliantException)) return false;
+  const status = value.getStatusCode();
+  return status >= 400 && status < 500;
+}
 
 const context = new AsyncLocalStorage<{
   requestId: string | undefined;
@@ -36,13 +50,15 @@ export function operationalError(
   component: string,
   values: readonly unknown[],
   requestId?: string,
-  code: 'APPLICATION_ERROR' | 'LAMBDA_FAILURE' = 'APPLICATION_ERROR'
+  code: 'APPLICATION_ERROR' | 'LAMBDA_FAILURE' = 'APPLICATION_ERROR',
+  condition?: OperationalCondition
 ): void {
   if (!process.env.AWS_LAMBDA_FUNCTION_NAME) return;
   try {
     const error = values.find(
       (value): value is Error => value instanceof Error
     );
+    if (isExpectedClientError(error)) return;
     const observedErrors = context.getStore()?.observedErrors;
     if (error && observedErrors?.has(error)) return;
     const service = token(process.env.AWS_LAMBDA_FUNCTION_NAME, 100);
@@ -54,9 +70,10 @@ export function operationalError(
       configuredEnvironment.endsWith('_staging')
         ? 'staging'
         : 'prod';
+    const discriminator = CONDITIONS.find((value) => value === condition) ?? '';
     const fingerprint = createHash('sha256')
       .update(
-        `${service}:${component}:${token(error?.name, 80) ?? 'Error'}:${code}`
+        `${service}:${component}:${token(error?.name, 80) ?? 'Error'}:${code}:${discriminator}`
       )
       .digest('hex');
     const correlationId = token(

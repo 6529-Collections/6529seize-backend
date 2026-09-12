@@ -3,6 +3,7 @@ import {
   operationalResponse,
   withOperationalContext
 } from './operational-errors';
+import { BadRequestException, CustomApiCompliantException } from './exceptions';
 
 describe('operational error envelopes', () => {
   const original = process.env;
@@ -72,5 +73,47 @@ describe('operational error envelopes', () => {
       throw new Error('stream failure');
     });
     expect(() => operationalError('APP', [])).not.toThrow();
+  });
+
+  it('separates explicit conditions while keeping dynamic messages out of fingerprints and payloads', () => {
+    operationalError(
+      'SUBSCRIPTIONS',
+      ['private user A'],
+      undefined,
+      'APPLICATION_ERROR',
+      'SUBSCRIPTION_NOT_FOUND'
+    );
+    operationalError(
+      'SUBSCRIPTIONS',
+      ['private user B'],
+      undefined,
+      'APPLICATION_ERROR',
+      'SUBSCRIPTION_NOT_FOUND'
+    );
+    operationalError(
+      'SUBSCRIPTIONS',
+      ['private user A'],
+      undefined,
+      'APPLICATION_ERROR',
+      'SUBSCRIPTION_BALANCE_NOT_FOUND'
+    );
+    const values = output.mock.calls.map(([raw]) => JSON.parse(String(raw)));
+    expect(values[0].fingerprint).toBe(values[1].fingerprint);
+    expect(values[0].fingerprint).not.toBe(values[2].fingerprint);
+    expect(JSON.stringify(values)).not.toMatch(
+      /private|SUBSCRIPTION_NOT_FOUND|SUBSCRIPTIONS/
+    );
+  });
+
+  it('excludes typed client errors while still reporting server errors', () => {
+    operationalError('API', [
+      new BadRequestException('private moderation reason')
+    ]);
+    expect(output).not.toHaveBeenCalled();
+    operationalError('API', [
+      new CustomApiCompliantException(503, 'private storage error')
+    ]);
+    expect(output).toHaveBeenCalledTimes(1);
+    expect(String(output.mock.calls[0][0])).not.toContain('private');
   });
 });

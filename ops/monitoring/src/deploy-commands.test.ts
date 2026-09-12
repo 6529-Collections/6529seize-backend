@@ -12,8 +12,29 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-for (const source of [false, true]) {
-  test(`${source ? 'source' : 'monitoring'} deployment uploads oversized templates under its approved artifact prefix`, async () => {
+const cases = [
+  { name: 'monitoring without fallback', source: false },
+  {
+    name: 'monitoring exact fallback grant',
+    source: false,
+    fallback: 'allowed'
+  },
+  {
+    name: 'monitoring mismatched fallback grant',
+    source: false,
+    fallback: 'denied'
+  },
+  { name: 'source existing topic preserved', source: true },
+  { name: 'source topic explicitly disabled', source: true, topic: '' },
+  {
+    name: 'source topic explicitly configured',
+    source: true,
+    topic: 'arn:aws:sns:us-east-1:111111111111:alarms'
+  }
+] as const;
+for (const scenario of cases) {
+  const source = scenario.source;
+  test(`${scenario.name}: validates configuration and uploads oversized templates under its approved artifact prefix`, async () => {
     const scratch = mkdtempSync(join(tmpdir(), 'monitoring-deploy-'));
     const executable = join(scratch, 'aws');
     writeFileSync(executable, 'mocked CLI fixture; never executed', {
@@ -25,11 +46,14 @@ for (const source of [false, true]) {
     const sourceAccount = '111111111111';
     const sha = 'a'.repeat(40);
     const bucket = source ? 'source-test-artifacts' : 'monitor-test-artifacts';
+    const fallback = 'fallback' in scenario ? scenario.fallback : undefined;
+    const targetTopic = `arn:aws:sns:us-east-1:${sourceAccount}:alarms`;
     const parameters = {
       SourceAccountId: sourceAccount,
       SourceRegion: 'us-east-1',
       RuntimePermissionsBoundaryArn: `arn:aws:iam::${monitorAccount}:policy/6529-observability-prod-runtime-boundary`,
-      FallbackKmsKeyArn: `arn:aws:kms:eu-west-1:${monitorAccount}:key/12345678-1234-1234-1234-123456789abc`
+      FallbackKmsKeyArn: `arn:aws:kms:eu-west-1:${monitorAccount}:key/12345678-1234-1234-1234-123456789abc`,
+      ...(fallback ? { FallbackTargetTopicArn: targetTopic } : {})
     };
     process.env = {
       ...original,
@@ -44,9 +68,11 @@ for (const source of [false, true]) {
       MONITORING_CLOUDFORMATION_ROLE_ARN: `arn:aws:iam::${monitorAccount}:role/deploy`,
       MONITORING_EVENT_BUS_ARN: `arn:aws:events:eu-west-1:${monitorAccount}:event-bus/seize-monitoring-prod-events`,
       MONITORING_PARAMETERS: JSON.stringify(parameters),
-      SOURCE_CLOUDFORMATION_ROLE_ARN: '',
-      SOURCE_ALARM_TOPIC_ARN: ''
+      SOURCE_CLOUDFORMATION_ROLE_ARN: ''
     };
+    if ('topic' in scenario)
+      process.env.SOURCE_ALARM_TOPIC_ARN = scenario.topic;
+    else delete process.env.SOURCE_ALARM_TOPIC_ARN;
     const coverage = JSON.parse(
       readFileSync(new URL('../coverage-prod.json', import.meta.url), 'utf8')
     );
@@ -61,6 +87,18 @@ for (const source of [false, true]) {
         calls.push(args);
         let stdout = '';
         if (args[0] === 'sts') stdout = source ? sourceAccount : monitorAccount;
+        if (args[1] === 'get-policy') stdout = 'v2';
+        if (args[1] === 'get-policy-version')
+          stdout = JSON.stringify({
+            Statement: [
+              {
+                Effect: 'Allow',
+                Action: ['sns:Publish'],
+                Resource:
+                  fallback === 'allowed' ? targetTopic : `${targetTopic}-other`
+              }
+            ]
+          });
         if (args[0] === 'lambda')
           stdout = JSON.stringify([
             ...functions,
@@ -80,7 +118,17 @@ for (const source of [false, true]) {
         `../scripts/${source ? 'deploy-source' : 'deploy'}.mjs`,
         import.meta.url
       ).toString();
-      await import(script);
+      const load = () =>
+        import(`${script}?scenario=${encodeURIComponent(scenario.name)}`);
+      if (fallback === 'denied') {
+        await assert.rejects(load, /Fallback topic is not allowed/);
+        assert.equal(
+          calls.some((args) => args[0] === 'cloudformation'),
+          false
+        );
+        return;
+      }
+      await load();
       const template = readFileSync(
         new URL(
           `../${source ? 'source' : 'monitoring'}-prod.json`,
@@ -103,6 +151,33 @@ for (const source of [false, true]) {
         );
       }
       assert.equal(artifactCommands[1]?.[1], 'deploy');
+      const deployArgs = artifactCommands[1]!;
+      if (source) {
+        const topicArg = deployArgs.find((arg) =>
+          arg.startsWith('ExistingAlarmTopicArn=')
+        );
+        assert.equal(
+          topicArg,
+          'topic' in scenario
+            ? `ExistingAlarmTopicArn=${scenario.topic}`
+            : undefined
+        );
+      } else {
+        assert.ok(
+          deployArgs.includes(
+            `FallbackTargetTopicArn=${fallback ? targetTopic : ''}`
+          )
+        );
+        if (fallback) {
+          const reads = calls.filter((args) => args[0] === 'iam');
+          assert.equal(reads.length, 2);
+          for (const args of reads)
+            assert.equal(
+              args[args.indexOf('--policy-arn') + 1],
+              parameters.RuntimePermissionsBoundaryArn
+            );
+        }
+      }
     } finally {
       subprocess.mock.restore();
       syncBuiltinESMExports();
@@ -112,3 +187,46 @@ for (const source of [false, true]) {
     }
   });
 }
+
+test('captured AWS diagnostics distinguish CLI spawn failure and service denial without echoing arguments', async () => {
+  const script = new URL('../scripts/aws-run.mjs', import.meta.url).toString();
+  const { runAws } = await import(script);
+  let spawnFailure = false;
+  const subprocess = mock.method(childProcess, 'spawnSync', () =>
+    spawnFailure
+      ? {
+          status: null,
+          error: Object.assign(new Error('private executable path'), {
+            code: 'ENOENT'
+          })
+        }
+      : {
+          status: 1,
+          stderr: 'AccessDenied: metadata permission missing',
+          stdout: ''
+        }
+  );
+  syncBuiltinESMExports();
+  try {
+    assert.throws(
+      () =>
+        runAws(
+          'unused',
+          ['iam', 'get-policy', '--policy-arn', 'argument-not-for-logs'],
+          true
+        ),
+      (error: unknown) =>
+        error instanceof Error &&
+        /AWS iam get-policy failed: AccessDenied/.test(error.message) &&
+        !error.message.includes('argument-not-for-logs')
+    );
+    spawnFailure = true;
+    assert.throws(
+      () => runAws('unused', ['sts', 'get-caller-identity'], true),
+      /AWS sts get-caller-identity could not start \(ENOENT\)/
+    );
+  } finally {
+    subprocess.mock.restore();
+    syncBuiltinESMExports();
+  }
+});

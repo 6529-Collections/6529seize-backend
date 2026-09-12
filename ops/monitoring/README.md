@@ -20,6 +20,10 @@ is deliberately outside the application deployment catalog and release service
 bundles. `bootstrap.json` provisions its artifact bucket and deployment identities.
 `source-bootstrap.json` provides retained source-account artifact storage so relay
 deployments do not depend on another application's deployment bucket.
+Build artifacts expire after 90 days, with noncurrent versions retained for 30
+days and incomplete multipart uploads aborted after seven days. Rollback using a
+previous packaged artifact must stay within that window; older releases require
+rebuilding the exact commit and uploading a fresh verified artifact.
 
 ## What is collected
 
@@ -58,15 +62,29 @@ ordinary content routes. Private `/content-moderation/*` errors additionally
 discard evidence-bearing messages, breadcrumbs, extras, context and stack locals;
 only bounded type, stack location and trace metadata remain. The final scrub runs
 after event enrichment. Existing source logs are still a separate privacy boundary.
+Typed `ApiCompliantException` 4xx errors are excluded before enrichment or emission,
+including moderation rejection explanations on ordinary profile/group routes.
 It never parses arbitrary exception text. AWS account/log-group metadata binds
 source identity. The same Error instance is deduplicated within one invocation,
 not across future invocations. Local development emits no operational envelope.
 
+The three subscription-processing anomalies use explicit allowlisted condition
+codes in their fingerprints; dynamic message text never determines a code.
+Existing generic logger calls remain grouped by component and error type.
 The three subscription-processing anomalies and duplicate top-up branch use this
 pipeline. Their existing business Wave updates stay in place. Successful business
 Discord notifications remain separate. The old CloudWatch Discord sender remains
 available only for a controlled cutover; moderation migration removes its own
 legacy callers in a separate change.
+
+Sentry ingress accepts `prod`/`production` and `staging` only. Legacy Lambda
+`<function>_prod`/`<function>_staging` Sentry environments are deliberately ignored.
+The SDK can initialize before the application's secret loader overwrites its
+environment, so secret precedence alone does not prove the SDK uses canonical
+names. Redeployed shared producers normalize these aliases independently through
+the structured-log path. Verify provider events and canonical environments before
+retiring the old Sentry routing; handled errors from other repositories need their
+own confirmed provider integration.
 
 ## Privacy and delivery contract
 
@@ -144,7 +162,8 @@ pipx run --spec cfn-lint==1.40.4 cfn-lint bootstrap.json source-bootstrap.json m
 ```
 
 The build verifies that every esbuild input stays inside this standalone package.
-Backend producer tests use the backend dependencies without starting MySQL:
+From the repository root, backend producer tests use the backend dependencies
+without starting MySQL:
 
 ```sh
 ./bin/6529 exec jest --config ops/monitoring/scripts/producer-jest.config.cjs --runInBand

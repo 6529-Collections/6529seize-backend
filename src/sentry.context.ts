@@ -1,7 +1,11 @@
 import * as Sentry from '@sentry/serverless';
 import { Logger } from '@/logging';
 import type { Handler } from 'aws-lambda';
-import { operationalError, withOperationalContext } from '@/operational-errors';
+import {
+  isExpectedClientError,
+  operationalError,
+  withOperationalContext
+} from '@/operational-errors';
 import { sanitizeSentryEvent } from '@/sentry-privacy';
 
 const logger = Logger.get('SENTRY_CONTEXT');
@@ -21,6 +25,7 @@ export function isConfigured() {
 }
 
 export function captureException(error: unknown): void {
+  if (isExpectedClientError(error)) return;
   operationalError('SENTRY_CONTEXT', [error]);
   if (!isConfigured()) {
     return;
@@ -79,6 +84,7 @@ export function wrapLambdaHandler(
       sendDefaultPii: false,
       beforeSend: (event, hint) => {
         const originalRequestUrl = event.request?.url;
+        if (isExpectedClientError(hint.originalException)) return null;
         if (options.shouldCaptureException?.(hint.originalException) === false)
           return null;
         return sanitizeSentryEvent(

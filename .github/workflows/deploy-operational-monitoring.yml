@@ -26,6 +26,7 @@ jobs:
         with:
           ref: ${{ inputs.commit_sha }}
           fetch-depth: 0
+          persist-credentials: false
       - name: Verify the exact merged commit
         env:
           EXPECTED_SHA: ${{ inputs.commit_sha }}

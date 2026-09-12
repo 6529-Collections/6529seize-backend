@@ -21,7 +21,7 @@ test('the contract reconstructs only bounded metadata and suppresses Discord men
     release: '@everyone'
   });
   assert.equal(JSON.stringify(alert).includes('private'), false);
-  assert.equal(alert.sourceLink, undefined);
+  assert.equal('sourceLink' in alert, false);
   assert.equal(alert.release, undefined);
   assert.deepEqual(
     (renderAlert(alert) as { allowed_mentions: unknown }).allowed_mentions,

@@ -438,14 +438,14 @@ export async function probe(): Promise<void> {
       lane === 'critical'
     );
   }
-  const targets = parseProbeTargets(process.env.PROBE_TARGETS ?? '[]');
-  for (const target of targets) await probeTarget(target, now);
   await new CloudWatchClient({ maxAttempts: 3 }).send(
     new PutMetricDataCommand({
       Namespace: '6529/OperationalMonitoring',
       MetricData: metricData
     })
   );
+  const targets = parseProbeTargets(process.env.PROBE_TARGETS ?? '[]');
+  for (const target of targets) await probeTarget(target, now);
   await webhookHealth(now);
   await externalCheckIn(metricData.every((metric) => metric.Value < 180));
 }

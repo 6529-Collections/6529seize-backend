@@ -20,7 +20,7 @@
     },
     "RuntimePermissionsBoundaryArn": {
       "Type": "String",
-      "AllowedPattern": "^arn:[^:]+:iam::[0-9]{12}:policy/6529-observability-(prod|staging)-runtime-boundary$"
+      "AllowedPattern": "^arn:[^:]+:iam::[0-9]{12}:policy/6529-observability-prod-runtime-boundary$"
     },
     "FallbackKmsKeyArn": {
       "Type": "String",

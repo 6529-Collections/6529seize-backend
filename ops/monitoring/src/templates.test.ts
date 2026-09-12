@@ -19,6 +19,21 @@ test('source catalog coverage is complete and monitoring delivery has no applica
     const source = JSON.parse(
       readFileSync(new URL(`../source-${env}.json`, import.meta.url), 'utf8')
     );
+    const boundary = new RegExp(
+      monitor.Parameters.RuntimePermissionsBoundaryArn.AllowedPattern
+    );
+    assert.equal(
+      boundary.test(
+        `arn:aws:iam::111111111111:policy/6529-observability-${env}-runtime-boundary`
+      ),
+      true
+    );
+    assert.equal(
+      boundary.test(
+        `arn:aws:iam::111111111111:policy/6529-observability-${env === 'prod' ? 'staging' : 'prod'}-runtime-boundary`
+      ),
+      false
+    );
     const coverage = JSON.parse(
       readFileSync(new URL(`../coverage-${env}.json`, import.meta.url), 'utf8')
     );

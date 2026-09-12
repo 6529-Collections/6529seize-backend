@@ -7,6 +7,7 @@ jest.mock('@sentry/serverless', () => ({
 import * as Sentry from '@sentry/serverless';
 import { captureException, wrapLambdaHandler } from './sentry.context';
 import type { Context } from 'aws-lambda';
+import { BadRequestException, CustomApiCompliantException } from './exceptions';
 
 describe('Sentry context', () => {
   const originalDsn = process.env.SENTRY_DSN;
@@ -143,6 +144,42 @@ describe('Sentry context', () => {
       )
     ).toBeNull();
     expect(enrichEvent).not.toHaveBeenCalled();
+  });
+
+  it('drops expected API client errors before enrichment on ordinary content routes', () => {
+    process.env.SENTRY_DSN = 'https://example.com/sentry';
+    const enrichEvent = jest.fn((event) => event);
+    wrapLambdaHandler(async () => undefined, { enrichEvent });
+    const beforeSend = jest.mocked(Sentry.init).mock.calls[0][0]!.beforeSend!;
+    const event = {
+      type: undefined,
+      request: { url: 'https://api.example.com/profiles/bio' },
+      exception: { values: [{ value: 'private model explanation' }] }
+    };
+    for (const error of [
+      new BadRequestException('private model explanation'),
+      new CustomApiCompliantException(499, 'private category')
+    ]) {
+      expect(beforeSend(event, { originalException: error })).toBeNull();
+    }
+    expect(enrichEvent).not.toHaveBeenCalled();
+    expect(
+      beforeSend(event, {
+        originalException: new CustomApiCompliantException(
+          503,
+          'storage unavailable'
+        )
+      })
+    ).not.toBeNull();
+  });
+
+  it('does not emit or capture explicit expected client errors', () => {
+    process.env.SENTRY_DSN = 'https://example.com/sentry';
+    process.env.AWS_LAMBDA_FUNCTION_NAME = 'seizeAPI';
+    const output = jest.spyOn(process.stdout, 'write').mockReturnValue(true);
+    captureException(new BadRequestException('private rejection'));
+    expect(output).not.toHaveBeenCalled();
+    expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 
   it('sanitizes the final enriched event before SDK transport', () => {

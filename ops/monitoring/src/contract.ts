@@ -23,7 +23,6 @@ export interface Alert {
   fingerprint: string;
   correlationId?: string;
   release?: string;
-  sourceLink?: string;
 }
 const CODES = new Set<Code>([
   'APPLICATION_ERROR',
@@ -78,7 +77,6 @@ export function parseAlert(input: unknown): Alert {
   const release = token(v.release, 64);
   if (correlationId) alert.correlationId = correlationId;
   if (release) alert.release = release;
-  // Source links are constructed by trusted collectors, never accepted from producers.
   return alert;
 }
 export function renderAlert(alert: Alert, count = 1): object {
@@ -107,8 +105,7 @@ export function renderAlert(alert: Alert, count = 1): object {
             : []),
           ...(alert.release ? [{ name: 'Release', value: alert.release }] : [])
         ],
-        timestamp: alert.occurredAt,
-        ...(alert.sourceLink ? { url: alert.sourceLink } : {})
+        timestamp: alert.occurredAt
       }
     ]
   };

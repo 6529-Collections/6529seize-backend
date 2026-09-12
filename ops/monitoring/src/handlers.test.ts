@@ -1,7 +1,8 @@
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { gzipSync } from 'node:zlib';
-import { collect, logAlerts, probeUrl } from './handlers.js';
+import { collect, logAlerts, probe, probeUrl } from './handlers.js';
+import { CloudWatchClient } from '@aws-sdk/client-cloudwatch';
 import { EVENT_TYPE } from './contract.js';
 import { ddb, sqs } from './aws.js';
 import type { EventBridgeEvent } from 'aws-lambda';
@@ -156,5 +157,61 @@ test('authenticated source routing protects the critical lane and suppresses ini
     process.env = original;
     dbMock.mock.restore();
     queueMock.mock.restore();
+  }
+});
+
+test('queue heartbeat metrics survive malformed probe config and endpoint-state storage failures', async () => {
+  const original = process.env;
+  const metrics: unknown[] = [];
+  const metricMock = mock.method(
+    CloudWatchClient.prototype,
+    'send',
+    async (command: { input: unknown }) => {
+      metrics.push(command.input);
+      return {};
+    }
+  );
+  const dbMock = mock.method(
+    ddb,
+    'send',
+    async (command: { input: { Key?: { pk?: string } } }) => {
+      if (command.input.Key?.pk?.startsWith('probe:'))
+        throw new Error('PROBE_STORAGE_FAILED');
+      return { Item: { seenAt: Math.floor(Date.now() / 1000) } };
+    }
+  );
+  const queueMock = mock.method(sqs, 'send', async () => ({}));
+  const fetchMock = mock.method(
+    globalThis,
+    'fetch',
+    async () => new Response(null, { status: 200 })
+  );
+  process.env = {
+    ...original,
+    ENVIRONMENT: 'prod',
+    RECEIPTS_TABLE: 'test',
+    NORMAL_QUEUE_URL: 'normal',
+    CRITICAL_QUEUE_URL: 'critical'
+  };
+  try {
+    process.env.PROBE_TARGETS = 'invalid-json';
+    await assert.rejects(probe, /INVALID_PROBE_TARGETS/);
+    assert.equal(metrics.length, 1);
+    process.env.PROBE_TARGETS = JSON.stringify([
+      {
+        name: 'api',
+        url: 'https://api.example.com/health',
+        expectedStatus: 200
+      }
+    ]);
+    await assert.rejects(probe, /PROBE_STORAGE_FAILED/);
+    assert.equal(metrics.length, 2);
+    assert.equal(JSON.stringify(metrics).includes('HeartbeatAge'), true);
+  } finally {
+    process.env = original;
+    metricMock.mock.restore();
+    dbMock.mock.restore();
+    queueMock.mock.restore();
+    fetchMock.mock.restore();
   }
 });

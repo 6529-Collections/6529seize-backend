@@ -252,7 +252,7 @@ async function processSubscription(
   if (!finalSubscription) {
     const transactionLink = buildTransactionLink(transaction.transaction);
     const message = `🚨 No subscription found for airdrop address: ${transaction.to_address} \nTransaction: ${transactionLink}`;
-    logger.error(message);
+    logger.errorWithCode('SUBSCRIPTION_NOT_FOUND', message);
     waveNotifications.push({
       kind: 'no-subscription-found',
       airdropAddress: transaction.to_address,
@@ -268,7 +268,7 @@ async function processSubscription(
   if (!balance) {
     const transactionLink = buildTransactionLink(transaction.transaction);
     const message = `🚨 No balance found for consolidation key: ${finalSubscription.consolidation_key} \nTransaction: ${transactionLink}`;
-    logger.error(message);
+    logger.errorWithCode('SUBSCRIPTION_BALANCE_NOT_FOUND', message);
     waveNotifications.push({
       kind: 'no-balance-found',
       consolidationKey: finalSubscription.consolidation_key,
@@ -281,7 +281,7 @@ async function processSubscription(
   } else if (MEMES_MINT_PRICE > balance.balance) {
     const transactionLink = buildTransactionLink(transaction.transaction);
     const message = `🚨 Insufficient balance for consolidation key: ${finalSubscription.consolidation_key} \nTransaction: ${transactionLink}`;
-    logger.error(message);
+    logger.errorWithCode('SUBSCRIPTION_BALANCE_INSUFFICIENT', message);
     waveNotifications.push({
       kind: 'insufficient-balance',
       consolidationKey: finalSubscription.consolidation_key,

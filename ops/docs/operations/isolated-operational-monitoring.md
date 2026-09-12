@@ -59,6 +59,11 @@ confirmed source topic. The source topic policy must allow only the output
 `FallbackForwarderRoleArn` to publish. This transitional email path still depends
 on the source account. A separately confirmed monitoring SNS subscription or
 outside-AWS provider is necessary for independent fallback.
+The deploy command reads only the environment's exact runtime boundary policy
+and requires an exact unconditional `sns:Publish` grant for the configured target.
+An omitted `FallbackTargetTopicArn` disables the monitoring forwarder; it never
+retains an unvalidated previous target. Bootstrap permissions must be updated
+before enabling a new fallback destination.
 
 ## Deploy and connect sources
 
@@ -90,6 +95,11 @@ outside-AWS provider is necessary for independent fallback.
    account; the monitoring OIDC role cannot deploy this stack. The region is
    derived from the catalog. Cross-region forwarding uses the monitoring bus
    ARN's region, so a production source in `us-east-1` can target `eu-west-1`.
+   Leaving `SOURCE_ALARM_TOPIC_ARN` undefined preserves an existing stack's topic;
+   explicitly setting it to an empty string disables that optional alarm action.
+   Source and monitoring artifact buckets expire current objects after 90 days
+   and noncurrent versions after 30 days. Older rollbacks require rebuilding the
+   exact commit and uploading a new verified artifact.
 3. Preflight the source function/log-group inventory against `coverage-{env}.json`.
    Required log groups must exist. CloudWatch Logs allows a finite number of
    subscription filters per group; inspect existing filters before adding these.

@@ -47,11 +47,11 @@ export async function deliver(
     throw new DeliveryError(true);
   }
   if (response.status === 429) {
-    const header = Number(response.headers.get('retry-after'));
+    const header = response.headers.get('retry-after');
     const body = (await response.json().catch(() => ({}))) as {
       retry_after?: unknown;
     };
-    const delay = Number(body.retry_after ?? header);
+    const delay = Number(body.retry_after ?? header ?? Number.NaN);
     throw new DeliveryError(
       true,
       Number.isFinite(delay)

@@ -548,6 +548,16 @@
                   "Resource": {
                     "Fn::Sub": "${ArtifactBucket.Arn}/staging/*"
                   }
+                },
+                {
+                  "Action": [
+                    "iam:GetPolicy",
+                    "iam:GetPolicyVersion"
+                  ],
+                  "Resource": {
+                    "Ref": "StagingRuntimePermissionsBoundary"
+                  },
+                  "Effect": "Allow"
                 }
               ]
             }
@@ -986,6 +996,16 @@
                   "Resource": {
                     "Fn::Sub": "${ArtifactBucket.Arn}/prod/*"
                   }
+                },
+                {
+                  "Action": [
+                    "iam:GetPolicy",
+                    "iam:GetPolicyVersion"
+                  ],
+                  "Resource": {
+                    "Ref": "ProdRuntimePermissionsBoundary"
+                  },
+                  "Effect": "Allow"
                 }
               ]
             }

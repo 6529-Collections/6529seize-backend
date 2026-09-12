@@ -1,17 +1,11 @@
-import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { approvedAwsCli } from './aws-cli.mjs';
+import { runAws } from './aws-run.mjs';
 
 const awsCli = approvedAwsCli();
 
 function run(args, capture = false) {
-  const result = spawnSync(awsCli, args, {
-    shell: false,
-    encoding: 'utf8',
-    stdio: capture ? 'pipe' : 'inherit'
-  });
-  if (result.status !== 0) throw new Error('AWS monitoring operation failed');
-  return capture ? result.stdout.trim() : '';
+  return runAws(awsCli, args, capture);
 }
 const environment = process.env.MONITORING_ENVIRONMENT;
 const account = process.env.MONITORING_ACCOUNT_ID;
@@ -42,12 +36,57 @@ const template = JSON.parse(
   readFileSync(`monitoring-${environment}.json`, 'utf8')
 );
 parameters.Environment = environment;
+parameters.FallbackTargetTopicArn ??= '';
 if (
   !new RegExp(
     `^arn:[^:]+:iam::${account}:policy/6529-observability-${environment}-runtime-boundary$`
   ).test(parameters.RuntimePermissionsBoundaryArn ?? '')
 )
   throw new Error('Invalid runtime permissions boundary');
+if (parameters.FallbackTargetTopicArn) {
+  const policyArn = parameters.RuntimePermissionsBoundaryArn;
+  const version = run(
+    [
+      'iam',
+      'get-policy',
+      '--policy-arn',
+      policyArn,
+      '--query',
+      'Policy.DefaultVersionId',
+      '--output',
+      'text'
+    ],
+    true
+  );
+  const boundary = JSON.parse(
+    run(
+      [
+        'iam',
+        'get-policy-version',
+        '--policy-arn',
+        policyArn,
+        '--version-id',
+        version,
+        '--query',
+        'PolicyVersion.Document',
+        '--output',
+        'json'
+      ],
+      true
+    )
+  );
+  const exactGrant = boundary.Statement?.some(
+    (statement) =>
+      statement.Effect === 'Allow' &&
+      !statement.Condition &&
+      [statement.Action].flat().includes('sns:Publish') &&
+      [statement.Resource].flat().includes(parameters.FallbackTargetTopicArn)
+  );
+  if (!exactGrant)
+    throw new Error(
+      'Fallback topic is not allowed by the runtime permissions boundary'
+    );
+}
 const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
 if (
   !/^[a-z]{2}(-gov)?-[a-z]+-\d$/.test(region ?? '') ||

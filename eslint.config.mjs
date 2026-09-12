@@ -12,6 +12,19 @@ export default [
   ...tseslint.config(eslint.configs.recommended, tseslint.configs.recommended),
 
   {
+    files: [
+      'ops/monitoring/scripts/**/*.mjs',
+      'ops/monitoring/scripts/**/*.cjs'
+    ],
+    languageOptions: { globals: globals.node }
+  },
+  {
+    files: ['ops/monitoring/scripts/**/*.cjs'],
+    languageOptions: { sourceType: 'commonjs' },
+    rules: { '@typescript-eslint/no-require-imports': 'off' }
+  },
+
+  {
     files: ['**/*.ts', '**/*.tsx'],
 
     languageOptions: {

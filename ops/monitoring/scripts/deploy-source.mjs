@@ -1,6 +1,6 @@
-import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { approvedAwsCli } from './aws-cli.mjs';
+import { runAws } from './aws-run.mjs';
 
 const awsCli = approvedAwsCli();
 
@@ -27,14 +27,7 @@ if (regions.size !== 1)
   );
 const region = [...regions][0];
 function run(args, capture = false) {
-  const result = spawnSync(awsCli, [...args, '--region', region], {
-    shell: false,
-    encoding: 'utf8',
-    stdio: capture ? 'pipe' : 'inherit'
-  });
-  if (result.status !== 0)
-    throw new Error('AWS source monitoring operation failed');
-  return capture ? result.stdout.trim() : '';
+  return runAws(awsCli, [...args, '--region', region], capture);
 }
 if (
   run(
@@ -58,7 +51,7 @@ if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(bucket ?? ''))
 const role = process.env.SOURCE_CLOUDFORMATION_ROLE_ARN;
 if (role && !new RegExp(`^arn:[^:]+:iam::${account}:role/`).test(role))
   throw new Error('Wrong source CloudFormation role');
-const topic = process.env.SOURCE_ALARM_TOPIC_ARN ?? '';
+const topic = process.env.SOURCE_ALARM_TOPIC_ARN;
 if (
   topic &&
   !new RegExp(`^arn:[^:]+:sns:${region}:${account}:[a-zA-Z0-9_-]+$`).test(topic)
@@ -163,5 +156,5 @@ run([
   '--parameter-overrides',
   `Environment=${environment}`,
   `MonitoringEventBusArn=${bus}`,
-  `ExistingAlarmTopicArn=${topic}`
+  ...(topic === undefined ? [] : [`ExistingAlarmTopicArn=${topic}`])
 ]);

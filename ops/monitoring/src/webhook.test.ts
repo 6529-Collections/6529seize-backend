@@ -60,3 +60,25 @@ test('revoked credentials and invalid destinations become safe permanent failure
     );
   }
 });
+
+test('rate limits default to sixty seconds only when vendor retry hints are missing or invalid', async () => {
+  for (const [body, headers, expected] of [
+    [{}, {}, 60],
+    [{}, { 'retry-after': '4.2' }, 5],
+    [{ retry_after: 2.1 }, { 'retry-after': '10' }, 3],
+    [{ retry_after: 0 }, {}, 1],
+    [{ retry_after: 999999 }, {}, 43200],
+    [{}, { 'retry-after': 'invalid' }, 60]
+  ] as const) {
+    await assert.rejects(
+      () =>
+        deliver(secret, {}, async () =>
+          Response.json(body, { status: 429, headers })
+        ),
+      (error) =>
+        error instanceof DeliveryError &&
+        error.retryable &&
+        error.retryAfterSeconds === expected
+    );
+  }
+});

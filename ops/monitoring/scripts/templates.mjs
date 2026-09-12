@@ -350,8 +350,7 @@ function monitoringTemplate(environment) {
       AllowedPattern: String.raw`^[a-z]{2}(-gov)?-[a-z]+-\d$`
     }),
     RuntimePermissionsBoundaryArn: parameter({
-      AllowedPattern:
-        '^arn:[^:]+:iam::[0-9]{12}:policy/6529-observability-(prod|staging)-runtime-boundary$'
+      AllowedPattern: `^arn:[^:]+:iam::[0-9]{12}:policy/6529-observability-${environment}-runtime-boundary$`
     }),
     FallbackKmsKeyArn: parameter({
       AllowedPattern: '^arn:[^:]+:kms:[^:]+:[0-9]{12}:key/[a-f0-9-]{36}$',
