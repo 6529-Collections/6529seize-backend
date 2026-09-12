@@ -47,6 +47,36 @@ review. Analysis adds no operation row, cache, table, migration, economic action
 or loop dependency. Deploy `api`, then its frontend consumer. The frontend Help
 Bot corpus must describe this new screen in the coupled frontend release.
 
+Memes and Meme Lab extended data preserve `edition_size_cleaned` as supply
+excluding burns and the configured Museum wallet. The new
+`edition_size_ex_research` and `edition_size_ex_museum_and_research` fields
+exclude burns plus, respectively, the configured Research wallet or the union
+of the Museum and Research wallets. Research means `RESEARCH_6529_ADDRESS`,
+not inferred identity consolidations; `research_holdings` reports that wallet's
+balance. Supply ranks are ascending competition ranks, so equal supplies share
+a rank (1, 1, 3). Other rank semantics are unchanged. New nullable columns and
+API fields remain unavailable until the next extended-data refresh, while -1
+continues to mean excluded from the ranking universe. These changes use the
+shared Memes/Meme Lab pipeline and do not add Gradient or NextGen supply fields.
+Deploy `dbMigrationsLoop` for entity synchronisation, then `nftsLoop` to populate
+the fields, then `api` and its frontend consumer.
+
+Authenticated `POST /collect/tdh-daily-plans` solves a desired acquisition base
+TDH/day rate or an ETH purchase budget against the same signed listing capture.
+It uses integer rates and costs, exact available quantity steps and fees, with
+bounded alternative greedy portfolios. It excludes profile sellers and never
+combines potentially overlapping orders from one maker for the same artwork.
+The base-rate objective is separate from personalized effects: the selected
+whole basket is replayed through the canonical calculator at the assumed
+acquisition time to report ongoing boosted rates and the distinct revaluation
+of existing TDH. Rates describe complete held days, not the next UTC snapshot
+delta; a newly acquired lot starts with zero accrued days. An external recipient
+can receive the artwork but adds no TDH to the requesting profile. Results keep
+partial market coverage, best-found search, unspent budget and unknown gas
+explicit. This endpoint does not create orders or write to the database and
+does not replace the future-total target endpoint. Deploy `api` before its
+frontend consumer; the coupled frontend release owns the Help Bot description.
+
 Anonymous `GET /collect/tdh-listings` compares supported ETH asks across the
 completed market-depth collection index. It reuses the marketplace adapter to
 validate stored signed order identities, exact fill quantities and fees, and

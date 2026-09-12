@@ -267,7 +267,17 @@ export function describeIndexedMarketOrder(
   side: 'LISTING' | 'OFFER',
   quantity: string
 ): MarketDiscoveredOrder {
-  return describeMarketOrder(parseProviderOrder(value), asset, side, quantity);
+  const provider = parseProviderOrder(value);
+  const nft =
+    side === 'LISTING'
+      ? provider.components.offer[0]
+      : provider.components.consideration[0];
+  if (nft.itemType !== (asset.standard === 'ERC721' ? 2 : 3))
+    throw new MarketValidationError(
+      'ORDER_MISMATCH',
+      'Indexed price references require exact-token signed terms.'
+    );
+  return describeMarketOrder(provider, asset, side, quantity);
 }
 
 /** Recheck indexed discovery with the same signed-order boundary as live orders. */
@@ -702,6 +712,7 @@ export class OpenSeaMarketplaceProvider {
       );
     assertMarketProtocol(transaction.to);
     const input = record(transaction.input_data);
+    let criteriaResolvers: unknown = [];
     let signature: string,
       extraData = '0x',
       conduit = MARKET_OPENSEA_CONDUIT_KEY;
@@ -734,7 +745,7 @@ export class OpenSeaMarketplaceProvider {
         );
       }
       if (fn === 'fulfillAdvancedOrder') {
-        parseMarketValue(z.array(z.never()).length(0), input.criteriaResolvers);
+        criteriaResolvers = input.criteriaResolvers;
         extraData = parseMarketValue(marketBytesSchema, order.extraData);
       }
     } else if (
@@ -763,7 +774,8 @@ export class OpenSeaMarketplaceProvider {
       validated,
       signature,
       extraData,
-      conduit
+      conduit,
+      criteriaResolvers
     );
     if (parseMarketValue(marketUintSchema, transaction.value) !== tx.value)
       throw new MarketValidationError(
