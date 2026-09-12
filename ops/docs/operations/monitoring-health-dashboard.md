@@ -64,6 +64,9 @@ operator usernames only in private deployment parameters.
 `6529-MonitoringAdmin` provides full monitoring-account administration to the
 explicitly approved existing administrator principals. `6529-MonitoringOperator`
 provides monitoring management: dashboard/alarms, RUM and Synthetics capabilities.
+It cannot manually override alarm state with `cloudwatch:SetAlarmState`.
+Native alarm acceptance uses metric-driven evaluation with a separately
+authorized release identity.
 Both trusts require the exact source principal ARN and MFA. Operator permissions
 do not include Secrets Manager reads, IAM role administration, Lambda code
 updates or blanket `iam:PassRole`. New canary execution-role setup therefore

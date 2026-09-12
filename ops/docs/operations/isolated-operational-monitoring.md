@@ -96,7 +96,14 @@ before enabling a new fallback destination.
    `/usr/local/bin/aws` on the hosted Linux runner). Scripts resolve symlinks and
    reject binaries inside the checkout; they never search npm/repository `PATH`.
    Its AWS session must belong to the source
-   account; the monitoring OIDC role cannot deploy this stack. The region is
+   account; the monitoring OIDC role cannot deploy this stack. The caller also
+   needs `cloudformation:UpdateTerminationProtection` on the exact
+   `seize-monitoring-{env}-source` stack ARN in the source account/region. This
+   operation uses the current AWS CLI identity, not the optional
+   `SOURCE_CLOUDFORMATION_ROLE_ARN` passed only to `cloudformation deploy`.
+   `source-bootstrap.json` provisions artifact storage, not that caller's IAM
+   permissions; its account owner manages the separate deployment identity.
+   The region is
    derived from the catalog. Cross-region forwarding uses the monitoring bus
    ARN's region, so a production source in `us-east-1` can target `eu-west-1`.
    Leaving `SOURCE_ALARM_TOPIC_ARN` undefined preserves an existing stack's topic;
