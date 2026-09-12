@@ -56,7 +56,7 @@ async function readBooks(assets: CollectingAsset[]) {
   }
 }
 
-async function readTargetBooks(
+export async function readTargetBooks(
   assets: CollectingAsset[],
   families: CollectingFamily[],
   budget: CollectingWorkBudget

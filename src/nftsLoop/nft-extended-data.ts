@@ -2,6 +2,7 @@ import {
   MEME_8_EDITION_BURN_ADJUSTMENT,
   MEMES_CONTRACT,
   NULL_ADDRESS,
+  RESEARCH_6529_ADDRESS,
   SIX529_MUSEUM
 } from '@/constants';
 import {
@@ -41,8 +42,12 @@ type ExtendedBase = {
   edition_size_not_burnt: number;
   edition_size_cleaned: number;
   museum_holdings: number;
+  research_holdings?: number | null;
+  edition_size_ex_research?: number | null;
+  edition_size_ex_museum_and_research?: number | null;
   burnt: number;
   museum_holdings_rank: number;
+  research_holdings_rank?: number | null;
   hodlers: number;
   percent_unique: number;
   percent_unique_not_burnt: number;
@@ -50,6 +55,8 @@ type ExtendedBase = {
   edition_size_rank: number;
   edition_size_not_burnt_rank: number;
   edition_size_cleaned_rank: number;
+  edition_size_ex_research_rank?: number | null;
+  edition_size_ex_museum_and_research_rank?: number | null;
   hodlers_rank: number;
   percent_unique_rank: number;
   percent_unique_not_burnt_rank: number;
@@ -116,19 +123,32 @@ async function generateExtendedData<T, M extends ExtendedBase>(
 
       let edition_size = 0;
       let museum_holdings = 0;
+      let research_holdings = 0;
       let burnt = 0;
       let edition_size_not_burnt = 0;
       let edition_size_cleaned = 0;
+      let edition_size_ex_research = 0;
+      let edition_size_ex_museum_and_research = 0;
 
       for (const tw of tokenOwners) {
         if (ethTools.isNullOrDeadAddress(tw.wallet)) {
           burnt += tw.balance;
         } else {
           edition_size_not_burnt += tw.balance;
-          if (equalIgnoreCase(tw.wallet, SIX529_MUSEUM)) {
+          const isMuseum = equalIgnoreCase(tw.wallet, SIX529_MUSEUM);
+          const isResearch = equalIgnoreCase(tw.wallet, RESEARCH_6529_ADDRESS);
+          if (isMuseum) {
             museum_holdings += tw.balance;
           } else {
             edition_size_cleaned += tw.balance;
+          }
+          if (isResearch) {
+            research_holdings += tw.balance;
+          } else {
+            edition_size_ex_research += tw.balance;
+          }
+          if (!isMuseum && !isResearch) {
+            edition_size_ex_museum_and_research += tw.balance;
           }
         }
         edition_size += tw.balance;
@@ -150,8 +170,12 @@ async function generateExtendedData<T, M extends ExtendedBase>(
         edition_size_not_burnt,
         edition_size_cleaned,
         museum_holdings,
+        research_holdings,
+        edition_size_ex_research,
+        edition_size_ex_museum_and_research,
         burnt,
         museum_holdings_rank: -1,
+        research_holdings_rank: -1,
         hodlers: tokenOwners.length,
         percent_unique,
         percent_unique_not_burnt,
@@ -159,6 +183,8 @@ async function generateExtendedData<T, M extends ExtendedBase>(
         edition_size_rank: -1,
         edition_size_not_burnt_rank: -1,
         edition_size_cleaned_rank: -1,
+        edition_size_ex_research_rank: -1,
+        edition_size_ex_museum_and_research_rank: -1,
         hodlers_rank: -1,
         percent_unique_rank: -1,
         percent_unique_not_burnt_rank: -1,
@@ -177,10 +203,18 @@ async function generateExtendedData<T, M extends ExtendedBase>(
   const rankedResults = rankFilter ? results.filter(rankFilter) : results;
 
   // Ascending: smaller is better
-  assignRanks(rankedResults, 'edition_size', 'asc');
+  assignRanks(rankedResults, 'edition_size', 'asc', 'competition');
   assignRanks(rankedResults, 'museum_holdings', 'asc');
-  assignRanks(rankedResults, 'edition_size_not_burnt', 'asc');
-  assignRanks(rankedResults, 'edition_size_cleaned', 'asc');
+  assignRanks(rankedResults, 'research_holdings', 'asc');
+  assignRanks(rankedResults, 'edition_size_not_burnt', 'asc', 'competition');
+  assignRanks(rankedResults, 'edition_size_cleaned', 'asc', 'competition');
+  assignRanks(rankedResults, 'edition_size_ex_research', 'asc', 'competition');
+  assignRanks(
+    rankedResults,
+    'edition_size_ex_museum_and_research',
+    'asc',
+    'competition'
+  );
 
   // Descending: bigger is better
   assignRanks(rankedResults, 'hodlers', 'desc');
@@ -194,13 +228,15 @@ async function generateExtendedData<T, M extends ExtendedBase>(
 function assignRanks<T extends { id: number }>(
   arr: T[],
   field: keyof T & string,
-  direction: 'asc' | 'desc' = 'desc'
+  direction: 'asc' | 'desc' = 'desc',
+  tiePolicy: 'ordinal' | 'competition' = 'ordinal'
 ) {
   assignRanksByValue(
     arr,
     `${field}_rank`,
     (item) => (item as any)[field],
-    direction
+    direction,
+    tiePolicy
   );
 }
 
@@ -208,11 +244,11 @@ export function assignRanksByValue<T extends { id: number }>(
   arr: T[],
   rankField: string,
   valueGetter: (item: T) => number,
-  direction: 'asc' | 'desc' = 'desc'
+  direction: 'asc' | 'desc' = 'desc',
+  tiePolicy: 'ordinal' | 'competition' = 'ordinal'
 ) {
-  // rank = 1 + number of strictly-better items, where "better" is
-  // (value per direction, then lower id). (value, id) is a total order, so
-  // sorting by it and assigning positions yields the same ranks as counting.
+  // Ordinal ranking uses (value per direction, then lower id) as a total order.
+  // Competition ranking keeps equal values tied and skips subsequent positions.
   const sorted = [...arr].sort((a, b) => {
     const aValue = valueGetter(a);
     const bValue = valueGetter(b);
@@ -221,8 +257,17 @@ export function assignRanksByValue<T extends { id: number }>(
     }
     return a.id - b.id;
   });
+  let previousValue: number | undefined;
+  let previousRank = 0;
   sorted.forEach((item, index) => {
-    (item as any)[rankField] = index + 1;
+    const value = valueGetter(item);
+    const rank =
+      tiePolicy === 'competition' && index > 0 && value === previousValue
+        ? previousRank
+        : index + 1;
+    (item as any)[rankField] = rank;
+    previousValue = value;
+    previousRank = rank;
   });
 }
 
@@ -308,7 +353,8 @@ function assignEditionSizeFloorRanks(
         supply: meme.edition_size,
         edition_size_floor: nftById.get(meme.id)?.edition_size_floor
       }),
-    'asc'
+    'asc',
+    'competition'
   );
 }
 

@@ -82,4 +82,17 @@ describe('assignRanksByValue', () => {
     expect(rankById.get(3)).toBe(2);
     expect(rankById.get(2)).toBe(3);
   });
+
+  it('gives equal values shared competition ranks when requested', () => {
+    const items: Item[] = [
+      { id: 3, value: 10 },
+      { id: 1, value: 10 },
+      { id: 2, value: 7 }
+    ];
+    assignRanksByValue(items, 'rank', (i) => i.value, 'desc', 'competition');
+    const rankById = new Map(items.map((i) => [i.id, i.rank]));
+    expect(rankById.get(1)).toBe(1);
+    expect(rankById.get(3)).toBe(1);
+    expect(rankById.get(2)).toBe(3);
+  });
 });
