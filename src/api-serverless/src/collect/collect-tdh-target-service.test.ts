@@ -175,7 +175,7 @@ const coverage = {
 };
 beforeEach(() => {
   jest.clearAllMocks();
-  jest.useFakeTimers().setSystemTime(now);
+  jest.spyOn(Date, 'now').mockReturnValue(now);
   jest.mocked(collectingDb.readTdhProjectionSource).mockResolvedValue(source());
   jest.mocked(collectingService.getCatalog).mockResolvedValue({
     version: 'catalog',
@@ -190,7 +190,7 @@ beforeEach(() => {
     .mocked(collectTdhTargetCandidates)
     .mockReturnValue({ listings: [listing()], coverage });
 });
-afterEach(() => jest.useRealTimers());
+afterEach(() => jest.restoreAllMocks());
 
 it('returns a profile-bound exact listing portfolio and leaves gas unquoted', async () => {
   const result = await createCollectTdhTargetPlan(
