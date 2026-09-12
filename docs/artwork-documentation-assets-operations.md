@@ -25,6 +25,19 @@ CloudFront distribution or public origin permission. Bucket policy also denies
 the CloudFront service principal object reads. An explicit region/bucket pair is
 written to API environment configuration by the release workflow.
 
+The frontend allows passive media from these two exact regional S3 origins in
+`media-src`; a different archive bucket also needs a reviewed frontend policy
+change. Test playback with the browser policy enforced. Do not use a policy
+bypass as evidence that deployed media works.
+
+The single-service deployment workflow does not recursively deploy dependencies.
+For this release, the operator must wait for a successful direct
+`dbMigrationsLoop` deployment and invocation before dispatching
+`artworkDocumentationProcessor`, and retain that run as schema evidence alongside
+the processor run. Its scheduled retention invocation does not apply the schema.
+Keep storage and schema prerequisites in the coupled release dependency graph;
+an independently successful processor build is not migration evidence.
+
 The release pipeline reads repository variables
 `ARTWORK_DOCUMENTATION_ENABLED_STAGING`, `ARTWORK_DOCUMENTATION_ENABLED_PROD`,
 `ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_STAGING`, and

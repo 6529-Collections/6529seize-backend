@@ -1,9 +1,13 @@
 import { parseJson } from '../../artwork-documentation.db';
-import { answerValue } from '../../artwork-documentation.validation';
+import {
+  answerValue,
+  matchesSchema
+} from '../../artwork-documentation.validation';
 import {
   AssetTechnicalMetadata,
   StoredAsset
 } from '../../assets/artwork-assets.types';
+import { museumRecordDefinition } from '../../institution/museum-record.catalogue';
 import { DossierIssue, DossierSnapshot } from './dossier.types';
 import { element as e } from './xml';
 
@@ -187,13 +191,12 @@ function technicalEvents(
 function journalEvent(
   record: Value,
   payload: Value,
+  details: Value,
   objects: Set<string>,
   agents: Map<string, string>
 ): string | null {
   if (record.kind !== 'preservation' || payload.event_status !== 'completed')
     return null;
-  const details = objectValue(payload.details);
-  if (!details) return null;
   const recorder = profileUri(record.actor_profile_id);
   agents.set(
     recorder,
@@ -478,13 +481,15 @@ export function buildPremis(
         record
       )
     );
-    const details = objectValue(payload.details);
     if (
-      ['preservation', 'rights'].includes(String(record.kind)) &&
-      payload.event_status === 'completed' &&
-      !superseded.has(record.id) &&
-      !details
+      !['preservation', 'rights'].includes(String(record.kind)) ||
+      payload.event_status !== 'completed' ||
+      superseded.has(record.id)
     )
+      continue;
+    const details = objectValue(payload.details);
+    const schema = museumRecordDefinition(String(record.kind))?.value_schema;
+    if (!details || !schema || !matchesSchema(details, schema)) {
       issues.push({
         code: 'PREMIS_INSTITUTIONAL_DETAILS_UNAVAILABLE',
         path: `museum-record:${record.id}`,
@@ -492,16 +497,17 @@ export function buildPremis(
         message:
           'The institutional record has no usable structured details. Its complete source and recording event are retained; no completed preservation activity or rights statement is inferred.'
       });
-    const preservation = superseded.has(record.id)
-      ? null
-      : journalEvent(record, payload, objectIds, agents);
+      continue;
+    }
+    const preservation = journalEvent(
+      record,
+      payload,
+      details,
+      objectIds,
+      agents
+    );
     if (preservation) events.push(preservation);
-    if (
-      record.kind === 'rights' &&
-      payload.event_status === 'completed' &&
-      !superseded.has(record.id) &&
-      details
-    ) {
+    if (record.kind === 'rights') {
       agents.set(
         recorder,
         agent(

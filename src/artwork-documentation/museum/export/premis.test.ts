@@ -20,7 +20,16 @@ describe('PREMIS preservation record', () => {
   it.each(['preservation', 'rights'])(
     'retains malformed %s journal source and reports its omitted projection without aborting the dossier',
     (kind) => {
-      for (const details of [undefined, null, 'missing', []]) {
+      for (const details of [
+        undefined,
+        null,
+        'missing',
+        [],
+        {},
+        kind === 'preservation'
+          ? { event_type: 'MIGRATION', agent: 'Recorded conservator' }
+          : { basis: 'license', licensor: 'Recorded licensor' }
+      ]) {
         const { snapshot } = dossierFixture();
         const row = {
           id: id(41),
@@ -49,6 +58,7 @@ describe('PREMIS preservation record', () => {
           .bytes.toString();
         expect(xml).toContain('Original source retained');
         expect(xml).toContain('journal-recording');
+        expect(xml).not.toContain('undefined');
         expect(xml).not.toContain(
           `<premis:rightsStatementIdentifierValue>urn:uuid:${row.id}`
         );
@@ -188,5 +198,47 @@ describe('PREMIS preservation record', () => {
     );
     expect(right).toContain('ai_training');
     expect(right).toContain('denied');
+  });
+  it('projects a complete institutional rights statement with its scoped instrument and attribution', () => {
+    const { snapshot } = dossierFixture();
+    const record = {
+      id: id(42),
+      context_id: snapshot.context.id,
+      actor_profile_id: 'rights-curator',
+      kind: 'rights',
+      created_at: 10000,
+      payload_json: JSON.stringify({
+        title: 'Interview publication permission',
+        event_status: 'completed',
+        subject_ids: [snapshot.assets[0].id],
+        details: {
+          basis: 'license',
+          licensor: 'Interview participant',
+          scope: 'The recorded interview and its transcript.',
+          instrument_asset_id: snapshot.assets[0].id,
+          uses: 'Publish with attribution to the speaker.'
+        }
+      })
+    };
+    snapshot.museum_records = [record];
+    const result = compileDossier(snapshot);
+    expect(result.issues).not.toContainEqual(
+      expect.objectContaining({
+        code: 'PREMIS_INSTITUTIONAL_DETAILS_UNAVAILABLE'
+      })
+    );
+    const xml = result.files
+      .find((file) => file.path === 'data/metadata/premis.xml')!
+      .bytes.toString();
+    const right = sections(xml, 'rightsStatement').find((item) =>
+      item.includes(`urn:uuid:${record.id}`)
+    )!;
+    expect(right).toContain('Institutional license assertion');
+    expect(right).toContain('Publish with attribution to the speaker.');
+    expect(right).toContain(
+      `<premis:otherRightsDocumentationIdentifierValue>urn:uuid:${snapshot.assets[0].id}</premis:otherRightsDocumentationIdentifierValue>`
+    );
+    expect(right).toContain('urn:6529:profile:rights-curator');
+    expect(xml).toContain('journal-recording');
   });
 });
