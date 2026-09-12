@@ -26,6 +26,7 @@ describe('mapWaveToApiWaveMin', () => {
       visibility_group_id: null,
       admin_drop_deletion_enabled: false,
       forbid_negative_votes: false,
+      reset_votes_after_win: false,
       ...overrides
     };
   }

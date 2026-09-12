@@ -33,6 +33,7 @@ export type WaveMinSource = {
   visibility_group_id: string | null;
   admin_drop_deletion_enabled: boolean;
   forbid_negative_votes: boolean;
+  reset_votes_after_win: boolean;
 };
 
 export function resolveWaveSubmissionType(
@@ -134,6 +135,7 @@ export function mapWaveToApiWaveMin({
     chat_group_id: wave.chat_group_id,
     voting_group_id: wave.voting_group_id,
     admin_drop_deletion_enabled: wave.admin_drop_deletion_enabled,
+    reset_votes_after_win: wave.reset_votes_after_win,
     forbid_negative_votes: wave.forbid_negative_votes,
     pinned,
     identity_wave: identityWave

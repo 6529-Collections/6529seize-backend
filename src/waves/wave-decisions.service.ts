@@ -336,6 +336,7 @@ export class WaveDecisionsService {
         let claimBuildDropId: string | null = null;
         let pendingPushNotificationIds: number[] = [];
         let dirtyWaveIds: string[] = [];
+        let didReset = false;
         await this.waveDecisionsDb.executeNativeQueriesInTransaction(
           async (connection) => {
             this.logger.info(
@@ -362,6 +363,7 @@ export class WaveDecisionsService {
             pendingPushNotificationIds =
               decisionResult.pendingPushNotificationIds;
             dirtyWaveIds = decisionResult.dirtyWaveIds ?? [];
+            didReset = decisionResult.didReset;
           }
         );
         if (dirtyWaveIds.length) {
@@ -390,7 +392,7 @@ export class WaveDecisionsService {
         // been cleared. Their pre-reset vote counts are now stale, so we
         // must stop processing this batch — the next createApproveDecisions
         // cycle will re-fetch candidates with fresh vote counts.
-        if (decisionResult.didReset) {
+        if (didReset) {
           this.logger.info(
             `Stopping APPROVE winner formalization for wave ${waveId} after reset_votes_after_win reset`
           );

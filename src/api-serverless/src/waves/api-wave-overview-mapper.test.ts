@@ -60,6 +60,7 @@ function makeWave(overrides: Partial<WaveEntity> = {}): WaveEntity {
     forbid_negative_votes: false,
     admin_drop_deletion_enabled: false,
     is_direct_message: false,
+    reset_votes_after_win: false,
     ...overrides
   };
 }

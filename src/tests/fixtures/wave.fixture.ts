@@ -53,7 +53,8 @@ const aBaseWave: BaseWave = {
   participation_terms: null,
   admin_drop_deletion_enabled: false,
   forbid_negative_votes: false,
-  is_direct_message: false
+  is_direct_message: false,
+  reset_votes_after_win: false
 };
 
 export function aWave(
