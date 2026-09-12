@@ -272,9 +272,11 @@ export function describeIndexedMarketListing(
     'LISTING',
     remainingQuantity
   );
-  return available.unitTotalWei === undefined
-    ? available
-    : describeMarketOrder(provider, asset, 'LISTING', '1');
+  const quoted =
+    available.unitTotalWei === undefined
+      ? available
+      : describeMarketOrder(provider, asset, 'LISTING', '1');
+  return { ...quoted, availableQuantity: available.quantity };
 }
 
 export class OpenSeaMarketplaceProvider {
