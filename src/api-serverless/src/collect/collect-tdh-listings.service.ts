@@ -274,7 +274,8 @@ export async function getCollectTdhListings(
 ): Promise<ApiCollectTdhListings> {
   const snapshot = await budget.waitFor(() =>
     redisCachedWithRefreshLease(
-      getRedisCacheKeyForPath(`collect/tdh-listings/v1/${family}`),
+      // The cache and its suffixed lease must share a Redis Cluster hash slot.
+      getRedisCacheKeyForPath(`collect/tdh-listings/v2/{${family}}`),
       Time.seconds(60),
       () => sharedSnapshot(family, budget)
     )
