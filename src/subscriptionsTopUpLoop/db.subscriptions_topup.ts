@@ -38,13 +38,7 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
       const isProcessed = await isTopUpProcessed(topUp.hash, manager);
       if (isProcessed) {
         const message = `⚠️ Top up ${topUp.hash} already processed`;
-        logger.warn(message);
-        await sendDiscordUpdate(
-          process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
-          message,
-          'Subscriptions',
-          'warn'
-        );
+        logger.error(message);
         addUniqueTopUpHash(alreadyProcessedTopUpHashes, topUp.hash);
 
         continue;

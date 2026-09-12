@@ -1,0 +1,1635 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Bootstrap isolated monitoring deployment access. Runtime stacks and secrets are separate.",
+  "Parameters": {
+    "GitHubRepository": {
+      "Type": "String",
+      "Default": "6529-Collections/6529seize-backend",
+      "AllowedPattern": "[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"
+    },
+    "FallbackTargetTopicArn": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^arn:[^:]+:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]+$",
+      "Description": "Optional established fallback notification topic. Its account dependency remains explicit."
+    }
+  },
+  "Resources": {
+    "GitHubOidcProvider": {
+      "Type": "AWS::IAM::OIDCProvider",
+      "Properties": {
+        "Url": "https://token.actions.githubusercontent.com",
+        "ClientIdList": [
+          "sts.amazonaws.com"
+        ]
+      }
+    },
+    "ArtifactBucket": {
+      "Type": "AWS::S3::Bucket",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "BucketName": {
+          "Fn::Sub": "6529-monitoring-artifacts-${AWS::AccountId}-${AWS::Region}"
+        },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "IgnorePublicAcls": true,
+          "BlockPublicPolicy": true,
+          "RestrictPublicBuckets": true
+        },
+        "OwnershipControls": {
+          "Rules": [
+            {
+              "ObjectOwnership": "BucketOwnerEnforced"
+            }
+          ]
+        },
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "ExpireBuildArtifacts",
+              "Status": "Enabled",
+              "ExpirationInDays": 90,
+              "NoncurrentVersionExpiration": {
+                "NoncurrentDays": 30
+              },
+              "AbortIncompleteMultipartUpload": {
+                "DaysAfterInitiation": 7
+              }
+            }
+          ]
+        },
+        "LoggingConfiguration": {
+          "DestinationBucketName": {
+            "Ref": "ArtifactAccessLogs"
+          },
+          "LogFilePrefix": "artifacts/"
+        }
+      },
+      "DependsOn": [
+        "ArtifactAccessLogPolicy"
+      ]
+    },
+    "ArtifactBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "ArtifactBucket"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "ArtifactBucket",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Sub": "${ArtifactBucket.Arn}/*"
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "StagingCloudFormationRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "6529-observability-staging-cfn-execution",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudformation.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ManageMonitoringRuntime",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "lambda:*"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:seize-monitoring-staging-*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudformation:CreateChangeSet"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "sqs:*"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:seize-monitoring-staging-*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:*"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/seize-monitoring-staging-*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "events:*"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/seize-monitoring-staging-*"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/seize-monitoring-staging-*"
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "sns:*"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:seize-monitoring-staging-*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:*"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/seize-monitoring-staging-**"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudwatch:PutMetricAlarm",
+                    "cloudwatch:DeleteAlarms",
+                    "cloudwatch:DescribeAlarms",
+                    "cloudwatch:TagResource",
+                    "cloudwatch:UntagResource",
+                    "cloudwatch:ListTagsForResource"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:seize-monitoring-staging-*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "apigateway:*"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:apigateway:${AWS::Region}::/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:*"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:s3:::seize-monitoring-staging-*"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:s3:::seize-monitoring-staging-*/*"
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObject",
+                    "s3:GetObjectVersion"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "${ArtifactBucket.Arn}/staging/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetBucketLocation"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "ArtifactBucket",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "secretsmanager:DescribeSecret"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:6529/monitoring/staging/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "iam:DeleteRole",
+                    "iam:GetRole",
+                    "iam:UpdateAssumeRolePolicy",
+                    "iam:PutRolePolicy",
+                    "iam:DeleteRolePolicy",
+                    "iam:GetRolePolicy",
+                    "iam:ListRolePolicies",
+                    "iam:ListAttachedRolePolicies",
+                    "iam:TagRole",
+                    "iam:UntagRole"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/seize-monitoring-staging-*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "iam:AttachRolePolicy",
+                    "iam:DetachRolePolicy"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/seize-monitoring-staging-*"
+                  },
+                  "Condition": {
+                    "ArnEquals": {
+                      "iam:PolicyARN": [
+                        {
+                          "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+                        },
+                        {
+                          "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "iam:PassRole"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/seize-monitoring-staging-*"
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "iam:PassedToService": [
+                        "lambda.amazonaws.com",
+                        "events.amazonaws.com"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Resource": "*",
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:RequestedRegion": {
+                        "Ref": "AWS::Region"
+                      }
+                    }
+                  },
+                  "Action": [
+                    "logs:DescribeLogGroups",
+                    "logs:DescribeResourcePolicies",
+                    "lambda:ListFunctions",
+                    "sqs:ListQueues",
+                    "dynamodb:ListTables",
+                    "events:ListEventBuses",
+                    "events:ListRules",
+                    "sns:ListTopics",
+                    "cloudwatch:ListMetrics"
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "iam:CreateRole",
+                    "iam:PutRolePermissionsBoundary"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/seize-monitoring-staging-*"
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "iam:PermissionsBoundary": {
+                        "Ref": "StagingRuntimePermissionsBoundary"
+                      }
+                    }
+                  }
+                },
+                {
+                  "Sid": "CreateOwnFunctionMappings",
+                  "Effect": "Allow",
+                  "Action": "lambda:CreateEventSourceMapping",
+                  "Resource": "*",
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:RequestedRegion": {
+                        "Ref": "AWS::Region"
+                      }
+                    },
+                    "ArnLike": {
+                      "lambda:FunctionArn": {
+                        "Fn::Sub": "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:seize-monitoring-staging-*"
+                      }
+                    }
+                  }
+                },
+                {
+                  "Sid": "ManageOwnFunctionMappings",
+                  "Effect": "Allow",
+                  "Action": [
+                    "lambda:GetEventSourceMapping",
+                    "lambda:UpdateEventSourceMapping",
+                    "lambda:DeleteEventSourceMapping"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:event-source-mapping:*"
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:RequestedRegion": {
+                        "Ref": "AWS::Region"
+                      }
+                    },
+                    "ArnLike": {
+                      "lambda:FunctionArn": {
+                        "Fn::Sub": "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:seize-monitoring-staging-*"
+                      }
+                    }
+                  }
+                },
+                {
+                  "Sid": "ListRegionalMappings",
+                  "Effect": "Allow",
+                  "Action": "lambda:ListEventSourceMappings",
+                  "Resource": "*",
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:RequestedRegion": {
+                        "Ref": "AWS::Region"
+                      }
+                    }
+                  }
+                },
+                {
+                  "Sid": "DescribeOwnFallbackKey",
+                  "Effect": "Allow",
+                  "Action": "kms:DescribeKey",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "StagingFallbackKey",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "StagingDeploymentRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "6529-observability-deploy-staging",
+        "MaxSessionDuration": 3600,
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Federated": {
+                  "Ref": "GitHubOidcProvider"
+                }
+              },
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                  "token.actions.githubusercontent.com:sub": {
+                    "Fn::Sub": "repo:${GitHubRepository}:environment:monitoring-staging"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "DeployMonitoringRuntime",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudformation:CreateChangeSet",
+                    "cloudformation:DescribeChangeSet",
+                    "cloudformation:ExecuteChangeSet",
+                    "cloudformation:DeleteChangeSet",
+                    "cloudformation:DescribeStacks",
+                    "cloudformation:DescribeStackEvents",
+                    "cloudformation:DescribeStackResources",
+                    "cloudformation:GetTemplate",
+                    "cloudformation:UpdateTerminationProtection"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/seize-monitoring-staging/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudformation:CreateChangeSet"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudformation:ValidateTemplate",
+                    "cloudformation:GetTemplateSummary"
+                  ],
+                  "Resource": "*",
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:RequestedRegion": { "Ref": "AWS::Region" }
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "iam:PassRole"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "StagingCloudFormationRole",
+                      "Arn"
+                    ]
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "iam:PassedToService": "cloudformation.amazonaws.com"
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:ListBucket",
+                    "s3:GetBucketLocation"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "ArtifactBucket",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:PutObject",
+                    "s3:GetObject",
+                    "s3:GetObjectVersion",
+                    "s3:AbortMultipartUpload",
+                    "s3:ListMultipartUploadParts"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "${ArtifactBucket.Arn}/staging/*"
+                  }
+                },
+                {
+                  "Action": [
+                    "iam:GetPolicy",
+                    "iam:GetPolicyVersion"
+                  ],
+                  "Resource": {
+                    "Ref": "StagingRuntimePermissionsBoundary"
+                  },
+                  "Effect": "Allow"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "ProdCloudFormationRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "6529-observability-prod-cfn-execution",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudformation.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ManageMonitoringRuntime",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "lambda:*"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:seize-monitoring-prod-*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudformation:CreateChangeSet"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "sqs:*"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:seize-monitoring-prod-*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:*"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/seize-monitoring-prod-*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "events:*"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/seize-monitoring-prod-*"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/seize-monitoring-prod-*"
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "sns:*"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:seize-monitoring-prod-*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:*"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/seize-monitoring-prod-**"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudwatch:PutMetricAlarm",
+                    "cloudwatch:DeleteAlarms",
+                    "cloudwatch:DescribeAlarms",
+                    "cloudwatch:TagResource",
+                    "cloudwatch:UntagResource",
+                    "cloudwatch:ListTagsForResource"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:seize-monitoring-prod-*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "apigateway:*"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:apigateway:${AWS::Region}::/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:*"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:s3:::seize-monitoring-prod-*"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:s3:::seize-monitoring-prod-*/*"
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObject",
+                    "s3:GetObjectVersion"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "${ArtifactBucket.Arn}/prod/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetBucketLocation"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "ArtifactBucket",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "secretsmanager:DescribeSecret"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:6529/monitoring/prod/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "iam:DeleteRole",
+                    "iam:GetRole",
+                    "iam:UpdateAssumeRolePolicy",
+                    "iam:PutRolePolicy",
+                    "iam:DeleteRolePolicy",
+                    "iam:GetRolePolicy",
+                    "iam:ListRolePolicies",
+                    "iam:ListAttachedRolePolicies",
+                    "iam:TagRole",
+                    "iam:UntagRole"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/seize-monitoring-prod-*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "iam:AttachRolePolicy",
+                    "iam:DetachRolePolicy"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/seize-monitoring-prod-*"
+                  },
+                  "Condition": {
+                    "ArnEquals": {
+                      "iam:PolicyARN": [
+                        {
+                          "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+                        },
+                        {
+                          "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "iam:PassRole"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/seize-monitoring-prod-*"
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "iam:PassedToService": [
+                        "lambda.amazonaws.com",
+                        "events.amazonaws.com"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Resource": "*",
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:RequestedRegion": {
+                        "Ref": "AWS::Region"
+                      }
+                    }
+                  },
+                  "Action": [
+                    "logs:DescribeLogGroups",
+                    "logs:DescribeResourcePolicies",
+                    "lambda:ListFunctions",
+                    "sqs:ListQueues",
+                    "dynamodb:ListTables",
+                    "events:ListEventBuses",
+                    "events:ListRules",
+                    "sns:ListTopics",
+                    "cloudwatch:ListMetrics"
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "iam:CreateRole",
+                    "iam:PutRolePermissionsBoundary"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/seize-monitoring-prod-*"
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "iam:PermissionsBoundary": {
+                        "Ref": "ProdRuntimePermissionsBoundary"
+                      }
+                    }
+                  }
+                },
+                {
+                  "Sid": "CreateOwnFunctionMappings",
+                  "Effect": "Allow",
+                  "Action": "lambda:CreateEventSourceMapping",
+                  "Resource": "*",
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:RequestedRegion": {
+                        "Ref": "AWS::Region"
+                      }
+                    },
+                    "ArnLike": {
+                      "lambda:FunctionArn": {
+                        "Fn::Sub": "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:seize-monitoring-prod-*"
+                      }
+                    }
+                  }
+                },
+                {
+                  "Sid": "ManageOwnFunctionMappings",
+                  "Effect": "Allow",
+                  "Action": [
+                    "lambda:GetEventSourceMapping",
+                    "lambda:UpdateEventSourceMapping",
+                    "lambda:DeleteEventSourceMapping"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:event-source-mapping:*"
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:RequestedRegion": {
+                        "Ref": "AWS::Region"
+                      }
+                    },
+                    "ArnLike": {
+                      "lambda:FunctionArn": {
+                        "Fn::Sub": "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:seize-monitoring-prod-*"
+                      }
+                    }
+                  }
+                },
+                {
+                  "Sid": "ListRegionalMappings",
+                  "Effect": "Allow",
+                  "Action": "lambda:ListEventSourceMappings",
+                  "Resource": "*",
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:RequestedRegion": {
+                        "Ref": "AWS::Region"
+                      }
+                    }
+                  }
+                },
+                {
+                  "Sid": "DescribeOwnFallbackKey",
+                  "Effect": "Allow",
+                  "Action": "kms:DescribeKey",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "ProdFallbackKey",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "ProdDeploymentRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "6529-observability-deploy-prod",
+        "MaxSessionDuration": 3600,
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Federated": {
+                  "Ref": "GitHubOidcProvider"
+                }
+              },
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                  "token.actions.githubusercontent.com:sub": {
+                    "Fn::Sub": "repo:${GitHubRepository}:environment:monitoring-prod"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "DeployMonitoringRuntime",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudformation:CreateChangeSet",
+                    "cloudformation:DescribeChangeSet",
+                    "cloudformation:ExecuteChangeSet",
+                    "cloudformation:DeleteChangeSet",
+                    "cloudformation:DescribeStacks",
+                    "cloudformation:DescribeStackEvents",
+                    "cloudformation:DescribeStackResources",
+                    "cloudformation:GetTemplate",
+                    "cloudformation:UpdateTerminationProtection"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/seize-monitoring-prod/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudformation:CreateChangeSet"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudformation:ValidateTemplate",
+                    "cloudformation:GetTemplateSummary"
+                  ],
+                  "Resource": "*",
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:RequestedRegion": { "Ref": "AWS::Region" }
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "iam:PassRole"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "ProdCloudFormationRole",
+                      "Arn"
+                    ]
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "iam:PassedToService": "cloudformation.amazonaws.com"
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:ListBucket",
+                    "s3:GetBucketLocation"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "ArtifactBucket",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:PutObject",
+                    "s3:GetObject",
+                    "s3:GetObjectVersion",
+                    "s3:AbortMultipartUpload",
+                    "s3:ListMultipartUploadParts"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "${ArtifactBucket.Arn}/prod/*"
+                  }
+                },
+                {
+                  "Action": [
+                    "iam:GetPolicy",
+                    "iam:GetPolicyVersion"
+                  ],
+                  "Resource": {
+                    "Ref": "ProdRuntimePermissionsBoundary"
+                  },
+                  "Effect": "Allow"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "StagingRuntimePermissionsBoundary": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Properties": {
+        "ManagedPolicyName": "6529-observability-staging-runtime-boundary",
+        "Description": "Bootstrap-owned permission ceiling for isolated monitoring runtime roles.",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+              ],
+              "Resource": {
+                "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/seize-monitoring-staging-**"
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "dynamodb:GetItem",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:BatchGetItem",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:Query",
+                "dynamodb:Scan",
+                "dynamodb:ConditionCheckItem"
+              ],
+              "Resource": {
+                "Fn::Sub": "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/seize-monitoring-staging-*"
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "sqs:SendMessage",
+                "sqs:ReceiveMessage",
+                "sqs:DeleteMessage",
+                "sqs:GetQueueAttributes",
+                "sqs:ChangeMessageVisibility",
+                "sqs:GetQueueUrl"
+              ],
+              "Resource": {
+                "Fn::Sub": "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:seize-monitoring-staging-*"
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "s3:PutObject"
+              ],
+              "Resource": {
+                "Fn::Sub": "arn:${AWS::Partition}:s3:::seize-monitoring-staging-*/*"
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "secretsmanager:GetSecretValue"
+              ],
+              "Resource": {
+                "Fn::Sub": "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:6529/monitoring/staging/*"
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "sns:Publish"
+              ],
+              "Resource": {
+                "Fn::Sub": "arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:seize-monitoring-staging-*"
+              }
+            },
+            {
+              "Fn::If": [
+                "HasFallbackTarget",
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "sns:Publish"
+                  ],
+                  "Resource": {
+                    "Ref": "FallbackTargetTopicArn"
+                  }
+                },
+                {
+                  "Ref": "AWS::NoValue"
+                }
+              ]
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "cloudwatch:PutMetricData"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "cloudwatch:namespace": "6529/OperationalMonitoring",
+                  "aws:RequestedRegion": {
+                    "Ref": "AWS::Region"
+                  }
+                }
+              }
+            },
+            {
+              "Sid": "UseOwnFallbackEncryptionThroughSNS",
+              "Effect": "Allow",
+              "Action": [
+                "kms:GenerateDataKey",
+                "kms:Decrypt"
+              ],
+              "Resource": {
+                "Fn::GetAtt": [
+                  "StagingFallbackKey",
+                  "Arn"
+                ]
+              },
+              "Condition": {
+                "StringEquals": {
+                  "kms:ViaService": {
+                    "Fn::Sub": "sns.${AWS::Region}.amazonaws.com"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "ProdRuntimePermissionsBoundary": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Properties": {
+        "ManagedPolicyName": "6529-observability-prod-runtime-boundary",
+        "Description": "Bootstrap-owned permission ceiling for isolated monitoring runtime roles.",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+              ],
+              "Resource": {
+                "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/seize-monitoring-prod-**"
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "dynamodb:GetItem",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:BatchGetItem",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:Query",
+                "dynamodb:Scan",
+                "dynamodb:ConditionCheckItem"
+              ],
+              "Resource": {
+                "Fn::Sub": "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/seize-monitoring-prod-*"
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "sqs:SendMessage",
+                "sqs:ReceiveMessage",
+                "sqs:DeleteMessage",
+                "sqs:GetQueueAttributes",
+                "sqs:ChangeMessageVisibility",
+                "sqs:GetQueueUrl"
+              ],
+              "Resource": {
+                "Fn::Sub": "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:seize-monitoring-prod-*"
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "s3:PutObject"
+              ],
+              "Resource": {
+                "Fn::Sub": "arn:${AWS::Partition}:s3:::seize-monitoring-prod-*/*"
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "secretsmanager:GetSecretValue"
+              ],
+              "Resource": {
+                "Fn::Sub": "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:6529/monitoring/prod/*"
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "sns:Publish"
+              ],
+              "Resource": {
+                "Fn::Sub": "arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:seize-monitoring-prod-*"
+              }
+            },
+            {
+              "Fn::If": [
+                "HasFallbackTarget",
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "sns:Publish"
+                  ],
+                  "Resource": {
+                    "Ref": "FallbackTargetTopicArn"
+                  }
+                },
+                {
+                  "Ref": "AWS::NoValue"
+                }
+              ]
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "cloudwatch:PutMetricData"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "cloudwatch:namespace": "6529/OperationalMonitoring",
+                  "aws:RequestedRegion": {
+                    "Ref": "AWS::Region"
+                  }
+                }
+              }
+            },
+            {
+              "Sid": "UseOwnFallbackEncryptionThroughSNS",
+              "Effect": "Allow",
+              "Action": [
+                "kms:GenerateDataKey",
+                "kms:Decrypt"
+              ],
+              "Resource": {
+                "Fn::GetAtt": [
+                  "ProdFallbackKey",
+                  "Arn"
+                ]
+              },
+              "Condition": {
+                "StringEquals": {
+                  "kms:ViaService": {
+                    "Fn::Sub": "sns.${AWS::Region}.amazonaws.com"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "ArtifactAccessLogs": {
+      "Type": "AWS::S3::Bucket",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Metadata": {
+        "Purpose": "Dedicated access-log sink; recursive server access logging is intentionally disabled."
+      },
+      "Properties": {
+        "BucketName": {
+          "Fn::Sub": "6529-monitoring-artifact-logs-${AWS::AccountId}-${AWS::Region}"
+        },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "OwnershipControls": {
+          "Rules": [
+            {
+              "ObjectOwnership": "BucketOwnerEnforced"
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "IgnorePublicAcls": true,
+          "BlockPublicPolicy": true,
+          "RestrictPublicBuckets": true
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "ExpireAccessLogs",
+              "Status": "Enabled",
+              "ExpirationInDays": 90,
+              "AbortIncompleteMultipartUpload": {
+                "DaysAfterInitiation": 7
+              },
+              "NoncurrentVersionExpiration": {
+                "NoncurrentDays": 90
+              }
+            }
+          ]
+        },
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        }
+      }
+    },
+    "ArtifactAccessLogPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "ArtifactAccessLogs"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "RequireTLS",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "ArtifactAccessLogs",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Sub": "${ArtifactAccessLogs.Arn}/*"
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            },
+            {
+              "Sid": "AllowExactArtifactLogDelivery",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "logging.s3.amazonaws.com"
+              },
+              "Action": "s3:PutObject",
+              "Resource": {
+                "Fn::Sub": "${ArtifactAccessLogs.Arn}/artifacts/*"
+              },
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "ArnLike": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:s3:::6529-monitoring-artifacts-${AWS::AccountId}-${AWS::Region}"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "StagingFallbackKey": {
+      "Type": "AWS::KMS::Key",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "Description": "Operational monitoring staging fallback notifications; managed by bootstrap only.",
+        "EnableKeyRotation": true,
+        "PendingWindowInDays": 30,
+        "Tags": [
+          {
+            "Key": "MonitoringEnvironment",
+            "Value": "staging"
+          },
+          {
+            "Key": "MonitoringComponent",
+            "Value": "fallback"
+          }
+        ],
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "EnableAccountIAMPolicies",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
+                }
+              },
+              "Action": "kms:*",
+              "Resource": "*"
+            },
+            {
+              "Sid": "AllowEnvironmentCloudWatchAlarms",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudwatch.amazonaws.com"
+              },
+              "Action": [
+                "kms:GenerateDataKey",
+                "kms:Decrypt"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "ArnLike": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:seize-monitoring-staging-*"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "StagingFallbackKeyAlias": {
+      "Type": "AWS::KMS::Alias",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "AliasName": "alias/seize-monitoring-staging-fallback",
+        "TargetKeyId": {
+          "Ref": "StagingFallbackKey"
+        }
+      }
+    },
+    "ProdFallbackKey": {
+      "Type": "AWS::KMS::Key",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "Description": "Operational monitoring prod fallback notifications; managed by bootstrap only.",
+        "EnableKeyRotation": true,
+        "PendingWindowInDays": 30,
+        "Tags": [
+          {
+            "Key": "MonitoringEnvironment",
+            "Value": "prod"
+          },
+          {
+            "Key": "MonitoringComponent",
+            "Value": "fallback"
+          }
+        ],
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "EnableAccountIAMPolicies",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
+                }
+              },
+              "Action": "kms:*",
+              "Resource": "*"
+            },
+            {
+              "Sid": "AllowEnvironmentCloudWatchAlarms",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudwatch.amazonaws.com"
+              },
+              "Action": [
+                "kms:GenerateDataKey",
+                "kms:Decrypt"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "ArnLike": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:seize-monitoring-prod-*"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "ProdFallbackKeyAlias": {
+      "Type": "AWS::KMS::Alias",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "AliasName": "alias/seize-monitoring-prod-fallback",
+        "TargetKeyId": {
+          "Ref": "ProdFallbackKey"
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "ArtifactBucket": {
+      "Value": {
+        "Ref": "ArtifactBucket"
+      }
+    },
+    "StagingDeploymentRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "StagingDeploymentRole",
+          "Arn"
+        ]
+      }
+    },
+    "StagingCloudFormationRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "StagingCloudFormationRole",
+          "Arn"
+        ]
+      }
+    },
+    "ProdDeploymentRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "ProdDeploymentRole",
+          "Arn"
+        ]
+      }
+    },
+    "ProdCloudFormationRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "ProdCloudFormationRole",
+          "Arn"
+        ]
+      }
+    },
+    "StagingRuntimePermissionsBoundaryArn": {
+      "Value": {
+        "Ref": "StagingRuntimePermissionsBoundary"
+      }
+    },
+    "ProdRuntimePermissionsBoundaryArn": {
+      "Value": {
+        "Ref": "ProdRuntimePermissionsBoundary"
+      }
+    },
+    "StagingFallbackKmsKeyArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "StagingFallbackKey",
+          "Arn"
+        ]
+      }
+    },
+    "ProdFallbackKmsKeyArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "ProdFallbackKey",
+          "Arn"
+        ]
+      }
+    }
+  },
+  "Conditions": {
+    "HasFallbackTarget": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "FallbackTargetTopicArn"
+            },
+            ""
+          ]
+        }
+      ]
+    }
+  }
+}

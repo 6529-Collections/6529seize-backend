@@ -1,6 +1,12 @@
 import * as Sentry from '@sentry/serverless';
 import { Logger } from '@/logging';
 import type { Handler } from 'aws-lambda';
+import {
+  isExpectedClientError,
+  operationalError,
+  withOperationalContext
+} from '@/operational-errors';
+import { sanitizeSentryEvent } from '@/sentry-privacy';
 
 const logger = Logger.get('SENTRY_CONTEXT');
 
@@ -19,6 +25,8 @@ export function isConfigured() {
 }
 
 export function captureException(error: unknown): void {
+  if (isExpectedClientError(error)) return;
+  operationalError('SENTRY_CONTEXT', [error]);
   if (!isConfigured()) {
     return;
   }
@@ -33,17 +41,59 @@ export function wrapLambdaHandler(
   handler: Handler,
   options: LambdaSentryOptions = {}
 ): Handler {
+  const capture: Handler = (event, context, callback) =>
+    withOperationalContext(context?.awsRequestId, () => {
+      const report = (error: unknown) => {
+        let shouldCapture = true;
+        try {
+          shouldCapture = options.shouldCaptureException?.(error) !== false;
+        } catch {
+          // Diagnostic filtering must never replace the original invocation failure.
+        }
+        if (shouldCapture) {
+          operationalError(
+            'LAMBDA_HANDLER',
+            [error],
+            context?.awsRequestId,
+            'LAMBDA_FAILURE'
+          );
+        }
+      };
+      try {
+        const result = handler(event, context, (error, value) => {
+          if (error) report(error);
+          callback?.(error, value);
+        });
+        if (result && typeof result.then === 'function') {
+          return result.catch((error: unknown) => {
+            report(error);
+            throw error;
+          });
+        }
+        return result;
+      } catch (error) {
+        report(error);
+        throw error;
+      }
+    });
   if (isConfigured()) {
     Sentry.init({
       dsn: process.env.SENTRY_DSN,
       environment: process.env.SENTRY_ENVIRONMENT,
       debug: process.env.SENTRY_DEBUG === 'true',
-      beforeSend: (event, hint) =>
-        options.shouldCaptureException?.(hint.originalException) === false
-          ? null
-          : (options.enrichEvent?.(event, hint.originalException) ?? event)
+      sendDefaultPii: false,
+      beforeSend: (event, hint) => {
+        const originalRequestUrl = event.request?.url;
+        if (isExpectedClientError(hint.originalException)) return null;
+        if (options.shouldCaptureException?.(hint.originalException) === false)
+          return null;
+        return sanitizeSentryEvent(
+          options.enrichEvent?.(event, hint.originalException) ?? event,
+          originalRequestUrl
+        );
+      }
     });
-    return Sentry.AWSLambda.wrapHandler(handler);
+    return Sentry.AWSLambda.wrapHandler(capture);
   }
-  return handler;
+  return capture;
 }

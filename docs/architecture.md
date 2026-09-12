@@ -1127,6 +1127,23 @@ limits, access, recovery, backup/restore and cleanup procedures.
 
 The strongest part of the architecture is its operational decomposition. Expensive, slow, and retryable work is mostly outside the request path, and the loop structure makes individual jobs independently deployable.
 
+Operational error delivery is a separate account-owned runtime under
+`ops/monitoring`, with its own dependency graph and OIDC deployment. Backend
+metadata-only stdout, a source-account CloudWatch Logs relay, source CloudWatch
+alarm forwarding and signed Sentry ingress feed separate normal/critical queues.
+Monitoring-owned dispatchers confirm webhook delivery, deduplicate with DynamoDB
+receipts and archive exhausted/permanent failures in S3. Queue canaries, endpoint
+probes and SNS fallback do not use application MySQL, Redis or its VPC. An
+outside-AWS uptime/dead-man provider remains a deployment requirement for
+AWS-wide failures. Moderation evidence is excluded from this operational contract.
+Separate monitoring-account CloudWatch dashboards combine bounded synthetic
+probe measurements and pipeline freshness with verified source-account REST API
+and production website ALB request metrics across regions. Dashboard access is
+separate from runtime permissions; queue canaries do not imply business-job
+completion. See the [health dashboard runbook](../ops/docs/operations/monitoring-health-dashboard.md).
+See [the package contract](../ops/monitoring/README.md) and
+[rollout/recovery runbook](../ops/docs/operations/isolated-operational-monitoring.md).
+
 The biggest tradeoff is the DB-centered coupling. Many services share tables directly, so changes need to be treated as cross-service contracts even when they look local. The safest pattern is additive schema changes first, backward-compatible writers/readers second, and cleanup only after all dependent Lambdas are deployed.
 
 The API Lambda has a broad blast radius. It is pragmatic and easy to route through one entrypoint, but it owns many unrelated concerns: public REST, auth, WebSocket handling, webhooks, upload preparation, docs, health, and proxy endpoints. Continued growth may eventually justify splitting high-risk or high-traffic boundaries.
