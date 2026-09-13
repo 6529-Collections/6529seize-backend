@@ -6,6 +6,8 @@ import {
   authenticateWebSocketJwtOrGetByConnectionId,
   authenticateWebSocketToken
 } from './ws/ws';
+import { wsListenersNotifier } from './ws/ws-listeners-notifier';
+import { NotFoundException, UnauthorisedException } from '../../exceptions';
 
 const mockHttpHandler = jest.fn();
 
@@ -180,6 +182,70 @@ describe('handler websocket auth', () => {
         data: { profile_ids: ['profile-1', 'profile-2'] }
       }),
       skipStaleConnectionCheck: true
+    });
+  });
+});
+
+describe('handler websocket typing', () => {
+  const typing = jest.mocked(wsListenersNotifier.notifyAboutUserIsTyping);
+  const waveId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const event = (wave = waveId) =>
+    ({
+      requestContext: { routeKey: '$default', connectionId: 'connection' },
+      body: JSON.stringify({
+        type: WsMessageType.USER_IS_TYPING,
+        wave_id: wave,
+        identity_id: 'untrusted-body-profile'
+      }) as string
+    }) as unknown as APIGatewayEvent;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    typing.mockReset().mockResolvedValue(undefined);
+    authenticateWebSocketJwtOrGetByConnectionIdMock.mockResolvedValue({
+      identityId: 'authenticated-profile',
+      jwtExpiry: 4102444800
+    });
+  });
+
+  it('acknowledges typing and passes only the authenticated sender', async () => {
+    await expect(handler(event(), {} as Context, jest.fn())).resolves.toEqual({
+      statusCode: 200,
+      body: JSON.stringify({ message: 'OK' })
+    });
+    expect(typing).toHaveBeenCalledWith({
+      identityId: 'authenticated-profile',
+      waveId
+    });
+  });
+
+  it('keeps invalid wave IDs as client errors without notifying', async () => {
+    const response = await handler(event('invalid'), {} as Context, jest.fn());
+    expect(response).toMatchObject({ statusCode: 400 });
+    expect(typing).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [new UnauthorisedException('private identity'), 401],
+    [new NotFoundException('private wave'), 404]
+  ])(
+    'preserves expected typing denial status without private details',
+    async (error, status) => {
+      typing.mockRejectedValue(error);
+      await expect(handler(event(), {} as Context, jest.fn())).resolves.toEqual(
+        {
+          statusCode: status,
+          body: JSON.stringify({ message: 'Typing update is not permitted' })
+        }
+      );
+    }
+  );
+
+  it('keeps an unexpected typing failure as a server error', async () => {
+    typing.mockRejectedValue(new Error('private database statement'));
+    await expect(handler(event(), {} as Context, jest.fn())).resolves.toEqual({
+      statusCode: 500,
+      body: JSON.stringify({ message: 'Failed to process message' })
     });
   });
 });
