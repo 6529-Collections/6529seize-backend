@@ -44,12 +44,36 @@ Ordinary 4xx responses and moderation decisions are not operational errors. Sile
 catches, console-only handled errors outside the shared logger, failures before
 telemetry reaches AWS, and unconfigured frontend/external providers remain gaps.
 Platform alarms can detect a failed invocation even when JavaScript cannot log it.
-The NFT link refresher's throttle alarm requires at least one throttle in three
-of the last five one-minute periods. Its SQS event source caps concurrency at the
+The NFT link refresher and wave score refresher throttle alarms require at least
+one throttle in three of the last five one-minute periods. The NFT refresher's
+SQS event source caps concurrency at the
 function's reserved capacity, preventing the poller from overshooting that limit.
 Isolated throttles therefore do not generate immediate alarm/recovery pairs;
-repeated throttling still alerts. Its invocation-error and OOM alarms remain
-immediate, and other services' alarm thresholds are unchanged.
+repeated throttling still alerts. Wave score refresh keeps its single reserved
+execution: its two FIFO sources and one-minute fallback can contend for that
+capacity even while messages drain normally. Invocation-error and OOM alarms
+remain immediate, as do other services' throttle alarms.
+
+Both wave score queues independently alert when their oldest message is at least
+1,800 seconds old in three of five one-minute periods. This initial backlog
+policy leaves room for the worker's 900-second timeout and 1,000-second message
+visibility timeout; it is an operator-tunable guard in `scripts/templates.mjs`,
+not a business completion or freshness SLO. The dirty-refresh DLQ alerts on one
+visible message in one minute. These alarms use SQS `Maximum` statistics and
+treat missing data as non-breaching, so an inactive queue does not page. They do
+not detect unqueued database refresh requests or prove that derived scores are
+correct. The scheduled fallback remains responsible for missed wakeups.
+
+Every accepted CloudWatch alarm/recovery transition still uses the protected
+delivery lane immediately; there is no incident cooldown or delayed recovery.
+An alarm that repeatedly crosses its sustained threshold can still notify more
+than once. Notifications include bounded alarm identity, metric namespace/name,
+statistic, period and numeric datapoint threshold when AWS supplies them. The
+datapoint threshold is distinct from the alarm's required number of breaching
+periods; a threshold of one on a three-of-five alarm does not mean one spike
+immediately pages. Metric-math and
+composite alarms omit single-metric labels. Free-form reasons, descriptions,
+dimension values and expressions are never copied into that diagnostic metadata.
 An application endpoint probe checks status and optional bounded JSON assertions.
 Configure API health with `jsonEquals: {"db":"ok","redis.healthy":true}`: its
 HTTP 200 alone also covers degraded dependencies. Assertions use exact scalar
@@ -97,7 +121,9 @@ own confirmed provider integration.
 
 The canonical `6529.ops.error.v1` envelope contains bounded service/environment,
 event ID, timestamp, severity, fixed error code, fingerprint and optional release
-and correlation ID. No exception message, stack, URL, request body, wallet,
+and correlation ID. CloudWatch platform events can also include the bounded
+infrastructure diagnostic metadata described above. No exception message, stack,
+URL, request body, wallet,
 username, model response or moderation evidence is sent to the webhook. The
 original diagnostic remains subject to source CloudWatch/Sentry access controls.
 Discord mentions are disabled. A fingerprint identifies a group without copying
