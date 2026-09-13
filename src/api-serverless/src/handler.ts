@@ -20,7 +20,11 @@ import {
 import { ids } from '../../ids';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 import { redactWebSocketMessageForLog } from './ws/ws-log-redaction';
-import { operationalResponse } from '../../operational-errors';
+import {
+  isExpectedClientError,
+  operationalResponse
+} from '../../operational-errors';
+import { ApiCompliantException } from '../../exceptions';
 
 const serverlessHttp = require('serverless-http');
 const logger = Logger.get('API_HANDLER');
@@ -221,7 +225,8 @@ async function wsHandler(
     case '$disconnect':
       await appWebSockets.deregister({ connectionId: connectionId! });
       return { statusCode: 200, body: 'Disconnected' };
-    case '$default':
+    case '$default': {
+      let isTypingMessage = false;
       try {
         const message = JSON.parse(event.body || '{}');
         const logSafeMessage = redactWebSocketMessageForLog(message);
@@ -325,6 +330,7 @@ async function wsHandler(
             };
           }
           case WsMessageType.USER_IS_TYPING: {
+            isTypingMessage = true;
             const waveId = message.wave_id?.toString();
             if (!waveId || !ids.isValidUuid(waveId)) {
               return {
@@ -337,7 +343,10 @@ async function wsHandler(
                 waveId
               });
             }
-            break;
+            return {
+              statusCode: 200,
+              body: JSON.stringify({ message: 'OK' })
+            };
           }
           default:
             return {
@@ -346,12 +355,18 @@ async function wsHandler(
             };
         }
       } catch (err) {
+        if (isTypingMessage && isExpectedClientError(err)) {
+          return {
+            statusCode: (err as ApiCompliantException).getStatusCode(),
+            body: JSON.stringify({ message: 'Typing update is not permitted' })
+          };
+        }
         return {
           statusCode: 500,
           body: JSON.stringify({ message: 'Failed to process message' })
         };
       }
-      return { statusCode: 400, body: 'This websocket does not accept data' };
+    }
     default:
       return { statusCode: 400, body: 'Unknown routeKey' };
   }
