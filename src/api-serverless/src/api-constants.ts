@@ -47,6 +47,8 @@ const WEB_AUTH_CREDENTIAL_ROUTE_PATHS = new Set([
 // Express routing is case-insensitive and accepts one trailing slash by default.
 const MARKET_IDEMPOTENT_ROUTE =
   /^\/api\/(?:market\/operations|collect\/rules(?:\/[^/]+\/prepare)?)\/?$/i;
+const MODERATED_SUBMISSION_ROUTE =
+  /^\/api\/(?:drops(?:\/[^/]+)?|profiles\/[^/]+\/cic\/statements|groups\/[^/]+\/visible)\/?$/i;
 
 export function getCorsOptionsForRequest(
   path: string,
@@ -66,7 +68,10 @@ export function getCorsOptionsForRequest(
       exposedHeaders: ['ETag', 'X-Request-Id']
     };
   }
-  if (MARKET_IDEMPOTENT_ROUTE.test(path)) {
+  if (
+    MARKET_IDEMPOTENT_ROUTE.test(path) ||
+    MODERATED_SUBMISSION_ROUTE.test(path)
+  ) {
     return {
       ...corsOptions,
       allowedHeaders: [...corsOptions.allowedHeaders, 'Idempotency-Key']
