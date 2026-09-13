@@ -80,7 +80,10 @@ export function operationalError(
       requestId ?? context.getStore()?.requestId,
       128
     );
-    const release = token(process.env.GIT_SHA ?? process.env.COMMIT_HASH, 64);
+    const release = token(
+      process.env.GIT_COMMIT ?? process.env.GIT_SHA ?? process.env.COMMIT_HASH,
+      64
+    );
     const envelope = {
       _type: '6529.ops.error.v1',
       eventId: randomUUID(),
