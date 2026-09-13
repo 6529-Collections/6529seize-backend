@@ -128,6 +128,7 @@ describe('Meme Lab card asset boundary', () => {
     `1:${MEMES_CONTRACT.toLowerCase()}:70`,
     `1:${MEMELAB_CONTRACT}:070`,
     `1:${MEMELAB_CONTRACT}:-1`,
+    `1:${MEMELAB_CONTRACT}:2147483648`,
     `${key}:extra`,
     `1:${MEMELAB_CONTRACT}:${BigInt(1) << BigInt(256)}`,
     `1:${MEMELAB_CONTRACT.toUpperCase()}:70`
@@ -138,12 +139,10 @@ describe('Meme Lab card asset boundary', () => {
     }
   );
 
-  it('accepts exact uint256 identities and rejects oversized explicit work before I/O', async () => {
+  it('accepts exact indexed identities and rejects oversized explicit work before I/O', async () => {
     expect(memeLabTradeTokenId(key)).toBe('70');
     expect(
-      memeLabTradeTokenId(
-        `1:${MEMELAB_CONTRACT}:${(BigInt(1) << BigInt(256)) - BigInt(1)}`
-      )
+      memeLabTradeTokenId(`1:${MEMELAB_CONTRACT}:2147483647`)
     ).not.toBeNull();
     const { trade } = setup();
     await expect(
@@ -171,6 +170,30 @@ describe('Meme Lab card asset boundary', () => {
       'Invalid'
     );
     expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    '2147483648',
+    '18446744073709551615',
+    ((BigInt(1) << BigInt(256)) - BigInt(1)).toString()
+  ])('never sends out-of-index token ID %s to MySQL', async (tokenId) => {
+    const execute = jest.fn();
+    const repository = new CollectingTradeAssetsDb(
+      () => ({ execute }) as unknown as SqlExecutor
+    );
+    await expect(repository.readMemeLabAssets([tokenId])).rejects.toThrow(
+      'Invalid'
+    );
+    expect(execute).not.toHaveBeenCalled();
+    const trade = { readMemeLabAssets: jest.fn() };
+    expect(
+      await catalogForTradeAssets(
+        catalog,
+        [`1:${MEMELAB_CONTRACT}:${tokenId}`],
+        trade
+      )
+    ).toBe(catalog);
+    expect(trade.readMemeLabAssets).not.toHaveBeenCalled();
   });
 
   it('searches Meme Lab only when explicitly requested and keeps the cached planner catalog unchanged', async () => {

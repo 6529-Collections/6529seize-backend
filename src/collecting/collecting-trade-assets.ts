@@ -14,12 +14,15 @@ import { dbSupplier, SqlExecutor } from '@/sql-executor';
 const MAX_LAB_ASSETS = 50000;
 const MAX_EXPLICIT_ASSETS = 2000;
 const LAB_PREFIX = `1:${MEMELAB_CONTRACT.toLowerCase()}:`;
+// BaseNFT.id (inherited by LabNFT) is a signed MySQL INT. Larger on-chain IDs
+// cannot be present in this index and must never enter a coercing SQL comparison.
+const MAX_INDEXED_LAB_TOKEN_ID = BigInt(2147483647);
 
 export function memeLabTradeTokenId(key: string): string | null {
   if (!key.startsWith(LAB_PREFIX)) return null;
   const tokenId = key.slice(LAB_PREFIX.length);
-  return /^(0|[1-9][0-9]{0,77})$/.test(tokenId) &&
-    BigInt(tokenId) < BigInt(1) << BigInt(256)
+  return /^(0|[1-9][0-9]{0,9})$/.test(tokenId) &&
+    BigInt(tokenId) <= MAX_INDEXED_LAB_TOKEN_ID
     ? tokenId
     : null;
 }
