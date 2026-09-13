@@ -7,7 +7,9 @@ import {
   ModeratedProfileStatus
 } from '@/entities/IContentModeration';
 import { ForbiddenException } from '@/exceptions';
-import { env } from '@/env';
+import { AuthenticationContext } from '@/auth-context';
+import { userGroupsService } from '@/api/community-members/user-groups.service';
+import { MODERATION_DEVELOPER_GROUP_ID } from './moderation-developer-access';
 import { ContentModerationAiService } from './content-moderation-ai.service';
 import { ContentModerationDb } from './content-moderation.db';
 import { ContentModerationService } from './content-moderation.service';
@@ -187,10 +189,10 @@ describe('ContentModerationService', () => {
     expect(db.getBlockActivity).not.toHaveBeenCalled();
 
     jest
-      .spyOn(env, 'getStringArray')
-      .mockImplementation((name) =>
-        name === 'DEVS_6529_MENTION_PROFILE_IDS'
-          ? ['profile-1', 'moderator-1']
+      .spyOn(userGroupsService, 'getGroupsUserIsEligibleForByIds')
+      .mockImplementation(async (profileId) =>
+        ['profile-1', 'moderator-1'].includes(profileId ?? '')
+          ? [MODERATION_DEVELOPER_GROUP_ID]
           : []
       );
     db.getBlockActivity.mockResolvedValue([
@@ -212,7 +214,10 @@ describe('ContentModerationService', () => {
       service.getBlockActivity(
         'moderator-1',
         { limit: 25, before: '500.42', include_unblocks: true },
-        {}
+        {
+          authenticationContext:
+            AuthenticationContext.fromProfileId('moderator-1')
+        }
       )
     ).resolves.toEqual([
       expect.objectContaining({ id: '42', action: 'PROFILE_UNBLOCKED' })
@@ -453,19 +458,24 @@ describe('ContentModerationService', () => {
     expect(db.getModerationQueue).not.toHaveBeenCalled();
   });
 
-  it('uses only the exact developer set and ignores broader moderator roles', async () => {
+  it('uses the saved developer group and ignores broader moderator roles', async () => {
     const { service, db } = createService();
     jest
-      .spyOn(env, 'getStringArray')
-      .mockImplementation((name) =>
-        name === 'DEVS_6529_MENTION_PROFILE_IDS' ? [' dev-1 '] : ['moderator-1']
+      .spyOn(userGroupsService, 'getGroupsUserIsEligibleForByIds')
+      .mockImplementation(async (profileId) =>
+        profileId === 'dev-1' ? [MODERATION_DEVELOPER_GROUP_ID] : []
       );
     db.isModerator.mockResolvedValue(true);
     await expect(
-      service.getModeratorAccess('moderator-1', {})
+      service.getModeratorAccess('moderator-1', {
+        authenticationContext:
+          AuthenticationContext.fromProfileId('moderator-1')
+      })
     ).resolves.toMatchObject({ moderator: false });
     await expect(
-      service.getModeratorAccess('dev-1', {})
+      service.getModeratorAccess('dev-1', {
+        authenticationContext: AuthenticationContext.fromProfileId('dev-1')
+      })
     ).resolves.toMatchObject({ moderator: true });
     expect(db.isModerator).not.toHaveBeenCalled();
   });
@@ -507,17 +517,20 @@ describe('ContentModerationService', () => {
   it('applies moderator state and report resolution atomically', async () => {
     const { service, db } = createService();
     jest
-      .spyOn(env, 'getStringArray')
-      .mockImplementation((name) =>
-        name === 'DEVS_6529_MENTION_PROFILE_IDS'
-          ? ['profile-1', 'moderator-1']
+      .spyOn(userGroupsService, 'getGroupsUserIsEligibleForByIds')
+      .mockImplementation(async (profileId) =>
+        ['profile-1', 'moderator-1'].includes(profileId ?? '')
+          ? [MODERATION_DEVELOPER_GROUP_ID]
           : []
       );
 
     await service.decideDrop(
       'moderator-1',
       { dropId: 'drop-1', decision: 'ALLOW', reason: 'Reviewed in context' },
-      {}
+      {
+        authenticationContext:
+          AuthenticationContext.fromProfileId('moderator-1')
+      }
     );
 
     expect(db.applyModeratorDropDecision).toHaveBeenCalledWith(
@@ -529,24 +542,30 @@ describe('ContentModerationService', () => {
         reason: 'Reviewed in context',
         reportStatus: ContentReportStatus.RESOLVED_ALLOWED
       },
-      {}
+      {
+        authenticationContext:
+          AuthenticationContext.fromProfileId('moderator-1')
+      }
     );
   });
 
   it('supports a moderation decision without an optional note', async () => {
     const { service, db } = createService();
     jest
-      .spyOn(env, 'getStringArray')
-      .mockImplementation((name) =>
-        name === 'DEVS_6529_MENTION_PROFILE_IDS'
-          ? ['profile-1', 'moderator-1']
+      .spyOn(userGroupsService, 'getGroupsUserIsEligibleForByIds')
+      .mockImplementation(async (profileId) =>
+        ['profile-1', 'moderator-1'].includes(profileId ?? '')
+          ? [MODERATION_DEVELOPER_GROUP_ID]
           : []
       );
 
     await service.decideDrop(
       'moderator-1',
       { dropId: 'drop-1', decision: 'REMOVE', reason: null },
-      {}
+      {
+        authenticationContext:
+          AuthenticationContext.fromProfileId('moderator-1')
+      }
     );
 
     expect(db.applyModeratorDropDecision).toHaveBeenCalledWith(
@@ -554,7 +573,10 @@ describe('ContentModerationService', () => {
         reason: null,
         reportStatus: ContentReportStatus.RESOLVED_REMOVED
       }),
-      {}
+      {
+        authenticationContext:
+          AuthenticationContext.fromProfileId('moderator-1')
+      }
     );
   });
 

@@ -158,7 +158,7 @@ function dropDecision(action: string) {
 export class ModerationReviewService {
   constructor(private readonly db: ModerationReviewDb) {}
   async reportCheck(reportId: string, ctx: RequestContext) {
-    assertModerationDeveloper(ctx);
+    await assertModerationDeveloper(ctx);
     const target = await this.db.reportForReview(reportId, ctx);
     if (target.item_id) return this.detail(target.item_id, ctx);
     const itemId = await this.db.executeNativeQueriesInTransaction(
@@ -235,7 +235,7 @@ export class ModerationReviewService {
     return this.detail(itemId, ctx);
   }
   async profileCheck(profileId: string, ctx: RequestContext) {
-    const actor = assertModerationDeveloper(ctx);
+    const actor = await assertModerationDeveloper(ctx);
     await contentModerationDb.getExistingProfileStatus(
       profileId,
       ctx.connection
@@ -266,7 +266,7 @@ export class ModerationReviewService {
   }
 
   async detail(id: string, ctx: RequestContext) {
-    assertModerationDeveloper(ctx);
+    await assertModerationDeveloper(ctx);
     const item = await this.db.get(id, ctx);
     const history = await this.db.history(id, ctx);
     const current = await this.db.currentRevision(item, ctx);
@@ -352,7 +352,7 @@ export class ModerationReviewService {
     },
     ctx: RequestContext
   ) {
-    const actor = assertModerationDeveloper(ctx);
+    const actor = await assertModerationDeveloper(ctx);
     const actionId = `${actor}:${input.idempotency_key}`;
     if (input.action === 'REEVALUATE') {
       const claimed = await this.claimAction(id, input, actor, actionId, ctx);

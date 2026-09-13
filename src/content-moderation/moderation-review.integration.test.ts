@@ -4,7 +4,8 @@ import { resetTestDatabase } from '@/tests/_setup/testDatabase';
 import { ModerationReviewDb } from './moderation-review.db';
 import { ModerationReviewService } from './moderation-review.service';
 import { AuthenticationContext } from '@/auth-context';
-import { env } from '@/env';
+import { userGroupsService } from '@/api/community-members/user-groups.service';
+import { MODERATION_DEVELOPER_GROUP_ID } from './moderation-developer-access';
 import { contentModerationDb } from './content-moderation.db';
 import { PrePublicationCheckOutcome } from '@/entities/IContentModeration';
 import { ContentModerationService } from './content-moderation.service';
@@ -70,7 +71,14 @@ describe('Moderation review durable integration', () => {
       authenticationContext: AuthenticationContext.fromProfileId('dev')
     });
     beforeEach(() => {
-      jest.spyOn(env, 'getStringArray').mockReturnValue(['dev']);
+      jest
+        .spyOn(userGroupsService, 'getGroupsUserIsEligibleForByIds')
+        .mockImplementation(async (profileId, groupIds) =>
+          profileId === 'dev' &&
+          groupIds.includes(MODERATION_DEVELOPER_GROUP_ID)
+            ? [MODERATION_DEVELOPER_GROUP_ID]
+            : []
+        );
     });
     afterEach(() => jest.restoreAllMocks());
     async function legacyReport(id: string, resolvedAt: number | null = null) {

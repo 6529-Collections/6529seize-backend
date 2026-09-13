@@ -2,8 +2,10 @@ import express, { NextFunction, Request, Response } from 'express';
 import { Server } from 'node:http';
 import { AuthenticationContext } from '@/auth-context';
 import { ApiCompliantException } from '@/exceptions';
-import { env } from '@/env';
+import { userGroupsService } from '@/api/community-members/user-groups.service';
+import { MODERATION_DEVELOPER_GROUP_ID } from '@/content-moderation/moderation-developer-access';
 import { Timer } from '@/time';
+import { Logger } from '@/logging';
 import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
 import { moderationReviewService } from '@/content-moderation/moderation-review.service';
 import { ObjectSerializer } from '@/api/generated/models/ObjectSerializer';
@@ -67,11 +69,9 @@ describe('moderation generated routes and private handlers', () => {
   };
   beforeEach(() => {
     jest
-      .spyOn(env, 'getStringArray')
-      .mockImplementation((key) =>
-        key === 'DEVS_6529_MENTION_PROFILE_IDS'
-          ? ['dev']
-          : ['broader-moderator']
+      .spyOn(userGroupsService, 'getGroupsUserIsEligibleForByIds')
+      .mockImplementation(async (profileId) =>
+        profileId === 'dev' ? [MODERATION_DEVELOPER_GROUP_ID] : []
       );
     jest
       .spyOn(Timer, 'getFromRequest')
@@ -158,6 +158,54 @@ describe('moderation generated routes and private handlers', () => {
     await withServer(async (base) =>
       expect((await fetch(`${base}/access`)).status).toBe(401)
     );
+  });
+  it('revokes access on the next request and does not expose cached private data', async () => {
+    const reads = jest.spyOn(moderationReviewDb, 'list');
+    await withServer(async (base) => {
+      expect(await (await fetch(`${base}/access`)).json()).toEqual({
+        developer: true
+      });
+      jest
+        .mocked(userGroupsService.getGroupsUserIsEligibleForByIds)
+        .mockResolvedValue([]);
+      expect(await (await fetch(`${base}/access`)).json()).toEqual({
+        developer: false
+      });
+      expect((await fetch(base)).status).toBe(403);
+    });
+    expect(reads).not.toHaveBeenCalled();
+  });
+  it('returns a retryable access error without evidence reads or actions when group lookup fails', async () => {
+    jest
+      .spyOn(Logger.get('ModerationDeveloperAccess'), 'error')
+      .mockImplementation();
+    jest
+      .mocked(userGroupsService.getGroupsUserIsEligibleForByIds)
+      .mockRejectedValue(new Error('private database context'));
+    const read = jest.spyOn(moderationReviewDb, 'list');
+    const actionService = jest.spyOn(moderationReviewService, 'action');
+    await withServer(async (base) => {
+      for (const suffix of ['/access', '', '/private-id/actions']) {
+        const response = await fetch(
+          `${base}${suffix}`,
+          suffix.endsWith('/actions')
+            ? {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(action)
+              }
+            : undefined
+        );
+        expect(response.status).toBe(503);
+        expect(response.headers.get('cache-control')).toBe('private, no-store');
+        expect(await response.json()).toEqual({
+          error: 'Moderation access is temporarily unavailable',
+          code: 'MODERATION_ACCESS_UNAVAILABLE'
+        });
+      }
+    });
+    expect(read).not.toHaveBeenCalled();
+    expect(actionService).not.toHaveBeenCalled();
   });
   it('rejects category text in subject filter URLs before reading private checks', async () => {
     const read = jest.spyOn(moderationReviewDb, 'list');

@@ -189,9 +189,15 @@ so the report remains available for human review.
 
 ## Moderator workflow
 
-Moderator access is server-enforced and restricted to authenticated non-proxy
-profile IDs in `DEVS_6529_MENTION_PROFILE_IDS`. Additional configured IDs and
-durable role rows do not grant access. The route `GET
+Moderator access is server-enforced and restricted to directly authenticated,
+non-proxy 6529 identities eligible for the saved **6529 Dev Team** group
+(`6529-dev-team-xuahLBqRGQr6yX9R5yna4V`). Existing inclusion/exclusion and REP
+criteria apply. The targeted check bypasses cross-request eligibility and
+group-definition caches and requires the supplied actor to match the signed-in
+identity. Mention recipients and durable role rows do not grant access. Missing
+or hidden groups deny access. Lookup failures return HTTP 503 with
+`MODERATION_ACCESS_UNAVAILABLE` and a bounded operational diagnostic; no private
+moderation data is read or changed. The route `GET
 /content-moderation/moderator-access` exposes the current authenticated
 profile's access state and whether the WatchTower queue has open reports.
 
@@ -336,7 +342,6 @@ after the backend API is available.
 
 | Variable                              | Purpose                                                                                                                          |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `DEVS_6529_MENTION_PROFILE_IDS`       | Comma-separated `@devs6529` profile IDs; the sole privileged moderation access set.                                              |
 | `CONTENT_MODERATION_BLOCKED_HOSTS`    | Comma-separated exact or parent hosts for deterministic unsafe-destination rejection. Empty disables this direct-rejection list. |
 | `CONTENT_MODERATION_BEDROCK_MODEL_ID` | Optional moderation-specific Bedrock model; otherwise the existing configured/default Anthropic model is used.                   |
 | `CONTENT_MODERATION_REPORTS_PER_HOUR` | Per-profile report ceiling; defaults to `100`.                                                                                   |
