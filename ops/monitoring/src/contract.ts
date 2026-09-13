@@ -118,7 +118,7 @@ function alarmFields(alarm: AlarmMetadata | undefined) {
     metric: 'Metric',
     statistic: 'Statistic',
     periodSeconds: 'Period (seconds)',
-    threshold: 'Threshold'
+    threshold: 'Datapoint threshold'
   };
   return (Object.keys(labels) as (keyof AlarmMetadata)[]).flatMap((key) =>
     alarm[key] === undefined

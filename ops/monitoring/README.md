@@ -68,7 +68,10 @@ Every accepted CloudWatch alarm/recovery transition still uses the protected
 delivery lane immediately; there is no incident cooldown or delayed recovery.
 An alarm that repeatedly crosses its sustained threshold can still notify more
 than once. Notifications include bounded alarm identity, metric namespace/name,
-statistic, period and numeric threshold when AWS supplies them. Metric-math and
+statistic, period and numeric datapoint threshold when AWS supplies them. The
+datapoint threshold is distinct from the alarm's required number of breaching
+periods; a threshold of one on a three-of-five alarm does not mean one spike
+immediately pages. Metric-math and
 composite alarms omit single-metric labels. Free-form reasons, descriptions,
 dimension values and expressions are never copied into that diagnostic metadata.
 An application endpoint probe checks status and optional bounded JSON assertions.

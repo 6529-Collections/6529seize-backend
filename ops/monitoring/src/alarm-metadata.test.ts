@@ -53,8 +53,8 @@ test('AWS metric alarm metadata survives queue parsing and renders bounded diagn
       { name: 'Metric', value: 'Throttles' }
     );
     assert.deepEqual(
-      fields.find((field) => field.name === 'Threshold'),
-      { name: 'Threshold', value: '1' }
+      fields.find((field) => field.name === 'Datapoint threshold'),
+      { name: 'Datapoint threshold', value: '1' }
     );
     assert.ok(fields.length <= 25);
     assert.ok(fields.every((field) => field.value.length <= 1024));
