@@ -1224,6 +1224,11 @@ receipts and archive exhausted/permanent failures in S3. Queue canaries, endpoin
 probes and SNS fallback do not use application MySQL, Redis or its VPC. An
 outside-AWS uptime/dead-man provider remains a deployment requirement for
 AWS-wide failures. Moderation evidence is excluded from this operational contract.
+Source log subscription filters retain their permission dependency and form one
+chain in ordinal logical-ID order. CloudFormation therefore updates them serially,
+avoiding a parallel burst against CloudWatch Logs subscription API limits while
+preserving filter identities, destinations and patterns. This increases source
+stack update time; it does not rate-limit unrelated callers in the account/region.
 The NFT and wave score refresher throttle alarms require three breaching minutes
 out of five while invocation errors and OOM alarms remain immediate. Wave score
 refresh keeps one reserved execution; independent source-account SQS alarms

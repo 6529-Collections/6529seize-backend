@@ -121,6 +121,15 @@ before enabling a new fallback destination.
    subscription filters per group; inspect existing filters before adding these.
    Missing catalog functions, absent log groups or exhausted subscription quotas
    are rollout blockers, not reasons to silently omit coverage.
+   Generated filters form a stable dependency chain while retaining their
+   `LogPermission` dependency. [CloudFormation `DependsOn`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-attribute-dependson.html)
+   orders updates as well as creation, preventing a parallel subscription update
+   burst. CloudWatch Logs limits both `PutSubscriptionFilter` and
+   `DescribeSubscriptionFilters` to [five requests per second per account/region](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/cloudwatch_limits_cwl.html).
+   Expect longer source stack updates. The chain is not a global rate limiter;
+   other concurrent subscription operations can still cause throttling. Inspect
+   stack events and let rollback finish before retrying a failed update; do not
+   delete filters or skip rollback resources to work around throttling.
 4. Enable signed Sentry issue-alert or error-created webhooks on independent
    `/sentry`, with explicit project and environment scope. `production` normalizes
    to `prod`; `staging` stays separate. Unknown/mismatched environments are not
