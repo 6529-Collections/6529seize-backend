@@ -7,6 +7,7 @@ import {
   buildStructuredWalletSignatureMessage,
   clearStructuredWalletSignatureReplayCacheForTests
 } from '@/api/wallet-signatures/structured-wallet-signatures';
+import memesFixture from '@/api/wallet-signatures/fixtures/memes-submission-v1.json';
 
 const EIP1271_MAGIC_VALUE = '0x1626ba7e';
 const EIP1271_INVALID_VALUE = '0xffffffff';
@@ -275,5 +276,66 @@ describe('DropSignatureVerifier', () => {
         termsOfService
       })
     ).resolves.toBe(false);
+  });
+
+  describe('The Memes typed signature routing', () => {
+    beforeEach(() => {
+      jest.replaceProperty(process, 'env', {
+        ...process.env,
+        MAIN_STAGE_WAVE_ID: memesFixture.wave.id,
+        AUTH_STRUCTURED_SIGNATURES_REQUIRED: 'true'
+      });
+      jest
+        .spyOn(Date, 'now')
+        .mockReturnValue(
+          Date.parse(memesFixture.typedData.message.Verification.IssuedAt) +
+            60_000
+        );
+    });
+
+    function typedDrop(): ApiCreateDropRequest {
+      return {
+        ...memesFixture.drop,
+        drop_type: ApiDropType.Participatory,
+        signature: memesFixture.signature,
+        signature_message: JSON.stringify(memesFixture.typedData)
+      };
+    }
+
+    it('accepts typed signatures with authoritative wave and API context', async () => {
+      await expect(
+        verifier.isDropSignedByAnyOfGivenWallets({
+          wallets: [wallet.address],
+          drop: typedDrop(),
+          termsOfService: memesFixture.terms,
+          waveName: memesFixture.wave.name,
+          audience: 'api.6529.io'
+        })
+      ).resolves.toBe(true);
+    });
+
+    it('rejects typed signatures when trusted context is missing', async () => {
+      await expect(
+        verifier.isDropSignedByAnyOfGivenWallets({
+          wallets: [wallet.address],
+          drop: typedDrop(),
+          termsOfService: memesFixture.terms
+        })
+      ).resolves.toBe(false);
+    });
+
+    it('rejects body changes without falling through to a legacy signature', async () => {
+      const drop = typedDrop();
+      drop.parts = [{ content: 'Changed after signing', media: [] }];
+      await expect(
+        verifier.isDropSignedByAnyOfGivenWallets({
+          wallets: [wallet.address],
+          drop,
+          termsOfService: memesFixture.terms,
+          waveName: memesFixture.wave.name,
+          audience: 'api.6529.io'
+        })
+      ).resolves.toBe(false);
+    });
   });
 });
