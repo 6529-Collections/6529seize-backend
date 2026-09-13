@@ -1,6 +1,7 @@
 import { mock } from 'ts-jest-mocker';
 import { AuthenticationContext } from '@/auth-context';
-import { env } from '@/env';
+import { userGroupsService } from '@/api/community-members/user-groups.service';
+import { MODERATION_DEVELOPER_GROUP_ID } from '@/content-moderation/moderation-developer-access';
 import { ModeratedProfileStatus } from '@/entities/IContentModeration';
 import { contentModerationDb } from './content-moderation.db';
 import { ModerationReviewDb } from './moderation-review.db';
@@ -71,9 +72,9 @@ describe('Developer review guards and evidence', () => {
     record = item();
     service = new ModerationReviewService(db);
     jest
-      .spyOn(env, 'getStringArray')
-      .mockImplementation((name) =>
-        name === 'DEVS_6529_MENTION_PROFILE_IDS' ? ['dev'] : ['other']
+      .spyOn(userGroupsService, 'getGroupsUserIsEligibleForByIds')
+      .mockImplementation(async (profileId) =>
+        profileId === 'dev' ? [MODERATION_DEVELOPER_GROUP_ID] : []
       );
     jest.mocked(db.get).mockImplementation(async () => record);
     jest.mocked(db.history).mockResolvedValue({ evaluations: [], audit: [] });

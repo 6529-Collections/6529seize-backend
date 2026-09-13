@@ -314,7 +314,7 @@ router.post(
     _res: Response<ApiContentModerationDropDecisionResponse>
   ) => {
     const { timer, authenticationContext } = await getRequiredProfileId(req);
-    assertModerationDeveloper({ timer, authenticationContext });
+    await assertModerationDeveloper({ timer, authenticationContext });
     throw new CustomApiCompliantException(
       409,
       'Open the moderation check and review its latest revision before acting.',
@@ -331,7 +331,7 @@ router.post(
     _res: Response<ApiContentModerationProfileStatusResponse>
   ) => {
     const { timer, authenticationContext } = await getRequiredProfileId(req);
-    assertModerationDeveloper({ timer, authenticationContext });
+    await assertModerationDeveloper({ timer, authenticationContext });
     throw new CustomApiCompliantException(
       409,
       'Open the moderation profile check and review its latest revision before acting.',

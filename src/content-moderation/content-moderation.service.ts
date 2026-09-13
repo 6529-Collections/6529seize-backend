@@ -246,9 +246,7 @@ export class ContentModerationService {
   }
 
   async getModeratorAccess(profileId: string, ctx: RequestContext) {
-    const moderator =
-      isModerationDeveloper(profileId) &&
-      !ctx.authenticationContext?.isAuthenticatedAsProxy();
+    const moderator = await isModerationDeveloper(profileId, ctx);
     if (!moderator) {
       return {
         moderator: false,
@@ -459,10 +457,7 @@ export class ContentModerationService {
   }
 
   private async assertModerator(profileId: string, ctx: RequestContext) {
-    if (
-      !isModerationDeveloper(profileId) ||
-      ctx.authenticationContext?.isAuthenticatedAsProxy()
-    ) {
+    if (!(await isModerationDeveloper(profileId, ctx))) {
       throw new ForbiddenException('Moderator access is required');
     }
   }

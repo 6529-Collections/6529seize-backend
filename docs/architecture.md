@@ -513,8 +513,13 @@ the reported-content Bedrock assessment runs. Only a high-confidence urgent
 recommendation can temporarily quarantine a drop; ordinary results remain in
 the developer review queue. Authorized developers can restore,
 quarantine, or remove drops and suspend or reinstate posting profiles.
-Privileged access requires the exact `DEVS_6529_MENTION_PROFILE_IDS` set and
-an authenticated non-proxy profile; broader roles do not grant access.
+Privileged access requires a directly authenticated, non-proxy 6529 identity
+eligible for the saved 6529 Dev Team group
+(`6529-dev-team-xuahLBqRGQr6yX9R5yna4V`). All moderation access and action paths
+use the existing targeted eligibility rules without cross-request membership
+or group-definition caches. The actor must match the authenticated identity.
+Mention recipients and broader roles do not grant access. A missing group
+denies access; failed lookups return HTTP 503 and a bounded operational diagnostic.
 The prioritized queue uses opaque
 stable cursors. There is no continuous review queue or hold-before-publish
 state.

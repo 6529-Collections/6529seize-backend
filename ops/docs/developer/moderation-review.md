@@ -11,9 +11,15 @@ and durable history, not a new image classifier or a tighter wave speech policy.
 
 ## Access and API
 
-Every privileged endpoint requires the authenticated profile to occur in
-`DEVS_6529_MENTION_PROFILE_IDS`, the exact `@devs6529` set. Proxies and broader
-moderator roles do not grant access. Responses use `Cache-Control: private,
+Every privileged endpoint requires the directly authenticated 6529 identity to
+be eligible for the existing saved **6529 Dev Team** group, pinned by immutable
+ID `6529-dev-team-xuahLBqRGQr6yX9R5yna4V`. The ordinary group eligibility rules
+apply, including explicit inclusions/exclusions and REP criteria. The server
+recomputes the targeted membership without cross-request eligibility or group
+definition caches. Proxies, mention recipients and broader moderator roles do
+not grant access. A missing or hidden group grants no access; lookup failures
+return HTTP 503 with `MODERATION_ACCESS_UNAVAILABLE`, record a bounded operational
+error, and expose no private evidence or membership payload. Responses use `Cache-Control: private,
 no-store`. Ordinary report, hide, block and report-withdrawal endpoints remain
 available to users.
 
