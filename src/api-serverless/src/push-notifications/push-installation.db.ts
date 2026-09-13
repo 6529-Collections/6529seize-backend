@@ -58,10 +58,12 @@ async function authorizeFreshClaim(
     return;
   // Logout can precede the first push registration. Require an actual native
   // credential in that case; an arbitrary device ID and new secret are not auth.
+  // Keep the matched session valid until the claim commits against concurrent
+  // revocation/rotation. The refresh hash is unique; stop at the first match.
   for (const session of authorization) {
     const authenticated = await sqlExecutor.oneOrNull<{ id: string }>(
       `SELECT id FROM ${WALLET_AUTH_SESSIONS_TABLE}
-       WHERE address = :address AND refresh_token_hash = :hash
+       WHERE LOWER(address) = :address AND refresh_token_hash = :hash
        AND client_type = 'native' AND revoked_at IS NULL AND expires_at > :now
        LIMIT 1 FOR UPDATE`,
       {
@@ -84,7 +86,12 @@ async function lockInstallation(
   ctx: RequestContext,
   authorization: FreshClaimAuthorization
 ) {
+  if (!ctx.connection?.connection) {
+    throw new Error('Push installation locks require a transaction connection');
+  }
   const options = { wrappedConnection: ctx.connection };
+  // Create the row when absent; the explicit locking read below fences every
+  // existing-row claim regardless of whether the duplicate-key update changes it.
   await sqlExecutor.execute(
     `INSERT INTO ${PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE} (device_id, revision) VALUES (:device_id, 0)
      ON DUPLICATE KEY UPDATE device_id = VALUES(device_id)`,
@@ -186,11 +193,11 @@ export async function registerInstallationDevice(
 export async function revokeInstallation(
   request: InstallationRevocation,
   ctx: RequestContext
-): Promise<PushInstallationEntity> {
+): Promise<Pick<PushInstallationEntity, 'device_id' | 'revision'>> {
   const timer = 'PushInstallationDb->revoke';
   ctx.timer?.start(timer);
   try {
-    return await sqlExecutor.executeNativeQueriesInTransaction(
+    const revoked = await sqlExecutor.executeNativeQueriesInTransaction(
       async (connection) => {
         const installation = await lockInstallation(
           request,
@@ -225,7 +232,7 @@ export async function revokeInstallation(
         for (const session of request.sessions) {
           await sqlExecutor.execute(
             `UPDATE ${WALLET_AUTH_SESSIONS_TABLE} SET revoked_at = COALESCE(revoked_at, :now)
-           WHERE address = :address AND refresh_token_hash = :hash AND client_type = 'native'`,
+           WHERE LOWER(address) = :address AND refresh_token_hash = :hash AND client_type = 'native'`,
             {
               address: session.address.toLowerCase(),
               hash: hashSecret(session.native_refresh_token),
@@ -242,6 +249,9 @@ export async function revokeInstallation(
         return { ...installation, revision: request.revision };
       }
     );
+    // Keep the verifier and delivery token inside the persistence boundary,
+    // including on the idempotent retry path.
+    return { device_id: revoked.device_id, revision: revoked.revision };
   } finally {
     ctx.timer?.stop(timer);
   }

@@ -45,7 +45,7 @@ describe('HelpBotBedrockRenderer', () => {
       () => ({ send }) as never
     );
     await renderer.renderAnswer({
-      question: 'How do I get started in Core?',
+      question: 'Give me a detailed guide to getting started in Core',
       record: {
         ...RECORD,
         id: 'desktop.getting-started',
@@ -58,6 +58,20 @@ describe('HelpBotBedrockRenderer', () => {
     expect(readPrompt(send)).toContain('data-loss warning in the same step');
     expect(readPrompt(send)).toContain('cannot inspect or operate');
     expect(readPrompt(send)).toContain('Do not turn Core-only paths');
+    send.mockClear();
+    await renderer.renderAnswer({
+      question: 'what is Core',
+      record: { ...RECORD, id: 'desktop.overview', tags: ['desktop-core'] },
+      canonicalUrl: 'https://6529.io/about/6529-apps'
+    });
+    expect(readBody(send).max_tokens).toBe(350);
+    expect(readPrompt(send)).toContain('two to four short sentences');
+    expect(readPrompt(send)).toContain(
+      'Do not repeat steps they have completed'
+    );
+    expect(readPrompt(send)).toContain(
+      'backend appends verified links at the end'
+    );
     send.mockClear();
     await renderer.renderAnswer({
       question: 'What is TDH?',

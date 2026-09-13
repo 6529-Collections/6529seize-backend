@@ -32,6 +32,7 @@ export async function handleRevokePushInstallation(
 ): Promise<ApiRevokePushInstallationResponse> {
   const request = getValidatedByJoiOrThrow(req.body, schema);
   // Coordinate deletion with final recipient validation/submission on both OSes.
+  // Only device_id participates in locking; token is legacy ownership proof.
   const installation = await withDeviceBadgeLock(
     { device_id: request.device_id, token: request.token ?? '' },
     () => revokeInstallation(request, {})

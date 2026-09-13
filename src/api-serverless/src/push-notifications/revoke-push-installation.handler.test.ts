@@ -25,10 +25,7 @@ const request = (value: unknown) =>
 beforeEach(() => {
   jest.mocked(revokeInstallation).mockReset().mockResolvedValue({
     device_id: 'phone',
-    revision: 1,
-    secret_hash: 'hash',
-    token: 'token',
-    platform: 'ios'
+    revision: 1
   });
   jest
     .mocked(requestInstallationBadgeRefresh)
