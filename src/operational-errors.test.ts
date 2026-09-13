@@ -14,6 +14,9 @@ describe('operational error envelopes', () => {
       AWS_LAMBDA_FUNCTION_NAME: 'seizeAPI',
       SENTRY_ENVIRONMENT: 'api_staging'
     };
+    delete process.env.GIT_COMMIT;
+    delete process.env.GIT_SHA;
+    delete process.env.COMMIT_HASH;
     output = jest.spyOn(process.stdout, 'write').mockReturnValue(true);
   });
   afterEach(() => {
@@ -116,4 +119,50 @@ describe('operational error envelopes', () => {
     expect(output).toHaveBeenCalledTimes(1);
     expect(String(output.mock.calls[0][0])).not.toContain('private');
   });
+
+  it.each([
+    { GIT_COMMIT: 'deployed-commit' },
+    { GIT_SHA: 'legacy-git-sha' },
+    { COMMIT_HASH: 'legacy-commit-hash' }
+  ])('includes the deployed release from %j', (releaseEnvironment) => {
+    Object.assign(process.env, releaseEnvironment);
+    operationalError('APP', [new Error('failure')]);
+    expect(JSON.parse(String(output.mock.calls[0][0])).release).toBe(
+      Object.values(releaseEnvironment)[0]
+    );
+  });
+
+  it('prefers the deployment-injected commit over legacy release variables', () => {
+    Object.assign(process.env, {
+      GIT_COMMIT: 'deployed-commit',
+      GIT_SHA: 'older-git-sha',
+      COMMIT_HASH: 'older-commit-hash'
+    });
+    operationalError('APP', [new Error('failure')]);
+    expect(JSON.parse(String(output.mock.calls[0][0])).release).toBe(
+      'deployed-commit'
+    );
+  });
+
+  it('preserves legacy release precedence when GIT_COMMIT is absent', () => {
+    Object.assign(process.env, {
+      GIT_SHA: 'legacy-git-sha',
+      COMMIT_HASH: 'older-commit-hash'
+    });
+    operationalError('APP', [new Error('failure')]);
+    expect(JSON.parse(String(output.mock.calls[0][0])).release).toBe(
+      'legacy-git-sha'
+    );
+  });
+
+  it.each(['https://private.example/token', 'a'.repeat(65)])(
+    'does not export an invalid release value',
+    (value) => {
+      process.env.GIT_COMMIT = value;
+      operationalError('APP', [new Error('failure')]);
+      const raw = String(output.mock.calls[0][0]);
+      expect(JSON.parse(raw).release).toBeUndefined();
+      expect(raw).not.toContain(value);
+    }
+  );
 });
