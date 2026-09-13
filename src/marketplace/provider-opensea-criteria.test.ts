@@ -1,4 +1,5 @@
 import { TypedDataEncoder } from 'ethers';
+import { MEMES_CONTRACT, MEMELAB_CONTRACT } from '@/constants';
 import type { MarketTradeIntent } from '@/marketplace/provider.types';
 import {
   OpenSeaMarketplaceProvider,
@@ -20,14 +21,14 @@ const maker = '0x1111111111111111111111111111111111111111';
 const seller = '0x2222222222222222222222222222222222222222';
 const fee = '0x3333333333333333333333333333333333333333';
 
-function fixture() {
+function fixture(contract = MEMES_CONTRACT) {
   const offer: MarketTradeIntent = {
     kind: 'OFFER',
     chainId: 1,
     wallet: maker,
     recipient: maker,
     asset: {
-      contract: '0x33fd426905f149f8376e227d0c9d3340aad17af1',
+      contract,
       tokenId: '56',
       standard: 'ERC1155'
     },
@@ -123,6 +124,24 @@ function providerFor(value: ReturnType<typeof fixture>) {
 }
 
 describe('OpenSea criteria-offer fulfillment boundary', () => {
+  it('resolves a Meme Lab collection offer to the exact card with exact partial fees', async () => {
+    const value = fixture(MEMELAB_CONTRACT);
+    const { provider } = providerFor(value);
+    const tx = await provider.prepareFulfillment(value.intent, '4');
+    const decoded = MARKET_SEAPORT_INTERFACE.decodeFunctionData(
+      'fulfillAdvancedOrder',
+      tx.data
+    );
+    expect(decoded[0].parameters.consideration[0].token.toLowerCase()).toBe(
+      MEMELAB_CONTRACT
+    );
+    expect(decoded[1][0].identifier.toString()).toBe('56');
+    expect(tx).toMatchObject({ from: seller, value: '0', purpose: 'FULFILL' });
+    value.input.criteriaResolvers[0].identifier = '57';
+    await expect(
+      providerFor(value).provider.prepareFulfillment(value.intent, '4')
+    ).rejects.toThrow();
+  });
   it.each([false, true])(
     'binds the NFT and exact one-third fill with optional creator fees=%s',
     async (includeOptionalCreatorFees) => {

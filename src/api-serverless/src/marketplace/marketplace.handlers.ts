@@ -4,6 +4,7 @@ import * as Operations from '@/api/generated/routes/operations';
 import * as BatchCapabilities from '@/api/generated/models/ApiMarketBatchCapabilities';
 import { marketCatalogAsset } from '@/marketplace/market-preparation';
 import { marketHashSchema } from '@/marketplace/seaport.schema';
+import { marketAssetStandard } from '@/marketplace/seaport.registry';
 import {
   continueMarketOperation,
   listMarketOperations,
@@ -109,7 +110,7 @@ export async function handleGetMarketOrders(
       {
         contract: asset.contract,
         tokenId: asset.token_id,
-        standard: asset.family === 'memes' ? 'ERC1155' : 'ERC721'
+        standard: marketAssetStandard(asset.contract)
       },
       query.side
     );

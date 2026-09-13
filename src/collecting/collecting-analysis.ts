@@ -66,7 +66,11 @@ function exactRequirements(
       throw new BadRequestException('Unknown or repeated asset');
     seen.add(item.asset_key);
     const target = positiveQuantity(item.quantity);
-    if (asset.family !== 'memes' && target !== BigInt(1))
+    if (
+      asset.family !== 'memes' &&
+      asset.family !== 'memelab' &&
+      target !== BigInt(1)
+    )
       throw new BadRequestException('Unique NFTs require quantity one');
     return {
       id: item.asset_key,

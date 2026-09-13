@@ -20,6 +20,7 @@ import { CustomApiCompliantException } from '@/exceptions';
 import { collectTdhTargetCandidates } from '@/api/collect/collect-tdh-target-candidates';
 import { discoveredOrderDto } from '@/api/marketplace/marketplace.dto';
 import { ApiCollectFamily } from '@/api/generated/models/ApiCollectFamily';
+import { ApiCollectPlanningFamily } from '@/api/generated/models/ApiCollectPlanningFamily';
 import { ApiCollectTdhTargetRequestTargetModeEnum } from '@/api/generated/models/ApiCollectTdhTargetRequest';
 import {
   ApiCollectTdhTargetPlan,
@@ -85,7 +86,7 @@ function accountDto(account: ProjectedAccountTdh) {
     ...account,
     tokens: account.tokens.map((token) => ({
       ...token,
-      family: token.family as ApiCollectFamily
+      family: token.family as ApiCollectPlanningFamily
     })),
     boost_breakdown: Object.entries(account.boost_breakdown).map(
       ([id, boost]) => ({ id, ...boost })
@@ -168,7 +169,7 @@ export async function createCollectTdhTargetPlan(
       ...request,
       target_mode:
         request.target_mode as ApiCollectTdhTargetRequestTargetModeEnum,
-      families: request.families as ApiCollectFamily[]
+      families: request.families as ApiCollectPlanningFamily[]
     },
     status: result.status as ApiCollectTdhTargetPlanStatusEnum,
     projection: {

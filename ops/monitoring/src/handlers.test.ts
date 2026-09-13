@@ -184,9 +184,33 @@ test('authenticated source routing protects the critical lane and suppresses ini
     assert.equal(queued.length, 1);
     await collect({
       ...alarm,
-      detail: { ...alarm.detail, state: { value: 'ALARM' } }
+      detail: {
+        ...alarm.detail,
+        state: { value: 'ALARM', reasonData: '{"threshold":1}' },
+        configuration: {
+          metrics: [
+            {
+              metricStat: {
+                metric: {
+                  name: 'Throttles',
+                  namespace: 'AWS/Lambda',
+                  dimensions: { FunctionName: 'waveScoreRefreshLoop' }
+                },
+                period: 60,
+                stat: 'Sum'
+              }
+            }
+          ]
+        }
+      }
     });
     assert.equal((queued[1] as { QueueUrl: string }).QueueUrl, 'critical');
+    const accepted = JSON.parse(
+      (queued[1] as { MessageBody: string }).MessageBody
+    ).alert;
+    assert.equal(accepted.service, 'waveScoreRefreshLoop');
+    assert.equal(accepted.alarm.metric, 'Throttles');
+    assert.equal(accepted.alarm.threshold, 1);
     await assert.rejects(
       () => collect({ ...alarm, region: 'eu-west-1' }),
       /UNAPPROVED_SOURCE_REGION/

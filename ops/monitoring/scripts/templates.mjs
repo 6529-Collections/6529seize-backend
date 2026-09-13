@@ -48,6 +48,19 @@ const document = (description) => ({
 });
 const environmentParameter = parameter({ AllowedValues: ['prod', 'staging'] });
 
+function serializeLogSubscriptions(resources) {
+  const ids = Object.keys(resources)
+    .filter((id) => resources[id].Type === 'AWS::Logs::SubscriptionFilter')
+    .sort((left, right) => {
+      if (left === right) return 0;
+      return left < right ? -1 : 1;
+    });
+  // Preserve resource order and existing grants while preventing parallel updates.
+  for (let index = 1; index < ids.length; index++) {
+    resources[ids[index]].DependsOn.push(ids[index - 1]);
+  }
+}
+
 function functionResource(
   handler,
   variables,
@@ -781,6 +794,40 @@ function monitoringTemplate(environment) {
   return doc;
 }
 
+function addWaveScoreQueueAlarms(r) {
+  // These queues have the same explicit names in both application regions.
+  // Age is a backlog guard, not a business-completion or freshness SLO.
+  for (const [id, queue, deadLetters] of [
+    ['WaveScoreDirtyAge', 'wave-score-refresh-dirty.fifo', false],
+    ['WaveScoreStartAge', 'wave-score-refresh-start.fifo', false],
+    ['WaveScoreDirtyDeadLetters', 'wave-score-refresh-dirty-dlq.fifo', true]
+  ]) {
+    r[id] = {
+      Type: 'AWS::CloudWatch::Alarm',
+      Properties: {
+        AlarmName: sub('seize-monitoring-${Environment}-' + id),
+        AlarmDescription: deadLetters
+          ? 'Wave score dirty refresh has a visible dead-letter message.'
+          : 'Wave score queue age is at least 30 minutes in three of five minutes; inspect backlog and worker health.',
+        Namespace: 'AWS/SQS',
+        MetricName: deadLetters
+          ? 'ApproximateNumberOfMessagesVisible'
+          : 'ApproximateAgeOfOldestMessage',
+        Dimensions: [{ Name: 'QueueName', Value: queue }],
+        Statistic: 'Maximum',
+        Period: 60,
+        EvaluationPeriods: deadLetters ? 1 : 5,
+        ...(deadLetters ? {} : { DatapointsToAlarm: 3 }),
+        // Initial buffer for a 900-second worker and 1,000-second visibility.
+        Threshold: deadLetters ? 1 : 1800,
+        ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+        TreatMissingData: 'notBreaching',
+        AlarmActions: when('HasAlarmTopic', [ref('ExistingAlarmTopicArn')], [])
+      }
+    };
+  }
+}
+
 function sourceTemplate(environment) {
   const services = catalog.services.filter((service) =>
     service.allowed_environments.includes(environment)
@@ -1000,7 +1047,8 @@ function sourceTemplate(environment) {
     const id = name.replace(/[^a-zA-Z0-9]/g, '');
     for (const metric of ['Errors', 'Throttles']) {
       const sustainedThrottling =
-        name === 'nftLinkRefresherLoop' && metric === 'Throttles';
+        ['nftLinkRefresherLoop', 'waveScoreRefreshLoop'].includes(name) &&
+        metric === 'Throttles';
       r[`${id}${metric}`] = {
         Type: 'AWS::CloudWatch::Alarm',
         Properties: {
@@ -1012,7 +1060,7 @@ function sourceTemplate(environment) {
           Dimensions: [{ Name: 'FunctionName', Value: name }],
           Statistic: 'Sum',
           Period: 60,
-          // Brief SQS bursts must not page while the refresher is keeping up.
+          // These queue workers can briefly contend for reserved concurrency.
           EvaluationPeriods: sustainedThrottling ? 5 : 1,
           ...(sustainedThrottling ? { DatapointsToAlarm: 3 } : {}),
           Threshold: 1,
@@ -1027,6 +1075,8 @@ function sourceTemplate(environment) {
       };
     }
   }
+  addWaveScoreQueueAlarms(r);
+  serializeLogSubscriptions(r);
   doc.Outputs = {
     LogRelayRoleArn: { Value: attr('LogRole') },
     AlarmForwardRoleArn: { Value: attr('AlarmForwardRole') }

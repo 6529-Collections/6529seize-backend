@@ -1,4 +1,5 @@
 import { Interface } from 'ethers';
+import { MEMELAB_CONTRACT, MEMES_CONTRACT } from '@/constants';
 import { marketBatchFixture } from '@/marketplace/market-batch.test-fixture';
 import { MarketBatchPrepared } from '@/marketplace/market-batch.types';
 import { buildMarketBatchTransaction } from '@/marketplace/seaport-batch.builder';
@@ -29,8 +30,8 @@ function log(
   return { address, ...abi.encodeEventLog(abi.getEvent(name)!, args) };
 }
 
-export function batchReceiptFixture() {
-  const { intent, materials, terms } = marketBatchFixture();
+export function batchReceiptFixture(erc1155Contract = MEMES_CONTRACT) {
+  const { intent, materials, terms } = marketBatchFixture(2, erc1155Contract);
   const prepared: MarketBatchPrepared = {
     intent,
     mirrorTerms: terms,
@@ -141,6 +142,26 @@ export function batchReceiptFixture() {
 }
 
 describe('exact atomic batch receipts', () => {
+  test('requires all Meme Lab split deliveries and rejects a same-ID transfer from another collection', () => {
+    const value = batchReceiptFixture(MEMELAB_CONTRACT);
+    expect(
+      validateMarketBatchReceipt(
+        value.prepared,
+        value.transaction,
+        value.receipt
+      ).outcome
+    ).toBe('ALL_SELECTED');
+    expect(() =>
+      validateMarketBatchReceipt(value.prepared, value.transaction, {
+        ...value.receipt,
+        logs: value.receipt.logs.map((entry) =>
+          entry.address === MEMELAB_CONTRACT
+            ? { ...entry, address: MEMES_CONTRACT }
+            : entry
+        )
+      })
+    ).toThrow();
+  });
   test('requires all seller fills, buyer mirror and exact split deliveries', () => {
     const { prepared, transaction, receipt } = batchReceiptFixture();
     expect(

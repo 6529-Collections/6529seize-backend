@@ -71,16 +71,17 @@ export async function handleGetModerationAccess(
 ): Promise<ApiModerationAccess> {
   const ctx = await context(req);
   return {
-    developer:
-      !ctx.authenticationContext.isAuthenticatedAsProxy() &&
-      isModerationDeveloper(ctx.authenticationContext.getActingAsId())
+    developer: await isModerationDeveloper(
+      ctx.authenticationContext.getActingAsId(),
+      ctx
+    )
   };
 }
 export async function handleGetModerationChecks(
   req: GetModerationChecksRequest
 ): Promise<ApiModerationCheckPage> {
   const ctx = await context(req);
-  assertModerationDeveloper(ctx);
+  await assertModerationDeveloper(ctx);
   const page = await moderationReviewDb.list(
     getValidatedByJoiOrThrow(req.query, filters),
     ctx
@@ -94,7 +95,7 @@ export async function handleGetModerationCounts(
   req: GetModerationCountsRequest
 ): Promise<ApiModerationCounts> {
   const ctx = await context(req);
-  assertModerationDeveloper(ctx);
+  await assertModerationDeveloper(ctx);
   const counts = await moderationReviewDb.counts(ctx);
   return {
     needs_review: Number(counts?.needs_review ?? 0),
@@ -115,7 +116,7 @@ export async function handleModerationCheckAction(
   req: ModerationCheckActionRequest
 ): Promise<ApiModerationCheckDetail> {
   const ctx = await context(req);
-  assertModerationDeveloper(ctx);
+  await assertModerationDeveloper(ctx);
   const body = getValidatedByJoiOrThrow(req.body, actionSchema) as {
     action: ModerationAction;
     reason: string;

@@ -30,6 +30,17 @@ confirmed consolidated wallets. Existing Pebbles trait rankings use that same
 profile scope. TDH projections reuse the production calculation kernel and
 first verify parity with the official snapshot.
 
+Meme Lab card trading resolves minted artwork from the existing `nfts_meme_lab`
+index only when `/collect/assets?family=memelab`, an exact ownership analysis,
+or a marketplace request explicitly names that collection. Exact analyses opt
+into its indexed holdings across the same confirmed profile wallets. The known
+Meme Lab contract is ERC1155 for discovery, exact-order resolution, single-order
+preparation and atomic purchases, including verified criteria-offer acceptance.
+This request-local extension never changes the shared planner catalog, set
+goals, TDH eligibility or ranking families. API asset families include Meme Lab;
+planning family schemas remain explicitly The Memes, Gradients and Pebbles.
+It adds no tables or indexer dependencies; only the API service needs deployment.
+
 Authenticated `POST /collect/tdh-target-plans` estimates a purchase subtotal for
 a profile's total boosted TDH at a 1/30/90/365-day deadline, or an explicit
 increase over its future no-purchase baseline. Its selected recipient must be a
@@ -420,6 +431,7 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 5. SQS workers handle slow or retryable side effects through named queues: claim building, claim media Arweave uploads, S3 media mirroring, attachment orchestration/processing, NFT link resolution/previews, xTDH recalculation, Wave Score dirty refreshes, and notification delivery through Firebase plus recipient-scoped WebSocket invalidations.
 
 6. S3 and CloudFront serve media. Drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception.
+   The on-demand media resizer spools each S3 source into its own temporary file before metadata inspection and conversion. A 256 MiB source limit and conservative 512 MiB decoded-work estimate reject unsupported or oversized inputs with HTTP 422; animated GIF admission counts every frame. Resize, rotation and output contracts are preserved for accepted inputs. Multipart upload concurrency is one, and the temporary directory is removed after completion or failure. These admission limits reduce resource risk; they do not guarantee a maximum native allocation for every codec.
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
 ### NFT link refresh bounds
@@ -513,8 +525,13 @@ the reported-content Bedrock assessment runs. Only a high-confidence urgent
 recommendation can temporarily quarantine a drop; ordinary results remain in
 the developer review queue. Authorized developers can restore,
 quarantine, or remove drops and suspend or reinstate posting profiles.
-Privileged access requires the exact `DEVS_6529_MENTION_PROFILE_IDS` set and
-an authenticated non-proxy profile; broader roles do not grant access.
+Privileged access requires a directly authenticated, non-proxy 6529 identity
+eligible for the saved 6529 Dev Team group
+(`6529-dev-team-xuahLBqRGQr6yX9R5yna4V`). All moderation access and action paths
+use the existing targeted eligibility rules without cross-request membership
+or group-definition caches. The actor must match the authenticated identity.
+Mention recipients and broader roles do not grant access. A missing group
+denies access; failed lookups return HTTP 503 and a bounded operational diagnostic.
 The prioritized queue uses opaque
 stable cursors. There is no continuous review queue or hold-before-publish
 state.
@@ -1227,6 +1244,18 @@ receipts and archive exhausted/permanent failures in S3. Queue canaries, endpoin
 probes and SNS fallback do not use application MySQL, Redis or its VPC. An
 outside-AWS uptime/dead-man provider remains a deployment requirement for
 AWS-wide failures. Moderation evidence is excluded from this operational contract.
+Source log subscription filters retain their permission dependency and form one
+chain in ordinal logical-ID order. CloudFormation therefore updates them serially,
+avoiding a parallel burst against CloudWatch Logs subscription API limits while
+preserving filter identities, destinations and patterns. This increases source
+stack update time; it does not rate-limit unrelated callers in the account/region.
+The NFT and wave score refresher throttle alarms require three breaching minutes
+out of five while invocation errors and OOM alarms remain immediate. Wave score
+refresh keeps one reserved execution; independent source-account SQS alarms
+detect sustained 30-minute backlog in either refresh queue and any visible
+dirty-refresh dead letter. Queue age is a transport guard, not proof of business
+completion. Protected alarm notifications include bounded infrastructure labels
+and numeric thresholds without forwarding free-form CloudWatch reasons.
 Separate monitoring-account CloudWatch dashboards combine bounded synthetic
 probe measurements and pipeline freshness with verified source-account REST API
 and production website ALB request metrics across regions. Dashboard access is

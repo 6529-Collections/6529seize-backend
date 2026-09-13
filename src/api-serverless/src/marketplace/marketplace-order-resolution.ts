@@ -5,7 +5,10 @@ import { marketChain } from '@/marketplace/market-chain';
 import { marketCatalogAsset } from '@/marketplace/market-preparation';
 import { describeMarketOrder } from '@/marketplace/provider.opensea';
 import { MarketValidationError } from '@/marketplace/provider.types';
-import { assertMarketProtocol } from '@/marketplace/seaport.registry';
+import {
+  assertMarketProtocol,
+  marketAssetStandard
+} from '@/marketplace/seaport.registry';
 import {
   marketAddressSchema,
   marketHashSchema,
@@ -80,8 +83,7 @@ export async function resolveMarketOrder(
   const marketAsset = {
     contract: asset.contract,
     tokenId: asset.token_id,
-    standard:
-      asset.family === 'memes' ? ('ERC1155' as const) : ('ERC721' as const)
+    standard: marketAssetStandard(asset.contract)
   };
   // Validate exact asset, side and signed economics before requesting chain data.
   const original = describeMarketOrder(selected, marketAsset, query.side);

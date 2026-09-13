@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { simulateMarketBatch } from '@/marketplace/market-batch-simulation';
 import { collectingService } from '@/collecting/collecting.service';
+import { catalogForTradeAssets } from '@/collecting/collecting-trade-assets';
 import { CollectingAsset } from '@/collecting/collecting.types';
 import { MarketChain } from '@/marketplace/market-chain';
 import {
@@ -24,7 +25,8 @@ import {
 import { MARKET_SEAPORT_INTERFACE } from '@/marketplace/seaport.builder';
 import {
   MARKET_SEAPORT,
-  MARKET_ZERO_ADDRESS
+  MARKET_ZERO_ADDRESS,
+  marketAssetStandard
 } from '@/marketplace/seaport.registry';
 import {
   sameMarketAddress,
@@ -64,7 +66,7 @@ async function prepareLine(
     asset: {
       contract: asset.contract,
       tokenId: asset.token_id,
-      standard: asset.family === 'memes' ? 'ERC1155' : 'ERC721'
+      standard: marketAssetStandard(asset.contract)
     },
     quantity: request.quantity,
     currency: MARKET_ZERO_ADDRESS,
@@ -195,7 +197,10 @@ export class MarketBatchPreparation {
         'UNSUPPORTED_ACTION',
         'This paying smart wallet is not supported. Smart wallets may receive NFTs.'
       );
-    const catalog = await collectingService.getCatalog();
+    const catalog = await catalogForTradeAssets(
+      await collectingService.getCatalog(),
+      request.items.map((item) => item.asset_key)
+    );
     const byKey = new Map(
       catalog.assets.map((asset) => [asset.asset_key, asset])
     );
