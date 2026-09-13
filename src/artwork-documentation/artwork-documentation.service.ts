@@ -1302,11 +1302,12 @@ export class ArtworkDocumentationService {
       !context.asset_links.some((link) => link.role === 'preservation_master')
     )
       fail(422, 'MASTER_ASSET_REQUIRED');
+    // The artist explicitly identifies the selected final file as the master.
+    // Its final-file role and readiness were checked above; no duplicate link is needed.
     if (
       master === 'same_as_final' &&
       !context.asset_links.some(
-        (link) =>
-          link.role === 'preservation_master' && link.asset_id === canonical
+        (link) => link.role === 'artwork_final' && link.asset_id === canonical
       )
     )
       fail(422, 'MASTER_ROLE_REQUIRED');

@@ -2360,6 +2360,99 @@ describe('artwork documentation transactional persistence', () => {
       'newer_draft'
     );
   });
+  it('confirms the selected final as its master without adding a file link and preserves the confirmed choice', async () => {
+    const record = await readyContext();
+    record.profile = getProfile('stream_artwork_basic_v1', 2);
+    record.asset_links[0].manifest = {
+      ...record.asset_links[0].manifest,
+      role: 'artwork_final',
+      intended_visibility: 'public_record'
+    };
+    record.modules.files.master_availability = answer({
+      kind: 'same_as_final'
+    });
+    const originalLinks = structuredClone(record.asset_links);
+    await db.saveContext(record, ctx);
+    const body = {
+      accepted: true,
+      confirmation_copy_version: PUBLICATION_CONFIRMATION_COPY_VERSION
+    };
+    const write = mutation('confirm-final-master', body, 1);
+    const confirmed = await service.confirm(record.id, body, write, ctx);
+    expect(
+      confirmed.snapshot.modules.files.answers.master_availability
+    ).toEqual(answer({ kind: 'same_as_final' }));
+    expect(
+      confirmed.snapshot.modules.artwork.answers.canonical_asset_id
+    ).toEqual(record.modules.artwork.canonical_asset_id);
+    expect(confirmed.snapshot.asset_links).toEqual(originalLinks);
+    expect((await db.context(record.id, ctx))!.asset_links).toEqual(
+      originalLinks
+    );
+    expect((await service.confirm(record.id, body, write, ctx)).id).toBe(
+      confirmed.id
+    );
+    const patch = {
+      schema_version: 1,
+      operations: [
+        {
+          op: 'set' as const,
+          field: 'master_availability',
+          answer: answer({
+            kind: 'unavailable',
+            explanation: 'A separate master is no longer available.'
+          })
+        }
+      ]
+    };
+    await service.patchModule(
+      record.id,
+      'files',
+      patch,
+      mutation('change-master', patch, 1),
+      ctx
+    );
+    const historical = await service.getRevision(record.id, confirmed.id, ctx);
+    expect(
+      historical.snapshot.modules.files.answers.master_availability
+    ).toEqual(answer({ kind: 'same_as_final' }));
+    expect(historical.snapshot.asset_links).toEqual(originalLinks);
+    expect((await service.getContext(record.id, ctx)).confirmation_status).toBe(
+      'newer_draft'
+    );
+  });
+  it.each([
+    ['master_availability', 'MASTER_ASSET_REQUIRED'],
+    ['source_availability', 'SOURCE_ASSET_REQUIRED']
+  ])(
+    'does not confirm %s claimed as separately supplied without its file link',
+    async (field, code) => {
+      const record = await readyContext();
+      record.modules.files[field] = answer({ kind: 'supplied' });
+      await db.saveContext(record, ctx);
+      const body = {
+        accepted: true,
+        confirmation_copy_version: CONFIRMATION_COPY_VERSION
+      };
+      await expect(
+        service.confirm(
+          record.id,
+          body,
+          mutation('confirm-missing-file', body, 1),
+          ctx
+        )
+      ).rejects.toMatchObject({ code });
+      expect(
+        await db.query(
+          `SELECT id FROM ${AD_REVISIONS} WHERE context_id=:id`,
+          { id: record.id },
+          ctx
+        )
+      ).toHaveLength(0);
+      expect((await db.context(record.id, ctx))!.latest_revision_id).toBeNull();
+      expect(assets.markReferenced).not.toHaveBeenCalled();
+    }
+  );
   it('does not confirm an incomplete draft or files whose server verification failed', async () => {
     const incomplete = await create();
     const body = {
