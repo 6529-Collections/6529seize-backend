@@ -12,6 +12,14 @@ export type Code =
   | 'SENTRY_ERROR'
   | 'UPTIME_FAILURE'
   | 'UPTIME_RECOVERY';
+export interface AlarmMetadata {
+  name?: string;
+  namespace?: string;
+  metric?: string;
+  statistic?: string;
+  periodSeconds?: number;
+  threshold?: number;
+}
 export interface Alert {
   _type: typeof EVENT_TYPE;
   eventId: string;
@@ -23,6 +31,7 @@ export interface Alert {
   fingerprint: string;
   correlationId?: string;
   release?: string;
+  alarm?: AlarmMetadata;
 }
 const CODES = new Set<Code>([
   'APPLICATION_ERROR',
@@ -46,6 +55,24 @@ export function token(value: unknown, max = 128): string | undefined {
     /^[a-zA-Z0-9_.:/-]+$/.test(value)
     ? value
     : undefined;
+}
+export function parseAlarmMetadata(input: unknown): AlarmMetadata | undefined {
+  const v = record(input);
+  const alarm: AlarmMetadata = {};
+  for (const key of ['name', 'namespace', 'metric', 'statistic'] as const) {
+    const value = token(v[key], key === 'name' ? 255 : 128);
+    if (value && !value.includes(':')) alarm[key] = value;
+  }
+  if (
+    typeof v.periodSeconds === 'number' &&
+    Number.isInteger(v.periodSeconds) &&
+    v.periodSeconds > 0 &&
+    v.periodSeconds <= 86400
+  )
+    alarm.periodSeconds = v.periodSeconds;
+  if (typeof v.threshold === 'number' && Number.isFinite(v.threshold))
+    alarm.threshold = v.threshold;
+  return Object.keys(alarm).length ? alarm : undefined;
 }
 export function parseAlert(input: unknown): Alert {
   const v = record(input);
@@ -77,7 +104,27 @@ export function parseAlert(input: unknown): Alert {
   const release = token(v.release, 64);
   if (correlationId) alert.correlationId = correlationId;
   if (release) alert.release = release;
+  if (['PLATFORM_ALARM', 'PLATFORM_RECOVERY'].includes(alert.code)) {
+    const alarm = parseAlarmMetadata(v.alarm);
+    if (alarm) alert.alarm = alarm;
+  }
   return alert;
+}
+function alarmFields(alarm: AlarmMetadata | undefined) {
+  if (!alarm) return [];
+  const labels: Record<keyof AlarmMetadata, string> = {
+    name: 'Alarm',
+    namespace: 'Namespace',
+    metric: 'Metric',
+    statistic: 'Statistic',
+    periodSeconds: 'Period (seconds)',
+    threshold: 'Threshold'
+  };
+  return (Object.keys(labels) as (keyof AlarmMetadata)[]).flatMap((key) =>
+    alarm[key] === undefined
+      ? []
+      : [{ name: labels[key], value: String(alarm[key]) }]
+  );
 }
 export function renderAlert(alert: Alert, count = 1): object {
   const descriptions: Record<Code, string> = {
@@ -98,6 +145,7 @@ export function renderAlert(alert: Alert, count = 1): object {
         color: alert.severity === 'recovery' ? 0x22c55e : 0xef4444,
         fields: [
           { name: 'Occurrences', value: String(count), inline: true },
+          ...alarmFields(alert.alarm),
           { name: 'Event', value: alert.eventId },
           { name: 'Fingerprint', value: alert.fingerprint },
           ...(alert.correlationId

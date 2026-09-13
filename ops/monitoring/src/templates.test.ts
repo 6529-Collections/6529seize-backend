@@ -35,7 +35,10 @@ test('NFT refresher throttling requires three breaching minutes out of five whil
       { Type: string; Properties: Record<string, unknown> }
     ][]) {
       if (
-        id !== 'nftLinkRefresherLoopThrottles' &&
+        ![
+          'nftLinkRefresherLoopThrottles',
+          'waveScoreRefreshLoopThrottles'
+        ].includes(id) &&
         resource.Type === 'AWS::CloudWatch::Alarm' &&
         resource.Properties.Namespace === 'AWS/Lambda'
       ) {
@@ -43,6 +46,56 @@ test('NFT refresher throttling requires three breaching minutes out of five whil
         assert.equal(resource.Properties.DatapointsToAlarm, undefined, id);
       }
     }
+  }
+});
+
+test('wave throttling is sustained while queue backlog and dead letters have independent alarms', () => {
+  for (const env of ['prod', 'staging']) {
+    const resources = JSON.parse(
+      readFileSync(new URL(`../source-${env}.json`, import.meta.url), 'utf8')
+    ).Resources;
+    const throttles = resources.waveScoreRefreshLoopThrottles.Properties;
+    assert.equal(throttles.EvaluationPeriods, 5);
+    assert.equal(throttles.DatapointsToAlarm, 3);
+    assert.equal(throttles.Period, 60);
+    assert.equal(throttles.Threshold, 1);
+    assert.equal(
+      resources.waveScoreRefreshLoopErrors.Properties.EvaluationPeriods,
+      1
+    );
+    for (const [id, queue] of [
+      ['WaveScoreDirtyAge', 'wave-score-refresh-dirty.fifo'],
+      ['WaveScoreStartAge', 'wave-score-refresh-start.fifo'],
+      ['WaveScoreDirtyDeadLetters', 'wave-score-refresh-dirty-dlq.fifo']
+    ]) {
+      const alarm = resources[id!].Properties;
+      const deadLetters = id === 'WaveScoreDirtyDeadLetters';
+      assert.equal(alarm.Namespace, 'AWS/SQS');
+      assert.deepEqual(alarm.Dimensions, [{ Name: 'QueueName', Value: queue }]);
+      assert.equal(
+        alarm.MetricName,
+        deadLetters
+          ? 'ApproximateNumberOfMessagesVisible'
+          : 'ApproximateAgeOfOldestMessage'
+      );
+      assert.equal(alarm.Statistic, 'Maximum');
+      assert.equal(alarm.Period, 60);
+      assert.equal(alarm.Threshold, deadLetters ? 1 : 1800);
+      assert.equal(alarm.EvaluationPeriods, deadLetters ? 1 : 5);
+      assert.equal(alarm.DatapointsToAlarm, deadLetters ? undefined : 3);
+      assert.equal(alarm.TreatMissingData, 'notBreaching');
+      assert.deepEqual(alarm.AlarmActions, throttles.AlarmActions);
+    }
+    const worker = readFileSync(
+      new URL(
+        '../../../src/waveScoreRefreshLoop/serverless.yaml',
+        import.meta.url
+      ),
+      'utf8'
+    );
+    assert.match(worker, /reservedConcurrency: 1\r?\n/);
+    assert.doesNotMatch(worker, /maximumConcurrency:/);
+    assert.match(worker, /MetricName: 'waveScoreRefreshLoop_OOMErrorCount'/);
   }
 });
 

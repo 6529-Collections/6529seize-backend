@@ -1224,6 +1224,13 @@ receipts and archive exhausted/permanent failures in S3. Queue canaries, endpoin
 probes and SNS fallback do not use application MySQL, Redis or its VPC. An
 outside-AWS uptime/dead-man provider remains a deployment requirement for
 AWS-wide failures. Moderation evidence is excluded from this operational contract.
+The NFT and wave score refresher throttle alarms require three breaching minutes
+out of five while invocation errors and OOM alarms remain immediate. Wave score
+refresh keeps one reserved execution; independent source-account SQS alarms
+detect sustained 30-minute backlog in either refresh queue and any visible
+dirty-refresh dead letter. Queue age is a transport guard, not proof of business
+completion. Protected alarm notifications include bounded infrastructure labels
+and numeric thresholds without forwarding free-form CloudWatch reasons.
 Separate monitoring-account CloudWatch dashboards combine bounded synthetic
 probe measurements and pipeline freshness with verified source-account REST API
 and production website ALB request metrics across regions. Dashboard access is

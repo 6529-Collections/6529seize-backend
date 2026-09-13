@@ -45,6 +45,7 @@ import {
 } from './aws.js';
 import { parseWork, processWork, Work } from './pipeline.js';
 import { deliver, DeliveryError, webhookUrl } from './webhook.js';
+import { cloudWatchAlarmMetadata } from './alarm-metadata.js';
 import { sentryAlert, verifySignature } from './sentry.js';
 import {
   measureProbe,
@@ -195,10 +196,14 @@ async function collectAlarm(
   const metrics = Array.isArray(configuration.metrics)
     ? configuration.metrics
     : [];
-  const dimensions = record(
-    record(record(record(metrics[0]).metricStat).metric).dimensions
-  );
-  const service = token(dimensions.FunctionName) ?? 'platform';
+  const dimensions =
+    metrics.length === 1
+      ? record(record(record(record(metrics[0]).metricStat).metric).dimensions)
+      : {};
+  const service =
+    token(dimensions.FunctionName, 100) ??
+    token(dimensions.QueueName, 100) ??
+    'platform';
   const alarmIdentity =
     typeof detail.alarmName === 'string' ? detail.alarmName : event.id;
   await accept(
@@ -210,6 +215,7 @@ async function collectAlarm(
       service,
       severity: state === 'OK' ? 'recovery' : 'critical',
       code: state === 'OK' ? 'PLATFORM_RECOVERY' : 'PLATFORM_ALARM',
+      alarm: cloudWatchAlarmMetadata(detail),
       fingerprint: hash(
         `${event.account}:${event.region}:${alarmIdentity}:${state}`
       )

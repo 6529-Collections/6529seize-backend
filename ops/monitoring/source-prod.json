@@ -5473,7 +5473,8 @@
         ],
         "Statistic": "Sum",
         "Period": 60,
-        "EvaluationPeriods": 1,
+        "EvaluationPeriods": 5,
+        "DatapointsToAlarm": 3,
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
@@ -6000,6 +6001,110 @@
           }
         ],
         "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        }
+      }
+    },
+    "WaveScoreDirtyAge": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-WaveScoreDirtyAge"
+        },
+        "AlarmDescription": "Wave score queue age is at least 30 minutes in three of five minutes; inspect backlog and worker health.",
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateAgeOfOldestMessage",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": "wave-score-refresh-dirty.fifo"
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 5,
+        "DatapointsToAlarm": 3,
+        "Threshold": 1800,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        }
+      }
+    },
+    "WaveScoreStartAge": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-WaveScoreStartAge"
+        },
+        "AlarmDescription": "Wave score queue age is at least 30 minutes in three of five minutes; inspect backlog and worker health.",
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateAgeOfOldestMessage",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": "wave-score-refresh-start.fifo"
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 5,
+        "DatapointsToAlarm": 3,
+        "Threshold": 1800,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        }
+      }
+    },
+    "WaveScoreDirtyDeadLetters": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-WaveScoreDirtyDeadLetters"
+        },
+        "AlarmDescription": "Wave score dirty refresh has a visible dead-letter message.",
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateNumberOfMessagesVisible",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": "wave-score-refresh-dirty-dlq.fifo"
+          }
+        ],
+        "Statistic": "Maximum",
         "Period": 60,
         "EvaluationPeriods": 1,
         "Threshold": 1,
