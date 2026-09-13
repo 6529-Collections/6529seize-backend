@@ -48,6 +48,19 @@ const document = (description) => ({
 });
 const environmentParameter = parameter({ AllowedValues: ['prod', 'staging'] });
 
+function serializeLogSubscriptions(resources) {
+  const ids = Object.keys(resources)
+    .filter((id) => resources[id].Type === 'AWS::Logs::SubscriptionFilter')
+    .sort((left, right) => {
+      if (left === right) return 0;
+      return left < right ? -1 : 1;
+    });
+  // Preserve resource order and existing grants while preventing parallel updates.
+  for (let index = 1; index < ids.length; index++) {
+    resources[ids[index]].DependsOn.push(ids[index - 1]);
+  }
+}
+
 function functionResource(
   handler,
   variables,
@@ -1063,6 +1076,7 @@ function sourceTemplate(environment) {
     }
   }
   addWaveScoreQueueAlarms(r);
+  serializeLogSubscriptions(r);
   doc.Outputs = {
     LogRelayRoleArn: { Value: attr('LogRole') },
     AlarmForwardRoleArn: { Value: attr('AlarmForwardRole') }

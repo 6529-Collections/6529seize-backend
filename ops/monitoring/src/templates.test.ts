@@ -2,6 +2,54 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
+test('catalog log subscriptions form one deterministic acyclic chain without changing their resource contract', () => {
+  for (const env of ['prod', 'staging']) {
+    const resources = JSON.parse(
+      readFileSync(new URL(`../source-${env}.json`, import.meta.url), 'utf8')
+    ).Resources;
+    const coverage = JSON.parse(
+      readFileSync(new URL(`../coverage-${env}.json`, import.meta.url), 'utf8')
+    );
+    const subscriptions = coverage.services
+      .flatMap((service: { functions: string[] }) => service.functions)
+      .map((name: string) => ({
+        name,
+        id: `${name.replace(/[^a-zA-Z0-9]/g, '')}ErrorLogs`
+      }))
+      .sort((left: { id: string }, right: { id: string }) => {
+        if (left.id === right.id) return 0;
+        return left.id < right.id ? -1 : 1;
+      });
+    const actualIds = Object.keys(resources).filter(
+      (id) => resources[id].Type === 'AWS::Logs::SubscriptionFilter'
+    );
+    assert.ok(subscriptions.length > 1);
+    assert.equal(actualIds.length, subscriptions.length);
+    assert.equal(
+      new Set(subscriptions.map(({ id }: { id: string }) => id)).size,
+      subscriptions.length
+    );
+    let previous: string | undefined;
+    for (const { id, name } of subscriptions) {
+      // Exactly one predecessor after the root proves a complete, acyclic chain.
+      assert.deepEqual(
+        resources[id],
+        {
+          Type: 'AWS::Logs::SubscriptionFilter',
+          DependsOn: previous ? ['LogPermission', previous] : ['LogPermission'],
+          Properties: {
+            DestinationArn: { 'Fn::GetAtt': ['LogRelay', 'Arn'] },
+            LogGroupName: `/aws/lambda/${name}`,
+            FilterPattern: '"6529.ops.error.v1"'
+          }
+        },
+        `${env}: ${id}`
+      );
+      previous = id;
+    }
+  }
+});
+
 test('NFT refresher throttling requires three breaching minutes out of five while failures remain immediate', () => {
   for (const env of ['prod', 'staging']) {
     const resources = JSON.parse(

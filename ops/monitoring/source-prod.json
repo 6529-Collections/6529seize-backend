@@ -376,7 +376,8 @@
     "seizeAPIErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "s3UploaderErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -408,7 +409,8 @@
     "attachmentsOrchestratorErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "artworkDocumentationProcessorErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -424,7 +426,8 @@
     "attachmentsProcessorErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "attachmentsOrchestratorErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -440,7 +443,8 @@
     "artCurationNftWatchLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "aggregatedActivityLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -456,7 +460,8 @@
     "claimsBuilderErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "attachmentsProcessorErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -472,7 +477,8 @@
     "claimsMediaArweaveUploaderErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "claimsBuilderErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -488,7 +494,8 @@
     "customReplayLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "claimsMediaArweaveUploaderErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -504,7 +511,8 @@
     "dbDumpsDailyErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "customReplayLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -520,7 +528,8 @@
     "dbMigrationsLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "dbDumpsDailyErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -536,7 +545,8 @@
     "delegationsLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "dbMigrationsLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -552,7 +562,8 @@
     "discoverEnsLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "delegationsLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -568,7 +579,8 @@
     "dropMediaSanitizerErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "discoverEnsLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -584,7 +596,8 @@
     "ethPriceLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "dropMediaSanitizerErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -600,7 +613,8 @@
     "externalCollectionLiveTailingLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "ethPriceLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -616,7 +630,8 @@
     "externalCollectionSnapshottingLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "externalCollectionLiveTailingLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -632,7 +647,8 @@
     "helpBotReplyLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "helpBotDailyActivityCreditLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -648,7 +664,8 @@
     "helpBotDailyActivityCreditLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "gradientsTransactionsLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -664,7 +681,8 @@
     "marketStatsMEMESErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "marketStatsLABErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -680,7 +698,8 @@
     "marketStatsLABErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "marketStatsGRADIENTErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -696,7 +715,8 @@
     "marketStatsGRADIENTErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "marketDepthStreamLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -712,7 +732,8 @@
     "marketStatsNEXTGENErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "marketStatsMEMESErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -728,7 +749,8 @@
     "marketDepthStreamLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "helpBotReplyLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -744,7 +766,8 @@
     "mediaResizerLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "marketStatsNEXTGENErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -760,7 +783,8 @@
     "mintAnnouncementsLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "memesTransactionsLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -776,7 +800,8 @@
     "nextgenContractLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "mintAnnouncementsLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -792,7 +817,8 @@
     "nextgenMediaImageResolutionsErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "nextgenContractLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -808,7 +834,8 @@
     "nextgenMediaProxyInterceptorErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "nextgenMediaImageResolutionsErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -824,7 +851,8 @@
     "nextgenMediaUploaderErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "nextgenMediaProxyInterceptorErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -840,7 +868,8 @@
     "nextgenMetadataLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "nextgenMediaUploaderErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -856,7 +885,8 @@
     "nftHistoryLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "nextgenMetadataLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -872,7 +902,8 @@
     "nftLinkRefresherLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "nftLinkMediaPreviewLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -888,7 +919,8 @@
     "nftLinkMediaPreviewLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "nftHistoryLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -904,7 +936,8 @@
     "nftOwnersLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "nftLinkRefresherLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -920,7 +953,8 @@
     "nftsLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "nftOwnersLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -936,7 +970,8 @@
     "overRatesRevocationLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "nftsLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -952,7 +987,8 @@
     "ownersBalancesLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "overRatesRevocationLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -968,7 +1004,8 @@
     "populateHistoricConsolidatedTdhErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "ownersBalancesLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -984,7 +1021,8 @@
     "pushNotificationsHandlerErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "populateHistoricConsolidatedTdhErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1000,7 +1038,8 @@
     "rateEventProcessingLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "pushNotificationsHandlerErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1016,7 +1055,8 @@
     "releaseNotesGenerationLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "refreshENSErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1032,7 +1072,8 @@
     "refreshENSErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "rateEventProcessingLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1048,7 +1089,8 @@
     "rememesS3LoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "rememesRefreshMetadataLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1064,7 +1106,8 @@
     "rememesRefreshMetadataLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "rememesFileLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1080,7 +1123,8 @@
     "rememesFileLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "releaseNotesGenerationLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1096,7 +1140,8 @@
     "royaltiesLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "rememesS3LoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1112,7 +1157,8 @@
     "s3UploaderErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "royaltiesLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1128,7 +1174,8 @@
     "subscriptionsDailyErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "subscriptionCoverageReconciliationLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1144,7 +1191,8 @@
     "subscriptionCoverageReconciliationLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "seizeAPIErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1160,7 +1208,8 @@
     "subscriptionsTopUpLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "subscriptionsDailyErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1176,7 +1225,8 @@
     "xTdhGrantsReviewerLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "waveScoreRefreshLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1192,7 +1242,8 @@
     "tdhHistoryLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "subscriptionsTopUpLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1208,7 +1259,8 @@
     "tdhLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "tdhHistoryLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1224,7 +1276,8 @@
     "teamLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "tdhLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1240,7 +1293,8 @@
     "memesTransactionsLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "memeLabTransactionsLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1256,7 +1310,8 @@
     "gradientsTransactionsLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "externalCollectionSnapshottingLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1272,7 +1327,8 @@
     "memeLabTransactionsLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "mediaResizerLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1288,7 +1344,8 @@
     "transactionsProcessingLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "teamLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1304,7 +1361,8 @@
     "waveDecisionExecutionLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "transactionsProcessingLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1320,7 +1378,8 @@
     "waveLeaderboardSnapshotterLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "waveDropMetricsRefreshLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1336,7 +1395,8 @@
     "waveDropMetricsRefreshLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "waveDecisionExecutionLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1352,7 +1412,8 @@
     "waveScoreRefreshLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "waveLeaderboardSnapshotterLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1368,7 +1429,8 @@
     "xTdhLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "xTdhGrantsReviewerLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1384,7 +1446,8 @@
     "artworkDocumentationProcessorErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
-        "LogPermission"
+        "LogPermission",
+        "artCurationNftWatchLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
