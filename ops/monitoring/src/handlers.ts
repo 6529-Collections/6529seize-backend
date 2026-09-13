@@ -43,7 +43,16 @@ import {
   store,
   normalDeliverySlot
 } from './aws.js';
-import { parseWork, processWork, Work } from './pipeline.js';
+import { parseWork, processWork, Work, workId } from './pipeline.js';
+import {
+  bindDispatchWork,
+  completeDispatch,
+  logDispatchFailure,
+  traceDispatch,
+  webhookAccepted,
+  webhookAttempted,
+  withDispatchDiagnostics
+} from './dispatch-diagnostics.js';
 import { deliver, DeliveryError, webhookUrl } from './webhook.js';
 import { cloudWatchAlarmMetadata } from './alarm-metadata.js';
 import { sentryAlert, verifySignature } from './sentry.js';
@@ -305,32 +314,53 @@ export async function dispatch(
   const batchItemFailures: { itemIdentifier: string }[] = [];
   const lane = setting('LANE');
   for (const row of event.Records) {
-    try {
-      const work = await dispatchWork(row, lane);
-      if (!work) continue;
-      await processWork(
-        work,
-        `${context.awsRequestId}:${row.messageId}`,
-        store,
-        {
-          schedule: (item, delay) => enqueue(item, false, delay),
-          deliver: async (payload) => {
-            if (lane === 'normal') await normalDeliverySlot();
-            return deliver(
-              await secret(setting('WEBHOOK_SECRET_ARN')),
-              payload
-            );
-          },
-          archive: async (item, reason) => {
-            await archive(item, reason);
-            await backup(reason);
+    await withDispatchDiagnostics(
+      {
+        lane,
+        messageId: row.messageId,
+        receiveCount: row.attributes.ApproximateReceiveCount
+      },
+      async () => {
+        try {
+          const work = await traceDispatch('PARSE', () =>
+            dispatchWork(row, lane)
+          );
+          if (!work) {
+            completeDispatch('INVALID_ARCHIVED');
+            return;
           }
+          bindDispatchWork(work.kind, hash(workId(work)));
+          await processWork(
+            work,
+            `${context.awsRequestId}:${row.messageId}`,
+            store,
+            {
+              schedule: (item, delay) => enqueue(item, false, delay),
+              deliver: async (payload) => {
+                if (lane === 'normal')
+                  await traceDispatch('RATE_SLOT', normalDeliverySlot);
+                const destination = await traceDispatch('SECRET', () =>
+                  secret(setting('WEBHOOK_SECRET_ARN'))
+                );
+                webhookAttempted();
+                const messageId = await traceDispatch('WEBHOOK', () =>
+                  deliver(destination, payload)
+                );
+                webhookAccepted();
+                return messageId;
+              },
+              archive: async (item, reason) => {
+                await traceDispatch('ARCHIVE', () => archive(item, reason));
+                await traceDispatch('FALLBACK', () => backup(reason));
+              }
+            }
+          );
+        } catch (error) {
+          await deliveryFailure(error, row, lane);
+          batchItemFailures.push({ itemIdentifier: row.messageId });
         }
-      );
-    } catch (error) {
-      await deliveryFailure(error, row, lane);
-      batchItemFailures.push({ itemIdentifier: row.messageId });
-    }
+      }
+    );
   }
   return { batchItemFailures };
 }
@@ -344,11 +374,13 @@ async function dispatchWork(
     work = parseWork(JSON.parse(row.body));
   } catch {
     // Do not persist malformed, potentially sensitive raw payloads.
-    await archive(
-      { sourceMessageHash: hash(row.body), messageId: row.messageId },
-      'INVALID_WORK'
+    await traceDispatch('ARCHIVE', () =>
+      archive(
+        { sourceMessageHash: hash(row.body), messageId: row.messageId },
+        'INVALID_WORK'
+      )
     );
-    await backup('INVALID_WORK');
+    await traceDispatch('FALLBACK', () => backup('INVALID_WORK'));
     return null;
   }
   if (work.kind === 'heartbeat' && work.lane !== lane)
@@ -368,13 +400,7 @@ async function deliveryFailure(
 ): Promise<void> {
   // Log codes only; no SDK exception can leak a webhook URL or vendor response.
   if (!(error instanceof DeliveryError && error.deferred)) {
-    console.error(
-      JSON.stringify({
-        code: 'DELIVERY_FAILED',
-        lane,
-        messageId: row.messageId
-      })
-    );
+    logDispatchFailure(error);
     metric('DeliveryFailures', 1);
   }
   if (error instanceof DeliveryError && error.retryAfterSeconds > 0) {
