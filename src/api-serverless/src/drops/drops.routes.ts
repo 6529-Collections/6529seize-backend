@@ -57,6 +57,7 @@ import { Logger } from '@/logging';
 import { wsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
 import { DbPoolName } from '@/db-query.options';
 import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
+import { getStructuredWalletSignatureAudienceForHost } from '@/api/wallet-signatures/structured-wallet-signatures';
 
 const router = asyncRouter();
 const logger = Logger.get('DropsRoutes');
@@ -198,7 +199,11 @@ router.post(
         'Each drop part must have content, media, or attachments'
       );
     }
-    await assertDropIsCorrectlySigned(apiRequest, authorProfileId);
+    await assertDropIsCorrectlySigned(
+      apiRequest,
+      authorProfileId,
+      req.headers.host
+    );
     const createDropRequest: ApiCreateDropRequest & {
       author: { external_id: string };
     } = {
@@ -271,6 +276,13 @@ router.post(
       apiRequest,
       UpdateDropSchema
     );
+    // The typed submission authorization does not identify an existing drop.
+    // Never reinterpret it as authorization to update one.
+    if (updateRequest.signature_message?.trimStart().startsWith('{')) {
+      throw new BadRequestException(
+        'Meme Card submission signatures can only create new submissions'
+      );
+    }
     const authorId = authenticationContext.getActingAsId()!;
     const waveId = await dropsDb.findWaveIdByDropId(dropId, { timer });
     if (!waveId) {
@@ -281,7 +293,8 @@ router.post(
         ...apiRequest,
         wave_id: waveId
       },
-      authorId
+      authorId,
+      req.headers.host
     );
     const updatedDrop = await dropCreationService.updateDrop(
       {
@@ -927,14 +940,21 @@ const DropCurationRequestSchema = Joi.object<ApiDropCurationRequest>({
 
 async function assertDropIsCorrectlySigned(
   drop: ApiCreateDropRequest,
-  authorProfileId: string
+  authorProfileId: string,
+  apiHostHeader: unknown
 ) {
+  const hasTypedSignature =
+    drop.signature_message?.trimStart().startsWith('{') ?? false;
+  if (hasTypedSignature && drop.drop_type !== ApiDropType.Participatory) {
+    throw new BadRequestException('Invalid drop signature');
+  }
   if (drop.drop_type === ApiDropType.Participatory) {
     const waveEntity = await wavesApiDb.findWaveById(drop.wave_id);
     if (!waveEntity) {
       throw new NotFoundException(`Wave ${drop.wave_id} does not exist`);
     }
-    const isSignatureRequired = waveEntity.participation_signature_required;
+    const isSignatureRequired =
+      waveEntity.participation_signature_required || hasTypedSignature;
     if (isSignatureRequired) {
       const signature = drop.signature;
       if (!signature) {
@@ -952,7 +972,9 @@ async function assertDropIsCorrectlySigned(
         await dropSignatureVerifier.isDropSignedByAnyOfGivenWallets({
           wallets,
           drop: drop,
-          termsOfService: waveEntity.participation_terms
+          termsOfService: waveEntity.participation_terms,
+          waveName: waveEntity.name,
+          audience: getStructuredWalletSignatureAudienceForHost(apiHostHeader)
         });
       if (!isDropCorrectlySigned) {
         throw new BadRequestException(`Invalid drop signature`);

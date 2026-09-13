@@ -260,6 +260,9 @@ PORT: 3000
 
 PATH: [src/api-serverless](https://github.com/6529-Collections/6529seize-backend/tree/main/src/api-serverless)
 
+See [The Memes submission signatures](docs/memes-submission-signatures.md) for
+the EIP-712 contract used to submit a Meme Card to Main Stage.
+
 ### 2.1 Install
 
 ```bash
