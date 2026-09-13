@@ -98,7 +98,7 @@ describe('Developer review guards and evidence', () => {
       service.detail('item', {
         authenticationContext: AuthenticationContext.fromProfileId('other')
       })
-    ).rejects.toThrow('Developer access');
+    ).rejects.toThrow('6529 Dev Team membership');
     expect(db.get).not.toHaveBeenCalled();
   });
   it('denies developers acting through a proxy', async () => {
@@ -107,7 +107,7 @@ describe('Developer review guards and evidence', () => {
       .spyOn(request.authenticationContext, 'isAuthenticatedAsProxy')
       .mockReturnValue(true);
     await expect(service.detail('item', request)).rejects.toThrow(
-      'Developer access'
+      '6529 Dev Team membership'
     );
     expect(db.get).not.toHaveBeenCalled();
   });

@@ -47,7 +47,7 @@ export async function assertModerationDeveloper(
 ): Promise<string> {
   const id = ctx.authenticationContext?.getActingAsId();
   if (!(await isModerationDeveloper(id, ctx))) {
-    throw new ForbiddenException('Developer access is required');
+    throw new ForbiddenException('6529 Dev Team membership is required');
   }
   return id!;
 }

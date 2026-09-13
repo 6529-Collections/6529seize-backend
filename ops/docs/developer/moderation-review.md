@@ -23,6 +23,13 @@ error, and expose no private evidence or membership payload. Responses use `Cach
 no-store`. Ordinary report, hide, block and report-withdrawal endpoints remain
 available to users.
 
+Normal group edits publish with `old_version_id`: the replacement definition
+takes over the original group ID atomically, so this authorization pin follows
+updated criteria, membership and names. A separately saved new group does not
+replace the authorization group. Hiding the canonical group denies access.
+Database read-replica freshness still applies; no additional authorization TTL
+is introduced.
+
 `GET /content-moderation/checks/access` returns the capability. `/checks` supports
 subject, policy, outcome, trigger, review status, profile, subject ID, date and
 cursor filters. `/checks/counts` returns summary counts; `/checks/{id}` returns
