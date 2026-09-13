@@ -132,6 +132,26 @@ it('rejects oversized decoded dimensions from real metadata before conversion/up
   expect(Upload).not.toHaveBeenCalled();
 });
 
+it('does not upscale physical-unit SVG input when a larger raster is requested', async () => {
+  mockInput = Buffer.from(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="1in" height="0.5in"><rect width="72" height="36" fill="red"/></svg>'
+  );
+  mockContentType = 'image/svg+xml';
+  const input = await sharp(mockInput).metadata();
+  expect(input).toMatchObject({ width: 72, height: 36 });
+  const result = await handler(
+    { queryStringParameters: { path: 'synthetic/20000x20000_max/fixture' } },
+    {} as Context,
+    () => undefined
+  );
+  expect(result.statusCode).toBe(302);
+  expect(await sharp(mockUploaded).metadata()).toMatchObject({
+    format: 'png',
+    width: input.width,
+    height: input.height
+  });
+});
+
 it('rejects a known oversized source before reading any source bytes', async () => {
   const read = jest.fn();
   mockSource = new Readable({ read });
@@ -142,6 +162,47 @@ it('rejects a known oversized source before reading any source bytes', async () 
   expect(read).not.toHaveBeenCalled();
   expect(mockSource.destroyed).toBe(true);
   expect(Upload).not.toHaveBeenCalled();
+});
+
+it.each(['oversized source', 'temporary directory failure'])(
+  'handles an asynchronous source-destroy error after %s',
+  async (failure) => {
+    const sourceCloseError = new Error('synthetic socket close failure');
+    const directoryError = new Error('synthetic temporary disk failure');
+    mockSource = new Readable({
+      read: jest.fn(),
+      destroy(_error, callback) {
+        callback(sourceCloseError);
+      }
+    });
+    if (failure === 'oversized source') {
+      mockContentLength = MAX_SOURCE_BYTES + 1;
+      expect((await resize()).statusCode).toBe(422);
+    } else {
+      jest.spyOn(fs, 'mkdtemp').mockRejectedValueOnce(directoryError);
+      await expect(resize()).rejects.toBe(directoryError);
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(mockSource.destroyed).toBe(true);
+    expect(Upload).not.toHaveBeenCalled();
+  }
+);
+
+it('preserves a source failure that occurs while the temporary directory is being created', async () => {
+  const sourceError = new Error('synthetic early S3 failure');
+  const makeDirectory = fs.mkdtemp;
+  mockSource = new Readable({ read: jest.fn() });
+  const directories = jest
+    .spyOn(fs, 'mkdtemp')
+    .mockImplementationOnce(async (prefix) => {
+      mockSource!.destroy(sourceError);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      return makeDirectory(prefix);
+    });
+  await expect(resize()).rejects.toBe(sourceError);
+  expect(Upload).not.toHaveBeenCalled();
+  const directory = await directories.mock.results[0].value;
+  await expect(fs.access(directory)).rejects.toMatchObject({ code: 'ENOENT' });
 });
 
 it('stops an unknown-length source at the byte budget and removes its temporary file', async () => {
@@ -197,6 +258,48 @@ it.each(['source', 'upload'])(
   }
 );
 
+it.each(['source', 'upload', 'invalid input', 'success'])(
+  'preserves the primary %s outcome when temporary cleanup fails',
+  async (outcome) => {
+    const primaryError = new Error('synthetic processing failure');
+    const cleanupError = new Error('synthetic cleanup failure');
+    const remove = fs.rm;
+    // Remove this fixture's own directory before simulating an rm rejection,
+    // so the regression itself does not leave temporary files behind.
+    jest.spyOn(fs, 'rm').mockImplementationOnce(async (path, options) => {
+      await remove(path, options);
+      throw cleanupError;
+    });
+    if (outcome === 'source') {
+      mockSource = new Readable({
+        read() {
+          this.destroy(primaryError);
+        }
+      });
+    } else if (outcome === 'upload') {
+      mockUploadError = primaryError;
+    } else if (outcome === 'invalid input') {
+      mockInput = Buffer.from('not an image');
+    }
+    if (outcome === 'invalid input') {
+      const result = await resize();
+      expect(result.statusCode).toBe(422);
+      expect(JSON.parse(result.body).code).toBe('INVALID_IMAGE');
+    } else {
+      await expect(resize()).rejects.toBe(
+        outcome === 'success' ? cleanupError : primaryError
+      );
+    }
+  }
+);
+
+it('propagates an unmatched native-codec error instead of caching a 422', async () => {
+  mockUploadError = new Error(
+    'VipsForeignLoad: synthetic unclassified failure'
+  );
+  await expect(resize()).rejects.toBe(mockUploadError);
+});
+
 it('counts animation frames and higher sample depths in decoded admission', async () => {
   const base = await sharp(mockInput).metadata();
   const admitted = {
@@ -226,4 +329,20 @@ it('counts animation frames and higher sample depths in decoded admission', asyn
   expect(() =>
     assertDecodedWorkBudget({ ...animation, height: 32768, pages: 32 }, true)
   ).not.toThrow();
+});
+
+it('uses a conservative frame-height fallback while still charging every animated page', async () => {
+  const metadata = await sharp(mockInput).metadata();
+  const animation = {
+    ...metadata,
+    width: 4096,
+    height: 4096,
+    pages: 2,
+    channels: 4 as const,
+    depth: 'uchar' as const
+  };
+  expect(() => assertDecodedWorkBudget(animation, true)).not.toThrow();
+  expect(() =>
+    assertDecodedWorkBudget({ ...animation, height: 4097 }, true)
+  ).toThrow(UnprocessableResizeInput);
 });

@@ -128,17 +128,7 @@ const liveHandler = wrapLambdaHandler(async (event: any) => {
     };
   } catch (e: any) {
     if (isUnprocessableResizeInput(e)) {
-      const code =
-        e instanceof UnprocessableResizeInput ? e.code : 'INVALID_IMAGE';
-      logger.warn(`Image resize rejected: ${code}`);
-      return {
-        statusCode: 422,
-        headers: {
-          'Content-Type': 'application/json',
-          'Cache-Control': 'public, max-age=300'
-        },
-        body: JSON.stringify({ error: 'Image cannot be resized', code })
-      };
+      return unprocessableInput(e);
     }
     logger.error(
       `[${path}] Resizing failed (Config: Region: ${BUCKET_REGION}, Bucket ${BUCKET}) ${
@@ -148,6 +138,20 @@ const liveHandler = wrapLambdaHandler(async (event: any) => {
     throw e;
   }
 });
+
+function unprocessableInput(error: unknown) {
+  const code =
+    error instanceof UnprocessableResizeInput ? error.code : 'INVALID_IMAGE';
+  logger.warn(`Image resize rejected: ${code}`);
+  return {
+    statusCode: 422,
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'public, max-age=300'
+    },
+    body: JSON.stringify({ error: 'Image cannot be resized', code })
+  };
+}
 
 function notFound() {
   return {

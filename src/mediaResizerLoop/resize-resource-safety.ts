@@ -32,7 +32,12 @@ export class UnprocessableResizeInput extends Error {
 /** Conservative admission estimate, not a guarantee about native codec memory. */
 export function assertDecodedWorkBudget(metadata: Metadata, animated: boolean) {
   const pages = animated ? (metadata.pages ?? 1) : 1;
-  const height = animated && pages > 1 ? metadata.pageHeight : metadata.height;
+  // If per-frame height is absent, the reported height is a conservative bound;
+  // still multiply by every page rather than risk admitting uncounted frames.
+  const height =
+    animated && pages > 1
+      ? (metadata.pageHeight ?? metadata.height)
+      : metadata.height;
   const sampleBytes: Record<string, number> = {
     char: 1,
     uchar: 1,
@@ -69,6 +74,8 @@ export function assertDecodedWorkBudget(metadata: Metadata, animated: boolean) {
 }
 
 export function isUnprocessableResizeInput(error: unknown): boolean {
+  // Native decoder messages are version-specific. Unmatched failures deliberately
+  // propagate as operational errors rather than being cached as invalid input.
   return (
     error instanceof UnprocessableResizeInput ||
     (error instanceof Error &&
@@ -85,6 +92,16 @@ export async function withResizeInputFile<T>(
   animated: boolean,
   useFile: (path: string) => Promise<T>
 ): Promise<T> {
+  // S3 can fail before pipeline attaches its listeners, including while mkdtemp
+  // is pending or after an early destroy. Keep the original failure until close.
+  let sourceError = source.errored;
+  const captureSourceError = (error: Error) => {
+    sourceError ??= error;
+  };
+  source.on('error', captureSourceError);
+  source.once('close', () =>
+    source.removeListener('error', captureSourceError)
+  );
   if (contentLength !== undefined && contentLength > MAX_SOURCE_BYTES) {
     source.destroy();
     throw new UnprocessableResizeInput('SOURCE_TOO_LARGE');
@@ -107,7 +124,11 @@ export async function withResizeInputFile<T>(
       callback(null, chunk);
     }
   });
+  // Only the unique directory created by this invocation is removed.
+  const cleanup = () => rm(directory, { recursive: true, force: true });
+  let result: T;
   try {
+    if (sourceError) throw sourceError;
     await pipeline(source, limit, createWriteStream(path));
     const metadata = await Sharp(path, {
       failOn: 'none',
@@ -115,9 +136,13 @@ export async function withResizeInputFile<T>(
       limitInputPixels: INPUT_PIXEL_BACKSTOP
     }).metadata();
     assertDecodedWorkBudget(metadata, animated);
-    return await useFile(path);
-  } finally {
-    // Only the unique directory created by this invocation is removed.
-    await rm(directory, { recursive: true, force: true });
+    result = await useFile(path);
+  } catch (error) {
+    // A secondary cleanup failure must not change input classification or hide
+    // the original source/upload error. Cleanup-only failures still propagate.
+    await cleanup().catch(() => undefined);
+    throw error;
   }
+  await cleanup();
+  return result;
 }
