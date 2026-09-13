@@ -1,5 +1,6 @@
 import { Alert, hash, parseAlert, renderAlert } from './contract.js';
 import { DeliveryError } from './webhook.js';
+import { completeDispatch, traceDispatch } from './dispatch-diagnostics.js';
 
 export type Work =
   | { kind: 'alert'; alert: Alert }
@@ -44,20 +45,43 @@ export async function processWork(
   now = Math.floor(Date.now() / 1000)
 ): Promise<void> {
   const id = hash(workId(work));
-  const lease = await store.reserve(id, owner, now);
-  if (lease === 'done') return;
+  const lease = await traceDispatch('RESERVE', () =>
+    store.reserve(id, owner, now)
+  );
+  if (lease === 'done') {
+    completeDispatch('ALREADY_COMPLETE');
+    return;
+  }
   if (lease === 'busy') throw new DeliveryError(true, 30, true);
   try {
     const outcome = await execute(work, id, store, transport, now);
-    await store.complete(id, owner, outcome);
+    await traceDispatch('COMPLETE', () => store.complete(id, owner, outcome));
+    completeDispatch(terminalOutcome(outcome));
   } catch (error) {
     if (error instanceof DeliveryError && !error.retryable) {
-      await transport.archive(work, 'WEBHOOK_PERMANENT');
-      await store.complete(id, owner, 'archived');
+      await traceDispatch('ARCHIVE', async () => {
+        await transport.archive(work, 'WEBHOOK_PERMANENT');
+        await traceDispatch('COMPLETE', () =>
+          store.complete(id, owner, 'archived')
+        );
+      });
+      completeDispatch('ARCHIVED');
       return;
     }
-    await store.release(id, owner);
+    await traceDispatch('RELEASE', () => store.release(id, owner));
     throw error;
+  }
+}
+function terminalOutcome(outcome: string) {
+  switch (outcome) {
+    case 'grouped':
+      return 'GROUPED';
+    case 'heartbeat':
+      return 'HEARTBEAT';
+    case 'no-repeat':
+      return 'NO_REPEAT';
+    default:
+      return 'DELIVERED';
   }
 }
 async function execute(
@@ -69,13 +93,18 @@ async function execute(
 ): Promise<string> {
   if (work.kind === 'heartbeat') {
     // Receipt proves a fresh canary traversed the queue, not merely that a scheduler ran.
-    if (Math.abs(now - work.emittedAt) > 180) throw new DeliveryError(false);
-    await store.heartbeat(work.lane, now);
-    return 'heartbeat';
+    return traceDispatch('HEARTBEAT', async () => {
+      if (Math.abs(now - work.emittedAt) > 180) throw new DeliveryError(false);
+      await store.heartbeat(work.lane, now);
+      return 'heartbeat';
+    });
   }
   if (work.kind === 'digest') {
-    const group = await store.readGroup(work.groupKey);
-    if (!group) throw new Error('MISSING_GROUP');
+    const group = await traceDispatch('DIGEST_READ', async () => {
+      const value = await store.readGroup(work.groupKey);
+      if (!value) throw new Error('MISSING_GROUP');
+      return value;
+    });
     return group.count > 1
       ? await transport.deliver(renderAlert(group.alert, group.count))
       : 'no-repeat';
@@ -84,18 +113,20 @@ async function execute(
   if (alert.severity !== 'error') return transport.deliver(renderAlert(alert));
   const bucket = Math.floor(now / 300);
   const key = `group:${alert.environment}:${alert.fingerprint}:${bucket}`;
-  const group = await store.group(key, id, alert);
+  const group = await traceDispatch('GROUP', () => store.group(key, id, alert));
   if (group.firstEventId !== id) return 'grouped';
   // Scheduling is retried before acknowledgement; deterministic digest receipts absorb duplicates.
-  await transport.schedule(
-    {
-      kind: 'digest',
-      groupKey: group.key,
-      eventId: `digest:${hash(group.key)}`
-    },
-    Math.max(
-      0,
-      Math.min(900, (Number(group.key.split(':').at(-1)) + 1) * 300 + 5 - now)
+  await traceDispatch('SCHEDULE', () =>
+    transport.schedule(
+      {
+        kind: 'digest',
+        groupKey: group.key,
+        eventId: `digest:${hash(group.key)}`
+      },
+      Math.max(
+        0,
+        Math.min(900, (Number(group.key.split(':').at(-1)) + 1) * 300 + 5 - now)
+      )
     )
   );
   return transport.deliver(renderAlert(alert));

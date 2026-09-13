@@ -188,6 +188,39 @@ must independently alert on a missing check-in. Its ping URL is another secret.
 The monitoring account's probes are outside the application account but inside AWS;
 an outside-AWS uptime/dead-man provider is still required for AWS-wide coverage.
 
+## Dispatch diagnostics
+
+Dispatcher logs use a versioned metadata-only schema. `DELIVERY_FAILED` retains
+its existing metric and deferral rules: it counts a non-deferred processing
+exception, which can occur in storage or scheduling before any webhook request.
+The record adds the failing operation, a finite cause code, bounded HTTP/SDK
+metadata, lane, work kind, receive count and elapsed time. DynamoDB cancellation
+diagnostics retain only bounded allowlisted reason codes, never items or messages.
+
+`sqsMessageHash` is SHA256 of the SQS message ID; `workHash` is SHA256 of the
+canonical work ID, matching the suffix of `receipt:<workHash>`. A later
+`DELIVERY_SETTLED` record links that attempt to a completed receipt: `DELIVERED`,
+`GROUPED`, `HEARTBEAT`, `NO_REPEAT` or `ARCHIVED`. `ALREADY_COMPLETE` means a
+duplicate found an existing completed receipt, not a new webhook delivery.
+`INVALID_ARCHIVED` means malformed work was archived and fallback published;
+it has no fabricated canonical work hash or completed receipt. Settlement logs
+are emitted after the relevant durable operation succeeds.
+
+`deliveryAcceptance` distinguishes `NOT_ATTEMPTED`, `UNKNOWN` and `CONFIRMED`.
+Confirmation requires a valid returned webhook message ID. A failure at
+`COMPLETE` with confirmed acceptance means the vendor accepted the message but
+the receipt write failed; retries can duplicate that send. A timeout leaves
+acceptance unknown. When releasing a lease or archiving also fails, the record
+keeps the original operation/cause and a separate cleanup cause. These fields
+do not change the exception, acknowledgement, retry or fallback behavior.
+
+Diagnostics stay in existing monitoring CloudWatch logs under their retention
+policy. No exception messages, stacks, response bodies, URLs, credentials,
+receipt handles or content are logged. Hashes are not metric dimensions. Logging
+failures cannot replace the processing error or prevent acknowledgement. The new
+correlation cannot establish outcomes for historical logs that lacked work hashes;
+missing terminal logs still require checking the durable receipt and archive.
+
 ## Build and verify
 
 From this package directory:

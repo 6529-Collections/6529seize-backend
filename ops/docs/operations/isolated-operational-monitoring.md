@@ -5,6 +5,31 @@ semantics and finite retention. Its runtime has no application DB/Redis/VPC
 dependency. Roll out monitoring before its application producers, and complete
 acceptance checks before removing the legacy CloudWatch-to-Discord subscription.
 
+## Investigate dispatcher failures
+
+Use the [dispatch diagnostic schema](../../monitoring/README.md#dispatch-diagnostics)
+to distinguish storage, scheduling, rate-slot and webhook failures. Start with
+`DELIVERY_FAILED`, inspect its finite operation/cause fields, and correlate by
+`workHash` to `DELIVERY_SETTLED` or the durable `receipt:<workHash>` item. Use
+`sqsMessageHash` and receive count to distinguish retries of one queue message
+from distinct messages containing the same canonical work. A `GROUPED` outcome
+is an intentional repeat, not a lost webhook delivery. `ALREADY_COMPLETE`
+establishes an existing completed receipt and does not establish a second send.
+
+Treat confirmed vendor acceptance followed by a receipt-completion error as an
+ambiguous retry boundary, and retain the primary failure when cleanup also fails.
+Neither a missing settlement log nor an empty archive alone proves final loss or
+successful recovery. Do not infer the cause of older generic failure logs from
+new diagnostics, or change alarm thresholds to hide unresolved failures.
+
+A diagnostic-only runtime change uses `Deploy operational monitoring` with the
+reviewed exact merged SHA. The shared monitoring bundle updates the configured
+runtime functions, including both dispatchers; unchanged application producers,
+source relay stacks, IAM policies and subscriptions do not need a rollout. Keep
+the existing Coordinator workstream identity and follow current deployment
+authorization and validation gates. Observe natural traffic after deployment;
+unit tests use mocked transport and do not require new live alert events.
+
 ## Bootstrap and identities
 
 Provision `ops/monitoring/bootstrap.json` in the monitoring account with an owner
