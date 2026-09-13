@@ -1,4 +1,12 @@
-import { analyzeCollectingGoal } from '@/collecting/collecting-analysis';
+import {
+  analyzeCollectingGoal,
+  collectingHash
+} from '@/collecting/collecting-analysis';
+import {
+  catalogForTradeAssets,
+  collectingTradeAssetsDb,
+  CollectingTradeAssetsDb
+} from '@/collecting/collecting-trade-assets';
 import { collectingDb, CollectingDb } from '@/collecting/collecting.db';
 import {
   CollectingAnalysisRequest,
@@ -29,7 +37,11 @@ export class CollectingService {
       CollectingDb,
       'readCatalog' | 'readAccountHoldings' | 'readTdhProjectionSource'
     >,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    private readonly tradeAssets: Pick<
+      CollectingTradeAssetsDb,
+      'readMemeLabAssets'
+    > = collectingTradeAssetsDb
   ) {}
 
   async getCatalog(): Promise<CollectingCatalog> {
@@ -59,7 +71,11 @@ export class CollectingService {
     ) {
       throw new BadRequestException('Invalid collecting search');
     }
-    const catalog = await this.getCatalog();
+    // Only explicit Meme Lab lookup opts into its separate artwork catalog.
+    const catalog =
+      request.family === 'memelab'
+        ? await this.memeLabCatalog()
+        : await this.getCatalog();
     const search = request.query?.trim().toLowerCase() ?? '';
     const matchingArtists = new Set(
       catalog.artists
@@ -84,9 +100,25 @@ export class CollectingService {
     };
   }
 
-  async analyze(request: CollectingAnalysisRequest) {
-    const catalog = await this.getCatalog();
-    const scope = await this.db.readAccountHoldings(request.profile_id);
+  async analyze(
+    request: CollectingAnalysisRequest,
+    options?: { includeTradeAssets: boolean }
+  ) {
+    const plannerCatalog = await this.getCatalog();
+    const catalog =
+      options?.includeTradeAssets && request.kind === 'exact'
+        ? await catalogForTradeAssets(
+            plannerCatalog,
+            (request.assets ?? []).map((asset) => asset.asset_key),
+            this.tradeAssets
+          )
+        : plannerCatalog;
+    const includesMemeLab = catalog !== plannerCatalog;
+    const scope = includesMemeLab
+      ? await this.db.readAccountHoldings(request.profile_id, {
+          includeMemeLab: true
+        })
+      : await this.db.readAccountHoldings(request.profile_id);
     const pebbleKeys = new Set(
       catalog.assets
         .filter((asset) => asset.family === 'pebbles')
@@ -109,6 +141,19 @@ export class CollectingService {
       scope.snapshot,
       request
     );
+  }
+
+  private async memeLabCatalog(): Promise<CollectingCatalog> {
+    const assets = await this.tradeAssets.readMemeLabAssets();
+    return {
+      version: collectingHash({ family: 'memelab', assets }),
+      chain_id: 1,
+      assets,
+      seasons: [],
+      artists: [],
+      pebbles_traits: [],
+      tdh_snapshot: null
+    };
   }
 
   async projectTdh(request: CollectingTdhProjectionRequest) {

@@ -20,6 +20,7 @@ import {
 } from '@/marketplace/seaport.registry';
 import { discoveredOrderDto } from '@/api/marketplace/marketplace.dto';
 import { ApiCollectFamily } from '@/api/generated/models/ApiCollectFamily';
+import { ApiCollectPlanningFamily } from '@/api/generated/models/ApiCollectPlanningFamily';
 import { ApiCollectTdhListing } from '@/api/generated/models/ApiCollectTdhListing';
 import {
   ApiCollectTdhListings,
@@ -195,7 +196,7 @@ export function rankIndexedTdhListings(
     .digest('hex');
   return {
     entries,
-    family: family as ApiCollectFamily,
+    family: family as ApiCollectPlanningFamily,
     snapshot_id: snapshotId,
     catalog_version: catalogVersion,
     observed_at: observedAt,

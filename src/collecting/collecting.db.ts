@@ -5,6 +5,7 @@ import {
   GRADIENT_CONTRACT,
   IDENTITIES_TABLE,
   MEMES_CONTRACT,
+  MEMELAB_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
   MEMES_SEASONS_TABLE,
   MEME_8_EDITION_BURN_ADJUSTMENT,
@@ -23,6 +24,7 @@ import {
 import {
   CollectingAccount,
   CollectingAsset,
+  CollectingFamily,
   CollectingCatalog,
   CollectingHolding
 } from '@/collecting/collecting.types';
@@ -90,7 +92,7 @@ function bounded<T>(rows: T[], maximum: number): T[] {
 function officialTokens(
   raw: unknown,
   contract: string,
-  family: CollectingAsset['family'],
+  family: CollectingFamily,
   boost: number
 ): ProjectedToken[] {
   const parsed: unknown = typeof raw === 'string' ? JSON.parse(raw) : raw;
@@ -353,11 +355,14 @@ export class CollectingDb {
     );
   }
 
-  async readAccountHoldings(profileId: string) {
+  async readAccountHoldings(
+    profileId: string,
+    options?: { includeMemeLab: boolean }
+  ) {
     return this.getDb().executeNativeQueriesInTransaction(
       async (connection) => {
         const account = await this.readAccount(profileId, connection);
-        const options = { wrappedConnection: connection };
+        const queryOptions = { wrappedConnection: connection };
         const holdings = await this.getDb().execute<{
           contract: string;
           token_id: string;
@@ -373,10 +378,13 @@ export class CollectingDb {
             wallets: account.wallets,
             contracts: [
               MEMES_CONTRACT.toLowerCase(),
-              GRADIENT_CONTRACT.toLowerCase()
+              GRADIENT_CONTRACT.toLowerCase(),
+              ...(options?.includeMemeLab
+                ? [MEMELAB_CONTRACT.toLowerCase()]
+                : [])
             ]
           },
-          options
+          queryOptions
         );
         const pebbles = await this.getDb().execute<{
           token_id: string;
@@ -387,7 +395,7 @@ export class CollectingDb {
         WHERE collection_id = 1 AND owner IN (:wallets) AND pending = false AND burnt = false ORDER BY id ASC
       `,
           { wallets: account.wallets },
-          options
+          queryOptions
         );
         const snapshots = await this.getDb().execute<{
           block_number: number;
@@ -399,7 +407,7 @@ export class CollectingDb {
         FROM ${NFT_OWNERS_SYNC_STATE_TABLE} WHERE id = 1
       `,
           undefined,
-          options
+          queryOptions
         );
         if (!snapshots[0] || Number(snapshots[0].block_number) <= 0)
           throw new CustomApiCompliantException(

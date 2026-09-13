@@ -6,6 +6,8 @@ import {
 import type { MarketChain } from '@/marketplace/market-chain';
 import type { OpenSeaMarketplaceProvider } from '@/marketplace/provider.opensea';
 import { collectingService } from '@/collecting/collecting.service';
+import { collectingTradeAssetsDb } from '@/collecting/collecting-trade-assets';
+import { MEMELAB_CONTRACT } from '@/constants';
 import {
   buildMarketOrder,
   buildMarketFulfillment
@@ -97,6 +99,188 @@ beforeEach(() => {
 });
 
 describe('trade request expiry and exact-order contract', () => {
+  describe('Meme Lab card actions', () => {
+    afterEach(() => jest.restoreAllMocks());
+    function labSetup() {
+      const s = setup();
+      (collectingService.getCatalog as jest.Mock).mockResolvedValue({
+        version: 'planner',
+        assets: []
+      });
+      jest
+        .spyOn(collectingTradeAssetsDb, 'readMemeLabAssets')
+        .mockResolvedValue([
+          {
+            asset_key: `1:${MEMELAB_CONTRACT}:56`,
+            contract: MEMELAB_CONTRACT,
+            token_id: '56',
+            family: 'memelab',
+            chain_id: 1,
+            name: 'Lab artwork',
+            image_url: null,
+            artist_ids: [],
+            season: null,
+            traits: [],
+            hodl_rate: null,
+            tdh_eligible: false
+          }
+        ]);
+      return s;
+    }
+
+    it.each(['LIST', 'OFFER'] as const)(
+      'prepares exact Meme Lab %s signing terms and approval scope',
+      async (kind) => {
+        const s = labSetup();
+        const prepared = await s.preparation.prepare(
+          {
+            ...request,
+            kind,
+            asset_key: `1:${MEMELAB_CONTRACT}:56`,
+            currency: kind === 'OFFER' ? MARKET_WETH : MARKET_ZERO_ADDRESS,
+            expires_at: 1800001000
+          },
+          true
+        );
+        expect(prepared.intent.asset).toEqual({
+          contract: MEMELAB_CONTRACT,
+          tokenId: '56',
+          standard: 'ERC1155'
+        });
+        expect(prepared.intent.quantity).toBe('2');
+        expect(s.chain.approvals).toHaveBeenCalledWith(
+          expect.objectContaining({ asset: prepared.intent.asset }),
+          expect.any(String)
+        );
+        const components = prepared.signedOrder!.order.components;
+        const item =
+          kind === 'LIST' ? components.offer[0] : components.consideration[0];
+        expect(item).toMatchObject({
+          token: MEMELAB_CONTRACT,
+          itemType: 3,
+          identifierOrCriteria: '56',
+          startAmount: '2'
+        });
+      }
+    );
+
+    it.each(['BUY', 'ACCEPT'] as const)(
+      'binds the exact Meme Lab %s order and recipient before approval',
+      async (kind) => {
+        const s = labSetup();
+        const otherMaker = recipient;
+        const currency = kind === 'BUY' ? MARKET_ZERO_ADDRESS : MARKET_WETH;
+        const orderIntent: MarketTradeIntent = {
+          ...intent,
+          kind: kind === 'BUY' ? 'LIST' : 'OFFER',
+          wallet: otherMaker,
+          recipient: otherMaker,
+          currency,
+          asset: {
+            contract: MEMELAB_CONTRACT,
+            tokenId: '56',
+            standard: 'ERC1155'
+          }
+        };
+        const built = buildMarketOrder(orderIntent, '0', '8').order;
+        s.provider.getOrder.mockResolvedValue({
+          identity: {
+            protocolAddress: MARKET_SEAPORT,
+            orderHash: built.orderHash
+          },
+          components: built.components
+        });
+        s.provider.prepareFulfillment.mockImplementation(async (fresh) =>
+          buildMarketFulfillment(
+            fresh,
+            built,
+            '0x1234',
+            built.components.orderType >= 2 ? '0xabcd' : '0x'
+          )
+        );
+        const prepared = await s.preparation.prepare(
+          {
+            ...request,
+            kind,
+            asset_key: `1:${MEMELAB_CONTRACT}:56`,
+            currency,
+            order: {
+              protocol_address: MARKET_SEAPORT,
+              order_hash: built.orderHash
+            }
+          },
+          true
+        );
+        expect(prepared.intent.asset.standard).toBe('ERC1155');
+        expect(prepared.reviewOrder?.orderHash).toBe(built.orderHash);
+        expect(prepared.nftRecipient).toBe(
+          kind === 'BUY' ? wallet : otherMaker
+        );
+        expect(prepared.transaction?.to).toBe(MARKET_SEAPORT);
+        expect(s.chain.approvals).toHaveBeenCalledWith(
+          expect.objectContaining({ asset: prepared.intent.asset })
+        );
+        s.provider.getOrder.mockResolvedValue({
+          identity: {
+            protocolAddress: MARKET_SEAPORT,
+            orderHash: built.orderHash
+          },
+          components: { ...built.components, offerer: wallet }
+        });
+        await expect(
+          s.preparation.prepare(
+            {
+              ...request,
+              kind,
+              asset_key: `1:${MEMELAB_CONTRACT}:56`,
+              currency,
+              order: {
+                protocol_address: MARKET_SEAPORT,
+                order_hash: built.orderHash
+              }
+            },
+            true
+          )
+        ).rejects.toThrow();
+        expect(s.chain.approvals).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it('cancels only the signer-owned exact Meme Lab listing even if catalog/provider lookup is unavailable', async () => {
+      const s = setup();
+      const built = buildMarketOrder(
+        {
+          ...intent,
+          asset: {
+            contract: MEMELAB_CONTRACT,
+            tokenId: '56',
+            standard: 'ERC1155'
+          }
+        },
+        '0',
+        '8'
+      ).order;
+      const identity = {
+        protocolAddress: MARKET_SEAPORT,
+        orderHash: built.orderHash
+      };
+      const prepared = await s.preparation.prepare(
+        {
+          ...request,
+          asset_key: `1:${MEMELAB_CONTRACT}:56`,
+          order: {
+            protocol_address: MARKET_SEAPORT,
+            order_hash: built.orderHash
+          }
+        },
+        true,
+        { identity, components: built.components }
+      );
+      expect(prepared.intent.asset.contract).toBe(MEMELAB_CONTRACT);
+      expect(prepared.transaction?.purpose).toBe('CANCEL');
+      expect(s.provider.getOrder).not.toHaveBeenCalled();
+    });
+  });
   it.each(['LIST', 'OFFER'] as const)(
     'requires Unix-seconds expiry for %s',
     (kind) => {

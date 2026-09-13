@@ -30,6 +30,17 @@ confirmed consolidated wallets. Existing Pebbles trait rankings use that same
 profile scope. TDH projections reuse the production calculation kernel and
 first verify parity with the official snapshot.
 
+Meme Lab card trading resolves minted artwork from the existing `nfts_meme_lab`
+index only when `/collect/assets?family=memelab`, an exact ownership analysis,
+or a marketplace request explicitly names that collection. Exact analyses opt
+into its indexed holdings across the same confirmed profile wallets. The known
+Meme Lab contract is ERC1155 for discovery, exact-order resolution, single-order
+preparation and atomic purchases, including verified criteria-offer acceptance.
+This request-local extension never changes the shared planner catalog, set
+goals, TDH eligibility or ranking families. API asset families include Meme Lab;
+planning family schemas remain explicitly The Memes, Gradients and Pebbles.
+It adds no tables or indexer dependencies; only the API service needs deployment.
+
 Authenticated `POST /collect/tdh-target-plans` estimates a purchase subtotal for
 a profile's total boosted TDH at a 1/30/90/365-day deadline, or an explicit
 increase over its future no-purchase baseline. Its selected recipient must be a

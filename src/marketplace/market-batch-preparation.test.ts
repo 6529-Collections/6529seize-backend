@@ -1,4 +1,7 @@
 import { collectingService } from '@/collecting/collecting.service';
+import { CollectingAsset } from '@/collecting/collecting.types';
+import { collectingTradeAssetsDb } from '@/collecting/collecting-trade-assets';
+import { MEMES_CONTRACT, MEMELAB_CONTRACT } from '@/constants';
 import { MarketBatchPreparation } from '@/marketplace/market-batch-preparation';
 import type { MarketChain } from '@/marketplace/market-chain';
 import type { OpenSeaMarketplaceProvider } from '@/marketplace/provider.opensea';
@@ -18,8 +21,8 @@ jest.mock('@/collecting/collecting.service', () => ({
   collectingService: { getCatalog: jest.fn() }
 }));
 
-function setup() {
-  const f = marketBatchFixture();
+function setup(contract = MEMES_CONTRACT) {
+  const f = marketBatchFixture(2, contract);
   const request: MarketBatchPrepareRequest = {
     kind: 'BUY_BATCH',
     profile_id: 'profile',
@@ -42,14 +45,31 @@ function setup() {
       }))
     }))
   };
+  const assets: CollectingAsset[] = f.intent.items.map((line) => ({
+    asset_key: line.assetKey,
+    contract: line.intent.asset.contract,
+    token_id: line.intent.asset.tokenId,
+    family:
+      line.intent.asset.contract.toLowerCase() === MEMELAB_CONTRACT
+        ? 'memelab'
+        : line.intent.asset.standard === 'ERC1155'
+          ? 'memes'
+          : 'gradients',
+    chain_id: 1,
+    name: 'Test artwork',
+    image_url: null,
+    artist_ids: [],
+    season: null,
+    traits: [],
+    hodl_rate: null,
+    tdh_eligible: false
+  }));
   (collectingService.getCatalog as jest.Mock).mockResolvedValue({
-    assets: f.intent.items.map((line) => ({
-      asset_key: line.assetKey,
-      contract: line.intent.asset.contract,
-      token_id: line.intent.asset.tokenId,
-      family: line.intent.asset.standard === 'ERC1155' ? 'memes' : 'gradients'
-    }))
+    assets: assets.filter((asset) => asset.family !== 'memelab')
   });
+  jest
+    .spyOn(collectingTradeAssetsDb, 'readMemeLabAssets')
+    .mockResolvedValue(assets.filter((asset) => asset.family === 'memelab'));
   const provider = {
     getOrder: jest.fn(async (identity) => {
       const material = f.materials.find(
@@ -105,10 +125,30 @@ function setup() {
 
 describe('atomic batch preparation', () => {
   beforeEach(() => {
-    jest.useFakeTimers().setSystemTime(1500000);
+    jest.spyOn(Date, 'now').mockReturnValue(1500000);
     jest.clearAllMocks();
   });
-  afterEach(() => jest.useRealTimers());
+  afterEach(() => jest.restoreAllMocks());
+  test('prepares Meme Lab editions and multiple destinations in the same complete batch', async () => {
+    const s = setup(MEMELAB_CONTRACT);
+    const prepared = await s.prepare();
+    expect(prepared.intent.items[1].intent.asset).toMatchObject({
+      contract: MEMELAB_CONTRACT,
+      standard: 'ERC1155'
+    });
+    expect(prepared.intent.items[1].allocations).toEqual(
+      s.f.intent.items[1].allocations
+    );
+    expect(prepared.transaction.value).toBe('300');
+    expect(s.chain.simulate).toHaveBeenCalledTimes(1);
+    s.chain.orderStatus.mockResolvedValue({
+      cancelled: false,
+      filled: BigInt(2),
+      size: BigInt(3)
+    });
+    await expect(s.prepare()).rejects.toThrow('complete requested quantity');
+    expect(s.chain.simulate).toHaveBeenCalledTimes(1);
+  });
   test('quotes only exact selected orders and simulates their complete allocated transaction', async () => {
     const s = setup(),
       prepared = await s.prepare();
@@ -124,7 +164,7 @@ describe('atomic batch preparation', () => {
     expect(prepared.mirrorTerms.endTime).toBe('1590');
   });
   test('caps review by the earliest seller expiry instead of the preparation work budget', async () => {
-    jest.setSystemTime(2950000);
+    jest.mocked(Date.now).mockReturnValue(2950000);
     const s = setup();
     s.chain.snapshot.mockResolvedValue({
       block_number: 10,
@@ -142,7 +182,7 @@ describe('atomic batch preparation', () => {
     expect(s.chain.simulate).toHaveBeenCalledTimes(1);
   });
   test('still refuses authorizations with insufficient review time', async () => {
-    jest.setSystemTime(2980000);
+    jest.mocked(Date.now).mockReturnValue(2980000);
     const s = setup();
     await expect(s.prepare()).rejects.toThrow('expires too soon');
     expect(s.chain.simulate).not.toHaveBeenCalled();

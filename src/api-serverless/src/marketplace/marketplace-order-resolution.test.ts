@@ -7,7 +7,11 @@ import {
   CollectingWorkBudget,
   CollectingWorkTimeout
 } from '@/collecting/collecting-work-budget';
-import { GRADIENT_CONTRACT, MEMES_CONTRACT } from '@/constants';
+import {
+  GRADIENT_CONTRACT,
+  MEMES_CONTRACT,
+  MEMELAB_CONTRACT
+} from '@/constants';
 import { marketChain } from '@/marketplace/market-chain';
 import { marketCatalogAsset } from '@/marketplace/market-preparation';
 import {
@@ -59,18 +63,28 @@ function setup(
     fee?: string;
     partial?: boolean;
     erc721?: boolean;
+    memelab?: boolean;
   } = {}
 ) {
   const side = options.side ?? 'LISTING';
   const quantity = options.quantity ?? (options.erc721 ? '1' : '12');
   const total = options.total ?? (BigInt(quantity) * BigInt(100)).toString();
   const fee = options.fee ?? (BigInt(quantity) * BigInt(2)).toString();
+  const contract = options.erc721
+    ? GRADIENT_CONTRACT
+    : options.memelab
+      ? MEMELAB_CONTRACT
+      : MEMES_CONTRACT;
   const asset: CollectingAsset = {
-    asset_key: `1:${options.erc721 ? GRADIENT_CONTRACT : MEMES_CONTRACT}:56`,
+    asset_key: `1:${contract}:56`,
     chain_id: 1,
-    contract: options.erc721 ? GRADIENT_CONTRACT : MEMES_CONTRACT,
+    contract,
     token_id: '56',
-    family: options.erc721 ? 'gradients' : 'memes',
+    family: options.erc721
+      ? 'gradients'
+      : options.memelab
+        ? 'memelab'
+        : 'memes',
     name: 'Resolver test artwork',
     image_url: null,
     artist_ids: [],
@@ -166,6 +180,38 @@ function deferred<T>() {
 describe('exact public marketplace order resolution', () => {
   beforeEach(() => jest.clearAllMocks());
   afterEach(() => jest.restoreAllMocks());
+
+  it.each(['LISTING', 'OFFER'] as const)(
+    'resolves a Meme Lab %s with exact remaining editions and fees',
+    async (side) => {
+      const s = setup({ side, memelab: true });
+      s.chain.orderStatus.mockResolvedValue({
+        cancelled: false,
+        filled: BigInt(1),
+        size: BigInt(3)
+      });
+      const result = await resolveMarketOrder(s.input);
+      expect(result).toMatchObject({
+        asset_key: s.asset.asset_key,
+        quantity: '8',
+        total_wei: '800'
+      });
+      expect(
+        result.fees.reduce(
+          (total, fee) => total + BigInt(fee.amount_wei),
+          BigInt(0)
+        )
+      ).toBe(BigInt(16));
+      expect(JSON.stringify(result)).not.toContain('0x1234');
+      expect(s.provider.prepareFulfillment).not.toHaveBeenCalled();
+      s.chain.orderStatus.mockResolvedValue({
+        cancelled: true,
+        filled: BigInt(0),
+        size: BigInt(0)
+      });
+      await expect(resolveMarketOrder(s.input)).rejects.toThrow('no longer');
+    }
+  );
 
   it.each(['LISTING', 'OFFER'] as const)(
     'resolves the selected %s independently of best-order discovery without creating a trade',
