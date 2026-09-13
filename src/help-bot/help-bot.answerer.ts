@@ -1,7 +1,13 @@
 import {
+  desktopFallbackAnswer,
+  normalizeDesktopAnswer
+} from '@/help-bot/help-bot-desktop-answer';
+import {
   desktopQuestionWithContext,
+  desktopRecordIdForQuestion,
+  isAmbiguousDesktopQuestion,
   isDesktopKnowledgeRecord,
-  MAX_DESKTOP_ANSWER_CHARACTERS
+  wantsDetailedDesktopAnswer
 } from './help-bot-desktop-knowledge';
 import { Logger } from '@/logging';
 import {
@@ -641,46 +647,41 @@ function buildStreamEvidenceAnswer(
 
 function buildDeterministicAnswer(
   record: HelpBotKnowledgeRecord,
-  baseUrl: string
+  baseUrl: string,
+  question = ''
 ): string {
   if (record.kind === 'public_review_knowledge') {
     return buildStreamEvidenceAnswer(record, baseUrl);
   }
-  const answer = ensureKnowledgeMarkdownLinks({
-    text: isDesktopKnowledgeRecord(record)
-      ? record.facts.map((fact, index) => `${index + 1}. ${fact}`).join('\n\n')
-      : record.facts.join(' '),
+  if (isDesktopKnowledgeRecord(record))
+    return desktopFallbackAnswer(record, question);
+  return ensureKnowledgeMarkdownLinks({
+    text: record.facts.join(' '),
     record,
     baseUrl
   });
-  if (
-    isDesktopKnowledgeRecord(record) &&
-    answer.length > MAX_DESKTOP_ANSWER_CHARACTERS
-  ) {
-    return 'I could not fit a complete Desktop procedure into this reply. Please narrow the question to one setup or recovery action so its steps and data-loss warnings can stay together. Do not reset local data based on an incomplete procedure.';
-  }
-  return answer;
 }
 
 function normalizeRenderedAnswer(
   text: string,
   record: HelpBotKnowledgeRecord,
-  baseUrl: string
+  baseUrl: string,
+  question = ''
 ): string {
   if (record.kind === 'public_review_knowledge') {
     return composeStreamAnswer(text, record, baseUrl);
   }
+  if (isDesktopKnowledgeRecord(record))
+    return normalizeDesktopAnswer(
+      stripHelpBotSelfIntro(text),
+      record,
+      question
+    );
   const withUrl = ensureKnowledgeMarkdownLinks({
     text: stripHelpBotSelfIntro(text),
     record,
     baseUrl
   });
-  if (isDesktopKnowledgeRecord(record)) {
-    // Never cut a recovery instruction before its data-loss warning.
-    return withUrl.length <= MAX_DESKTOP_ANSWER_CHARACTERS
-      ? withUrl
-      : buildDeterministicAnswer(record, baseUrl);
-  }
   return withUrl.length <= MAX_RENDERED_ANSWER_CHARACTERS
     ? withUrl
     : `${withUrl.slice(0, MAX_RENDERED_ANSWER_CHARACTERS - 3)}...`;
@@ -1659,23 +1660,40 @@ export class HelpBotAnswerer {
     request: HelpBotAnswerRequest
   ): Promise<HelpBotAnswerResult | null> {
     const context = parseHelpBotQuestionContext(request.question);
+    const previousAnswer =
+      request.previousBotAnswer ?? context.repliedToDropContext;
     const desktopQuestion = desktopQuestionWithContext(
       context.primaryQuestion,
-      request.previousBotAnswer ?? context.repliedToDropContext
+      previousAnswer
     );
-    if (!desktopQuestion) {
+    const needsContext =
+      !desktopQuestion && isAmbiguousDesktopQuestion(context.primaryQuestion);
+    if (!desktopQuestion && !needsContext) {
       return null;
     }
     // A thrown load error reaches the processor's technical-failure/refund path.
-    const match = await this.findKnowledgeMatches(desktopQuestion, {
-      desktopScope: true
-    });
+    const match = await this.findKnowledgeMatches(
+      desktopQuestion ?? context.primaryQuestion,
+      {
+        desktopScope: true,
+        desktopRecordId: needsContext
+          ? 'desktop.clarify-context'
+          : desktopRecordIdForQuestion(context.primaryQuestion, previousAnswer)
+      }
+    );
     if (
       match &&
       (isDesktopKnowledgeRecord(match.record) ||
         match.record.tags.includes('desktop'))
     ) {
-      return this.answerFromKnowledgeMatch(request, match);
+      return this.answerFromKnowledgeMatch(
+        {
+          ...request,
+          question: context.primaryQuestion,
+          previousBotAnswer: previousAnswer
+        },
+        match
+      );
     }
     // Local-node state cannot be replaced with a public database answer.
     return { type: 'NO_RELIABLE_SOURCE', escalateToTechTeam: true };
@@ -1722,11 +1740,20 @@ export class HelpBotAnswerer {
       };
     }
 
-    if (!this.renderer) {
+    // Curated diagnostic turns preserve acknowledged progress verbatim for the next reply.
+    const shortDialogue =
+      isDesktopKnowledgeRecord(answerRecord) &&
+      answerRecord.tags.includes('desktop-dialogue') &&
+      !wantsDetailedDesktopAnswer(request.question);
+    if (!this.renderer || shortDialogue) {
       return {
         type: 'ANSWER',
         answer: maybeWithWeakCaveat(
-          buildDeterministicAnswer(answerRecord, request.baseUrl)
+          buildDeterministicAnswer(
+            answerRecord,
+            request.baseUrl,
+            request.question
+          )
         ),
         record: answerRecord,
         escalateToTechTeam
@@ -1744,7 +1771,12 @@ export class HelpBotAnswerer {
         return {
           type: 'ANSWER',
           answer: maybeWithWeakCaveat(
-            normalizeRenderedAnswer(rendered, answerRecord, request.baseUrl)
+            normalizeRenderedAnswer(
+              rendered,
+              answerRecord,
+              request.baseUrl,
+              request.question
+            )
           ),
           record: answerRecord,
           escalateToTechTeam
@@ -1760,7 +1792,11 @@ export class HelpBotAnswerer {
     return {
       type: 'ANSWER',
       answer: maybeWithWeakCaveat(
-        buildDeterministicAnswer(answerRecord, request.baseUrl)
+        buildDeterministicAnswer(
+          answerRecord,
+          request.baseUrl,
+          request.question
+        )
       ),
       record: answerRecord,
       escalateToTechTeam
