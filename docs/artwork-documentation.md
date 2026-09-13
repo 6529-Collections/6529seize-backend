@@ -35,6 +35,14 @@ and an event. A snapshot normalizes strings to NFC/LF before RFC 8785-compatible
 canonical JSON and SHA-256. Source receipts retain their separate original
 bytes and hashes. Digests establish byte equality, not truth or authorship.
 
+When `files.master_availability` is `same_as_final`, the artist identifies the
+selected canonical artwork file as the preservation master. Confirmation uses
+its existing `artwork_final` link and retains the answer and canonical asset ID
+in the snapshot; it does not require a duplicate upload or add a second role
+link. The file must still pass the existing publication, role and readiness
+checks. A separately `supplied` master or source file still requires its
+corresponding asset-role link.
+
 The three review lanes refer to one immutable revision. Later draft edits do
 not overwrite an earlier confirmation or carry acceptance into a new revision.
 Legacy rights-sensitive fields, private contact, source receipts and original-file
