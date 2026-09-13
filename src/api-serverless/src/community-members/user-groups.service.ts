@@ -119,7 +119,12 @@ type GClean = Omit<
   | 'is_beneficiary_of_grant'
 >;
 
-type GroupSqlOptions = { forOnlineRecipients?: boolean };
+type GroupSqlOptions = {
+  forOnlineRecipients?: boolean;
+  // Restrict REP work to profiles that can match a member list/count search.
+  // The caller must still apply the search to the final identity rows.
+  memberSearch?: string | null;
+};
 
 // Required makes new top-level criteria, including optional ones, require an
 // explicit template update. Exact comparison rejects unknown runtime criteria.
@@ -1849,7 +1854,8 @@ export class UserGroupsService {
 
   public async getSqlAndParamsForPreview(
     description: ApiCreateGroupDescription,
-    ctx: RequestContext
+    ctx: RequestContext,
+    options: GroupSqlOptions = {}
   ): Promise<{
     sql: string;
     params: Record<string, any>;
@@ -1878,10 +1884,16 @@ export class UserGroupsService {
         description.is_beneficiary_of_grant_match_mode ??
         ApiGroupBeneficiaryGrantMatchMode.AnyToken
     };
-    return await this.getSqlAndParams(group, null, ctx, {
-      includedAddresses: description.identity_addresses ?? [],
-      excludedAddresses: description.excluded_identity_addresses ?? []
-    });
+    return await this.getSqlAndParams(
+      group,
+      null,
+      ctx,
+      {
+        includedAddresses: description.identity_addresses ?? [],
+        excludedAddresses: description.excluded_identity_addresses ?? []
+      },
+      options
+    );
   }
 
   /**
@@ -2048,7 +2060,7 @@ export class UserGroupsService {
       ) ?? DEFAULT_BENEFICIARY_GRANT_MATCH_MODE,
       params
     );
-    const repPart = this.getRepPart(group, params);
+    const repPart = this.getRepPart(group, params, options.memberSearch);
     const cicPart = this.getCicPart(group, params, repPart);
     const nftsPart = this.getNftsPart(
       group,
@@ -2594,7 +2606,39 @@ export class UserGroupsService {
     return cicPart;
   }
 
-  private getRepPart(group: GClean, params: Record<string, any>) {
+  private getRepMemberSearchPart(
+    direction: ApiGroupFilterDirection,
+    memberSearchInput: string | null | undefined,
+    params: Record<string, unknown>
+  ): string {
+    const memberSearch = memberSearchInput?.trim().toLowerCase();
+    if (!memberSearch) {
+      return '';
+    }
+    params.rep_member_search = memberSearch;
+    const profileColumn =
+      direction === ApiGroupFilterDirection.Received
+        ? 'matter_target_id'
+        : 'rater_profile_id';
+    // Restrict aggregation/materialization without multiplying ratings when a
+    // profile has multiple identities. Keep the existing comparison collation
+    // and complete live sum; this does not guarantee a smaller ratings scan.
+    return ` and ${profileColumn} in (
+      select candidates.profile_id from (
+        select distinct member.profile_id from ${IDENTITIES_TABLE} member
+        where member.profile_id is not null and (
+          instr(lower(ifnull(member.handle, member.primary_address)), :rep_member_search) > 0
+          or instr(lower(member.primary_address), :rep_member_search) > 0
+        )
+      ) candidates
+    )`;
+  }
+
+  private getRepPart(
+    group: GClean,
+    params: Record<string, any>,
+    memberSearch?: string | null
+  ) {
     let repPart = null;
     const repGroup = group.rep;
     if (
@@ -2604,6 +2648,11 @@ export class UserGroupsService {
       repGroup.min
     ) {
       const direction = repGroup.direction ?? ApiGroupFilterDirection.Received;
+      const memberSearchPart = this.getRepMemberSearchPart(
+        direction,
+        memberSearch,
+        params
+      );
       if (repGroup.user_identity) {
         params.rep_user = repGroup.user_identity;
       }
@@ -2617,7 +2666,7 @@ export class UserGroupsService {
           direction === ApiGroupFilterDirection.Received
             ? 'rater_profile_id'
             : 'matter_target_id'
-        } = :rep_user)`;
+        } = :rep_user${memberSearchPart})`;
       } else if (
         repGroup.user_identity !== null &&
         repGroup.category === null
@@ -2630,7 +2679,7 @@ export class UserGroupsService {
           direction === ApiGroupFilterDirection.Received
             ? 'rater_profile_id'
             : 'matter_target_id'
-        } = :rep_user group by 1, 2)`;
+        } = :rep_user${memberSearchPart} group by 1, 2)`;
       } else if (
         repGroup.user_identity === null &&
         repGroup.category !== null
@@ -2639,13 +2688,13 @@ export class UserGroupsService {
           direction === ApiGroupFilterDirection.Received
             ? 'matter_target_id'
             : 'rater_profile_id'
-        } as profile_id, matter_category, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0 group by 1, 2)`;
+        } as profile_id, matter_category, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0${memberSearchPart} group by 1, 2)`;
       } else {
         groupedRepQuery = `grouped_reps as (select ${
           direction === ApiGroupFilterDirection.Received
             ? 'matter_target_id'
             : 'rater_profile_id'
-        } as profile_id, null as matter_category, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0 group by 1, 2)`;
+        } as profile_id, null as matter_category, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0${memberSearchPart} group by 1, 2)`;
       }
 
       repPart = `${groupedRepQuery}, rep_exchanges as (select distinct profile_id from grouped_reps where true `;
