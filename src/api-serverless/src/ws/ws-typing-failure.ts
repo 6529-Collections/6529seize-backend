@@ -15,13 +15,14 @@ export function typingFailureDetails(error: unknown) {
     error !== null && typeof error === 'object' && 'code' in error
       ? error.code
       : undefined;
+  let errorType = 'Unknown';
+  if (error instanceof TypeError) {
+    errorType = 'TypeError';
+  } else if (error instanceof Error) {
+    errorType = 'Error';
+  }
   return {
-    error_type:
-      error instanceof TypeError
-        ? 'TypeError'
-        : error instanceof Error
-          ? 'Error'
-          : 'Unknown',
+    error_type: errorType,
     error_code:
       typeof code === 'string' && ERROR_CODES.has(code) ? code : 'OTHER'
   };
