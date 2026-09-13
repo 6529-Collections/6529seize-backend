@@ -10,13 +10,13 @@
  * Do not edit the class manually.
  */
 
-import { ApiCollectFamily } from '../models/ApiCollectFamily';
+import { ApiCollectPlanningFamily } from '../models/ApiCollectPlanningFamily';
 import { ApiCollectTdhListing } from '../models/ApiCollectTdhListing';
 import { HttpFile } from '../http/http';
 
 export class ApiCollectTdhListings {
     'entries': Array<ApiCollectTdhListing>;
-    'family': ApiCollectFamily;
+    'family': ApiCollectPlanningFamily;
     'next': string | null;
     'snapshot_id': string;
     'catalog_version': string;
@@ -45,7 +45,7 @@ export class ApiCollectTdhListings {
         {
             "name": "family",
             "baseName": "family",
-            "type": "ApiCollectFamily",
+            "type": "ApiCollectPlanningFamily",
             "format": ""
         },
         {

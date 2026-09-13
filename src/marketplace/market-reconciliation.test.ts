@@ -1,4 +1,5 @@
 import { Interface } from 'ethers';
+import { MEMELAB_CONTRACT } from '@/constants';
 import type { MarketPrepared } from '@/marketplace/market-preparation';
 import type { MarketOperationRow } from '@/marketplace/market-operations.db';
 import {
@@ -44,10 +45,14 @@ const listing: MarketTradeIntent = {
   endTime: '1900000000'
 };
 
-function fixture() {
-  const order = buildMarketOrder(listing, '4', '5').order;
-  const intent = {
+function fixture(assetContract = contract) {
+  const selectedListing = {
     ...listing,
+    asset: { ...listing.asset, contract: assetContract }
+  };
+  const order = buildMarketOrder(selectedListing, '4', '5').order;
+  const intent = {
+    ...selectedListing,
     kind: 'BUY' as const,
     wallet: buyer,
     recipient,
@@ -74,7 +79,7 @@ function fixture() {
       maker,
       MARKET_ZERO_ADDRESS,
       recipient,
-      [[3, contract, '56', '2']],
+      [[3, assetContract, '56', '2']],
       [
         [0, MARKET_ZERO_ADDRESS, '0', '198', maker],
         [0, MARKET_ZERO_ADDRESS, '0', '2', maker]
@@ -98,7 +103,7 @@ function fixture() {
     status: 1,
     logs: [
       { address: MARKET_SEAPORT, ...fill },
-      { address: contract, ...transfer }
+      { address: assetContract, ...transfer }
     ]
   };
   const submitted: MarketTransactionEvidence = {
@@ -137,6 +142,27 @@ function deps(value: ReturnType<typeof fixture>, safeNumber = 99) {
 }
 
 describe('safe marketplace reconciliation', () => {
+  it('requires exact Meme Lab custody evidence and rejects another contract with the same token ID', () => {
+    const value = fixture(MEMELAB_CONTRACT);
+    expect(
+      validateMarketReceipt(
+        value.prepared,
+        'BUY',
+        value.submitted,
+        value.receipt
+      ).filledQuantity
+    ).toBe('2');
+    expect(() =>
+      validateMarketReceipt(value.prepared, 'BUY', value.submitted, {
+        ...value.receipt,
+        logs: value.receipt.logs.map((entry) =>
+          entry.address === MEMELAB_CONTRACT
+            ? { ...entry, address: contract }
+            : entry
+        )
+      })
+    ).toThrow(/delivery/);
+  });
   it.each([
     { status: 409, code: 'OPERATION_CHANGED', conflict: true },
     { status: 409, code: 'OTHER_CONFLICT', conflict: false },

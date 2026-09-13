@@ -1,4 +1,8 @@
-import { GRADIENT_CONTRACT, MEMES_CONTRACT } from '@/constants';
+import {
+  GRADIENT_CONTRACT,
+  MEMES_CONTRACT,
+  MEMELAB_CONTRACT
+} from '@/constants';
 import { MarketValidationError } from '@/marketplace/provider.types';
 
 export const MARKET_CHAIN_ID = 1;
@@ -19,9 +23,21 @@ export const MARKET_ASSET_STANDARDS: Readonly<
   Record<string, 'ERC721' | 'ERC1155'>
 > = Object.freeze({
   [MEMES_CONTRACT.toLowerCase()]: 'ERC1155',
+  [MEMELAB_CONTRACT.toLowerCase()]: 'ERC1155',
   [GRADIENT_CONTRACT.toLowerCase()]: 'ERC721',
   [MARKET_NEXTGEN]: 'ERC721'
 });
+
+/** Contract identity, never the response family label, determines the signing standard. */
+export function marketAssetStandard(contract: string): 'ERC721' | 'ERC1155' {
+  const standard = MARKET_ASSET_STANDARDS[contract.toLowerCase()];
+  if (!standard)
+    throw new MarketValidationError(
+      'INVALID_INTENT',
+      'Unsupported collection.'
+    );
+  return standard;
+}
 
 export function marketSpender(conduitKey: string): string {
   const key = conduitKey.toLowerCase();

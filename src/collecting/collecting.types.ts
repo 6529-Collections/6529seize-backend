@@ -1,5 +1,7 @@
 /** Internal domain contracts. Public responses are mapped to OpenAPI-generated models. */
 export type CollectingFamily = 'memes' | 'gradients' | 'pebbles';
+/** Card trading can resolve additional collections without widening planner universes. */
+export type CollectingTradeFamily = CollectingFamily | 'memelab';
 export type PebblesTrait = 'Palette' | 'Size' | 'Traced';
 export type CollectingGoalKind =
   | 'memes_season'
@@ -15,7 +17,7 @@ export interface CollectingAsset {
   chain_id: number;
   contract: string;
   token_id: string;
-  family: CollectingFamily;
+  family: CollectingTradeFamily;
   name: string;
   image_url: string | null;
   artist_ids: string[];
@@ -104,7 +106,7 @@ export interface CollectingAnalysis {
 }
 
 export interface CollectingAssetSearch {
-  family?: CollectingFamily;
+  family?: CollectingTradeFamily;
   query?: string;
   page: number;
   page_size: number;

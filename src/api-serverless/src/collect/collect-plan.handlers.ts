@@ -5,7 +5,7 @@ import {
   ApiCollectPlanStateEnum
 } from '@/api/generated/models/ApiCollectPlan';
 import { ApiCollectKind } from '@/api/generated/models/ApiCollectKind';
-import { ApiCollectFamily } from '@/api/generated/models/ApiCollectFamily';
+import { ApiCollectPlanningFamily } from '@/api/generated/models/ApiCollectPlanningFamily';
 import {
   ApiCollectAcquisitionPlan,
   ApiCollectAcquisitionPlanOptimalityEnum,
@@ -99,7 +99,7 @@ function projectionAccountDto(account: ProjectedAccountTdh) {
     ...account,
     tokens: account.tokens.map((token) => ({
       ...token,
-      family: token.family as ApiCollectFamily
+      family: token.family as ApiCollectPlanningFamily
     })),
     boost_breakdown: Object.entries(account.boost_breakdown).map(
       ([id, boost]) => ({ id, ...boost })

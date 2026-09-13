@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { CollectingDb } from '@/collecting/collecting.db';
+import { CollectingTradeAssetsDb } from '@/collecting/collecting-trade-assets';
 import { collectingAssetKey } from '@/collecting/collecting-analysis';
 import { assertCollectingTdhParity } from '@/collecting/collecting-tdh-projection';
 import {
@@ -7,14 +8,16 @@ import {
   ARTISTS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   MEMES_CONTRACT,
+  MEMELAB_CONTRACT,
   NFTS_TABLE,
+  NFTS_MEME_LAB_TABLE,
   NFT_OWNERS_TABLE,
   NFT_OWNERS_SYNC_STATE_TABLE,
   NULL_ADDRESS,
   TDH_BLOCKS_TABLE,
   TRANSACTIONS_TABLE
 } from '@/constants';
-import { NFT } from '@/entities/INFT';
+import { LabNFT, NFT } from '@/entities/INFT';
 import { Transaction } from '@/entities/ITransaction';
 import { dbSupplier, sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
@@ -92,6 +95,24 @@ function transaction(
   };
 }
 
+function labNft(id: number): LabNFT {
+  const {
+    edition_size_floor: _floor,
+    hodl_rate: _rate,
+    boosted_tdh: _boosted,
+    tdh: _tdh,
+    tdh__raw: _raw,
+    tdh_rank: _rank,
+    ...base
+  } = nft(id);
+  return {
+    ...base,
+    contract: MEMELAB_CONTRACT,
+    collection: 'Meme Lab',
+    meme_references: []
+  };
+}
+
 // The legacy artist index is not managed by TypeORM. Provision only the selected
 // legacy columns in the isolated test database, never in an application path.
 beforeEach(async () => {
@@ -142,6 +163,14 @@ describeWithSeed(
       ]
     },
     {
+      table: NFTS_MEME_LAB_TABLE,
+      rows: [
+        labNft(70),
+        { ...labNft(71), contract: seller },
+        { ...labNft(72), mint_date: null }
+      ]
+    },
+    {
       table: TDH_BLOCKS_TABLE,
       rows: [
         {
@@ -157,13 +186,22 @@ describeWithSeed(
     },
     {
       table: NFT_OWNERS_TABLE,
-      rows: [walletA, walletB].map((wallet) => ({
-        contract: MEMES_CONTRACT,
-        token_id: 1,
-        wallet,
-        balance: 1,
-        block_reference: 110
-      }))
+      rows: [
+        ...[walletA, walletB].map((wallet) => ({
+          contract: MEMES_CONTRACT,
+          token_id: 1,
+          wallet,
+          balance: 1,
+          block_reference: 110
+        })),
+        ...[walletA, walletB, seller].map((wallet, index) => ({
+          contract: MEMELAB_CONTRACT,
+          token_id: 70,
+          wallet,
+          balance: index + 2,
+          block_reference: 110
+        }))
+      ]
     },
     {
       table: TRANSACTIONS_TABLE,
@@ -225,6 +263,50 @@ describeWithSeed(
         block_number: 110,
         nextgen_block_number: null
       });
+    });
+
+    it('opts into exact Lab holdings only for confirmed profile wallets and resolves only minted known-contract artwork', async () => {
+      const trade = new CollectingTradeAssetsDb(dbSupplier);
+      const assets = await trade.readMemeLabAssets(['70', '71', '72']);
+      expect(assets).toHaveLength(1);
+      expect(assets[0]).toMatchObject({
+        asset_key: collectingAssetKey(MEMELAB_CONTRACT, '70'),
+        family: 'memelab',
+        hodl_rate: null,
+        tdh_eligible: false
+      });
+      expect(
+        (await db.readCatalog()).assets.some(
+          (asset) => asset.family === 'memelab'
+        )
+      ).toBe(false);
+      const ordinary = await db.readAccountHoldings('profile');
+      expect(
+        ordinary.holdings.some(
+          (holding) => holding.asset_key === assets[0].asset_key
+        )
+      ).toBe(false);
+      const explicit = await db.readAccountHoldings('profile', {
+        includeMemeLab: true
+      });
+      expect(
+        explicit.holdings.filter(
+          (holding) => holding.asset_key === assets[0].asset_key
+        )
+      ).toEqual([
+        { asset_key: assets[0].asset_key, wallet: walletA, quantity: '2' },
+        { asset_key: assets[0].asset_key, wallet: walletB, quantity: '3' }
+      ]);
+      await expect(
+        db.readAccountHoldings('missing-profile', { includeMemeLab: true })
+      ).rejects.toThrow('profile not found');
+      await sqlExecutor.execute(
+        `DELETE FROM ${ADDRESS_CONSOLIDATION_KEY} WHERE address = :wallet`,
+        { wallet: walletB }
+      );
+      await expect(
+        db.readAccountHoldings('profile', { includeMemeLab: true })
+      ).rejects.toThrow('membership is updating');
     });
 
     it('reconstructs exact supply rates and per-wallet rounding at the official block', async () => {

@@ -10,7 +10,7 @@ import { ApiCollectCapabilityActionEnum } from '@/api/generated/models/ApiCollec
 import { collectingService } from '@/collecting/collecting.service';
 import {
   CollectingAnalysisRequest,
-  CollectingFamily
+  CollectingTradeFamily
 } from '@/collecting/collecting.types';
 import { BadRequestException } from '@/exceptions';
 import * as Joi from 'joi';
@@ -106,7 +106,7 @@ export async function handleGetCollectAssets(
   if (validation.error)
     throw new BadRequestException('Invalid collection search.');
   const query = validation.value as {
-    family?: CollectingFamily;
+    family?: CollectingTradeFamily;
     query?: string;
     page: number;
     page_size: number;
@@ -129,7 +129,8 @@ export async function handleAnalyzeCollectGoal(
   if (validation.error)
     throw new BadRequestException('Invalid collecting goal.');
   const result = await collectingService.analyze(
-    validation.value as CollectingAnalysisRequest
+    validation.value as CollectingAnalysisRequest,
+    { includeTradeAssets: true }
   );
   return { ...result, kind: result.kind as ApiCollectKind };
 }

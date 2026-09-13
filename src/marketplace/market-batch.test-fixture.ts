@@ -22,7 +22,10 @@ export const BATCH_FREN = '0x3333333333333333333333333333333333333333';
 export const BATCH_SELLER = '0x4444444444444444444444444444444444444444';
 export const BATCH_FEE = '0x5555555555555555555555555555555555555555';
 
-export function marketBatchFixture(count = 2): {
+export function marketBatchFixture(
+  count = 2,
+  erc1155Contract = MEMES_CONTRACT
+): {
   intent: MarketBatchIntent;
   materials: MarketBatchFulfillmentMaterial[];
   terms: MarketBatchMirrorTerms;
@@ -40,7 +43,7 @@ export function marketBatchFixture(count = 2): {
   for (let index = 0; index < count; index++) {
     const is721 = index === 0;
     const asset = {
-      contract: is721 ? GRADIENT_CONTRACT : MEMES_CONTRACT,
+      contract: is721 ? GRADIENT_CONTRACT : erc1155Contract,
       tokenId: String(index + 1),
       standard: is721 ? ('ERC721' as const) : ('ERC1155' as const)
     };
