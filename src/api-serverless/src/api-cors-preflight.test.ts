@@ -20,6 +20,12 @@ const IDEMPOTENT_PATHS = [
   '/collect/rules',
   '/collect/rules/{id}/prepare'
 ];
+const MODERATED_SUBMISSION_PATHS = [
+  '/drops',
+  '/drops/{id}',
+  '/profiles/{id}/cic/statements',
+  '/groups/{id}/visible'
+];
 
 type ApiOperation = {
   parameters?: { name: string; in: string; required?: boolean }[];
@@ -27,7 +33,7 @@ type ApiOperation = {
   'x-6529-router'?: { auth?: string };
 };
 
-describe('idempotent marketplace and collecting preflights', () => {
+describe('idempotent API submission preflights', () => {
   let server: Server;
   let url: string;
   const downstream = jest.fn();
@@ -79,7 +85,7 @@ describe('idempotent marketplace and collecting preflights', () => {
     });
   }
 
-  it.each(IDEMPOTENT_PATHS)(
+  it.each([...IDEMPOTENT_PATHS, ...MODERATED_SUBMISSION_PATHS])(
     'permits the browser headers already required by POST %s',
     async (path) => {
       const response = await preflight(
@@ -106,7 +112,11 @@ describe('idempotent marketplace and collecting preflights', () => {
   it.each([
     '/API/MARKET/operations/',
     '/Api/Collect/rules/',
-    '/api/collect/RULES/rule-id/PREPARE/'
+    '/api/collect/RULES/rule-id/PREPARE/',
+    '/API/DROPS/',
+    '/Api/Drops/drop-id/',
+    '/api/Profiles/profile-id/CIC/Statements/',
+    '/api/Groups/group-id/Visible/'
   ])(
     'matches normal Express case and trailing-slash routing at %s',
     async (path) => {
@@ -129,7 +139,12 @@ describe('idempotent marketplace and collecting preflights', () => {
     '/api/collect/rules/rule-id/prepare/extra',
     '/api/collect/rules/rule-id/extra/prepare',
     '/api/collect/rules//prepare',
-    '/api/drops'
+    '/api/drops-extra',
+    '/api/drops/drop-id/reaction',
+    '/api/profiles/profile-id/cic/statements/extra',
+    '/api/profiles/profile-id/cic',
+    '/api/groups/group-id/visible/extra',
+    '/api/groups//visible'
   ])(
     'does not grant an extra request header to adjacent route %s',
     async (path) => {
@@ -177,17 +192,23 @@ describe('idempotent marketplace and collecting preflights', () => {
     );
   });
 
-  it('continues past CORS for actual requests, leaving authentication in force', async () => {
-    const response = await fetch(`${url}/api/market/operations`, {
-      method: 'POST',
-      headers: {
-        Origin: 'https://6529.io',
-        'Content-Type': 'application/json',
-        'Idempotency-Key': 'synthetic-idempotency-key'
-      },
-      body: '{}'
-    });
-    expect(response.status).toBe(401);
-    expect(downstream).toHaveBeenCalledTimes(1);
-  });
+  it.each(['/market/operations', ...MODERATED_SUBMISSION_PATHS])(
+    'continues past CORS for POST %s, leaving authentication in force',
+    async (path) => {
+      const response = await fetch(
+        `${url}/api${path.replace('{id}', 'test-id')}`,
+        {
+          method: 'POST',
+          headers: {
+            Origin: 'https://6529.io',
+            'Content-Type': 'application/json',
+            'Idempotency-Key': 'synthetic-idempotency-key'
+          },
+          body: '{}'
+        }
+      );
+      expect(response.status).toBe(401);
+      expect(downstream).toHaveBeenCalledTimes(1);
+    }
+  );
 });
