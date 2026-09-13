@@ -573,6 +573,8 @@ Notification invalidation is emitted only after the push worker loads durable no
 
 WebSocket notification subscription replacement is transactional. New connections, re-authentication, and identity resyncs each have a one-percent chance of running bounded, deterministic cleanup of expired and orphaned subscription rows, so cleanup capacity follows subscription churn without putting the sweep on every hot-path call. The repository identity update method is the sole write path for `ws_connections.identity_id` and keeps the primary subscription reset coupled to re-authentication.
 
+Typing updates use the server-authenticated connection profile when resolving private visibility groups. The sender must appear in the current child/parent membership intersection for the active wave before a typing message is sent; recipients retain the same intersection. Successful typing is acknowledged with 200, expected access failures keep client-error status, and unexpected failures emit only bounded operation-stage and error labels.
+
 ## API Boundary
 
 The API is organized by domain routers under `src/api-serverless/src`. The OpenAPI file defines the public contract and generated models. Legacy routes are wired manually, while newer OpenAPI operations can opt into generated route wiring through `x-6529-router` and thin domain handlers.
