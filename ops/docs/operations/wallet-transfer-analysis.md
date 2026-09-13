@@ -214,6 +214,8 @@ transactions. At one percent duty, each millisecond of measured update work is
 followed by at least 99 milliseconds of rest; the minimum rest is two seconds.
 Duty is capped at ten percent. This controls application pacing, not an exact
 share of DB CPU. Start at one percent and only adjust after measured trials.
+Update durations, cooldowns and the runtime budget use a monotonic clock, so
+wall-clock corrections do not change measured work or rest time.
 `max_rows` defaults to 10,000 and shares the CLI's 100,000-row ceiling. If a hot
 bucket exceeds the configured limit, the runner stops; inspect that bucket's
 plan and load before raising the limit and resuming. Never skip it.
@@ -240,6 +242,21 @@ inspection before explicitly changing that state to `paused`; no automatic
 retry skips or repeatedly hammers a failing bucket. If a process was killed,
 verify it has exited before removing a stale local `runner.lock`. MySQL
 releases its advisory lock when the connection closes.
+
+Local progress files use whole-file atomic replacement. Temporary-file writes
+and replacement each allow four attempts for `EPERM`, `EACCES` or `EBUSY`, with
+50, 100 and 200 millisecond waits. These retries apply only to local file
+operations after any bucket transaction has ended; they do not repeat DB work
+or skip a bucket. Other errors fail immediately, and exhausted retries stop
+the runner. Failure diagnostics identify the operation and an allowlisted
+error code without including raw messages, paths or query text.
+
+A local progress save can fail after its bucket has committed. Preserve the
+failed run's state and diagnostics, check the DB checkpoint and completed
+bucket, and confirm process and advisory-lock ownership before recovery. If
+even the failure state cannot be written, use the nonzero process exit and
+safe stderr diagnostic; do not treat an older local state as success. Keep
+the original target and let the runner reread the DB checkpoint on resume.
 
 Runtime and invocation limits exit with `paused_budget`; invoke the same
 configuration again to resume its fixed historical target. Once covered, the

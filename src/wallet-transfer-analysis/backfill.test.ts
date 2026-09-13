@@ -5,6 +5,7 @@ import {
   rmSync,
   writeFileSync
 } from 'node:fs';
+import { rename, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { MEMES_CONTRACT } from '@/constants';
@@ -23,6 +24,20 @@ import { walletTransferAnalysisService } from './wallet-transfer-analysis.servic
 const mockMetricSend = jest.fn();
 const mockMetricDestroy = jest.fn();
 const mockAssertHeld = jest.fn();
+
+jest.mock('node:fs/promises', () => {
+  const fs = jest.requireActual<typeof import('node:fs')>('node:fs');
+  return {
+    writeFile: jest.fn(
+      async (path: string, data: string, options: { mode: number }) => {
+        fs.writeFileSync(path, data, options);
+      }
+    ),
+    rename: jest.fn(async (source: string, target: string) => {
+      fs.renameSync(source, target);
+    })
+  };
+});
 
 jest.mock('@aws-sdk/client-cloudwatch', () => ({
   CloudWatchClient: jest.fn(() => ({
@@ -63,6 +78,8 @@ const NOW = Date.UTC(2026, 8, 12, 18);
 const DATABASE_UUID = '11111111-1111-4111-8111-111111111111';
 const TEMP_PREFIX = 'wallet-transfer-backfill-test-';
 const CONTRACT = MEMES_CONTRACT.toLowerCase();
+const defaultStateWrite = jest.mocked(writeFile).getMockImplementation()!;
+const defaultStateRename = jest.mocked(rename).getMockImplementation()!;
 
 interface SavedState {
   status: string;
@@ -130,6 +147,8 @@ describe('wallet transfer backfill operator lifecycle', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(writeFile).mockReset().mockImplementation(defaultStateWrite);
+    jest.mocked(rename).mockReset().mockImplementation(defaultStateRename);
     jest.useFakeTimers({ now: NOW });
     jest.spyOn(process.stdout, 'write').mockReturnValue(true);
     jest.spyOn(process.stderr, 'write').mockReturnValue(true);
@@ -423,7 +442,7 @@ describe('wallet transfer backfill operator lifecycle', () => {
       });
 
     await expect(startRunner()).rejects.toThrow(
-      'Backfill stopped after an execution failure'
+      'Bucket exceeds max-rows=10000'
     );
 
     expect(savedState()).toEqual(
@@ -494,5 +513,181 @@ describe('wallet transfer backfill operator lifecycle', () => {
     ).toBe(
       'Wallet transfer backfill failed. Inspect its private operator state and logs.'
     );
+  });
+
+  it.each(['write', 'replace'] as const)(
+    'retries a transient cooldown state %s without repeating committed DB work',
+    async (operation) => {
+      let failures = 0;
+      const rejectOnce = () => {
+        if (lastBlock === 1_999 && failures === 0) {
+          failures++;
+          throw Object.assign(new Error('private file details'), {
+            code: operation === 'write' ? 'EACCES' : 'EPERM'
+          });
+        }
+      };
+      jest.mocked(writeFile).mockImplementation(async (...args) => {
+        if (operation === 'write') rejectOnce();
+        return defaultStateWrite(...args);
+      });
+      jest.mocked(rename).mockImplementation(async (...args) => {
+        if (operation === 'replace') rejectOnce();
+        return defaultStateRename(...args);
+      });
+
+      const execution = startRunner();
+      await jest.advanceTimersByTimeAsync(3_000);
+      await execution;
+
+      expect(failures).toBe(1);
+      expect(walletTransferAnalysisService.update).toHaveBeenCalledTimes(1);
+      expect(walletTransferAnalysisService.rebuild).not.toHaveBeenCalled();
+      expect(savedState()).toEqual(
+        expect.objectContaining({
+          status: 'paused_budget',
+          last_block: 1_999,
+          invocations: 1,
+          target_block: 1_005
+        })
+      );
+    }
+  );
+
+  it.each([
+    { code: 'ENOSPC', expectedAttempts: 1 },
+    { code: 'EBUSY', expectedAttempts: 4 }
+  ])('fails closed after a cooldown replacement failure: %p', async (test) => {
+    let failedReplacements = 0;
+    jest.mocked(rename).mockImplementation(async (...args) => {
+      const pendingState = JSON.parse(
+        readFileSync(args[0], 'utf8')
+      ) as SavedState;
+      if (pendingState.status === 'cooldown') {
+        failedReplacements++;
+        throw Object.assign(new Error('private path, SQL and credential'), {
+          code: test.code,
+          path: 'private path'
+        });
+      }
+      return defaultStateRename(...args);
+    });
+
+    const execution = startRunner();
+    await jest.advanceTimersByTimeAsync(1_000);
+    await expect(execution.catch(backfillFailureMessage)).resolves.toBe(
+      `Backfill state replace failed (${test.code})`
+    );
+
+    expect(failedReplacements).toBe(test.expectedAttempts);
+    expect(lastBlock).toBe(1_999);
+    expect(walletTransferAnalysisService.update).toHaveBeenCalledTimes(1);
+    expect(savedState()).toEqual(
+      expect.objectContaining({
+        status: 'failed',
+        last_block: 1_999,
+        invocations: 1,
+        target_block: 1_005,
+        detail: `Backfill state replace failed (${test.code})`
+      })
+    );
+    expect(JSON.stringify(savedState())).not.toContain('private');
+    await expect(startRunner()).rejects.toThrow('Previous backfill failed');
+    expect(walletTransferAnalysisService.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves safe diagnostics when writing the failed state also fails', async () => {
+    let failedReplacements = 0;
+    jest.mocked(rename).mockImplementation(async (...args) => {
+      if (lastBlock === 1_999) {
+        failedReplacements++;
+        throw Object.assign(new Error('private path and credential'), {
+          code: 'EPERM'
+        });
+      }
+      return defaultStateRename(...args);
+    });
+
+    const execution = startRunner();
+    await jest.advanceTimersByTimeAsync(1_000);
+    await expect(execution.catch(backfillFailureMessage)).resolves.toBe(
+      'Backfill state replace failed (EPERM)'
+    );
+
+    expect(failedReplacements).toBe(8);
+    expect(walletTransferAnalysisService.update).toHaveBeenCalledTimes(1);
+    expect(walletTransferAnalysisService.rebuild).not.toHaveBeenCalled();
+    expect(lastBlock).toBe(1_999);
+    // An unwritable state file can lag; it cannot roll back the DB checkpoint.
+    expect(savedState()).toEqual(
+      expect.objectContaining({ status: 'running', last_block: -1 })
+    );
+    expect(existsSync(join(directory, 'runner.lock'))).toBe(false);
+  });
+
+  it('rechecks stop controls after a state-write retry before DB work', async () => {
+    jest.mocked(writeFile).mockRejectedValueOnce({ code: 'EBUSY' });
+    const execution = startRunner();
+    await jest.advanceTimersByTimeAsync(0);
+
+    await stopRunner(execution);
+
+    expect(savedState().status).toBe('stopped');
+    expect(walletTransferAnalysisService.update).not.toHaveBeenCalled();
+    expect(walletTransferAnalysisService.rebuild).not.toHaveBeenCalled();
+  });
+
+  it('uses monotonic batch duration and run budget across a wall-clock rollback', async () => {
+    const update = jest
+      .mocked(walletTransferAnalysisService.update)
+      .getMockImplementation()!;
+    jest
+      .mocked(walletTransferAnalysisService.update)
+      .mockImplementation(async (options) => {
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 4_000));
+        jest.setSystemTime(Date.now() - 60_000);
+        return update(options);
+      });
+
+    const execution = startRunner();
+    await jest.advanceTimersByTimeAsync(4_000);
+    expect(savedState()).toEqual(
+      expect.objectContaining({
+        status: 'cooldown',
+        detail: expect.objectContaining({ elapsed_ms: 4_000 })
+      })
+    );
+    await jest.advanceTimersByTimeAsync(56_000);
+    await execution;
+
+    expect(savedState().status).toBe('paused_budget');
+    expect(walletTransferAnalysisService.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('records a safe pacing diagnostic after an invalid monotonic sample', async () => {
+    const update = jest
+      .mocked(walletTransferAnalysisService.update)
+      .getMockImplementation()!;
+    jest
+      .mocked(walletTransferAnalysisService.update)
+      .mockImplementation(async (options) => {
+        jest.spyOn(performance, 'now').mockReturnValueOnce(NaN);
+        return update(options);
+      });
+
+    const execution = startRunner();
+    await expect(execution.catch(backfillFailureMessage)).resolves.toBe(
+      'Backfill pacing failed (INVALID_DURATION_OR_DUTY)'
+    );
+
+    expect(savedState()).toEqual(
+      expect.objectContaining({
+        status: 'failed',
+        last_block: 1_999,
+        invocations: 1,
+        detail: 'Backfill pacing failed (INVALID_DURATION_OR_DUTY)'
+      })
+    );
+    expect(walletTransferAnalysisService.update).toHaveBeenCalledTimes(1);
   });
 });
