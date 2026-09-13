@@ -82,3 +82,82 @@ test('rate limits default to sixty seconds only when vendor retry hints are miss
     );
   }
 });
+
+test('delivery failures expose fixed diagnostic causes without changing retry policy', async () => {
+  for (const [status, cause, retryable] of [
+    [429, 'HTTP_RATE_LIMIT', true],
+    [408, 'HTTP_RETRYABLE_STATUS', true],
+    [503, 'HTTP_RETRYABLE_STATUS', true],
+    [400, 'HTTP_PERMANENT_STATUS', false],
+    [404, 'HTTP_PERMANENT_STATUS', false],
+    [204, 'INVALID_DELIVERY_RESPONSE', true]
+  ] as const) {
+    await assert.rejects(
+      deliver(secret, {}, async () => new Response(null, { status })),
+      (error) =>
+        error instanceof DeliveryError &&
+        error.retryable === retryable &&
+        error.details?.cause === cause &&
+        error.details.httpStatus === status
+    );
+  }
+  assert.throws(
+    () => webhookUrl('private-invalid-url'),
+    (error) =>
+      error instanceof DeliveryError &&
+      !error.retryable &&
+      error.details?.cause === 'INVALID_DELIVERY_CONFIGURATION'
+  );
+});
+
+test('transport diagnostics distinguish standard timeout without retaining exception details', async () => {
+  for (const [error, cause] of [
+    [new DOMException(secret, 'TimeoutError'), 'TRANSPORT_TIMEOUT'],
+    [
+      Object.assign(new Error(secret), { name: 'TimeoutError' }),
+      'TRANSPORT_TIMEOUT'
+    ],
+    [new Error(secret), 'TRANSPORT_OTHER']
+  ] as const) {
+    await assert.rejects(
+      deliver(secret, {}, async () => {
+        throw error;
+      }),
+      (caught) =>
+        caught instanceof DeliveryError &&
+        caught.retryable &&
+        caught.details?.cause === cause &&
+        !JSON.stringify(caught).includes(secret)
+    );
+  }
+});
+
+test('legacy DeliveryError callers keep retry, deferral and message behavior', () => {
+  const legacy = new DeliveryError(true, 3, true);
+  assert.equal(legacy.message, 'WEBHOOK_RETRYABLE');
+  assert.equal(legacy.retryable, true);
+  assert.equal(legacy.retryAfterSeconds, 3);
+  assert.equal(legacy.deferred, true);
+  assert.equal(legacy.details, undefined);
+});
+
+test('transport classification does not invoke arbitrary error name getters', async () => {
+  let calls = 0;
+  const error = new DOMException(secret, 'TimeoutError');
+  Object.defineProperty(error, 'name', {
+    get() {
+      calls++;
+      throw new Error(secret);
+    }
+  });
+  await assert.rejects(
+    deliver(secret, {}, async () => {
+      throw error;
+    }),
+    (caught) =>
+      caught instanceof DeliveryError &&
+      caught.retryable &&
+      caught.details?.cause === 'TRANSPORT_TIMEOUT'
+  );
+  assert.equal(calls, 0);
+});
