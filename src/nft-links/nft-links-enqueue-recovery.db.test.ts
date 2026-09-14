@@ -52,7 +52,12 @@ describeWithSeed(
       });
       await expect(
         db.markMediaPreviewPendingIfNeeded(
-          { canonicalId: 'pending', sourceHash: 'old', kind: 'image' },
+          {
+            canonicalId: 'pending',
+            sourceHash: 'old',
+            kind: 'image',
+            maxBytes: 30_000_000
+          },
           {}
         )
       ).resolves.toBe(true);

@@ -3,6 +3,7 @@ import { promises as dns } from 'node:dns';
 import * as http from 'node:http';
 import * as https from 'node:https';
 import { isIP } from 'node:net';
+import type { Readable } from 'node:stream';
 import fetch, { Response } from 'node-fetch';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { env } from '@/env';
@@ -13,6 +14,7 @@ import type { RequestContext } from '@/request.context';
 import { sqs, SQS } from '@/sqs';
 import { Time } from '@/time';
 import { NftLinkEntity } from '@/entities/INftLink';
+import { NftPreviewOversizeError } from './nft-preview-size-policy';
 import type {
   NftLinkMediaPreviewJobMessage,
   NftLinkMediaPreviewKind
@@ -107,7 +109,8 @@ export class NftLinkMediaPreviewService {
       {
         canonicalId: prepared.canonicalId,
         sourceHash: prepared.sourceHash,
-        kind: prepared.previewKind
+        kind: prepared.previewKind,
+        maxBytes: this.getMaxPreviewBytes()
       },
       ctx
     );
@@ -174,11 +177,17 @@ export class NftLinkMediaPreviewService {
       return;
     }
 
+    const fence = {
+      sourceHash: lockedEntity.media_preview_source_hash,
+      lease: lockedEntity.media_preview_error_message
+    };
+
     const prepared = this.preparePreviewSourceFromEntity(lockedEntity);
     if (!prepared) {
       await this.nftLinksDb.updateMediaPreviewWithFailure(
         {
           canonicalId: parsed.canonicalId,
+          fence,
           status: 'SKIPPED',
           message: `No preview source available in resolved NFT metadata`
         },
@@ -198,6 +207,7 @@ export class NftLinkMediaPreviewService {
       await this.nftLinksDb.updateMediaPreviewWithFailure(
         {
           canonicalId: parsed.canonicalId,
+          fence,
           status: 'FAILED',
           message: `Stale preview job source hash mismatch`
         },
@@ -211,9 +221,10 @@ export class NftLinkMediaPreviewService {
       const classified = this.classifyDownloadedMedia(downloaded);
       if (classified.kind === 'video') {
         const uploaded = await this.uploadVideoSource(prepared, downloaded);
-        await this.nftLinksDb.updateMediaPreviewWithSuccess(
+        const stored = await this.nftLinksDb.updateMediaPreviewWithSuccess(
           {
             canonicalId: prepared.canonicalId,
+            fence,
             kind: 'video',
             sourceHash: prepared.sourceHash,
             cardUrl: uploaded.url,
@@ -226,15 +237,17 @@ export class NftLinkMediaPreviewService {
           },
           ctx
         );
-        this.logger.info(
-          `Stored NFT link video preview source for ${prepared.canonicalId} at ${uploaded.key}`
-        );
+        if (stored)
+          this.logger.info(
+            `Stored NFT link video preview source for ${prepared.canonicalId} at ${uploaded.key}`
+          );
         return;
       }
       if (classified.kind !== 'image') {
         await this.nftLinksDb.updateMediaPreviewWithFailure(
           {
             canonicalId: prepared.canonicalId,
+            fence,
             status: 'SKIPPED',
             message: `Preview skipped for unsupported media (${classified.kind}, detector=${classified.detector}, mime=${classified.mimeType ?? 'unknown'})`
           },
@@ -251,9 +264,10 @@ export class NftLinkMediaPreviewService {
         downloaded,
         rendered
       );
-      await this.nftLinksDb.updateMediaPreviewWithSuccess(
+      const stored = await this.nftLinksDb.updateMediaPreviewWithSuccess(
         {
           canonicalId: prepared.canonicalId,
+          fence,
           kind: 'image',
           sourceHash: prepared.sourceHash,
           cardUrl: uploadedUrls.cardUrl,
@@ -266,14 +280,16 @@ export class NftLinkMediaPreviewService {
         },
         ctx
       );
-      this.logger.info(
-        `Generated NFT link previews for ${prepared.canonicalId} from ${downloaded.finalUrl}`
-      );
+      if (stored)
+        this.logger.info(
+          `Generated NFT link previews for ${prepared.canonicalId} from ${downloaded.finalUrl}`
+        );
     } catch (e: any) {
       const message = this.normalizeErrorMessage(e);
       await this.nftLinksDb.updateMediaPreviewWithFailure(
         {
           canonicalId: prepared.canonicalId,
+          fence,
           message
         },
         ctx
@@ -1006,6 +1022,8 @@ export class NftLinkMediaPreviewService {
   }
 
   private normalizeErrorMessage(error: any): string {
+    if (error instanceof NftPreviewOversizeError)
+      return error.toStoredMessage();
     const raw =
       typeof error?.message === 'string'
         ? error.message
@@ -1018,63 +1036,71 @@ export class NftLinkMediaPreviewService {
   ): Promise<DownloadedRemoteImage> {
     const timeoutMs =
       env.getIntOrNull('NFT_LINK_MEDIA_PREVIEW_HTTP_TIMEOUT_MS') ?? 15000;
-    const maxBytes =
-      env.getIntOrNull('NFT_LINK_MEDIA_PREVIEW_MAX_BYTES') ?? 30_000_000;
+    const maxBytes = this.getMaxPreviewBytes();
     const maxRedirects =
       env.getIntOrNull('NFT_LINK_MEDIA_PREVIEW_MAX_REDIRECTS') ?? 3;
 
     let currentUrl = url;
     for (let i = 0; i <= maxRedirects; i++) {
       const pinnedDns = await this.resolveSafeRemoteUrl(currentUrl);
-      const response = await this.fetchWithTimeout(
+      const download = await this.fetchWithTimeout(
         currentUrl,
         timeoutMs,
         pinnedDns
       );
-      if (this.isRedirect(response.status)) {
-        const location = response.headers.get('location');
-        if (!location) {
-          throw new Error(`Redirect without Location header for ${currentUrl}`);
+      const { response } = download;
+      try {
+        if (this.isRedirect(response.status)) {
+          const location = response.headers.get('location');
+          if (!location) {
+            throw new Error(
+              `Redirect without Location header for ${currentUrl}`
+            );
+          }
+          currentUrl = new URL(location, currentUrl).toString();
+          continue;
         }
-        currentUrl = new URL(location, currentUrl).toString();
-        continue;
-      }
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} for ${currentUrl}`);
-      }
-      const contentLength = response.headers.get('content-length');
-      if (contentLength) {
-        const parsed = Number(contentLength);
-        if (Number.isFinite(parsed) && parsed > maxBytes) {
-          throw new Error(
-            `Remote media too large (${parsed} bytes > ${maxBytes}) for ${currentUrl}`
-          );
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status} for ${currentUrl}`);
         }
+        const contentLength = response.headers.get('content-length');
+        if (contentLength) {
+          const parsed = Number(contentLength);
+          if (Number.isFinite(parsed) && parsed > maxBytes) {
+            throw new NftPreviewOversizeError(
+              maxBytes,
+              parsed,
+              'content-length'
+            );
+          }
+        }
+        const bytes = await this.readBodyWithLimit(response, maxBytes);
+        return {
+          finalUrl: currentUrl,
+          bytes,
+          contentType: response.headers.get('content-type')
+        };
+      } finally {
+        download.cancel();
       }
-      const bytes = await this.readBodyWithLimit(
-        response,
-        maxBytes,
-        currentUrl
-      );
-      return {
-        finalUrl: currentUrl,
-        bytes,
-        contentType: response.headers.get('content-type')
-      };
     }
 
     throw new Error(`Too many redirects while fetching ${url}`);
+  }
+
+  private getMaxPreviewBytes(): number {
+    return env.getIntOrNull('NFT_LINK_MEDIA_PREVIEW_MAX_BYTES') ?? 30_000_000;
   }
 
   private async fetchWithTimeout(
     url: string,
     timeoutMs: number,
     pinnedDns: PinnedDnsResolution
-  ): Promise<Response> {
+  ): Promise<{ response: Response; cancel: () => void }> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      return await fetch(url, {
+      const response = await fetch(url, {
         method: 'GET',
         redirect: 'manual',
         headers: {
@@ -1084,6 +1110,15 @@ export class NftLinkMediaPreviewService {
         agent: this.createPinnedAgent(url, pinnedDns) as any,
         signal: controller.signal as any
       });
+      return {
+        response,
+        cancel: () => {
+          // node-fetch2 pipes through a PassThrough: destroy alone need not
+          // abort the owning request. Keep its AbortController until disposal.
+          controller.abort();
+          (response.body as Readable | null)?.destroy();
+        }
+      };
     } finally {
       clearTimeout(timeout);
     }
@@ -1091,8 +1126,7 @@ export class NftLinkMediaPreviewService {
 
   private async readBodyWithLimit(
     response: Response,
-    maxBytes: number,
-    url: string
+    maxBytes: number
   ): Promise<Buffer> {
     const body = response.body;
     if (!body) {
@@ -1105,7 +1139,8 @@ export class NftLinkMediaPreviewService {
         const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         total += buf.length;
         if (total > maxBytes) {
-          (body as any).destroy(new Error(`Remote media too large for ${url}`));
+          reject(new NftPreviewOversizeError(maxBytes, total, 'stream'));
+          (body as Readable).destroy();
           return;
         }
         chunks.push(Uint8Array.from(buf));

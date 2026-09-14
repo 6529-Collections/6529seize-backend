@@ -90,7 +90,10 @@ describe('WsConnectionRepository', () => {
   );
 
   it('replaces the notification identities owned by a connection', async () => {
-    const execute = jest.fn().mockResolvedValue([]);
+    const execute = jest
+      .fn()
+      .mockResolvedValueOnce([{ connection_id: 'connection-1' }])
+      .mockResolvedValue([]);
     const transactionConnection = { connection: {} };
     const executeNativeQueriesInTransaction = jest.fn(async (callback) =>
       callback(transactionConnection)
@@ -110,27 +113,33 @@ describe('WsConnectionRepository', () => {
     );
 
     expect(executeNativeQueriesInTransaction).toHaveBeenCalledTimes(1);
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(3);
     expect(execute.mock.calls[0][0]).toContain(
-      `delete from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}`
+      'order by identity_id for update'
     );
     expect(execute.mock.calls[0][2]).toEqual({
       wrappedConnection: transactionConnection
     });
     expect(execute.mock.calls[1][0]).toContain(
+      `delete from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}`
+    );
+    expect(execute.mock.calls[1][2]).toEqual({
+      wrappedConnection: transactionConnection
+    });
+    expect(execute.mock.calls[2][0]).toContain(
       `insert into ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}`
     );
-    expect(execute.mock.calls[1][0]).toContain(
+    expect(execute.mock.calls[2][0]).toContain(
       '(:connectionId, :identityId0, :jwtExpiry0), (:connectionId, :identityId1, :jwtExpiry1)'
     );
-    expect(execute.mock.calls[1][1]).toEqual({
+    expect(execute.mock.calls[2][1]).toEqual({
       connectionId: 'connection-1',
       identityId0: 'profile-1',
       jwtExpiry0: 123,
       identityId1: 'profile-2',
       jwtExpiry1: 456
     });
-    expect(execute.mock.calls[1][2]).toEqual({
+    expect(execute.mock.calls[2][2]).toEqual({
       wrappedConnection: transactionConnection
     });
   });
