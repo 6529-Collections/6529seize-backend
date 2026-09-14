@@ -1,0 +1,269 @@
+# Membership refresh schema and publication contract
+
+Status: schema foundation only, PR #1739. No eligibility evaluator, producer,
+consumer, queue, schedule, cache, API or read-mode change is enabled here.
+Implementation work remains tracked by [#2075](https://github.com/6529-Collections/6529seize-backend/issues/2075).
+The overlapping #1740 and #1822 must be reconciled against current main; their
+SQL, spec version and worker are not incorporated by this schema release.
+
+## Decisions
+
+Publish an immutable **profile generation**, not an in-place whole-group
+replacement. A PROFILE run evaluates a bounded page of the canonical group
+catalogue at a time. GROUP and FULL runs durably fan out PROFILE requests using
+bounded primary-key pages. Thus even a group matching every profile is handled
+across many invocations, with no million-row delete/insert or initialization
+transaction. One identity row per profile is a system invariant.
+
+Freshness is a vector of **committed source versions**, plus a monotonically
+increasing group-catalogue version. UUIDs identify jobs, runs and leases;
+BIGINT counters order changes. Millisecond fields measure age and scheduling;
+they never prove freshness or deduplicate source completion.
+
+A reader uses clean parts of a published profile generation and directly
+evaluates affected groups, including groups absent from the stored positive
+membership rows. An individual dirty group does not disable all materialized
+reads. No global FULL-ready flag is required. Missing evidence means fallback,
+never an authoritative empty result.
+
+## Tables
+
+| Table | Key and purpose |
+| --- | --- |
+| `membership_source_states` | `(scope, target_id, dimension)` version and active-job barrier. GLOBAL uses target `*`; PROFILE uses canonical profile ID. |
+| `membership_source_jobs` | Source key plus durable producer `job_id`; stage/checkpoint, RUNNING/FAILED/COMPLETED state, start/completion versions and error evidence. |
+| `membership_group_versions` | Group ID, latest catalogue version and deletion tombstone; indexed by catalogue version to find changed rules. |
+| `membership_refresh_targets` | `(PROFILE/GROUP/FULL, target_id)` persistent coalesced requested/completed counters, active run pointer, retry time and errors. FULL uses `*`. |
+| `membership_refresh_runs` | UUID, captured request/spec/catalogue/source versions, keyset cursor and high bound, lease fencing, progress and completion. |
+| `membership_generation_members` | `(run_id, group_id)` positive results for a PROFILE run, with a profile/run/group lookup index. Rows belong to an unpublished candidate until publication. |
+| `membership_publications` | Profile ID → completed PROFILE run ID, including generations with zero positive rows. The single-row pointer is the atomic publication boundary. |
+
+Types live in `src/membership/membership-schema.types.ts`, outside the entity
+barrel (the synchronizer passes every barrel export to TypeORM). All new
+identity and UUID columns use binary collation consistently. Store and compare
+canonical application IDs; keyset queries must use the source column's actual
+collation and ordering. Counters are decimal strings in persistence types to
+avoid loss above JavaScript's safe integer limit. JSON source-version vectors
+have one unique entry per source key; reject missing, duplicate, unknown or
+malformed entries before considering any group ready. These are application
+contracts, not database enum, foreign-key or CHECK constraints.
+
+The July draft tables `user_group_members`, `membership_refresh_requests`,
+`membership_materialization_states` and `membership_watermarks` are deliberately
+not mapped by these entities. Any surviving July data stays untouched and can
+never become readiness evidence for this protocol. Their cleanup is separate
+work after retention/rollback review. Existing `wave_score_refresh_requests`
+columns and TypeScript types are unchanged; there is no shared-base refactor.
+
+## Source mutation and completion protocol
+
+Every source key is provisioned explicitly. An absent key is **unknown**, not
+version zero. Bootstrap must inventory producer coverage before initializing
+zero-version states. GLOBAL and PROFILE versions both participate: a global
+change cannot be hidden by a profile-local version. Dimensions are TDH_XTDH
+(including derived levels), RATINGS, OWNERSHIP, DELEGATIONS, GRANTS, IDENTITY and
+GROUP_CATALOG. Fine-grained dimensions may be added only with corresponding
+producer, evaluator and reader coverage.
+
+For a single-transaction mutation:
+
+1. Lock affected source-state rows in a stable order on the primary.
+2. Persist the source mutation, increment each affected version using SQL
+   arithmetic, and upsert/increment the appropriate refresh target in the
+   **same transaction**. Set `available_at_millis` to the database time and
+   reset retry bookkeeping for the new requested version.
+3. Commit, then optionally send a wakeup. Losing the wakeup is harmless: the
+   target remains discoverable by a recovery poll. Rollback leaves neither new
+   inputs nor a version/request visible.
+
+For a multi-transaction producer:
+
+1. Before its first write, lock source-state rows, insert a RUNNING source job
+   under a stable producer ID and increment version/active_jobs atomically.
+   Duplicate delivery of that ID resumes the existing job; a COMPLETED job
+   never starts again. Every reader/refresh now treats affected dimensions as
+   unready, so a mark-before-mutation cannot be consumed as completion.
+2. Persist stage/checkpoint progress with each bounded source write. Serialize
+   conflicting writers to the same source dataset; a new overlapping cycle
+   waits for or resumes the active cycle. If later implementation parallelizes
+   disjoint jobs, it must fence source writes as well as refresh publication.
+   A version counter alone does not stop an older producer overwriting newer
+   source values. Lock global keys before profile keys consistently.
+3. After all eligibility inputs and derived outputs commit, atomically change
+   RUNNING → COMPLETED, increment version, decrement active_jobs and enqueue
+   the refresh target. Repeated completion must be a no-op under the same job
+   row lock; it cannot increment twice or clear another active job.
+4. FAILED retains the active barrier. Recovery resumes/repairs the source and
+   only then completes it. Timeouts and expired worker leases never clear a
+   source barrier automatically. Conflicting queued jobs remain durable in
+   the existing producer orchestration; refresh targets are not a source-job
+   work queue.
+
+TDH and downstream xTDH share a durable cycle ID and **one TDH_XTDH job**. TDH
+completion only advances its stage. Complete the job and request refresh only
+after xTDH, identity metrics and derived levels for that same cycle have all
+committed. On current main, the xTDH universe phase commits level updates in
+`RecalculateXTdhUseCase.handleUniversePhase`, then enqueues a distinct STATS
+phase; `RecalculateXTdhStatsUseCase.handle` publishes the inactive statistics
+slot last. Propagate the cycle ID through **both** SQS phases and make durable
+cycle completion follow successful stats activation. Returning from the
+universe handler or merely sending STATS is not full-cycle completion. Delayed stages from an older cycle cannot complete a newer job.
+Delegation/consolidation jobs follow the same protocol and request affected
+profiles after commit, including `handleDelegations` persistence,
+`reconsolidateWallets` TDH/NFT/balance consolidation and primary-address effects,
+or FULL when the affected cohort cannot be bounded
+safely. Overlapping TDH and delegation jobs have independent barriers; readers
+and publishers must check both dependencies where used.
+
+This replaces the proposed routine 02:00 FULL schedule in the later worker;
+#1739 neither installs nor removes any schedule. Keep explicit bootstrap and
+recovery FULL requests and a dirty-work recovery poll. See #2065, #2067, #2073.
+
+All eligibility writers must participate before read cutover: single and bulk
+REP/CIC, lost-credit and over-rate revocation, grant single/bulk status and
+boundaries, NFT/external ownership, profile lifecycle/consolidation, group
+rules/lists/visibility and wave-group selection. A producer coverage audit and
+tests through the actual mutation methods remain required by #2067.
+
+## Group catalogue protocol
+
+Group rule/list/visibility changes and deletion or wave-group selection changes
+increment GLOBAL `GROUP_CATALOG` on target `*` in their transaction and upsert
+`membership_group_versions` for every affected group with that value. A change
+to a shared list must cover every referencing group, or use a barrier while
+bounded fanout completes. Keep deletion tombstones until no retained readable
+generation predates them. A group recreated with the same ID gets a newer
+version. Bootstrap versions every existing candidate group before publication.
+
+A PROFILE run captures catalogue version C before its first page and a high
+bound for its catalogue traversal. Changes during traversal are safe only
+because all groups with latest catalogue version > C are overridden by the
+reader, even if absent from that run's rows or inserted behind its cursor.
+Never advance C to a later value at completion. A GROUP fanout captures a
+profile high bound and checkpoints requests as it walks; profile creation must
+also enqueue its own PROFILE request. Completion of a GROUP/FULL run means
+**fanout completed**, not that its child profiles are published or current.
+Observe child target/publication progress separately when reporting backfill
+completion. Do not clear group-version evidence when fanout completes.
+
+## Bounded refresh and publication
+
+A target's requested counter is durable and never reset or deleted. Repeated
+triggers coalesce into the same row. `available_at_millis` is non-null while
+pending or retryable and null only after fully acknowledged or parked failure;
+a recovery scanner also checks expired active runs. New invalidation reactivates
+parked work. The requested/completed counter difference remains the truth.
+
+Claim under a target row lock; capture request version V, allocate a run UUID,
+set `active_run_id`, and lease it with a random fencing token and DB-clock
+expiry. Only the matching active run/lease token may checkpoint, finish or
+acknowledge. Reclaiming rotates the token, so an old invocation cannot commit
+late. Lease expiry alone does not authorize a second publisher.
+
+For PROFILE runs capture the required GLOBAL and PROFILE source-version vector,
+spec version, evaluation time and catalogue version. Each group page reads
+**consistent primary inputs and definitions**, bypassing replica routing and
+all stale group/identity caches. Start a short consistent-snapshot transaction,
+verify the captured source versions and active barriers, compute/write a
+bounded candidate page, and checkpoint its cursor/count/version in that same
+transaction. Use keyset pages of canonical group IDs; GROUP/FULL runs instead
+page canonical identity profile IDs and atomically enqueue requests with their
+checkpoint. Never load every identity or seed all state rows in one statement.
+
+Separate transactions may contribute to one candidate only while all captured
+non-catalogue source versions stay equal and their active-job counts stay zero.
+At final publication, lock/recheck the relevant current source-state rows on
+the primary, together with target/run/publication rows. A concurrent source
+commit either precedes that check (reject the candidate) or follows publication
+(and immediately invalidates its dependent results). Do not rely on a repeatable
+read's old snapshot for this final guard. GROUP_CATALOG is checked using the
+per-group override protocol above; an active catalogue barrier is not publishable.
+
+After the last page, one short transaction marks the PROFILE run COMPLETED,
+swaps the profile publication pointer and advances the target's completed
+counter to V. It may advance only when this is still the active run. If the
+requested counter became V+1, acknowledge at most V and leave the target queued;
+never delete the newer request. A stale source vector requires SUPERSEDED and
+a fresh candidate, not publication. An existing complete publication remains
+available with per-group freshness checks while a replacement runs. Crashes
+before the commit expose no partial result; crashes after it require no replay
+of completed work. Negative membership is represented by the completed pointer
+and absence of that group in its immutable rows.
+
+Refreshes have both time and row/work budgets. Stop before the Lambda deadline
+with time reserved for commit/checkpoint; bound SQL execution and external calls
+too. If a single rule cannot meet the page budget, it requires a smaller
+producer/evaluator checkpoint strategy or an explicit resource limit before
+activation. A group-count limit alone is not a time bound. Candidate and old
+run garbage collection is bounded, cannot delete a currently published run,
+and must retain generations for the reader transaction/grace period.
+
+Use an **external scheduled dispatcher** to lease pending database targets and
+send bounded SQS work. Workers checkpoint and return; they do not send chains
+to their own trigger queue. The poll is recovery as well as progress, so a crash
+between commit and notification converges. Implement the dispatcher/queues and
+verify >16 invocations in the later infrastructure PR (#2071/#2072); this schema
+introduces none of that runtime.
+
+## Readiness and time-dependent rules
+
+For a targeted group, read a coherent primary snapshot containing the publication,
+COMPLETED PROFILE run (matching profile ID and current evaluator spec), current
+canonical group, latest group version, and relevant source keys. Require complete
+producer/bootstrap evidence, no relevant active job, and exact matching GLOBAL
+and PROFILE versions for every dimension that the **current** rule depends on.
+Require the group's catalogue version <= the run's captured C. Only then can
+membership-row presence/absence answer authorization. Never join a publication
+to a GROUP/FULL run. Missing source state, group-version evidence, publication,
+run, invalid metadata or errors use authoritative direct evaluation.
+
+For all-groups queries enumerate the current candidate catalogue, including
+possible new memberships. Overlay direct results for changed groups and groups
+whose source dependencies fail readiness; remove stale positives as well as
+add new positives. Deleted/invisible/noncandidate groups are excluded under
+current-main semantics. Re-evaluation and clean membership assembly must share
+a coherent primary read context. Cached readiness must itself be version-checked;
+a fixed TTL does not provide authorization freshness. A large affected set may
+justify full direct evaluation, but one poison group must not force it.
+
+Time is an input for grant activation/expiry even without a writer. Capture one
+evaluation time per run and the earliest future relevant transition across all
+candidate rules, **including currently false rules**, in `valid_until_millis`.
+When crossed, time-dependent groups need direct evaluation and refresh; a null
+value is valid only after proving there is no future boundary. A refresh's lease
+must not extend that horizon. Direct/shadow checks must use the same intended
+rule semantics; this PR does not adopt #1740's unfinished conformance changes.
+
+## Rollout and remaining gates
+
+1. Deploy only `dbMigrationsLoop`, then invoke with `schema_scope=membership-refresh`
+   (workflow input `db_schema_scope=membership-refresh`). This scope inspects
+   TypeORM's plan, accepts only creation of the seven selected tables, executes
+   those exact statements, and verifies a subsequent plan is empty. Existing
+   table drift fails before executing any DDL. It skips unrelated full-schema
+   synchronization, data migrations and maintenance.
+   These seven new tables add no foreign keys or changes to preexisting tables.
+   Verify a second sync produces no DDL and old wave-score/July rows survive.
+2. Keep all current readers and source jobs operating as before. No frontend,
+   OpenAPI or help-bot knowledge change is required for this internal schema.
+3. Later implement and test producer transaction/barrier coverage, primary-only
+   evaluation, fenced checkpoints/publication and per-group read fallback.
+   Deploy schema before producers, dispatcher/worker before enabling triggers,
+   and keep read and background-work switches independent.
+4. Initialize source/catalogue evidence, backfill and run shadow comparisons;
+   measure real writes, broad groups, storage, lock time, queue age and API p95/
+   p99 against warm/cold legacy behavior (#2074). At the reviewed scale of
+   1,034,081 profiles and 9,936 mostly tiny explicit-list groups, PROFILE fanout
+   trades predictable transaction bounds for potentially high evaluation work.
+   Use shared immutable rule plans by version, indexed explicit-list lookups
+   and set-based evaluation over bounded batches of profile runs; this layout
+   does not require a separate SQL query per profile/group pair. Optimize with
+   measured evidence. This schema is not a claim of cutover performance or readiness.
+5. Require correctness/concurrency, current consumer conformance, realistic load
+   and fresh staging E2E gates before enabling materialized authorization.
+   #1739 Phase 3 requires its related staging E2E to pass, but does not close
+   these worker/cutover issues or authorize production activation.
+
+Rollback retains all additive tables and existing authorization paths. Future
+read rollback and workload disablement are separate controls. Never redeploy
+an old July worker against this protocol or infer readiness from its tables.

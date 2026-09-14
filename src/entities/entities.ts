@@ -109,9 +109,6 @@ export {
 } from './IContentModeration';
 export { IdentityNotificationEntity } from './IIdentityNotification';
 export { IdentitySubscriptionEntity } from './IIdentitySubscription';
-export { MembershipRefreshRequestEntity } from './IMembershipRefreshRequest';
-export { MembershipMaterializationStateEntity } from './IMembershipMaterializationState';
-export { MembershipWatermarkEntity } from './IMembershipWatermark';
 export { ProfilePreferencesEntity } from './IProfilePreferences';
 export { MentionAliasEntity, MentionAliasMemberEntity } from './IMentionAlias';
 export { MintingClaimEntity } from './IMintingClaim';
@@ -234,7 +231,6 @@ export {
 } from './ITransactionsProcessing';
 export { ConsolidatedTDHUpload, UploadEntity } from './IUpload';
 export { UserGroupEntity } from './IUserGroup';
-export { UserGroupMemberEntity } from './IUserGroupMember';
 export {
   WaveArchiveEntity,
   WaveDecisionPauseEntity,
@@ -295,3 +291,11 @@ export {
   ModerationItemEntity,
   ModerationEvaluationEntity
 } from './IModerationReview';
+
+export { MembershipSourceStateEntity } from './IMembershipSourceState';
+export { MembershipSourceJobEntity } from './IMembershipSourceJob';
+export { MembershipGroupVersionEntity } from './IMembershipGroupVersion';
+export { MembershipRefreshTargetEntity } from './IMembershipRefreshTarget';
+export { MembershipRefreshRunEntity } from './IMembershipRefreshRun';
+export { MembershipGenerationMemberEntity } from './IMembershipGenerationMember';
+export { MembershipPublicationEntity } from './IMembershipPublication';

@@ -38,11 +38,6 @@ export const ABUSIVENESS_DETECTION_RESULTS_TABLE =
 export const CIC_STATEMENTS_TABLE = 'cic_statements';
 export const RATINGS_SNAPSHOTS_TABLE = 'ratings_snapshots';
 export const USER_GROUPS_TABLE = 'community_groups';
-export const USER_GROUP_MEMBERS_TABLE = 'user_group_members';
-export const MEMBERSHIP_REFRESH_REQUESTS_TABLE = 'membership_refresh_requests';
-export const MEMBERSHIP_MATERIALIZATION_STATES_TABLE =
-  'membership_materialization_states';
-export const MEMBERSHIP_WATERMARKS_TABLE = 'membership_watermarks';
 export const PROFILE_GROUPS_TABLE = 'profile_groups';
 export const PROFILES_TABLE = 'profiles';
 export const PROFILES_ACTIVITY_LOGS_TABLE = 'profile_activity_logs';
@@ -269,3 +264,12 @@ export const PROFILE_CMS_AGENT_EVENTS_TABLE = 'profile_cms_agent_events';
 export const CONTENT_MODERATION_ITEMS_TABLE = 'content_moderation_items';
 export const CONTENT_MODERATION_EVALUATIONS_TABLE =
   'content_moderation_evaluations';
+
+export const MEMBERSHIP_SOURCE_STATES_TABLE = 'membership_source_states';
+export const MEMBERSHIP_SOURCE_JOBS_TABLE = 'membership_source_jobs';
+export const MEMBERSHIP_GROUP_VERSIONS_TABLE = 'membership_group_versions';
+export const MEMBERSHIP_REFRESH_TARGETS_TABLE = 'membership_refresh_targets';
+export const MEMBERSHIP_REFRESH_RUNS_TABLE = 'membership_refresh_runs';
+export const MEMBERSHIP_GENERATION_MEMBERS_TABLE =
+  'membership_generation_members';
+export const MEMBERSHIP_PUBLICATIONS_TABLE = 'membership_publications';
