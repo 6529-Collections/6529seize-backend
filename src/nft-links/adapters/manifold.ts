@@ -129,6 +129,105 @@ function isSafeManifoldHost(viewUrl: string): boolean {
   }
 }
 
+function resolveInstanceMetadata(
+  data: AnyObj | undefined,
+  instanceId: string,
+  canonical: CanonicalLink
+): AdapterResult {
+  const publicData: unknown = data?.publicData;
+  const hasSelectedToken =
+    isRecord(publicData) && 'selectedToken' in publicData;
+  // New token metadata requires a positive ID binding. Legacy responses may omit
+  // an ID; keep their extraction compatible, but never accept a known mismatch.
+  assertMatchingInstance(data, instanceId, hasSelectedToken);
+  if (isRecord(publicData) && 'selectedToken' in publicData) {
+    return resolveSelectedToken(publicData.selectedToken, canonical);
+  }
+
+  // Very loose extraction; exact shape varies.
+  const title = pick<string>(
+    data?.name,
+    data?.title,
+    data?.instance?.name,
+    data?.instance?.title,
+    data?.data?.name,
+    data?.data?.title
+  );
+
+  const imageUrl = pick<string>(
+    data?.image,
+    data?.imageUrl,
+    data?.data?.image,
+    data?.data?.imageUrl
+  );
+
+  const description = pick<string>(data?.description, data?.data?.description);
+
+  if (isRecord(publicData) && 'listingType' in publicData) {
+    return withUnknownSale(
+      {
+        title,
+        description,
+        media: imageUrl ? { kind: 'image', imageUrl } : undefined
+      },
+      canonical
+    );
+  }
+
+  const priceAmount = pick<any>(
+    data?.price,
+    data?.data?.price,
+    data?.mintPrice,
+    data?.data?.mintPrice,
+    data?.publicData?.mintPrice?.value
+  );
+
+  const priceCurrency = pick<any>(
+    data?.currency,
+    data?.data?.currency,
+    data?.currencySymbol,
+    data?.data?.currencySymbol,
+    data?.publicData?.mintPrice?.currency
+  );
+
+  const priceDecimals =
+    numbers.parseIntOrNull(
+      pick<any>(
+        data?.decimals,
+        data?.data?.decimals,
+        data?.publicData?.mintPrice?.decimals
+      )
+    ) ?? 0;
+  // Claims are usually CLAIM sale type; price may require onchain reads.
+  const saleType = 'CLAIM' as const;
+  const patch: any = {
+    asset: {
+      title,
+      description,
+      media: imageUrl ? { kind: 'image', imageUrl } : undefined
+    },
+    market: {
+      saleType,
+      price:
+        priceAmount != null && priceCurrency != null
+          ? {
+              amount: formatTokenAmount(BigInt(priceAmount), priceDecimals),
+              currency: String(priceCurrency)
+            }
+          : undefined,
+      cta: buildPrimaryAction(canonical.platform, saleType, canonical.viewUrl)
+    },
+    links: {
+      viewUrl: canonical.viewUrl,
+      buyOrBidUrl: canonical.viewUrl
+    }
+  };
+
+  return {
+    patch
+  };
+}
+
 export class ManifoldAdapter implements PlatformAdapter {
   canHandle(canonical: CanonicalLink): boolean {
     return canonical.platform === 'MANIFOLD';
@@ -193,100 +292,6 @@ export class ManifoldAdapter implements PlatformAdapter {
       }
     }
 
-    const publicData: unknown = data?.publicData;
-    const hasSelectedToken =
-      isRecord(publicData) && 'selectedToken' in publicData;
-    // New token metadata requires a positive ID binding. Legacy responses may omit
-    // an ID; keep their extraction compatible, but never accept a known mismatch.
-    assertMatchingInstance(data, instanceId, hasSelectedToken);
-    if (isRecord(publicData) && 'selectedToken' in publicData) {
-      return resolveSelectedToken(publicData.selectedToken, canonical);
-    }
-
-    // Very loose extraction; exact shape varies.
-    const title = pick<string>(
-      data?.name,
-      data?.title,
-      data?.instance?.name,
-      data?.instance?.title,
-      data?.data?.name,
-      data?.data?.title
-    );
-
-    const imageUrl = pick<string>(
-      data?.image,
-      data?.imageUrl,
-      data?.data?.image,
-      data?.data?.imageUrl
-    );
-
-    const description = pick<string>(
-      data?.description,
-      data?.data?.description
-    );
-
-    if (isRecord(publicData) && 'listingType' in publicData) {
-      return withUnknownSale(
-        {
-          title,
-          description,
-          media: imageUrl ? { kind: 'image', imageUrl } : undefined
-        },
-        canonical
-      );
-    }
-
-    const priceAmount = pick<any>(
-      data?.price,
-      data?.data?.price,
-      data?.mintPrice,
-      data?.data?.mintPrice,
-      data?.publicData?.mintPrice?.value
-    );
-
-    const priceCurrency = pick<any>(
-      data?.currency,
-      data?.data?.currency,
-      data?.currencySymbol,
-      data?.data?.currencySymbol,
-      data?.publicData?.mintPrice?.currency
-    );
-
-    const priceDecimals =
-      numbers.parseIntOrNull(
-        pick<any>(
-          data?.decimals,
-          data?.data?.decimals,
-          data?.publicData?.mintPrice?.decimals
-        )
-      ) ?? 0;
-    // Claims are usually CLAIM sale type; price may require onchain reads.
-    const saleType = 'CLAIM' as const;
-    const patch: any = {
-      asset: {
-        title,
-        description,
-        media: imageUrl ? { kind: 'image', imageUrl } : undefined
-      },
-      market: {
-        saleType,
-        price:
-          priceAmount != null && priceCurrency != null
-            ? {
-                amount: formatTokenAmount(BigInt(priceAmount), priceDecimals),
-                currency: String(priceCurrency)
-              }
-            : undefined,
-        cta: buildPrimaryAction(canonical.platform, saleType, canonical.viewUrl)
-      },
-      links: {
-        viewUrl: canonical.viewUrl,
-        buyOrBidUrl: canonical.viewUrl
-      }
-    };
-
-    return {
-      patch
-    };
+    return resolveInstanceMetadata(data, instanceId, canonical);
   }
 }
