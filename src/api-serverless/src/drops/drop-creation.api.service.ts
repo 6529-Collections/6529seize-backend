@@ -67,6 +67,19 @@ import {
   HelpBotDailyActivityCreditQueueService
 } from '@/help-bot/help-bot-daily-activity-credit-queue.service';
 
+import { BadRequestException } from '@/exceptions';
+import { DropType } from '@/entities/IDrop';
+import {
+  chatHistoryPurgeDb,
+  ChatHistoryPurgeDb,
+  CHAT_HISTORY_PURGE_BATCH_SIZE
+} from '@/drops/chat-history-purge.db';
+import {
+  createChatHistoryPurgeToken,
+  readChatHistoryPurgeToken
+} from '@/api/waves/chat-history-purge-token';
+import { ApiWaveChatHistoryPurgePlan } from '@/api/generated/models/ApiWaveChatHistoryPurgePlan';
+
 function normalizeCreateDropPollRequest(
   poll: ApiCreateDropPollRequest | null | undefined
 ): CreateDropPollRequest | null | undefined {
@@ -93,7 +106,8 @@ export class DropCreationApiService {
     private readonly nftLinkResolvingService: NftLinkResolvingService,
     private readonly dropPollsApiService: DropPollsApiService,
     private readonly wavesApiDb: WavesApiDb = defaultWavesApiDb,
-    private readonly dailyActivityCreditQueueService: HelpBotDailyActivityCreditQueueService = helpBotDailyActivityCreditQueueService
+    private readonly dailyActivityCreditQueueService: HelpBotDailyActivityCreditQueueService = helpBotDailyActivityCreditQueueService,
+    private readonly purgeDb: ChatHistoryPurgeDb = chatHistoryPurgeDb
   ) {}
 
   public async createDrop(
@@ -373,82 +387,114 @@ export class DropCreationApiService {
     timer?.stop('dropCreationApiService->deleteDrop');
   }
 
+  private getChatHistoryPurgeAuthor(ctx: RequestContext): string {
+    const authenticationContext = ctx.authenticationContext;
+    const authorId = authenticationContext?.getActingAsId();
+    if (!authenticationContext || !authorId) {
+      throw new ForbiddenException('Please create a profile first');
+    }
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(
+        'Proxy is not allowed to delete chat history'
+      );
+    }
+    return authorId;
+  }
+
+  public async prepareMyWaveChatHistoryPurge(
+    { waveId }: { waveId: string },
+    ctx: RequestContext
+  ): Promise<ApiWaveChatHistoryPurgePlan> {
+    const authorId = this.getChatHistoryPurgeAuthor(ctx);
+    return this.dropsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const txCtx = { ...ctx, connection };
+        const wave = await this.wavesApiDb.findWaveByIdForUpdate(waveId, txCtx);
+        if (!wave) throw new NotFoundException(`Wave ${waveId} not found`);
+        const cutoffSerialNo = await this.purgeDb.findCutoff(waveId, txCtx);
+        return {
+          purge_token: createChatHistoryPurgeToken({
+            waveId,
+            authorId,
+            cutoffSerialNo
+          })
+        };
+      }
+    );
+  }
+
   public async deleteMyWaveChatHistory(
-    { waveId }: { readonly waveId: string },
+    {
+      waveId,
+      purgeToken
+    }: { readonly waveId: string; readonly purgeToken?: string },
     ctx: RequestContext
   ): Promise<ApiDeleteMyWaveChatHistoryResponse> {
     const timerName = `${this.constructor.name}->deleteMyWaveChatHistory`;
     ctx.timer?.start(timerName);
     try {
-      const authenticationContext = ctx.authenticationContext;
-      const authenticatedProfileId = authenticationContext?.getActingAsId();
-      if (!authenticationContext || !authenticatedProfileId) {
-        throw new ForbiddenException(`Please create a profile first`);
-      }
-      if (authenticationContext.isAuthenticatedAsProxy()) {
-        throw new ForbiddenException(
-          `Proxy is not allowed to delete chat history`
-        );
-      }
-
-      const { deleteResponses, preservedPinnedDropId } =
-        await this.dropsDb.executeNativeQueriesInTransaction(
-          async (connection) => {
-            const transactionContext: RequestContext = {
-              ...ctx,
-              connection
-            };
-            const wave = await this.wavesApiDb.findWaveByIdForUpdate(
-              waveId,
-              transactionContext
+      const authorId = this.getChatHistoryPurgeAuthor(ctx);
+      const tokenCutoff =
+        purgeToken === undefined
+          ? undefined
+          : readChatHistoryPurgeToken(purgeToken, { waveId, authorId });
+      const {
+        deleteResponses,
+        preservedPinnedDropId,
+        hasMore,
+        dmUnreadRecipientIds
+      } = await this.dropsDb.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const transactionContext = { ...ctx, connection };
+          const wave = await this.wavesApiDb.findWaveByIdForUpdate(
+            waveId,
+            transactionContext
+          );
+          if (!wave) throw new NotFoundException(`Wave ${waveId} not found`);
+          const cutoffSerialNo =
+            tokenCutoff ??
+            (await this.purgeDb.findCutoff(waveId, transactionContext));
+          const scope = { waveId, authorId, cutoffSerialNo };
+          const candidates = await this.purgeDb.findBatchForUpdate(
+            { ...scope, pinnedDropId: wave.description_drop_id },
+            transactionContext
+          );
+          const hasMore = candidates.length > CHAT_HISTORY_PURGE_BATCH_SIZE;
+          if (purgeToken === undefined && hasMore) {
+            throw new BadRequestException(
+              'Please update your app to delete a large chat history in batches'
             );
-            if (!wave) {
-              throw new NotFoundException(`Wave ${waveId} not found`);
-            }
-
-            const chatDrops =
-              await this.dropsDb.findWaveChatDropsByAuthorForUpdate(
-                {
-                  waveId,
-                  authorId: authenticatedProfileId
-                },
-                transactionContext
-              );
-            const pinnedDrop = chatDrops.find(
-              (drop) => drop.id === wave.description_drop_id
-            );
-            const responses: Array<{
-              id: string;
-              visibility_group_id: string | null;
-              serial_no: number;
-              wave_id: string;
-              dm_unread_recipient_ids: string[];
-            }> = [];
-
-            for (const drop of chatDrops) {
-              if (drop.id === pinnedDrop?.id) {
-                continue;
-              }
-              const deleteResponse = await this.deleteDrop.execute(
-                {
-                  drop_id: drop.id,
-                  deleter_identity: authenticatedProfileId,
-                  deleter_id: authenticatedProfileId,
-                  deletion_purpose: 'DELETE'
-                },
-                { timer: ctx.timer, connection }
-              );
-              if (deleteResponse) {
-                responses.push(deleteResponse);
-              }
-            }
-
-            return {
-              deleteResponses: responses,
-              preservedPinnedDropId: pinnedDrop?.id ?? null
-            };
           }
-        );
+          const pinnedDrop = wave.description_drop_id
+            ? await this.dropsDb.findDropById(
+                wave.description_drop_id,
+                connection
+              )
+            : null;
+          const drops = candidates.slice(0, CHAT_HISTORY_PURGE_BATCH_SIZE);
+          const recipientIds = await this.deleteDrop.executeChatHistoryBatch(
+            scope,
+            drops,
+            wave,
+            transactionContext
+          );
+          return {
+            hasMore,
+            dmUnreadRecipientIds: recipientIds,
+            preservedPinnedDropId:
+              pinnedDrop?.author_id === authorId &&
+              pinnedDrop.drop_type === DropType.CHAT
+                ? pinnedDrop.id
+                : null,
+            deleteResponses: drops.map((drop) => ({
+              id: drop.id,
+              serial_no: drop.serial_no,
+              wave_id: waveId,
+              visibility_group_id: wave.visibility_group_id
+            }))
+          };
+        }
+      );
 
       if (deleteResponses.length) {
         const postCommitEffects = [
@@ -492,13 +538,7 @@ export class DropCreationApiService {
             run: () =>
               this.notifyDmUnreadStateChanged({
                 waveId,
-                recipientIds: Array.from(
-                  new Set(
-                    deleteResponses.flatMap(
-                      (response) => response.dm_unread_recipient_ids
-                    )
-                  )
-                ),
+                recipientIds: dmUnreadRecipientIds,
                 ctx
               })
           }
@@ -518,7 +558,8 @@ export class DropCreationApiService {
 
       return {
         deleted_drop_ids: deleteResponses.map((response) => response.id),
-        preserved_pinned_drop_id: preservedPinnedDropId
+        preserved_pinned_drop_id: preservedPinnedDropId,
+        has_more: hasMore
       };
     } finally {
       ctx.timer?.stop(timerName);
