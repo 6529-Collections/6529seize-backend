@@ -1,5 +1,7 @@
 import { collectingDb } from '@/collecting/collecting.db';
 import { simulateMarketBatch } from '@/marketplace/market-batch-simulation';
+import { sameMarketGas } from '@/marketplace/market-gas-envelope';
+import { MarketBatchPrepared } from '@/marketplace/market-batch.types';
 import { CustomApiCompliantException } from '@/exceptions';
 import { MarketBatchPrepareRequest } from '@/marketplace/market-batch.schema';
 import { MarketBatchPreparation } from '@/marketplace/market-batch-preparation';
@@ -61,7 +63,11 @@ async function membership(
   return wallets;
 }
 
-async function prepare(request: MarketBatchPrepareRequest, wallets: string[]) {
+async function prepare(
+  request: MarketBatchPrepareRequest,
+  wallets: string[],
+  reviewed?: MarketBatchPrepared
+) {
   return withMarketBatchDeadline((signal) =>
     new MarketBatchPreparation(
       new OpenSeaMarketplaceProvider({
@@ -69,7 +75,7 @@ async function prepare(request: MarketBatchPrepareRequest, wallets: string[]) {
         signal
       }),
       marketChain()
-    ).prepare(request, wallets, signal)
+    ).prepare(request, wallets, signal, reviewed)
   );
 }
 
@@ -132,7 +138,14 @@ export async function continueBatchOperation(
       'OPERATION_CHANGED'
     );
   const wallets = await membership(request);
-  const prepared = await prepare(request, wallets);
+  const previous = operationPrepared(row);
+  if (!previous || !isMarketBatchPrepared(previous))
+    throw new CustomApiCompliantException(
+      409,
+      'The batch is not ready.',
+      'OPERATION_CHANGED'
+    );
+  const prepared = await prepare(request, wallets, previous);
   await marketOperationsDb.transition(row.id, ['REVIEW'], 'REVIEW', {
     expectedRevision: marketOperationRevision(row),
     prepared,
@@ -177,12 +190,12 @@ export async function beginBatchTransactionAttempt(
       prepared.transaction
     );
     assertMarketBatchActive(signal);
-    const gas = await simulateMarketBatch(marketChain(), prepared.transaction);
-    if (
-      BigInt(gas.gas_reserve_wei) > BigInt(prepared.gas.gas_reserve_wei) ||
-      BigInt(gas.max_fee_per_gas) > BigInt(prepared.gas.max_fee_per_gas) ||
-      BigInt(gas.gas_limit) > BigInt(prepared.gas.gas_limit)
-    )
+    const gas = await simulateMarketBatch(
+      marketChain(),
+      prepared.transaction,
+      prepared.gas
+    );
+    if (!sameMarketGas(gas, prepared.gas))
       throw new CustomApiCompliantException(
         409,
         'The required gas increased. Review the complete batch again.',
