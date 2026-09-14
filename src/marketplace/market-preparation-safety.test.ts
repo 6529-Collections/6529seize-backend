@@ -523,3 +523,74 @@ it('defers fulfillment simulation until the required WETH approval has been mine
   expect(chain.simulate).toHaveBeenCalledWith(ready.transaction);
   expect(ready.gas?.gas_reserve_wei).toBe('100');
 });
+
+it.each(['BUY', 'ACCEPT'] as const)(
+  'retains the reviewed %s envelope only after refetching the same exact signed economics',
+  async (kind) => {
+    const { chain, provider, preparation } = setup();
+    (collectingService.getCatalog as jest.Mock).mockResolvedValue({
+      assets: [
+        { asset_key: assetKey, contract, token_id: '56', family: 'memes' }
+      ]
+    });
+    const seller = '0x3333333333333333333333333333333333333333';
+    const currency = kind === 'BUY' ? MARKET_ZERO_ADDRESS : MARKET_WETH;
+    const order = buildMarketOrder(
+      {
+        ...intent,
+        kind: kind === 'BUY' ? 'LIST' : 'OFFER',
+        wallet: seller,
+        recipient: seller,
+        currency
+      },
+      '0',
+      '1'
+    ).order;
+    provider.getOrder.mockResolvedValue({
+      identity: { protocolAddress: MARKET_SEAPORT, orderHash: order.orderHash },
+      components: order.components
+    });
+    provider.prepareFulfillment.mockImplementation(async (i) =>
+      buildMarketFulfillment(
+        i,
+        order,
+        '0x1234',
+        order.components.orderType >= 2 ? '0xabcd' : '0x'
+      )
+    );
+    const selected: MarketPrepareRequest = {
+      ...request,
+      kind,
+      currency,
+      order: { protocol_address: MARKET_SEAPORT, order_hash: order.orderHash }
+    };
+    const previous = await preparation.prepare(selected, true);
+    const refreshed = await preparation.prepare(
+      selected,
+      true,
+      undefined,
+      previous
+    );
+    expect(chain.simulate).toHaveBeenLastCalledWith(
+      refreshed.transaction,
+      previous.gas
+    );
+    expect(chain.approvals).toHaveBeenLastCalledWith(
+      refreshed.intent,
+      undefined,
+      previous.approvalTransactions
+    );
+    expect(refreshed.intent).toEqual(previous.intent);
+    expect(refreshed.reviewOrder).toEqual(previous.reviewOrder);
+    expect(provider.getOrder).toHaveBeenCalledTimes(2);
+    await expect(
+      preparation.prepare(
+        { ...selected, amount_wei: '201' },
+        true,
+        undefined,
+        previous
+      )
+    ).rejects.toMatchObject({ code: 'AMOUNT_MISMATCH' });
+    expect(chain.simulate).toHaveBeenCalledTimes(2);
+  }
+);
