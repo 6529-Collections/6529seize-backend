@@ -1,5 +1,5 @@
 import type { AdapterResult, PlatformAdapter } from './types';
-import { Contract, ZeroAddress } from 'ethers';
+import { Contract, isError, ZeroAddress } from 'ethers';
 
 import { fetchJsonWithTimeout } from '../lib/http';
 import { buildPrimaryAction } from '../lib/market';
@@ -14,7 +14,7 @@ import { env } from '@/env';
  * SuperRare
  *
  * We prefer a keyless, onchain-first integration:
- * - token metadata via ERC721 tokenURI
+ * - token metadata via ERC721 tokenURI or confirmed ERC1155 uri
  * - market state via SuperRare Bazaar contract
  *
  * This avoids brittle HTML scraping and avoids depending on private / rate-limited APIs.
@@ -31,9 +31,11 @@ const BAZAAR_ABI = [
   'function auctionBids(address _originContract, uint256 _tokenId) view returns (address bidder, address currencyAddress, uint256 amount, uint256 marketplaceFee)'
 ];
 
-const ERC721_METADATA_ABI = [
+const NFT_METADATA_ABI = [
   'function tokenURI(uint256 tokenId) view returns (string)',
-  'function name() view returns (string)'
+  'function name() view returns (string)',
+  'function supportsInterface(bytes4 interfaceId) view returns (bool)',
+  'function uri(uint256 tokenId) view returns (string)'
 ];
 
 type MetadataJson = Record<string, any>;
@@ -41,6 +43,15 @@ type MetadataJson = Record<string, any>;
 function pick<T>(...vals: Array<T | undefined | null>): T | undefined {
   for (const v of vals) if (v !== undefined && v !== null) return v;
   return undefined;
+}
+
+function expandMetadataTokenId(
+  value: string | undefined,
+  erc1155TokenId: string | undefined
+): string | undefined {
+  return typeof value === 'string' && erc1155TokenId
+    ? value.replace(/\{id\}/g, erc1155TokenId)
+    : value;
 }
 
 class SuperRareAdapter implements PlatformAdapter {
@@ -63,7 +74,7 @@ class SuperRareAdapter implements PlatformAdapter {
       BAZAAR_ABI,
       provider
     );
-    const nft = new Contract(contract, ERC721_METADATA_ABI, provider);
+    const nft = new Contract(contract, NFT_METADATA_ABI, provider);
 
     // --- Market state (best effort)
     let saleCurrency: string | undefined;
@@ -191,10 +202,11 @@ class SuperRareAdapter implements PlatformAdapter {
       saleType = 'NOT_FOR_SALE';
     }
     // --- Metadata
-    const [tokenUri, collectionName] = await Promise.all([
-      nft.tokenURI(BigInt(tokenId)),
-      nft.name().catch(() => undefined)
-    ]);
+    const [{ uri: tokenUri, erc1155TokenId }, collectionName] =
+      await Promise.all([
+        this.resolveMetadataUri(nft, BigInt(tokenId)),
+        nft.name().catch(() => undefined)
+      ]);
 
     let meta: MetadataJson | undefined;
     if (tokenUri) {
@@ -206,13 +218,25 @@ class SuperRareAdapter implements PlatformAdapter {
       }
     }
 
-    const title = pick<string>(meta?.name, meta?.title);
-    const description = pick<string>(meta?.description);
+    const title = expandMetadataTokenId(
+      pick<string>(meta?.name, meta?.title),
+      erc1155TokenId
+    );
+    const description = expandMetadataTokenId(
+      pick<string>(meta?.description),
+      erc1155TokenId
+    );
     const imageUrl = normalizeMetadataUri(
-      pick<string>(meta?.image, meta?.image_url, meta?.imageUrl)
+      expandMetadataTokenId(
+        pick<string>(meta?.image, meta?.image_url, meta?.imageUrl),
+        erc1155TokenId
+      )
     );
     const animationUrl = normalizeMetadataUri(
-      pick<string>(meta?.animation_url, meta?.animationUrl)
+      expandMetadataTokenId(
+        pick<string>(meta?.animation_url, meta?.animationUrl),
+        erc1155TokenId
+      )
     );
 
     const patch: any = {
@@ -255,6 +279,37 @@ class SuperRareAdapter implements PlatformAdapter {
       patch
     };
   }
+
+  private async resolveMetadataUri(
+    nft: Contract,
+    tokenId: bigint
+  ): Promise<{ uri: string; erc1155TokenId?: string }> {
+    try {
+      return { uri: await nft.tokenURI(tokenId) };
+    } catch (originalError) {
+      // Preserve RPC/time-budget failures. Only a contract revert can indicate
+      // the ERC721 method is absent on an ERC1155 collection.
+      if (!isError(originalError, 'CALL_EXCEPTION')) throw originalError;
+      try {
+        if ((await nft.supportsInterface('0xd9b67a26')) === true) {
+          const uri: unknown = await nft.uri(tokenId);
+          if (typeof uri === 'string' && uri.trim()) {
+            // ERC1155 requires this substitution in both the URI and consumed
+            // metadata JSON strings; ERC721 metadata remains unchanged.
+            const erc1155TokenId = tokenId.toString(16).padStart(64, '0');
+            return {
+              uri: uri.replace(/\{id\}/g, erc1155TokenId),
+              erc1155TokenId
+            };
+          }
+        }
+      } catch {
+        // Unsupported/malformed interfaces must not replace the original error.
+      }
+      throw originalError;
+    }
+  }
+
   private getSuperRareBazaarAddress() {
     return (
       env.getStringOrNull(`SUPERRARE_BAZAAR_ADDRESS`) ??
