@@ -195,7 +195,8 @@ describe('durable wallet send attempts', () => {
     await submitApprovalAttempt(row, hash);
     expect(approvals).toHaveBeenCalledWith(
       prepared.intent,
-      prepared.reviewOrder?.components.conduitKey
+      prepared.reviewOrder?.components.conduitKey,
+      prepared.approvalTransactions
     );
     expect(rpc.getBlock).not.toHaveBeenCalledWith('safe');
     expect(operationSendAttempt(row)).toMatchObject({
@@ -204,6 +205,42 @@ describe('durable wallet send attempts', () => {
     });
     expect(row.state).toBe('REVIEW');
     expect(row.expires_at).toBe(0);
+  });
+  it('preserves remaining approval envelopes after canonical receipt reconciliation', async () => {
+    const remaining = {
+      ...transaction,
+      data: '0x5678',
+      gas: {
+        gas_limit: '60000',
+        max_fee_per_gas: '10',
+        gas_reserve_wei: '600000'
+      }
+    };
+    row.prepared_json = {
+      ...prepared,
+      approvalTransactions: [transaction, remaining]
+    };
+    approvals.mockResolvedValue([remaining]);
+    await begin();
+    await submitApprovalAttempt(row, hash);
+    expect(approvals).toHaveBeenCalledWith(
+      prepared.intent,
+      prepared.reviewOrder?.components.conduitKey,
+      [transaction, remaining]
+    );
+    expect((row.prepared_json as MarketPrepared).approvalTransactions).toEqual([
+      remaining
+    ]);
+    expect(operationSendAttempt(row)?.status).toBe('RESOLVED');
+  });
+  it('does not change saved-rule approval quoting behavior', async () => {
+    row.rule_id = 'rule';
+    await begin();
+    await submitApprovalAttempt(row, hash);
+    expect(approvals).toHaveBeenCalledWith(
+      prepared.intent,
+      prepared.reviewOrder?.components.conduitKey
+    );
   });
   it.each([
     'reorg',

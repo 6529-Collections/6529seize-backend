@@ -1,7 +1,8 @@
 import type { MarketChain } from '@/marketplace/market-chain';
 import {
   MarketTransaction,
-  MarketValidationError
+  MarketValidationError,
+  MarketGasEstimate
 } from '@/marketplace/provider.types';
 
 // Ethereum mainnet EIP-7825: https://eips.ethereum.org/EIPS/eip-7825
@@ -10,9 +11,12 @@ export const MARKET_BATCH_MAX_TRANSACTION_GAS = BigInt(16777216);
 /** A resource-count bound is not evidence that the complete selection fits one transaction. */
 export async function simulateMarketBatch(
   chain: MarketChain,
-  transaction: MarketTransaction
+  transaction: MarketTransaction,
+  reviewed?: MarketGasEstimate
 ) {
-  const gas = await chain.simulate(transaction);
+  const gas = reviewed
+    ? await chain.simulate(transaction, reviewed)
+    : await chain.simulate(transaction);
   const block = await chain.rpc.getBlock('latest');
   if (!block?.hash || block.timestamp * 1000 < Date.now() - 120000)
     throw new MarketValidationError(

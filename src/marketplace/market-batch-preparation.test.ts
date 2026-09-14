@@ -6,6 +6,8 @@ import { MarketBatchPreparation } from '@/marketplace/market-batch-preparation';
 import type { MarketChain } from '@/marketplace/market-chain';
 import type { OpenSeaMarketplaceProvider } from '@/marketplace/provider.opensea';
 import { MarketBatchPrepareRequest } from '@/marketplace/market-batch.schema';
+import { MarketBatchPrepared } from '@/marketplace/market-batch.types';
+import { MARKET_BATCH_INTERFACE } from '@/marketplace/seaport-batch.builder';
 import {
   BATCH_BUYER,
   BATCH_OWN,
@@ -114,11 +116,12 @@ function setup(contract = MEMES_CONTRACT) {
     provider as unknown as OpenSeaMarketplaceProvider,
     chain as unknown as MarketChain
   );
-  const prepare = () =>
+  const prepare = (reviewed?: MarketBatchPrepared) =>
     preparation.prepare(
       request,
       [BATCH_BUYER, BATCH_OWN],
-      new AbortController().signal
+      new AbortController().signal,
+      reviewed
     );
   return { f, request, provider, chain, prepare };
 }
@@ -129,6 +132,74 @@ describe('atomic batch preparation', () => {
     jest.clearAllMocks();
   });
   afterEach(() => jest.restoreAllMocks());
+  test('keeps the unsigned buyer mirror active for an adjacent older RPC block without altering seller terms', async () => {
+    const s = setup();
+    const prepared = await s.prepare();
+    const decoded = MARKET_BATCH_INTERFACE.decodeFunctionData(
+      'matchAdvancedOrders',
+      prepared.transaction.data
+    );
+    const buyer = decoded.orders[decoded.orders.length - 1];
+    expect(buyer.parameters.startTime).toBe(BigInt(1380));
+    expect(buyer.parameters.startTime).toBeLessThanOrEqual(BigInt(1488));
+    expect(buyer.parameters.endTime).toBe(BigInt(1590));
+    expect(buyer.signature).toBe('0x');
+    s.f.materials.forEach((material, index) => {
+      expect(decoded.orders[index].parameters.startTime.toString()).toBe(
+        material.order.components.startTime
+      );
+      expect(decoded.orders[index].parameters.endTime.toString()).toBe(
+        material.order.components.endTime
+      );
+      expect(decoded.orders[index].signature).toBe(material.signature);
+    });
+  });
+  test('never backdates the mirror before any signed seller start', async () => {
+    const s = setup();
+    s.chain.snapshot.mockResolvedValue({
+      block_number: 10,
+      block_hash: `0x${'11'.repeat(32)}`,
+      block_timestamp: 1050
+    });
+    const prepared = await s.prepare();
+    expect(prepared.mirrorTerms.startTime).toBe('1000');
+  });
+  test('retains a valid reviewed mirror start and passes its exact caps into a fully refreshed batch simulation', async () => {
+    const s = setup();
+    const previous = await s.prepare();
+    s.chain.snapshot.mockResolvedValue({
+      block_number: 11,
+      block_hash: `0x${'22'.repeat(32)}`,
+      block_timestamp: 1512
+    });
+    jest.mocked(Date.now).mockReturnValue(1512000);
+    const refreshed = await s.prepare(previous);
+    expect(refreshed.mirrorTerms.startTime).toBe(
+      previous.mirrorTerms.startTime
+    );
+    expect(refreshed.mirrorTerms.endTime).toBe('1602');
+    expect(refreshed.transaction.data).not.toBe(previous.transaction.data);
+    expect(refreshed.intent).toEqual(previous.intent);
+    expect(s.chain.simulate).toHaveBeenLastCalledWith(
+      refreshed.transaction,
+      previous.gas
+    );
+    expect(s.provider.getOrder).toHaveBeenCalledTimes(4);
+  });
+  test('replaces expired or future prior mirror starts rather than exposing an inactive buyer order', async () => {
+    const s = setup();
+    const previous = await s.prepare();
+    for (const candidate of [
+      { ...previous, validUntil: Date.now() },
+      {
+        ...previous,
+        mirrorTerms: { ...previous.mirrorTerms, startTime: '1512' }
+      }
+    ]) {
+      const refreshed = await s.prepare(candidate);
+      expect(refreshed.mirrorTerms.startTime).toBe('1380');
+    }
+  });
   test('prepares Meme Lab editions and multiple destinations in the same complete batch', async () => {
     const s = setup(MEMELAB_CONTRACT);
     const prepared = await s.prepare();

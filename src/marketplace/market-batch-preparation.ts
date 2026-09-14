@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { simulateMarketBatch } from '@/marketplace/market-batch-simulation';
+import { reviewedMarketGas } from '@/marketplace/market-gas-envelope';
 import { collectingService } from '@/collecting/collecting.service';
 import { catalogForTradeAssets } from '@/collecting/collecting-trade-assets';
 import { CollectingAsset } from '@/collecting/collecting.types';
@@ -177,7 +178,8 @@ export class MarketBatchPreparation {
   async prepare(
     input: MarketBatchPrepareRequest,
     profileWallets: readonly string[],
-    signal: AbortSignal
+    signal: AbortSignal,
+    reviewed?: MarketBatchPrepared
   ): Promise<MarketBatchPrepared> {
     const request = marketBatchPrepareSchema.parse(input);
     const wallets = new Set(
@@ -240,8 +242,25 @@ export class MarketBatchPreparation {
       unavailable(
         'A selected authorization expires too soon. Refresh the complete selection.'
       );
+    // RPCs can observe adjacent blocks. Only the unsigned payer mirror gets
+    // this allowance; its interval remains inside every signed seller order.
+    const sellerStart = Math.max(
+      0,
+      ...materials.map((material) =>
+        Number(material.order.components.startTime)
+      )
+    );
+    const priorStart = Number(reviewed?.mirrorTerms.startTime);
+    const start =
+      reviewed &&
+      reviewed.validUntil > Date.now() &&
+      Number.isSafeInteger(priorStart) &&
+      priorStart >= sellerStart &&
+      priorStart <= snapshot.block_timestamp
+        ? priorStart
+        : Math.max(sellerStart, snapshot.block_timestamp - 120);
     const mirrorTerms = {
-      startTime: String(snapshot.block_timestamp),
+      startTime: String(start),
       endTime: String(end),
       salt: BigInt(`0x${randomBytes(32).toString('hex')}`).toString()
     };
@@ -252,7 +271,11 @@ export class MarketBatchPreparation {
     );
     validateMarketBatchTransaction(intent, materials, mirrorTerms, transaction);
     assertMarketBatchActive(signal);
-    const gas = await simulateMarketBatch(this.chain, transaction);
+    const gas = await simulateMarketBatch(
+      this.chain,
+      transaction,
+      reviewedMarketGas(transaction, reviewed?.transaction, reviewed?.gas)
+    );
     assertMarketBatchActive(signal);
     return {
       intent,
