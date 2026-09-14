@@ -687,433 +687,222 @@ describe('DropCreationApiService.deleteDropById', () => {
   });
 });
 
-describe('DropCreationApiService.deleteMyWaveChatHistory', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-  });
-
-  afterEach(() => {
-    jest.restoreAllMocks();
-  });
-
-  it('deletes the authenticated author chat drops and preserves their pinned drop', async () => {
-    const connection = {} as any;
-    const chatDrops = [
-      { id: 'chat-1' },
-      { id: 'pinned-chat' },
-      { id: 'chat-2' }
-    ];
+describe('DropCreationApiService bounded chat history purge', () => {
+  function setup() {
+    process.env.JWT_SECRET = 'purge-unit-test-secret';
+    const connection = {};
     const dropsDb = {
-      executeNativeQueriesInTransaction: jest.fn(
-        async (callback: (connection: unknown) => Promise<unknown>) =>
-          callback(connection)
+      executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+        callback(connection)
       ),
-      findWaveChatDropsByAuthorForUpdate: jest.fn().mockResolvedValue(chatDrops)
+      findDropById: jest.fn().mockResolvedValue({
+        id: 'pin',
+        author_id: 'author',
+        drop_type: DropType.CHAT
+      })
     };
-    const deleteDrop = {
-      execute: jest.fn().mockImplementation(async ({ drop_id }) => ({
-        id: drop_id,
-        serial_no: drop_id === 'chat-1' ? 10 : 12,
-        visibility_group_id: 'group-1',
-        wave_id: 'wave-1',
-        dm_unread_recipient_ids: []
-      }))
+    const purgeDb = {
+      findCutoff: jest.fn().mockResolvedValue(60000),
+      findBatchForUpdate: jest
+        .fn()
+        .mockResolvedValue([{ id: 'chat', serial_no: 1 }])
     };
-    const wsListenersNotifier = {
+    const deletion = {
+      executeChatHistoryBatch: jest.fn().mockResolvedValue([]),
+      execute: jest.fn()
+    };
+    const notifier = {
       notifyAboutDropDeletes: jest.fn().mockResolvedValue(undefined)
     };
-    const wavesApiDb = {
+    const waves = {
       findWaveByIdForUpdate: jest.fn().mockResolvedValue({
-        id: 'wave-1',
-        description_drop_id: 'pinned-chat'
+        id: 'wave',
+        description_drop_id: 'pin',
+        visibility_group_id: null
       })
+    };
+    const ctx = {
+      authenticationContext: {
+        getActingAsId: jest.fn().mockReturnValue('author'),
+        isAuthenticatedAsProxy: jest.fn().mockReturnValue(false)
+      }
     };
     const service = new DropCreationApiService(
       {} as never,
       dropsDb as never,
       {} as never,
       {} as never,
-      deleteDrop as never,
-      wsListenersNotifier as never,
+      deletion as never,
+      notifier as never,
       {} as never,
       {} as never,
       {} as never,
-      wavesApiDb as never
+      waves as never,
+      {} as never,
+      purgeDb as never
     );
-    const requestWaveDropMetricsRefreshSpy = jest
+    jest
       .spyOn(
         waveDropMetricsRefreshService,
         'requestWaveDropMetricsRefreshBestEffort'
       )
-      .mockResolvedValue(undefined);
-    const requestWaveScoreRefreshSpy = jest
-      .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
-      .mockResolvedValue(undefined);
-    const ctx = {
-      authenticationContext: {
-        getActingAsId: jest.fn().mockReturnValue('profile-1'),
-        isAuthenticatedAsProxy: jest.fn().mockReturnValue(false)
-      },
-      timer: {
-        start: jest.fn(),
-        stop: jest.fn()
-      }
-    };
-
-    await expect(
-      service.deleteMyWaveChatHistory({ waveId: 'wave-1' }, ctx as never)
-    ).resolves.toEqual({
-      deleted_drop_ids: ['chat-1', 'chat-2'],
-      preserved_pinned_drop_id: 'pinned-chat'
-    });
-
-    expect(wavesApiDb.findWaveByIdForUpdate).toHaveBeenCalledWith(
-      'wave-1',
-      expect.objectContaining({
-        authenticationContext: ctx.authenticationContext,
-        connection,
-        timer: ctx.timer
-      })
-    );
-    expect(dropsDb.findWaveChatDropsByAuthorForUpdate).toHaveBeenCalledWith(
-      { waveId: 'wave-1', authorId: 'profile-1' },
-      expect.objectContaining({ connection })
-    );
-    expect(deleteDrop.execute).toHaveBeenCalledTimes(2);
-    expect(deleteDrop.execute).toHaveBeenNthCalledWith(
-      1,
-      {
-        drop_id: 'chat-1',
-        deleter_identity: 'profile-1',
-        deleter_id: 'profile-1',
-        deletion_purpose: 'DELETE'
-      },
-      { timer: ctx.timer, connection }
-    );
-    expect(deleteDrop.execute).toHaveBeenNthCalledWith(
-      2,
-      {
-        drop_id: 'chat-2',
-        deleter_identity: 'profile-1',
-        deleter_id: 'profile-1',
-        deletion_purpose: 'DELETE'
-      },
-      { timer: ctx.timer, connection }
-    );
-    expect(requestWaveDropMetricsRefreshSpy).toHaveBeenCalledTimes(1);
-    expect(requestWaveScoreRefreshSpy).toHaveBeenCalledTimes(1);
-    expect(invalidateWaveUnreadCacheForWave).toHaveBeenCalledWith('wave-1');
-    expect(wsListenersNotifier.notifyAboutDropDeletes).toHaveBeenCalledWith(
-      [
-        { drop_id: 'chat-1', drop_serial: 10, wave_id: 'wave-1' },
-        { drop_id: 'chat-2', drop_serial: 12, wave_id: 'wave-1' }
-      ],
-      'group-1',
-      {
-        authenticationContext: ctx.authenticationContext,
-        timer: ctx.timer
-      }
-    );
-  });
-
-  it('does not delete or publish when the only authored chat drop is pinned', async () => {
-    const dropsDb = {
-      executeNativeQueriesInTransaction: jest.fn(
-        async (callback: (connection: unknown) => Promise<unknown>) =>
-          callback({})
-      ),
-      findWaveChatDropsByAuthorForUpdate: jest
-        .fn()
-        .mockResolvedValue([{ id: 'pinned-chat' }])
-    };
-    const deleteDrop = { execute: jest.fn() };
-    const wsListenersNotifier = { notifyAboutDropDeletes: jest.fn() };
-    const wavesApiDb = {
-      findWaveByIdForUpdate: jest.fn().mockResolvedValue({
-        id: 'wave-1',
-        description_drop_id: 'pinned-chat'
-      })
-    };
-    const service = new DropCreationApiService(
-      {} as never,
-      dropsDb as never,
-      {} as never,
-      {} as never,
-      deleteDrop as never,
-      wsListenersNotifier as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      wavesApiDb as never
-    );
-    const requestWaveDropMetricsRefreshSpy = jest.spyOn(
-      waveDropMetricsRefreshService,
-      'requestWaveDropMetricsRefreshBestEffort'
-    );
-    const requestWaveScoreRefreshSpy = jest.spyOn(
-      waveScoreService,
-      'requestWaveScoreRefreshBestEffort'
-    );
-    const ctx = {
-      authenticationContext: {
-        getActingAsId: jest.fn().mockReturnValue('profile-1'),
-        isAuthenticatedAsProxy: jest.fn().mockReturnValue(false)
-      },
-      timer: undefined
-    };
-
-    await expect(
-      service.deleteMyWaveChatHistory({ waveId: 'wave-1' }, ctx as never)
-    ).resolves.toEqual({
-      deleted_drop_ids: [],
-      preserved_pinned_drop_id: 'pinned-chat'
-    });
-
-    expect(deleteDrop.execute).not.toHaveBeenCalled();
-    expect(requestWaveDropMetricsRefreshSpy).not.toHaveBeenCalled();
-    expect(requestWaveScoreRefreshSpy).not.toHaveBeenCalled();
-    expect(invalidateWaveUnreadCacheForWave).not.toHaveBeenCalled();
-    expect(wsListenersNotifier.notifyAboutDropDeletes).not.toHaveBeenCalled();
-  });
-
-  it('attempts every post-commit effect when one effect fails', async () => {
-    const dropsDb = {
-      executeNativeQueriesInTransaction: jest.fn(
-        async (callback: (connection: unknown) => Promise<unknown>) =>
-          callback({})
-      ),
-      findWaveChatDropsByAuthorForUpdate: jest
-        .fn()
-        .mockResolvedValue([{ id: 'chat-1' }])
-    };
-    const deleteDrop = {
-      execute: jest.fn().mockResolvedValue({
-        id: 'chat-1',
-        serial_no: 10,
-        visibility_group_id: 'group-1',
-        wave_id: 'wave-1',
-        dm_unread_recipient_ids: []
-      })
-    };
-    const wsListenersNotifier = {
-      notifyAboutDropDeletes: jest.fn().mockResolvedValue(undefined)
-    };
-    const wavesApiDb = {
-      findWaveByIdForUpdate: jest.fn().mockResolvedValue({
-        id: 'wave-1',
-        description_drop_id: 'different-author-pinned-drop'
-      })
-    };
-    const service = new DropCreationApiService(
-      {} as never,
-      dropsDb as never,
-      {} as never,
-      {} as never,
-      deleteDrop as never,
-      wsListenersNotifier as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      wavesApiDb as never
-    );
-    const requestWaveDropMetricsRefreshSpy = jest
-      .spyOn(
-        waveDropMetricsRefreshService,
-        'requestWaveDropMetricsRefreshBestEffort'
-      )
-      .mockRejectedValue(new Error('metrics unavailable'));
-    const requestWaveScoreRefreshSpy = jest
-      .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
       .mockResolvedValue(undefined);
     jest
-      .mocked(invalidateWaveUnreadCacheForWave)
-      .mockRejectedValueOnce(new Error('cache unavailable'));
-    const ctx = {
-      authenticationContext: {
-        getActingAsId: jest.fn().mockReturnValue('profile-1'),
-        isAuthenticatedAsProxy: jest.fn().mockReturnValue(false)
-      },
-      timer: undefined
-    };
+      .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
+      .mockResolvedValue(undefined);
+    return { service, ctx, dropsDb, purgeDb, deletion, notifier, waves };
+  }
+  beforeEach(() => jest.clearAllMocks());
+  afterEach(() => jest.restoreAllMocks());
 
+  it('prepares without deletion and retains the frozen cutoff after a lost response', async () => {
+    const { service, ctx, purgeDb, deletion } = setup();
+    const { purge_token } = await service.prepareMyWaveChatHistoryPurge(
+      { waveId: 'wave' },
+      ctx as never
+    );
+    expect(deletion.executeChatHistoryBatch).not.toHaveBeenCalled();
+    purgeDb.findCutoff.mockResolvedValue(70000);
+    purgeDb.findBatchForUpdate.mockResolvedValue(
+      Array.from({ length: 101 }, (_, i) => ({
+        id: `chat-${i}`,
+        serial_no: i + 1
+      }))
+    );
+    const request = { waveId: 'wave', purgeToken: purge_token };
+    const first = await service.deleteMyWaveChatHistory(request, ctx as never);
+    expect(first.has_more).toBe(true);
+    expect(first.deleted_drop_ids).toHaveLength(100);
+    await service.deleteMyWaveChatHistory(request, ctx as never);
+    expect(purgeDb.findCutoff).toHaveBeenCalledTimes(1);
+    expect(purgeDb.findBatchForUpdate).toHaveBeenLastCalledWith(
+      {
+        waveId: 'wave',
+        authorId: 'author',
+        cutoffSerialNo: 60000,
+        pinnedDropId: 'pin'
+      },
+      expect.anything()
+    );
+    expect(deletion.execute).not.toHaveBeenCalled();
+    expect(deletion.executeChatHistoryBatch).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses an oversized legacy purge before mutation', async () => {
+    const { service, ctx, purgeDb, deletion, notifier } = setup();
+    purgeDb.findBatchForUpdate.mockResolvedValue(
+      Array.from({ length: 101 }, (_, i) => ({
+        id: `chat-${i}`,
+        serial_no: i + 1
+      }))
+    );
     await expect(
-      service.deleteMyWaveChatHistory({ waveId: 'wave-1' }, ctx as never)
+      service.deleteMyWaveChatHistory({ waveId: 'wave' }, ctx as never)
+    ).rejects.toThrow('update your app');
+    expect(deletion.executeChatHistoryBatch).not.toHaveBeenCalled();
+    expect(notifier.notifyAboutDropDeletes).not.toHaveBeenCalled();
+  });
+
+  it('completes a small legacy purge and runs post-commit work once', async () => {
+    const { service, ctx, deletion, notifier } = setup();
+    await expect(
+      service.deleteMyWaveChatHistory({ waveId: 'wave' }, ctx as never)
     ).resolves.toEqual({
-      deleted_drop_ids: ['chat-1'],
-      preserved_pinned_drop_id: null
+      deleted_drop_ids: ['chat'],
+      preserved_pinned_drop_id: 'pin',
+      has_more: false
     });
-
-    expect(requestWaveDropMetricsRefreshSpy).toHaveBeenCalledTimes(1);
-    expect(requestWaveScoreRefreshSpy).toHaveBeenCalledTimes(1);
-    expect(invalidateWaveUnreadCacheForWave).toHaveBeenCalledWith('wave-1');
-    expect(wsListenersNotifier.notifyAboutDropDeletes).toHaveBeenCalledTimes(1);
+    expect(deletion.executeChatHistoryBatch).toHaveBeenCalledTimes(1);
+    expect(notifier.notifyAboutDropDeletes).toHaveBeenCalledTimes(1);
+    expect(
+      waveScoreService.requestWaveScoreRefreshBestEffort
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      waveDropMetricsRefreshService.requestWaveDropMetricsRefreshBestEffort
+    ).toHaveBeenCalledTimes(1);
+    expect(invalidateWaveUnreadCacheForWave).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects a missing wave before selecting or deleting drops', async () => {
-    const dropsDb = {
-      executeNativeQueriesInTransaction: jest.fn(
-        async (callback: (connection: unknown) => Promise<unknown>) =>
-          callback({})
-      ),
-      findWaveChatDropsByAuthorForUpdate: jest.fn()
-    };
-    const deleteDrop = { execute: jest.fn() };
-    const wavesApiDb = {
-      findWaveByIdForUpdate: jest.fn().mockResolvedValue(null)
-    };
-    const service = new DropCreationApiService(
-      {} as never,
-      dropsDb as never,
-      {} as never,
-      {} as never,
-      deleteDrop as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      wavesApiDb as never
+  it('uses the latest pin and returns an empty final batch without post-commit work', async () => {
+    const { service, ctx, purgeDb, waves, notifier, dropsDb } = setup();
+    const plan = await service.prepareMyWaveChatHistoryPurge(
+      { waveId: 'wave' },
+      ctx as never
     );
-    const ctx = {
-      authenticationContext: {
-        getActingAsId: jest.fn().mockReturnValue('profile-1'),
-        isAuthenticatedAsProxy: jest.fn().mockReturnValue(false)
-      },
-      timer: undefined
-    };
-
+    waves.findWaveByIdForUpdate.mockResolvedValue({
+      id: 'wave',
+      description_drop_id: 'new-pin',
+      visibility_group_id: null
+    });
+    dropsDb.findDropById.mockResolvedValue({
+      id: 'new-pin',
+      author_id: 'other',
+      drop_type: DropType.CHAT
+    });
+    purgeDb.findBatchForUpdate.mockResolvedValue([]);
     await expect(
-      service.deleteMyWaveChatHistory({ waveId: 'missing-wave' }, ctx as never)
-    ).rejects.toThrow('Wave missing-wave not found');
-
-    expect(dropsDb.findWaveChatDropsByAuthorForUpdate).not.toHaveBeenCalled();
-    expect(deleteDrop.execute).not.toHaveBeenCalled();
+      service.deleteMyWaveChatHistory(
+        { waveId: 'wave', purgeToken: plan.purge_token },
+        ctx as never
+      )
+    ).resolves.toEqual({
+      deleted_drop_ids: [],
+      preserved_pinned_drop_id: null,
+      has_more: false
+    });
+    expect(purgeDb.findBatchForUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ pinnedDropId: 'new-pin' }),
+      expect.anything()
+    );
+    expect(notifier.notifyAboutDropDeletes).not.toHaveBeenCalled();
   });
 
-  it('does not publish post-commit effects when a transactional delete fails', async () => {
-    const dropsDb = {
-      executeNativeQueriesInTransaction: jest.fn(
-        async (callback: (connection: unknown) => Promise<unknown>) =>
-          callback({})
-      ),
-      findWaveChatDropsByAuthorForUpdate: jest
-        .fn()
-        .mockResolvedValue([{ id: 'chat-1' }, { id: 'chat-2' }])
-    };
-    const deleteDrop = {
-      execute: jest
-        .fn()
-        .mockResolvedValueOnce({
-          id: 'chat-1',
-          serial_no: 10,
-          visibility_group_id: 'group-1',
-          wave_id: 'wave-1',
-          dm_unread_recipient_ids: []
-        })
-        .mockRejectedValueOnce(new Error('delete failed'))
-    };
-    const wsListenersNotifier = { notifyAboutDropDeletes: jest.fn() };
-    const wavesApiDb = {
-      findWaveByIdForUpdate: jest.fn().mockResolvedValue({
-        id: 'wave-1',
-        description_drop_id: 'different-author-pinned-drop'
-      })
-    };
-    const service = new DropCreationApiService(
-      {} as never,
-      dropsDb as never,
-      {} as never,
-      {} as never,
-      deleteDrop as never,
-      wsListenersNotifier as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      wavesApiDb as never
-    );
-    const requestWaveDropMetricsRefreshSpy = jest.spyOn(
-      waveDropMetricsRefreshService,
-      'requestWaveDropMetricsRefreshBestEffort'
-    );
-    const requestWaveScoreRefreshSpy = jest.spyOn(
-      waveScoreService,
-      'requestWaveScoreRefreshBestEffort'
-    );
-    const ctx = {
-      authenticationContext: {
-        getActingAsId: jest.fn().mockReturnValue('profile-1'),
-        isAuthenticatedAsProxy: jest.fn().mockReturnValue(false)
-      },
-      timer: undefined
-    };
-
+  it('reports committed deletion even if a post-commit effect fails', async () => {
+    const { service, ctx, notifier } = setup();
+    notifier.notifyAboutDropDeletes.mockRejectedValue(new Error('offline'));
     await expect(
-      service.deleteMyWaveChatHistory({ waveId: 'wave-1' }, ctx as never)
-    ).rejects.toThrow('delete failed');
+      service.deleteMyWaveChatHistory({ waveId: 'wave' }, ctx as never)
+    ).resolves.toMatchObject({ deleted_drop_ids: ['chat'], has_more: false });
+    expect(invalidateWaveUnreadCacheForWave).toHaveBeenCalledTimes(1);
+  });
 
-    expect(deleteDrop.execute).toHaveBeenCalledTimes(2);
-    expect(requestWaveDropMetricsRefreshSpy).not.toHaveBeenCalled();
-    expect(requestWaveScoreRefreshSpy).not.toHaveBeenCalled();
+  it('does not notify when batch transaction fails', async () => {
+    const { service, ctx, deletion, notifier } = setup();
+    deletion.executeChatHistoryBatch.mockRejectedValue(new Error('rollback'));
+    await expect(
+      service.deleteMyWaveChatHistory({ waveId: 'wave' }, ctx as never)
+    ).rejects.toThrow('rollback');
+    expect(notifier.notifyAboutDropDeletes).not.toHaveBeenCalled();
     expect(invalidateWaveUnreadCacheForWave).not.toHaveBeenCalled();
-    expect(wsListenersNotifier.notifyAboutDropDeletes).not.toHaveBeenCalled();
   });
 
-  it('rejects a missing acting profile before opening a transaction', async () => {
-    const dropsDb = {
-      executeNativeQueriesInTransaction: jest.fn()
-    };
-    const service = new DropCreationApiService(
-      {} as never,
-      dropsDb as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never
-    );
-    const ctx = {
-      authenticationContext: {
-        getActingAsId: jest.fn().mockReturnValue(null),
-        isAuthenticatedAsProxy: jest.fn()
-      },
-      timer: undefined
-    };
-
-    await expect(
-      service.deleteMyWaveChatHistory({ waveId: 'wave-1' }, ctx as never)
-    ).rejects.toThrow('Please create a profile first');
-
-    expect(dropsDb.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
-  });
-
-  it('rejects proxy deletion before opening a transaction', async () => {
-    const dropsDb = {
-      executeNativeQueriesInTransaction: jest.fn()
-    };
-    const service = new DropCreationApiService(
-      {} as never,
-      dropsDb as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never
-    );
-    const ctx = {
-      authenticationContext: {
-        getActingAsId: jest.fn().mockReturnValue('profile-1'),
-        isAuthenticatedAsProxy: jest.fn().mockReturnValue(true)
-      },
-      timer: undefined
-    };
-
-    await expect(
-      service.deleteMyWaveChatHistory({ waveId: 'wave-1' }, ctx as never)
-    ).rejects.toThrow('Proxy is not allowed to delete chat history');
-
-    expect(dropsDb.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
-  });
+  it.each(['missing-profile', 'proxy', 'missing-wave', 'bad-token'])(
+    'rejects %s safely',
+    async (failure) => {
+      const { service, ctx, waves, deletion } = setup();
+      if (failure === 'missing-profile')
+        ctx.authenticationContext.getActingAsId.mockReturnValue(null);
+      if (failure === 'proxy')
+        ctx.authenticationContext.isAuthenticatedAsProxy.mockReturnValue(true);
+      if (failure === 'missing-wave')
+        waves.findWaveByIdForUpdate.mockResolvedValue(null);
+      await expect(
+        service.deleteMyWaveChatHistory(
+          {
+            waveId: 'wave',
+            ...(failure === 'bad-token' ? { purgeToken: 'bad' } : {})
+          },
+          ctx as never
+        )
+      ).rejects.toThrow();
+      if (failure !== 'bad-token')
+        await expect(
+          service.prepareMyWaveChatHistoryPurge(
+            { waveId: 'wave' },
+            ctx as never
+          )
+        ).rejects.toThrow();
+      expect(deletion.executeChatHistoryBatch).not.toHaveBeenCalled();
+    }
+  );
 });
