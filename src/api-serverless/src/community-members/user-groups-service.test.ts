@@ -991,9 +991,55 @@ describe('UserGroupsService draft membership SQL', () => {
     );
 
     expect(result).not.toBeNull();
+    expect(result!.sql).not.toContain('i.level_raw >= :level_min');
+    expect(result!.sql).toContain('i.level_raw < :level_max_exclusive');
+    expect(result!.params).toMatchObject({ level_max_exclusive: 25 });
+  });
+
+  it('uses the next level threshold as the exclusive upper score bound', async () => {
+    const service = buildService();
+
+    const result = await service.getSqlAndParamsForPreview(
+      buildPreviewGroup({ level: { min: 1, max: 1 } }),
+      {}
+    );
+
+    expect(result).not.toBeNull();
     expect(result!.sql).toContain('i.level_raw >= :level_min');
-    expect(result!.sql).toContain('i.level_raw <= :level_max');
-    expect(result!.params).toMatchObject({ level_min: 0, level_max: 0 });
+    expect(result!.sql).toContain('i.level_raw < :level_max_exclusive');
+    expect(result!.params).toMatchObject({
+      level_min: 25,
+      level_max_exclusive: 50
+    });
+  });
+
+  it('does not constrain raw scores for the full ordinal level range', async () => {
+    const service = buildService();
+
+    const result = await service.getSqlAndParamsForPreview(
+      buildPreviewGroup({ level: { min: 0, max: 100 } }),
+      {}
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.sql).not.toContain('i.level_raw >= :level_min');
+    expect(result!.sql).not.toContain('i.level_raw < :level_max_exclusive');
+    expect(result!.params).not.toHaveProperty('level_min');
+    expect(result!.params).not.toHaveProperty('level_max_exclusive');
+  });
+
+  it('makes an entirely negative ordinal level range unsatisfiable', async () => {
+    const service = buildService();
+
+    const result = await service.getSqlAndParamsForPreview(
+      buildPreviewGroup({ level: { min: -10, max: -1 } }),
+      {}
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.sql).toContain('and 1 = 0');
+    expect(result!.params).not.toHaveProperty('level_min');
+    expect(result!.params).not.toHaveProperty('level_max_exclusive');
   });
 
   it('separates NFT and beneficiary grant CTEs with valid delimiters', async () => {

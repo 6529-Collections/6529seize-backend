@@ -425,3 +425,32 @@ export function getLevelComponentsBorderByLevel(level: number): number {
   }
   return LEVELS.find((l) => l.level === level)?.minTdh ?? 0;
 }
+
+export function getLevelScoreBounds({
+  min,
+  max
+}: {
+  min: number | null;
+  max: number | null;
+}): {
+  minInclusive: number | null;
+  maxExclusive: number | null;
+  matchesNoScores: boolean;
+} {
+  const matchesNoScores =
+    (min !== null && min > 100) ||
+    (max !== null && max < 0) ||
+    (min !== null && max !== null && min > max);
+
+  return {
+    minInclusive:
+      !matchesNoScores && min !== null && min > 0
+        ? getLevelComponentsBorderByLevel(min)
+        : null,
+    maxExclusive:
+      !matchesNoScores && max !== null && max >= 0 && max < 100
+        ? getLevelComponentsBorderByLevel(max + 1)
+        : null,
+    matchesNoScores
+  };
+}
