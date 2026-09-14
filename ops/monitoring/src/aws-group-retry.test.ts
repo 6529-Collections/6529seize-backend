@@ -100,6 +100,9 @@ function harness(t: TestContext) {
     },
     async deliver() {
       assert.fail('a repeat must group without sending');
+    },
+    async edit() {
+      assert.fail('a repeat must group without editing');
     }
   };
   return {

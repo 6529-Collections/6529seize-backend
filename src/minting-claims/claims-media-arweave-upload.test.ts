@@ -719,6 +719,132 @@ describe('uploadMintingClaimToArweave', () => {
     );
   });
 
+  it('stops publication when the image checkpoint cannot be persisted', async () => {
+    const failure = new Error('checkpoint unavailable');
+    const onImageUploaded = jest
+      .fn<(_location: string) => Promise<void>>()
+      .mockRejectedValue(failure);
+    const onAnimationUploaded = jest.fn<(_location: string) => Promise<void>>();
+
+    await expect(
+      uploadMintingClaimToArweave(MEMES_CONTRACT, baseClaim(), {
+        onImageUploaded,
+        onAnimationUploaded
+      })
+    ).rejects.toBe(failure);
+
+    expect(uploadFileMock).toHaveBeenCalledTimes(1);
+    expect(uploadFileMock.mock.calls[0]?.[1]).toBe('image/png');
+    expect(onAnimationUploaded).not.toHaveBeenCalled();
+  });
+
+  it.each([1, 2, 3])(
+    'checks ownership before publication phase %s',
+    async (failedPhase) => {
+      uploadFileMock.mockReset();
+      fetchPublicUrlToBufferMock.mockReset();
+      uploadFileMock.mockResolvedValue({
+        url: 'https://arweave.net/checkpoint-tx'
+      });
+      fetchPublicUrlToBufferMock
+        .mockResolvedValueOnce({
+          buffer: Buffer.from('image-bytes'),
+          contentType: 'image/png',
+          finalUrl: 'https://cdn.example.com/image.png'
+        })
+        .mockResolvedValueOnce({
+          buffer: Buffer.from('video-bytes'),
+          contentType: 'video/mp4',
+          finalUrl: 'https://cdn.example.com/animation.mp4'
+        });
+      let phase = 0;
+      const failure = new Error('upload ownership lost');
+      const beforePublish = jest
+        .fn<() => Promise<void>>()
+        .mockImplementation(async () => {
+          phase += 1;
+          if (phase === failedPhase) throw failure;
+        });
+      await expect(
+        uploadMintingClaimToArweave(
+          MEMES_CONTRACT,
+          baseClaim({
+            animation_url: 'https://cdn.example.com/animation.mp4',
+            animation_details: JSON.stringify({
+              bytes: 11,
+              format: 'MP4',
+              sha256: 'b'.repeat(64),
+              width: 800,
+              height: 800,
+              duration: 1,
+              codecs: ['avc1']
+            })
+          }),
+          { beforePublish }
+        )
+      ).rejects.toBe(failure);
+      expect(uploadFileMock).toHaveBeenCalledTimes(failedPhase - 1);
+    }
+  );
+
+  it('reuses persisted media when metadata publication fails and is retried', async () => {
+    const imageUrl = 'https://arweave.net/image-checkpoint-tx';
+    const metadataUrl = 'https://arweave.net/metadata-retry-tx';
+    const failure = new Error('metadata publication unavailable');
+    uploadFileMock.mockReset();
+    uploadFileMock
+      .mockResolvedValueOnce({ url: imageUrl })
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValueOnce({ url: metadataUrl });
+    const persisted = baseClaim({
+      image_details: JSON.stringify({
+        bytes: 11,
+        format: 'PNG',
+        sha256: createHash('sha256').update('image-bytes').digest('hex'),
+        width: 800,
+        height: 800
+      })
+    });
+    const onImageUploaded = jest
+      .fn<(_location: string) => Promise<void>>()
+      .mockImplementation(async (location) => {
+        persisted.image_location = location;
+      });
+
+    await expect(
+      uploadMintingClaimToArweave(
+        MEMES_CONTRACT,
+        { ...persisted },
+        {
+          onImageUploaded
+        }
+      )
+    ).rejects.toBe(failure);
+    expect(persisted.image_location).toBe(imageUrl);
+
+    await expect(
+      uploadMintingClaimToArweave(
+        MEMES_CONTRACT,
+        { ...persisted },
+        {
+          onImageUploaded
+        }
+      )
+    ).resolves.toEqual({
+      imageLocationUrl: imageUrl,
+      animationLocationUrl: null,
+      metadataLocationUrl: metadataUrl
+    });
+    expect(uploadFileMock.mock.calls.map((call) => call[1])).toEqual([
+      'image/png',
+      'application/json',
+      'application/json'
+    ]);
+    expect(uploadFileMock.mock.calls[1]?.[0]).toEqual(
+      uploadFileMock.mock.calls[2]?.[0]
+    );
+  });
+
   it('uploads HTML MEMES metadata in object shape', async () => {
     uploadFileMock.mockReset();
     uploadFileMock

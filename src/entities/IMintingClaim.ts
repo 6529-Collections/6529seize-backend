@@ -67,6 +67,12 @@ export class MintingClaimEntity {
   @Column({ type: 'boolean', default: false })
   readonly media_uploading!: boolean;
 
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  readonly media_upload_lease_token!: string | null;
+
+  @Column({ type: 'bigint', nullable: true })
+  readonly media_upload_lease_until!: number | null;
+
   @Column({ type: 'int', nullable: true })
   readonly edition_size!: number | null;
 
