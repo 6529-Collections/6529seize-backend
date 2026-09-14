@@ -15,11 +15,6 @@ export const ABUSIVENESS_BEDROCK_MODEL_ID_ENV = 'ABUSIVENESS_BEDROCK_MODEL_ID';
 export const DEFAULT_ABUSIVENESS_BEDROCK_MODEL_ID =
   DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID;
 
-const MODEL_ID = getConfiguredBedrockAnthropicModelId(
-  ABUSIVENESS_BEDROCK_MODEL_ID_ENV,
-  DEFAULT_ABUSIVENESS_BEDROCK_MODEL_ID
-);
-
 export function buildAbusivenessBedrockInvokeModelInput(
   modelId: string,
   prompt: string
@@ -46,7 +41,13 @@ class BedrockAiPrompter implements AiPrompter {
   public async promptAndGetReply(prompt: string): Promise<string> {
     const response = await this.getBedrock().send(
       new InvokeModelCommand(
-        buildAbusivenessBedrockInvokeModelInput(MODEL_ID, prompt)
+        buildAbusivenessBedrockInvokeModelInput(
+          getConfiguredBedrockAnthropicModelId(
+            ABUSIVENESS_BEDROCK_MODEL_ID_ENV,
+            DEFAULT_ABUSIVENESS_BEDROCK_MODEL_ID
+          ),
+          prompt
+        )
       )
     );
     const rawRes = response.body;

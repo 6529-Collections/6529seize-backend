@@ -5,6 +5,13 @@ import { Time } from '@/time';
 const DISTRIBUTED_WINDOW_MS = 60_000;
 const DISTRIBUTED_LIMIT = 60;
 
+export class OpenSeaDeadlineError extends Error {
+  constructor(message: string) {
+    super(message);
+    Object.setPrototypeOf(this, OpenSeaDeadlineError.prototype);
+  }
+}
+
 interface OpenSeaRateLimiterOptions {
   readonly sleep?: (milliseconds: number) => Promise<void>;
   readonly now?: () => number;
@@ -37,7 +44,9 @@ export class OpenSeaRateLimiter {
       const interval = Math.ceil(DISTRIBUTED_WINDOW_MS / limit);
       const wait = Math.max(0, this.localNextRequestAt - this.now());
       if (this.now() + wait >= deadlineMs)
-        throw new Error('OpenSea request deadline exceeded while rate limited');
+        throw new OpenSeaDeadlineError(
+          'OpenSea request deadline exceeded while rate limited'
+        );
       if (wait > 0) await this.sleep(wait);
       this.localNextRequestAt = this.now() + interval;
       return;
@@ -72,7 +81,9 @@ export class OpenSeaRateLimiter {
       const wait = Number(result);
       if (wait <= 0) return;
       if (now + wait >= deadlineMs)
-        throw new Error('OpenSea request deadline exceeded while rate limited');
+        throw new OpenSeaDeadlineError(
+          'OpenSea request deadline exceeded while rate limited'
+        );
       await this.sleep(wait);
     }
   }

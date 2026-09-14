@@ -9,13 +9,15 @@ import {
   NFTS_TABLE
 } from '@/constants';
 import { NEXTGEN_CORE } from '@/api/nextgen/abis';
-import { NotFoundException } from '@/exceptions';
+import { CustomApiCompliantException, NotFoundException } from '@/exceptions';
 import { NEXTGEN_TOKENS_TABLE } from '@/nextgen/nextgen_constants';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { marketDepthDb } from '@/market-depth/market-depth.db';
 import {
   CurrentMarketDepthOrder,
   CurrentMarketDepthSnapshot,
+  MAX_MARKET_DEPTH_COLLECTION_ASKS,
+  MAX_MARKET_DEPTH_COLLECTION_PARTITIONS,
   MarketDepthOrderStatus
 } from '@/market-depth/market-depth.types';
 import { DbPoolName } from '@/db-query.options';
@@ -98,6 +100,45 @@ export function applyOrderStatusObservation(
 }
 
 export class MarketDepthApiDb extends LazyDbAccessCompatibleService {
+  private async readBook(
+    token: MarketTokenContext,
+    partition: { source: string; collection_slug: string },
+    scope: boolean | 'all',
+    limit: number
+  ): Promise<CurrentMarketDepthSnapshot | null> {
+    if (scope !== 'all')
+      return marketDepthDb.getLatestCompletedSnapshot(
+        partition.source,
+        token.contract,
+        partition.collection_slug,
+        scope
+          ? { side: 'ask', limit }
+          : { token_id: token.token_id, include_payloads: false }
+      );
+    // Reserve half of the existing collection bound for each side. An ask-heavy
+    // collection must not consume the bid quota through SQL's side ordering.
+    const [asks, bids] = await Promise.all(
+      (['ask', 'bid'] as const).map((side) =>
+        marketDepthDb.getLatestCompletedSnapshot(
+          partition.source,
+          token.contract,
+          partition.collection_slug,
+          { side, limit: Math.floor(limit / 2) }
+        )
+      )
+    );
+    if (!asks || !bids) return null;
+    if (asks.snapshot.id !== bids.snapshot.id)
+      throw new CustomApiCompliantException(
+        503,
+        'The indexed collection is updating. Refresh before trying again.'
+      );
+    return {
+      snapshot: asks.snapshot,
+      orders: [...asks.orders, ...bids.orders]
+    };
+  }
+
   async getToken(
     contract: string,
     tokenId: string
@@ -135,22 +176,36 @@ export class MarketDepthApiDb extends LazyDbAccessCompatibleService {
   }
 
   async getBooks(
-    token: MarketTokenContext
+    token: MarketTokenContext,
+    collectionListings: boolean | 'all' = false
   ): Promise<CurrentMarketDepthSnapshot[]> {
     const partitions = await this.getPartitions(token);
+    if (
+      collectionListings &&
+      partitions.length > MAX_MARKET_DEPTH_COLLECTION_PARTITIONS
+    )
+      throw new CustomApiCompliantException(
+        503,
+        'The indexed collection is temporarily unavailable.'
+      );
+    const collectionLimit = Math.floor(
+      MAX_MARKET_DEPTH_COLLECTION_ASKS / Math.max(1, partitions.length)
+    );
     const books = await Promise.all(
       partitions.map((partition) =>
-        marketDepthDb.getLatestCompletedSnapshot(
-          partition.source,
-          token.contract,
-          partition.collection_slug,
-          { token_id: token.token_id, include_payloads: false }
-        )
+        this.readBook(token, partition, collectionListings, collectionLimit)
       )
     );
     const completed = books.filter(
       (book): book is CurrentMarketDepthSnapshot => book !== null
     );
+    // A collection-wide read must account for every known partition. Token
+    // depth can still display the partitions available during a refresh.
+    if (collectionListings && completed.length !== partitions.length)
+      throw new CustomApiCompliantException(
+        503,
+        'The indexed collection is temporarily unavailable.'
+      );
     const orderIds = Array.from(
       new Set(
         completed.flatMap((book) => book.orders.map((order) => order.order_id))

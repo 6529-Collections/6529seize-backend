@@ -4,6 +4,8 @@ import { CicStatementGroup } from '../entities/ICICStatement';
 import { CicDb } from './cic.db';
 import { CicService } from './cic.service';
 import { MAX_ART_LINK_LENGTH } from './cic-statement-validation';
+import { profileActivityLogsDb } from '../profileActivityLogs/profile-activity-logs.db';
+import { NotFoundException } from '../exceptions';
 
 jest.mock('../profileActivityLogs/profile-activity-logs.db', () => ({
   profileActivityLogsDb: {
@@ -12,6 +14,46 @@ jest.mock('../profileActivityLogs/profile-activity-logs.db', () => ({
 }));
 
 describe('CicService', () => {
+  it('reads deletion state only after the lock and does not audit an already deleted statement', async () => {
+    jest.clearAllMocks();
+    const connection: ConnectionWrapper<unknown> = { connection: {} };
+    const lock = jest.fn().mockResolvedValue(undefined);
+    const read = jest
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'statement-id',
+        profile_id: 'profile-id',
+        statement_group: CicStatementGroup.GENERAL,
+        statement_type: 'BIO',
+        statement_value: 'About me'
+      })
+      .mockResolvedValueOnce(null);
+    const remove = jest.fn().mockResolvedValue(undefined);
+    const db = {
+      executeNativeQueriesInTransaction: jest.fn((work) => work(connection)),
+      lockProfileForCicStatementMutation: lock,
+      getCicStatementByIdAndProfileId: read,
+      deleteCicStatement: remove
+    } as unknown as CicDb;
+    const service = new CicService(db, {} as AbusivenessCheckService);
+    const props = { profile_id: 'profile-id', id: 'statement-id' };
+
+    await service.deleteCicStatement(props);
+    await expect(service.deleteCicStatement(props)).rejects.toThrow(
+      NotFoundException
+    );
+
+    expect(read).toHaveBeenNthCalledWith(1, props, connection);
+    expect(read).toHaveBeenNthCalledWith(2, props, connection);
+    for (const index of [0, 1]) {
+      expect(lock.mock.invocationCallOrder[index]).toBeLessThan(
+        read.mock.invocationCallOrder[index]!
+      );
+    }
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(profileActivityLogsDb.insert).toHaveBeenCalledTimes(1);
+  });
+
   it('serializes profile validation and accepts a custom art URL at the contract limit', async () => {
     const connection: ConnectionWrapper<unknown> = { connection: {} };
     const lockProfileForCicStatementMutation = jest

@@ -51,7 +51,9 @@ router.post(
           );
         }
         const abusivenessDetectionResult =
-          await abusivenessCheckService.checkRepPhrase(proposedCategory);
+          await abusivenessCheckService.checkRepPhrase(proposedCategory, {
+            authenticationContext: authContext
+          });
         if (abusivenessDetectionResult.status === 'DISALLOWED') {
           throw new BadRequestException(
             abusivenessDetectionResult.explanation ??

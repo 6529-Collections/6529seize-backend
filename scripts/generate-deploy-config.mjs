@@ -92,6 +92,18 @@ ${indent(yamlList(['staging', 'prod']))}
         default: ${config.default_service}
         options:
 ${indent(yamlList(serviceNames))}
+      expected_source_sha:
+        type: string
+        description: 'Exact reviewed source commit; fail if the branch resolves differently'
+        required: false
+      db_schema_scope:
+        type: choice
+        description: 'Schema scope for dbMigrationsLoop; other services require full'
+        required: false
+        default: full
+        options:
+          - full
+          - wallet-transfer-analysis
       release_pull_request:
         type: string
         description: 'Merged PR represented by this production release'
@@ -153,6 +165,8 @@ jobs:
     env:
       INPUT_ENVIRONMENT: \${{ github.event.inputs.environment }}
       INPUT_SERVICE: \${{ github.event.inputs.service }}
+      EXPECTED_SOURCE_SHA: \${{ github.event.inputs.expected_source_sha }}
+      DB_SCHEMA_SCOPE: \${{ github.event.inputs.db_schema_scope || 'full' }}
     steps:
       - name: Validate dispatch inputs before using credentials
         shell: bash
@@ -160,10 +174,25 @@ jobs:
           set -euo pipefail
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]]
           [[ "$INPUT_SERVICE" =~ ^(${serviceCasePattern})$ ]]
+          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|wallet-transfer-analysis)$ ]]
+          if [ "$DB_SCHEMA_SCOPE" != full ] && [ "$INPUT_SERVICE" != dbMigrationsLoop ]; then
+            echo "db_schema_scope is only supported for dbMigrationsLoop" >&2
+            exit 1
+          fi
           if [ "$INPUT_ENVIRONMENT" = prod ]; then
             test "$GITHUB_REF" = refs/heads/main
           else
             test "$GITHUB_REF" = refs/heads/1a-staging
+          fi
+          if [ -n "$EXPECTED_SOURCE_SHA" ]; then
+            if ! [[ "$EXPECTED_SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]; then
+              echo "expected_source_sha must be a full lowercase commit SHA" >&2
+              exit 1
+            fi
+            if [ "$GITHUB_SHA" != "$EXPECTED_SOURCE_SHA" ]; then
+              echo "Source changed after review; refusing deployment" >&2
+              exit 1
+            fi
           fi
       - name: Check production preconditions
         shell: bash
@@ -378,23 +407,6 @@ jobs:
           pushd src/nextgenMediaProxyInterceptor
           sh deploy.sh
           popd
-      - name: Run lambda and validate result
-        if: github.event.inputs.service == 'dbMigrationsLoop'
-        run: |
-          sleep 10
-
-          aws lambda invoke --function-name \${{ github.event.inputs.service }} response.json > meta.json
-
-          printf "\\nresponse.json:\\n"
-          cat response.json
-          printf "\\n\\nmeta.json:\\n"
-          cat meta.json
-          printf "\\n"
-
-          if jq -e '.FunctionError == "Unhandled"' meta.json > /dev/null; then
-            echo "Lambda function threw an unhandled error"
-            exit 1
-          fi
       - name: Verify immutable Lambda code
         if: \${{ !(${cloudFormationStackCondition}) && !(${lambdaEdgeCondition}) }}
         shell: bash
@@ -420,6 +432,31 @@ jobs:
               exit 1
             fi
           done < <(jq -r '.[]' <<< "$targets")
+      - name: Run lambda and validate result
+        if: github.event.inputs.service == 'dbMigrationsLoop'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 10
+
+          payload="$(jq -cn --arg scope "$DB_SCHEMA_SCOPE" '{schema_scope: $scope}')"
+          aws lambda invoke --function-name "$INPUT_SERVICE" \\
+            --cli-binary-format raw-in-base64-out --payload "$payload" response.json > meta.json
+
+          printf "\\nresponse.json:\\n"
+          cat response.json
+          printf "\\n\\nmeta.json:\\n"
+          cat meta.json
+          printf "\\n"
+
+          if ! jq -e 'type == "object" and .FunctionError == null' meta.json > /dev/null; then
+            echo "Lambda invocation returned a function error or invalid metadata"
+            exit 1
+          fi
+          if [ "$DB_SCHEMA_SCOPE" = wallet-transfer-analysis ] && ! jq -e '.schema_scope == "wallet-transfer-analysis"' response.json > /dev/null; then
+            echo "Lambda did not acknowledge the requested wallet-transfer-analysis schema scope"
+            exit 1
+          fi
       - name: Verify resources-only CloudFormation stack
         if: (${cloudFormationStackCondition})
         shell: bash

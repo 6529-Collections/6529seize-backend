@@ -367,12 +367,25 @@ process.exitCode = ${exitCode};
   });
 
   it('keeps every package root pinned and guarded', () => {
+    const inventory = run('git', [
+      'ls-files',
+      '--cached',
+      '--others',
+      '--exclude-standard',
+      '-z',
+      '--',
+      'package.json',
+      ':(glob)**/package.json'
+    ]);
+    expect(inventory.status).toBe(0);
+    const packages = inventory.stdout.split('\0').filter(Boolean);
+    expect(packages).toContain('package.json');
     const result = run(process.execPath, [
       path.join(repoRoot, 'scripts', 'check-package-manager.mjs')
     ]);
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain('60 package.json files');
+    expect(result.stdout).toContain(`${packages.length} package.json files`);
     expect(result.stdout).toContain('guarded by 6529');
   });
 

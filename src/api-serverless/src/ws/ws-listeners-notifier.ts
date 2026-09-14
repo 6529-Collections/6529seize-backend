@@ -1,5 +1,5 @@
 import { ApiDrop } from '../generated/models/ApiDrop';
-import { appWebSockets, AppWebSockets } from './ws';
+import { ANON_USER_ID, appWebSockets, AppWebSockets } from './ws';
 import {
   wsConnectionRepository,
   WsConnectionRepository
@@ -39,6 +39,10 @@ import {
   ContentModerationDb
 } from '@/content-moderation/content-moderation.db';
 import { ApiDmUnreadConversationState } from '@/api/generated/models/ApiDmUnreadConversationState';
+import { AuthenticationContext } from '@/auth-context';
+import { NotFoundException, UnauthorisedException } from '@/exceptions';
+import { isExpectedClientError } from '@/operational-errors';
+import { typingFailureDetails } from './ws-typing-failure';
 
 const scalarForLog = (value: unknown): string =>
   typeof value === 'string' ||
@@ -563,79 +567,105 @@ export class WsListenersNotifier {
     identityId: string;
     waveId: string;
   }) {
-    const connectionIds = await this.wsConnectionRepository
-      .getCurrentlyOnlineCommunityMemberConnectionIds(
-        { waveId, groupId: null },
-        {}
-      )
-      .then((res) =>
-        res.filter((it) => it.wave_id === waveId).map((it) => it.connectionId)
+    let stage = 'identity';
+    try {
+      if (identityId === ANON_USER_ID) {
+        throw new UnauthorisedException('Authentication required');
+      }
+      const identityEntity =
+        await identitiesDb.getIdentityByProfileId(identityId);
+      if (!identityEntity) {
+        throw new UnauthorisedException('Authentication required');
+      }
+      stage = 'recipients';
+      const recipients = await this.wsConnectionRepository
+        .getCurrentlyOnlineCommunityMemberConnectionIds(
+          { waveId, groupId: null },
+          {
+            authenticationContext:
+              AuthenticationContext.fromProfileId(identityId)
+          }
+        )
+        .then((res) => res.filter((it) => it.wave_id === waveId));
+      // Group metadata visibility alone is insufficient: the sender must also
+      // be in the current child/parent membership intersection on this wave.
+      if (!recipients.some((it) => it.profileId === identityId)) {
+        throw new NotFoundException('Wave not found');
+      }
+      const connectionIds = recipients.map((it) => it.connectionId);
+      stage = 'profile_enrichment';
+      const [
+        mainStageSubscriptions,
+        mainStageWins,
+        artistOfPrevoteCards,
+        waveCreatorIds,
+        profileWaveIds
+      ] = await Promise.all([
+        identitiesDb.getActiveMainStageDropIds([identityId], {}),
+        identitiesDb.getMainStageWinnerDropIds([identityId], {}),
+        identitiesDb.getArtistOfPrevoteCards([identityId], {}),
+        identitiesDb.getWaveCreatorProfileIds([identityId]),
+        profileWavesDb.findProfileWaveIdsByProfileIds([identityId], {})
+      ]);
+      const profile: Omit<ApiProfileMin, 'subscribed_actions'> = {
+        id: identityId,
+        handle: identityEntity.handle!,
+        pfp: identityEntity.pfp,
+        banner1_color: identityEntity.banner1,
+        banner2_color: identityEntity.banner2,
+        cic: identityEntity.cic,
+        rep: identityEntity.rep,
+        tdh: identityEntity.tdh,
+        tdh_rate: identityEntity.basetdh_rate,
+        xtdh: identityEntity.xtdh,
+        xtdh_rate: identityEntity.xtdh_rate,
+        level: getLevelFromScore(identityEntity.level_raw),
+        classification: identityEntity.classification
+          ? (enums.resolve(
+              ApiProfileClassification,
+              identityEntity.classification as string
+            ) ?? ApiProfileClassification.Pseudonym)
+          : ApiProfileClassification.Pseudonym,
+        sub_classification: identityEntity.sub_classification,
+        archived: false,
+        primary_address: identityEntity.primary_address,
+        profile_wave_id: profileWaveIds[identityId] ?? null,
+        active_main_stage_submission_ids:
+          mainStageSubscriptions[identityId] ?? [],
+        winner_main_stage_drop_ids: mainStageWins[identityId] ?? [],
+        artist_of_prevote_cards: artistOfPrevoteCards[identityId] ?? [],
+        is_wave_creator: waveCreatorIds.has(identityId)
+      };
+      const now = Time.currentMillis();
+      stage = 'delivery';
+      await Promise.all(
+        connectionIds.map((connectionId: string) =>
+          this.appWebSockets.send({
+            connectionId,
+            message: JSON.stringify(
+              userIsTypingMessage({
+                wave_id: waveId,
+                timestamp: now,
+                profile: profile
+              })
+            )
+          })
+        )
       );
-    if (!connectionIds.length) {
-      return;
+    } catch (error) {
+      if (!isExpectedClientError(error)) {
+        try {
+          this.logger.error({
+            code: 'WS_TYPING_FAILED',
+            stage,
+            ...typingFailureDetails(error)
+          });
+        } catch {
+          // Diagnostic failure must not replace the original operation error.
+        }
+      }
+      throw error;
     }
-    const identityEntity =
-      await identitiesDb.getIdentityByProfileId(identityId);
-    if (!identityEntity) {
-      return;
-    }
-    const [
-      mainStageSubscriptions,
-      mainStageWins,
-      artistOfPrevoteCards,
-      waveCreatorIds,
-      profileWaveIds
-    ] = await Promise.all([
-      identitiesDb.getActiveMainStageDropIds([identityId], {}),
-      identitiesDb.getMainStageWinnerDropIds([identityId], {}),
-      identitiesDb.getArtistOfPrevoteCards([identityId], {}),
-      identitiesDb.getWaveCreatorProfileIds([identityId]),
-      profileWavesDb.findProfileWaveIdsByProfileIds([identityId], {})
-    ]);
-    const profile: Omit<ApiProfileMin, 'subscribed_actions'> = {
-      id: identityId,
-      handle: identityEntity.handle!,
-      pfp: identityEntity.pfp,
-      banner1_color: identityEntity.banner1,
-      banner2_color: identityEntity.banner2,
-      cic: identityEntity.cic,
-      rep: identityEntity.rep,
-      tdh: identityEntity.tdh,
-      tdh_rate: identityEntity.basetdh_rate,
-      xtdh: identityEntity.xtdh,
-      xtdh_rate: identityEntity.xtdh_rate,
-      level: getLevelFromScore(identityEntity.level_raw),
-      classification: identityEntity.classification
-        ? (enums.resolve(
-            ApiProfileClassification,
-            identityEntity.classification as string
-          ) ?? ApiProfileClassification.Pseudonym)
-        : ApiProfileClassification.Pseudonym,
-      sub_classification: identityEntity.sub_classification,
-      archived: false,
-      primary_address: identityEntity.primary_address,
-      profile_wave_id: profileWaveIds[identityId] ?? null,
-      active_main_stage_submission_ids:
-        mainStageSubscriptions[identityId] ?? [],
-      winner_main_stage_drop_ids: mainStageWins[identityId] ?? [],
-      artist_of_prevote_cards: artistOfPrevoteCards[identityId] ?? [],
-      is_wave_creator: waveCreatorIds.has(identityId)
-    };
-    const now = Time.currentMillis();
-    await Promise.all(
-      connectionIds.map((connectionId: string) =>
-        this.appWebSockets.send({
-          connectionId,
-          message: JSON.stringify(
-            userIsTypingMessage({
-              wave_id: waveId,
-              timestamp: now,
-              profile: profile
-            })
-          )
-        })
-      )
-    );
   }
 
   private async getCreditLeftsForOnlineProfiles(
