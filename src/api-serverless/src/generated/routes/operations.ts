@@ -159,6 +159,8 @@ import { ApiProfileCmsValidationResult } from '@/api/generated/models/ApiProfile
 import { ApiProfileCmsWalletGallerySnapshot } from '@/api/generated/models/ApiProfileCmsWalletGallerySnapshot';
 import { ApiProfilePreferences } from '@/api/generated/models/ApiProfilePreferences';
 import { ApiProfileWaveActivityPage } from '@/api/generated/models/ApiProfileWaveActivityPage';
+import { ApiProposalFrameRequest } from '@/api/generated/models/ApiProposalFrameRequest';
+import { ApiProposalFrameResponse } from '@/api/generated/models/ApiProposalFrameResponse';
 import { ApiPublishProfileCmsPackageRequest } from '@/api/generated/models/ApiPublishProfileCmsPackageRequest';
 import { ApiReviewProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiReviewProfileCmsAgentProposalRequest';
 import { ApiRevokePushInstallationRequest } from '@/api/generated/models/ApiRevokePushInstallationRequest';
@@ -1370,6 +1372,20 @@ export type GetDmUnreadSnapshotRequest = Request<
   ApiResponse<GetDmUnreadSnapshotResponse>,
   never,
   GetDmUnreadSnapshotQuery,
+  Record<string, never>
+>;
+
+export type CreateProposalFramePathParams = Record<string, never>;
+
+export type CreateProposalFrameQuery = Record<string, never>;
+
+export type CreateProposalFrameResponse = ApiProposalFrameResponse;
+
+export type CreateProposalFrameRequest = Request<
+  CreateProposalFramePathParams,
+  ApiResponse<CreateProposalFrameResponse>,
+  ApiProposalFrameRequest,
+  CreateProposalFrameQuery,
   Record<string, never>
 >;
 
