@@ -172,6 +172,7 @@ import { ApiValidateProfileCmsAgentCandidateRequest } from '@/api/generated/mode
 import { ApiValidateProfileCmsAgentPatchRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentPatchRequest';
 import { ApiValidateProfileCmsPackageRequest } from '@/api/generated/models/ApiValidateProfileCmsPackageRequest';
 import { ApiWalletDistributionAllocations } from '@/api/generated/models/ApiWalletDistributionAllocations';
+import { ApiWaveChatHistoryPurgePlan } from '@/api/generated/models/ApiWaveChatHistoryPurgePlan';
 import { ApiWaveDecisionsPageV2 } from '@/api/generated/models/ApiWaveDecisionsPageV2';
 import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
 import { ApiWaveGroupValidationRequest } from '@/api/generated/models/ApiWaveGroupValidationRequest';
@@ -3301,7 +3302,9 @@ export interface DeleteMyWaveChatHistoryPathParams {
   "id": string;
 }
 
-export type DeleteMyWaveChatHistoryQuery = Record<string, never>;
+export interface DeleteMyWaveChatHistoryQuery {
+  "purge_token"?: string;
+}
 
 export type DeleteMyWaveChatHistoryResponse = ApiDeleteMyWaveChatHistoryResponse;
 
@@ -3310,6 +3313,22 @@ export type DeleteMyWaveChatHistoryRequest = Request<
   ApiResponse<DeleteMyWaveChatHistoryResponse>,
   never,
   DeleteMyWaveChatHistoryQuery,
+  Record<string, never>
+>;
+
+export interface PrepareMyWaveChatHistoryPurgePathParams {
+  "id": string;
+}
+
+export type PrepareMyWaveChatHistoryPurgeQuery = Record<string, never>;
+
+export type PrepareMyWaveChatHistoryPurgeResponse = ApiWaveChatHistoryPurgePlan;
+
+export type PrepareMyWaveChatHistoryPurgeRequest = Request<
+  PrepareMyWaveChatHistoryPurgePathParams,
+  ApiResponse<PrepareMyWaveChatHistoryPurgeResponse>,
+  never,
+  PrepareMyWaveChatHistoryPurgeQuery,
   Record<string, never>
 >;
 
