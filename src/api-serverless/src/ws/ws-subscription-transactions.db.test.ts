@@ -1,3 +1,4 @@
+import type WebSocket from 'ws';
 import {
   WS_CONNECTIONS_TABLE,
   WS_NOTIFICATION_SUBSCRIPTIONS_TABLE
@@ -114,7 +115,15 @@ describeWithSeed(
           throw new Error('synthetic registration failure');
       };
       await expect(
-        sockets.register({ connectionId, identityId: 'new', jwtExpiry: expiry })
+        sockets.register({
+          connectionId,
+          identityId: 'new',
+          jwtExpiry: expiry,
+          ws: {
+            send: jest.fn(),
+            close: jest.fn()
+          } as unknown as WebSocket
+        })
       ).rejects.toThrow('synthetic registration failure');
       expect(await stored()).toEqual([]);
       expect(
