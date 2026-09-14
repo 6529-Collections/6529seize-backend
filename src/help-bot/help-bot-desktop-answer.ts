@@ -6,14 +6,21 @@ import {
   wantsDetailedDesktopAnswer
 } from '@/help-bot/help-bot-desktop-knowledge';
 
+function removeAnswerUrl(url: string): string {
+  if (url.startsWith('(') || url.startsWith('<')) return '';
+  // Preserve sentence punctuation after bare URLs with a single backward scan.
+  let end = url.length;
+  while (end > 0 && '.,;!?'.includes(url[end - 1])) end--;
+  return url.slice(end);
+}
+
 /** Links are corpus-owned and appended once, independently of model formatting. */
 export function composeDesktopAnswer(
   text: string,
   record: HelpBotKnowledgeRecord
 ): string {
   const lines = text.trimEnd().split('\n');
-  if (lines.length > 1 && /^More info:/i.test(lines[lines.length - 1]))
-    lines.pop();
+  if (/^More info:/i.test(lines[lines.length - 1])) lines.pop();
   // Anchor each candidate to avoid rescanning runs of unmatched opening brackets.
   const body = lines
     .join('\n')
@@ -24,7 +31,13 @@ export function composeDesktopAnswer(
       return link ? link[1] + part.slice(link[0].length) : `[${part}`;
     })
     .join('')
-    .replace(/https?:\/\/[^\s)]+/g, '')
+    // Remove wrappers together with their URL, leaving ordinary parentheses intact.
+    .replace(
+      /\(https?:\/\/[^\s)]*\)|<https?:\/\/[^\s>]*>|https?:\/\/[^\s)<>]+/g,
+      removeAnswerUrl
+    )
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/ ([.,;!?])/g, '$1')
     .trim();
   if (!body) return '';
   const links = Array.from(
