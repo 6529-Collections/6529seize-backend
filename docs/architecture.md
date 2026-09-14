@@ -434,6 +434,43 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
    The on-demand media resizer spools each S3 source into its own temporary file before metadata inspection and conversion. A 256 MiB source limit and conservative 512 MiB decoded-work estimate reject unsupported or oversized inputs with HTTP 422; animated GIF admission counts every frame. Resize, rotation and output contracts are preserved for accepted inputs. Multipart upload concurrency is one, and the temporary directory is removed after completion or failure. These admission limits reduce resource risk; they do not guarantee a maximum native allocation for every codec.
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
+### NFT link media preview size failures
+
+Preview downloads retain their configured byte cap (30 MB by default; the
+production configuration currently uses 200 MB). A typed header or streamed
+byte overrun records FAILED and preserves cached preview URLs. A repeated
+resolution of the same original source under the same observed cap waits one
+hour before enqueueing another preview attempt. The first failure is still
+reported; ordinary decoder, HTTP and network failures retain their existing
+retry behavior. Expiry permits the next demand-driven attempt, not scheduled
+work. Source changes, a newly observed cap/policy version, malformed state and
+successful generation reset eligibility. A smaller asset at an unchanged URL
+can wait one hour plus the time until another resolution request.
+
+The private preview error/state column holds bounded versioned oversize data,
+or a UUID lease marker while PROCESSING. Public API and drop mappers exclude
+this field. Every terminal worker update requires the exact marker, source
+hash and PROCESSING status; READY clears the marker and failures replace it.
+Worker lease and completion timestamps use the database clock. Active legacy
+leases are respected; expired leases can be reacquired. Invalid timestamps
+cannot impose an indefinite cooldown, and locks more than one lock TTL into the
+future are treated as invalid. The owning AbortController disposes rejected response
+bodies and requests; the existing HTTP timeout still covers headers, not an
+entire accepted body transfer.
+
+Secrets are loaded once per warm process. A cap change resets eligibility only
+after each caller observes that configuration; deliberate changes must refresh
+the affected preview worker and resolver/API producer processes. Old in-flight
+workers do not enforce the new lease marker. A coordinated rollout must drain
+the preview event source for the old worker's full 120-second timeout before
+claiming universal completion fencing. The resolver/API inline fallback can
+enqueue preview work, but only the preview worker downloads and renders it.
+Old producers may still enqueue during mixed rollout, so cooldown acceptance
+also requires the relevant producers to be current. No schema synchronization
+or media deletion is needed, and rollback treats the private marker as ordinary
+error text. None of these controls guarantees preview output for oversized
+assets or identical fallback behavior across frontend views.
+
 ### NFT link refresh bounds
 
 The `nft-link-refreshes` SQS event source caps concurrent invocations at the
