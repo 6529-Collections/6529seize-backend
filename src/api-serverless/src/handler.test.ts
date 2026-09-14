@@ -87,6 +87,114 @@ describe('handler websocket auth', () => {
     });
   });
 
+  it.each([
+    WsMessageType.AUTHENTICATE,
+    WsMessageType.SYNC_NOTIFICATION_IDENTITIES
+  ])(
+    'waits for committed subscription persistence before acknowledging %s',
+    async (type) => {
+      let releasePersistence!: () => void;
+      let persistenceStarted!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        releasePersistence = resolve;
+      });
+      const started = new Promise<void>((resolve) => {
+        persistenceStarted = resolve;
+      });
+      authenticateWebSocketTokenMock.mockResolvedValue({
+        identityId: 'fresh-identity',
+        jwtExpiry: 200
+      });
+      authenticateNotificationIdentityTokensMock.mockResolvedValue([
+        { identityId: 'fresh-identity', jwtExpiry: 200 }
+      ]);
+      if (type === WsMessageType.AUTHENTICATE) {
+        appWebSocketsMock.authenticateConnection.mockImplementationOnce(
+          async () => {
+            persistenceStarted();
+            await pending;
+          }
+        );
+      } else {
+        appWebSocketsMock.syncNotificationIdentities.mockImplementationOnce(
+          async () => {
+            persistenceStarted();
+            await pending;
+            return ['fresh-identity'];
+          }
+        );
+      }
+      const response = handler(
+        {
+          httpMethod: 'POST',
+          requestContext: {
+            routeKey: '$default',
+            connectionId: 'connection-1',
+            requestId: 'request-1'
+          },
+          body: JSON.stringify({
+            type,
+            access_token: 'synthetic',
+            access_tokens: ['synthetic']
+          })
+        } as unknown as APIGatewayEvent,
+        { awsRequestId: 'lambda-request-1' } as Context,
+        jest.fn()
+      );
+      await started;
+      expect(appWebSocketsMock.send).not.toHaveBeenCalled();
+      releasePersistence();
+      await expect(response).resolves.toMatchObject({ statusCode: 200 });
+      expect(appWebSocketsMock.send).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each([
+    WsMessageType.AUTHENTICATE,
+    WsMessageType.SYNC_NOTIFICATION_IDENTITIES
+  ])(
+    'does not send a success frame when persistence for %s exhausts deadlock recovery',
+    async (type) => {
+      const failure = Object.assign(new Error('synthetic exhausted deadlock'), {
+        code: 'ER_LOCK_DEADLOCK'
+      });
+      authenticateWebSocketTokenMock.mockResolvedValue({
+        identityId: 'fresh-identity',
+        jwtExpiry: 200
+      });
+      authenticateNotificationIdentityTokensMock.mockResolvedValue([
+        { identityId: 'fresh-identity', jwtExpiry: 200 }
+      ]);
+      if (type === WsMessageType.AUTHENTICATE) {
+        appWebSocketsMock.authenticateConnection.mockRejectedValueOnce(failure);
+      } else {
+        appWebSocketsMock.syncNotificationIdentities.mockRejectedValueOnce(
+          failure
+        );
+      }
+      await expect(
+        handler(
+          {
+            httpMethod: 'POST',
+            requestContext: {
+              routeKey: '$default',
+              connectionId: 'connection-1',
+              requestId: 'request-1'
+            },
+            body: JSON.stringify({
+              type,
+              access_token: 'synthetic',
+              access_tokens: ['synthetic']
+            })
+          } as unknown as APIGatewayEvent,
+          { awsRequestId: 'lambda-request-1' } as Context,
+          jest.fn()
+        )
+      ).resolves.toMatchObject({ statusCode: 500 });
+      expect(appWebSocketsMock.send).not.toHaveBeenCalled();
+    }
+  );
+
   it('sends AUTHENTICATED without the stale connection check after reauth', async () => {
     authenticateWebSocketTokenMock.mockResolvedValue({
       identityId: 'fresh-identity',
