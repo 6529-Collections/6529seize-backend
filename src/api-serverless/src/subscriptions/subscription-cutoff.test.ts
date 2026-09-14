@@ -47,7 +47,9 @@ let savedSubscriptions: Array<{
 
 beforeEach(() => {
   jest.resetAllMocks();
-  jest.useFakeTimers().setSystemTime(new Date('2026-09-14T08:00:00Z'));
+  jest
+    .useFakeTimers({ doNotFake: ['setTimeout', 'clearTimeout'] })
+    .setSystemTime(new Date('2026-09-14T08:00:00Z'));
   automatic = true;
   savedSubscriptions = [];
   jest.mocked(getMaxMemeId).mockResolvedValue(547);
