@@ -16,6 +16,19 @@ Closed-card aggregate subscription counts use the finalized subscription list,
 so a later top-up or mode change does not change the displayed mint-day count.
 Future-card counts continue to use current preferences and available balance.
 
+The latest card id and its MySQL `TIMESTAMP` epoch are read together; host
+timezone conversion does not determine the UTC mint day. Direct selection and
+quantity writes recheck the cutoff in their transaction before returning, so a
+cutoff reached during the preceding asynchronous work rejects and rolls back the
+write. This does not add a lock shared with the daily finalization job.
+
+The existing schedule assumes NFT ingestion is current through the preceding
+release and infers at most one unreleased card on a mint day. Prolonged ingestion
+outages or skipped releases require operational reconciliation; this change does
+not derive historical releases from a calendar. The upcoming-list starting id
+deliberately uses `getMaxMemeId(true)` (completed cards), while the cutoff uses the
+latest ingested card, so today's ingested card remains visible and closed.
+
 This status handling does not change the daily list-generation job or rebuild
 finalized subscription lists. Subscription selection and allocation remain
 separate: a selected card can have no assigned phase. The frontend displays

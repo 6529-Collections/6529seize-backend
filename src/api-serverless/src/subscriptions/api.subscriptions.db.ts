@@ -41,7 +41,10 @@ import {
   fetchSubscriptionEligibilityForKeys
 } from '@/subscriptionsDaily/db.subscriptions';
 import { MINIMUM_SUBSCRIPTION_ELIGIBILITY } from '@/subscriptionsDaily/subscription-eligibility';
-import { getSubscriptionCutoffMemeId } from '@/api/subscriptions/subscription-cutoff';
+import {
+  assertSubscriptionOpen,
+  getSubscriptionCutoffMemeId
+} from '@/api/subscriptions/subscription-cutoff';
 import { markSubscriptionCoverageDirty } from '@/subscription-coverage/subscription-coverage-dirty';
 
 const SUBSCRIPTIONS_START_ID = 220;
@@ -449,12 +452,7 @@ export async function updateSubscription(
       );
     }
   }
-  const maxMemeId = await getSubscriptionCutoffMemeId();
-  if (maxMemeId >= tokenId) {
-    throw new BadRequestException(
-      `Subscriptions are closed for Meme #${tokenId}.`
-    );
-  }
+  await assertSubscriptionOpen(tokenId);
 
   const mode = await fetchSubscriptionModeForConsolidationKey(consolidationKey);
   let subscribedCount = 1;
@@ -498,6 +496,8 @@ export async function updateSubscription(
         { consolidationKey, log, additionalInfo },
         { wrappedConnection }
       );
+      // Roll back if the cutoff passed while eligibility checks or writes ran.
+      await assertSubscriptionOpen(tokenId, { wrappedConnection });
     }
   );
   await markSubscriptionCoverageDirty([consolidationKey], 'SELECTION_CHANGED');
@@ -517,12 +517,7 @@ export async function updateSubscriptionCount(
   tokenId: number,
   count: number
 ) {
-  const cutoffMemeId = await getSubscriptionCutoffMemeId();
-  if (tokenId <= cutoffMemeId) {
-    throw new BadRequestException(
-      `Subscriptions are closed for Meme #${tokenId}.`
-    );
-  }
+  await assertSubscriptionOpen(tokenId);
 
   const subscription = await fetchSubscriptionForConsolidationKey(
     consolidationKey,
@@ -582,6 +577,7 @@ export async function updateSubscriptionCount(
         { consolidationKey, log, additionalInfo },
         { wrappedConnection }
       );
+      await assertSubscriptionOpen(tokenId, { wrappedConnection });
     }
   );
   await markSubscriptionCoverageDirty([consolidationKey], 'QUANTITY_CHANGED');

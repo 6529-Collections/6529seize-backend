@@ -5,7 +5,6 @@ import {
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   SUBSCRIPTIONS_NFTS_TABLE
 } from '@/constants';
-import { fetchNft } from '@/db-api';
 import { getMaxMemeId } from '@/nftsLoop/db.nfts';
 import { sqlExecutor } from '@/sql-executor';
 import {
@@ -18,11 +17,12 @@ import {
 } from './api.subscriptions.db';
 import { getSubscriptionCutoffMemeId } from './subscription-cutoff';
 
-jest.mock('@/db-api', () => ({ fetchNft: jest.fn() }));
+jest.mock('@/db-api', () => ({}));
 jest.mock('@/nftsLoop/db.nfts', () => ({ getMaxMemeId: jest.fn() }));
 jest.mock('@/sql-executor', () => ({
   sqlExecutor: {
     execute: jest.fn(),
+    oneOrNull: jest.fn(),
     executeNativeQueriesInTransaction: jest.fn()
   }
 }));
@@ -51,9 +51,10 @@ beforeEach(() => {
   automatic = true;
   savedSubscriptions = [];
   jest.mocked(getMaxMemeId).mockResolvedValue(547);
-  jest.mocked(fetchNft).mockResolvedValue({
-    mint_date: new Date('2026-09-11T15:40:00Z')
-  } as Awaited<ReturnType<typeof fetchNft>>);
+  jest.mocked(sqlExecutor.oneOrNull).mockResolvedValue({
+    id: 547,
+    mint_timestamp: Date.parse('2026-09-11T15:40:00Z') / 1000
+  });
   const eligibility = jest.requireMock('@/subscriptionsDaily/db.subscriptions');
   eligibility.fetchSubscriptionEligibility.mockResolvedValue(3);
   eligibility.fetchSubscriptionEligibilityForKeys.mockResolvedValue(new Map());
@@ -116,9 +117,10 @@ it.each(['2026-09-13T23:59:59Z', '2026-09-15T08:00:00Z'])(
 );
 it('does not skip the following card after today has dropped', async () => {
   jest.mocked(getMaxMemeId).mockResolvedValue(548);
-  jest.mocked(fetchNft).mockResolvedValue({
-    mint_date: new Date('2026-09-14T15:40:00Z')
-  } as Awaited<ReturnType<typeof fetchNft>>);
+  jest.mocked(sqlExecutor.oneOrNull).mockResolvedValue({
+    id: 548,
+    mint_timestamp: Date.parse('2026-09-14T15:40:00Z') / 1000
+  });
   await expect(getSubscriptionCutoffMemeId()).resolves.toBe(548);
 });
 it.each([true, false])(
@@ -211,3 +213,57 @@ it('rejects quantity changes after cutoff', async () => {
   ).rejects.toThrow('Subscriptions are closed');
   expect(sqlExecutor.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
 });
+
+it.each([
+  ['2026-09-13T23:59:59Z', 548],
+  ['2026-09-14T00:00:00Z', 547]
+])(
+  'compares the timestamp epoch at the UTC boundary (%s)',
+  async (mintedAt, cutoff) => {
+    jest.mocked(sqlExecutor.oneOrNull).mockResolvedValue({
+      id: 547,
+      mint_timestamp: Date.parse(mintedAt) / 1000
+    });
+    await expect(getSubscriptionCutoffMemeId()).resolves.toBe(cutoff);
+  }
+);
+it.each([null, { id: 547, mint_timestamp: null }])(
+  'does not infer an unreleased card without a mint timestamp (%j)',
+  async (latest) => {
+    jest.mocked(sqlExecutor.oneOrNull).mockResolvedValue(latest);
+    await expect(getSubscriptionCutoffMemeId()).resolves.toBe(latest?.id ?? 0);
+  }
+);
+it.each(['selection', 'quantity'])(
+  'rechecks a %s write inside its transaction when midnight passes',
+  async (change) => {
+    jest.setSystemTime(new Date('2026-09-13T23:59:59Z'));
+    const wrappedConnection = { connection: {} };
+    jest
+      .mocked(sqlExecutor.executeNativeQueriesInTransaction)
+      .mockImplementation(async (fn) => {
+        jest.setSystemTime(new Date('2026-09-14T00:00:00Z'));
+        return fn(wrappedConnection);
+      });
+    const update =
+      change === 'selection'
+        ? updateSubscription(profileKey, MEMES_CONTRACT, 548, true)
+        : updateSubscriptionCount(profileKey, MEMES_CONTRACT, 548, 2);
+    await expect(update).rejects.toThrow('Subscriptions are closed');
+    expect(sqlExecutor.oneOrNull).toHaveBeenLastCalledWith(
+      expect.any(String),
+      { contract: MEMES_CONTRACT },
+      { wrappedConnection }
+    );
+  }
+);
+it.each(['selection', 'quantity'])(
+  'allows a %s write for a future card',
+  async (change) => {
+    const update =
+      change === 'selection'
+        ? updateSubscription(profileKey, MEMES_CONTRACT, 549, true)
+        : updateSubscriptionCount(profileKey, MEMES_CONTRACT, 549, 2);
+    await expect(update).resolves.toMatchObject({ token_id: 549 });
+  }
+);
