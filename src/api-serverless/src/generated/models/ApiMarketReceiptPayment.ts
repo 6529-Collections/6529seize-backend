@@ -10,19 +10,18 @@
  * Do not edit the class manually.
  */
 
-import { ApiMarketBatchAllocation } from '../models/ApiMarketBatchAllocation';
-import { ApiMarketIdentity } from '../models/ApiMarketIdentity';
+import { ApiMarketFee } from '../models/ApiMarketFee';
 import { HttpFile } from '../http/http';
 
-export class ApiMarketBatchSettlementItem {
-    /**
-    * Whole source order remaining quantity verified at a canonical safe block; absent when unavailable.
-    */
-    'order_remaining_quantity'?: string;
-    'asset_key': string;
-    'order': ApiMarketIdentity;
-    'filled_quantity': string;
-    'allocations': Array<ApiMarketBatchAllocation>;
+/**
+* Exact payment proven by successful fulfillment events in a canonical safe block. Batch net is the sum of seller proceeds, not buyer income. Excludes network costs.
+*/
+export class ApiMarketReceiptPayment {
+    'currency': string;
+    'total_wei': string;
+    'net_wei': string;
+    'fees': Array<ApiMarketFee>;
+    'payout_wallet'?: string;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -30,38 +29,38 @@ export class ApiMarketBatchSettlementItem {
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "order_remaining_quantity",
-            "baseName": "order_remaining_quantity",
+            "name": "currency",
+            "baseName": "currency",
             "type": "string",
             "format": ""
         },
         {
-            "name": "asset_key",
-            "baseName": "asset_key",
+            "name": "total_wei",
+            "baseName": "total_wei",
             "type": "string",
             "format": ""
         },
         {
-            "name": "order",
-            "baseName": "order",
-            "type": "ApiMarketIdentity",
-            "format": ""
-        },
-        {
-            "name": "filled_quantity",
-            "baseName": "filled_quantity",
+            "name": "net_wei",
+            "baseName": "net_wei",
             "type": "string",
             "format": ""
         },
         {
-            "name": "allocations",
-            "baseName": "allocations",
-            "type": "Array<ApiMarketBatchAllocation>",
+            "name": "fees",
+            "baseName": "fees",
+            "type": "Array<ApiMarketFee>",
+            "format": ""
+        },
+        {
+            "name": "payout_wallet",
+            "baseName": "payout_wallet",
+            "type": "string",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiMarketBatchSettlementItem.attributeTypeMap;
+        return ApiMarketReceiptPayment.attributeTypeMap;
     }
 
     public constructor() {
