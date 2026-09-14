@@ -172,7 +172,12 @@ describe('generated deployment source guard', () => {
         'Schema scope for dbMigrationsLoop; other services require full',
       required: false,
       default: 'full',
-      options: ['full', 'wallet-transfer-analysis', 'claims-media-upload']
+      options: [
+        'full',
+        'wallet-transfer-analysis',
+        'claims-media-upload',
+        'nft-link-page-retry'
+      ]
     });
     expect(job.env.DB_SCHEMA_SCOPE).toBe(
       "${{ github.event.inputs.db_schema_scope || 'full' }}"
@@ -202,6 +207,40 @@ describe('generated deployment source guard', () => {
     }
   );
 
+  it('restricts NFT retry scope to dbMigrationsLoop before credentials', () => {
+    expect(
+      validateDispatch('', 'prod', {
+        INPUT_SERVICE: 'dbMigrationsLoop',
+        DB_SCHEMA_SCOPE: 'nft-link-page-retry'
+      }).status
+    ).toBe(0);
+    expect(
+      validateDispatch('', 'prod', {
+        INPUT_SERVICE: 'api',
+        DB_SCHEMA_SCOPE: 'nft-link-page-retry'
+      }).status
+    ).toBe(1);
+  });
+
+  it.each([
+    {},
+    null,
+    { schema_scope: 'full' },
+    { schema_scope: 'wallet-transfer-analysis' },
+    { schema_scope: 'claims-media-upload' }
+  ])(
+    'rejects a missing or different NFT retry acknowledgment %j',
+    (response) => {
+      const result = invokeMigrationScope(
+        'nft-link-page-retry',
+        { StatusCode: 200 },
+        response
+      );
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('did not acknowledge');
+    }
+  );
+
   it('verifies the exact Lambda artifact before invoking a scoped migration', () => {
     const verificationIndex = steps.findIndex(
       (step) => step.name === 'Verify immutable Lambda code'
@@ -220,25 +259,27 @@ describe('generated deployment source guard', () => {
     );
   });
 
-  it.each(['full', 'wallet-transfer-analysis', 'claims-media-upload'])(
-    'forwards validated %s as one JSON invocation payload',
-    (scope) => {
-      const result = invokeMigrationScope(scope);
-      expect(result.error).toBeUndefined();
-      expect(result.status).toBe(0);
-      expect(result.args).toEqual([
-        'lambda',
-        'invoke',
-        '--function-name',
-        'dbMigrationsLoop',
-        '--cli-binary-format',
-        'raw-in-base64-out',
-        '--payload',
-        JSON.stringify({ schema_scope: scope }),
-        'response.json'
-      ]);
-    }
-  );
+  it.each([
+    'full',
+    'wallet-transfer-analysis',
+    'claims-media-upload',
+    'nft-link-page-retry'
+  ])('forwards validated %s as one JSON invocation payload', (scope) => {
+    const result = invokeMigrationScope(scope);
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.args).toEqual([
+      'lambda',
+      'invoke',
+      '--function-name',
+      'dbMigrationsLoop',
+      '--cli-binary-format',
+      'raw-in-base64-out',
+      '--payload',
+      JSON.stringify({ schema_scope: scope }),
+      'response.json'
+    ]);
+  });
 
   it.each(['Handled', 'Unhandled', 'Unexpected', '', false, 0])(
     'fails on every non-null FunctionError including %j',
@@ -293,7 +334,8 @@ describe('generated deployment source guard', () => {
     null,
     {},
     { schema_scope: 'full' },
-    { schema_scope: 'wallet-transfer-analysis' }
+    { schema_scope: 'wallet-transfer-analysis' },
+    { schema_scope: 'nft-link-page-retry' }
   ])(
     'rejects a claims schema invocation without its exact acknowledgment: %j',
     (response) => {

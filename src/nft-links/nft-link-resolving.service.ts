@@ -2,7 +2,11 @@ import {
   nftLinkResolver,
   NftLinkResolver
 } from '@/nft-links/nft-link-resolver';
-import { nftLinksDb, NftLinksDb } from '@/nft-links/nft-links.db';
+import {
+  nftLinksDb,
+  NftLinksDb,
+  NftLinkResolutionLockLostError
+} from '@/nft-links/nft-links.db';
 import { Logger } from '@/logging';
 import {
   wsListenersNotifier,
@@ -25,6 +29,12 @@ import {
   NftLinkResolutionDeadlineError,
   nftLinkResolutionStage
 } from '@/nft-links/resolution-budget';
+import {
+  isNftLinkRefreshDue,
+  nextNftPageRetryState,
+  nftPageRetryScope,
+  RequiredNftPageNotFoundError
+} from './nft-link-page-retry';
 
 export class NftLinkResolvingService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -51,9 +61,12 @@ export class NftLinkResolvingService {
     );
     let reasonForCacheRefresh;
     if (cachedData) {
-      reasonForCacheRefresh = Time.millis(cachedData.last_tried_to_update)
-        .plus(this.getUpdateMinInterval())
-        .isInPast();
+      reasonForCacheRefresh = isNftLinkRefreshDue(
+        cachedData,
+        canonical,
+        Time.currentMillis(),
+        this.getUpdateMinInterval().toMillis()
+      );
     } else {
       const identifiers = canonical.identifiers as any;
       await this.nftLinksDb.insertPendingOrDoNothing(
@@ -125,7 +138,7 @@ export class NftLinkResolvingService {
     }
     const entity = await nftLinkResolutionStage('lock', () =>
       this.nftLinksDb.lockForProcessing(
-        { canonicalId: canonicalLink.canonicalId, lockTTL, updateMinInterval },
+        { canonical: canonicalLink, lockTTL, updateMinInterval },
         ctx
       )
     );
@@ -133,11 +146,7 @@ export class NftLinkResolvingService {
       this.logger.info(`Didn't find ready to process entity for url ${url}`);
       return;
     }
-    const card = await this.resolveAndPersist(
-      url,
-      canonicalLink.canonicalId,
-      ctx
-    );
+    const card = await this.resolveAndPersist(url, canonicalLink, entity, ctx);
     if (!card) return;
     try {
       await nftLinkResolutionStage('preview_enqueue', () =>
@@ -191,12 +200,15 @@ export class NftLinkResolvingService {
 
   private async resolveAndPersist(
     url: string,
-    canonicalId: string,
+    canonical: CanonicalLink,
+    entity: NftLinkEntity,
     ctx: RequestContext
   ): Promise<NormalizedNftCard | null> {
     const maxAttempts = 5;
     const retryDelay = Time.seconds(10);
     const budget = getNftLinkResolutionBudget();
+    const lockStamp = entity.is_locked_since;
+    if (lockStamp == null) throw new NftLinkResolutionLockLostError();
     let lastError: unknown;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
@@ -209,10 +221,11 @@ export class NftLinkResolvingService {
         // result produced after cancellation as a successful refresh.
         budget?.check();
         await nftLinkResolutionStage('persist_success', () =>
-          this.nftLinksDb.updateWithSuccess(card, ctx)
+          this.nftLinksDb.updateWithSuccess(card, lockStamp, ctx)
         );
         return card;
       } catch (error) {
+        if (error instanceof NftLinkResolutionLockLostError) throw error;
         lastError = error;
         this.logger.error(
           `Attempt #${attempt} of ${maxAttempts}. Failed to update url ${url}`,
@@ -220,6 +233,8 @@ export class NftLinkResolvingService {
         );
         if (
           error instanceof NftLinkResolutionDeadlineError ||
+          (error instanceof RequiredNftPageNotFoundError &&
+            error.scopeHash === nftPageRetryScope(canonical)) ||
           attempt === maxAttempts
         )
           break;
@@ -237,10 +252,19 @@ export class NftLinkResolvingService {
     }
     // Preserve cached data and release the processing lock, just as for an
     // exhausted retry count. A later refresh can try again.
+    const attemptedAt = Time.currentMillis();
+    const retryState =
+      lastError instanceof RequiredNftPageNotFoundError &&
+      lastError.scopeHash === nftPageRetryScope(canonical)
+        ? nextNftPageRetryState(entity, lastError.scopeHash, attemptedAt)
+        : null;
     await nftLinkResolutionStage('persist_failure', () =>
       this.nftLinksDb.updateWithFailure(
         {
-          canonicalId,
+          canonicalId: canonical.canonicalId,
+          lockStamp,
+          attemptedAt,
+          retryState,
           message:
             lastError instanceof Error
               ? lastError.message
@@ -297,9 +321,12 @@ export class NftLinkResolvingService {
       }
       if (
         refreshIfStale &&
-        Time.millis(existing.last_tried_to_update)
-          .plus(this.getUpdateMinInterval())
-          .isInPast()
+        isNftLinkRefreshDue(
+          existing,
+          canonical,
+          Time.currentMillis(),
+          this.getUpdateMinInterval().toMillis()
+        )
       ) {
         queueTargets.push(canonical.originalUrl);
       }
