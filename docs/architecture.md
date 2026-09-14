@@ -177,6 +177,20 @@ durable send attempt, including the current block limit and mainnet's
 [EIP-7825 transaction gas limit](https://eips.ethereum.org/EIPS/eip-7825).
 Exceeding a bound requires the user to reduce the selection explicitly.
 
+`POST /market/operations/{id}/preflight` is a read-only, authenticated
+`BUY_BATCH` check. Its small body binds the existing review revision and exact
+transaction digest; the server loads and independently validates stored Seaport
+orders, allocations and calldata. It sends only that transaction to the existing
+Alchemy provider, pinning both `eth_call` and raw `eth_estimateGas` to one fresh
+block and rechecking the block hash. Ownership, current profile membership,
+expiry, revision and recovery fences are checked again before returning. No
+operation, journal, send attempt, gas cap or expiry is changed. A 12-second
+abortable deadline, one concurrent check per actor, 12 checks per actor per
+minute and a two-second per-operation cooldown bound work through fail-closed
+Redis leases. This avoids sending large batch RPC bodies through the browser's
+read provider; independent frontend validation and send-arming resimulation
+remain mandatory. Only the API service must deploy before its frontend consumer.
+
 Restricted ERC1155 seller orders currently support original and filled quantity
 one. Open partial orders support multiple editions and recipients only when
 every individual NFT/payment amount has an exact fill fraction. Discovery
