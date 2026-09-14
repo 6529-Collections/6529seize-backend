@@ -186,6 +186,8 @@ export async function preflightMarketBatch(
       await read();
       signal.throwIfAborted();
       assertMarketEnabled();
+      // The last membership/read awaits can cross the 120-second freshness
+      // boundary for a block that was already near it when simulation finished.
       if (
         Date.now() - result.block_timestamp * 1000 > 120_000 ||
         result.block_timestamp * 1000 - Date.now() > 30_000

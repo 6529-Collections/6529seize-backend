@@ -1,3 +1,5 @@
+import { Interface } from 'ethers';
+import { SeaportABI } from '@opensea/seaport-js/lib/abi/Seaport';
 import { getRpcUrl } from '@/alchemy';
 import { simulateStoredMarketBatch } from '@/marketplace/market-batch-preflight-rpc';
 import { marketBatchFixture } from '@/marketplace/market-batch.test-fixture';
@@ -9,6 +11,22 @@ jest.mock('@/alchemy', () => ({
   getRpcUrl: jest.fn(() => 'https://rpc.example.invalid/ethereum')
 }));
 
+const SEAPORT = new Interface(SeaportABI);
+const CALL_RESULT = SEAPORT.encodeFunctionResult('matchAdvancedOrders', [
+  [
+    {
+      item: {
+        itemType: 2,
+        token: '0x' + '11'.repeat(20),
+        identifier: '1',
+        amount: '1',
+        recipient: '0x' + '22'.repeat(20)
+      },
+      offerer: '0x' + '33'.repeat(20),
+      conduitKey: '0x' + '00'.repeat(32)
+    }
+  ]
+]);
 const NOW = 1_800_000_000;
 const HASH = `0x${'ab'.repeat(32)}`;
 const BLOCK = {
@@ -81,7 +99,7 @@ describe('stored batch RPC simulation boundary', () => {
   function successResponses(canonical: unknown = BLOCK) {
     fetchMock
       .mockResolvedValueOnce(rpcResponse(BLOCK))
-      .mockResolvedValueOnce(rpcResponse('0x1234'))
+      .mockResolvedValueOnce(rpcResponse(CALL_RESULT))
       .mockResolvedValueOnce(rpcResponse('0x8affd'))
       .mockResolvedValueOnce(rpcResponse(canonical));
   }
@@ -153,6 +171,24 @@ describe('stored batch RPC simulation boundary', () => {
     }
   );
 
+  test('rejects a near-stale block that ages out during two seconds of RPC work', async () => {
+    const block = { ...BLOCK, timestamp: `0x${(NOW - 119).toString(16)}` };
+    const prepared = preparedBatch();
+    prepared.snapshot.block_timestamp = NOW - 120;
+    fetchMock
+      .mockResolvedValueOnce(rpcResponse(block))
+      .mockResolvedValueOnce(rpcResponse(CALL_RESULT))
+      .mockResolvedValueOnce(rpcResponse('0x8affd'))
+      .mockImplementationOnce(async () => {
+        jest.spyOn(Date, 'now').mockReturnValue((NOW + 2) * 1000);
+        return rpcResponse(block);
+      });
+    await expect(
+      simulateStoredMarketBatch(prepared, controller.signal)
+    ).rejects.toMatchObject(UNAVAILABLE);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
   test.each([
     ['hash', { ...BLOCK, hash: `0x${'ef'.repeat(32)}` }],
     ['height', { ...BLOCK, number: '0x65' }],
@@ -173,7 +209,7 @@ describe('stored batch RPC simulation boundary', () => {
     async (gas) => {
       fetchMock
         .mockResolvedValueOnce(rpcResponse(BLOCK))
-        .mockResolvedValueOnce(rpcResponse('0x'))
+        .mockResolvedValueOnce(rpcResponse(CALL_RESULT))
         .mockResolvedValueOnce(rpcResponse(gas));
       await expect(
         simulateStoredMarketBatch(preparedBatch(), controller.signal)
@@ -182,18 +218,26 @@ describe('stored batch RPC simulation boundary', () => {
     }
   );
 
-  test.each(['0x1', 'not hex', null, { data: '0x' }])(
-    'rejects a malformed call result %j before estimating',
-    async (result) => {
-      fetchMock
-        .mockResolvedValueOnce(rpcResponse(BLOCK))
-        .mockResolvedValueOnce(rpcResponse(result));
-      await expect(
-        simulateStoredMarketBatch(preparedBatch(), controller.signal)
-      ).rejects.toMatchObject(UNAVAILABLE);
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-    }
-  );
+  test.each([
+    '0x',
+    '0x1234',
+    '0x1',
+    'not hex',
+    null,
+    { data: '0x' },
+    SEAPORT.encodeFunctionResult('matchAdvancedOrders', [[]]),
+    CALL_RESULT.slice(0, -64),
+    CALL_RESULT + '00'.repeat(32),
+    `0x${'00'.repeat(31)}01`
+  ])('rejects a malformed call result %j before estimating', async (result) => {
+    fetchMock
+      .mockResolvedValueOnce(rpcResponse(BLOCK))
+      .mockResolvedValueOnce(rpcResponse(result));
+    await expect(
+      simulateStoredMarketBatch(preparedBatch(), controller.signal)
+    ).rejects.toMatchObject(UNAVAILABLE);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 
   test.each([
     { jsonrpc: '2.0', id: 2, result: BLOCK },

@@ -5,6 +5,8 @@ import { CustomApiCompliantException } from '@/exceptions';
 export const MARKET_BATCH_PREFLIGHT_TIMEOUT_MS = 12_000;
 const LEASE_MS = MARKET_BATCH_PREFLIGHT_TIMEOUT_MS + 3_000;
 // All keys have the same actor hash tag, including on clustered Redis.
+// The request counter is fixed-window: INCR preserves its first 60-second TTL;
+// releasing the concurrent-work lease does not refund a completed request.
 const ACQUIRE = `
 if redis.call('EXISTS', KEYS[1]) == 1 or redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
 local count = tonumber(redis.call('GET', KEYS[3]) or '0')

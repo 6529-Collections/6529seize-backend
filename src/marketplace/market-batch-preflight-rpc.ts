@@ -1,7 +1,17 @@
+import { Interface } from 'ethers';
+import { SeaportABI } from '@opensea/seaport-js/lib/abi/Seaport';
+import { MARKET_BATCH_MAX_TRANSACTION_GAS } from '@/marketplace/market-batch-simulation';
 import { getRpcUrl } from '@/alchemy';
 import { MarketBatchPrepared } from '@/marketplace/market-batch.types';
 import { MarketValidationError } from '@/marketplace/provider.types';
 import { z } from 'zod';
+
+// Official Seaport1.6 ABI: matchAdvancedOrders returns Execution[], not void.
+const seaport = new Interface(
+  SeaportABI.filter(
+    (entry) => entry.type === 'function' && entry.name === 'matchAdvancedOrders'
+  )
+);
 
 const quantity = z.string().regex(/^0x(?:0|[1-9a-f][0-9a-f]{0,63})$/i);
 const blockSchema = z.object({
@@ -128,11 +138,22 @@ export async function simulateStoredMarketBatch(
     const result = await rpc('eth_call', [transaction, tag], signal);
     if (typeof result !== 'string' || !/^0x(?:[0-9a-f]{2})*$/i.test(result))
       unavailable();
+    const decoded = seaport.decodeFunctionResult('matchAdvancedOrders', result);
+    if (
+      !decoded[0].length ||
+      seaport
+        .encodeFunctionResult('matchAdvancedOrders', decoded)
+        .toLowerCase() !== result.toLowerCase()
+    )
+      unavailable();
     const estimated = quantity.parse(
       await rpc('eth_estimateGas', [transaction, tag], signal)
     );
     const gas = BigInt(estimated);
-    if (gas <= BigInt(0) || gas > BigInt(16_777_216)) unavailable();
+    if (gas <= BigInt(0) || gas > MARKET_BATCH_MAX_TRANSACTION_GAS)
+      unavailable();
+    // A block initially just inside the freshness bound can age out even
+    // during this request's 12-second deadline. Recheck it after simulation.
     const canonical = snapshot(
       await rpc('eth_getBlockByNumber', [tag, false], signal)
     );

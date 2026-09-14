@@ -336,3 +336,20 @@ test.each([
   await expect(preflightMarketBatch(ID, auth(), input)).rejects.toThrow();
   expect(transition).not.toHaveBeenCalled();
 });
+
+test('rejects a block aging out during the final membership/read await despite a short overall request', async () => {
+  const f = fixture();
+  jest.spyOn(Date, 'now').mockReturnValue(NOW + 119000);
+  read
+    .mockResolvedValueOnce(f.row)
+    .mockResolvedValueOnce(f.row)
+    .mockImplementationOnce(async () => {
+      jest.spyOn(Date, 'now').mockReturnValue(NOW + 121000);
+      return f.row;
+    });
+  await expect(
+    preflightMarketBatch(ID, auth(), f.input())
+  ).rejects.toMatchObject({ code: 'OPERATION_CHANGED' });
+  expect(simulate).toHaveBeenCalledTimes(1);
+  expect(transition).not.toHaveBeenCalled();
+});
