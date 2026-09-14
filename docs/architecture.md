@@ -663,15 +663,34 @@ configuration, not historical or versioned inputs persisted with the snapshot.
 The public current-season rules and configured future schedule remain
 independent of any collector identity.
 
-Authenticated profiles can delete their own chat history from one wave through
-`DELETE /waves/{id}/my-chat-history`. The API locks the wave and the profile's
-matching `CHAT` drops in one transaction, preserves the current pinned drop,
-and delegates each remaining drop to the canonical deletion use case so
-submission/winner drops and dependent drop data are unaffected. After commit,
-the API requests the normal wave metric/score repairs, invalidates unread state,
-and broadcasts the deleted drop identities to connected wave clients. Because
-this is self-service privacy cleanup scoped to the authenticated author ID, it
-remains available if the author is no longer eligible to enter the wave.
+Authenticated profiles prepare a chat-history purge through
+`POST /waves/{id}/my-chat-history`, which freezes the author's latest CHAT serial number
+in a signed token bound to the author and wave without deleting anything. Clients
+retain the token before `DELETE /waves/{id}/my-chat-history?purge_token=...`, reuse
+it across retries, and continue until `has_more` is false. Each transaction locks
+the wave and at most 101 eligible CHAT rows, deletes at most 100 through set-based
+SQL, and preserves the current pinned drop. An indexed serial range avoids
+locking the complete history. Newly sent messages remain outside the cutoff.
+Legacy DELETE without a token completes histories of at most 100 eligible drops
+and rejects larger histories before mutation, preventing false partial success.
+Proxies remain forbidden; former wave members can still remove their own chats.
+The batch repository mirrors single-drop dependent-data cleanup, including poll
+and voting children, tombstones, curation order compaction and empty token-watch
+cancellation, and additionally removes boost/NFT-link associations. Metrics deltas,
+latest timestamps, DM unread versions and dirty repair markers run once per batch;
+post-commit refresh requests, unread-cache invalidation, and bounded batches of
+existing DROP_DELETE notifications preserve current client behavior. No schema,
+queue, worker or deployment-unit changes are required; deploy `api` before the
+frontend continuation UI.
+The range queries use the existing `idx_drop_wave_type_author` index declared
+on `DropEntity` in `src/entities/IDrop.ts`; TypeORM schema synchronization already
+owns this index. Wave and dropper metrics rows are initialized by
+`applyInsertedDropMetricsDelta` in the drop-creation transaction, and this path
+preserves the existing deletion-delta/full-resync invariant. Tokens are signed
+but readable and contain only the caller's own scope. Clients treat them as
+opaque handles. They deliberately have no expiry so a delayed retry retains its
+original cutoff; authentication and author/wave binding remain required on every
+request.
 
 Waves have an additive competition read boundary under `/v3/waves`. A wave is
 the chat/visibility hub and owns zero, one, or many competition resources. The
