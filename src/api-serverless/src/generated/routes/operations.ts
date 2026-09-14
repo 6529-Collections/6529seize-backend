@@ -119,6 +119,8 @@ import { ApiGlobalRepCategoryWaveOverview } from '@/api/generated/models/ApiGlob
 import { ApiGlobalRepCategoryWavesPage } from '@/api/generated/models/ApiGlobalRepCategoryWavesPage';
 import { ApiGroupMembersPreviewRequest } from '@/api/generated/models/ApiGroupMembersPreviewRequest';
 import { ApiMarketBatchCapabilities } from '@/api/generated/models/ApiMarketBatchCapabilities';
+import { ApiMarketBatchPreflight } from '@/api/generated/models/ApiMarketBatchPreflight';
+import { ApiMarketBatchPreflightRequest } from '@/api/generated/models/ApiMarketBatchPreflightRequest';
 import { ApiMarketDepth } from '@/api/generated/models/ApiMarketDepth';
 import { ApiMarketListings } from '@/api/generated/models/ApiMarketListings';
 import { ApiMarketMyOperations } from '@/api/generated/models/ApiMarketMyOperations';
@@ -172,6 +174,7 @@ import { ApiValidateProfileCmsAgentCandidateRequest } from '@/api/generated/mode
 import { ApiValidateProfileCmsAgentPatchRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentPatchRequest';
 import { ApiValidateProfileCmsPackageRequest } from '@/api/generated/models/ApiValidateProfileCmsPackageRequest';
 import { ApiWalletDistributionAllocations } from '@/api/generated/models/ApiWalletDistributionAllocations';
+import { ApiWaveChatHistoryPurgePlan } from '@/api/generated/models/ApiWaveChatHistoryPurgePlan';
 import { ApiWaveDecisionsPageV2 } from '@/api/generated/models/ApiWaveDecisionsPageV2';
 import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
 import { ApiWaveGroupValidationRequest } from '@/api/generated/models/ApiWaveGroupValidationRequest';
@@ -1501,6 +1504,22 @@ export type ContinueMarketOperationRequest = Request<
   ApiResponse<ContinueMarketOperationResponse>,
   never,
   ContinueMarketOperationQuery,
+  Record<string, never>
+>;
+
+export interface PreflightMarketBatchPathParams {
+  "id": string;
+}
+
+export type PreflightMarketBatchQuery = Record<string, never>;
+
+export type PreflightMarketBatchResponse = ApiMarketBatchPreflight;
+
+export type PreflightMarketBatchRequest = Request<
+  PreflightMarketBatchPathParams,
+  ApiResponse<PreflightMarketBatchResponse>,
+  ApiMarketBatchPreflightRequest,
+  PreflightMarketBatchQuery,
   Record<string, never>
 >;
 
@@ -3301,7 +3320,9 @@ export interface DeleteMyWaveChatHistoryPathParams {
   "id": string;
 }
 
-export type DeleteMyWaveChatHistoryQuery = Record<string, never>;
+export interface DeleteMyWaveChatHistoryQuery {
+  "purge_token"?: string;
+}
 
 export type DeleteMyWaveChatHistoryResponse = ApiDeleteMyWaveChatHistoryResponse;
 
@@ -3310,6 +3331,22 @@ export type DeleteMyWaveChatHistoryRequest = Request<
   ApiResponse<DeleteMyWaveChatHistoryResponse>,
   never,
   DeleteMyWaveChatHistoryQuery,
+  Record<string, never>
+>;
+
+export interface PrepareMyWaveChatHistoryPurgePathParams {
+  "id": string;
+}
+
+export type PrepareMyWaveChatHistoryPurgeQuery = Record<string, never>;
+
+export type PrepareMyWaveChatHistoryPurgeResponse = ApiWaveChatHistoryPurgePlan;
+
+export type PrepareMyWaveChatHistoryPurgeRequest = Request<
+  PrepareMyWaveChatHistoryPurgePathParams,
+  ApiResponse<PrepareMyWaveChatHistoryPurgeResponse>,
+  never,
+  PrepareMyWaveChatHistoryPurgeQuery,
   Record<string, never>
 >;
 
