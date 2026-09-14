@@ -1311,8 +1311,11 @@ chain in ordinal logical-ID order. CloudFormation therefore updates them seriall
 avoiding a parallel burst against CloudWatch Logs subscription API limits while
 preserving filter identities, destinations and patterns. This increases source
 stack update time; it does not rate-limit unrelated callers in the account/region.
-The NFT and wave score refresher throttle alarms require three breaching minutes
-out of five while invocation errors and OOM alarms remain immediate. Wave score
+Selected serialized-worker throttle alarms, including release-note generation,
+require three breaching minutes out of five while invocation errors and OOM
+alarms remain immediate. Release-note generation retains its single reserved
+execution, batch-one SQS mapping and existing queue/publication contracts; the
+alarm qualification is not proof of successful note delivery. Wave score
 refresh keeps one reserved execution; independent source-account SQS alarms
 detect sustained 30-minute backlog in either refresh queue and any visible
 dirty-refresh dead letter. Queue age is a transport guard, not proof of business

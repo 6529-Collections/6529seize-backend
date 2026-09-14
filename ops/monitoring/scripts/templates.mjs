@@ -1051,7 +1051,8 @@ function sourceTemplate(environment) {
           'nftLinkRefresherLoop',
           'waveScoreRefreshLoop',
           'subscriptionCoverageReconciliationLoop',
-          'nftsLoop'
+          'nftsLoop',
+          'releaseNotesGenerationLoop'
         ].includes(name) && metric === 'Throttles';
       r[`${id}${metric}`] = {
         Type: 'AWS::CloudWatch::Alarm',
