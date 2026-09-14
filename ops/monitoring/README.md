@@ -44,15 +44,23 @@ Ordinary 4xx responses and moderation decisions are not operational errors. Sile
 catches, console-only handled errors outside the shared logger, failures before
 telemetry reaches AWS, and unconfigured frontend/external providers remain gaps.
 Platform alarms can detect a failed invocation even when JavaScript cannot log it.
-The NFT link refresher and wave score refresher throttle alarms require at least
-one throttle in three of the last five one-minute periods. The NFT refresher's
+The NFT link refresher, wave score refresher, subscription coverage reconciler
+and NFT processing loop throttle alarms require at least one throttle in three
+of the last five one-minute periods. The NFT refresher's
 SQS event source caps concurrency at the
 function's reserved capacity, preventing the poller from overshooting that limit.
 Isolated throttles therefore do not generate immediate alarm/recovery pairs;
 repeated throttling still alerts. Wave score refresh keeps its single reserved
 execution: its two FIFO sources and one-minute fallback can contend for that
-capacity even while messages drain normally. Invocation-error and OOM alarms
-remain immediate, as do other services' throttle alarms.
+capacity even while messages drain normally. Subscription coverage reconciliation
+and NFT processing also reserve one execution while running overlapping
+one-minute and longer schedules. Their short contention can be retried before
+the next scheduled run. The sustained rule delays the first throttle warning
+until three breaching minutes occur within the five-minute evaluation window;
+it does not measure successful business output or guarantee a detection SLA.
+Recovery follows the same rolling window without a separate cooldown.
+Invocation-error and OOM alarms remain immediate, as do other services' throttle
+alarms, including release-note generation. Direct SNS alarm actions are retained.
 
 Both wave score queues independently alert when their oldest message is at least
 1,800 seconds old in three of five one-minute periods. This initial backlog
