@@ -7,6 +7,14 @@ acceptance checks before removing the legacy CloudWatch-to-Discord subscription.
 
 ## Investigate dispatcher failures
 
+Confirmed grouping transaction conflicts receive bounded local retries before
+the dispatcher reports failure. Up to three application transaction sends share a
+three-second abort signal for requests and local waits; SDK retry sleeps can
+extend elapsed time beyond that deadline. Mixed/unknown failures and exhausted attempts retain the existing
+failed-item path. Local recovery reduces avoidable queue redelivery and alarm
+noise without acknowledging an uncommitted group. It does not change alert
+severity, fingerprint windows, webhook delivery, or fallback routing.
+
 Use the [dispatch diagnostic schema](../../monitoring/README.md#dispatch-diagnostics)
 to distinguish storage, scheduling, rate-slot and webhook failures. Start with
 `DELIVERY_FAILED`, inspect its finite operation/cause fields, and correlate by
