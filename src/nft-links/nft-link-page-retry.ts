@@ -15,13 +15,22 @@ export interface NftLinkPageRetryState {
   scopeHash: string;
 }
 
-type RetryRow = Pick<
-  NftLinkEntity,
-  | 'refresh_retry_state'
-  | 'last_tried_to_update'
-  | 'last_successfully_updated'
-  | 'failed_since'
->;
+type RetryRow = Pick<NftLinkEntity, 'refresh_retry_state'> & {
+  last_tried_to_update: number | string | null;
+  last_successfully_updated: number | string | null;
+  failed_since: number | string | null;
+};
+
+/** Raw worker TypeORM queries return BIGINT strings; API queries return numbers. */
+function readRetryTimestamp(value: unknown): number | null {
+  if (
+    typeof value !== 'number' &&
+    (typeof value !== 'string' || !/^\d+$/.test(value))
+  )
+    return null;
+  const timestamp = Number(value);
+  return Number.isSafeInteger(timestamp) && timestamp >= 0 ? timestamp : null;
+}
 
 /** Purpose is assigned only at a required canonical-page fetch, never from text. */
 export class RequiredNftPageNotFoundError extends Error {
@@ -71,6 +80,7 @@ export function readNftPageRetryState(
   scopeHash: string
 ): NftLinkPageRetryState | null {
   const state = parseState(row.refresh_retry_state);
+  const lastSuccess = readRetryTimestamp(row.last_successfully_updated);
   if (
     state?.version !== 1 ||
     state.code !== CODE ||
@@ -83,9 +93,10 @@ export function readNftPageRetryState(
     !Number.isSafeInteger(state.notBefore) ||
     state.notBefore! < state.attemptedAt! + DELAYS[state.streak! - 1] * 0.9 ||
     state.notBefore! > state.attemptedAt! + DELAYS[state.streak! - 1] ||
-    state.attemptedAt !== row.last_tried_to_update ||
-    row.failed_since == null ||
-    (row.last_successfully_updated ?? 0) >= state.attemptedAt!
+    state.attemptedAt !== readRetryTimestamp(row.last_tried_to_update) ||
+    readRetryTimestamp(row.failed_since) === null ||
+    (row.last_successfully_updated != null && lastSuccess === null) ||
+    (lastSuccess ?? 0) >= state.attemptedAt!
   )
     return null;
   return state as NftLinkPageRetryState;
@@ -98,7 +109,9 @@ export function isNftLinkRefreshDue(
   now: number,
   ordinaryInterval: number
 ): boolean {
-  if (row.last_tried_to_update + ordinaryInterval >= now) return false;
+  const lastAttempt = readRetryTimestamp(row.last_tried_to_update);
+  if (lastAttempt !== null && lastAttempt + ordinaryInterval >= now)
+    return false;
   const state = readNftPageRetryState(row, nftPageRetryScope(canonical));
   return !state || state.attemptedAt > now || state.notBefore <= now;
 }
