@@ -17,6 +17,7 @@ import {
 import { RequestContext } from '../../../request.context';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { isLegacyWsQueryTokenEnabled } from '../auth/auth-session-v2';
+import { describeWebSocketSendFailure } from './ws-send-diagnostics';
 
 export class SocketNotAvailableException extends Error {
   constructor() {
@@ -115,23 +116,18 @@ class ApiGatewayClientConnections extends ClientConnections {
           Data: Buffer.from(message)
         })
       );
-    } catch (err: any) {
-      const isInvalidConnectionId =
-        err.name === 'BadRequestException' &&
-        typeof err.message === 'string' &&
-        err.message.includes('Invalid connectionId');
-      if (
-        err.name === 'GoneException' ||
-        isInvalidConnectionId ||
-        err.$metadata?.httpStatusCode === 410
-      ) {
+    } catch (error: unknown) {
+      const failure = describeWebSocketSendFailure(message, error);
+      if (failure.unavailable) {
         throw new SocketNotAvailableException();
       } else {
-        this.logger.error(
-          `Failed to post message to client ${connectionId}: ${JSON.stringify(
-            err
-          )}`
-        );
+        try {
+          // Replace the existing error event; do not report again or turn a
+          // diagnostic failure into deletion of an otherwise live connection.
+          this.logger.error(failure.diagnostic);
+        } catch {
+          // Outbound delivery remains best effort when reporting is unavailable.
+        }
       }
     }
   }
@@ -216,10 +212,6 @@ export class AppWebSockets {
         connection_id: connectionId,
         wave_id: null
       },
-      {}
-    );
-    await this.wsConnectionRepository.replaceNotificationSubscriptions(
-      connectionId,
       getAuthenticatedNotificationSubscriptions([{ identityId, jwtExpiry }]),
       {}
     );
@@ -269,10 +261,6 @@ export class AppWebSockets {
         identityId,
         jwtExpiry
       },
-      ctx
-    );
-    await this.wsConnectionRepository.replaceNotificationSubscriptions(
-      connectionId,
       getAuthenticatedNotificationSubscriptions([{ identityId, jwtExpiry }]),
       ctx
     );
