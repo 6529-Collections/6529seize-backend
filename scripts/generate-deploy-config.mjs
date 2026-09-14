@@ -104,6 +104,7 @@ ${indent(yamlList(serviceNames))}
         options:
           - full
           - wallet-transfer-analysis
+          - nft-link-page-retry
       release_pull_request:
         type: string
         description: 'Merged PR represented by this production release'
@@ -174,7 +175,7 @@ jobs:
           set -euo pipefail
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]]
           [[ "$INPUT_SERVICE" =~ ^(${serviceCasePattern})$ ]]
-          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|wallet-transfer-analysis)$ ]]
+          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|wallet-transfer-analysis|nft-link-page-retry)$ ]]
           if [ "$DB_SCHEMA_SCOPE" != full ] && [ "$INPUT_SERVICE" != dbMigrationsLoop ]; then
             echo "db_schema_scope is only supported for dbMigrationsLoop" >&2
             exit 1
@@ -455,6 +456,10 @@ jobs:
           fi
           if [ "$DB_SCHEMA_SCOPE" = wallet-transfer-analysis ] && ! jq -e '.schema_scope == "wallet-transfer-analysis"' response.json > /dev/null; then
             echo "Lambda did not acknowledge the requested wallet-transfer-analysis schema scope"
+            exit 1
+          fi
+          if [ "$DB_SCHEMA_SCOPE" = nft-link-page-retry ] && ! jq -e '.schema_scope == "nft-link-page-retry"' response.json > /dev/null; then
+            echo "Lambda did not acknowledge the requested nft-link-page-retry schema scope"
             exit 1
           fi
       - name: Verify resources-only CloudFormation stack

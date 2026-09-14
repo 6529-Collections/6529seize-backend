@@ -13,6 +13,8 @@ import {
   WalletTransferWalletDailyEntity
 } from '@/entities/IWalletTransferAnalysis';
 import { moderationRetentionSchemaDb } from './moderation-retention-schema.db';
+import { NftLinkEntity } from '@/entities/INftLink';
+import { applyNftLinkPageRetrySchema } from './nft-link-page-retry-schema';
 
 const DBMigrate = require('db-migrate');
 
@@ -69,7 +71,9 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
   const scope = (event as { schema_scope: unknown }).schema_scope;
   if (
     scheduledInvocation ||
-    (scope !== 'full' && scope !== 'wallet-transfer-analysis')
+    (scope !== 'full' &&
+      scope !== 'wallet-transfer-analysis' &&
+      scope !== 'nft-link-page-retry')
   ) {
     throw new Error('Unsupported database schema scope for this invocation');
   }
@@ -80,6 +84,21 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const scheduledInvocation = isScheduledInvocation(event);
   const scope = schemaScope(event, scheduledInvocation);
   logger.info(`[RUNNING]`);
+  if (scope === 'nft-link-page-retry') {
+    await doInDbContext(
+      async () => {
+        const added = await applyNftLinkPageRetrySchema();
+        logger.info(`[NFT RETRY SCHEMA COLUMNS ADDED] ${added}`);
+      },
+      {
+        logger,
+        entities: [NftLinkEntity],
+        syncEntities: false,
+        skipRedis: true
+      }
+    );
+    return { schema_scope: scope };
+  }
   if (scope === 'wallet-transfer-analysis') {
     await doInDbContext(async () => undefined, {
       logger,

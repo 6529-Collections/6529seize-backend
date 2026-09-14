@@ -10,6 +10,12 @@ import {
 } from '@/entities/IWalletTransferAnalysis';
 import { handler } from './index';
 import { moderationRetentionSchemaDb } from './moderation-retention-schema.db';
+import { applyNftLinkPageRetrySchema } from './nft-link-page-retry-schema';
+import { NftLinkEntity } from '@/entities/INftLink';
+
+jest.mock('./nft-link-page-retry-schema', () => ({
+  applyNftLinkPageRetrySchema: jest.fn().mockResolvedValue(1)
+}));
 
 jest.mock('@/sentry.context', () => ({
   wrapLambdaHandler: (fn: (event: unknown) => Promise<unknown>) => fn
@@ -64,6 +70,37 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     jest
       .mocked(moderationRetentionSchemaDb.missingColumns)
       .mockResolvedValue([]);
+  });
+
+  it('executes only the inspected NFT retry schema and skips all unrelated work', async () => {
+    await expect(
+      invoke({ schema_scope: 'nft-link-page-retry' })
+    ).resolves.toEqual({ schema_scope: 'nft-link-page-retry' });
+    expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
+      logger: expect.anything(),
+      entities: [NftLinkEntity],
+      syncEntities: false,
+      skipRedis: true
+    });
+    expect(applyNftLinkPageRetrySchema).toHaveBeenCalledTimes(1);
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+    expect(competitionRepository.backfillLegacyMappings).not.toHaveBeenCalled();
+    expect(
+      contentModerationDb.deleteExpiredPrePublicationChecks
+    ).not.toHaveBeenCalled();
+    expect(moderationReviewDb.retain).not.toHaveBeenCalled();
+    expect(moderationRetentionSchemaDb.missingColumns).not.toHaveBeenCalled();
+  });
+
+  it('does not acknowledge an NFT schema guard failure or fall through to maintenance', async () => {
+    jest
+      .mocked(applyNftLinkPageRetrySchema)
+      .mockRejectedValueOnce(new Error('synthetic drift'));
+    await expect(
+      invoke({ schema_scope: 'nft-link-page-retry' })
+    ).rejects.toThrow('synthetic drift');
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+    expect(competitionRepository.backfillLegacyMappings).not.toHaveBeenCalled();
   });
 
   it('synchronizes only the three wallet-transfer entities and skips all unrelated work', async () => {
@@ -181,7 +218,7 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     }
   );
 
-  it.each(['full', 'wallet-transfer-analysis'])(
+  it.each(['full', 'wallet-transfer-analysis', 'nft-link-page-retry'])(
     'rejects explicit %s scope on scheduled events',
     async (scope) => {
       await expect(
