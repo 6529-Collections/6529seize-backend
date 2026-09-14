@@ -12,6 +12,12 @@ import {
 import { handler } from './index';
 import { moderationRetentionSchemaDb } from './moderation-retention-schema.db';
 import { applyClaimsMediaUploadSchema } from './claims-media-schema';
+import { NftLinkEntity } from '@/entities/INftLink';
+import { applyNftLinkPageRetrySchema } from './nft-link-page-retry-schema';
+
+jest.mock('./nft-link-page-retry-schema', () => ({
+  applyNftLinkPageRetrySchema: jest.fn().mockResolvedValue(1)
+}));
 
 jest.mock('./claims-media-schema', () => ({
   applyClaimsMediaUploadSchema: jest.fn().mockResolvedValue(2)
@@ -72,6 +78,38 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       .mockResolvedValue([]);
   });
 
+  it('executes only the inspected NFT retry schema and skips all unrelated work', async () => {
+    await expect(
+      invoke({ schema_scope: 'nft-link-page-retry' })
+    ).resolves.toEqual({ schema_scope: 'nft-link-page-retry' });
+    expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
+      logger: expect.anything(),
+      entities: [NftLinkEntity],
+      syncEntities: false,
+      skipRedis: true
+    });
+    expect(applyNftLinkPageRetrySchema).toHaveBeenCalledTimes(1);
+    expect(applyClaimsMediaUploadSchema).not.toHaveBeenCalled();
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+    expect(competitionRepository.backfillLegacyMappings).not.toHaveBeenCalled();
+    expect(
+      contentModerationDb.deleteExpiredPrePublicationChecks
+    ).not.toHaveBeenCalled();
+    expect(moderationReviewDb.retain).not.toHaveBeenCalled();
+    expect(moderationRetentionSchemaDb.missingColumns).not.toHaveBeenCalled();
+  });
+
+  it('does not acknowledge an NFT schema guard failure or fall through to maintenance', async () => {
+    jest
+      .mocked(applyNftLinkPageRetrySchema)
+      .mockRejectedValueOnce(new Error('synthetic drift'));
+    await expect(
+      invoke({ schema_scope: 'nft-link-page-retry' })
+    ).rejects.toThrow('synthetic drift');
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+    expect(competitionRepository.backfillLegacyMappings).not.toHaveBeenCalled();
+  });
+
   it.each([
     {
       scope: 'wallet-transfer-analysis',
@@ -98,6 +136,7 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       expect(applyClaimsMediaUploadSchema).toHaveBeenCalledTimes(
         scope === 'claims-media-upload' ? 1 : 0
       );
+      expect(applyNftLinkPageRetrySchema).not.toHaveBeenCalled();
       expect(migrations.getInstance).not.toHaveBeenCalled();
       expect(
         competitionRepository.backfillLegacyMappings
@@ -199,15 +238,17 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     }
   );
 
-  it.each(['full', 'wallet-transfer-analysis', 'claims-media-upload'])(
-    'rejects explicit %s scope on scheduled events',
-    async (scope) => {
-      await expect(
-        invoke({ ...scheduledEvent, schema_scope: scope })
-      ).rejects.toThrow('Unsupported database schema scope');
-      expect(doInDbContext).not.toHaveBeenCalled();
-    }
-  );
+  it.each([
+    'full',
+    'wallet-transfer-analysis',
+    'claims-media-upload',
+    'nft-link-page-retry'
+  ])('rejects explicit %s scope on scheduled events', async (scope) => {
+    await expect(
+      invoke({ ...scheduledEvent, schema_scope: scope })
+    ).rejects.toThrow('Unsupported database schema scope');
+    expect(doInDbContext).not.toHaveBeenCalled();
+  });
 
   it.each(['wallet-transfer-analysis', 'claims-media-upload'])(
     'propagates %s schema synchronization failure without starting maintenance',
