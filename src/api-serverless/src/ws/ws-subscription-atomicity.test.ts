@@ -1,4 +1,5 @@
 import type { PoolConnection } from 'mysql';
+import type WebSocket from 'ws';
 import { DbQueryOptions } from '@/db-query.options';
 import { execNativeTransactionally } from '@/db/my-sql.helpers';
 import { ConnectionWrapper, SqlExecutor } from '@/sql-executor';
@@ -175,7 +176,8 @@ describe('WebSocket identity and notification subscription atomicity', () => {
       sockets.register({
         connectionId: 'socket',
         identityId: 'new',
-        jwtExpiry: 200
+        jwtExpiry: 200,
+        ws: { send: jest.fn(), close: jest.fn() } as unknown as WebSocket
       })
     ).rejects.toBe(failure);
     expect(db.state).toEqual({ identity: null, subscriptions: [] });
