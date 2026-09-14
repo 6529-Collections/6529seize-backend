@@ -449,6 +449,13 @@ HTTP requests also observe the overall budget. Retries stop when the remaining
 budget cannot cover their backoff and another RPC. Failed resolution preserves
 cached metadata and releases the existing processing lock.
 
+The SuperRare adapter preserves the ERC721 `tokenURI` path. A contract revert
+can fall back to `uri` only after positive ERC1155 interface detection; transport
+failures and unsupported interfaces remain failures. ERC1155 `{id}` placeholders
+in the metadata URI and consumed metadata strings use the standard 64-digit
+lowercase hexadecimal token ID. Existing URI normalization and bounded HTTP
+handling apply; this does not establish token existence or media availability.
+
 After persistence, a worker-specific notifier reads active WebSocket recipients
 once and sends the existing `MEDIA_LINK_UPDATED` payload with concurrency 10,
 five-second request limits, and a 15-second broadcast deadline. Notification
