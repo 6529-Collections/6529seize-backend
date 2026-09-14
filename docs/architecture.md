@@ -550,6 +550,18 @@ in the metadata URI and consumed metadata strings use the standard 64-digit
 lowercase hexadecimal token ID. Existing URI normalization and bounded HTTP
 handling apply; this does not establish token existence or media availability.
 
+The Manifold adapter requires selected-token responses to match the requested
+instance ID and rejects known ID mismatches on legacy responses too.
+When present, it reads string metadata from `publicData.selectedToken`
+and normalizes supported decentralized media to HTTP(S) without credentials;
+the existing preview download safety checks still apply. Complete title and media
+avoid an unnecessary canonical-page OG fetch. Listing metadata does not prove an
+active sale, so these cards use the unknown sale state and a view action. Legacy
+claim and edition field extraction remains available when selectedToken is absent,
+including older responses without a recognizable instance ID. A listingType-only
+response keeps those legacy assets and uses an unknown market state with a view
+action, without inferring a claim price.
+
 After persistence, a worker-specific notifier reads active WebSocket recipients
 once and sends the existing `MEDIA_LINK_UPDATED` payload with concurrency 10,
 five-second request limits, and a 15-second broadcast deadline. Notification
