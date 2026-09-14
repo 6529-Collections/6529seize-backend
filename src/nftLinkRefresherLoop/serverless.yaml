@@ -26,6 +26,7 @@ functions:
           arn:
             Fn::GetAtt: [NftLinkRefresherQueue, Arn]
           batchSize: 1
+          maximumConcurrency: ${self:functions.nftLinkRefresherLoop.reservedConcurrency}
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}

@@ -13,11 +13,23 @@ completed snapshot pointer change in one database transaction. Failed or older
 polls cannot replace a newer completed snapshot. NextGen projects are partitioned
 by their OpenSea collection slug and local collection ID.
 
+Existing price statistics and order-book collection run concurrently with
+separate deadlines. Both tasks settle before the database context closes, so
+a slow backfill cannot consume the time reserved for price statistics. All
+NextGen order books are attempted before lifecycle maintenance begins.
+The four collectors have 1 GiB of memory to accommodate concurrent work;
+monitor reported peak memory as collection sizes grow.
+
 `marketDepthStreamLoop` subscribes to listing, bid, collection offer, trait offer,
 cancellation, invalidation, revalidation and sale events. It reconnects through
 the official OpenSea SDK, batches writes and bounds its in-memory queue. REST
 event catch-up uses a closed time window, overlap and a persisted pagination
 cursor. Immutable event IDs deduplicate replay and overlapping sources.
+Status reconciliation runs before REST catch-up. Catch-up processes a bounded
+batch and checkpoints each completed page; a deferred batch resumes the same
+closed window on the next run. Only the final page advances the completed
+watermark. A planned pause is logged separately from provider or database
+failure.
 
 Orders missing from a newer snapshot enter persistent status reconciliation.
 Expiry and confirmed provider status changes can produce observed lifecycle
@@ -76,6 +88,17 @@ cursor replacement, empty and stale states, and market events without a
 transaction hash. Inspect collector logs for exhausted retries, queue overflow,
 failed catch-up or archive limits; a deployed Lambda version alone does not
 prove successful capture.
+Also verify that existing price statistics complete and that deferred REST
+pages make progress across runs. A fresh order book alone does not prove that
+historical catch-up has completed.
+
+Check EventBridge rules targeting each collector after deployment. The
+stack-managed schedules must be the only recurring trigger for these functions;
+an older shared rule can otherwise queue duplicate work despite reserved
+concurrency of one. When retiring a duplicate, first verify the replacement
+rule is enabled and targets the same function, remove only that function's
+target from the older rule, and read back both rules. Preserve all other
+targets on shared rules.
 
 Archives are retained without an automatic deletion policy. Monitor snapshot
 count and compressed byte growth, reconciliation backlog and oldest due retry,

@@ -1,0 +1,2299 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Transform": "AWS::Serverless-2016-10-31",
+  "Description": "Independent operational error delivery; deploy in the monitoring account.",
+  "Parameters": {
+    "Environment": {
+      "Type": "String",
+      "AllowedValues": [
+        "staging"
+      ],
+      "Default": "staging"
+    },
+    "SourceAccountId": {
+      "Type": "String",
+      "AllowedPattern": "^\\d{12}$"
+    },
+    "SourceRegion": {
+      "Type": "String",
+      "AllowedPattern": "^[a-z]{2}(-gov)?-[a-z]+-\\d$"
+    },
+    "RuntimePermissionsBoundaryArn": {
+      "Type": "String",
+      "AllowedPattern": "^arn:[^:]+:iam::[0-9]{12}:policy/6529-observability-staging-runtime-boundary$"
+    },
+    "FallbackKmsKeyArn": {
+      "Type": "String",
+      "AllowedPattern": "^arn:[^:]+:kms:[^:]+:[0-9]{12}:key/[a-f0-9-]{36}$",
+      "Description": "Matching environment fallback key ARN from the monitoring bootstrap stack."
+    },
+    "WebhookSecretArn": {
+      "Type": "String",
+      "AllowedPattern": "^arn:[^:]+:secretsmanager:[^:]+:[0-9]{12}:secret:.+$"
+    },
+    "SentrySecretArn": {
+      "Type": "String",
+      "AllowedPattern": "^arn:[^:]+:secretsmanager:[^:]+:[0-9]{12}:secret:.+$"
+    },
+    "SentryProjects": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Comma-separated Sentry project slugs."
+    },
+    "ExternalCheckInSecretArn": {
+      "Type": "String",
+      "Default": ""
+    },
+    "FallbackTargetTopicArn": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Optional confirmed source SNS topic; its policy must permit the fallback forwarder."
+    },
+    "ProbeTargets": {
+      "Type": "String",
+      "Default": "[]",
+      "Description": "JSON array of approved public HTTPS targets: name, url, status, optional jsonEquals scalar property assertions."
+    }
+  },
+  "Conditions": {
+    "HasCheckIn": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "ExternalCheckInSecretArn"
+            },
+            ""
+          ]
+        }
+      ]
+    },
+    "HasFallbackTarget": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "FallbackTargetTopicArn"
+            },
+            ""
+          ]
+        }
+      ]
+    }
+  },
+  "Resources": {
+    "Receipts": {
+      "Type": "AWS::DynamoDB::Table",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "pk",
+            "AttributeType": "S"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "pk",
+            "KeyType": "HASH"
+          }
+        ],
+        "SSESpecification": {
+          "SSEEnabled": true
+        },
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        },
+        "TimeToLiveSpecification": {
+          "AttributeName": "expiresAt",
+          "Enabled": true
+        }
+      }
+    },
+    "Archive": {
+      "Type": "AWS::S3::Bucket",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "SanitizedRetention",
+              "Status": "Enabled",
+              "ExpirationInDays": 365,
+              "NoncurrentVersionExpiration": {
+                "NoncurrentDays": 365
+              }
+            }
+          ]
+        },
+        "BucketName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-archive-${AWS::AccountId}-${AWS::Region}"
+        },
+        "LoggingConfiguration": {
+          "DestinationBucketName": {
+            "Ref": "ArchiveAccessLogs"
+          },
+          "LogFilePrefix": "archive/"
+        }
+      },
+      "DependsOn": "ArchiveAccessLogsPolicy"
+    },
+    "ArchivePolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "Archive"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "Archive",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Sub": "${Archive.Arn}/*"
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "FallbackTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "DisplayName": "6529 independent monitoring fallback",
+        "KmsMasterKeyId": {
+          "Ref": "FallbackKmsKeyArn"
+        }
+      }
+    },
+    "ArchiveAccessLogs": {
+      "Type": "AWS::S3::Bucket",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Metadata": {
+        "SecurityReview": "Access-log sink intentionally has no self-logging to prevent recursive log generation."
+      },
+      "Properties": {
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "AccessLogRetention",
+              "Status": "Enabled",
+              "ExpirationInDays": 90,
+              "NoncurrentVersionExpiration": {
+                "NoncurrentDays": 90
+              }
+            }
+          ]
+        },
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        }
+      }
+    },
+    "ArchiveAccessLogsPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "ArchiveAccessLogs"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "logging.s3.amazonaws.com"
+              },
+              "Action": "s3:PutObject",
+              "Resource": {
+                "Fn::Sub": "${ArchiveAccessLogs.Arn}/archive/*"
+              },
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "ArnEquals": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:s3:::seize-monitoring-${Environment}-archive-${AWS::AccountId}-${AWS::Region}"
+                  }
+                }
+              }
+            },
+            {
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "ArchiveAccessLogs",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Sub": "${ArchiveAccessLogs.Arn}/*"
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "FallbackTopicPolicy": {
+      "Type": "AWS::SNS::TopicPolicy",
+      "Properties": {
+        "Topics": [
+          {
+            "Ref": "FallbackTopic"
+          }
+        ],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudwatch.amazonaws.com"
+              },
+              "Action": "sns:Publish",
+              "Resource": {
+                "Ref": "FallbackTopic"
+              },
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "ArnLike": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:seize-monitoring-${Environment}-*"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "NormalDeadLetters": {
+      "Type": "AWS::SQS::Queue",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "MessageRetentionPeriod": 1209600,
+        "VisibilityTimeout": 180,
+        "SqsManagedSseEnabled": true,
+        "RedriveAllowPolicy": {
+          "redrivePermission": "byQueue",
+          "sourceQueueArns": [
+            {
+              "Fn::Sub": "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:seize-monitoring-${Environment}-normal"
+            }
+          ]
+        }
+      }
+    },
+    "NormalQueue": {
+      "Type": "AWS::SQS::Queue",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "QueueName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-normal"
+        },
+        "MessageRetentionPeriod": 1209600,
+        "VisibilityTimeout": 180,
+        "SqsManagedSseEnabled": true,
+        "RedrivePolicy": {
+          "deadLetterTargetArn": {
+            "Fn::GetAtt": [
+              "NormalDeadLetters",
+              "Arn"
+            ]
+          },
+          "maxReceiveCount": 40
+        }
+      }
+    },
+    "CriticalDeadLetters": {
+      "Type": "AWS::SQS::Queue",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "MessageRetentionPeriod": 1209600,
+        "VisibilityTimeout": 180,
+        "SqsManagedSseEnabled": true,
+        "RedriveAllowPolicy": {
+          "redrivePermission": "byQueue",
+          "sourceQueueArns": [
+            {
+              "Fn::Sub": "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:seize-monitoring-${Environment}-critical"
+            }
+          ]
+        }
+      }
+    },
+    "CriticalQueue": {
+      "Type": "AWS::SQS::Queue",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "QueueName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-critical"
+        },
+        "MessageRetentionPeriod": 1209600,
+        "VisibilityTimeout": 180,
+        "SqsManagedSseEnabled": true,
+        "RedrivePolicy": {
+          "deadLetterTargetArn": {
+            "Fn::GetAtt": [
+              "CriticalDeadLetters",
+              "Arn"
+            ]
+          },
+          "maxReceiveCount": 8
+        }
+      }
+    },
+    "EventDeadLetters": {
+      "Type": "AWS::SQS::Queue",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "MessageRetentionPeriod": 1209600,
+        "SqsManagedSseEnabled": true,
+        "VisibilityTimeout": 180
+      }
+    },
+    "EventBus": {
+      "Type": "AWS::Events::EventBus",
+      "Properties": {
+        "Name": {
+          "Fn::Sub": "seize-monitoring-${Environment}-events"
+        }
+      }
+    },
+    "ApplicationBusPolicy": {
+      "Type": "AWS::Events::EventBusPolicy",
+      "Properties": {
+        "EventBusName": {
+          "Ref": "EventBus"
+        },
+        "StatementId": "ApplicationSource",
+        "Statement": {
+          "Effect": "Allow",
+          "Principal": {
+            "AWS": {
+              "Fn::Sub": "arn:${AWS::Partition}:iam::${SourceAccountId}:root"
+            }
+          },
+          "Action": "events:PutEvents",
+          "Resource": {
+            "Fn::GetAtt": [
+              "EventBus",
+              "Arn"
+            ]
+          },
+          "Condition": {
+            "ArnEquals": {
+              "aws:PrincipalArn": {
+                "Fn::Sub": "arn:${AWS::Partition}:iam::${SourceAccountId}:role/seize-monitoring-${Environment}-logs"
+              }
+            },
+            "StringEquals": {
+              "events:source": "6529.ops"
+            }
+          }
+        }
+      }
+    },
+    "PlatformBusPolicy": {
+      "Type": "AWS::Events::EventBusPolicy",
+      "Properties": {
+        "EventBusName": {
+          "Ref": "EventBus"
+        },
+        "StatementId": "PlatformSource",
+        "Statement": {
+          "Effect": "Allow",
+          "Principal": {
+            "AWS": {
+              "Fn::Sub": "arn:${AWS::Partition}:iam::${SourceAccountId}:root"
+            }
+          },
+          "Action": "events:PutEvents",
+          "Resource": {
+            "Fn::GetAtt": [
+              "EventBus",
+              "Arn"
+            ]
+          },
+          "Condition": {
+            "ArnEquals": {
+              "aws:PrincipalArn": {
+                "Fn::Sub": "arn:${AWS::Partition}:iam::${SourceAccountId}:role/seize-monitoring-${Environment}-alarms-forward"
+              }
+            },
+            "StringEquals": {
+              "events:source": "aws.cloudwatch"
+            }
+          }
+        }
+      }
+    },
+    "NormalCollector": {
+      "Type": "AWS::Serverless::Function",
+      "Properties": {
+        "CodeUri": "dist/",
+        "Handler": "handlers.collect",
+        "Runtime": "nodejs22.x",
+        "Architectures": [
+          "arm64"
+        ],
+        "MemorySize": 256,
+        "Timeout": 30,
+        "PermissionsBoundary": {
+          "Ref": "RuntimePermissionsBoundaryArn"
+        },
+        "Environment": {
+          "Variables": {
+            "ENVIRONMENT": {
+              "Ref": "Environment"
+            },
+            "RECEIPTS_TABLE": {
+              "Ref": "Receipts"
+            },
+            "NORMAL_QUEUE_URL": {
+              "Ref": "NormalQueue"
+            },
+            "CRITICAL_QUEUE_URL": {
+              "Ref": "CriticalQueue"
+            },
+            "ARCHIVE_BUCKET": {
+              "Ref": "Archive"
+            },
+            "FALLBACK_TOPIC_ARN": {
+              "Ref": "FallbackTopic"
+            },
+            "SOURCE_ACCOUNTS": {
+              "Ref": "SourceAccountId"
+            },
+            "SOURCE_REGION": {
+              "Ref": "SourceRegion"
+            },
+            "ALLOWED_SERVICES": "seizeAPI,aggregatedActivityLoop,attachmentsOrchestrator,attachmentsProcessor,artCurationNftWatchLoop,claimsBuilder,claimsMediaArweaveUploader,customReplayLoop,dbDumpsDaily,dbMigrationsLoop,delegationsLoop,discoverEnsLoop,dropMediaSanitizer,dropVideoConversionInvokerLoop,ethPriceLoop,externalCollectionLiveTailingLoop,externalCollectionSnapshottingLoop,helpBotReplyLoop,helpBotDailyActivityCreditLoop,marketStatsMEMES,marketStatsLAB,marketStatsGRADIENT,marketStatsNEXTGEN,marketDepthStreamLoop,mintAnnouncementsLoop,nextgenContractLoop,nextgenMetadataLoop,nftHistoryLoop,nftLinkRefresherLoop,nftLinkMediaPreviewLoop,nftOwnersLoop,nftsLoop,overRatesRevocationLoop,ownersBalancesLoop,populateHistoricConsolidatedTdh,pushNotificationsHandler,rateEventProcessingLoop,refreshENS,rememesS3Loop,rememesRefreshMetadataLoop,rememesFileLoop,royaltiesLoop,s3Uploader,subscriptionsDaily,subscriptionCoverageReconciliationLoop,subscriptionsTopUpLoop,xTdhGrantsReviewerLoop,tdhHistoryLoop,tdhLoop,teamLoop,memesTransactionsLoop,gradientsTransactionsLoop,memeLabTransactionsLoop,transactionsProcessingLoop,waveDecisionExecutionLoop,waveLeaderboardSnapshotterLoop,waveDropMetricsRefreshLoop,waveScoreRefreshLoop,xTdhLoop,artworkDocumentationProcessor",
+            "EVENTS_PER_SERVICE_MINUTE": "120"
+          }
+        },
+        "Policies": [
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "dynamodb:GetItem",
+                  "dynamodb:PutItem",
+                  "dynamodb:UpdateItem"
+                ],
+                "Resource": {
+                  "Fn::GetAtt": [
+                    "Receipts",
+                    "Arn"
+                  ]
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "s3:PutObject"
+                ],
+                "Resource": {
+                  "Fn::Sub": "${Archive.Arn}/*"
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "sqs:SendMessage"
+                ],
+                "Resource": {
+                  "Fn::GetAtt": [
+                    "NormalQueue",
+                    "Arn"
+                  ]
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "sqs:SendMessage"
+                ],
+                "Resource": {
+                  "Fn::GetAtt": [
+                    "EventDeadLetters",
+                    "Arn"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "Events": {},
+        "ReservedConcurrentExecutions": 4
+      }
+    },
+    "NormalRule": {
+      "Type": "AWS::Events::Rule",
+      "Properties": {
+        "EventBusName": {
+          "Ref": "EventBus"
+        },
+        "EventPattern": {
+          "account": [
+            {
+              "Ref": "SourceAccountId"
+            }
+          ],
+          "source": [
+            "6529.ops"
+          ],
+          "detail-type": [
+            "6529.ops.error.v1"
+          ]
+        },
+        "Targets": [
+          {
+            "Id": "Normal",
+            "Arn": {
+              "Fn::GetAtt": [
+                "NormalCollector",
+                "Arn"
+              ]
+            },
+            "DeadLetterConfig": {
+              "Arn": {
+                "Fn::GetAtt": [
+                  "EventDeadLetters",
+                  "Arn"
+                ]
+              }
+            },
+            "RetryPolicy": {
+              "MaximumEventAgeInSeconds": 86400,
+              "MaximumRetryAttempts": 185
+            }
+          }
+        ]
+      }
+    },
+    "NormalInvocation": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Ref": "NormalCollector"
+        },
+        "Principal": "events.amazonaws.com",
+        "SourceArn": {
+          "Fn::GetAtt": [
+            "NormalRule",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "NormalCollectorInvokeConfig": {
+      "Type": "AWS::Lambda::EventInvokeConfig",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "NormalCollector"
+        },
+        "Qualifier": "$LATEST",
+        "MaximumEventAgeInSeconds": 21600,
+        "MaximumRetryAttempts": 2,
+        "DestinationConfig": {
+          "OnFailure": {
+            "Destination": {
+              "Fn::GetAtt": [
+                "EventDeadLetters",
+                "Arn"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "NormalDispatcher": {
+      "Type": "AWS::Serverless::Function",
+      "Properties": {
+        "CodeUri": "dist/",
+        "Handler": "handlers.dispatch",
+        "Runtime": "nodejs22.x",
+        "Architectures": [
+          "arm64"
+        ],
+        "MemorySize": 256,
+        "Timeout": 30,
+        "PermissionsBoundary": {
+          "Ref": "RuntimePermissionsBoundaryArn"
+        },
+        "Environment": {
+          "Variables": {
+            "ENVIRONMENT": {
+              "Ref": "Environment"
+            },
+            "RECEIPTS_TABLE": {
+              "Ref": "Receipts"
+            },
+            "NORMAL_QUEUE_URL": {
+              "Ref": "NormalQueue"
+            },
+            "CRITICAL_QUEUE_URL": {
+              "Ref": "CriticalQueue"
+            },
+            "ARCHIVE_BUCKET": {
+              "Ref": "Archive"
+            },
+            "FALLBACK_TOPIC_ARN": {
+              "Ref": "FallbackTopic"
+            },
+            "LANE": "normal",
+            "WEBHOOK_SECRET_ARN": {
+              "Ref": "WebhookSecretArn"
+            }
+          }
+        },
+        "Policies": [
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "dynamodb:GetItem",
+                  "dynamodb:PutItem",
+                  "dynamodb:UpdateItem"
+                ],
+                "Resource": {
+                  "Fn::GetAtt": [
+                    "Receipts",
+                    "Arn"
+                  ]
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "s3:PutObject"
+                ],
+                "Resource": {
+                  "Fn::Sub": "${Archive.Arn}/*"
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "sns:Publish"
+                ],
+                "Resource": {
+                  "Ref": "FallbackTopic"
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "kms:GenerateDataKey",
+                  "kms:Decrypt"
+                ],
+                "Resource": {
+                  "Ref": "FallbackKmsKeyArn"
+                },
+                "Condition": {
+                  "StringEquals": {
+                    "kms:ViaService": {
+                      "Fn::Sub": "sns.${AWS::Region}.${AWS::URLSuffix}"
+                    }
+                  }
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "secretsmanager:GetSecretValue"
+                ],
+                "Resource": {
+                  "Ref": "WebhookSecretArn"
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "sqs:SendMessage"
+                ],
+                "Resource": {
+                  "Fn::GetAtt": [
+                    "NormalQueue",
+                    "Arn"
+                  ]
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "sqs:ReceiveMessage",
+                  "sqs:DeleteMessage",
+                  "sqs:GetQueueAttributes",
+                  "sqs:ChangeMessageVisibility"
+                ],
+                "Resource": {
+                  "Fn::GetAtt": [
+                    "NormalQueue",
+                    "Arn"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "Events": {
+          "Queue": {
+            "Type": "SQS",
+            "Properties": {
+              "Queue": {
+                "Fn::GetAtt": [
+                  "NormalQueue",
+                  "Arn"
+                ]
+              },
+              "BatchSize": 1,
+              "FunctionResponseTypes": [
+                "ReportBatchItemFailures"
+              ],
+              "ScalingConfig": {
+                "MaximumConcurrency": 2
+              }
+            }
+          }
+        },
+        "ReservedConcurrentExecutions": 3
+      }
+    },
+    "NormalCollectorErrors": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "NormalCollector"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "FallbackTopic"
+          }
+        ]
+      }
+    },
+    "NormalDispatcherErrors": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "NormalDispatcher"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "FallbackTopic"
+          }
+        ]
+      }
+    },
+    "NormalQueueAge": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateAgeOfOldestMessage",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "NormalQueue",
+                "QueueName"
+              ]
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 2,
+        "Threshold": 600,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "FallbackTopic"
+          }
+        ]
+      }
+    },
+    "NormalHeartbeatAge": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "6529/OperationalMonitoring",
+        "MetricName": "HeartbeatAge",
+        "Dimensions": [
+          {
+            "Name": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          },
+          {
+            "Name": "Lane",
+            "Value": "normal"
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 3,
+        "Threshold": 180,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "breaching",
+        "AlarmActions": [
+          {
+            "Ref": "FallbackTopic"
+          }
+        ]
+      }
+    },
+    "CriticalCollector": {
+      "Type": "AWS::Serverless::Function",
+      "Properties": {
+        "CodeUri": "dist/",
+        "Handler": "handlers.collect",
+        "Runtime": "nodejs22.x",
+        "Architectures": [
+          "arm64"
+        ],
+        "MemorySize": 256,
+        "Timeout": 30,
+        "PermissionsBoundary": {
+          "Ref": "RuntimePermissionsBoundaryArn"
+        },
+        "Environment": {
+          "Variables": {
+            "ENVIRONMENT": {
+              "Ref": "Environment"
+            },
+            "RECEIPTS_TABLE": {
+              "Ref": "Receipts"
+            },
+            "NORMAL_QUEUE_URL": {
+              "Ref": "NormalQueue"
+            },
+            "CRITICAL_QUEUE_URL": {
+              "Ref": "CriticalQueue"
+            },
+            "ARCHIVE_BUCKET": {
+              "Ref": "Archive"
+            },
+            "FALLBACK_TOPIC_ARN": {
+              "Ref": "FallbackTopic"
+            },
+            "SOURCE_ACCOUNTS": {
+              "Ref": "SourceAccountId"
+            },
+            "SOURCE_REGION": {
+              "Ref": "SourceRegion"
+            },
+            "ALLOWED_SERVICES": "seizeAPI,aggregatedActivityLoop,attachmentsOrchestrator,attachmentsProcessor,artCurationNftWatchLoop,claimsBuilder,claimsMediaArweaveUploader,customReplayLoop,dbDumpsDaily,dbMigrationsLoop,delegationsLoop,discoverEnsLoop,dropMediaSanitizer,dropVideoConversionInvokerLoop,ethPriceLoop,externalCollectionLiveTailingLoop,externalCollectionSnapshottingLoop,helpBotReplyLoop,helpBotDailyActivityCreditLoop,marketStatsMEMES,marketStatsLAB,marketStatsGRADIENT,marketStatsNEXTGEN,marketDepthStreamLoop,mintAnnouncementsLoop,nextgenContractLoop,nextgenMetadataLoop,nftHistoryLoop,nftLinkRefresherLoop,nftLinkMediaPreviewLoop,nftOwnersLoop,nftsLoop,overRatesRevocationLoop,ownersBalancesLoop,populateHistoricConsolidatedTdh,pushNotificationsHandler,rateEventProcessingLoop,refreshENS,rememesS3Loop,rememesRefreshMetadataLoop,rememesFileLoop,royaltiesLoop,s3Uploader,subscriptionsDaily,subscriptionCoverageReconciliationLoop,subscriptionsTopUpLoop,xTdhGrantsReviewerLoop,tdhHistoryLoop,tdhLoop,teamLoop,memesTransactionsLoop,gradientsTransactionsLoop,memeLabTransactionsLoop,transactionsProcessingLoop,waveDecisionExecutionLoop,waveLeaderboardSnapshotterLoop,waveDropMetricsRefreshLoop,waveScoreRefreshLoop,xTdhLoop,artworkDocumentationProcessor",
+            "EVENTS_PER_SERVICE_MINUTE": "120"
+          }
+        },
+        "Policies": [
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "sqs:SendMessage"
+                ],
+                "Resource": {
+                  "Fn::GetAtt": [
+                    "CriticalQueue",
+                    "Arn"
+                  ]
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "sqs:SendMessage"
+                ],
+                "Resource": {
+                  "Fn::GetAtt": [
+                    "EventDeadLetters",
+                    "Arn"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "Events": {},
+        "ReservedConcurrentExecutions": 2
+      }
+    },
+    "CriticalRule": {
+      "Type": "AWS::Events::Rule",
+      "Properties": {
+        "EventBusName": {
+          "Ref": "EventBus"
+        },
+        "EventPattern": {
+          "account": [
+            {
+              "Ref": "SourceAccountId"
+            }
+          ],
+          "source": [
+            "aws.cloudwatch"
+          ],
+          "region": [
+            {
+              "Ref": "SourceRegion"
+            }
+          ],
+          "detail-type": [
+            "CloudWatch Alarm State Change"
+          ]
+        },
+        "Targets": [
+          {
+            "Id": "Critical",
+            "Arn": {
+              "Fn::GetAtt": [
+                "CriticalCollector",
+                "Arn"
+              ]
+            },
+            "DeadLetterConfig": {
+              "Arn": {
+                "Fn::GetAtt": [
+                  "EventDeadLetters",
+                  "Arn"
+                ]
+              }
+            },
+            "RetryPolicy": {
+              "MaximumEventAgeInSeconds": 86400,
+              "MaximumRetryAttempts": 185
+            }
+          }
+        ]
+      }
+    },
+    "CriticalInvocation": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Ref": "CriticalCollector"
+        },
+        "Principal": "events.amazonaws.com",
+        "SourceArn": {
+          "Fn::GetAtt": [
+            "CriticalRule",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "CriticalCollectorInvokeConfig": {
+      "Type": "AWS::Lambda::EventInvokeConfig",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "CriticalCollector"
+        },
+        "Qualifier": "$LATEST",
+        "MaximumEventAgeInSeconds": 21600,
+        "MaximumRetryAttempts": 2,
+        "DestinationConfig": {
+          "OnFailure": {
+            "Destination": {
+              "Fn::GetAtt": [
+                "EventDeadLetters",
+                "Arn"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "CriticalDispatcher": {
+      "Type": "AWS::Serverless::Function",
+      "Properties": {
+        "CodeUri": "dist/",
+        "Handler": "handlers.dispatch",
+        "Runtime": "nodejs22.x",
+        "Architectures": [
+          "arm64"
+        ],
+        "MemorySize": 256,
+        "Timeout": 30,
+        "PermissionsBoundary": {
+          "Ref": "RuntimePermissionsBoundaryArn"
+        },
+        "Environment": {
+          "Variables": {
+            "ENVIRONMENT": {
+              "Ref": "Environment"
+            },
+            "RECEIPTS_TABLE": {
+              "Ref": "Receipts"
+            },
+            "NORMAL_QUEUE_URL": {
+              "Ref": "NormalQueue"
+            },
+            "CRITICAL_QUEUE_URL": {
+              "Ref": "CriticalQueue"
+            },
+            "ARCHIVE_BUCKET": {
+              "Ref": "Archive"
+            },
+            "FALLBACK_TOPIC_ARN": {
+              "Ref": "FallbackTopic"
+            },
+            "LANE": "critical",
+            "WEBHOOK_SECRET_ARN": {
+              "Ref": "WebhookSecretArn"
+            }
+          }
+        },
+        "Policies": [
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "dynamodb:GetItem",
+                  "dynamodb:PutItem",
+                  "dynamodb:UpdateItem"
+                ],
+                "Resource": {
+                  "Fn::GetAtt": [
+                    "Receipts",
+                    "Arn"
+                  ]
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "s3:PutObject"
+                ],
+                "Resource": {
+                  "Fn::Sub": "${Archive.Arn}/*"
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "sns:Publish"
+                ],
+                "Resource": {
+                  "Ref": "FallbackTopic"
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "kms:GenerateDataKey",
+                  "kms:Decrypt"
+                ],
+                "Resource": {
+                  "Ref": "FallbackKmsKeyArn"
+                },
+                "Condition": {
+                  "StringEquals": {
+                    "kms:ViaService": {
+                      "Fn::Sub": "sns.${AWS::Region}.${AWS::URLSuffix}"
+                    }
+                  }
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "secretsmanager:GetSecretValue"
+                ],
+                "Resource": {
+                  "Ref": "WebhookSecretArn"
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "sqs:ReceiveMessage",
+                  "sqs:DeleteMessage",
+                  "sqs:GetQueueAttributes",
+                  "sqs:ChangeMessageVisibility"
+                ],
+                "Resource": {
+                  "Fn::GetAtt": [
+                    "CriticalQueue",
+                    "Arn"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "Events": {
+          "Queue": {
+            "Type": "SQS",
+            "Properties": {
+              "Queue": {
+                "Fn::GetAtt": [
+                  "CriticalQueue",
+                  "Arn"
+                ]
+              },
+              "BatchSize": 1,
+              "FunctionResponseTypes": [
+                "ReportBatchItemFailures"
+              ],
+              "ScalingConfig": {
+                "MaximumConcurrency": 2
+              }
+            }
+          }
+        },
+        "ReservedConcurrentExecutions": 3
+      }
+    },
+    "CriticalCollectorErrors": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "CriticalCollector"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "FallbackTopic"
+          }
+        ]
+      }
+    },
+    "CriticalDispatcherErrors": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "CriticalDispatcher"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "FallbackTopic"
+          }
+        ]
+      }
+    },
+    "CriticalQueueAge": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateAgeOfOldestMessage",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "CriticalQueue",
+                "QueueName"
+              ]
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 2,
+        "Threshold": 120,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "FallbackTopic"
+          }
+        ]
+      }
+    },
+    "CriticalHeartbeatAge": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "6529/OperationalMonitoring",
+        "MetricName": "HeartbeatAge",
+        "Dimensions": [
+          {
+            "Name": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          },
+          {
+            "Name": "Lane",
+            "Value": "critical"
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 3,
+        "Threshold": 180,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "breaching",
+        "AlarmActions": [
+          {
+            "Ref": "FallbackTopic"
+          }
+        ]
+      }
+    },
+    "EventDeadLettersPolicy": {
+      "Type": "AWS::SQS::QueuePolicy",
+      "Properties": {
+        "Queues": [
+          {
+            "Ref": "EventDeadLetters"
+          }
+        ],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "events.amazonaws.com"
+              },
+              "Action": "sqs:SendMessage",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "EventDeadLetters",
+                  "Arn"
+                ]
+              },
+              "Condition": {
+                "ArnEquals": {
+                  "aws:SourceArn": [
+                    {
+                      "Fn::GetAtt": [
+                        "NormalRule",
+                        "Arn"
+                      ]
+                    },
+                    {
+                      "Fn::GetAtt": [
+                        "CriticalRule",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "Archiver": {
+      "Type": "AWS::Serverless::Function",
+      "Properties": {
+        "CodeUri": "dist/",
+        "Handler": "handlers.archiveDeadLetters",
+        "Runtime": "nodejs22.x",
+        "Architectures": [
+          "arm64"
+        ],
+        "MemorySize": 256,
+        "Timeout": 30,
+        "PermissionsBoundary": {
+          "Ref": "RuntimePermissionsBoundaryArn"
+        },
+        "Environment": {
+          "Variables": {
+            "ENVIRONMENT": {
+              "Ref": "Environment"
+            },
+            "RECEIPTS_TABLE": {
+              "Ref": "Receipts"
+            },
+            "NORMAL_QUEUE_URL": {
+              "Ref": "NormalQueue"
+            },
+            "CRITICAL_QUEUE_URL": {
+              "Ref": "CriticalQueue"
+            },
+            "ARCHIVE_BUCKET": {
+              "Ref": "Archive"
+            },
+            "FALLBACK_TOPIC_ARN": {
+              "Ref": "FallbackTopic"
+            }
+          }
+        },
+        "Policies": [
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "s3:PutObject"
+                ],
+                "Resource": {
+                  "Fn::Sub": "${Archive.Arn}/*"
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "sns:Publish"
+                ],
+                "Resource": {
+                  "Ref": "FallbackTopic"
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "kms:GenerateDataKey",
+                  "kms:Decrypt"
+                ],
+                "Resource": {
+                  "Ref": "FallbackKmsKeyArn"
+                },
+                "Condition": {
+                  "StringEquals": {
+                    "kms:ViaService": {
+                      "Fn::Sub": "sns.${AWS::Region}.${AWS::URLSuffix}"
+                    }
+                  }
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "sqs:ReceiveMessage",
+                  "sqs:DeleteMessage",
+                  "sqs:GetQueueAttributes",
+                  "sqs:ChangeMessageVisibility"
+                ],
+                "Resource": [
+                  {
+                    "Fn::GetAtt": [
+                      "NormalDeadLetters",
+                      "Arn"
+                    ]
+                  },
+                  {
+                    "Fn::GetAtt": [
+                      "CriticalDeadLetters",
+                      "Arn"
+                    ]
+                  },
+                  {
+                    "Fn::GetAtt": [
+                      "EventDeadLetters",
+                      "Arn"
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "Events": {
+          "NormalDeadLetters": {
+            "Type": "SQS",
+            "Properties": {
+              "Queue": {
+                "Fn::GetAtt": [
+                  "NormalDeadLetters",
+                  "Arn"
+                ]
+              },
+              "BatchSize": 1,
+              "FunctionResponseTypes": [
+                "ReportBatchItemFailures"
+              ]
+            }
+          },
+          "CriticalDeadLetters": {
+            "Type": "SQS",
+            "Properties": {
+              "Queue": {
+                "Fn::GetAtt": [
+                  "CriticalDeadLetters",
+                  "Arn"
+                ]
+              },
+              "BatchSize": 1,
+              "FunctionResponseTypes": [
+                "ReportBatchItemFailures"
+              ]
+            }
+          },
+          "EventDeadLetters": {
+            "Type": "SQS",
+            "Properties": {
+              "Queue": {
+                "Fn::GetAtt": [
+                  "EventDeadLetters",
+                  "Arn"
+                ]
+              },
+              "BatchSize": 1,
+              "FunctionResponseTypes": [
+                "ReportBatchItemFailures"
+              ]
+            }
+          }
+        },
+        "ReservedConcurrentExecutions": 3
+      }
+    },
+    "HttpApi": {
+      "Type": "AWS::Serverless::HttpApi",
+      "Properties": {
+        "StageName": "$default",
+        "DefaultRouteSettings": {
+          "ThrottlingBurstLimit": 20,
+          "ThrottlingRateLimit": 10
+        }
+      }
+    },
+    "SentryIngress": {
+      "Type": "AWS::Serverless::Function",
+      "Properties": {
+        "CodeUri": "dist/",
+        "Handler": "handlers.ingress",
+        "Runtime": "nodejs22.x",
+        "Architectures": [
+          "arm64"
+        ],
+        "MemorySize": 256,
+        "Timeout": 30,
+        "PermissionsBoundary": {
+          "Ref": "RuntimePermissionsBoundaryArn"
+        },
+        "Environment": {
+          "Variables": {
+            "ENVIRONMENT": {
+              "Ref": "Environment"
+            },
+            "RECEIPTS_TABLE": {
+              "Ref": "Receipts"
+            },
+            "NORMAL_QUEUE_URL": {
+              "Ref": "NormalQueue"
+            },
+            "CRITICAL_QUEUE_URL": {
+              "Ref": "CriticalQueue"
+            },
+            "ARCHIVE_BUCKET": {
+              "Ref": "Archive"
+            },
+            "FALLBACK_TOPIC_ARN": {
+              "Ref": "FallbackTopic"
+            },
+            "SENTRY_SECRET_ARN": {
+              "Ref": "SentrySecretArn"
+            },
+            "SENTRY_PROJECTS": {
+              "Ref": "SentryProjects"
+            }
+          }
+        },
+        "Policies": [
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "dynamodb:GetItem",
+                  "dynamodb:PutItem",
+                  "dynamodb:UpdateItem"
+                ],
+                "Resource": {
+                  "Fn::GetAtt": [
+                    "Receipts",
+                    "Arn"
+                  ]
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "s3:PutObject"
+                ],
+                "Resource": {
+                  "Fn::Sub": "${Archive.Arn}/*"
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "sqs:SendMessage"
+                ],
+                "Resource": {
+                  "Fn::GetAtt": [
+                    "NormalQueue",
+                    "Arn"
+                  ]
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "secretsmanager:GetSecretValue"
+                ],
+                "Resource": {
+                  "Ref": "SentrySecretArn"
+                }
+              }
+            ]
+          }
+        ],
+        "Events": {
+          "Sentry": {
+            "Type": "HttpApi",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "Path": "/sentry",
+              "Method": "POST"
+            }
+          }
+        },
+        "ReservedConcurrentExecutions": 3
+      }
+    },
+    "Health": {
+      "Type": "AWS::Serverless::Function",
+      "Properties": {
+        "CodeUri": "dist/",
+        "Handler": "handlers.health",
+        "Runtime": "nodejs22.x",
+        "Architectures": [
+          "arm64"
+        ],
+        "MemorySize": 256,
+        "Timeout": 30,
+        "PermissionsBoundary": {
+          "Ref": "RuntimePermissionsBoundaryArn"
+        },
+        "Environment": {
+          "Variables": {
+            "RECEIPTS_TABLE": {
+              "Ref": "Receipts"
+            }
+          }
+        },
+        "Policies": [
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "dynamodb:GetItem"
+                ],
+                "Resource": {
+                  "Fn::GetAtt": [
+                    "Receipts",
+                    "Arn"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "Events": {
+          "Health": {
+            "Type": "HttpApi",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "Path": "/health",
+              "Method": "GET"
+            }
+          }
+        },
+        "ReservedConcurrentExecutions": 2
+      }
+    },
+    "Probe": {
+      "Type": "AWS::Serverless::Function",
+      "Properties": {
+        "CodeUri": "dist/",
+        "Handler": "handlers.probe",
+        "Runtime": "nodejs22.x",
+        "Architectures": [
+          "arm64"
+        ],
+        "MemorySize": 256,
+        "Timeout": 90,
+        "PermissionsBoundary": {
+          "Ref": "RuntimePermissionsBoundaryArn"
+        },
+        "Environment": {
+          "Variables": {
+            "ENVIRONMENT": {
+              "Ref": "Environment"
+            },
+            "RECEIPTS_TABLE": {
+              "Ref": "Receipts"
+            },
+            "NORMAL_QUEUE_URL": {
+              "Ref": "NormalQueue"
+            },
+            "CRITICAL_QUEUE_URL": {
+              "Ref": "CriticalQueue"
+            },
+            "ARCHIVE_BUCKET": {
+              "Ref": "Archive"
+            },
+            "FALLBACK_TOPIC_ARN": {
+              "Ref": "FallbackTopic"
+            },
+            "PROBE_TARGETS": {
+              "Ref": "ProbeTargets"
+            },
+            "WEBHOOK_SECRET_ARN": {
+              "Ref": "WebhookSecretArn"
+            },
+            "CHECKIN_SECRET_ARN": {
+              "Ref": "ExternalCheckInSecretArn"
+            }
+          }
+        },
+        "Policies": [
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "dynamodb:GetItem",
+                  "dynamodb:PutItem",
+                  "dynamodb:UpdateItem"
+                ],
+                "Resource": {
+                  "Fn::GetAtt": [
+                    "Receipts",
+                    "Arn"
+                  ]
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "sqs:SendMessage"
+                ],
+                "Resource": {
+                  "Fn::GetAtt": [
+                    "NormalQueue",
+                    "Arn"
+                  ]
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "sqs:SendMessage"
+                ],
+                "Resource": {
+                  "Fn::GetAtt": [
+                    "CriticalQueue",
+                    "Arn"
+                  ]
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "secretsmanager:GetSecretValue"
+                ],
+                "Resource": {
+                  "Ref": "WebhookSecretArn"
+                }
+              },
+              {
+                "Fn::If": [
+                  "HasCheckIn",
+                  {
+                    "Effect": "Allow",
+                    "Action": [
+                      "secretsmanager:GetSecretValue"
+                    ],
+                    "Resource": {
+                      "Ref": "ExternalCheckInSecretArn"
+                    }
+                  },
+                  {
+                    "Ref": "AWS::NoValue"
+                  }
+                ]
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "cloudwatch:PutMetricData"
+                ],
+                "Resource": "*",
+                "Condition": {
+                  "StringEquals": {
+                    "cloudwatch:namespace": "6529/OperationalMonitoring"
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "Events": {
+          "Schedule": {
+            "Type": "Schedule",
+            "Properties": {
+              "Schedule": "rate(1 minute)",
+              "Enabled": true
+            }
+          }
+        },
+        "ReservedConcurrentExecutions": 1
+      }
+    },
+    "FallbackForwarder": {
+      "Type": "AWS::Serverless::Function",
+      "Properties": {
+        "CodeUri": "dist/",
+        "Handler": "handlers.forwardFallback",
+        "Runtime": "nodejs22.x",
+        "Architectures": [
+          "arm64"
+        ],
+        "MemorySize": 256,
+        "Timeout": 30,
+        "PermissionsBoundary": {
+          "Ref": "RuntimePermissionsBoundaryArn"
+        },
+        "Environment": {
+          "Variables": {
+            "FALLBACK_TARGET_TOPIC_ARN": {
+              "Ref": "FallbackTargetTopicArn"
+            }
+          }
+        },
+        "Policies": [
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "sns:Publish"
+                ],
+                "Resource": {
+                  "Ref": "FallbackTargetTopicArn"
+                }
+              }
+            ]
+          }
+        ],
+        "Events": {
+          "Topic": {
+            "Type": "SNS",
+            "Properties": {
+              "Topic": {
+                "Ref": "FallbackTopic"
+              }
+            }
+          }
+        },
+        "ReservedConcurrentExecutions": 1
+      },
+      "Condition": "HasFallbackTarget"
+    },
+    "ArchiverErrors": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "Archiver"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "FallbackTopic"
+          }
+        ]
+      }
+    },
+    "SentryIngressErrors": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "SentryIngress"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "FallbackTopic"
+          }
+        ]
+      }
+    },
+    "HealthErrors": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "Health"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "FallbackTopic"
+          }
+        ]
+      }
+    },
+    "ProbeErrors": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "Probe"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "FallbackTopic"
+          }
+        ]
+      }
+    },
+    "NormalDeadLettersAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateNumberOfMessagesVisible",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "NormalDeadLetters",
+                "QueueName"
+              ]
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "FallbackTopic"
+          }
+        ]
+      }
+    },
+    "CriticalDeadLettersAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateNumberOfMessagesVisible",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "CriticalDeadLetters",
+                "QueueName"
+              ]
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "FallbackTopic"
+          }
+        ]
+      }
+    },
+    "EventDeadLettersAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateNumberOfMessagesVisible",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "EventDeadLetters",
+                "QueueName"
+              ]
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "FallbackTopic"
+          }
+        ]
+      }
+    },
+    "AdmissionOverflowAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "6529/OperationalMonitoring",
+        "MetricName": "AdmissionOverflow",
+        "Dimensions": [
+          {
+            "Name": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "FallbackTopic"
+          }
+        ]
+      }
+    },
+    "DeliveryFailuresAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "6529/OperationalMonitoring",
+        "MetricName": "DeliveryFailures",
+        "Dimensions": [
+          {
+            "Name": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "FallbackTopic"
+          }
+        ]
+      }
+    },
+    "NormalCollectorLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/aws/lambda/${NormalCollector}"
+        },
+        "RetentionInDays": 30
+      }
+    },
+    "NormalDispatcherLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/aws/lambda/${NormalDispatcher}"
+        },
+        "RetentionInDays": 30
+      }
+    },
+    "CriticalCollectorLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/aws/lambda/${CriticalCollector}"
+        },
+        "RetentionInDays": 30
+      }
+    },
+    "CriticalDispatcherLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/aws/lambda/${CriticalDispatcher}"
+        },
+        "RetentionInDays": 30
+      }
+    },
+    "ArchiverLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/aws/lambda/${Archiver}"
+        },
+        "RetentionInDays": 30
+      }
+    },
+    "SentryIngressLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/aws/lambda/${SentryIngress}"
+        },
+        "RetentionInDays": 30
+      }
+    },
+    "HealthLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/aws/lambda/${Health}"
+        },
+        "RetentionInDays": 30
+      }
+    },
+    "ProbeLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/aws/lambda/${Probe}"
+        },
+        "RetentionInDays": 30
+      }
+    },
+    "FallbackForwarderLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Condition": "HasFallbackTarget",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/aws/lambda/${FallbackForwarder}"
+        },
+        "RetentionInDays": 30
+      }
+    }
+  },
+  "Outputs": {
+    "EventBusArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "EventBus",
+          "Arn"
+        ]
+      }
+    },
+    "IngressUrl": {
+      "Value": {
+        "Fn::Sub": "https://${HttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}"
+      }
+    },
+    "FallbackTopicArn": {
+      "Value": {
+        "Ref": "FallbackTopic"
+      }
+    },
+    "ArchiveBucket": {
+      "Value": {
+        "Ref": "Archive"
+      }
+    },
+    "FallbackForwarderRoleArn": {
+      "Condition": "HasFallbackTarget",
+      "Value": {
+        "Fn::GetAtt": [
+          "FallbackForwarderRole",
+          "Arn"
+        ]
+      }
+    }
+  }
+}

@@ -35,7 +35,7 @@
     "mcache": "^0.4.0",
     "merkletreejs": "^0.6.0",
     "mp4box": "^2.3.0",
-    "multer": "^2.0.2",
+    "multer": "2.3.0",
     "node-fetch": "^2.7.0",
     "passport": "^0.7.0",
     "passport-anonymous": "^1.0.1",
@@ -59,6 +59,7 @@
     "@types/memory-cache": "^0.2.2",
     "@types/multer": "^2.0.0",
     "@types/node": "^18.19.130",
+    "@types/ws": "^8.18.1",
     "esbuild": "^0.28.1",
     "eslint": "^9.27.0",
     "eslint-config-prettier": "^10.1.5",
@@ -75,6 +76,9 @@
   "author": "The serverless webpack authors (https://github.com/elastic-coders/serverless-webpack)",
   "license": "MIT",
   "overrides": {
+    "@effect/platform-node": {
+      "undici": "6.28.1"
+    },
     "jsonpath-plus": "10.3.0",
     "minimatch@3": {
       "brace-expansion": "^2.0.2"

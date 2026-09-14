@@ -15,6 +15,13 @@ import { HttpFile } from '../http/http';
 
 export class ApiArtworkDocumentationField {
     'id': string;
+    'label'?: string;
+    'guidance'?: string;
+    'chapter'?: string;
+    'editor'?: ApiArtworkDocumentationFieldEditorEnum;
+    'media_profiles'?: Array<string>;
+    'required_for_media'?: boolean;
+    'read_only'?: boolean;
     'value_schema': ApiArtworkDocumentationValueSchema;
     'allowed_statuses': Array<string>;
     'default_visibility': string;
@@ -29,6 +36,48 @@ export class ApiArtworkDocumentationField {
             "name": "id",
             "baseName": "id",
             "type": "string",
+            "format": ""
+        },
+        {
+            "name": "label",
+            "baseName": "label",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "guidance",
+            "baseName": "guidance",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "chapter",
+            "baseName": "chapter",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "editor",
+            "baseName": "editor",
+            "type": "ApiArtworkDocumentationFieldEditorEnum",
+            "format": ""
+        },
+        {
+            "name": "media_profiles",
+            "baseName": "media_profiles",
+            "type": "Array<string>",
+            "format": ""
+        },
+        {
+            "name": "required_for_media",
+            "baseName": "required_for_media",
+            "type": "boolean",
+            "format": ""
+        },
+        {
+            "name": "read_only",
+            "baseName": "read_only",
+            "type": "boolean",
             "format": ""
         },
         {
@@ -63,3 +112,12 @@ export class ApiArtworkDocumentationField {
     public constructor() {
     }
 }
+
+export enum ApiArtworkDocumentationFieldEditorEnum {
+    Text = 'text',
+    LongText = 'long_text',
+    Structured = 'structured',
+    Choice = 'choice',
+    MediaProfiles = 'media_profiles'
+}
+

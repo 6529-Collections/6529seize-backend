@@ -5,27 +5,34 @@ import { maybeAuthenticatedUser, needsAuthenticatedUser } from '@/api/auth/auth'
 import { cacheRequest } from '@/api/request-cache';
 import { Time } from '@/time';
 import { Response } from 'express';
-import { ArtworkDocumentationCancelDocumentationUploadRequest, ArtworkDocumentationCancelDocumentationUploadResponse, ArtworkDocumentationCommentDocumentationThreadRequest, ArtworkDocumentationCommentDocumentationThreadResponse, ArtworkDocumentationCompleteDocumentationUploadRequest, ArtworkDocumentationCompleteDocumentationUploadResponse, ArtworkDocumentationConfirmDocumentationRequest, ArtworkDocumentationConfirmDocumentationResponse, ArtworkDocumentationCreateDocumentationContextRequest, ArtworkDocumentationCreateDocumentationContextResponse, ArtworkDocumentationCreateDocumentationThreadRequest, ArtworkDocumentationCreateDocumentationThreadResponse, ArtworkDocumentationCreateDocumentationWorkRequest, ArtworkDocumentationCreateDocumentationWorkResponse, ArtworkDocumentationDownloadDocumentationAssetRequest, ArtworkDocumentationDownloadDocumentationAssetResponse, ArtworkDocumentationGetDocumentationContextRequest, ArtworkDocumentationGetDocumentationContextResponse, ArtworkDocumentationGetDocumentationProfilesRequest, ArtworkDocumentationGetDocumentationProfilesResponse, ArtworkDocumentationGetDocumentationPublicPreviewRequest, ArtworkDocumentationGetDocumentationPublicPreviewResponse, ArtworkDocumentationGetDocumentationRevisionRequest, ArtworkDocumentationGetDocumentationRevisionResponse, ArtworkDocumentationGetDocumentationUploadRequest, ArtworkDocumentationGetDocumentationUploadResponse, ArtworkDocumentationGetDocumentationWorkRequest, ArtworkDocumentationGetDocumentationWorkResponse, ArtworkDocumentationGrantDocumentationAccessRequest, ArtworkDocumentationGrantDocumentationAccessResponse, ArtworkDocumentationImportDocumentationSourceRequest, ArtworkDocumentationImportDocumentationSourceResponse, ArtworkDocumentationLinkDocumentationAssetRequest, ArtworkDocumentationLinkDocumentationAssetResponse, ArtworkDocumentationLinkDocumentationSourceRequest, ArtworkDocumentationLinkDocumentationSourceResponse, ArtworkDocumentationListDocumentationGrantsRequest, ArtworkDocumentationListDocumentationGrantsResponse, ArtworkDocumentationListDocumentationProgramRequest, ArtworkDocumentationListDocumentationProgramResponse, ArtworkDocumentationListDocumentationRevisionsRequest, ArtworkDocumentationListDocumentationRevisionsResponse, ArtworkDocumentationListDocumentationThreadsRequest, ArtworkDocumentationListDocumentationThreadsResponse, ArtworkDocumentationListDocumentationWorksRequest, ArtworkDocumentationListDocumentationWorksResponse, ArtworkDocumentationPatchDocumentationAssetLinkRequest, ArtworkDocumentationPatchDocumentationAssetLinkResponse, ArtworkDocumentationPatchDocumentationContextRequest, ArtworkDocumentationPatchDocumentationContextResponse, ArtworkDocumentationPatchDocumentationModuleRequest, ArtworkDocumentationPatchDocumentationModuleResponse, ArtworkDocumentationPatchDocumentationThreadRequest, ArtworkDocumentationPatchDocumentationThreadResponse, ArtworkDocumentationPinDocumentationArtistRequest, ArtworkDocumentationPinDocumentationArtistResponse, ArtworkDocumentationPreviewDocumentationSourceRequest, ArtworkDocumentationPreviewDocumentationSourceResponse, ArtworkDocumentationPreviewDocumentationUpgradeRequest, ArtworkDocumentationPreviewDocumentationUpgradeResponse, ArtworkDocumentationReviewDocumentationRequest, ArtworkDocumentationReviewDocumentationResponse, ArtworkDocumentationRevokeDocumentationAccessRequest, ArtworkDocumentationRevokeDocumentationAccessResponse, ArtworkDocumentationSignDocumentationPartsRequest, ArtworkDocumentationSignDocumentationPartsResponse, ArtworkDocumentationStartDocumentationUploadRequest, ArtworkDocumentationStartDocumentationUploadResponse, ArtworkDocumentationUnlinkDocumentationAssetRequest, ArtworkDocumentationUnlinkDocumentationAssetResponse, ArtworkDocumentationUpgradeDocumentationProfileRequest, ArtworkDocumentationUpgradeDocumentationProfileResponse } from './operations';
-import { AdvanceCollectPlanRequest, AdvanceCollectPlanResponse, AnalyzeCollectGoalRequest, AnalyzeCollectGoalResponse, CreateCollectPlanRequest, CreateCollectPlanResponse, CreateCollectRuleRequest, CreateCollectRuleResponse, GetCollectAssetsRequest, GetCollectAssetsResponse, GetCollectCapabilitiesRequest, GetCollectCapabilitiesResponse, GetCollectCatalogRequest, GetCollectCatalogResponse, GetCollectPlanRequest, GetCollectPlanResponse, GetCollectRuleRequest, GetCollectRuleResponse, GetCollectRulesRequest, GetCollectRulesResponse, GetMarketListingsRequest, GetMarketListingsResponse, PauseCollectRuleRequest, PauseCollectRuleResponse, PrepareCollectRuleRequest, PrepareCollectRuleResponse, ProjectCollectPurchasesRequest, ProjectCollectPurchasesResponse, RankCollectTdhPurchasesRequest, RankCollectTdhPurchasesResponse, ReconcileCollectRuleRequest, ReconcileCollectRuleResponse } from './operations';
+import { ArtworkDocumentationAppendMuseumRecordRequest, ArtworkDocumentationAppendMuseumRecordResponse, ArtworkDocumentationCancelDocumentationUploadRequest, ArtworkDocumentationCancelDocumentationUploadResponse, ArtworkDocumentationCommentDocumentationThreadRequest, ArtworkDocumentationCommentDocumentationThreadResponse, ArtworkDocumentationCompleteDocumentationUploadRequest, ArtworkDocumentationCompleteDocumentationUploadResponse, ArtworkDocumentationConfirmDocumentationRequest, ArtworkDocumentationConfirmDocumentationResponse, ArtworkDocumentationCreateArtworkDossierExportRequest, ArtworkDocumentationCreateArtworkDossierExportResponse, ArtworkDocumentationCreateDocumentationContextRequest, ArtworkDocumentationCreateDocumentationContextResponse, ArtworkDocumentationCreateDocumentationThreadRequest, ArtworkDocumentationCreateDocumentationThreadResponse, ArtworkDocumentationCreateDocumentationWorkRequest, ArtworkDocumentationCreateDocumentationWorkResponse, ArtworkDocumentationDownloadDocumentationAssetRequest, ArtworkDocumentationDownloadDocumentationAssetResponse, ArtworkDocumentationGetArtworkArtistRecordRequest, ArtworkDocumentationGetArtworkArtistRecordResponse, ArtworkDocumentationGetArtworkDossierExportRequest, ArtworkDocumentationGetArtworkDossierExportResponse, ArtworkDocumentationGetArtworkDossierRequest, ArtworkDocumentationGetArtworkDossierResponse, ArtworkDocumentationGetDocumentationContextRequest, ArtworkDocumentationGetDocumentationContextResponse, ArtworkDocumentationGetDocumentationProfilesRequest, ArtworkDocumentationGetDocumentationProfilesResponse, ArtworkDocumentationGetDocumentationPublicPreviewRequest, ArtworkDocumentationGetDocumentationPublicPreviewResponse, ArtworkDocumentationGetDocumentationRevisionRequest, ArtworkDocumentationGetDocumentationRevisionResponse, ArtworkDocumentationGetDocumentationUploadRequest, ArtworkDocumentationGetDocumentationUploadResponse, ArtworkDocumentationGetDocumentationWorkRequest, ArtworkDocumentationGetDocumentationWorkResponse, ArtworkDocumentationGrantDocumentationAccessRequest, ArtworkDocumentationGrantDocumentationAccessResponse, ArtworkDocumentationImportDocumentationSourceRequest, ArtworkDocumentationImportDocumentationSourceResponse, ArtworkDocumentationLinkDocumentationAssetRequest, ArtworkDocumentationLinkDocumentationAssetResponse, ArtworkDocumentationLinkDocumentationSourceRequest, ArtworkDocumentationLinkDocumentationSourceResponse, ArtworkDocumentationListDocumentationGrantsRequest, ArtworkDocumentationListDocumentationGrantsResponse, ArtworkDocumentationListDocumentationProgramRequest, ArtworkDocumentationListDocumentationProgramResponse, ArtworkDocumentationListDocumentationRevisionsRequest, ArtworkDocumentationListDocumentationRevisionsResponse, ArtworkDocumentationListDocumentationThreadsRequest, ArtworkDocumentationListDocumentationThreadsResponse, ArtworkDocumentationListDocumentationWorksRequest, ArtworkDocumentationListDocumentationWorksResponse, ArtworkDocumentationListMuseumRecordsRequest, ArtworkDocumentationListMuseumRecordsResponse, ArtworkDocumentationPatchDocumentationAssetLinkRequest, ArtworkDocumentationPatchDocumentationAssetLinkResponse, ArtworkDocumentationPatchDocumentationContextRequest, ArtworkDocumentationPatchDocumentationContextResponse, ArtworkDocumentationPatchDocumentationModuleRequest, ArtworkDocumentationPatchDocumentationModuleResponse, ArtworkDocumentationPatchDocumentationThreadRequest, ArtworkDocumentationPatchDocumentationThreadResponse, ArtworkDocumentationPinDocumentationArtistRequest, ArtworkDocumentationPinDocumentationArtistResponse, ArtworkDocumentationPreviewDocumentationSourceRequest, ArtworkDocumentationPreviewDocumentationSourceResponse, ArtworkDocumentationPreviewDocumentationUpgradeRequest, ArtworkDocumentationPreviewDocumentationUpgradeResponse, ArtworkDocumentationReviewDocumentationRequest, ArtworkDocumentationReviewDocumentationResponse, ArtworkDocumentationRevokeDocumentationAccessRequest, ArtworkDocumentationRevokeDocumentationAccessResponse, ArtworkDocumentationSignDocumentationPartsRequest, ArtworkDocumentationSignDocumentationPartsResponse, ArtworkDocumentationStartDocumentationUploadRequest, ArtworkDocumentationStartDocumentationUploadResponse, ArtworkDocumentationUnlinkDocumentationAssetRequest, ArtworkDocumentationUnlinkDocumentationAssetResponse, ArtworkDocumentationUpgradeDocumentationProfileRequest, ArtworkDocumentationUpgradeDocumentationProfileResponse } from './operations';
+import { AdvanceCollectPlanRequest, AdvanceCollectPlanResponse, AnalyzeCollectGoalRequest, AnalyzeCollectGoalResponse, AnalyzeCollectOffersRequest, AnalyzeCollectOffersResponse, CreateCollectDailyTdhPlanRequest, CreateCollectDailyTdhPlanResponse, CreateCollectPlanRequest, CreateCollectPlanResponse, CreateCollectRuleRequest, CreateCollectRuleResponse, CreateCollectTdhTargetPlanRequest, CreateCollectTdhTargetPlanResponse, GetCollectAssetsRequest, GetCollectAssetsResponse, GetCollectCapabilitiesRequest, GetCollectCapabilitiesResponse, GetCollectCatalogRequest, GetCollectCatalogResponse, GetCollectPlanRequest, GetCollectPlanResponse, GetCollectRuleRequest, GetCollectRuleResponse, GetCollectRulesRequest, GetCollectRulesResponse, GetCollectTdhListingsRequest, GetCollectTdhListingsResponse, GetMarketListingsRequest, GetMarketListingsResponse, PauseCollectRuleRequest, PauseCollectRuleResponse, PrepareCollectRuleRequest, PrepareCollectRuleResponse, ProjectCollectPurchasesRequest, ProjectCollectPurchasesResponse, RankCollectTdhPurchasesRequest, RankCollectTdhPurchasesResponse, ReconcileCollectRuleRequest, ReconcileCollectRuleResponse } from './operations';
 import { GetCompetitionEntryV3Request, GetCompetitionEntryV3Response, GetWaveCompetitionV3Request, GetWaveCompetitionV3Response, GetWaveHubV3Request, GetWaveHubV3Response, ListCompetitionDecisionsV3Request, ListCompetitionDecisionsV3Response, ListCompetitionEntriesV3Request, ListCompetitionEntriesV3Response, ListCompetitionEntryVotesV3Request, ListCompetitionEntryVotesV3Response, ListCompetitionLeaderboardV3Request, ListCompetitionLeaderboardV3Response, ListCompetitionOutcomeDistributionV3Request, ListCompetitionOutcomeDistributionV3Response, ListCompetitionOutcomesV3Request, ListCompetitionOutcomesV3Response, ListCompetitionPausesV3Request, ListCompetitionPausesV3Response, ListCompetitionVersionsV3Request, ListCompetitionVersionsV3Response, ListCompetitionVotersV3Request, ListCompetitionVotersV3Response, ListCompetitionWinnersV3Request, ListCompetitionWinnersV3Response, ListWaveCompetitionsV3Request, ListWaveCompetitionsV3Response } from './operations';
-import { BeginMarketTransactionAttemptRequest, BeginMarketTransactionAttemptResponse, ContinueMarketOperationRequest, ContinueMarketOperationResponse, GetMarketOperationRequest, GetMarketOperationResponse, GetMarketOrdersRequest, GetMarketOrdersResponse, GetMyMarketOperationsRequest, GetMyMarketOperationsResponse, PrepareMarketOperationRequest, PrepareMarketOperationResponse, PublishMarketOperationRequest, PublishMarketOperationResponse, RejectMarketTransactionAttemptRequest, RejectMarketTransactionAttemptResponse, SubmitMarketOperationRequest, SubmitMarketOperationResponse } from './operations';
+import { BeginMarketTransactionAttemptRequest, BeginMarketTransactionAttemptResponse, ContinueMarketOperationRequest, ContinueMarketOperationResponse, GetMarketBatchCapabilitiesRequest, GetMarketBatchCapabilitiesResponse, GetMarketOperationRequest, GetMarketOperationResponse, GetMarketOrderRequest, GetMarketOrderResponse, GetMarketOrdersRequest, GetMarketOrdersResponse, GetMyMarketOperationsRequest, GetMyMarketOperationsResponse, PrepareMarketOperationRequest, PrepareMarketOperationResponse, PublishMarketOperationRequest, PublishMarketOperationResponse, RejectMarketTransactionAttemptRequest, RejectMarketTransactionAttemptResponse, SubmitMarketOperationRequest, SubmitMarketOperationResponse } from './operations';
+import { GetModerationAccessRequest, GetModerationAccessResponse, GetModerationCheckRequest, GetModerationCheckResponse, GetModerationChecksRequest, GetModerationChecksResponse, GetModerationCountsRequest, GetModerationCountsResponse, GetModerationProfileCheckRequest, GetModerationProfileCheckResponse, GetModerationReportCheckRequest, GetModerationReportCheckResponse, ModerationCheckActionRequest, ModerationCheckActionResponse } from './operations';
 import { GetProfilePreferencesRequest, GetProfilePreferencesResponse, PutProfilePreferencesRequest, PutProfilePreferencesResponse } from './operations';
+import { handleAppendMuseumRecord, handleCreateArtworkDossierExport, handleGetArtworkArtistRecord, handleGetArtworkDossier, handleGetArtworkDossierExport, handleListMuseumRecords } from '@/api/artwork-documentation/artwork-documentation-museum.handlers';
 import { handleCancelDocumentationUpload, handleCommentDocumentationThread, handleCompleteDocumentationUpload, handleConfirmDocumentation, handleCreateDocumentationContext, handleCreateDocumentationThread, handleCreateDocumentationWork, handleDownloadDocumentationAsset, handleGetDocumentationContext, handleGetDocumentationProfiles, handleGetDocumentationPublicPreview, handleGetDocumentationRevision, handleGetDocumentationUpload, handleGetDocumentationWork, handleGrantDocumentationAccess, handleImportDocumentationSource, handleLinkDocumentationAsset, handleLinkDocumentationSource, handleListDocumentationGrants, handleListDocumentationProgram, handleListDocumentationRevisions, handleListDocumentationThreads, handleListDocumentationWorks, handlePatchDocumentationAssetLink, handlePatchDocumentationContext, handlePatchDocumentationModule, handlePatchDocumentationThread, handlePinDocumentationArtist, handlePreviewDocumentationSource, handlePreviewDocumentationUpgrade, handleReviewDocumentation, handleRevokeDocumentationAccess, handleSignDocumentationParts, handleStartDocumentationUpload, handleUnlinkDocumentationAsset, handleUpgradeDocumentationProfile } from '@/api/artwork-documentation/artwork-documentation.handlers';
+import { handleCreateCollectDailyTdhPlan } from '@/api/collect/collect-daily-tdh.handlers';
 import { handleGetMarketListings, handleRankCollectTdhPurchases } from '@/api/collect/collect-discovery.handlers';
+import { handleAnalyzeCollectOffers } from '@/api/collect/collect-offer-analysis.handlers';
 import { handleAdvanceCollectPlan, handleCreateCollectPlan, handleGetCollectPlan, handleProjectCollectPurchases } from '@/api/collect/collect-plan.handlers';
 import { handleCreateCollectRule, handleGetCollectRule, handleGetCollectRules, handlePauseCollectRule, handlePrepareCollectRule, handleReconcileCollectRule } from '@/api/collect/collect-rules.handlers';
+import { handleGetCollectTdhListings } from '@/api/collect/collect-tdh-listings.handlers';
+import { handleCreateCollectTdhTargetPlan } from '@/api/collect/collect-tdh-target.handlers';
 import { handleAnalyzeCollectGoal, handleGetCollectAssets, handleGetCollectCapabilities, handleGetCollectCatalog } from '@/api/collect/collect.handlers';
 import { handlePreviewGroupMembers } from '@/api/community-members/group-members-preview.handler';
 import { handleGetCompetitionEntryV3, handleGetWaveCompetitionV3, handleGetWaveHubV3, handleListCompetitionDecisionsV3, handleListCompetitionEntriesV3, handleListCompetitionEntryVotesV3, handleListCompetitionLeaderboardV3, handleListCompetitionOutcomeDistributionV3, handleListCompetitionOutcomesV3, handleListCompetitionPausesV3, handleListCompetitionVersionsV3, handleListCompetitionVotersV3, handleListCompetitionWinnersV3, handleListWaveCompetitionsV3 } from '@/api/competitions/competitions-v3.handlers';
 import { handleGetContentModerationBlockActivity } from '@/api/content-moderation/get-block-activity.handler';
 import { handleGetPublicContentModerationProfileStatus } from '@/api/content-moderation/get-public-profile-status.handler';
+import { handleGetModerationAccess, handleGetModerationCheck, handleGetModerationChecks, handleGetModerationCounts, handleGetModerationProfileCheck, handleGetModerationReportCheck, handleModerationCheckAction } from '@/api/content-moderation/moderation-review.handlers';
 import { handleGetWalletDistributionAllocations } from '@/api/distributions/get-wallet-distribution-allocations.handler';
 import { handleGetDmDropsUnread, handleGetDmUnreadSnapshot } from '@/api/dm-drops/dm-drops.handlers';
 import { handleGetDropPollOptionVotersV2, handleGetWavePollsV2, handleVoteDropPollV2 } from '@/api/drops/drop-polls.handlers';
 import { handleDownloadDropV2VotersById, handleGetBoostedDropsV2, handleGetCuratedProfileWaveDropsV2, handleGetDropsV2, handleGetDropV2BoostsById, handleGetDropV2ById, handleGetDropV2MetadataById, handleGetDropV2PartById, handleGetDropV2ReactionsById, handleGetDropV2VoteEditLogsById, handleGetDropV2VotersById } from '@/api/drops/drops-v2.handlers';
 import { handleGetDropV2VoteSummaryById } from '@/api/drops/get-drop-vote-summary.handler';
 import { handleGetNftMarketActivity, handleGetNftMarketDepth } from '@/api/market-depth/market-depth.handlers';
-import { handleBeginMarketTransactionAttempt, handleContinueMarketOperation, handleGetMarketOperation, handleGetMarketOrders, handleGetMyMarketOperations, handlePrepareMarketOperation, handlePublishMarketOperation, handleRejectMarketTransactionAttempt, handleSubmitMarketOperation } from '@/api/marketplace/marketplace.handlers';
+import { handleBeginMarketTransactionAttempt, handleContinueMarketOperation, handleGetMarketBatchCapabilities, handleGetMarketOperation, handleGetMarketOrder, handleGetMarketOrders, handleGetMyMarketOperations, handlePrepareMarketOperation, handlePublishMarketOperation, handleRejectMarketTransactionAttempt, handleSubmitMarketOperation } from '@/api/marketplace/marketplace.handlers';
 import { handleResolveDecentralizedMedia } from '@/api/media/decentralized-media.handlers';
 import { handleGetMemeCardDropMapping } from '@/api/memes/meme-card-drop-mappings.handlers';
 import { handleGetNotificationsV2 } from '@/api/notifications/notifications-v2.handlers';
@@ -76,6 +83,17 @@ router.post(
     res: Response<ApiResponse<ArtworkDocumentationPinDocumentationArtistResponse>>
   ) => {
     res.send(await handlePinDocumentationArtist(req));
+  }
+);
+
+router.get(
+  '/artwork-documentation/contexts/:id/artist-records/:revisionId',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationGetArtworkArtistRecordRequest,
+    res: Response<ApiResponse<ArtworkDocumentationGetArtworkArtistRecordResponse>>
+  ) => {
+    res.send(await handleGetArtworkArtistRecord(req));
   }
 );
 
@@ -190,6 +208,39 @@ router.post(
 );
 
 router.get(
+  '/artwork-documentation/contexts/:id/dossier',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationGetArtworkDossierRequest,
+    res: Response<ApiResponse<ArtworkDocumentationGetArtworkDossierResponse>>
+  ) => {
+    res.send(await handleGetArtworkDossier(req));
+  }
+);
+
+router.post(
+  '/artwork-documentation/contexts/:id/dossier/exports',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationCreateArtworkDossierExportRequest,
+    res: Response<ApiResponse<ArtworkDocumentationCreateArtworkDossierExportResponse>>
+  ) => {
+    res.send(await handleCreateArtworkDossierExport(req));
+  }
+);
+
+router.get(
+  '/artwork-documentation/contexts/:id/dossier/exports/:exportId',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationGetArtworkDossierExportRequest,
+    res: Response<ApiResponse<ArtworkDocumentationGetArtworkDossierExportResponse>>
+  ) => {
+    res.send(await handleGetArtworkDossierExport(req));
+  }
+);
+
+router.get(
   '/artwork-documentation/contexts/:id/grants',
   needsAuthenticatedUser(),
   async (
@@ -230,6 +281,28 @@ router.patch(
     res: Response<ApiResponse<ArtworkDocumentationPatchDocumentationModuleResponse>>
   ) => {
     res.send(await handlePatchDocumentationModule(req));
+  }
+);
+
+router.get(
+  '/artwork-documentation/contexts/:id/museum-records',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationListMuseumRecordsRequest,
+    res: Response<ApiResponse<ArtworkDocumentationListMuseumRecordsResponse>>
+  ) => {
+    res.send(await handleListMuseumRecords(req));
+  }
+);
+
+router.post(
+  '/artwork-documentation/contexts/:id/museum-records',
+  needsAuthenticatedUser(),
+  async (
+    req: ArtworkDocumentationAppendMuseumRecordRequest,
+    res: Response<ApiResponse<ArtworkDocumentationAppendMuseumRecordResponse>>
+  ) => {
+    res.send(await handleAppendMuseumRecord(req));
   }
 );
 
@@ -483,6 +556,17 @@ router.get(
 );
 
 router.post(
+  '/collect/offer-analyses',
+  needsAuthenticatedUser(),
+  async (
+    req: AnalyzeCollectOffersRequest,
+    res: Response<ApiResponse<AnalyzeCollectOffersResponse>>
+  ) => {
+    res.send(await handleAnalyzeCollectOffers(req));
+  }
+);
+
+router.post(
   '/collect/plans',
   needsAuthenticatedUser(),
   async (
@@ -582,6 +666,27 @@ router.post(
 );
 
 router.post(
+  '/collect/tdh-daily-plans',
+  needsAuthenticatedUser(),
+  async (
+    req: CreateCollectDailyTdhPlanRequest,
+    res: Response<ApiResponse<CreateCollectDailyTdhPlanResponse>>
+  ) => {
+    res.send(await handleCreateCollectDailyTdhPlan(req));
+  }
+);
+
+router.get(
+  '/collect/tdh-listings',
+  async (
+    req: GetCollectTdhListingsRequest,
+    res: Response<ApiResponse<GetCollectTdhListingsResponse>>
+  ) => {
+    res.send(await handleGetCollectTdhListings(req));
+  }
+);
+
+router.post(
   '/collect/tdh-ranking',
   needsAuthenticatedUser(),
   async (
@@ -603,6 +708,17 @@ router.post(
   }
 );
 
+router.post(
+  '/collect/tdh-target-plans',
+  needsAuthenticatedUser(),
+  async (
+    req: CreateCollectTdhTargetPlanRequest,
+    res: Response<ApiResponse<CreateCollectTdhTargetPlanResponse>>
+  ) => {
+    res.send(await handleCreateCollectTdhTargetPlan(req));
+  }
+);
+
 router.get(
   '/content-moderation/block-activity',
   needsAuthenticatedUser(),
@@ -611,6 +727,83 @@ router.get(
     res: Response<ApiResponse<GetContentModerationBlockActivityResponse>>
   ) => {
     res.send(await handleGetContentModerationBlockActivity(req));
+  }
+);
+
+router.get(
+  '/content-moderation/checks',
+  needsAuthenticatedUser(),
+  async (
+    req: GetModerationChecksRequest,
+    res: Response<ApiResponse<GetModerationChecksResponse>>
+  ) => {
+    res.send(await handleGetModerationChecks(req));
+  }
+);
+
+router.get(
+  '/content-moderation/checks/access',
+  needsAuthenticatedUser(),
+  async (
+    req: GetModerationAccessRequest,
+    res: Response<ApiResponse<GetModerationAccessResponse>>
+  ) => {
+    res.send(await handleGetModerationAccess(req));
+  }
+);
+
+router.get(
+  '/content-moderation/checks/counts',
+  needsAuthenticatedUser(),
+  async (
+    req: GetModerationCountsRequest,
+    res: Response<ApiResponse<GetModerationCountsResponse>>
+  ) => {
+    res.send(await handleGetModerationCounts(req));
+  }
+);
+
+router.get(
+  '/content-moderation/checks/profile/:profile_id',
+  needsAuthenticatedUser(),
+  async (
+    req: GetModerationProfileCheckRequest,
+    res: Response<ApiResponse<GetModerationProfileCheckResponse>>
+  ) => {
+    res.send(await handleGetModerationProfileCheck(req));
+  }
+);
+
+router.get(
+  '/content-moderation/checks/report/:report_id',
+  needsAuthenticatedUser(),
+  async (
+    req: GetModerationReportCheckRequest,
+    res: Response<ApiResponse<GetModerationReportCheckResponse>>
+  ) => {
+    res.send(await handleGetModerationReportCheck(req));
+  }
+);
+
+router.get(
+  '/content-moderation/checks/:id',
+  needsAuthenticatedUser(),
+  async (
+    req: GetModerationCheckRequest,
+    res: Response<ApiResponse<GetModerationCheckResponse>>
+  ) => {
+    res.send(await handleGetModerationCheck(req));
+  }
+);
+
+router.post(
+  '/content-moderation/checks/:id/actions',
+  needsAuthenticatedUser(),
+  async (
+    req: ModerationCheckActionRequest,
+    res: Response<ApiResponse<ModerationCheckActionResponse>>
+  ) => {
+    res.send(await handleModerationCheckAction(req));
   }
 );
 
@@ -665,6 +858,17 @@ router.post(
     res: Response<ApiResponse<PreviewGroupMembersResponse>>
   ) => {
     res.send(await handlePreviewGroupMembers(req));
+  }
+);
+
+router.get(
+  '/market/batch-capabilities',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetMarketBatchCapabilitiesRequest,
+    res: Response<ApiResponse<GetMarketBatchCapabilitiesResponse>>
+  ) => {
+    res.send(await handleGetMarketBatchCapabilities(req));
   }
 );
 
@@ -773,6 +977,16 @@ router.get(
     res: Response<ApiResponse<GetMarketOrdersResponse>>
   ) => {
     res.send(await handleGetMarketOrders(req));
+  }
+);
+
+router.get(
+  '/market/orders/:order_hash',
+  async (
+    req: GetMarketOrderRequest,
+    res: Response<ApiResponse<GetMarketOrderResponse>>
+  ) => {
+    res.send(await handleGetMarketOrder(req));
   }
 );
 

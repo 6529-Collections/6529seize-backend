@@ -1,5 +1,9 @@
 export const TDH_BLOCKS_TABLE = 'tdh_blocks';
 export const TRANSACTIONS_TABLE = 'transactions';
+export const WALLET_TRANSFER_PAIR_DAYS_TABLE = 'wallet_transfer_pair_days';
+export const WALLET_TRANSFER_WALLET_DAYS_TABLE = 'wallet_transfer_wallet_days';
+export const WALLET_TRANSFER_ANALYSIS_STATES_TABLE =
+  'wallet_transfer_analysis_states';
 export const TRANSACTIONS_PROCESSED_DISTRIBUTION_BLOCKS_TABLE =
   'transactions_processed_distribution_blocks';
 export const TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE =
@@ -256,6 +260,10 @@ export const MARKET_DEPTH_RECONCILIATION_QUEUE_TABLE =
 export const PROFILE_CMS_AGENT_GRANTS_TABLE = 'profile_cms_agent_grants';
 export const PROFILE_CMS_AGENT_PROPOSALS_TABLE = 'profile_cms_agent_proposals';
 export const PROFILE_CMS_AGENT_EVENTS_TABLE = 'profile_cms_agent_events';
+
+export const CONTENT_MODERATION_ITEMS_TABLE = 'content_moderation_items';
+export const CONTENT_MODERATION_EVALUATIONS_TABLE =
+  'content_moderation_evaluations';
 
 export const PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE =
   'push_notification_device_installations';

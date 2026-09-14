@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { TypedDataEncoder } from 'ethers';
 import { collectingService } from '@/collecting/collecting.service';
+import { catalogForTradeAssets } from '@/collecting/collecting-trade-assets';
 import { CollectingAsset } from '@/collecting/collecting.types';
 import { collectingAssetKey } from '@/collecting/collecting-analysis';
 import {
@@ -22,7 +23,8 @@ import {
   MARKET_SEAPORT,
   MARKET_ZERO_ADDRESS,
   MARKET_WETH,
-  MARKET_ZERO_HASH
+  MARKET_ZERO_HASH,
+  marketAssetStandard
 } from '@/marketplace/seaport.registry';
 import {
   marketAddressSchema,
@@ -103,7 +105,10 @@ export interface MarketPrepared {
 export async function marketCatalogAsset(
   key: string
 ): Promise<CollectingAsset> {
-  const catalog = await collectingService.getCatalog();
+  const catalog = await catalogForTradeAssets(
+    await collectingService.getCatalog(),
+    [key]
+  );
   const asset = catalog.assets.find((item) => item.asset_key === key);
   if (!asset)
     throw new MarketValidationError(
@@ -153,7 +158,7 @@ export class MarketPreparation {
       asset: {
         contract: asset.contract,
         tokenId: asset.token_id,
-        standard: asset.family === 'memes' ? 'ERC1155' : 'ERC721'
+        standard: marketAssetStandard(asset.contract)
       },
       quantity: request.quantity,
       currency: request.currency.toLowerCase(),

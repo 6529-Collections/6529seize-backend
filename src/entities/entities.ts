@@ -246,6 +246,11 @@ export { WalletAuthSessionEntity } from './IWalletAuthSession';
 export type { WalletAuthClientType } from './IWalletAuthSession';
 export { WalletConnectionShareEntity } from './IWalletConnectionShare';
 export {
+  WalletTransferPairDailyEntity,
+  WalletTransferWalletDailyEntity,
+  WalletTransferAnalysisStateEntity
+} from './IWalletTransferAnalysis';
+export {
   WaveDecisionEntity,
   WaveDecisionWinnerDropEntity
 } from './IWaveDecision';
@@ -271,6 +276,8 @@ export {
 } from './IXTdhTokenGrantStats';
 export { XTdhTokenStatsA, XTdhTokenStatsB } from './IXTdhTokenStats';
 export * from './IArtworkDocumentation';
+export * from './IArtworkMuseumRecord';
+export * from './IArtworkDossierExport';
 export { ProfileCmsAgentGrantEntity } from './IProfileCmsAgentGrant';
 export { ProfileCmsAgentProposalEntity } from './IProfileCmsAgentProposal';
 export { ProfileCmsAgentEventEntity } from './IProfileCmsAgentEvent';
@@ -279,5 +286,10 @@ export {
   ArtworkDocumentationAssetEntity,
   ArtworkDocumentationAssetQuotaEntity
 } from './IArtworkDocumentationAsset';
+
+export {
+  ModerationItemEntity,
+  ModerationEvaluationEntity
+} from './IModerationReview';
 
 export { PushInstallationEntity } from './IPushInstallation';

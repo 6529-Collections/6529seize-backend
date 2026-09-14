@@ -8,6 +8,7 @@ import {
   PROFILE_SUSPENDED_REJECTION_CODE,
   PrePublicationModerationService
 } from './pre-publication-moderation.service';
+import { ModerationReviewDb } from './moderation-review.db';
 
 function createService() {
   const moderationDb = {
@@ -25,13 +26,23 @@ function createService() {
       rationale: 'Allowed'
     })
   };
+  const reviews = {
+    find: jest.fn().mockResolvedValue(null),
+    start: jest.fn().mockResolvedValue({
+      item: { id: 'review-item' },
+      evaluationId: 'evaluation'
+    }),
+    finish: jest.fn().mockResolvedValue(undefined)
+  };
   return {
     service: new PrePublicationModerationService(
       moderationDb as any,
-      aiService as any
+      aiService as any,
+      reviews as unknown as ModerationReviewDb
     ),
     moderationDb,
-    aiService
+    aiService,
+    reviews
   };
 }
 
@@ -112,7 +123,10 @@ describe('PrePublicationModerationService', () => {
 
     await expect(
       service.evaluate(input('I will kill you'), {})
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({
+      itemId: 'review-item',
+      permitGeneration: undefined
+    });
 
     expect(aiService.assessPrePublication).toHaveBeenCalledTimes(1);
     expect(moderationDb.recordPrePublicationCheck).toHaveBeenCalledWith(
@@ -173,7 +187,10 @@ describe('PrePublicationModerationService', () => {
 
     await expect(
       service.evaluate(input('I will kill you'), {})
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({
+      itemId: 'review-item',
+      permitGeneration: undefined
+    });
 
     expect(moderationDb.recordPrePublicationCheck).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -253,6 +270,57 @@ describe('PrePublicationModerationService', () => {
     );
   });
 
+  it('carries the exact permit generation only when approval bypasses AI', async () => {
+    const { service, reviews, aiService } = createService();
+    reviews.find.mockResolvedValue({
+      override: 'ALLOW',
+      subject_type: 'DROP',
+      permit_expires_at: Date.now() + 60000,
+      scope: { permit_generation: 7 }
+    });
+    await expect(
+      service.evaluate(input('I will kill you'), {})
+    ).resolves.toEqual({
+      itemId: 'review-item',
+      permitGeneration: 7
+    });
+    expect(aiService.assessPrePublication).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    PrePublicationCheckOutcome.ALLOW,
+    PrePublicationCheckOutcome.REJECT
+  ])(
+    'screens an expired permit normally and respects a fresh %s result',
+    async (outcome) => {
+      const { service, reviews, aiService } = createService();
+      reviews.find.mockResolvedValue({
+        override: 'ALLOW',
+        subject_type: 'DROP',
+        permit_expires_at: 1,
+        permit_consumed_at: null,
+        scope: { permit_generation: 7 }
+      });
+      aiService.assessPrePublication.mockResolvedValue({
+        outcome,
+        category: 'THREAT',
+        confidence: 0.99,
+        rationale: 'Fresh classification'
+      });
+      const result = service.evaluate(input('I will kill you'), {});
+      if (outcome === PrePublicationCheckOutcome.REJECT)
+        await expect(result).rejects.toMatchObject({
+          code: CONTENT_MODERATION_REJECTION_CODE
+        });
+      else
+        await expect(result).resolves.toEqual({
+          itemId: 'review-item',
+          permitGeneration: undefined
+        });
+      expect(aiService.assessPrePublication).toHaveBeenCalledTimes(1);
+    }
+  );
+
   it('blocks posting for a suspended profile before content checks', async () => {
     const { service, moderationDb, aiService } = createService();
     moderationDb.getProfileStatus.mockResolvedValue(
@@ -265,6 +333,12 @@ describe('PrePublicationModerationService', () => {
         'This profile is currently suspended from posting. Contact support if you believe this is an error.'
     });
     expect(aiService.assessPrePublication).not.toHaveBeenCalled();
-    expect(moderationDb.recordPrePublicationCheck).not.toHaveBeenCalled();
+    expect(moderationDb.recordPrePublicationCheck).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deterministicSignal: 'PROFILE_SUSPENDED',
+        outcome: 'REJECT'
+      }),
+      undefined
+    );
   });
 });

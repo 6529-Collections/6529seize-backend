@@ -37,6 +37,8 @@ export class ApiArtworkDocumentationDownloadRequest {
 
 export enum ApiArtworkDocumentationDownloadRequestVariantEnum {
     Original = 'original',
-    Preview = 'preview'
+    Preview = 'preview',
+    Media = 'media',
+    C2paReport = 'c2pa_report'
 }
 

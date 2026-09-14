@@ -1,0 +1,117 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Share only CloudWatch metrics and alarms with the exact monitoring console broker; allow the existing monitoring operator to switch roles.",
+  "Parameters": {
+    "MonitoringAccountId": {
+      "Type": "String",
+      "AllowedPattern": "^[0-9]{12}$"
+    },
+    "OperatorUserNames": {
+      "Type": "CommaDelimitedList",
+      "Description": "Existing source IAM users who need the explicit operator AssumeRole grant; administrators already have it.",
+      "AllowedPattern": "^[A-Za-z0-9+=,.@_-]{1,64}$"
+    }
+  },
+  "Resources": {
+    "SharedMetrics": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "CloudWatch-CrossAccountSharingRole",
+        "Description": "Read-only metrics and alarms for the monitoring account's AWS CloudWatch console broker.",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::Sub": "arn:${AWS::Partition}:iam::${MonitoringAccountId}:root"
+                }
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "ArnEquals": {
+                  "aws:PrincipalArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:iam::${MonitoringAccountId}:role/service-role/ServiceRoleForCloudWatchCrossAccountV2"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "OnlyCloudWatchMetricsAndAlarms",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudwatch:DescribeAlarms",
+                    "cloudwatch:DescribeAlarmsForMetric",
+                    "cloudwatch:DescribeAlarmHistory",
+                    "cloudwatch:DescribeAnomalyDetectors",
+                    "cloudwatch:ListDashboards",
+                    "cloudwatch:GetMetricData",
+                    "cloudwatch:GetMetricStatistics",
+                    "cloudwatch:ListMetrics",
+                    "cloudwatch:GetMetricWidgetImage"
+                  ],
+                  "Resource": "*",
+                  "Sid": "ReadMetricsAndAlarms"
+                },
+                {
+                  "Sid": "ReadAccountDashboards",
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudwatch:GetDashboard"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudwatch::${AWS::AccountId}:dashboard/*"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "OperatorSwitchRole": {
+      "Type": "AWS::IAM::Policy",
+      "Properties": {
+        "PolicyName": "6529MonitoringOperatorAccess",
+        "Users": {
+          "Ref": "OperatorUserNames"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": "sts:AssumeRole",
+              "Resource": {
+                "Fn::Sub": "arn:${AWS::Partition}:iam::${MonitoringAccountId}:role/6529-MonitoringOperator"
+              },
+              "Condition": {
+                "Bool": {
+                  "aws:MultiFactorAuthPresent": "true"
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "SharedMetricsRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "SharedMetrics",
+          "Arn"
+        ]
+      }
+    }
+  }
+}

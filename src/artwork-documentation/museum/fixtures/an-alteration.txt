@@ -1,0 +1,326 @@
+AN ALTERATION
+Elia Maris · 2026
+Artist and artwork record · Keys and Gates
+________________________________________
+1. The artwork
+Title: AN ALTERATION
+Title language: English
+Alternate titles: None.
+Capture date: 18 May 2026
+Completion date: 24 May 2026
+Location: Milos, Greece. A coastal stair descending from the edge of a village to a small beach.
+Medium: Digital colour photograph. Single exposure, with subsequent colour and tonal adjustments. Presented digitally and as a pigment print.
+Existing edition statement
+I have not issued a numbered edition. Two full-size reference prints were made during completion of the work: they both remain in my studio. Both are signed on the reverse and marked “Reference print.”
+Visual description
+A narrow limestone staircase descends between whitewashed walls toward the sea. The treads are uneven, with worn depressions along their centres. A dark metal handrail follows the left wall and ends before a galvanized-steel gate spanning the passage. Grey mortar surrounds the gate’s fixings. Beyond its vertical bars, the steps continue to a thin beach bordered by rocks and blue-green water. The passage is shaded; sunlight reaches the shore. A small growth of vegetation enters at the upper right. Neither sky nor horizon is visible.
+Series title
+COMMON PASSAGE, 2023–ongoing
+Related works
+Untitled site study, Milos, September 2023
+An earlier photograph of the same stair, made before the gate was installed. I have supplied it as background material. It is not intended to hang beside AN ALTERATION as a before-and-after pair.
+RIGHT OF WAY, 2024
+A work from COMMON PASSAGE showing a pedestrian path crossing a recently resurfaced municipal verge. The route remains visible within the new surface.
+THE MAINTENANCE LINE, 2025
+A work from COMMON PASSAGE showing a concrete repair within a coastal retaining wall. I was interested in the different ages of the construction and the way they could be read together.
+Final artwork file
+EM_AN-ALTERATION_2026_MASTER.tif
+I have supplied the definitive image as a flattened, 16-bit RGB TIFF with its Adobe RGB (1998) profile embedded. It contains the complete final composition and colour rendering, without a border or output sharpening.
+Pixel dimensions
+14,202 × 9,468 pixels.
+Preservation master
+The final TIFF is also my preservation master.
+Alongside it, I have supplied the original Phase One IIQ capture, the Capture One session, the layered Photoshop working file and the print-production file. The original capture and working files record how I arrived at the image; the flattened master records the finished photograph.
+The package also includes the printer profile, saved output settings and a signed 120 × 80 cm reference print. I would use the master TIFF and that print together when preparing future reproductions.
+________________________________________
+2. The story
+Caption
+On a coastal stair in Milos, a recently installed steel gate interrupts the descent to the sea. The limestone treads are worn on both sides of the barrier. Bare mortar at the fixings and the shortened handrail distinguish the new work from its surroundings. The photograph is taken from several steps above, where someone approaching the water would pause.
+Artist statement
+I remembered this stair before I remembered the beach. The centres of the treads had become lower and smoother than their edges. The handrail was dark except where hands had polished it. When I first photographed the place, in 2023, these were the things that held my attention.
+Returning three years later, I found the gate.
+I had expected to walk straight down. Instead, I stopped and looked at something I had previously passed through without much thought. The stairs continued on the other side, with the same wear in the stone. Around the new fixings, the mortar had not yet been whitewashed.
+I wanted both kinds of change in the photograph: the slow alteration made by people using the stair and the much quicker work of fitting a gate across it.
+The camera stands close to where I stopped. I left enough stone in the foreground for the descent to be felt before the eye reaches the bars. Beyond them, the water is near enough to make the interruption inconvenient. I excluded the horizon because it drew attention away from the way down.
+What has stayed with me is how readily the gate might become part of the place. Another coat of whitewash, a few winters, and the new work will begin to look familiar. I wanted to photograph it while the difference was still there to be seen.
+Circumstances of making
+I first came across the stair in September 2023 while walking coastal routes for COMMON PASSAGE. I made several studies and noted the location so that I could return.
+In May 2026, I found the gate in place. I came back the following morning with the larger camera, having watched how the light moved through the passage. At the time of the exposure, the stair remained in shade while sunlight had reached the shore.
+I worked from the upper side of the gate. Nothing was moved or arranged. The photograph was made during a quiet interval, with no one on the stair or the small beach below.
+Connection to Keys and Gates
+I usually notice a gate when I need to go through it. Here, remembering the stair without one made the gate especially conspicuous.
+The worn stone gives the passage a history. The new metal introduces a different way of using it: someone can open it, close it, leave it one way or the other. I was interested in how little construction was needed to change the whole approach to the water.
+There is no key in the photograph. The gate is enough.
+What viewers might misunderstand
+The gate can look like something I introduced for the photograph because it is so much newer than the stair. I found it as it appears here. The mortar patches and shortened handrail were already there.
+The earlier image from 2023 is included in my working archive, but I prefer this photograph to be encountered on its own.
+Publication and exhibition history
+The finished work had not been publicly exhibited or published before its presentation for Keys and Gates.
+The earlier site study remained in my working archive.
+Previous mint history
+None. I have not previously minted this image.
+References
+Luigi Ghirri, Kodachrome, 1978.
+I return to this book for its attention to things that are already in front of us: a wall, a window, an ordinary arrangement of objects. It has been important to my sense of how much a photograph can find without making the subject more theatrical. (MACK)
+Allan Sekula, Fish Story, 1995; MACK reissue, 2018.
+This book has stayed with me while working along the coast. I think of it when the sea begins to become merely a view, and I need to look again at the structures and activities around it. (MACK)
+My site photographs and field notes, Milos, September 2023.
+These record the stair before the installation. The selected study and scans of the relevant notebook pages accompany the work.
+________________________________________
+3. How the work was made
+Capture method: Digital medium-format camera; single exposure.
+Camera: Phase One XF with IQ4 150MP digital back.
+Lens: Schneider Kreuznach 80mm LS f/2.8 Blue Ring.
+Exposure notes
+ISO 100; f/11; 1/30 second. Tripod-mounted.
+I exposed to retain detail in the shaded stone while holding the brighter water. The walls provided enough reflected light to describe the gate and its fixings. I wanted the passage to remain recognisably in shade.
+Techniques
+Single capture in available light, cropped to the final 3:2 composition.
+No compositing, focus stacking, artificial lighting or staged elements.
+Editing tools
+Capture One Pro 23: RAW conversion, lens correction, colour balance and primary tonal adjustments.
+Adobe Photoshop 2025: Local tonal adjustments, removal of sensor-dust marks, final file preparation and print proofing.
+How the work was made
+I began with handheld studies from different positions on the stair. From higher up, the gate became a pattern over the beach. From lower down, too little of the worn approach remained in the frame.
+The final position was close to the point where I had stopped on first returning. I set the camera on a tripod and kept the view almost frontal, without trying to make the walls symmetrical.
+During processing, I brought back a little detail in the brightest water and adjusted the shaded foreground so that the hollows in the treads remained readable. I paid particular attention to the differences among the whitewash, mortar and zinc. The mortar needed to remain visible without looking as though it had been picked out.
+The final crop removed the horizon. I then worked through paper proofs, making small adjustments to the foreground shadows and the colour of the water. I completed the image when those relationships held in the full-size print.
+Material changes
+I made a 3:2 crop, applied lens correction, adjusted colour and tone, and removed two sensor-dust marks.
+No objects or architectural features were added, removed or repositioned. I retained the vegetation, surface irregularities and small distractions at the edges of the frame.
+AI use
+None.
+Component images and sources
+The work consists of one exposure made by me. No other images are incorporated.
+Construction and staging
+I did not alter the location. The gate, handrail, walls and stair were photographed as I found them.
+The main decisions were where to stand, when to expose and how much of the approach to keep within the frame.
+________________________________________
+4. The artist and collaborators
+Artist name: Elia Maris
+Preferred credit: Elia Maris, AN ALTERATION, 2026
+About the artist
+Elia Maris is a Greek artist based in Athens. Working principally with photography and site-based research, she examines the everyday structures through which people move: stairs, service entrances, coastal paths, retaining walls and passages between buildings.
+Her architectural training informs an attention to repairs, junctions and changes of material. She often returns to the same sites, photographing what has been worn, replaced, closed or adapted between visits. Her ongoing series COMMON PASSAGE, begun in 2023, brings together places shaped by repeated use and occasional intervention. Individual photographs are accompanied by site studies and notebooks, which form a working archive of the locations over time.
+Artist links
+None listed.
+Record language: English
+Additional languages: None.
+Contributors
+Elia Maris: Conception, photography, image editing and print production.
+Leonie Karras: Interview and editing of the accompanying conversation.
+Preferred interview credit: Interview with Elia Maris by Leonie Karras.
+________________________________________
+5. Rights and attribution
+Authorship and rights basis
+I conceived, photographed and edited the work. All image material is my own.
+Artwork license
+CC0 1.0 Universal — No Rights Reserved.
+Keys and Gates programme licence.
+Third-party material
+None.
+Public attribution and context notes
+My preferred credit is:
+Elia Maris, AN ALTERATION, 2026
+For location, Milos, Greece is sufficient.
+________________________________________
+6. Display and preservation
+What needs to survive
+The stair needs to read as one route, continuing from the foreground through the gate to the beach. I want the viewer to see the whole descent before beginning to inspect its details.
+The mortar patches, the end of the handrail and the difference between worn stone and newer metal should remain clear at close viewing. They should not become more emphatic than they are in the reference print.
+The shaded passage and sunlit water also need to retain their different brightness. The photograph loses something when the foreground is lightened until it appears to be under the same light as the shore.
+Orientation, frame and cropping
+Landscape, 3:2, with the complete image visible.
+I prefer the existing proportions of foreground stair, gate and water to remain unchanged. In print, any margin belongs outside the image. On a screen, the image should fit within the available space rather than be cropped to fill it.
+Colour and tonal balance
+The limestone is slightly warm; the walls are off-white rather than a uniform neutral white. The bare mortar is cooler and darker, and the zinc has its own grey.
+I want the sea to retain its blue-green colour without becoming the strongest colour a printer can produce. Small reflections on the water may be very bright. The shaded stone should remain quieter, with enough separation to see its shape.
+Screen display
+I prefer a still image, shown in full, without automatic movement or transitions. A neutral surround and moderate brightness suit it better than a luminous display in a darkened room.
+The first view should show the whole photograph. Zooming can then make the fixings and surfaces available for closer inspection.
+Printing preferences and production instructions
+Reference presentation
+My preferred exhibition print is 120 × 80 cm, centred on a 140 × 100 cm sheet, leaving a 10 cm paper margin on each side.
+At this size, the gate is large enough to have a physical presence without becoming larger than the passage it belongs to. From a few steps away, the photograph holds together as a view. Closer to the print, the worn stone and the installation details become apparent.
+The supplied reference print establishes the colour, density, surface and scale I prefer.
+Paper
+Hahnemühle Photo Rag Baryta, 315 gsm.
+This is a 100% cotton paper with a white base, no optical brighteners and a gloss baryta inkjet surface. (Hahnemühle)
+I chose it after comparing it with a matt cotton paper. In the matt proof, the water and zinc became too similar to the stone. The baryta surface kept the small differences in reflected light that I wanted, while the paper itself still had a slight texture.
+Please use Photo Rag Baryta, rather than substituting another paper with “Baryta” in its name. I would keep the surface as printed, without varnish, spray coating or lamination.
+Printer and ink
+Epson SureColor SC-P9500 with Epson UltraChrome Pro12 pigment inks.
+The SC-P9500 is a 44-inch printer using Epson’s twelve-colour Pro12 ink set. It is the printer used for my reference presentation. (Epson Europe)
+For the 120 × 80 cm image, place the 80 cm side across the roll and the 120 cm side along the feed direction. Leave the full paper margins and trim the finished sheet to 140 × 100 cm.
+Use bordered printing at the specified dimensions. Turn off automatic enlargement, “fit to page” and borderless expansion.
+Files and resolution
+For the reference presentation, use:
+EM_AN-ALTERATION_2026_PRINT_120x80_PRB315.tif
+This is the output file prepared for the specified paper and printer. It includes the small print-specific adjustments and output sharpening used in the approved proof.
+The file retains the full 14,202 × 9,468 pixels, which gives approximately 300.6 pixels per inch at 120 × 80 cm. No enlargement is needed.
+Keep the preservation master unchanged. Prepare any other size from that master and apply sharpening for the new output rather than resizing an already sharpened print file.
+Colour management
+I have supplied the custom ICC profile and the saved media settings used for the reference print.
+My preferred workflow is application-managed colour: the image retains its embedded Adobe RGB profile, Photoshop uses the supplied printer-and-paper profile, and colour adjustment in the printer driver is switched off. This avoids applying a second colour conversion in the driver. (Epson Support Files)
+For this print, I use Relative Colorimetric with Black Point Compensation. The supplied profile was made for the recorded paper, ink and print-quality settings; those settings should be used together.
+My proofing display is calibrated to a D50 white point, gamma 2.2 and approximately 100 cd/m². I soft-proof with paper colour and black ink simulation enabled, then judge the result on paper.
+The saved reference preset uses the high-quality 2400 × 1200 dpi mode, with high-speed printing off. Before making a final print, run a nozzle check and inspect a small test for banding or head-alignment errors.
+Proofing approach
+I begin with a 30 × 20 cm full-image proof on the final paper. This is useful for judging the overall balance, but it cannot tell me everything about a larger print.
+I then make sections at the final reproduction scale, including the foreground treads, the left-hand fixing and rail termination, the lock side of the gate, and the water immediately beyond it.
+In those sections, I look for a few specific things. The centres of the steps should look smoother than the edges without appearing polished. The mortar should separate from the wall without becoming a conspicuous patch of grey. The bars should have clean edges without sharpening halos. The water should retain small changes of colour rather than becoming an even turquoise field.
+I assess the dried proofs under D50 viewing light and then under the intended exhibition lighting. The signed reference print should be beside the new print during final comparison.
+Once the sections are right, make a full-size proof. That last stage matters: a correction that seems helpful in a small section can become too strong across the whole photograph.
+Drying and handling
+I leave prints face up on a clean drying rack for at least 24 hours before judging the final colour, and for 48 hours before framing.
+Handle the sheet by its margins, with clean gloves, and support it fully when moving it. I prefer the finished reference and exhibition prints to be stored flat. Nothing adhesive should touch the printed surface.
+Mounting and frame
+My preferred frame is a narrow, natural-anodised aluminium section, approximately 12–15 mm across the face and 40 mm deep. I do not want a black outline around the photograph.
+Retain the paper margin. Use a conservation window mount that overlaps only the outer edge of the sheet, leaving the image and almost all of the margin visible. The mount should be close to the paper’s own white rather than noticeably brighter.
+I prefer the print to be supported on cotton-rag museum board and attached with reversible Japanese-paper hinges, rather than dry-mounted to a rigid panel. The sheet should remain free to move slightly within the frame.
+For glazing, my preference is 6 mm Tru Vue Optium Museum Acrylic, with a clear gap of approximately 10 mm between the glazing and the print. It provides an anti-reflective surface and UV filtering; the 6 mm sheet is available for larger framing applications. (Tru Vue)
+I do not want acrylic face-mounting. The photograph should remain visibly a print on paper.
+Exhibition lighting and placement
+I prefer even, high-colour-rendering light around 3500 K, beginning at approximately 50 lux at the print. Avoid direct sunlight and a concentrated spotlight reflected in the glazing.
+The surrounding wall should be a quiet white or pale neutral. Leave enough space for someone to see the whole photograph from two or three metres away and then approach it.
+The print does not need a separate darkened space or a theatrical installation.
+Identification and retained print materials
+I sign and date the reverse in pencil, within the paper margin. The title, image dimensions, paper and printing date are also recorded there. There is no signature or text on the face.
+The supplied print-production materials include the output TIFF, ICC profile, media preset, proofing notes and signed reference print. I have retained a matching reference in my studio.
+Acceptable future changes
+I am comfortable with changes of file format, proportionate resizing and printing on later equipment. I would compare the result with the supplied master and reference print rather than try to preserve a particular printer indefinitely.
+If the paper is discontinued, I would look for a cotton-based photographic paper with a similar white and baryta gloss. The replacement should be proofed for this image, particularly in the stone, zinc and water.
+Changes to avoid
+I would not remove the vegetation, tidy the walls, strengthen the mortar patches or make the stair look more worn.
+Please retain the existing water and the complete frame. I would avoid adding sky, straightening the old masonry into symmetry or giving the image a warmer, more saturated Mediterranean colour.
+Sharpening should not make the stone brittle or draw outlines around the bars.
+Related physical materials
+One signed 120 × 80 cm reference print accompanies the preservation package; a matching print remains in my studio.
+I have also supplied the selected 2023 site study, scans of the relevant field notes and the final proofing notes. These accompany the photograph as working material. They are not intended to be displayed as part of the image’s presentation.
+________________________________________
+7. Complete written interview
+Interview with Elia Maris by Leonie Karras
+Returning to the stair
+Leonie Karras: What do you remember about the first time you saw this place?
+Elia Maris: The steps. I remember looking down and noticing how different the middle of each tread was from its edge. Some of the stone was rough, and some had become very smooth. The rail had been changed by touch in a similar way.
+I was walking routes down to the water for COMMON PASSAGE. Most were quite ordinary, and this one was ordinary too. But the amount of use was unusually easy to see. I made a few photographs and wrote down where it was.
+At that point, I wasn’t thinking about a future photograph. I liked the stair as I found it.
+Karras: And when you returned?
+Maris: I recognised the place and started down. Then I saw the gate.
+My first response was annoyance. I had expected to go to the water, and suddenly there was something in the way. I think that is worth saying because the photograph became more considered afterwards. The first experience was very simple.
+I stood there for a while. The steps continued beyond the gate, and they looked just like the ones I was standing on. Then I began noticing the mortar and the way the rail ended.
+Karras: Did you know immediately that you would photograph it?
+Maris: I made a picture immediately, but not this picture.
+The first one was too much about the gate. I was closer, and there was less stair in front of it. Looking at it later, I realised I had photographed the thing that surprised me and left out much of what made the surprise interesting.
+I came back the next morning. By then I knew that the older stair needed more space in the frame.
+Karras: What did the earlier photograph give you?
+Maris: A memory I could check.
+I remembered the steps quite clearly, but I hadn’t remembered every detail around them. Looking at the earlier image, I could see the passage without the new frame across it.
+I like having that photograph in the archive. I don’t particularly want it on the wall beside this one. Once you put the two together, people start comparing them. I wanted them to spend time with the one image and find the difference within it.
+Making the picture
+Karras: How did you find the final camera position?
+Maris: By moving up and down the stair more than I had expected.
+Higher up, I could see more water, but the gate began to flatten against the shore. Lower down, the bars became dominant and the foreground disappeared.
+The position I settled on was quite close to where I had first stopped. It gave me enough of the worn approach and enough of what continued beyond. I tried to keep the camera near the height from which I had been looking, rather than raise it to get a tidier architectural view.
+Karras: The composition is orderly, but the place is not entirely symmetrical.
+Maris: That was already there. The gate is a manufactured rectangle fitted between walls that have become irregular over time.
+I wanted the camera to be steady enough for those differences to show. I didn’t want the angle of the photograph to become another complication.
+There is a temptation, particularly when you have studied architecture, to correct things until they look as though they belong in a drawing. Here that would have removed some of what I was looking at.
+Karras: Why did you leave out the horizon?
+Maris: It made a much prettier photograph when it was in.
+You could look over the gate and enjoy the sea as a separate view. I found myself doing that, and it was taking me away from the stair.
+Without the horizon, the water remained part of the descent. You reached it by following the steps through the frame. I liked that more.
+I also liked ending the picture in moving water rather than in the very clear division of sea and sky.
+Karras: Were you worried that the photograph was still too beautiful?
+Maris: A little. But I didn’t want to make the place gloomy just to make the subject seem serious.
+The water really was that colour. The walls were giving light back into the passage. Those were reasons to stand there and look.
+I tried to keep the colour from becoming too agreeable in the print, particularly the blue. There was no need to make the sea more attractive than it already was.
+Karras: What did you wait for in the light?
+Maris: The separation between the passage and the water.
+When direct light entered too far into the stair, there were strong shapes on the stone and the wall. They became another subject. Earlier, the shore was less distinct.
+I wanted enough reflected light to see the surfaces inside the passage, with sunlight beyond it. That gave the image depth without requiring much adjustment afterwards.
+Looking at the alteration
+Karras: The mortar around the gate is a small detail, but it changes how the picture reads.
+Maris: Yes. Without it, you might assume that the gate had been there for a long time.
+I didn’t want to make a close-up of the mortar. It interested me as something you notice while looking at the whole place. The new work had not yet been absorbed into the wall.
+I was careful with it in printing. A little too much contrast made it look as though I had underlined it.
+Karras: The handrail stops just before the gate. Was that important from the beginning?
+Maris: I noticed it after the mortar.
+The rail had followed the descent for years, and now it had this abrupt end. It was a small adjustment made to fit the new arrangement. I liked that it was practical. Someone had had to deal with the rail when putting the gate there.
+That sort of detail is often what I look for. A larger change leaves small, awkward decisions around its edges.
+Karras: Do you think the person who installed the gate would recognise what interests you in it?
+Maris: Perhaps not at first. They might look at the hinges or think I had chosen an inconvenient time to photograph the wall, before it had been painted.
+I would be interested in that response. From the point of view of the work being done, the bare mortar might simply be something unfinished.
+For me, it is one of the reasons to make the picture then. Once it has been painted, the relationship will look different.
+Karras: What does the absence of people do?
+Maris: It leaves the route available to imagine.
+A person at the gate would make the photograph about a particular moment: arriving, opening it, waiting or turning around. Any of those could be interesting, but I was more interested in the place between those moments.
+There are people in the picture in another way. You can see what repeated passage has done to the steps and the rail. I didn’t feel that I needed someone to demonstrate how the stair was used.
+Karras: Some viewers may think you put the gate there.
+Maris: I understand that. It is very conveniently placed for a photograph about a changed route.
+But no, I found it there. The uneven mortar is part of that. So is the little plant at the top right, which I might have left out if I were designing the whole thing.
+I like the fact that a place can give you an arrangement you would distrust slightly if you had invented it.
+The title and the series
+Karras: Why AN ALTERATION?
+Maris: It was the word I kept coming back to when looking at the two visits.
+It is quite an ordinary word. You could use it for moving a doorway or changing a sleeve. Something that exists has been adjusted.
+I liked that scale for the title. A gate had been fitted into a stair. The photograph could carry the rest without the title announcing a larger subject.
+Karras: How does this relate to the other works in COMMON PASSAGE?
+Maris: I often photograph places where repeated use has made something that no one quite designed.
+A path across a verge is an obvious example. A step worn into a particular shape is another. Then there are the occasional interventions: a repair, a rail, a wall that closes an opening.
+In RIGHT OF WAY, the route spreads across the picture. Here, everything is compressed. You can see the long use and the recent work within a few metres.
+Karras: Has your architectural training changed the way you photograph?
+Maris: It has probably made me less interested in the complete building than in the part where something has had to be fitted to something else.
+That is where you see decisions. A repair rarely repeats exactly what was there. A new fitting meets an old surface imperfectly. Something has been cut short, patched or worked around.
+I still enjoy a whole building, of course. But when I go back through my pictures, it is often those smaller meetings that hold my attention.
+Karras: What does the absent key mean to you in this photograph?
+Maris: Mostly that it is somewhere else.
+Someone may have it in a pocket or hanging by a door. The gate is part of an ordinary routine for that person. For someone coming down the stair, it is the thing they meet.
+I don’t think I would gain much by photographing the key. I would rather stay with the view from the steps.
+From file to print
+Karras: When did the photograph feel finished?
+Maris: In the full-size print.
+On the screen, I had made the foreground slightly too easy to see. In the first large proof, the shaded stone looked brighter than I remembered. I took it back a little.
+The other adjustment was in the water. It needed to be bright, but I didn’t want the eye to leave the stair and stay there.
+Once those two things worked together, I stopped. The remaining differences were small enough that I would have been changing the picture rather than improving it.
+Karras: Why the baryta paper?
+Maris: I first tried a matt paper that I use for some other work. I liked the stone on it, but the water lost something. The metal also became rather flat.
+The baryta paper held those surfaces apart. I could see the dullness of the zinc, the little reflections in the water and the heavier surface of the limestone.
+I didn’t choose it for a particularly luxurious finish. I chose it because I could see the materials more clearly.
+Karras: And the size?
+Maris: At 120 by 80 centimetres, I could stand back and see the whole passage, then move closer to the fixings and the stone.
+Smaller, it became more of a view through a gate. Much larger, I began to feel that I was giving the gate too much presence.
+I wanted the print to allow close looking without making the place seem grander than it is.
+Karras: Your printing notes are quite specific.
+Maris: They are specific because I have already made the decisions once.
+I don’t want the next person printing it to have to guess which white I preferred or how dark the foreground should be. The reference print is more useful than a long description, but the paper and settings help someone get back to it.
+I would expect printers and materials to change. I’m less attached to the machine than to the result.
+Karras: What would bother you most in a reproduction?
+Maris: Too much sharpening, probably.
+The photograph contains a great deal of rough material, but the worn parts are important. If everything becomes equally crisp, the difference between the centre of a tread and its edge begins to disappear.
+I would also notice if the walls became perfectly white. There are quite a few different whites and greys in the print. They make the place feel solid.
+What happens afterwards
+Karras: Would you photograph the stair again?
+Maris: Yes. I would like to see it after the wall has been whitewashed, or after the gate has weathered.
+I don’t know whether that would produce another finished work. Returning to a place does not always give you a photograph. Sometimes it simply changes how you understand the one you have already made.
+I would still keep the visit in the archive.
+Karras: What do you think someone might overlook when seeing this image many years from now?
+Maris: How briefly it looked this way.
+The mortar was still bare. The metal had begun to dull, but it had not acquired much wear. The gate was easy to distinguish from the stair.
+That difference will become less obvious. Someone arriving later may never think to ask whether the gate was always there.
+When I made the photograph, I could still remember walking down without it.
+Interview supporting fields
+Format: Written interview.
+Date: 2 June 2026.
+Participants: Elia Maris, artist; Leonie Karras, interviewer.
+Language: English.
+Recording: None; the interview was conducted in writing.
+Transcript: The complete edited exchange appears above. A copy accompanies the artwork files as EM_AN-ALTERATION_INTERVIEW_2026.txt.
+Publication permission: I approve publication of this interview with the work.
+Artist corrections: I revised several answers for clarity before the final text was prepared.
+________________________________________
+8. Final review
+Review materials: Final image, artist record, interview, exact credits, preservation files and print-production files.
+Confirmation: Recorded separately against the reviewed version.
+Questions for the team: None.
+

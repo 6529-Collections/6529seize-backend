@@ -1,11 +1,85 @@
 jest.mock('@/redis', () => ({ getRedisClient: () => null }));
 
-import { OpenSeaClient, parseOpenSeaJson } from './opensea-client';
+import {
+  OpenSeaClient,
+  OpenSeaDeadlineError,
+  OpenSeaHttpError,
+  parseOpenSeaJson
+} from './opensea-client';
 import { normalizeOpenSeaEvent } from './opensea-normalizer';
 
 it('preserves JSON integers beyond JavaScript safe-number precision', () => {
   expect(parseOpenSeaJson('{"remaining_quantity":9007199254740993}')).toEqual({
     remaining_quantity: '9007199254740993'
+  });
+});
+
+describe('planned OpenSea request budgets', () => {
+  it('uses a typed deadline error when the unused local request allowance cannot fit', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValue(Response.json({ asset_events: [], next: null }));
+    const client = new OpenSeaClient({
+      apiKey: 'fixture',
+      fetchImpl,
+      now: () => 1_000
+    });
+    await client.getEventsPage('fixture', 0, 1, null, 10_000);
+    await expect(
+      client.getEventsPage('fixture', 0, 1, null, 1_500)
+    ).rejects.toBeInstanceOf(OpenSeaDeadlineError);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([429, 503])(
+    'preserves HTTP %i when its retry does not fit the deadline',
+    async (status) => {
+      const fetchImpl = jest
+        .fn()
+        .mockResolvedValue(new Response('', { status }));
+      const client = new OpenSeaClient({
+        apiKey: 'fixture',
+        fetchImpl,
+        now: () => 1_000
+      });
+      await expect(
+        client.getEventsPage('fixture', 0, 1, null, 1_100)
+      ).rejects.toMatchObject({ status });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('preserves a request abort when its retry does not fit the deadline', async () => {
+    const failure = Object.assign(new Error('fixture aborted'), {
+      name: 'AbortError'
+    });
+    const client = new OpenSeaClient({
+      apiKey: 'fixture',
+      fetchImpl: jest.fn().mockRejectedValue(failure),
+      now: () => 1_000
+    });
+    await expect(
+      client.getEventsPage('fixture', 0, 1, null, 1_100)
+    ).rejects.toBe(failure);
+  });
+
+  it('preserves an earlier provider failure when the next attempt runs out of request budget', async () => {
+    let now = 1_000;
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValue(new Response('', { status: 503 }));
+    const client = new OpenSeaClient({
+      apiKey: 'fixture',
+      fetchImpl,
+      now: () => now,
+      sleep: async () => {
+        now = 2_000;
+      }
+    });
+    await expect(
+      client.getEventsPage('fixture', 0, 1, null, 2_000)
+    ).rejects.toBeInstanceOf(OpenSeaHttpError);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 });
 

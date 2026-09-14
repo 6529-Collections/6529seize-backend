@@ -1,5 +1,7 @@
 export const MARKET_DEPTH_CHAIN = 'ethereum' as const;
 export const MARKET_DEPTH_CHAIN_ID = '1' as const;
+export const MAX_MARKET_DEPTH_COLLECTION_ASKS = 10000;
+export const MAX_MARKET_DEPTH_COLLECTION_PARTITIONS = 8;
 
 export const MARKET_DEPTH_SNAPSHOT_SCHEMA_VERSION = 1;
 /**
@@ -122,6 +124,9 @@ export interface MarketDepthSnapshotReadOptions {
   token_id?: string;
   /** Large provider/protocol payloads are retained in DB but can be omitted. */
   include_payloads?: boolean;
+  /** Bound collection-wide discovery without reading the much larger bid book. */
+  side?: MarketDepthOrderSide;
+  limit?: number;
 }
 
 export interface MarketDepthSnapshotArchive {

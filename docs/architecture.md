@@ -10,6 +10,18 @@ The main runtime pieces are:
 - SQS and EventBridge as the async execution fabric.
 - S3, CloudFront, Arweave, Ethereum/RPC providers, Firebase, Sentry, CloudWatch, Discord, and SNS around the core.
 
+The six Sharp media packages also accept the exact direct-invocation payload
+`{"operator_action":"verify_media_dependencies_v1"}` for release diagnostics.
+This IAM-invoked path runs fixed synthetic codec operations in memory and
+returns native versions before entering database, queue, storage or notification
+processing. It adds no HTTP route; ordinary SQS, schedule and API Gateway
+events keep their existing handlers. This lets operators verify each deployed
+Lambda, including production-only media resizing and the three rememes
+functions, without invoking whole production loops.
+The resizer's HTTP API uses AWS_PROXY payload 1.0 without request templates;
+request bodies remain inside the HTTP event envelope and cannot become this
+top-level operator payload.
+
 ## Profile collecting and marketplace operations
 
 The API owns `/collect/*` and `/market/*`. Collecting derives versioned catalogs
@@ -18,12 +30,119 @@ confirmed consolidated wallets. Existing Pebbles trait rankings use that same
 profile scope. TDH projections reuse the production calculation kernel and
 first verify parity with the official snapshot.
 
+Meme Lab card trading resolves minted artwork from the existing `nfts_meme_lab`
+index only when `/collect/assets?family=memelab`, an exact ownership analysis,
+or a marketplace request explicitly names that collection. Exact analyses opt
+into its indexed holdings across the same confirmed profile wallets. The known
+Meme Lab contract is ERC1155 for discovery, exact-order resolution, single-order
+preparation and atomic purchases, including verified criteria-offer acceptance.
+This request-local extension never changes the shared planner catalog, set
+goals, TDH eligibility or ranking families. API asset families include Meme Lab;
+planning family schemas remain explicitly The Memes, Gradients and Pebbles.
+It adds no tables or indexer dependencies; only the API service needs deployment.
+
+Authenticated `POST /collect/tdh-target-plans` estimates a purchase subtotal for
+a profile's total boosted TDH at a 1/30/90/365-day deadline, or an explicit
+increase over its future no-purchase baseline. Its selected recipient must be a
+confirmed wallet of that profile. It verifies official snapshot parity and
+reuses one canonical projector for complete candidate portfolios, including
+nonlinear set-completion bundles. Search is bounded to 128 replays, 10 million
+modeled replay-work units and a 20-second request window; inventory validation
+and hypothetical per-edition work are charged before each replay. It preserves
+exact captured listing identities, fee-divisible steps, remaining quantities and
+the atomic checkout's supported order shapes. Results distinguish best found,
+no purchase needed and an unresolved target gap; captured index coverage never
+claims complete live market coverage or a global minimum. Purchase subtotals
+include signed fees, while gas and total funding remain unquoted until batch
+review. Analysis adds no operation row, cache, table, migration, economic action
+or loop dependency. Deploy `api`, then its frontend consumer. The frontend Help
+Bot corpus must describe this new screen in the coupled frontend release.
+
+Memes and Meme Lab extended data preserve `edition_size_cleaned` as supply
+excluding burns and the configured Museum wallet. The new
+`edition_size_ex_research` and `edition_size_ex_museum_and_research` fields
+exclude burns plus, respectively, the configured Research wallet or the union
+of the Museum and Research wallets. Research means `RESEARCH_6529_ADDRESS`,
+not inferred identity consolidations; `research_holdings` reports that wallet's
+balance. Supply ranks are ascending competition ranks, so equal supplies share
+a rank (1, 1, 3). Other rank semantics are unchanged. New nullable columns and
+API fields remain unavailable until the next extended-data refresh, while -1
+continues to mean excluded from the ranking universe. These changes use the
+shared Memes/Meme Lab pipeline and do not add Gradient or NextGen supply fields.
+Deploy `dbMigrationsLoop` for entity synchronisation, then `nftsLoop` to populate
+the fields, then `api` and its frontend consumer.
+
+Authenticated `POST /collect/tdh-daily-plans` solves a desired acquisition base
+TDH/day rate or an ETH purchase budget against the same signed listing capture.
+It uses integer rates and costs, exact available quantity steps and fees, with
+bounded alternative greedy portfolios. It excludes profile sellers and never
+combines potentially overlapping orders from one maker for the same artwork.
+The base-rate objective is separate from personalized effects: the selected
+whole basket is replayed through the canonical calculator at the assumed
+acquisition time to report ongoing boosted rates and the distinct revaluation
+of existing TDH. Rates describe complete held days, not the next UTC snapshot
+delta; a newly acquired lot starts with zero accrued days. An external recipient
+can receive the artwork but adds no TDH to the requesting profile. Results keep
+partial market coverage, best-found search, unspent budget and unknown gas
+explicit. This endpoint does not create orders or write to the database and
+does not replace the future-total target endpoint. Deploy `api` before its
+frontend consumer; the coupled frontend release owns the Help Bot description.
+
+Anonymous `GET /collect/tdh-listings` compares supported ETH asks across the
+completed market-depth collection index. It reuses the marketplace adapter to
+validate stored signed order identities, exact fill quantities and fees, and
+applies observed cancellations and fills before ranking. Comparison uses exact
+wei against the indexed base accrual rate rounded to production hundredths,
+without inheriting seller holding time or applying profile multipliers. Reads
+are bounded across collection partitions; freshness and index coverage remain
+explicit. A short-lived cache contains only public discovery DTOs. An expiring
+Redis refresh lease limits concurrent cold-cache work across API instances;
+only its current owner can publish a result. Cursors
+bind the ranked content, catalog and collection. Checkout still obtains a fresh
+executable quote. This read-only endpoint adds no table or loop dependency and
+requires only the API deployment, followed by its frontend consumer.
+
+Private `POST /collect/offer-analyses` prices explicitly selected exact NFTs
+with manual pins or transparent WETH formulas. It reuses bounded indexed books
+and lifecycle observations; references remain explicitly unverified for live
+funding and fulfillment. One payer funding snapshot and primary tracked
+liabilities bound recommendations, while existing single-offer preparation
+still performs fresh review and reserves actual exposure. The conservative
+goal policy never signs, spends, or implies atomic group offers. It adds no
+table or loop dependency. See [per-NFT offer analysis](../specs/collect-offer-analysis.md).
+
+Collecting request budgets use a monotonic clock, with 20 seconds shared across
+reads and parsing. The optional set-plan seed and TDH browse parser each receive
+at most eight seconds within that budget. Seed expiry discards partial results
+and preserves time for scanner-row persistence; browse expiry marks retained
+results incomplete or returns a retryable refresh response when empty. Checks
+inside synchronous order loops bound CPU work, while read wait bounds prevent
+late responses from starting subsequent parsing. They do not claim to cancel
+an already-issued database request. Market quote expiry still uses wall time.
+
 The marketplace adapter obtains unsigned OpenSea Seaport actions server-side.
 Closed schemas, a protocol/spender registry, independent action decoding and
 chain simulation bind the exact artwork, quantity, wallet, recipient, fees and
 economic limits. The client independently validates before asking its wallet
 to sign or send. Purchase fulfillment delivers directly to a reviewed profile
 or third-party recipient. The backend never holds user signing keys.
+
+Browser preflights allow the required `Idempotency-Key` header only on
+`POST /market/operations`, `POST /collect/rules` and
+`POST /collect/rules/{id}/prepare`. These routes retain the public API's
+non-credentialed CORS policy; their bearer authentication, mandatory
+idempotency keys and financial validation remain enforced on actual requests.
+Artwork documentation and credentialed session routes retain their separate
+origin policies. This CORS repair requires only the `api` deployment.
+
+Public `GET /market/orders/{order_hash}` resolves an exact supported Seaport
+listing or offer outside the limited best-order discovery results. Required
+asset, side and protocol parameters bind the requested identity. The API checks
+signed terms, a fresh mainnet snapshot, maker counter and remaining fill fraction
+under one request budget, returning the existing sanitized trade-order DTO.
+It does not expose signatures, reserve inventory or create an operation;
+authenticated preparation still revalidates financial execution. This additive
+API boundary requires only the `api` deployment and no database migration.
 
 `market_operations` and `market_operation_events` persist idempotent operations
 and state transitions. A per-wallet/currency lock serializes potential offer
@@ -40,9 +159,51 @@ send for that operation across browsers and devices. Hash recovery validates
 the original approval or fulfillment; only a positively identified pre-broadcast
 rejection can release an attempt without a verified transaction outcome.
 
+Atomic Collect purchases use a separate `BUY_BATCH` request and response while
+preserving the existing single-artwork contract. Each selected seller order has
+an exact quantity, native-ETH cost and recipient allocations. The API builds a
+Seaport 1.6 `matchAdvancedOrders` transaction with an unsigned payer mirror;
+every selected order must fill or the transaction reverts. No router deployment,
+new approval, automatic substitution or automatic splitting is involved.
+Profile membership labels collecting and recipient scope; the directly
+authenticated EOA pays, and profile or third-party wallets receive the NFTs.
+
+`GET /market/batch-capabilities` reports bounds of 128 seller orders, 256
+recipient allocations and 1 MiB of calldata. These bound parser, provider and
+validator work rather than spend or editions. Preparation uses at most eight
+concurrent selected-order tasks and a 20-second deadline. Complete simulation,
+balance and padded gas checks must pass before review and before opening the
+durable send attempt, including the current block limit and mainnet's
+[EIP-7825 transaction gas limit](https://eips.ethereum.org/EIPS/eip-7825).
+Exceeding a bound requires the user to reduce the selection explicitly.
+
+Restricted ERC1155 seller orders currently support original and filled quantity
+one. Open partial orders support multiple editions and recipients only when
+every individual NFT/payment amount has an exact fill fraction. Discovery
+publishes `purchase_quantity`, `quantity_step` and `available_quantity` so the
+UI can distinguish an executable unit quote from a required whole lot. Batch
+receipt reconciliation additionally requires every seller event, the exact
+buyer mirror, complete `OrdersMatched` membership and every recipient transfer.
+Uncertain evidence retains the recovery fence. Batch state and immutable mirror
+terms use the existing JSON operation journal; there is no schema change.
+History includes batches only with `include_batches=true`, and saved rules
+continue to support single purchases only. This addition requires the API to
+deploy before the dependent frontend; no indexing or migration loop changes.
+Opt-in history omits batch calldata, send-attempt payloads and seller components
+and bounds page bytes; clients follow its cursor and fetch the operation by ID
+for complete review or recovery evidence.
+
 `collect_plans` stores incremental listing scans with renewable leases and
 profile/catalog invalidation. It distinguishes a completed asset scan from
-incomplete market coverage. `collect_rules` and `collect_rule_operations` store
+incomplete market coverage. Plan responses optionally include `available_result`,
+an uncapped comparison over the same captured candidates and evaluation instant,
+alongside the result constrained by an explicitly echoed `budget_wei`. Without
+a cap the same result is reused; otherwise one additional search is bounded to
+20,000 states. Both use the same observed unit prices and estimated gas, make no
+additional market reads and preserve incomplete coverage. Neither authorizes
+spending or claims a global minimum. This additive response requires the API
+before its frontend consumer, without database or loop changes.
+`collect_rules` and `collect_rule_operations` store
 fixed targets, review limits, one outstanding operation and monotonic verified
 acquisitions. Rules only prepare transactions for owner approval. Their limits
 are not a smart-contract-enforced mandate or authority to broadcast unattended.
@@ -150,14 +311,16 @@ flowchart TD
     Operator --> CustomReplayLoop["customReplayLoop"]
     Operator --> PopulateHistoricConsolidatedTdh["populateHistoricConsolidatedTdh"]
     Operator --> TeamLoop["teamLoop"]
-    CloudwatchTopic["SNS: cloudwatch-alarms"] --> CloudwatchAlarmsToDiscordLoop["cloudwatchAlarmsToDiscordLoop"]
+    CloudwatchTopic["SNS: cloudwatch-alarms"] --> AlarmEmail["confirmed email subscribers"]
+    CloudWatch["CloudWatch alarm state changes"] --> MonitorBus["independent monitoring EventBridge bus"]
   end
 
   BackgroundWorkers["background Lambda runtime"] --> LambdaRuntime["doInDbContext runtime"]
   DropVideoConversionInvokerLoop --> EnvOnlyRuntime["environment-only runtime"]
   LambdaRuntime --> MySQL
   LambdaRuntime --> Redis
-  LambdaRuntime --> Ops["Sentry / CloudWatch / Discord"]
+  LambdaRuntime --> Ops["Sentry / structured CloudWatch errors"]
+  Ops --> MonitorBus
   EnvOnlyRuntime --> Ops
 
   S3Uploader --> S3
@@ -241,7 +404,6 @@ for alert triage and recovery.
 | `mediaResizerLoop`               | CloudFront/request path                                                                                                            | Resize images on demand.                                                                                                    |
 | `nextgenMediaProxyInterceptor`   | Lambda@Edge / CloudFront request                                                                                                   | Provide NextGen metadata fallback.                                                                                          |
 | `dropVideoConversionInvokerLoop` | S3 object-created event for `drops/`                                                                                               | Invoke MediaConvert for uploaded drop videos.                                                                               |
-| `cloudwatchAlarmsToDiscordLoop`  | SNS `cloudwatch-alarms`                                                                                                            | Post CloudWatch alarms to Discord.                                                                                          |
 
 ### Manual Or One-Off Lambdas
 
@@ -269,9 +431,16 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 5. SQS workers handle slow or retryable side effects through named queues: claim building, claim media Arweave uploads, S3 media mirroring, attachment orchestration/processing, NFT link resolution/previews, xTDH recalculation, Wave Score dirty refreshes, and notification delivery through Firebase plus recipient-scoped WebSocket invalidations.
 
 6. S3 and CloudFront serve media. Drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception.
+   The on-demand media resizer spools each S3 source into its own temporary file before metadata inspection and conversion. A 256 MiB source limit and conservative 512 MiB decoded-work estimate reject unsupported or oversized inputs with HTTP 422; animated GIF admission counts every frame. Resize, rotation and output contracts are preserved for accepted inputs. Multipart upload concurrency is one, and the temporary directory is removed after completion or failure. These admission limits reduce resource risk; they do not guarantee a maximum native allocation for every codec.
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
 ### NFT link refresh bounds
+
+The `nft-link-refreshes` SQS event source caps concurrent invocations at the
+worker's reserved concurrency (20), so polling does not exceed its execution
+capacity. The source monitoring stack requires throttles in three of five
+one-minute periods before raising the refresher throttle alarm; invocation
+errors and OOMs still alarm immediately.
 
 `nftLinkRefresherLoop` applies a 90-second resolution budget, reduced to leave
 10 seconds before the Lambda deadline and processing-lock expiry. Its RPC
@@ -304,6 +473,10 @@ prices.
 
 `marketStatsLoop` publishes complete OpenSea order snapshots atomically with
 current orders and a persistent queue for reconciling disappeared orders.
+Existing price statistics run concurrently with an independent deadline; both
+tasks finish before the database context closes. Collection books are attempted
+before lifecycle maintenance, which prioritizes status reconciliation and
+checkpoints bounded REST catch-up batches.
 `marketDepthStreamLoop` records live order lifecycle events, while REST event
 catch-up and per-order status checks recover supported missed observations.
 Six `market_depth_*` tables retain immutable compressed archives, current orders,
@@ -350,12 +523,30 @@ block profiles through `/content-moderation`. Reports, private evidence
 snapshots, and requested personal hide/block actions commit atomically before
 the reported-content Bedrock assessment runs. Only a high-confidence urgent
 recommendation can temporarily quarantine a drop; ordinary results remain in
-the occasional moderator queue. Authorized moderators can restore,
+the developer review queue. Authorized developers can restore,
 quarantine, or remove drops and suspend or reinstate posting profiles.
-Moderator access is read from explicit configured profile IDs or a durable
-role; access checks never create roles. The prioritized queue uses opaque
+Privileged access requires a directly authenticated, non-proxy 6529 identity
+eligible for the saved 6529 Dev Team group
+(`6529-dev-team-xuahLBqRGQr6yX9R5yna4V`). All moderation access and action paths
+use the existing targeted eligibility rules without cross-request membership
+or group-definition caches. The actor must match the authenticated identity.
+Mention recipients and broader roles do not grant access. A missing group
+denies access; failed lookups return HTTP 503 and a bounded operational diagnostic.
+The prioritized queue uses opaque
 stable cursors. There is no continuous review queue or hold-before-publish
 state.
+
+The developer [moderation review API](../ops/docs/developer/moderation-review.md)
+captures REP, About, group-name, signaled pre-publication and reported-content
+evaluations in `content_moderation_items` and `content_moderation_evaluations`.
+It replaces moderation's Discord notifications with database evidence and
+versioned, idempotent human actions. Existing stricter public-field prompts
+remain separate from permissive wave-content prompts. Exact rejected content
+can receive a seven-day single-use resubmission permit; approval never publishes
+an archived draft. About and group-name suppression uses an exact-revision
+presentation overlay while preserving source values. Routine successes expire
+after 30 days, resolved evidence after 90 days, and compact history after one
+year; unresolved evidence and active rules retain their required provenance.
 
 MySQL stores viewer blocks and hides, reports, global drop and profile states,
 moderator roles, pre-publication decisions, and an append-only audit history.
@@ -383,6 +574,8 @@ Notification read/unread mutations also enqueue a `badge_refresh` job with the a
 Notification invalidation is emitted only after the push worker loads durable notification rows. It intentionally remains independent from mobile push registration, mute settings, and delivery success because those controls affect Firebase delivery only; the durable row remains visible through the authenticated REST feed. Duplicate SQS deliveries may repeat this idempotent invalidation without duplicating notification data.
 
 WebSocket notification subscription replacement is transactional. New connections, re-authentication, and identity resyncs each have a one-percent chance of running bounded, deterministic cleanup of expired and orphaned subscription rows, so cleanup capacity follows subscription churn without putting the sweep on every hot-path call. The repository identity update method is the sole write path for `ws_connections.identity_id` and keeps the primary subscription reset coupled to re-authentication.
+
+Typing updates use the server-authenticated connection profile when resolving private visibility groups. The sender must appear in the current child/parent membership intersection for the active wave before a typing message is sent; recipients retain the same intersection. Successful typing is acknowledged with 200, expected access failures keep client-error status, and unexpected failures emit only bounded operation-stage and error labels.
 
 ## API Boundary
 
@@ -558,6 +751,33 @@ There are two DB access modes:
 - Loop mode uses TypeORM initialization and the shared `SqlExecutor` abstraction. Schema ownership is entities-first: add or update TypeORM entity classes, export them from `src/entities/entities.ts`, and let `dbMigrationsLoop` run entity synchronization. Do not create SQL migrations for schema changes unless explicitly requested; migrations are reserved for one-off data work or views.
 
 The core architectural choice is that MySQL is both the system of record and the internal integration layer. This keeps the system understandable, but it makes table contracts, migrations, backfills, indexes, and worker idempotency especially important.
+
+The operational `wallet-transfer-analysis` CLI derives undeclared Memes wallet
+relationship candidates from existing `transactions` rows without inference or
+external chain requests. It maintains `wallet_transfer_pair_days`,
+`wallet_transfer_wallet_days`, and `wallet_transfer_analysis_states`. Daily
+directional counts and wallet denominators are partitioned by fixed 1,000-block
+source buckets, replaced transactionally, and checkpointed. Bounded updates
+reconcile the latest processed bucket and advance through new activity; explicit
+bounded rebuilds repair older processed ranges without skipping history.
+
+Reports score repeated reciprocal or concentrated one-way transfers over stored
+summaries. They exclude currently declared common-ownership pairs while keeping
+their activity in wallet denominators. Outputs include rule version, source and
+summary coverage, sample transaction evidence, and candidate preselection limits;
+scores are investigative rules rather than ownership probabilities. This first
+version has no funding analysis, public API, additional Lambda, or enabled
+schedule. The CLI uses `doInDbContext` with schema synchronization and Redis
+disabled. Its historical supervisor keeps a single connection pool, binds
+CloudWatch monitoring to the verified database identity, pauses on load or
+missing metrics, and uses a dedicated advisory-lock connection without a long
+transaction. It persists a fixed historical target and pause/stop state.
+Deploy `dbMigrationsLoop` with `db_schema_scope=wallet-transfer-analysis` to
+create only its three derived tables, without synchronizing unrelated entities
+or running unrelated data migrations. Daily moderation-review retention checks
+its required schema before running, allowing its separate schema rollout to
+remain pending after a scoped deployment. Then install the reviewed CLI on the
+operator host. See the [wallet transfer analysis runbook](../ops/docs/operations/wallet-transfer-analysis.md).
 
 Main Stage Meme-card associations are stored separately in
 `meme_card_drop_mappings`, with one unique row per Meme card ID and drop ID.
@@ -935,6 +1155,30 @@ contexts pin profiles, artist-record revisions, module answers and disclosure
 choices. Context row locks guard all content versions, and immutable revisions
 retain confirmation receipts and independent reviewer decisions. Explicit
 context/program grants are separate from Wave roles and proxy authentication.
+The additive `artwork_documentation_program_viewers` table holds profile or
+existing-group subjects for read-only program access. Access resolution uses
+the current site group eligibility evaluator scoped to granted IDs, with no
+copied member roster. Queue, draft, history, file and discussion reads share
+the existing authorization boundary. Every mutation uses the original artist
+and collaborator grants, so additional viewer reads cannot widen field, asset,
+discussion, assignment or review authority. Context responses expose original
+`mutation_capabilities` and visible `mutation_restricted_paths` for accurate
+editing controls. Upload-session reads retain viewer access and report
+`can_mutate` using original grants and the stored upload ownership, reference
+and lifecycle state. The IAM-only
+`set_program_viewers_v1` action inventories original grants and managed viewers,
+requires the reviewed inventory hash before replacing viewer configuration,
+and records a permanent replay fence. It preserves artist/context grants and
+coordinator authority. Deploy and invoke `dbMigrationsLoop` for the additive
+table, then the processor and API; no new storage infrastructure or HTTP
+operator endpoint is introduced.
+
+Context summaries include the authorized owner profile and visible artist
+identity answers. A single page-level query adds the earliest linked source
+receipt's identifiers and original title for readers with source-receipt access.
+The original title stays separate from the documented title; excerpted or
+malformed receipts expose no title. Summary enrichment does not query live Drop
+content, issue media URLs or change the database schema.
 
 Version 2 profiles collect only artwork answers and selected materials intended
 for eventual public publication; legacy private intake remains protected. Team
@@ -942,8 +1186,9 @@ questions use existing context discussion threads and are excluded from every
 artwork confirmation snapshot and public preview. Profile-aware server validation
 covers edits, identity pins, source imports, upgrades and confirmation. Asset
 reservation locks the context before its quota so it cannot race a publication
-profile upgrade using stale private-intake permissions. No new table or storage
-boundary is introduced by this follow-up; deploy the processor before the API.
+profile upgrade using stale private-intake permissions. Publication-only intake
+uses the existing storage boundary; the viewer table above is a separate
+additive schema change.
 The public-record preview removes restricted answers on the server; creating
 another context for a work requires an explicit artist choice and starts empty.
 See [the application contract and pilot runbook](artwork-documentation.md).
@@ -958,6 +1203,11 @@ mutex rows serialize reservations in `artwork_documentation_asset_quotas`, while
 fixity, access class and a durable processing lease.
 
 `artworkDocumentationProcessor` runs every minute with reserved concurrency one.
+Its C2PA reader uses upstream SDK 0.9.5 with a locally maintained installer patch.
+The patch replaces the ZIP extractor and pins native release hashes; SDK reader
+bytes remain unchanged. Both root and worker lockfiles expose its dependencies.
+See [C2PA package reproduction](../vendor/c2pa-node/README.md) for source integrity,
+supported platforms and upgrade checks.
 It requires a successful real GuardDuty scan before streaming byte-size/SHA-256
 verification and bounded format inspection. Small supported images can produce
 stripped private previews; large/vendor originals remain intact with honest
@@ -975,7 +1225,45 @@ repository variables in the existing deployment pipeline. See
 [archive operations](artwork-documentation-assets-operations.md) for exact units,
 limits, access, recovery, backup/restore and cleanup procedures.
 
+The generic version 3 artwork profile adds composable media descriptions, typed
+museum entities and an independently attributed institutional journal. Its
+asynchronous dossier exporter shares the single artwork worker: one long asset
+or export job is claimed per invocation. Dossiers contain original files,
+confirmation/review history and validated standards projections in BagIt/OCFL.
+Detailed technical reports and artist-record comparisons load separately from
+bounded context lists. See [reusable museum records](artwork-museum-record.md)
+for the model, permissions, standards and deployment dependencies.
+
 The strongest part of the architecture is its operational decomposition. Expensive, slow, and retryable work is mostly outside the request path, and the loop structure makes individual jobs independently deployable.
+
+Operational error delivery is a separate account-owned runtime under
+`ops/monitoring`, with its own dependency graph and OIDC deployment. Backend
+metadata-only stdout, a source-account CloudWatch Logs relay, source CloudWatch
+alarm forwarding and signed Sentry ingress feed separate normal/critical queues.
+Monitoring-owned dispatchers confirm webhook delivery, deduplicate with DynamoDB
+receipts and archive exhausted/permanent failures in S3. Queue canaries, endpoint
+probes and SNS fallback do not use application MySQL, Redis or its VPC. An
+outside-AWS uptime/dead-man provider remains a deployment requirement for
+AWS-wide failures. Moderation evidence is excluded from this operational contract.
+Source log subscription filters retain their permission dependency and form one
+chain in ordinal logical-ID order. CloudFormation therefore updates them serially,
+avoiding a parallel burst against CloudWatch Logs subscription API limits while
+preserving filter identities, destinations and patterns. This increases source
+stack update time; it does not rate-limit unrelated callers in the account/region.
+The NFT and wave score refresher throttle alarms require three breaching minutes
+out of five while invocation errors and OOM alarms remain immediate. Wave score
+refresh keeps one reserved execution; independent source-account SQS alarms
+detect sustained 30-minute backlog in either refresh queue and any visible
+dirty-refresh dead letter. Queue age is a transport guard, not proof of business
+completion. Protected alarm notifications include bounded infrastructure labels
+and numeric thresholds without forwarding free-form CloudWatch reasons.
+Separate monitoring-account CloudWatch dashboards combine bounded synthetic
+probe measurements and pipeline freshness with verified source-account REST API
+and production website ALB request metrics across regions. Dashboard access is
+separate from runtime permissions; queue canaries do not imply business-job
+completion. See the [health dashboard runbook](../ops/docs/operations/monitoring-health-dashboard.md).
+See [the package contract](../ops/monitoring/README.md) and
+[rollout/recovery runbook](../ops/docs/operations/isolated-operational-monitoring.md).
 
 The biggest tradeoff is the DB-centered coupling. Many services share tables directly, so changes need to be treated as cross-service contracts even when they look local. The safest pattern is additive schema changes first, backward-compatible writers/readers second, and cleanup only after all dependent Lambdas are deployed.
 
