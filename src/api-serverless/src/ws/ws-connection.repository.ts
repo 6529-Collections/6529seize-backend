@@ -1,5 +1,4 @@
 import {
-  ConnectionWrapper,
   dbSupplier,
   LazyDbAccessCompatibleService,
   SqlExecutor
@@ -23,8 +22,11 @@ import {
   userGroupsService,
   UserGroupsService
 } from '../community-members/user-groups.service';
-import { ANON_USER_ID } from './ws';
+import { ANON_USER_ID, SocketNotAvailableException } from './ws';
 import { randomInt } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
+
+type NotificationSubscription = { identityId: string; jwtExpiry: number };
 
 export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   private static readonly NOTIFICATION_CLEANUP_SAMPLE_DENOMINATOR = 100;
@@ -42,12 +44,25 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     super(sqlExecutorGetter);
   }
 
-  public async save(entity: WSConnectionEntity, ctx: RequestContext) {
-    await this.db.execute(
-      `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id) values (:connection_id, :jwt_expiry, :identity_id)`,
-      entity,
-      { wrappedConnection: ctx.connection }
-    );
+  public async save(
+    entity: WSConnectionEntity,
+    subscriptions: NotificationSubscription[],
+    ctx: RequestContext
+  ) {
+    await this.mutateConnection(ctx, async (transactionContext) => {
+      // The inserted connection row provides the same serialization point used
+      // by reauthentication, subscription sync and deletion.
+      await this.db.execute(
+        `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id) values (:connection_id, :jwt_expiry, :identity_id)`,
+        entity,
+        { wrappedConnection: transactionContext.connection }
+      );
+      await this.writeNotificationSubscriptions(
+        entity.connection_id,
+        subscriptions,
+        transactionContext
+      );
+    });
   }
 
   public async updateWaveId(
@@ -67,63 +82,136 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       identityId: string;
       jwtExpiry: number;
     },
+    subscriptions: NotificationSubscription[],
     ctx: RequestContext
   ) {
     // Keep this as the sole write path for ws_connections.identity_id. Any
     // future identity update must also replace notification subscriptions so
     // a re-authenticated connection cannot retain another identity's grants.
-    await this.db.execute(
-      `update ${WS_CONNECTIONS_TABLE}
-       set identity_id = :identityId,
-           jwt_expiry = :jwtExpiry
-       where connection_id = :connectionId`,
-      params,
-      { wrappedConnection: ctx.connection }
-    );
+    await this.mutateConnection(ctx, async (transactionContext) => {
+      await this.requireConnection(params.connectionId, transactionContext);
+      await this.db.execute(
+        `update ${WS_CONNECTIONS_TABLE}
+         set identity_id = :identityId,
+             jwt_expiry = :jwtExpiry
+         where connection_id = :connectionId`,
+        params,
+        { wrappedConnection: transactionContext.connection }
+      );
+      await this.writeNotificationSubscriptions(
+        params.connectionId,
+        subscriptions,
+        transactionContext
+      );
+    });
   }
 
   public async deleteByConnectionId(connectionId: string, ctx: RequestContext) {
-    await this.deleteNotificationSubscriptions(connectionId, ctx);
-    await this.db.execute(
-      `delete from ${WS_CONNECTIONS_TABLE} where connection_id = :connectionId`,
-      { connectionId },
-      { wrappedConnection: ctx.connection }
-    );
+    await this.mutateConnection(ctx, async (transactionContext) => {
+      // Missing connections may still have legacy orphan grants to remove.
+      await this.lockConnection(connectionId, transactionContext);
+      await this.deleteNotificationSubscriptions(
+        connectionId,
+        transactionContext
+      );
+      await this.db.execute(
+        `delete from ${WS_CONNECTIONS_TABLE} where connection_id = :connectionId`,
+        { connectionId },
+        { wrappedConnection: transactionContext.connection }
+      );
+    });
   }
 
   public async replaceNotificationSubscriptions(
     connectionId: string,
-    subscriptions: { identityId: string; jwtExpiry: number }[],
+    subscriptions: NotificationSubscription[],
     ctx: RequestContext
   ): Promise<void> {
-    const replace = async (connection: ConnectionWrapper<any>) => {
-      await this.deleteNotificationSubscriptions(connectionId, {
-        ...ctx,
-        connection
-      });
-      if (!subscriptions.length) {
+    await this.mutateConnection(ctx, async (transactionContext) => {
+      await this.requireConnection(connectionId, transactionContext);
+      await this.writeNotificationSubscriptions(
+        connectionId,
+        subscriptions,
+        transactionContext
+      );
+    });
+  }
+
+  private async mutateConnection(
+    ctx: RequestContext,
+    mutation: (ctx: RequestContext) => Promise<void>
+  ): Promise<void> {
+    // A deadlock aborts the whole transaction. Its owner must replay the whole
+    // unit: never retry just our statements inside somebody else's transaction.
+    if (ctx.connection) {
+      await mutation(ctx);
+      return;
+    }
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.db.executeNativeQueriesInTransaction((connection) =>
+          mutation({ ...ctx, connection })
+        );
         return;
+      } catch (error) {
+        if (
+          attempt >= 3 ||
+          !error ||
+          typeof error !== 'object' ||
+          !('code' in error) ||
+          error.code !== 'ER_LOCK_DEADLOCK'
+        ) {
+          throw error;
+        }
+        await delay(randomInt(10 * attempt, 25 * attempt + 1));
       }
-      const params: Record<string, string | number> = { connectionId };
-      const values = subscriptions.map(({ identityId, jwtExpiry }, index) => {
+    }
+  }
+
+  private async lockConnection(
+    connectionId: string,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const connections = await this.db.execute<{ connection_id: string }>(
+      `select connection_id from ${WS_CONNECTIONS_TABLE}
+       where connection_id = :connectionId
+       order by identity_id for update`,
+      { connectionId },
+      { wrappedConnection: ctx.connection }
+    );
+    return connections.length > 0;
+  }
+
+  private async requireConnection(connectionId: string, ctx: RequestContext) {
+    if (!(await this.lockConnection(connectionId, ctx))) {
+      throw new SocketNotAvailableException();
+    }
+  }
+
+  private async writeNotificationSubscriptions(
+    connectionId: string,
+    subscriptions: NotificationSubscription[],
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.deleteNotificationSubscriptions(connectionId, ctx);
+    if (!subscriptions.length) {
+      return;
+    }
+    const params: Record<string, string | number> = { connectionId };
+    const values = [...subscriptions]
+      .sort((left, right) => left.identityId.localeCompare(right.identityId))
+      .map(({ identityId, jwtExpiry }, index) => {
         params[`identityId${index}`] = identityId;
         params[`jwtExpiry${index}`] = jwtExpiry;
         return `(:connectionId, :identityId${index}, :jwtExpiry${index})`;
       });
-      await this.db.execute(
-        `insert into ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}
-           (connection_id, identity_id, jwt_expiry)
-         values ${values.join(', ')}`,
-        params,
-        { wrappedConnection: connection }
-      );
-    };
-
-    if (ctx.connection) {
-      await replace(ctx.connection);
-    } else {
-      await this.db.executeNativeQueriesInTransaction(replace);
-    }
+    await this.db.execute(
+      `insert into ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}
+         (connection_id, identity_id, jwt_expiry)
+       values ${values.join(', ')}`,
+      params,
+      { wrappedConnection: ctx.connection }
+    );
   }
 
   async maybeCleanupStaleNotificationSubscriptions(): Promise<void> {
