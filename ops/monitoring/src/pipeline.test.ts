@@ -63,6 +63,19 @@ function harness() {
     async readGroup(key) {
       return groups.get(key) ?? null;
     },
+    async prepareDigest(_id, _owner, group) {
+      // This legacy fixture has no destination-bound first-message receipt.
+      return {
+        version: 1,
+        groupKey: group.key,
+        count: group.count,
+        mode: 'POST',
+        reason: 'NO_ACK'
+      };
+    },
+    async fallbackDigest() {
+      assert.fail('legacy summary cannot fall back from an edit');
+    },
     async heartbeat(lane) {
       heartbeat.push(lane);
     }
@@ -73,7 +86,10 @@ function harness() {
     },
     async deliver(payload) {
       sent.push(payload);
-      return '123';
+      return { messageId: '123', operation: 'POST' };
+    },
+    async edit() {
+      assert.fail('legacy summary has no edit target');
     },
     async archive(work) {
       archived.push(work);

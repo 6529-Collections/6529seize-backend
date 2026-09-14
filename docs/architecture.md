@@ -794,6 +794,34 @@ the anchors or winner sequence are inconsistent. `claimsBuilder` adds future
 mappings in the same transaction as claim creation after confirming that the
 drop is a winner in the configured Main Stage wave.
 
+`claimsMediaArweaveUploader` claims a per-claim upload lease on the MySQL writer
+before publishing. The nullable `minting_claims.media_upload_lease_token` and
+`media_upload_lease_until` columns fence media checkpoints, completion, and
+cleanup to the current owner. The lease lasts 20 minutes, exceeding the worker's
+15-minute Lambda execution limit; an expired owner cannot overwrite a successor.
+Active duplicate deliveries retry, while `media_uploading=false` remains the
+completion/idle signal. Checkpointed media can be reused on retry. This prevents
+overlapping owners but does not guarantee exactly-once Arweave publication: a
+crash or ambiguous external response before a checkpoint can still require
+republication.
+
+Deploy the additive schema before the uploader using `dbMigrationsLoop` with
+the explicit `db_schema_scope=claims-media-upload` input. The deploy workflow
+automatically invokes that scope after verifying the Lambda artifact and
+requires its exact acknowledgment. This scope initializes without synchronization,
+inspects the live `MintingClaimEntity` schema plan, and executes only the exact
+missing nullable lease-column additions. A missing claims table, incompatible
+existing lease column, or any other schema change fails before DDL. An already
+aligned table is a no-op. Unrelated migrations and maintenance are skipped.
+MySQL additions commit independently: an application or post-check failure stops
+the deployment but does not undo a completed addition. Diagnose the failure,
+then rerun this same guarded scope; it inspects the remaining plan and safely
+does nothing when both compatible columns are already present. Do not widen
+the scope to work around unrelated schema drift.
+Omitting the input retains the existing full-sync behavior. Keep
+the nullable columns when rolling back the worker, and avoid overlapping old
+workers that do not honor the lease with the new implementation.
+
 Profile-native CMS packages are stored in `profile_cms_packages`. The table
 keeps the complete CMS V1 package JSON, indexed profile/package/version/hash
 fields, publication state, primary-package flags, validation results, and

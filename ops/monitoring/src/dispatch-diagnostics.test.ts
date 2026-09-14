@@ -55,6 +55,7 @@ test('failure and every terminal outcome retain hashed work and message identiti
     });
     for (const outcome of [
       'DELIVERED',
+      'EDITED',
       'GROUPED',
       'HEARTBEAT',
       'NO_REPEAT',
@@ -70,7 +71,7 @@ test('failure and every terminal outcome retain hashed work and message identiti
       );
     }
   });
-  assert.equal(entries.length, 7);
+  assert.equal(entries.length, 8);
   for (const entry of entries) {
     assert.equal(entry.workHash, workHash);
     assert.equal(entry.sqsMessageHash, digest(input.messageId));
