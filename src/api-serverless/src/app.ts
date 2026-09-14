@@ -89,6 +89,10 @@ import { getJwtSecret } from './auth/auth';
 
 import * as awsServerlessExpressMiddleware from 'aws-serverless-express/middleware';
 import { randomUUID } from 'crypto';
+import {
+  recoverUnavailableWebSocket,
+  WebSocketControlOperation
+} from '@/api/ws/ws-control-failure';
 import * as crypto from 'node:crypto';
 import { Strategy as AnonymousStrategy } from 'passport-anonymous';
 import * as process from 'process';
@@ -1774,11 +1778,13 @@ async function initializeApp() {
         socket.send(JSON.stringify({ routeKey: '$connect', connected: true }));
 
         socket.on('message', async (rawData) => {
+          let controlOperation: WebSocketControlOperation | undefined;
           try {
             const message = JSON.parse(rawData.toString());
 
             switch (message.type) {
               case WsMessageType.AUTHENTICATE: {
+                controlOperation = WsMessageType.AUTHENTICATE;
                 const accessToken = (
                   message.access_token ?? message.token
                 )?.toString();
@@ -1793,7 +1799,6 @@ async function initializeApp() {
                   );
                   break;
                 }
-                activeIdentityId = authenticated.identityId;
                 await appWebSockets.authenticateConnection(
                   {
                     connectionId,
@@ -1802,6 +1807,7 @@ async function initializeApp() {
                   },
                   {}
                 );
+                activeIdentityId = authenticated.identityId;
                 socket.send(
                   JSON.stringify({
                     type: WsMessageType.AUTHENTICATED,
@@ -1814,6 +1820,7 @@ async function initializeApp() {
                 break;
               }
               case WsMessageType.SYNC_NOTIFICATION_IDENTITIES: {
+                controlOperation = WsMessageType.SYNC_NOTIFICATION_IDENTITIES;
                 const subscriptions =
                   await authenticateNotificationIdentityTokens(
                     message.access_tokens
@@ -1880,6 +1887,15 @@ async function initializeApp() {
                 );
             }
           } catch (err) {
+            if (
+              await recoverUnavailableWebSocket(
+                err,
+                controlOperation,
+                connectionId
+              )
+            ) {
+              return;
+            }
             socket.send(
               JSON.stringify({
                 error: 'Failed to process message'
