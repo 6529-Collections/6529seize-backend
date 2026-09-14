@@ -14,7 +14,8 @@ const METADATA_KEYS_SKIP = new Set([
   'about_artist',
   'airdrop_config',
   'allowlist_batches',
-  'additional_media'
+  'additional_media',
+  'proposal_frame'
 ]);
 
 const DATA_KEY_TO_TRAIT_TYPE: Record<string, string> = {

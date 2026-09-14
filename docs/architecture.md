@@ -22,6 +22,32 @@ The resizer's HTTP API uses AWS_PROXY payload 1.0 without request templates;
 request bodies remain inside the HTTP event envelope and cannot become this
 top-level operator payload.
 
+## Proposal card media
+
+Authenticated `POST /drop-media/proposal-frame` builds a bounded, fixed HTML
+document around the submitter's uploaded image/video or recognized decentralized
+artwork. Tracked image uploads must have completed sanitization. The endpoint
+uses the existing upload profile authentication and API rate limiter, accepts
+no client-authored HTML, and never fetches the source. Its versioned template
+embeds the original media URL, with interactive HTML confined to a sandboxed
+iframe, and publishes only `index.html` through the existing IPFS directory
+uploader. The returned `text/html` URL follows existing decentralized HTML drop
+validation and mint animation handling; the frontend retains a separate
+`additional_media.preview_image` for static previews. Submitter-provided
+`proposal_frame` editing metadata is excluded from public NFT traits and is
+never used to authorize publishing or select mint media. Deploy `claimsBuilder`
+(which excludes that metadata from traits) and `api` before the frontend consumer.
+No new service, database schema, or migration is required.
+
+Decentralized artwork remains untrusted: accepting a reference does not verify
+ownership, MIME, or content safety. The declared MIME selects a rendering element,
+not a trust level. An image/video response cannot execute as a document through
+those elements, and HTML always uses `sandbox="allow-scripts"` without same-origin,
+popup, download, or top-navigation permissions. This preserves the existing
+interactive-art submission model without fetching arbitrary source content on
+the server. The template applies attribute escaping before every media branch;
+its separate URL guard also protects local previews, which do not use this API.
+
 ## Profile collecting and marketplace operations
 
 The API owns `/collect/*` and `/market/*`. Collecting derives versioned catalogs
