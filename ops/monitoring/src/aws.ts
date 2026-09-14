@@ -14,6 +14,7 @@ import {
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { SNSClient, PublishCommand } from '@aws-sdk/client-sns';
 import { setTimeout as delay } from 'node:timers/promises';
+import { randomInt } from 'node:crypto';
 import { Alert, hash } from './contract.js';
 import type { Group, Store, Work } from './pipeline.js';
 import { DeliveryError } from './webhook.js';
@@ -88,7 +89,8 @@ async function writeGroupWithRetry(
       )
         throw error;
       // Two waits of 50–100ms and 100–200ms avoid synchronized writers.
-      await delay(50 * 2 ** attempt * (1 + Math.random()), undefined, {
+      const minimumWaitMs = 50 * 2 ** attempt;
+      await delay(randomInt(minimumWaitMs, minimumWaitMs * 2), undefined, {
         signal: abortSignal
       }).catch(() => {
         throw error;
