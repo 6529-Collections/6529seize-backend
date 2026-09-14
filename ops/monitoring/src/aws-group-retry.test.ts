@@ -34,7 +34,6 @@ function harness(t: TestContext) {
     if (originalTable === undefined) delete process.env.RECEIPTS_TABLE;
     else process.env.RECEIPTS_TABLE = originalTable;
   });
-  t.mock.method(Math, 'random', () => 0);
   const receipt: { groupKey?: string; outcome?: string } = {};
   const group = { count: 1, firstEventId: 'earlier-event', alert };
   const signals: (AbortSignal | undefined)[] = [];
@@ -101,6 +100,9 @@ function harness(t: TestContext) {
     },
     async deliver() {
       assert.fail('a repeat must group without sending');
+    },
+    async edit() {
+      assert.fail('a repeat must group without editing');
     }
   };
   return {

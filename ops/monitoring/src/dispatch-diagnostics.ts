@@ -6,10 +6,13 @@ const stages = [
   'RESERVE',
   'GROUP',
   'DIGEST_READ',
+  'DIGEST_PLAN',
+  'DIGEST_FALLBACK',
   'SCHEDULE',
   'RATE_SLOT',
   'SECRET',
   'WEBHOOK',
+  'WEBHOOK_EDIT',
   'COMPLETE',
   'RELEASE',
   'HEARTBEAT',
@@ -19,6 +22,7 @@ const stages = [
 export type DispatchStage = (typeof stages)[number];
 const outcomes = [
   'DELIVERED',
+  'EDITED',
   'GROUPED',
   'HEARTBEAT',
   'NO_REPEAT',
@@ -34,7 +38,8 @@ const deliveryCauses = [
   'TRANSPORT_TIMEOUT',
   'TRANSPORT_OTHER',
   'INVALID_DELIVERY_RESPONSE',
-  'INVALID_DELIVERY_CONFIGURATION'
+  'INVALID_DELIVERY_CONFIGURATION',
+  'DELIVERY_DESTINATION_CHANGED'
 ] as const;
 export interface DeliveryErrorDetails {
   cause: (typeof deliveryCauses)[number];
