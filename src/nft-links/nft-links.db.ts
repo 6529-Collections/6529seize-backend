@@ -3,12 +3,23 @@ import { NftLinkEntity } from '@/entities/INftLink';
 import { RequestContext } from '@/request.context';
 import { NFT_LINKS_TABLE } from '@/constants';
 import { Time } from '@/time';
-import type { NormalizedNftCard } from '@/nft-links/types';
+import type { CanonicalLink, NormalizedNftCard } from '@/nft-links/types';
+import {
+  isNftLinkRefreshDue,
+  type NftLinkPageRetryState
+} from './nft-link-page-retry';
 import { DbPoolName } from '@/db-query.options';
 import type {
   NftLinkMediaPreviewKind,
   NftLinkMediaPreviewStatus
 } from '@/nft-links/nft-link-media-preview.types';
+
+export class NftLinkResolutionLockLostError extends Error {
+  constructor() {
+    super('NFT link resolution lock is no longer owned');
+    Object.setPrototypeOf(this, NftLinkResolutionLockLostError.prototype);
+  }
+}
 
 export class NftLinksDb extends LazyDbAccessCompatibleService {
   public async findByCanonicalIdForNotification(
@@ -81,11 +92,11 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
 
   public async lockForProcessing(
     {
-      canonicalId,
+      canonical,
       lockTTL,
       updateMinInterval
     }: {
-      canonicalId: string;
+      canonical: CanonicalLink;
       lockTTL: Time;
       updateMinInterval: Time;
     },
@@ -95,6 +106,8 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
       ctx.timer?.start(`${this.constructor.name}->lockForProcessing`);
       return await this.db.executeNativeQueriesInTransaction(
         async (connection) => {
+          const canonicalId = canonical.canonicalId;
+          const now = Time.currentMillis();
           const entity = await this.db
             .oneOrNull<NftLinkEntity>(
               `
@@ -106,24 +119,33 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
           `,
               {
                 canonicalId,
-                lockedSince: Time.now().minus(lockTTL).toMillis(),
-                maxLastUpdated: Time.now().minus(updateMinInterval).toMillis()
+                lockedSince: now - lockTTL.toMillis(),
+                maxLastUpdated: now - updateMinInterval.toMillis()
               },
               { wrappedConnection: connection }
             )
             .then((res) => this.deserializeDullData(res));
-          if (entity) {
+          if (
+            entity &&
+            isNftLinkRefreshDue(
+              entity,
+              canonical,
+              now,
+              updateMinInterval.toMillis()
+            )
+          ) {
             await this.db.execute(
               `
             update ${NFT_LINKS_TABLE} 
             set is_locked_since = :now
             where canonical_id = :canonicalId
             `,
-              { now: Time.currentMillis(), canonicalId },
+              { now, canonicalId },
               { wrappedConnection: connection }
             );
+            return { ...entity, is_locked_since: now };
           }
-          return entity;
+          return null;
         }
       );
     } finally {
@@ -138,6 +160,7 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
       | 'price'
       | 'price_currency'
       | 'full_data'
+      | 'refresh_retry_state'
       | 'media_uri'
       | 'media_preview_status'
       | 'media_preview_kind'
@@ -194,34 +217,53 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
   async updateWithFailure(
     {
       canonicalId,
-      message
+      message,
+      lockStamp,
+      attemptedAt,
+      retryState
     }: {
       canonicalId: string;
       message: string;
+      lockStamp: number;
+      attemptedAt: number;
+      retryState: NftLinkPageRetryState | null;
     },
     ctx: RequestContext
   ) {
     try {
       ctx.timer?.start(`${this.constructor.name}->updateWithFailure`);
-      await this.db.execute(
+      const result = await this.db.execute(
         `
             update ${NFT_LINKS_TABLE} 
               set 
                 last_tried_to_update = :now,
                 last_error_message = :message,
+                refresh_retry_state = :retryState,
                 is_locked_since = null,
                 failed_since = ifnull(failed_since, :now)
-            where canonical_id = :canonicalId
+            where canonical_id = :canonicalId and is_locked_since = :lockStamp
         `,
-        { canonicalId, message, now: Time.currentMillis() },
+        {
+          canonicalId,
+          message,
+          now: attemptedAt,
+          lockStamp,
+          retryState: retryState ? JSON.stringify(retryState) : null
+        },
         { wrappedConnection: ctx.connection }
       );
+      if (this.db.getAffectedRows(result) !== 1)
+        throw new NftLinkResolutionLockLostError();
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->updateWithFailure`);
     }
   }
 
-  async updateWithSuccess(data: NormalizedNftCard, ctx: RequestContext) {
+  async updateWithSuccess(
+    data: NormalizedNftCard,
+    lockStamp: number,
+    ctx: RequestContext
+  ) {
     try {
       ctx.timer?.start(`${this.constructor.name}->updateWithSuccess`);
       const identifiers = data.identifier.identifiers as any;
@@ -234,13 +276,14 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
         media?.kind === 'animation'
           ? (media.animationUrl ?? media.imageUrl ?? null)
           : (media?.imageUrl ?? media?.animationUrl ?? null);
-      await this.db.execute(
+      const result = await this.db.execute(
         `
             update ${NFT_LINKS_TABLE} 
               set 
                 last_tried_to_update = :now,
                 last_successfully_updated = :now,
                 last_error_message = null,
+                refresh_retry_state = null,
                 is_locked_since = null,
                 failed_since = null,
                 full_data = :fullData,
@@ -252,10 +295,11 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
                 media_uri = :media_uri,
                 price = :price,
                 price_currency = :price_currency
-            where canonical_id = :canonicalId
+            where canonical_id = :canonicalId and is_locked_since = :lockStamp
         `,
         {
           canonicalId: data.identifier.canonicalId,
+          lockStamp,
           platform: data.identifier.platform,
           chain: identifiers.chain ?? null,
           contract: identifiers.contract ?? null,
@@ -273,6 +317,8 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
         },
         { wrappedConnection: ctx.connection }
       );
+      if (this.db.getAffectedRows(result) !== 1)
+        throw new NftLinkResolutionLockLostError();
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->updateWithSuccess`);
     }

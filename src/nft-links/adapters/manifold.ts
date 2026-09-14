@@ -5,6 +5,7 @@ import { numbers } from '@/numbers';
 import { formatTokenAmount } from '@/nft-links/lib/onchain';
 import { CanonicalLink } from '@/nft-links/types';
 import { env } from '@/env';
+import { requiredNftPage404 } from '../nft-link-page-retry';
 
 type AnyObj = Record<string, any>;
 
@@ -77,8 +78,10 @@ export class ManifoldAdapter implements PlatformAdapter {
           }
         });
         instanceId = safeExtractInstanceIdFromHtml(html);
-      } catch {
-        // ignore
+      } catch (error) {
+        const pageFailure = requiredNftPage404(error, canonical);
+        if (pageFailure) throw pageFailure;
+        // Other page failures retain the existing resolution/retry behavior.
       }
     }
 
