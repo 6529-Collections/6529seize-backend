@@ -267,3 +267,5 @@ export const CONTENT_MODERATION_EVALUATIONS_TABLE =
 
 export const PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE =
   'push_notification_device_installations';
+export const PUSH_NOTIFICATION_DEVICE_LOGOUT_FENCES_TABLE =
+  'push_notification_device_logout_fences';

@@ -151,10 +151,8 @@ it('counts all connected profiles during partial token rotation', async () => {
 
 it('uses one lock across tokens belonging to the same device', async () => {
   await withDeviceBadgeLock(device, async () => undefined);
-  await withDeviceBadgeLock(
-    { ...device, token: 'rotated' },
-    async () => undefined
-  );
+  const rotated = { ...device, token: 'rotated' };
+  await withDeviceBadgeLock(rotated, async () => undefined);
   expect(redisSet.mock.calls[0][0]).toBe(redisSet.mock.calls[1][0]);
 });
 

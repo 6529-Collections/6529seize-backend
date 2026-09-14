@@ -293,3 +293,4 @@ export {
 } from './IModerationReview';
 
 export { PushInstallationEntity } from './IPushInstallation';
+export { PushDeviceLogoutFenceEntity } from './IPushDeviceLogoutFence';

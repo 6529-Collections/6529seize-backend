@@ -87,7 +87,7 @@ async function refreshTokenGroup(
 export async function refreshInstallationBadge(
   deviceId: string
 ): Promise<void> {
-  await withDeviceBadgeLock({ device_id: deviceId, token: '' }, async () => {
+  await withDeviceBadgeLock({ device_id: deviceId }, async () => {
     const installation = await getDataSource()
       .getRepository(PushInstallationEntity)
       .findOneBy({ device_id: deviceId });

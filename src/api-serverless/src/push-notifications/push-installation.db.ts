@@ -3,14 +3,17 @@ import {
   PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE,
   PUSH_NOTIFICATION_DEVICES_TABLE,
   PUSH_NOTIFICATION_SETTINGS_TABLE,
-  WALLET_AUTH_SESSIONS_TABLE
+  PUSH_NOTIFICATION_DEVICE_LOGOUT_FENCES_TABLE
 } from '@/constants';
 import { PushInstallationEntity } from '@/entities/IPushInstallation';
 import { PushNotificationDevice } from '@/entities/IPushNotification';
 import { CustomApiCompliantException, ForbiddenException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
-import { hashSecret } from '@/api/auth/auth-session-v2';
+import {
+  requireLiveNativeSession,
+  revokeNativeSessions
+} from './push-logout-sessions';
 
 export interface InstallationProof {
   device_id: string;
@@ -39,44 +42,18 @@ function matchesToken(stored: string, provided: string | undefined): boolean {
 const conflict = () =>
   new CustomApiCompliantException(409, 'Stale push installation revision');
 
-type FreshClaimAuthorization =
-  | 'authenticated-registration'
-  | InstallationRevocation['sessions'];
+type InstallationOperation = 'registration' | 'revocation';
 
-async function authorizeFreshClaim(
-  installation: PushInstallationEntity,
-  legacy: PushNotificationDevice[],
-  authorization: FreshClaimAuthorization,
-  ctx: RequestContext
-): Promise<void> {
-  // Existing installations prove ownership through their retained token/rows.
-  if (
-    legacy.length ||
-    installation.token ||
-    authorization === 'authenticated-registration'
-  )
-    return;
-  // Logout can precede the first push registration. Require an actual native
-  // credential in that case; an arbitrary device ID and new secret are not auth.
-  // Keep the matched session valid until the claim commits against concurrent
-  // revocation/rotation. The refresh hash is unique; stop at the first match.
-  for (const session of authorization) {
-    const authenticated = await sqlExecutor.oneOrNull<{ id: string }>(
-      `SELECT id FROM ${WALLET_AUTH_SESSIONS_TABLE}
-       WHERE LOWER(address) = :address AND refresh_token_hash = :hash
-       AND client_type = 'native' AND revoked_at IS NULL AND expires_at > :now
-       LIMIT 1 FOR UPDATE`,
-      {
-        address: session.address.toLowerCase(),
-        hash: hashSecret(session.native_refresh_token),
-        now: new Date()
-      },
-      { wrappedConnection: ctx.connection }
-    );
-    if (authenticated) return;
-  }
-  throw new ForbiddenException(
-    'A native session is required to claim an unregistered push installation'
+// The installation row already serializes this read; avoid missing-key gap locks.
+async function getLogoutFence(proof: InstallationProof, ctx: RequestContext) {
+  return sqlExecutor.oneOrNull<{ revision: number }>(
+    `SELECT revision FROM ${PUSH_NOTIFICATION_DEVICE_LOGOUT_FENCES_TABLE}
+     WHERE device_id = :device_id AND secret_hash = :secret_hash`,
+    {
+      device_id: proof.device_id,
+      secret_hash: digest(proof.installation_secret!)
+    },
+    { wrappedConnection: ctx.connection }
   );
 }
 
@@ -84,7 +61,7 @@ async function authorizeFreshClaim(
 async function lockInstallation(
   proof: InstallationProof,
   ctx: RequestContext,
-  authorization: FreshClaimAuthorization
+  operation: InstallationOperation
 ) {
   if (!ctx.connection?.connection) {
     throw new Error('Push installation locks require a transaction connection');
@@ -119,7 +96,12 @@ async function lockInstallation(
       { device_id: proof.device_id },
       options
     );
-    await authorizeFreshClaim(installation, legacy, authorization, ctx);
+    // No existing registration means no proof of ownership of this device ID.
+    // Early logout may only fence its own secret; authenticated registration
+    // remains free to establish the installation using a different credential.
+    if (!legacy.length && !installation.token && operation === 'revocation') {
+      return installation;
+    }
     // Device IDs are public to registered profiles. A caller must know the
     // existing FCM token, and cannot add its own token row to claim others.
     const retainedTokenMismatch =
@@ -134,14 +116,23 @@ async function lockInstallation(
         'Legacy installation token ownership is ambiguous'
       );
     }
+    const fence = await getLogoutFence(proof, ctx);
+    installation.revision = fence?.revision ?? installation.revision;
     installation.secret_hash = digest(proof.installation_secret);
     installation.token =
       legacy[0]?.token ?? installation.token ?? proof.token ?? null;
     installation.platform =
       legacy[0]?.platform ?? installation.platform ?? null;
     await sqlExecutor.execute(
-      `UPDATE ${PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE} SET secret_hash = :secret_hash, token = :token, platform = :platform WHERE device_id = :device_id`,
+      `UPDATE ${PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE} SET secret_hash = :secret_hash, token = :token, platform = :platform, revision = :revision WHERE device_id = :device_id`,
       { ...installation },
+      options
+    );
+    // The authoritative installation now owns this credential's revision fence.
+    await sqlExecutor.execute(
+      `DELETE FROM ${PUSH_NOTIFICATION_DEVICE_LOGOUT_FENCES_TABLE}
+       WHERE device_id = :device_id AND secret_hash = :secret_hash`,
+      { device_id: proof.device_id, secret_hash: installation.secret_hash },
       options
     );
   }
@@ -160,7 +151,7 @@ export async function registerInstallationDevice(
       const installation = await lockInstallation(
         { ...device, ...credential },
         { ...ctx, connection },
-        'authenticated-registration'
+        'registration'
       );
       if (
         installation.secret_hash &&
@@ -202,8 +193,12 @@ export async function revokeInstallation(
         const installation = await lockInstallation(
           request,
           { ...ctx, connection },
-          request.sessions
+          'revocation'
         );
+        const transactionCtx = { ...ctx, connection };
+        if (!installation.secret_hash) {
+          return revokeBeforeRegistration(request, transactionCtx);
+        }
         // A retry must never delete a profile deliberately reconnected later.
         if (request.revision <= installation.revision) return installation;
         if (request.revision !== installation.revision + 1) throw conflict();
@@ -227,20 +222,7 @@ export async function revokeInstallation(
             options
           );
         }
-        // Possession of each refresh token authorizes only that exact native
-        // session. Never revoke the address's sessions on other installations.
-        for (const session of request.sessions) {
-          await sqlExecutor.execute(
-            `UPDATE ${WALLET_AUTH_SESSIONS_TABLE} SET revoked_at = COALESCE(revoked_at, :now)
-           WHERE LOWER(address) = :address AND refresh_token_hash = :hash AND client_type = 'native'`,
-            {
-              address: session.address.toLowerCase(),
-              hash: hashSecret(session.native_refresh_token),
-              now: new Date()
-            },
-            options
-          );
-        }
+        await revokeNativeSessions(request.sessions, transactionCtx);
         await sqlExecutor.execute(
           `UPDATE ${PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE} SET revision = :revision WHERE device_id = :device_id`,
           { device_id: request.device_id, revision: request.revision },
@@ -255,4 +237,31 @@ export async function revokeInstallation(
   } finally {
     ctx.timer?.stop(timer);
   }
+}
+
+/** Caller holds the shared installation row lock, but this row grants no ownership. */
+async function revokeBeforeRegistration(
+  request: InstallationRevocation,
+  ctx: RequestContext
+): Promise<Pick<PushInstallationEntity, 'device_id' | 'revision'>> {
+  const fence = await getLogoutFence(request, ctx);
+  if (!fence) await requireLiveNativeSession(request.sessions, ctx);
+  const currentRevision = fence?.revision ?? 0;
+  if (request.revision <= currentRevision) {
+    return { device_id: request.device_id, revision: currentRevision };
+  }
+  if (request.revision !== currentRevision + 1) throw conflict();
+  await revokeNativeSessions(request.sessions, ctx);
+  await sqlExecutor.execute(
+    `INSERT INTO ${PUSH_NOTIFICATION_DEVICE_LOGOUT_FENCES_TABLE} (device_id, secret_hash, revision)
+     VALUES (:device_id, :secret_hash, :revision)
+     ON DUPLICATE KEY UPDATE revision = VALUES(revision)`,
+    {
+      device_id: request.device_id,
+      secret_hash: digest(request.installation_secret),
+      revision: request.revision
+    },
+    { wrappedConnection: ctx.connection }
+  );
+  return { device_id: request.device_id, revision: request.revision };
 }

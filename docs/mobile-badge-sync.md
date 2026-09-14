@@ -121,11 +121,14 @@ missing settings continue to use `DEFAULT_PUSH_NOTIFICATION_SETTINGS` at read
 time. Session creation normalizes addresses to lowercase. Logout comparisons
 normalize both stored and supplied addresses, so older mixed-case rows match
 independently of database collation. The unique refresh-token-hash lookup still
-restricts the candidate session. The early-claim session lookup intentionally holds its matching
-row lock until commit against concurrent revocation/rotation; the refresh hash
-is unique and the search stops on its first valid session.
-Fresh claims allow at most 50 session lookups per request; include their primary
-database latency and lock contention when verifying the API limiter at rollout.
+restricts the candidate session. An early logout requires a live native session,
+but that proof never grants device ownership. Session proof uses a non-locking
+read; native session updates acquire row locks in refresh-hash/address order,
+including when different installations supply the same sessions in reverse order.
+Auth session creation/refresh/revocation does not acquire push-table locks, so it
+does not introduce the reverse sessions-to-installations lock order.
+The API accepts at most 50 session pairs per request; include their primary
+latency when verifying the limiter at rollout.
 
 A single logout deletes `push_notification_devices` and settings for the selected
 profile/device. Sign-out-all deletes every registration/settings row for that
@@ -143,10 +146,16 @@ idempotent and cannot erase a later login; new registration must present the
 current revision. Registration and revocation lock the same database row.
 Locking rejects a missing transaction connection before issuing any query.
 Unclaimed installations start at revision zero, and the API requires revoke
-revisions of at least one. Advancing a revision establishes and retains the
-credential in the same transaction; it never clears ownership. Consequently, a
-valid stale revoke always verifies an already-claimed installation's credential
-before returning, and cannot claim it with a replacement secret.
+revisions of at least one. Once claimed through registration or legacy token
+proof, ownership is retained and verified before accepting a stale retry.
+Before registration, a separate `push_notification_device_logout_fences` row
+stores only `(device_id, secret_hash, revision)`. It fences that secret's delayed
+registration requests without claiming the device ID or retaining an unverified
+FCM token. Another credential can still register the device at revision zero.
+Authenticated registration transfers its own fence into the installation row and
+deletes that fence in the same transaction. Other secrets' fences confer no
+ownership and cannot revoke the now-claimed installation. Unconsumed fences are
+retained for offline retry correctness; no expiry or background purge is assumed.
 If the client never retries a failed logout queue handoff, the registrations
 remain deleted but the badge can stay stale. The retained installation record
 does not schedule its own reconciliation. Recovery requires the client to retry
@@ -181,11 +190,11 @@ to match their session records; that authentication policy is unchanged.
 The revocation database operation returns only device ID and revision on both
 first execution and retries. Neither the stored verifier nor FCM token leaves
 that persistence boundary through the revocation result; the public response
-contains only the revision.
+contains only the revision. The unsigned revision ceiling is enforced by both API validation and the frontend; the client rejects overflow before changing its durable outbox.
 
 A mixed-session logout checks every supplied address/token pair independently.
-Authenticating one native session for an early installation claim does not
-authorize revoking another session without its exact refresh token. Redis busy
+Authenticating one native session for an early logout fence does not establish
+device ownership or authorize revoking another session without its exact token. Redis busy
 or unavailable errors leave the client outbox intact for a later activation,
 reconnect, or pre-registration retry. Both iOS and Android final alert delivery
 use this same coordination so a logout cannot race the last recipient check.
@@ -208,16 +217,14 @@ For an unclaimed legacy device, the first credential must prove knowledge of the
 FCM token on every existing registration row, or the retained installation token
 when those rows have already been removed. Authenticated registration can establish a fresh installation with neither
 registrations nor a retained token. Logout before the first registration instead
-requires a matching, unexpired, unrevoked native refresh session. Anonymous requests
-cannot pre-claim an installation using only its device ID and a new secret.
-Native-session proof never substitutes for an existing installation secret or
-legacy FCM-token proof. It authorizes only the initial binding when no registration
-or retained token exists; the legacy token checks still run after the session
-helper returns. A caller's valid native session cannot claim another registered
-installation, including one whose final registration was removed but whose token
-was retained.
-Successful early logout stores its revision fence and later retries use the
-installation secret, even after that logout revoked the native session. If the
+requires a matching, unexpired, unrevoked native refresh session to establish only
+its own credential-scoped logout fence. Even a caller with a valid native session
+cannot reserve an arbitrary never-registered device ID: the installation row
+remains unclaimed, its token/platform remain empty, and another credential may
+register normally. Existing ownership still requires the installation secret or
+legacy FCM-token proof; native-session proof never substitutes for either.
+Successful early logout stores its separate fence and later retries use the
+same secret, even after that logout revoked the native session. If the
 initial request has no valid session proof, cleanup remains pending; this also
 covers a never-registered client's session expiring before offline reconciliation.
 Device IDs are visible to profiles and do not authorize device-wide deletion by themselves. Conflicting legacy

@@ -26,7 +26,7 @@ export function deviceBadgeKey(device: BadgeDevice): string {
 
 /** Serialize count + submission for both ordinary iOS pushes and badge refreshes. */
 export async function withDeviceBadgeLock<T>(
-  device: BadgeDevice,
+  device: Pick<BadgeDevice, 'device_id'>,
   action: () => Promise<T>
 ): Promise<T> {
   const redis = getRedisClient();
