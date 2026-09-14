@@ -1,9 +1,10 @@
 import 'reflect-metadata';
-import { describeWithSeed } from '@/tests/_setup/seed';
 import { sqlExecutor } from '@/sql-executor';
 import {
   PUSH_NOTIFICATION_DEVICES_TABLE,
   PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE,
+  PUSH_NOTIFICATION_DEVICE_LOGOUT_FENCES_TABLE,
+  PUSH_NOTIFICATION_SETTINGS_TABLE,
   WALLET_AUTH_SESSIONS_TABLE
 } from '@/constants';
 import {
@@ -43,7 +44,23 @@ const storedInstallation = () =>
     `SELECT secret_hash, token, platform, revision FROM ${PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE} WHERE device_id = 'phone'`
   );
 
-describeWithSeed('push installation logout', [], () => {
+describe('push installation logout', () => {
+  const resetInstallationFixtures = async () => {
+    // This suite only touches these tables. Keep real database isolation without
+    // rebuilding unrelated NFT/marketplace tables before and after every test.
+    for (const table of [
+      PUSH_NOTIFICATION_SETTINGS_TABLE,
+      PUSH_NOTIFICATION_DEVICES_TABLE,
+      PUSH_NOTIFICATION_DEVICE_LOGOUT_FENCES_TABLE,
+      PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE,
+      WALLET_AUTH_SESSIONS_TABLE
+    ]) {
+      await sqlExecutor.execute(`TRUNCATE TABLE ${table}`);
+    }
+  };
+  beforeEach(resetInstallationFixtures);
+  afterEach(resetInstallationFixtures);
+
   it.each(['registration', 'revocation'] as const)(
     'rejects %s before querying when its transaction connection is missing',
     async (operation) => {
@@ -134,7 +151,7 @@ describeWithSeed('push installation logout', [], () => {
   });
 
   it.each(['a'.repeat(40), 'aA'.repeat(20)])(
-    'authenticates early logout for stored address %s, fences late registration and allows a fresh login',
+    'fences only the early-logout credential for stored address %s and transfers its revision on registration',
     async (storedAddress) => {
       process.env.AUTH_SESSION_HASH_SECRET = 'push-logout-test-secret';
       const address = '0x' + storedAddress;
@@ -191,17 +208,23 @@ describeWithSeed('push installation logout', [], () => {
       );
       const result = await revokeInstallation(request, {});
       expect(result).toEqual({ device_id: 'phone', revision: 1 });
-      expect(await storedInstallation()).toMatchObject({
-        revision: 1,
+      expect(await storedInstallation()).toEqual({
+        secret_hash: null,
+        revision: 0,
         token: null,
         platform: null
       });
+      expect(
+        await sqlExecutor.execute(
+          `SELECT revision FROM ${PUSH_NOTIFICATION_DEVICE_LOGOUT_FENCES_TABLE} WHERE device_id = 'phone'`
+        )
+      ).toEqual([{ revision: 1 }]);
       expect(
         await sqlExecutor.oneOrNull(
           `SELECT revoked_at IS NOT NULL AS revoked FROM ${WALLET_AUTH_SESSIONS_TABLE} WHERE id = 'early-native'`
         )
       ).toEqual({ revoked: 1 });
-      // A retry is authorized by the now-established installation secret, even
+      // A retry uses this secret's fence without claiming the device, even
       // after the session was revoked by the first successful request.
       expect(await revokeInstallation(request, {})).toEqual({
         device_id: 'phone',
@@ -220,6 +243,93 @@ describeWithSeed('push installation logout', [], () => {
       ]);
     }
   );
+
+  it.each([undefined, 'attacker-supplied-token'])(
+    'a valid native session cannot reserve a fresh victim device, even with token %s',
+    async (token) => {
+      process.env.AUTH_SESSION_HASH_SECRET = 'push-logout-test-secret';
+      const address = '0x' + '3'.repeat(40);
+      await sqlExecutor.execute(
+        `INSERT INTO ${WALLET_AUTH_SESSIONS_TABLE} (id, address, client_type, refresh_token_hash, expires_at)
+         VALUES ('attacker', :address, 'native', :hash, :expires)`,
+        {
+          address,
+          hash: hashSecret('attacker-session'),
+          expires: new Date(Date.now() + 60000)
+        }
+      );
+      const attack = {
+        device_id: 'phone',
+        installation_secret: 'b'.repeat(64),
+        token,
+        revision: 1,
+        all_profiles: true,
+        sessions: [{ address, native_refresh_token: 'attacker-session' }]
+      };
+      await revokeInstallation(attack, {});
+      await revokeInstallation({ ...attack, revision: 2 }, {});
+      expect(await storedInstallation()).toEqual({
+        secret_hash: null,
+        revision: 0,
+        token: null,
+        platform: null
+      });
+      // The real device's unrelated credential still starts at revision zero.
+      await registerInstallationDevice(device('A'), credential, {});
+      await registerInstallationDevice(device('B'), credential, {});
+      const before = await storedInstallation();
+      await expect(
+        revokeInstallation({ ...attack, revision: 3 }, {})
+      ).rejects.toThrow('credential');
+      expect(await storedInstallation()).toEqual(before);
+      expect(await registrations()).toEqual([
+        { device_id: 'phone', profile_id: 'A' },
+        { device_id: 'phone', profile_id: 'B' }
+      ]);
+    }
+  );
+
+  it('serializes first registration against early logout without resurrecting its profile', async () => {
+    process.env.AUTH_SESSION_HASH_SECRET = 'push-logout-test-secret';
+    const address = '0x' + '4'.repeat(40);
+    await sqlExecutor.execute(
+      `INSERT INTO ${WALLET_AUTH_SESSIONS_TABLE} (id, address, client_type, refresh_token_hash, expires_at)
+       VALUES ('early', :address, 'native', :hash, :expires)`,
+      {
+        address,
+        hash: hashSecret('early-session'),
+        expires: new Date(Date.now() + 60000)
+      }
+    );
+    const outcomes = await Promise.allSettled([
+      registerInstallationDevice(device('A'), credential, {}),
+      revokeInstallation(
+        {
+          device_id: 'phone',
+          installation_secret: secret,
+          revision: 1,
+          all_profiles: true,
+          sessions: [{ address, native_refresh_token: 'early-session' }]
+        },
+        {}
+      )
+    ]);
+    expect(outcomes[1].status).toBe('fulfilled');
+    expect(await registrations()).toEqual([]);
+    await expect(
+      registerInstallationDevice(device('A'), credential, {})
+    ).rejects.toThrow('Stale');
+    await registerInstallationDevice(
+      device('A'),
+      { ...credential, installation_revision: 1 },
+      {}
+    );
+    expect(
+      await sqlExecutor.execute(
+        `SELECT * FROM ${PUSH_NOTIFICATION_DEVICE_LOGOUT_FENCES_TABLE}`
+      )
+    ).toEqual([]);
+  });
 
   it('removes A from this phone, preserving B and another device', async () => {
     await registerInstallationDevice(device('A'), credential, {});
@@ -461,8 +571,8 @@ describeWithSeed('push installation logout', [], () => {
         expect(await readVictimInstallation()).toEqual(beforeInstallation);
         expect(await registrations()).toEqual(beforeRegistrations);
       }
-      // The supplied native proof really is valid: it authorizes first logout
-      // on a fresh installation, but could not claim the victim's existing one.
+      // The native proof is valid: it permits an early logout fence for its
+      // own secret, but cannot claim either a fresh or an existing installation.
       const ownLogout = await revokeInstallation(
         { ...attack, device_id: 'attacker-phone' },
         {}

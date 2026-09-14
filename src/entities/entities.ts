@@ -287,9 +287,10 @@ export {
   ArtworkDocumentationAssetQuotaEntity
 } from './IArtworkDocumentationAsset';
 
-export { PushInstallationEntity } from './IPushInstallation';
-
 export {
   ModerationItemEntity,
   ModerationEvaluationEntity
 } from './IModerationReview';
+
+export { PushInstallationEntity } from './IPushInstallation';
+export { PushDeviceLogoutFenceEntity } from './IPushDeviceLogoutFence';

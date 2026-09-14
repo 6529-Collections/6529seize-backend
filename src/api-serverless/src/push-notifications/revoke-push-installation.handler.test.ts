@@ -1,6 +1,7 @@
 import { handleRevokePushInstallation } from './revoke-push-installation.handler';
 import { revokeInstallation } from './push-installation.db';
 import { requestInstallationBadgeRefresh } from './push-notifications.service';
+import { withDeviceBadgeLock } from '@/pushNotificationsHandler/device-badge';
 import { RevokePushInstallationRequest } from '@/api/generated/routes/operations';
 
 jest.mock('./push-installation.db', () => ({ revokeInstallation: jest.fn() }));
@@ -8,10 +9,7 @@ jest.mock('./push-notifications.service', () => ({
   requestInstallationBadgeRefresh: jest.fn()
 }));
 jest.mock('@/pushNotificationsHandler/device-badge', () => ({
-  withDeviceBadgeLock: async (
-    _device: unknown,
-    action: () => Promise<unknown>
-  ) => action()
+  withDeviceBadgeLock: jest.fn()
 }));
 const body = {
   device_id: 'phone',
@@ -23,6 +21,10 @@ const body = {
 const request = (value: unknown) =>
   ({ body: value }) as RevokePushInstallationRequest;
 beforeEach(() => {
+  jest
+    .mocked(withDeviceBadgeLock)
+    .mockReset()
+    .mockImplementation(async (_device, action) => action());
   jest.mocked(revokeInstallation).mockReset().mockResolvedValue({
     device_id: 'phone',
     revision: 1
@@ -81,3 +83,23 @@ it('accepts the maximum unsigned revision and rejects overflow before deletion',
   ).rejects.toThrow();
   expect(revokeInstallation).not.toHaveBeenCalled();
 });
+
+it.each(['busy', 'unavailable'])(
+  'preserves deletion for retry when Redis is %s',
+  async (reason) => {
+    jest.mocked(withDeviceBadgeLock).mockRejectedValueOnce(new Error(reason));
+    await expect(handleRevokePushInstallation(request(body))).rejects.toThrow(
+      reason
+    );
+    expect(revokeInstallation).not.toHaveBeenCalled();
+    expect(requestInstallationBadgeRefresh).not.toHaveBeenCalled();
+    await expect(handleRevokePushInstallation(request(body))).resolves.toEqual({
+      revision: 1
+    });
+    expect(withDeviceBadgeLock).toHaveBeenCalledWith(
+      { device_id: 'phone' },
+      expect.any(Function)
+    );
+    expect(revokeInstallation).toHaveBeenCalledTimes(1);
+  }
+);

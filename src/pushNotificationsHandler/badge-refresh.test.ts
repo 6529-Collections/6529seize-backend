@@ -105,6 +105,32 @@ it('cleans up only the exact unregistered token', async () => {
   });
 });
 
+it('retries only the invalid-token group when its cleanup fails', async () => {
+  findDevices.mockResolvedValue([
+    { ...phone, token: 'invalid', profile_id: 'a' },
+    {
+      ...phone,
+      device_id: 'other-phone',
+      token: 'valid',
+      profile_id: 'b'
+    }
+  ]);
+  jest.mocked(sendBadgeUpdate).mockImplementation(async (token) => {
+    if (token === 'invalid') {
+      throw { code: 'messaging/registration-token-not-registered' };
+    }
+  });
+  deleteDevice.mockRejectedValueOnce(new Error('database unavailable'));
+
+  expect(await refreshProfileBadges(['a', 'b'])).toEqual(['a']);
+  expect(sendBadgeUpdate).toHaveBeenCalledWith('invalid', 1);
+  expect(sendBadgeUpdate).toHaveBeenCalledWith('valid', 1);
+  expect(deleteDevice).toHaveBeenCalledWith({
+    device_id: 'phone',
+    token: 'invalid'
+  });
+});
+
 it('does nothing for profiles with no iOS registrations', async () => {
   findDevices.mockResolvedValue([]);
   expect(await refreshProfileBadges(['android-only'])).toEqual([]);

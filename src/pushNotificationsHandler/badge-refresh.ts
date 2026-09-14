@@ -70,10 +70,17 @@ async function refreshTokenGroup(
       code === 'messaging/invalid-registration-token'
     ) {
       // Remove all profiles using this invalid token, preserving rotated-token rows.
-      await getDataSource().getRepository(PushNotificationDevice).delete({
-        device_id: device.device_id,
-        token: device.token
-      });
+      try {
+        await getDataSource().getRepository(PushNotificationDevice).delete({
+          device_id: device.device_id,
+          token: device.token
+        });
+      } catch (cleanupError) {
+        logger.error(
+          `Failed to remove invalid badge token for device ${device.device_id}: ${cleanupError}`
+        );
+        registrations.forEach((row) => failed.add(row.profile_id));
+      }
       return;
     }
     logger.error(
@@ -87,7 +94,7 @@ async function refreshTokenGroup(
 export async function refreshInstallationBadge(
   deviceId: string
 ): Promise<void> {
-  await withDeviceBadgeLock({ device_id: deviceId, token: '' }, async () => {
+  await withDeviceBadgeLock({ device_id: deviceId }, async () => {
     const installation = await getDataSource()
       .getRepository(PushInstallationEntity)
       .findOneBy({ device_id: deviceId });

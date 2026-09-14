@@ -1407,3 +1407,7 @@ revocation retries idempotent. An `installation_badge_refresh` SQS event lets th
 existing push worker send the remaining iOS count, including zero. See
 [Mobile badge synchronization](./mobile-badge-sync.md) for legacy ownership,
 offline recovery, security boundaries and schema-first deployment order.
+
+Before first registration, `push_notification_device_logout_fences` stores logout
+revisions by device ID and secret hash without claiming installation ownership.
+Registration atomically adopts only its own secret's fence and removes that row.
