@@ -804,6 +804,11 @@ inspects the live `MintingClaimEntity` schema plan, and executes only the exact
 missing nullable lease-column additions. A missing claims table, incompatible
 existing lease column, or any other schema change fails before DDL. An already
 aligned table is a no-op. Unrelated migrations and maintenance are skipped.
+MySQL additions commit independently: an application or post-check failure stops
+the deployment but does not undo a completed addition. Diagnose the failure,
+then rerun this same guarded scope; it inspects the remaining plan and safely
+does nothing when both compatible columns are already present. Do not widen
+the scope to work around unrelated schema drift.
 Omitting the input retains the existing full-sync behavior. Keep
 the nullable columns when rolling back the worker, and avoid overlapping old
 workers that do not honor the lease with the new implementation.

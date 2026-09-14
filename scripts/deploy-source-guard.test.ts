@@ -47,9 +47,7 @@ function validateDispatch(
 function invokeMigrationScope(
   scope: string,
   metadata: unknown = { StatusCode: 200 },
-  response: unknown = scope !== 'full'
-    ? { schema_scope: scope }
-    : null
+  response: unknown = scope !== 'full' ? { schema_scope: scope } : null
 ) {
   const directory = mkdtempSync(path.join(tmpdir(), '6529-schema-scope-'));
   const argumentsPath = path.join(directory, 'arguments.txt');
@@ -277,18 +275,33 @@ describe('generated deployment source guard', () => {
   });
 
   it('restricts claims schema scope to the migration service', () => {
-    expect(validateDispatch(sourceSha, 'prod', {
-      INPUT_SERVICE: 'dbMigrationsLoop', DB_SCHEMA_SCOPE: 'claims-media-upload'
-    }).status).toBe(0);
-    expect(validateDispatch(sourceSha, 'prod', {
-      INPUT_SERVICE: 'claimsMediaArweaveUploader', DB_SCHEMA_SCOPE: 'claims-media-upload'
-    }).status).toBe(1);
+    expect(
+      validateDispatch(sourceSha, 'prod', {
+        INPUT_SERVICE: 'dbMigrationsLoop',
+        DB_SCHEMA_SCOPE: 'claims-media-upload'
+      }).status
+    ).toBe(0);
+    expect(
+      validateDispatch(sourceSha, 'prod', {
+        INPUT_SERVICE: 'claimsMediaArweaveUploader',
+        DB_SCHEMA_SCOPE: 'claims-media-upload'
+      }).status
+    ).toBe(1);
   });
 
-  it.each([null, {}, { schema_scope: 'full' }, { schema_scope: 'wallet-transfer-analysis' }])(
+  it.each([
+    null,
+    {},
+    { schema_scope: 'full' },
+    { schema_scope: 'wallet-transfer-analysis' }
+  ])(
     'rejects a claims schema invocation without its exact acknowledgment: %j',
     (response) => {
-      const result = invokeMigrationScope('claims-media-upload', { StatusCode: 200 }, response);
+      const result = invokeMigrationScope(
+        'claims-media-upload',
+        { StatusCode: 200 },
+        response
+      );
       expect(result.status).toBe(1);
       expect(result.stdout).toContain('did not acknowledge');
     }
