@@ -21,13 +21,9 @@ export function readChatHistoryPurgeToken(
   expected: { waveId: string; authorId: string }
 ): number {
   try {
+    if (token.length > 2048) throw new Error('Malformed token');
     const [payload, encodedSignature, extra] = token.split('.');
-    if (
-      !payload ||
-      !encodedSignature ||
-      extra !== undefined ||
-      token.length > 2048
-    )
+    if (!payload || !encodedSignature || extra !== undefined)
       throw new Error('Malformed token');
     const actual = Buffer.from(encodedSignature, 'base64url');
     const wanted = signature(payload);

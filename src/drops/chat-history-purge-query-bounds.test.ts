@@ -24,6 +24,9 @@ it('keeps SQL statement count constant for one and one hundred deleted messages'
     )
   ).rejects.toThrow('bounded transaction');
   expect(execute).not.toHaveBeenCalled();
+  await expect(repo.findCutoff(scope, {})).rejects.toThrow(
+    'requires a transaction'
+  );
   await expect(
     repo.findBatchForUpdate({ ...scope, pinnedDropId: null }, {})
   ).rejects.toThrow('requires a transaction');

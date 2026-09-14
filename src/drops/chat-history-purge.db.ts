@@ -76,6 +76,8 @@ export class ChatHistoryPurgeDb extends LazyDbAccessCompatibleService {
     scope: Pick<ChatHistoryPurgeScope, 'waveId' | 'authorId'>,
     ctx: RequestContext
   ): Promise<number> {
+    if (!ctx.connection)
+      throw new Error('Chat history purge requires a transaction');
     const timerName = `${this.constructor.name}->findCutoff`;
     ctx.timer?.start(timerName);
     try {

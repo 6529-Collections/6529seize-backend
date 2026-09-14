@@ -643,6 +643,15 @@ post-commit refresh requests, unread-cache invalidation, and bounded batches of
 existing DROP_DELETE notifications preserve current client behavior. No schema,
 queue, worker or deployment-unit changes are required; deploy `api` before the
 frontend continuation UI.
+The range queries use the existing `idx_drop_wave_type_author` index declared
+on `DropEntity` in `src/entities/IDrop.ts`; TypeORM schema synchronization already
+owns this index. Wave and dropper metrics rows are initialized by
+`applyInsertedDropMetricsDelta` in the drop-creation transaction, and this path
+preserves the existing deletion-delta/full-resync invariant. Tokens are signed
+but readable and contain only the caller's own scope. Clients treat them as
+opaque handles. They deliberately have no expiry so a delayed retry retains its
+original cutoff; authentication and author/wave binding remain required on every
+request.
 
 Waves have an additive competition read boundary under `/v3/waves`. A wave is
 the chat/visibility hub and owns zero, one, or many competition resources. The

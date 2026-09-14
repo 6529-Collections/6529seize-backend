@@ -46,13 +46,14 @@ async function insertDrops(count: number, offset = 0) {
     );
   }
 }
-async function purge(cutoffSerialNo: number, pinnedDropId = 'pin') {
+async function purge(cutoffSerialNo: number) {
   return sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
     const ctx = { connection };
-    await wavesApiDb.findWaveByIdForUpdate('wave', ctx);
+    const lockedWave = await wavesApiDb.findWaveByIdForUpdate('wave', ctx);
+    if (!lockedWave) throw new Error('Expected synthetic wave');
     const frozen = { ...scope, cutoffSerialNo };
     const candidates = await repo.findBatchForUpdate(
-      { ...frozen, pinnedDropId },
+      { ...frozen, pinnedDropId: lockedWave.description_drop_id },
       ctx
     );
     const drops = candidates.slice(0, CHAT_HISTORY_PURGE_BATCH_SIZE);
@@ -72,6 +73,48 @@ describeWithSeed(
   'ChatHistoryPurgeDb synthetic MySQL cleanup',
   withWaves([wave]),
   () => {
+    it('protects the latest pin between batches and deletes a formerly pinned message', async () => {
+      await insertDrops(305);
+      await sqlExecutor.execute(
+        `insert into ${tables.DROPS_PARTS_TABLE} (drop_id, drop_part_id, content, wave_id)
+         select id, 1, 'Synthetic chat message', wave_id from ${tables.DROPS_TABLE}`
+      );
+      await sqlExecutor.execute(
+        `update ${tables.WAVES_TABLE} set description_drop_id = 'drop-1' where id = 'wave'`
+      );
+      const first = await purge(305);
+      expect(first.hasMore).toBe(true);
+      expect(first.ids).not.toContain('drop-1');
+      await sqlExecutor.execute(
+        `update ${tables.WAVES_TABLE} set description_drop_id = 'drop-302' where id = 'wave'`
+      );
+      const deletedIds = [...first.ids];
+      let hasMore = true;
+      while (hasMore) {
+        const batch = await purge(305);
+        deletedIds.push(...batch.ids);
+        hasMore = batch.hasMore;
+      }
+      expect(deletedIds).toContain('drop-1');
+      expect(deletedIds).not.toContain('drop-302');
+      expect(deletedIds).toHaveLength(203);
+      expect(
+        await sqlExecutor.oneOrNull(
+          `select count(*) as count from ${tables.DROPS_TABLE} where id = 'drop-302'`
+        )
+      ).toEqual({ count: 1 });
+      expect(
+        await sqlExecutor.oneOrNull(
+          `select count(*) as count from ${tables.DROPS_PARTS_TABLE} where drop_id = 'drop-302'`
+        )
+      ).toEqual({ count: 1 });
+      expect(
+        await sqlExecutor.oneOrNull(
+          `select count(*) as count from ${tables.DELETED_DROPS_TABLE} where id = 'drop-302'`
+        )
+      ).toEqual({ count: 0 });
+    });
+
     it('does not reveal other authors or non-chat activity through a readable cutoff token', async () => {
       const cutoff = () =>
         sqlExecutor.executeNativeQueriesInTransaction((connection) =>
