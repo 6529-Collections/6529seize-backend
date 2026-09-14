@@ -31,7 +31,7 @@ function hasDesktopSupportTopic(question: string): boolean {
 }
 
 function hasMismatch(question: string): boolean {
-  return /\b(?:out of sync|mismatch|different|differs?|not match|doesn't match|does not match|don't match|do not match|not matching|still wrong)\b/i.test(
+  return /\b(?:out of sync|mismatch|different|differs?|not match|doesn't match|doesnt match|does not match|don't match|dont match|do not match|not matching|still wrong)\b/i.test(
     question.replace(/’/g, "'")
   );
 }
@@ -87,7 +87,7 @@ export function desktopQuestionWithContext(
     ].some((pattern) => pattern.test(question))
   )
     return null;
-  return `6529 Desktop Core: ${question}`;
+  return `6529 Desktop: ${question}`;
 }
 
 /** Inspect clauses conservatively: uncertain or negated reports cannot advance repair. */
@@ -181,7 +181,13 @@ export function desktopRecordIdForQuestion(
   previousBotAnswer?: string | null
 ): string | undefined {
   if (
-    /^(?:what (?:is|is the)|explain|describe|tell me about)\s+(?:6529\s+)?(?:core|desktop(?: app)?)[?.!]*$/i.test(
+    /^(?:what (?:is|is the)|explain|describe|tell me about)\s+(?:6529\s+)?core[?.!]*$/i.test(
+      question.trim()
+    )
+  )
+    return 'desktop.legacy-core-name';
+  if (
+    /^(?:what (?:is|is the)|explain|describe|tell me about)\s+(?:6529\s+)?desktop(?: app)?[?.!]*$/i.test(
       question.trim()
     )
   )

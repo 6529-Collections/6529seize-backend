@@ -57,7 +57,7 @@ export function desktopFallbackAnswer(
     detailed
       ? record.facts.map((fact, index) => `${index + 1}. ${fact}`).join('\n\n')
       : (record.briefAnswer ??
-          'Which part of 6529 Desktop (Core) do you need help with? Please describe what you see or the step you are trying to complete.'),
+          'Which part of 6529 Desktop do you need help with? Please describe what you see or the step you are trying to complete.'),
     record
   );
   const limit = detailed

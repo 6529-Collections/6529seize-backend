@@ -57,7 +57,7 @@ describe('HelpBotBedrockRenderer', () => {
     expect(readBody(send).max_tokens).toBe(1600);
     expect(readPrompt(send)).toContain('data-loss warning in the same step');
     expect(readPrompt(send)).toContain('cannot inspect or operate');
-    expect(readPrompt(send)).toContain('Do not turn Core-only paths');
+    expect(readPrompt(send)).toContain('Do not turn Desktop-only paths');
     send.mockClear();
     await renderer.renderAnswer({
       question: 'what is Core',
