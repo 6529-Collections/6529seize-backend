@@ -647,6 +647,8 @@ WebSocket registration and re-authentication persist the identity, JWT expiry an
 
 Typing updates use the server-authenticated connection profile when resolving private visibility groups. The sender must appear in the current child/parent membership intersection for the active wave before a typing message is sent; recipients retain the same intersection. Successful typing is acknowledged with 200, expected access failures keep client-error status, and unexpected failures emit only bounded operation-stage and error labels.
 
+Terminal WebSocket send failures replace the existing error message with an allowlisted outbound frame type, fixed error category, final HTTP status and numeric SDK attempt/retry-delay metadata. Frame content, connection IDs and exception text are not copied into this diagnostic; missing or malformed metadata remains unknown. The existing operational error fingerprint and single error-event path are retained. SDK retry policy and best-effort send behavior remain unchanged, Gone connections still take the cleanup path, and a diagnostic failure cannot turn a live connection into a cleanup candidate. This metadata describes a failed send, not confirmed client delivery or a rate-limit repair.
+
 ## API Boundary
 
 The API is organized by domain routers under `src/api-serverless/src`. The OpenAPI file defines the public contract and generated models. Legacy routes are wired manually, while newer OpenAPI operations can opt into generated route wiring through `x-6529-router` and thin domain handlers.
