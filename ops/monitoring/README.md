@@ -147,7 +147,14 @@ environment), leaving vendor capacity for critical traffic. Slot contention
 defers delivery through SQS; sustained overload can exhaust retries and is archived.
 Within a five-minute fingerprint window, the first occurrence is sent promptly;
 repeats update a durable count and schedule a summary. Critical/recovery events
-bypass that grouping. The 90-second conditional receipt lease outlives the
+bypass that grouping. Confirmed grouping transaction conflicts get up to three
+application transaction sends sharing a three-second abort signal for requests
+and short jittered waits. Each send retains the SDK's existing retry configuration;
+SDK retry sleeps can extend elapsed time beyond three seconds. The atomic receipt/count write and duplicate proof
+remain intact. Mixed or unknown failures are not retried locally; exhaustion
+still fails the SQS item without acknowledging it. A later queue delivery can
+verify a previously committed write before counting again.
+The 90-second conditional receipt lease outlives the
 30-second dispatcher timeout. A receipt is completed after confirmed delivery,
 grouping, or successful permanent-failure archive. `wait=true` and a Discord
 message ID are required for confirmed delivery. Timeouts, network errors, 408,

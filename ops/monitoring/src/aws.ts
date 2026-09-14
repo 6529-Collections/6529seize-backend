@@ -13,6 +13,8 @@ import {
 } from '@aws-sdk/client-secrets-manager';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { SNSClient, PublishCommand } from '@aws-sdk/client-sns';
+import { setTimeout as delay } from 'node:timers/promises';
+import { randomInt } from 'node:crypto';
 import { Alert, hash } from './contract.js';
 import type { Group, Store, Work } from './pipeline.js';
 import { DeliveryError } from './webhook.js';
@@ -50,6 +52,51 @@ function duplicateGroupWrite(error: unknown): boolean {
     reasons[0]?.Code === 'ConditionalCheckFailed' &&
     reasons[1]?.Code === 'None'
   );
+}
+function groupTransactionConflict(error: unknown): boolean {
+  if (
+    !(error instanceof Error) ||
+    error.name !== 'TransactionCanceledException'
+  )
+    return false;
+  const reasons = (error as { CancellationReasons?: { Code?: string }[] })
+    .CancellationReasons;
+  return (
+    Array.isArray(reasons) &&
+    reasons.length === 2 &&
+    reasons.some((reason) => reason?.Code === 'TransactionConflict') &&
+    reasons.every(
+      (reason) =>
+        reason?.Code === 'None' || reason?.Code === 'TransactionConflict'
+    )
+  );
+}
+async function writeGroupWithRetry(
+  command: TransactWriteCommand
+): Promise<void> {
+  // Share an abort signal across requests and local waits. SDK retry sleeps can
+  // extend elapsed time beyond this deadline.
+  const abortSignal = AbortSignal.timeout(3000);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await ddb.send(command, { abortSignal });
+      return;
+    } catch (error) {
+      if (
+        attempt >= 2 ||
+        abortSignal.aborted ||
+        !groupTransactionConflict(error)
+      )
+        throw error;
+      // Two waits of 50–100ms and 100–200ms avoid synchronized writers.
+      const minimumWaitMs = 50 * 2 ** attempt;
+      await delay(randomInt(minimumWaitMs, minimumWaitMs * 2), undefined, {
+        signal: abortSignal
+      }).catch(() => {
+        throw error;
+      });
+    }
+  }
 }
 export async function read(
   pk: string
@@ -134,7 +181,7 @@ export const store: Store = {
       typeof receipt?.groupKey === 'string' ? receipt.groupKey : key;
     if (!receipt?.groupKey) {
       try {
-        await ddb.send(
+        await writeGroupWithRetry(
           new TransactWriteCommand({
             TransactItems: [
               {
