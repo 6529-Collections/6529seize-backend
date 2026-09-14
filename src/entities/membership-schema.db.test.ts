@@ -139,6 +139,15 @@ describeWithSeed('Membership refresh schema foundation', [], () => {
         expect(query.query).toMatch(/^CREATE TABLE `membership_/);
         expect(query.query).not.toMatch(/DROP|ALTER|FOREIGN KEY/);
       }
+      // The pinned MySQL driver puts every secondary index inside CREATE TABLE.
+      const creationSql = addedQueries.map((query) => query.query).join('\n');
+      for (const entity of db.entityMetadatas.filter((metadata) =>
+        TABLES.includes(metadata.tableName)
+      )) {
+        for (const index of entity.indices) {
+          expect(creationSql).toContain(`INDEX \`${index.name}\``);
+        }
+      }
       const scoped = await dataSource(true).initialize();
       try {
         await expect(applyMembershipSchema(scoped)).resolves.toEqual({
@@ -181,6 +190,50 @@ describeWithSeed('Membership refresh schema foundation', [], () => {
       for (const table of legacyTables) {
         await db.query(`drop table if exists \`${table}\``);
       }
+      await db.destroy();
+    }
+  });
+
+  it('resumes a partially committed CREATE plan without replacing existing tables', async () => {
+    const db = await dataSource(true).initialize();
+    try {
+      for (const table of TABLES) {
+        await db.query(`drop table \`${table}\``);
+      }
+      const execute = db.query.bind(db);
+      let creates = 0;
+      const failure = jest
+        .spyOn(db, 'query')
+        .mockImplementation(async (sql, parameters, runner) => {
+          if (sql.startsWith('CREATE TABLE') && ++creates === 4) {
+            throw new Error('synthetic interrupted DDL');
+          }
+          return execute(sql, parameters, runner);
+        });
+      try {
+        await expect(applyMembershipSchema(db)).rejects.toThrow(
+          'synthetic interrupted DDL'
+        );
+      } finally {
+        failure.mockRestore();
+      }
+      const remaining = await db.driver.createSchemaBuilder().log();
+      expect(remaining.upQueries).toHaveLength(4);
+      expect(
+        remaining.upQueries.every((query) =>
+          query.query.startsWith('CREATE TABLE')
+        )
+      ).toBe(true);
+      await expect(applyMembershipSchema(db)).resolves.toEqual({
+        created_tables: 4,
+        verified_tables: 7
+      });
+      await expect(applyMembershipSchema(db)).resolves.toEqual({
+        created_tables: 0,
+        verified_tables: 7
+      });
+    } finally {
+      await db.synchronize();
       await db.destroy();
     }
   });

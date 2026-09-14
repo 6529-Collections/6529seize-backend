@@ -33,6 +33,8 @@ export async function applyMembershipSchema(db: DataSource = getDataSource()) {
   }
   const builder = db.driver.createSchemaBuilder();
   const plan = await builder.log();
+  // Pinned TypeORM's MysqlQueryRunner.createTableSql inlines secondary indexes.
+  // downQueries describe destructive reversal and are never executed here.
   for (const query of plan.upQueries) {
     const table = /^CREATE TABLE `([a-z_]+)` /.exec(query.query)?.[1];
     if (!table || !expectedTables.includes(table)) {

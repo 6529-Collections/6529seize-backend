@@ -43,7 +43,9 @@ barrel (the synchronizer passes every barrel export to TypeORM). All new
 identity and UUID columns use binary collation consistently. Store and compare
 canonical application IDs; keyset queries must use the source column's actual
 collation and ordering. Counters are decimal strings in persistence types to
-avoid loss above JavaScript's safe integer limit. JSON source-version vectors
+avoid loss above JavaScript's safe integer limit. Future SqlExecutor repositories
+must normalize its native number/bigint results to decimal strings before
+storing version vectors as JSON; entity typings do not change driver decoding. JSON source-version vectors
 have one unique entry per source key; reject missing, duplicate, unknown or
 malformed entries before considering any group ready. These are application
 contracts, not database enum, foreign-key or CHECK constraints.
@@ -63,7 +65,11 @@ zero-version states. GLOBAL and PROFILE versions both participate: a global
 change cannot be hidden by a profile-local version. Dimensions are TDH_XTDH
 (including derived levels), RATINGS, OWNERSHIP, DELEGATIONS, GRANTS, IDENTITY and
 GROUP_CATALOG. Fine-grained dimensions may be added only with corresponding
-producer, evaluator and reader coverage.
+producer, evaluator and reader coverage. Dimensions identify mutated inputs,
+not Lambda names: a delegation reconsolidation must also barrier/version its
+TDH_XTDH, OWNERSHIP and IDENTITY effects as applicable. Likewise, xTDH grant/rating
+revocations must cover those dimensions. Reader dependency analysis must include
+derived inputs such as levels, not just the rule's directly named metric.
 
 For a single-transaction mutation:
 
@@ -263,6 +269,25 @@ rule semantics; this PR does not adopt #1740's unfinished conformance changes.
    and fresh staging E2E gates before enabling materialized authorization.
    #1739 Phase 3 requires its related staging E2E to pass, but does not close
    these worker/cutover issues or authorize production activation.
+
+The pinned TypeORM MySQL driver creates secondary indexes inline in CREATE
+TABLE; the real-MySQL test asserts every declared index appears in those seven
+statements and exists after synchronization. Separate index/ALTER statements
+on an existing table deliberately remain outside this create-only release
+scope. Revalidate the plan contract when upgrading the driver. `downQueries`
+are reversal descriptions and are never executed by the scoped operation.
+
+MySQL DDL commits each CREATE independently. If a later statement fails, keep
+the successfully created tables and rerun the same scoped invocation: it
+replans and creates only the missing tables, then verifies the complete schema.
+A fault-injection DB test interrupts the fourth CREATE and verifies recovery
+creates exactly four remaining tables followed by a no-op rerun. Do not try to
+roll back the prefix with DROP statements or claim a SQL transaction can make
+the complete DDL plan atomic. No worker/readiness is enabled during this retry.
+An existing-table mismatch still requires explicit review instead of repair
+through this scope. Schema fixtures use Testcontainers and one database per
+Jest worker, provisioned in `src/tests/_setup/globalSetup.ts`; they never use a
+shared development, staging or production database.
 
 Rollback retains all additive tables and existing authorization paths. Future
 read rollback and workload disablement are separate controls. Never redeploy
