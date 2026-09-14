@@ -53,11 +53,13 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
     const viewResult = previewGroup
       ? await this.userGroupsService.getSqlAndParamsForPreview(
           previewGroup,
-          ctx
+          ctx,
+          { memberSearch: query.param }
         )
       : await this.userGroupsService.getSqlAndParamsByGroupId(
           query.group_id,
-          ctx
+          ctx,
+          { memberSearch: query.param }
         );
     if (viewResult === null) {
       return [];
@@ -124,11 +126,13 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
     const viewResult = previewGroup
       ? await this.userGroupsService.getSqlAndParamsForPreview(
           previewGroup,
-          ctx
+          ctx,
+          { memberSearch: query.param }
         )
       : await this.userGroupsService.getSqlAndParamsByGroupId(
           query.group_id,
-          ctx
+          ctx,
+          { memberSearch: query.param }
         );
     if (viewResult === null) {
       return 0;

@@ -322,12 +322,11 @@ function tokenTransactions(
   return byAsset;
 }
 
-function calculateAccount(
+/** The same eligible catalog and rates drive nominal daily acquisition analysis. */
+export function getCollectingTdhEligibleRates(
   input: CollectingTdhProjectionInput,
-  at: Date,
-  transactions: Transaction[]
-): ProjectedAccountTdh {
-  const wallets = input.wallets.map((wallet) => wallet.toLowerCase());
+  at: Date
+) {
   const eligible = input.tokens.filter(
     (token) =>
       timestamp(token.minted_at).getTime() <=
@@ -338,6 +337,23 @@ function calculateAccount(
     0,
     ...memes.map((token) => token.calculation_edition_size!)
   );
+  return eligible.map((token) => ({
+    token,
+    rate:
+      token.family === 'memes'
+        ? index / token.calculation_edition_size!
+        : token.hodl_rate
+  }));
+}
+
+function calculateAccount(
+  input: CollectingTdhProjectionInput,
+  at: Date,
+  transactions: Transaction[]
+): ProjectedAccountTdh {
+  const wallets = input.wallets.map((wallet) => wallet.toLowerCase());
+  const eligible = getCollectingTdhEligibleRates(input, at);
+  const memes = eligible.filter(({ token }) => token.family === 'memes');
   const seasons = getAdjustedSeasons(input.seasons, memes.length);
   const byAsset = tokenTransactions(
     transactions.filter(
@@ -352,14 +368,10 @@ function calculateAccount(
   };
   const projected: Array<{ source: CollectingProjectionToken; tdh: TokenTDH }> =
     [];
-  for (const token of eligible) {
+  for (const { token, rate } of eligible) {
     const key = collectingAssetKey(token.contract, String(token.token_id));
     const sourceTransactions = byAsset.get(key) ?? [];
     if (!sourceTransactions.length) continue;
-    const rate =
-      token.family === 'memes'
-        ? index / token.calculation_edition_size!
-        : token.hodl_rate;
     let consolidated: TokenTDH[] = [];
     for (const wallet of wallets) {
       // Production rounds each custody wallet before consolidating copies. Reuse

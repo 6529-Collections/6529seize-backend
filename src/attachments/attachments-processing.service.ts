@@ -19,7 +19,11 @@ import { createHash } from 'node:crypto';
 import { Readable, Transform } from 'node:stream';
 import { TextDecoder } from 'node:util';
 import { fromBuffer as fileTypeFromBuffer } from 'file-type';
-import { EncryptedPDFError, PDFDocument } from 'pdf-lib';
+import {
+  MAX_PDF_BYTES,
+  PdfContentViolationError,
+  validatePdfContent
+} from '@/attachments/pdf-content-validator';
 import {
   getFileExtension,
   slugifyBaseName
@@ -28,28 +32,13 @@ import { Time } from '@/time';
 
 const csvParser = require('csv-parser');
 
-const MAX_PDF_BYTES = 25 * 1024 * 1024;
 const MAX_CSV_BYTES = 50 * 1024 * 1024;
-const MAX_PDF_PAGES = 100;
 const MAX_CSV_ROWS = 100_000;
 const MAX_CSV_COLUMNS = 256;
 const MAX_CSV_CELL_LENGTH = 256 * 1024;
 const MAX_CSV_LINE_LENGTH = 1024 * 1024;
 const DANGEROUS_CSV_PREFIX =
   /^[\uFEFF\s]*[=+\-@\t\r\n\uFF1D\uFF0B\uFF0D\uFF20]/;
-const PDF_BLOCKLIST_MARKERS = [
-  '/JS',
-  '/JavaScript',
-  '/OpenAction',
-  '/AA',
-  '/Launch',
-  '/SubmitForm',
-  '/EmbeddedFile',
-  '/RichMedia',
-  '/XFA',
-  '/Encrypt'
-];
-const PDF_OBJECT_STREAM_MARKER = '/ObjStm';
 
 function formatByteLimit(byteLimit: number): string {
   return byteLimit.toLocaleString();
@@ -247,47 +236,7 @@ export class AttachmentsProcessingService {
   }
 
   private async validatePdf(fileBuffer: Buffer): Promise<Buffer> {
-    const sizeBytes = fileBuffer.byteLength;
-    if (sizeBytes > MAX_PDF_BYTES) {
-      throw new ContentViolationError(
-        `PDF exceeds the ${formatByteLimit(MAX_PDF_BYTES)} byte limit`
-      );
-    }
-
-    const pdfText = this.normalizePdfText(fileBuffer);
-    const hasObjectStreams = this.pdfTextContainsMarker(
-      pdfText,
-      PDF_OBJECT_STREAM_MARKER
-    );
-    this.assertPdfTextDoesNotContainBlockedMarkers(pdfText);
-
-    const { pageCount, normalizedBuffer } = await this.loadPdfForValidation(
-      fileBuffer,
-      { normalizeObjectStreams: hasObjectStreams }
-    );
-    if (pageCount > MAX_PDF_PAGES) {
-      throw new ContentViolationError(
-        `PDF exceeds the ${MAX_PDF_PAGES} page limit`
-      );
-    }
-    if (!normalizedBuffer) {
-      return fileBuffer;
-    }
-    if (normalizedBuffer.byteLength > MAX_PDF_BYTES) {
-      throw new ContentViolationError(
-        `PDF exceeds the ${formatByteLimit(MAX_PDF_BYTES)} byte limit`
-      );
-    }
-    const normalizedPdfText = this.normalizePdfText(normalizedBuffer);
-    if (
-      this.pdfTextContainsMarker(normalizedPdfText, PDF_OBJECT_STREAM_MARKER)
-    ) {
-      throw new ContentViolationError(
-        'PDF object streams could not be normalized safely'
-      );
-    }
-    this.assertPdfTextDoesNotContainBlockedMarkers(normalizedPdfText);
-    return normalizedBuffer;
+    return (await validatePdfContent(fileBuffer)).displayBytes;
   }
 
   private async createSafeCsv(fileBuffer: Buffer): Promise<Buffer> {
@@ -409,75 +358,10 @@ export class AttachmentsProcessingService {
   }
 
   private isContentViolationError(error: unknown): boolean {
-    return error instanceof ContentViolationError;
-  }
-
-  private normalizePdfText(fileBuffer: Buffer): string {
-    return fileBuffer
-      .toString('latin1')
-      .replace(/#([0-9a-fA-F]{2})/g, (_, hex: string) =>
-        String.fromCodePoint(Number.parseInt(hex, 16))
-      )
-      .toLowerCase();
-  }
-
-  private pdfTextContainsMarker(pdfText: string, marker: string): boolean {
-    return pdfText.includes(marker.toLowerCase());
-  }
-
-  private assertPdfTextDoesNotContainBlockedMarkers(pdfText: string): void {
-    for (const marker of PDF_BLOCKLIST_MARKERS) {
-      if (this.pdfTextContainsMarker(pdfText, marker)) {
-        throw new ContentViolationError(
-          `PDF contains blocked feature ${marker}`
-        );
-      }
-    }
-  }
-
-  private async loadPdfForValidation(
-    fileBuffer: Buffer,
-    { normalizeObjectStreams }: { normalizeObjectStreams: boolean }
-  ): Promise<{ pageCount: number; normalizedBuffer: Buffer | null }> {
-    let pdfDocument: PDFDocument;
-    try {
-      pdfDocument = await PDFDocument.load(fileBuffer, {
-        ignoreEncryption: false,
-        updateMetadata: false
-      });
-    } catch (error) {
-      if (this.isEncryptedPdfError(error)) {
-        throw new ContentViolationError('Encrypted PDFs are not supported');
-      }
-      throw new ContentViolationError('PDF could not be parsed safely');
-    }
-    let pageCount: number;
-    try {
-      pageCount = pdfDocument.getPageCount();
-    } catch {
-      throw new ContentViolationError('PDF could not be parsed safely');
-    }
-    if (pageCount === 0) {
-      throw new ContentViolationError('PDF must contain at least one page');
-    }
-    if (!normalizeObjectStreams) {
-      return { pageCount, normalizedBuffer: null };
-    }
-    let normalizedBuffer: Buffer;
-    try {
-      normalizedBuffer = Buffer.from(
-        await pdfDocument.save({ useObjectStreams: false })
-      );
-    } catch {
-      throw new ContentViolationError(
-        'PDF object streams could not be normalized safely'
-      );
-    }
-    return { pageCount, normalizedBuffer };
-  }
-
-  private isEncryptedPdfError(error: unknown): boolean {
-    return error instanceof EncryptedPDFError;
+    return (
+      error instanceof ContentViolationError ||
+      error instanceof PdfContentViolationError
+    );
   }
 
   private getPublishedFileName({

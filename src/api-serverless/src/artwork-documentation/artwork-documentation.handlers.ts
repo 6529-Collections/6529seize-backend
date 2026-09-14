@@ -47,7 +47,10 @@ const fieldOperation = Joi.object({
 function body<T>(req: DocumentationRequest, schema: Joi.Schema): T {
   return validateDocumentationBody<T>(req.body, schema);
 }
-function mutation(req: DocumentationRequest, expected = false): Mutation {
+export function mutation(
+  req: DocumentationRequest,
+  expected = false
+): Mutation {
   const key = req.get('Idempotency-Key');
   if (uuid.required().validate(key).error)
     fail(428, 'IDEMPOTENCY_KEY_REQUIRED');
@@ -58,7 +61,7 @@ function mutation(req: DocumentationRequest, expected = false): Mutation {
     expectedVersion: expected ? parseIfMatch(req.get('If-Match')) : undefined
   };
 }
-async function execute<T>(
+export async function execute<T>(
   req: DocumentationRequest,
   operation: (ctx: RequestContext) => Promise<unknown>
 ): Promise<T> {

@@ -1,13 +1,21 @@
+import { ApiMarketOperationResult } from '@/api/generated/models/ApiMarketOperationResult';
+import {
+  MarketOperationPrepareRequest,
+  MarketOperationPrepared,
+  marketOperationPrepareSchema,
+  isMarketBatchPrepared
+} from '@/marketplace/market-operation.types';
+import { batchOperationDto } from '@/api/marketplace/marketplace-batch.dto';
+import {
+  transactionDto,
+  componentsDto
+} from '@/api/marketplace/marketplace-shared.dto';
+export { transactionDto } from '@/api/marketplace/marketplace-shared.dto';
 import { ApiMarketKind } from '@/api/generated/models/ApiMarketKind';
 import {
   ApiMarketOperation,
   ApiMarketOperationStateEnum
 } from '@/api/generated/models/ApiMarketOperation';
-import {
-  ApiMarketTransaction,
-  ApiMarketTransactionApprovalScopeEnum,
-  ApiMarketTransactionPurposeEnum
-} from '@/api/generated/models/ApiMarketTransaction';
 import { MarketOperationRow } from '@/marketplace/market-operations.db';
 import {
   marketOperationRevision,
@@ -19,13 +27,9 @@ import {
 } from '@/api/generated/models/ApiMarketSendAttempt';
 import {
   MarketPrepared,
-  MarketPrepareRequest,
-  marketPrepareSchema
+  MarketPrepareRequest
 } from '@/marketplace/market-preparation';
-import {
-  MarketTransaction,
-  MarketDiscoveredOrder
-} from '@/marketplace/provider.types';
+import { MarketDiscoveredOrder } from '@/marketplace/provider.types';
 import {
   ApiMarketTradeOrder,
   ApiMarketTradeOrderSideEnum
@@ -37,34 +41,15 @@ function json(value: unknown): unknown {
 }
 export function operationRequest(
   row: MarketOperationRow
-): MarketPrepareRequest {
-  return marketPrepareSchema.parse(json(row.request_json));
+): MarketOperationPrepareRequest {
+  return marketOperationPrepareSchema.parse(json(row.request_json));
 }
 export function operationPrepared(
   row: MarketOperationRow
-): MarketPrepared | undefined {
+): MarketOperationPrepared | undefined {
   return row.prepared_json
-    ? (json(row.prepared_json) as MarketPrepared)
+    ? (json(row.prepared_json) as MarketOperationPrepared)
     : undefined;
-}
-export function transactionDto(
-  transaction: MarketTransaction
-): ApiMarketTransaction {
-  return {
-    chain_id: transaction.chainId,
-    sender: transaction.from,
-    to: transaction.to,
-    value: transaction.value,
-    data: transaction.data,
-    purpose: transaction.purpose as ApiMarketTransactionPurposeEnum,
-    ...transaction.gas,
-    ...(transaction.approvalScope
-      ? {
-          approval_scope:
-            transaction.approvalScope as ApiMarketTransactionApprovalScopeEnum
-        }
-      : {})
-  };
 }
 export function discoveredOrderDto(
   order: MarketDiscoveredOrder,
@@ -80,6 +65,15 @@ export function discoveredOrderDto(
     recipient: order.recipient,
     side: order.side as ApiMarketTradeOrderSideEnum,
     quantity: order.quantity,
+    purchase_quantity:
+      order.unitTotalWei === undefined
+        ? (order.availableQuantity ?? order.quantity)
+        : '1',
+    quantity_step:
+      order.unitTotalWei === undefined
+        ? (order.availableQuantity ?? order.quantity)
+        : '1',
+    available_quantity: order.availableQuantity ?? order.quantity,
     currency: order.currency,
     total_wei: order.totalWei,
     net_wei: order.netWei,
@@ -91,36 +85,11 @@ export function discoveredOrderDto(
     end_time: order.endTime
   };
 }
-function componentsDto(
-  c: NonNullable<MarketPrepared['signedOrder']>['order']['components']
-) {
-  const item = (entry: (typeof c.offer)[number]) => ({
-    item_type: entry.itemType,
-    token: entry.token,
-    identifier_or_criteria: entry.identifierOrCriteria,
-    start_amount: entry.startAmount,
-    end_amount: entry.endAmount
-  });
-  return {
-    offerer: c.offerer,
-    zone: c.zone,
-    offer: c.offer.map(item),
-    consideration: c.consideration.map((entry) => ({
-      ...item(entry),
-      recipient: entry.recipient
-    })),
-    order_type: c.orderType,
-    start_time: c.startTime,
-    end_time: c.endTime,
-    zone_hash: c.zoneHash,
-    salt: c.salt,
-    conduit_key: c.conduitKey,
-    counter: c.counter
-  };
-}
-export function operationDto(row: MarketOperationRow): ApiMarketOperation {
-  const request = operationRequest(row),
-    prepared = operationPrepared(row);
+function singleOperationDto(
+  row: MarketOperationRow,
+  request: MarketPrepareRequest,
+  prepared?: MarketPrepared
+): ApiMarketOperation {
   const intent = prepared?.intent;
   const attempt = operationSendAttempt(row);
   const signed = prepared?.signedOrder?.order ?? prepared?.reviewOrder;
@@ -213,4 +182,20 @@ export function operationDto(row: MarketOperationRow): ApiMarketOperation {
         }
       : {})
   };
+}
+
+export function operationDto(
+  row: MarketOperationRow
+): ApiMarketOperationResult {
+  const request = operationRequest(row),
+    prepared = operationPrepared(row);
+  if (request.kind === 'BUY_BATCH')
+    return batchOperationDto(
+      row,
+      request,
+      prepared && isMarketBatchPrepared(prepared) ? prepared : undefined
+    );
+  if (prepared && isMarketBatchPrepared(prepared))
+    throw new Error('Operation preparation kind mismatch');
+  return singleOperationDto(row, request, prepared);
 }

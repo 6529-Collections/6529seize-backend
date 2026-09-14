@@ -329,6 +329,35 @@ describeWithSeed('MarketDepthDb', [] as never[], () => {
     ]);
   });
 
+  it('bounds collection ask reads without including bids or changing the snapshot counts', async () => {
+    const published = snapshot('00000000-0000-4000-8000-000000000099', {
+      raw_order_count: 3,
+      orders: [
+        order(),
+        order({ order_key: 'ask-two', order_id: 'ask-two' }),
+        order({ order_key: 'bid-one', order_id: 'bid-one', side: 'bid' })
+      ]
+    });
+    await marketDepthDb.publishCompletedSnapshot(published);
+    const current = await marketDepthDb.getLatestCompletedSnapshot(
+      published.source,
+      published.contract,
+      published.collection_slug,
+      { side: 'ask', limit: 1 }
+    );
+    expect(current?.orders).toHaveLength(1);
+    expect(current?.orders[0].side).toBe('ask');
+    expect(current?.snapshot).toMatchObject({ ask_count: 2, bid_count: 1 });
+    await expect(
+      marketDepthDb.getLatestCompletedSnapshot(
+        published.source,
+        published.contract,
+        published.collection_slug,
+        { side: 'ask', limit: 10002 }
+      )
+    ).rejects.toThrow('Invalid market-depth read limit');
+  });
+
   it('deduplicates events and advances a cursor with cursor and watermark CAS', async () => {
     const base = {
       source: 'opensea-stream',

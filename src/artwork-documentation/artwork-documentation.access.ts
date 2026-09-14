@@ -24,6 +24,15 @@ export function emptyCapabilities(): Capabilities {
     manage_context: false
   };
 }
+export function canWriteDocumentation(capabilities: Capabilities): boolean {
+  return (
+    capabilities.confirm_as_artist ||
+    capabilities.edit_modules.length > 0 ||
+    capabilities.review_lanes.length > 0 ||
+    capabilities.manage_context ||
+    capabilities.manage_assignments
+  );
+}
 export function artistCapabilities(): Capabilities {
   return {
     read_context: true,

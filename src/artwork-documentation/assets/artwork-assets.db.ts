@@ -3,6 +3,8 @@ import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import {
   ARTWORK_ASSET_QUOTAS_TABLE,
   ARTWORK_ASSETS_TABLE,
+  ARTWORK_ASSET_LIST_COLUMNS,
+  ArtworkAssetListRow,
   AssetConnection,
   StoredAsset
 } from '@/artwork-documentation/assets/artwork-assets.types';
@@ -10,7 +12,8 @@ import {
   ARTWORK_UPLOAD_POLICY,
   assetError,
   publicationAssetAccess,
-  requirePublicationAsset
+  requirePublicationAsset,
+  validateStartUpload
 } from '@/artwork-documentation/assets/artwork-assets.policy';
 import { AD_CONTEXTS } from '@/artwork-documentation/artwork-documentation.tables';
 import { parseJson } from '@/artwork-documentation/artwork-documentation.db';
@@ -39,6 +42,13 @@ export class ArtworkAssetsDb extends LazyDbAccessCompatibleService {
       { forcePool: DbPoolName.WRITE }
     );
   }
+  async listSummaries(contextId: string): Promise<ArtworkAssetListRow[]> {
+    return this.db.execute<ArtworkAssetListRow>(
+      `select ${ARTWORK_ASSET_LIST_COLUMNS.join(',')} from ${ARTWORK_ASSETS_TABLE} where context_id = :contextId and reserved_bytes > 0 order by created_at asc`,
+      { contextId },
+      { forcePool: DbPoolName.WRITE }
+    );
+  }
   async reserve(asset: StoredAsset): Promise<StoredAsset> {
     return this.db.executeNativeQueriesInTransaction(async (connection) => {
       const options = { wrappedConnection: connection };
@@ -56,12 +66,14 @@ export class ArtworkAssetsDb extends LazyDbAccessCompatibleService {
       if (!context) assetError(404, 'ASSET_CONTEXT_NOT_FOUND');
       if (context.lifecycle !== 'active')
         assetError(403, 'ASSET_EDIT_FORBIDDEN');
-      requirePublicationAsset(
-        publicationAssetAccess({
-          profile: parseJson<DocumentationProfile>(context.profile_json),
-          modules: parseJson<Modules>(context.modules_json)
-        }),
-        asset
+      const access = publicationAssetAccess({
+        profile: parseJson<DocumentationProfile>(context.profile_json),
+        modules: parseJson<Modules>(context.modules_json)
+      });
+      requirePublicationAsset(access, asset);
+      validateStartUpload(
+        { ...asset, size_bytes: Number(asset.size_bytes) },
+        access
       );
       await this.db.execute(
         // ON DUPLICATE KEY UPDATE takes an exclusive lock immediately; INSERT
@@ -101,7 +113,7 @@ export class ArtworkAssetsDb extends LazyDbAccessCompatibleService {
       );
       if (
         !usage ||
-        Number(usage.bytes) + asset.size_bytes >
+        Number(usage.bytes) + Number(asset.size_bytes) >
           ARTWORK_UPLOAD_POLICY.context_quota_bytes ||
         Number(usage.count) >= ARTWORK_UPLOAD_POLICY.max_assets
       )
@@ -171,11 +183,14 @@ export class ArtworkAssetsDb extends LazyDbAccessCompatibleService {
   }
   async claimProcessing(now: number): Promise<StoredAsset | null> {
     return this.db.executeNativeQueriesInTransaction(async (connection) => {
-      const asset = await this.db.oneOrNull<StoredAsset>(
-        `select * from ${ARTWORK_ASSETS_TABLE} where state = 'processing' and next_attempt_at <= :now and lease_until < :now order by next_attempt_at asc limit 1 for update skip locked`,
+      // Keep characterization and multipart payloads out of the queue sort.
+      const candidate = await this.db.oneOrNull<Pick<StoredAsset, 'id'>>(
+        `select id from ${ARTWORK_ASSETS_TABLE} where state = 'processing' and next_attempt_at <= :now and lease_until < :now order by next_attempt_at asc limit 1 for update skip locked`,
         { now },
         { wrappedConnection: connection }
       );
+      if (!candidate) return null;
+      const asset = await this.find(candidate.id, undefined, connection, true);
       if (!asset) return null;
       const lease = now + 15 * 60_000;
       await this.update(
@@ -209,11 +224,14 @@ export class ArtworkAssetsDb extends LazyDbAccessCompatibleService {
   }
   async claimCleanup(now: number): Promise<StoredAsset | null> {
     return this.db.executeNativeQueriesInTransaction(async (connection) => {
-      const asset = await this.db.oneOrNull<StoredAsset>(
-        `select * from ${ARTWORK_ASSETS_TABLE} where referenced = 0 and reserved_bytes > 0 and expires_at > 0 and expires_at < :now and state <> 'processing' and lease_until < :now and next_attempt_at <= :now order by expires_at asc limit 1 for update skip locked`,
+      // Hydrate the full row only after its bounded candidate is locked.
+      const candidate = await this.db.oneOrNull<Pick<StoredAsset, 'id'>>(
+        `select id from ${ARTWORK_ASSETS_TABLE} where referenced = 0 and reserved_bytes > 0 and expires_at > 0 and expires_at < :now and state <> 'processing' and lease_until < :now and next_attempt_at <= :now order by expires_at asc limit 1 for update skip locked`,
         { now },
         { wrappedConnection: connection }
       );
+      if (!candidate) return null;
+      const asset = await this.find(candidate.id, undefined, connection, true);
       if (!asset) return null;
       const claimed: StoredAsset = {
         ...asset,

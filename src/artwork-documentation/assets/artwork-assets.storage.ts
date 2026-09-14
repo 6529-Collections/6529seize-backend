@@ -13,9 +13,11 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Readable } from 'node:stream';
+import { createReadStream } from 'node:fs';
 import { getArtworkArchiveS3 } from '@/artwork-documentation/assets/artwork-assets.config';
 import {
   ARTWORK_UPLOAD_POLICY,
+  PASSIVE_MEDIA_MIMES,
   expectedPartSize
 } from '@/artwork-documentation/assets/artwork-assets.policy';
 import {
@@ -174,6 +176,13 @@ export class ArtworkAssetStorage {
           Key: asset.preview_key
         })
       );
+    if (asset.validation_report_key)
+      await this.s3Getter().send(
+        new DeleteObjectCommand({
+          Bucket: asset.bucket,
+          Key: asset.validation_report_key
+        })
+      );
   }
   async scanStatus(asset: StoredAsset): Promise<string | null> {
     const result = await this.s3Getter().send(
@@ -201,6 +210,60 @@ export class ArtworkAssetStorage {
       throw new Error('Archive object body is not a stream');
     return result.Body;
   }
+  async readRangeStream(
+    asset: StoredAsset,
+    start: number,
+    length: number,
+    signal: AbortSignal
+  ): Promise<Readable> {
+    if (
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(length) ||
+      start < 0 ||
+      length < 1 ||
+      start + length > Number(asset.size_bytes)
+    )
+      throw new Error('Invalid archival read range');
+    const result = await this.s3Getter().send(
+      new GetObjectCommand({
+        Bucket: asset.bucket,
+        Key: asset.object_key,
+        VersionId: asset.object_version!,
+        Range: `bytes=${start}-${start + length - 1}`
+      }),
+      { abortSignal: signal }
+    );
+    if (!(result.Body instanceof Readable) || result.ContentLength !== length)
+      throw new Error('Archive range response is invalid');
+    return result.Body;
+  }
+  async readRange(
+    asset: StoredAsset,
+    start: number,
+    length: number,
+    signal: AbortSignal
+  ): Promise<Buffer> {
+    if (length === 0) return Buffer.alloc(0);
+    if (length > 8 * 1024 ** 2)
+      throw new Error('Archive buffered range exceeds policy');
+    const stream = await this.readRangeStream(asset, start, length, signal);
+    const chunks: Buffer[] = [];
+    let received = 0;
+    try {
+      for await (const chunk of stream) {
+        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        received += bytes.length;
+        if (received > length)
+          throw new Error('Archive range response exceeds request');
+        chunks.push(bytes);
+      }
+      if (received !== length)
+        throw new Error('Archive range response is incomplete');
+      return Buffer.concat(chunks);
+    } finally {
+      stream.destroy();
+    }
+  }
   async putPreview(asset: StoredAsset, bytes: Buffer): Promise<string> {
     const key = `previews/${asset.id}.jpg`;
     await this.s3Getter().send(
@@ -215,7 +278,53 @@ export class ArtworkAssetStorage {
     );
     return key;
   }
-  async download(asset: StoredAsset, preview: boolean): Promise<string> {
+  async putValidationReport(
+    asset: StoredAsset,
+    path: string,
+    size: number,
+    digest: string
+  ): Promise<string> {
+    const key = `validation-reports/${asset.id}/c2pa-${digest}.json`;
+    const body = createReadStream(path);
+    try {
+      await this.s3Getter().send(
+        new PutObjectCommand({
+          Bucket: asset.bucket,
+          Key: key,
+          Body: body,
+          ContentLength: size,
+          ContentType: 'application/json',
+          ContentDisposition: 'attachment',
+          CacheControl: 'private, no-store',
+          ServerSideEncryption: 'AES256'
+        })
+      );
+      return key;
+    } finally {
+      body.destroy();
+    }
+  }
+  async downloadValidationReport(asset: StoredAsset): Promise<string> {
+    return getSignedUrl(
+      this.s3Getter(),
+      new GetObjectCommand({
+        Bucket: asset.bucket,
+        Key: asset.validation_report_key!,
+        ResponseContentType: 'application/octet-stream',
+        ResponseContentDisposition:
+          'attachment; filename="c2pa-validation-report.json"',
+        ResponseCacheControl: 'private, no-store'
+      }),
+      { expiresIn: ARTWORK_UPLOAD_POLICY.download_url_seconds }
+    );
+  }
+  async download(
+    asset: StoredAsset,
+    preview: boolean,
+    media = false
+  ): Promise<string> {
+    if (media && !PASSIVE_MEDIA_MIMES.has(asset.detected_mime ?? ''))
+      throw new Error('Active media preview is not allowed');
     // The API also returns nosniff/no-store. S3 originals are octet-stream attachments, never an active same-origin renderer.
     const filename = encodeURIComponent(asset.filename).replace(
       /['()*]/g,
@@ -230,10 +339,13 @@ export class ArtworkAssetStorage {
         ResponseCacheControl: 'private, no-store',
         ResponseContentType: preview
           ? 'image/jpeg'
-          : 'application/octet-stream',
-        ResponseContentDisposition: preview
-          ? 'inline'
-          : `attachment; filename="artwork-file"; filename*=UTF-8''${filename}`
+          : media
+            ? asset.detected_mime!
+            : 'application/octet-stream',
+        ResponseContentDisposition:
+          preview || media
+            ? 'inline'
+            : `attachment; filename="artwork-file"; filename*=UTF-8''${filename}`
       }),
       { expiresIn: ARTWORK_UPLOAD_POLICY.download_url_seconds }
     );

@@ -79,6 +79,7 @@ import {
   mapWaveScore
 } from '@/api/waves/wave-score.api-mapper';
 import { WaveUnreadSummary } from '@/api/waves/wave-unread-cache';
+import { moderationPresentationService } from '@/content-moderation/moderation-presentation.service';
 
 type WaveMappingRelatedData = {
   contributors: Record<
@@ -765,6 +766,10 @@ export class WavesMappers {
         },
         ctx.connection
       );
+    const curationDisplayNames = await moderationPresentationService.groupNames(
+      curationEntities,
+      ctx
+    );
     const curations: Record<string, ApiGroup> = curationEntities.reduce(
       (acc, curationEntity) => {
         const isHidden =
@@ -778,7 +783,7 @@ export class WavesMappers {
         } else {
           acc[curationEntity.id] = {
             id: curationEntity.id,
-            name: curationEntity.name,
+            name: curationDisplayNames[curationEntity.id],
             author: profileMins[curationEntity.created_by],
             created_at: new Date(curationEntity.created_at).getTime(),
             is_hidden: false,

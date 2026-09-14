@@ -282,7 +282,11 @@ router.post(
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
-    const requestContext: RequestContext = { timer, authenticationContext };
+    const requestContext: RequestContext = {
+      timer,
+      authenticationContext,
+      moderationRequestId: req.get('Idempotency-Key')
+    };
     const savingProfileId = authenticationContext.getActingAsId();
     if (!savingProfileId) {
       throw new ForbiddenException(`Please create a profile first.`);

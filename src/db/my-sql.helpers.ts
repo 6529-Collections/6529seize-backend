@@ -42,9 +42,17 @@ export const CustomTypeCaster: TypeCast = (field, next) =>
 type PrivateQueryFamily =
   | 'artwork documentation'
   | 'market depth'
+  | 'content moderation'
   | 'CMS agent';
 
 function privateQueryFamily(sql: string): PrivateQueryFamily | null {
+  if (
+    /\b(?:content_moderation_[a-z_]+|abusiveness_detection_results)\b/i.test(
+      sql
+    )
+  ) {
+    return 'content moderation';
+  }
   if (/\bartwork_documentation_[a-z_]+\b/i.test(sql)) {
     return 'artwork documentation';
   }
@@ -64,6 +72,8 @@ function describeQuery(sql: string, params?: Record<string, unknown>): string {
   }
   if (family === 'market depth') return '[private market depth query]';
   if (family === 'CMS agent') return '[private CMS agent query]';
+  if (family === 'content moderation')
+    return '[private content moderation query]';
   const normalized = sql.replace('\n', ' ');
   if (!params) return normalized;
   return `${normalized} with params ${JSON.stringify(params)}`;

@@ -28,7 +28,7 @@ import { pollOpenSeaMarketDepthForContract } from '../market-depth/opensea-polle
 const logger = Logger.get('MARKET_STATS_LOOP');
 const RESERVED_COMPLETION_MS = 60_000;
 const MAX_INVOCATION_WORK_MS = 13 * 60_000;
-const LEGACY_STATIC_BUDGET_MS = 4 * 60_000;
+const LEGACY_BUDGET_MS = 10 * 60_000;
 
 const batchContracts = new Set(
   [MEMES_CONTRACT, MEMELAB_CONTRACT, GRADIENT_CONTRACT].map((c) =>
@@ -48,48 +48,37 @@ async function refreshStaticContract(
   contract: string,
   deadlineMs: number
 ): Promise<void> {
-  const failures: unknown[] = [];
-  const legacyDeadline = Math.min(
-    deadlineMs,
-    Date.now() + LEGACY_STATIC_BUDGET_MS
-  );
-  try {
-    await findNftMarketStats(contract, legacyDeadline);
-  } catch (error) {
-    failures.push(error);
-    logger.error(`[CONTRACT ${contract}] Legacy market stats failed`, error);
-  }
-  try {
-    await pollOpenSeaMarketDepthForContract(contract, { deadlineMs });
-  } catch (error) {
-    failures.push(error);
-    logger.error(`[CONTRACT ${contract}] Market-depth refresh failed`, error);
-  }
-  if (failures.length > 0)
-    throw combinedFailure('Market refresh failed', failures);
+  const legacyDeadline = Math.min(deadlineMs, Date.now() + LEGACY_BUDGET_MS);
+  await refreshTogether(`CONTRACT ${contract}`, [
+    findNftMarketStats(contract, legacyDeadline),
+    pollOpenSeaMarketDepthForContract(contract, { deadlineMs })
+  ]);
 }
 
 async function refreshNextgen(deadlineMs: number): Promise<void> {
-  const failures: unknown[] = [];
-  try {
-    await pollOpenSeaMarketDepthForContract('nextgen', { deadlineMs });
-  } catch (error) {
-    failures.push(error);
-    logger.error('[NEXTGEN] Market-depth refresh failed', error);
-  }
-  try {
-    if (Date.now() >= deadlineMs)
-      throw new Error('Invocation deadline reached');
-    await findNextgenMarketStats(
+  await refreshTogether('NEXTGEN', [
+    findNextgenMarketStats(
       NEXTGEN_CORE[mainnet.id].toLowerCase(),
-      deadlineMs
-    );
-  } catch (error) {
-    failures.push(error);
-    logger.error('[NEXTGEN] Legacy market stats failed', error);
-  }
+      Math.min(deadlineMs, Date.now() + LEGACY_BUDGET_MS)
+    ),
+    pollOpenSeaMarketDepthForContract('nextgen', { deadlineMs })
+  ]);
+}
+
+async function refreshTogether(
+  label: string,
+  tasks: Promise<unknown>[]
+): Promise<void> {
+  // Both tasks must finish before doInDbContext disconnects their database.
+  const results = await Promise.allSettled(tasks);
+  const failures = results.flatMap((result, index) => {
+    if (result.status === 'fulfilled') return [];
+    const task = index === 0 ? 'Legacy market stats' : 'Market-depth refresh';
+    logger.error(`[${label}] ${task} failed`, result.reason);
+    return [result.reason];
+  });
   if (failures.length > 0)
-    throw combinedFailure('NextGen market refresh failed', failures);
+    throw combinedFailure('Market refresh failed', failures);
 }
 
 export const handler = sentryContext.wrapLambdaHandler(

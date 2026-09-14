@@ -16,8 +16,9 @@ export const NEXTGEN_BURN_COLLECTIONS_TABLE = 'nextgen_burn_collection';
 export const NEXTGEN_TOKENS_TDH_TABLE = 'nextgen_tokens_tdh';
 
 export const GENERATOR_BASE_PATH = 'https://generator.6529.io';
-export const NEXTGEN_BUCKET = 'media.generator.6529.io';
-export const NEXTGEN_CF_BASE_PATH = `https://${NEXTGEN_BUCKET}`;
+// The storage bucket retains its name when the public CDN hostname changes.
+export const NEXTGEN_BUCKET = 'media.generator.seize.io';
+export const NEXTGEN_CF_BASE_PATH = 'https://media.generator.6529.io';
 export const NEXTGEN_BUCKET_AWS_REGION = 'us-east-1';
 export const CLOUDFRONT_DISTRIBUTION = 'E1RI37JRN0ZK6J';
 

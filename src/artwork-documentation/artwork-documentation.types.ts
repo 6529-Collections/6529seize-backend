@@ -61,8 +61,10 @@ export type ValueSchema = {
   minimum?: number;
   maximum?: number;
   format?: string;
+  uniqueItems?: boolean;
   oneOf?: ValueSchema[];
   description?: string;
+  title?: string;
 };
 export type FieldDefinition = {
   id: string;
@@ -70,6 +72,13 @@ export type FieldDefinition = {
   allowed_statuses: Answer['status'][];
   default_visibility: Answer['intended_visibility'];
   locked_restricted: boolean;
+  label?: string;
+  guidance?: string;
+  editor?: 'text' | 'long_text' | 'structured' | 'choice' | 'media_profiles';
+  media_profiles?: string[];
+  required_for_media?: boolean;
+  chapter?: string;
+  read_only?: boolean;
 };
 export type DocumentationProfile = {
   profile_id: string;

@@ -24,6 +24,8 @@ jobs:
           cache: 'npm'
       - name: Check package manager discipline
         run: ./bin/6529 run package-manager:check
+      - name: Verify patched C2PA package against pinned upstream
+        run: python3 scripts/build-c2pa-package.py --check
       - name: Verify pinned npm through the 6529 wrapper
         shell: bash
         run: |

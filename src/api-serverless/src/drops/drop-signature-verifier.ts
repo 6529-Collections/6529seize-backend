@@ -1,5 +1,7 @@
 import { ApiCreateDropRequest } from '../generated/models/ApiCreateDropRequest';
 import { ethers } from 'ethers';
+import { env } from '@/env';
+import { verifyMemesSubmissionSignature } from '@/api/wallet-signatures/memes-submission-signature';
 import { dropHasher, DropHasher } from './drop-hasher';
 import {
   ETHEREUM_MAINNET_CHAIN_ID,
@@ -21,11 +23,15 @@ export class DropSignatureVerifier {
   public async isDropSignedByAnyOfGivenWallets({
     wallets,
     drop,
-    termsOfService
+    termsOfService,
+    waveName = null,
+    audience = null
   }: {
     wallets: string[];
     drop: StructuredDropSignatureRequest;
     termsOfService: string | null;
+    waveName?: string | null;
+    audience?: string | null;
   }): Promise<boolean> {
     if (!wallets.length) {
       return false;
@@ -40,6 +46,19 @@ export class DropSignatureVerifier {
       termsOfService
     });
     const structuredMessage = drop.signature_message ?? null;
+    if (structuredMessage?.trimStart().startsWith('{')) {
+      return verifyMemesSubmissionSignature({
+        message: structuredMessage,
+        signature,
+        drop,
+        wallets,
+        payloadHash: hash,
+        termsOfService,
+        expectedWaveId: env.getStringOrNull('MAIN_STAGE_WAVE_ID'),
+        expectedWaveName: waveName,
+        expectedAudience: audience
+      });
+    }
     if (structuredMessage) {
       const expectedAddress = this.getStructuredSigningAddress(
         structuredMessage,

@@ -107,6 +107,15 @@ description: Write, open, iterate, and prepare pull requests in the 6529 SEIZE b
 
 - Never merge, deploy staging, or deploy production unless the user explicitly asked for that mode or repo standing instructions require it.
 - Use `ops/skills/deploy-6529/SKILL.md` for actual merge execution, staging deployment, production deployment, frontend coordination, failed-gate recovery, and deployed-environment validation.
+- Before claiming the requester lacks maintainer/admin authority or asking again,
+  follow [Verify GitHub authority](../deploy-6529/SKILL.md#verify-github-authority).
+  Check the authenticated account, repository permissions, actual required team,
+  and effective rules; an unmet approval is not evidence of non-membership.
+- For the ordinary review path, verify that the required team's approval counts
+  for the exact PR and head; membership alone does not satisfy self-review or
+  last-push rules. Honor an explicit owner/admin bypass already authorized for
+  this release when the actor is eligible, without asking again or changing
+  protections. Report which path applies and retain relevant validation.
 - Always list all lambdas/services that need redeployment and their deployment order when finishing development or writing the PR.
 - Use `ops/skills/deploy-6529/SKILL.md` as the source of truth for deployment workflow dispatch mechanics.
 - Deploy `dbMigrationsLoop` before services that depend on new schema/entity sync or data backfills.

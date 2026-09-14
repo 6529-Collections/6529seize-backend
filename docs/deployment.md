@@ -52,6 +52,14 @@ Find the new run by workflow, branch, service, and commit; follow that run to
 completion. The workflows resolve and verify the source commit and artifact
 identity automatically.
 
+Backend dispatches can also supply `expected_source_sha`, the full lowercase
+40-character commit SHA reviewed for the release. When supplied, the workflow
+rejects a different resolved commit before checkout, builds, or AWS credential
+configuration. Release sequencers should always supply this input, because a
+branch can move between a caller's check and dispatch. Omitting it preserves
+ordinary branch-based dispatch behavior; it does not pin the branch to an
+earlier review. Checkout still uses the immutable SHA attached to the run.
+
 Backend production also carries release-note inputs:
 
 - `release_pull_request`: merged PR represented by the deployment;
