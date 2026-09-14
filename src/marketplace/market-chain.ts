@@ -1,6 +1,10 @@
 import { Interface, isError, JsonRpcProvider } from 'ethers';
 import { getRpcUrl } from '@/alchemy';
 import {
+  marketGasFitsEnvelope,
+  reviewedMarketGas
+} from '@/marketplace/market-gas-envelope';
+import {
   MarketTradeIntent,
   MarketTransaction,
   MarketValidationError,
@@ -95,16 +99,24 @@ export class MarketChain {
 
   async approvals(
     intent: MarketTradeIntent,
-    conduitKey = MARKET_OPENSEA_CONDUIT_KEY
+    conduitKey = MARKET_OPENSEA_CONDUIT_KEY,
+    reviewed: readonly MarketTransaction[] = []
   ): Promise<MarketTransaction[]> {
     const approvals = await this.approvalRequests(intent, conduitKey);
     // These fixed NFT/WETH approvals are independent of one another. Simulate
     // only the approvals; fulfillment is prepared again after they are mined.
     return Promise.all(
-      approvals.map(async (transaction) => ({
-        ...transaction,
-        gas: await this.simulate(transaction)
-      }))
+      approvals.map(async (transaction) => {
+        const previous = reviewed.find((candidate) =>
+          reviewedMarketGas(transaction, candidate)
+        );
+        return {
+          ...transaction,
+          gas: previous?.gas
+            ? await this.simulate(transaction, previous.gas)
+            : await this.simulate(transaction)
+        };
+      })
     );
   }
 
@@ -246,7 +258,10 @@ export class MarketChain {
     ];
   }
 
-  async simulate(transaction: MarketTransaction): Promise<MarketGasEstimate> {
+  async simulate(
+    transaction: MarketTransaction,
+    reviewed?: MarketGasEstimate
+  ): Promise<MarketGasEstimate> {
     const { from, to, data, value } = transaction;
     const request = { from, to, data, value: BigInt(value) };
     try {
@@ -259,15 +274,30 @@ export class MarketChain {
         fee.maxFeePerGas <= BigInt(0)
       )
         throw simulationMismatch();
+      let maxFee = fee.maxFeePerGas;
+      let retained: MarketGasEstimate | undefined;
+      if (reviewed) {
+        const requiredFee = await this.currentRequiredFee(
+          fee.maxPriorityFeePerGas
+        );
+        if (marketGasFitsEnvelope(gas, requiredFee, reviewed))
+          retained = reviewed;
+        // Fee data and the latest block can cross a block boundary. A new quote
+        // must cover the raw requirement even if the earlier recommendation does not.
+        if (requiredFee > maxFee) maxFee = requiredFee;
+      }
       const gasLimit = (gas * BigInt(120)) / BigInt(100);
-      const reserve = gasLimit * fee.maxFeePerGas;
-      if ((await this.rpc.getBalance(from)) < BigInt(value) + reserve)
-        throw simulationMismatch();
-      return {
+      const result = retained ?? {
         gas_limit: gasLimit.toString(),
-        max_fee_per_gas: fee.maxFeePerGas.toString(),
-        gas_reserve_wei: reserve.toString()
+        max_fee_per_gas: maxFee.toString(),
+        gas_reserve_wei: (gasLimit * maxFee).toString()
       };
+      if (
+        (await this.rpc.getBalance(from)) <
+        BigInt(value) + BigInt(result.gas_reserve_wei)
+      )
+        throw simulationMismatch();
+      return { ...result };
     } catch (error) {
       if (error instanceof MarketValidationError) throw error;
       if (hasExecutionFailure(error)) throw simulationMismatch();
@@ -276,6 +306,25 @@ export class MarketChain {
         'The chain provider could not simulate this transaction. Try again when the connection is available.'
       );
     }
+  }
+
+  private async currentRequiredFee(priority: bigint | null): Promise<bigint> {
+    const block = await this.rpc.getBlock('latest');
+    if (
+      !block?.hash ||
+      !Number.isSafeInteger(block.timestamp) ||
+      block.timestamp < 0 ||
+      block.timestamp * 1000 < Date.now() - 120000 ||
+      typeof block.baseFeePerGas !== 'bigint' ||
+      block.baseFeePerGas < BigInt(0) ||
+      typeof priority !== 'bigint' ||
+      priority < BigInt(0)
+    )
+      throw new MarketValidationError(
+        'PROVIDER_UNAVAILABLE',
+        'The current network fee requirements could not be verified.'
+      );
+    return block.baseFeePerGas + priority;
   }
 }
 

@@ -68,7 +68,15 @@ function fixture() {
       return abi.encodeFunctionResult(call.fragment, [result[call.signature]]);
     }),
     estimateGas: jest.fn().mockResolvedValue(BigInt(50000)),
-    getFeeData: jest.fn().mockResolvedValue({ maxFeePerGas: BigInt(10) }),
+    getFeeData: jest.fn().mockResolvedValue({
+      maxFeePerGas: BigInt(10),
+      maxPriorityFeePerGas: BigInt(2)
+    }),
+    getBlock: jest.fn().mockResolvedValue({
+      hash: `0x${'11'.repeat(32)}`,
+      timestamp: Math.floor(Date.now() / 1000),
+      baseFeePerGas: BigInt(7)
+    }),
     getBalance: jest.fn().mockResolvedValue(BigInt(1000000))
   };
   return {
@@ -104,6 +112,35 @@ it('simulates the exact ERC1155 collection approval and includes bounded gas in 
     gas_limit: '60000',
     max_fee_per_gas: '10',
     gas_reserve_wei: '600000'
+  });
+});
+
+it('retains exact approval limits only while the same operator, amount and scope remain required', async () => {
+  const { chain, rpc } = fixture();
+  const [previous] = await chain.approvals({ ...intent, kind: 'OFFER' });
+  rpc.estimateGas.mockResolvedValue(BigInt(55000));
+  rpc.getFeeData.mockResolvedValue({
+    maxFeePerGas: BigInt(16),
+    maxPriorityFeePerGas: BigInt(2)
+  });
+  rpc.getBalance.mockResolvedValue(BigInt(10000000));
+  const [refreshed] = await chain.approvals(
+    { ...intent, kind: 'OFFER' },
+    MARKET_OPENSEA_CONDUIT_KEY,
+    [previous]
+  );
+  expect(refreshed).toEqual(previous);
+  const [changed] = await chain.approvals(
+    { ...intent, kind: 'OFFER', maxTotalWei: '199' },
+    MARKET_OPENSEA_CONDUIT_KEY,
+    [previous]
+  );
+  expect(abi.parseTransaction(changed)!.args[1]).toBe(BigInt(199));
+  expect(changed.data).not.toBe(previous.data);
+  expect(changed.gas).toEqual({
+    gas_limit: '66000',
+    max_fee_per_gas: '16',
+    gas_reserve_wei: '1056000'
   });
 });
 
