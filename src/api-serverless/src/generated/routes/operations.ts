@@ -119,6 +119,8 @@ import { ApiGlobalRepCategoryWaveOverview } from '@/api/generated/models/ApiGlob
 import { ApiGlobalRepCategoryWavesPage } from '@/api/generated/models/ApiGlobalRepCategoryWavesPage';
 import { ApiGroupMembersPreviewRequest } from '@/api/generated/models/ApiGroupMembersPreviewRequest';
 import { ApiMarketBatchCapabilities } from '@/api/generated/models/ApiMarketBatchCapabilities';
+import { ApiMarketBatchPreflight } from '@/api/generated/models/ApiMarketBatchPreflight';
+import { ApiMarketBatchPreflightRequest } from '@/api/generated/models/ApiMarketBatchPreflightRequest';
 import { ApiMarketDepth } from '@/api/generated/models/ApiMarketDepth';
 import { ApiMarketListings } from '@/api/generated/models/ApiMarketListings';
 import { ApiMarketMyOperations } from '@/api/generated/models/ApiMarketMyOperations';
@@ -1504,6 +1506,22 @@ export type ContinueMarketOperationRequest = Request<
   ApiResponse<ContinueMarketOperationResponse>,
   never,
   ContinueMarketOperationQuery,
+  Record<string, never>
+>;
+
+export interface PreflightMarketBatchPathParams {
+  "id": string;
+}
+
+export type PreflightMarketBatchQuery = Record<string, never>;
+
+export type PreflightMarketBatchResponse = ApiMarketBatchPreflight;
+
+export type PreflightMarketBatchRequest = Request<
+  PreflightMarketBatchPathParams,
+  ApiResponse<PreflightMarketBatchResponse>,
+  ApiMarketBatchPreflightRequest,
+  PreflightMarketBatchQuery,
   Record<string, never>
 >;
 
