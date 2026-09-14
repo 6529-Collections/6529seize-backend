@@ -27,7 +27,7 @@ import {
   SUBSCRIPTIONS_REDEEMED_TABLE,
   SUBSCRIPTIONS_TOP_UP_TABLE
 } from '@/constants';
-import { fetchNft, fetchPaginated } from '@/db-api';
+import { fetchPaginated } from '@/db-api';
 import {
   SubscriptionBalance,
   SubscriptionMode
@@ -41,7 +41,7 @@ import {
   fetchSubscriptionEligibilityForKeys
 } from '@/subscriptionsDaily/db.subscriptions';
 import { MINIMUM_SUBSCRIPTION_ELIGIBILITY } from '@/subscriptionsDaily/subscription-eligibility';
-import { Time } from '@/time';
+import { getSubscriptionCutoffMemeId } from '@/api/subscriptions/subscription-cutoff';
 import { markSubscriptionCoverageDirty } from '@/subscription-coverage/subscription-coverage-dirty';
 
 const SUBSCRIPTIONS_START_ID = 220;
@@ -208,27 +208,13 @@ async function updateSubscriptionModeInternal(
   );
 }
 
-async function getEffectiveMaxMemeId(): Promise<number> {
-  let maxMemeId = await getMaxMemeId();
-  if (Time.isMemeDropDay()) {
-    const lastMinted = await fetchNft(MEMES_CONTRACT, maxMemeId);
-    const lastMintedDate = lastMinted?.mint_date
-      ? Time.fromDate(new Date(lastMinted.mint_date))
-      : Time.now();
-    if (lastMinted && !lastMintedDate.isToday()) {
-      maxMemeId++;
-    }
-  }
-  return maxMemeId;
-}
-
 async function updateSubscriptionsAfterModeChange(
   consolidationKey: string,
   automatic: boolean,
   wrappedConnection: any
 ) {
   const promises: Promise<any>[] = [];
-  const maxMemeId = await getEffectiveMaxMemeId();
+  const maxMemeId = await getSubscriptionCutoffMemeId();
   const upcomingSubscriptions: NFTSubscription[] = await sqlExecutor.execute(
     `SELECT * FROM ${SUBSCRIPTIONS_NFTS_TABLE} WHERE consolidation_key = :consolidationKey AND contract = :memesContract AND token_id > :maxMemeId AND subscribed = :subscribed`,
     {
@@ -344,6 +330,7 @@ export async function fetchUpcomingMemeSubscriptions(
   cardCount: number
 ): Promise<NFTSubscription[]> {
   const maxMemeId = await getMaxMemeId(true);
+  const cutoffMemeId = await getSubscriptionCutoffMemeId();
 
   const mode: SubscriptionMode = await getForConsolidationKey(
     consolidationKey,
@@ -382,7 +369,7 @@ export async function fetchUpcomingMemeSubscriptions(
         consolidation_key: consolidationKey,
         contract: MEMES_CONTRACT,
         token_id: id,
-        subscribed: mode?.automatic ?? false,
+        subscribed: id > cutoffMemeId && (mode?.automatic ?? false),
         subscribed_count: mode?.subscribe_all_editions
           ? subscriptionEligibility
           : 1
@@ -429,7 +416,8 @@ export async function fetchUpcomingMemeSubscriptionStatusForConsolidationKey(
     };
   }
 
-  if (!(mode?.automatic ?? false)) {
+  const cutoffMemeId = await getSubscriptionCutoffMemeId();
+  if (memeId <= cutoffMemeId || !(mode?.automatic ?? false)) {
     return {
       subscribed: false,
       eligibility: subscriptionEligibility
@@ -461,9 +449,11 @@ export async function updateSubscription(
       );
     }
   }
-  const maxMemeId = await getMaxMemeId();
+  const maxMemeId = await getSubscriptionCutoffMemeId();
   if (maxMemeId >= tokenId) {
-    throw new BadRequestException(`Meme #${tokenId} already dropped.`);
+    throw new BadRequestException(
+      `Subscriptions are closed for Meme #${tokenId}.`
+    );
   }
 
   const mode = await fetchSubscriptionModeForConsolidationKey(consolidationKey);
@@ -527,6 +517,13 @@ export async function updateSubscriptionCount(
   tokenId: number,
   count: number
 ) {
+  const cutoffMemeId = await getSubscriptionCutoffMemeId();
+  if (tokenId <= cutoffMemeId) {
+    throw new BadRequestException(
+      `Subscriptions are closed for Meme #${tokenId}.`
+    );
+  }
+
   const subscription = await fetchSubscriptionForConsolidationKey(
     consolidationKey,
     contract,
@@ -810,6 +807,8 @@ async function fetchEffectiveUpcomingMemeSubscriptionCounts(
     return [];
   }
 
+  const cutoffMemeId = await getSubscriptionCutoffMemeId();
+
   const autoSubs: SubscriptionMode[] = await sqlExecutor.execute(
     `SELECT * FROM ${SUBSCRIPTIONS_MODE_TABLE} WHERE automatic = :automatic`,
     { automatic: true }
@@ -849,6 +848,11 @@ async function fetchEffectiveUpcomingMemeSubscriptionCounts(
 
   const counts: SubscriptionCounts[] = [];
   for (const id of tokenIds) {
+    if (id <= cutoffMemeId) {
+      counts.push(await fetchFinalMemeSubscriptionCount(id));
+      continue;
+    }
+
     const { tokenSubs, tokenAutoSubs } = getTokenSubscriptionPartitions(
       id,
       subs,
@@ -882,9 +886,9 @@ async function fetchEffectiveUpcomingMemeSubscriptionCounts(
 export async function fetchMemeSubscriptionCount(
   tokenId: number
 ): Promise<SubscriptionCounts> {
-  const maxMemeId = await getMaxMemeId();
+  const cutoffMemeId = await getSubscriptionCutoffMemeId();
 
-  if (tokenId <= maxMemeId) {
+  if (tokenId <= cutoffMemeId) {
     return fetchFinalMemeSubscriptionCount(tokenId);
   }
 
