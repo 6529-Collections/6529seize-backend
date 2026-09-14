@@ -17,7 +17,7 @@ description: Write, open, iterate, and prepare pull requests in the 6529 SEIZE b
      deployment and smoke validation. Never author or post a release note;
      follow the deploy skill’s metadata/finalization contract so the existing
      autonomous bot publishes exactly once after the production group succeeds.
-   If the user did not explicitly request merge or deployment, stop at `review-ready`.
+     If the user did not explicitly request merge or deployment, stop at `review-ready`.
 
 2. Inspect the change before writing:
    - Read the issue, task, or user request.
@@ -36,28 +36,35 @@ description: Write, open, iterate, and prepare pull requests in the 6529 SEIZE b
 
    ```markdown
    ## Issue
+
    - What problem, user need, bug, or follow-up this PR addresses.
 
    ## Fix
+
    - The core solution and why it is appropriate.
 
    ## Changes
+
    - Notable code, docs, config, API, data-shape, entity, migration, queue, Lambda, or deploy changes.
 
    ## Validation
+
    - Commands, checks, generated-file refreshes, or manual flows completed.
    - Anything intentionally not tested, with the reason and residual risk.
 
    ## Risk
+
    - Level: Low | Medium | High
    - Why: blast radius, reversibility, data/security/performance/deploy impact.
    - Rollback: expected rollback or mitigation path.
 
    ## Deployment
+
    - Lambdas/services to redeploy, in order.
    - State "None" when no backend deploy is needed.
 
    ## Review Notes
+
    - Areas reviewers or bots should focus on, plus any trade-offs.
    ```
 
@@ -81,21 +88,34 @@ description: Write, open, iterate, and prepare pull requests in the 6529 SEIZE b
 7. Decide readiness:
    - Agent-happy means the diff is scoped, reviewed, validates the requested behavior, and has no known unaddressed high-risk issues.
    - Bot-happy means every available review bot has no remaining blocking concerns on the latest pushed commit, or the agent has documented why a remaining item is safe to defer.
-   - Human approval and required CI still govern merge eligibility.
+   - Required approvals and relevant CI govern merge eligibility, subject to the
+     user's existing authorization. Pending or failed E2E unrelated to the change
+     does not block release work. Report it separately and use the authorized
+     merge path if it is the only cause of a blocked aggregate check; do not
+     change repository protections or claim the E2E passed.
 
 ## Validation
 
-- Run `npm run lint` after changes; fix all errors and warnings.
-- Use `npm test` for broad behavior changes, and `npm test path/to/file.test.ts` for focused test runs.
-- Use `npm run build` for TypeScript, generated deploy config, entity, shared-library, loop, or deploy-sensitive changes.
-- For API contract changes, run `cd src/api-serverless && npm run restructure-openapi && npm run generate`; use `npm run build` in `src/api-serverless` when API packaging or generated API output is affected.
-- For deploy config changes, edit `src/config/deploy-services.json`, run `npm run generate:deploy-config`, and commit the generated `.github/workflows/deploy.yml` change.
+- Run `6529 run lint` after changes; fix all errors and warnings.
+- Use `6529 run test` for broad behavior changes, and `6529 run test -- path/to/file.test.ts` for focused test runs.
+- Use `6529 run build` for TypeScript, generated deploy config, entity, shared-library, loop, or deploy-sensitive changes.
+- For API contract changes, run `cd src/api-serverless && 6529 run generate:openapi`; this runs `restructure-openapi` and `generate` and refreshes generated models, routes, and operation types. Use `6529 run build` in `src/api-serverless` when API packaging or generated API output is affected.
+- For deploy config changes, edit `src/config/deploy-services.json`, run `6529 run generate:deploy-config`, and commit the generated `.github/workflows/deploy.yml` change.
 - The pull-request workflow verifies generated deploy config, generated API models/routes, lint, format, root build, and API build.
 
 ## Deployment Gates
 
 - Never merge, deploy staging, or deploy production unless the user explicitly asked for that mode or repo standing instructions require it.
 - Use `ops/skills/deploy-6529/SKILL.md` for actual merge execution, staging deployment, production deployment, frontend coordination, failed-gate recovery, and deployed-environment validation.
+- Before claiming the requester lacks maintainer/admin authority or asking again,
+  follow [Verify GitHub authority](../deploy-6529/SKILL.md#verify-github-authority).
+  Check the authenticated account, repository permissions, actual required team,
+  and effective rules; an unmet approval is not evidence of non-membership.
+- For the ordinary review path, verify that the required team's approval counts
+  for the exact PR and head; membership alone does not satisfy self-review or
+  last-push rules. Honor an explicit owner/admin bypass already authorized for
+  this release when the actor is eligible, without asking again or changing
+  protections. Report which path applies and retain relevant validation.
 - Always list all lambdas/services that need redeployment and their deployment order when finishing development or writing the PR.
 - Use `ops/skills/deploy-6529/SKILL.md` as the source of truth for deployment workflow dispatch mechanics.
 - Deploy `dbMigrationsLoop` before services that depend on new schema/entity sync or data backfills.

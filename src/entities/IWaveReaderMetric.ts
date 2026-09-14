@@ -10,6 +10,10 @@ export class WaveReaderMetricEntity {
   readonly reader_id!: string;
   @Column({ type: 'bigint', nullable: false, default: 0 })
   readonly latest_read_timestamp!: number;
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly latest_read_serial_no!: number | null;
+  @Column({ type: 'bigint', nullable: false, default: 0 })
+  readonly unread_state_version!: number;
   @Column({ type: 'boolean', nullable: false, default: false })
   readonly muted!: boolean;
 }

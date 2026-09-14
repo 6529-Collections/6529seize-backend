@@ -2,14 +2,19 @@ import fetch, { Response } from 'node-fetch';
 import type { AbortSignal as NodeFetchAbortSignal } from 'node-fetch/externals';
 import { numbers } from '@/numbers';
 import { env } from '@/env';
+import { getNftLinkResolutionBudget } from '@/nft-links/resolution-budget';
 
 export class HttpError extends Error {
+  public readonly responseMatchesRequest: boolean;
   constructor(
     public readonly status: number,
     public readonly url: string,
-    message: string
+    message: string,
+    responseUrl?: string
   ) {
     super(message);
+    Object.setPrototypeOf(this, HttpError.prototype);
+    this.responseMatchesRequest = responseUrl === url;
   }
 }
 
@@ -51,7 +56,11 @@ export async function fetchTextWithTimeout(
   url: string,
   opts: FetchOptions
 ): Promise<string> {
+  const budget = getNftLinkResolutionBudget();
+  budget?.check();
   const controller = new AbortController();
+  const abort = () => controller.abort();
+  budget?.signal.addEventListener('abort', abort, { once: true });
   const t = setTimeout(() => controller.abort(), opts.timeoutMs);
   try {
     const res = await fetch(url, {
@@ -64,12 +73,19 @@ export async function fetchTextWithTimeout(
       signal: controller.signal as unknown as NodeFetchAbortSignal
     });
     if (!res.ok) {
-      throw new HttpError(res.status, url, `HTTP ${res.status} for ${url}`);
+      throw new HttpError(
+        res.status,
+        url,
+        `HTTP ${res.status} for ${url}`,
+        res.url
+      );
     }
 
     return await readTextWithLimit(res, url, getMaxBytes(opts));
   } finally {
     clearTimeout(t);
+    if (budget) controller.abort();
+    budget?.signal.removeEventListener('abort', abort);
   }
 }
 

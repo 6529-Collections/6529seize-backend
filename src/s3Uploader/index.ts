@@ -1,3 +1,4 @@
+import { withMediaDependencySmoke } from '@/media/media-dependency-smoke';
 import { SQSBatchResponse, SQSHandler } from 'aws-lambda';
 import { fetchMemeLabNFTByContractAndId, fetchNFTByContractAndId } from '@/db';
 import { Logger } from '@/logging';
@@ -109,4 +110,6 @@ function truncateRecordBody(body: string | undefined): string {
   return body.length <= maxLength ? body : `${body.slice(0, maxLength)}...`;
 }
 
-export const handler = sentryContext.wrapLambdaHandler(sqsHandler);
+export const handler = withMediaDependencySmoke(
+  sentryContext.wrapLambdaHandler(sqsHandler)
+);

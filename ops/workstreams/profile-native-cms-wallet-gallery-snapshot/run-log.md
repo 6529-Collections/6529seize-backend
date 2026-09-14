@@ -1,5 +1,9 @@
 # Run Log
 
+> Historical command record: commands below show what was run at the time.
+> Current development must use the repo-local `6529` wrapper documented in
+> `docs/package-commands.md`.
+
 ## 2026-06-18
 
 - Created branch `codex/cms-wallet-nft-snapshot` from

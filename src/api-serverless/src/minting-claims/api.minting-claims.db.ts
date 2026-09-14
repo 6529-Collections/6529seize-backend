@@ -410,6 +410,55 @@ export async function updateMintingClaim(
   );
 }
 
+export async function updateMintingClaimIfEditable(
+  contract: string,
+  claimId: number,
+  updates: Parameters<typeof updateMintingClaim>[2],
+  expectedAttributes?: string
+): Promise<boolean> {
+  const { setClauses, params } = buildMintingClaimUpdateStatement(
+    contract,
+    claimId,
+    updates
+  );
+  if (setClauses.length === 0) return true;
+
+  const attributesPredicate =
+    expectedAttributes === undefined
+      ? ''
+      : 'AND attributes <=> CAST(:expectedAttributes AS JSON)';
+  if (expectedAttributes !== undefined) {
+    params.expectedAttributes = expectedAttributes;
+  }
+
+  return await sqlExecutor.executeNativeQueriesInTransaction(
+    async (connection) => {
+      const matchingRows = await sqlExecutor.execute<{ claim_id: number }>(
+        `SELECT claim_id
+         FROM ${MINTING_CLAIMS_TABLE}
+         WHERE contract = :contract
+           AND claim_id = :claimId
+           AND COALESCE(media_uploading, 0) = 0
+           ${attributesPredicate}
+         FOR UPDATE`,
+        params,
+        { wrappedConnection: connection }
+      );
+      if (matchingRows.length === 0) return false;
+
+      await sqlExecutor.execute(
+        `UPDATE ${MINTING_CLAIMS_TABLE}
+         SET ${setClauses.join(', ')}
+         WHERE contract = :contract
+           AND claim_id = :claimId`,
+        params,
+        { wrappedConnection: connection }
+      );
+      return true;
+    }
+  );
+}
+
 function buildMintingClaimUpdateStatement(
   contract: string,
   claimId: number,

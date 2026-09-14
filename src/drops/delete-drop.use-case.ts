@@ -44,6 +44,16 @@ import {
   waveDropMetricsRefreshService,
   WaveDropMetricsDirtyRefreshReason
 } from '@/drops/wave-drop-metrics-refresh.service';
+import {
+  wavesApiDb,
+  WavesApiDb
+} from '@/api-serverless/src/waves/waves.api.db';
+import { RequestContext } from '@/request.context';
+import {
+  chatHistoryPurgeDb,
+  ChatHistoryPurgeDb,
+  ChatHistoryPurgeScope
+} from '@/drops/chat-history-purge.db';
 
 export class DeleteDropUseCase {
   public constructor(
@@ -54,7 +64,9 @@ export class DeleteDropUseCase {
     private readonly curationsDb: CurationsDb,
     private readonly artCurationTokenWatchService: ArtCurationTokenWatchService,
     private readonly attachmentsDb: AttachmentsDb,
-    private readonly dropPollsDb: DropPollsDb
+    private readonly dropPollsDb: DropPollsDb,
+    private readonly wavesApiDb: WavesApiDb,
+    private readonly purgeDb: ChatHistoryPurgeDb = chatHistoryPurgeDb
   ) {}
 
   private async resolveDeleterId(
@@ -83,6 +95,90 @@ export class DeleteDropUseCase {
     return resolvedDeleterIdentity;
   }
 
+  private async findCurrentDmReaderIds(
+    wave: WaveEntity,
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+  ): Promise<string[]> {
+    if (!wave.chat_group_id) {
+      return [];
+    }
+    const readerIds = await userGroupsService.findIdentitiesInGroups(
+      [wave.chat_group_id],
+      { timer, connection }
+    );
+    const visibilityGroupIds = [wave.visibility_group_id].filter(
+      (groupId): groupId is string => groupId !== null
+    );
+    if (wave.parent_wave_id) {
+      const parentWave = await this.wavesApiDb.findWaveById(
+        wave.parent_wave_id,
+        connection
+      );
+      if (!parentWave) {
+        return [];
+      }
+      if (parentWave.visibility_group_id) {
+        visibilityGroupIds.push(parentWave.visibility_group_id);
+      }
+    }
+    let eligibleReaderIds = new Set(readerIds);
+    for (const groupId of Array.from(new Set(visibilityGroupIds))) {
+      const groupReaderIds = await userGroupsService.findIdentitiesInGroups(
+        [groupId],
+        { timer, connection }
+      );
+      const groupReaderIdSet = new Set(groupReaderIds);
+      eligibleReaderIds = new Set(
+        Array.from(eligibleReaderIds).filter((readerId) =>
+          groupReaderIdSet.has(readerId)
+        )
+      );
+    }
+    return Array.from(eligibleReaderIds);
+  }
+
+  public async executeChatHistoryBatch(
+    scope: ChatHistoryPurgeScope,
+    drops: DropEntity[],
+    wave: WaveEntity,
+    ctx: RequestContext & { connection: ConnectionWrapper<unknown> }
+  ): Promise<string[]> {
+    if (!drops.length) return [];
+    if (
+      drops.some(
+        (drop) =>
+          drop.wave_id !== scope.waveId ||
+          drop.author_id !== scope.authorId ||
+          drop.drop_type !== 'CHAT' ||
+          drop.serial_no > scope.cutoffSerialNo ||
+          drop.id === wave.description_drop_id
+      )
+    ) {
+      throw new Error('Invalid chat history purge batch');
+    }
+    await this.purgeDb.deleteBatch(
+      scope,
+      drops.map((drop) => drop.id),
+      ctx
+    );
+    await waveDropMetricsRefreshService.markWaveDropMetricsDirtyBestEffort(
+      [wave.id],
+      WaveDropMetricsDirtyRefreshReason.DROP_DELETED,
+      ctx
+    );
+    await waveScoreService.markWaveScoresDirtyBestEffort(
+      [wave.id],
+      WaveScoreDirtyRefreshReason.DROP_DELETED,
+      ctx
+    );
+    if (!wave.is_direct_message) return [];
+    const readerIds = await this.findCurrentDmReaderIds(wave, ctx);
+    return this.wavesApiDb.incrementDmUnreadStateVersionsForWaveReaders(
+      { waveId: wave.id, readerIds },
+      ctx
+    );
+  }
+
   public async execute(
     model: DeleteDropModel,
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
@@ -91,6 +187,7 @@ export class DeleteDropUseCase {
     visibility_group_id: string | null;
     serial_no: number;
     wave_id: string;
+    dm_unread_recipient_ids: string[];
   } | null> {
     const isBackendDelete = model.deletion_purpose === 'SYSTEM_DELETE';
     const isPermanentDelete = model.deletion_purpose !== 'UPDATE';
@@ -187,11 +284,24 @@ export class DeleteDropUseCase {
           { timer, connection }
         );
       }
+      let dmUnreadRecipientIds: string[] = [];
+      if (isPermanentDelete && wave?.is_direct_message === true) {
+        const currentReaderIds = await this.findCurrentDmReaderIds(wave, {
+          timer,
+          connection
+        });
+        dmUnreadRecipientIds =
+          await this.wavesApiDb.incrementDmUnreadStateVersionsForWaveReaders(
+            { waveId, readerIds: currentReaderIds },
+            { timer, connection }
+          );
+      }
       return {
         id: dropId,
         serial_no: drop.serial_no,
         visibility_group_id: wave?.visibility_group_id ?? null,
-        wave_id: drop.wave_id
+        wave_id: drop.wave_id,
+        dm_unread_recipient_ids: dmUnreadRecipientIds
       };
     }
     return null;
@@ -241,5 +351,6 @@ export const deleteDrop = new DeleteDropUseCase(
   curationsDb,
   artCurationTokenWatchService,
   attachmentsDb,
-  dropPollsDb
+  dropPollsDb,
+  wavesApiDb
 );

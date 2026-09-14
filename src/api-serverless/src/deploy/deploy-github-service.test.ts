@@ -68,80 +68,147 @@ describe('GitHubDeployService.listRefs', () => {
       { name: 'v1.0.0', type: 'tag' }
     ]);
   });
+});
 
-  it('keeps the owner separator literal while encoding a PR head branch', async () => {
-    fetchMock.mockResolvedValueOnce(
-      createResponse([
-        { number: 42, html_url: 'https://github.com/example/pull/42' }
-      ]) as never
-    );
+describe('GitHubDeployService.dispatchDeploy', () => {
+  const fetchMock = jest.mocked(fetch);
 
-    const service = new GitHubDeployService();
-    await expect(
-      service.findOpenPullRequest('token', 'backend', 'feature/release bus')
-    ).resolves.toMatchObject({ number: 42 });
-
-    expect(fetchMock.mock.calls[0]?.[0]).toContain(
-      'head=6529-Collections:feature%2Frelease%20bus'
-    );
+  beforeEach(() => {
+    jest.resetAllMocks();
+    fetchMock.mockResolvedValue(createResponse({}) as never);
   });
 
-  it('detects an existing Release Bus commit status before cancellation', async () => {
-    fetchMock.mockResolvedValueOnce(
-      createResponse([
-        { context: 'continuous-integration', state: 'success' },
-        { context: 'Release Bus', state: 'pending' }
-      ]) as never
+  function expectDispatch(repository: string, workflow: string, body: unknown) {
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      `https://api.github.com/repos/6529-Collections/${repository}/actions/workflows/${workflow}/dispatches`,
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ Authorization: 'Bearer token' })
+      })
     );
-
-    const service = new GitHubDeployService();
-    await expect(
-      service.getReleaseBusCommitStatusState(
-        'token',
-        'frontend',
-        'a'.repeat(40)
-      )
-    ).resolves.toBe('pending');
-
-    expect(fetchMock.mock.calls[0]?.[0]).toContain(
-      `/commits/${'a'.repeat(40)}/statuses?per_page=100&page=1`
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual(
+      body
     );
+  }
+
+  it('dispatches backend staging with ordinary workflow inputs', async () => {
+    await new GitHubDeployService().dispatchDeploy({
+      token: 'token',
+      target: 'backend',
+      ref: '1a-staging',
+      environment: 'staging',
+      service: 'api'
+    });
+
+    expectDispatch('6529seize-backend', 'deploy.yml', {
+      ref: '1a-staging',
+      inputs: {
+        environment: 'staging',
+        service: 'api',
+        release_note_opt_out: 'false'
+      }
+    });
   });
 
-  it('does not invent a Release Bus status for a shadow-only candidate', async () => {
-    fetchMock.mockResolvedValueOnce(
-      createResponse([
-        { context: 'continuous-integration', state: 'success' }
-      ]) as never
-    );
+  it('dispatches backend production with release-note group metadata', async () => {
+    await new GitHubDeployService().dispatchDeploy({
+      token: 'token',
+      ref: 'main',
+      environment: 'prod',
+      service: 'api',
+      releasePullRequest: 1801,
+      releaseGroupServices: 'dbMigrationsLoop,api'
+    });
 
-    const service = new GitHubDeployService();
-    await expect(
-      service.getReleaseBusCommitStatusState(
-        'token',
-        'frontend',
-        'b'.repeat(40)
-      )
-    ).resolves.toBeNull();
+    expectDispatch('6529seize-backend', 'deploy.yml', {
+      ref: 'main',
+      inputs: {
+        environment: 'prod',
+        service: 'api',
+        release_note_opt_out: 'false',
+        release_pull_request: '1801',
+        release_group_services: 'dbMigrationsLoop,api',
+        release_note_publish: 'true'
+      }
+    });
   });
 
-  it('paginates commit statuses until the Release Bus context is found', async () => {
-    fetchMock
-      .mockResolvedValueOnce(
-        createResponse(
-          Array.from({ length: 100 }, () => ({ context: 'other' }))
-        ) as never
-      )
-      .mockResolvedValueOnce(
-        createResponse([{ context: 'Release Bus', state: 'pending' }]) as never
-      );
+  it('defaults a production service group to the selected service', async () => {
+    await new GitHubDeployService().dispatchDeploy({
+      token: 'token',
+      ref: 'main',
+      environment: 'prod',
+      service: 'api',
+      releasePullRequest: 1801
+    });
 
-    const service = new GitHubDeployService();
+    expectDispatch('6529seize-backend', 'deploy.yml', {
+      ref: 'main',
+      inputs: {
+        environment: 'prod',
+        service: 'api',
+        release_note_opt_out: 'false',
+        release_pull_request: '1801',
+        release_group_services: 'api',
+        release_note_publish: 'true'
+      }
+    });
+  });
+
+  it('dispatches internal production with explicit release-note opt-out', async () => {
+    await new GitHubDeployService().dispatchDeploy({
+      token: 'token',
+      ref: 'main',
+      environment: 'prod',
+      service: 'api',
+      releaseNoteOptOut: true
+    });
+
+    expectDispatch('6529seize-backend', 'deploy.yml', {
+      ref: 'main',
+      inputs: {
+        environment: 'prod',
+        service: 'api',
+        release_note_opt_out: 'true'
+      }
+    });
+  });
+
+  it.each([false, true])(
+    'dispatches frontend production with release-note opt-out %s',
+    async (releaseNoteOptOut) => {
+      await new GitHubDeployService().dispatchDeploy({
+        token: 'token',
+        target: 'frontend',
+        ref: 'main',
+        environment: 'prod',
+        releaseNoteOptOut
+      });
+
+      expectDispatch('6529seize-frontend', 'build-upload-deploy-prod.yml', {
+        ref: 'main',
+        inputs: { release_note_opt_out: String(releaseNoteOptOut) }
+      });
+    }
+  );
+
+  it('surfaces GitHub permission failures without retrying dispatch', async () => {
+    const response = createResponse({ message: 'Resource not accessible' });
+    response.ok = false;
+    response.status = 403;
+    fetchMock.mockResolvedValue(response as never);
+
     await expect(
-      service.getReleaseBusCommitStatusState('token', 'backend', 'c'.repeat(40))
-    ).resolves.toBe('pending');
-
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[1]?.[0]).toContain('page=2');
+      new GitHubDeployService().dispatchDeploy({
+        token: 'token',
+        ref: '1a-staging',
+        environment: 'staging',
+        service: 'api'
+      })
+    ).rejects.toThrow(
+      'GitHub token cannot dispatch workflows: Resource not accessible'
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -109,4 +109,52 @@ describe('UserNotificationMapper', () => {
       }
     });
   });
+
+  it('maps actorless subscription coverage notifications', () => {
+    const additionalData = {
+      recipient_profile_id: 'stale-profile-id',
+      profile_handle: 'alice',
+      status: 'ACTION_REQUIRED',
+      consolidation_key: '0xabc-0xdef',
+      mint_capacity: 2,
+      allocated_mints: 2,
+      fully_funded_drops: 0,
+      funded_through: null,
+      next_unfunded: {
+        token_id: 528,
+        mint_at: '2026-08-03T00:00:00.000Z',
+        requested_mints: 3,
+        funded_mints: 2,
+        missing_mints: 1
+      },
+      minimum_top_up_eth: '0.06529',
+      top_up_deadline: null,
+      calculation_version: 1,
+      forecast_fingerprint: 'risk-528-x3'
+    };
+
+    expect(
+      mapper.mapNotifications([
+        notificationEntity({
+          identity_id: 'recipient-1',
+          additional_identity_id: null,
+          related_drop_id: null,
+          wave_id: null,
+          cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE,
+          additional_data: additionalData
+        })
+      ])
+    ).toEqual([
+      {
+        id: 1,
+        created_at: 1000,
+        read_at: null,
+        cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE,
+        data: {
+          ...additionalData,
+          recipient_profile_id: 'recipient-1'
+        }
+      }
+    ]);
+  });
 });

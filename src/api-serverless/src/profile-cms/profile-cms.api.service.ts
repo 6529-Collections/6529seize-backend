@@ -1,3 +1,4 @@
+import { DbPoolName } from '@/db-query.options';
 import { AuthenticationContext } from '@/auth-context';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import {
@@ -10,6 +11,7 @@ import {
 } from '@/entities/IProfileCmsPointerEvent';
 import {
   BadRequestException,
+  CustomApiCompliantException,
   ForbiddenException,
   NotFoundException
 } from '@/exceptions';
@@ -47,9 +49,14 @@ import {
   profileCmsStorageReceiptVerifier
 } from '@/profile-cms/profile-cms-storage';
 import {
+  canonicalizeJson,
   cmsPackageSchema,
   CmsPackageV1,
+  CmsSignatureEnvelopeV1,
+  CmsStorageReceiptV1,
   CmsValidationResultV1,
+  computeCmsPackageHash,
+  toPackageHashInput,
   validateCmsPackageV1
 } from '@/profile-cms/protocol/v1';
 import { RequestContext } from '@/request.context';
@@ -59,6 +66,9 @@ import {
   identityFetcher,
   IdentityFetcher
 } from '@/api/identities/identity.fetcher';
+import { ArweaveFileUploader, arweaveFileUploader } from '@/arweave';
+import { ProfileCmsPublicationStorage } from '@/profile-cms/profile-cms-publication-storage';
+import { buildProfileCmsPublicationManifest } from '@/profile-cms/profile-cms-publication';
 
 export interface SaveProfileCmsPackageDraftRequest {
   readonly profile_id: string;
@@ -73,6 +83,8 @@ export interface ValidateProfileCmsPackageRequest {
 }
 
 export interface PublishProfileCmsPackageRequest {
+  readonly expected_current_package_id?: string | null;
+  readonly expected_current_package_hash?: string;
   readonly expected_package_hash?: string;
   readonly expected_payload_hash?: string;
   readonly signer_address: string;
@@ -84,7 +96,7 @@ export interface PublishProfileCmsPackageRequest {
 }
 
 export interface RollbackProfileCmsPackageRequest {
-  readonly expected_current_package_id: string;
+  readonly expected_current_package_id: string | null;
   readonly expected_current_package_hash?: string;
 }
 
@@ -92,7 +104,13 @@ export interface ArchiveProfileCmsPackageRequest {
   readonly expected_package_hash?: string;
 }
 
+export interface ProfileCmsPackageStorageUploadResponse {
+  readonly receipt: CmsStorageReceiptV1;
+}
+
 export interface ProfileCmsPackageResponse {
+  readonly is_primary: boolean;
+  readonly recovery_receipt?: unknown;
   readonly id: string;
   readonly package: unknown;
   readonly profile_id: string;
@@ -131,12 +149,16 @@ export interface ProfileCmsPointerEventResponse {
   readonly actor_profile_id: string;
   readonly signer_address?: string;
   readonly typed_data_hash?: string;
+  readonly signature?: string;
+  readonly typed_data?: unknown;
   readonly storage_receipt?: unknown;
   readonly event_sequence: number;
   readonly created_at: number;
 }
 
 export interface ProfileCmsPackageExportResponse {
+  readonly is_primary: boolean;
+  readonly recovery_receipt?: unknown;
   readonly package: unknown;
   readonly package_id: string;
   readonly package_db_id: string;
@@ -168,7 +190,12 @@ export class ProfileCmsApiService {
     private readonly pointerEventsDb: ProfileCmsPointerEventsDb,
     private readonly publishSignaturesDb: ProfileCmsPublishSignaturesDb,
     private readonly storageReceiptVerifier: ProfileCmsStorageReceiptVerifier,
-    private readonly publishSignatureVerifier = verifyProfileCmsPublishSignature
+    private readonly publishSignatureVerifier = verifyProfileCmsPublishSignature,
+    arweaveUploader: ArweaveFileUploader = arweaveFileUploader,
+    private readonly publicationStorage: ProfileCmsPublicationStorage = new ProfileCmsPublicationStorage(
+      undefined,
+      arweaveUploader
+    )
   ) {}
 
   async saveDraft(
@@ -176,59 +203,68 @@ export class ProfileCmsApiService {
     ctx: RequestContext
   ): Promise<ProfileCmsPackageResponse> {
     this.assertCanManageProfile(request.profile_id, ctx.authenticationContext);
-    const cmsPackage = this.parsePackageOrThrow(request.cms_package);
+    const inputPackage = this.parsePackageOrThrow(request.cms_package);
+    const cmsPackage = this.toDraftPackage(inputPackage);
     const profile = await this.getProfileIdentityOrThrow(
       request.profile_id,
       ctx
     );
     this.assertPackageProfileMatches(cmsPackage, profile);
-    this.assertPackageWalletsMatch(cmsPackage, profile);
+    this.assertPackageWalletsMatch(inputPackage, profile);
     const createdByProfileId = this.getLoggedInProfileId(
       ctx.authenticationContext
     );
 
-    const now = Time.currentMillis();
-    const version = await this.packagesDb.getNextVersion(
-      profile.id,
-      cmsPackage.package_id,
-      ctx
-    );
-    const receipt = this.getIndexedStorageReceipt(cmsPackage);
-    const entity: NewProfileCmsPackageEntity = {
-      id: randomUUID(),
-      profile_id: profile.id,
-      profile_handle: profile.handle,
-      package_id: cmsPackage.package_id,
-      version,
-      status: ProfileCmsPackageStatus.DRAFT,
-      cms_package: cmsPackage,
-      payload_hash: cmsPackage.integrity.payload_hash,
-      package_hash: cmsPackage.integrity.package_hash,
-      primary_path: `/${profile.handle}/index.html`,
-      is_primary: false,
-      production_valid: false,
-      created_by_profile_id: createdByProfileId,
-      published_by_profile_id: null,
-      created_at: now,
-      updated_at: now,
-      validated_at: null,
-      published_at: null,
-      failed_at: null,
-      archived_at: null,
-      superseded_by_id: null,
-      validation_result: null,
-      validation_error: null,
-      storage_receipts: cmsPackage.storage,
-      storage_provider: receipt?.provider ?? null,
-      storage_uri: receipt?.uri ?? null,
-      storage_content_hash: receipt?.content_hash ?? null,
-      storage_provider_content_id: receipt?.provider_content_id ?? null,
-      storage_recorded_at: receipt?.recorded_at ?? null,
-      storage_pinned: receipt?.pinned ?? null,
-      storage_canonical: receipt?.canonical ?? null
-    };
+    return this.packagesDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const txCtx = { ...ctx, connection };
+        await this.packagesDb.lockProfilePackagesForUpdate(profile.id, txCtx);
+        const now = Time.currentMillis();
+        const version = await this.packagesDb.getNextVersion(
+          profile.id,
+          cmsPackage.package_id,
+          txCtx
+        );
+        const receipt = this.getIndexedStorageReceipt(cmsPackage);
+        const entity: NewProfileCmsPackageEntity = {
+          id: randomUUID(),
+          profile_id: profile.id,
+          profile_handle: profile.handle,
+          package_id: cmsPackage.package_id,
+          version,
+          status: ProfileCmsPackageStatus.DRAFT,
+          cms_package: cmsPackage,
+          payload_hash: cmsPackage.integrity.payload_hash,
+          package_hash: cmsPackage.integrity.package_hash,
+          primary_path: `/${profile.handle}/index.html`,
+          is_primary: false,
+          production_valid: false,
+          created_by_profile_id: createdByProfileId,
+          published_by_profile_id: null,
+          created_at: now,
+          updated_at: now,
+          validated_at: null,
+          published_at: null,
+          failed_at: null,
+          archived_at: null,
+          superseded_by_id: null,
+          validation_result: null,
+          validation_error: null,
+          storage_receipts: cmsPackage.storage,
+          storage_provider: receipt?.provider ?? null,
+          storage_uri: receipt?.uri ?? null,
+          storage_content_hash: receipt?.content_hash ?? null,
+          storage_provider_content_id: receipt?.provider_content_id ?? null,
+          storage_recorded_at: receipt?.recorded_at ?? null,
+          storage_pinned: receipt?.pinned ?? null,
+          storage_canonical: receipt?.canonical ?? null
+        };
 
-    return this.toPackageResponse(await this.packagesDb.insert(entity, ctx));
+        return this.toPackageResponse(
+          await this.packagesDb.insert(entity, txCtx)
+        );
+      }
+    );
   }
 
   validatePackage(
@@ -296,48 +332,39 @@ export class ProfileCmsApiService {
   ): Promise<ProfileCmsPackageResponse> {
     const entity = await this.getPackageEntityOrThrow(id, ctx);
     this.assertCanManageProfile(entity.profile_id, ctx.authenticationContext);
+    if (this.isCompletedPublishRetry(entity, request)) {
+      return this.toPackageResponse(entity);
+    }
     this.assertDraftCanBePublished(entity);
     this.assertExpectedHashes(entity, request);
     this.assertPublishSignatureRequest(request);
     this.assertPublishDeadline(request.deadline);
+    this.assertExpectedCurrentPrimary(
+      await this.packagesDb.findPrimaryPublishedByProfileId(
+        entity.profile_id,
+        ctx,
+        DbPoolName.WRITE
+      ),
+      {
+        expected_current_package_id:
+          request.expected_current_package_id ?? null,
+        expected_current_package_hash: request.expected_current_package_hash
+      }
+    );
 
-    const validationResult = validateCmsPackageV1(entity.cms_package, {
-      allowFixtureSignatures: false,
-      allowFixtureStorage: false,
-      enforceHashes: true
-    });
-
-    if (!validationResult.valid) {
-      await this.markPublishFailed(
-        entity.id,
-        validationResult,
-        this.getValidationErrorMessage(validationResult),
-        ctx
-      );
-      throw new BadRequestException('CMS package is not valid for publish');
-    }
-
-    const cmsPackage = entity.cms_package as CmsPackageV1;
-    const storageValidation =
-      this.storageReceiptVerifier.validateForPublish(cmsPackage);
-    if (!storageValidation.valid || !storageValidation.canonical_receipt) {
-      await this.markPublishFailed(
-        entity.id,
-        validationResult,
-        storageValidation.reason ?? 'storage_receipt_invalid',
-        ctx
-      );
-      throw new BadRequestException(
-        `CMS package storage receipt is not valid for publish: ${
-          storageValidation.reason ?? 'unknown'
-        }`
-      );
-    }
+    // Verify the EIP-712 request signature FIRST. It derives everything from
+    // the entity + request (via the client-signed canonical storage receipt)
+    // and does not depend on the validity of the stored package's fixture
+    // placeholders.
+    const storedPackage = this.parsePackageOrThrow(entity.cms_package);
+    const signedCanonicalReceipt =
+      this.getSignedCanonicalReceiptOrThrow(storedPackage);
 
     const profile = await this.getProfileIdentityOrThrow(
       entity.profile_id,
       ctx
     );
+    this.assertCurrentProfileBinding(entity, profile.handle);
     const signatureVerification = await this.publishSignatureVerifier({
       request,
       message: {
@@ -350,9 +377,9 @@ export class ProfileCmsApiService {
         payloadHash: entity.payload_hash,
         packageHash: entity.package_hash,
         primaryPath: entity.primary_path,
-        storageProvider: storageValidation.canonical_receipt.provider,
-        storageUri: storageValidation.canonical_receipt.uri,
-        storageContentHash: storageValidation.canonical_receipt.content_hash,
+        storageProvider: signedCanonicalReceipt.provider,
+        storageUri: signedCanonicalReceipt.uri,
+        storageContentHash: signedCanonicalReceipt.content_hash,
         deadline: request.deadline
       }
     });
@@ -362,6 +389,83 @@ export class ProfileCmsApiService {
       profile
     );
 
+    // Rebuild the package the server will serve: discard client-provided
+    // fixture signatures/storage and replace them with the real, server-
+    // verified signature envelope and the real decentralized storage
+    // receipt(s). The hash preimage (toPackageHashInput) strips signatures and
+    // storage, so package_hash MUST remain unchanged.
+    const rebuiltPackage = this.buildRebuiltPublishPackage(
+      storedPackage,
+      signatureVerification,
+      request
+    );
+    if (computeCmsPackageHash(rebuiltPackage) !== entity.package_hash) {
+      await this.markPublishFailed(
+        entity.id,
+        this.buildPublishFailureValidation(entity),
+        'rebuilt_package_hash_mismatch',
+        ctx
+      );
+      throw new BadRequestException(
+        'Rebuilt CMS package hash does not match the stored draft'
+      );
+    }
+
+    // Run production validation against the REBUILT package (never the stored
+    // draft that still carries fixture placeholders).
+    const validationResult = validateCmsPackageV1(rebuiltPackage, {
+      allowFixtureSignatures: false,
+      allowFixtureStorage: false,
+      enforceHashes: true
+    });
+    if (!validationResult.valid) {
+      await this.markPublishFailed(
+        entity.id,
+        validationResult,
+        this.getValidationErrorMessage(validationResult),
+        ctx
+      );
+      throw new BadRequestException('CMS package is not valid for publish');
+    }
+
+    const rebuiltStorageValidation =
+      this.storageReceiptVerifier.validateForPublish(rebuiltPackage);
+    if (
+      !rebuiltStorageValidation.valid ||
+      !rebuiltStorageValidation.canonical_receipt
+    ) {
+      await this.markPublishFailed(
+        entity.id,
+        validationResult,
+        rebuiltStorageValidation.reason ?? 'storage_receipt_invalid',
+        ctx
+      );
+      throw new BadRequestException(
+        `CMS package storage receipt is not valid for publish: ${
+          rebuiltStorageValidation.reason ?? 'unknown'
+        }`
+      );
+    }
+    const rebuiltCanonicalReceipt = rebuiltStorageValidation.canonical_receipt;
+    await this.publicationStorage.verify(rebuiltCanonicalReceipt);
+    const manifest = buildProfileCmsPublicationManifest({
+      entity,
+      cmsPackage: rebuiltPackage,
+      request,
+      verification: signatureVerification,
+      publishedAt: Time.currentMillis()
+    });
+    const recoveryReceipt = await this.publicationStorage.upload(
+      {
+        operationKey: `${entity.id}:publication:${signatureVerification.typed_data_hash}:${signatureVerification.signer_address}:${request.signature}`,
+        profileId: entity.profile_id,
+        packageDbId: entity.id,
+        bytes: Buffer.from(canonicalizeJson(manifest), 'utf8')
+      },
+      ctx
+    );
+    await this.publicationStorage.verify(recoveryReceipt);
+
     const publishedAt = Time.currentMillis();
     const publishedByProfileId = this.getLoggedInProfileId(
       ctx.authenticationContext
@@ -369,7 +473,7 @@ export class ProfileCmsApiService {
     await this.packagesDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const txCtx: RequestContext = { ...ctx, connection };
-        await this.packagesDb.lockProfilePackagesForUpdate(
+        const lockedHandle = await this.packagesDb.lockProfilePackagesForUpdate(
           entity.profile_id,
           txCtx
         );
@@ -382,8 +486,28 @@ export class ProfileCmsApiService {
             `Profile CMS package ${entity.id} was not found`
           );
         }
+        if (this.isCompletedPublishRetry(lockedEntity, request)) return;
+        this.assertCurrentProfileBinding(lockedEntity, lockedHandle);
         this.assertDraftCanBePublished(lockedEntity);
         this.assertExpectedHashes(lockedEntity, request);
+        this.assertPublishDeadline(request.deadline);
+        const currentReceipt = this.getSignedCanonicalReceiptOrThrow(
+          this.parsePackageOrThrow(lockedEntity.cms_package)
+        );
+        if (
+          currentReceipt.uri !== signedCanonicalReceipt.uri ||
+          currentReceipt.content_hash !== signedCanonicalReceipt.content_hash
+        ) {
+          throw new CustomApiCompliantException(
+            409,
+            'CMS storage changed while signing; refresh the draft'
+          );
+        }
+        await this.packagesDb.setRecoveryReceipt(
+          lockedEntity.id,
+          recoveryReceipt,
+          txCtx
+        );
         await this.consumePublishSignatureOrThrow(
           lockedEntity,
           request,
@@ -395,8 +519,22 @@ export class ProfileCmsApiService {
             lockedEntity.profile_id,
             txCtx
           );
+        this.assertExpectedCurrentPrimary(previousPrimary, {
+          expected_current_package_id:
+            request.expected_current_package_id ?? null,
+          expected_current_package_hash: request.expected_current_package_hash
+        });
         await this.packagesDb.markValidating(
           lockedEntity.id,
+          publishedAt,
+          txCtx
+        );
+        // Persist the rebuilt package (real signature envelope + real storage)
+        // so the served primary package carries decentralized verifiability.
+        await this.persistRebuiltPublishPackage(
+          lockedEntity.id,
+          rebuiltPackage,
+          rebuiltCanonicalReceipt,
           publishedAt,
           txCtx
         );
@@ -422,7 +560,7 @@ export class ProfileCmsApiService {
               actorProfileId: publishedByProfileId,
               signatureVerification,
               signatureRequest: request,
-              storageReceipt: storageValidation.canonical_receipt,
+              storageReceipt: rebuiltCanonicalReceipt,
               createdAt: publishedAt
             }),
             ...(previousPrimary
@@ -434,7 +572,7 @@ export class ProfileCmsApiService {
                     actorProfileId: publishedByProfileId,
                     signatureVerification,
                     signatureRequest: request,
-                    storageReceipt: storageValidation.canonical_receipt,
+                    storageReceipt: rebuiltCanonicalReceipt,
                     createdAt: publishedAt
                   })
                 ]
@@ -446,7 +584,7 @@ export class ProfileCmsApiService {
               actorProfileId: publishedByProfileId,
               signatureVerification,
               signatureRequest: request,
-              storageReceipt: storageValidation.canonical_receipt,
+              storageReceipt: rebuiltCanonicalReceipt,
               createdAt: publishedAt
             })
           ],
@@ -468,13 +606,18 @@ export class ProfileCmsApiService {
     const target = await this.getPackageEntityOrThrow(id, ctx);
     this.assertCanManageProfile(target.profile_id, ctx.authenticationContext);
     this.assertPackageCanBecomePrimary(target);
+    const profile = await this.getProfileIdentityOrThrow(
+      target.profile_id,
+      ctx
+    );
+    this.assertCurrentProfileBinding(target, profile.handle);
     const actorProfileId = this.getLoggedInProfileId(ctx.authenticationContext);
     const now = Time.currentMillis();
 
     await this.packagesDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const txCtx: RequestContext = { ...ctx, connection };
-        await this.packagesDb.lockProfilePackagesForUpdate(
+        const lockedHandle = await this.packagesDb.lockProfilePackagesForUpdate(
           target.profile_id,
           txCtx
         );
@@ -487,6 +630,7 @@ export class ProfileCmsApiService {
             `Profile CMS package ${target.id} was not found`
           );
         }
+        this.assertCurrentProfileBinding(lockedTarget, lockedHandle);
         this.assertPackageCanBecomePrimary(lockedTarget);
         const currentPrimary =
           await this.packagesDb.findPrimaryPublishedByProfileIdForUpdate(
@@ -544,6 +688,71 @@ export class ProfileCmsApiService {
     );
   }
 
+  async unpublishPackage(
+    id: string,
+    request: RollbackProfileCmsPackageRequest,
+    ctx: RequestContext
+  ): Promise<ProfileCmsPackageResponse> {
+    const entity = await this.getPackageEntityOrThrow(id, ctx);
+    this.assertCanManageProfile(entity.profile_id, ctx.authenticationContext);
+    if (
+      request.expected_current_package_id !== id ||
+      request.expected_current_package_hash !== entity.package_hash
+    ) {
+      throw new CustomApiCompliantException(
+        409,
+        'Expected current package does not match'
+      );
+    }
+    await this.packagesDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const txCtx = { ...ctx, connection };
+        await this.packagesDb.lockProfilePackagesForUpdate(
+          entity.profile_id,
+          txCtx
+        );
+        const target = await this.packagesDb.findByIdForUpdate(id, txCtx);
+        if (!target) throw new NotFoundException('CMS package not found');
+        const current =
+          await this.packagesDb.findPrimaryPublishedByProfileIdForUpdate(
+            entity.profile_id,
+            txCtx
+          );
+        if (
+          !current &&
+          target.status === ProfileCmsPackageStatus.SUPERSEDED &&
+          target.production_valid
+        ) {
+          const events = await this.pointerEventsDb.listByPackageId(
+            target.id,
+            txCtx
+          );
+          if (
+            events.at(-1)?.event_type === ProfileCmsPointerEventType.UNPUBLISH
+          )
+            return;
+        }
+        this.assertExpectedCurrentPrimary(current, request);
+        await this.packagesDb.unpublish(id, Time.currentMillis(), txCtx);
+        await this.recordPointerEvents(
+          [
+            this.toPointerEvent({
+              eventType: ProfileCmsPointerEventType.UNPUBLISH,
+              entity: target,
+              previousPackageDbId: target.id,
+              actorProfileId: this.getLoggedInProfileId(
+                ctx.authenticationContext
+              ),
+              createdAt: Time.currentMillis()
+            })
+          ],
+          txCtx
+        );
+      }
+    );
+    return this.toPackageResponse(await this.getPackageEntityOrThrow(id, ctx));
+  }
+
   async archivePackage(
     id: string,
     request: ArchiveProfileCmsPackageRequest,
@@ -599,6 +808,133 @@ export class ProfileCmsApiService {
       }
     );
     return this.toPackageResponse(await this.getPackageEntityOrThrow(id, ctx));
+  }
+
+  async uploadToStorage(
+    id: string,
+    ctx: RequestContext
+  ): Promise<ProfileCmsPackageStorageUploadResponse> {
+    const entity = await this.getPackageEntityOrThrow(id, ctx);
+    this.assertCanManageProfile(entity.profile_id, ctx.authenticationContext);
+    this.assertDraftCanBePublished(entity);
+
+    const cmsPackage = this.parsePackageOrThrow(entity.cms_package);
+    this.assertStoredPackageHashMatches(cmsPackage, entity);
+
+    const existingReceipt = this.findCanonicalArweaveReceipt(
+      cmsPackage,
+      entity.package_hash
+    );
+    if (existingReceipt) {
+      return { receipt: existingReceipt };
+    }
+
+    const canonicalBytes = Buffer.from(
+      canonicalizeJson(toPackageHashInput(cmsPackage)),
+      'utf8'
+    );
+    const receipt = await this.publicationStorage.upload(
+      {
+        operationKey: `${entity.id}:core:${entity.package_hash}`,
+        profileId: entity.profile_id,
+        packageDbId: entity.id,
+        bytes: canonicalBytes
+      },
+      ctx
+    );
+
+    return this.packagesDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const txCtx: RequestContext = { ...ctx, connection };
+        const lockedEntity = await this.packagesDb.findByIdForUpdate(
+          entity.id,
+          txCtx
+        );
+        if (!lockedEntity) {
+          throw new NotFoundException(
+            `Profile CMS package ${entity.id} was not found`
+          );
+        }
+        this.assertDraftCanBePublished(lockedEntity);
+        const lockedPackage = this.parsePackageOrThrow(
+          lockedEntity.cms_package
+        );
+        this.assertStoredPackageHashMatches(lockedPackage, lockedEntity);
+        if (lockedEntity.package_hash !== entity.package_hash) {
+          throw new BadRequestException(
+            'CMS package hash does not match the stored draft; refusing to upload'
+          );
+        }
+        const concurrentReceipt = this.findCanonicalArweaveReceipt(
+          lockedPackage,
+          lockedEntity.package_hash
+        );
+        if (concurrentReceipt) {
+          return { receipt: concurrentReceipt };
+        }
+        await this.persistStorageReceipt(
+          lockedEntity,
+          lockedPackage,
+          receipt,
+          txCtx
+        );
+        return { receipt };
+      }
+    );
+  }
+
+  private assertStoredPackageHashMatches(
+    cmsPackage: CmsPackageV1,
+    entity: ProfileCmsPackageEntity
+  ): void {
+    if (computeCmsPackageHash(cmsPackage) !== entity.package_hash) {
+      throw new BadRequestException(
+        'CMS package hash does not match the stored draft; refusing to upload'
+      );
+    }
+  }
+
+  private findCanonicalArweaveReceipt(
+    cmsPackage: CmsPackageV1,
+    packageHash: string
+  ): CmsStorageReceiptV1 | undefined {
+    return cmsPackage.storage.find(
+      (receipt) =>
+        receipt.provider === 'arweave' &&
+        receipt.canonical &&
+        receipt.content_hash === packageHash
+    );
+  }
+
+  private async persistStorageReceipt(
+    entity: ProfileCmsPackageEntity,
+    cmsPackage: CmsPackageV1,
+    receipt: CmsStorageReceiptV1,
+    ctx: RequestContext
+  ): Promise<void> {
+    const otherReceipts = cmsPackage.storage.filter(
+      (existing) => existing.provider !== 'fixture' && !existing.canonical
+    );
+    const updatedPackage: CmsPackageV1 = {
+      ...cmsPackage,
+      storage: [...otherReceipts, receipt]
+    };
+    await this.packagesDb.updateStorageReceipt(
+      {
+        id: entity.id,
+        cms_package: updatedPackage,
+        storage_receipts: updatedPackage.storage,
+        storage_provider: receipt.provider,
+        storage_uri: receipt.uri,
+        storage_content_hash: receipt.content_hash,
+        storage_provider_content_id: receipt.provider_content_id ?? null,
+        storage_recorded_at: receipt.recorded_at,
+        storage_pinned: receipt.pinned ?? null,
+        storage_canonical: receipt.canonical ?? null,
+        updated_at: Time.currentMillis()
+      },
+      ctx
+    );
   }
 
   async exportPackage(
@@ -761,15 +1097,127 @@ export class ProfileCmsApiService {
     validationError: string,
     ctx: RequestContext
   ): Promise<void> {
-    const failedAt = Time.currentMillis();
-    await this.packagesDb.markValidating(id, failedAt, ctx);
-    await this.packagesDb.markFailed(
+    await this.packagesDb.recordDraftFailure(
       id,
       validationResult,
       validationError,
-      failedAt,
+      Time.currentMillis(),
       ctx
     );
+  }
+
+  private buildPublishFailureValidation(
+    entity: ProfileCmsPackageEntity
+  ): CmsValidationResultV1 {
+    return validateCmsPackageV1(entity.cms_package, {
+      allowFixtureSignatures: false,
+      allowFixtureStorage: false,
+      enforceHashes: true
+    });
+  }
+
+  private getSignedCanonicalReceiptOrThrow(
+    storedPackage: CmsPackageV1
+  ): CmsStorageReceiptV1 {
+    const canonicalReceipts = storedPackage.storage.filter(
+      (receipt) => receipt.canonical
+    );
+    if (canonicalReceipts.length !== 1) {
+      throw new BadRequestException(
+        'CMS package must have exactly one canonical storage receipt to publish'
+      );
+    }
+    return canonicalReceipts[0];
+  }
+
+  private buildRebuiltPublishPackage(
+    storedPackage: CmsPackageV1,
+    signatureVerification: ProfileCmsPublishSignatureVerificationResult,
+    signatureRequest: ProfileCmsPublishSignatureRequest
+  ): CmsPackageV1 {
+    if (!signatureVerification.signer_address) {
+      throw new BadRequestException('CMS publish signature signer is missing');
+    }
+    return {
+      ...storedPackage,
+      signatures: [
+        this.buildPublishSignatureEnvelope(
+          signatureVerification,
+          signatureRequest
+        )
+      ],
+      // Drop every fixture-provider receipt; keep the real receipts (including
+      // the real canonical one the storage validator will re-check).
+      storage: storedPackage.storage.filter(
+        (receipt) => receipt.provider !== 'fixture'
+      )
+    };
+  }
+
+  private buildPublishSignatureEnvelope(
+    signatureVerification: ProfileCmsPublishSignatureVerificationResult,
+    signatureRequest: ProfileCmsPublishSignatureRequest
+  ): CmsSignatureEnvelopeV1 {
+    return {
+      type: 'eip712',
+      signer: signatureVerification.signer_address as string,
+      signature: signatureRequest.signature,
+      signed_at: this.getCurrentIsoDate(),
+      domain: {
+        ...signatureVerification.typed_data.domain,
+        typed_data_hash: signatureVerification.typed_data_hash
+      }
+    };
+  }
+
+  private async persistRebuiltPublishPackage(
+    id: string,
+    rebuiltPackage: CmsPackageV1,
+    canonicalReceipt: CmsStorageReceiptV1,
+    now: number,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.packagesDb.updateStorageReceipt(
+      {
+        id,
+        cms_package: rebuiltPackage,
+        storage_receipts: rebuiltPackage.storage,
+        storage_provider: canonicalReceipt.provider,
+        storage_uri: canonicalReceipt.uri,
+        storage_content_hash: canonicalReceipt.content_hash,
+        storage_provider_content_id:
+          canonicalReceipt.provider_content_id ?? null,
+        storage_recorded_at: canonicalReceipt.recorded_at,
+        storage_pinned: canonicalReceipt.pinned ?? null,
+        storage_canonical: canonicalReceipt.canonical ?? null,
+        updated_at: now
+      },
+      ctx
+    );
+  }
+
+  private toDraftPackage(cmsPackage: CmsPackageV1): CmsPackageV1 {
+    const recordedAt = this.getCurrentIsoDate();
+    return {
+      ...cmsPackage,
+      signatures: [
+        {
+          type: 'fixture',
+          signer: 'fixture',
+          signature: 'fixture',
+          signed_at: recordedAt
+        }
+      ],
+      storage: [
+        {
+          provider: 'fixture',
+          uri: 'https://6529.io/profile-cms/draft',
+          content_hash: cmsPackage.integrity.package_hash,
+          canonical: false,
+          recorded_at: recordedAt
+        }
+      ]
+    };
   }
 
   private parsePackageOrThrow(input: unknown): CmsPackageV1 {
@@ -805,6 +1253,26 @@ export class ProfileCmsApiService {
       handle: identity.handle,
       wallets
     };
+  }
+
+  private assertCurrentProfileBinding(
+    entity: ProfileCmsPackageEntity,
+    handle: string
+  ): void {
+    const cmsPackage = this.parsePackageOrThrow(entity.cms_package);
+    if (
+      entity.profile_handle.toLowerCase() !== handle.toLowerCase() ||
+      entity.primary_path !== `/${handle}/index.html` ||
+      cmsPackage.profile.handle.toLowerCase() !== handle.toLowerCase() ||
+      (cmsPackage.profile.profile_id &&
+        cmsPackage.profile.profile_id !== entity.profile_id)
+    ) {
+      throw new CustomApiCompliantException(
+        409,
+        'Profile handle changed; save a new draft before publishing',
+        'cms_profile_changed'
+      );
+    }
   }
 
   private assertPackageProfileMatches(
@@ -934,18 +1402,49 @@ export class ProfileCmsApiService {
     currentPrimary: ProfileCmsPackageEntity | null,
     request: RollbackProfileCmsPackageRequest
   ): void {
+    if (!currentPrimary && request.expected_current_package_id === null) return;
     if (!currentPrimary) {
-      throw new BadRequestException('Profile has no current primary package');
+      throw new CustomApiCompliantException(
+        409,
+        'Profile has no current primary package'
+      );
     }
     if (currentPrimary.id !== request.expected_current_package_id) {
-      throw new BadRequestException('Expected current package id mismatch');
+      throw new CustomApiCompliantException(
+        409,
+        'Expected current package id mismatch',
+        'cms_primary_changed'
+      );
     }
     if (
       request.expected_current_package_hash &&
       currentPrimary.package_hash !== request.expected_current_package_hash
     ) {
-      throw new BadRequestException('Expected current package hash mismatch');
+      throw new CustomApiCompliantException(
+        409,
+        'Expected current package hash mismatch',
+        'cms_primary_changed'
+      );
     }
+  }
+
+  private isCompletedPublishRetry(
+    entity: ProfileCmsPackageEntity,
+    request: PublishProfileCmsPackageRequest
+  ): boolean {
+    if (
+      !entity.production_valid ||
+      !entity.published_at ||
+      ![
+        ProfileCmsPackageStatus.PUBLISHED,
+        ProfileCmsPackageStatus.SUPERSEDED
+      ].includes(entity.status)
+    )
+      return false;
+    this.assertExpectedHashes(entity, request);
+    return this.parsePackageOrThrow(entity.cms_package).signatures.some(
+      (envelope) => envelope.signature === request.signature
+    );
   }
 
   private assertDraftCanBePublished(entity: ProfileCmsPackageEntity): void {
@@ -1147,6 +1646,10 @@ export class ProfileCmsApiService {
   ): ProfileCmsPackageResponse {
     return {
       id: entity.id,
+      is_primary: entity.is_primary,
+      ...(entity.recovery_receipt
+        ? { recovery_receipt: entity.recovery_receipt }
+        : {}),
       package: entity.cms_package,
       profile_id: entity.profile_id,
       profile_handle: entity.profile_handle,
@@ -1183,6 +1686,10 @@ export class ProfileCmsApiService {
       package: entity.cms_package,
       package_id: entity.package_id,
       package_db_id: entity.id,
+      is_primary: entity.is_primary,
+      ...(entity.recovery_receipt
+        ? { recovery_receipt: entity.recovery_receipt }
+        : {}),
       version: entity.version,
       status: entity.status.toLowerCase(),
       profile_id: entity.profile_id,
@@ -1225,6 +1732,8 @@ export class ProfileCmsApiService {
       ...(entity.storage_receipt
         ? { storage_receipt: entity.storage_receipt }
         : {}),
+      ...(entity.signature ? { signature: entity.signature } : {}),
+      ...(entity.typed_data ? { typed_data: entity.typed_data } : {}),
       event_sequence: entity.event_sequence,
       created_at: entity.created_at
     };

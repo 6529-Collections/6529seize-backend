@@ -24,7 +24,7 @@ V1 package for profile-native galleries.
 
 - Focused Jest coverage for deterministic output, route collisions, grouping,
   NFT detail pages, media references, and CMS validation pass/fail.
-- `npm run lint` after code/doc changes.
+- `6529 run lint` after code/doc changes.
 - `codex-diff-check` before PR publication.
 
 ## Escalation

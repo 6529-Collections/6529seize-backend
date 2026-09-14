@@ -1,0 +1,2 @@
+export const DEVS_6529_MENTION_TOKEN = 'devs6529';
+export const DEVS_6529_MENTION = `@${DEVS_6529_MENTION_TOKEN}`;

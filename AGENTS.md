@@ -1,27 +1,44 @@
-# Simple Release Bus v2
+# AGENTS.md
 
-- Never register with Release Bus v1. It remains disabled rollback reference.
-- Before staging, production, promotion, or release mutation, run
-  `node ops/scripts/release-bus-status.mjs` and follow `deploy-6529`.
-- `OFF` uses the serialized manual fallback and requires enforcement absent or
-  `false`. `STAGING` routes staging readiness through v2. `PRODUCTION` routes
-  staging through v2 and requires a separate explicit exact-SHA production
-  action after `STAGING_VALIDATED`.
-- While `OFF`, dispatch backend `Deploy a service` workflows one at a time and
-  wait for exact success before starting the next. Its shared concurrency can
-  cancel sibling service runs, including independent DAG-frontier units.
-- Stop an active v2 lane when `ALL` or that lane is paused. In `OFF`, v2
-  controls are non-authoritative and do not block manual staging or production.
-  Explicit owner production authorization is sufficient; prior staging
-  deployment or validation is not required.
-- For coupled work, declare backend dependencies and preserve backend-before-
-  frontend ordering. Within v2, only independent backend DAG frontier units run
-  together.
-- `STAGING_DEPLOYED` is not validation. Do not mutate staging during manifest-
-  bound E2E, and never infer production readiness from staging validation.
-- Never cancel another actor's workflow, force-push a shared ref, or bypass exact
-  SHA/artifact checks. Never author or post release notes manually; preserve the
-  autonomous bot's complete grouping metadata and finalize signal.
+## Deployment
+
+- Follow `ops/skills/deploy-6529/SKILL.md` for authorized staging and production
+  work, using ordinary Git merges and the existing GitHub Actions workflows.
+- Before claiming missing maintainer/admin authority or repeating a permission
+  question, follow [Verify GitHub authority](ops/skills/deploy-6529/SKILL.md#verify-github-authority).
+  Check the authenticated account, repo permissions, actual required team and
+  effective rules; preserve existing explicit authorization for the release.
+- Follow [Coordinator release recording](ops/skills/deploy-6529/SKILL.md#coordinator-release-recording)
+  before release mutations, and preserve this current Coordinator integration
+  when changing deployment instructions.
+- For staging, merge the development branch into the latest `1a-staging` and
+  push. Frontend changes automatically start `Web Deploy - STAGING`; backend
+  changes require dispatching `Deploy a service` for the required services.
+- For production, merge the development branch into `main`, then dispatch
+  `Web Deploy - PROD` for frontend or `Deploy a service` with `environment=prod`
+  for backend. A staging request alone does not authorize production.
+- Run backend service deployments sequentially in dependency order. Wait for
+  each run to succeed, then continue the next service in the same task without
+  asking for repeated authorization already covered by the requested phase.
+- Deploy backend dependencies before merging or deploying dependent frontend
+  changes in each environment. Read the backend service catalog and the change
+  to determine the units and order; avoid deploying unrelated services.
+- Fetch shared refs before merging. Preserve other developers' changes, resolve
+  conflicts normally, and never force-push or overwrite a moved shared ref.
+  Do not cancel another developer's deployment; coordinate through GitHub run
+  visibility and wait when the work would conflict.
+- Complete deployments after build, artifact integrity, runtime version, and
+  health checks pass. Automatic E2E runs separately and does not hold up a
+  merge, deployment, or promotion to the next authorized environment.
+- Unrelated PR E2E failures or pending runs do not block releases. Keep relevant
+  build, unit/contract, and security checks intact; report E2E status separately.
+  Fix known regressions attributable to the change on the development branch.
+- CI wave notifications carry deploy run IDs through E2E and reruns. The
+  backend alone resolves the drop reply target; notification failures remain
+  best effort. Keep receiver and sender contracts compatible during rollout.
+- Never author or post release notes manually. Preserve the autonomous bot's
+  PR/service grouping metadata and final publication signal; use the release-note opt-out
+  only when the user explicitly requests suppressing release notes.
 
 # Commiting to Git
 
@@ -37,7 +54,7 @@ Use DCO signoff commits. Before committing, verify `git config user.name` and `g
 
 # Linting
 
-After you do your changes then run `npm run lint`. Make sure you fix all errors and warnings.
+After you do your changes then run `6529 run lint`. Make sure you fix all errors and warnings.
 
 # Sonar
 
@@ -52,6 +69,14 @@ When writing or changing code, keep predictable SonarCloud findings in mind befo
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Package Command Boundary
+
+All project installs, package scripts, and local package binaries must run
+through the repo-local `6529` wrapper. Do not use npm, npx, or Corepack npm
+directly. Run `./bin/6529 bootstrap` once when `direnv` is unavailable; with
+`direnv`, `direnv allow` exposes the same repo-scoped command. See
+`docs/package-commands.md` for the complete contract.
+
 ## Project Overview
 
 This is the 6529 SEIZE Backend repository, a Web3 NFT platform backend that handles NFT indexing, community features (drops, waves, ratings), user profiles, delegations, and comprehensive REST API services. It consists of two main components:
@@ -65,59 +90,59 @@ This is the 6529 SEIZE Backend repository, a Web3 NFT platform backend that hand
 
 ```bash
 # Install dependencies
-npm i
+6529 ci
 
 # Build the project (includes tests)
-npm run build
+6529 run build
 
 # Format code
-npm run format
+6529 run format
 
 # Lint code
-npm run lint
+6529 run lint
 
 # Run tests
-npm test
+6529 run test
 ```
 
 ### Backend Services
 
 ```bash
 # Run backend locally
-npm run backend:local
+6529 run backend:local
 
 # Run backend in development
-npm run backend:dev
+6529 run backend:dev
 
 # Run backend in production
-npm run backend:prod
+6529 run backend:prod
 ```
 
 ### API Services
 
 ```bash
-# Run API in development
-cd src/api-serverless && npm run api:local
+# Run API in development from its package directory
+cd src/api-serverless && 6529 run dev
 
 # Build API separately
-cd src/api-serverless && npm run build
+cd src/api-serverless && 6529 run build
 ```
 
 ### Database Migrations
 
 ```bash
 # Run migrations up (apply new migrations)
-npm run migrate:up
+6529 run migrate:up
 
 # Run migrations down (rollback)
-npm run migrate:down
+6529 run migrate:down
 
 # Create new migration
-npm run migrate:new name-of-the-migration
+6529 run migrate:new name-of-the-migration
 
 # Local development migrations
-npm run migrate-local:up
-npm run migrate-local:down
+6529 run migrate-local:up
+6529 run migrate-local:down
 ```
 
 After creating a migration, edit the generated SQL files in the `migrations` folder (write SQL in the "up" file, and just delete the "down" file, also replace the down implementation in js file with "do nothing" implementation).
@@ -126,13 +151,14 @@ After creating a migration, edit the generated SQL files in the `migrations` fol
 
 ```bash
 # Run all tests
-npm test
+6529 run test
 
 # Run specific test file
-npm test path/to/test.spec.ts
+6529 run test -- path/to/test.spec.ts
 ```
 
 The test configuration uses:
+
 - Jest with ts-jest preset
 - Testcontainers for MySQL integration tests
 - Global setup/teardown in `src/tests/_setup/`
@@ -171,6 +197,7 @@ validator/query tests in the same PR.
 The backend consists of independent "loop" services that run as AWS Lambda functions or cron jobs. Each loop is self-contained in `src/*Loop/` directories:
 
 **Key Loops:**
+
 - `nftsLoop` - Discovers and indexes NFTs from blockchain
 - `nftOwnersLoop` - Tracks NFT ownership changes
 - `nftHistoryLoop` - Maintains NFT ownership history
@@ -189,6 +216,7 @@ The backend consists of independent "loop" services that run as AWS Lambda funct
 - `overRatesRevocationLoop` - Handles reputation rate revocations
 
 Each loop follows the pattern:
+
 1. Entry point in `index.ts` with `handler` function
 2. Uses `doInDbContext()` to initialize database and Redis
 3. Wrapped with `sentryContext.wrapLambdaHandler()` for error tracking
@@ -199,11 +227,13 @@ Each loop follows the pattern:
 The API (`src/api-serverless/src/`) is an Express application with:
 
 **Core Files:**
+
 - `app.ts` - Main Express app configuration with routes, middleware, authentication
 - `handler.ts` - AWS Lambda handler wrapper for serverless deployment
 - `async.router.ts` - Async-aware Express router wrapper
 
 **Feature Routes (in subdirectories):**
+
 - `drops/` - Social content drops (posts/content) with voting and reactions
 - `waves/` - Community waves (voting periods/campaigns)
 - `profiles/` - User profiles, reputation, and activity logs
@@ -218,35 +248,42 @@ The API (`src/api-serverless/src/`) is an Express application with:
 - `xtdh/` - Extended TDH calculations
 
 **Architecture Patterns:**
+
 - **Routes** (`*.routes.ts`) - Define endpoints and validation
 - **API Services** (`*.api.service.ts`) - Business logic for API endpoints
 - **DB Services** (`*.db.ts` in `src/`) - Database access layer extending `LazyDbAccessCompatibleService`
-- **Generated Models** (`generated/models/`) - TypeScript API response models
+- **Generated API** (`generated/models/`, `generated/routes/`) - TypeScript API
+  models plus generated route wiring and operation types
 
 ### Database Layer
 
 **Connection Management:**
+
 - Separate read/write connection pools configured in `src/db-api.ts`
 - `read_pool` for SELECT queries, `write_pool` for INSERT/UPDATE/DELETE
 - Environment variables: `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_PORT` (write) and `DB_HOST_READ`, `DB_USER_READ`, `DB_PASS_READ` (read)
 
 **Query Execution:**
+
 - `SqlExecutor` interface in `src/sql-executor.ts` provides abstraction
 - Services extend `LazyDbAccessCompatibleService` to access `this.db`
 - Use parameterized queries with named parameters: `execute(sql, { param: value })`
 - Transaction support via `executeNativeQueriesInTransaction()`
 
 **ORM:**
+
 - TypeORM for schema synchronization (entities in `src/entities/`)
 - Entities files are prefixed with `I` (e.g., `IIdentity.ts`, `IDrop.ts`) but the entity classes in them don't have this prefix. Instead they have `Entity` suffix (e.g., `IdentityEntiy`, `ProfileEntity`)
 - Schema auto-syncs on startup; migrations are only used for data migrations (and rarely for views).
 - Every time a new Entity is added it also needs to be exported in `entities.ts`.
 
 **Constants:**
+
 - All table names defined in `src/constants.ts` (e.g., `NFTS_TABLE`, `DROPS_TABLE`, `PROFILES_TABLE`)
 - Use constants instead of hardcoded strings
 
 **Important:**
+
 - Never use foreign keys in database schemas
 - Avoid fancy db level constraints (like enum validation for example)
 - Be careful with changing preexisting entity classes as there is a high chance of accidentally deleting data. This includes changing data types.
@@ -254,37 +291,44 @@ The API (`src/api-serverless/src/`) is an Express application with:
 ### Key Domain Models
 
 **NFTs:**
+
 - Primary contracts: MEMES (`0x33FD426905F149f8376e227d0C9D3340AaD17aF1`), MEME LAB, GRADIENT, NextGen
 - Tables: `nfts`, `nfts_meme_lab`, `nft_owners`, `nfts_history`
 - Extended data: `memes_extended_data`, `lab_extended_data`
 
 **Community Features:**
+
 - **Drops** - Social posts/content with voting, reactions, and metadata
 - **Waves** - Social channels with all kinds of metadata like voting periods with participation requirements and outcomes
 - **Ratings** - Reputation system with categories (CIC, REP)
 - **Identities** - User profiles with proxy support
 
 **TDH (Total Days Held):**
+
 - Scoring system based on eligible NFT ownership duration
 - Per-wallet calculations and consolidated calculations across wallet consolidations
 - Historical tracking in `tdh_history` and `tdh_global_history`
 
 **Delegations:**
+
 - Integration with delegations protocol
 - Allows delegating wallet permissions to other addresses
 
 ### Authentication & Authorization
 
 **Authorization**:
+
 - Uses a sequence of API calls and Ethereum wallet signatures to figure out who the user is. If successful, releases a JWT. (`openapi.yaml` `/auth` endpoints)
 
 **JWT Authentication:**
+
 - Passport.js with JWT strategy in `src/api-serverless/src/app.ts`
 - JWT secret from `getJwtSecret()` in `src/api-serverless/src/auth/auth.ts`
 - Routes can use `passport.authenticate('jwt')` or `passport.authenticate(['jwt', 'anonymous'])`
 - User identity in `request.user`
 
 **Rate Limiting:**
+
 - Redis-based rate limiting middleware in `src/api-serverless/src/rate-limiting/`
 - Two-tier: burst limit (requests/second) and sustained limit (requests over time window)
 - Different limits for authenticated vs unauthenticated users
@@ -294,10 +338,12 @@ The API (`src/api-serverless/src/`) is an Express application with:
 ### Environment Configuration
 
 **Environment Files:**
+
 - Use `.env.local` to set them
 - Ignore the one in `src/api-serverless/`
 
 **Environment Loading:**
+
 - `loadLocalConfig()` and `loadSecrets()`(works only in prod) in `src/env.ts`
 - `doInDbContext()` wrapper in `src/secrets.ts` handles full initialization
 
@@ -317,22 +363,26 @@ The API (`src/api-serverless/src/`) is an Express application with:
 ### Development Notes
 
 **Running Locally:**
+
 1. Set up MySQL database (or use Docker: `docker-compose up -d`)
 2. Create `.env.local` with database credentials
-3. Run migrations: `npm run migrate-local:up`
-4. Start backend: `npm run backend:local` (optional)
-5. Start API: `cd src/api-serverless && npm run dev`
+3. Run migrations: `6529 run migrate-local:up`
+4. Start backend: `6529 run backend:local` (optional)
+5. Start API: `cd src/api-serverless && 6529 run dev`
 
 **Database Setup:**
+
 - Create database and user via docker-compose
 - TypeORM creates tables automatically
 - Migrations create views and complex structures
 
 **Video Compression:**
+
 - S3Loop requires ffmpeg installed locally
 - Only runs in `prod` mode by default
 
 **Lambda Deployment:**
+
 - Each loop folder represents a deployable Lambda
 - Serverless Framework configuration in `serverless-config/`
 - Most loops have their own serverless.yaml files in their roots. Those are used to set up lambdas (via Github Actions). All new lambdas should also use serverless.yaml and make sure they are wired in build scripts and `.github/workflows/deploy.yaml`
@@ -342,38 +392,64 @@ The API (`src/api-serverless/src/`) is an Express application with:
 ### Code Patterns
 
 **Error Handling:**
+
 - Use `ApiCompliantException` or one of its specific subclasses from `src/exceptions` for API errors
 - Sentry integration via `sentryContext.wrapLambdaHandler()`
 
 **Logging:**
+
 - `Logger.get('COMPONENT_NAME')` pattern (in classes use the pattern `private readonly logger = Logger.get(this.constructor.name);`)
 - Request-scoped logging with `loggerContext` in API
 - Each request gets unique `requestId`
 
 **Timing:**
+
 - `Time` utility in `src/time.ts` for time operations
 - `Timer` class for performance measurement
 
 **Validation:**
+
 - Joi schemas for request validation
 - `getValidatedByJoiOrThrow()` in `src/api-serverless/src/validation.ts`
 
 **Caching:**
+
 - Redis-based caching via `src/redis.ts`
 - Request-level caching via `request-cache.ts`
 - `cacheKey()` helper for consistent cache key generation
 
 **WebSockets:**
+
 - WebSocket server in `src/api-serverless/src/ws/`
 - JWT authentication for WebSocket connections
 - Notification system for real-time updates
 
 **API schemas**
+
 - API endpoints are described in `openapi.yaml` file.
-- Any time you change this file run `cd src/api-serverless && npm run restructure-openapi && npm run generate`
-- This will generate response models to `src/api-serverless/src/generated/models`, but only response models and POST/DELETE request bodies, not routes and query param models.
-- Routes themselves are manually created into `api-serverless` into files ending with `.routes.ts` and are wired in `app.ts` file.
-- Generated API models are used in those routes. For query param based requests, types are created manually.
+- Any time you change this file run `cd src/api-serverless && 6529 run generate:openapi`
+- `generate:openapi` runs `restructure-openapi` and then `generate`. The latter
+  refreshes models under `src/api-serverless/src/generated/models` and generated
+  route wiring plus operation types under
+  `src/api-serverless/src/generated/routes`.
+- Every change to `src/api-serverless/openapi.yaml` must also be propagated to
+  `6529seize-frontend` in the same task, even when no frontend call site changes.
+  Direct copy is valid only from the task's backend worktree on the backend
+  feature branch containing the final spec: copy
+  `src/api-serverless/openapi.yaml` to the frontend worktree's root
+  `openapi.yaml`. If that backend worktree is unavailable, first commit and push
+  the final spec, then run `bash scripts/refresh-api.sh <backend_feature_branch>`
+  from the frontend worktree. The argument must be the exact backend branch
+  containing the OpenAPI change, never the frontend branch. Never omit it for
+  unmerged feature work: omission defaults to backend `main`, which may not
+  contain the change. Then run `6529 run generate` in the frontend repo and
+  commit its `openapi.yaml` and `generated/` changes. Do not report the backend
+  OpenAPI work complete while this frontend synchronization is missing; if it
+  cannot be completed, report it as an explicit blocker.
+- Prefer `x-6529-router` generated routes for new endpoints. Manual `.routes.ts`
+  files are legacy/escape-hatch wiring for route shapes the generator does not
+  support.
+- Generated API models and operation types must be used by generated handlers.
 
 ### Imports and path aliases
 
@@ -387,8 +463,18 @@ Use path aliases for **new** imports where applicable. Do not change existing im
 All API request/response types must be defined via OpenAPI and the generated models. Do not hand-roll response types for API endpoints unless explicitly asked not to.
 
 1. **Define in OpenAPI**: Add the endpoint and its request/response schemas in `src/api-serverless/openapi.yaml` (paths and `components/schemas`).
-2. **Generate**: From `src/api-serverless` run `npm run restructure-openapi` then `npm run generate`. This creates/updates types under `src/api-serverless/src/generated/models/`.
-3. **Use in routes**: Import from `@/api/generated/models/...` (or `../generated/models/...`) and use the generated classes for responses (and for POST/PUT bodies where applicable). Map your DB/service output to the generated model shape (e.g. snake_case properties) before returning.
+2. **Generate**: From `src/api-serverless` run `6529 run generate:openapi`.
+   This runs `restructure-openapi` and `generate`, refreshing models under
+   `src/api-serverless/src/generated/models/` and generated routes plus
+   operation types under `src/api-serverless/src/generated/routes/`.
+3. **Synchronize frontend**: Propagate the final backend `openapi.yaml` to the
+   frontend and run frontend `6529 run generate`, following the mandatory
+   cross-repository procedure under **API schemas** above. Commit the frontend
+   spec and generated artifacts in the same task.
+4. **Use generated types**: Import models from `@/api/generated/models/...` and
+   operation request/query/path/body/response types from
+   `@/api/generated/routes/operations`. Map DB/service output to the generated
+   model shape (for example, snake_case properties) before returning.
 
 # Database schema and migrations
 

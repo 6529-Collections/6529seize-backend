@@ -1,0 +1,128 @@
+name: Media dependency compatibility
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'package*.json'
+      - 'src/api-serverless/package*.json'
+      - 'src/api-serverless/src/multer-middleware*'
+      - 'src/media/**'
+      - 'src/drops/drop-media-sanitizer*'
+      - 'src/artwork-documentation/**'
+      - 'scripts/*artwork*'
+      - 'scripts/*museum*'
+      - 'scripts/*c2pa*'
+      - 'vendor/c2pa-node/**'
+      - 'src/nft-links/nft-link-media-preview*'
+      - 'src/artworkDocumentationProcessor/**'
+      - 'src/dropMediaSanitizer/**'
+      - 'src/mediaResizerLoop/**'
+      - 'src/nftLinkMediaPreviewLoop/**'
+      - 'src/rememesLoop/**'
+      - 'src/s3Uploader/**'
+      - 'src/s3.ts'
+      - 'src/s3_rememes.ts'
+      - 'scripts/*media*'
+      - 'scripts/check-package-lock.mjs'
+      - 'scripts/media-fixtures/**'
+      - '.github/workflows/media-compatibility.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: media-compatibility-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  museum-standards:
+    name: Museum dossier standards
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.17.1'
+      - name: Install validation dependencies
+        run: |
+          ./bin/6529 ci
+          python3 -m venv "$RUNNER_TEMP/museum-validator"
+          "$RUNNER_TEMP/museum-validator/bin/pip" install --disable-pip-version-check --index-url https://pypi.org/simple --require-hashes --only-binary=:all: -r scripts/museum-validator-requirements.txt
+      - name: Validate portable artwork records independently
+        run: |
+          ./bin/6529 exec node scripts/build-artwork-schema-bundle.cjs --check
+          "$RUNNER_TEMP/museum-validator/bin/python" scripts/test_museum_iiif_validation.py
+          "$RUNNER_TEMP/museum-validator/bin/python" scripts/test_artwork_validators.py
+          "$RUNNER_TEMP/museum-validator/bin/python" -O scripts/test_artwork_validators.py
+          ./bin/6529 exec ts-node --transpile-only -r tsconfig-paths/register scripts/write-artwork-dossier-fixture.ts "$RUNNER_TEMP/artwork-dossier"
+          "$RUNNER_TEMP/museum-validator/bin/python" -O scripts/validate-artwork-dossier.py "$RUNNER_TEMP/artwork-dossier"
+          ./bin/6529 exec ts-node --transpile-only -r tsconfig-paths/register scripts/write-museum-corpus.ts
+          "$RUNNER_TEMP/museum-validator/bin/python" -O scripts/validate-museum-corpus.py .museum-corpus-fixtures
+
+  native:
+    name: Native media (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, macos-15-intel, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      SHARP_IGNORE_GLOBAL_LIBVIPS: '1'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.17.1'
+      - name: Install native dependencies
+        run: |
+          ./bin/6529 ci
+          (cd src/api-serverless && ../../bin/6529 ci)
+      - name: Verify lockfile platforms and real media/upload behavior
+        run: |
+          ./bin/6529 exec node scripts/check-package-lock.mjs
+          ./bin/6529 exec node scripts/verify-media-runtime.cjs .
+          NODE_OPTIONS=--max-old-space-size=3072 ./bin/6529 exec jest --config scripts/media-jest.config.cjs
+      - name: Verify each media package installs and loads natively
+        run: |
+          for service in artworkDocumentationProcessor dropMediaSanitizer mediaResizerLoop nftLinkMediaPreviewLoop rememesLoop s3Uploader; do
+            (cd "src/$service" && ../../bin/6529 ci)
+            ./bin/6529 exec node scripts/verify-media-runtime.cjs "src/$service"
+          done
+
+  artifacts:
+    name: Lambda media ZIPs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.17.1'
+      - name: Install build dependencies
+        run: ./bin/6529 ci
+      - name: Build and execute every packaged native dependency in Lambda Node 22
+        shell: bash
+        run: |
+          set -euo pipefail
+          for service in artworkDocumentationProcessor dropMediaSanitizer mediaResizerLoop nftLinkMediaPreviewLoop rememesLoop s3Uploader; do
+            (cd "src/$service" && ../../bin/6529 run build)
+            extracted="${RUNNER_TEMP}/media-${service}"
+            mkdir -p "$extracted"
+            unzip -q "src/$service/dist/index.zip" -d "$extracted"
+            docker run --rm --platform linux/amd64 --network none --user 1000:1000 \
+              -v "$extracted:/var/task:ro" -v "$PWD/scripts:/checks:ro" \
+              --entrypoint /var/lang/bin/node \
+              public.ecr.aws/lambda/nodejs:22@sha256:214c26cdbb7eeb1b942a16e0910c6c07de5d2a750b23eb4a907cd6864949edbf \
+              /checks/verify-media-runtime.cjs /var/task --lambda
+          done

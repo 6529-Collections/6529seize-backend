@@ -92,6 +92,27 @@ describe('WaveQuickVoteApiService', () => {
     );
   });
 
+  it('rejects quick vote reads when a public child has a restricted parent', async () => {
+    jest
+      .mocked(wavesApiDb.findWaveById)
+      .mockResolvedValueOnce({ ...wave, parent_wave_id: 'parent' } as never)
+      .mockResolvedValueOnce({
+        ...wave,
+        id: 'parent',
+        visibility_group_id: 'parent-group'
+      } as never);
+    jest
+      .mocked(userGroupsService.getGroupsUserIsEligibleFor)
+      .mockResolvedValue([]);
+    await expect(
+      service.findUndiscoveredDrop(
+        { waveId: 'wave-1', identityId: 'viewer' },
+        {}
+      )
+    ).rejects.toThrow('Wave wave-1 not found');
+    expect(waveQuickVoteDb.countUnvotedDrops).not.toHaveBeenCalled();
+  });
+
   it('returns the mapped drop when one undiscovered drop is available', async () => {
     when(wavesApiDb.findWaveById)
       .calledWith('wave-1', undefined)

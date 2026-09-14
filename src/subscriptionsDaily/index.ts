@@ -13,6 +13,8 @@ import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
 import { updateSubscriptions } from './subscriptions';
 
+export { handler as subscriptionCoverageReconciliationHandler } from '../subscriptionCoverageReconciliationLoop';
+
 const logger = Logger.get('SUBSCRIPTIONS_LOOP');
 const ALERT_TITLE = 'Subscriptions Daily Loop';
 

@@ -1,0 +1,43 @@
+{
+  "name": "6529-operational-monitoring",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "packageManager": "npm@10.9.8",
+  "scripts": {
+    "preinstall": "node ../../scripts/require-6529-command.cjs",
+    "build": "node ../../scripts/require-6529-command.cjs && node scripts/build.mjs",
+    "test": "node ../../scripts/require-6529-command.cjs && tsx --test src/*.test.ts",
+    "typecheck": "node ../../scripts/require-6529-command.cjs && tsc --noEmit",
+    "generate": "node ../../scripts/require-6529-command.cjs && node scripts/templates.mjs && node scripts/dashboard.mjs",
+    "generate:check": "node ../../scripts/require-6529-command.cjs && node scripts/templates.mjs --check && node scripts/dashboard.mjs --check",
+    "deploy": "node ../../scripts/require-6529-command.cjs && node scripts/deploy.mjs",
+    "deploy:source": "node ../../scripts/require-6529-command.cjs && node scripts/deploy-source.mjs",
+    "check": "node ../../scripts/require-6529-command.cjs && ../../bin/6529 run typecheck && ../../bin/6529 run test && ../../bin/6529 run build"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cloudwatch": "^3.980.0",
+    "@aws-sdk/client-dynamodb": "^3.980.0",
+    "@aws-sdk/client-eventbridge": "^3.980.0",
+    "@aws-sdk/client-s3": "^3.980.0",
+    "@aws-sdk/client-secrets-manager": "^3.980.0",
+    "@aws-sdk/client-sns": "^3.980.0",
+    "@aws-sdk/client-sqs": "^3.980.0",
+    "@aws-sdk/lib-dynamodb": "^3.980.0"
+  },
+  "overrides": {
+    "tsx": {
+      "esbuild": "0.28.1"
+    }
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.159",
+    "@types/node": "^22.19.11",
+    "esbuild": "^0.28.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

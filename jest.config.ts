@@ -12,7 +12,11 @@ const config: Config = {
   },
   transformIgnorePatterns: ['<rootDir>/node_modules/'],
   modulePathIgnorePatterns: ['<rootDir>/src/.*/dist/'],
-  testPathIgnorePatterns: ['<rootDir>/build/', '<rootDir>/src/.*/dist/'],
+  testPathIgnorePatterns: [
+    '<rootDir>/build/',
+    '<rootDir>/src/.*/dist/',
+    '<rootDir>/ops/monitoring/'
+  ],
   globalSetup: './src/tests/_setup/globalSetup.ts',
   globalTeardown: './src/tests/_setup/globalTeardown.ts',
   setupFilesAfterEnv: ['./src/tests/_setup/perTestHooks.ts'],

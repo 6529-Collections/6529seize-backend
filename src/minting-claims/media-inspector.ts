@@ -9,6 +9,12 @@ import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
 import { MAX_MINTING_CLAIM_MEDIA_BYTES } from '@/minting-claims/media-limits';
 import { imageSize } from 'image-size';
 import * as MP4Box from 'mp4box';
+import { assertValidGlb } from '@/minting-claims/glb-validation';
+import {
+  assertValidComputedMediaDetails,
+  getImageDetailIssues,
+  getAnimationDetailIssues
+} from '@/minting-claims/media-details-validation';
 
 type MediaKind = 'image' | 'video' | 'glb';
 
@@ -168,6 +174,7 @@ function extractVideoDetailsFromBuffer(
 function extractGlbDetailsFromBuffer(
   buffer: Buffer
 ): MintingClaimAnimationDetailsGlb {
+  assertValidGlb(buffer);
   const sha256 = createHash('sha256')
     .update(asUint8Array(buffer))
     .digest('hex');
@@ -186,7 +193,9 @@ export async function computeImageDetails(
   if (kind !== 'image') {
     throw new Error(`Expected image, got ${kind}`);
   }
-  return extractImageDetailsFromBuffer(buffer, format);
+  const details = extractImageDetailsFromBuffer(buffer, format);
+  assertValidComputedMediaDetails(getImageDetailIssues(details));
+  return details;
 }
 
 export function animationDetailsHtml(): MintingClaimAnimationDetails {
@@ -201,7 +210,9 @@ export async function computeAnimationDetailsGlb(
   if (kind !== 'glb') {
     throw new Error(`Expected GLB, got ${kind}`);
   }
-  return extractGlbDetailsFromBuffer(buffer);
+  const details = extractGlbDetailsFromBuffer(buffer);
+  assertValidComputedMediaDetails(getAnimationDetailIssues(details));
+  return details;
 }
 
 export async function computeAnimationDetailsVideo(
@@ -212,5 +223,7 @@ export async function computeAnimationDetailsVideo(
   if (kind !== 'video') {
     throw new Error(`Expected video, got ${kind}`);
   }
-  return extractVideoDetailsFromBuffer(buffer, format);
+  const details = await extractVideoDetailsFromBuffer(buffer, format);
+  assertValidComputedMediaDetails(getAnimationDetailIssues(details));
+  return details;
 }

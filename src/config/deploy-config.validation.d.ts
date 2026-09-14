@@ -16,9 +16,7 @@ export type DeployServiceConfig = {
     | 'api-health'
     | 'cloudformation-stack'
     | 'lambda-edge-association';
-  staging_policy: 'allowed' | 'production-only';
   default_dependencies: string[];
-  automatic_rollback_supported: boolean;
 };
 
 export type DeployConfig = {

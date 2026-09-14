@@ -1,6 +1,32 @@
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
-import { IdentityNotificationsDb } from './identity-notifications.db';
+import { ConnectionWrapper, SqlExecutor } from '@/sql-executor';
+import {
+  IdentityNotificationsDb,
+  NewIdentityNotification
+} from './identity-notifications.db';
 import { sendIdentityPushNotification } from '../api-serverless/src/push-notifications/push-notifications.service';
+import {
+  DEFAULT_PROFILE_PREFERENCES,
+  ProfileNotificationLevel
+} from '@/entities/IProfilePreferences';
+import { IdentityMutesDb } from '@/api-serverless/src/identity-mutes/identity-mutes.db';
+import { ContentModerationDb } from '@/content-moderation/content-moderation.db';
+import { ProfilePreferencesDb } from '@/profile-preferences/profile-preferences.db';
+
+type IdentityMutesDbDouble = jest.Mocked<
+  Pick<IdentityMutesDb, 'filterMutedNotificationRows'>
+>;
+type ContentModerationDbDouble = jest.Mocked<
+  Pick<
+    ContentModerationDb,
+    'filterBlockedNotificationRows' | 'filterUnavailableDropNotificationRows'
+  >
+>;
+type ProfilePreferencesDbDouble = jest.Mocked<
+  Pick<ProfilePreferencesDb, 'getMany'>
+>;
+
+const connection: ConnectionWrapper<null> = { connection: null };
 
 jest.mock(
   '../api-serverless/src/push-notifications/push-notifications.service',
@@ -9,7 +35,9 @@ jest.mock(
   })
 );
 
-function notification(overrides: Record<string, unknown> = {}) {
+function notification(
+  overrides: Partial<NewIdentityNotification> = {}
+): NewIdentityNotification {
   return {
     identity_id: 'recipient-1',
     additional_identity_id: 'actor-1',
@@ -27,30 +55,60 @@ function notification(overrides: Record<string, unknown> = {}) {
 
 function createRepo({
   filteredNotifications,
-  filterError
+  filterError,
+  moderationFilterError,
+  unavailableDropFilterError
 }: {
   readonly filteredNotifications: ReturnType<typeof notification>[];
   readonly filterError?: Error;
+  readonly moderationFilterError?: Error;
+  readonly unavailableDropFilterError?: Error;
 }) {
   const db = {
     execute: jest.fn().mockResolvedValue([undefined, undefined, 101]),
     bulkInsert: jest.fn()
-  };
+  } as unknown as jest.Mocked<SqlExecutor>;
   const identityMutesDb = {
     filterMutedNotificationRows: jest.fn(
       filterError
         ? () => Promise.reject(filterError)
         : () => Promise.resolve(filteredNotifications)
     )
-  };
+  } as unknown as IdentityMutesDbDouble;
+  const contentModerationDb = {
+    filterBlockedNotificationRows: jest
+      .fn()
+      .mockImplementation((rows) =>
+        moderationFilterError
+          ? Promise.reject(moderationFilterError)
+          : Promise.resolve(rows)
+      ),
+    filterUnavailableDropNotificationRows: jest
+      .fn()
+      .mockImplementation((rows) =>
+        unavailableDropFilterError
+          ? Promise.reject(unavailableDropFilterError)
+          : Promise.resolve(rows)
+      )
+  } as unknown as ContentModerationDbDouble;
+  const profilePreferencesDb = {
+    getMany: jest.fn().mockResolvedValue(new Map())
+  } as unknown as ProfilePreferencesDbDouble;
   return {
     db,
     identityMutesDb,
-    repo: new IdentityNotificationsDb(() => db as any, identityMutesDb as any)
+    contentModerationDb,
+    profilePreferencesDb,
+    repo: new IdentityNotificationsDb(
+      () => db,
+      identityMutesDb,
+      contentModerationDb,
+      profilePreferencesDb
+    )
   };
 }
 
-describe('IdentityNotificationsDb mute filtering', () => {
+describe('IdentityNotificationsDb', () => {
   const originalNotifierActivated = process.env.USER_NOTIFIER_ACTIVATED;
 
   beforeEach(() => {
@@ -69,11 +127,11 @@ describe('IdentityNotificationsDb mute filtering', () => {
       filteredNotifications: []
     });
 
-    await repo.insertNotification(row as any, {} as any);
+    await repo.insertNotification(row, connection);
 
     expect(identityMutesDb.filterMutedNotificationRows).toHaveBeenCalledWith(
       [row],
-      {}
+      connection
     );
     expect(db.execute).not.toHaveBeenCalled();
     expect(sendIdentityPushNotification).not.toHaveBeenCalled();
@@ -90,11 +148,11 @@ describe('IdentityNotificationsDb mute filtering', () => {
         filteredNotifications: []
       });
 
-      await repo.insertNotification(row as any, {} as any);
+      await repo.insertNotification(row, connection);
 
       expect(identityMutesDb.filterMutedNotificationRows).toHaveBeenCalledWith(
         [row],
-        {}
+        connection
       );
       expect(db.execute).not.toHaveBeenCalled();
       expect(sendIdentityPushNotification).not.toHaveBeenCalled();
@@ -111,7 +169,7 @@ describe('IdentityNotificationsDb mute filtering', () => {
     db.execute.mockResolvedValueOnce([{ id: 301 }]);
 
     await expect(
-      repo.insertManyNotifications([mutedRow, unmutedRow] as any, {} as any)
+      repo.insertManyNotifications([mutedRow, unmutedRow], connection)
     ).resolves.toEqual([301]);
 
     expect(db.bulkInsert).toHaveBeenCalledWith(
@@ -125,13 +183,13 @@ describe('IdentityNotificationsDb mute filtering', () => {
       ],
       expect.any(Array),
       undefined,
-      { connection: {} }
+      { connection }
     );
     expect(db.execute).toHaveBeenNthCalledWith(
       1,
       'select last_insert_id() as id',
       undefined,
-      { wrappedConnection: {} }
+      { wrappedConnection: connection }
     );
     expect(db.execute).toHaveBeenNthCalledWith(
       2,
@@ -144,7 +202,7 @@ describe('IdentityNotificationsDb mute filtering', () => {
         additional_identity_id_0: 'actor-1',
         additional_data_0: '{}'
       }),
-      { wrappedConnection: {} }
+      { wrappedConnection: connection }
     );
   });
 
@@ -156,7 +214,7 @@ describe('IdentityNotificationsDb mute filtering', () => {
     });
     db.execute.mockResolvedValueOnce([undefined, undefined, 401]);
 
-    await repo.insertNotification(row as any, {} as any);
+    await repo.insertNotification(row, connection);
 
     expect(db.execute).toHaveBeenCalledWith(
       expect.stringContaining('insert into identity_notifications'),
@@ -165,16 +223,163 @@ describe('IdentityNotificationsDb mute filtering', () => {
         additional_identity_id: 'actor-1',
         additional_data: '{}'
       }),
-      { wrappedConnection: {} }
+      { wrappedConnection: connection }
     );
     expect(sendIdentityPushNotification).toHaveBeenCalledWith(401);
+  });
+
+  it('retries the write when content moderation filtering fails', async () => {
+    const row = notification({ related_drop_id: 'drop-1' });
+    const { db, repo } = createRepo({
+      filteredNotifications: [row],
+      moderationFilterError: new Error('moderation tables unavailable')
+    });
+
+    await expect(repo.insertNotification(row, connection)).rejects.toThrow(
+      'moderation tables unavailable'
+    );
+
+    expect(db.execute).not.toHaveBeenCalled();
+    expect(sendIdentityPushNotification).not.toHaveBeenCalled();
+  });
+
+  it('retries the write when moderated drop filtering fails', async () => {
+    const row = notification({ related_drop_id: 'drop-1' });
+    const { db, repo } = createRepo({
+      filteredNotifications: [row],
+      unavailableDropFilterError: new Error(
+        'drop moderation states unavailable'
+      )
+    });
+
+    await expect(repo.insertNotification(row, connection)).rejects.toThrow(
+      'drop moderation states unavailable'
+    );
+
+    expect(db.execute).not.toHaveBeenCalled();
+    expect(sendIdentityPushNotification).not.toHaveBeenCalled();
+  });
+
+  it('keeps actorless system notifications on the write path', async () => {
+    const row = notification({
+      additional_identity_id: null,
+      cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE
+    });
+    const { db, identityMutesDb, repo } = createRepo({
+      filteredNotifications: [row]
+    });
+
+    await repo.insertNotification(row, connection);
+
+    expect(identityMutesDb.filterMutedNotificationRows).toHaveBeenCalledWith(
+      [row],
+      connection
+    );
+    expect(db.execute).toHaveBeenCalledWith(
+      expect.stringContaining('insert into identity_notifications'),
+      expect.objectContaining({
+        additional_identity_id: null,
+        cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE
+      }),
+      { wrappedConnection: connection }
+    );
+  });
+
+  it('does not create in-app or push notifications disabled by profile preferences', async () => {
+    const row = notification({
+      cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE
+    });
+    const { db, profilePreferencesDb, repo } = createRepo({
+      filteredNotifications: [row]
+    });
+    profilePreferencesDb.getMany.mockResolvedValue(
+      new Map([
+        [
+          'recipient-1',
+          {
+            ...DEFAULT_PROFILE_PREFERENCES,
+            notifications: {
+              ...DEFAULT_PROFILE_PREFERENCES.notifications,
+              subscription_coverage: false
+            }
+          }
+        ]
+      ])
+    );
+
+    await repo.insertNotification(row, connection);
+
+    expect(db.execute).not.toHaveBeenCalled();
+    expect(sendIdentityPushNotification).not.toHaveBeenCalled();
+  });
+
+  it('pauses optional notifications at the essential-only level without erasing category choices', async () => {
+    const row = notification();
+    const { db, profilePreferencesDb, repo } = createRepo({
+      filteredNotifications: [row]
+    });
+    profilePreferencesDb.getMany.mockResolvedValue(
+      new Map([
+        [
+          'recipient-1',
+          {
+            ...DEFAULT_PROFILE_PREFERENCES,
+            notification_level: ProfileNotificationLevel.ESSENTIAL_ONLY
+          }
+        ]
+      ])
+    );
+
+    await repo.insertNotification(row, connection);
+
+    expect(db.execute).not.toHaveBeenCalled();
+    expect(sendIdentityPushNotification).not.toHaveBeenCalled();
+  });
+
+  it('includes actorless notifications while suppressing orphaned actors', async () => {
+    const db = {
+      execute: jest.fn().mockResolvedValue([])
+    };
+    const repo = new IdentityNotificationsDb(
+      () => db as unknown as SqlExecutor
+    );
+
+    await repo.findNotifications({
+      identity_id: 'recipient-1',
+      id_less_than: null,
+      limit: 20,
+      eligible_group_ids: [],
+      cause: null,
+      cause_exclude: null,
+      unread_only: false
+    });
+
+    expect(db.execute).toHaveBeenCalledWith(
+      expect.stringContaining('n.additional_identity_id IS NULL'),
+      expect.objectContaining({ identity_id: 'recipient-1' }),
+      undefined
+    );
+    expect(db.execute.mock.calls[0][0]).toContain(
+      'WHERE i.profile_id = n.additional_identity_id'
+    );
+    expect(db.execute.mock.calls[0][0]).not.toContain(
+      'JOIN identities i ON n.additional_identity_id'
+    );
+    expect(db.execute.mock.calls[0][0]).toContain(
+      'OR rd1.author_id = n.identity_id'
+    );
+    expect(db.execute.mock.calls[0][0]).toContain(
+      'OR rd2.author_id = n.identity_id'
+    );
   });
 
   it('counts only unread notifications visible to the recipient', async () => {
     const db = {
       oneOrNull: jest.fn().mockResolvedValue({ cnt: 2 })
     };
-    const repo = new IdentityNotificationsDb(() => db as any);
+    const repo = new IdentityNotificationsDb(
+      () => db as unknown as SqlExecutor
+    );
 
     await expect(
       repo.countUnreadNotificationsForIdentity(
@@ -193,5 +398,74 @@ describe('IdentityNotificationsDb mute filtering', () => {
       }),
       undefined
     );
+    expect(db.oneOrNull.mock.calls[0][0]).toContain(
+      'OR rd1.author_id = n.identity_id'
+    );
+    expect(db.oneOrNull.mock.calls[0][0]).toContain(
+      'OR rd2.author_id = n.identity_id'
+    );
+  });
+
+  it('uses private DM membership and wave mute state when reading the notification feed', async () => {
+    const db: Partial<SqlExecutor> = {
+      execute: jest.fn().mockResolvedValue([])
+    };
+    const repo = new IdentityNotificationsDb(() => db as SqlExecutor);
+
+    await repo.findNotifications({
+      identity_id: 'phoebeumzz',
+      id_less_than: null,
+      limit: 20,
+      eligible_group_ids: ['dm-phoebeumzz-prxt0-notprxt0'],
+      cause: null,
+      cause_exclude: null,
+      unread_only: false
+    });
+
+    const execute = jest.mocked(db.execute!);
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain('OR n.visibility_group_id IN (:eligible_group_ids)');
+    expect(sql).toContain('AND COALESCE(r.muted, FALSE) = FALSE');
+    expect(sql).toContain('AND m.id IS NULL');
+    expect(params).toEqual(
+      expect.objectContaining({
+        identity_id: 'phoebeumzz',
+        eligible_group_ids: ['dm-phoebeumzz-prxt0-notprxt0']
+      })
+    );
+  });
+
+  it('finds only recipients already notified about a drop creation', async () => {
+    const db = {
+      execute: jest
+        .fn()
+        .mockResolvedValue([
+          { identity_id: 'recipient-1' },
+          { identity_id: 'recipient-2' }
+        ])
+    };
+    const repo = new IdentityNotificationsDb(
+      () => db as unknown as SqlExecutor
+    );
+
+    await expect(
+      repo.findIdentitiesNotifiedForDropCreation('wave-1', 'drop-1', connection)
+    ).resolves.toEqual(['recipient-1', 'recipient-2']);
+
+    expect(db.execute).toHaveBeenCalledWith(
+      expect.stringContaining('related_drop_id = :dropId'),
+      {
+        waveId: 'wave-1',
+        dropId: 'drop-1',
+        causes: [
+          IdentityNotificationCause.DROP_REPLIED,
+          IdentityNotificationCause.DROP_QUOTED,
+          IdentityNotificationCause.IDENTITY_MENTIONED,
+          IdentityNotificationCause.ALL_DROPS
+        ]
+      },
+      { wrappedConnection: connection }
+    );
+    expect(db.execute.mock.calls[0][0]).not.toContain('related_drop_2_id');
   });
 });

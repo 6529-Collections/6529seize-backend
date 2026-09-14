@@ -27,6 +27,10 @@ functions:
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: "dbMigrationsLoop_{opt:stage, self:provider.stage}"
+    events:
+      - schedule:
+          rate: rate(1 day)
+          enabled: true
       
 resources:
   Resources:

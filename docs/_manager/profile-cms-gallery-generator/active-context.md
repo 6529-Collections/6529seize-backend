@@ -26,7 +26,7 @@ Phase 5 backend gallery package generator lane for profile-native CMS.
 - No API route is added in this PR.
 - Production publish still requires replacing fixture signature/storage with
   EIP-712 signature and canonical IPFS/Arweave receipt.
-- `npm ci --ignore-scripts` was needed locally because `serverless`
+- `6529 ci --ignore-scripts` was needed locally because `serverless`
   postinstall failed after an interrupted install.
 
 ## Next Actions

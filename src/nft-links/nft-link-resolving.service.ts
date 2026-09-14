@@ -2,14 +2,18 @@ import {
   nftLinkResolver,
   NftLinkResolver
 } from '@/nft-links/nft-link-resolver';
-import { nftLinksDb, NftLinksDb } from '@/nft-links/nft-links.db';
+import {
+  nftLinksDb,
+  NftLinksDb,
+  NftLinkResolutionLockLostError
+} from '@/nft-links/nft-links.db';
 import { Logger } from '@/logging';
 import {
   wsListenersNotifier,
   WsListenersNotifier
 } from '@/api/ws/ws-listeners-notifier';
 import { validateLinkUrl } from '@/nft-links/nft-link-resolver.validator';
-import { CanonicalLink } from '@/nft-links/types';
+import { CanonicalLink, NormalizedNftCard } from '@/nft-links/types';
 import { Time } from '@/time';
 import { env } from '@/env';
 import { RequestContext } from '@/request.context';
@@ -19,6 +23,18 @@ import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 import { mapNftLinkEntityToApiLink } from '@/nft-links/nft-link-api.mapper';
 import { nftLinkMediaPreviewService } from '@/nft-links/nft-link-media-preview.service';
+import {
+  getNftLinkResolutionBudget,
+  nftLinkNotificationRead,
+  NftLinkResolutionDeadlineError,
+  nftLinkResolutionStage
+} from '@/nft-links/resolution-budget';
+import {
+  isNftLinkRefreshDue,
+  nextNftPageRetryState,
+  nftPageRetryScope,
+  RequiredNftPageNotFoundError
+} from './nft-link-page-retry';
 
 export class NftLinkResolvingService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -26,7 +42,10 @@ export class NftLinkResolvingService {
   constructor(
     private readonly nftLinkResolver: NftLinkResolver,
     private readonly nftLinksDb: NftLinksDb,
-    private readonly wsListenersNotifier: WsListenersNotifier,
+    private readonly wsListenersNotifier: Pick<
+      WsListenersNotifier,
+      'notifyAboutNftLinkUpdate'
+    >,
     private readonly sqs: SQS
   ) {}
 
@@ -42,9 +61,12 @@ export class NftLinkResolvingService {
     );
     let reasonForCacheRefresh;
     if (cachedData) {
-      reasonForCacheRefresh = Time.millis(cachedData.last_tried_to_update)
-        .plus(this.getUpdateMinInterval())
-        .isInPast();
+      reasonForCacheRefresh = isNftLinkRefreshDue(
+        cachedData,
+        canonical,
+        Time.currentMillis(),
+        this.getUpdateMinInterval().toMillis()
+      );
     } else {
       const identifiers = canonical.identifiers as any;
       await this.nftLinksDb.insertPendingOrDoNothing(
@@ -114,75 +136,144 @@ export class NftLinkResolvingService {
       );
       return;
     }
-    const entity = await this.nftLinksDb.lockForProcessing(
-      { canonicalId: canonicalLink.canonicalId, lockTTL, updateMinInterval },
-      ctx
+    const entity = await nftLinkResolutionStage('lock', () =>
+      this.nftLinksDb.lockForProcessing(
+        { canonical: canonicalLink, lockTTL, updateMinInterval },
+        ctx
+      )
     );
     if (!entity) {
       this.logger.info(`Didn't find ready to process entity for url ${url}`);
       return;
     }
-    const MAX_ATTEMPTS = 5;
-    const waitBetweenTries = Time.seconds(10);
-    let didPersistSuccess = false;
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      try {
-        const card = await this.nftLinkResolver.resolve(url, ctx);
-        await this.nftLinksDb.updateWithSuccess(card, ctx);
-        try {
-          await nftLinkMediaPreviewService.onResolvedCard(card, ctx);
-        } catch (previewErr) {
-          this.logger.error(
-            `Failed to enqueue/process NFT link media preview for ${url}`,
-            previewErr
-          );
-        }
-        didPersistSuccess = true;
-        this.logger.info(`Data for ${url} updated`);
-        break;
-      } catch (e: any) {
-        if (attempt === MAX_ATTEMPTS) {
-          await this.nftLinksDb.updateWithFailure(
-            {
-              canonicalId: canonicalLink.canonicalId,
-              message: e?.message ?? JSON.stringify(e)
-            },
-            ctx
-          );
-          this.logger.error(
-            `Attempt #${attempt} of ${MAX_ATTEMPTS}. Failed to update url ${url}`,
-            e
-          );
-        } else {
-          this.logger.error(
-            `Attempt #${attempt} of ${MAX_ATTEMPTS}. Failed to update url ${url}. Will try again after ${waitBetweenTries}`,
-            e
-          );
-          await waitBetweenTries.sleep();
-        }
-      }
+    const card = await this.resolveAndPersist(url, canonicalLink, entity, ctx);
+    if (!card) return;
+    try {
+      await nftLinkResolutionStage('preview_enqueue', () =>
+        nftLinkMediaPreviewService.onResolvedCard(
+          card,
+          ctx,
+          getNftLinkResolutionBudget()?.signal
+        )
+      );
+    } catch (previewErr) {
+      this.logger.error(
+        `Failed to enqueue/process NFT link media preview for ${url}`,
+        previewErr
+      );
     }
-
-    if (!didPersistSuccess) {
-      return;
-    }
+    this.logger.info(`Data for ${url} updated`);
 
     // Notification is best-effort and should not affect persisted resolution.
     try {
-      const dataAfterUpdate = await this.nftLinksDb.findByCanonicalId(
-        canonicalLink.canonicalId,
-        ctx
+      const dataAfterUpdate = await nftLinkResolutionStage(
+        'notification_data',
+        () =>
+          nftLinkNotificationRead(() =>
+            getNftLinkResolutionBudget()
+              ? this.nftLinksDb.findByCanonicalIdForNotification(
+                  canonicalLink.canonicalId,
+                  ctx
+                )
+              : this.nftLinksDb.findByCanonicalId(
+                  canonicalLink.canonicalId,
+                  ctx
+                )
+          )
       );
       if (dataAfterUpdate) {
-        await giveReadReplicaTimeToCatchUp();
-        await this.wsListenersNotifier.notifyAboutNftLinkUpdate(
-          this.entityToApiLink(dataAfterUpdate),
-          ctx
+        // The worker reads the primary and sends the complete cached payload.
+        if (!getNftLinkResolutionBudget()) {
+          await giveReadReplicaTimeToCatchUp();
+        }
+        await nftLinkResolutionStage('notify', () =>
+          this.wsListenersNotifier.notifyAboutNftLinkUpdate(
+            this.entityToApiLink(dataAfterUpdate),
+            ctx
+          )
         );
       }
     } catch (notifyErr) {
       this.logger.error(`Failed to send WS notification for ${url}`, notifyErr);
     }
+  }
+
+  private async resolveAndPersist(
+    url: string,
+    canonical: CanonicalLink,
+    entity: NftLinkEntity,
+    ctx: RequestContext
+  ): Promise<NormalizedNftCard | null> {
+    const maxAttempts = 5;
+    const retryDelay = Time.seconds(10);
+    const budget = getNftLinkResolutionBudget();
+    const lockStamp = entity.is_locked_since;
+    if (lockStamp == null) throw new NftLinkResolutionLockLostError();
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        budget?.check();
+        const card = await nftLinkResolutionStage(
+          `resolve_attempt_${attempt}`,
+          () => this.nftLinkResolver.resolve(url, ctx)
+        );
+        // Adapters may swallow individual RPC errors. Never persist a partial
+        // result produced after cancellation as a successful refresh.
+        budget?.check();
+        await nftLinkResolutionStage('persist_success', () =>
+          this.nftLinksDb.updateWithSuccess(card, lockStamp, ctx)
+        );
+        return card;
+      } catch (error) {
+        if (error instanceof NftLinkResolutionLockLostError) throw error;
+        lastError = error;
+        this.logger.error(
+          `Attempt #${attempt} of ${maxAttempts}. Failed to update url ${url}`,
+          error
+        );
+        if (
+          error instanceof NftLinkResolutionDeadlineError ||
+          (error instanceof RequiredNftPageNotFoundError &&
+            error.scopeHash === nftPageRetryScope(canonical)) ||
+          attempt === maxAttempts
+        )
+          break;
+      }
+      try {
+        await nftLinkResolutionStage('retry_wait', () =>
+          budget
+            ? budget.waitToRetry(retryDelay.toMillis())
+            : retryDelay.sleep()
+        );
+      } catch (error) {
+        lastError = error;
+        break;
+      }
+    }
+    // Preserve cached data and release the processing lock, just as for an
+    // exhausted retry count. A later refresh can try again.
+    const attemptedAt = Time.currentMillis();
+    const retryState =
+      lastError instanceof RequiredNftPageNotFoundError &&
+      lastError.scopeHash === nftPageRetryScope(canonical)
+        ? nextNftPageRetryState(entity, lastError.scopeHash, attemptedAt)
+        : null;
+    await nftLinkResolutionStage('persist_failure', () =>
+      this.nftLinksDb.updateWithFailure(
+        {
+          canonicalId: canonical.canonicalId,
+          lockStamp,
+          attemptedAt,
+          retryState,
+          message:
+            lastError instanceof Error
+              ? lastError.message
+              : 'NFT link resolution failed'
+        },
+        ctx
+      )
+    );
+    return null;
   }
   private getUpdateMinInterval() {
     return Time.millis(
@@ -230,9 +321,12 @@ export class NftLinkResolvingService {
       }
       if (
         refreshIfStale &&
-        Time.millis(existing.last_tried_to_update)
-          .plus(this.getUpdateMinInterval())
-          .isInPast()
+        isNftLinkRefreshDue(
+          existing,
+          canonical,
+          Time.currentMillis(),
+          this.getUpdateMinInterval().toMillis()
+        )
       ) {
         queueTargets.push(canonical.originalUrl);
       }

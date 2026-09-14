@@ -1,9 +1,51 @@
 import { AuthenticationContext } from '@/auth-context';
-import { ForbiddenException } from '@/exceptions';
+import { ForbiddenException, NotFoundException } from '@/exceptions';
+import type { WavesApiDb } from '@/api/waves/waves.api.db';
 import {
   getGroupsUserIsEligibleForReadContext,
-  getWaveManagementContextOrThrow
+  getWaveManagementContextOrThrow,
+  assertWaveAndParentVisibleOrThrow
 } from './wave-access.helpers';
+
+describe('independent subwave visibility', () => {
+  it.each([
+    { childGroup: null, eligible: [], allowed: false },
+    { childGroup: 'child-group', eligible: ['child-group'], allowed: false },
+    { childGroup: 'child-group', eligible: ['parent-group'], allowed: false },
+    { childGroup: null, eligible: ['parent-group'], allowed: true },
+    {
+      childGroup: 'child-group',
+      eligible: ['parent-group', 'child-group'],
+      allowed: true
+    }
+  ])(
+    'requires both audiences: $childGroup / $eligible',
+    async ({ childGroup, eligible, allowed }) => {
+      const wave = {
+        visibility_group_id: childGroup,
+        parent_wave_id: 'parent'
+      };
+      const wavesApiDb = {
+        findWaveById: jest.fn().mockResolvedValue({
+          visibility_group_id: 'parent-group',
+          parent_wave_id: null
+        })
+      } as unknown as WavesApiDb;
+      const access = assertWaveAndParentVisibleOrThrow({
+        wave,
+        groupsUserIsEligibleFor: eligible,
+        message: 'Wave not found',
+        wavesApiDb,
+        ctx: {}
+      });
+      if (allowed) {
+        await expect(access).resolves.toBe(wave);
+      } else {
+        await expect(access).rejects.toThrow(NotFoundException);
+      }
+    }
+  );
+});
 
 describe('getGroupsUserIsEligibleForReadContext', () => {
   it('reuses the same eligible-groups promise within a request context', async () => {

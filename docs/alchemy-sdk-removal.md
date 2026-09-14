@@ -42,9 +42,6 @@ All under `src/alchemy-sdk.ts`, imported via `@/alchemy-sdk`:
 - `alchemy.nft`
   - `getNftMetadata(contract, tokenId, options?)` — REST `GET /getNFTMetadata`.
   - `getContractMetadata(contract)` — REST `GET /getContractMetadata`.
-  - `searchContractMetadata(query)` — REST `GET /searchContractMetadata`,
-    unwrapping Alchemy's `{ contracts: [...] }` REST envelope to preserve the
-    old SDK return shape.
   - `getNftsForOwner(owner, options?)` — REST `GET /getNFTsForOwner`, array
     params serialised as repeated `key=a&key=b` (what Alchemy's NFT REST v3
     expects).
@@ -215,8 +212,8 @@ validation.
 
 ## Verification checklist for reviewers
 
-1. `npm run build` at root and under `src/api-serverless` completes cleanly.
-2. `npm test` — `src/alchemy-sdk.test.ts` covers the wrapper.
+1. `6529 run build` at root and under `src/api-serverless` completes cleanly.
+2. `6529 run test -- src/alchemy-sdk.test.ts` covers the wrapper.
 3. Spot-check `rememesLoop` in staging: `getContractMetadata` and
    `getNftMetadata` should return the same JSON shape as before.
 4. Spot-check `nextgenContractLoop` in staging: `getAssetTransfers` pagination

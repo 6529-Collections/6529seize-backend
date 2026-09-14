@@ -19,6 +19,7 @@ const options = process.argv.slice(2).reduce(
 );
 
 const repoRoot = process.cwd();
+const commandWrapper = path.join(repoRoot, 'bin', '6529');
 
 function run(command, args, extraOptions = {}) {
   const result = spawnSync(command, args, {
@@ -111,11 +112,11 @@ const checkableTsFiles = changedTsFiles.filter(
 
 if (!changedTsFiles.length) {
   console.log(`No changed src/**/*.ts files found since ${options.baseRef}.`);
-  run('npm', ['run', 'generate:deploy-config']);
+  run(commandWrapper, ['run', 'generate:deploy-config']);
   if (!options.skipTypecheck) {
     run(
-      'npx',
-      ['tsc', '-p', 'tsconfig.json', '--noEmit'],
+      commandWrapper,
+      ['exec', 'tsc', '-p', 'tsconfig.json', '--noEmit'],
       { env: { NODE_OPTIONS: '--max-old-space-size=8192' } }
     );
   }
@@ -129,21 +130,27 @@ if (checkableTsFiles.length !== changedTsFiles.length) {
   );
 }
 
-run('npm', ['run', 'generate:deploy-config']);
+run(commandWrapper, ['run', 'generate:deploy-config']);
 if (checkableTsFiles.length) {
-  run('npx', ['prettier', '--write', ...checkableTsFiles]);
+  run(commandWrapper, ['exec', 'prettier', '--write', ...checkableTsFiles]);
   run(
-    'npx',
-    ['eslint', '--fix', '--max-warnings=0', ...checkableTsFiles],
+    commandWrapper,
+    ['exec', 'eslint', '--fix', '--max-warnings=0', ...checkableTsFiles],
     { env: { NODE_OPTIONS: '--max-old-space-size=8192' } }
   );
-  run('npx', ['jest', '--findRelatedTests', ...checkableTsFiles, '--passWithNoTests']);
+  run(commandWrapper, [
+    'exec',
+    'jest',
+    '--findRelatedTests',
+    ...checkableTsFiles,
+    '--passWithNoTests'
+  ]);
 }
 
 if (!options.skipTypecheck) {
   run(
-    'npx',
-    ['tsc', '-p', 'tsconfig.json', '--noEmit'],
+    commandWrapper,
+    ['exec', 'tsc', '-p', 'tsconfig.json', '--noEmit'],
     { env: { NODE_OPTIONS: '--max-old-space-size=8192' } }
   );
 }

@@ -1,7 +1,8 @@
 import {
   fetchMintingClaimByClaimId,
-  updateMintingClaim
+  type MintingClaimRow
 } from '@/api/minting-claims/api.minting-claims.db';
+import { DbPoolName } from '@/db-query.options';
 import { Logger } from '@/logging';
 import {
   arweaveTxIdFromUrl,
@@ -11,9 +12,17 @@ import * as priorityAlertsContext from '@/priority-alerts.context';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
 import type { SQSHandler } from 'aws-lambda';
+import { BadRequestException } from '@/exceptions';
+import {
+  CLAIM_MEDIA_UPLOAD_LEASE_MS,
+  ClaimMediaUploadLeaseLostError,
+  claimsMediaUploadLeaseDb,
+  type ClaimMediaUploadLease
+} from '@/minting-claims/claims-media-upload-lease.db';
 
 const logger = Logger.get('CLAIMS_MEDIA_ARWEAVE_UPLOADER');
 const ALERT_TITLE = 'Claims Media Arweave Uploader';
+const MAX_RECEIVE_COUNT = 10;
 
 function buildUploadErrorWithContext(
   contract: string,
@@ -50,29 +59,68 @@ function parseRecordBody(body: string): { contract: string; claim_id: number } {
   return { contract: contract.toLowerCase(), claim_id: claimId };
 }
 
-async function processMintingClaimUpload(
-  contract: string,
-  claimId: number
+async function clearUploadLockAfterFailure(
+  lease: ClaimMediaUploadLease
 ): Promise<void> {
-  logger.info(
-    `Processing minting claim media upload for contract=${contract} claim_id=${claimId}`
-  );
+  await claimsMediaUploadLeaseDb.update(lease, { media_uploading: false });
+}
 
-  const claim = await fetchMintingClaimByClaimId(contract, claimId);
-  if (!claim) {
-    throw new Error(
-      `Claim not found for contract=${contract} claim_id=${claimId}`
+async function sendUploadFailureAlert(
+  contract: string,
+  claimId: number,
+  error: unknown
+): Promise<void> {
+  try {
+    await priorityAlertsContext.sendPriorityAlert(
+      ALERT_TITLE,
+      buildUploadErrorWithContext(contract, claimId, error)
     );
+  } catch (alertError) {
+    logger.error('Failed to send claims media upload priority alert', {
+      contract,
+      claimId,
+      alertError
+    });
   }
+}
 
-  if (!claim.media_uploading) {
-    logger.info(
-      `Skipping upload - claim is not uploading for contract=${contract} claim_id=${claimId}`
-    );
-    return;
+async function handleUploadFailure({
+  lease,
+  receiveCount,
+  error
+}: {
+  lease: ClaimMediaUploadLease;
+  receiveCount: number;
+  error: unknown;
+}): Promise<boolean> {
+  const { contract, claimId } = lease;
+  const isTerminal = error instanceof BadRequestException;
+  const isFinalAttempt = receiveCount >= MAX_RECEIVE_COUNT;
+  if (isTerminal || isFinalAttempt) {
+    try {
+      await clearUploadLockAfterFailure(lease);
+    } catch (rollbackError) {
+      logger.error('Failed to reset media_uploading after upload failure', {
+        contract,
+        claimId,
+        rollbackError
+      });
+      await sendUploadFailureAlert(contract, claimId, error);
+      throw rollbackError;
+    }
+    await sendUploadFailureAlert(contract, claimId, error);
   }
+  return isTerminal;
+}
 
-  await updateMintingClaim(contract, claimId, {
+async function uploadOwnedClaim(
+  lease: ClaimMediaUploadLease,
+  claim: MintingClaimRow,
+  receiveCount: number,
+  getRemainingTimeInMillis: () => number
+): Promise<void> {
+  const { contract, claimId } = lease;
+  await claimsMediaUploadLeaseDb.update(lease, {
     media_uploading: true
   });
 
@@ -81,8 +129,23 @@ async function processMintingClaimUpload(
   );
 
   try {
-    const uploadResult = await uploadMintingClaimToArweave(contract, claim);
-    await updateMintingClaim(contract, claimId, {
+    const uploadResult = await uploadMintingClaimToArweave(contract, claim, {
+      beforePublish: async () => {
+        assertExecutionBudget(getRemainingTimeInMillis());
+        await claimsMediaUploadLeaseDb.assertHeld(lease);
+      },
+      onImageUploaded: async (locationUrl) => {
+        await claimsMediaUploadLeaseDb.update(lease, {
+          image_location: arweaveTxIdFromUrl(locationUrl)
+        });
+      },
+      onAnimationUploaded: async (locationUrl) => {
+        await claimsMediaUploadLeaseDb.update(lease, {
+          animation_location: arweaveTxIdFromUrl(locationUrl)
+        });
+      }
+    });
+    await claimsMediaUploadLeaseDb.update(lease, {
       image_location: arweaveTxIdFromUrl(uploadResult.imageLocationUrl),
       animation_location: uploadResult.animationLocationUrl
         ? arweaveTxIdFromUrl(uploadResult.animationLocationUrl)
@@ -91,32 +154,86 @@ async function processMintingClaimUpload(
       media_uploading: false
     });
   } catch (error) {
+    if (error instanceof ClaimMediaUploadLeaseLostError) throw error;
     logger.error(
       `Failed to upload claim media to Arweave for contract=${contract} claim_id=${claimId}, error=${error}`
     );
-    try {
-      await updateMintingClaim(contract, claimId, { media_uploading: false });
-    } catch (rollbackError) {
-      logger.error('Failed to reset media_uploading after upload error', {
-        contract,
-        claimId,
-        rollbackError
-      });
+    const isTerminal = await handleUploadFailure({
+      lease,
+      receiveCount,
+      error
+    });
+    if (isTerminal) {
+      return;
     }
-    await priorityAlertsContext.sendPriorityAlert(
-      ALERT_TITLE,
-      buildUploadErrorWithContext(contract, claimId, error)
-    );
     throw error;
   }
 }
 
-const sqsHandler: SQSHandler = async (event) => {
+function assertExecutionBudget(remainingMillis: number): void {
+  if (
+    !Number.isFinite(remainingMillis) ||
+    remainingMillis <= 5000 ||
+    remainingMillis > CLAIM_MEDIA_UPLOAD_LEASE_MS - 30000
+  ) {
+    throw new Error(
+      'Claim upload execution budget is outside the lease safety bound'
+    );
+  }
+}
+
+export async function processMintingClaimUpload(
+  contract: string,
+  claimId: number,
+  receiveCount: number,
+  getRemainingTimeInMillis: () => number = () => 900000
+): Promise<void> {
+  assertExecutionBudget(getRemainingTimeInMillis());
+  const primary = { forcePool: DbPoolName.WRITE };
+  const existing = await fetchMintingClaimByClaimId(contract, claimId, primary);
+  if (!existing) throw new Error('Claim not found for media upload');
+  if (!existing.media_uploading) return;
+  const lease = await claimsMediaUploadLeaseDb.acquire(contract, claimId);
+  if (!lease)
+    throw new Error('Claim media upload is already owned; retry required');
+  try {
+    // Read again after acquisition to resume the preceding owner's latest checkpoints.
+    const claim = await fetchMintingClaimByClaimId(contract, claimId, primary);
+    if (!claim)
+      throw new Error('Claim disappeared during media upload acquisition');
+    if (!claim.media_uploading) return;
+    await uploadOwnedClaim(
+      lease,
+      claim,
+      receiveCount,
+      getRemainingTimeInMillis
+    );
+  } finally {
+    try {
+      await claimsMediaUploadLeaseDb.release(lease);
+    } catch {
+      // Preserve the upload outcome. The bounded lease still permits recovery.
+      logger.error(
+        'Could not release claim media upload lease; expiry will permit retry'
+      );
+    }
+  }
+}
+
+const sqsHandler: SQSHandler = async (event, context) => {
   await doInDbContext(
     async () => {
       for (const record of event.Records) {
         const message = parseRecordBody(record.body);
-        await processMintingClaimUpload(message.contract, message.claim_id);
+        const receiveCount = Number(record.attributes.ApproximateReceiveCount);
+        await processMintingClaimUpload(
+          message.contract,
+          message.claim_id,
+          Number.isSafeInteger(receiveCount) && receiveCount > 0
+            ? receiveCount
+            : 1,
+          () => context.getRemainingTimeInMillis()
+        );
       }
     },
     { logger }

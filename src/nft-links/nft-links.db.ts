@@ -3,14 +3,53 @@ import { NftLinkEntity } from '@/entities/INftLink';
 import { RequestContext } from '@/request.context';
 import { NFT_LINKS_TABLE } from '@/constants';
 import { Time } from '@/time';
-import type { NormalizedNftCard } from '@/nft-links/types';
+import type { CanonicalLink, NormalizedNftCard } from '@/nft-links/types';
+import {
+  isNftLinkRefreshDue,
+  type NftLinkPageRetryState
+} from './nft-link-page-retry';
 import { DbPoolName } from '@/db-query.options';
+import {
+  createPreviewLease,
+  isPreviewLease,
+  isPreviewSizeCooldownActive,
+  PreviewCompletionFence
+} from './nft-preview-size-policy';
+
+const PREVIEW_DB_NOW =
+  'cast(unix_timestamp(current_timestamp(3)) * 1000 as unsigned)';
 import type {
   NftLinkMediaPreviewKind,
   NftLinkMediaPreviewStatus
 } from '@/nft-links/nft-link-media-preview.types';
 
+export class NftLinkResolutionLockLostError extends Error {
+  constructor() {
+    super('NFT link resolution lock is no longer owned');
+    Object.setPrototypeOf(this, NftLinkResolutionLockLostError.prototype);
+  }
+}
+
 export class NftLinksDb extends LazyDbAccessCompatibleService {
+  public async findByCanonicalIdForNotification(
+    canonicalId: string,
+    ctx: RequestContext
+  ): Promise<NftLinkEntity | null> {
+    const timerName = `${this.constructor.name}->findByCanonicalIdForNotification`;
+    ctx.timer?.start(timerName);
+    try {
+      const row = await this.db.oneOrNull<NftLinkEntity>(
+        `select /*+ MAX_EXECUTION_TIME(3000) */ * from ${NFT_LINKS_TABLE}
+         where canonical_id = :canonicalId`,
+        { canonicalId },
+        { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
+      );
+      return this.deserializeDullData(row);
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   public async findByCanonicalId(
     canonicalId: string,
     ctx: RequestContext
@@ -62,11 +101,11 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
 
   public async lockForProcessing(
     {
-      canonicalId,
+      canonical,
       lockTTL,
       updateMinInterval
     }: {
-      canonicalId: string;
+      canonical: CanonicalLink;
       lockTTL: Time;
       updateMinInterval: Time;
     },
@@ -76,6 +115,8 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
       ctx.timer?.start(`${this.constructor.name}->lockForProcessing`);
       return await this.db.executeNativeQueriesInTransaction(
         async (connection) => {
+          const canonicalId = canonical.canonicalId;
+          const now = Time.currentMillis();
           const entity = await this.db
             .oneOrNull<NftLinkEntity>(
               `
@@ -87,24 +128,33 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
           `,
               {
                 canonicalId,
-                lockedSince: Time.now().minus(lockTTL).toMillis(),
-                maxLastUpdated: Time.now().minus(updateMinInterval).toMillis()
+                lockedSince: now - lockTTL.toMillis(),
+                maxLastUpdated: now - updateMinInterval.toMillis()
               },
               { wrappedConnection: connection }
             )
             .then((res) => this.deserializeDullData(res));
-          if (entity) {
+          if (
+            entity &&
+            isNftLinkRefreshDue(
+              entity,
+              canonical,
+              now,
+              updateMinInterval.toMillis()
+            )
+          ) {
             await this.db.execute(
               `
             update ${NFT_LINKS_TABLE} 
             set is_locked_since = :now
             where canonical_id = :canonicalId
             `,
-              { now: Time.currentMillis(), canonicalId },
+              { now, canonicalId },
               { wrappedConnection: connection }
             );
+            return { ...entity, is_locked_since: now };
           }
-          return entity;
+          return null;
         }
       );
     } finally {
@@ -119,6 +169,7 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
       | 'price'
       | 'price_currency'
       | 'full_data'
+      | 'refresh_retry_state'
       | 'media_uri'
       | 'media_preview_status'
       | 'media_preview_kind'
@@ -175,34 +226,53 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
   async updateWithFailure(
     {
       canonicalId,
-      message
+      message,
+      lockStamp,
+      attemptedAt,
+      retryState
     }: {
       canonicalId: string;
       message: string;
+      lockStamp: number;
+      attemptedAt: number;
+      retryState: NftLinkPageRetryState | null;
     },
     ctx: RequestContext
   ) {
     try {
       ctx.timer?.start(`${this.constructor.name}->updateWithFailure`);
-      await this.db.execute(
+      const result = await this.db.execute(
         `
             update ${NFT_LINKS_TABLE} 
               set 
                 last_tried_to_update = :now,
                 last_error_message = :message,
+                refresh_retry_state = :retryState,
                 is_locked_since = null,
                 failed_since = ifnull(failed_since, :now)
-            where canonical_id = :canonicalId
+            where canonical_id = :canonicalId and is_locked_since = :lockStamp
         `,
-        { canonicalId, message, now: Time.currentMillis() },
+        {
+          canonicalId,
+          message,
+          now: attemptedAt,
+          lockStamp,
+          retryState: retryState ? JSON.stringify(retryState) : null
+        },
         { wrappedConnection: ctx.connection }
       );
+      if (this.db.getAffectedRows(result) !== 1)
+        throw new NftLinkResolutionLockLostError();
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->updateWithFailure`);
     }
   }
 
-  async updateWithSuccess(data: NormalizedNftCard, ctx: RequestContext) {
+  async updateWithSuccess(
+    data: NormalizedNftCard,
+    lockStamp: number,
+    ctx: RequestContext
+  ) {
     try {
       ctx.timer?.start(`${this.constructor.name}->updateWithSuccess`);
       const identifiers = data.identifier.identifiers as any;
@@ -215,13 +285,14 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
         media?.kind === 'animation'
           ? (media.animationUrl ?? media.imageUrl ?? null)
           : (media?.imageUrl ?? media?.animationUrl ?? null);
-      await this.db.execute(
+      const result = await this.db.execute(
         `
             update ${NFT_LINKS_TABLE} 
               set 
                 last_tried_to_update = :now,
                 last_successfully_updated = :now,
                 last_error_message = null,
+                refresh_retry_state = null,
                 is_locked_since = null,
                 failed_since = null,
                 full_data = :fullData,
@@ -233,10 +304,11 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
                 media_uri = :media_uri,
                 price = :price,
                 price_currency = :price_currency
-            where canonical_id = :canonicalId
+            where canonical_id = :canonicalId and is_locked_since = :lockStamp
         `,
         {
           canonicalId: data.identifier.canonicalId,
+          lockStamp,
           platform: data.identifier.platform,
           chain: identifiers.chain ?? null,
           contract: identifiers.contract ?? null,
@@ -254,6 +326,8 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
         },
         { wrappedConnection: ctx.connection }
       );
+      if (this.db.getAffectedRows(result) !== 1)
+        throw new NftLinkResolutionLockLostError();
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->updateWithSuccess`);
     }
@@ -263,11 +337,13 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
     {
       canonicalId,
       sourceHash,
-      kind
+      kind,
+      maxBytes
     }: {
       canonicalId: string;
       sourceHash: string;
       kind: NftLinkMediaPreviewKind;
+      maxBytes: number;
     },
     ctx: RequestContext
   ): Promise<boolean> {
@@ -275,9 +351,41 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
       ctx.timer?.start(
         `${this.constructor.name}->markMediaPreviewPendingIfNeeded`
       );
-      const affectedRows = await this.db
-        .execute(
-          `
+      const enqueue = async (
+        connection: NonNullable<RequestContext['connection']>
+      ) => {
+        const previous = await this.db.oneOrNull<
+          Pick<
+            NftLinkEntity,
+            | 'media_preview_status'
+            | 'media_preview_source_hash'
+            | 'media_preview_error_message'
+            | 'media_preview_last_tried_at'
+          > & { preview_now: number }
+        >(
+          `select media_preview_status, media_preview_source_hash,
+          media_preview_error_message, media_preview_last_tried_at,
+          ${PREVIEW_DB_NOW} as preview_now
+         from ${NFT_LINKS_TABLE} where canonical_id = :canonicalId for update`,
+          { canonicalId },
+          { wrappedConnection: connection }
+        );
+        if (!previous) return false;
+        if (
+          isPreviewSizeCooldownActive({
+            status: previous.media_preview_status,
+            sourceHash: previous.media_preview_source_hash,
+            expectedSourceHash: sourceHash,
+            message: previous.media_preview_error_message,
+            lastTriedAt: previous.media_preview_last_tried_at,
+            limitBytes: maxBytes,
+            now: Number(previous.preview_now)
+          })
+        )
+          return false;
+        const affectedRows = await this.db
+          .execute(
+            `
             update ${NFT_LINKS_TABLE}
             set
               media_preview_status = :pendingStatus,
@@ -326,20 +434,49 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
                 or media_preview_status in ('FAILED', 'SKIPPED')
               )
           `,
-          {
-            canonicalId,
-            sourceHash,
-            kind,
-            pendingStatus: 'PENDING'
-          },
-          { wrappedConnection: ctx.connection }
-        )
-        .then((res) => this.db.getAffectedRows(res));
-      return affectedRows > 0;
+            {
+              canonicalId,
+              sourceHash,
+              kind,
+              pendingStatus: 'PENDING'
+            },
+            { wrappedConnection: connection }
+          )
+          .then((res) => this.db.getAffectedRows(res));
+        return affectedRows > 0;
+      };
+      return ctx.connection
+        ? await enqueue(ctx.connection)
+        : await this.db.executeNativeQueriesInTransaction(enqueue);
     } finally {
       ctx.timer?.stop(
         `${this.constructor.name}->markMediaPreviewPendingIfNeeded`
       );
+    }
+  }
+
+  public async markMediaPreviewEnqueueFailed(
+    canonicalId: string,
+    sourceHash: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    const timerName = `${this.constructor.name}->markMediaPreviewEnqueueFailed`;
+    ctx.timer?.start(timerName);
+    try {
+      await this.db.execute(
+        `update ${NFT_LINKS_TABLE}
+         set media_preview_status = 'FAILED',
+             media_preview_error_message = 'Preview enqueue failed',
+             media_preview_failed_since = ifnull(media_preview_failed_since, :now)
+         where canonical_id = :canonicalId
+           and media_preview_source_hash = :sourceHash
+           and media_preview_status = 'PENDING'
+           and media_preview_locked_since is null`,
+        { canonicalId, sourceHash, now: Time.currentMillis() },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
     }
   }
 
@@ -404,7 +541,7 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
       lockTTL: Time;
     },
     ctx: RequestContext
-  ): Promise<NftLinkEntity | null> {
+  ): Promise<(NftLinkEntity & { media_preview_error_message: string }) | null> {
     try {
       ctx.timer?.start(
         `${this.constructor.name}->lockMediaPreviewForProcessing`
@@ -416,15 +553,16 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
               `
                 select * from ${NFT_LINKS_TABLE}
                 where canonical_id = :canonicalId
-                  and media_preview_status = :pendingStatus
-                  and ifnull(media_preview_locked_since, 0) < :lockedBefore
+                  and media_preview_status in (:pendingStatus, 'PROCESSING')
+                  and (ifnull(media_preview_locked_since, 0) < ${PREVIEW_DB_NOW} - :lockTtlMs
+                    or media_preview_locked_since > ${PREVIEW_DB_NOW} + :lockTtlMs)
                   ${expectedSourceHash ? 'and media_preview_source_hash = :expectedSourceHash' : ''}
                 for update skip locked
               `,
               {
                 canonicalId,
                 pendingStatus: 'PENDING',
-                lockedBefore: Time.now().minus(lockTTL).toMillis(),
+                lockTtlMs: lockTTL.toMillis(),
                 expectedSourceHash: expectedSourceHash ?? null
               },
               { wrappedConnection: connection }
@@ -435,20 +573,20 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
             return null;
           }
 
-          const now = Time.currentMillis();
+          const lease = createPreviewLease();
           await this.db.execute(
             `
               update ${NFT_LINKS_TABLE}
               set
                 media_preview_status = :processingStatus,
-                media_preview_locked_since = :now,
-                media_preview_last_tried_at = :now,
-                media_preview_error_message = null
+                media_preview_locked_since = ${PREVIEW_DB_NOW},
+                media_preview_last_tried_at = ${PREVIEW_DB_NOW},
+                media_preview_error_message = :lease
               where canonical_id = :canonicalId
             `,
             {
               canonicalId,
-              now,
+              lease,
               processingStatus: 'PROCESSING'
             },
             { wrappedConnection: connection }
@@ -456,8 +594,9 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
 
           return {
             ...entity,
-            media_preview_status: 'PROCESSING'
-          } as NftLinkEntity;
+            media_preview_status: 'PROCESSING',
+            media_preview_error_message: lease
+          };
         }
       );
     } finally {
@@ -471,38 +610,46 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
     {
       canonicalId,
       message,
-      status
+      status,
+      fence
     }: {
       canonicalId: string;
       message: string;
+      fence: PreviewCompletionFence;
       status?: Extract<NftLinkMediaPreviewStatus, 'FAILED' | 'SKIPPED'>;
     },
     ctx: RequestContext
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       ctx.timer?.start(
         `${this.constructor.name}->updateMediaPreviewWithFailure`
       );
-      const now = Time.currentMillis();
-      await this.db.execute(
+      if (!isPreviewLease(fence.lease))
+        throw new Error('Invalid NFT preview completion lease');
+      const result = await this.db.execute(
         `
           update ${NFT_LINKS_TABLE}
           set
             media_preview_status = :status,
             media_preview_error_message = :message,
             media_preview_locked_since = null,
-            media_preview_failed_since = ifnull(media_preview_failed_since, :now),
-            media_preview_last_tried_at = :now
+            media_preview_failed_since = ifnull(media_preview_failed_since, ${PREVIEW_DB_NOW}),
+            media_preview_last_tried_at = ${PREVIEW_DB_NOW}
           where canonical_id = :canonicalId
+            and media_preview_status = 'PROCESSING'
+            and media_preview_source_hash <=> :expectedSourceHash
+            and binary media_preview_error_message = binary :lease
         `,
         {
           canonicalId,
           message,
-          now,
+          expectedSourceHash: fence.sourceHash,
+          lease: fence.lease,
           status: status ?? 'FAILED'
         },
         { wrappedConnection: ctx.connection }
       );
+      return this.db.getAffectedRows(result) > 0;
     } finally {
       ctx.timer?.stop(
         `${this.constructor.name}->updateMediaPreviewWithFailure`
@@ -521,7 +668,8 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
       width,
       height,
       mimeType,
-      bytes
+      bytes,
+      fence
     }: {
       canonicalId: string;
       kind: NftLinkMediaPreviewKind;
@@ -533,15 +681,17 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
       height: number | null;
       mimeType: string | null;
       bytes: number | null;
+      fence: PreviewCompletionFence;
     },
     ctx: RequestContext
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       ctx.timer?.start(
         `${this.constructor.name}->updateMediaPreviewWithSuccess`
       );
-      const now = Time.currentMillis();
-      await this.db.execute(
+      if (!isPreviewLease(fence.lease))
+        throw new Error('Invalid NFT preview completion lease');
+      const result = await this.db.execute(
         `
           update ${NFT_LINKS_TABLE}
           set
@@ -555,12 +705,15 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
             media_preview_height = :height,
             media_preview_mime_type = :mimeType,
             media_preview_bytes = :bytes,
-            media_preview_last_success_at = :now,
-            media_preview_last_tried_at = :now,
+            media_preview_last_success_at = ${PREVIEW_DB_NOW},
+            media_preview_last_tried_at = ${PREVIEW_DB_NOW},
             media_preview_failed_since = null,
             media_preview_error_message = null,
             media_preview_locked_since = null
           where canonical_id = :canonicalId
+            and media_preview_status = 'PROCESSING'
+            and media_preview_source_hash <=> :expectedSourceHash
+            and binary media_preview_error_message = binary :lease
         `,
         {
           canonicalId,
@@ -574,10 +727,12 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
           height,
           mimeType,
           bytes,
-          now
+          expectedSourceHash: fence.sourceHash,
+          lease: fence.lease
         },
         { wrappedConnection: ctx.connection }
       );
+      return this.db.getAffectedRows(result) > 0;
     } finally {
       ctx.timer?.stop(
         `${this.constructor.name}->updateMediaPreviewWithSuccess`

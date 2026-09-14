@@ -25,6 +25,8 @@ export class ApiProfileCmsPointerEvent {
     'previous_package_db_id'?: string;
     'actor_profile_id': string;
     'signer_address'?: string;
+    'signature'?: string;
+    'typed_data'?: { [key: string]: any; };
     'typed_data_hash'?: string;
     'storage_receipt'?: { [key: string]: any; };
     /**
@@ -111,6 +113,18 @@ export class ApiProfileCmsPointerEvent {
             "format": ""
         },
         {
+            "name": "signature",
+            "baseName": "signature",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "typed_data",
+            "baseName": "typed_data",
+            "type": "{ [key: string]: any; }",
+            "format": ""
+        },
+        {
             "name": "typed_data_hash",
             "baseName": "typed_data_hash",
             "type": "string",
@@ -148,6 +162,7 @@ export enum ApiProfileCmsPointerEventEventTypeEnum {
     SetPrimary = 'set_primary',
     Supersede = 'supersede',
     Rollback = 'rollback',
-    Archive = 'archive'
+    Archive = 'archive',
+    Unpublish = 'unpublish'
 }
 

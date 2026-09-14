@@ -1,5 +1,7 @@
 import { Contract, formatUnits, JsonRpcProvider } from 'ethers';
 import { externalIndexerRpc } from '@/external-indexing/external-indexer-rpc';
+import { getNftLinkResolutionBudget } from '@/nft-links/resolution-budget';
+import { getResolutionRpcProvider } from '@/nft-links/lib/resolution-rpc';
 
 /**
  * Minimal onchain helpers.
@@ -12,7 +14,10 @@ export function getProvider(chain: string): JsonRpcProvider {
   if (chain !== 'eth') {
     throw new Error(`Only eth chain is supported at the moment`);
   }
-  return externalIndexerRpc.provider;
+  const budget = getNftLinkResolutionBudget();
+  return budget
+    ? getResolutionRpcProvider(budget)
+    : externalIndexerRpc.provider;
 }
 
 const ERC20_ABI = [

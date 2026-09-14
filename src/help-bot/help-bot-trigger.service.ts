@@ -10,6 +10,7 @@ import {
   HELP_BOT_FAILURE_REACTION,
   HELP_BOT_INSUFFICIENT_CREDITS_REACTION,
   HELP_BOT_INSUFFICIENT_CREDITS_REPLY,
+  HELP_BOT_INTERACTION_QUESTION_MAX_UTF8_BYTES,
   HELP_BOT_REPLY_QUEUE_NAME,
   HELP_BOT_SEEN_REACTION,
   HELP_BOT_SPAM_REACTION,
@@ -91,6 +92,16 @@ export class HelpBotTriggerService {
       if (!trigger) {
         this.logger.debug(
           `Help bot trigger skipped for drop ${createdDrop.id}: no trigger detected`
+        );
+        return;
+      }
+
+      if (
+        Buffer.byteLength(trigger.question, 'utf8') >
+        HELP_BOT_INTERACTION_QUESTION_MAX_UTF8_BYTES
+      ) {
+        this.logger.info(
+          `Help bot trigger skipped for drop ${createdDrop.id}: derived question exceeds ${HELP_BOT_INTERACTION_QUESTION_MAX_UTF8_BYTES} UTF-8 bytes`
         );
         return;
       }
@@ -216,7 +227,10 @@ export class HelpBotTriggerService {
     waveId: string,
     ctx: RequestContext
   ): Promise<boolean> {
-    const wave = await this.wavesDb.findWaveById(waveId, ctx.connection);
+    // Public help must not process a public child beneath a restricted parent.
+    const wave = (
+      await this.wavesDb.findWavesByIds([waveId], [], ctx.connection)
+    ).at(0);
     if (!wave) {
       this.logger.warn(`Could not resolve wave ${waveId} for help bot trigger`);
       return false;

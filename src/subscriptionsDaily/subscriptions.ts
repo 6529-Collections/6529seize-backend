@@ -42,6 +42,8 @@ import {
   persistNFTFinalSubscriptions,
   persistSubscriptions
 } from './db.subscriptions';
+import { MINIMUM_SUBSCRIPTION_ELIGIBILITY } from './subscription-eligibility';
+import { markSubscriptionCoverageDirty } from '../subscription-coverage/subscription-coverage-dirty';
 
 const logger = Logger.get('SUBSCRIPTIONS');
 
@@ -56,9 +58,11 @@ export async function updateSubscriptions() {
 
   await populateAutoSubscriptionsForMemeId(nextMemeId, autoSubscriptions);
 
-  const uploadLink = await buildFinalSubscription(
-    nextMemeId,
-    autoSubscriptions
+  const { uploadLink, affectedConsolidationKeys } =
+    await buildFinalSubscription(nextMemeId, autoSubscriptions);
+  await markSubscriptionCoverageDirty(
+    affectedConsolidationKeys,
+    'DAILY_FINALIZATION'
   );
 
   const seizeDomain =
@@ -118,8 +122,9 @@ async function populateAutoSubscriptionsForMemeId(
     autoSubscriptionsDelta.forEach((s) => {
       let subscribedCount = 1;
       const eligibilityCount = s.consolidation_key
-        ? (eligibilityByKey.get(s.consolidation_key.toLowerCase()) ?? 1)
-        : 1;
+        ? (eligibilityByKey.get(s.consolidation_key.toLowerCase()) ??
+          MINIMUM_SUBSCRIPTION_ELIGIBILITY)
+        : MINIMUM_SUBSCRIPTION_ELIGIBILITY;
       if (s.subscribe_all_editions) {
         subscribedCount = eligibilityCount;
       }
@@ -150,7 +155,10 @@ async function populateAutoSubscriptionsForMemeId(
 async function buildFinalSubscription(
   newMeme: number,
   autoSubscriptions: SubscriptionMode[]
-): Promise<string> {
+): Promise<{
+  readonly uploadLink: string;
+  readonly affectedConsolidationKeys: string[];
+}> {
   logger.info(`[BUILDING FINAL SUBSCRIPTION FOR MEME #${newMeme}]`);
 
   const now = Time.now();
@@ -173,7 +181,16 @@ async function buildFinalSubscription(
     newSubscriptionLogs
   );
 
-  return upload.upload_url;
+  return {
+    uploadLink: upload.upload_url,
+    affectedConsolidationKeys: Array.from(
+      new Set(
+        newSubscriptionLogs.map((subscription) =>
+          subscription.consolidation_key.toLowerCase()
+        )
+      )
+    )
+  };
 }
 
 async function createFinalSubscriptions(
@@ -294,8 +311,9 @@ async function addFundedFinalSubscription(
   }
   const subscribedAt = Time.millis(createdAt).toIsoString();
   const eligibilityCount = sub.consolidation_key
-    ? (eligibilityByKey.get(sub.consolidation_key.toLowerCase()) ?? 1)
-    : 1;
+    ? (eligibilityByKey.get(sub.consolidation_key.toLowerCase()) ??
+      MINIMUM_SUBSCRIPTION_ELIGIBILITY)
+    : MINIMUM_SUBSCRIPTION_ELIGIBILITY;
   const airdropAddress = await fetchAirdropAddressForConsolidationKey(
     sub.consolidation_key
   );

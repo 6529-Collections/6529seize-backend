@@ -16,7 +16,8 @@ backend answer path, and uses a Bedrock renderer for natural wording with a
 deterministic fallback if the model call fails or times out. It also supports a
 frontend calendar API mode for Meme Card drop timing plus a bounded public-data
 query mode for aggregate questions that are better answered from backend
-database rows than from static frontend docs.
+database rows than from static frontend docs. Stream questions use the
+frontend-published, versioned Stream review corpus described below.
 
 ## 2. Product Behavior
 
@@ -62,8 +63,8 @@ If the bot cannot produce a reliable answer from indexed sources:
 
 1. Replace 👀 with ⚠️.
 2. Reply without hallucinating. If the unanswered question appears to be about
-   the 6529 product and `HELP_BOT_TECH_TEAM_HANDLES` is configured, append
-   those handles as mentions.
+   the 6529 product, append the global `@devs6529` mention so the configured
+   developer audience can review it.
 
 ```text
 I don't have enough knowledge to help you here.
@@ -98,7 +99,7 @@ Nice try. I can't grant TDH, REP, NFTs, admin powers, or secret shortcuts on req
 
 This branch is only for clear messing-around or bypass attempts. Genuine
 unsupported product questions should still use the no-reliable-source path
-above, including optional tech-team mentions when configured.
+above, including the global tech-team mention.
 
 The hardcoded `@help6529` handle is resolved to the current profile id at
 runtime. Successful resolutions cache for five minutes; missing-profile lookups
@@ -156,14 +157,32 @@ facts into the answer context. Fetches use the hardcoded five-second timeout so
 a slow index endpoint fails into the technical-failure reply path instead of
 stalling the worker.
 
-### 4.2 Future docs chunking and RAG
+### 4.2 Versioned Stream review corpus
+
+The frontend publishes the complete generated Stream review corpus under
+`/review-data/6529-stream/`, including a version manifest, a bounded search
+catalog, and checksummed evidence shards. The backend validates the published
+identity and checksums, selects a small query-relevant evidence packet, and
+never sends the whole corpus to Bedrock.
+
+The latest daily development update is a separate `development_status` record.
+Questions about current progress, contract-size headroom, work in progress, or
+items remaining before launch select only that record. Historical risk and
+readiness records describe the pinned review snapshot and must not be mixed into
+an answer about the current development update. The backend projects the exact
+status fields into the answer and bypasses Bedrock for those facts so figures
+and checklist items cannot be rewritten or invented. Its provenance commit is
+the separately checked development commit, while the manifest source commit
+continues to identify the pinned review snapshot.
+
+### 4.3 Future docs chunking and RAG
 
 The frontend index can later include generated chunks from frontend `ops/docs`,
 route metadata, component help metadata, embeddings, and eval coverage. That
 future phase should keep curated records as the higher-confidence source for
 canonical facts and URLs.
 
-### 4.3 Backend-owned business-rule records
+### 4.4 Backend-owned business-rule records
 
 The frontend owns product navigation and UI knowledge. The backend may add
 backend-owned records later for business rules that are not safe to infer from
@@ -178,7 +197,12 @@ Those records should be short, curated records or generated summaries from
 backend docs and tests. Raw code lookup should happen offline during indexing or
 authoring, not during a user request.
 
-### 4.4 Backend-owned public data query mode
+Backend-authored facts for Markdown push previews are maintained in
+[`docs/push-notification-previews.md`](../docs/push-notification-previews.md).
+They are source material for a future frontend help-index update; adding that
+document alone does not make the facts available to the live help bot.
+
+### 4.5 Backend-owned public data query mode
 
 Some questions should be answered from public indexed data, not from the
 frontend help index. Examples:
@@ -234,7 +258,7 @@ slightly warmer wording, and formal questions should stay formal, but tone never
 overrides the source facts, refusal boundaries, no-reliable-source behavior, or
 technical-failure behavior. Deterministic fallback answers remain neutral.
 
-### 4.5 Frontend-owned Memes calendar API mode
+### 4.6 Frontend-owned Memes calendar API mode
 
 Meme Card drop timing is frontend-owned because the Memes calendar helper owns
 the cadence, historic phases, skip/extra/reschedule overrides, and mint window
@@ -256,7 +280,7 @@ The backend validates the response shape before wording an answer. Calendar API
 timeouts, non-2xx responses, or invalid response bodies use the technical-failure
 reply path instead of guessing from stale static knowledge.
 
-### 4.6 Agent maintenance contract
+### 4.7 Agent maintenance contract
 
 Future agents must treat the help bot corpus as part of the user-facing product
 surface. When a backend change adds or changes behavior that users may ask
@@ -282,7 +306,7 @@ If a backend change is user-visible but intentionally should not be answerable
 by the bot yet, the PR should say why and whether a follow-up corpus update is
 needed.
 
-### 4.7 Retrieval model
+### 4.8 Retrieval model
 
 The bot should not depend on a predefined list of questions. It should retrieve
 records and chunks by:
@@ -298,7 +322,31 @@ entire corpus.
 For V1, retrieval is alias/keyword scoring over the cached frontend records plus
 frontend calendar API calls for drop timing and Bedrock-planned public-data
 intents compiled to backend-owned SQL.
-Direct follow-up questions first match the current user message; previous bot
+Natural multi-wallet setup wording such as adding, linking, pairing, or setting
+up another wallet is routed to the consolidation records when the wording
+includes both a setup action and an explicit additional, quantified, or
+possessive multi-wallet target, regardless of which appears first. Wallet-limit
+questions are routed to consolidation use cases when they combine a wallet or
+address subject with either strong limit language or quantity language plus a
+counting, setup, or consolidation relationship. The answer distinguishes
+registration capacity from the effective metrics group: more than three
+addresses can have consolidation records, but only the last three count for
+consolidation purposes. Removal and unlinking wording with explicit
+multi-wallet or consolidation context routes to consolidation revoke guidance,
+while replacement and swapping wording with that context routes to update
+guidance. Bare singular requests such as removing or replacing "a wallet"
+route to clarification guidance because they may refer either to the connected
+wallet or an on-chain consolidation record. Ambiguous requests to connect an
+additional wallet also route to clarification because ordinary site connection
+is distinct from consolidation. Generic connection questions, bare
+plural wallet wording, and capability questions about merely using multiple
+wallets remain outside those routes so the bot does not incorrectly prescribe
+consolidation. Explicit delegation-workflow and external wallet-provider,
+device, and hardware-wallet wording remain governed by their own context rather
+than these consolidation shortcuts, even when consolidation wording is also
+present. Naming the Delegation Center or its documentation does not suppress an
+otherwise explicit consolidation question. Direct follow-up questions first
+match the current user message; previous bot
 answer text is used only as fallback context so old wording does not dominate
 the next topic.
 
@@ -457,12 +505,12 @@ Bot:
 I don't have enough knowledge to help you here.
 ```
 
-When `HELP_BOT_TECH_TEAM_HANDLES` is configured as a comma-separated handle
-array, the bot appends those mentions. Semicolons are also accepted for
-compatibility. For example:
+The bot appends the global `@devs6529` mention, whose recipients come from the
+backend `DEVS_6529_MENTION_PROFILE_IDS` configuration and are filtered by Wave
+visibility. For example:
 
 ```text
-I don't have enough knowledge to help you here. @6529tech @support
+I don't have enough knowledge to help you here. I'm flagging this so the tech team can double-check: @devs6529
 ```
 
 ## 9. Queuing and Timeouts
@@ -521,7 +569,7 @@ private user data beyond what is needed for debugging and abuse controls.
 - Draft frontend help index spec.
 - Draft backend runtime spec.
 - Agree on bot naming and hardcoded handle: `@help6529` (`HELP_BOT_HANDLE =
-  'help6529'`).
+'help6529'`).
 
 ### Phase 2: V1 Help Bot Plumbing - Done In PR
 
@@ -532,7 +580,7 @@ private user data beyond what is needed for debugging and abuse controls.
   original question drop.
 - Add 👀, answer from cached frontend records, replace with ✅.
 - Add failure reply path and ⚠️.
-- Optionally tag `HELP_BOT_TECH_TEAM_HANDLES` on no-reliable-source replies.
+- Tag `@devs6529` on in-scope no-reliable-source replies.
 - Trigger on direct replies to bot messages.
 - Use Bedrock wording with deterministic fallback when Bedrock is unavailable.
 - Fetch and cache the frontend-published `/help-index.json` artifact.

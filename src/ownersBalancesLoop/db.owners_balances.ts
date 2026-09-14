@@ -15,6 +15,7 @@ import {
   insertWithoutUpdate,
   resetRepository
 } from '../orm_helpers';
+import { markSubscriptionCoverageDirtyForDemonstratedIntent } from '../subscription-coverage/subscription-coverage-dirty';
 
 const logger = Logger.get('DB_OWNER_BALANCES');
 
@@ -199,6 +200,13 @@ export async function persistConsolidatedOwnerBalances(
       });
     });
   }
+  await markSubscriptionCoverageDirtyForDemonstratedIntent(
+    [
+      ...consolidatedOwnerBalances.map((balance) => balance.consolidation_key),
+      ...Array.from(deleteDelta)
+    ],
+    'ELIGIBILITY_CHANGED'
+  );
 }
 
 export async function fetchRefreshOutdatedBalances(

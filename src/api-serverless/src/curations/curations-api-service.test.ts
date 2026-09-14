@@ -10,7 +10,8 @@ describe('CurationsApiService', () => {
       id: 'wave-1',
       type: WaveType.CHAT,
       created_by: 'profile-1',
-      admin_group_id: null
+      admin_group_id: null,
+      visibility_group_id: null
     },
     drop = {
       id: 'drop-1',
@@ -399,7 +400,8 @@ describe('CurationsApiService', () => {
         id: 'wave-1',
         type: WaveType.CHAT,
         created_by: 'profile-2',
-        admin_group_id: 'admin-group'
+        admin_group_id: 'admin-group',
+        visibility_group_id: null
       },
       eligibleGroupIds: ['admin-group'],
       communityGroup: { id: 'admin-group', is_private: true },
@@ -1021,7 +1023,8 @@ describe('CurationsApiService', () => {
         id: 'wave-1',
         type: WaveType.CHAT,
         created_by: 'profile-2',
-        admin_group_id: 'admin-group'
+        admin_group_id: 'admin-group',
+        visibility_group_id: null
       },
       eligibleGroupIds: ['admin-group'],
       communityGroup: { id: 'admin-group', is_private: true }

@@ -16,8 +16,84 @@ describe('WsConnectionRepository', () => {
     jest.restoreAllMocks();
   });
 
+  it.each([false, true])(
+    'intersects live parent and child websocket recipients (system=%s)',
+    async (system) => {
+      const oneOrNull = jest.fn().mockResolvedValue({
+        visibility_group_id: 'child',
+        parent_wave_id: 'parent',
+        parent_id: 'parent',
+        parent_parent_id: null,
+        parent_group_id: 'parent-group'
+      });
+      const execute = jest
+        .fn()
+        .mockResolvedValueOnce([
+          { connection_id: 'child-only', profile_id: 'a', wave_id: 'wave' },
+          { connection_id: 'both', profile_id: 'b', wave_id: 'wave' }
+        ])
+        .mockResolvedValueOnce([
+          { connection_id: 'both', profile_id: 'b', wave_id: 'wave' },
+          { connection_id: 'parent-only', profile_id: 'c', wave_id: 'wave' }
+        ]);
+      const groupQuery = jest.fn().mockResolvedValue({ sql: '', params: {} });
+      const repo = new WsConnectionRepository(
+        () => ({ oneOrNull, execute }) as never,
+        {
+          getSqlAndParamsByGroupId: groupQuery,
+          getSqlAndParamsByGroupIdForSystemBroadcast: groupQuery
+        } as never
+      );
+      const method = system
+        ? repo.getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast.bind(
+            repo
+          )
+        : repo.getCurrentlyOnlineCommunityMemberConnectionIds.bind(repo);
+      await expect(
+        method({ waveId: 'wave', groupId: null }, {})
+      ).resolves.toEqual([
+        { connectionId: 'both', profileId: 'b', wave_id: 'wave' }
+      ]);
+      expect(groupQuery.mock.calls.map((call) => call[0])).toEqual([
+        'child',
+        'parent-group'
+      ]);
+    }
+  );
+
+  it.each([
+    null,
+    { visibility_group_id: null, parent_wave_id: 'missing', parent_id: null },
+    {
+      visibility_group_id: null,
+      parent_wave_id: 'parent',
+      parent_id: 'parent',
+      parent_parent_id: 'grandparent'
+    }
+  ])(
+    'does not broadcast missing or invalid parent chains: %s',
+    async (wave) => {
+      const execute = jest.fn();
+      const repo = new WsConnectionRepository(
+        () =>
+          ({ oneOrNull: jest.fn().mockResolvedValue(wave), execute }) as never,
+        {} as never
+      );
+      await expect(
+        repo.getCurrentlyOnlineCommunityMemberConnectionIds(
+          { waveId: 'wave', groupId: null },
+          {}
+        )
+      ).resolves.toEqual([]);
+      expect(execute).not.toHaveBeenCalled();
+    }
+  );
+
   it('replaces the notification identities owned by a connection', async () => {
-    const execute = jest.fn().mockResolvedValue([]);
+    const execute = jest
+      .fn()
+      .mockResolvedValueOnce([{ connection_id: 'connection-1' }])
+      .mockResolvedValue([]);
     const transactionConnection = { connection: {} };
     const executeNativeQueriesInTransaction = jest.fn(async (callback) =>
       callback(transactionConnection)
@@ -37,27 +113,33 @@ describe('WsConnectionRepository', () => {
     );
 
     expect(executeNativeQueriesInTransaction).toHaveBeenCalledTimes(1);
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(3);
     expect(execute.mock.calls[0][0]).toContain(
-      `delete from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}`
+      'order by identity_id for update'
     );
     expect(execute.mock.calls[0][2]).toEqual({
       wrappedConnection: transactionConnection
     });
     expect(execute.mock.calls[1][0]).toContain(
+      `delete from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}`
+    );
+    expect(execute.mock.calls[1][2]).toEqual({
+      wrappedConnection: transactionConnection
+    });
+    expect(execute.mock.calls[2][0]).toContain(
       `insert into ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}`
     );
-    expect(execute.mock.calls[1][0]).toContain(
+    expect(execute.mock.calls[2][0]).toContain(
       '(:connectionId, :identityId0, :jwtExpiry0), (:connectionId, :identityId1, :jwtExpiry1)'
     );
-    expect(execute.mock.calls[1][1]).toEqual({
+    expect(execute.mock.calls[2][1]).toEqual({
       connectionId: 'connection-1',
       identityId0: 'profile-1',
       jwtExpiry0: 123,
       identityId1: 'profile-2',
       jwtExpiry1: 456
     });
-    expect(execute.mock.calls[1][2]).toEqual({
+    expect(execute.mock.calls[2][2]).toEqual({
       wrappedConnection: transactionConnection
     });
   });

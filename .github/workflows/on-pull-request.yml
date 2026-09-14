@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+concurrency:
+  group: backend-pr-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build backend and API
@@ -12,87 +16,82 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '22'
+          node-version: '22.17.1'
           cache: 'npm'
       - name: Check package manager discipline
-        run: node scripts/check-package-manager.mjs
-      - name: Activate pinned npm via Corepack
+        run: ./bin/6529 run package-manager:check
+      - name: Verify patched C2PA package against pinned upstream
+        run: python3 scripts/build-c2pa-package.py --check
+      - name: Verify pinned npm through the 6529 wrapper
         shell: bash
-        env:
-          COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
         run: |
           expected="$(node -p "String(require('./package.json').packageManager ?? '').split('npm@')[1]?.split('+')[0] ?? ''")"
           if [[ -z "${expected}" ]]; then
             echo "::error::package.json has no npm packageManager pin; the discipline check should have caught this."
             exit 1
           fi
-          corepack enable npm
-          corepack install
-          resolved="$(npm --version)"
+          resolved="$(./bin/6529 npm:version)"
           echo "npm resolved to ${resolved} (pinned ${expected})"
           if [[ "${resolved}" != "${expected}" ]]; then
-            echo "::error::Corepack did not activate the pinned npm (expected ${expected}, got ${resolved})."
+            echo "::error::The 6529 wrapper did not resolve the pinned npm (expected ${expected}, got ${resolved})."
             exit 1
           fi
       - name: Install dependencies
-        run: npm i && pushd src/api-serverless && npm i && popd
+        run: ./bin/6529 ci && pushd src/api-serverless && ../../bin/6529 ci && popd
       - name: Verify generated files are committed
         run: |
-          npm run generate:deploy-config
+          ./bin/6529 run generate:deploy-config
           if [[ -n "$(git status --porcelain -- .github/workflows/deploy.yml)" ]]; then
-            echo "::error::.github/workflows/deploy.yml is generated. Edit config/deploy-services.json, rerun npm run generate:deploy-config, and commit the result."
+            echo "::error::.github/workflows/deploy.yml is generated. Edit config/deploy-services.json, rerun 6529 run generate:deploy-config, and commit the result."
             git diff --stat -- .github/workflows/deploy.yml
             exit 1
           fi
 
           pushd src/api-serverless
-          npm run generate
+          ../../bin/6529 run generate
           popd
 
           if [[ -n "$(git status --porcelain -- src/api-serverless/src/generated)" ]]; then
-            echo "::error::src/api-serverless/src/generated is generated from openapi.yaml. Rerun src/api-serverless generation and commit the result."
+            echo "::error::src/api-serverless/src/generated is generated from openapi.yaml. From src/api-serverless, rerun 6529 run generate:openapi and commit the result."
             git diff --stat -- src/api-serverless/src/generated
             exit 1
           fi
       - name: Lint
         run: |
-          npm run lint -- --max-warnings=0
-          if ! git diff --exit-code -- 'src/**/*.ts'; then
-            echo "::error::Lint --fix changed source files. Commit the fixes."
-            git diff --stat -- 'src/**/*.ts'
-            exit 1
-          fi
+          ./bin/6529 run lint:check
+          ./bin/6529 run ci:assert-source-clean
       - name: Format
         run: |
-          npm run format
-          if ! git diff --exit-code -- 'src/**/*.ts'; then
-            echo "::error::Format changed source files. Run 'npm run format' and commit."
-            git diff --stat -- 'src/**/*.ts'
-            exit 1
-          fi
-      - name: Build backend
-        run: npm run build
-      - name: Build API
-        run: pushd src/api-serverless && npm run build && popd
-      - name: Package exact PR merge-tree API artifact
-        env:
-          EXPECTED_MERGE_SHA: ${{ github.sha }}
+          ./bin/6529 run format:check
+          ./bin/6529 run ci:assert-source-clean
+      - name: Test backend
+        timeout-minutes: 30
         run: |
           set -euo pipefail
-          [[ "$EXPECTED_MERGE_SHA" =~ ^[a-f0-9]{40}$ ]]
-          test "$(git rev-parse HEAD)" = "$EXPECTED_MERGE_SHA"
-          mkdir -p release-bus-v2-pr-artifact/packages/api
-          cp src/api-serverless/dist/index.zip release-bus-v2-pr-artifact/packages/api/index.zip
-          jq -n --arg source_sha "$EXPECTED_MERGE_SHA" '{schema_version:2,repository:"backend",source_sha:$source_sha,environment:"portable",units:["api"]}' > release-bus-v2-pr-artifact/manifest.json
-          (cd release-bus-v2-pr-artifact && find . -type f ! -path ./SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
-      - name: Upload exact PR merge-tree API artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: release-bus-v2-pr-${{ github.sha }}
-          path: release-bus-v2-pr-artifact
-          if-no-files-found: error
-          retention-days: 30
+          rm -rf pr-ci-jest-inventory
+          mkdir -p pr-ci-jest-inventory
+          NODE_ENV=test ./bin/6529 exec jest --listTests \
+            | sort -u > pr-ci-jest-inventory/complete.txt
+          test -s pr-ci-jest-inventory/complete.txt
+          for shard in 1 2 3 4; do
+            NODE_ENV=test ./bin/6529 exec jest --listTests \
+              --shard="$shard/4" \
+              | sort -u > "pr-ci-jest-inventory/shard-$shard.txt"
+            test -s "pr-ci-jest-inventory/shard-$shard.txt"
+            NODE_ENV=test NODE_OPTIONS=--max-old-space-size=3072 \
+              ./bin/6529 exec jest --maxWorkers=2 --shard="$shard/4"
+          done
+          sort pr-ci-jest-inventory/complete.txt > complete.sorted
+          cat pr-ci-jest-inventory/shard-*.txt | sort > shards.sorted
+          test -z "$(uniq -d shards.sorted)"
+          test "$(wc -l < shards.sorted)" -eq "$(wc -l < complete.sorted)"
+          diff -u complete.sorted shards.sorted
+          ./bin/6529 run ci:assert-source-clean
+      - name: Build backend
+        run: ./bin/6529 run build:ci
+      - name: Build API
+        run: pushd src/api-serverless && ../../bin/6529 run build && popd

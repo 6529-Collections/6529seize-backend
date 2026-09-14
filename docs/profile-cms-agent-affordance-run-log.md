@@ -1,5 +1,9 @@
 # Profile CMS Agent Affordance API Run Log
 
+> Historical command record: commands below show what was run at the time.
+> Current development must use the repo-local `6529` wrapper documented in
+> `docs/package-commands.md`.
+
 ## Scope
 
 Phase 8 backend lane for BYO AI-agent affordances. The backend must expose CMS

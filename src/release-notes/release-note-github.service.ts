@@ -1,27 +1,45 @@
 import fetch from 'node-fetch';
 import deployConfig from '@/config/deploy-services.json';
 import { env } from '@/env';
+import { Logger } from '@/logging';
 import { ReleaseNoteGenerationRequest } from './release-note-generation-queue';
+import {
+  NonRetryableReleaseNoteError,
+  UntrustedReleaseNoteMetadataError
+} from './release-note-errors';
 import { isAllowedReleaseNotesPrompt } from './release-note-prompts.config';
 
 interface GitHubWorkflowRun {
   readonly id: number;
-  readonly name: string;
   readonly display_title: string;
+  readonly path?: string;
+  readonly head_branch?: string | null;
   readonly head_sha: string;
   readonly run_number: number;
   readonly workflow_id: number;
+  readonly status?: string | null;
+  readonly conclusion?: string | null;
 }
 
 interface GitHubWorkflowRunsResponse {
   readonly workflow_runs?: GitHubWorkflowRun[];
 }
 
+type GitHubWorkflowRunAnchor = Pick<
+  GitHubWorkflowRun,
+  'run_number' | 'workflow_id'
+>;
+
+interface GitHubUser {
+  readonly login?: string;
+  readonly type?: string;
+}
+
 interface GitHubCommit {
   readonly sha: string;
-  readonly author?: {
-    readonly login?: string;
-  } | null;
+  readonly parents?: Array<{ readonly sha: string }>;
+  readonly author?: GitHubUser | null;
+  readonly committer?: GitHubUser | null;
   readonly commit?: {
     readonly message?: string;
   };
@@ -46,9 +64,7 @@ interface GitHubPullRequest {
   readonly body: string | null;
   readonly merged_at: string | null;
   readonly merge_commit_sha?: string | null;
-  readonly user?: {
-    readonly login?: string;
-  };
+  readonly user?: GitHubUser;
   readonly base?: {
     readonly ref?: string;
   };
@@ -70,35 +86,66 @@ export interface ReleasePullRequestContext {
   readonly commit_messages: string[];
   readonly changed_files: GitHubPullRequestFile[];
   readonly candidate_services: string[];
+  readonly changed_files_incomplete?: boolean;
+  readonly commit_contributors_incomplete?: boolean;
 }
 
 export interface GitHubReleaseContext {
   readonly previous_sha: string;
   readonly current_sha: string;
   readonly pull_requests: ReleasePullRequestContext[];
+  readonly commit_messages?: string[];
+}
+
+export interface GitHubReleaseRun {
+  readonly id: string;
+  readonly run_number: number;
+  readonly workflow_id: string;
+  readonly sha: string;
 }
 
 interface AggregatedPullRequest {
   readonly pullRequest: GitHubPullRequest;
   readonly commitMessages: Set<string>;
-  readonly contributors: Set<string>;
 }
 
-const MAX_COMPARE_PAGES = 3;
+interface BoundedGitHubCollection<T> {
+  readonly items: T[];
+  readonly incomplete: boolean;
+}
+
+const MAX_COMPARE_PAGES = 100;
+const MAX_RELEASE_COMMITS = 1200;
+const MAX_PULL_REQUEST_COMMIT_PAGES = 3;
 const MAX_FILE_PAGES = 3;
 const MAX_WORKFLOW_RUN_PAGES = 10;
+const WORKFLOW_RUN_PAGE_SIZE = 100;
 const PAGE_SIZE = 100;
 const BACKEND_REPO = '6529seize-backend';
 const FRONTEND_REPO = '6529seize-frontend';
+const CORE_REPO = '6529-core';
+const BACKEND_PRODUCTION_WORKFLOW = 'Deploy a service';
+const BACKEND_PRODUCTION_WORKFLOW_PATH = '.github/workflows/deploy.yml';
+const BACKEND_PRODUCTION_RUN_PATTERN =
+  /^Deploy [A-Za-z0-9]+ to prod(?: \[[A-Za-z0-9._-]+\])?$/;
 const FRONTEND_PRODUCTION_WORKFLOW = 'Web Deploy - PROD';
-const MAX_COMMITS = MAX_COMPARE_PAGES * PAGE_SIZE;
-const MAX_PULL_REQUESTS = 100;
-const MAX_TOTAL_CHANGED_FILES = 3000;
+const FRONTEND_PRODUCTION_WORKFLOW_PATH =
+  '.github/workflows/build-upload-deploy-prod.yml';
+const CORE_PRODUCTION_WORKFLOW_PATH =
+  '.github/workflows/build-all-platforms.yml';
+const CORE_PRODUCTION_WORKFLOWS = new Set(['Publish', 'Build All']);
 const MAX_PROMPT_LENGTH = 20000;
 const MAX_GITHUB_RESPONSE_BYTES = 5 * 1024 * 1024;
 const GITHUB_REQUEST_TIMEOUT_MS = 15000;
 const MAX_GITHUB_ATTEMPTS = 2;
 const MAX_GITHUB_CONCURRENCY = 5;
+const MAX_LOGGED_PULL_REQUEST_NUMBERS = 100;
+const NON_HUMAN_GITHUB_LOGINS = new Set([
+  'dependabot',
+  'github-actions',
+  'renovate',
+  'web-flow'
+]);
 
 function normalizeRepository(repo: string): string {
   return repo.includes('/') ? repo : `6529-Collections/${repo}`;
@@ -113,21 +160,164 @@ function normalizeBranch(branch: string | null | undefined): string {
   return trimmed || 'main';
 }
 
+function isHumanGithubUser(user: GitHubUser | null | undefined): boolean {
+  const login = user?.login?.trim();
+  if (!login) {
+    return false;
+  }
+  const normalizedLogin = login.toLowerCase();
+  const normalizedType = user?.type?.trim().toLowerCase();
+  return (
+    normalizedType !== 'bot' &&
+    normalizedType !== 'app' &&
+    !normalizedLogin.endsWith('[bot]') &&
+    !NON_HUMAN_GITHUB_LOGINS.has(normalizedLogin)
+  );
+}
+
+function collectPullRequestContributors(
+  pullRequest: GitHubPullRequest,
+  commits: readonly GitHubCommit[]
+): string[] {
+  const contributors: string[] = [];
+  const seen = new Set<string>();
+  const addLogin = (login: string | null | undefined) => {
+    const trimmed = login?.trim();
+    const normalized = trimmed?.toLowerCase();
+    if (
+      !trimmed ||
+      !normalized ||
+      seen.has(normalized) ||
+      normalized.endsWith('[bot]') ||
+      NON_HUMAN_GITHUB_LOGINS.has(normalized)
+    ) {
+      return;
+    }
+    seen.add(normalized);
+    contributors.push(trimmed);
+  };
+
+  if (isHumanGithubUser(pullRequest.user)) {
+    addLogin(pullRequest.user?.login);
+  }
+  for (const commit of commits) {
+    if (isHumanGithubUser(commit.author)) {
+      addLogin(commit.author?.login);
+    }
+    if (isHumanGithubUser(commit.committer)) {
+      addLogin(commit.committer?.login);
+    }
+  }
+  return contributors;
+}
+
 function isMatchingProductionRun(
   run: GitHubWorkflowRun,
   request: ReleaseNoteGenerationRequest
 ): boolean {
   const repoName = getRepoName(request.repo);
   if (repoName === BACKEND_REPO) {
-    return run.display_title.endsWith(' to prod');
+    return (
+      request.workflow === BACKEND_PRODUCTION_WORKFLOW &&
+      run.path === BACKEND_PRODUCTION_WORKFLOW_PATH &&
+      BACKEND_PRODUCTION_RUN_PATTERN.test(run.display_title) &&
+      run.head_branch === normalizeBranch(request.branch)
+    );
   }
   if (repoName === FRONTEND_REPO) {
     return (
       request.workflow === FRONTEND_PRODUCTION_WORKFLOW &&
-      run.name === FRONTEND_PRODUCTION_WORKFLOW
+      run.path === FRONTEND_PRODUCTION_WORKFLOW_PATH &&
+      run.head_branch === normalizeBranch(request.branch)
+    );
+  }
+  if (repoName === CORE_REPO) {
+    return (
+      request.environment === 'prod' &&
+      CORE_PRODUCTION_WORKFLOWS.has(request.workflow) &&
+      run.path === CORE_PRODUCTION_WORKFLOW_PATH &&
+      Array.from(CORE_PRODUCTION_WORKFLOWS).some((workflow) =>
+        run.display_title.startsWith(`FLOW: ${workflow} / ENV: Production - v`)
+      )
     );
   }
   return false;
+}
+
+function isMatchingCurrentProductionRun(
+  run: GitHubWorkflowRun,
+  request: ReleaseNoteGenerationRequest
+): boolean {
+  if (!isMatchingProductionRun(run, request)) {
+    return false;
+  }
+  if (getRepoName(request.repo) !== CORE_REPO) {
+    return true;
+  }
+  return run.display_title.startsWith(
+    `FLOW: ${request.workflow} / ENV: Production - v`
+  );
+}
+
+function isSuccessfulCompletedRun(run: GitHubWorkflowRun): boolean {
+  return run.status === 'completed' && run.conclusion === 'success';
+}
+
+function toReleaseRun(run: GitHubWorkflowRun): GitHubReleaseRun {
+  return {
+    id: String(run.id),
+    run_number: run.run_number,
+    workflow_id: String(run.workflow_id),
+    sha: run.head_sha
+  };
+}
+
+function getFirstParentReleaseCommits(
+  commits: GitHubCommit[],
+  previousSha: string,
+  currentSha: string,
+  repository: string
+): GitHubCommit[] {
+  if (!commits.length) {
+    return [];
+  }
+  const commitsBySha = new Map(commits.map((commit) => [commit.sha, commit]));
+  const releaseCommits: GitHubCommit[] = [];
+  const visited = new Set<string>();
+  let cursor = currentSha;
+
+  while (cursor !== previousSha) {
+    if (visited.has(cursor)) {
+      throw new NonRetryableReleaseNoteError(
+        `Release first-parent history for ${repository} contains a cycle`
+      );
+    }
+    visited.add(cursor);
+    const commit = commitsBySha.get(cursor);
+    if (!commit) {
+      throw new NonRetryableReleaseNoteError(
+        `Release first-parent commit ${cursor} for ${repository} is missing from the GitHub comparison`
+      );
+    }
+    const parents = commit.parents ?? [];
+    if (parents[0]?.sha === previousSha) {
+      releaseCommits.push(commit);
+      return releaseCommits.reverse();
+    }
+    if (parents.slice(1).some((parent) => parent.sha === previousSha)) {
+      return releaseCommits.reverse();
+    }
+    releaseCommits.push(commit);
+    const firstParent = parents[0]?.sha;
+    if (!firstParent) {
+      throw new NonRetryableReleaseNoteError(
+        `Release history for ${repository} did not reach previous production commit ${previousSha}`
+      );
+    }
+    cursor = firstParent;
+  }
+
+  return releaseCommits.reverse();
 }
 
 function mergeAssociatedPullRequests(
@@ -142,24 +332,13 @@ function mergeAssociatedPullRequests(
     }
     const existing = pullRequests.get(pullRequest.number) ?? {
       pullRequest,
-      commitMessages: new Set<string>(),
-      contributors: new Set<string>()
+      commitMessages: new Set<string>()
     };
-    const contributors = [
-      pullRequest.user?.login?.trim(),
-      commit.author?.login?.trim()
-    ].filter((login): login is string => Boolean(login));
-    contributors.forEach((login) => existing.contributors.add(login));
     const message = commit.commit?.message?.trim();
     if (message) {
       existing.commitMessages.add(message);
     }
     pullRequests.set(pullRequest.number, existing);
-    if (pullRequests.size > MAX_PULL_REQUESTS) {
-      throw new Error(
-        `Release range exceeds maximum of ${MAX_PULL_REQUESTS} pull requests`
-      );
-    }
   }
 }
 
@@ -210,6 +389,7 @@ function collectCandidateServices(
 
 export class ReleaseNoteGitHubService {
   private readonly apiBaseUrl = 'https://api.github.com';
+  private readonly logger = Logger.get(this.constructor.name);
 
   private async api<T>(path: string): Promise<T> {
     const token = env.getStringOrThrow('RELEASE_NOTES_GITHUB_TOKEN');
@@ -265,7 +445,7 @@ export class ReleaseNoteGitHubService {
     request: ReleaseNoteGenerationRequest
   ): Promise<string> {
     if (!isAllowedReleaseNotesPrompt(request.repo, request.prompt_path)) {
-      throw new Error(
+      throw new NonRetryableReleaseNoteError(
         `Unsupported release notes prompt ${request.prompt_path} for ${request.repo}`
       );
     }
@@ -282,7 +462,7 @@ export class ReleaseNoteGitHubService {
       payload.encoding !== 'base64' ||
       !payload.content
     ) {
-      throw new Error(
+      throw new NonRetryableReleaseNoteError(
         `Invalid release notes prompt response for ${repository}`
       );
     }
@@ -291,7 +471,7 @@ export class ReleaseNoteGitHubService {
       'base64'
     ).toString('utf8');
     if (!prompt.trim() || prompt.length > MAX_PROMPT_LENGTH) {
-      throw new Error(
+      throw new NonRetryableReleaseNoteError(
         `Release notes prompt for ${repository} must be 1-${MAX_PROMPT_LENGTH} characters`
       );
     }
@@ -299,7 +479,8 @@ export class ReleaseNoteGitHubService {
   }
 
   public async getReleaseContext(
-    request: ReleaseNoteGenerationRequest
+    request: ReleaseNoteGenerationRequest,
+    previousSha?: string
   ): Promise<GitHubReleaseContext | null> {
     const repository = normalizeRepository(request.repo);
     if (
@@ -308,30 +489,68 @@ export class ReleaseNoteGitHubService {
     ) {
       return this.getPullRequestReleaseContext(repository, request);
     }
-    const previousRun = await this.findPreviousSuccessfulRun(
-      repository,
-      request
-    );
-    if (!previousRun) {
+    const currentRun = await this.getValidatedCurrentRun(repository, request);
+    const previousRun = previousSha
+      ? null
+      : await this.findPreviousSuccessfulRun(repository, request, currentRun);
+    const resolvedPreviousSha = previousSha ?? previousRun?.head_sha;
+    if (!resolvedPreviousSha) {
       return null;
     }
 
-    const commits = await this.getComparedCommits(
+    const comparedCommits = await this.getComparedCommits(
       repository,
-      previousRun.head_sha,
+      resolvedPreviousSha,
       request.sha
     );
+    const repoName = getRepoName(request.repo);
+    const desktopRelease = repoName === CORE_REPO;
+    const mainlineRelease = desktopRelease || repoName === FRONTEND_REPO;
+    const commits = mainlineRelease
+      ? getFirstParentReleaseCommits(
+          comparedCommits,
+          resolvedPreviousSha,
+          request.sha,
+          repository
+        )
+      : comparedCommits;
+    this.logger.info('Resolved GitHub release-note commit range', {
+      repository,
+      run_id: request.run_id,
+      previous_sha: resolvedPreviousSha,
+      current_sha: request.sha,
+      compared_commit_count: comparedCommits.length,
+      discovery_commit_count: commits.length,
+      mainline_discovery: mainlineRelease
+    });
     const pullRequests = await this.getPullRequests(
       repository,
-      normalizeBranch(request.branch),
+      desktopRelease ? 'main' : normalizeBranch(request.branch),
       commits,
       request.release_group_services
     );
+    this.logger.info('Resolved GitHub release-note context', {
+      repository,
+      run_id: request.run_id,
+      pull_request_count: pullRequests.length,
+      pull_request_numbers: pullRequests
+        .slice(0, MAX_LOGGED_PULL_REQUEST_NUMBERS)
+        .map((pullRequest) => pullRequest.number),
+      pull_request_numbers_truncated:
+        pullRequests.length > MAX_LOGGED_PULL_REQUEST_NUMBERS
+    });
 
     return {
-      previous_sha: previousRun.head_sha,
+      previous_sha: resolvedPreviousSha,
       current_sha: request.sha,
-      pull_requests: pullRequests
+      pull_requests: pullRequests,
+      ...(desktopRelease
+        ? {
+            commit_messages: commits
+              .map((commit) => commit.commit?.message?.trim())
+              .filter((message): message is string => Boolean(message))
+          }
+        : {})
     };
   }
 
@@ -352,7 +571,7 @@ export class ReleaseNoteGitHubService {
       pullRequest.base?.ref !== branch ||
       !mergeCommitSha
     ) {
-      throw new Error(
+      throw new NonRetryableReleaseNoteError(
         `Pull request ${pullRequestNumber} is not merged into ${branch}`
       );
     }
@@ -361,13 +580,15 @@ export class ReleaseNoteGitHubService {
         `/repos/${repository}/compare/${encodeURIComponent(mergeCommitSha)}...${encodeURIComponent(request.sha)}`
       );
       if (comparison.status !== 'ahead' && comparison.status !== 'identical') {
-        throw new Error(
+        throw new NonRetryableReleaseNoteError(
           `Deployed commit ${request.sha} does not contain pull request ${pullRequestNumber}`
         );
       }
     }
-    const files = await this.getPullRequestFiles(repository, pullRequestNumber);
-    const contributor = pullRequest.user?.login?.trim();
+    const [fileResult, commitResult] = await Promise.all([
+      this.getPullRequestFilesBestEffort(repository, pullRequestNumber),
+      this.getPullRequestCommitsBestEffort(repository, pullRequestNumber)
+    ]);
     return {
       previous_sha: mergeCommitSha,
       current_sha: request.sha,
@@ -377,17 +598,32 @@ export class ReleaseNoteGitHubService {
           url: pullRequest.html_url,
           title: pullRequest.title,
           body: pullRequest.body,
-          contributors: contributor ? [contributor] : [],
+          contributors: collectPullRequestContributors(
+            pullRequest,
+            commitResult.items
+          ),
           commit_messages: [pullRequest.title],
-          changed_files: files,
+          changed_files: fileResult.items,
           candidate_services: Array.from(
             new Set(request.release_group_services)
-          ).sort((a, b) => a.localeCompare(b))
+          ).sort((a, b) => a.localeCompare(b)),
+          ...(fileResult.incomplete ? { changed_files_incomplete: true } : {}),
+          ...(commitResult.incomplete
+            ? { commit_contributors_incomplete: true }
+            : {})
         }
       ]
     };
   }
 
+  /**
+   * Validates the queued run identity and its production-workflow metadata.
+   *
+   * Core requests are HMAC-authenticated and enqueued upstream only after the
+   * production S3-links notification succeeds. The same workflow can still be
+   * running, or later fail in Arweave/CloudFront, without invalidating that
+   * completed S3 milestone.
+   */
   private async getValidatedCurrentRun(
     repository: string,
     request: ReleaseNoteGenerationRequest
@@ -395,47 +631,112 @@ export class ReleaseNoteGitHubService {
     const currentRun = await this.api<GitHubWorkflowRun>(
       `/repos/${repository}/actions/runs/${encodeURIComponent(request.run_id)}`
     );
+    const repoName = getRepoName(request.repo);
+    const mustMatchProductionRun =
+      (repoName === BACKEND_REPO && !request.pull_request_number) ||
+      (repoName === FRONTEND_REPO &&
+        request.workflow === FRONTEND_PRODUCTION_WORKFLOW) ||
+      repoName === CORE_REPO;
     if (
       String(currentRun.id) !== request.run_id ||
       currentRun.head_sha !== request.sha ||
-      !Number.isSafeInteger(currentRun.workflow_id)
+      !Number.isSafeInteger(currentRun.workflow_id) ||
+      !Number.isSafeInteger(currentRun.run_number) ||
+      (mustMatchProductionRun &&
+        !isMatchingCurrentProductionRun(currentRun, request))
     ) {
-      throw new Error(
+      throw new UntrustedReleaseNoteMetadataError(
         `GitHub release run ${request.run_id} does not match the queued release metadata`
       );
+    }
+    if (repoName !== CORE_REPO) {
+      if (currentRun.status !== 'completed') {
+        throw new Error(
+          `GitHub release run ${request.run_id} is still ${currentRun.status ?? 'not completed'}`
+        );
+      }
+      if (currentRun.conclusion !== 'success') {
+        throw new UntrustedReleaseNoteMetadataError(
+          `GitHub release run ${request.run_id} did not complete successfully`
+        );
+      }
     }
     return currentRun;
   }
 
+  public async getValidatedReleaseRun(
+    request: ReleaseNoteGenerationRequest
+  ): Promise<GitHubReleaseRun> {
+    return toReleaseRun(
+      await this.getValidatedCurrentRun(
+        normalizeRepository(request.repo),
+        request
+      )
+    );
+  }
+
+  /**
+   * `currentRun` must be the result of `getValidatedReleaseRun` for the same
+   * request. The immutable queued run id and SHA are checked again here before
+   * the value is used to select a workflow-history baseline.
+   */
+  public async getPreviousSuccessfulReleaseRun(
+    request: ReleaseNoteGenerationRequest,
+    currentRun: GitHubReleaseRun
+  ): Promise<GitHubReleaseRun | null> {
+    const repository = normalizeRepository(request.repo);
+    const workflowId = Number(currentRun.workflow_id);
+    if (
+      currentRun.id !== request.run_id ||
+      currentRun.sha !== request.sha ||
+      !Number.isSafeInteger(currentRun.run_number) ||
+      !Number.isSafeInteger(workflowId)
+    ) {
+      throw new UntrustedReleaseNoteMetadataError(
+        `Validated GitHub release run ${currentRun.id} does not match the queued release metadata`
+      );
+    }
+    const previousRun = await this.findPreviousSuccessfulRun(
+      repository,
+      request,
+      { run_number: currentRun.run_number, workflow_id: workflowId }
+    );
+    return previousRun ? toReleaseRun(previousRun) : null;
+  }
+
   private async findPreviousSuccessfulRun(
     repository: string,
-    request: ReleaseNoteGenerationRequest
+    request: ReleaseNoteGenerationRequest,
+    currentRun: GitHubWorkflowRunAnchor
   ): Promise<GitHubWorkflowRun | null> {
-    const currentRun = await this.getValidatedCurrentRun(repository, request);
-
-    const branch = encodeURIComponent(normalizeBranch(request.branch));
     for (let page = 1; page <= MAX_WORKFLOW_RUN_PAGES; page++) {
+      const query = new URLSearchParams();
+      query.set('per_page', String(WORKFLOW_RUN_PAGE_SIZE));
+      query.set('page', String(page));
       const payload = await this.api<GitHubWorkflowRunsResponse>(
-        `/repos/${repository}/actions/workflows/${currentRun.workflow_id}/runs?status=success&branch=${branch}&per_page=${PAGE_SIZE}&page=${page}`
+        `/repos/${repository}/actions/workflows/${currentRun.workflow_id}/runs?${query.toString()}`
       );
       const runs = payload.workflow_runs ?? [];
-      const previousRun = runs.find(
-        (run) =>
-          String(run.id) !== request.run_id &&
-          run.head_sha !== request.sha &&
-          run.workflow_id === currentRun.workflow_id &&
-          run.run_number < currentRun.run_number &&
-          isMatchingProductionRun(run, request)
-      );
+      const previousRun = runs
+        .filter(
+          (run) =>
+            String(run.id) !== request.run_id &&
+            run.head_sha !== request.sha &&
+            run.workflow_id === currentRun.workflow_id &&
+            run.run_number < currentRun.run_number &&
+            isSuccessfulCompletedRun(run) &&
+            isMatchingProductionRun(run, request)
+        )
+        .sort((left, right) => right.run_number - left.run_number)[0];
       if (previousRun) {
         return previousRun;
       }
-      if (runs.length < PAGE_SIZE) {
+      if (runs.length < WORKFLOW_RUN_PAGE_SIZE) {
         return null;
       }
     }
-    throw new Error(
-      `Previous successful production run was not found within ${MAX_WORKFLOW_RUN_PAGES * PAGE_SIZE} workflow runs`
+    throw new NonRetryableReleaseNoteError(
+      `Previous successful production run was not found within ${MAX_WORKFLOW_RUN_PAGES * WORKFLOW_RUN_PAGE_SIZE} workflow runs`
     );
   }
 
@@ -452,17 +753,16 @@ export class ReleaseNoteGitHubService {
       );
       const pageCommits = payload.commits ?? [];
       const totalCommits = payload.total_commits;
-      if (typeof totalCommits === 'number' && totalCommits > MAX_COMMITS) {
-        throw new Error(
-          `Release range contains ${totalCommits} commits; maximum is ${MAX_COMMITS}`
+      if (
+        (typeof totalCommits === 'number' &&
+          totalCommits > MAX_RELEASE_COMMITS) ||
+        commits.length + pageCommits.length > MAX_RELEASE_COMMITS
+      ) {
+        throw new NonRetryableReleaseNoteError(
+          `Release-note commit range exceeds ${MAX_RELEASE_COMMITS} commits`
         );
       }
       commits.push(...pageCommits);
-      if (commits.length > MAX_COMMITS) {
-        throw new Error(
-          `Release range exceeds maximum of ${MAX_COMMITS} commits`
-        );
-      }
       if (
         pageCommits.length < PAGE_SIZE ||
         (typeof totalCommits === 'number' &&
@@ -471,14 +771,11 @@ export class ReleaseNoteGitHubService {
       ) {
         return commits;
       }
-      if (page === MAX_COMPARE_PAGES) {
-        throw new Error(
-          `Release range exceeds pagination maximum of ${MAX_COMMITS} commits`
-        );
-      }
     }
 
-    return commits;
+    throw new NonRetryableReleaseNoteError(
+      `Release comparison did not complete within ${MAX_COMPARE_PAGES * PAGE_SIZE} commits`
+    );
   }
 
   private async getPullRequests(
@@ -497,16 +794,6 @@ export class ReleaseNoteGitHubService {
       Array.from(pullRequests.values()),
       deployedServices
     );
-    const totalChangedFiles = contexts.reduce(
-      (total, context) => total + context.changed_files.length,
-      0
-    );
-    if (totalChangedFiles > MAX_TOTAL_CHANGED_FILES) {
-      throw new Error(
-        `Release context exceeds maximum of ${MAX_TOTAL_CHANGED_FILES} changed files`
-      );
-    }
-
     return contexts.sort((a, b) => a.number - b.number);
   }
 
@@ -575,31 +862,78 @@ export class ReleaseNoteGitHubService {
     aggregate: AggregatedPullRequest,
     deployedServices: string[]
   ): Promise<ReleasePullRequestContext> {
-    const { pullRequest, commitMessages, contributors } = aggregate;
-    const files = await this.getPullRequestFiles(
-      repository,
-      pullRequest.number
-    );
+    const { pullRequest, commitMessages } = aggregate;
+    const [fileResult, commitResult] = await Promise.all([
+      this.getPullRequestFilesBestEffort(repository, pullRequest.number),
+      this.getPullRequestCommitsBestEffort(repository, pullRequest.number)
+    ]);
     return {
       number: pullRequest.number,
       url: pullRequest.html_url,
       title: pullRequest.title,
       body: pullRequest.body,
-      contributors: Array.from(contributors),
+      contributors: collectPullRequestContributors(
+        pullRequest,
+        commitResult.items
+      ),
       commit_messages: Array.from(commitMessages),
-      changed_files: files,
+      changed_files: fileResult.items,
       candidate_services: collectCandidateServices(
         repository,
-        files,
+        fileResult.items,
         deployedServices
-      )
+      ),
+      ...(fileResult.incomplete ? { changed_files_incomplete: true } : {}),
+      ...(commitResult.incomplete
+        ? { commit_contributors_incomplete: true }
+        : {})
     };
+  }
+
+  private async getPullRequestCommits(
+    repository: string,
+    pullRequestNumber: number
+  ): Promise<BoundedGitHubCollection<GitHubCommit>> {
+    const commits: GitHubCommit[] = [];
+    for (let page = 1; page <= MAX_PULL_REQUEST_COMMIT_PAGES; page++) {
+      const pageCommits = await this.api<GitHubCommit[]>(
+        `/repos/${repository}/pulls/${pullRequestNumber}/commits?per_page=${PAGE_SIZE}&page=${page}`
+      );
+      commits.push(...pageCommits);
+      if (pageCommits.length < PAGE_SIZE) {
+        return { items: commits, incomplete: false };
+      }
+    }
+    return { items: commits, incomplete: true };
+  }
+
+  private async getPullRequestCommitsBestEffort(
+    repository: string,
+    pullRequestNumber: number
+  ): Promise<BoundedGitHubCollection<GitHubCommit>> {
+    try {
+      const result = await this.getPullRequestCommits(
+        repository,
+        pullRequestNumber
+      );
+      if (result.incomplete) {
+        this.logger.warn(
+          `Using the first ${result.items.length} commits for release-note contributors from pull request ${pullRequestNumber}`
+        );
+      }
+      return result;
+    } catch (error) {
+      this.logger.warn(
+        `Generating release-note context for pull request ${pullRequestNumber} without commit contributor enrichment: ${error}`
+      );
+      return { items: [], incomplete: true };
+    }
   }
 
   private async getPullRequestFiles(
     repository: string,
     pullRequestNumber: number
-  ): Promise<GitHubPullRequestFile[]> {
+  ): Promise<BoundedGitHubCollection<GitHubPullRequestFile>> {
     const files: GitHubPullRequestFile[] = [];
     for (let page = 1; page <= MAX_FILE_PAGES; page++) {
       const pageFiles = await this.api<GitHubPullRequestFile[]>(
@@ -614,15 +948,33 @@ export class ReleaseNoteGitHubService {
         }))
       );
       if (pageFiles.length < PAGE_SIZE) {
-        break;
-      }
-      if (page === MAX_FILE_PAGES) {
-        throw new Error(
-          `Pull request ${pullRequestNumber} exceeds maximum of ${MAX_FILE_PAGES * PAGE_SIZE} changed files`
-        );
+        return { items: files, incomplete: false };
       }
     }
-    return files;
+    return { items: files, incomplete: true };
+  }
+
+  private async getPullRequestFilesBestEffort(
+    repository: string,
+    pullRequestNumber: number
+  ): Promise<BoundedGitHubCollection<GitHubPullRequestFile>> {
+    try {
+      const result = await this.getPullRequestFiles(
+        repository,
+        pullRequestNumber
+      );
+      if (result.incomplete) {
+        this.logger.warn(
+          `Using the first ${result.items.length} changed files for release-note context from pull request ${pullRequestNumber}`
+        );
+      }
+      return result;
+    } catch (error) {
+      this.logger.warn(
+        `Generating release-note context for pull request ${pullRequestNumber} without changed-file enrichment: ${error}`
+      );
+      return { items: [], incomplete: true };
+    }
   }
 }
 

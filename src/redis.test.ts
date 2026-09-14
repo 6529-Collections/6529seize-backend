@@ -27,13 +27,17 @@ describe('redis cache eviction helpers', () => {
     del = jest.fn().mockResolvedValue(undefined),
     connect = jest.fn().mockResolvedValue(undefined),
     on = jest.fn(),
-    eval: evalScript = jest.fn()
+    eval: evalScript = jest.fn(),
+    get = jest.fn().mockResolvedValue(null),
+    set = jest.fn().mockResolvedValue('OK')
   }: {
     scan: jest.Mock;
     del?: jest.Mock;
     connect?: jest.Mock;
     on?: jest.Mock;
     eval?: jest.Mock;
+    get?: jest.Mock;
+    set?: jest.Mock;
   }) {
     jest.doMock('redis', () => ({
       createClient: jest.fn(() => ({
@@ -41,11 +45,13 @@ describe('redis cache eviction helpers', () => {
         del,
         connect,
         on,
-        eval: evalScript
+        eval: evalScript,
+        get,
+        set
       }))
     }));
 
-    return { scan, del, connect, on, eval: evalScript };
+    return { scan, del, connect, on, eval: evalScript, get, set };
   }
 
   it('stops scanning when redis returns the terminal cursor as a string', async () => {
@@ -221,5 +227,102 @@ describe('redis cache eviction helpers', () => {
       )
     ).rejects.toThrow('positive whole seconds');
     expect(evalScript).not.toHaveBeenCalled();
+  });
+
+  it('returns a cached snapshot without acquiring a refresh lease', async () => {
+    const { set } = mockRedisClient({
+      scan: jest.fn(),
+      get: jest.fn().mockResolvedValue('{"snapshot":"existing"}')
+    });
+    const redisModule = await import('./redis');
+    const { Time } = await import('./time');
+    await redisModule.initRedis();
+    const build = jest.fn();
+    await expect(
+      redisModule.redisCachedWithRefreshLease(
+        'snapshot',
+        Time.seconds(60),
+        build
+      )
+    ).resolves.toEqual({ snapshot: 'existing' });
+    expect(build).not.toHaveBeenCalled();
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it('does not repeat an expensive refresh while another request owns its lease', async () => {
+    const { set, eval: evalScript } = mockRedisClient({
+      scan: jest.fn(),
+      set: jest.fn().mockResolvedValueOnce('OK').mockResolvedValue(null),
+      eval: jest.fn().mockResolvedValue(1)
+    });
+    const redisModule = await import('./redis');
+    const { Time } = await import('./time');
+    await redisModule.initRedis();
+    let finish: (value: { snapshot: string }) => void = () => {};
+    const build = jest.fn(
+      () =>
+        new Promise<{ snapshot: string }>((resolve) => {
+          finish = resolve;
+        })
+    );
+    const first = redisModule.redisCachedWithRefreshLease(
+      'snapshot',
+      Time.seconds(60),
+      build
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    const secondBuild = jest.fn();
+    await expect(
+      redisModule.redisCachedWithRefreshLease(
+        'snapshot',
+        Time.seconds(60),
+        secondBuild
+      )
+    ).resolves.toBeUndefined();
+    expect(secondBuild).not.toHaveBeenCalled();
+    finish({ snapshot: 'fresh' });
+    await expect(first).resolves.toEqual({ snapshot: 'fresh' });
+    expect(build).toHaveBeenCalledTimes(1);
+    const owner = set.mock.calls[0][1];
+    expect(evalScript).toHaveBeenCalledWith(expect.any(String), {
+      keys: ['snapshot:refresh-lease', 'snapshot'],
+      arguments: [owner, '{"snapshot":"fresh"}', '60']
+    });
+    expect(evalScript).toHaveBeenLastCalledWith(expect.any(String), {
+      keys: ['snapshot:refresh-lease'],
+      arguments: [owner]
+    });
+  });
+
+  it('discards a result after its lease expires and releases a failed refresh by owner', async () => {
+    const { eval: evalScript } = mockRedisClient({
+      scan: jest.fn(),
+      eval: jest.fn().mockResolvedValue(0)
+    });
+    const redisModule = await import('./redis');
+    const { Time } = await import('./time');
+    await redisModule.initRedis();
+    await expect(
+      redisModule.redisCachedWithRefreshLease(
+        'snapshot',
+        Time.seconds(60),
+        async () => ({ snapshot: 'old' })
+      )
+    ).resolves.toBeUndefined();
+    evalScript.mockClear();
+    await expect(
+      redisModule.redisCachedWithRefreshLease(
+        'snapshot',
+        Time.seconds(60),
+        async () => {
+          throw new Error('refresh failed');
+        }
+      )
+    ).rejects.toThrow('refresh failed');
+    expect(evalScript).toHaveBeenCalledTimes(1);
+    expect(evalScript).toHaveBeenCalledWith(expect.any(String), {
+      keys: ['snapshot:refresh-lease'],
+      arguments: [expect.any(String)]
+    });
   });
 });

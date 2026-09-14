@@ -6,6 +6,7 @@ import { ApiProfileCmsAgentPatchValidationResult } from '@/api/generated/models/
 import { ApiProfileCmsAgentSchemaBundle } from '@/api/generated/models/ApiProfileCmsAgentSchemaBundle';
 import { ApiProfileCmsAgentSourcePacket } from '@/api/generated/models/ApiProfileCmsAgentSourcePacket';
 import { ApiProfileCmsPackageExport } from '@/api/generated/models/ApiProfileCmsPackageExport';
+import { ApiProfileCmsPackageStorageUploadResult } from '@/api/generated/models/ApiProfileCmsPackageStorageUploadResult';
 import { ApiProfileCmsPrimaryPackage } from '@/api/generated/models/ApiProfileCmsPrimaryPackage';
 import { ApiPublishProfileCmsPackageRequest } from '@/api/generated/models/ApiPublishProfileCmsPackageRequest';
 import { ApiRollbackProfileCmsPackageRequest } from '@/api/generated/models/ApiRollbackProfileCmsPackageRequest';
@@ -24,7 +25,9 @@ import {
   ListProfileCmsPackagesRequest,
   PublishProfileCmsPackageRequest,
   RollbackProfileCmsPackageRequest,
+  UnpublishProfileCmsPackageRequest,
   SaveProfileCmsPackageDraftRequest,
+  UploadProfileCmsPackageStorageRequest,
   ValidateProfileCmsAgentPatchRequest,
   ValidateProfileCmsPackageRequest
 } from '@/api/generated/routes/operations';
@@ -106,6 +109,17 @@ const ValidateAgentPatchBodySchema: Joi.ObjectSchema<ApiValidateProfileCmsAgentP
 
 const PublishBodySchema: Joi.ObjectSchema<ApiPublishProfileCmsPackageRequest> =
   Joi.object<ApiPublishProfileCmsPackageRequest>({
+    expected_current_package_id: Joi.string()
+      .trim()
+      .min(1)
+      .max(100)
+      .optional()
+      .allow(null),
+    expected_current_package_hash: Joi.string()
+      .trim()
+      .min(1)
+      .max(100)
+      .optional(),
     expected_package_hash: Joi.string().trim().min(1).max(100).optional(),
     expected_payload_hash: Joi.string().trim().min(1).max(100).optional(),
     signer_address: Joi.string().trim().min(1).max(100).required(),
@@ -123,13 +137,40 @@ const PublishBodySchema: Joi.ObjectSchema<ApiPublishProfileCmsPackageRequest> =
 
 const RollbackBodySchema: Joi.ObjectSchema<ApiRollbackProfileCmsPackageRequest> =
   Joi.object<ApiRollbackProfileCmsPackageRequest>({
-    expected_current_package_id: Joi.string().trim().min(1).max(100).required(),
+    expected_current_package_id: Joi.string()
+      .trim()
+      .min(1)
+      .max(100)
+      .required()
+      .allow(null),
     expected_current_package_hash: Joi.string()
       .trim()
       .min(1)
       .max(100)
       .optional()
   });
+
+const UnpublishBodySchema = Joi.object({
+  expected_current_package_id: Joi.string().trim().min(1).max(100).required(),
+  expected_current_package_hash: Joi.string()
+    .pattern(/^sha256:[a-f0-9]{64}$/)
+    .required()
+});
+
+export async function handleUnpublishProfileCmsPackage(
+  req: UnpublishProfileCmsPackageRequest
+): Promise<ApiProfileCmsPackage> {
+  const { id } = getValidatedByJoiOrThrow(
+    req.params,
+    PackageIdPathParamsSchema
+  );
+  const body = getValidatedByJoiOrThrow(req.body, UnpublishBodySchema);
+  return profileCmsApiService.unpublishPackage(
+    id,
+    body,
+    await getRequestContext(req)
+  ) as unknown as Promise<ApiProfileCmsPackage>;
+}
 
 const ArchiveBodySchema: Joi.ObjectSchema<ApiArchiveProfileCmsPackageRequest> =
   Joi.object<ApiArchiveProfileCmsPackageRequest>({
@@ -190,6 +231,20 @@ export async function handleValidateProfileCmsAgentPatch(
     body,
     ctx
   ) as unknown as Promise<ApiProfileCmsAgentPatchValidationResult>;
+}
+
+export async function handleUploadProfileCmsPackageStorage(
+  req: UploadProfileCmsPackageStorageRequest
+): Promise<ApiProfileCmsPackageStorageUploadResult> {
+  const { id } = getValidatedByJoiOrThrow(
+    req.params,
+    PackageIdPathParamsSchema
+  );
+  const ctx = await getRequestContext(req);
+  return profileCmsApiService.uploadToStorage(
+    id,
+    ctx
+  ) as unknown as Promise<ApiProfileCmsPackageStorageUploadResult>;
 }
 
 export async function handlePublishProfileCmsPackage(

@@ -9,6 +9,7 @@ type ManageWaveEntity = {
   id: string;
   admin_group_id: string | null;
   created_by: string;
+  visibility_group_id: string | null;
 };
 
 export function getWaveReadContextProfileId(
@@ -156,6 +157,12 @@ export async function getWaveManagementContextOrThrow<
   }
   const groupsUserIsEligibleFor =
     await userGroupsService.getGroupsUserIsEligibleFor(profileId, ctx.timer);
+  if (
+    wave.visibility_group_id !== null &&
+    !groupsUserIsEligibleFor.includes(wave.visibility_group_id)
+  ) {
+    throw new ForbiddenException(forbiddenMessage);
+  }
   const isCreator = allowCreator && wave.created_by === profileId;
   const isAdmin =
     wave.admin_group_id !== null &&

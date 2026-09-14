@@ -16,8 +16,14 @@ const logger = Logger.get('TDH_NFT');
 
 export const updateNftTDH = async (
   tdh: ConsolidatedTDH[],
-  startingWallets?: string[]
+  startingWallets?: string[],
+  consolidationKeysToReplace?: string[]
 ) => {
+  const nftTdh = calculateNftTDH(tdh);
+  await persistNftTdh(nftTdh, startingWallets, consolidationKeysToReplace);
+};
+
+export const calculateNftTDH = (tdh: ConsolidatedTDH[]): NftTDH[] => {
   logger.info(`[FINDING NFT TDH...]`);
   const tokenTdhs = tdh.map((t) => {
     const memesTdh = findContractTDH(
@@ -44,7 +50,7 @@ export const updateNftTDH = async (
     return [...memesTdh, ...gradientsTdh, ...nextgenTdh];
   });
   logger.info(`[FOUND ${tokenTdhs.length}]`);
-  await persistNftTdh(tokenTdhs.flat(), startingWallets);
+  return tokenTdhs.flat();
 };
 
 const findContractTDH = (

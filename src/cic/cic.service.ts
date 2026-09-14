@@ -8,7 +8,18 @@ import {
   abusivenessCheckService,
   AbusivenessCheckService
 } from '../profiles/abusiveness-check.service';
+import {
+  moderationReviewDb,
+  moderationConflict,
+  assertModerationPermitReplay
+} from '@/content-moderation/moderation-review.db';
+import { moderationFingerprint } from '@/content-moderation/moderation-review.types';
 import { ProfileClassification } from '../entities/IProfile';
+import {
+  MAX_ART_LINK_LENGTH,
+  prepareCicStatementForInsert,
+  validateNftAccountStatementConstraints
+} from './cic-statement-validation';
 
 const CIC_STATEMENT_GROUP_TO_PROFILE_ACTIVITY_LOG_TYPE: Record<
   CicStatementGroup,
@@ -171,12 +182,14 @@ export class CicService {
     private readonly abusivenessCheckService: AbusivenessCheckService
   ) {}
 
-  public async getCicStatementByIdAndProfileIdOrThrow(props: {
-    profile_id: string;
-    id: string;
-  }): Promise<CicStatement> {
-    const cicStatement =
-      await this.cicDb.getCicStatementByIdAndProfileId(props);
+  public async getCicStatementByIdAndProfileIdOrThrow(
+    props: { profile_id: string; id: string },
+    connection?: ConnectionWrapper<unknown>
+  ): Promise<CicStatement> {
+    const cicStatement = await this.cicDb.getCicStatementByIdAndProfileId(
+      props,
+      connection
+    );
     if (!cicStatement) {
       throw new NotFoundException(
         `CIC statement ${props.id} not found for profile ${props.profile_id}`
@@ -193,12 +206,26 @@ export class CicService {
   }
 
   private validateCicStatement({
+    statement_group,
     statement_type,
     statement_value
   }: {
+    statement_group: CicStatementGroup;
     statement_type: string;
     statement_value: string;
   }) {
+    if (
+      statement_group === CicStatementGroup.NFT_ACCOUNTS &&
+      (statement_type === 'LINK' || statement_type === 'NINFA')
+    ) {
+      if (statement_value.length > MAX_ART_LINK_LENGTH) {
+        throw new BadRequestException(
+          `Statement of type ${statement_type} can not be longer than ${MAX_ART_LINK_LENGTH} characters`
+        );
+      }
+      return;
+    }
+
     const rule = this.socialsRules[statement_type];
     if (rule) {
       const regexp = rule.regexp;
@@ -214,7 +241,8 @@ export class CicService {
 
   public async addCicStatement({
     statement,
-    profile
+    profile,
+    moderationRequestId
   }: {
     statement: Omit<CicStatement, 'id' | 'crated_at' | 'updated_at'>;
     profile: {
@@ -222,49 +250,157 @@ export class CicService {
       profile_id: string;
       classification: ProfileClassification | null;
     };
+    moderationRequestId?: string;
   }) {
-    this.validateCicStatement(statement);
+    const statementToInsert = prepareCicStatementForInsert(statement);
+    this.validateCicStatement(statementToInsert);
+    const isBio =
+      statementToInsert.statement_group === CicStatementGroup.GENERAL &&
+      statementToInsert.statement_type === 'BIO';
+    const initialBio = isBio
+      ? await this.cicDb.getLatestBioForWrite(statement.profile_id)
+      : undefined;
+    const currentRevision = initialBio
+      ? moderationFingerprint({
+          id: initialBio.id,
+          text: initialBio.statement_value
+        })
+      : null;
+    const replay = isBio
+      ? await moderationReviewDb.savedRequest(
+          profile.profile_id,
+          'PROFILE_BIO',
+          moderationRequestId
+        )
+      : null;
+    if (replay) {
+      if (
+        replay.evidence?.text !== statementToInsert.statement_value.trim() ||
+        initialBio?.id !== replay.published_subject_id
+      )
+        moderationConflict();
+      return initialBio;
+    }
+    const review = isBio
+      ? await this.abusivenessCheckService.checkBio({
+          handle: profile.handle,
+          profile_type:
+            profile.classification ?? ProfileClassification.PSEUDONYM,
+          text: statementToInsert.statement_value,
+          profile_id: profile.profile_id,
+          current_revision: currentRevision
+        })
+      : null;
+    if (review?.status === 'DISALLOWED')
+      throw new BadRequestException(
+        `Bio is not allowed: ${review.explanation}`
+      );
     return await this.cicDb.executeNativeQueriesInTransaction(
       async (connection) => {
-        const existingStatements = await this.cicDb.getCicStatementsByProfileId(
-          statement.profile_id,
+        await this.cicDb.lockProfileForCicStatementMutation(
+          statementToInsert.profile_id,
           connection
+        );
+        const existingStatements = await this.cicDb.getCicStatementsByProfileId(
+          statementToInsert.profile_id,
+          connection
+        );
+        validateNftAccountStatementConstraints(
+          statementToInsert,
+          existingStatements
         );
         const preexistingStatement = existingStatements.find(
           (existingStatement) =>
-            existingStatement.statement_type === statement.statement_type &&
-            existingStatement.statement_value === statement.statement_value
+            existingStatement.statement_type ===
+              statementToInsert.statement_type &&
+            existingStatement.statement_value ===
+              statementToInsert.statement_value
         );
         if (
-          statement.statement_group === CicStatementGroup.GENERAL &&
-          statement.statement_type === 'BIO'
+          statementToInsert.statement_group === CicStatementGroup.GENERAL &&
+          statementToInsert.statement_type === 'BIO'
         ) {
-          const abusivenessDetectionResult =
-            await this.abusivenessCheckService.checkBio({
-              handle: profile.handle,
-              profile_type:
-                profile.classification ?? ProfileClassification.PSEUDONYM,
-              text: statement.statement_value
-            });
-          if (abusivenessDetectionResult.status === 'DISALLOWED') {
-            throw new BadRequestException(
-              `Bio is not allowed: ${abusivenessDetectionResult.explanation}`
-            );
-          }
-          const existingBioStatement = existingStatements.find(
-            (existingStatement) => existingStatement.statement_type === 'BIO'
+          const existingBioStatement = this.latestBio(existingStatements);
+          const savedBio = await this.replayApprovedBio(
+            review?.moderation_item_id,
+            moderationRequestId,
+            existingBioStatement,
+            connection
           );
+          if (savedBio) return savedBio;
+          const actualRevision = existingBioStatement
+            ? moderationFingerprint({
+                id: existingBioStatement.id,
+                text: existingBioStatement.statement_value
+              })
+            : null;
+          if (actualRevision !== currentRevision) moderationConflict();
           if (existingBioStatement) {
             await this.deleteStatement(existingBioStatement, connection);
           }
         } else if (preexistingStatement) {
           throw new BadRequestException(
-            `Statement of type ${statement.statement_type} with value ${statement.statement_value} already exists`
+            `Statement of type ${statementToInsert.statement_type} with value ${statementToInsert.statement_value} already exists`
           );
         }
-        return await this.insertStatement(statement, connection);
+        const inserted = await this.insertStatement(
+          statementToInsert,
+          connection
+        );
+        if (review?.moderation_item_id) {
+          await moderationReviewDb.consume(
+            review.moderation_item_id,
+            inserted.id,
+            {
+              connection,
+              moderationRequestId,
+              moderationPermitGeneration: review.moderation_permit_generation
+            }
+          );
+          await moderationReviewDb.setPublishedRevision(
+            review.moderation_item_id,
+            moderationFingerprint({
+              id: inserted.id,
+              text: inserted.statement_value
+            }),
+            { connection }
+          );
+        }
+        return inserted;
       }
     );
+  }
+
+  private async replayApprovedBio(
+    reviewId: string | undefined,
+    requestId: string | undefined,
+    existing: CicStatement | undefined,
+    connection: ConnectionWrapper<unknown>
+  ) {
+    if (!reviewId) return undefined;
+    const reviewed = await moderationReviewDb.get(
+      reviewId,
+      { connection },
+      true
+    );
+    if (!reviewed.permit_consumed_at) return undefined;
+    assertModerationPermitReplay(reviewed, requestId);
+    if (existing?.id !== reviewed.published_subject_id) moderationConflict();
+    return existing;
+  }
+
+  private latestBio(statements: CicStatement[]): CicStatement | undefined {
+    return statements
+      .filter(
+        (row) =>
+          row.statement_type === 'BIO' &&
+          row.statement_group === CicStatementGroup.GENERAL
+      )
+      .sort(
+        (a, b) =>
+          new Date(b.crated_at).getTime() - new Date(a.crated_at).getTime() ||
+          b.id.localeCompare(a.id)
+      )[0];
   }
 
   public async insertStatement(
@@ -296,9 +432,15 @@ export class CicService {
   }
 
   public async deleteCicStatement(props: { profile_id: string; id: string }) {
-    const cicStatement =
-      await this.getCicStatementByIdAndProfileIdOrThrow(props);
     await this.cicDb.executeNativeQueriesInTransaction(async (connection) => {
+      await this.cicDb.lockProfileForCicStatementMutation(
+        props.profile_id,
+        connection
+      );
+      const cicStatement = await this.getCicStatementByIdAndProfileIdOrThrow(
+        props,
+        connection
+      );
       await this.deleteStatement(cicStatement, connection);
     });
   }

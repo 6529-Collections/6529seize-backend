@@ -47,7 +47,7 @@ export class IdentityNotificationEntity {
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly read_at!: number | null;
 
-  @Column({ type: 'varchar', length: 50, nullable: true, default: null })
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly visibility_group_id!: string | null;
 
   @Index()
@@ -68,5 +68,6 @@ export enum IdentityNotificationCause {
   DROP_BOOSTED = 'DROP_BOOSTED',
   WAVE_CREATED = 'WAVE_CREATED',
   ALL_DROPS = 'ALL_DROPS',
-  PRIORITY_ALERT = 'PRIORITY_ALERT'
+  PRIORITY_ALERT = 'PRIORITY_ALERT',
+  SUBSCRIPTION_COVERAGE = 'SUBSCRIPTION_COVERAGE'
 }

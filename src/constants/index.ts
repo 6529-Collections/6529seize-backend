@@ -4,6 +4,7 @@ export * from './db-tables';
 export * from './delegations';
 export * from './manifold';
 export * from './media';
+export * from './mentions';
 
 export const MEMES_CONTRACT = '0x33FD426905F149f8376e227d0C9D3340AaD17aF1';
 

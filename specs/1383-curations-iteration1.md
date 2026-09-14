@@ -247,8 +247,7 @@ Curator add/remove requires current eligibility from wave curation community gro
 
 2. Model generation
 - Run:
-  - `cd src/api-serverless && npm run restructure-openapi`
-  - `cd src/api-serverless && npm run generate`
+  - `cd src/api-serverless && 6529 run generate:openapi`
 
 3. Route and service wiring
 - Add wave curation-group routes

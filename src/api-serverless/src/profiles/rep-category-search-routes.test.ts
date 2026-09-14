@@ -1,5 +1,6 @@
-jest.mock('async-express-decorator', () => (router: unknown) => router, {
-  virtual: true
+jest.mock('@/api/async.router', () => {
+  const { Router } = jest.requireActual<typeof import('express')>('express');
+  return { asyncRouter: () => Router() };
 });
 
 import { maybeIncludeHelpBotCreditCategory } from '@/api/profiles/rep-category-search.routes';

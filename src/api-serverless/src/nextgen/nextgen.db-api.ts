@@ -1,3 +1,4 @@
+import { nextgenTraitSetsDb } from '@/collecting/nextgen-trait-sets.db';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   CONSOLIDATED_WALLETS_TDH_TABLE,
@@ -25,7 +26,7 @@ import { calculateLevel } from '../../../profiles/profile-level';
 import { sqlExecutor } from '../../../sql-executor';
 import { Time } from '../../../time';
 import { NextGenCollectionStatus } from '../api-filters';
-import { constructFilters, constructFiltersOR } from '../api-helpers';
+import { constructFilters } from '../api-helpers';
 import { PageSortDirection } from '../page-request';
 import { getNextGenChainId, NEXTGEN_CORE } from './abis';
 import { getProof } from './merkle-proof';
@@ -738,111 +739,16 @@ export async function fetchNextGenCollectionTraitSets(
   page: number,
   searchStr: string
 ) {
-  const tokenTraits = await sqlExecutor.execute(
-    `SELECT token_id, value FROM ${NEXTGEN_TOKEN_TRAITS_TABLE} 
-      WHERE trait=:trait`,
-    {
-      trait: trait
-    }
-  );
-
-  const fields = `
-    ${NEXTGEN_TOKENS_TABLE}.owner, 
-    ${IDENTITIES_TABLE}.normalised_handle,
-    ${IDENTITIES_TABLE}.handle,
-    ${IDENTITIES_TABLE}.xtdh,
-    0 as level,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as tdh,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display,
-    ${IDENTITIES_TABLE}.rep as rep_score,
-    COUNT(DISTINCT ${NEXTGEN_TOKEN_TRAITS_TABLE}.value) AS distinct_values_count,
-    GROUP_CONCAT(DISTINCT ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id ORDER BY ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id) AS token_ids,
-    GROUP_CONCAT(DISTINCT ${NEXTGEN_TOKEN_TRAITS_TABLE}.value ORDER BY ${NEXTGEN_TOKEN_TRAITS_TABLE}.value) AS distinct_values`;
-
-  let filters = constructFilters(
-    '',
-    `${NEXTGEN_TOKENS_TABLE}.collection_id = :collectionId AND LOWER(${NEXTGEN_TOKEN_TRAITS_TABLE}.trait) = :trait`
-  );
-  const groups = `
-    ${NEXTGEN_TOKENS_TABLE}.owner, 
-    ${IDENTITIES_TABLE}.normalised_handle, 
-    ${IDENTITIES_TABLE}.handle, 
-    ${IDENTITIES_TABLE}.xtdh,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display, 
-    ${IDENTITIES_TABLE}.rep`;
-
-  let joins = `JOIN ${NEXTGEN_TOKEN_TRAITS_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id`;
-  joins += ` LEFT JOIN ${ADDRESS_CONSOLIDATION_KEY} on ${ADDRESS_CONSOLIDATION_KEY}.address = ${NEXTGEN_TOKENS_TABLE}.owner`;
-  joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} on ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key = ${ADDRESS_CONSOLIDATION_KEY}.consolidation_key`;
-  joins += ` LEFT JOIN ${IDENTITIES_TABLE} on ${IDENTITIES_TABLE}.consolidation_key = ${ADDRESS_CONSOLIDATION_KEY}.consolidation_key`;
-
-  const props: any = {
-    collectionId: collectionId,
-    trait: trait.toLowerCase()
-  };
-
-  if (searchStr) {
-    const resolvedAddresses = await resolveEns(searchStr);
-    let walletFilters = constructFiltersOR(
-      '',
-      `${NEXTGEN_TOKENS_TABLE}.owner in (:addresses)`
-    );
-    props.addresses = resolvedAddresses.map((a: any) => a.toLowerCase());
-
-    searchStr
-      .toLowerCase()
-      .split(',')
-      .forEach((s: string, index: number) => {
-        props[`search${index}`] = `%${s}%`;
-        walletFilters = constructFiltersOR(
-          walletFilters,
-          `${IDENTITIES_TABLE}.normalised_handle like :search${index} or ${IDENTITIES_TABLE}.handle like :search${index}`
-        );
-      });
-
-    filters = constructFilters(filters, `(${walletFilters})`);
-  }
-
-  const results = await fetchPaginated(
-    NEXTGEN_TOKENS_TABLE,
-    props,
-    'distinct_values_count DESC, owner ASC',
+  const addresses: string[] = searchStr ? await resolveEns(searchStr) : [];
+  return nextgenTraitSetsDb.find({
+    collectionId,
+    traits: [trait],
     pageSize,
     page,
-    filters,
-    fields,
-    joins,
-    groups
-  );
-
-  results.data.forEach((d: any) => {
-    d.level = calculateLevel({
-      tdh: (d.tdh ?? 0) + (d.xtdh ?? 0),
-      rep: d.rep_score
-    });
-
-    const distinctValues = d.distinct_values.split(',');
-    const tokenIds = d.token_ids.split(',').map(Number);
-    const tokenValues: {
-      value: string;
-      tokens: number[];
-    }[] = distinctValues.map((value: string) => {
-      const traitTokens = tokenTraits
-        .filter((t: any) => t.value === value && tokenIds.includes(t.token_id))
-        .map((t: any) => t.token_id);
-      return {
-        value: value,
-        tokens: traitTokens
-      };
-    });
-
-    delete d.distinct_values;
-    delete d.token_ids;
-    d.token_values = tokenValues;
+    ultimate: false,
+    search: searchStr,
+    addresses
   });
-
-  return results;
 }
 
 export async function fetchNextGenCollectionTraitSetsUltimate(
@@ -851,109 +757,11 @@ export async function fetchNextGenCollectionTraitSetsUltimate(
   pageSize: number,
   page: number
 ) {
-  const traits = Array.from(
-    new Set(
-      traitsStr
-        .split(',')
-        .map((trait) => trait.trim())
-        .filter(Boolean)
-    )
-  );
-
-  if (traits.length === 0) {
-    return {
-      count: 0,
-      page,
-      next: false,
-      data: []
-    };
-  }
-
-  const countsPerTrait = await sqlExecutor.execute(
-    `SELECT DISTINCT trait, trait_count FROM ${NEXTGEN_TOKEN_TRAITS_TABLE} 
-      WHERE collection_id = :collectionId AND trait in (:traits)`,
-    {
-      traits: traits,
-      collectionId: collectionId
-    }
-  );
-
-  if (countsPerTrait.length !== traits.length) {
-    return {
-      count: 0,
-      page,
-      next: false,
-      data: []
-    };
-  }
-
-  let fields = `
-    ${NEXTGEN_TOKENS_TABLE}.owner,
-    ${IDENTITIES_TABLE}.normalised_handle,
-    ${IDENTITIES_TABLE}.handle,
-    0 as level,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as tdh,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display,
-    ${IDENTITIES_TABLE}.rep as rep_score,
-    ${IDENTITIES_TABLE}.xtdh as xtdh`;
-
-  const params: any = {
-    traits: traits,
-    collectionId: collectionId
-  };
-  let filters = constructFilters(
-    '',
-    `${NEXTGEN_TOKEN_TRAITS_TABLE}.trait in (:traits)`
-  );
-  filters = constructFilters(
-    filters,
-    `${NEXTGEN_TOKENS_TABLE}.collection_id = :collectionId`
-  );
-  let havingQuery = ``;
-  countsPerTrait.forEach((ct: any, index: number) => {
-    const field = `${ct.trait.toLowerCase()}_sets`;
-    const paramName = `trait_${index}`;
-    fields += `, COUNT(DISTINCT CASE WHEN ${NEXTGEN_TOKEN_TRAITS_TABLE}.trait = :${paramName} THEN ${NEXTGEN_TOKEN_TRAITS_TABLE}.value ELSE NULL END) AS ${field}`;
-    params[paramName] = ct.trait;
-    params[field] = ct.trait_count;
-    havingQuery += ` ${index > 0 ? 'AND' : ''} ${field} = :${field}`;
-  });
-
-  let joins = `JOIN ${NEXTGEN_TOKEN_TRAITS_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id`;
-  joins += ` LEFT JOIN ${ADDRESS_CONSOLIDATION_KEY} on ${ADDRESS_CONSOLIDATION_KEY}.address = ${NEXTGEN_TOKENS_TABLE}.owner`;
-  joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} on ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key = ${ADDRESS_CONSOLIDATION_KEY}.consolidation_key`;
-  joins += ` LEFT JOIN ${IDENTITIES_TABLE} on ${IDENTITIES_TABLE}.consolidation_key = ${ADDRESS_CONSOLIDATION_KEY}.consolidation_key`;
-
-  const groups = `
-    ${NEXTGEN_TOKENS_TABLE}.owner, 
-    ${IDENTITIES_TABLE}.normalised_handle, 
-    ${IDENTITIES_TABLE}.handle, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display, 
-    ${IDENTITIES_TABLE}.rep,
-    ${IDENTITIES_TABLE}.xtdh`;
-
-  const limit = `LIMIT ${pageSize}`;
-  const offset = page > 1 ? `OFFSET ${pageSize * (page - 1)}` : '';
-  const sqlQuery = `SELECT ${fields} FROM ${NEXTGEN_TOKENS_TABLE} ${joins} ${filters} GROUP BY ${groups} HAVING ${havingQuery}`;
-  const countSql = `SELECT COUNT(1) as count FROM (${sqlQuery}) inner_q`;
-
-  const [count, data] = await Promise.all([
-    sqlExecutor.execute(countSql, params).then((r) => r[0].count),
-    sqlExecutor.execute(`${sqlQuery} ${limit} ${offset}`, params)
-  ]);
-
-  data.forEach((d: any) => {
-    d.level = calculateLevel({
-      tdh: (d.tdh ?? 0) + (d.xtdh ?? 0),
-      rep: d.rep_score
-    });
-  });
-
-  return {
-    count,
+  return nextgenTraitSetsDb.find({
+    collectionId,
+    traits: traitsStr.split(','),
+    pageSize,
     page,
-    next: count > pageSize * page,
-    data
-  };
+    ultimate: true
+  });
 }

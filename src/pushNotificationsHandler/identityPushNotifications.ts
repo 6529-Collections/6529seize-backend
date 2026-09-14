@@ -27,6 +27,7 @@ import { WaveEntity } from '../entities/IWave';
 import { WaveReaderMetricEntity } from '../entities/IWaveReaderMetric';
 import { Logger } from '../logging';
 import { IdentityNotificationsDb } from '../notifications/identity-notifications.db';
+import type { SubscriptionCoverageNotificationData } from '@/notifications/user-notification.types';
 import { dbSupplier } from '../sql-executor';
 import { sumBadgeContributions } from './badge-count';
 import {
@@ -46,24 +47,22 @@ import {
   sendMessages
 } from '@/pushNotificationsHandler/sendPushNotifications';
 import { identityMutesDb } from '../api-serverless/src/identity-mutes/identity-mutes.db';
+import { contentModerationDb } from '@/content-moderation/content-moderation.db';
+import { formatDropMarkdownForPush } from '@/pushNotificationsHandler/markdown-push-notification-text';
 import { wsListenersNotifier } from '../api-serverless/src/ws/ws-listeners-notifier';
 import { identityPushNotificationAccess } from '@/pushNotificationsHandler/identity-push-notification-access';
-
-const CAUSE_TO_SETTING_KEY: Partial<
-  Record<IdentityNotificationCause, keyof PushNotificationSettingsData>
-> = {
-  [IdentityNotificationCause.IDENTITY_SUBSCRIBED]: 'identity_subscribed',
-  [IdentityNotificationCause.IDENTITY_MENTIONED]: 'identity_mentioned',
-  [IdentityNotificationCause.IDENTITY_REP]: 'identity_rep',
-  [IdentityNotificationCause.IDENTITY_NIC]: 'identity_nic',
-  [IdentityNotificationCause.DROP_QUOTED]: 'drop_quoted',
-  [IdentityNotificationCause.DROP_REPLIED]: 'drop_replied',
-  [IdentityNotificationCause.DROP_VOTED]: 'drop_voted',
-  [IdentityNotificationCause.DROP_POLL_VOTED]: 'drop_voted',
-  [IdentityNotificationCause.DROP_REACTED]: 'drop_reacted',
-  [IdentityNotificationCause.DROP_BOOSTED]: 'drop_boosted',
-  [IdentityNotificationCause.WAVE_CREATED]: 'wave_created'
-};
+import {
+  getEnabledCauses,
+  isNotificationEnabledForDevice
+} from '@/pushNotificationsHandler/identity-push-notification-settings';
+import { buildSubscriptionCoveragePushNotificationData } from '@/pushNotificationsHandler/subscription-coverage-push-notification';
+import {
+  appendWavePushNotificationContext,
+  buildAllDropsPushNotificationTitle,
+  buildWavePushNotificationContext,
+  buildWavePushNotificationTitle
+} from '@/pushNotificationsHandler/wave-push-notification-title';
+import type { WavePushNotificationContext } from '@/pushNotificationsHandler/wave-push-notification-title';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_IDENTITY');
 const SKIP_NOTIFICATION_PUSH = Symbol('SKIP_NOTIFICATION_PUSH');
@@ -75,6 +74,24 @@ interface IdentityPushNotificationMessage {
   identityId: string;
   device: PushNotificationDevice;
 }
+
+interface WavePresentation {
+  readonly context: WavePushNotificationContext;
+  readonly picture: string | null;
+}
+
+interface WavePresentationSource {
+  readonly waveName: string;
+  readonly isDirectMessage: boolean;
+  readonly participantCount: number;
+  readonly picture: string | null;
+}
+
+type WavePresentationResolver = (
+  notification: IdentityNotificationEntity,
+  additionalEntity: ApiIdentity,
+  targetProfile: ApiIdentity
+) => Promise<WavePresentation>;
 
 type AdditionalDataNumber = string | number | null;
 
@@ -95,10 +112,46 @@ interface PollVoteAdditionalDataOption {
   option_string: string;
 }
 
-function extractAdditionalData(
+function extractAdditionalData<T extends object = AdditionalDataPayload>(
   notification: IdentityNotificationEntity
-): AdditionalDataPayload {
-  return (notification.additional_data ?? {}) as AdditionalDataPayload;
+): T {
+  return (notification.additional_data ?? {}) as unknown as T;
+}
+
+function createWavePresentationResolver(): WavePresentationResolver {
+  const sourceByWaveAndRecipient = new Map<
+    string,
+    Promise<WavePresentationSource>
+  >();
+
+  return async (notification) => {
+    const cacheKey = JSON.stringify([
+      notification.wave_id,
+      notification.identity_id
+    ]);
+    let sourcePromise = sourceByWaveAndRecipient.get(cacheKey);
+    if (!sourcePromise) {
+      sourcePromise = loadWavePresentationSourceForRecipient(notification);
+      sourceByWaveAndRecipient.set(cacheKey, sourcePromise);
+    }
+
+    let source: WavePresentationSource;
+    try {
+      source = await sourcePromise;
+    } catch (error) {
+      sourceByWaveAndRecipient.delete(cacheKey);
+      throw error;
+    }
+
+    return {
+      context: buildWavePushNotificationContext({
+        waveName: source.waveName,
+        isDirectMessage: source.isDirectMessage,
+        participantCount: source.participantCount
+      }),
+      picture: source.picture
+    };
+  };
 }
 
 function numbersOrNull(value: unknown): number | null {
@@ -162,31 +215,9 @@ async function getDeviceSettings(
     drop_voted: result.drop_voted,
     drop_reacted: result.drop_reacted,
     drop_boosted: result.drop_boosted,
-    wave_created: result.wave_created
+    wave_created: result.wave_created,
+    subscription_coverage: result.subscription_coverage
   };
-}
-
-function isNotificationEnabledForDevice(
-  cause: IdentityNotificationCause,
-  settings: PushNotificationSettingsData
-): boolean {
-  const settingKey = CAUSE_TO_SETTING_KEY[cause];
-  if (!settingKey) {
-    return true;
-  }
-  return settings[settingKey];
-}
-
-function getEnabledCauses(
-  settings: PushNotificationSettingsData
-): IdentityNotificationCause[] {
-  return (
-    Object.values(IdentityNotificationCause) as IdentityNotificationCause[]
-  ).filter((cause) => {
-    const key = CAUSE_TO_SETTING_KEY[cause];
-    if (key == null) return true;
-    return settings[key];
-  });
 }
 
 function getDeviceTokenKey(deviceId: string, token: string): string {
@@ -261,7 +292,16 @@ export async function sendIdentityNotificationsBatch(
   await wsListenersNotifier.notifyAboutIdentityNotificationsChanged(
     notifications.map((notification) => notification.identity_id)
   );
-  const mutedNotificationIds = await findMutedNotificationIds(notifications);
+  let mutedNotificationIds: Set<number>;
+  try {
+    mutedNotificationIds = await findMutedNotificationIds(notifications);
+  } catch (error) {
+    logger.error(
+      'Failed to apply notification visibility filters; retrying push notifications',
+      error
+    );
+    return notifications.map((notification) => Number(notification.id));
+  }
 
   uniqueIds
     .filter((id) => !notificationsById.has(id))
@@ -269,6 +309,7 @@ export async function sendIdentityNotificationsBatch(
 
   const failedIds: number[] = [];
   const waveAccessCache = new Map<string, Promise<boolean>>();
+  const wavePresentationResolver = createWavePresentationResolver();
   const messagesByNotification = await Promise.all(
     uniqueIds.map(async (id) => {
       const notification = notificationsById.get(id);
@@ -284,7 +325,8 @@ export async function sendIdentityNotificationsBatch(
       try {
         return await buildIdentityNotificationMessages(
           notification,
-          waveAccessCache
+          waveAccessCache,
+          wavePresentationResolver
         );
       } catch (error) {
         logger.error(`Failed to build notification ${id}: ${error}`);
@@ -318,32 +360,32 @@ async function findMutedNotificationIds(
   const notificationRows = notifications.map((notification) => ({
     notification_id: Number(notification.id),
     identity_id: notification.identity_id,
-    additional_identity_id: notification.additional_identity_id
+    additional_identity_id: notification.additional_identity_id,
+    related_drop_id: notification.related_drop_id,
+    related_drop_2_id: notification.related_drop_2_id
   }));
-  if (!notificationRows.some((row) => row.additional_identity_id !== null)) {
-    return new Set();
-  }
-
-  try {
-    const unmutedRows =
-      await identityMutesDb.filterMutedNotificationRows(notificationRows);
-    const unmutedNotificationIds = new Set(
-      unmutedRows.map((row) => row.notification_id)
+  const unmutedRows =
+    await identityMutesDb.filterMutedNotificationRows(notificationRows);
+  const deliverableRows =
+    await contentModerationDb.filterBlockedNotificationRows(unmutedRows);
+  const visibleRows =
+    await contentModerationDb.filterUnavailableDropNotificationRows(
+      deliverableRows
     );
-    return new Set(
-      notificationRows
-        .filter((row) => !unmutedNotificationIds.has(row.notification_id))
-        .map((row) => row.notification_id)
-    );
-  } catch (error) {
-    logger.error('Failed to filter muted push notifications', error);
-    return new Set();
-  }
+  const unmutedNotificationIds = new Set(
+    visibleRows.map((row) => row.notification_id)
+  );
+  return new Set(
+    notificationRows
+      .filter((row) => !unmutedNotificationIds.has(row.notification_id))
+      .map((row) => row.notification_id)
+  );
 }
 
 async function buildIdentityNotificationMessages(
   notification: IdentityNotificationEntity,
-  waveAccessCache?: Map<string, Promise<boolean>>
+  waveAccessCache: Map<string, Promise<boolean>>,
+  wavePresentationResolver: WavePresentationResolver
 ): Promise<IdentityPushNotificationMessage[]> {
   if (notification.read_at) {
     logger.info(
@@ -412,7 +454,11 @@ async function buildIdentityNotificationMessages(
     return [];
   }
 
-  const notificationData = await generateNotificationData(notification);
+  const notificationData = await generateNotificationData(
+    notification,
+    targetProfile,
+    wavePresentationResolver
+  );
   if (notificationData === SKIP_NOTIFICATION_PUSH) {
     logger.info(`[ID ${notification.id}] Skipping push notification`);
     return [];
@@ -560,40 +606,113 @@ async function handleSendResults(
 }
 
 async function generateNotificationData(
-  notification: IdentityNotificationEntity
+  notification: IdentityNotificationEntity,
+  targetProfile: ApiIdentity,
+  wavePresentationResolver: WavePresentationResolver
 ) {
-  const additionalEntity = await getAdditionalIdOrThrow(notification);
+  const getAdditionalEntity = () => getAdditionalIdOrThrow(notification);
 
   switch (notification.cause) {
     case IdentityNotificationCause.IDENTITY_SUBSCRIBED:
-      return handleIdentitySubscribed(additionalEntity);
+      return handleIdentitySubscribed(await getAdditionalEntity());
     case IdentityNotificationCause.IDENTITY_MENTIONED:
-      return handleIdentityMentioned(notification, additionalEntity);
+      return handleIdentityMentioned(
+        notification,
+        await getAdditionalEntity(),
+        targetProfile,
+        wavePresentationResolver
+      );
     case IdentityNotificationCause.IDENTITY_REP:
-      return handleIdentityRep(notification, additionalEntity);
+      return handleIdentityRep(notification, await getAdditionalEntity());
     case IdentityNotificationCause.IDENTITY_NIC:
-      return handleIdentityNic(notification, additionalEntity);
+      return handleIdentityNic(notification, await getAdditionalEntity());
     case IdentityNotificationCause.DROP_QUOTED:
-      return handleDropQuoted(notification, additionalEntity);
+      return handleDropQuoted(
+        notification,
+        await getAdditionalEntity(),
+        targetProfile,
+        wavePresentationResolver
+      );
     case IdentityNotificationCause.DROP_REPLIED:
-      return handleDropReplied(notification, additionalEntity);
+      return handleDropReplied(
+        notification,
+        await getAdditionalEntity(),
+        targetProfile,
+        wavePresentationResolver
+      );
     case IdentityNotificationCause.DROP_VOTED:
-      return handleDropVoted(notification, additionalEntity);
+      return handleDropVoted(
+        notification,
+        await getAdditionalEntity(),
+        targetProfile,
+        wavePresentationResolver
+      );
     case IdentityNotificationCause.DROP_POLL_VOTED:
-      return handleDropPollVoted(notification, additionalEntity);
+      return handleDropPollVoted(
+        notification,
+        await getAdditionalEntity(),
+        targetProfile,
+        wavePresentationResolver
+      );
     case IdentityNotificationCause.DROP_REACTED:
-      return handleDropReacted(notification, additionalEntity);
+      return handleDropReacted(
+        notification,
+        await getAdditionalEntity(),
+        targetProfile,
+        wavePresentationResolver
+      );
     case IdentityNotificationCause.DROP_BOOSTED:
-      return handleDropBoosted(notification, additionalEntity);
+      return handleDropBoosted(
+        notification,
+        await getAdditionalEntity(),
+        targetProfile,
+        wavePresentationResolver
+      );
     case IdentityNotificationCause.WAVE_CREATED:
-      return handleWaveCreated(notification, additionalEntity);
+      return handleWaveCreated(
+        notification,
+        await getAdditionalEntity(),
+        targetProfile,
+        wavePresentationResolver
+      );
     case IdentityNotificationCause.ALL_DROPS:
-      return handleAllDrops(notification, additionalEntity);
+      return handleAllDrops(
+        notification,
+        await getAdditionalEntity(),
+        targetProfile,
+        wavePresentationResolver
+      );
     case IdentityNotificationCause.PRIORITY_ALERT:
-      return handlePriorityAlert(notification, additionalEntity);
+      return handlePriorityAlert(
+        notification,
+        await getAdditionalEntity(),
+        targetProfile,
+        wavePresentationResolver
+      );
+    case IdentityNotificationCause.SUBSCRIPTION_COVERAGE:
+      return handleSubscriptionCoverage(notification, targetProfile);
     default:
       return null;
   }
+}
+
+function handleSubscriptionCoverage(
+  notification: IdentityNotificationEntity,
+  targetProfile: ApiIdentity
+) {
+  const additionalData =
+    extractAdditionalData<SubscriptionCoverageNotificationData>(notification);
+  const handle = targetProfile.normalised_handle ?? targetProfile.handle;
+  if (!handle) {
+    logger.warn(
+      `[ID ${notification.id}] Skipping subscription coverage push because profile handle was not found`
+    );
+    return SKIP_NOTIFICATION_PUSH;
+  }
+  return (
+    buildSubscriptionCoveragePushNotificationData(additionalData, handle) ??
+    SKIP_NOTIFICATION_PUSH
+  );
 }
 
 async function handleIdentitySubscribed(additionalEntity: ApiIdentity) {
@@ -674,7 +793,9 @@ async function handleIdentityNic(
 
 async function handleIdentityMentioned(
   notification: IdentityNotificationEntity,
-  additionalEntity: ApiIdentity
+  additionalEntity: ApiIdentity,
+  targetProfile: ApiIdentity,
+  wavePresentationResolver: WavePresentationResolver
 ) {
   const userProfile =
     await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
@@ -686,7 +807,16 @@ async function handleIdentityMentioned(
   }
   const dropPartMention = await getDropPart(notification, userProfile.handle!);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
-  const title = `${additionalEntity.handle} mentioned you`;
+  const wavePresentation = await wavePresentationResolver(
+    notification,
+    additionalEntity,
+    targetProfile
+  );
+  const title = buildWavePushNotificationTitle({
+    actorHandle: getIdentityDisplayHandle(additionalEntity),
+    action: { type: 'mention' },
+    context: wavePresentation.context
+  });
   const body = await getDropBodyTextForPush(notification, dropPartMention);
   const imageUrl = additionalEntity.pfp;
   const data = {
@@ -699,11 +829,22 @@ async function handleIdentityMentioned(
 
 async function handleDropQuoted(
   notification: IdentityNotificationEntity,
-  additionalEntity: ApiIdentity
+  additionalEntity: ApiIdentity,
+  targetProfile: ApiIdentity,
+  wavePresentationResolver: WavePresentationResolver
 ) {
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
-  const title = `${additionalEntity.handle} quoted you`;
+  const wavePresentation = await wavePresentationResolver(
+    notification,
+    additionalEntity,
+    targetProfile
+  );
+  const title = buildWavePushNotificationTitle({
+    actorHandle: getIdentityDisplayHandle(additionalEntity),
+    action: { type: 'quote' },
+    context: wavePresentation.context
+  });
   const imageUrl = additionalEntity.pfp;
   const body = await getDropBodyTextForPush(notification, dropPart);
   const data = {
@@ -716,11 +857,22 @@ async function handleDropQuoted(
 
 async function handleDropReplied(
   notification: IdentityNotificationEntity,
-  additionalEntity: ApiIdentity
+  additionalEntity: ApiIdentity,
+  targetProfile: ApiIdentity,
+  wavePresentationResolver: WavePresentationResolver
 ) {
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
-  const title = `${additionalEntity.handle} replied to your drop`;
+  const wavePresentation = await wavePresentationResolver(
+    notification,
+    additionalEntity,
+    targetProfile
+  );
+  const title = buildWavePushNotificationTitle({
+    actorHandle: getIdentityDisplayHandle(additionalEntity),
+    action: { type: 'reply' },
+    context: wavePresentation.context
+  });
   const body = await getDropBodyTextForPush(notification, dropPart);
   const imageUrl = additionalEntity.pfp;
   const data = {
@@ -733,7 +885,9 @@ async function handleDropReplied(
 
 async function handleDropVoted(
   notification: IdentityNotificationEntity,
-  additionalEntity: ApiIdentity
+  additionalEntity: ApiIdentity,
+  targetProfile: ApiIdentity,
+  wavePresentationResolver: WavePresentationResolver
 ) {
   const additionalData = extractAdditionalData(notification);
   const vote = Number(additionalData.vote);
@@ -762,11 +916,19 @@ async function handleDropVoted(
     additionalEntity.normalised_handle ??
     notification.additional_identity_id ??
     'Someone';
-  const title = buildDropVotePushTitle({
-    voterHandle,
-    vote,
-    voteChange
-  });
+  const wavePresentation = await wavePresentationResolver(
+    notification,
+    additionalEntity,
+    targetProfile
+  );
+  const title = appendWavePushNotificationContext(
+    buildDropVotePushTitle({
+      voterHandle,
+      vote,
+      voteChange
+    }),
+    wavePresentation.context
+  );
   const body = buildDropVotePushBody({
     dropBody,
     vote,
@@ -783,7 +945,9 @@ async function handleDropVoted(
 
 async function handleDropPollVoted(
   notification: IdentityNotificationEntity,
-  additionalEntity: ApiIdentity
+  additionalEntity: ApiIdentity,
+  targetProfile: ApiIdentity,
+  wavePresentationResolver: WavePresentationResolver
 ) {
   const pollOptions = getPollVoteOptions(notification);
   if (!pollOptions.length) {
@@ -798,7 +962,15 @@ async function handleDropPollVoted(
     additionalEntity.normalised_handle ??
     notification.additional_identity_id ??
     'Someone';
-  const title = `${voterHandle} voted on your poll`;
+  const wavePresentation = await wavePresentationResolver(
+    notification,
+    additionalEntity,
+    targetProfile
+  );
+  const title = appendWavePushNotificationContext(
+    `${voterHandle} voted on your poll`,
+    wavePresentation.context
+  );
   const body =
     pollOptions.length === 1
       ? `Option: ${pollOptions[0].option_string}`
@@ -837,7 +1009,9 @@ function getPollVoteOptions(
 
 async function handleDropReacted(
   notification: IdentityNotificationEntity,
-  additionalEntity: ApiIdentity
+  additionalEntity: ApiIdentity,
+  targetProfile: ApiIdentity,
+  wavePresentationResolver: WavePresentationResolver
 ) {
   const reaction = extractAdditionalData(notification).reaction;
   if (!reaction) {
@@ -845,7 +1019,16 @@ async function handleDropReacted(
       `[ID ${notification.id}] Reaction additional data not found`
     );
   }
-  const title = `${additionalEntity.handle} reacted ${reaction} to your drop`;
+  const wavePresentation = await wavePresentationResolver(
+    notification,
+    additionalEntity,
+    targetProfile
+  );
+  const title = buildWavePushNotificationTitle({
+    actorHandle: getIdentityDisplayHandle(additionalEntity),
+    action: { type: 'reaction', reaction },
+    context: wavePresentation.context
+  });
   const imageUrl = additionalEntity.pfp;
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
@@ -860,9 +1043,19 @@ async function handleDropReacted(
 
 async function handleDropBoosted(
   notification: IdentityNotificationEntity,
-  additionalEntity: ApiIdentity
+  additionalEntity: ApiIdentity,
+  targetProfile: ApiIdentity,
+  wavePresentationResolver: WavePresentationResolver
 ) {
-  const title = `${additionalEntity.handle} boosted your drop 🔥`;
+  const wavePresentation = await wavePresentationResolver(
+    notification,
+    additionalEntity,
+    targetProfile
+  );
+  const title = appendWavePushNotificationContext(
+    `${getIdentityDisplayHandle(additionalEntity)} boosted your drop 🔥`,
+    wavePresentation.context
+  );
   const imageUrl = additionalEntity.pfp;
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
@@ -950,7 +1143,8 @@ async function getDropBodyTextForPush(
   }
 
   if (hasText) {
-    return rawContentTrimmed;
+    const preview = formatDropMarkdownForPush(rawContentTrimmed);
+    if (preview) return preview;
   }
 
   const mediaInfos = mediaRows.map((row) =>
@@ -1059,17 +1253,22 @@ async function getDropSerialNo(dropId: string | null) {
 
 async function handleWaveCreated(
   notification: IdentityNotificationEntity,
-  additionalEntity: ApiIdentity
+  additionalEntity: ApiIdentity,
+  targetProfile: ApiIdentity,
+  wavePresentationResolver: WavePresentationResolver
 ) {
-  const wave = await getWaveEntityOrThrow(
-    notification.id,
-    notification.wave_id
+  const wavePresentation = await wavePresentationResolver(
+    notification,
+    additionalEntity,
+    targetProfile
   );
-  const waveDisplay = await getWaveDisplayForRecipient(notification, wave);
-
-  const title = `${additionalEntity.handle} invited you to a wave: ${waveDisplay.name}`;
+  const title = buildWavePushNotificationTitle({
+    actorHandle: getIdentityDisplayHandle(additionalEntity),
+    action: { type: 'invite' },
+    context: wavePresentation.context
+  });
   const body = 'View wave';
-  const imageUrl = waveDisplay.picture ?? undefined;
+  const imageUrl = wavePresentation.picture ?? undefined;
   const data = {
     redirect: 'waves',
     wave_id: notification.wave_id
@@ -1093,10 +1292,17 @@ async function getWaveEntityOrThrow(
   return wave;
 }
 
-async function getWaveDisplayForRecipient(
-  notification: IdentityNotificationEntity,
-  wave: WaveEntity
-): Promise<{ name: string; picture: string | null }> {
+function getIdentityDisplayHandle(identity: ApiIdentity): string {
+  return identity.handle ?? identity.normalised_handle ?? 'Someone';
+}
+
+async function loadWavePresentationSourceForRecipient(
+  notification: IdentityNotificationEntity
+): Promise<WavePresentationSource> {
+  const wave = await getWaveEntityOrThrow(
+    notification.id,
+    notification.wave_id
+  );
   const displayByWaveId =
     await directMessageWaveDisplayService.resolveWaveDisplayByWaveIdForContext({
       waveEntities: [wave],
@@ -1104,36 +1310,36 @@ async function getWaveDisplayForRecipient(
     });
   const display = displayByWaveId[wave.id];
   return {
-    name: display?.name ?? wave.name,
+    waveName: display?.name ?? wave.name,
+    isDirectMessage: wave.is_direct_message === true,
+    participantCount:
+      display?.participantCount ?? display?.contributors?.length ?? 0,
     picture: resolveWavePictureOverride(wave.picture, display)
   };
 }
 
 async function handleAllDrops(
   notification: IdentityNotificationEntity,
-  additionalEntity: ApiIdentity
+  additionalEntity: ApiIdentity,
+  targetProfile: ApiIdentity,
+  wavePresentationResolver: WavePresentationResolver
 ) {
-  const wave = await getWaveEntityOrThrow(
-    notification.id,
-    notification.wave_id
+  const wavePresentation = await wavePresentationResolver(
+    notification,
+    additionalEntity,
+    targetProfile
   );
-  const waveDisplay = await getWaveDisplayForRecipient(notification, wave);
   const additionalData = extractAdditionalData(notification);
-  const isRating = typeof additionalData.vote === 'number';
-
-  let title;
-  if (isRating) {
-    const vote = Number(additionalData.vote);
-    title = `${additionalEntity.handle} rated a drop: ${formatSignedLocaleNumber(vote)}`;
-  } else {
-    title = `${additionalEntity.handle}`;
-  }
-
-  title += ` in ${waveDisplay.name}`;
+  const actorHandle = getIdentityDisplayHandle(additionalEntity);
+  const title = buildAllDropsPushNotificationTitle({
+    actorHandle,
+    vote: additionalData.vote,
+    context: wavePresentation.context
+  });
 
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
-  const imageUrl = waveDisplay.picture ?? additionalEntity.pfp;
+  const imageUrl = wavePresentation.picture ?? additionalEntity.pfp;
   const body = await getDropBodyTextForPush(notification, dropPart);
   const data = {
     redirect: 'waves',
@@ -1145,19 +1351,24 @@ async function handleAllDrops(
 
 async function handlePriorityAlert(
   notification: IdentityNotificationEntity,
-  additionalEntity: ApiIdentity
+  additionalEntity: ApiIdentity,
+  targetProfile: ApiIdentity,
+  wavePresentationResolver: WavePresentationResolver
 ) {
-  const wave = await getWaveEntityOrThrow(
-    notification.id,
-    notification.wave_id
+  const wavePresentation = await wavePresentationResolver(
+    notification,
+    additionalEntity,
+    targetProfile
   );
-  const waveDisplay = await getWaveDisplayForRecipient(notification, wave);
 
   const drop = await getDrop(notification);
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
-  const imageUrl = waveDisplay.picture ?? additionalEntity.pfp;
-  const title = `🚨 ${drop?.title ?? 'Priority Alert'}`;
+  const imageUrl = wavePresentation.picture ?? additionalEntity.pfp;
+  const title = appendWavePushNotificationContext(
+    `🚨 ${drop?.title ?? 'Priority Alert'}`,
+    wavePresentation.context
+  );
   const body = await getDropBodyTextForPush(
     notification,
     dropPart,
