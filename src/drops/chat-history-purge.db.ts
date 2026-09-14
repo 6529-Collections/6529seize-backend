@@ -72,14 +72,18 @@ const DROP_OWNED_TABLES = [
 ] as const;
 
 export class ChatHistoryPurgeDb extends LazyDbAccessCompatibleService {
-  async findCutoff(waveId: string, ctx: RequestContext): Promise<number> {
+  async findCutoff(
+    scope: Pick<ChatHistoryPurgeScope, 'waveId' | 'authorId'>,
+    ctx: RequestContext
+  ): Promise<number> {
     const timerName = `${this.constructor.name}->findCutoff`;
     ctx.timer?.start(timerName);
     try {
       const row = await this.db.oneOrNull<{ serial_no: number }>(
-        `select serial_no from ${DROPS_TABLE} where wave_id = :waveId
+        `select serial_no from ${DROPS_TABLE} force index (idx_drop_wave_type_author)
+         where wave_id = :waveId and author_id = :authorId and drop_type = 'CHAT'
          order by serial_no desc limit 1`,
-        { waveId },
+        scope,
         { wrappedConnection: ctx.connection }
       );
       return Number(row?.serial_no ?? 0);

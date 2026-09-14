@@ -411,7 +411,10 @@ export class DropCreationApiService {
         const txCtx = { ...ctx, connection };
         const wave = await this.wavesApiDb.findWaveByIdForUpdate(waveId, txCtx);
         if (!wave) throw new NotFoundException(`Wave ${waveId} not found`);
-        const cutoffSerialNo = await this.purgeDb.findCutoff(waveId, txCtx);
+        const cutoffSerialNo = await this.purgeDb.findCutoff(
+          { waveId, authorId },
+          txCtx
+        );
         return {
           purge_token: createChatHistoryPurgeToken({
             waveId,
@@ -453,7 +456,10 @@ export class DropCreationApiService {
           if (!wave) throw new NotFoundException(`Wave ${waveId} not found`);
           const cutoffSerialNo =
             tokenCutoff ??
-            (await this.purgeDb.findCutoff(waveId, transactionContext));
+            (await this.purgeDb.findCutoff(
+              { waveId, authorId },
+              transactionContext
+            ));
           const scope = { waveId, authorId, cutoffSerialNo };
           const candidates = await this.purgeDb.findBatchForUpdate(
             { ...scope, pinnedDropId: wave.description_drop_id },

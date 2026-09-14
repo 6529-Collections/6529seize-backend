@@ -72,13 +72,66 @@ describeWithSeed(
   'ChatHistoryPurgeDb synthetic MySQL cleanup',
   withWaves([wave]),
   () => {
+    it('does not reveal other authors or non-chat activity through a readable cutoff token', async () => {
+      const cutoff = () =>
+        sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+          repo.findCutoff(scope, { connection })
+        );
+      expect(await cutoff()).toBe(0);
+      await insert(tables.DROPS_TABLE, {
+        id: 'foreign',
+        wave_id: 'wave',
+        author_id: 'other',
+        created_at: 1,
+        parts_count: 1,
+        drop_type: 'CHAT'
+      });
+      expect(await cutoff()).toBe(0);
+      await insert(tables.DROPS_TABLE, {
+        id: 'own-chat',
+        wave_id: 'wave',
+        author_id: 'author',
+        created_at: 2,
+        parts_count: 1,
+        drop_type: 'CHAT'
+      });
+      const preparedCutoff = await cutoff();
+      await insert(tables.DROPS_TABLE, {
+        id: 'foreign-new',
+        wave_id: 'wave',
+        author_id: 'other',
+        created_at: 3,
+        parts_count: 1,
+        drop_type: 'CHAT'
+      });
+      await insert(tables.DROPS_TABLE, {
+        id: 'own-participatory',
+        wave_id: 'wave',
+        author_id: 'author',
+        created_at: 4,
+        parts_count: 1,
+        drop_type: 'PARTICIPATORY'
+      });
+      expect(await cutoff()).toBe(preparedCutoff);
+    });
+
     it('purges 40,000 of 60,000 messages in bounded transactions, preserving newer messages and retries', async () => {
       await insertDrops(60000);
       const cutoff = await sqlExecutor.executeNativeQueriesInTransaction(
-        (connection) => repo.findCutoff('wave', { connection })
+        (connection) => repo.findCutoff(scope, { connection })
       );
-      expect(cutoff).toBe(60000);
+      expect(cutoff).toBe(59999);
       await insertDrops(3, 60000);
+      await sqlExecutor.execute(
+        `insert into ${tables.DROPS_PARTS_TABLE} (drop_id, drop_part_id, content, wave_id)
+         select id, 1, 'Synthetic chat message', wave_id from ${tables.DROPS_TABLE}`
+      );
+      await sqlExecutor.execute(
+        `insert into ${tables.IDENTITY_NOTIFICATIONS_TABLE}
+         (identity_id, related_drop_id, cause, additional_data, created_at, wave_id)
+         select if(author_id = 'author', 'other', 'author'), id, 'ALL_DROPS', '{}', created_at, wave_id
+         from ${tables.DROPS_TABLE}`
+      );
       await insert(tables.WAVE_METRICS_TABLE, {
         wave_id: 'wave',
         drops_count: 60003
@@ -121,6 +174,14 @@ describeWithSeed(
           `select count(*) as count from ${tables.DROPS_TABLE}`
         )
       ).toEqual({ count: 20003 });
+      for (const table of [
+        tables.DROPS_PARTS_TABLE,
+        tables.IDENTITY_NOTIFICATIONS_TABLE
+      ]) {
+        expect(
+          await sqlExecutor.oneOrNull(`select count(*) as count from ${table}`)
+        ).toEqual({ count: 20003 });
+      }
       expect(
         await sqlExecutor.oneOrNull(
           `select drops_count, latest_drop_timestamp from ${tables.WAVE_METRICS_TABLE} where wave_id = 'wave'`

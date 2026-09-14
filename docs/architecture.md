@@ -625,7 +625,7 @@ The public current-season rules and configured future schedule remain
 independent of any collector identity.
 
 Authenticated profiles prepare a chat-history purge through
-`POST /waves/{id}/my-chat-history`, which freezes the wave's latest serial number
+`POST /waves/{id}/my-chat-history`, which freezes the author's latest CHAT serial number
 in a signed token bound to the author and wave without deleting anything. Clients
 retain the token before `DELETE /waves/{id}/my-chat-history?purge_token=...`, reuse
 it across retries, and continue until `has_more` is false. Each transaction locks
