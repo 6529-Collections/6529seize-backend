@@ -216,10 +216,6 @@ export class AppWebSockets {
         connection_id: connectionId,
         wave_id: null
       },
-      {}
-    );
-    await this.wsConnectionRepository.replaceNotificationSubscriptions(
-      connectionId,
       getAuthenticatedNotificationSubscriptions([{ identityId, jwtExpiry }]),
       {}
     );
@@ -269,10 +265,6 @@ export class AppWebSockets {
         identityId,
         jwtExpiry
       },
-      ctx
-    );
-    await this.wsConnectionRepository.replaceNotificationSubscriptions(
-      connectionId,
       getAuthenticatedNotificationSubscriptions([{ identityId, jwtExpiry }]),
       ctx
     );
