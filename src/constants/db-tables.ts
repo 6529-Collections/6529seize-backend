@@ -269,3 +269,12 @@ export const PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE =
   'push_notification_device_installations';
 export const PUSH_NOTIFICATION_DEVICE_LOGOUT_FENCES_TABLE =
   'push_notification_device_logout_fences';
+
+export const MEMBERSHIP_SOURCE_STATES_TABLE = 'membership_source_states';
+export const MEMBERSHIP_SOURCE_JOBS_TABLE = 'membership_source_jobs';
+export const MEMBERSHIP_GROUP_VERSIONS_TABLE = 'membership_group_versions';
+export const MEMBERSHIP_REFRESH_TARGETS_TABLE = 'membership_refresh_targets';
+export const MEMBERSHIP_REFRESH_RUNS_TABLE = 'membership_refresh_runs';
+export const MEMBERSHIP_GENERATION_MEMBERS_TABLE =
+  'membership_generation_members';
+export const MEMBERSHIP_PUBLICATIONS_TABLE = 'membership_publications';

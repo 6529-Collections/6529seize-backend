@@ -22,6 +22,21 @@ The resizer's HTTP API uses AWS_PROXY payload 1.0 without request templates;
 request bodies remain inside the HTTP event envelope and cannot become this
 top-level operator payload.
 
+## Membership refresh foundation (inactive)
+
+Seven additive membership tables separate committed source/job versions, group
+catalogue changes, durable refresh targets/runs, immutable per-profile generation
+rows and atomic publication pointers. Bounded GROUP/FULL fanout produces PROFILE
+work; readers will validate source dependencies and recompute affected groups.
+The [membership refresh design](membership-refresh-design.md) defines transaction,
+TDH→xTDH completion, lease/checkpoint, publication and scoped-readiness contracts.
+This schema release deploys only `dbMigrationsLoop`, using its explicit
+`membership-refresh` scope to create and verify only these tables. It enables no producers,
+worker, queue, schedule or materialized reader and preserves existing API and
+frontend behavior. The July draft tables are not mapped or used as readiness
+evidence. Runtime implementation and cutover remain gated by issue #2075.
+
+
 ## Profile collecting and marketplace operations
 
 The API owns `/collect/*` and `/market/*`. Collecting derives versioned catalogs

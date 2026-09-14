@@ -294,3 +294,11 @@ export {
 
 export { PushInstallationEntity } from './IPushInstallation';
 export { PushDeviceLogoutFenceEntity } from './IPushDeviceLogoutFence';
+
+export { MembershipSourceStateEntity } from './IMembershipSourceState';
+export { MembershipSourceJobEntity } from './IMembershipSourceJob';
+export { MembershipGroupVersionEntity } from './IMembershipGroupVersion';
+export { MembershipRefreshTargetEntity } from './IMembershipRefreshTarget';
+export { MembershipRefreshRunEntity } from './IMembershipRefreshRun';
+export { MembershipGenerationMemberEntity } from './IMembershipGenerationMember';
+export { MembershipPublicationEntity } from './IMembershipPublication';
