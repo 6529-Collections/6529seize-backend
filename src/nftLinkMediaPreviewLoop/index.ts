@@ -1,3 +1,4 @@
+import { withMediaDependencySmoke } from '@/media/media-dependency-smoke';
 import { SQSHandler } from 'aws-lambda';
 import { Logger } from '@/logging';
 import { doInDbContext } from '@/secrets';
@@ -25,4 +26,6 @@ const sqsHandler: SQSHandler = async (event) => {
   );
 };
 
-export const handler = sentryContext.wrapLambdaHandler(sqsHandler);
+export const handler = withMediaDependencySmoke(
+  sentryContext.wrapLambdaHandler(sqsHandler)
+);

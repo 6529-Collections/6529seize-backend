@@ -15,6 +15,7 @@ import {
 import { requireEdit } from './artwork-documentation.access';
 import { fail } from './artwork-documentation.validation';
 import {
+  assetClass,
   publicationAssetAccess,
   validatePublicationAssetLink
 } from './assets/artwork-assets.policy';
@@ -53,11 +54,14 @@ core.setAssetGateway({
 });
 
 export type AssetLinkInput = Omit<AssetLink, 'id' | 'manifest'>;
-function normalizeLink(raw: AssetLinkInput): AssetLinkInput {
+function normalizeLink(
+  raw: AssetLinkInput,
+  access: AssetAccess
+): AssetLinkInput {
   if (!ARTWORK_ASSET_ROLES.includes(raw.role as ArtworkAssetRole))
     fail(422, 'INVALID_ASSET_ROLE');
   if (
-    ['rights_instrument', 'consent_instrument'].includes(raw.role) &&
+    assetClass(raw.role, access) === 'rights_evidence' &&
     raw.intended_visibility !== 'restricted'
   )
     fail(422, 'RESTRICTED_VISIBILITY_REQUIRED');
@@ -111,8 +115,9 @@ export async function writeAssetLink(
 ) {
   await core.mutate(id, mutation, ctx, async (access, transaction) => {
     requireEdit(access, 'files');
-    const input = normalizeLink(raw);
-    validatePublicationAssetLink(toAssetAccess(access), input);
+    const assetAccess = toAssetAccess(access);
+    const input = normalizeLink(raw, assetAccess);
+    validatePublicationAssetLink(assetAccess, input);
     const old = linkId
       ? access.context.asset_links.find((link) => link.id === linkId)
       : null;
@@ -129,9 +134,8 @@ export async function writeAssetLink(
       )
     )
       fail(409, 'ASSET_ROLE_ALREADY_LINKED');
-    if (!old && access.context.asset_links.length >= 100)
+    if (!old && access.context.asset_links.length >= 1000)
       fail(413, 'ASSET_LINK_LIMIT');
-    const assetAccess = toAssetAccess(access);
     await artworkAssetsService.validateReadyAsset(
       id,
       input.asset_id,
@@ -140,7 +144,7 @@ export async function writeAssetLink(
     );
     if (!transaction.connection) fail(500, 'TRANSACTION_REQUIRED');
     const rightsEvidence =
-      ['rights_instrument', 'consent_instrument'].includes(input.role) ||
+      assetClass(input.role, assetAccess) === 'rights_evidence' ||
       access.context.restricted_paths.includes(
         `asset-rights:${input.asset_id}`
       );

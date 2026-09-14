@@ -2,6 +2,7 @@ import * as Operations from '@/api/generated/routes/operations';
 import * as Joi from 'joi';
 import { artworkAssetsService } from '@/artwork-documentation/assets/artwork-assets.service';
 import { ARTWORK_ASSET_ROLES } from '@/artwork-documentation/assets/artwork-assets.types';
+import { ARTWORK_UPLOAD_POLICY } from '@/artwork-documentation/assets/artwork-assets.policy';
 import { artworkDocumentationService as core } from '@/artwork-documentation/artwork-documentation.service';
 import {
   toAssetAccess,
@@ -15,6 +16,9 @@ import {
 } from './artwork-documentation.handlers';
 
 const uuid = Joi.string().guid();
+const maxParts = Math.ceil(
+  ARTWORK_UPLOAD_POLICY.max_asset_bytes / ARTWORK_UPLOAD_POLICY.part_size_bytes
+);
 const visibility = Joi.string().valid('public_record', 'restricted').required();
 const role = Joi.string()
   .valid(...ARTWORK_ASSET_ROLES)
@@ -52,7 +56,7 @@ const assetLink = Joi.object({
   }).required()
 });
 const part = Joi.object({
-  part_number: Joi.number().integer().min(1).max(256).required(),
+  part_number: Joi.number().integer().min(1).max(maxParts).required(),
   checksum_sha256: Joi.string().base64().length(44).required()
 });
 
@@ -62,12 +66,16 @@ export function handleStartDocumentationUpload(
   return execute(req, async (ctx) =>
     artworkAssetsService.startUpload(
       req.params.id,
-      toAssetAccess(await core.authorizeContext(req.params.id, ctx)),
+      toAssetAccess(await core.authorizeMutationContext(req.params.id, ctx)),
       body(
         req,
         Joi.object({
           filename: Joi.string().min(1).max(255).required(),
-          size_bytes: Joi.number().integer().min(1).max(4294967296).required(),
+          size_bytes: Joi.number()
+            .integer()
+            .min(1)
+            .max(ARTWORK_UPLOAD_POLICY.max_asset_bytes)
+            .required(),
           declared_mime: Joi.string().min(1).max(150).required(),
           role,
           intended_visibility: visibility
@@ -80,13 +88,16 @@ export function handleStartDocumentationUpload(
 export function handleGetDocumentationUpload(
   req: Operations.ArtworkDocumentationGetDocumentationUploadRequest
 ): Promise<Operations.ArtworkDocumentationGetDocumentationUploadResponse> {
-  return execute(req, async (ctx) =>
-    artworkAssetsService.getUpload(
+  return execute(req, async (ctx) => {
+    const access = await core.authorizeContext(req.params.id, ctx);
+    const mutationCapabilities = await core.mutationCapabilities(access, ctx);
+    return artworkAssetsService.getUpload(
       req.params.id,
       req.params.uploadId,
-      toAssetAccess(await core.authorizeContext(req.params.id, ctx))
-    )
-  );
+      toAssetAccess(access),
+      toAssetAccess({ ...access, capabilities: mutationCapabilities })
+    );
+  });
 }
 export function handleSignDocumentationParts(
   req: Operations.ArtworkDocumentationSignDocumentationPartsRequest
@@ -96,10 +107,16 @@ export function handleSignDocumentationParts(
     return artworkAssetsService.signParts(
       req.params.id,
       req.params.uploadId,
-      toAssetAccess(await core.authorizeContext(req.params.id, ctx)),
+      toAssetAccess(await core.authorizeMutationContext(req.params.id, ctx)),
       body(
         req,
-        Joi.object({ parts: Joi.array().items(part).min(1).max(3).required() })
+        Joi.object({
+          parts: Joi.array()
+            .items(part)
+            .min(1)
+            .max(ARTWORK_UPLOAD_POLICY.parallel_parts)
+            .required()
+        })
       )
     );
   });
@@ -109,7 +126,7 @@ export function handleCompleteDocumentationUpload(
 ): Promise<Operations.ArtworkDocumentationCompleteDocumentationUploadResponse> {
   return execute(req, async (ctx) => {
     const access = toAssetAccess(
-      await core.authorizeContext(req.params.id, ctx)
+      await core.authorizeMutationContext(req.params.id, ctx)
     );
     const input = body<
       Parameters<typeof artworkAssetsService.completeUpload>[3]
@@ -119,7 +136,7 @@ export function handleCompleteDocumentationUpload(
         parts: Joi.array()
           .items(part.keys({ etag: Joi.string().min(1).max(200).required() }))
           .min(1)
-          .max(256)
+          .max(maxParts)
           .required()
       })
     );
@@ -150,7 +167,7 @@ export function handleCancelDocumentationUpload(
     await artworkAssetsService.cancelUpload(
       req.params.id,
       req.params.uploadId,
-      toAssetAccess(await core.authorizeContext(req.params.id, ctx))
+      toAssetAccess(await core.authorizeMutationContext(req.params.id, ctx))
     );
     return { success: true };
   });
@@ -167,7 +184,9 @@ export function handleDownloadDocumentationAsset(
       body(
         req,
         Joi.object({
-          variant: Joi.string().valid('original', 'preview').required()
+          variant: Joi.string()
+            .valid('original', 'preview', 'media', 'c2pa_report')
+            .required()
         })
       )
     );

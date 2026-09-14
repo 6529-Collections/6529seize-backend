@@ -23,7 +23,7 @@ import {
   fetchNextGenCollections,
   fetchNextgenTokens
 } from '@/nextgen/nextgen.db';
-import { OpenSeaClient } from './opensea-client';
+import { OpenSeaClient, OpenSeaDeadlineError } from './opensea-client';
 import {
   normalizeOpenSeaEvent,
   normalizeOpenSeaOrder,
@@ -41,6 +41,8 @@ const logger = Logger.get('OPENSEA_MARKET_DEPTH');
 const EVENT_SAFETY_LAG_SECONDS = 120;
 const EVENT_OVERLAP_SECONDS = 300;
 const INITIAL_EVENT_LOOKBACK_SECONDS = 24 * 60 * 60;
+const EVENT_WORK_BUDGET_MS = 5 * 60_000;
+const EVENT_PAGE_LIMIT = 300;
 
 export interface OpenSeaCollectionTarget {
   readonly contract: string;
@@ -70,6 +72,16 @@ export interface OpenSeaPollOptions {
   readonly db?: MarketDepthPersistence;
   readonly now?: () => Date;
   readonly deadlineMs?: number;
+  readonly eventPageLimit?: number;
+}
+
+export interface OpenSeaEventPollResult {
+  readonly eventCount: number;
+  readonly pageCount: number;
+  readonly completed: boolean;
+  readonly deferred: boolean;
+  readonly windowBefore: number;
+  readonly completedWatermark: string | null;
 }
 
 const STATIC_COLLECTIONS: readonly OpenSeaCollectionTarget[] = [
@@ -171,14 +183,40 @@ function watermarkSeconds(value: string | null): number | null {
   return Number.isSafeInteger(seconds) && seconds >= 0 ? seconds : null;
 }
 
+async function getEventPageBeforeDeadline(
+  client: OpenSeaClient,
+  collectionSlug: string,
+  after: number,
+  before: number,
+  cursor: string | null,
+  deadlineMs: number
+) {
+  try {
+    return await client.getEventsPage(
+      collectionSlug,
+      after,
+      before,
+      cursor,
+      deadlineMs
+    );
+  } catch (error) {
+    if (error instanceof OpenSeaDeadlineError) return null;
+    throw error;
+  }
+}
+
 export async function pollOpenSeaEvents(
   target: OpenSeaCollectionTarget,
   options: OpenSeaPollOptions = {}
-): Promise<number> {
+): Promise<OpenSeaEventPollResult> {
   const client = options.client ?? new OpenSeaClient();
   const db = options.db ?? marketDepthDb;
   const now = options.now ?? (() => new Date());
-  const deadlineMs = options.deadlineMs ?? now().getTime() + 10 * 60_000;
+  const deadlineMs = Math.min(
+    options.deadlineMs ?? Number.POSITIVE_INFINITY,
+    now().getTime() + EVENT_WORK_BUDGET_MS
+  );
+  const pageLimit = options.eventPageLimit ?? EVENT_PAGE_LIMIT;
   const stored = await db.getCursor(
     OPENSEA_SOURCE,
     target.contract,
@@ -201,16 +239,37 @@ export async function pollOpenSeaEvents(
   let cursor = stored?.provider_cursor ?? null;
   let expectedWatermark = stored?.provider_watermark ?? null;
   const seenCursors = new Set<string>();
+  if (cursor) seenCursors.add(cursor);
   let eventCount = 0;
+  let pageCount = 0;
+
+  function result(completed: boolean): OpenSeaEventPollResult {
+    const summary = {
+      eventCount,
+      pageCount,
+      completed,
+      deferred: !completed,
+      windowBefore: closedBefore,
+      completedWatermark: expectedWatermark
+    };
+    logger.info(
+      `[COLLECTION ${target.collection_slug}] OpenSea event catch-up ${JSON.stringify(summary)}`
+    );
+    return summary;
+  }
 
   do {
-    const page = await client.getEventsPage(
+    if (pageCount >= pageLimit || now().getTime() >= deadlineMs)
+      return result(false);
+    const page = await getEventPageBeforeDeadline(
+      client,
       target.collection_slug,
       after,
       closedBefore,
       cursor,
       deadlineMs
     );
+    if (page === null) return result(false);
     const observedAt = now();
     const events = page.entries.map((entry) =>
       normalizeOpenSeaEvent(
@@ -240,11 +299,12 @@ export async function pollOpenSeaEvents(
       events
     });
     eventCount += events.length;
+    pageCount++;
     cursor = nextCursor;
     expectedWatermark = nextWatermark;
   } while (cursor);
 
-  return eventCount;
+  return result(true);
 }
 
 function excludeConflictingOrder(order: NormalizedMarketDepthOrder): void {
@@ -259,7 +319,7 @@ function excludeConflictingOrder(order: NormalizedMarketDepthOrder): void {
   );
 }
 
-export async function pollOpenSeaCollection(
+async function captureOpenSeaCollection(
   target: OpenSeaCollectionTarget,
   options: OpenSeaPollOptions = {}
 ): Promise<MarketDepthSnapshotMetadata> {
@@ -363,34 +423,83 @@ export async function pollOpenSeaCollection(
     orders,
     reconciliations
   });
-  const postPublicationFailures: unknown[] = [];
-  try {
-    await pollOpenSeaEvents(target, { client, db, now, deadlineMs });
-  } catch (error) {
-    postPublicationFailures.push(error);
-    logger.error(
-      `[COLLECTION ${target.collection_slug}] OpenSea event catch-up failed after order-book publication`,
-      error
-    );
+  return snapshot;
+}
+
+async function completeCollectionLifecycles(
+  targets: readonly OpenSeaCollectionTarget[],
+  options: OpenSeaPollOptions & { client: OpenSeaClient; deadlineMs: number }
+): Promise<void> {
+  const { client, deadlineMs } = options;
+  const db = options.db ?? marketDepthDb;
+  const now = options.now ?? (() => new Date());
+  const failures: unknown[] = [];
+  // Every book and every reconciliation pass precedes any historical backfill.
+  for (const target of targets) {
+    try {
+      await reconcileOpenSeaOrders({ target, client, db, deadlineMs, now });
+    } catch (error) {
+      failures.push(error);
+      logger.error(
+        `[COLLECTION ${target.collection_slug}] OpenSea order reconciliation failed after order-book publication`,
+        error
+      );
+    }
   }
-  try {
-    await reconcileOpenSeaOrders({ target, client, db, deadlineMs, now });
-  } catch (error) {
-    postPublicationFailures.push(error);
-    logger.error(
-      `[COLLECTION ${target.collection_slug}] OpenSea order reconciliation failed after order-book publication`,
-      error
-    );
+  const eventDeadline = Math.min(
+    deadlineMs,
+    now().getTime() + EVENT_WORK_BUDGET_MS
+  );
+  let pagesRemaining = options.eventPageLimit ?? EVENT_PAGE_LIMIT;
+  for (let index = 0; index < targets.length; index++) {
+    const target = targets[index];
+    const targetsRemaining = targets.length - index;
+    const sliceDeadline =
+      now().getTime() +
+      Math.max(0, eventDeadline - now().getTime()) / targetsRemaining;
+    const pageAllowance = Math.ceil(pagesRemaining / targetsRemaining);
+    // A failed page may follow committed pages. Charge the whole allowance on
+    // failure so aggregate work stays bounded even without a returned count.
+    pagesRemaining -= pageAllowance;
+    try {
+      const progress = await pollOpenSeaEvents(target, {
+        ...options,
+        client,
+        db,
+        now,
+        deadlineMs: sliceDeadline,
+        eventPageLimit: pageAllowance
+      });
+      pagesRemaining += pageAllowance - progress.pageCount;
+    } catch (error) {
+      failures.push(error);
+      logger.error(
+        `[COLLECTION ${target.collection_slug}] OpenSea event catch-up failed after order-book publication`,
+        error
+      );
+    }
   }
-  if (postPublicationFailures.length > 0) {
+  if (failures.length > 0) {
     throw new Error(
-      `OpenSea order book published but ${postPublicationFailures.length} lifecycle task(s) failed: ${postPublicationFailures
+      `OpenSea order book published but ${failures.length} lifecycle task(s) failed: ${failures
         .map((error) =>
           error instanceof Error ? error.message : String(error)
         )
         .join('; ')}`
     );
   }
+}
+
+export async function pollOpenSeaCollection(
+  target: OpenSeaCollectionTarget,
+  options: OpenSeaPollOptions = {}
+): Promise<MarketDepthSnapshotMetadata> {
+  const client = options.client ?? new OpenSeaClient();
+  const now = options.now ?? (() => new Date());
+  const deadlineMs = options.deadlineMs ?? now().getTime() + 10 * 60_000;
+  const shared = { ...options, client, now, deadlineMs };
+  const snapshot = await captureOpenSeaCollection(target, shared);
+  await completeCollectionLifecycles([target], shared);
   return snapshot;
 }
 
@@ -412,15 +521,30 @@ export async function pollOpenSeaMarketDepthForContract(
   if (targets.length === 0)
     throw new Error(`No OpenSea market-depth target for ${contract}`);
   const snapshots: MarketDepthSnapshotMetadata[] = [];
+  const capturedTargets: OpenSeaCollectionTarget[] = [];
   const failures: unknown[] = [];
   for (const target of targets) {
     try {
       snapshots.push(
-        await pollOpenSeaCollection(target, { ...options, client, deadlineMs })
+        await captureOpenSeaCollection(target, {
+          ...options,
+          client,
+          deadlineMs
+        })
       );
+      capturedTargets.push(target);
     } catch (error) {
       failures.push(error);
     }
+  }
+  try {
+    await completeCollectionLifecycles(capturedTargets, {
+      ...options,
+      client,
+      deadlineMs
+    });
+  } catch (error) {
+    failures.push(error);
   }
   if (failures.length > 0) {
     throw new Error(

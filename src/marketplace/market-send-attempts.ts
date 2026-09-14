@@ -8,7 +8,8 @@ import {
   operationSendAttempt,
   reviewedTransactionDigest
 } from './market-operation-state';
-import type { MarketPrepared } from './market-preparation';
+import type { MarketOperationPrepared as MarketPrepared } from '@/marketplace/market-operation.types';
+import { isMarketBatchPrepared } from '@/marketplace/market-operation.types';
 
 export interface BeginMarketSendAttempt {
   expected_revision: string;
@@ -284,8 +285,9 @@ export async function reconcileApprovalAttempt(
     )
       return;
     const prepared = preparedFrom(row);
-    const order = prepared?.signedOrder?.order ?? prepared?.reviewOrder;
-    if (!prepared || !order) return;
+    if (!prepared || isMarketBatchPrepared(prepared)) return;
+    const order = prepared.signedOrder?.order ?? prepared.reviewOrder;
+    if (!order) return;
     const approvalTransactions = await chain.approvals(
       prepared.intent,
       order.components.conduitKey

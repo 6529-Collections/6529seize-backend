@@ -1,4 +1,5 @@
 import { TypedDataEncoder } from 'ethers';
+import { isMarketCriteriaOffer } from '@/marketplace/seaport-criteria';
 import { z } from 'zod';
 import {
   MarketTradeIntent,
@@ -110,9 +111,10 @@ export function assertMarketIntent(
 
 function isNft(item: SeaportOfferItem, i: MarketTradeIntent): boolean {
   return (
-    item.itemType === (i.asset.standard === 'ERC721' ? 2 : 3) &&
-    sameMarketAddress(item.token, i.asset.contract) &&
-    item.identifierOrCriteria === i.asset.tokenId
+    isMarketCriteriaOffer(item, i) ||
+    (item.itemType === (i.asset.standard === 'ERC721' ? 2 : 3) &&
+      sameMarketAddress(item.token, i.asset.contract) &&
+      item.identifierOrCriteria === i.asset.tokenId)
   );
 }
 function assertCurrency(item: SeaportOfferItem, i: MarketTradeIntent): void {

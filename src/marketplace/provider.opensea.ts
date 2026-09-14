@@ -16,6 +16,7 @@ import {
 import {
   MARKET_ASSET_STANDARDS,
   MARKET_OPENSEA_CONDUIT_KEY,
+  MARKET_OPENSEA_ZONE,
   MARKET_SEAPORT,
   assertMarketProtocol
 } from '@/marketplace/seaport.registry';
@@ -259,10 +260,74 @@ export function describeMarketOrder(
   };
 }
 
+/** Recheck indexed discovery with the same signed-order boundary as live orders. */
+export function describeIndexedMarketOrder(
+  value: unknown,
+  asset: MarketAsset,
+  side: 'LISTING' | 'OFFER',
+  quantity: string
+): MarketDiscoveredOrder {
+  const provider = parseProviderOrder(value);
+  const nft =
+    side === 'LISTING'
+      ? provider.components.offer[0]
+      : provider.components.consideration[0];
+  if (nft.itemType !== (asset.standard === 'ERC721' ? 2 : 3))
+    throw new MarketValidationError(
+      'ORDER_MISMATCH',
+      'Indexed price references require exact-token signed terms.'
+    );
+  return describeMarketOrder(provider, asset, side, quantity);
+}
+
+/** Recheck indexed discovery with the same signed-order boundary as live orders. */
+export function describeIndexedMarketListing(
+  value: unknown,
+  asset: MarketAsset,
+  remainingQuantity: string
+): MarketDiscoveredOrder {
+  const provider = parseProviderOrder(value);
+  const available = describeMarketOrder(
+    provider,
+    asset,
+    'LISTING',
+    remainingQuantity
+  );
+  const quoted =
+    available.unitTotalWei === undefined
+      ? available
+      : describeMarketOrder(provider, asset, 'LISTING', '1');
+  return { ...quoted, availableQuantity: available.quantity };
+}
+
+/** Target plans must only suggest shapes supported by the atomic review path. */
+export function describeIndexedMarketBatchListing(
+  value: unknown,
+  asset: MarketAsset,
+  remainingQuantity: string
+): MarketDiscoveredOrder {
+  const provider = parseProviderOrder(value);
+  if (
+    asset.standard === 'ERC1155' &&
+    sameMarketAddress(provider.components.zone, MARKET_OPENSEA_ZONE) &&
+    (provider.components.offer[0].startAmount !== '1' ||
+      remainingQuantity !== '1')
+  )
+    throw new MarketValidationError(
+      'UNSUPPORTED_ACTION',
+      'Restricted multi-edition orders are not supported in one batch yet.'
+    );
+  return describeIndexedMarketListing(value, asset, remainingQuantity);
+}
+
 export class OpenSeaMarketplaceProvider {
   private readonly fetcher: typeof fetch;
   constructor(
-    private readonly options: { apiKey: string; fetch?: typeof fetch }
+    private readonly options: {
+      apiKey: string;
+      fetch?: typeof fetch;
+      signal?: AbortSignal;
+    }
   ) {
     this.fetcher = options.fetch ?? fetch;
   }
@@ -277,6 +342,9 @@ export class OpenSeaMarketplaceProvider {
         'The marketplace provider is not configured.'
       );
     const controller = new AbortController();
+    const abort = () => controller.abort();
+    this.options.signal?.addEventListener('abort', abort, { once: true });
+    if (this.options.signal?.aborted) controller.abort();
     const timeout = setTimeout(
       () => controller.abort(),
       OPENSEA_REQUEST_TIMEOUT_MS
@@ -304,6 +372,7 @@ export class OpenSeaMarketplaceProvider {
       );
     } finally {
       clearTimeout(timeout);
+      this.options.signal?.removeEventListener('abort', abort);
       controller.abort();
     }
   }
@@ -368,12 +437,17 @@ export class OpenSeaMarketplaceProvider {
   async getOrder(identity: MarketOrderIdentity): Promise<MarketProviderOrder> {
     assertMarketProtocol(identity.protocolAddress);
     parseMarketValue(marketHashSchema, identity.orderHash);
-    const response = record(
-      await this.request(
-        `/api/v2/orders/chain/ethereum/protocol/${MARKET_SEAPORT}/${identity.orderHash}`
-      )
+    const response = await this.request(
+      `/api/v2/orders/chain/ethereum/protocol/${MARKET_SEAPORT}/${identity.orderHash}`,
+      undefined,
+      true
     );
-    const order = parseProviderOrder(response.order);
+    if (response === null)
+      throw new MarketValidationError(
+        'ORDER_MISMATCH',
+        'This order is no longer available.'
+      );
+    const order = parseProviderOrder(record(response).order);
     if (
       order.identity.orderHash.toLowerCase() !==
       identity.orderHash.toLowerCase()
@@ -638,6 +712,7 @@ export class OpenSeaMarketplaceProvider {
       );
     assertMarketProtocol(transaction.to);
     const input = record(transaction.input_data);
+    let criteriaResolvers: unknown = [];
     let signature: string,
       extraData = '0x',
       conduit = MARKET_OPENSEA_CONDUIT_KEY;
@@ -670,7 +745,7 @@ export class OpenSeaMarketplaceProvider {
         );
       }
       if (fn === 'fulfillAdvancedOrder') {
-        parseMarketValue(z.array(z.never()).length(0), input.criteriaResolvers);
+        criteriaResolvers = input.criteriaResolvers;
         extraData = parseMarketValue(marketBytesSchema, order.extraData);
       }
     } else if (
@@ -699,7 +774,8 @@ export class OpenSeaMarketplaceProvider {
       validated,
       signature,
       extraData,
-      conduit
+      conduit,
+      criteriaResolvers
     );
     if (parseMarketValue(marketUintSchema, transaction.value) !== tx.value)
       throw new MarketValidationError(

@@ -187,7 +187,8 @@ describe('market service authorization and first payload exposure', () => {
       'profile',
       20,
       undefined,
-      wallet
+      wallet,
+      false
     );
     expect(page.operations).toHaveLength(20);
     expect(
@@ -211,13 +212,25 @@ describe('market service authorization and first payload exposure', () => {
       'profile',
       5,
       before,
-      wallet
+      wallet,
+      false
     );
     (marketOperationsDb.page as jest.Mock).mockClear();
     await expect(
       listMarketOperations(auth, { limit: 5, cursor: 'not-a-cursor' })
     ).rejects.toThrow(/Invalid order history cursor/);
     expect(marketOperationsDb.page).not.toHaveBeenCalled();
+  });
+  it('includes batch history only when the client explicitly opts in', async () => {
+    (marketOperationsDb.page as jest.Mock).mockResolvedValue([]);
+    await listMarketOperations(auth, { limit: 20, include_batches: true });
+    expect(marketOperationsDb.page).toHaveBeenCalledWith(
+      'profile',
+      20,
+      undefined,
+      wallet,
+      true
+    );
   });
   function submittedFixture() {
     const tx = {

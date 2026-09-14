@@ -1,4 +1,5 @@
 import { AuthenticationContext } from '@/auth-context';
+import { marketHistoryPage } from '@/api/marketplace/marketplace-history';
 import { z } from 'zod';
 import type { ConnectionWrapper } from '@/sql-executor';
 import { collectingDb } from '@/collecting/collecting.db';
@@ -32,6 +33,18 @@ import {
 } from '@/marketplace/market-send-attempts';
 import { reconcileMarketOperation } from '@/marketplace/market-reconciliation';
 import {
+  MarketOperationPrepareRequest,
+  MarketOperationPrepared,
+  isMarketBatchPrepared
+} from '@/marketplace/market-operation.types';
+import {
+  prepareBatchOperation,
+  continueBatchOperation,
+  beginBatchTransactionAttempt
+} from '@/api/marketplace/marketplace-batch.service';
+import { ApiMarketOperation } from '@/api/generated/models/ApiMarketOperation';
+import { ApiMarketOperationResult } from '@/api/generated/models/ApiMarketOperationResult';
+import {
   operationDto,
   operationPrepared,
   operationRequest
@@ -43,7 +56,7 @@ export function marketplaceProvider() {
   });
 }
 
-function reviewedTransactionPatch(prepared: MarketPrepared) {
+function reviewedTransactionPatch(prepared: MarketOperationPrepared) {
   return prepared.transaction && !prepared.approvalTransactions.length
     ? {
         reviewedTransaction: {
@@ -96,7 +109,7 @@ async function ruleContinuationPatch(
 }
 export function assertMarketActor(
   auth: AuthenticationContext,
-  request?: MarketPrepareRequest
+  request?: MarketOperationPrepareRequest
 ) {
   if (
     !auth.authenticatedWallet ||
@@ -165,6 +178,7 @@ async function knownCancellationOrder(
         request.order.order_hash
       );
   const prepared = previous ?? (row ? operationPrepared(row) : undefined);
+  if (prepared && isMarketBatchPrepared(prepared)) return undefined;
   const order = prepared?.signedOrder?.order ?? prepared?.reviewOrder;
   return order
     ? {
@@ -177,21 +191,41 @@ async function knownCancellationOrder(
     : undefined;
 }
 
-export async function prepareMarketOperation(
+interface MarketRulePrepareContext {
+  ruleId: string;
+  beforeExpose: (
+    operationId: string,
+    prepared: MarketPrepared,
+    connection: ConnectionWrapper<unknown>
+  ) => Promise<void>;
+}
+export function prepareMarketOperation(
   auth: AuthenticationContext,
   request: MarketPrepareRequest,
   key: string,
-  context?: {
-    ruleId: string;
-    beforeExpose: (
-      operationId: string,
-      prepared: MarketPrepared,
-      connection: ConnectionWrapper<unknown>
-    ) => Promise<void>;
-  }
+  context?: MarketRulePrepareContext
+): Promise<ApiMarketOperation>;
+export function prepareMarketOperation(
+  auth: AuthenticationContext,
+  request: MarketOperationPrepareRequest,
+  key: string,
+  context?: MarketRulePrepareContext
+): Promise<ApiMarketOperationResult>;
+export async function prepareMarketOperation(
+  auth: AuthenticationContext,
+  request: MarketOperationPrepareRequest,
+  key: string,
+  context?: MarketRulePrepareContext
 ) {
   assertMarketActor(auth, request);
   assertMarketEnabled(request.kind === 'CANCEL');
+  if (request.kind === 'BUY_BATCH') {
+    if (context)
+      throw new ForbiddenException(
+        'Batch purchases require a direct reviewed operation.'
+      );
+    return prepareBatchOperation(request, key);
+  }
   const recipientInProfile = await recipientMembership(request);
   const result = await marketOperationsDb.create({
     profileId: request.profile_id,
@@ -264,6 +298,7 @@ export async function continueMarketOperation(
     request = operationRequest(row);
   assertMarketActor(auth, request);
   assertMarketEnabled(request.kind === 'CANCEL');
+  if (request.kind === 'BUY_BATCH') return continueBatchOperation(row, request);
   if (!['REVIEW', 'APPROVAL', 'AWAITING_SIGNATURE'].includes(row.state))
     throw new CustomApiCompliantException(
       409,
@@ -271,7 +306,7 @@ export async function continueMarketOperation(
       'OPERATION_CHANGED'
     );
   const previous = operationPrepared(row);
-  if (!previous)
+  if (!previous || isMarketBatchPrepared(previous))
     throw new CustomApiCompliantException(
       409,
       'The trade is not ready.',
@@ -373,7 +408,7 @@ export async function publishMarketOperation(
       'OPERATION_CHANGED'
     );
   const prepared = operationPrepared(row);
-  if (!prepared?.signedOrder)
+  if (!prepared || isMarketBatchPrepared(prepared) || !prepared.signedOrder)
     throw new CustomApiCompliantException(
       409,
       'No order is ready for signing.',
@@ -409,6 +444,8 @@ export async function beginMarketTransactionAttempt(
     request = operationRequest(row);
   assertMarketActor(auth, request);
   assertMarketEnabled(request.kind === 'CANCEL');
+  if (request.kind === 'BUY_BATCH')
+    return beginBatchTransactionAttempt(row, request, input);
   const recipientInProfile = await recipientMembership(request);
   if (!recipientInProfile && !request.acknowledge_external_recipient)
     throw new CustomApiCompliantException(
@@ -417,6 +454,10 @@ export async function beginMarketTransactionAttempt(
       'RECIPIENT_SCOPE_CHANGED'
     );
   const prepared = operationPrepared(row);
+  if (prepared && isMarketBatchPrepared(prepared))
+    throw new ForbiddenException(
+      'The prepared operation kind does not match this trade.'
+    );
   const guard = prepared
     ? await ruleContinuationPatch(row, request, prepared)
     : {};
@@ -472,7 +513,7 @@ export async function readMarketOperation(
 }
 export async function listMarketOperations(
   auth: AuthenticationContext,
-  options?: { limit: number; cursor?: string }
+  options?: { limit: number; cursor?: string; include_batches?: boolean }
 ) {
   const actor = assertMarketActor(auth);
   const limit = options?.limit ?? 20;
@@ -498,14 +539,18 @@ export async function listMarketOperations(
     actor.profileId,
     limit,
     before,
-    actor.wallet
+    actor.wallet,
+    options?.include_batches ?? false
   );
-  const shown = rows.slice(0, limit),
-    last = shown.at(-1);
+  const candidates = rows.slice(0, limit).map(operationDto);
+  const shown = options?.include_batches
+    ? marketHistoryPage(candidates)
+    : candidates;
+  const last = rows[shown.length - 1];
   return {
-    operations: shown.map(operationDto),
+    operations: shown,
     next:
-      rows.length > limit && last
+      rows.length > shown.length && last
         ? Buffer.from(
             JSON.stringify({ created_at: Number(last.created_at), id: last.id })
           ).toString('base64url')

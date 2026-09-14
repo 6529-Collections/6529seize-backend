@@ -1,4 +1,3 @@
-import { discord, Discord, DiscordChannel } from '../discord';
 import { AbusivenessDetectionResult } from '../entities/IAbusivenessDetectionResult';
 import { AiPrompter } from './ai-prompter';
 import { bedrockAiPrompter } from './bedrock-ai.prompter';
@@ -55,10 +54,7 @@ const STATUS_MAPPINGS: Record<string, 'ALLOWED' | 'DISALLOWED'> = {
 };
 
 export class AiBasedAbusivenessDetector {
-  constructor(
-    private readonly aiPrompter: AiPrompter,
-    private readonly discord: Discord
-  ) {}
+  constructor(private readonly aiPrompter: AiPrompter) {}
 
   public async checkRepPhraseText(
     text: string
@@ -119,17 +115,6 @@ export class AiBasedAbusivenessDetector {
 ${text}
     `.trim();
     const responseMessage = await this.aiPrompter.promptAndGetReply(prompt);
-    if (process.env.NODE_ENV !== 'local') {
-      await this.discord.sendMessage(
-        DiscordChannel.OPENAI_BIO_CHECK_RESPONSES,
-        `\n\nRep check:\n  Environment: \`${
-          process.env.NODE_ENV
-        }\`\n  Input text: \`${text}\`\n  GPT response:\n\`\`\`json\n${responseMessage.substring(
-          0,
-          1069
-        )}\n\`\`\``
-      );
-    }
     return await this.formatChatResponse(text, responseMessage);
   }
 
@@ -218,17 +203,6 @@ Input
 {"username": "${handle}", "usertype": "${profile_type}", "about_text": "${text}"}
     `.trim();
     const responseMessage = await this.aiPrompter.promptAndGetReply(prompt);
-    if (process.env.NODE_ENV !== 'local') {
-      await this.discord.sendMessage(
-        DiscordChannel.OPENAI_BIO_CHECK_RESPONSES,
-        `\n\nAbout check:\n  Environment: \`${
-          process.env.NODE_ENV
-        }\`\n  Input username: \`${handle}\`\n  Type: ${profile_type}\n  About text:\n\`\`\`${text}\`\`\`\n  GPT response:\n\`\`\`json\n${responseMessage.substring(
-          0,
-          1069
-        )}\n\`\`\``
-      );
-    }
     return await this.formatChatResponse(text, responseMessage);
   }
 
@@ -317,17 +291,6 @@ input
 {"username": "${handle}", "filter_name": "${text}"}
     `.trim();
     const responseMessage = await this.aiPrompter.promptAndGetReply(prompt);
-    if (process.env.NODE_ENV !== 'local') {
-      await this.discord.sendMessage(
-        DiscordChannel.OPENAI_BIO_CHECK_RESPONSES,
-        `Group name check:\n  Environment: \`${
-          process.env.NODE_ENV
-        }\`\n  Username: \`${handle}\`\n  Group name: \`${text}\`\n  GPT response:\n\`\`\`json\n${responseMessage.substring(
-          0,
-          1069
-        )}\n\`\`\``
-      );
-    }
     return await this.formatChatResponse(text, responseMessage);
   }
 
@@ -381,6 +344,5 @@ interface GptResponseJson {
 }
 
 export const aiBasedAbusivenessDetector = new AiBasedAbusivenessDetector(
-  bedrockAiPrompter,
-  discord
+  bedrockAiPrompter
 );

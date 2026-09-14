@@ -30,6 +30,12 @@ describe('CommunityMembersDb search', () => {
     await db.countCommunityMembers(query, {});
 
     expect(execute).toHaveBeenCalledTimes(2);
+    expect(userGroupsService.getSqlAndParamsByGroupId).toHaveBeenCalledTimes(2);
+    expect(userGroupsService.getSqlAndParamsByGroupId).toHaveBeenCalledWith(
+      'group-1',
+      {},
+      { memberSearch: ' Alice ' }
+    );
     expect(execute.mock.calls[0][0]).toContain('order by display ASC');
     expect(execute.mock.calls[0][0]).not.toContain('order by cm.display');
     for (const [sql, params] of execute.mock.calls) {
@@ -103,6 +109,11 @@ describe('CommunityMembersDb search', () => {
     expect(execute).toHaveBeenCalledWith(
       expect.stringContaining('select i.* from identities i'),
       expect.objectContaining({ member_search: 'alice' })
+    );
+    expect(userGroupsService.getSqlAndParamsForPreview).toHaveBeenCalledWith(
+      {},
+      {},
+      { memberSearch: 'alice' }
     );
     expect(execute.mock.calls[0][0]).toContain(
       'from user_groups_view cm where (instr(lower(ifnull(cm.handle, cm.primary_address))'

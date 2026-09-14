@@ -559,17 +559,7 @@ describe('SubscriptionTests', () => {
       expect(redeemedSubscriptionRepo.save).toHaveBeenCalledTimes(2);
       expect(nftFinalSubscriptionRepo.save).toHaveBeenCalledTimes(2);
 
-      expect(mockSendDiscordUpdate).toHaveBeenCalledWith(
-        'https://test-discord-webhook',
-        expect.stringContaining(
-          `https://sepolia.etherscan.io/tx/${transaction.transaction}`
-        ),
-        'Subscriptions',
-        'warn'
-      );
-      expect(mockSendDiscordUpdate.mock.calls[0][1]).toContain(
-        '🚨 No subscription found for airdrop address'
-      );
+      expect(mockSendDiscordUpdate).not.toHaveBeenCalled();
       expect(waveNotifications).toContainEqual({
         kind: 'no-subscription-found',
         airdropAddress: transaction.to_address,
@@ -629,12 +619,7 @@ describe('SubscriptionTests', () => {
       await processAirdrop(transaction, entityManager, waveNotifications);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(2);
-      expect(mockSendDiscordUpdate).toHaveBeenCalledWith(
-        'https://test-discord-webhook',
-        expect.stringContaining('🚨 Insufficient balance'),
-        'Subscriptions',
-        'error'
-      );
+      expect(mockSendDiscordUpdate).not.toHaveBeenCalled();
       expect(waveNotifications).toContainEqual({
         kind: 'insufficient-balance',
         consolidationKey,
@@ -682,12 +667,7 @@ describe('SubscriptionTests', () => {
       await processAirdrop(transaction, entityManager, waveNotifications);
 
       expect(mockFetchBalance).toHaveBeenCalledTimes(1);
-      expect(mockSendDiscordUpdate).toHaveBeenCalledWith(
-        'https://test-discord-webhook',
-        expect.stringContaining('🚨 No balance found'),
-        'Subscriptions',
-        'error'
-      );
+      expect(mockSendDiscordUpdate).not.toHaveBeenCalled();
       expect(waveNotifications).toContainEqual({
         kind: 'no-balance-found',
         consolidationKey,
