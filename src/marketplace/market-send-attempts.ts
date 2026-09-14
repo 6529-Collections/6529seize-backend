@@ -290,7 +290,8 @@ export async function reconcileApprovalAttempt(
     if (!order) return;
     const approvalTransactions = await chain.approvals(
       prepared.intent,
-      order.components.conduitKey
+      order.components.conduitKey,
+      ...(row.rule_id ? [] : [prepared.approvalTransactions])
     );
     const freshCanonical = await chain.rpc.getBlock(receipt.blockNumber);
     if (freshCanonical?.hash !== canonical.hash) return;
