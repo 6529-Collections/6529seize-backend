@@ -477,6 +477,13 @@ rollback. The resolver worker and API are primary callers; help-bot reply,
 release-note generation and media-sanitizer broadcasts can also enqueue via
 drop mapping. Updating an entity import alone does not require a fleet rollout.
 
+The SuperRare adapter preserves the ERC721 `tokenURI` path. A contract revert
+can fall back to `uri` only after positive ERC1155 interface detection; transport
+failures and unsupported interfaces remain failures. ERC1155 `{id}` placeholders
+in the metadata URI and consumed metadata strings use the standard 64-digit
+lowercase hexadecimal token ID. Existing URI normalization and bounded HTTP
+handling apply; this does not establish token existence or media availability.
+
 After persistence, a worker-specific notifier reads active WebSocket recipients
 once and sends the existing `MEDIA_LINK_UPDATED` payload with concurrency 10,
 five-second request limits, and a 15-second broadcast deadline. Notification
