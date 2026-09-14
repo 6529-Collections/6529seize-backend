@@ -704,72 +704,90 @@ export async function searchNfts(
   search: string,
   pageSize: number
 ): Promise<NFTSearchResult[]> {
-  let nameQuery = '';
-  let idQuery = '';
-
-  if (search) {
-    const id = numbers.parseIntOrNull(search);
-    if (id !== null) {
-      idQuery = search;
-    }
-
-    if (search.length >= 3) {
-      nameQuery = search;
-    }
+  const query = typeof search === 'string' ? search.trim() : '';
+  const id = numbers.parseIntOrNull(query);
+  const normalize = (value: string) =>
+    value.replace(new RegExp('[^\\p{L}\\p{N}%_\\\\]', 'gu'), '');
+  const normalizedQuery = normalize(query);
+  if (
+    id === null &&
+    (normalizedQuery.length < 3 ||
+      !new RegExp('[\\p{L}\\p{N}]', 'u').test(normalizedQuery))
+  ) {
+    return [];
   }
 
-  let nextgenFilters = '';
-  let nftFilters = '';
-  const params: any = {};
-  if (idQuery) {
-    nextgenFilters = constructFiltersOR(nextgenFilters, `normalised_id = :id`);
-    nextgenFilters = constructFiltersOR(nextgenFilters, `id = :id`);
-    nftFilters = constructFiltersOR(nftFilters, `id = :id`);
-    params.id = idQuery;
-  }
-  if (nameQuery) {
-    nextgenFilters = constructFiltersOR(nextgenFilters, `name like :name`);
-    nftFilters = constructFiltersOR(nftFilters, `name like :name`);
-    params.name = `%${nameQuery}%`;
+  // An explicit escape character keeps %, _ and backslashes literal in LIKE.
+  const escapeLike = (value: string) => value.replace(/[!%_]/g, '!$&');
+  const terms = Array.from(
+    new Set(query.split(/\s+/).map(normalize).filter(Boolean))
+  ).sort((left, right) => right.length - left.length);
+  const params: Record<string, unknown> = {
+    id: id === null ? null : query,
+    exactName: query,
+    normalizedName: normalizedQuery,
+    phrase: `%${escapeLike(normalizedQuery)}%`,
+    punctuation: '[^[:alnum:]%_\\\\]',
+    pageSize
+  };
+  const nftIdMatch = id === null ? '0' : 'id = :id';
+  const nextgenIdMatch =
+    id === null ? '0' : '(id = :id OR normalised_id = :id)';
+  let nameFilter: string;
+  let candidateFilter: string;
+  let normalizedName: string;
+
+  if (id !== null) {
+    // Numeric searches retain their existing ID/name lookup without regex work.
+    params.literalName = `%${escapeLike(query)}%`;
+    nameFilter = query.length >= 3 ? "name LIKE :literalName ESCAPE '!'" : '0';
+    candidateFilter = nameFilter;
+    normalizedName = 'name';
+  } else {
+    nameFilter = terms
+      .map((term, index) => {
+        params[`term${index}`] = `%${escapeLike(term)}%`;
+        return `normalized_name LIKE :term${index} ESCAPE '!'`;
+      })
+      .join(' AND ');
+    // A cheap subsequence filter narrows the scan before normalizing names.
+    // Every normalized match also matches this punctuation-tolerant superset.
+    params.candidateName = `%${Array.from(terms[0]).map(escapeLike).join('%')}%`;
+    candidateFilter = "name LIKE :candidateName ESCAPE '!'";
+    normalizedName = "REGEXP_REPLACE(name, :punctuation, '')";
   }
 
-  const nextgenFields = `
-    id,
-      name,
-      LOWER('${NEXTGEN_CORE[getNextGenChainId()]}') AS contract,
-      icon_url,
-      thumbnail_url,
-      image_url`;
-  const nftFields = `
-      id,
-      name,
-      LOWER(contract),
-      icon AS icon_url,  
-      thumbnail AS thumbnail_url,
-      image AS image_url`;
-
+  const nftFields = `id, name, LOWER(contract) AS contract,
+    icon AS icon_url, thumbnail AS thumbnail_url, image AS image_url,
+    ${nftIdMatch} AS id_match, ${normalizedName} AS normalized_name`;
   const sql = `
-    SELECT
-      ${nextgenFields}
-    FROM
-      ${NEXTGEN_TOKENS_TABLE}
-      ${nextgenFilters ? ` WHERE ${nextgenFilters}` : ''}
-    UNION
-    SELECT
-      ${nftFields}
-    FROM
-      ${NFTS_TABLE}
-      ${nftFilters ? ` WHERE ${nftFilters}` : ''}
-    UNION
-    SELECT
-      ${nftFields}
-    FROM
-      ${NFTS_MEME_LAB_TABLE}
-      ${nftFilters ? ` WHERE ${nftFilters}` : ''}
-    ORDER BY contract asc, id asc
-    LIMIT ${pageSize};
+    SELECT id, name, contract, icon_url, thumbnail_url, image_url
+    FROM (
+      SELECT id, name, LOWER('${NEXTGEN_CORE[getNextGenChainId()]}') AS contract,
+        icon_url, thumbnail_url, image_url,
+        ${nextgenIdMatch} AS id_match, ${normalizedName} AS normalized_name
+      FROM ${NEXTGEN_TOKENS_TABLE}
+      WHERE ${nextgenIdMatch} OR ${candidateFilter}
+      UNION
+      SELECT ${nftFields}
+      FROM ${NFTS_TABLE}
+      WHERE ${nftIdMatch} OR ${candidateFilter}
+      UNION
+      SELECT ${nftFields}
+      FROM ${NFTS_MEME_LAB_TABLE}
+      WHERE ${nftIdMatch} OR ${candidateFilter}
+    ) AS candidates
+    WHERE id_match OR (${nameFilter})
+    ORDER BY CASE
+      WHEN id_match OR name = :exactName THEN 0
+      WHEN normalized_name = :normalizedName THEN 1
+      WHEN normalized_name LIKE :phrase ESCAPE '!' THEN 2
+      ELSE 3
+    END, ${id === null ? 'CHAR_LENGTH(normalized_name) ASC,' : ''}
+    contract ASC, id ASC
+    LIMIT :pageSize;
   `;
-  return await sqlExecutor.execute(sql, params);
+  return sqlExecutor.execute<NFTSearchResult>(sql, params);
 }
 
 export async function resolveEns(walletsStr: string) {
