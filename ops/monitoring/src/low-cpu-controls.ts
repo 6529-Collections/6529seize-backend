@@ -68,9 +68,10 @@ function metricMatches(
   const entry = record(metrics[0]);
   const stat = record(entry.metricStat);
   const metric = record(stat.metric);
-  const dimensions = Object.entries(record(metric.dimensions)).sort(
-    ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)
-  );
+  const dimensions = Object.entries(record(metric.dimensions)).sort(([a], [b]) => {
+    if (a === b) return 0;
+    return a < b ? -1 : 1;
+  });
   return (
     onlyKeys(entry, ['id', 'metricStat', 'returnData']) &&
     (entry.returnData === undefined || entry.returnData === true) &&
@@ -180,7 +181,7 @@ function stateEvidence(
       timestamp === undefined ||
       timestamp < start ||
       timestamp > query ||
-      (points.length > 0 && timestamp >= points[points.length - 1]!.timestamp)
+      (points.length > 0 && timestamp >= points.at(-1)!.timestamp)
     )
       return undefined;
     points.push({ value: point.value, timestamp });
