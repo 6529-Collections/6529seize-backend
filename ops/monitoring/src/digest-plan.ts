@@ -45,8 +45,7 @@ export function parseDigestPlan(value: unknown, groupKey: string): DigestPlan {
     destinationKey?: unknown;
   } | null;
   if (
-    !v ||
-    v.version !== 1 ||
+    v?.version !== 1 ||
     v.groupKey !== groupKey ||
     typeof v.count !== 'number' ||
     !Number.isSafeInteger(v.count) ||
