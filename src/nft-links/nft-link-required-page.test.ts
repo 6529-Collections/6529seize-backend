@@ -85,12 +85,9 @@ describe('required page error provenance through real HTTP/resolver paths', () =
       response(404, page + '/moved')
     ]) {
       jest.mocked(fetch).mockResolvedValueOnce(result);
-      try {
-        await new NftLinkResolver().resolve(page, {});
-        throw new Error('expected synthetic failure');
-      } catch (error) {
-        expect(error).not.toBeInstanceOf(RequiredNftPageNotFoundError);
-      }
+      await expect(
+        new NftLinkResolver().resolve(page, {})
+      ).rejects.not.toBeInstanceOf(RequiredNftPageNotFoundError);
     }
   });
 
