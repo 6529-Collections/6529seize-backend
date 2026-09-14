@@ -35,6 +35,7 @@ import {
   ApiMarketTradeOrderSideEnum
 } from '@/api/generated/models/ApiMarketTradeOrder';
 import { MarketSettlement } from '@/marketplace/market-reconciliation';
+import { marketReceiptDto } from './marketplace-receipt.dto';
 
 function json(value: unknown): unknown {
   return typeof value === 'string' ? JSON.parse(value) : value;
@@ -152,11 +153,19 @@ function singleOperationDto(
     ...(row.transaction_hash ? { transaction_hash: row.transaction_hash } : {}),
     ...(row.order_hash ? { order_hash: row.order_hash } : {}),
     ...(prepared?.nftRecipient ? { nft_recipient: prepared.nftRecipient } : {}),
+    ...(prepared?.receipt
+      ? { receipt: marketReceiptDto(prepared.receipt) }
+      : {}),
     ...(settlement
       ? {
           settlement: {
             filled_quantity: settlement.filledQuantity,
             remaining_quantity: settlement.remainingQuantity,
+            ...(settlement.orderRemainingQuantity === undefined
+              ? {}
+              : {
+                  order_remaining_quantity: settlement.orderRemainingQuantity
+                }),
             ...(settlement.transactionHash
               ? { transaction_hash: settlement.transactionHash }
               : {}),
