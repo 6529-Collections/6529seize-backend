@@ -104,6 +104,7 @@ ${indent(yamlList(serviceNames))}
         options:
           - full
           - wallet-transfer-analysis
+          - claims-media-upload
       release_pull_request:
         type: string
         description: 'Merged PR represented by this production release'
@@ -174,7 +175,7 @@ jobs:
           set -euo pipefail
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]]
           [[ "$INPUT_SERVICE" =~ ^(${serviceCasePattern})$ ]]
-          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|wallet-transfer-analysis)$ ]]
+          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|wallet-transfer-analysis|claims-media-upload)$ ]]
           if [ "$DB_SCHEMA_SCOPE" != full ] && [ "$INPUT_SERVICE" != dbMigrationsLoop ]; then
             echo "db_schema_scope is only supported for dbMigrationsLoop" >&2
             exit 1
@@ -453,8 +454,8 @@ jobs:
             echo "Lambda invocation returned a function error or invalid metadata"
             exit 1
           fi
-          if [ "$DB_SCHEMA_SCOPE" = wallet-transfer-analysis ] && ! jq -e '.schema_scope == "wallet-transfer-analysis"' response.json > /dev/null; then
-            echo "Lambda did not acknowledge the requested wallet-transfer-analysis schema scope"
+          if [ "$DB_SCHEMA_SCOPE" != full ] && ! jq -e --arg scope "$DB_SCHEMA_SCOPE" '.schema_scope == $scope' response.json > /dev/null; then
+            echo "Lambda did not acknowledge the requested schema scope"
             exit 1
           fi
       - name: Verify resources-only CloudFormation stack
