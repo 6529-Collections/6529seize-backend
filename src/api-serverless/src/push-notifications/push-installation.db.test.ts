@@ -1,10 +1,10 @@
 import 'reflect-metadata';
-import { describeWithSeed } from '@/tests/_setup/seed';
 import { sqlExecutor } from '@/sql-executor';
 import {
   PUSH_NOTIFICATION_DEVICES_TABLE,
   PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE,
   PUSH_NOTIFICATION_DEVICE_LOGOUT_FENCES_TABLE,
+  PUSH_NOTIFICATION_SETTINGS_TABLE,
   WALLET_AUTH_SESSIONS_TABLE
 } from '@/constants';
 import {
@@ -44,7 +44,23 @@ const storedInstallation = () =>
     `SELECT secret_hash, token, platform, revision FROM ${PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE} WHERE device_id = 'phone'`
   );
 
-describeWithSeed('push installation logout', [], () => {
+describe('push installation logout', () => {
+  const resetInstallationFixtures = async () => {
+    // This suite only touches these tables. Keep real database isolation without
+    // rebuilding unrelated NFT/marketplace tables before and after every test.
+    for (const table of [
+      PUSH_NOTIFICATION_SETTINGS_TABLE,
+      PUSH_NOTIFICATION_DEVICES_TABLE,
+      PUSH_NOTIFICATION_DEVICE_LOGOUT_FENCES_TABLE,
+      PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE,
+      WALLET_AUTH_SESSIONS_TABLE
+    ]) {
+      await sqlExecutor.execute(`TRUNCATE TABLE ${table}`);
+    }
+  };
+  beforeEach(resetInstallationFixtures);
+  afterEach(resetInstallationFixtures);
+
   it.each(['registration', 'revocation'] as const)(
     'rejects %s before querying when its transaction connection is missing',
     async (operation) => {
