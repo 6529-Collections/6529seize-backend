@@ -5,12 +5,16 @@ import { env } from '@/env';
 import { getNftLinkResolutionBudget } from '@/nft-links/resolution-budget';
 
 export class HttpError extends Error {
+  public readonly responseMatchesRequest: boolean;
   constructor(
     public readonly status: number,
     public readonly url: string,
-    message: string
+    message: string,
+    responseUrl?: string
   ) {
     super(message);
+    Object.setPrototypeOf(this, HttpError.prototype);
+    this.responseMatchesRequest = responseUrl === url;
   }
 }
 
@@ -69,7 +73,12 @@ export async function fetchTextWithTimeout(
       signal: controller.signal as unknown as NodeFetchAbortSignal
     });
     if (!res.ok) {
-      throw new HttpError(res.status, url, `HTTP ${res.status} for ${url}`);
+      throw new HttpError(
+        res.status,
+        url,
+        `HTTP ${res.status} for ${url}`,
+        res.url
+      );
     }
 
     return await readTextWithLimit(res, url, getMaxBytes(opts));

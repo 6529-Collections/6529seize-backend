@@ -9,6 +9,7 @@ import { formatTokenAmount } from '@/nft-links/lib/onchain';
 import { RequestContext } from '@/request.context';
 import { env } from '@/env';
 import { getNftLinkResolutionBudget } from '@/nft-links/resolution-budget';
+import { requiredNftPage404 } from './nft-link-page-retry';
 
 export class NftLinkResolver {
   private isOgFetchAllowed(viewUrl: string): boolean {
@@ -103,7 +104,13 @@ export class NftLinkResolver {
 
     if (!this.isOgFetchAllowed(canonical.viewUrl)) return null;
     const timeoutMs = env.getIntOrNull('OG_TIMEOUT_MS') ?? 5000;
-    const html = await fetchTextWithTimeout(canonical.viewUrl, { timeoutMs });
+    let html: string;
+    try {
+      html = await fetchTextWithTimeout(canonical.viewUrl, { timeoutMs });
+    } catch (error) {
+      // Title-only enrichment is not a required media-page failure.
+      throw (needsImage && requiredNftPage404(error, canonical)) || error;
+    }
 
     const og = extractOg(html);
     const fallbackPriceAmount =
