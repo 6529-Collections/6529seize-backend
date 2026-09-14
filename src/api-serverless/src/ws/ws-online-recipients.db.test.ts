@@ -202,8 +202,10 @@ describeWithSeed(
         'allowed-other-wave',
         'allowed-second',
         'child-only',
+        'denied',
         'mixed',
-        'mixed'
+        'mixed',
+        'parent-only'
       ]);
       const query = await service.getSqlAndParamsByGroupId(
         zero.id,
@@ -261,7 +263,12 @@ describeWithSeed(
           result
             .map((row) => row.connectionId)
             .sort((a, b) => a.localeCompare(b))
-        ).toEqual(['allowed', 'allowed-other-wave', 'allowed-second']);
+        ).toEqual([
+          'allowed',
+          'allowed-other-wave',
+          'allowed-second',
+          'parent-only'
+        ]);
       }
     );
 
@@ -447,8 +454,9 @@ describeWithSeed(
             const updates = messages
               .filter((message) => message !== 'barrier')
               .map((message) => JSON.parse(message));
-            expect(updates).toHaveLength(id === 'allowed' ? 1 : 0);
-            if (id === 'allowed') expect(updates[0].type).toBe(messageType);
+            const isPermitted = id === 'allowed' || id === 'parent-only';
+            expect(updates).toHaveLength(isPermitted ? 1 : 0);
+            if (isPermitted) expect(updates[0].type).toBe(messageType);
           }
 
           await sqlExecutor.execute(

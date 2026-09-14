@@ -69,15 +69,16 @@ describe('Online recipient group SQL', () => {
     expect(load).toHaveBeenCalledWith('group', ctx);
     expect(result?.sql).toContain('where exists');
     expect(result?.sql).not.toContain('included_profile_ids');
-    expect(result?.params).toEqual({ level_min: 0 });
+    expect(result?.sql).not.toContain('eligible.level_raw');
+    expect(result?.params).toEqual({});
   });
 
   it('keeps the generic query for callers that did not opt in', async () => {
     const { service } = serviceFor(levelZeroGroup());
     const result = await service.getSqlAndParamsByGroupId('group', {});
     expect(result?.sql).toContain('included_profile_ids');
-    expect(result?.sql).toContain('i.level_raw >= :level_min');
-    expect(result?.params).toEqual({ level_min: 0 });
+    expect(result?.sql).not.toContain('i.level_raw >= :level_min');
+    expect(result?.params).toEqual({});
   });
 
   it('does not turn a missing or inaccessible group into a public audience', async () => {

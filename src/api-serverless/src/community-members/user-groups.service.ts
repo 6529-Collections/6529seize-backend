@@ -12,7 +12,7 @@ import {
   XTDH_GRANTS_TABLE
 } from '@/constants';
 import {
-  getLevelComponentsBorderByLevel,
+  getLevelScoreBounds,
   getLevelFromScore
 } from '@/profiles/profile-level';
 import {
@@ -1999,20 +1999,15 @@ export class UserGroupsService {
       isLevelZeroOnlyGroup(group)
     ) {
       ctx.timer?.stop(`${this.constructor.name}->getSqlAndParams`);
-      // The general query selects eligible profile IDs, then joins them back to
-      // all identity rows in getPersistedInclusionExclusionPart. EXISTS preserves
-      // that row multiplicity, including mixed-level rows for the same profile.
-      // Filtering the outer i.level_raw instead would change existing results.
       return {
         sql: `with ${UserGroupsService.GENERATED_VIEW} as (
           select i.* from ${IDENTITIES_TABLE} i
           where exists (
             select 1 from ${IDENTITIES_TABLE} eligible
             where eligible.profile_id = i.profile_id
-              and eligible.level_raw >= :level_min
           )
         )`,
-        params: { level_min: 0 }
+        params: {}
       };
     }
     const filterUsers = [
@@ -2042,15 +2037,6 @@ export class UserGroupsService {
     group.rep.user_identity = group.rep.user_identity
       ? usersToUserIds[group.rep.user_identity]
       : null;
-    group.level.min =
-      group.level.min !== null
-        ? getLevelComponentsBorderByLevel(group.level.min)
-        : null;
-    group.level.max =
-      group.level.max !== null
-        ? getLevelComponentsBorderByLevel(group.level.max)
-        : null;
-
     const params: Record<string, any> = {};
     const beneficiaryOwnersPart = this.getBeneficiaryOwnersPart(
       group.is_beneficiary_of_grant_id,
@@ -2075,7 +2061,8 @@ export class UserGroupsService {
       nftsPart,
       beneficiaryOwnersPart,
       group,
-      params
+      params,
+      getLevelScoreBounds(group.level)
     );
     const inclusionExclusionPart = this.getInclusionExclusionPart(
       group,
@@ -2477,7 +2464,8 @@ export class UserGroupsService {
     nftsPart: string | null,
     beneficiariesPart: string | null,
     group: GClean,
-    params: Record<string, any>
+    params: Record<string, any>,
+    levelScoreBounds: ReturnType<typeof getLevelScoreBounds>
   ) {
     let cmPart = ` ${repPart || cicPart || nftsPart ? ', ' : ' '}`;
     if (beneficiariesPart) {
@@ -2547,13 +2535,16 @@ export class UserGroupsService {
       cmPart += `and ${identitySideTdhPart} <= :tdh_max `;
       params.tdh_max = group.tdh.max;
     }
-    if (group.level.min !== null) {
-      cmPart += `and i.level_raw >= :level_min `;
-      params.level_min = group.level.min;
+    if (levelScoreBounds.matchesNoScores) {
+      cmPart += `and 1 = 0 `;
     }
-    if (group.level.max !== null) {
-      cmPart += `and i.level_raw <= :level_max `;
-      params.level_max = group.level.max;
+    if (levelScoreBounds.minInclusive !== null) {
+      cmPart += `and i.level_raw >= :level_min `;
+      params.level_min = levelScoreBounds.minInclusive;
+    }
+    if (levelScoreBounds.maxExclusive !== null) {
+      cmPart += `and i.level_raw < :level_max_exclusive `;
+      params.level_max_exclusive = levelScoreBounds.maxExclusive;
     }
     cmPart += '), ';
     return cmPart;
