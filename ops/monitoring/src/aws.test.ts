@@ -105,6 +105,9 @@ for (const codes of [
       async archive() {},
       async deliver() {
         throw new Error('Repeats must group');
+      },
+      async edit() {
+        assert.fail('repeat alert must not edit');
       }
     };
     try {

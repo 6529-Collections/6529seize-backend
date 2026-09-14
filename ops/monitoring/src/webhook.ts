@@ -1,4 +1,5 @@
 import type { DeliveryErrorDetails } from './dispatch-diagnostics.js';
+import { isMessageId } from './digest-plan.js';
 
 export class DeliveryError extends Error {
   constructor(
@@ -40,10 +41,49 @@ export async function deliver(
   payload: object,
   send: typeof fetch = fetch
 ): Promise<string> {
+  const response = await sendWebhook(webhookUrl(secret), 'POST', payload, send);
+  await requireSuccess(response);
+  return responseMessageId(response);
+}
+export async function edit(
+  secret: string,
+  messageId: string,
+  payload: object,
+  send: typeof fetch = fetch
+): Promise<string | null> {
+  if (!isMessageId(messageId))
+    throw new DeliveryError(false, 0, false, {
+      cause: 'INVALID_DELIVERY_CONFIGURATION'
+    });
+  const url = new URL(webhookUrl(secret));
+  url.pathname += `/messages/${messageId}`;
+  url.search = '';
+  const response = await sendWebhook(url.toString(), 'PATCH', payload, send);
+  if (response.status === 404) {
+    const result = (await response.json().catch(() => null)) as {
+      code?: unknown;
+    } | null;
+    if (result?.code === 10008) return null;
+  }
+  await requireSuccess(response);
+  const confirmed = await responseMessageId(response);
+  if (confirmed !== messageId)
+    throw new DeliveryError(true, 0, false, {
+      cause: 'INVALID_DELIVERY_RESPONSE',
+      httpStatus: response.status
+    });
+  return confirmed;
+}
+async function sendWebhook(
+  url: string,
+  method: 'POST' | 'PATCH',
+  payload: object,
+  send: typeof fetch
+): Promise<Response> {
   let response: Response;
   try {
-    response = await send(webhookUrl(secret), {
-      method: 'POST',
+    response = await send(url, {
+      method,
       redirect: 'error',
       signal: AbortSignal.timeout(8000),
       headers: { 'Content-Type': 'application/json' },
@@ -53,12 +93,15 @@ export async function deliver(
     if (error instanceof DeliveryError) throw error;
     throw new DeliveryError(true, 0, false, { cause: transportCause(error) });
   }
+  return response;
+}
+async function requireSuccess(response: Response): Promise<void> {
   if (response.status === 429) {
     const header = response.headers.get('retry-after');
     const body = (await response.json().catch(() => ({}))) as {
       retry_after?: unknown;
     };
-    const delay = Number(body.retry_after ?? header ?? Number.NaN);
+    const delay = Number(body?.retry_after ?? header ?? Number.NaN);
     throw new DeliveryError(
       true,
       Number.isFinite(delay)
@@ -81,10 +124,12 @@ export async function deliver(
         httpStatus: response.status
       }
     );
+}
+async function responseMessageId(response: Response): Promise<string> {
   const result = (await response.json().catch(() => null)) as {
     id?: unknown;
   } | null;
-  if (!result || typeof result.id !== 'string' || !/^\d+$/.test(result.id)) {
+  if (!result || !isMessageId(result.id)) {
     throw new DeliveryError(true, 0, false, {
       cause: 'INVALID_DELIVERY_RESPONSE',
       httpStatus: response.status
