@@ -13,6 +13,8 @@ import {
   WalletTransferWalletDailyEntity
 } from '@/entities/IWalletTransferAnalysis';
 import { moderationRetentionSchemaDb } from './moderation-retention-schema.db';
+import { MintingClaimEntity } from '@/entities/IMintingClaim';
+import { applyClaimsMediaUploadSchema } from './claims-media-schema';
 
 const DBMigrate = require('db-migrate');
 
@@ -69,7 +71,9 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
   const scope = (event as { schema_scope: unknown }).schema_scope;
   if (
     scheduledInvocation ||
-    (scope !== 'full' && scope !== 'wallet-transfer-analysis')
+    (scope !== 'full' &&
+      scope !== 'wallet-transfer-analysis' &&
+      scope !== 'claims-media-upload')
   ) {
     throw new Error('Unsupported database schema scope for this invocation');
   }
@@ -80,6 +84,18 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const scheduledInvocation = isScheduledInvocation(event);
   const scope = schemaScope(event, scheduledInvocation);
   logger.info(`[RUNNING]`);
+  if (scope === 'claims-media-upload') {
+    const addedColumns = await doInDbContext(applyClaimsMediaUploadSchema, {
+      logger,
+      entities: [MintingClaimEntity],
+      syncEntities: false,
+      skipRedis: true
+    });
+    logger.info(
+      `[FINISHED CLAIM MEDIA UPLOAD SCHEMA] added_columns=${addedColumns}`
+    );
+    return { schema_scope: scope };
+  }
   if (scope === 'wallet-transfer-analysis') {
     await doInDbContext(async () => undefined, {
       logger,

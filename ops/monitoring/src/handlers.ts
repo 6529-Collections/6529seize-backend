@@ -41,6 +41,7 @@ import {
   setting,
   sqs,
   store,
+  webhookDestination,
   normalDeliverySlot
 } from './aws.js';
 import { parseWork, processWork, Work, workId } from './pipeline.js';
@@ -53,7 +54,7 @@ import {
   webhookAttempted,
   withDispatchDiagnostics
 } from './dispatch-diagnostics.js';
-import { deliver, DeliveryError, webhookUrl } from './webhook.js';
+import { deliver, edit, DeliveryError, webhookUrl } from './webhook.js';
 import { cloudWatchAlarmMetadata } from './alarm-metadata.js';
 import { sentryAlert, verifySignature } from './sentry.js';
 import {
@@ -336,18 +337,49 @@ export async function dispatch(
             store,
             {
               schedule: (item, delay) => enqueue(item, false, delay),
-              deliver: async (payload) => {
+              deliver: async (payload, destinationKey) => {
                 if (lane === 'normal')
                   await traceDispatch('RATE_SLOT', normalDeliverySlot);
-                const destination = await traceDispatch('SECRET', () =>
-                  secret(setting('WEBHOOK_SECRET_ARN'))
+                const destination = await traceDispatch(
+                  'SECRET',
+                  webhookDestination
                 );
-                webhookAttempted();
-                const messageId = await traceDispatch('WEBHOOK', () =>
-                  deliver(destination, payload)
-                );
+                const messageId = await traceDispatch('WEBHOOK', () => {
+                  requireDeliveryDestination(destination.key, destinationKey);
+                  webhookAttempted();
+                  return deliver(destination.value, payload);
+                });
                 webhookAccepted();
-                return messageId;
+                return {
+                  messageId,
+                  operation: 'POST',
+                  destinationKey: destination.key
+                };
+              },
+              edit: async (target, payload) => {
+                await traceDispatch('RATE_SLOT', normalDeliverySlot);
+                const destination = await traceDispatch(
+                  'SECRET',
+                  webhookDestination
+                );
+                const messageId = await traceDispatch(
+                  'WEBHOOK_EDIT',
+                  async () => {
+                    requireDeliveryDestination(
+                      destination.key,
+                      target.destinationKey
+                    );
+                    webhookAttempted();
+                    return edit(destination.value, target.messageId, payload);
+                  }
+                );
+                if (!messageId) return null;
+                webhookAccepted();
+                return {
+                  messageId,
+                  operation: 'EDIT',
+                  destinationKey: destination.key
+                };
               },
               archive: async (item, reason) => {
                 await traceDispatch('ARCHIVE', () => archive(item, reason));
@@ -363,6 +395,15 @@ export async function dispatch(
     );
   }
   return { batchItemFailures };
+}
+function requireDeliveryDestination(
+  actual: string | undefined,
+  expected?: string
+): void {
+  if (expected !== undefined && actual !== expected)
+    throw new DeliveryError(false, 0, false, {
+      cause: 'DELIVERY_DESTINATION_CHANGED'
+    });
 }
 
 async function dispatchWork(
