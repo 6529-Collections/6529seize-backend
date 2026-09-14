@@ -29,6 +29,26 @@ const failed = {
 };
 
 describe('persistent required-page 404 eligibility', () => {
+  it('keeps production-generated jitter inside the persisted policy bounds', () => {
+    let row = failed;
+    for (const minutes of [15, 60, 60]) {
+      const attemptedAt = row.refresh_retry_state.notBefore + 1;
+      const next = nextNftPageRetryState(row, scope, attemptedAt);
+      expect(next.notBefore - attemptedAt).toBeGreaterThanOrEqual(
+        minutes * 60_000 * 0.9
+      );
+      expect(next.notBefore - attemptedAt).toBeLessThanOrEqual(
+        minutes * 60_000
+      );
+      row = {
+        ...row,
+        last_tried_to_update: attemptedAt,
+        refresh_retry_state: next
+      };
+      expect(readNftPageRetryState(row, scope)).toEqual(next);
+    }
+  });
+
   it('advances eligible runs through 5, 15 and capped 60 minutes with bounded jitter', () => {
     let row = failed;
     expect(state.notBefore - now).toBe(300_000);

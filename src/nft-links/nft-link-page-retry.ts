@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomInt } from 'node:crypto';
 import type { NftLinkEntity } from '@/entities/INftLink';
 import type { CanonicalLink } from './types';
 import { HttpError } from './lib/http';
@@ -72,8 +72,7 @@ export function readNftPageRetryState(
 ): NftLinkPageRetryState | null {
   const state = parseState(row.refresh_retry_state);
   if (
-    !state ||
-    state.version !== 1 ||
+    state?.version !== 1 ||
     state.code !== CODE ||
     state.scopeHash !== scopeHash ||
     !Number.isSafeInteger(state.streak) ||
@@ -108,7 +107,7 @@ export function nextNftPageRetryState(
   row: RetryRow,
   scopeHash: string,
   now: number,
-  random = Math.random()
+  random = randomInt(1_000_000) / 1_000_000
 ): NftLinkPageRetryState {
   const previous = readNftPageRetryState(row, scopeHash);
   const streak = Math.min((previous?.streak ?? 0) + 1, DELAYS.length);
