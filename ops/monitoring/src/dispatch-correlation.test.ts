@@ -15,6 +15,7 @@ import { EVENT_TYPE, hash, type Alert } from './contract.js';
 import { dispatch } from './handlers.js';
 import { processWork, type Group, type Store, type Work } from './pipeline.js';
 import { DeliveryError } from './webhook.js';
+import type { DeliveryResult, DigestPlan } from './digest-plan.js';
 import {
   bindDispatchWork,
   logDispatchFailure,
@@ -52,7 +53,12 @@ const context: Context = {
   succeed: () => undefined
 };
 
-type Receipt = { busy?: boolean; outcome?: string; groupKey?: string };
+type Receipt = {
+  busy?: boolean;
+  outcome?: string;
+  groupKey?: string;
+  delivery?: DeliveryResult;
+};
 type LogEntry = Record<string, unknown>;
 
 function row(value: unknown, messageId = 'private-sqs-message', count = 1) {
@@ -85,7 +91,7 @@ function sdkError(name: string) {
   });
 }
 
-function harness(t: TestContext, lane = 'normal') {
+function harness(t: TestContext, lane = 'normal', boundDestination = false) {
   const originalEnvironment = process.env;
   process.env = {
     ...originalEnvironment,
@@ -101,17 +107,21 @@ function harness(t: TestContext, lane = 'normal') {
   t.after(() => {
     process.env = originalEnvironment;
   });
-  t.mock.method(Date, 'now', () => now);
+  let clockNow = now;
+  let credentialVersion = 'fixture-version-1';
+  t.mock.method(Date, 'now', () => clockNow);
   const calls: string[] = [];
   const failures = new Map<string, unknown[]>();
   const receipts = new Map<string, Receipt>();
   const groups = new Map<string, Group>();
+  const plans = new Map<string, DigestPlan>();
   const logged: LogEntry[] = [];
   const scheduled: SendMessageCommandInput[] = [];
   const visibility: ChangeMessageVisibilityCommandInput[] = [];
   const archives: PutObjectCommandInput[] = [];
   const responses: Response[] = [];
   const payloads: string[] = [];
+  const methods: string[] = [];
   function call(operation: string) {
     calls.push(operation);
     const pending = failures.get(operation);
@@ -132,9 +142,9 @@ function harness(t: TestContext, lane = 'normal') {
       receipts.set(id, receipt);
       return 'acquired';
     },
-    async complete(id, _owner, outcome) {
+    async complete(id, _owner, outcome, delivery) {
       call('COMPLETE');
-      receipts.set(id, { ...receipts.get(id), busy: false, outcome });
+      receipts.set(id, { ...receipts.get(id), busy: false, outcome, delivery });
     },
     async release(id) {
       call('RELEASE');
@@ -166,6 +176,40 @@ function harness(t: TestContext, lane = 'normal') {
       call('DIGEST_READ');
       return groups.get(key) ?? null;
     },
+    async prepareDigest(id, _owner, group) {
+      const current = plans.get(id);
+      if (current) return current;
+      const first = receipts.get(group.firstEventId)?.delivery;
+      const snapshot = {
+        version: 1 as const,
+        groupKey: group.key,
+        count: group.count
+      };
+      const plan: DigestPlan = first?.destinationKey
+        ? {
+            ...snapshot,
+            mode: 'EDIT',
+            target: {
+              messageId: first.messageId,
+              destinationKey: first.destinationKey
+            }
+          }
+        : { ...snapshot, mode: 'POST', reason: 'NO_ACK' };
+      plans.set(id, plan);
+      return plan;
+    },
+    async fallbackDigest(id, _owner, plan) {
+      const fallback = {
+        version: 1 as const,
+        groupKey: plan.groupKey,
+        count: plan.count,
+        mode: 'POST' as const,
+        reason: 'TARGET_MISSING' as const,
+        destinationKey: plan.target.destinationKey
+      };
+      plans.set(id, fallback);
+      return fallback;
+    },
     async heartbeat() {
       call('HEARTBEAT');
     }
@@ -175,6 +219,8 @@ function harness(t: TestContext, lane = 'normal') {
   t.mock.method(store, 'release', memory.release);
   t.mock.method(store, 'group', memory.group);
   t.mock.method(store, 'readGroup', memory.readGroup);
+  t.mock.method(store, 'prepareDigest', memory.prepareDigest);
+  t.mock.method(store, 'fallbackDigest', memory.fallbackDigest);
   t.mock.method(store, 'heartbeat', memory.heartbeat);
   t.mock.method(
     ddb,
@@ -187,7 +233,10 @@ function harness(t: TestContext, lane = 'normal') {
   );
   t.mock.method(SecretsManagerClient.prototype, 'send', async () => {
     call('SECRET');
-    return { SecretString: destination };
+    return {
+      SecretString: destination,
+      ...(boundDestination ? { VersionId: credentialVersion } : {})
+    };
   });
   t.mock.method(
     S3Client.prototype,
@@ -219,10 +268,14 @@ function harness(t: TestContext, lane = 'normal') {
   t.mock.method(
     globalThis,
     'fetch',
-    async (_url: unknown, options?: RequestInit) => {
+    async (url: unknown, options?: RequestInit) => {
       call('WEBHOOK');
       assert.ok(options);
-      assert.equal(options?.method, 'POST');
+      if (options.method === 'PATCH') {
+        assert.ok(boundDestination);
+        assert.equal(String(url), `${destination}/messages/123456789012345678`);
+      } else assert.equal(options.method, 'POST');
+      methods.push(options.method);
       assert.ok(typeof options.body === 'string');
       payloads.push(options.body);
       return (
@@ -268,6 +321,11 @@ function harness(t: TestContext, lane = 'normal') {
     archives,
     responses,
     payloads,
+    methods,
+    rotateCredential: () => {
+      credentialVersion = 'fixture-version-2';
+      clockNow += 60001;
+    },
     memory,
     failures: () => logged.filter((entry) => entry.code === 'DELIVERY_FAILED'),
     settled: () => logged.filter((entry) => entry.code === 'DELIVERY_SETTLED'),
@@ -474,6 +532,9 @@ test('webhook failure and failed release retain both causes and the existing fin
           bindDispatchWork(next.kind, hash(next.alert.eventId));
           try {
             await processWork(next, 'owner', h.memory, {
+              edit: async () => {
+                assert.fail('critical work must not edit');
+              },
               schedule: async () => {
                 assert.fail('critical work must not schedule');
               },
@@ -687,4 +748,133 @@ test('archive accepted but receipt completion failed retains the original webhoo
     sdkAttempts: 3
   });
   assert.equal(h.metricCount(), 1);
+});
+
+async function boundDigest(h: ReturnType<typeof harness>): Promise<Work> {
+  await h.run(row({ kind: 'alert', alert }));
+  await h.run(
+    row(
+      { kind: 'alert', alert: { ...alert, eventId: 'private-event:repeat' } },
+      'private-sqs-repeat'
+    )
+  );
+  assert.equal(h.scheduled.length, 1);
+  return JSON.parse(h.scheduled[0]!.MessageBody!) as Work;
+}
+
+test('bound digest handler edits through the normal rate slot and records EDITED rather than a new post', async (t) => {
+  const h = harness(t, 'normal', true);
+  const digest = await boundDigest(h);
+  assert.deepEqual(await h.run(row(digest, 'private-sqs-digest')), {
+    batchItemFailures: []
+  });
+  assert.deepEqual(h.methods, ['POST', 'PATCH']);
+  assert.equal(h.calls.filter((value) => value === 'RATE_SLOT').length, 2);
+  assert.equal(h.settled().at(-1)?.outcome, 'EDITED');
+  assert.equal(h.settled().at(-1)?.deliveryAcceptance, 'CONFIRMED');
+  assert.equal(h.metricCount(), 0);
+  assert.equal(h.archives.length, 0);
+});
+
+test('edit429 remains a failed item with vendor delay and retries PATCH only', async (t) => {
+  const h = harness(t, 'normal', true);
+  const digest = await boundDigest(h);
+  h.responses.push(
+    Response.json({ retry_after: 4.2, message: privateMarker }, { status: 429 })
+  );
+  assert.deepEqual(await h.run(row(digest, 'private-sqs-digest')), {
+    batchItemFailures: [{ itemIdentifier: 'private-sqs-digest' }]
+  });
+  assert.equal(h.visibility.at(-1)?.VisibilityTimeout, 5);
+  assert.equal(h.failures().at(-1)?.operation, 'WEBHOOK_EDIT');
+  assert.equal(h.failures().at(-1)?.cause, 'HTTP_RATE_LIMIT');
+  assert.equal(h.failures().at(-1)?.deliveryAcceptance, 'UNKNOWN');
+  assert.equal(h.metricCount(), 1);
+  assert.deepEqual(await h.run(row(digest, 'private-sqs-digest', 2)), {
+    batchItemFailures: []
+  });
+  assert.deepEqual(h.methods, ['POST', 'PATCH', 'PATCH']);
+});
+
+test('secret-version rotation cannot edit or repost an old bound target and signals fallback', async (t) => {
+  const h = harness(t, 'normal', true);
+  const digest = await boundDigest(h);
+  h.rotateCredential();
+  assert.deepEqual(await h.run(row(digest, 'private-sqs-digest')), {
+    batchItemFailures: []
+  });
+  assert.deepEqual(h.methods, ['POST']);
+  assert.equal(h.archives.length, 1);
+  assert.ok(h.calls.includes('FALLBACK'));
+  assert.equal(h.settled().at(-1)?.outcome, 'ARCHIVED');
+  assert.equal(h.settled().at(-1)?.deliveryAcceptance, 'NOT_ATTEMPTED');
+});
+
+test('bound missing-message response selects rate-limited summary POST while revoked webhook cannot', async (t) => {
+  const h = harness(t, 'normal', true);
+  const digest = await boundDigest(h);
+  h.responses.push(
+    Response.json({ code: 10008, message: privateMarker }, { status: 404 })
+  );
+  assert.deepEqual(await h.run(row(digest, 'private-sqs-digest')), {
+    batchItemFailures: []
+  });
+  assert.deepEqual(h.methods, ['POST', 'PATCH', 'POST']);
+  assert.equal(h.calls.filter((value) => value === 'RATE_SLOT').length, 3);
+  assert.equal(h.archives.length, 0);
+  assert.equal(h.settled().at(-1)?.outcome, 'DELIVERED');
+});
+
+test('revoked edit destination retains archive/fallback failure and does not acknowledge or POST', async (t) => {
+  const h = harness(t, 'normal', true);
+  const digest = await boundDigest(h);
+  h.responses.push(
+    Response.json({ code: 10015, message: privateMarker }, { status: 404 })
+  );
+  h.fail('FALLBACK', sdkError('AccessDeniedException'));
+  assert.deepEqual(await h.run(row(digest, 'private-sqs-digest')), {
+    batchItemFailures: [{ itemIdentifier: 'private-sqs-digest' }]
+  });
+  assert.deepEqual(h.methods, ['POST', 'PATCH']);
+  assert.equal(h.failures().at(-1)?.operation, 'WEBHOOK_EDIT');
+  assert.equal(h.failures().at(-1)?.cause, 'HTTP_PERMANENT_STATUS');
+  assert.equal(
+    (h.failures().at(-1)?.cleanup as LogEntry).operation,
+    'FALLBACK'
+  );
+  assert.equal(
+    h.receipts.get(
+      hash(digest.kind === 'alert' ? digest.alert.eventId : digest.eventId)
+    )?.outcome,
+    undefined
+  );
+});
+
+test('replacement POST remains destination-bound after missing-target deferral and credential rotation', async (t) => {
+  const h = harness(t, 'normal', true);
+  const digest = await boundDigest(h);
+  h.responses.push(Response.json({ code: 10008 }, { status: 404 }));
+  const originalFetch = globalThis.fetch;
+  t.mock.method(
+    globalThis,
+    'fetch',
+    async (...args: Parameters<typeof fetch>) => {
+      const response = await originalFetch(...args);
+      if (args[1]?.method === 'PATCH')
+        h.fail('RATE_SLOT', new DeliveryError(true, 3, true));
+      return response;
+    }
+  );
+  assert.deepEqual(await h.run(row(digest, 'private-sqs-digest')), {
+    batchItemFailures: [{ itemIdentifier: 'private-sqs-digest' }]
+  });
+  assert.deepEqual(h.methods, ['POST', 'PATCH']);
+  h.rotateCredential();
+  assert.deepEqual(await h.run(row(digest, 'private-sqs-digest', 2)), {
+    batchItemFailures: []
+  });
+  assert.deepEqual(h.methods, ['POST', 'PATCH']);
+  assert.equal(h.archives.length, 1);
+  assert.ok(h.calls.includes('FALLBACK'));
+  assert.equal(h.settled().at(-1)?.outcome, 'ARCHIVED');
 });
