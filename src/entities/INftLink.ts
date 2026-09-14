@@ -18,6 +18,8 @@ export class NftLinkEntity {
   readonly custom_id!: string | null;
   @Column({ type: 'json', nullable: true })
   readonly full_data!: NormalizedNftCard | null;
+  @Column({ type: 'json', nullable: true })
+  readonly refresh_retry_state?: unknown;
   @Column({ type: 'text', nullable: true })
   readonly media_uri!: string | null;
   @Column({ type: 'varchar', length: 50, nullable: true })
