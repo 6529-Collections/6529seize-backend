@@ -377,6 +377,17 @@ describe('Desktop corpus retrieval and answers', () => {
     ['Core (https://example.com/wrong) runs locally.', 'Core runs locally.'],
     ['Core <https://example.com/wrong> runs locally.', 'Core runs locally.'],
     ['Core https://example.com/wrong runs locally.', 'Core runs locally.'],
+    ['Open https://example.com/docs.', 'Open.'],
+    ['See https://example.com/docs, then continue.', 'See, then continue.'],
+    ['See https://example.com/docs; then continue.', 'See; then continue.'],
+    ['Open https://example.com/docs!', 'Open!'],
+    ['Open https://example.com/docs?', 'Open?'],
+    ['Open https://example.com/docs?!', 'Open?!'],
+    ['Open https://example.com/a.b?q=what?next=yes.', 'Open.'],
+    ['Open https://example.com/a]b.', 'Open.'],
+    ['Open https://example.com/a}b.', 'Open.'],
+    ['Open (https://example.com/docs).', 'Open.'],
+    ['Open <https://example.com/docs>.', 'Open.'],
     [
       'Read [note] then [that](https://example.com/wrong).',
       'Read [note] then that.'

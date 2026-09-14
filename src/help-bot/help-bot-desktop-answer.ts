@@ -6,6 +6,14 @@ import {
   wantsDetailedDesktopAnswer
 } from '@/help-bot/help-bot-desktop-knowledge';
 
+function removeAnswerUrl(url: string): string {
+  if (url.startsWith('(') || url.startsWith('<')) return '';
+  // Preserve sentence punctuation after bare URLs with a single backward scan.
+  let end = url.length;
+  while (end > 0 && '.,;!?'.includes(url[end - 1])) end--;
+  return url.slice(end);
+}
+
 /** Links are corpus-owned and appended once, independently of model formatting. */
 export function composeDesktopAnswer(
   text: string,
@@ -27,7 +35,7 @@ export function composeDesktopAnswer(
     // Remove wrappers together with their URL, leaving ordinary parentheses intact.
     .replace(
       /\(https?:\/\/[^\s)]*\)|<https?:\/\/[^\s>]*>|https?:\/\/[^\s)<>]+/g,
-      ''
+      removeAnswerUrl
     )
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/ ([.,;!?])/g, '$1')
