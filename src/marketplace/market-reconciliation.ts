@@ -21,7 +21,10 @@ import {
   parseMarketValue
 } from '@/marketplace/seaport.schema';
 import { prepareMarketCancel } from '@/marketplace/seaport.builder';
-import { operationSendAttempt } from './market-operation-state';
+import {
+  marketOperationRevision,
+  operationSendAttempt
+} from './market-operation-state';
 import { CustomApiCompliantException } from '@/exceptions';
 import {
   MarketOperationPrepared,
@@ -29,6 +32,16 @@ import {
 } from '@/marketplace/market-operation.types';
 import { MarketBatchSettlement } from '@/marketplace/market-batch.types';
 import { validateMarketBatchReceipt } from '@/marketplace/market-batch-receipt';
+import {
+  appendMarketReceiptTransaction,
+  confirmedMarketApprovalReceipts,
+  marketReceiptTransaction
+} from '@/marketplace/market-receipt-evidence';
+import {
+  settledMarketOrderRemaining,
+  settledMarketPayment,
+  mergeMarketReceiptSupplement
+} from '@/marketplace/market-receipt-enrichment';
 
 export interface MarketSettlement {
   filledQuantity: string;
@@ -37,6 +50,7 @@ export interface MarketSettlement {
   blockNumber?: number;
   blockHash?: string;
   safeBlockNumber?: number;
+  orderRemainingQuantity?: string;
 }
 interface ReceiptLog {
   address: string;
@@ -49,6 +63,8 @@ export interface MarketReceiptEvidence {
   blockHash: string;
   status: number | null;
   logs: readonly ReceiptLog[];
+  gasUsed?: bigint;
+  gasPrice?: bigint;
 }
 export interface MarketTransactionEvidence {
   hash: string;
@@ -357,6 +373,18 @@ async function reconcileSubmitted(
   if (!canonical?.hash || !sameMarketAddress(canonical.hash, receipt.blockHash))
     return persist(row, deps, 'UNKNOWN', { errorCode: 'RECEIPT_REORG' });
   const safeIncluded = !!safe && safe.number >= receipt.blockNumber;
+  const approvals = await confirmedMarketApprovalReceipts(
+    isMarketBatchPrepared(prepared) ? undefined : prepared.approvalReceipts,
+    deps.rpc,
+    safe
+  );
+  const transactionReceipt = marketReceiptTransaction(
+    receipt,
+    canonical.timestamp,
+    transaction.from,
+    'TRANSACTION',
+    safeIncluded ? safe!.number : undefined
+  );
   // A failed transaction is only terminal once its canonical block is safe.
   if (receipt.status === 0) {
     const expected = prepared.transaction;
@@ -378,6 +406,15 @@ async function reconcileSubmitted(
       });
     return persist(row, deps, safeIncluded ? 'FAILED' : 'MINED', {
       errorCode: 'TRANSACTION_REVERTED',
+      prepared: {
+        ...prepared,
+        receipt: {
+          transactions: appendMarketReceiptTransaction(
+            approvals,
+            transactionReceipt
+          )
+        }
+      },
       ...(safeIncluded ? { liabilityWei: '0' } : {})
     });
   }
@@ -393,12 +430,41 @@ async function reconcileSubmitted(
     return persist(row, deps, 'UNKNOWN', { errorCode: 'SETTLEMENT_MISMATCH' });
   }
   if (safeIncluded) settlement.safeBlockNumber = safe!.number;
+  if (safeIncluded) {
+    const remaining = await settledMarketOrderRemaining(
+      prepared,
+      deps.rpc,
+      safe!
+    );
+    if ('items' in settlement) {
+      for (const item of settlement.items) {
+        const quantity = remaining.get(item.order.orderHash.toLowerCase());
+        if (quantity !== undefined) item.orderRemainingQuantity = quantity;
+      }
+    } else if (!isMarketBatchPrepared(prepared) && prepared.reviewOrder) {
+      const quantity = remaining.get(
+        prepared.reviewOrder.orderHash.toLowerCase()
+      );
+      if (quantity !== undefined) settlement.orderRemainingQuantity = quantity;
+    }
+  }
+  const payment = safeIncluded ? settledMarketPayment(prepared) : undefined;
   return persist(
     row,
     deps,
     safeIncluded ? (kind === 'CANCEL' ? 'CANCELLED' : 'CONFIRMED') : 'MINED',
     {
-      prepared: { ...prepared, settlement },
+      prepared: {
+        ...prepared,
+        settlement,
+        receipt: {
+          transactions: appendMarketReceiptTransaction(
+            approvals,
+            transactionReceipt
+          ),
+          ...(payment ? { payment } : {})
+        }
+      },
       ...(safeIncluded ? { liabilityWei: '0' } : {})
     }
   );
@@ -485,16 +551,86 @@ async function reconcileSigned(
   const previous = (
     prepared as MarketPrepared & { settlement?: MarketSettlement }
   ).settlement;
+  const approvalTransactions = await confirmedMarketApprovalReceipts(
+    prepared.approvalReceipts,
+    deps.rpc,
+    safe
+  );
+  const receipt = { transactions: approvalTransactions };
+  const approvalReceipts = prepared.approvalReceipts?.map(
+    (entry) =>
+      approvalTransactions.find(
+        (confirmed) => confirmed.transactionHash === entry.transactionHash
+      ) ?? entry
+  );
   // Safe-head advances alone do not create an unbounded stream of identical events.
   const changed =
     previous?.filledQuantity !== settlement.filledQuantity ||
     previous?.remainingQuantity !== settlement.remainingQuantity;
+  const receiptChanged =
+    (prepared.receipt !== undefined || approvalTransactions.length > 0) &&
+    JSON.stringify(prepared.receipt) !== JSON.stringify(receipt);
   return persist(row, deps, state, {
-    ...(changed ? { prepared: { ...prepared, settlement } } : {}),
+    ...(changed || receiptChanged
+      ? { prepared: { ...prepared, settlement, receipt, approvalReceipts } }
+      : {}),
     ...(liability !== undefined && liability !== row.liability_wei
       ? { liabilityWei: liability }
       : {})
   });
+}
+
+function needsReceiptSupplement(
+  prepared: MarketOperationPrepared,
+  kind: string
+): boolean {
+  const primary = prepared.receipt?.transactions.find(
+    (entry) => entry.purpose === 'TRANSACTION'
+  );
+  if (!primary || primary.networkFeeWei === undefined) return true;
+  if (primary.status === 'REVERTED' || kind === 'CANCEL') return false;
+  if (!prepared.receipt?.payment) return true;
+  if (isMarketBatchPrepared(prepared))
+    return (
+      prepared.settlement?.items.some(
+        (item) => item.orderRemainingQuantity === undefined
+      ) ?? true
+    );
+  return (
+    (prepared as MarketPrepared & { settlement?: MarketSettlement }).settlement
+      ?.orderRemainingQuantity === undefined
+  );
+}
+
+/** Terminal status never depends on optional receipt enrichment succeeding.
+ * Reuse the exact transaction/receipt proof, but only allow additive JSON updates. */
+async function supplementTerminalReceipt(
+  row: MarketOperationRow,
+  prepared: MarketOperationPrepared,
+  kind: string,
+  deps: MarketReconcileDependencies
+): Promise<void> {
+  if (!needsReceiptSupplement(prepared, kind)) return;
+  try {
+    await reconcileSubmitted(row, prepared, kind, {
+      ...deps,
+      transition: async (id, _expected, state, patch) => {
+        if (state !== row.state || !patch?.prepared) return;
+        const enriched = mergeMarketReceiptSupplement(
+          prepared,
+          patch.prepared as MarketOperationPrepared
+        );
+        if (JSON.stringify(enriched) === JSON.stringify(prepared)) return;
+        await deps.transition(id, [row.state], row.state, {
+          expectedRevision: marketOperationRevision(row),
+          prepared: enriched
+        });
+      }
+    });
+  } catch {
+    // Failed enrichment, RPC uncertainty and a concurrent write leave the
+    // previously confirmed status and evidence authoritative.
+  }
 }
 
 /** No provider status, lost approval or temporary balance can release a signed liability. */
@@ -522,6 +658,11 @@ export async function reconcileMarketOperation(
   try {
     if (row.transaction_hash && submittedStates.includes(row.state))
       await reconcileSubmitted(row, prepared, kind, deps);
+    else if (
+      row.transaction_hash &&
+      ['CONFIRMED', 'FAILED', 'CANCELLED'].includes(row.state)
+    )
+      await supplementTerminalReceipt(row, prepared, kind, deps);
     else if (
       signedStates.includes(row.state) &&
       !isMarketBatchPrepared(prepared)

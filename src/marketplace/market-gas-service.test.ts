@@ -186,6 +186,32 @@ describe('single trade stable gas service boundaries', () => {
     jest.spyOn(Date, 'now').mockReturnValue(1500000);
     process.env.OPENSEA_API_KEY = 'test-not-a-real-key';
   });
+  it('preserves completed approval cost evidence across a new exact purchase quote', async () => {
+    const s = setup();
+    const approvalReceipts: NonNullable<MarketPrepared['approvalReceipts']> = [
+      {
+        purpose: 'APPROVAL',
+        from: BATCH_BUYER,
+        transactionHash: `0x${'ab'.repeat(32)}`,
+        blockNumber: 9,
+        blockHash: `0x${'cd'.repeat(32)}`,
+        blockTimestamp: 1499,
+        status: 'SUCCESS',
+        confirmation: 'INCLUDED',
+        gasUsed: '45000',
+        effectiveGasPriceWei: '3',
+        networkFeeWei: '135000'
+      }
+    ];
+    s.prepared.approvalReceipts = approvalReceipts;
+    const { approvalReceipts: _previous, ...fresh } = s.prepared;
+    jest.spyOn(MarketPreparation.prototype, 'prepare').mockResolvedValue(fresh);
+    await continueMarketOperation('single', s.auth);
+    expect((s.row().prepared_json as MarketPrepared).approvalReceipts).toEqual(
+      approvalReceipts
+    );
+    expect(operationSendAttempt(s.row())).toBeUndefined();
+  });
   afterEach(() => {
     jest.restoreAllMocks();
     delete process.env.OPENSEA_API_KEY;

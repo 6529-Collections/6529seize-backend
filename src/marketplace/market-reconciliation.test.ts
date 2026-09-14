@@ -22,6 +22,8 @@ import {
 import { MARKET_SEAPORT_EVENTS } from '@/marketplace/seaport.events';
 import { MarketTradeIntent } from '@/marketplace/provider.types';
 import { CustomApiCompliantException } from '@/exceptions';
+import * as quoteValidation from '@/marketplace/quote-validation';
+import { marketReceiptTransaction } from '@/marketplace/market-receipt-evidence';
 
 const maker = '0x1111111111111111111111111111111111111111';
 const buyer = '0x2222222222222222222222222222222222222222';
@@ -142,6 +144,182 @@ function deps(value: ReturnType<typeof fixture>, safeNumber = 99) {
 }
 
 describe('safe marketplace reconciliation', () => {
+  it('keeps safe settlement confirmed when optional payment derivation cannot finish', async () => {
+    const f = fixture(),
+      d = deps(f, 100);
+    const validate = quoteValidation.validateMarketOrder;
+    const spy = jest
+      .spyOn(quoteValidation, 'validateMarketOrder')
+      .mockImplementationOnce(validate)
+      .mockImplementationOnce(() => {
+        throw new Error('Supplement unavailable');
+      });
+    try {
+      await reconcileMarketOperation(f.row, d);
+      expect(spy).toHaveBeenCalledTimes(2);
+      const call = (d.transition as jest.Mock).mock.calls[0];
+      expect(call.slice(0, 3)).toEqual([
+        'operation',
+        ['SUBMITTED'],
+        'CONFIRMED'
+      ]);
+      expect(call[3].liabilityWei).toBe('0');
+      expect(call[3].prepared.settlement.filledQuantity).toBe('2');
+      expect(call[3].prepared.receipt.payment).toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+  it('retains confirmed approval costs when a signed order progresses but supplemental RPC reads fail', async () => {
+    const f = fixture(),
+      d = deps(f, 100);
+    const signedOrder = buildMarketOrder(listing, '4', '5');
+    const approval = marketReceiptTransaction(
+      {
+        ...f.receipt,
+        blockNumber: 95,
+        gasUsed: BigInt(45000),
+        gasPrice: BigInt(3)
+      },
+      1799999900,
+      maker,
+      'APPROVAL',
+      99
+    )!;
+    const row = {
+      ...f.row,
+      state: 'LIVE' as const,
+      transaction_hash: null,
+      order_hash: signedOrder.order.orderHash,
+      request_json: { kind: 'LIST' },
+      prepared_json: {
+        ...f.prepared,
+        intent: listing,
+        signedOrder,
+        approvalReceipts: [approval],
+        receipt: { transactions: [approval] }
+      }
+    };
+    const state = new Interface([
+      'function getCounter(address) view returns (uint256)',
+      'function getOrderStatus(bytes32) view returns (bool,bool,uint256,uint256)'
+    ]);
+    (d.rpc.call as jest.Mock).mockImplementation(async (request) =>
+      request.data.slice(0, 10) === state.getFunction('getCounter')!.selector
+        ? state.encodeFunctionResult('getCounter', ['4'])
+        : state.encodeFunctionResult('getOrderStatus', [false, false, '1', '2'])
+    );
+    (d.rpc.getBlock as jest.Mock).mockImplementation(async (tag) => {
+      if (tag === 95) throw new Error('Supplement unavailable');
+      return { number: 100, hash: blockHash, timestamp: 1800000000 };
+    });
+    await reconcileMarketOperation(row, d);
+    const call = (d.transition as jest.Mock).mock.calls[0];
+    expect(call.slice(0, 3)).toEqual(['operation', ['LIVE'], 'LIVE']);
+    expect(call[3].prepared.settlement.filledQuantity).toBe('1');
+    expect(call[3].prepared.receipt.transactions).toEqual([approval]);
+    expect(call[3].prepared.receipt.transactions[0].networkFeeWei).toBe(
+      '135000'
+    );
+    expect(call[3].prepared.receipt.payment).toBeUndefined();
+  });
+  it('supplements a confirmed receipt without reopening the operation or changing liability', async () => {
+    const f = fixture(),
+      d = deps(f, 100);
+    f.row.state = 'CONFIRMED';
+    f.receipt.gasUsed = BigInt(21000);
+    f.receipt.gasPrice = BigInt(7);
+    await reconcileMarketOperation(f.row, d);
+    const call = (d.transition as jest.Mock).mock.calls[0];
+    expect(call.slice(0, 3)).toEqual(['operation', ['CONFIRMED'], 'CONFIRMED']);
+    expect(call[3]).toHaveProperty('expectedRevision');
+    expect(call[3]).not.toHaveProperty('liabilityWei');
+    expect(call[3].prepared.receipt.payment.totalWei).toBe('200');
+  });
+  it.each(['missing', 'reorg', 'revert', 'mismatch'])(
+    'keeps prior confirmed status authoritative when supplementation finds %s',
+    async (reason) => {
+      const f = fixture(),
+        d = deps(f, 100);
+      f.row.state = 'CONFIRMED';
+      if (reason === 'missing')
+        (d.rpc.getTransactionReceipt as jest.Mock).mockResolvedValue(null);
+      if (reason === 'reorg')
+        (d.rpc.getBlock as jest.Mock).mockResolvedValue({
+          hash: MARKET_ZERO_HASH,
+          number: 100
+        });
+      if (reason === 'revert') f.receipt.status = 0;
+      if (reason === 'mismatch') f.receipt.logs = [];
+      await reconcileMarketOperation(f.row, d);
+      expect(d.transition).not.toHaveBeenCalled();
+    }
+  );
+  it('records actual gas and proven payment only at safe confirmation, independently of review caps', async () => {
+    const f = fixture();
+    f.receipt.gasUsed = BigInt(21000);
+    f.receipt.gasPrice = BigInt(7);
+    f.prepared.gas = {
+      gas_limit: '90000',
+      max_fee_per_gas: '100',
+      gas_reserve_wei: '9000000'
+    };
+    const pending = deps(f);
+    await reconcileMarketOperation(f.row, pending);
+    const included = (pending.transition as jest.Mock).mock.calls[0][3].prepared
+      .receipt;
+    expect(included.payment).toBeUndefined();
+    expect(included.transactions[0]).toMatchObject({
+      confirmation: 'INCLUDED',
+      networkFeeWei: '147000',
+      from: buyer
+    });
+    const safe = deps(f, 100);
+    await reconcileMarketOperation(f.row, safe);
+    const confirmed = (safe.transition as jest.Mock).mock.calls[0][3].prepared
+      .receipt;
+    expect(confirmed.payment).toMatchObject({
+      currency: MARKET_ZERO_ADDRESS,
+      totalWei: '200',
+      netWei: '198',
+      payoutWallet: maker
+    });
+    expect(confirmed.transactions[0]).toMatchObject({
+      confirmation: 'CONFIRMED',
+      blockTimestamp: 1800000000,
+      networkFeeWei: '147000'
+    });
+  });
+  it('confirms exact delivery with costs unavailable and never substitutes the gas reserve', async () => {
+    const f = fixture(),
+      d = deps(f, 100);
+    f.prepared.gas = {
+      gas_limit: '90000',
+      max_fee_per_gas: '100',
+      gas_reserve_wei: '9000000'
+    };
+    await reconcileMarketOperation(f.row, d);
+    expect((d.transition as jest.Mock).mock.calls[0][2]).toBe('CONFIRMED');
+    const receipt = (d.transition as jest.Mock).mock.calls[0][3].prepared
+      .receipt;
+    expect(receipt.transactions[0]).not.toHaveProperty('networkFeeWei');
+    expect(receipt.payment.totalWei).toBe('200');
+  });
+  it('records reverted transaction cost without claiming a payment or completed purchase', async () => {
+    const f = fixture(),
+      d = deps(f, 100);
+    f.receipt.status = 0;
+    f.receipt.gasUsed = BigInt(25000);
+    f.receipt.gasPrice = BigInt(9);
+    await reconcileMarketOperation(f.row, d);
+    const call = (d.transition as jest.Mock).mock.calls[0];
+    expect(call[2]).toBe('FAILED');
+    expect(call[3].prepared.receipt.payment).toBeUndefined();
+    expect(call[3].prepared.receipt.transactions[0]).toMatchObject({
+      status: 'REVERTED',
+      networkFeeWei: '225000'
+    });
+  });
   it('requires exact Meme Lab custody evidence and rejects another contract with the same token ID', () => {
     const value = fixture(MEMELAB_CONTRACT);
     expect(
@@ -304,7 +482,7 @@ describe('safe marketplace reconciliation', () => {
       'operation',
       ['SUBMITTED'],
       'MINED',
-      { errorCode: 'TRANSACTION_REVERTED' }
+      expect.objectContaining({ errorCode: 'TRANSACTION_REVERTED' })
     );
     const safe = deps(f, 100);
     await reconcileMarketOperation(f.row, safe);
@@ -312,7 +490,10 @@ describe('safe marketplace reconciliation', () => {
       'operation',
       ['SUBMITTED'],
       'FAILED',
-      { errorCode: 'TRANSACTION_REVERTED', liabilityWei: '0' }
+      expect.objectContaining({
+        errorCode: 'TRANSACTION_REVERTED',
+        liabilityWei: '0'
+      })
     );
   });
   it('uses safe on-chain partial fractions without prematurely invalidating a newer maker counter', async () => {
