@@ -236,7 +236,8 @@ function computeSha256Hex(buffer: Buffer): string {
 
 async function uploadImageToArweaveOrThrow(
   claim: MintingClaimRow,
-  imageUrl: string
+  imageUrl: string,
+  beforePublish?: () => Promise<void>
 ): Promise<string> {
   const fetched = await fetchUrlToBuffer(imageUrl);
   const inferred = inferImageContentTypeFromUrl(imageUrl);
@@ -264,6 +265,7 @@ async function uploadImageToArweaveOrThrow(
       return existingArweaveUrl;
     }
   }
+  await beforePublish?.();
   const { url } = await arweaveFileUploader.uploadFile(
     fetched.buffer,
     contentType
@@ -272,7 +274,8 @@ async function uploadImageToArweaveOrThrow(
 }
 
 async function uploadAnimationToArweaveIfPresent(
-  claim: MintingClaimRow
+  claim: MintingClaimRow,
+  beforePublish?: () => Promise<void>
 ): Promise<string | null> {
   const animationUrl = claim.animation_url?.trim() || null;
   if (animationUrl === null || animationUrl === '') return null;
@@ -324,6 +327,7 @@ async function uploadAnimationToArweaveIfPresent(
       return existingArweaveUrl;
     }
   }
+  await beforePublish?.();
   const { url } = await arweaveFileUploader.uploadFile(
     buffer,
     contentTypeToUpload
@@ -568,7 +572,8 @@ async function uploadClaimMetadataToArweave(
   imageLocation: string,
   animationLocation: string | null,
   typeMemeId: number | null,
-  seasonValue: number | null
+  seasonValue: number | null,
+  beforePublish?: () => Promise<void>
 ): Promise<string> {
   const metadata = buildArweaveMetadataPayload(
     contract,
@@ -579,6 +584,7 @@ async function uploadClaimMetadataToArweave(
     seasonValue
   );
   const buffer = Buffer.from(JSON.stringify(metadata), 'utf8');
+  await beforePublish?.();
   const { url } = await arweaveFileUploader.uploadFile(
     buffer,
     'application/json'
@@ -1005,6 +1011,7 @@ export async function uploadMintingClaimToArweave(
   contract: string,
   claim: MintingClaimRow,
   callbacks: {
+    beforePublish?: () => Promise<void>;
     onImageUploaded?: (locationUrl: string) => Promise<void>;
     onAnimationUploaded?: (locationUrl: string) => Promise<void>;
   } = {}
@@ -1015,9 +1022,16 @@ export async function uploadMintingClaimToArweave(
 }> {
   const { imageUrl, typeMemeId, seasonValue } =
     await validateMintingClaimReadyForArweaveUpload(claim, contract);
-  const imageLocationUrl = await uploadImageToArweaveOrThrow(claim, imageUrl);
+  const imageLocationUrl = await uploadImageToArweaveOrThrow(
+    claim,
+    imageUrl,
+    callbacks.beforePublish
+  );
   await callbacks.onImageUploaded?.(imageLocationUrl);
-  const animationLocationUrl = await uploadAnimationToArweaveIfPresent(claim);
+  const animationLocationUrl = await uploadAnimationToArweaveIfPresent(
+    claim,
+    callbacks.beforePublish
+  );
   if (animationLocationUrl) {
     await callbacks.onAnimationUploaded?.(animationLocationUrl);
   }
@@ -1027,7 +1041,8 @@ export async function uploadMintingClaimToArweave(
     imageLocationUrl,
     animationLocationUrl,
     typeMemeId,
-    seasonValue
+    seasonValue,
+    callbacks.beforePublish
   );
   return {
     imageLocationUrl,

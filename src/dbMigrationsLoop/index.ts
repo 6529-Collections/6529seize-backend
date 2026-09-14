@@ -13,6 +13,8 @@ import {
   WalletTransferWalletDailyEntity
 } from '@/entities/IWalletTransferAnalysis';
 import { moderationRetentionSchemaDb } from './moderation-retention-schema.db';
+import { MintingClaimEntity } from '@/entities/IMintingClaim';
+import { applyClaimsMediaUploadSchema } from './claims-media-schema';
 import { NftLinkEntity } from '@/entities/INftLink';
 import { applyNftLinkPageRetrySchema } from './nft-link-page-retry-schema';
 
@@ -73,6 +75,7 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
     scheduledInvocation ||
     (scope !== 'full' &&
       scope !== 'wallet-transfer-analysis' &&
+      scope !== 'claims-media-upload' &&
       scope !== 'nft-link-page-retry')
   ) {
     throw new Error('Unsupported database schema scope for this invocation');
@@ -96,6 +99,18 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
         syncEntities: false,
         skipRedis: true
       }
+    );
+    return { schema_scope: scope };
+  }
+  if (scope === 'claims-media-upload') {
+    const addedColumns = await doInDbContext(applyClaimsMediaUploadSchema, {
+      logger,
+      entities: [MintingClaimEntity],
+      syncEntities: false,
+      skipRedis: true
+    });
+    logger.info(
+      `[FINISHED CLAIM MEDIA UPLOAD SCHEMA] added_columns=${addedColumns}`
     );
     return { schema_scope: scope };
   }

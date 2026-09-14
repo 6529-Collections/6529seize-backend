@@ -70,6 +70,79 @@ function claimRowInput(
   };
 }
 
+describe('MintingClaimsService queue redelivery', () => {
+  const connection = {} as NonNullable<RequestContext['connection']>;
+  const findDropById = jest.fn();
+  const existsByDropId = jest.fn();
+  const transaction = jest.fn(async (work) => work(connection));
+  let createClaim: jest.SpiedFunction<
+    MintingClaimsService['createClaimForDrop']
+  >;
+  let service: MintingClaimsService;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    findDropById.mockResolvedValue({ id: 'drop-1' });
+    existsByDropId.mockResolvedValue(false);
+    service = new MintingClaimsService(
+      { findDropById } as unknown as DropsDb,
+      {
+        existsByDropId,
+        executeNativeQueriesInTransaction: transaction
+      } as unknown as MintingClaimsDb,
+      {} as MemeCardDropMappingsDb,
+      () => null
+    );
+    createClaim = jest
+      .spyOn(service, 'createClaimForDrop')
+      .mockResolvedValue(undefined);
+  });
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it('skips rebuilding a claim already persisted for the drop', async () => {
+    existsByDropId.mockResolvedValue(true);
+
+    await service.createClaimForDropIfMissing('drop-1');
+
+    expect(createClaim).not.toHaveBeenCalled();
+    expect(existsByDropId).toHaveBeenCalledWith(
+      expect.any(String),
+      'drop-1',
+      connection
+    );
+  });
+
+  it('rejects a missing source drop before building a claim', async () => {
+    findDropById.mockResolvedValue(null);
+
+    await expect(service.createClaimForDropIfMissing('drop-1')).rejects.toThrow(
+      'drop not found'
+    );
+
+    expect(existsByDropId).not.toHaveBeenCalled();
+    expect(createClaim).not.toHaveBeenCalled();
+  });
+
+  it('propagates a failed transaction and rebuilds on redelivery if still missing', async () => {
+    const failure = new Error('claim persistence unavailable');
+    createClaim.mockRejectedValueOnce(failure);
+
+    await expect(service.createClaimForDropIfMissing('drop-1')).rejects.toBe(
+      failure
+    );
+    await expect(
+      service.createClaimForDropIfMissing('drop-1')
+    ).resolves.toBeUndefined();
+
+    expect(transaction).toHaveBeenCalledTimes(2);
+    expect(createClaim.mock.calls).toEqual([
+      ['drop-1', { connection }],
+      ['drop-1', { connection }]
+    ]);
+  });
+});
+
 describe('MintingClaimsService Main Stage mapping', () => {
   it('resolves the Main Stage wave after runtime configuration loads', async () => {
     let mainStageWaveId: string | null = null;
