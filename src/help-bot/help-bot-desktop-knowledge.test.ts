@@ -296,6 +296,31 @@ describe('Desktop corpus retrieval and answers', () => {
     ).toBe('desktop.tdh-out-of-sync');
   });
 
+  it.each([
+    ['I reconciled but have not recalculated', 'tdh-after-reconciliation'],
+    [
+      'I ran reconciliation; not sure I recalculated',
+      'tdh-after-reconciliation'
+    ],
+    ['I reconciled and recalculated', 'tdh-repair-diagnostics']
+  ])(
+    'uses only confirmed completion after reconciliation: %s',
+    (question, expected) => {
+      expect(
+        desktopRecordIdForQuestion(
+          question,
+          'In 6529 Desktop, your node does not match 6529.io.'
+        )
+      ).toBe(`desktop.${expected}`);
+    }
+  );
+
+  it('prioritizes a symptom in a compound definition question', () => {
+    expect(
+      desktopRecordIdForQuestion('what is Core, my node is out of sync?')
+    ).toBe('desktop.tdh-out-of-sync');
+  });
+
   it('does not turn a block definition into another mismatch step', () => {
     expect(
       desktopRecordIdForQuestion(
@@ -347,6 +372,35 @@ describe('Desktop corpus retrieval and answers', () => {
       'Get the app. Read this or that.\n\nMore info: [6529 Apps](https://6529.io/about/6529-apps)'
     );
   });
+
+  it.each([
+    ['Core (https://example.com/wrong) runs locally.', 'Core runs locally.'],
+    ['Core <https://example.com/wrong> runs locally.', 'Core runs locally.'],
+    ['Core https://example.com/wrong runs locally.', 'Core runs locally.'],
+    [
+      'Read [note] then [that](https://example.com/wrong).',
+      'Read [note] then that.'
+    ],
+    ['Read [a] b](https://example.com/wrong).', 'Read [a] b].'],
+    [
+      'Core (on your machine) runs locally.',
+      'Core (on your machine) runs locally.'
+    ]
+  ])(
+    'cleans URL wrappers without discarding surrounding prose: %s',
+    async (input, expected) => {
+      const { answerer } = makeAnswerer({
+        renderAnswer: jest.fn().mockResolvedValue(input)
+      });
+      const result = await answerer.answer({
+        question: 'what is Core',
+        baseUrl: 'https://6529.io'
+      });
+      expect(result.type === 'ANSWER' && result.answer).toBe(
+        `${expected}\n\nMore info: [6529 Apps](https://6529.io/about/6529-apps)`
+      );
+    }
+  );
 
   it('preserves mid-body More info text while replacing only a trailing footer', async () => {
     const { answerer } = makeAnswerer({

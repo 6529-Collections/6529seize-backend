@@ -24,7 +24,13 @@ export function composeDesktopAnswer(
       return link ? link[1] + part.slice(link[0].length) : `[${part}`;
     })
     .join('')
-    .replace(/https?:\/\/[^\s)]+/g, '')
+    // Remove wrappers together with their URL, leaving ordinary parentheses intact.
+    .replace(
+      /\(https?:\/\/[^\s)]*\)|<https?:\/\/[^\s>]*>|https?:\/\/[^\s)<>]+/g,
+      ''
+    )
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/ ([.,;!?])/g, '$1')
     .trim();
   if (!body) return '';
   const links = Array.from(
