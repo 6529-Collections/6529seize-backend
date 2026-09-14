@@ -1047,8 +1047,12 @@ function sourceTemplate(environment) {
     const id = name.replace(/[^a-zA-Z0-9]/g, '');
     for (const metric of ['Errors', 'Throttles']) {
       const sustainedThrottling =
-        ['nftLinkRefresherLoop', 'waveScoreRefreshLoop'].includes(name) &&
-        metric === 'Throttles';
+        [
+          'nftLinkRefresherLoop',
+          'waveScoreRefreshLoop',
+          'subscriptionCoverageReconciliationLoop',
+          'nftsLoop'
+        ].includes(name) && metric === 'Throttles';
       r[`${id}${metric}`] = {
         Type: 'AWS::CloudWatch::Alarm',
         Properties: {
@@ -1060,7 +1064,7 @@ function sourceTemplate(environment) {
           Dimensions: [{ Name: 'FunctionName', Value: name }],
           Statistic: 'Sum',
           Period: 60,
-          // These queue workers can briefly contend for reserved concurrency.
+          // These queue/scheduled workers can briefly contend for reserved concurrency.
           EvaluationPeriods: sustainedThrottling ? 5 : 1,
           ...(sustainedThrottling ? { DatapointsToAlarm: 3 } : {}),
           Threshold: 1,
