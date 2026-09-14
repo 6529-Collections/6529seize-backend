@@ -217,6 +217,8 @@ async function updateSubscriptionsAfterModeChange(
   wrappedConnection: any
 ) {
   const promises: Promise<any>[] = [];
+  // Preserve the cutoff used to select rows even if the mode update finishes
+  // after midnight. This also applies when a first top-up enables Automatic.
   const maxMemeId = await getSubscriptionCutoffMemeId({ wrappedConnection });
   const upcomingSubscriptions: NFTSubscription[] = await sqlExecutor.execute(
     `SELECT * FROM ${SUBSCRIPTIONS_NFTS_TABLE} WHERE consolidation_key = :consolidationKey AND contract = :memesContract AND token_id > :maxMemeId AND subscribed = :subscribed`,
@@ -265,14 +267,6 @@ async function updateSubscriptionsAfterModeChange(
     );
   });
   await Promise.all(promises);
-  const finalCutoffMemeId = await getSubscriptionCutoffMemeId({
-    wrappedConnection
-  });
-  if (finalCutoffMemeId > maxMemeId) {
-    throw new BadRequestException(
-      'The subscription cutoff changed. Retry the mode update.'
-    );
-  }
 }
 
 export async function updateSubscribeAllEditions(

@@ -12,6 +12,14 @@ for a closed card. Existing card opt-ins and opt-outs remain authoritative.
 Enabling Automatic mode, including through the first top-up, applies to later
 cards. Turning it off also leaves the closed card's saved choice unchanged.
 
+Automatic-mode updates retain the cutoff calculated before selecting the card
+rows to update. An update accepted before midnight may finish afterward; there
+is no second cutoff check for mode changes. This preserves the existing behavior
+for both direct mode changes and first top-ups. A deposit made before midnight
+but first processed afterward still uses processing time. Deposit-time eligibility
+and reconciliation of delayed deposits into a finalized list are outside this
+change.
+
 Closed-card aggregate subscription counts use the finalized subscription list,
 so a later top-up or mode change does not change the displayed mint-day count.
 Future-card counts continue to use current preferences and available balance.
