@@ -49,10 +49,7 @@ import {
   NFTSearchResult,
   PaginatedResponse
 } from './api-serverless/src/api-constants';
-import {
-  constructFilters,
-  constructFiltersOR
-} from './api-serverless/src/api-helpers';
+import { constructFilters } from './api-serverless/src/api-helpers';
 import { ApiNftMedia } from './api-serverless/src/generated/models/ApiNftMedia';
 import { ApiTransaction } from './api-serverless/src/generated/models/ApiTransaction';
 import { ApiTransactionPage } from './api-serverless/src/generated/models/ApiTransactionPage';
@@ -706,28 +703,30 @@ export async function searchNfts(
 ): Promise<NFTSearchResult[]> {
   const query = typeof search === 'string' ? search.trim() : '';
   const id = numbers.parseIntOrNull(query);
+  const punctuation = String.raw`[^\p{L}\p{N}%_\\]`;
   const normalize = (value: string) =>
-    value.replace(new RegExp('[^\\p{L}\\p{N}%_\\\\]', 'gu'), '');
+    value.replace(new RegExp(punctuation, 'gu'), '');
   const normalizedQuery = normalize(query);
   if (
     id === null &&
     (normalizedQuery.length < 3 ||
-      !new RegExp('[\\p{L}\\p{N}]', 'u').test(normalizedQuery))
+      normalizedQuery.replace(/[%_\\]/g, '').length === 0)
   ) {
     return [];
   }
 
   // An explicit escape character keeps %, _ and backslashes literal in LIKE.
   const escapeLike = (value: string) => value.replace(/[!%_]/g, '!$&');
+  const separators = new RegExp(String.raw`[^\p{L}\p{N}%_\\'’]+`, 'u');
   const terms = Array.from(
-    new Set(query.split(/\s+/).map(normalize).filter(Boolean))
+    new Set(query.split(separators).map(normalize).filter(Boolean))
   ).sort((left, right) => right.length - left.length);
   const params: Record<string, unknown> = {
     id: id === null ? null : query,
     exactName: query,
     normalizedName: normalizedQuery,
     phrase: `%${escapeLike(normalizedQuery)}%`,
-    punctuation: '[^[:alnum:]%_\\\\]',
+    punctuation,
     pageSize
   };
   const nftIdMatch = id === null ? '0' : 'id = :id';
@@ -751,7 +750,8 @@ export async function searchNfts(
       })
       .join(' AND ');
     // A cheap subsequence filter narrows the scan before normalizing names.
-    // Every normalized match also matches this punctuation-tolerant superset.
+    // Normalization only deletes characters, so a matching term must remain
+    // an ordered subsequence of the raw name.
     params.candidateName = `%${Array.from(terms[0]).map(escapeLike).join('%')}%`;
     candidateFilter = "name LIKE :candidateName ESCAPE '!'";
     normalizedName = "REGEXP_REPLACE(name, :punctuation, '')";

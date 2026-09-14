@@ -74,7 +74,8 @@ describeWithSeed(
         nft(108, 'Café — 東京'),
         nft(109, '𐐀rt // Worlds'),
         nft(110, 'We’re ALL–IN!'),
-        nft(111, 'Art & Life: #Now!? // Together.')
+        nft(111, 'Art & Life: #Now!? // Together.'),
+        nft(112, 'Art ² // Ⅳ')
       ]
     },
     {
@@ -123,6 +124,10 @@ describeWithSeed(
       ['dont trust check', 103],
       ['Dont Trust Check', 103],
       ['check trust', 103],
+      ['check,trust', 103],
+      ['check/trust', 103],
+      ['check-trust', 103],
+      ['trust,check', 103],
       ['  dont   trust\tcheck  ', 103],
       ["dall-e's revenge", 6],
       ['dalle revenge', 6],
@@ -132,7 +137,8 @@ describeWithSeed(
       ['open roads open metaverse', 21],
       ['café 東京', 108],
       ['were allin', 110],
-      ['art life now together', 111]
+      ['art life now together', 111],
+      ['art ² Ⅳ', 112]
     ])('ranks the remembered name %s first', async (query, expectedId) => {
       const results = await searchNfts(query, 50);
       expect(results[0]).toMatchObject({
