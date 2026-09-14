@@ -38,7 +38,9 @@ const BodySchema: Joi.ObjectSchema<ApiProposalFrameRequest> =
       .required(),
     title: Joi.string().trim().min(1).max(250).required(),
     layout: Joi.string().valid('portrait', 'landscape').required()
-  }).unknown(false);
+  })
+    .unknown(false)
+    .required();
 
 export class ProposalFrameService {
   constructor(

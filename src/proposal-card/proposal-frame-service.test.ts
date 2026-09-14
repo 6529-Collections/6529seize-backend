@@ -5,6 +5,7 @@ import {
 } from '@/api/generated/models/ApiProposalFrameRequest';
 import { CLOUDFRONT_LINK } from '@/constants';
 import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
+import { BadRequestException } from '@/exceptions';
 import { ProposalFrameService } from '@/proposal-card/proposal-frame.service';
 
 const CID = 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi';
@@ -36,6 +37,14 @@ describe('ProposalFrameService', () => {
     uploadDirectory.mockResolvedValue({
       files: { 'index.html': `ipfs://${CID}/index.html` }
     });
+  });
+
+  it('rejects a missing body as a bad request before reading or publishing media', async () => {
+    await expect(
+      service.publish(undefined as unknown as ApiProposalFrameRequest, PROFILE)
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(findByPublicUrl).not.toHaveBeenCalled();
+    expect(uploadDirectory).not.toHaveBeenCalled();
   });
 
   it('publishes a bounded HTML document with the uploaded image and returns drop-ready media', async () => {
