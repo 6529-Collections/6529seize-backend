@@ -486,6 +486,34 @@ HTTP requests also observe the overall budget. Retries stop when the remaining
 budget cannot cover their backoff and another RPC. Failed resolution preserves
 cached metadata and releases the existing processing lock.
 
+An exact HTTP 404 from a required Transient or Manifold canonical page ends
+further attempts in that eligible run. The internal nullable
+`nft_links.refresh_retry_state` JSON records a versioned, page-scoped delay:
+5 minutes, then 15 minutes, then at most 60 minutes, with 0–10% negative jitter.
+Both API enqueue paths and the worker's primary-row transaction enforce it.
+This remains demand-driven: future reads or queued work can retry after the
+delay; there is no periodic retry sweeper and no terminal invalid-NFT state.
+Success clears the delay and retains the ordinary two-minute refresh interval.
+Failure keeps cached metadata, media, price and last-success time. A processing
+lock timestamp fences late writes after another worker takes ownership.
+
+Only typed errors from the required canonical HTML fetch qualify. Optional
+title enrichment, redirects to another URL, asset/metadata API 404s, 429s,
+5xx responses and contract reverts retain their existing retry policy. Retry
+state is internal to persistence and is not added to the public NFT-link model.
+Old writers invalidate stale retry state by advancing the attempt timestamp or
+clearing the failure fields. Queued messages from older producers remain
+subject to the upgraded worker gate.
+
+Before deploying these callers, explicitly run `dbMigrationsLoop` with
+`schema_scope=nft-link-page-retry`. This inspects the single NFT entity and
+permits only `ALTER TABLE nft_links ADD refresh_retry_state json NULL`; it
+rejects unrelated schema drift and skips full synchronization, migrations,
+backfills and retention. Leave the nullable column in place during application
+rollback. The resolver worker and API are primary callers; help-bot reply,
+release-note generation and media-sanitizer broadcasts can also enqueue via
+drop mapping. Updating an entity import alone does not require a fleet rollout.
+
 The SuperRare adapter preserves the ERC721 `tokenURI` path. A contract revert
 can fall back to `uri` only after positive ERC1155 interface detection; transport
 failures and unsupported interfaces remain failures. ERC1155 `{id}` placeholders

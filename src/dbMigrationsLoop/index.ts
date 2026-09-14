@@ -15,6 +15,8 @@ import {
 import { moderationRetentionSchemaDb } from './moderation-retention-schema.db';
 import { MintingClaimEntity } from '@/entities/IMintingClaim';
 import { applyClaimsMediaUploadSchema } from './claims-media-schema';
+import { NftLinkEntity } from '@/entities/INftLink';
+import { applyNftLinkPageRetrySchema } from './nft-link-page-retry-schema';
 
 const DBMigrate = require('db-migrate');
 
@@ -73,7 +75,8 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
     scheduledInvocation ||
     (scope !== 'full' &&
       scope !== 'wallet-transfer-analysis' &&
-      scope !== 'claims-media-upload')
+      scope !== 'claims-media-upload' &&
+      scope !== 'nft-link-page-retry')
   ) {
     throw new Error('Unsupported database schema scope for this invocation');
   }
@@ -84,6 +87,21 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const scheduledInvocation = isScheduledInvocation(event);
   const scope = schemaScope(event, scheduledInvocation);
   logger.info(`[RUNNING]`);
+  if (scope === 'nft-link-page-retry') {
+    await doInDbContext(
+      async () => {
+        const added = await applyNftLinkPageRetrySchema();
+        logger.info(`[NFT RETRY SCHEMA COLUMNS ADDED] ${added}`);
+      },
+      {
+        logger,
+        entities: [NftLinkEntity],
+        syncEntities: false,
+        skipRedis: true
+      }
+    );
+    return { schema_scope: scope };
+  }
   if (scope === 'claims-media-upload') {
     const addedColumns = await doInDbContext(applyClaimsMediaUploadSchema, {
       logger,
