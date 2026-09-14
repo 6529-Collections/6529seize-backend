@@ -623,6 +623,7 @@ async function supplementTerminalReceipt(
         if (JSON.stringify(enriched) === JSON.stringify(prepared)) return;
         await deps.transition(id, [row.state], row.state, {
           expectedRevision: marketOperationRevision(row),
+          ...(row.error_code ? { errorCode: row.error_code } : {}),
           prepared: enriched
         });
       }

@@ -144,6 +144,23 @@ function deps(value: ReturnType<typeof fixture>, safeNumber = 99) {
 }
 
 describe('safe marketplace reconciliation', () => {
+  it('preserves the terminal failure reason when filling in a reverted transaction cost', async () => {
+    const f = fixture(),
+      d = deps(f, 100);
+    f.row.state = 'FAILED';
+    f.row.error_code = 'TRANSACTION_REVERTED';
+    f.receipt.status = 0;
+    f.receipt.gasUsed = BigInt(21000);
+    f.receipt.gasPrice = BigInt(7);
+    await reconcileMarketOperation(f.row, d);
+    const call = (d.transition as jest.Mock).mock.calls[0];
+    expect(call.slice(0, 3)).toEqual(['operation', ['FAILED'], 'FAILED']);
+    expect(call[3].errorCode).toBe('TRANSACTION_REVERTED');
+    expect(call[3]).not.toHaveProperty('liabilityWei');
+    expect(call[3].prepared.receipt.transactions[0].networkFeeWei).toBe(
+      '147000'
+    );
+  });
   it('keeps safe settlement confirmed when optional payment derivation cannot finish', async () => {
     const f = fixture(),
       d = deps(f, 100);
