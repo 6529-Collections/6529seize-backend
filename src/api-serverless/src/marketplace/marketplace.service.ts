@@ -6,6 +6,7 @@ import { collectingDb } from '@/collecting/collecting.db';
 import { collectingRulesService } from '@/collecting/collecting-rules.service';
 import { CustomApiCompliantException, ForbiddenException } from '@/exceptions';
 import { marketChain } from '@/marketplace/market-chain';
+import { sameMarketGas } from '@/marketplace/market-gas-envelope';
 import {
   marketOperationsDb,
   marketRequestHash,
@@ -348,7 +349,8 @@ export async function continueMarketOperation(
       );
     const approvalTransactions = await marketChain().approvals(
       previous.intent,
-      previous.signedOrder.order.components.conduitKey
+      previous.signedOrder.order.components.conduitKey,
+      row.rule_id ? undefined : previous.approvalTransactions
     );
     prepared = {
       ...previous,
@@ -363,7 +365,8 @@ export async function continueMarketOperation(
     ).prepare(
       request,
       recipientInProfile,
-      await knownCancellationOrder(request, previous)
+      await knownCancellationOrder(request, previous),
+      row.rule_id ? undefined : previous
     );
   }
   let next: MarketOperationRow['state'] = 'REVIEW';
@@ -461,6 +464,29 @@ export async function beginMarketTransactionAttempt(
   const guard = prepared
     ? await ruleContinuationPatch(row, request, prepared)
     : {};
+  const attempt = operationSendAttempt(row);
+  if (
+    prepared &&
+    !row.rule_id &&
+    attempt?.status !== 'ACTIVE' &&
+    attempt?.attempt_id !== input.attempt_id
+  ) {
+    const transaction =
+      prepared.approvalTransactions[0] ?? prepared.transaction;
+    const gas = prepared.approvalTransactions.length
+      ? prepared.approvalTransactions[0].gas
+      : prepared.gas;
+    if (
+      !transaction ||
+      !gas ||
+      !sameMarketGas(await marketChain().simulate(transaction, gas), gas)
+    )
+      throw new CustomApiCompliantException(
+        409,
+        'The required gas increased. Review this trade again.',
+        'OPERATION_CHANGED'
+      );
+  }
   return operationDto(
     await beginMarketSendAttempt(row, input, guard.beforeCommit)
   );

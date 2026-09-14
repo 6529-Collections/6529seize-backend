@@ -10,6 +10,7 @@ import {
   describeMarketOrder
 } from '@/marketplace/provider.opensea';
 import { MarketChain } from '@/marketplace/market-chain';
+import { reviewedMarketGas } from '@/marketplace/market-gas-envelope';
 import {
   MarketTradeIntent,
   MarketTransaction,
@@ -127,7 +128,8 @@ export class MarketPreparation {
   async prepare(
     request: MarketPrepareRequest,
     recipientInProfile: boolean,
-    knownOrder?: KnownMarketOrder
+    knownOrder?: KnownMarketOrder,
+    reviewed?: MarketPrepared
   ): Promise<MarketPrepared> {
     // Execution through contract wallets needs a verified wrapper/receipt path.
     // An NFT recipient may still be any explicitly reviewed account, including a Safe.
@@ -138,7 +140,13 @@ export class MarketPreparation {
       );
     const snapshot = await this.chain.snapshot();
     if (request.kind === 'CANCEL')
-      return this.cancel(request, snapshot, recipientInProfile, knownOrder);
+      return this.cancel(
+        request,
+        snapshot,
+        recipientInProfile,
+        knownOrder,
+        reviewed
+      );
     const asset = await marketCatalogAsset(request.asset_key);
     if (BigInt(request.quantity) < BigInt(1))
       throw new MarketValidationError(
@@ -240,7 +248,8 @@ export class MarketPreparation {
         );
       const approvalTransactions = await this.chain.approvals(
         intent,
-        signedOrder.order.components.conduitKey
+        signedOrder.order.components.conduitKey,
+        ...(reviewed ? [reviewed.approvalTransactions] : [])
       );
       return {
         intent,
@@ -293,10 +302,27 @@ export class MarketPreparation {
       order
     );
     // The fulfiller's outgoing asset operator is encoded by our builder. Native ETH needs no approval.
-    const approvalTransactions = await this.chain.approvals(intent);
+    const approvalTransactions = reviewed
+      ? await this.chain.approvals(
+          intent,
+          undefined,
+          reviewed.approvalTransactions
+        )
+      : await this.chain.approvals(intent);
     const gas =
       approvalTransactions.length === 0
-        ? await this.chain.simulate(transaction)
+        ? await this.chain.simulate(
+            transaction,
+            ...(reviewed
+              ? [
+                  reviewedMarketGas(
+                    transaction,
+                    reviewed.transaction,
+                    reviewed.gas
+                  )
+                ]
+              : [])
+          )
         : undefined;
     const reviewOrder = validateMarketOrder(
       intent,
@@ -321,7 +347,8 @@ export class MarketPreparation {
     request: MarketPrepareRequest,
     snapshot: MarketPrepared['snapshot'],
     recipientInProfile: boolean,
-    knownOrder?: KnownMarketOrder
+    knownOrder?: KnownMarketOrder,
+    reviewed?: MarketPrepared
   ): Promise<MarketPrepared> {
     if (!request.order)
       throw new MarketValidationError(
@@ -405,7 +432,12 @@ export class MarketPreparation {
       snapshot,
       reviewOrder,
       feePolicyVersion: MARKET_ZERO_HASH,
-      gas: await this.chain.simulate(transaction)
+      gas: await this.chain.simulate(
+        transaction,
+        ...(reviewed
+          ? [reviewedMarketGas(transaction, reviewed.transaction, reviewed.gas)]
+          : [])
+      )
     };
   }
 }
