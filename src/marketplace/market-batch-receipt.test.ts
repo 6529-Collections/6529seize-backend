@@ -1,6 +1,9 @@
 import { Interface } from 'ethers';
 import { MEMELAB_CONTRACT, MEMES_CONTRACT } from '@/constants';
-import { marketBatchFixture } from '@/marketplace/market-batch.test-fixture';
+import {
+  BATCH_FEE,
+  marketBatchFixture
+} from '@/marketplace/market-batch.test-fixture';
 import { MarketBatchPrepared } from '@/marketplace/market-batch.types';
 import { buildMarketBatchTransaction } from '@/marketplace/seaport-batch.builder';
 import { MARKET_SEAPORT_EVENTS } from '@/marketplace/seaport.events';
@@ -203,6 +206,10 @@ describe('exact atomic batch receipts', () => {
     expect(saved.receipt?.payment?.fees.map((fee) => fee.amountWei)).toEqual([
       '10',
       '20'
+    ]);
+    expect(saved.receipt?.payment?.fees.map((fee) => fee.recipient)).toEqual([
+      BATCH_FEE,
+      BATCH_FEE
     ]);
     expect(
       saved.settlement?.items.map((item) => item.orderRemainingQuantity)

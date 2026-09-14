@@ -146,6 +146,7 @@ function deriveSettledMarketPayment(
       netWei: fills
         .reduce((total, fill) => total + BigInt(fill.netWei), BigInt(0))
         .toString(),
+      // Preserve each proven source-order fee, including a repeated recipient.
       fees: fills.flatMap((fill) => fill.fees)
     };
   }
@@ -171,6 +172,31 @@ function deriveSettledMarketPayment(
   };
 }
 
+function receiptSourceOrders(prepared: MarketOperationPrepared) {
+  if (isMarketBatchPrepared(prepared)) return prepared.reviewOrders;
+  if (prepared.reviewOrder && ['BUY', 'ACCEPT'].includes(prepared.intent.kind))
+    return [prepared.reviewOrder];
+  return [];
+}
+
+function exactSourceRemaining(
+  original: bigint,
+  requested: bigint,
+  cancelled: boolean,
+  filled: bigint,
+  size: bigint
+): string | undefined {
+  // Receipt proof establishes a fill: an unfilled status cannot corroborate it.
+  if (size <= BigInt(0) || filled <= BigInt(0) || filled > size)
+    return undefined;
+  const filledUnits = original * filled;
+  if (filledUnits % size !== BigInt(0) || filledUnits / size < requested)
+    return undefined;
+  const numerator = original * (size - filled);
+  if (numerator % size !== BigInt(0)) return undefined;
+  return cancelled ? '0' : (numerator / size).toString();
+}
+
 /** Whole signed-order availability at a pinned safe block. A missing read must
  * not delay success or be replaced by this operation's remaining quantity. */
 export async function settledMarketOrderRemaining(
@@ -180,11 +206,7 @@ export async function settledMarketOrderRemaining(
 ): Promise<Map<string, string>> {
   const remaining = new Map<string, string>();
   if (!safe.hash) return remaining;
-  const orders = isMarketBatchPrepared(prepared)
-    ? prepared.reviewOrders
-    : prepared.reviewOrder && ['BUY', 'ACCEPT'].includes(prepared.intent.kind)
-      ? [prepared.reviewOrder]
-      : [];
+  const orders = receiptSourceOrders(prepared);
   if (!orders.length) return remaining;
   const deadline = Date.now() + 2000;
   try {
@@ -210,24 +232,20 @@ export async function settledMarketOrderRemaining(
             ? order.components.consideration[0].startAmount
             : order.components.offer[0].startAmount
         );
-        const filled = BigInt(status[2]),
-          size = BigInt(status[3]);
-        // Receipt proof establishes a fill: an unfilled status cannot corroborate it.
-        if (size <= BigInt(0) || filled <= BigInt(0) || filled > size) continue;
         const requested = BigInt(
           isMarketBatchPrepared(prepared)
             ? prepared.intent.items[index].intent.quantity
             : prepared.intent.quantity
         );
-        const filledUnits = original * filled;
-        if (filledUnits % size !== BigInt(0) || filledUnits / size < requested)
-          continue;
-        const numerator = original * (size - filled);
-        if (numerator % size !== BigInt(0)) continue;
-        remaining.set(
-          order.orderHash.toLowerCase(),
-          status[1] ? '0' : (numerator / size).toString()
+        const quantity = exactSourceRemaining(
+          original,
+          requested,
+          Boolean(status[1]),
+          BigInt(status[2]),
+          BigInt(status[3])
         );
+        if (quantity !== undefined)
+          remaining.set(order.orderHash.toLowerCase(), quantity);
       } catch {
         // Supplemental order availability may arrive later than the receipt.
       }
