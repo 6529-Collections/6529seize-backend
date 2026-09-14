@@ -193,6 +193,54 @@ it.each([false, true])(
     ).toBe(false);
   }
 );
+it.each([true, false])(
+  'rolls back a mode change to %s when the cutoff advances during the transaction',
+  async (automaticMode) => {
+    jest.setSystemTime(new Date('2026-09-13T23:59:59Z'));
+    savedSubscriptions = [
+      {
+        consolidation_key: profileKey,
+        contract: MEMES_CONTRACT,
+        token_id: 548,
+        subscribed: !automaticMode,
+        subscribed_count: 1
+      }
+    ];
+    const wrappedConnection = { connection: {} };
+    let cutoffReads = 0;
+    jest.mocked(sqlExecutor.oneOrNull).mockImplementation(async () => {
+      cutoffReads += 1;
+      if (cutoffReads === 2) {
+        jest.setSystemTime(new Date('2026-09-14T00:00:00Z'));
+      }
+      return {
+        id: 547,
+        mint_timestamp: Date.parse('2026-09-11T15:40:00Z') / 1000
+      };
+    });
+    jest
+      .mocked(sqlExecutor.executeNativeQueriesInTransaction)
+      .mockImplementation(async (fn) => fn(wrappedConnection));
+
+    await expect(
+      updateSubscriptionMode(profileKey, automaticMode)
+    ).rejects.toThrow('The subscription cutoff changed');
+    expect(cutoffReads).toBe(2);
+    expect(sqlExecutor.oneOrNull).toHaveBeenLastCalledWith(
+      expect.any(String),
+      { contract: MEMES_CONTRACT },
+      { wrappedConnection }
+    );
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining(`UPDATE ${SUBSCRIPTIONS_NFTS_TABLE}`),
+      expect.objectContaining({
+        tokenId: 548,
+        subscribed: automaticMode
+      }),
+      { wrappedConnection }
+    );
+  }
+);
 it('uses the frozen final count on mint day instead of new automatic subscribers or top-ups', async () => {
   await expect(fetchMemeSubscriptionCount(548)).resolves.toMatchObject({
     count: 7
