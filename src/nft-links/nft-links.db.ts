@@ -5,6 +5,15 @@ import { NFT_LINKS_TABLE } from '@/constants';
 import { Time } from '@/time';
 import type { NormalizedNftCard } from '@/nft-links/types';
 import { DbPoolName } from '@/db-query.options';
+import {
+  createPreviewLease,
+  isPreviewLease,
+  isPreviewSizeCooldownActive,
+  PreviewCompletionFence
+} from './nft-preview-size-policy';
+
+const PREVIEW_DB_NOW =
+  'cast(unix_timestamp(current_timestamp(3)) * 1000 as unsigned)';
 import type {
   NftLinkMediaPreviewKind,
   NftLinkMediaPreviewStatus
@@ -282,11 +291,13 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
     {
       canonicalId,
       sourceHash,
-      kind
+      kind,
+      maxBytes
     }: {
       canonicalId: string;
       sourceHash: string;
       kind: NftLinkMediaPreviewKind;
+      maxBytes: number;
     },
     ctx: RequestContext
   ): Promise<boolean> {
@@ -294,9 +305,41 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
       ctx.timer?.start(
         `${this.constructor.name}->markMediaPreviewPendingIfNeeded`
       );
-      const affectedRows = await this.db
-        .execute(
-          `
+      const enqueue = async (
+        connection: NonNullable<RequestContext['connection']>
+      ) => {
+        const previous = await this.db.oneOrNull<
+          Pick<
+            NftLinkEntity,
+            | 'media_preview_status'
+            | 'media_preview_source_hash'
+            | 'media_preview_error_message'
+            | 'media_preview_last_tried_at'
+          > & { preview_now: number }
+        >(
+          `select media_preview_status, media_preview_source_hash,
+          media_preview_error_message, media_preview_last_tried_at,
+          ${PREVIEW_DB_NOW} as preview_now
+         from ${NFT_LINKS_TABLE} where canonical_id = :canonicalId for update`,
+          { canonicalId },
+          { wrappedConnection: connection }
+        );
+        if (!previous) return false;
+        if (
+          isPreviewSizeCooldownActive({
+            status: previous.media_preview_status,
+            sourceHash: previous.media_preview_source_hash,
+            expectedSourceHash: sourceHash,
+            message: previous.media_preview_error_message,
+            lastTriedAt: previous.media_preview_last_tried_at,
+            limitBytes: maxBytes,
+            now: Number(previous.preview_now)
+          })
+        )
+          return false;
+        const affectedRows = await this.db
+          .execute(
+            `
             update ${NFT_LINKS_TABLE}
             set
               media_preview_status = :pendingStatus,
@@ -345,16 +388,20 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
                 or media_preview_status in ('FAILED', 'SKIPPED')
               )
           `,
-          {
-            canonicalId,
-            sourceHash,
-            kind,
-            pendingStatus: 'PENDING'
-          },
-          { wrappedConnection: ctx.connection }
-        )
-        .then((res) => this.db.getAffectedRows(res));
-      return affectedRows > 0;
+            {
+              canonicalId,
+              sourceHash,
+              kind,
+              pendingStatus: 'PENDING'
+            },
+            { wrappedConnection: connection }
+          )
+          .then((res) => this.db.getAffectedRows(res));
+        return affectedRows > 0;
+      };
+      return ctx.connection
+        ? await enqueue(ctx.connection)
+        : await this.db.executeNativeQueriesInTransaction(enqueue);
     } finally {
       ctx.timer?.stop(
         `${this.constructor.name}->markMediaPreviewPendingIfNeeded`
@@ -448,7 +495,7 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
       lockTTL: Time;
     },
     ctx: RequestContext
-  ): Promise<NftLinkEntity | null> {
+  ): Promise<(NftLinkEntity & { media_preview_error_message: string }) | null> {
     try {
       ctx.timer?.start(
         `${this.constructor.name}->lockMediaPreviewForProcessing`
@@ -460,15 +507,16 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
               `
                 select * from ${NFT_LINKS_TABLE}
                 where canonical_id = :canonicalId
-                  and media_preview_status = :pendingStatus
-                  and ifnull(media_preview_locked_since, 0) < :lockedBefore
+                  and media_preview_status in (:pendingStatus, 'PROCESSING')
+                  and (ifnull(media_preview_locked_since, 0) < ${PREVIEW_DB_NOW} - :lockTtlMs
+                    or media_preview_locked_since > ${PREVIEW_DB_NOW} + :lockTtlMs)
                   ${expectedSourceHash ? 'and media_preview_source_hash = :expectedSourceHash' : ''}
                 for update skip locked
               `,
               {
                 canonicalId,
                 pendingStatus: 'PENDING',
-                lockedBefore: Time.now().minus(lockTTL).toMillis(),
+                lockTtlMs: lockTTL.toMillis(),
                 expectedSourceHash: expectedSourceHash ?? null
               },
               { wrappedConnection: connection }
@@ -479,20 +527,20 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
             return null;
           }
 
-          const now = Time.currentMillis();
+          const lease = createPreviewLease();
           await this.db.execute(
             `
               update ${NFT_LINKS_TABLE}
               set
                 media_preview_status = :processingStatus,
-                media_preview_locked_since = :now,
-                media_preview_last_tried_at = :now,
-                media_preview_error_message = null
+                media_preview_locked_since = ${PREVIEW_DB_NOW},
+                media_preview_last_tried_at = ${PREVIEW_DB_NOW},
+                media_preview_error_message = :lease
               where canonical_id = :canonicalId
             `,
             {
               canonicalId,
-              now,
+              lease,
               processingStatus: 'PROCESSING'
             },
             { wrappedConnection: connection }
@@ -500,8 +548,9 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
 
           return {
             ...entity,
-            media_preview_status: 'PROCESSING'
-          } as NftLinkEntity;
+            media_preview_status: 'PROCESSING',
+            media_preview_error_message: lease
+          };
         }
       );
     } finally {
@@ -515,38 +564,46 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
     {
       canonicalId,
       message,
-      status
+      status,
+      fence
     }: {
       canonicalId: string;
       message: string;
+      fence: PreviewCompletionFence;
       status?: Extract<NftLinkMediaPreviewStatus, 'FAILED' | 'SKIPPED'>;
     },
     ctx: RequestContext
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       ctx.timer?.start(
         `${this.constructor.name}->updateMediaPreviewWithFailure`
       );
-      const now = Time.currentMillis();
-      await this.db.execute(
+      if (!isPreviewLease(fence.lease))
+        throw new Error('Invalid NFT preview completion lease');
+      const result = await this.db.execute(
         `
           update ${NFT_LINKS_TABLE}
           set
             media_preview_status = :status,
             media_preview_error_message = :message,
             media_preview_locked_since = null,
-            media_preview_failed_since = ifnull(media_preview_failed_since, :now),
-            media_preview_last_tried_at = :now
+            media_preview_failed_since = ifnull(media_preview_failed_since, ${PREVIEW_DB_NOW}),
+            media_preview_last_tried_at = ${PREVIEW_DB_NOW}
           where canonical_id = :canonicalId
+            and media_preview_status = 'PROCESSING'
+            and media_preview_source_hash <=> :expectedSourceHash
+            and binary media_preview_error_message = binary :lease
         `,
         {
           canonicalId,
           message,
-          now,
+          expectedSourceHash: fence.sourceHash,
+          lease: fence.lease,
           status: status ?? 'FAILED'
         },
         { wrappedConnection: ctx.connection }
       );
+      return this.db.getAffectedRows(result) > 0;
     } finally {
       ctx.timer?.stop(
         `${this.constructor.name}->updateMediaPreviewWithFailure`
@@ -565,7 +622,8 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
       width,
       height,
       mimeType,
-      bytes
+      bytes,
+      fence
     }: {
       canonicalId: string;
       kind: NftLinkMediaPreviewKind;
@@ -577,15 +635,17 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
       height: number | null;
       mimeType: string | null;
       bytes: number | null;
+      fence: PreviewCompletionFence;
     },
     ctx: RequestContext
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       ctx.timer?.start(
         `${this.constructor.name}->updateMediaPreviewWithSuccess`
       );
-      const now = Time.currentMillis();
-      await this.db.execute(
+      if (!isPreviewLease(fence.lease))
+        throw new Error('Invalid NFT preview completion lease');
+      const result = await this.db.execute(
         `
           update ${NFT_LINKS_TABLE}
           set
@@ -599,12 +659,15 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
             media_preview_height = :height,
             media_preview_mime_type = :mimeType,
             media_preview_bytes = :bytes,
-            media_preview_last_success_at = :now,
-            media_preview_last_tried_at = :now,
+            media_preview_last_success_at = ${PREVIEW_DB_NOW},
+            media_preview_last_tried_at = ${PREVIEW_DB_NOW},
             media_preview_failed_since = null,
             media_preview_error_message = null,
             media_preview_locked_since = null
           where canonical_id = :canonicalId
+            and media_preview_status = 'PROCESSING'
+            and media_preview_source_hash <=> :expectedSourceHash
+            and binary media_preview_error_message = binary :lease
         `,
         {
           canonicalId,
@@ -618,10 +681,12 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
           height,
           mimeType,
           bytes,
-          now
+          expectedSourceHash: fence.sourceHash,
+          lease: fence.lease
         },
         { wrappedConnection: ctx.connection }
       );
+      return this.db.getAffectedRows(result) > 0;
     } finally {
       ctx.timer?.stop(
         `${this.constructor.name}->updateMediaPreviewWithSuccess`
