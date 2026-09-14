@@ -430,6 +430,21 @@ describe('Desktop corpus retrieval and answers', () => {
     );
   });
 
+  it('replaces a lone generated footer with the concise corpus fallback', async () => {
+    const { answerer } = makeAnswerer({
+      renderAnswer: jest
+        .fn()
+        .mockResolvedValue('More info: [bad](https://example.com)')
+    });
+    const result = await answerer.answer({
+      question: 'what is Core',
+      baseUrl: 'https://6529.io'
+    });
+    expect(result.type === 'ANSWER' && result.answer).toBe(
+      '**6529 Desktop (Core)** is the Windows, macOS, and Linux app that runs your own 6529 node: it indexes Ethereum data and calculates TDH locally. It also includes Core wallets and an IPFS node. Would you like help getting started?\n\nMore info: [6529 Apps](https://6529.io/about/6529-apps)'
+    );
+  });
+
   it('bounds the entire deterministic reply including a long link footer', async () => {
     const match = await source().findMatch('what is Core');
     if (!match) throw new Error('Expected overview record');

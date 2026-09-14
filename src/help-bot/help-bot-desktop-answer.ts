@@ -20,8 +20,7 @@ export function composeDesktopAnswer(
   record: HelpBotKnowledgeRecord
 ): string {
   const lines = text.trimEnd().split('\n');
-  if (lines.length > 1 && /^More info:/i.test(lines[lines.length - 1]))
-    lines.pop();
+  if (/^More info:/i.test(lines[lines.length - 1])) lines.pop();
   // Anchor each candidate to avoid rescanning runs of unmatched opening brackets.
   const body = lines
     .join('\n')
