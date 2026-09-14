@@ -3,6 +3,7 @@ import { competitionRepository } from '@/competitions/competition.repository';
 import { contentModerationDb } from '@/content-moderation/content-moderation.db';
 import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
 import * as Entities from '@/entities/entities';
+import { MintingClaimEntity } from '@/entities/IMintingClaim';
 import {
   WalletTransferAnalysisStateEntity,
   WalletTransferPairDailyEntity,
@@ -10,6 +11,11 @@ import {
 } from '@/entities/IWalletTransferAnalysis';
 import { handler } from './index';
 import { moderationRetentionSchemaDb } from './moderation-retention-schema.db';
+import { applyClaimsMediaUploadSchema } from './claims-media-schema';
+
+jest.mock('./claims-media-schema', () => ({
+  applyClaimsMediaUploadSchema: jest.fn().mockResolvedValue(2)
+}));
 
 jest.mock('@/sentry.context', () => ({
   wrapLambdaHandler: (fn: (event: unknown) => Promise<unknown>) => fn
@@ -66,31 +72,43 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       .mockResolvedValue([]);
   });
 
-  it('synchronizes only the three wallet-transfer entities and skips all unrelated work', async () => {
-    await expect(
-      invoke({ schema_scope: 'wallet-transfer-analysis' })
-    ).resolves.toEqual({
-      schema_scope: 'wallet-transfer-analysis'
-    });
-    expect(doInDbContext).toHaveBeenCalledTimes(1);
-    expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
-      logger: expect.anything(),
+  it.each([
+    {
+      scope: 'wallet-transfer-analysis',
       entities: [
         WalletTransferAnalysisStateEntity,
         WalletTransferPairDailyEntity,
         WalletTransferWalletDailyEntity
-      ],
-      syncEntities: true,
-      skipRedis: true
-    });
-    expect(migrations.getInstance).not.toHaveBeenCalled();
-    expect(competitionRepository.backfillLegacyMappings).not.toHaveBeenCalled();
-    expect(
-      contentModerationDb.deleteExpiredPrePublicationChecks
-    ).not.toHaveBeenCalled();
-    expect(moderationReviewDb.retain).not.toHaveBeenCalled();
-    expect(moderationRetentionSchemaDb.missingColumns).not.toHaveBeenCalled();
-  });
+      ]
+    },
+    { scope: 'claims-media-upload', entities: [MintingClaimEntity] }
+  ])(
+    'synchronizes only the $scope entities and skips all unrelated work',
+    async ({ scope, entities }) => {
+      await expect(invoke({ schema_scope: scope })).resolves.toEqual({
+        schema_scope: scope
+      });
+      expect(doInDbContext).toHaveBeenCalledTimes(1);
+      expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
+        logger: expect.anything(),
+        entities,
+        syncEntities: scope !== 'claims-media-upload',
+        skipRedis: true
+      });
+      expect(applyClaimsMediaUploadSchema).toHaveBeenCalledTimes(
+        scope === 'claims-media-upload' ? 1 : 0
+      );
+      expect(migrations.getInstance).not.toHaveBeenCalled();
+      expect(
+        competitionRepository.backfillLegacyMappings
+      ).not.toHaveBeenCalled();
+      expect(
+        contentModerationDb.deleteExpiredPrePublicationChecks
+      ).not.toHaveBeenCalled();
+      expect(moderationReviewDb.retain).not.toHaveBeenCalled();
+      expect(moderationRetentionSchemaDb.missingColumns).not.toHaveBeenCalled();
+    }
+  );
 
   it.each([undefined, {}, { schema_scope: 'full' }])(
     'preserves full manual migration behavior for %j',
@@ -181,7 +199,7 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     }
   );
 
-  it.each(['full', 'wallet-transfer-analysis'])(
+  it.each(['full', 'wallet-transfer-analysis', 'claims-media-upload'])(
     'rejects explicit %s scope on scheduled events',
     async (scope) => {
       await expect(
@@ -191,13 +209,16 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     }
   );
 
-  it('propagates scoped schema synchronization failure without starting maintenance', async () => {
-    const failure = new Error('Synthetic schema failure');
-    jest.mocked(doInDbContext).mockRejectedValueOnce(failure);
-    await expect(
-      invoke({ schema_scope: 'wallet-transfer-analysis' })
-    ).rejects.toBe(failure);
-    expect(migrations.getInstance).not.toHaveBeenCalled();
-    expect(competitionRepository.backfillLegacyMappings).not.toHaveBeenCalled();
-  });
+  it.each(['wallet-transfer-analysis', 'claims-media-upload'])(
+    'propagates %s schema synchronization failure without starting maintenance',
+    async (scope) => {
+      const failure = new Error('Synthetic schema failure');
+      jest.mocked(doInDbContext).mockRejectedValueOnce(failure);
+      await expect(invoke({ schema_scope: scope })).rejects.toBe(failure);
+      expect(migrations.getInstance).not.toHaveBeenCalled();
+      expect(
+        competitionRepository.backfillLegacyMappings
+      ).not.toHaveBeenCalled();
+    }
+  );
 });

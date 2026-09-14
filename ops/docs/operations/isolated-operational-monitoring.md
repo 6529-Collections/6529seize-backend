@@ -23,6 +23,21 @@ to distinguish storage, scheduling, rate-slot and webhook failures. Start with
 from distinct messages containing the same canonical work. A `GROUPED` outcome
 is an intentional repeat, not a lost webhook delivery. `ALREADY_COMPLETE`
 establishes an existing completed receipt and does not establish a second send.
+`EDITED` establishes a confirmed update of the acknowledged first message; do not
+count it as a newly posted alert. Inspect the digest's saved plan and the first
+receipt's group/destination binding when investigating a missing count update.
+Never expose the configured webhook or provider response body in diagnostics.
+
+Count-only digests edit their exact first message when acknowledgement and
+destination metadata are available. The saved plan fixes the target and count
+across retries. Legacy or unacknowledged first receipts retain summary POSTs.
+Only a confirmed missing target permits a persisted POST fallback, and that
+fallback retains the original destination binding. Rotation or an ambiguous
+response must not redirect the summary or create a speculative replacement.
+These edits reduce new Discord posts; source email and fallback policy are
+unchanged. Retain the previous artifact for rollback without deleting receipts.
+An older runtime ignores unfinished edit plans and can emit a new summary;
+completed numeric outcomes still deduplicate.
 
 Treat confirmed vendor acceptance followed by a receipt-completion error as an
 ambiguous retry boundary, and retain the primary failure when cleanup also fails.
@@ -30,7 +45,7 @@ Neither a missing settlement log nor an empty archive alone proves final loss or
 successful recovery. Do not infer the cause of older generic failure logs from
 new diagnostics, or change alarm thresholds to hide unresolved failures.
 
-A diagnostic-only runtime change uses `Deploy operational monitoring` with the
+A monitoring-runtime change uses `Deploy operational monitoring` with the
 reviewed exact merged SHA. The shared monitoring bundle updates the configured
 runtime functions, including both dispatchers; unchanged application producers,
 source relay stacks, IAM policies and subscriptions do not need a rollout. Keep

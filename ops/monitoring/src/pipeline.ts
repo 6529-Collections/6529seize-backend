@@ -1,6 +1,13 @@
 import { Alert, hash, parseAlert, renderAlert } from './contract.js';
 import { DeliveryError } from './webhook.js';
 import { completeDispatch, traceDispatch } from './dispatch-diagnostics.js';
+import type {
+  DeliveryResult,
+  DeliveryTarget,
+  DigestPlan,
+  EditDigestPlan,
+  PostDigestPlan
+} from './digest-plan.js';
 
 export type Work =
   | { kind: 'alert'; alert: Alert }
@@ -23,15 +30,27 @@ export interface Store {
     owner: string,
     now: number
   ): Promise<'acquired' | 'done' | 'busy'>;
-  complete(id: string, owner: string, outcome: string): Promise<void>;
+  complete(
+    id: string,
+    owner: string,
+    outcome: string,
+    delivery?: DeliveryResult
+  ): Promise<void>;
   release(id: string, owner: string): Promise<void>;
   group(key: string, id: string, alert: Alert): Promise<Group>;
   readGroup(key: string): Promise<Group | null>;
+  prepareDigest(id: string, owner: string, group: Group): Promise<DigestPlan>;
+  fallbackDigest(
+    id: string,
+    owner: string,
+    plan: EditDigestPlan
+  ): Promise<PostDigestPlan>;
   heartbeat(lane: string, now: number): Promise<void>;
 }
 export interface Transport {
   schedule(work: Work, delay: number): Promise<void>;
-  deliver(payload: object): Promise<string>;
+  deliver(payload: object, destinationKey?: string): Promise<DeliveryResult>;
+  edit(target: DeliveryTarget, payload: object): Promise<DeliveryResult | null>;
   archive(work: Work, reason: string): Promise<void>;
 }
 export function workId(work: Work): string {
@@ -54,8 +73,15 @@ export async function processWork(
   }
   if (lease === 'busy') throw new DeliveryError(true, 30, true);
   try {
-    const outcome = await execute(work, id, store, transport, now);
-    await traceDispatch('COMPLETE', () => store.complete(id, owner, outcome));
+    const outcome = await execute(work, id, owner, store, transport, now);
+    await traceDispatch('COMPLETE', () =>
+      store.complete(
+        id,
+        owner,
+        typeof outcome === 'string' ? outcome : outcome.messageId,
+        typeof outcome === 'string' ? undefined : outcome
+      )
+    );
     completeDispatch(terminalOutcome(outcome));
   } catch (error) {
     if (error instanceof DeliveryError && !error.retryable) {
@@ -72,7 +98,9 @@ export async function processWork(
     throw error;
   }
 }
-function terminalOutcome(outcome: string) {
+function terminalOutcome(outcome: string | DeliveryResult) {
+  if (typeof outcome !== 'string')
+    return outcome.operation === 'EDIT' ? 'EDITED' : 'DELIVERED';
   switch (outcome) {
     case 'grouped':
       return 'GROUPED';
@@ -87,10 +115,11 @@ function terminalOutcome(outcome: string) {
 async function execute(
   work: Work,
   id: string,
+  owner: string,
   store: Store,
   transport: Transport,
   now: number
-): Promise<string> {
+): Promise<string | DeliveryResult> {
   if (work.kind === 'heartbeat') {
     // Receipt proves a fresh canary traversed the queue, not merely that a scheduler ran.
     return traceDispatch('HEARTBEAT', async () => {
@@ -105,9 +134,7 @@ async function execute(
       if (!value) throw new Error('MISSING_GROUP');
       return value;
     });
-    return group.count > 1
-      ? await transport.deliver(renderAlert(group.alert, group.count))
-      : 'no-repeat';
+    return executeDigest(group, id, owner, store, transport);
   }
   const alert = parseAlert(work.alert);
   if (alert.severity !== 'error') return transport.deliver(renderAlert(alert));
@@ -130,6 +157,35 @@ async function execute(
     )
   );
   return transport.deliver(renderAlert(alert));
+}
+async function executeDigest(
+  group: Group,
+  id: string,
+  owner: string,
+  store: Store,
+  transport: Transport
+): Promise<string | DeliveryResult> {
+  if (!Number.isSafeInteger(group.count) || group.count < 1)
+    throw new Error('INVALID_GROUP_COUNT');
+  if (group.count === 1) return 'no-repeat';
+  let plan = await traceDispatch('DIGEST_PLAN', () =>
+    store.prepareDigest(id, owner, group)
+  );
+  if (plan.mode === 'EDIT') {
+    const edited = await transport.edit(
+      plan.target,
+      renderAlert(group.alert, plan.count)
+    );
+    if (edited) return edited;
+    const missing = plan;
+    plan = await traceDispatch('DIGEST_FALLBACK', () =>
+      store.fallbackDigest(id, owner, missing)
+    );
+  }
+  return transport.deliver(
+    renderAlert(group.alert, plan.count),
+    plan.reason === 'TARGET_MISSING' ? plan.destinationKey : undefined
+  );
 }
 export function parseWork(value: unknown): Work {
   if (!value || typeof value !== 'object') throw new Error('INVALID_WORK');

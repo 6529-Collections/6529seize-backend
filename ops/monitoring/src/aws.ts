@@ -17,7 +17,16 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { randomInt } from 'node:crypto';
 import { Alert, hash } from './contract.js';
 import type { Group, Store, Work } from './pipeline.js';
-import { DeliveryError } from './webhook.js';
+import { DeliveryError, webhookUrl } from './webhook.js';
+import {
+  isDestinationKey,
+  isMessageId,
+  parseDigestPlan,
+  parseDeliveryTarget,
+  type DeliveryTarget,
+  type DigestPlan,
+  type PostDigestPlan
+} from './digest-plan.js';
 
 export function setting(name: string): string {
   const value = process.env[name];
@@ -147,15 +156,23 @@ export const store: Store = {
       return (await read(`receipt:${id}`))?.outcome ? 'done' : 'busy';
     }
   },
-  async complete(id, owner, outcome) {
+  async complete(id, owner, outcome, delivery) {
+    if (delivery && (!isMessageId(outcome) || delivery.messageId !== outcome))
+      throw new Error('INVALID_DELIVERY_RECEIPT');
     await ddb.send(
       new UpdateCommand({
         TableName: setting('RECEIPTS_TABLE'),
         Key: { pk: `receipt:${id}` },
-        UpdateExpression:
-          'SET outcome = :outcome REMOVE leaseOwner, leaseUntil',
+        UpdateExpression: `SET outcome = :outcome${delivery ? ', deliveryOperation = :operation' : ''}${delivery?.destinationKey ? ', destinationKey = :destination' : ''} REMOVE leaseOwner, leaseUntil`,
         ConditionExpression: 'leaseOwner = :owner',
-        ExpressionAttributeValues: { ':outcome': outcome, ':owner': owner }
+        ExpressionAttributeValues: {
+          ':outcome': outcome,
+          ':owner': owner,
+          ...(delivery ? { ':operation': delivery.operation } : {}),
+          ...(delivery?.destinationKey
+            ? { ':destination': delivery.destinationKey }
+            : {})
+        }
       })
     );
   },
@@ -227,10 +244,93 @@ export const store: Store = {
     const item = await read(key);
     return item ? ({ ...item, key } as unknown as Group) : null;
   },
+  async prepareDigest(id, owner, group) {
+    const receipt = await read(`receipt:${id}`);
+    if (receipt?.leaseOwner !== owner || receipt.outcome !== undefined)
+      throw new Error('DIGEST_LEASE_NOT_OWNED');
+    if (receipt.digestPlan !== undefined)
+      return parseDigestPlan(receipt.digestPlan, group.key);
+    const target = await firstDelivery(group);
+    const snapshot = {
+      version: 1 as const,
+      groupKey: group.key,
+      count: group.count
+    };
+    const candidate: DigestPlan = target
+      ? { ...snapshot, mode: 'EDIT', target }
+      : { ...snapshot, mode: 'POST', reason: 'NO_ACK' };
+    parseDigestPlan(candidate, group.key);
+    const result = await ddb.send(
+      new UpdateCommand({
+        TableName: setting('RECEIPTS_TABLE'),
+        Key: { pk: `receipt:${id}` },
+        UpdateExpression: 'SET digestPlan = if_not_exists(digestPlan, :plan)',
+        ConditionExpression:
+          'leaseOwner = :owner AND attribute_not_exists(outcome)',
+        ExpressionAttributeValues: { ':owner': owner, ':plan': candidate },
+        ReturnValues: 'ALL_NEW'
+      })
+    );
+    return parseDigestPlan(result.Attributes?.digestPlan, group.key);
+  },
+  async fallbackDigest(id, owner, plan) {
+    const fallback: PostDigestPlan = {
+      version: 1,
+      groupKey: plan.groupKey,
+      count: plan.count,
+      mode: 'POST',
+      reason: 'TARGET_MISSING',
+      destinationKey: plan.target.destinationKey
+    };
+    const result = await ddb.send(
+      new UpdateCommand({
+        TableName: setting('RECEIPTS_TABLE'),
+        Key: { pk: `receipt:${id}` },
+        UpdateExpression: 'SET digestPlan = :fallback',
+        ConditionExpression:
+          'leaseOwner = :owner AND attribute_not_exists(outcome) AND digestPlan = :previous',
+        ExpressionAttributeValues: {
+          ':owner': owner,
+          ':previous': plan,
+          ':fallback': fallback
+        },
+        ReturnValues: 'ALL_NEW'
+      })
+    );
+    const persisted = parseDigestPlan(
+      result.Attributes?.digestPlan,
+      plan.groupKey
+    );
+    if (persisted.mode !== 'POST' || persisted.reason !== 'TARGET_MISSING')
+      throw new Error('DIGEST_FALLBACK_NOT_PERSISTED');
+    return persisted;
+  },
   async heartbeat(lane, now) {
     await put(`health:${lane}`, { seenAt: now });
   }
 };
+async function firstDelivery(group: Group): Promise<DeliveryTarget | null> {
+  if (!isDestinationKey(group.firstEventId))
+    throw new Error('INVALID_FIRST_EVENT_RECEIPT');
+  const receipt = await read(`receipt:${group.firstEventId}`);
+  if (!receipt) return null;
+  if (receipt.groupKey !== group.key)
+    throw new Error('FIRST_DELIVERY_GROUP_MISMATCH');
+  if (receipt.outcome === undefined || receipt.outcome === 'archived')
+    return null;
+  if (
+    !isMessageId(receipt.outcome) ||
+    (receipt.deliveryOperation !== undefined &&
+      receipt.deliveryOperation !== 'POST')
+  )
+    throw new Error('INVALID_FIRST_DELIVERY_RECEIPT');
+  // Older successful receipts did not retain a destination binding.
+  if (receipt.destinationKey === undefined) return null;
+  return parseDeliveryTarget({
+    messageId: receipt.outcome,
+    destinationKey: receipt.destinationKey
+  });
+}
 export async function enqueue(
   work: Work,
   critical = false,
@@ -260,19 +360,53 @@ export async function archive(value: unknown, reason: string): Promise<void> {
     })
   );
 }
-const secretCache = new Map<string, { value: string; until: number }>();
-export async function secret(arn: string): Promise<string> {
+interface CachedSecret {
+  value: string;
+  until: number;
+  versionId?: string;
+}
+const secretCache = new Map<string, CachedSecret>();
+async function readSecret(arn: string): Promise<CachedSecret> {
   const cached = secretCache.get(arn);
-  if (cached && cached.until > Date.now()) return cached.value;
+  if (cached && cached.until > Date.now()) return cached;
   const result = await secrets.send(
     new GetSecretValueCommand({ SecretId: arn })
   );
   if (!result.SecretString) throw new Error('SECRET_UNAVAILABLE');
-  secretCache.set(arn, {
+  const value = {
     value: result.SecretString,
-    until: Date.now() + 60000
-  });
-  return result.SecretString;
+    until: Date.now() + 60000,
+    versionId: result.VersionId
+  };
+  secretCache.set(arn, value);
+  return value;
+}
+export async function secret(arn: string): Promise<string> {
+  return (await readSecret(arn)).value;
+}
+export async function webhookDestination(): Promise<{
+  value: string;
+  key?: string;
+}> {
+  const arn = setting('WEBHOOK_SECRET_ARN');
+  const result = await readSecret(arn);
+  const url = new URL(webhookUrl(result.value));
+  const webhookId = url.pathname.split('/').at(-2);
+  // Missing version metadata must not prevent first/critical delivery. Such
+  // receipts retain the legacy POST summary behavior and cannot authorize edits.
+  return {
+    value: result.value,
+    key: result.versionId
+      ? hash(
+          JSON.stringify([
+            setting('ENVIRONMENT'),
+            arn,
+            result.versionId,
+            webhookId
+          ])
+        )
+      : undefined
+  };
 }
 export async function backup(code: string): Promise<void> {
   await sns.send(

@@ -44,15 +44,23 @@ Ordinary 4xx responses and moderation decisions are not operational errors. Sile
 catches, console-only handled errors outside the shared logger, failures before
 telemetry reaches AWS, and unconfigured frontend/external providers remain gaps.
 Platform alarms can detect a failed invocation even when JavaScript cannot log it.
-The NFT link refresher and wave score refresher throttle alarms require at least
-one throttle in three of the last five one-minute periods. The NFT refresher's
+The NFT link refresher, wave score refresher, subscription coverage reconciler
+and NFT processing loop throttle alarms require at least one throttle in three
+of the last five one-minute periods. The NFT refresher's
 SQS event source caps concurrency at the
 function's reserved capacity, preventing the poller from overshooting that limit.
 Isolated throttles therefore do not generate immediate alarm/recovery pairs;
 repeated throttling still alerts. Wave score refresh keeps its single reserved
 execution: its two FIFO sources and one-minute fallback can contend for that
-capacity even while messages drain normally. Invocation-error and OOM alarms
-remain immediate, as do other services' throttle alarms.
+capacity even while messages drain normally. Subscription coverage reconciliation
+and NFT processing also reserve one execution while running overlapping
+one-minute and longer schedules. Their short contention can be retried before
+the next scheduled run. The sustained rule delays the first throttle warning
+until three breaching minutes occur within the five-minute evaluation window;
+it does not measure successful business output or guarantee a detection SLA.
+Recovery follows the same rolling window without a separate cooldown.
+Invocation-error and OOM alarms remain immediate, as do other services' throttle
+alarms, including release-note generation. Direct SNS alarm actions are retained.
 
 Both wave score queues independently alert when their oldest message is at least
 1,800 seconds old in three of five one-minute periods. This initial backlog
@@ -146,8 +154,10 @@ Normal webhook sends also share a DynamoDB rate slot (one every two seconds per
 environment), leaving vendor capacity for critical traffic. Slot contention
 defers delivery through SQS; sustained overload can exhaust retries and is archived.
 Within a five-minute fingerprint window, the first occurrence is sent promptly;
-repeats update a durable count and schedule a summary. Critical/recovery events
-bypass that grouping. Confirmed grouping transaction conflicts get up to three
+repeats update a durable count. The scheduled summary edits the first confirmed
+message when its receipt identifies the same group and webhook destination.
+Critical/recovery events bypass grouping and continue sending immediately.
+Confirmed grouping transaction conflicts get up to three
 application transaction sends sharing a three-second abort signal for requests
 and short jittered waits. Each send retains the SDK's existing retry configuration;
 SDK retry sleeps can extend elapsed time beyond three seconds. The atomic receipt/count write and duplicate proof
@@ -160,6 +170,27 @@ grouping, or successful permanent-failure archive. `wait=true` and a Discord
 message ID are required for confirmed delivery. Timeouts, network errors, 408,
 429 and 5xx retry; 429 delays honor vendor backoff. Permanent failures archive
 and signal fallback rather than silently succeeding.
+
+Count summaries persist an absolute count and delivery plan before contacting
+Discord. An edit retry uses that same count and message, even if a later repeat
+increases the group count. `PATCH` must return the exact expected message ID;
+timeouts and uncertain responses retry the edit instead of creating a new post.
+A completed edit is recorded as `EDITED`, not a new message. The count is a
+snapshot, not a guarantee that late arrivals after digest completion are included.
+
+The first message's receipt binds its ID to the webhook identity and secret
+version through a nonsecret hash. Missing or legacy acknowledgement metadata
+retains the previous summary POST behavior. A specifically confirmed missing
+message (`404` / Discord code `10008`) can transition its durable plan to POST;
+that fallback remains bound to the original destination. Credential changes,
+permission errors, unknown webhooks and ambiguous failures never authorize a
+replacement post. Existing permanent-failure archive and fallback signaling
+remain active. Missing secret-version metadata does not block first or critical
+delivery, but those receipts cannot authorize future edits.
+
+This reduces new count-summary posts, not webhook operations or email traffic.
+It still uses the monitoring-owned incoming webhook. Five-minute groups,
+initial/protected alerts, source retention and independent fallback are unchanged.
 
 SQS/EventBridge/Lambda delivery is at least once. An ambiguous timeout after
 Discord accepted a message can cause a duplicate; this is not an exactly-once
@@ -207,16 +238,19 @@ diagnostics retain only bounded allowlisted reason codes, never items or message
 `sqsMessageHash` is SHA256 of the SQS message ID; `workHash` is SHA256 of the
 canonical work ID, matching the suffix of `receipt:<workHash>`. A later
 `DELIVERY_SETTLED` record links that attempt to a completed receipt: `DELIVERED`,
-`GROUPED`, `HEARTBEAT`, `NO_REPEAT` or `ARCHIVED`. `ALREADY_COMPLETE` means a
+`EDITED`, `GROUPED`, `HEARTBEAT`, `NO_REPEAT` or `ARCHIVED`. `ALREADY_COMPLETE` means a
 duplicate found an existing completed receipt, not a new webhook delivery.
 `INVALID_ARCHIVED` means malformed work was archived and fallback published;
 it has no fabricated canonical work hash or completed receipt. Settlement logs
 are emitted after the relevant durable operation succeeds.
 
 `deliveryAcceptance` distinguishes `NOT_ATTEMPTED`, `UNKNOWN` and `CONFIRMED`.
-Confirmation requires a valid returned webhook message ID. A failure at
-`COMPLETE` with confirmed acceptance means the vendor accepted the message but
-the receipt write failed; retries can duplicate that send. A timeout leaves
+Confirmation requires a valid returned webhook message ID; an edit must return
+its exact target ID. `DIGEST_PLAN`, `DIGEST_FALLBACK` and `WEBHOOK_EDIT` identify
+the new operations, and `DELIVERY_DESTINATION_CHANGED` identifies a failed
+destination binding. A failure at `COMPLETE` with confirmed acceptance means the
+vendor accepted the POST or PATCH but the receipt write failed. A POST retry can
+duplicate the message; an edit retries its saved absolute count. A timeout leaves
 acceptance unknown. When releasing a lease or archiving also fails, the record
 keeps the original operation/cause and a separate cleanup cause. These fields
 do not change the exception, acknowledgement, retry or fallback behavior.

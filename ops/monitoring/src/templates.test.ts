@@ -85,7 +85,9 @@ test('NFT refresher throttling requires three breaching minutes out of five whil
       if (
         ![
           'nftLinkRefresherLoopThrottles',
-          'waveScoreRefreshLoopThrottles'
+          'waveScoreRefreshLoopThrottles',
+          'subscriptionCoverageReconciliationLoopThrottles',
+          'nftsLoopThrottles'
         ].includes(id) &&
         resource.Type === 'AWS::CloudWatch::Alarm' &&
         resource.Properties.Namespace === 'AWS/Lambda'
@@ -94,6 +96,52 @@ test('NFT refresher throttling requires three breaching minutes out of five whil
         assert.equal(resource.Properties.DatapointsToAlarm, undefined, id);
       }
     }
+  }
+});
+
+test('overlapping scheduled workers qualify sustained throttles without delaying invocation failures or changing notification actions', () => {
+  for (const env of ['prod', 'staging']) {
+    const resources = JSON.parse(
+      readFileSync(new URL(`../source-${env}.json`, import.meta.url), 'utf8')
+    ).Resources;
+    for (const name of ['subscriptionCoverageReconciliationLoop', 'nftsLoop']) {
+      const throttles = resources[`${name}Throttles`].Properties;
+      const errors = resources[`${name}Errors`].Properties;
+      assert.deepEqual(throttles, {
+        AlarmName: {
+          'Fn::Sub': `seize-monitoring-\${Environment}-${name}-Throttles`
+        },
+        Namespace: 'AWS/Lambda',
+        MetricName: 'Throttles',
+        Dimensions: [{ Name: 'FunctionName', Value: name }],
+        Statistic: 'Sum',
+        Period: 60,
+        EvaluationPeriods: 5,
+        DatapointsToAlarm: 3,
+        Threshold: 1,
+        ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+        TreatMissingData: 'notBreaching',
+        AlarmActions: {
+          'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
+        }
+      });
+      assert.equal(errors.MetricName, 'Errors');
+      assert.equal(errors.EvaluationPeriods, 1);
+      assert.equal(errors.DatapointsToAlarm, undefined);
+      assert.equal(errors.Threshold, 1);
+      assert.deepEqual(errors.AlarmActions, throttles.AlarmActions);
+    }
+    if (env === 'prod') {
+      const releaseNotes =
+        resources.releaseNotesGenerationLoopThrottles.Properties;
+      assert.equal(releaseNotes.EvaluationPeriods, 1);
+      assert.equal(releaseNotes.DatapointsToAlarm, undefined);
+    }
+    assert.equal(resources.LogRelayErrors.Properties.EvaluationPeriods, 1);
+    assert.equal(
+      resources.RelayDeadLettersAlarm.Properties.EvaluationPeriods,
+      1
+    );
   }
 });
 
