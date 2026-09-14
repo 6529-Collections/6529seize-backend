@@ -209,12 +209,14 @@ describeWithSeed(
 
     it('does not acknowledge a failed database completion write or expose private state', async () => {
       const lease = await acquire();
-      await sqlExecutor.execute(`create trigger preview_failure_fixture before update on ${NFT_LINKS_TABLE}
-        for each row signal sqlstate '45000' set message_text = 'fixture write failure'`);
+      await sqlExecutor.execute(`alter table ${NFT_LINKS_TABLE}
+        add constraint preview_failure_fixture check (media_preview_status <> 'FAILED')`);
       try {
-        await expect(fail(lease)).rejects.toThrow('fixture write failure');
+        await expect(fail(lease)).rejects.toMatchObject({ errno: 3819 });
       } finally {
-        await sqlExecutor.execute('drop trigger preview_failure_fixture');
+        await sqlExecutor.execute(
+          `alter table ${NFT_LINKS_TABLE} drop check preview_failure_fixture`
+        );
       }
       const row = await read();
       expect(row.media_preview_error_message).toBe(lease.lease);

@@ -90,7 +90,7 @@ jobs:
         run: |
           ./bin/6529 exec node scripts/check-package-lock.mjs
           ./bin/6529 exec node scripts/verify-media-runtime.cjs .
-          ./bin/6529 exec jest --config scripts/media-jest.config.cjs
+          NODE_OPTIONS=--max-old-space-size=3072 ./bin/6529 exec jest --config scripts/media-jest.config.cjs
       - name: Verify each media package installs and loads natively
         run: |
           for service in artworkDocumentationProcessor dropMediaSanitizer mediaResizerLoop nftLinkMediaPreviewLoop rememesLoop s3Uploader; do
