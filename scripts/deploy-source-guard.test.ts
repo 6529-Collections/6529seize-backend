@@ -176,7 +176,8 @@ describe('generated deployment source guard', () => {
         'full',
         'wallet-transfer-analysis',
         'claims-media-upload',
-        'nft-link-page-retry'
+        'nft-link-page-retry',
+        'membership-refresh'
       ]
     });
     expect(job.env.DB_SCHEMA_SCOPE).toBe(
@@ -263,7 +264,8 @@ describe('generated deployment source guard', () => {
     'full',
     'wallet-transfer-analysis',
     'claims-media-upload',
-    'nft-link-page-retry'
+    'nft-link-page-retry',
+    'membership-refresh'
   ])('forwards validated %s as one JSON invocation payload', (scope) => {
     const result = invokeMigrationScope(scope);
     expect(result.error).toBeUndefined();
