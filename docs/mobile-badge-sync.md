@@ -170,9 +170,13 @@ device; contention retries through SQS. Enqueueing happens after releasing the
 lock, before the worker acquires it separately for the badge refresh.
 
 The Redis lock ends before enqueueing; it does not span the asynchronous refresh.
-Registration uses the database row lock and revision fence, while the refresh
-worker reads the latest registrations and token. A deliberate login before the
-refresh is therefore included in its count. Revocation must not bypass Redis
+Registration uses the database row lock and revision fence; it does not acquire
+the Redis device lock. Redis coordinates revocation with worker recipient checks
+and submissions, not registration with delivery. A login committed before the
+worker reads registrations is included in that count. A registration committed
+after the read can leave the submitted badge temporarily stale until a later
+read/unread event or ordinary push recalculates it; registration alone does not
+schedule a corrective badge update. Revocation must not bypass Redis
 during an outage: a pending alert could otherwise submit after its last recipient
 check and after logout. The client keeps that revocation queued until coordination
 recovers. Installation lookups use the `device_id` primary key; the additional
