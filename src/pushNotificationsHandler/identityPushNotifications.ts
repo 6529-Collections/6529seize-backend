@@ -63,6 +63,10 @@ import {
   buildWavePushNotificationTitle
 } from '@/pushNotificationsHandler/wave-push-notification-title';
 import type { WavePushNotificationContext } from '@/pushNotificationsHandler/wave-push-notification-title';
+import {
+  createPushSendDiagnostic,
+  reportPushSendDiagnostic
+} from '@/pushNotificationsHandler/push-send-diagnostics';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_IDENTITY');
 const SKIP_NOTIFICATION_PUSH = Symbol('SKIP_NOTIFICATION_PUSH');
@@ -548,7 +552,7 @@ async function buildIdentityNotificationMessages(
   ).filter((message): message is IdentityPushNotificationMessage => !!message);
 }
 
-async function handleSendResults(
+export async function handleSendResults(
   messages: IdentityPushNotificationMessage[],
   results: PushNotificationSendResult[]
 ): Promise<number[]> {
@@ -593,9 +597,10 @@ async function handleSendResults(
         }
         return;
       }
-      logger.error(`Failed to send notification: ${error?.message}`, {
-        error
-      });
+      reportPushSendDiagnostic(
+        result.diagnosticError ??
+          createPushSendDiagnostic(error, 'sdk_response')
+      );
       outcome.hasRetryableFailure = true;
     })
   );
