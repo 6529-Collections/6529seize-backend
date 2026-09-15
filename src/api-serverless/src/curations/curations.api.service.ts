@@ -273,6 +273,7 @@ export class CurationsApiService {
           (it) => it.drop_id === drop.id && it.curation_id === curation.id
         );
         const requestedPriorityOrder = request.priority_order;
+        this.assertDropPlacementRequestOrThrow(request, !!existingDropCuration);
         if (existingDropCuration) {
           const currentPriorityOrder = this.resolveCurrentDropPriorityOrder(
             existingDropCuration,
@@ -285,10 +286,14 @@ export class CurationsApiService {
               label: 'Drop curation priority_order'
             });
           }
-          const nextPriorityOrder =
-            requestedPriorityOrder === undefined
-              ? currentPriorityOrder
-              : requestedPriorityOrder;
+          const nextPriorityOrder = request.placement
+            ? this.resolveDropPlacementOrThrow({
+                request,
+                movingDropId: drop.id,
+                currentPriorityOrder,
+                lockedDropCurations
+              })
+            : (requestedPriorityOrder ?? currentPriorityOrder);
           await this.shiftDropCurationPriorityOrdersForMove(
             {
               curationId: curation.id,
@@ -650,6 +655,64 @@ export class CurationsApiService {
           curation.drop_id === targetCuration.drop_id &&
           curation.curation_id === targetCuration.curation_id
       ) + 1
+    );
+  }
+
+  private assertDropPlacementRequestOrThrow(
+    request: ApiDropCurationRequest,
+    isIncluded: boolean
+  ): void {
+    const { placement, anchor_drop_id: anchorDropId } = request;
+    if (placement === undefined && anchorDropId === undefined) {
+      return;
+    }
+    if (!placement || request.priority_order !== undefined || !isIncluded) {
+      throw new BadRequestException(
+        `Placement requires a drop already in the curation and cannot be combined with priority_order`
+      );
+    }
+    const requiresAnchor = placement === 'BEFORE' || placement === 'AFTER';
+    if (requiresAnchor !== Boolean(anchorDropId)) {
+      throw new BadRequestException(
+        `anchor_drop_id is required only for BEFORE or AFTER placement`
+      );
+    }
+  }
+
+  private resolveDropPlacementOrThrow(param: {
+    request: ApiDropCurationRequest;
+    movingDropId: string;
+    currentPriorityOrder: number;
+    lockedDropCurations: DropCurationEntity[];
+  }): number {
+    const { placement, anchor_drop_id: anchorDropId } = param.request;
+    const count = param.lockedDropCurations.length;
+    if (placement === 'TOP') return count;
+    if (placement === 'BOTTOM') return 1;
+    const anchor = param.lockedDropCurations.find(
+      (it) => it.drop_id === anchorDropId
+    );
+    if (!anchor) {
+      throw new BadRequestException(
+        `The target drop is no longer in this curation. Refresh and try again.`
+      );
+    }
+    if (anchor.drop_id === param.movingDropId) {
+      return param.currentPriorityOrder;
+    }
+    const anchorPriorityOrder = this.resolveCurrentDropPriorityOrder(
+      anchor,
+      param.lockedDropCurations
+    );
+    if (placement === 'BEFORE') {
+      return (
+        anchorPriorityOrder +
+        (param.currentPriorityOrder > anchorPriorityOrder ? 1 : 0)
+      );
+    }
+    return (
+      anchorPriorityOrder -
+      (param.currentPriorityOrder < anchorPriorityOrder ? 1 : 0)
     );
   }
 
