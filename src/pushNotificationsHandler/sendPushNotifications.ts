@@ -10,6 +10,12 @@ import { numbers } from '../numbers';
 import { emojify } from './emojify';
 import { sanitizePushNotificationText } from './push-notification-text';
 import { fitPushNotificationPayload } from './push-notification-payload-budget';
+import {
+  createPushSendDiagnostic,
+  PushSendDiagnostic,
+  reportPushImageRetry,
+  reportPushSendDiagnostic
+} from '@/pushNotificationsHandler/push-send-diagnostics';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_SEND');
 
@@ -32,6 +38,8 @@ export interface PushNotificationMessageInput {
 export interface PushNotificationSendResult {
   input: PushNotificationMessageInput;
   response: SendResponse;
+  /** Private diagnostic carrier; the original provider response stays unchanged. */
+  diagnosticError?: PushSendDiagnostic;
 }
 
 function preparePushNotificationLine(value: string | null | undefined): string {
@@ -112,8 +120,9 @@ function prepareMessage(input: PushNotificationMessageInput) {
   try {
     return { input, message: buildMessage(input, true) };
   } catch (error) {
-    logger.error(`Failed to prepare push notification: ${error}`);
-    return { input, result: buildFailedSendResult(input, error) };
+    const diagnostic = createPushSendDiagnostic(error, 'prepare');
+    reportPushSendDiagnostic(diagnostic);
+    return { input, result: buildFailedSendResult(input, error, diagnostic) };
   }
 }
 
@@ -141,8 +150,11 @@ async function sendPreparedMessages(
       .messaging()
       .sendEach(prepared.map((item) => item.message));
   } catch (error) {
-    logger.error(`Error sending notification batch: ${error}`);
-    return prepared.map(({ input }) => buildFailedSendResult(input, error));
+    const diagnostic = createPushSendDiagnostic(error, 'sdk_batch');
+    reportPushSendDiagnostic(diagnostic);
+    return prepared.map(({ input }) =>
+      buildFailedSendResult(input, error, diagnostic)
+    );
   }
 
   logger.info(
@@ -158,10 +170,12 @@ async function sendPreparedMessages(
 
 function buildFailedSendResult(
   input: PushNotificationMessageInput,
-  error: unknown
+  error: unknown,
+  diagnosticError: PushSendDiagnostic
 ): PushNotificationSendResult {
   return {
     input,
+    diagnosticError,
     response: {
       success: false,
       error: error as SendResponse['error']
@@ -240,14 +254,13 @@ async function handleSendResponse(
 
   const error = response.error;
   if (input.imageUrl && error?.code === 'messaging/invalid-payload') {
-    logger.info(
-      `Invalid payload (e.g. imageUrl), retrying without image: ${error.message}`
-    );
+    reportPushImageRetry();
     return retryMessageWithoutImage(input);
   }
 
-  logger.error(`Error sending notification: ${error}`);
-  return { input, response };
+  const diagnosticError = createPushSendDiagnostic(error, 'sdk_response');
+  reportPushSendDiagnostic(diagnosticError);
+  return { input, response, diagnosticError };
 }
 
 async function retryMessageWithoutImage(
@@ -263,14 +276,9 @@ async function retryMessageWithoutImage(
         messageId
       }
     };
-  } catch (error: any) {
-    logger.error(`Error sending notification without image: ${error}`);
-    return {
-      input,
-      response: {
-        success: false,
-        error
-      }
-    };
+  } catch (error) {
+    const diagnostic = createPushSendDiagnostic(error, 'image_retry');
+    reportPushSendDiagnostic(diagnostic);
+    return buildFailedSendResult(input, error, diagnostic);
   }
 }
