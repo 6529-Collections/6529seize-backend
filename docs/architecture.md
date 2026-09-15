@@ -809,7 +809,9 @@ Important API responsibilities:
   the same membership SQL without creating a group, identity group, or other
   persistent record. Draft identity-address and NFT-token criteria remain bind
   parameters, and results reflect the current indexed metrics and ownership
-  state.
+  state. The [eligibility specification](eligibility-spec.md) pins parity with
+  direct evaluation, including explicit Level zero and identity-shaped empty
+  member results. This changes no materialization runtime or API contract.
 - Wave mention autocomplete under `/v2/waves/{waveId}/mention-search`, which
   derives visibility eligibility from a persisted wave, and the authenticated
   `/v2/waves/mention-search` draft endpoint, which applies the selected
