@@ -95,7 +95,7 @@ Publication requires the current request, source guards, lease, immutable seed a
 exhaustion proof. GROUP/FULL runs page the canonical identity source and request
 PROFILE work; source-collation duplicate identities fail closed.
 
-`membership_runtime_checkpoints` holds independent strictly decoded GC and future
+`membership_runtime_checkpoints` holds independent strictly decoded GC and
 dispatcher progress rows. GC uses bounded terminal-status scans and pending slots,
 then locks target/run/publication in order. It marks retirement once, honors reader
 grace and deletes bounded raw member windows while progressing past locked rows.
@@ -108,19 +108,64 @@ Runtime controls are captured before secret loading. Production accepts only
 fixture mode with a fixed isolated database and fixed targets, checked before any
 database or secret access. An internal immutable connection selection overrides
 the loaded default database and rejects startup failure without falling back.
-The worker verifies the fixture ownership marker before writes. Closed IAM status
-inspection works without database access; inactive SQS delivery throws rather than
+The worker verifies the fixture ownership marker and READY state before writes.
+Closed IAM status inspection works without database access; inactive SQS delivery throws rather than
 acknowledging a hint. The worker cannot send messages or invoke itself. External
-dispatch and fixture setup/acceptance follow in M5; normal producers, API readers,
-production work and cutover remain unavailable. See
+dispatch is provided by `membershipRefreshDispatcherLoop`; normal producers, API
+readers, production work and cutover remain unavailable. See
 [runtime operations](membership-runtime-operations.md).
 
-The worker catalog entry also generates independent operational-monitoring
-coverage. Its central collector allowlist and application-account log subscription
-require separate monitoring and source-stack deployments after the authorized
-main merges and service log-group creation. Combined staging uses service-owned
-alarms and direct logs until that coverage is installed and verified; see the
+The worker and dispatcher catalog entries also generate independent operational
+monitoring coverage. Their central collector allowlists and application-account
+log subscriptions require separate monitoring and source-stack deployments after
+the authorized main merges and service log-group creation. Combined staging uses
+service-owned alarms and direct logs until coverage is verified. See the
 [monitoring rollout sequence](membership-runtime-operations.md#independent-operational-monitoring).
+
+### External membership dispatcher and isolated staging fixture
+
+`membershipRefreshDispatcherLoop` is a separate 512 MB, 30-second Lambda with
+reserved concurrency one and a disabled-by-default one-minute EventBridge rule.
+It imports the worker stack's work queue identity. Its dedicated role can send to
+that queue and its own failure destination; it cannot consume work or invoke a
+Lambda. EventBridge and Lambda asynchronous delivery have bounded event age,
+zero automatic retries and a separate encrypted failure queue.
+
+Each tick advances a durable, strictly decoded checkpoint across alternating
+due-time and target-primary-key scans. A raw position commits before the target
+is locked and reserved. Each normalized target is attempted once per invocation,
+so overlapping scan lanes cannot immediately re-enqueue a checkpointed page.
+The finite availability reservation commits before the
+bounded SQS send. Failed or uncertain sends leave that reservation to expire;
+subsequent independent ticks recover the target without a self-continuation chain.
+Parked targets, live leases, stale hints and incompatible protocol state never
+gain membership authority through dispatch. Separate GC work retains its own
+deadline allowance even when dispatch fails. Metrics cover successful heartbeat,
+observed due age, observed parked targets, failed sends and GC progress/failure;
+service alarms also cover delivery destinations, errors, throttles and OOM.
+
+The existing IAM-only `customReplayLoop` carries six exact staging fixture
+actions: preflight, bounded prepare, status, scenario advance, database proof and
+bounded cleanup. The database proof owns its transactions and concurrent reader;
+it records natural lease expiry, stale-token rejection and reader-grace retention
+separately from the independently scheduled SQS proof. Private lease tokens never
+cross the carrier response boundary.
+These actions select only `membership_runtime_drill_v1` through the immutable
+connection option, never the secret-loaded application database. A fixed manifest
+owns 21 schema objects, three profiles and 36 referenced broad groups. Preparation
+uses the actual source provisioning/job/barrier/catalogue contracts before marking
+READY; it does not certify source coverage for the application database.
+Create-only schema inspection rejects foreign populated objects and unexpected
+DDL. The sole generated-column metadata receipt is reconciled only after verifying
+the exact existing expression; it never permits a generated-column rebuild.
+
+For the transport drill, a fixed fixture target records the original SQS message
+and actual committed run/checkpoint, then deliberately fails that message outside
+the receipt transaction. Independent dispatch suppresses new hints for that target
+while other targets continue. The closed correction action permits the original
+DLQ message to resume the same generation after explicit redrive. This protocol
+exists only in the isolated staging fixture. Both runtime services deploy inactive
+in production, and fixture actions reject production before secret or DB access.
 
 ## Proposal card media
 

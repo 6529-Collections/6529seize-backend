@@ -106,6 +106,7 @@ function boot(environment: MembershipRuntimeEnvironment = staging) {
     evaluator: typeof import('@/membership/membership-profile-evaluator');
     fixture: typeof import('@/membership/membership-runtime-fixture.db');
     executor: typeof import('@/sql-executor');
+    transport: typeof import('@/membership/membership-runtime-transport.db');
   };
   jest.isolateModules(() => {
     modules = {
@@ -118,7 +119,8 @@ function boot(environment: MembershipRuntimeEnvironment = staging) {
       worker: require('@/membership/membership-worker'),
       evaluator: require('@/membership/membership-profile-evaluator'),
       fixture: require('@/membership/membership-runtime-fixture.db'),
-      executor: require('@/sql-executor')
+      executor: require('@/sql-executor'),
+      transport: require('@/membership/membership-runtime-transport.db')
     };
   });
   const m = modules!;
@@ -137,11 +139,17 @@ function boot(environment: MembershipRuntimeEnvironment = staging) {
   const work = jest
     .spyOn(m.worker.MembershipRefreshWorker.prototype, 'runTarget')
     .mockResolvedValue(result);
+  const inspect = jest
+    .spyOn(
+      m.transport.MembershipRuntimeTransportDb.prototype,
+      'inspectDelivery'
+    )
+    .mockResolvedValue({ outcome: 'PROCEED', receipt: null });
   const invoke = m.entry.handler as (
     event: unknown,
     lambdaContext?: ReturnType<typeof context>
   ) => Promise<unknown>;
-  return { ...m, database, initialize, marker, work, invoke };
+  return { ...m, database, initialize, marker, work, inspect, invoke };
 }
 
 afterEach(() => {
@@ -201,6 +209,24 @@ describe('membership worker handler cold-start boundary', () => {
     await expect(app.invoke(event(), context())).rejects.toThrow('inactive');
     expect(app.initialize).not.toHaveBeenCalled();
   });
+  it.each([
+    { scope: 'FULL', target_id: '*' },
+    { scope: 'GROUP', target_id: 'membership-drill-group-001' }
+  ])(
+    'bounds $scope fanout to one profile per external delivery',
+    async (target) => {
+      const app = boot();
+      const incoming = event();
+      incoming.Records[0].body = JSON.stringify({ ...hint, target });
+      await expect(app.invoke(incoming, context())).resolves.toEqual(result);
+      expect(app.work).toHaveBeenCalledWith(
+        target,
+        expect.objectContaining({ max_quanta: 1, page_size: 1 }),
+        {},
+        hint.delivery
+      );
+    }
+  );
   it('retains trusted controls through prepEnvironment overwrites and binds real worker/evaluator to the initialized executor', async () => {
     const app = boot();
     jest.mocked(app.env.prepEnvironment).mockImplementation(async () => {
@@ -320,6 +346,103 @@ describe('membership worker handler cold-start boundary', () => {
     await expect(app.invoke(event(), context())).rejects.toThrow(
       'failed quantum'
     );
+    expect(app.db.disconnect).toHaveBeenCalledTimes(1);
+  });
+  it('checks transport before and after a pending committed quantum', async () => {
+    const app = boot();
+    await app.invoke(event(), context());
+    expect(app.inspect).toHaveBeenNthCalledWith(
+      1,
+      hint.target,
+      event().Records[0].messageId,
+      null,
+      expect.any(Object)
+    );
+    expect(app.inspect).toHaveBeenNthCalledWith(
+      2,
+      hint.target,
+      event().Records[0].messageId,
+      result,
+      expect.any(Object)
+    );
+    expect(app.inspect.mock.invocationCallOrder[0]).toBeLessThan(
+      app.work.mock.invocationCallOrder[0]
+    );
+    expect(app.work.mock.invocationCallOrder[0]).toBeLessThan(
+      app.inspect.mock.invocationCallOrder[1]
+    );
+  });
+  it.each([false, true])(
+    'throws a held-message transport failure only after receipt transaction commit (after page=%s)',
+    async (afterPage) => {
+      const app = boot();
+      const timeline: string[] = [];
+      jest
+        .mocked(app.primary.withMembershipPrimaryTransaction)
+        .mockImplementation(async (_db, callback) => {
+          const value = await callback({
+            connection: { connection: 'bound-test-primary' }
+          } as unknown as MembershipPrimaryContext);
+          timeline.push('commit');
+          return value;
+        });
+      if (afterPage)
+        app.inspect.mockResolvedValueOnce({
+          outcome: 'PROCEED',
+          receipt: null
+        });
+      app.inspect.mockImplementationOnce(async () => {
+        timeline.push('receipt');
+        return {
+          outcome: 'HELD_MESSAGE',
+          receipt: {
+            phase: 'HELD',
+            message_id: event().Records[0].messageId,
+            run_id: '019946b3-4180-7000-8000-000000000002',
+            checkpoint_version: '2'
+          }
+        };
+      });
+      await app.invoke(event(), context()).then(
+        () => {
+          throw new Error('Expected held receipt');
+        },
+        (error) => {
+          timeline.push('rejected');
+          expect(error.message).toContain('committed checkpoint');
+        }
+      );
+      expect(timeline.slice(-3)).toEqual(['receipt', 'commit', 'rejected']);
+      expect(app.work).toHaveBeenCalledTimes(afterPage ? 1 : 0);
+      expect(app.db.disconnect).toHaveBeenCalledTimes(1);
+    }
+  );
+  it('acknowledges a different held-target hint without running another quantum', async () => {
+    const app = boot();
+    app.inspect.mockResolvedValueOnce({
+      outcome: 'OTHER_MESSAGE',
+      receipt: {
+        phase: 'HELD',
+        message_id: '019946b3-4180-7000-8000-000000000003',
+        run_id: '019946b3-4180-7000-8000-000000000002',
+        checkpoint_version: '2'
+      }
+    });
+    await expect(app.invoke(event(), context())).resolves.toMatchObject({
+      outcome: 'NO_WORK',
+      quanta: 0
+    });
+    expect(app.work).not.toHaveBeenCalled();
+    expect(app.inspect).toHaveBeenCalledTimes(1);
+    expect(app.db.disconnect).toHaveBeenCalledTimes(1);
+  });
+  it('does not acknowledge an uncertain receipt commit or failed readiness check', async () => {
+    const app = boot();
+    app.inspect.mockRejectedValueOnce(new Error('receipt commit unknown'));
+    await expect(app.invoke(event(), context())).rejects.toThrow(
+      'receipt commit unknown'
+    );
+    expect(app.work).not.toHaveBeenCalled();
     expect(app.db.disconnect).toHaveBeenCalledTimes(1);
   });
 });
