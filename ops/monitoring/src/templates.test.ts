@@ -2,6 +2,44 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
+test('low-control audit grants only the existing archive prefix and preserves collector failure alarms', () => {
+  for (const environment of ['prod', 'staging']) {
+    const resources = JSON.parse(
+      readFileSync(
+        new URL(`../monitoring-${environment}.json`, import.meta.url),
+        'utf8'
+      )
+    ).Resources;
+    const statements =
+      resources.CriticalCollector.Properties.Policies[0].Statement;
+    const s3 = statements.filter((entry: { Action: string[] }) =>
+      entry.Action.includes('s3:PutObject')
+    );
+    assert.deepEqual(s3, [
+      {
+        Effect: 'Allow',
+        Action: ['s3:PutObject'],
+        Resource: { 'Fn::Sub': '${Archive.Arn}/controls/v1/*' }
+      }
+    ]);
+    assert.equal(
+      statements.some((entry: { Action: string[] }) =>
+        entry.Action.includes('sns:Publish')
+      ),
+      false
+    );
+    const errors = resources.CriticalCollectorErrors.Properties;
+    assert.equal(errors.MetricName, 'Errors');
+    assert.equal(errors.EvaluationPeriods, 1);
+    assert.deepEqual(errors.AlarmActions, [{ Ref: 'FallbackTopic' }]);
+    assert.equal(
+      resources.CriticalRule.Properties.Targets[0].RetryPolicy
+        .MaximumRetryAttempts,
+      185
+    );
+  }
+});
+
 test('catalog log subscriptions form one deterministic acyclic chain without changing their resource contract', () => {
   for (const env of ['prod', 'staging']) {
     const resources = JSON.parse(
@@ -87,7 +125,8 @@ test('NFT refresher throttling requires three breaching minutes out of five whil
           'nftLinkRefresherLoopThrottles',
           'waveScoreRefreshLoopThrottles',
           'subscriptionCoverageReconciliationLoopThrottles',
-          'nftsLoopThrottles'
+          'nftsLoopThrottles',
+          'releaseNotesGenerationLoopThrottles'
         ].includes(id) &&
         resource.Type === 'AWS::CloudWatch::Alarm' &&
         resource.Properties.Namespace === 'AWS/Lambda'
@@ -131,18 +170,51 @@ test('overlapping scheduled workers qualify sustained throttles without delaying
       assert.equal(errors.Threshold, 1);
       assert.deepEqual(errors.AlarmActions, throttles.AlarmActions);
     }
-    if (env === 'prod') {
-      const releaseNotes =
-        resources.releaseNotesGenerationLoopThrottles.Properties;
-      assert.equal(releaseNotes.EvaluationPeriods, 1);
-      assert.equal(releaseNotes.DatapointsToAlarm, undefined);
-    }
     assert.equal(resources.LogRelayErrors.Properties.EvaluationPeriods, 1);
     assert.equal(
       resources.RelayDeadLettersAlarm.Properties.EvaluationPeriods,
       1
     );
   }
+});
+
+test('release-note throttles require sustained contention while errors stay immediate and direct email actions remain', () => {
+  const prod = JSON.parse(
+    readFileSync(new URL('../source-prod.json', import.meta.url), 'utf8')
+  ).Resources;
+  const stage = JSON.parse(
+    readFileSync(new URL('../source-staging.json', import.meta.url), 'utf8')
+  ).Resources;
+  assert.equal(stage.releaseNotesGenerationLoopThrottles, undefined);
+  const throttle = prod.releaseNotesGenerationLoopThrottles.Properties;
+  assert.deepEqual(throttle, {
+    AlarmName: {
+      'Fn::Sub':
+        'seize-monitoring-${Environment}-releaseNotesGenerationLoop-Throttles'
+    },
+    Namespace: 'AWS/Lambda',
+    MetricName: 'Throttles',
+    Dimensions: [{ Name: 'FunctionName', Value: 'releaseNotesGenerationLoop' }],
+    Statistic: 'Sum',
+    Period: 60,
+    EvaluationPeriods: 5,
+    DatapointsToAlarm: 3,
+    Threshold: 1,
+    ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+    TreatMissingData: 'notBreaching',
+    AlarmActions: {
+      'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
+    }
+  });
+  const error = prod.releaseNotesGenerationLoopErrors.Properties;
+  assert.equal(error.MetricName, 'Errors');
+  assert.equal(error.Period, 60);
+  assert.equal(error.EvaluationPeriods, 1);
+  assert.equal(error.DatapointsToAlarm, undefined);
+  assert.equal(error.Threshold, 1);
+  assert.deepEqual(error.AlarmActions, throttle.AlarmActions);
+  assert.equal(prod.LogRelayErrors.Properties.EvaluationPeriods, 1);
+  assert.equal(prod.RelayDeadLettersAlarm.Properties.EvaluationPeriods, 1);
 });
 
 test('wave throttling is sustained while queue backlog and dead letters have independent alarms', () => {
