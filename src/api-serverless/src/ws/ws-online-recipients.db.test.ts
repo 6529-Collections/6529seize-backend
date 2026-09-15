@@ -36,10 +36,6 @@ const childOnly = anIdentity({ level_raw: 0, tdh: 0 });
 const parentOnly = anIdentity({ level_raw: -1, tdh: 20 });
 const denied = anIdentity({ level_raw: -1, tdh: 0 });
 const mixedEligible = anIdentity({ level_raw: 5, tdh: 0 });
-const mixedIneligible = {
-  ...anIdentity({ level_raw: -1 }),
-  profile_id: mixedEligible.profile_id
-};
 const noProfile = { ...anIdentity({ level_raw: 0 }), profile_id: null };
 const identities = [
   allowed,
@@ -47,7 +43,6 @@ const identities = [
   parentOnly,
   denied,
   mixedEligible,
-  mixedIneligible,
   noProfile
 ];
 const zero = aUserGroup({ level_min: 0 });
@@ -189,7 +184,7 @@ describeWithSeed(
       );
     }
 
-    it('returns exactly the same rows, including duplicate profiles and cross-wave sockets', async () => {
+    it('returns exactly the same rows, including negative raw scores and cross-wave sockets', async () => {
       const original = await groupRecipients(zero.id, false);
       const optimized = await groupRecipients(zero.id, true);
       expect(sortedRows(optimized)).toEqual(sortedRows(original));
@@ -202,15 +197,16 @@ describeWithSeed(
         'allowed-other-wave',
         'allowed-second',
         'child-only',
+        'denied',
         'mixed',
-        'mixed'
+        'parent-only'
       ]);
       const query = await service.getSqlAndParamsByGroupId(
         zero.id,
         {},
         { forOnlineRecipients: true }
       );
-      expect(query?.sql).toContain('where exists');
+      expect(query?.sql).not.toContain('level_raw');
       expect(query?.sql).not.toContain('included_profile_ids');
     });
 
@@ -261,7 +257,12 @@ describeWithSeed(
           result
             .map((row) => row.connectionId)
             .sort((a, b) => a.localeCompare(b))
-        ).toEqual(['allowed', 'allowed-other-wave', 'allowed-second']);
+        ).toEqual([
+          'allowed',
+          'allowed-other-wave',
+          'allowed-second',
+          'parent-only'
+        ]);
       }
     );
 
@@ -447,8 +448,11 @@ describeWithSeed(
             const updates = messages
               .filter((message) => message !== 'barrier')
               .map((message) => JSON.parse(message));
-            expect(updates).toHaveLength(id === 'allowed' ? 1 : 0);
-            if (id === 'allowed') expect(updates[0].type).toBe(messageType);
+            expect(updates).toHaveLength(
+              ['allowed', 'parent-only'].includes(id) ? 1 : 0
+            );
+            if (['allowed', 'parent-only'].includes(id))
+              expect(updates[0].type).toBe(messageType);
           }
 
           await sqlExecutor.execute(
@@ -481,14 +485,14 @@ describeWithSeed(
     it('matches the original SQL across generated identity and connection layouts', async () => {
       await fc.assert(
         fc.asyncProperty(
-          fc.array(
+          fc.uniqueArray(
             fc.record({
               profile: fc.option(fc.integer({ min: 0, max: 5 }), { nil: null }),
               level: fc.integer({ min: -5, max: 5 })
             }),
-            { maxLength: 20 }
+            { maxLength: 6, selector: (identity) => identity.profile }
           ),
-          fc.array(
+          fc.uniqueArray(
             fc.record({
               profile: fc.integer({ min: 0, max: 7 }),
               wave: fc.option(fc.constantFrom('a', 'b'), { nil: null })

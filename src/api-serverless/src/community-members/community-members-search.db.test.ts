@@ -90,11 +90,12 @@ function query(param: string | null): CommunityMembersQuery {
 
 function makeRepositories(group: ApiGroupDescription) {
   const service = new UserGroupsService(mock(), mock(), mock());
-  jest
-    .spyOn(service, 'getByIdOrThrow')
-    .mockImplementation(async () =>
-      Object.assign(new ApiGroupFull(), { group: structuredClone(group) })
-    );
+  jest.spyOn(service, 'getByIdOrThrow').mockImplementation(async () =>
+    Object.assign(new ApiGroupFull(), {
+      visible: true,
+      group: structuredClone(group)
+    })
+  );
   const optimized = new CommunityMembersDb(() => sqlExecutor, service);
   // Omitting the new option runs the unchanged general SQL used before the fix.
   const original = new CommunityMembersDb(() => sqlExecutor, {

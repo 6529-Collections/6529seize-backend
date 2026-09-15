@@ -1,0 +1,264 @@
+[
+  {
+    "name": "composite-all-dimensions-and",
+    "dimension": "composite",
+    "description": "All configured criteria dimensions must pass together (logical AND, spec §1.1 step 4): one failing axis rejects the group.",
+    "identities": [
+      {
+        "id": "subject",
+        "tdh": 200,
+        "level_raw": 100,
+        "rep": 10,
+        "cic": 5
+      },
+      {
+        "id": "alice"
+      }
+    ],
+    "subject": "subject",
+    "ratings": [
+      {
+        "rater": "alice",
+        "target": "subject",
+        "matter": "REP",
+        "category": "artist",
+        "rating": 10
+      },
+      {
+        "rater": "alice",
+        "target": "subject",
+        "matter": "CIC",
+        "rating": 5
+      }
+    ],
+    "nft_ownings": [
+      {
+        "owner": "subject",
+        "collection": "memes",
+        "token_id": "100"
+      }
+    ],
+    "groups": [
+      {
+        "id": "g-all-pass",
+        "tdh_min": 100,
+        "level_min": 3,
+        "rep_min": 10,
+        "cic_min": 5,
+        "owns_meme": true,
+        "owns_meme_tokens": ["100"],
+        "owns_meme_tokens_match_mode": "ANY_TOKEN"
+      },
+      {
+        "id": "g-cic-axis-fails",
+        "tdh_min": 100,
+        "level_min": 3,
+        "rep_min": 10,
+        "cic_min": 6,
+        "owns_meme": true,
+        "owns_meme_tokens": ["100"],
+        "owns_meme_tokens_match_mode": "ANY_TOKEN"
+      },
+      {
+        "id": "g-level-axis-fails",
+        "tdh_min": 100,
+        "level_min": 4,
+        "rep_min": 10,
+        "cic_min": 5,
+        "owns_meme": true,
+        "owns_meme_tokens": ["100"],
+        "owns_meme_tokens_match_mode": "ANY_TOKEN"
+      },
+      {
+        "id": "g-negative-max-rep-pass",
+        "level_max": -1,
+        "rep_min": 10
+      },
+      {
+        "id": "g-negative-max-cic-pass",
+        "level_max": -1,
+        "cic_min": 5
+      },
+      {
+        "id": "g-negative-max-tdh-pass",
+        "level_max": -1,
+        "tdh_min": 100
+      },
+      {
+        "id": "g-negative-max-all-pass",
+        "tdh_min": 100,
+        "rep_min": 10,
+        "cic_min": 5,
+        "owns_meme": true,
+        "owns_meme_tokens": ["100"],
+        "owns_meme_tokens_match_mode": "ANY_TOKEN",
+        "level_max": -1
+      },
+      {
+        "id": "g-negative-max-all-included",
+        "tdh_min": 100,
+        "rep_min": 10,
+        "cic_min": 5,
+        "owns_meme": true,
+        "owns_meme_tokens": ["100"],
+        "owns_meme_tokens_match_mode": "ANY_TOKEN",
+        "level_max": -1,
+        "profile_group_id": "pg-subject"
+      },
+      {
+        "id": "g-negative-max-all-excluded",
+        "tdh_min": 100,
+        "rep_min": 10,
+        "cic_min": 5,
+        "owns_meme": true,
+        "owns_meme_tokens": ["100"],
+        "owns_meme_tokens_match_mode": "ANY_TOKEN",
+        "level_max": -1,
+        "profile_group_id": "pg-subject",
+        "excluded_profile_group_id": "pg-subject"
+      }
+    ],
+    "expected": {
+      "eligible_group_ids": ["g-all-pass", "g-negative-max-all-included"]
+    },
+    "profile_groups": [
+      {
+        "id": "pg-subject",
+        "members": ["subject"]
+      }
+    ]
+  },
+  {
+    "name": "multi-group-mixed-dimensions",
+    "dimension": "composite",
+    "description": "One profile evaluated against several single-dimension groups at once; the result is the set of passing groups (spec §1, §11 rule 3).",
+    "identities": [
+      {
+        "id": "subject",
+        "tdh": 50,
+        "level_raw": 30,
+        "rep": 3,
+        "cic": 0
+      },
+      {
+        "id": "alice"
+      }
+    ],
+    "subject": "subject",
+    "ratings": [
+      {
+        "rater": "alice",
+        "target": "subject",
+        "matter": "REP",
+        "category": "artist",
+        "rating": 3
+      }
+    ],
+    "nft_ownings": [
+      {
+        "owner": "subject",
+        "collection": "gradient",
+        "token_id": "7"
+      }
+    ],
+    "groups": [
+      {
+        "id": "g-tdh-pass",
+        "tdh_min": 40
+      },
+      {
+        "id": "g-level-fail",
+        "level_min": 2
+      },
+      {
+        "id": "g-rep-by-user-pass",
+        "rep_user": "alice"
+      },
+      {
+        "id": "g-nft-fail",
+        "owns_gradient": true,
+        "owns_gradient_tokens": ["8"],
+        "owns_gradient_tokens_match_mode": "ANY_TOKEN"
+      }
+    ],
+    "expected": {
+      "eligible_group_ids": ["g-tdh-pass", "g-rep-by-user-pass"]
+    }
+  },
+  {
+    "name": "grant-with-rating-and-nft-criteria",
+    "dimension": "composite",
+    "description": "The beneficiary CTE composes with REP, CIC and NFT CTEs for persisted and preview rules.",
+    "identities": [
+      {
+        "id": "subject",
+        "rep": 5,
+        "cic": 3
+      },
+      {
+        "id": "rater"
+      }
+    ],
+    "subject": "subject",
+    "ratings": [
+      {
+        "rater": "rater",
+        "target": "subject",
+        "matter": "REP",
+        "category": "art",
+        "rating": 5
+      },
+      {
+        "rater": "rater",
+        "target": "subject",
+        "matter": "CIC",
+        "rating": 3
+      }
+    ],
+    "grants": [
+      {
+        "id": "grant",
+        "token_mode": "INCLUDE",
+        "tokens": ["1", "2"]
+      }
+    ],
+    "external_ownership": [
+      {
+        "grant": "grant",
+        "token_id": "1",
+        "owner": "subject"
+      },
+      {
+        "grant": "grant",
+        "token_id": "2",
+        "owner": "subject"
+      }
+    ],
+    "nft_ownings": [
+      {
+        "owner": "subject",
+        "collection": "memes",
+        "token_id": "1"
+      }
+    ],
+    "groups": [
+      {
+        "id": "all-pass",
+        "is_beneficiary_of_grant_id": "grant",
+        "is_beneficiary_of_grant_match_mode": "ALL_TOKENS",
+        "rep_min": 5,
+        "cic_min": 3,
+        "owns_meme": true,
+        "owns_meme_tokens": ["1"]
+      },
+      {
+        "id": "rating-fails",
+        "is_beneficiary_of_grant_id": "grant",
+        "rep_min": 6
+      }
+    ],
+    "expected": {
+      "eligible_group_ids": ["all-pass"]
+    }
+  }
+]
