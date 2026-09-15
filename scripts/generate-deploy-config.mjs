@@ -106,6 +106,7 @@ ${indent(yamlList(serviceNames))}
           - wallet-transfer-analysis
           - claims-media-upload
           - nft-link-page-retry
+          - membership-refresh
       release_pull_request:
         type: string
         description: 'Merged PR represented by this production release'
@@ -176,7 +177,7 @@ jobs:
           set -euo pipefail
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]]
           [[ "$INPUT_SERVICE" =~ ^(${serviceCasePattern})$ ]]
-          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|wallet-transfer-analysis|claims-media-upload|nft-link-page-retry)$ ]]
+          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|wallet-transfer-analysis|claims-media-upload|nft-link-page-retry|membership-refresh)$ ]]
           if [ "$DB_SCHEMA_SCOPE" != full ] && [ "$INPUT_SERVICE" != dbMigrationsLoop ]; then
             echo "db_schema_scope is only supported for dbMigrationsLoop" >&2
             exit 1

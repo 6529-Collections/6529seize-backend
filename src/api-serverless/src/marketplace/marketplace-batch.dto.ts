@@ -5,6 +5,7 @@ import {
   ApiMarketBatchOperationStateEnum
 } from '@/api/generated/models/ApiMarketBatchOperation';
 import { ApiMarketBatchSettlementOutcomeEnum } from '@/api/generated/models/ApiMarketBatchSettlement';
+import { marketReceiptDto } from './marketplace-receipt.dto';
 import {
   ApiMarketBatchSendAttemptPurposeEnum,
   ApiMarketBatchSendAttemptStatusEnum
@@ -132,6 +133,9 @@ export function batchOperationDto(
       : {}),
     ...(row.transaction_hash ? { transaction_hash: row.transaction_hash } : {}),
     ...(row.error_code ? { error_code: row.error_code } : {}),
+    ...(prepared?.receipt
+      ? { receipt: marketReceiptDto(prepared.receipt) }
+      : {}),
     ...(settlement
       ? {
           settlement: {
@@ -143,6 +147,11 @@ export function batchOperationDto(
                 order_hash: item.order.orderHash
               },
               filled_quantity: item.filledQuantity,
+              ...(item.orderRemainingQuantity === undefined
+                ? {}
+                : {
+                    order_remaining_quantity: item.orderRemainingQuantity
+                  }),
               allocations: item.allocations.map((allocation) => ({
                 recipient: allocation.recipient,
                 quantity: allocation.quantity,

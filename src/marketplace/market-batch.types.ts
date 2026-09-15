@@ -65,6 +65,7 @@ export interface MarketBatchFulfillment {
 }
 
 export interface MarketBatchPrepared {
+  receipt?: import('@/marketplace/market-receipt-evidence').MarketReceipt;
   intent: MarketBatchIntent;
   approvalTransactions: [];
   transaction: MarketTransaction;
@@ -93,6 +94,7 @@ export interface MarketBatchSettlement {
     assetKey: string;
     order: MarketOrderIdentity;
     filledQuantity: string;
+    orderRemainingQuantity?: string;
     allocations: MarketBatchAllocation[];
   }>;
   transactionHash: string;

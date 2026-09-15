@@ -6,7 +6,11 @@ import {
   operationalError,
   withOperationalContext
 } from '@/operational-errors';
-import { sanitizeSentryEvent } from '@/sentry-privacy';
+import {
+  sanitizeSentryEvent,
+  sanitizeProviderBreadcrumb,
+  sanitizeProviderTransaction
+} from '@/sentry-privacy';
 
 const logger = Logger.get('SENTRY_CONTEXT');
 
@@ -82,6 +86,8 @@ export function wrapLambdaHandler(
       environment: process.env.SENTRY_ENVIRONMENT,
       debug: process.env.SENTRY_DEBUG === 'true',
       sendDefaultPii: false,
+      beforeBreadcrumb: sanitizeProviderBreadcrumb,
+      beforeSendTransaction: sanitizeProviderTransaction,
       beforeSend: (event, hint) => {
         const originalRequestUrl = event.request?.url;
         if (isExpectedClientError(hint.originalException)) return null;
