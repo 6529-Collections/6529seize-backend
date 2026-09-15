@@ -107,6 +107,26 @@ ${indent(yamlList(serviceNames))}
           - claims-media-upload
           - nft-link-page-retry
           - membership-refresh
+          - membership-evaluator-index
+          - membership-runtime-control
+      membership_runtime_mode:
+        type: choice
+        description: 'Closed membership runtime mode; production requires inactive'
+        required: false
+        default: inactive
+        options:
+          - inactive
+          - staging-fixture-v1
+      membership_worker_mapping_enabled:
+        type: boolean
+        description: 'Enable only the staging fixture worker SQS mapping'
+        required: false
+        default: false
+      membership_dispatch_schedule_enabled:
+        type: boolean
+        description: 'Enable only the staging fixture dispatcher schedule'
+        required: false
+        default: false
       release_pull_request:
         type: string
         description: 'Merged PR represented by this production release'
@@ -170,6 +190,9 @@ jobs:
       INPUT_SERVICE: \${{ github.event.inputs.service }}
       EXPECTED_SOURCE_SHA: \${{ github.event.inputs.expected_source_sha }}
       DB_SCHEMA_SCOPE: \${{ github.event.inputs.db_schema_scope || 'full' }}
+      MEMBERSHIP_RUNTIME_MODE: \${{ github.event.inputs.membership_runtime_mode || 'inactive' }}
+      MEMBERSHIP_WORKER_MAPPING_ENABLED: \${{ github.event.inputs.membership_worker_mapping_enabled || 'false' }}
+      MEMBERSHIP_DISPATCH_SCHEDULE_ENABLED: \${{ github.event.inputs.membership_dispatch_schedule_enabled || 'false' }}
     steps:
       - name: Validate dispatch inputs before using credentials
         shell: bash
@@ -177,9 +200,31 @@ jobs:
           set -euo pipefail
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]]
           [[ "$INPUT_SERVICE" =~ ^(${serviceCasePattern})$ ]]
-          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|wallet-transfer-analysis|claims-media-upload|nft-link-page-retry|membership-refresh)$ ]]
+          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|wallet-transfer-analysis|claims-media-upload|nft-link-page-retry|membership-refresh|membership-evaluator-index|membership-runtime-control)$ ]]
           if [ "$DB_SCHEMA_SCOPE" != full ] && [ "$INPUT_SERVICE" != dbMigrationsLoop ]; then
             echo "db_schema_scope is only supported for dbMigrationsLoop" >&2
+            exit 1
+          fi
+          membership_mode="\${MEMBERSHIP_RUNTIME_MODE:-inactive}"
+          membership_mapping="\${MEMBERSHIP_WORKER_MAPPING_ENABLED:-false}"
+          membership_schedule="\${MEMBERSHIP_DISPATCH_SCHEDULE_ENABLED:-false}"
+          [[ "$membership_mode" =~ ^(inactive|staging-fixture-v1)$ ]]
+          [[ "$membership_mapping" =~ ^(true|false)$ ]]
+          [[ "$membership_schedule" =~ ^(true|false)$ ]]
+          if [[ "$INPUT_SERVICE" != membershipRefreshLoop && "$INPUT_SERVICE" != membershipRefreshDispatcherLoop ]] && [ "$membership_mode" != inactive ]; then
+            echo "Membership mode requires a membership runtime service" >&2
+            exit 1
+          fi
+          if [ "$membership_mapping" = true ] && { [ "$INPUT_SERVICE" != membershipRefreshLoop ] || [ "$membership_mode" != staging-fixture-v1 ]; }; then
+            echo "Membership mapping requires the staging fixture worker" >&2
+            exit 1
+          fi
+          if [ "$membership_schedule" = true ] && { [ "$INPUT_SERVICE" != membershipRefreshDispatcherLoop ] || [ "$membership_mode" != staging-fixture-v1 ]; }; then
+            echo "Membership schedule requires the staging fixture dispatcher" >&2
+            exit 1
+          fi
+          if [ "$INPUT_ENVIRONMENT" = prod ] && { [ "$membership_mode" != inactive ] || [ "$membership_mapping" != false ] || [ "$membership_schedule" != false ]; }; then
+            echo "Production membership runtime must remain inactive" >&2
             exit 1
           fi
           if [ "$INPUT_ENVIRONMENT" = prod ]; then

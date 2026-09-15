@@ -1,0 +1,216 @@
+service: membershipRefreshLoop
+
+package:
+  artifact: dist/index.zip
+
+provider:
+  name: aws
+  stage: staging
+  region: eu-west-1
+  runtime: nodejs22.x
+  memorySize: 2048
+  timeout: 60
+  architecture: arm64
+  logRetentionInDays: 60
+
+custom:
+  membershipWorker: ${file(../../serverless-config/membership-runtime.js):worker}
+
+functions:
+  membershipRefreshLoop:
+    handler: index.handler
+    name: membershipRefreshLoop
+    description: ${env:VERSION_DESCRIPTION}
+    role: !GetAtt MembershipWorkerRole.Arn
+    reservedConcurrency: 2
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      MEMBERSHIP_RUNTIME_STAGE: ${self:custom.membershipWorker.stage}
+      MEMBERSHIP_RUNTIME_MODE: ${self:custom.membershipWorker.mode}
+      MEMBERSHIP_WORK_QUEUE_ARN: !GetAtt MembershipWorkQueue.Arn
+      MEMBERSHIP_WORK_QUEUE_URL: !Ref MembershipWorkQueue
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: membershipRefreshLoop_${self:custom.membershipWorker.stage}
+    events:
+      - sqs:
+          arn: !GetAtt MembershipWorkQueue.Arn
+          enabled: ${self:custom.membershipWorker.mappingEnabled}
+          batchSize: 1
+          maximumBatchingWindow: 0
+          maximumConcurrency: 2
+
+resources:
+  Resources:
+    MembershipWorkDlq:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: membership-refresh-work-dlq-${self:custom.membershipWorker.stage}-v1
+        MessageRetentionPeriod: 1209600
+        SqsManagedSseEnabled: true
+        RedriveAllowPolicy:
+          redrivePermission: byQueue
+          sourceQueueArns:
+            - !Sub arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:membership-refresh-work-${self:custom.membershipWorker.stage}-v1
+    MembershipWorkQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: membership-refresh-work-${self:custom.membershipWorker.stage}-v1
+        VisibilityTimeout: 360
+        MessageRetentionPeriod: 345600
+        ReceiveMessageWaitTimeSeconds: 20
+        SqsManagedSseEnabled: true
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt MembershipWorkDlq.Arn
+          maxReceiveCount: 5
+    MembershipWorkerRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: membership-worker-runtime
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/membershipRefreshLoop:*
+                - Effect: Allow
+                  Action:
+                    - ec2:CreateNetworkInterface
+                    - ec2:DescribeNetworkInterfaces
+                    - ec2:DescribeSubnets
+                    - ec2:DeleteNetworkInterface
+                    - ec2:AssignPrivateIpAddresses
+                    - ec2:UnassignPrivateIpAddresses
+                  Resource: '*'
+                - Effect: Allow
+                  Action: secretsmanager:GetSecretValue
+                  Resource: ${self:custom.membershipWorker.secretArn}
+                - Effect: Allow
+                  Action:
+                    - sqs:ReceiveMessage
+                    - sqs:DeleteMessage
+                    - sqs:GetQueueAttributes
+                  Resource: !GetAtt MembershipWorkQueue.Arn
+    MembershipWorkerOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn: MembershipRefreshLoopLogGroup
+      Properties:
+        LogGroupName: /aws/lambda/membershipRefreshLoop
+        FilterPattern: Runtime.OutOfMemory
+        MetricTransformations:
+          - MetricNamespace: Membership/Runtime
+            MetricName: WorkerOOM-${self:custom.membershipWorker.stage}
+            MetricValue: '1'
+            DefaultValue: 0
+    MembershipWorkerOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub ${AWS::StackName}-worker-oom
+        Namespace: Membership/Runtime
+        MetricName: WorkerOOM-${self:custom.membershipWorker.stage}
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+    MembershipWorkerErrorsAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub ${AWS::StackName}-WorkerErrors
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: !Ref MembershipRefreshLoopLambdaFunction
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+    MembershipWorkerThrottlesAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub ${AWS::StackName}-WorkerThrottles
+        Namespace: AWS/Lambda
+        MetricName: Throttles
+        Dimensions:
+          - Name: FunctionName
+            Value: !Ref MembershipRefreshLoopLambdaFunction
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+    MembershipWorkQueueAgeAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub ${AWS::StackName}-WorkQueueAge
+        Namespace: AWS/SQS
+        MetricName: ApproximateAgeOfOldestMessage
+        Dimensions:
+          - Name: QueueName
+            Value: !GetAtt MembershipWorkQueue.QueueName
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 2
+        Threshold: 600
+        ComparisonOperator: GreaterThanThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+    MembershipWorkDlqDepthAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub ${AWS::StackName}-WorkDlqDepth
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: !GetAtt MembershipWorkDlq.QueueName
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+  Outputs:
+    WorkQueueArn:
+      Value: !GetAtt MembershipWorkQueue.Arn
+      Export:
+        Name: membershipRefreshLoop-${self:custom.membershipWorker.stage}-WorkQueueArn-v1
+    WorkQueueUrl:
+      Value: !Ref MembershipWorkQueue
+      Export:
+        Name: membershipRefreshLoop-${self:custom.membershipWorker.stage}-WorkQueueUrl-v1

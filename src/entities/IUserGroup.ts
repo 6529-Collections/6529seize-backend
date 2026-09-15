@@ -42,6 +42,11 @@ const IS_PURE_PROFILE_GROUP_EXPRESSION = `
 @Index(['id', 'visible'])
 @Index(['profile_group_id', 'visible', 'id'])
 @Index(['excluded_profile_group_id', 'id'])
+@Index('idx_user_groups_pure_visible_id', [
+  'is_pure_profile_group',
+  'visible',
+  'id'
+])
 export class UserGroupEntity {
   @PrimaryColumn({ type: 'varchar', length: 200, nullable: false })
   readonly id!: string;
