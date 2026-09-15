@@ -14,6 +14,19 @@ import { moderationRetentionSchemaDb } from './moderation-retention-schema.db';
 import { applyClaimsMediaUploadSchema } from './claims-media-schema';
 import { NftLinkEntity } from '@/entities/INftLink';
 import { applyNftLinkPageRetrySchema } from './nft-link-page-retry-schema';
+import {
+  applyMembershipSchema,
+  membershipSchemaEntities
+} from './membership-schema';
+
+jest.mock('@/db', () => ({ getDataSource: jest.fn() }));
+
+jest.mock('./membership-schema', () => ({
+  ...jest.requireActual('./membership-schema'),
+  applyMembershipSchema: jest
+    .fn()
+    .mockResolvedValue({ created_tables: 7, verified_tables: 7 })
+}));
 
 jest.mock('./nft-link-page-retry-schema', () => ({
   applyNftLinkPageRetrySchema: jest.fn().mockResolvedValue(1)
@@ -76,6 +89,36 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     jest
       .mocked(moderationRetentionSchemaDb.missingColumns)
       .mockResolvedValue([]);
+  });
+
+  it('creates and verifies only membership tables without full sync or maintenance', async () => {
+    await expect(
+      invoke({ schema_scope: 'membership-refresh' })
+    ).resolves.toEqual({
+      schema_scope: 'membership-refresh',
+      created_tables: 7,
+      verified_tables: 7
+    });
+    expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
+      logger: expect.anything(),
+      entities: membershipSchemaEntities,
+      syncEntities: false,
+      skipRedis: true
+    });
+    expect(applyMembershipSchema).toHaveBeenCalledTimes(1);
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+    expect(competitionRepository.backfillLegacyMappings).not.toHaveBeenCalled();
+    expect(moderationReviewDb.retain).not.toHaveBeenCalled();
+  });
+
+  it('does not acknowledge membership schema drift', async () => {
+    jest
+      .mocked(applyMembershipSchema)
+      .mockRejectedValueOnce(new Error('schema drift'));
+    await expect(
+      invoke({ schema_scope: 'membership-refresh' })
+    ).rejects.toThrow('schema drift');
+    expect(migrations.getInstance).not.toHaveBeenCalled();
   });
 
   it('executes only the inspected NFT retry schema and skips all unrelated work', async () => {
@@ -242,7 +285,8 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     'full',
     'wallet-transfer-analysis',
     'claims-media-upload',
-    'nft-link-page-retry'
+    'nft-link-page-retry',
+    'membership-refresh'
   ])('rejects explicit %s scope on scheduled events', async (scope) => {
     await expect(
       invoke({ ...scheduledEvent, schema_scope: scope })
