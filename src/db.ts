@@ -124,7 +124,36 @@ const logger = Logger.get('DB');
 
 let AppDataSource: DataSource;
 
-export async function connect(entities: any[] = [], syncEntities = false) {
+/** Internal selection applied after secret loading; null opens a server-only connection. */
+export interface DbConnectionSelection {
+  readonly database: string | null;
+  readonly failOnInitializationError: true;
+}
+
+function validateDbConnectionSelection(
+  syncEntities: boolean,
+  selection?: DbConnectionSelection
+): void {
+  if (
+    selection &&
+    (selection.failOnInitializationError !== true ||
+      syncEntities ||
+      (selection.database !== null &&
+        !/^[a-z][a-z0-9_]{0,63}$/.test(selection.database)))
+  ) {
+    throw new Error('Invalid explicit database selection');
+  }
+  if (selection && AppDataSource?.isInitialized) {
+    throw new Error('An explicit database context is already initialized');
+  }
+}
+
+export async function connect(
+  entities: any[] = [],
+  syncEntities = false,
+  selection?: DbConnectionSelection
+) {
+  validateDbConnectionSelection(syncEntities, selection);
   logger.info(
     `[DB HOST ${process.env.DB_HOST}] [SYNC ENTITIES ${syncEntities}]`
   );
@@ -135,7 +164,9 @@ export async function connect(entities: any[] = [], syncEntities = false) {
     port: parseInt(process.env.DB_PORT!),
     username: process.env.DB_USER,
     password: process.env.DB_PASS,
-    database: process.env.DB_NAME,
+    database: selection
+      ? (selection.database ?? undefined)
+      : process.env.DB_NAME,
     entities: entities,
     synchronize: syncEntities,
     logging: false,
@@ -143,9 +174,22 @@ export async function connect(entities: any[] = [], syncEntities = false) {
     timezone: 'Etc/UTC'
   });
 
-  await AppDataSource.initialize().catch((error) =>
-    logger.error(`DB INIT ERROR: ${error}`)
-  );
+  try {
+    await AppDataSource.initialize();
+  } catch (error) {
+    if (selection) {
+      // initialize() can fail during driver.connect(), before TypeORM's own cleanup.
+      // It can also have cleaned up already; preserve the original startup error.
+      try {
+        if (AppDataSource.isInitialized) await AppDataSource.destroy();
+        else await AppDataSource.driver.disconnect();
+      } catch {
+        // A driver with no pool has nothing left to disconnect.
+      }
+      throw error;
+    }
+    logger.error(`DB INIT ERROR: ${error}`);
+  }
   class DbImpl extends SqlExecutor {
     async execute(
       sql: string,

@@ -66,9 +66,18 @@ module.exports = async (globalConfig?: unknown) => {
       });
       try {
         await fixture.initialize();
-      } finally {
-        if (fixture.isInitialized) await fixture.destroy();
+      } catch (error) {
+        // The driver can own a pool before initialize marks the source ready.
+        // Preserve its startup error even when partial cleanup has nothing to close.
+        try {
+          if (fixture.isInitialized) await fixture.destroy();
+          else await fixture.driver.disconnect();
+        } catch {
+          // initialize may already have cleaned up the failed driver.
+        }
+        throw error;
       }
+      await fixture.destroy();
       await dbMigrationsLoop.handler(
         undefined as any,
         undefined as any,

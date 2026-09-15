@@ -302,3 +302,4 @@ export { MembershipRefreshTargetEntity } from './IMembershipRefreshTarget';
 export { MembershipRefreshRunEntity } from './IMembershipRefreshRun';
 export { MembershipGenerationMemberEntity } from './IMembershipGenerationMember';
 export { MembershipPublicationEntity } from './IMembershipPublication';
+export { MembershipRuntimeCheckpointEntity } from './IMembershipRuntimeCheckpoint';
