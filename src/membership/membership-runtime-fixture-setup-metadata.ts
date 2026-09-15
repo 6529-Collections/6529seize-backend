@@ -173,8 +173,10 @@ export function equalFixtureGeneratedExpression(
   expected: string
 ): boolean {
   if (actual.length > 8192 || expected.length > 8192) return false;
-  const compare = (left: string, right: string) =>
-    left < right ? -1 : left > right ? 1 : 0;
+  const compare = (left: string, right: string) => {
+    if (left < right) return -1;
+    return left > right ? 1 : 0;
+  };
   try {
     return (
       JSON.stringify(expressionAtoms(actual).sort(compare)) ===

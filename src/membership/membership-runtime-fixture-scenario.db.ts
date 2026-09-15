@@ -57,8 +57,7 @@ export class MembershipFixtureScenarioDb {
       ctx
     );
     if (
-      !target ||
-      target.active_run_id !== null ||
+      target?.active_run_id !== null ||
       target.requested_version !== target.completed_version
     )
       throw new Error('Fixture profile has no settled current publication');
@@ -68,8 +67,7 @@ export class MembershipFixtureScenarioDb {
       ctx
     );
     if (
-      !run ||
-      run.status !== 'COMPLETED' ||
+      run?.status !== 'COMPLETED' ||
       run.scope !== 'PROFILE' ||
       run.target_id !== profile ||
       run.request_version !== target.completed_version
@@ -102,7 +100,7 @@ export class MembershipFixtureScenarioDb {
   }
   async superseded(id: string, ctx: MembershipPrimaryContext): Promise<string> {
     const run = await this.runs.run(id, false, ctx);
-    if (!run || run.status !== 'SUPERSEDED')
+    if (run?.status !== 'SUPERSEDED')
       throw new Error('Fixture superseded run has not been observed');
     return this.runs.now(ctx);
   }

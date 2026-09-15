@@ -6,8 +6,10 @@ import { wrapLambdaHandler } from '@/sentry.context';
 import { sqlExecutor } from '@/sql-executor';
 import { withMembershipPrimaryTransaction } from '@/membership/membership-primary';
 import { MembershipRefreshDispatcher } from '@/membership/membership-dispatch';
-import type { MembershipDispatchResult } from '@/membership/membership-dispatch.types';
-import type { MembershipDispatchSender } from '@/membership/membership-dispatch.types';
+import type {
+  MembershipDispatchResult,
+  MembershipDispatchSender
+} from '@/membership/membership-dispatch.types';
 import { MembershipRuntimeSendFaultDb } from '@/membership/membership-runtime-send-fault.db';
 import { MembershipRunGarbageCollector } from '@/membership/membership-gc';
 import type { MembershipWorkerOptions } from '@/membership/membership-worker.types';

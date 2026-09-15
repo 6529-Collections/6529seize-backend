@@ -138,9 +138,7 @@ export class MembershipRefreshDispatcher {
         this.count(result, 'EMPTY');
         continue;
       }
-      result.raw_candidates++;
-      if (position.lane === 'DUE') result.due_candidates++;
-      else result.target_pk_candidates++;
+      this.countCandidate(position.lane, result);
       // The durable raw frontier already advanced. Reserve each canonical target
       // once even when a worker checkpoints before the other lane reaches it.
       if (alreadyVisited(position.key, visited)) {
@@ -160,6 +158,15 @@ export class MembershipRefreshDispatcher {
         break;
     }
     return result;
+  }
+
+  private countCandidate(
+    lane: MembershipDispatchLane,
+    result: MembershipDispatchResult
+  ): void {
+    result.raw_candidates++;
+    if (lane === 'DUE') result.due_candidates++;
+    else result.target_pk_candidates++;
   }
 
   private hasTime(

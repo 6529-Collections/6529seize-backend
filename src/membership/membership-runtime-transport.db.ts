@@ -94,8 +94,7 @@ export class MembershipRuntimeTransportDb {
           throw new Error('Transport fixture result has no durable checkpoint');
         if (!receipt && run && BigInt(run.checkpoint_version) > BigInt(0)) {
           if (
-            !current ||
-            current.active_run_id !== run.id ||
+            current?.active_run_id !== run.id ||
             BigInt(run.request_version) <= BigInt(current.completed_version) ||
             BigInt(run.request_version) > BigInt(current.requested_version) ||
             run.scope !== target.scope ||

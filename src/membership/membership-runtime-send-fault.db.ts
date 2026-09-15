@@ -46,8 +46,7 @@ export class MembershipRuntimeSendFaultDb {
         )
           return false;
         if (
-          !target ||
-          target.requested_version !== hint.delivery.requested_version ||
+          target?.requested_version !== hint.delivery.requested_version ||
           target.available_at_millis !== hint.delivery.reserved_until_millis ||
           BigInt(target.completed_version) >= BigInt(target.requested_version)
         )

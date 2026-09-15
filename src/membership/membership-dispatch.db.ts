@@ -146,8 +146,7 @@ export class MembershipDispatchDb extends LazyDbAccessCompatibleService {
     if (target.active_run_id === null) return null;
     const run = await worker.run(target.active_run_id, true, ctx);
     if (
-      !run ||
-      run.id !== target.active_run_id ||
+      run?.id !== target.active_run_id ||
       run.scope !== target.scope ||
       run.target_id !== target.target_id ||
       !['PENDING', 'RUNNING'].includes(run.status) ||

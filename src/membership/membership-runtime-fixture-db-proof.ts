@@ -329,8 +329,7 @@ export class MembershipFixtureDbProofService {
       ctx
     );
     if (
-      !target ||
-      target.active_run_id !== null ||
+      target?.active_run_id !== null ||
       target.requested_version !== target.completed_version
     )
       return false;
@@ -462,8 +461,7 @@ export class MembershipFixtureDbProofService {
       this.runs.run(proof.lease.run_id, false, ctx)
     );
     requireProof(
-      run &&
-        run.scope === 'PROFILE' &&
+      run?.scope === 'PROFILE' &&
         run.target_id === emptyTarget.target_id &&
         run.request_version === proof.lease.request_version
     );
@@ -474,8 +472,7 @@ export class MembershipFixtureDbProofService {
       );
     }
     requireProof(
-      run &&
-        run.scope === 'PROFILE' &&
+      run?.scope === 'PROFILE' &&
         run.target_id === emptyTarget.target_id &&
         run.request_version === proof.lease.request_version &&
         ['PENDING', 'COMPLETED'].includes(run.status) &&
@@ -580,8 +577,7 @@ export class MembershipFixtureDbProofService {
       this.runs.run(proof.lease.run_id, false, ctx)
     );
     requireProof(
-      run &&
-        run.scope === 'PROFILE' &&
+      run?.scope === 'PROFILE' &&
         run.target_id === emptyTarget.target_id &&
         run.request_version === proof.lease.request_version &&
         BigInt(run.checkpoint_version) >=
@@ -756,9 +752,7 @@ export class MembershipFixtureDbProofService {
         requireProof(readerId !== observed.writerId);
         const stillOld = await this.publication(longTarget.target_id, reader);
         requireProof(
-          stillOld &&
-            stillOld.run_id === old.run_id &&
-            stillOld.hash === old.hash
+          stillOld?.run_id === old.run_id && stillOld.hash === old.hash
         );
         const verifiedAt = await this.runs.now(reader);
         requireProof(BigInt(verifiedAt) < BigInt(observed.eligibleAt));

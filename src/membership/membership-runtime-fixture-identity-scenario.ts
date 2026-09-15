@@ -237,8 +237,7 @@ export class MembershipFixtureIdentityScenario {
       ? await this.evidence.runs.run(target.active_run_id, false, ctx)
       : null;
     if (
-      !run ||
-      run.scope !== 'FULL' ||
+      run?.scope !== 'FULL' ||
       run.request_version !== fanout.request_version ||
       !['PENDING', 'RUNNING'].includes(run.status) ||
       run.progress_cursor.kind !== 'PROFILE_FANOUT' ||
@@ -323,8 +322,7 @@ export class MembershipFixtureIdentityScenario {
       const run = await this.evidence.runs.run(captured.run_id, false, ctx);
       const full = await this.evidence.target(fullKey, ctx);
       if (
-        !run ||
-        run.status !== 'COMPLETED' ||
+        run?.status !== 'COMPLETED' ||
         run.progress_cursor.through_id !== captured.through_id ||
         run.request_version !== fanout.request_version ||
         BigInt(full.completed_version) < BigInt(fanout.request_version)

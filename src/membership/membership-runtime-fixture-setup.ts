@@ -267,8 +267,9 @@ export class MembershipFixtureSetupService {
           })
           .join(',')})`
     );
+    const columnNames = columns.map((column) => `\`${column}\``).join(',');
     await this.db.execute(
-      `INSERT INTO \`${table}\` (${columns.map((column) => `\`${column}\``).join(',')}) VALUES ${values.join(',')}`,
+      `INSERT INTO \`${table}\` (${columnNames}) VALUES ${values.join(',')}`,
       params,
       membershipQueryOptions(ctx)
     );

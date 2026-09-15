@@ -74,8 +74,7 @@ export class MembershipDispatchCheckpointsDb extends LazyDbAccessCompatibleServi
       membershipQueryOptions(ctx)
     );
     if (
-      !row ||
-      row.id !== MEMBERSHIP_DISPATCH_CHECKPOINT_ID ||
+      row?.id !== MEMBERSHIP_DISPATCH_CHECKPOINT_ID ||
       row.protocol_version !== 1
     )
       throw new MembershipDispatchIntegrityError(
@@ -229,6 +228,12 @@ export class MembershipDispatchCheckpointsDb extends LazyDbAccessCompatibleServi
       );
       lane.cutoff_millis = lane.through === null ? null : now;
     }
+    const afterClause =
+      lane.after === null
+        ? ''
+        : `AND (t.available_at_millis>:afterTime
+        OR (t.available_at_millis=:afterTime AND t.scope>:afterScope)
+        OR (t.available_at_millis=:afterTime AND t.scope=:afterScope AND t.target_id>:afterId))`;
     const key =
       lane.through === null
         ? null
@@ -236,13 +241,7 @@ export class MembershipDispatchCheckpointsDb extends LazyDbAccessCompatibleServi
             `SELECT CAST(t.available_at_millis AS CHAR) available_at_millis,t.scope,t.target_id
       FROM ${MEMBERSHIP_REFRESH_TARGETS_TABLE} t FORCE INDEX(idx_mrt_available_scope_target)
       WHERE t.available_at_millis IS NOT NULL AND t.available_at_millis<=:cutoff
-      ${
-        lane.after === null
-          ? ''
-          : `AND (t.available_at_millis>:afterTime
-        OR (t.available_at_millis=:afterTime AND t.scope>:afterScope)
-        OR (t.available_at_millis=:afterTime AND t.scope=:afterScope AND t.target_id>:afterId))`
-      }
+      ${afterClause}
       AND (t.available_at_millis<:throughTime
         OR (t.available_at_millis=:throughTime AND t.scope<:throughScope)
         OR (t.available_at_millis=:throughTime AND t.scope=:throughScope AND t.target_id<=:throughId))
@@ -279,13 +278,17 @@ export class MembershipDispatchCheckpointsDb extends LazyDbAccessCompatibleServi
         {},
         membershipQueryOptions(ctx)
       );
+    const afterClause =
+      lane.after === null
+        ? ''
+        : 'AND (t.scope>:afterScope OR (t.scope=:afterScope AND t.target_id>:afterId))';
     const key =
       lane.through === null
         ? null
         : await this.db.oneOrNull<MembershipDispatchRawKey>(
             `SELECT t.scope,t.target_id FROM ${MEMBERSHIP_REFRESH_TARGETS_TABLE} t FORCE INDEX(PRIMARY)
       WHERE (t.scope<:throughScope OR (t.scope=:throughScope AND t.target_id<=:throughId))
-      ${lane.after === null ? '' : 'AND (t.scope>:afterScope OR (t.scope=:afterScope AND t.target_id>:afterId))'}
+      ${afterClause}
       ORDER BY t.scope,t.target_id LIMIT 1`,
             {
               afterScope: lane.after?.scope,

@@ -87,8 +87,7 @@ export class MembershipFixtureScenarios {
     const partial = await this.evidence.partial(long, ctx);
     const failedSend = state.dispatch_send_failure;
     if (
-      !failedSend ||
-      partial.request_version !== failedSend.requested_version ||
+      partial.request_version !== failedSend?.requested_version ||
       BigInt(await this.evidence.runs.now(ctx)) <
         BigInt(failedSend.reserved_until_millis)
     )
@@ -315,8 +314,7 @@ export class MembershipFixtureScenarios {
       ctx
     );
     if (
-      !run ||
-      run.status !== 'SUPERSEDED' ||
+      run?.status !== 'SUPERSEDED' ||
       run.valid_until_millis !== horizon ||
       target.last_error !== 'EXPIRED'
     )

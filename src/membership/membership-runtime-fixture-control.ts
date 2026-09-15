@@ -101,6 +101,19 @@ export function parseFixtureState(value: unknown): FixtureState {
   const state = fixtureState.parse(JSON.parse(encoded));
   if (state.proof) validateFixtureProof(state.proof);
   validateScenarioProof(state);
+  validateCleanupProgress(state);
+  if (state.setup_stage === 'SCHEMA_READY' && state.input_page !== 0)
+    throw new Error('Invalid initial fixture page');
+  if (state.setup_stage === 'PROVISIONED' && state.input_page >= 3)
+    throw new Error('Invalid pending fixture page');
+  if (
+    !['SCHEMA_READY', 'PROVISIONED'].includes(state.setup_stage) &&
+    state.input_page !== 3
+  )
+    throw new Error('Incomplete fixture inputs');
+  return state;
+}
+function validateCleanupProgress(state: FixtureState): void {
   if (
     (state.cleanup_table === undefined) !==
     (state.cleanup_not_before_millis === undefined)
@@ -122,16 +135,6 @@ export function parseFixtureState(value: unknown): FixtureState {
     state.cleanup_table === MEMBERSHIP_FIXTURE_CLEANUP_TABLES.length
   )
     throw new Error('Invalid completed cleanup phase');
-  if (state.setup_stage === 'SCHEMA_READY' && state.input_page !== 0)
-    throw new Error('Invalid initial fixture page');
-  if (state.setup_stage === 'PROVISIONED' && state.input_page >= 3)
-    throw new Error('Invalid pending fixture page');
-  if (
-    !['SCHEMA_READY', 'PROVISIONED'].includes(state.setup_stage) &&
-    state.input_page !== 3
-  )
-    throw new Error('Incomplete fixture inputs');
-  return state;
 }
 function validateScenarioProof(state: FixtureState): void {
   const proof = state.proof;
@@ -255,7 +258,10 @@ export class MembershipFixtureControlDb {
       ctx,
       async () => {
         const current = await this.read(ctx, true);
-        if (!current || current.revision !== normalizeCounter(expectedRevision))
+        if (
+          current?.revision === undefined ||
+          current.revision !== normalizeCounter(expectedRevision)
+        )
           throw new Error('Fixture control revision conflict');
         const parsed = parseFixtureState(state);
         if (parsed.anchor_millis !== current.state.anchor_millis)
