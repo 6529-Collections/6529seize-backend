@@ -1,15 +1,15 @@
 # Ethereum RPC Provider Portability
 
 Status: Backend foundation opened in PR #1985; caller migration planned;
-frontend implementation tracked separately
+frontend implementation merged in PR #3911
 
 Owners: Backend and frontend
 
 Canonical record: This document is the cross-repository source of truth for
-the migration. The frontend-owned execution record is tracked in
-[frontend PR #3911](https://github.com/6529-Collections/6529seize-frontend/pull/3911),
-under `ops/workstreams/ethereum-rpc-provider-portability/README.md`. Use the PR
-while it remains unmerged; the file is not yet available on frontend `main`.
+the migration. The frontend-owned execution record is available in the
+[merged frontend record](https://github.com/6529-Collections/6529seize-frontend/blob/7c48047f3281c010825ed7d8c8ca9213475a58da/ops/workstreams/ethereum-rpc-provider-portability/README.md).
+[Frontend PR #3911](https://github.com/6529-Collections/6529seize-frontend/pull/3911)
+merged on 2026-09-15. Merge completion does not establish production deployment.
 
 ## Decision
 
@@ -83,7 +83,7 @@ separately configured RPC endpoints.
 ### Frontend
 
 - [Frontend PR #3911](https://github.com/6529-Collections/6529seize-frontend/pull/3911)
-  implements the shared server-only `ETHEREUM_RPC_URL` boundary and deployment
+  merged the shared server-only `ETHEREUM_RPC_URL` boundary and deployment
   configuration. Implementation does not imply deployment; consult the PR and
   frontend execution record for current rollout state.
 - Active `/api/alchemy/*` routes and Open Graph NFT metadata fallback code use
@@ -283,7 +283,7 @@ directory. Its implementation scope is:
 1. Completed in merged [PR #3915](https://github.com/6529-Collections/6529seize-frontend/pull/3915):
    deleted the unused `services/alchemy-api.ts` facade, the unused
    `services/alchemy/{index,collections,owner-nfts,tokens}.ts` implementations,
-   and their orphaned test. The remaining implementation is tracked in PR #3911;
+   and their orphaned test. The remaining implementation merged in PR #3911;
    code completion does not imply deployment.
 2. Retain `services/alchemy/types.ts` and `services/alchemy/utils.ts` while
    production code imports them.
