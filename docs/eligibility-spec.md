@@ -174,7 +174,8 @@ influence eligibility.
 
 ## 4. Level bounds
 
-`level_min` / `level_max` store **LEVEL NUMBERS** (0–100), not raw scores.
+`level_min` / `level_max` store **LEVEL NUMBERS**, not raw scores. The API
+accepts bounds from -100 to 100; derived profile levels range from 0 to 100.
 Levels are derived from `identities.level_raw` via the fixed table in
 `src/profiles/profile-level.ts`: `getLevelFromScore(score)` returns the highest
 level whose border (`minTdh`) is ≤ score; scores below 25 (including negative
@@ -196,9 +197,9 @@ The two engines approach the same rule differently:
   level zero too. Level 100 has no upper bound.
 
 For positive `level_min`, `level ≥ N ⟺ level_raw ≥ border(N)`. This equivalence
-**does not hold at zero**. Preserve whether either level criterion was supplied
-before normalizing bounds, so an explicit minimum zero or maximum 100 still
-activates the criteria branch (including its union with an inclusion list).
+**does not hold at zero**. Keep the supplied bounds on the rule and translate
+them only while building SQL predicates, so an explicit minimum zero or maximum
+100 still activates the criteria branch (including its union with an inclusion list).
 An absent criterion must not turn an empty group or a pure inclusion list into
 an unrestricted group. The optimized online-recipient path follows the same
 rule and admits negative raw scores for a minimum-zero-only group.
@@ -210,7 +211,9 @@ border therefore encodes `level ≤ N` exactly.
 `level_min = 0`.
 
 Zero-valued level bounds are real bounds. `level_min = 0` is vacuous and
-`level_max = 0` admits only level-0 profiles.
+`level_max = 0` admits only level-0 profiles. A negative minimum is also
+vacuous; a negative maximum makes the criteria branch empty. Explicit inclusion
+can still admit a profile, and exclusion still overrides inclusion.
 
 ## 5. Rep bounds
 
@@ -568,7 +571,7 @@ Received`), ignoring `cic_direction = 'SENT'`. The in-memory engine honors
 
 ## 13. Current-consumer conformance and rollout
 
-The 72 shared vectors (250 group definitions) exercise direct evaluation, real-MySQL membership SQL,
+The 72 shared vectors (300 group definitions) exercise direct evaluation, real-MySQL membership SQL,
 member lists and counts with wallet search, unsaved previews, and trusted online
 broadcast SQL. A legacy-invalid `ALL_TOKENS` rule over an `ALL` grant remains an
 empty saved member set; preview validation rejects it. Existing consumer suites

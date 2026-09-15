@@ -219,6 +219,29 @@
         "id": "zero-other-axis-fails",
         "level_min": 0,
         "tdh_min": 1
+      },
+      {
+        "id": "min-negative",
+        "level_min": -100
+      },
+      {
+        "id": "max-negative",
+        "level_max": -1
+      },
+      {
+        "id": "negative-range",
+        "level_min": -100,
+        "level_max": -1
+      },
+      {
+        "id": "negative-max-included",
+        "level_max": -1,
+        "profile_group_id": "subject-list"
+      },
+      {
+        "id": "reversed-range",
+        "level_min": 1,
+        "level_max": 0
       }
     ],
     "expected": {
@@ -228,7 +251,9 @@
         "min-zero-included-other",
         "min-zero-max-zero",
         "max-zero",
-        "min-zero-max-one"
+        "min-zero-max-one",
+        "min-negative",
+        "negative-max-included"
       ]
     }
   },
@@ -314,6 +339,29 @@
         "id": "zero-other-axis-fails",
         "level_min": 0,
         "tdh_min": 1
+      },
+      {
+        "id": "min-negative",
+        "level_min": -100
+      },
+      {
+        "id": "max-negative",
+        "level_max": -1
+      },
+      {
+        "id": "negative-range",
+        "level_min": -100,
+        "level_max": -1
+      },
+      {
+        "id": "negative-max-included",
+        "level_max": -1,
+        "profile_group_id": "subject-list"
+      },
+      {
+        "id": "reversed-range",
+        "level_min": 1,
+        "level_max": 0
       }
     ],
     "expected": {
@@ -323,7 +371,9 @@
         "min-zero-included-other",
         "min-zero-max-zero",
         "max-zero",
-        "min-zero-max-one"
+        "min-zero-max-one",
+        "min-negative",
+        "negative-max-included"
       ]
     }
   },
@@ -409,6 +459,29 @@
         "id": "zero-other-axis-fails",
         "level_min": 0,
         "tdh_min": 1
+      },
+      {
+        "id": "min-negative",
+        "level_min": -100
+      },
+      {
+        "id": "max-negative",
+        "level_max": -1
+      },
+      {
+        "id": "negative-range",
+        "level_min": -100,
+        "level_max": -1
+      },
+      {
+        "id": "negative-max-included",
+        "level_max": -1,
+        "profile_group_id": "subject-list"
+      },
+      {
+        "id": "reversed-range",
+        "level_min": 1,
+        "level_max": 0
       }
     ],
     "expected": {
@@ -418,7 +491,9 @@
         "min-zero-included-other",
         "min-zero-max-zero",
         "max-zero",
-        "min-zero-max-one"
+        "min-zero-max-one",
+        "min-negative",
+        "negative-max-included"
       ]
     }
   },
@@ -504,6 +579,29 @@
         "id": "zero-other-axis-fails",
         "level_min": 0,
         "tdh_min": 1
+      },
+      {
+        "id": "min-negative",
+        "level_min": -100
+      },
+      {
+        "id": "max-negative",
+        "level_max": -1
+      },
+      {
+        "id": "negative-range",
+        "level_min": -100,
+        "level_max": -1
+      },
+      {
+        "id": "negative-max-included",
+        "level_max": -1,
+        "profile_group_id": "subject-list"
+      },
+      {
+        "id": "reversed-range",
+        "level_min": 1,
+        "level_max": 0
       }
     ],
     "expected": {
@@ -513,7 +611,9 @@
         "min-zero-included-other",
         "min-zero-max-zero",
         "max-zero",
-        "min-zero-max-one"
+        "min-zero-max-one",
+        "min-negative",
+        "negative-max-included"
       ]
     }
   },
@@ -599,6 +699,29 @@
         "id": "zero-other-axis-fails",
         "level_min": 0,
         "tdh_min": 1
+      },
+      {
+        "id": "min-negative",
+        "level_min": -100
+      },
+      {
+        "id": "max-negative",
+        "level_max": -1
+      },
+      {
+        "id": "negative-range",
+        "level_min": -100,
+        "level_max": -1
+      },
+      {
+        "id": "negative-max-included",
+        "level_max": -1,
+        "profile_group_id": "subject-list"
+      },
+      {
+        "id": "reversed-range",
+        "level_min": 1,
+        "level_max": 0
       }
     ],
     "expected": {
@@ -608,7 +731,9 @@
         "min-zero-included-other",
         "min-zero-max-zero",
         "max-zero",
-        "min-zero-max-one"
+        "min-zero-max-one",
+        "min-negative",
+        "negative-max-included"
       ]
     }
   },
@@ -694,6 +819,29 @@
         "id": "zero-other-axis-fails",
         "level_min": 0,
         "tdh_min": 1
+      },
+      {
+        "id": "min-negative",
+        "level_min": -100
+      },
+      {
+        "id": "max-negative",
+        "level_max": -1
+      },
+      {
+        "id": "negative-range",
+        "level_min": -100,
+        "level_max": -1
+      },
+      {
+        "id": "negative-max-included",
+        "level_max": -1,
+        "profile_group_id": "subject-list"
+      },
+      {
+        "id": "reversed-range",
+        "level_min": 1,
+        "level_max": 0
       }
     ],
     "expected": {
@@ -703,7 +851,9 @@
         "min-zero-included-other",
         "min-one",
         "min-zero-max-one",
-        "min-one-max-one"
+        "min-one-max-one",
+        "min-negative",
+        "negative-max-included"
       ]
     }
   },
@@ -789,6 +939,29 @@
         "id": "zero-other-axis-fails",
         "level_min": 0,
         "tdh_min": 1
+      },
+      {
+        "id": "min-negative",
+        "level_min": -100
+      },
+      {
+        "id": "max-negative",
+        "level_max": -1
+      },
+      {
+        "id": "negative-range",
+        "level_min": -100,
+        "level_max": -1
+      },
+      {
+        "id": "negative-max-included",
+        "level_max": -1,
+        "profile_group_id": "subject-list"
+      },
+      {
+        "id": "reversed-range",
+        "level_min": 1,
+        "level_max": 0
       }
     ],
     "expected": {
@@ -798,7 +971,9 @@
         "min-zero-included-other",
         "min-one",
         "min-zero-max-one",
-        "min-one-max-one"
+        "min-one-max-one",
+        "min-negative",
+        "negative-max-included"
       ]
     }
   },
@@ -884,6 +1059,29 @@
         "id": "zero-other-axis-fails",
         "level_min": 0,
         "tdh_min": 1
+      },
+      {
+        "id": "min-negative",
+        "level_min": -100
+      },
+      {
+        "id": "max-negative",
+        "level_max": -1
+      },
+      {
+        "id": "negative-range",
+        "level_min": -100,
+        "level_max": -1
+      },
+      {
+        "id": "negative-max-included",
+        "level_max": -1,
+        "profile_group_id": "subject-list"
+      },
+      {
+        "id": "reversed-range",
+        "level_min": 1,
+        "level_max": 0
       }
     ],
     "expected": {
@@ -891,7 +1089,9 @@
         "min-zero",
         "max-hundred",
         "min-zero-included-other",
-        "min-one"
+        "min-one",
+        "min-negative",
+        "negative-max-included"
       ]
     }
   },
@@ -977,6 +1177,29 @@
         "id": "zero-other-axis-fails",
         "level_min": 0,
         "tdh_min": 1
+      },
+      {
+        "id": "min-negative",
+        "level_min": -100
+      },
+      {
+        "id": "max-negative",
+        "level_max": -1
+      },
+      {
+        "id": "negative-range",
+        "level_min": -100,
+        "level_max": -1
+      },
+      {
+        "id": "negative-max-included",
+        "level_max": -1,
+        "profile_group_id": "subject-list"
+      },
+      {
+        "id": "reversed-range",
+        "level_min": 1,
+        "level_max": 0
       }
     ],
     "expected": {
@@ -984,7 +1207,9 @@
         "min-zero",
         "max-hundred",
         "min-zero-included-other",
-        "min-one"
+        "min-one",
+        "min-negative",
+        "negative-max-included"
       ]
     }
   },
@@ -1070,6 +1295,29 @@
         "id": "zero-other-axis-fails",
         "level_min": 0,
         "tdh_min": 1
+      },
+      {
+        "id": "min-negative",
+        "level_min": -100
+      },
+      {
+        "id": "max-negative",
+        "level_max": -1
+      },
+      {
+        "id": "negative-range",
+        "level_min": -100,
+        "level_max": -1
+      },
+      {
+        "id": "negative-max-included",
+        "level_max": -1,
+        "profile_group_id": "subject-list"
+      },
+      {
+        "id": "reversed-range",
+        "level_min": 1,
+        "level_max": 0
       }
     ],
     "expected": {
@@ -1078,7 +1326,9 @@
         "max-hundred",
         "min-zero-included-other",
         "min-one",
-        "min-hundred-max-hundred"
+        "min-hundred-max-hundred",
+        "min-negative",
+        "negative-max-included"
       ]
     }
   }

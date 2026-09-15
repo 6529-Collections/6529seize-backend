@@ -2041,17 +2041,6 @@ export class UserGroupsService {
     group.rep.user_identity = group.rep.user_identity
       ? usersToUserIds[group.rep.user_identity]
       : null;
-    const hasLevelCriterion =
-      group.level.min !== null || group.level.max !== null;
-    group.level.min =
-      group.level.min !== null && group.level.min > 0
-        ? getLevelComponentsBorderByLevel(group.level.min)
-        : null;
-    group.level.max =
-      group.level.max !== null && group.level.max < 100
-        ? getLevelComponentsBorderByLevel(group.level.max + 1)
-        : null;
-
     const params: Record<string, any> = {};
     const beneficiaryOwnersPart = this.getBeneficiaryOwnersPart(
       group.is_beneficiary_of_grant_id,
@@ -2082,7 +2071,6 @@ export class UserGroupsService {
       group,
       group_id,
       params,
-      hasLevelCriterion,
       previewIdentityMembership
     );
     const sql = `with ${repPart ?? ''} ${cicPart ?? ''} ${
@@ -2099,11 +2087,11 @@ export class UserGroupsService {
     group: GClean,
     groupId: string | null,
     params: Record<string, any>,
-    hasLevelCriterion: boolean,
     previewIdentityMembership?: PreviewIdentityMembership
   ): string {
     const anyOtherDescriptionButInclusion = !!(
-      hasLevelCriterion ||
+      group.level.min !== null ||
+      group.level.max !== null ||
       group.tdh.max !== null ||
       group.tdh.min !== null ||
       group.owns_nfts.length ||
@@ -2554,16 +2542,32 @@ export class UserGroupsService {
       cmPart += `and ${identitySideTdhPart} <= :tdh_max `;
       params.tdh_max = group.tdh.max;
     }
-    if (group.level.min !== null) {
-      cmPart += `and i.level_raw >= :level_min `;
-      params.level_min = group.level.min;
-    }
-    if (group.level.max !== null) {
-      cmPart += `and i.level_raw < :level_max `;
-      params.level_max = group.level.max;
-    }
+    cmPart += this.getLevelBoundsPart(group, params);
     cmPart += '), ';
     return cmPart;
+  }
+
+  /** Converts level bounds to raw-score predicates without changing the rule. */
+  private getLevelBoundsPart(
+    group: GClean,
+    params: Record<string, any>
+  ): string {
+    const { min, max } = group.level;
+    // All raw scores map to levels 0..100. A negative upper bound is
+    // impossible, while a nonpositive lower bound is vacuous.
+    if (max !== null && max < 0) {
+      return 'and false ';
+    }
+    let sql = '';
+    if (min !== null && min > 0) {
+      sql += 'and i.level_raw >= :level_min ';
+      params.level_min = getLevelComponentsBorderByLevel(min);
+    }
+    if (max !== null && max < 100) {
+      sql += 'and i.level_raw < :level_max ';
+      params.level_max = getLevelComponentsBorderByLevel(max + 1);
+    }
+    return sql;
   }
 
   private getCicPart(
