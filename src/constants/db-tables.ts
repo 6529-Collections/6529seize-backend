@@ -265,6 +265,11 @@ export const CONTENT_MODERATION_ITEMS_TABLE = 'content_moderation_items';
 export const CONTENT_MODERATION_EVALUATIONS_TABLE =
   'content_moderation_evaluations';
 
+export const PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE =
+  'push_notification_device_installations';
+export const PUSH_NOTIFICATION_DEVICE_LOGOUT_FENCES_TABLE =
+  'push_notification_device_logout_fences';
+
 export const MEMBERSHIP_SOURCE_STATES_TABLE = 'membership_source_states';
 export const MEMBERSHIP_SOURCE_JOBS_TABLE = 'membership_source_jobs';
 export const MEMBERSHIP_GROUP_VERSIONS_TABLE = 'membership_group_versions';

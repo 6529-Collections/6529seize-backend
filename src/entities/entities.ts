@@ -292,6 +292,9 @@ export {
   ModerationEvaluationEntity
 } from './IModerationReview';
 
+export { PushInstallationEntity } from './IPushInstallation';
+export { PushDeviceLogoutFenceEntity } from './IPushDeviceLogoutFence';
+
 export { MembershipSourceStateEntity } from './IMembershipSourceState';
 export { MembershipSourceJobEntity } from './IMembershipSourceJob';
 export { MembershipGroupVersionEntity } from './IMembershipGroupVersion';

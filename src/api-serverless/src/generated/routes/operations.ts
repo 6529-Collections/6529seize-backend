@@ -163,6 +163,8 @@ import { ApiProposalFrameRequest } from '@/api/generated/models/ApiProposalFrame
 import { ApiProposalFrameResponse } from '@/api/generated/models/ApiProposalFrameResponse';
 import { ApiPublishProfileCmsPackageRequest } from '@/api/generated/models/ApiPublishProfileCmsPackageRequest';
 import { ApiReviewProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiReviewProfileCmsAgentProposalRequest';
+import { ApiRevokePushInstallationRequest } from '@/api/generated/models/ApiRevokePushInstallationRequest';
+import { ApiRevokePushInstallationResponse } from '@/api/generated/models/ApiRevokePushInstallationResponse';
 import { ApiRollbackProfileCmsPackageRequest } from '@/api/generated/models/ApiRollbackProfileCmsPackageRequest';
 import { ApiSaveEulaConsentRequest } from '@/api/generated/models/ApiSaveEulaConsentRequest';
 import { ApiSaveEulaConsentResponse } from '@/api/generated/models/ApiSaveEulaConsentResponse';
@@ -2234,6 +2236,20 @@ export type PutProfilePreferencesRequest = Request<
   ApiResponse<PutProfilePreferencesResponse>,
   ApiUpdateProfilePreferences,
   PutProfilePreferencesQuery,
+  Record<string, never>
+>;
+
+export type RevokePushInstallationPathParams = Record<string, never>;
+
+export type RevokePushInstallationQuery = Record<string, never>;
+
+export type RevokePushInstallationResponse = ApiRevokePushInstallationResponse;
+
+export type RevokePushInstallationRequest = Request<
+  RevokePushInstallationPathParams,
+  ApiResponse<RevokePushInstallationResponse>,
+  ApiRevokePushInstallationRequest,
+  RevokePushInstallationQuery,
   Record<string, never>
 >;
 

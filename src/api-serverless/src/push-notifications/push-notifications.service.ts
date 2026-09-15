@@ -49,6 +49,46 @@ export const sendIdentityPushNotifications = async (ids: number[]) => {
   }
 };
 
+/** Only enqueue here: device discovery, counting and Firebase run in the worker. */
+export async function requestDeviceBadgeRefresh(
+  profileId: string
+): Promise<void> {
+  if (!isActivated()) return;
+  try {
+    await sendBatchMessagesToSQS([
+      {
+        // This handoff always sends exactly one entry; SQS IDs are unique within a batch only.
+        Id: 'badge-refresh',
+        MessageBody: JSON.stringify({
+          type: 'badge_refresh',
+          profile_id: profileId
+        })
+      }
+    ]);
+  } catch (error) {
+    // The read is already persisted. Do not report a failed read or send a guessed badge.
+    logger.error(
+      `Failed to enqueue badge refresh for profile ${profileId}: ${error}`
+    );
+  }
+}
+
+/** Logout retries must retry a failed queue handoff, without repeating deletion. */
+export async function requestInstallationBadgeRefresh(
+  deviceId: string
+): Promise<void> {
+  if (!isActivated()) return;
+  await sendBatchMessagesToSQS([
+    {
+      Id: 'installation-badge-refresh',
+      MessageBody: JSON.stringify({
+        type: 'installation_badge_refresh',
+        device_id: deviceId
+      })
+    }
+  ]);
+}
+
 const sendBatchMessagesToSQS = async (
   entries: NonNullable<SendMessageBatchCommandInput['Entries']>
 ) => {

@@ -707,6 +707,8 @@ falls back to a standalone result. Workflows never own Seize drop IDs. See
 [CI Pipeline Alerts](./ci-pipeline-alerts.md) for the request, formatting,
 retention, rerun, and rollout contract.
 
+Notification read/unread mutations also enqueue a `badge_refresh` job with the affected profile ID on the existing `firebase-push-notifications` queue. `pushNotificationsHandler` combines shared-device refreshes within each batch, discovers current iOS registrations, and computes aggregate unread counts from the primary database using the existing push settings, visibility and moderation filters. The API performs only the queue handoff, not device lookup, counting or Firebase delivery. Normal iOS alerts and badge-only refreshes share a per-device Redis lock covering count calculation and submission. Android delivery and installation logout use the same lock to fence removed recipients. Failed or invalid profile contributions never become partial badge totals. See [Mobile badge synchronization](./mobile-badge-sync.md) for the payload, failure handling and rollout boundaries.
+
 Notification invalidation is emitted only after the push worker loads durable notification rows. It intentionally remains independent from mobile push registration, mute settings, and delivery success because those controls affect Firebase delivery only; the durable row remains visible through the authenticated REST feed. Duplicate SQS deliveries may repeat this idempotent invalidation without duplicating notification data.
 
 WebSocket registration and re-authentication persist the identity, JWT expiry and notification grants atomically. Existing connection mutations lock the connection row before subscription rows; identity resync and deletion use the same order, and missing connections cannot gain grants. Only a transaction's owner retries confirmed deadlocks, with at most three whole attempts and bounded jitter; caller-owned transactions and ambiguous failures propagate. Socket acknowledgements follow persistence, and socket/provider operations remain outside the retried transaction. New connections, re-authentication, and identity resyncs each retain a one-percent chance of running bounded cleanup of expired and orphaned subscriptions after persistence. The repository identity update method remains the sole write path for `ws_connections.identity_id`.
@@ -1473,3 +1475,20 @@ The API Lambda has a broad blast radius. It is pragmatic and easy to route throu
 Redis should remain treated as an optimization and coordination layer, not a source of truth. The current design mostly follows that rule.
 
 Media and edge processing are the most heterogeneous deployment area. S3, CloudFront, MediaConvert, Lambda@Edge, native modules, and specialized build packaging all meet there, so changes in this area need more deployment and runtime verification than ordinary DB/API changes.
+
+### Mobile installation logout
+
+The native frontend persists an installation-authenticated logout outbox before
+clearing local credentials. The API revokes one profile/device or every profile
+on an installation, including rows absent from the client account list, while
+preserving other devices. `push_notification_device_installations` retains a hashed installation
+credential, monotonic revision and latest delivery target after registration
+removal. Database row locking rejects stale registration requests and makes
+revocation retries idempotent. An `installation_badge_refresh` SQS event lets the
+existing push worker send the remaining iOS count, including zero. See
+[Mobile badge synchronization](./mobile-badge-sync.md) for legacy ownership,
+offline recovery, security boundaries and schema-first deployment order.
+
+Before first registration, `push_notification_device_logout_fences` stores logout
+revisions by device ID and secret hash without claiming installation ownership.
+Registration atomically adopts only its own secret's fence and removes that row.

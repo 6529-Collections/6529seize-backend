@@ -612,6 +612,7 @@ export * from '../models/ApiProfileWaveActivityType';
 export * from '../models/ApiProposalFrameRequest';
 export * from '../models/ApiProposalFrameResponse';
 export * from '../models/ApiPublishProfileCmsPackageRequest';
+export * from '../models/ApiPushLogoutSession';
 export * from '../models/ApiPushNotificationDevice';
 export * from '../models/ApiPushNotificationSettings';
 export * from '../models/ApiPushNotificationSettingsUpdate';
@@ -637,6 +638,8 @@ export * from '../models/ApiReplyToDropAuthor';
 export * from '../models/ApiReplyToDropResponse';
 export * from '../models/ApiReplyToDropV2';
 export * from '../models/ApiReviewProfileCmsAgentProposalRequest';
+export * from '../models/ApiRevokePushInstallationRequest';
+export * from '../models/ApiRevokePushInstallationResponse';
 export * from '../models/ApiRollbackProfileCmsPackageRequest';
 export * from '../models/ApiSaveEulaConsentRequest';
 export * from '../models/ApiSaveEulaConsentResponse';
@@ -1481,6 +1484,7 @@ import { ApiProfileWaveActivityType } from '../models/ApiProfileWaveActivityType
 import { ApiProposalFrameRequest , ApiProposalFrameRequestMimeTypeEnum   , ApiProposalFrameRequestLayoutEnum   } from '../models/ApiProposalFrameRequest';
 import { ApiProposalFrameResponse , ApiProposalFrameResponseMimeTypeEnum   } from '../models/ApiProposalFrameResponse';
 import { ApiPublishProfileCmsPackageRequest } from '../models/ApiPublishProfileCmsPackageRequest';
+import { ApiPushLogoutSession } from '../models/ApiPushLogoutSession';
 import { ApiPushNotificationDevice } from '../models/ApiPushNotificationDevice';
 import { ApiPushNotificationSettings } from '../models/ApiPushNotificationSettings';
 import { ApiPushNotificationSettingsUpdate } from '../models/ApiPushNotificationSettingsUpdate';
@@ -1506,6 +1510,8 @@ import { ApiReplyToDropAuthor } from '../models/ApiReplyToDropAuthor';
 import { ApiReplyToDropResponse } from '../models/ApiReplyToDropResponse';
 import { ApiReplyToDropV2 } from '../models/ApiReplyToDropV2';
 import { ApiReviewProfileCmsAgentProposalRequest, ApiReviewProfileCmsAgentProposalRequestStatusEnum        } from '../models/ApiReviewProfileCmsAgentProposalRequest';
+import { ApiRevokePushInstallationRequest } from '../models/ApiRevokePushInstallationRequest';
+import { ApiRevokePushInstallationResponse } from '../models/ApiRevokePushInstallationResponse';
 import { ApiRollbackProfileCmsPackageRequest } from '../models/ApiRollbackProfileCmsPackageRequest';
 import { ApiSaveEulaConsentRequest    } from '../models/ApiSaveEulaConsentRequest';
 import { ApiSaveEulaConsentResponse   } from '../models/ApiSaveEulaConsentResponse';
@@ -2583,6 +2589,7 @@ let typeMap: {[index: string]: any} = {
     "ApiProposalFrameRequest": ApiProposalFrameRequest,
     "ApiProposalFrameResponse": ApiProposalFrameResponse,
     "ApiPublishProfileCmsPackageRequest": ApiPublishProfileCmsPackageRequest,
+    "ApiPushLogoutSession": ApiPushLogoutSession,
     "ApiPushNotificationDevice": ApiPushNotificationDevice,
     "ApiPushNotificationSettings": ApiPushNotificationSettings,
     "ApiPushNotificationSettingsUpdate": ApiPushNotificationSettingsUpdate,
@@ -2606,6 +2613,8 @@ let typeMap: {[index: string]: any} = {
     "ApiReplyToDropResponse": ApiReplyToDropResponse,
     "ApiReplyToDropV2": ApiReplyToDropV2,
     "ApiReviewProfileCmsAgentProposalRequest": ApiReviewProfileCmsAgentProposalRequest,
+    "ApiRevokePushInstallationRequest": ApiRevokePushInstallationRequest,
+    "ApiRevokePushInstallationResponse": ApiRevokePushInstallationResponse,
     "ApiRollbackProfileCmsPackageRequest": ApiRollbackProfileCmsPackageRequest,
     "ApiSaveEulaConsentRequest": ApiSaveEulaConsentRequest,
     "ApiSaveEulaConsentResponse": ApiSaveEulaConsentResponse,

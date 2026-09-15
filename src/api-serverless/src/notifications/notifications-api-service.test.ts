@@ -1,3 +1,4 @@
+import { requestDeviceBadgeRefresh } from '@/api/push-notifications/push-notifications.service';
 import { AuthenticationContext } from '@/auth-context';
 import { ApiDropGroupMention } from '@/api/generated/models/ApiDropGroupMention';
 import { ApiNotificationCause } from '@/api/generated/models/ApiNotificationCause';
@@ -7,6 +8,10 @@ import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
 import { NotFoundException } from '@/exceptions';
 import { DbPoolName } from '@/db-query.options';
+
+jest.mock('@/api/push-notifications/push-notifications.service', () => ({
+  requestDeviceBadgeRefresh: jest.fn().mockResolvedValue(undefined)
+}));
 
 jest.mock('@/api/waves/wave-unread-cache', () => ({
   invalidateWaveUnreadCacheForReaderWave: jest.fn().mockResolvedValue(undefined)
@@ -678,6 +683,7 @@ describe('NotificationsApiService V1 system notifications', () => {
 });
 
 describe('NotificationsApiService realtime invalidation', () => {
+  beforeEach(() => jest.mocked(requestDeviceBadgeRefresh).mockClear());
   it('notifies the affected profile after read-state mutations succeed', async () => {
     const identityNotificationsDb = {
       updateNotificationReadAt: jest.fn().mockResolvedValue(undefined),
@@ -726,6 +732,19 @@ describe('NotificationsApiService realtime invalidation', () => {
       false
     );
 
+    expect(requestDeviceBadgeRefresh).toHaveBeenCalledTimes(4);
+    expect(jest.mocked(requestDeviceBadgeRefresh).mock.calls).toEqual([
+      ['profile-1'],
+      ['profile-1'],
+      ['profile-1'],
+      ['profile-1']
+    ]);
+    expect(
+      jest.mocked(requestDeviceBadgeRefresh).mock.invocationCallOrder[0]
+    ).toBeGreaterThan(
+      identityNotificationsDb.updateNotificationReadAt.mock
+        .invocationCallOrder[0]
+    );
     expect(
       identityNotificationsDb.updateNotificationReadAt
     ).toHaveBeenNthCalledWith(
@@ -762,6 +781,15 @@ describe('NotificationsApiService realtime invalidation', () => {
     expect(
       wsListenersNotifier.notifyAboutIdentityNotificationsChanged
     ).toHaveBeenNthCalledWith(4, ['profile-1']);
+
+    jest.mocked(requestDeviceBadgeRefresh).mockClear();
+    identityNotificationsDb.updateNotificationReadAt.mockRejectedValueOnce(
+      new Error('write failed')
+    );
+    await expect(
+      service.markNotificationAsRead({ id: 3, identity_id: 'profile-1' })
+    ).rejects.toThrow('write failed');
+    expect(requestDeviceBadgeRefresh).not.toHaveBeenCalled();
   });
 
   it.each([
