@@ -116,6 +116,27 @@ Closed status inspection requires no DB access. See
 [membership runtime operations](membership-runtime-operations.md) for exact controls,
 delivery semantics and the remaining combined staging acceptance.
 
+### Membership external dispatcher and fixture carrier
+
+Deploy `membershipRefreshLoop` before `membershipRefreshDispatcherLoop`: the latter
+imports the exact existing work queue and the M5 worker supplies the fixture
+transport receipt protocol. Use `membership_runtime_mode=inactive`,
+`membership_worker_mapping_enabled=false` and
+`membership_dispatch_schedule_enabled=false` for production. The generated
+workflow rejects production activation and service-incompatible controls before
+AWS credentials are configured. Verify actual AWS mapping/rule states as well as
+the deployed source and artifact.
+
+Deploy `customReplayLoop` for the closed staging fixture preflight/prepare/status/
+advance/database-proof/cleanup actions. Only the reviewed staging drill may enable the worker mapping
+and, afterward, the external schedule. Stop the dispatcher before disabling the
+worker. Run the database-only lease/reader proof after verifying dispatch and worker
+mapping are disabled and work has settled; retain reader grace before bounded
+fixture cleanup. Follow
+[membership runtime operations](membership-runtime-operations.md) for admission,
+ownership, source readiness, natural SQS/DLQ evidence and independent-invocation
+acceptance. These services do not enable normal producers or authorization reads.
+
 ### Operational failures
 
 Inspect the failing job and logs. Fix attributable failures on the development
