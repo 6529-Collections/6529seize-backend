@@ -18,6 +18,10 @@ export function isImageMimeType(contentType: string): boolean {
   return contentType.toLowerCase().startsWith('image/');
 }
 
+export function getPublishedDropMediaMimeType(contentType: string): string {
+  return contentType === 'image/avif' ? 'image/webp' : contentType;
+}
+
 export function getDropMediaIngestS3Bucket(): string {
   const configuredBucket = process.env.DROP_MEDIA_INGEST_S3_BUCKET;
   if (configuredBucket) {
