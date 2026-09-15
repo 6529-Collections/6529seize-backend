@@ -1091,6 +1091,48 @@ describe('Desktop corpus retrieval and answers', () => {
     }
   });
 
+  it.each([false, true])(
+    'does not infer legacy Desktop links (renderer: %s)',
+    async (rendered) => {
+      const legacySource = new FrontendHelpBotKnowledgeSource(async () => ({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            records: [
+              {
+                id: 'desktop.overview',
+                title: '6529 Desktop',
+                facts: ['6529 Desktop runs your local node.'],
+                brief_answer: '6529 Desktop runs your local node.',
+                canonical_path: '/core/tdh',
+                related_paths: ['/about/6529-apps'],
+                tags: ['desktop-core']
+              }
+            ]
+          })
+      }));
+      const renderer = rendered
+        ? {
+            renderAnswer: jest
+              .fn()
+              .mockResolvedValue(
+                '6529 Desktop runs your local node.\n\nMore info: https://6529.io/core/tdh'
+              )
+          }
+        : null;
+      const result = await new HelpBotAnswerer(renderer, legacySource).answer({
+        question: 'what is 6529 Desktop',
+        baseUrl: 'https://6529.io'
+      });
+      expect(result.type).toBe('ANSWER');
+      if (result.type !== 'ANSWER')
+        throw new Error('Expected a Desktop answer');
+      expect(result.record.answerLinks).toBeUndefined();
+      expect(result.answer).toBe('6529 Desktop runs your local node.');
+    }
+  );
+
   it('fails closed when an older published corpus has no Core support', async () => {
     const emptySource = new FrontendHelpBotKnowledgeSource(async () => ({
       ok: true,

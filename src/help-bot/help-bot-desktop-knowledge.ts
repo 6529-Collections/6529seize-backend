@@ -257,12 +257,14 @@ function isPostInstallationQuestion(question: string): boolean {
   const installation = /\b(?:installed|opened)\b/i;
   const nextStep =
     /\b(?:now what|what (?:do i do |comes )?next|what now|next steps?|get started|getting started|how do i start)\b/i;
-  const specificTopic =
-    /\b(?:wallets?|rpc|tdh|merkle|ipfs|errors?|crash\w*|fail\w*|stuck|sync\w*|connect\w*|pair\w*)\b/i;
+  const specificTopic = [
+    /\b(?:wallets?|rpc|tdh|merkle|ipfs|errors?|stuck)\b/i,
+    /\b(?:crash|fail|sync|connect|pair)\w*\b/i
+  ].some((pattern) => pattern.test(text));
   return (
     installation.test(text) &&
     nextStep.test(text) &&
-    !specificTopic.test(text) &&
+    !specificTopic &&
     !/\b(?:not|never|haven't|havent|can't|cant|couldn't|couldnt)\b/i.test(text)
   );
 }
