@@ -99,6 +99,23 @@ controlled membership schema to be current; it cannot bootstrap these additions.
 Scheduled maintenance continues without synchronization. Deploy additive schema
 before dependent runtime packages and leave current authorization readers in place.
 
+### Membership runtime control and worker
+
+After the evaluator index, use `db_schema_scope=membership-runtime-control` on
+`dbMigrationsLoop` to create the runtime checkpoint table and add the exact
+terminal-run scan index online. The complete isolated plan must contain only those
+two additions. Reinvocation verifies existing compatible state; an uncertain or
+partial DDL result is reconciled without deleting existing data. Manual full sync
+requires this scope first.
+
+Deploy `membershipRefreshLoop` afterward. Defaults are
+`membership_runtime_mode=inactive` and `membership_worker_mapping_enabled=false`.
+Production rejects any activation. Verify the compiled and actual disabled SQS
+mapping, source/artifact/version, dedicated role, queue/DLQ and service alarms.
+Closed status inspection requires no DB access. See
+[membership runtime operations](membership-runtime-operations.md) for exact controls,
+delivery semantics and the remaining combined staging acceptance.
+
 ### Operational failures
 
 Inspect the failing job and logs. Fix attributable failures on the development

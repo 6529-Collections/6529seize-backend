@@ -178,7 +178,8 @@ describe('generated deployment source guard', () => {
         'claims-media-upload',
         'nft-link-page-retry',
         'membership-refresh',
-        'membership-evaluator-index'
+        'membership-evaluator-index',
+        'membership-runtime-control'
       ]
     });
     expect(job.env.DB_SCHEMA_SCOPE).toBe(
@@ -352,4 +353,83 @@ describe('generated deployment source guard', () => {
       expect(result.stdout).toContain('did not acknowledge');
     }
   );
+  it.each(['staging', 'prod'] as const)(
+    'accepts inactive worker defaults for %s',
+    (environment) => {
+      expect(
+        validateDispatch(sourceSha, environment, {
+          INPUT_SERVICE: 'membershipRefreshLoop'
+        }).status
+      ).toBe(0);
+    }
+  );
+
+  it('allows the exact staging fixture mapping and binds control inputs as data', () => {
+    expect(
+      validateDispatch(sourceSha, 'staging', {
+        INPUT_SERVICE: 'membershipRefreshLoop',
+        MEMBERSHIP_RUNTIME_MODE: 'staging-fixture-v1',
+        MEMBERSHIP_WORKER_MAPPING_ENABLED: 'true'
+      }).status
+    ).toBe(0);
+    expect(
+      workflow.on.workflow_dispatch.inputs.membership_runtime_mode.default
+    ).toBe('inactive');
+    expect(
+      workflow.on.workflow_dispatch.inputs.membership_worker_mapping_enabled
+        .default
+    ).toBe(false);
+    expect(job.env.MEMBERSHIP_RUNTIME_MODE).toBe(
+      "${{ github.event.inputs.membership_runtime_mode || 'inactive' }}"
+    );
+    expect(job.env.MEMBERSHIP_WORKER_MAPPING_ENABLED).toBe(
+      "${{ github.event.inputs.membership_worker_mapping_enabled || 'false' }}"
+    );
+  });
+
+  it.each<Record<string, string>>([
+    { INPUT_SERVICE: 'api', MEMBERSHIP_RUNTIME_MODE: 'staging-fixture-v1' },
+    { INPUT_SERVICE: 'api', MEMBERSHIP_WORKER_MAPPING_ENABLED: 'true' },
+    { MEMBERSHIP_WORKER_MAPPING_ENABLED: 'true' },
+    { MEMBERSHIP_WORKER_MAPPING_ENABLED: 'TRUE' },
+    { MEMBERSHIP_WORKER_MAPPING_ENABLED: '0' },
+    { MEMBERSHIP_RUNTIME_MODE: 'active' },
+    { MEMBERSHIP_RUNTIME_MODE: '$(exit 73)' }
+  ])(
+    'rejects unsupported worker controls before credentials: %j',
+    (overrides) => {
+      expect(
+        validateDispatch(sourceSha, 'staging', {
+          INPUT_SERVICE: 'membershipRefreshLoop',
+          ...overrides
+        }).status
+      ).toBe(1);
+    }
+  );
+
+  it('rejects production fixture mode even when mapping is disabled', () => {
+    expect(
+      validateDispatch(sourceSha, 'prod', {
+        INPUT_SERVICE: 'membershipRefreshLoop',
+        MEMBERSHIP_RUNTIME_MODE: 'staging-fixture-v1'
+      }).status
+    ).toBe(1);
+  });
+
+  it('restricts runtime-control schema to the migration carrier and validates its acknowledgment', () => {
+    expect(
+      validateDispatch(sourceSha, 'prod', {
+        INPUT_SERVICE: 'membershipRefreshLoop',
+        DB_SCHEMA_SCOPE: 'membership-runtime-control'
+      }).status
+    ).toBe(1);
+    expect(invokeMigrationScope('membership-runtime-control').status).toBe(0);
+    expect(
+      invokeMigrationScope(
+        'membership-runtime-control',
+        { StatusCode: 200 },
+        { schema_scope: 'membership-refresh' }
+      ).status
+    ).toBe(1);
+  });
 });
