@@ -15,7 +15,8 @@ import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { SNSClient, PublishCommand } from '@aws-sdk/client-sns';
 import { setTimeout as delay } from 'node:timers/promises';
 import { randomInt } from 'node:crypto';
-import { Alert, hash } from './contract.js';
+import { Alert, hash, parseAlert } from './contract.js';
+import type { LowCpuControlRule } from './low-cpu-controls.js';
 import type { Group, Store, Work } from './pipeline.js';
 import { DeliveryError, webhookUrl } from './webhook.js';
 import {
@@ -354,6 +355,26 @@ export async function archive(value: unknown, reason: string): Promise<void> {
     new PutObjectCommand({
       Bucket: setting('ARCHIVE_BUCKET'),
       Key: `${new Date().toISOString().slice(0, 10)}/${hash(body)}.json`,
+      Body: body,
+      ContentType: 'application/json',
+      ServerSideEncryption: 'AES256'
+    })
+  );
+}
+export async function archiveLowCpuControl(
+  alert: Alert,
+  rule: LowCpuControlRule
+): Promise<void> {
+  const body = JSON.stringify({
+    policy: 'known-low-cpu-control/v1',
+    rule: rule.id,
+    alarmIdentityHash: rule.identityHash,
+    alert: parseAlert(alert)
+  });
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: setting('ARCHIVE_BUCKET'),
+      Key: `controls/v1/${hash(alert.eventId)}.json`,
       Body: body,
       ContentType: 'application/json',
       ServerSideEncryption: 'AES256'
