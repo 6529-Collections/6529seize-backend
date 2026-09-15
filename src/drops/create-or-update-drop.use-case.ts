@@ -1,3 +1,4 @@
+import { getPublishedDropMediaMimeType } from '@/drops/drop-media-upload.config';
 import {
   CreateOrUpdateDropModel,
   CreateOrUpdateDropPartModel,
@@ -1466,7 +1467,7 @@ export class CreateOrUpdateDropUseCase {
     if (upload.public_url !== mediaUrl) {
       throw new BadRequestException(`media_upload_id does not match media url`);
     }
-    if (upload.declared_mime_type !== mimeType) {
+    if (getPublishedDropMediaMimeType(upload.declared_mime_type) !== mimeType) {
       throw new BadRequestException(
         `media_upload_id does not match media type`
       );

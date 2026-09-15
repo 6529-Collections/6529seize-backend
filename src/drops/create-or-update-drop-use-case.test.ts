@@ -11,6 +11,7 @@ jest.mock('@/alchemy', () => ({
 import { identitiesDb } from '@/identities/identities.db';
 import { AuthenticationContext } from '@/auth-context';
 import { DropType } from '@/entities/IDrop';
+import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
 import { AttachmentStatus } from '@/entities/IAttachment';
 import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
 import { WaveIdentitySubmissionDuplicates, WaveType } from '@/entities/IWave';
@@ -83,6 +84,7 @@ describe('CreateOrUpdateDropUseCase', () => {
       metricsRecorder?: any;
       artCurationTokenWatchService?: any;
       attachmentsDb?: any;
+      dropMediaUploadsDb?: any;
       moderationService?: ModerationServiceMock;
       moderationDb?: any;
     } = {}
@@ -101,13 +103,47 @@ describe('CreateOrUpdateDropUseCase', () => {
       {} as any,
       overrides.artCurationTokenWatchService ?? ({} as any),
       overrides.attachmentsDb ?? ({} as any),
-      {} as any,
+      overrides.dropMediaUploadsDb ?? ({} as any),
       overrides.moderationService ?? createModerationServiceMock(),
       overrides.moderationDb ?? {
         filterBlockedNotificationRows: jest.fn(async (rows) => rows)
       }
     );
   }
+
+  it('requires the published MIME type and uploader for an AVIF media reference', async () => {
+    const useCase = createUseCaseWithMocks({
+      dropMediaUploadsDb: {
+        findById: jest.fn().mockResolvedValue({
+          declared_mime_type: 'image/avif',
+          status: DropMediaUploadStatus.READY,
+          public_url: 'https://media.example/still.webp',
+          profile_id: 'author-profile'
+        })
+      }
+    });
+    const reference = {
+      mediaUploadId: 'upload-id',
+      mediaUrl: 'https://media.example/still.webp',
+      mimeType: 'image/webp',
+      authorId: 'author-profile'
+    };
+    await expect(
+      (useCase as any).verifyDropMediaUploadReference(reference)
+    ).resolves.toBeUndefined();
+    await expect(
+      (useCase as any).verifyDropMediaUploadReference({
+        ...reference,
+        mimeType: 'image/avif'
+      })
+    ).rejects.toThrow('does not match media type');
+    await expect(
+      (useCase as any).verifyDropMediaUploadReference({
+        ...reference,
+        authorId: 'other-profile'
+      })
+    ).rejects.toThrow('does not belong to the drop author');
+  });
 
   function createIdentitySubmissionModel(identity: string) {
     return {
