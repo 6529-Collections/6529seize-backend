@@ -62,6 +62,32 @@ Recovery follows the same rolling window without a separate cooldown.
 Invocation-error and OOM alarms remain immediate, as do other services' throttle
 alarms, including release-note generation. Direct SNS alarm actions are retained.
 
+Three audited production low-CPU autoscaling controls are recorded without
+operator notifications when the collector positively matches their exact source
+identity, dimensions, metric, statistic, period and threshold. The policy pins
+identity/dimension hashes; it does not match alarm-name prefixes. Matching also
+requires the observed AWS low-direction reason grammar and consistent numeric
+reason data. Recovery requires a matching previous low ALARM. Unknown, changed,
+partial or malformed evidence retains the existing alert path, as do high-CPU,
+health, capacity and application failures. This verifies the observed transition
+semantics, not every native action setting that is absent from the event. It
+does not establish whether the scaling action succeeded: action outcomes are
+unobserved by this state-change event. Existing health and failure alerts remain
+in place; explicitly failed or unknown metadata does not qualify for this policy.
+This applies to the collector's existing ALARM and ALARM-to-OK notification
+paths; other OK transitions remain ignored as before.
+
+Successful matches write sanitized evidence under `controls/v1/` in the existing
+private archive before acknowledgement and increment `LowCpuControlAudited`.
+They do not post to Discord or send fallback email. The object key and body are
+stable for a repeated event; retries after ambiguous acceptance can create more
+than one S3 version and counter increment. The counter measures successful audit
+writes, not unique incidents. Raw reasons, reason data and dimensions are never
+archived. Archive failure propagates to existing collector retries and failure
+alarms. Native alarms, scaling actions, thresholds and source forwarding remain
+unchanged. The current exact policy applies only to production; staging retains
+its existing alert behavior and validates the same code with offline fixtures.
+
 Both wave score queues independently alert when their oldest message is at least
 1,800 seconds old in three of five one-minute periods. This initial backlog
 policy leaves room for the worker's 900-second timeout and 1,000-second message

@@ -2,6 +2,44 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
+test('low-control audit grants only the existing archive prefix and preserves collector failure alarms', () => {
+  for (const environment of ['prod', 'staging']) {
+    const resources = JSON.parse(
+      readFileSync(
+        new URL(`../monitoring-${environment}.json`, import.meta.url),
+        'utf8'
+      )
+    ).Resources;
+    const statements =
+      resources.CriticalCollector.Properties.Policies[0].Statement;
+    const s3 = statements.filter((entry: { Action: string[] }) =>
+      entry.Action.includes('s3:PutObject')
+    );
+    assert.deepEqual(s3, [
+      {
+        Effect: 'Allow',
+        Action: ['s3:PutObject'],
+        Resource: { 'Fn::Sub': '${Archive.Arn}/controls/v1/*' }
+      }
+    ]);
+    assert.equal(
+      statements.some((entry: { Action: string[] }) =>
+        entry.Action.includes('sns:Publish')
+      ),
+      false
+    );
+    const errors = resources.CriticalCollectorErrors.Properties;
+    assert.equal(errors.MetricName, 'Errors');
+    assert.equal(errors.EvaluationPeriods, 1);
+    assert.deepEqual(errors.AlarmActions, [{ Ref: 'FallbackTopic' }]);
+    assert.equal(
+      resources.CriticalRule.Properties.Targets[0].RetryPolicy
+        .MaximumRetryAttempts,
+      185
+    );
+  }
+});
+
 test('catalog log subscriptions form one deterministic acyclic chain without changing their resource contract', () => {
   for (const env of ['prod', 'staging']) {
     const resources = JSON.parse(
