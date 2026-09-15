@@ -233,6 +233,37 @@ describe('durable wallet send attempts', () => {
     ]);
     expect(operationSendAttempt(row)?.status).toBe('RESOLVED');
   });
+  it('retains actual approval evidence while clearing only its resolved send fence', async () => {
+    rpc.getTransactionReceipt.mockResolvedValue({
+      hash,
+      blockNumber: 101,
+      blockHash: hash,
+      status: 1,
+      gasUsed: BigInt(45000),
+      gasPrice: BigInt(3)
+    });
+    rpc.getBlock.mockResolvedValue({
+      hash,
+      number: 101,
+      timestamp: 1800000000
+    });
+    await begin();
+    await submitApprovalAttempt(row, hash);
+    expect(operationSendAttempt(row)?.status).toBe('RESOLVED');
+    expect((row.prepared_json as MarketPrepared).approvalReceipts).toEqual([
+      expect.objectContaining({
+        purpose: 'APPROVAL',
+        from: wallet,
+        transactionHash: hash,
+        confirmation: 'INCLUDED',
+        networkFeeWei: '135000',
+        blockTimestamp: 1800000000
+      })
+    ]);
+    expect(row.state).toBe('REVIEW');
+    expect(row.expires_at).toBe(0);
+    expect(rpc.getBlock).not.toHaveBeenCalledWith('safe');
+  });
   it('does not change saved-rule approval quoting behavior', async () => {
     row.rule_id = 'rule';
     await begin();
