@@ -1,8 +1,14 @@
-import { ConnectionWrapper } from '../sql-executor';
+import { ConnectionWrapper, SqlTransactionOptions } from '../sql-executor';
 import * as mysql from 'mysql';
 import { PoolConnection, TypeCast } from 'mysql';
 import { Time } from '../time';
 import { Logger } from '../logging';
+import {
+  executeBudgetedSqlTransaction,
+  withSqlBudgetQueryOptions,
+  SqlBudgetQueryOptions,
+  SqlExecutionBudgetExceededError
+} from '@/db/sql-execution-budget';
 
 const logger = Logger.get('MYSQL_HELPERS');
 
@@ -95,10 +101,33 @@ function privateQueryError(
 
 export async function execNativeTransactionally<T>(
   executable: (connectionWrapper: ConnectionWrapper<any>) => Promise<T>,
-  connection: PoolConnection
+  connection: PoolConnection,
+  options?: SqlTransactionOptions
 ): Promise<T> {
+  if (options?.executionBudget) {
+    let accepted = false;
+    try {
+      return await execBudgetedNativeTransactionally(
+        executable,
+        () => {
+          accepted = true;
+          return Promise.resolve(connection);
+        },
+        options.executionBudget
+      );
+    } finally {
+      if (!accepted) connection.release();
+    }
+  }
   try {
-    connection.beginTransaction();
+    if (options?.isolationLevel) {
+      await beginIsolatedTransaction(connection, options);
+    } else {
+      // Preserve the existing lifecycle for legacy callers. Membership always
+      // opts into the awaited BEGIN/rollback path; changing all legacy callers
+      // requires its own compatibility validation and deployment inventory.
+      connection.beginTransaction();
+    }
     const result = await executable({ connection: connection });
     return await new Promise((resolve, reject) => {
       connection.commit((err: any) => {
@@ -110,52 +139,108 @@ export async function execNativeTransactionally<T>(
       });
     });
   } catch (e) {
-    connection.rollback();
+    if (options?.isolationLevel) {
+      await new Promise<void>((resolve) =>
+        connection.rollback(() => resolve())
+      );
+    } else {
+      connection.rollback();
+    }
     throw e;
   } finally {
     connection.release();
   }
 }
 
+export function execBudgetedNativeTransactionally<T>(
+  executable: (
+    connection: ConnectionWrapper<mysql.PoolConnection>
+  ) => Promise<T>,
+  acquire: () => Promise<mysql.PoolConnection>,
+  budget: NonNullable<SqlTransactionOptions['executionBudget']>
+): Promise<T> {
+  return executeBudgetedSqlTransaction(
+    async () => {
+      const connection = await acquire();
+      return {
+        handle: connection,
+        physical: connection,
+        release: () => connection.release()
+      };
+    },
+    budget,
+    (handle) => executable({ connection: handle as mysql.PoolConnection })
+  );
+}
+
+async function beginIsolatedTransaction(
+  connection: PoolConnection,
+  options: SqlTransactionOptions
+): Promise<void> {
+  if (options.isolationLevel !== 'REPEATABLE READ') {
+    throw new Error('Unsupported explicit transaction isolation');
+  }
+  // SET TRANSACTION applies to the next transaction only, avoiding pooled
+  // connection session-setting leaks into unrelated legacy requests.
+  await new Promise<void>((resolve, reject) => {
+    connection.query(
+      'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',
+      (error) => (error ? reject(error) : resolve())
+    );
+  });
+  await new Promise<void>((resolve, reject) => {
+    connection.beginTransaction((error) => (error ? reject(error) : resolve()));
+  });
+}
+
 export async function execSQLWithParams<T>(
   sql: string,
   connection: mysql.PoolConnection,
   closeConnection: boolean,
-  params?: Record<string, any>
+  params?: Record<string, any>,
+  options?: SqlBudgetQueryOptions
 ): Promise<T[]> {
-  return new Promise((resolve, reject) => {
-    connection.config.queryFormat = function (query, values) {
-      if (!values) return query;
-      return prepareStatement(query, values);
-    };
-    const timer = Time.now();
-    connection.query({ sql, values: params }, (err: any, result: T[]) => {
-      // Artwork records and archival metadata are private even in infrastructure
-      // logs. Bulk inserts can embed values directly in SQL, so hide both the
-      // statement and parameters for every query touching this table family.
-      const privateFamily = privateQueryFamily(sql);
-      const queryDescription = describeQuery(sql, params);
-      const queryTook = timer.diffFromNow();
-      if (queryTook.gt(Time.seconds(1))) {
-        logger.warn(
-          `SQL query took ${queryTook.toMillis()} ms to execute: ${queryDescription}`
-        );
-      }
-      if (closeConnection) {
-        connection?.release();
-      }
-      if (err) {
-        logger.error(
-          privateFamily
-            ? `Database error executing private ${privateFamily} query`
-            : `Error "${err}" executing SQL query ${queryDescription}\n`
-        );
-        reject(privateFamily ? privateQueryError(err, privateFamily) : err);
-      } else {
-        resolve(Object.values(JSON.parse(JSON.stringify(result))));
-      }
-    });
-  });
+  return withSqlBudgetQueryOptions(
+    connection,
+    options,
+    () =>
+      new Promise((resolve, reject) => {
+        connection.config.queryFormat = function (query, values) {
+          if (!values) return query;
+          return prepareStatement(query, values);
+        };
+        const timer = Time.now();
+        connection.query({ sql, values: params }, (err: any, result: T[]) => {
+          // Artwork records and archival metadata are private even in infrastructure
+          // logs. Bulk inserts can embed values directly in SQL, so hide both the
+          // statement and parameters for every query touching this table family.
+          const privateFamily = privateQueryFamily(sql);
+          const queryDescription = describeQuery(sql, params);
+          const queryTook = timer.diffFromNow();
+          if (queryTook.gt(Time.seconds(1))) {
+            logger.warn(
+              `SQL query took ${queryTook.toMillis()} ms to execute: ${queryDescription}`
+            );
+          }
+          if (closeConnection) {
+            connection?.release();
+          }
+          if (err) {
+            let description: string;
+            if (err instanceof SqlExecutionBudgetExceededError)
+              description = `${err.code} phase=${err.phase} commit=${err.commitOutcome}`;
+            else if (privateFamily)
+              description = `Database error executing private ${privateFamily} query`;
+            else
+              description = `Error "${err}" executing SQL query ${queryDescription}\n`;
+            logger.error(description);
+            reject(privateFamily ? privateQueryError(err, privateFamily) : err);
+          } else {
+            resolve(Object.values(JSON.parse(JSON.stringify(result))));
+          }
+        });
+      })
+  );
 }
 
 function prepareStatement(query: string, values: Record<string, any>) {

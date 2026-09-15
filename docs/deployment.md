@@ -76,6 +76,31 @@ run IDs to correlate E2E replies.
 
 ## Failure and rollback
 
+### Membership evaluator schema scope
+
+For the inactive primary evaluator increment, select `service=dbMigrationsLoop`
+and `db_schema_scope=membership-evaluator-index` with the exact reviewed source
+SHA. This scope requires the existing `community_groups` table and adds only
+`idx_user_groups_pure_visible_id(is_pure_profile_group, visible, id)`. It inspects
+the complete isolated TypeORM plan, requires a nonunique visible full-column index,
+and uses `ALGORITHM=INPLACE, LOCK=NONE`. An incompatible index or unrelated schema
+drift fails before additions; no fallback to a copying/locking algorithm is allowed.
+
+Verify the returned scope, `verified_indexes=1`, deployed source and artifact,
+and a second idempotent invocation returning `added_indexes=0`. Metadata lock
+waiting is capped at one second and the online DDL client deadline is 120 seconds.
+If acknowledgement is lost, retain the existing schema and rerun this same scope
+to reconcile actual index state. Do not drop the index as cleanup or infer rollback
+from a client timeout. Keep worker/reader activation separate from schema success.
+
+The existing `membership-refresh` scope still creates exactly seven selected
+tables and rejects ALTER drift. Manual `full` synchronization first requires the
+controlled membership schema to be current; it cannot bootstrap these additions.
+Scheduled maintenance continues without synchronization. Deploy additive schema
+before dependent runtime packages and leave current authorization readers in place.
+
+### Operational failures
+
 Inspect the failing job and logs. Fix attributable failures on the development
 branch, merge the fix into the authorized target, and repeat only the required
 deployments. Keep dependent frontend changes waiting for successful backend
