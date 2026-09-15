@@ -193,9 +193,14 @@ it.each([false, true])(
     ).toBe(false);
   }
 );
-it.each([true, false])(
-  'rolls back a mode change to %s when the cutoff advances during the transaction',
-  async (automaticMode) => {
+it.each([
+  { automaticMode: true, existingTransaction: false },
+  { automaticMode: false, existingTransaction: false },
+  { automaticMode: true, existingTransaction: true },
+  { automaticMode: false, existingTransaction: true }
+])(
+  'completes a mode change to $automaticMode accepted before midnight (existing transaction: $existingTransaction)',
+  async ({ automaticMode, existingTransaction }) => {
     jest.setSystemTime(new Date('2026-09-13T23:59:59Z'));
     savedSubscriptions = [
       {
@@ -207,28 +212,30 @@ it.each([true, false])(
       }
     ];
     const wrappedConnection = { connection: {} };
-    let cutoffReads = 0;
-    jest.mocked(sqlExecutor.oneOrNull).mockImplementation(async () => {
-      cutoffReads += 1;
-      if (cutoffReads === 2) {
-        jest.setSystemTime(new Date('2026-09-14T00:00:00Z'));
+    const defaultExecute = execute.getMockImplementation()!;
+    execute.mockImplementation(async (sql, params, options) => {
+      if (sql.includes(`UPDATE ${SUBSCRIPTIONS_NFTS_TABLE}`)) {
+        jest.setSystemTime(new Date('2026-09-14T00:00:01Z'));
+        savedSubscriptions[0].subscribed = params!.subscribed;
       }
-      return {
-        id: 547,
-        mint_timestamp: Date.parse('2026-09-11T15:40:00Z') / 1000
-      };
+      return defaultExecute(sql, params, options);
     });
     jest
       .mocked(sqlExecutor.executeNativeQueriesInTransaction)
       .mockImplementation(async (fn) => fn(wrappedConnection));
 
     await expect(
-      updateSubscriptionMode(profileKey, automaticMode)
-    ).rejects.toThrow('The subscription cutoff changed');
-    expect(cutoffReads).toBe(2);
-    expect(sqlExecutor.oneOrNull).toHaveBeenLastCalledWith(
-      expect.any(String),
-      { contract: MEMES_CONTRACT },
+      updateSubscriptionMode(
+        profileKey,
+        automaticMode,
+        existingTransaction ? wrappedConnection : undefined
+      )
+    ).resolves.toMatchObject({ automatic: automaticMode });
+    expect(new Date().toISOString()).toBe('2026-09-14T00:00:01.000Z');
+    expect(savedSubscriptions[0].subscribed).toBe(automaticMode);
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('token_id > :maxMemeId'),
+      expect.objectContaining({ maxMemeId: 547 }),
       { wrappedConnection }
     );
     expect(execute).toHaveBeenCalledWith(

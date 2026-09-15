@@ -1,9 +1,12 @@
-# Subscription status at the mint-day cutoff
+# Subscription status for closed upcoming cards
 
-Subscription changes close at 00:00 UTC on Monday, Wednesday, and Friday,
-including when that day's Meme has not been released yet. The API uses the
-same card boundary for automatic-mode updates, direct card subscription and
-quantity updates, and subscription-status reads.
+Product guidance requires subscription changes and top-ups by 00:00 UTC on the
+day before a Meme Card mint. This change does not calculate or redefine that
+deadline. It reuses the backend's existing closed-card boundary: the latest
+ingested Meme, plus one unreleased card on a Monday, Wednesday, or Friday when
+the latest ingested Meme is from an earlier UTC date. The API now uses that same
+card boundary for automatic-mode updates, direct card subscription and quantity
+updates, counts, and subscription-status reads.
 
 After that boundary, the profile Upcoming Drops API and the homepage's
 per-card upcoming-status API use the saved card subscription. A missing card
@@ -11,6 +14,14 @@ record is unsubscribed; current Automatic mode must not supply a subscription
 for a closed card. Existing card opt-ins and opt-outs remain authoritative.
 Enabling Automatic mode, including through the first top-up, applies to later
 cards. Turning it off also leaves the closed card's saved choice unchanged.
+
+Automatic-mode updates retain the cutoff calculated before selecting the card
+rows to update. An update accepted before midnight may finish afterward; there
+is no second cutoff check for mode changes. This preserves the existing behavior
+for both direct mode changes and first top-ups. A deposit made before midnight
+but first processed afterward still uses processing time. Deposit-time eligibility
+and reconciliation of delayed deposits into a finalized list are outside this
+change.
 
 Closed-card aggregate subscription counts use the finalized subscription list,
 so a later top-up or mode change does not change the displayed mint-day count.
