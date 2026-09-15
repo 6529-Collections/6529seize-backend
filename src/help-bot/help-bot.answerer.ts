@@ -1,7 +1,26 @@
+import {
+  type DesktopReconciliationTurn,
+  desktopReconciliationTurn,
+  renderReconciliationTurn
+} from './help-bot-desktop-reconciliation';
+import { answerAppDiscovery } from './help-bot-app-discovery';
+import {
+  composeDesktopAnswer,
+  desktopFallbackAnswer,
+  normalizeDesktopAnswer
+} from '@/help-bot/help-bot-desktop-answer';
+import {
+  desktopQuestionWithContext,
+  desktopRecordIdForQuestion,
+  isAmbiguousDesktopQuestion,
+  isDesktopKnowledgeRecord,
+  wantsDetailedDesktopAnswer
+} from './help-bot-desktop-knowledge';
 import { Logger } from '@/logging';
 import {
   frontendHelpBotKnowledgeSource,
   HelpBotKnowledgeSource,
+  HelpBotKnowledgeQueryOptions,
   HelpBotKnowledgeRecord,
   HelpBotKnowledgeMatch,
   isAmbiguousWalletManagementQuestion,
@@ -250,6 +269,9 @@ function ensureKnowledgeMarkdownLinks({
   readonly record: HelpBotKnowledgeRecord;
   readonly baseUrl: string;
 }): string {
+  if (record.answerLinks !== undefined) {
+    return composeDesktopAnswer(text, record);
+  }
   if (record.suppressSourceLinks) {
     return text;
   }
@@ -635,11 +657,14 @@ function buildStreamEvidenceAnswer(
 
 function buildDeterministicAnswer(
   record: HelpBotKnowledgeRecord,
-  baseUrl: string
+  baseUrl: string,
+  question = ''
 ): string {
   if (record.kind === 'public_review_knowledge') {
     return buildStreamEvidenceAnswer(record, baseUrl);
   }
+  if (isDesktopKnowledgeRecord(record))
+    return desktopFallbackAnswer(record, question);
   return ensureKnowledgeMarkdownLinks({
     text: record.facts.join(' '),
     record,
@@ -650,11 +675,18 @@ function buildDeterministicAnswer(
 function normalizeRenderedAnswer(
   text: string,
   record: HelpBotKnowledgeRecord,
-  baseUrl: string
+  baseUrl: string,
+  question = ''
 ): string {
   if (record.kind === 'public_review_knowledge') {
     return composeStreamAnswer(text, record, baseUrl);
   }
+  if (isDesktopKnowledgeRecord(record))
+    return normalizeDesktopAnswer(
+      stripHelpBotSelfIntro(text),
+      record,
+      question
+    );
   const withUrl = ensureKnowledgeMarkdownLinks({
     text: stripHelpBotSelfIntro(text),
     record,
@@ -1262,14 +1294,17 @@ function mergeKnowledgeMatches(
   if (!primary) {
     return null;
   }
-  if (matches.length === 1) {
+  if (matches.length === 1 || isDesktopKnowledgeRecord(primary.record)) {
     return primary;
   }
 
   const relatedRecords = matches
     .slice(1)
     .map((match) => match.record)
-    .filter((record) => record.id !== primary.record.id);
+    .filter(
+      (record) =>
+        record.id !== primary.record.id && !isDesktopKnowledgeRecord(record)
+    );
   if (!relatedRecords.length) {
     return primary;
   }
@@ -1561,6 +1596,17 @@ export class HelpBotAnswerer {
       };
     }
 
+    const appDiscoveryAnswer = await answerAppDiscovery(
+      request,
+      this.knowledgeSource
+    );
+    if (appDiscoveryAnswer) return appDiscoveryAnswer;
+
+    const desktopAnswer = await this.answerFromDesktopKnowledge(request);
+    if (desktopAnswer) {
+      return desktopAnswer;
+    }
+
     const streamMatch = await this.findStreamKnowledgeMatch(request);
     if (streamMatch) {
       return this.answerFromKnowledgeMatch(request, streamMatch);
@@ -1625,6 +1671,90 @@ export class HelpBotAnswerer {
     return this.answerFromKnowledgeMatch(request, match);
   }
 
+  /** Keep local-node knowledge separate from public data and propagate source failures. */
+  private async answerFromDesktopKnowledge(
+    request: HelpBotAnswerRequest
+  ): Promise<HelpBotAnswerResult | null> {
+    const context = parseHelpBotQuestionContext(request.question);
+    const previousAnswer =
+      request.previousBotAnswer ?? context.repliedToDropContext;
+    const reconciliation = desktopReconciliationTurn(
+      context.primaryQuestion,
+      previousAnswer ?? ''
+    );
+    const desktopQuestion = reconciliation
+      ? '6529 Desktop transaction reconciliation'
+      : desktopQuestionWithContext(context.primaryQuestion, previousAnswer);
+    const needsContext =
+      !desktopQuestion && isAmbiguousDesktopQuestion(context.primaryQuestion);
+    if (!desktopQuestion && !needsContext) {
+      return null;
+    }
+    // A thrown load error reaches the processor's technical-failure/refund path.
+    const match = await this.findKnowledgeMatches(
+      desktopQuestion ?? context.primaryQuestion,
+      {
+        desktopScope: true,
+        desktopRecordId: needsContext
+          ? 'desktop.clarify-context'
+          : (reconciliation?.id ??
+            desktopRecordIdForQuestion(context.primaryQuestion, previousAnswer))
+      }
+    );
+    if (
+      match &&
+      (isDesktopKnowledgeRecord(match.record) ||
+        match.record.tags.includes('desktop'))
+    ) {
+      if (
+        reconciliation &&
+        reconciliation.id !== 'desktop.tdh-repair-diagnostics'
+      )
+        return this.answerFromReconciliationMatch(
+          request,
+          reconciliation,
+          match.record
+        );
+      return this.answerFromKnowledgeMatch(
+        {
+          ...request,
+          question: context.primaryQuestion,
+          previousBotAnswer: previousAnswer
+        },
+        match
+      );
+    }
+    // Local-node state cannot be replaced with a public database answer.
+    return { type: 'NO_RELIABLE_SOURCE', escalateToTechTeam: true };
+  }
+
+  private async answerFromReconciliationMatch(
+    request: HelpBotAnswerRequest,
+    turn: DesktopReconciliationTurn,
+    record: HelpBotKnowledgeRecord
+  ): Promise<HelpBotAnswerResult> {
+    if (!record.tags.includes('desktop-calculated'))
+      return { type: 'NO_RELIABLE_SOURCE', escalateToTechTeam: true };
+    const answer = renderReconciliationTurn(turn, record);
+    if (answer)
+      return {
+        type: 'ANSWER',
+        answer: composeDesktopAnswer(answer, record, 'corpus'),
+        record
+      };
+    // Invalid/missing checkpoints get a source-owned prompt, never guessed numbers.
+    const prompt = await this.findKnowledgeMatches(
+      '6529 Desktop reconciliation checkpoint',
+      {
+        desktopScope: true,
+        desktopRecordId: 'desktop.tdh-same-block-mismatch'
+      }
+    );
+    if (!prompt)
+      return { type: 'NO_RELIABLE_SOURCE', escalateToTechTeam: true };
+    return this.answerFromKnowledgeMatch(request, prompt);
+  }
+
   private async answerFromKnowledgeMatch(
     request: HelpBotAnswerRequest,
     match: HelpBotKnowledgeMatch
@@ -1666,11 +1796,20 @@ export class HelpBotAnswerer {
       };
     }
 
-    if (!this.renderer) {
+    // Curated diagnostic turns preserve acknowledged progress verbatim for the next reply.
+    const shortDialogue =
+      isDesktopKnowledgeRecord(answerRecord) &&
+      answerRecord.tags.includes('desktop-dialogue') &&
+      !wantsDetailedDesktopAnswer(request.question);
+    if (!this.renderer || shortDialogue) {
       return {
         type: 'ANSWER',
         answer: maybeWithWeakCaveat(
-          buildDeterministicAnswer(answerRecord, request.baseUrl)
+          buildDeterministicAnswer(
+            answerRecord,
+            request.baseUrl,
+            request.question
+          )
         ),
         record: answerRecord,
         escalateToTechTeam
@@ -1688,7 +1827,12 @@ export class HelpBotAnswerer {
         return {
           type: 'ANSWER',
           answer: maybeWithWeakCaveat(
-            normalizeRenderedAnswer(rendered, answerRecord, request.baseUrl)
+            normalizeRenderedAnswer(
+              rendered,
+              answerRecord,
+              request.baseUrl,
+              request.question
+            )
           ),
           record: answerRecord,
           escalateToTechTeam
@@ -1704,7 +1848,11 @@ export class HelpBotAnswerer {
     return {
       type: 'ANSWER',
       answer: maybeWithWeakCaveat(
-        buildDeterministicAnswer(answerRecord, request.baseUrl)
+        buildDeterministicAnswer(
+          answerRecord,
+          request.baseUrl,
+          request.question
+        )
       ),
       record: answerRecord,
       escalateToTechTeam
@@ -1784,16 +1932,18 @@ export class HelpBotAnswerer {
   }
 
   private async findKnowledgeMatches(
-    question: string
+    question: string,
+    options?: HelpBotKnowledgeQueryOptions
   ): Promise<HelpBotKnowledgeMatch | null> {
     if (this.knowledgeSource.findMatches) {
       return mergeKnowledgeMatches(
         await this.knowledgeSource.findMatches(
           question,
-          MAX_KNOWLEDGE_CONTEXT_MATCHES
+          MAX_KNOWLEDGE_CONTEXT_MATCHES,
+          options
         )
       );
     }
-    return await this.knowledgeSource.findMatch(question);
+    return await this.knowledgeSource.findMatch(question, options);
   }
 }
