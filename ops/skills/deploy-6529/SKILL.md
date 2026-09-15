@@ -133,11 +133,11 @@ dependencies, then reuse that request's identity and outcome throughout. Follow
 the frontend recording instructions there; do not submit a second backend
 request or one request per service. Frontend-only work belongs in that context.
 
-Do not create another request for status checks, monitoring, merge-only work,
-retries, resumes, recovery, production continuation, or promotion of an already
-recorded release. Reuse the existing outcome and evidence on continuation,
-including after a returned failure; do not resubmit to repair the record during
-the release.
+Do not create another request for status checks, passive monitoring, merge-only
+work, retries, resumes, recovery, production continuation, or promotion of an
+already recorded release. Reuse the existing outcome and evidence on
+continuation, including after a returned failure; do not resubmit to repair the
+record during the release.
 
 From the backend repository root, print the installed CLI's current input
 template:
@@ -167,6 +167,12 @@ template with actual release metadata:
   ordering edges of the form `{ "before": "unit", "after": "unit" }`, using
   included units and consistent with the catalog. Normal service dependencies
   remain in the catalog. Frontend parts have no backend deployment fields.
+- Each backend part's `operational_deployments[]`: use `["monitoring"]` only
+  when the release includes the separate `ops/monitoring` package and its
+  `Deploy operational monitoring` workflow. A monitoring-only backend part uses
+  empty `deploy_units` and `deploy_dependencies` arrays. Keep the array empty
+  for ordinary backend-service releases. This field records the package in the
+  request; it does not make the Coordinator deploy it.
 
 For a backend-only release, remove the frontend template part and any references
 to it. Replace all sample values with verified inputs, retaining empty
@@ -192,7 +198,7 @@ waiting, and result handling. It saves run records under
 Do not duplicate submission, choose or dispatch its workflow, or poll it
 separately through direct `gh` commands.
 
-Version `0.0.4` runs synchronously in the foreground and waits for the central
+Version `0.0.5` runs synchronously in the foreground and waits for the central
 GitHub workflow. Queueing and execution can add waiting time before deployment.
 Do not retry, background, detach, or wrap it in an invented shell timeout. If the
 wait does not return, report the available evidence and escalate to the
