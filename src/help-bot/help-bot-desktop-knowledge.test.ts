@@ -184,6 +184,101 @@ describe('Desktop corpus retrieval and answers', () => {
     expect(renderAnswer).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    'same block different tdh and merkle',
+    'same Last Block different TDH and Merkle Root',
+    'same block, different tdh and merkle',
+    'same block but different tdh and merkle',
+    'blocks match different tdh and merkle'
+  ])(
+    'preserves the matching block in a terse mismatch reply: %s',
+    async (question) => {
+      const { answerer, publicAnswer } = makeAnswerer();
+      const initial = await answerer.answer({
+        question: 'My node doesnt match 6529.io',
+        baseUrl: 'https://6529.io'
+      });
+      if (initial.type !== 'ANSWER')
+        throw new Error('Expected initial diagnostic');
+      const result = await answerer.answer({
+        question,
+        previousBotAnswer: initial.answer,
+        baseUrl: 'https://6529.io'
+      });
+      expect(result.type === 'ANSWER' && result.record.id).toBe(
+        'desktop.tdh-check-workers'
+      );
+      if (result.type !== 'ANSWER')
+        throw new Error('Expected worker diagnostic');
+      expect(result.answer).not.toContain('Different Last Block values');
+      expect(result.answer).toContain('Transactions');
+      expect(result.answer).toContain('NFTDelegation');
+      expect(result.answer).not.toContain('Reconcile');
+      expect(publicAnswer).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    'no block is same',
+    'no the Last Block is the same',
+    'no, block is same',
+    'no! block is same'
+  ])(
+    'accepts a correction to the previous block mismatch: %s',
+    async (question) => {
+      const { answerer } = makeAnswerer();
+      const previous = await answerer.answer({
+        question: 'My node doesnt match 6529.io, different blocks',
+        baseUrl: 'https://6529.io'
+      });
+      if (previous.type !== 'ANSWER')
+        throw new Error('Expected block diagnostic');
+      const result = await answerer.answer({
+        question,
+        previousBotAnswer: previous.answer,
+        baseUrl: 'https://6529.io'
+      });
+      expect(result.type === 'ANSWER' && result.record.id).toBe(
+        'desktop.tdh-check-workers'
+      );
+    }
+  );
+
+  it.each([
+    'no block is the same',
+    'no blocks are the same',
+    'the block is not the same',
+    'no block is same?',
+    'no block is same but I am not sure the blocks match'
+  ])(
+    'does not infer matching blocks from an ambiguous or negated report: %s',
+    (question) => {
+      expect(
+        desktopRecordIdForQuestion(
+          question,
+          'In 6529 Desktop, your node does not match 6529.io. Are the Last Block values identical?'
+        )
+      ).not.toBe('desktop.tdh-check-workers');
+    }
+  );
+
+  it.each([
+    'the Last Block values are different',
+    'my block is different',
+    'different blocks',
+    'blocks do not match',
+    'last block different',
+    'TDH differs, block different',
+    'same TDH but different blocks'
+  ])('preserves actual block mismatches: %s', (question) => {
+    expect(
+      desktopRecordIdForQuestion(
+        question,
+        'In 6529 Desktop, your node does not match 6529.io. Are the Last Block values identical?'
+      )
+    ).toBe('desktop.tdh-block-mismatch');
+  });
+
   it('uses checkpoint and worker replies to advance troubleshooting', async () => {
     const { answerer } = makeAnswerer();
     let previousBotAnswer =
@@ -289,7 +384,14 @@ describe('Desktop corpus retrieval and answers', () => {
     'Are both blocks the same',
     'Have both workers reconciled?',
     'Both workers recalculated?',
-    'Both blocks are the same?'
+    'Both blocks are the same?',
+    'Which workers recalculated',
+    'Who recalculated',
+    'When were both workers recalculated',
+    'Why were both workers reconciled',
+    'How were both workers recalculated',
+    'What was recalculated',
+    'Which blocks are the same'
   ])(
     'does not treat a progress question as confirmation: %s',
     async (question) => {

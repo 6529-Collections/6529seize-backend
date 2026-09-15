@@ -1,3 +1,4 @@
+import { answerAppDiscovery } from './help-bot-app-discovery';
 import {
   desktopFallbackAnswer,
   normalizeDesktopAnswer
@@ -1585,6 +1586,12 @@ export class HelpBotAnswerer {
         record: buildSocialRecord()
       };
     }
+
+    const appDiscoveryAnswer = await answerAppDiscovery(
+      request,
+      this.knowledgeSource
+    );
+    if (appDiscoveryAnswer) return appDiscoveryAnswer;
 
     const desktopAnswer = await this.answerFromDesktopKnowledge(request);
     if (desktopAnswer) {
