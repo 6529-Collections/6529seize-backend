@@ -205,8 +205,10 @@ document alone does not make the facts available to the live help bot.
 Backend-authored group eligibility facts are maintained in
 [`docs/eligibility-spec.md`](../docs/eligibility-spec.md#help6529-knowledge-authoring-facts),
 including Level zero, empty groups, inclusion/exclusion precedence, rating bounds,
-and preview parity. They remain authoring material until the frontend help corpus
-publishes them; this SQL milestone does not change the live help knowledge source.
+and preview parity. The frontend corpus mirrors them in `groups.eligibility`
+and publishes the generated `/help-index.json` after the corresponding backend
+SQL consumers deploy. The runtime continues to read its environment-matching
+frontend artifact; these facts do not introduce a second live knowledge source.
 
 ### 4.5 Backend-owned public data query mode
 

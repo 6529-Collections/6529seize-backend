@@ -130,7 +130,9 @@ function readVectorFiles(): EligibilityConformanceVector[] {
       fs.readFileSync(path.join(VECTORS_DIR, file), 'utf8')
     ) as EligibilityConformanceVector[];
     if (!Array.isArray(parsed)) {
-      throw new Error(`Vector file ${file} must contain an array of vectors`);
+      throw new TypeError(
+        `Vector file ${file} must contain an array of vectors`
+      );
     }
     return parsed;
   });

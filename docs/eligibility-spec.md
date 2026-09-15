@@ -589,8 +589,9 @@ is not evidence that the future runtime or cutover is ready.
 ### Deployment units
 
 For staging, deploy `attachmentsProcessor`, `attachmentsOrchestrator`,
-`helpBotReplyLoop`, then `api`, sequentially. The attachment processor and
+`dropMediaSanitizer`, `helpBotReplyLoop`, then `api`, sequentially. The attachment processor and
 orchestrator publish attachment status through the trusted group-recipient SQL;
+the media sanitizer publishes media-status drop updates through that SQL;
 the help bot publishes drop/reaction updates through the same member SQL;
 the API serves lists, previews, feeds, mention search, containment, and live
 broadcasts. The processor precedes its existing orchestration producer.
@@ -599,8 +600,9 @@ no migration or feature activation is needed. The API's existing catalogue
 prerequisites are unchanged and already deployed.
 
 `releaseNotesGenerationLoop` also reaches group-recipient SQL when posting drops,
-but its catalogue permits production only. Include it in a separately authorized
-production plan. Other loops using only the unchanged direct evaluator or
+but its catalogue permits production only. In production, deploy it after
+`helpBotReplyLoop` and before the final `api` deployment/publication signal.
+Other loops using only the unchanged direct evaluator or
 ungrouped notification methods do not need this SQL-only deployment.
 Rollback uses a reviewed revert and the same services; a materialization read
 switch cannot undo these SQL changes.
@@ -617,14 +619,16 @@ switch cannot undo these SQL changes.
   bounds are inclusive, absent aggregates count as zero, and filtered ratings
   with no bounds require a nonzero total. Fractional xTDH is floored for bounds.
 
-These backend-authored facts are source material for the frontend help corpus.
-They are not yet published in the live frontend `/help-index.json`; that corpus
-update remains a documented knowledge gap for this backend-only release.
+The frontend help corpus mirrors these backend-authored facts in its
+`groups.eligibility` record and publishes them through `/help-index.json`.
+Keep the canonical frontend record, generated artifact, and group guide aligned
+with this specification. Deploy the SQL consumers before publishing changed
+eligibility knowledge in each environment.
 
 ## 14. Changelog
 
 | spec_version | Date       | Changes                                                                                                                                                                                                                                                                                 |
 | ------------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2            | 2026-09-15 | Clarified negative-score minimum-zero semantics, preview parity, full empty projections, and current-consumer coverage. |
+| 2            | 2026-09-15 | Clarified negative-score minimum-zero semantics, preview parity, full empty projections, and current-consumer coverage.                                                                                                                                                                 |
 | 2            | 2026-07-23 | Resolved D-1…D-9 by aligning the set-based SQL member-set generator with the normative in-memory rules; both conformance harnesses now require identical outcomes.                                                                                                                      |
 | 1            | 2026-07-08 | Initial specification extracted from the in-memory predicates and the member-set SQL generator, including the new NFT-ownership match modes (`owns_*_tokens_match_mode`) and grant-beneficiary match mode (`is_beneficiary_of_grant_match_mode`). Divergences D-1…D-9 recorded as open. |
