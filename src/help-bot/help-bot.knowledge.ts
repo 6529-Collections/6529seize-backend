@@ -24,6 +24,7 @@ export interface HelpBotKnowledgeRecord {
   readonly keywords: string[];
   readonly facts: string[];
   readonly briefAnswer?: string;
+  readonly reconciliationMinBlock?: number;
   readonly answerLinks?: readonly { label: string; url: string }[];
   readonly relatedPaths: string[];
   readonly tags: string[];
@@ -448,6 +449,12 @@ function normalizeRecord(value: unknown): HelpBotKnowledgeRecord | null {
     keywords: keywords.length ? keywords : aliases.concat([title]),
     facts,
     briefAnswer: readString(raw.brief_answer) ?? undefined,
+    reconciliationMinBlock:
+      typeof raw.reconciliation_min_block === 'number' &&
+      Number.isSafeInteger(raw.reconciliation_min_block) &&
+      raw.reconciliation_min_block >= 0
+        ? raw.reconciliation_min_block
+        : undefined,
     // Only ordinary records infer canonical links; Desktop requires explicit approval.
     answerLinks:
       raw.answer_links === undefined
@@ -1099,6 +1106,11 @@ function findMatchesInRecords(
     ? (options?.desktopRecordId ?? desktopRecordIdForQuestion(question))
     : undefined;
   return records
+    .filter(
+      (record) =>
+        !record.tags.includes('desktop-calculated') ||
+        record.id === desktopRecordId
+    )
     .filter(
       (record) =>
         !desktopRecordId ||
