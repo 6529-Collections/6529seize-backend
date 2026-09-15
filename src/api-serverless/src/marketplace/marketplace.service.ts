@@ -370,6 +370,9 @@ export async function continueMarketOperation(
     );
   }
   let next: MarketOperationRow['state'] = 'REVIEW';
+  // An approval's actual cost belongs to this operation even when its quote changes.
+  prepared.approvalReceipts = previous.approvalReceipts;
+  prepared.receipt = previous.receipt;
   if (prepared.approvalTransactions.length) next = 'APPROVAL';
   else if (prepared.signedOrder) next = 'AWAITING_SIGNATURE';
   // A signature can leave the browser even if publication is never acknowledged.

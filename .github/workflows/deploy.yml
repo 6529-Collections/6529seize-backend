@@ -91,6 +91,7 @@ on:
           - wallet-transfer-analysis
           - claims-media-upload
           - nft-link-page-retry
+          - membership-refresh
       release_pull_request:
         type: string
         description: 'Merged PR represented by this production release'
@@ -161,7 +162,7 @@ jobs:
           set -euo pipefail
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]]
           [[ "$INPUT_SERVICE" =~ ^(api|aggregatedActivityLoop|attachmentsOrchestrator|attachmentsProcessor|artCurationNftWatchLoop|claimsBuilder|claimsMediaArweaveUploader|customReplayLoop|dbDumpsDaily|dbMigrationsLoop|delegationsLoop|discoverEnsLoop|dropMediaIngestStorage|dropMediaSanitizer|dropVideoConversionInvokerLoop|ethPriceLoop|externalCollectionLiveTailingLoop|externalCollectionSnapshottingLoop|helpBotReplyLoop|marketStatsLoop|marketDepthStreamLoop|mediaResizerLoop|mintAnnouncementsLoop|nextgenContractLoop|nextgenMediaImageResolutions|nextgenMediaProxyInterceptor|nextgenMediaUploader|nextgenMetadataLoop|nftHistoryLoop|nftLinkRefresherLoop|nftLinkMediaPreviewLoop|nftOwnersLoop|nftsLoop|overRatesRevocationLoop|ownersBalancesLoop|populateHistoricConsolidatedTdh|pushNotificationsHandler|rateEventProcessingLoop|releaseNotesGenerationLoop|refreshEnsLoop|rememesLoop|royaltiesLoop|s3Uploader|subscriptionsDaily|subscriptionsTopUpLoop|xTdhGrantsReviewerLoop|tdhHistoryLoop|tdhLoop|teamLoop|transactionsLoop|transactionsProcessingLoop|waveDecisionExecutionLoop|waveLeaderboardSnapshotterLoop|waveDropMetricsRefreshLoop|waveScoreRefreshLoop|xTdhLoop|artworkDocumentationStorage|artworkDocumentationProcessor)$ ]]
-          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|wallet-transfer-analysis|claims-media-upload|nft-link-page-retry)$ ]]
+          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|wallet-transfer-analysis|claims-media-upload|nft-link-page-retry|membership-refresh)$ ]]
           if [ "$DB_SCHEMA_SCOPE" != full ] && [ "$INPUT_SERVICE" != dbMigrationsLoop ]; then
             echo "db_schema_scope is only supported for dbMigrationsLoop" >&2
             exit 1

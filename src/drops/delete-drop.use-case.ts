@@ -48,6 +48,12 @@ import {
   wavesApiDb,
   WavesApiDb
 } from '@/api-serverless/src/waves/waves.api.db';
+import { RequestContext } from '@/request.context';
+import {
+  chatHistoryPurgeDb,
+  ChatHistoryPurgeDb,
+  ChatHistoryPurgeScope
+} from '@/drops/chat-history-purge.db';
 
 export class DeleteDropUseCase {
   public constructor(
@@ -59,7 +65,8 @@ export class DeleteDropUseCase {
     private readonly artCurationTokenWatchService: ArtCurationTokenWatchService,
     private readonly attachmentsDb: AttachmentsDb,
     private readonly dropPollsDb: DropPollsDb,
-    private readonly wavesApiDb: WavesApiDb
+    private readonly wavesApiDb: WavesApiDb,
+    private readonly purgeDb: ChatHistoryPurgeDb = chatHistoryPurgeDb
   ) {}
 
   private async resolveDeleterId(
@@ -128,6 +135,48 @@ export class DeleteDropUseCase {
       );
     }
     return Array.from(eligibleReaderIds);
+  }
+
+  public async executeChatHistoryBatch(
+    scope: ChatHistoryPurgeScope,
+    drops: DropEntity[],
+    wave: WaveEntity,
+    ctx: RequestContext & { connection: ConnectionWrapper<unknown> }
+  ): Promise<string[]> {
+    if (!drops.length) return [];
+    if (
+      drops.some(
+        (drop) =>
+          drop.wave_id !== scope.waveId ||
+          drop.author_id !== scope.authorId ||
+          drop.drop_type !== 'CHAT' ||
+          drop.serial_no > scope.cutoffSerialNo ||
+          drop.id === wave.description_drop_id
+      )
+    ) {
+      throw new Error('Invalid chat history purge batch');
+    }
+    await this.purgeDb.deleteBatch(
+      scope,
+      drops.map((drop) => drop.id),
+      ctx
+    );
+    await waveDropMetricsRefreshService.markWaveDropMetricsDirtyBestEffort(
+      [wave.id],
+      WaveDropMetricsDirtyRefreshReason.DROP_DELETED,
+      ctx
+    );
+    await waveScoreService.markWaveScoresDirtyBestEffort(
+      [wave.id],
+      WaveScoreDirtyRefreshReason.DROP_DELETED,
+      ctx
+    );
+    if (!wave.is_direct_message) return [];
+    const readerIds = await this.findCurrentDmReaderIds(wave, ctx);
+    return this.wavesApiDb.incrementDmUnreadStateVersionsForWaveReaders(
+      { waveId: wave.id, readerIds },
+      ctx
+    );
   }
 
   public async execute(
