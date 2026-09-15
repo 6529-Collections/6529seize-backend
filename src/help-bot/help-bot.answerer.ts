@@ -1,3 +1,8 @@
+import {
+  type DesktopReconciliationTurn,
+  desktopReconciliationTurn,
+  renderReconciliationTurn
+} from './help-bot-desktop-reconciliation';
 import { answerAppDiscovery } from './help-bot-app-discovery';
 import {
   composeDesktopAnswer,
@@ -1673,10 +1678,13 @@ export class HelpBotAnswerer {
     const context = parseHelpBotQuestionContext(request.question);
     const previousAnswer =
       request.previousBotAnswer ?? context.repliedToDropContext;
-    const desktopQuestion = desktopQuestionWithContext(
+    const reconciliation = desktopReconciliationTurn(
       context.primaryQuestion,
-      previousAnswer
+      previousAnswer ?? ''
     );
+    const desktopQuestion = reconciliation
+      ? '6529 Desktop transaction reconciliation'
+      : desktopQuestionWithContext(context.primaryQuestion, previousAnswer);
     const needsContext =
       !desktopQuestion && isAmbiguousDesktopQuestion(context.primaryQuestion);
     if (!desktopQuestion && !needsContext) {
@@ -1689,7 +1697,8 @@ export class HelpBotAnswerer {
         desktopScope: true,
         desktopRecordId: needsContext
           ? 'desktop.clarify-context'
-          : desktopRecordIdForQuestion(context.primaryQuestion, previousAnswer)
+          : (reconciliation?.id ??
+            desktopRecordIdForQuestion(context.primaryQuestion, previousAnswer))
       }
     );
     if (
@@ -1697,6 +1706,15 @@ export class HelpBotAnswerer {
       (isDesktopKnowledgeRecord(match.record) ||
         match.record.tags.includes('desktop'))
     ) {
+      if (
+        reconciliation &&
+        reconciliation.id !== 'desktop.tdh-repair-diagnostics'
+      )
+        return this.answerFromReconciliationMatch(
+          request,
+          reconciliation,
+          match.record
+        );
       return this.answerFromKnowledgeMatch(
         {
           ...request,
@@ -1708,6 +1726,33 @@ export class HelpBotAnswerer {
     }
     // Local-node state cannot be replaced with a public database answer.
     return { type: 'NO_RELIABLE_SOURCE', escalateToTechTeam: true };
+  }
+
+  private async answerFromReconciliationMatch(
+    request: HelpBotAnswerRequest,
+    turn: DesktopReconciliationTurn,
+    record: HelpBotKnowledgeRecord
+  ): Promise<HelpBotAnswerResult> {
+    if (!record.tags.includes('desktop-calculated'))
+      return { type: 'NO_RELIABLE_SOURCE', escalateToTechTeam: true };
+    const answer = renderReconciliationTurn(turn, record);
+    if (answer)
+      return {
+        type: 'ANSWER',
+        answer: composeDesktopAnswer(answer, record, 'corpus'),
+        record
+      };
+    // Invalid/missing checkpoints get a source-owned prompt, never guessed numbers.
+    const prompt = await this.findKnowledgeMatches(
+      '6529 Desktop reconciliation checkpoint',
+      {
+        desktopScope: true,
+        desktopRecordId: 'desktop.tdh-same-block-mismatch'
+      }
+    );
+    if (!prompt)
+      return { type: 'NO_RELIABLE_SOURCE', escalateToTechTeam: true };
+    return this.answerFromKnowledgeMatch(request, prompt);
   }
 
   private async answerFromKnowledgeMatch(

@@ -693,6 +693,15 @@ as "Have both workers recalculated?") and negated or uncertain completion report
 do not authorize advancing to reconciliation. Wh-questions such as "Which workers
 recalculated" remain questions even without a question mark. Current corrections override earlier
 acknowledgements.
+Worker-check replies accept ordinary confirmations such as "yes both in sync",
+"they reached that block", and a direct "yes" to the two-worker checkpoint
+question. A checkpoint report preserves the already-established same-block
+comparison; a new contradictory or uncertain comparison overrides it. Partial,
+negated, and questioning worker reports cannot advance the recovery procedure.
+After the recalculation instruction, "done, still different" reports completion
+of that step and retains the matching-block context, so the next response gives
+the corpus-owned reconciliation procedure instead of repeating block/worker checks.
+An unrelated completed reset or refresh is not treated as completed recalculation.
 Block comparison parsing keeps the subject of each mismatch intact: "same block
 different tdh and merkle" confirms matching blocks and advances to checking workers,
 not the different-snapshot explanation. A singular correction such as "no block is
@@ -708,3 +717,34 @@ These requests use only `about.6529-apps` and its authored `brief_answer` and va
 footer. Missing or incomplete app knowledge fails closed; product facts remain in
 the frontend corpus. This route runs before Desktop scope inheritance and never
 needs a generated answer or a public-data query.
+
+
+### Progressive Desktop reconciliation
+
+After a same-block mismatch persists through recalculation, ask for the local
+Transactions checkpoint (`Latest block in DB` in its Logs). Do not default to
+full-history reconciliation. Corpus-owned `desktop-calculated` records provide
+`reconciliation_min_block` and numeric answer templates. Validate the minimum and
+checkpoint as safe integers, with checkpoint at least the minimum, and calculate
+`minimum + floor((checkpoint - minimum) * (100 - percentage) / 100)` using exact
+integer arithmetic. Percentages refer to blocks, never transaction counts.
+
+Start at 25%, then widen to 50%, 75%, and 100% after completed reconciliation and
+TDH recalculation still leave a mismatch. Keep the percentage and supplied block
+interval in the visible final `Range:` sentence so immediate replies such as
+`done`, `still different`, and `no` preserve progress. A new explicit checkpoint
+updates the calculation. The actual reconciliation endpoint is captured by the
+worker at execution time; this can be slightly newer than the supplied checkpoint.
+Unknown, invalid, or ambiguous checkpoints request the checkpoint again instead
+of inventing one. Missing stages, invalid template data, and changed minimums
+fail closed. A fresh user confirmation is required after uncertain/unfinished
+work; never treat negated completion or different snapshot blocks as permission
+to widen recovery. Stop on a matching result; after 100% still fails, use the
+existing diagnostic/escalation guidance. Explicit reset/NFT/wallet questions leave
+this dialogue and retain their separate corpus-owned procedures.
+
+Calculated records cannot participate in ordinary retrieval, and their templates
+are expanded without model generation. Supported placeholders are `percentage`,
+`minimum_block`, `checkpoint`, and `from_block`. Deploy this backend before the
+companion corpus templates. No new API, persistence, service, or Desktop build is
+needed; the reply loop consumes the updated frontend-owned corpus.

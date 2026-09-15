@@ -103,7 +103,8 @@ export function desktopQuestionWithContext(
   if (
     !hasContext ||
     ![
-      /\b(?:it|that|this|there|these|those|both|same|still)\b/i,
+      /\b(?:it|that|this|there|these|those|they|both|same|still)\b/i,
+      /^(?:yes|yep|yeah|correct|done|finished|completed)[.! ]*$/i,
       /\b(?:reset|reconcil\w*|rebuild|refresh|worker|rpc|tdh|ipfs)\b/i,
       /\b(?:wallet|sync|merkle|block|caught up|missing)\b/i
     ].some((pattern) => pattern.test(question))
@@ -113,7 +114,7 @@ export function desktopQuestionWithContext(
 }
 
 /** Inspect clauses conservatively: uncertain or negated reports cannot advance repair. */
-function affirmativeReport(question: string, action: RegExp): boolean {
+export function affirmativeReport(question: string, action: RegExp): boolean {
   // Keep question marks attached so shorthand questions cannot confirm progress.
   const clauses = question.replace(/’/g, "'").split(/[,;.!]|\bbut\b|(?<=\?)/i);
   const matching = clauses.filter((clause) => action.test(clause));
@@ -131,8 +132,62 @@ function affirmativeReport(question: string, action: RegExp): boolean {
 }
 
 /** A suggestion, question, or negated action is not evidence of completion. */
-function reportsRecalculation(question: string): boolean {
-  return affirmativeReport(question, /\brecalculated\b/i);
+function reportsRecalculation(
+  question: string,
+  previousBotAnswer = ''
+): boolean {
+  if (affirmativeReport(question, /\brecalculated\b/i)) return true;
+  return (
+    /\bRecalculate TDH Now\b/i.test(previousBotAnswer) &&
+    affirmativeReport(question, /\b(?:done|finished|completed)\b/i) &&
+    !/\b(?:reconcil\w*|reset|refresh)\b/i.test(question)
+  );
+}
+
+function asksWorkerCheckpoint(previousBotAnswer: string): boolean {
+  const text = previousBotAnswer.replace(/\*/g, '');
+  return /have Transactions and NFTDelegation both reached that block\?/i.test(
+    text
+  );
+}
+
+function reportsWorkersSynced(
+  question: string,
+  previousBotAnswer: string
+): boolean {
+  question = question.replace(/\bthey['’]re\b/gi, 'they are');
+  // A partial/contradictory report must not confirm both prerequisites.
+  if (/\b(?:behind|stalled|stuck|unsure|maybe|only|not sure)\b/i.test(question))
+    return false;
+  const status = [
+    /\b(?:both(?: workers)?|workers) (?:are )?(?:in sync|synced|caught up)\b/i,
+    /\bTransactions and NFTDelegation (?:are )?(?:in sync|synced|caught up)\b/i
+  ];
+  if (asksWorkerCheckpoint(previousBotAnswer)) {
+    status.push(
+      /\bthey (?:are )?(?:in sync|synced|caught up)\b/i,
+      /\b(?:they|both(?: workers)?) (?:have )?reached (?:that|the(?: target)?|target) block\b/i,
+      /^(?:yes|yep|yeah|correct|they are|both are)[.! ]*$/i
+    );
+  }
+  return status.some((pattern) => affirmativeReport(question, pattern));
+}
+
+function hasConfirmedBlock(
+  question: string,
+  previousBotAnswer: string
+): boolean {
+  if (confirmsSameBlock(question, previousBotAnswer)) return true;
+  // A worker checkpoint report refers to the established target; it is not a
+  // new comparison between the node and reference snapshot blocks.
+  if (
+    /\bblocks?\b/i.test(question) &&
+    !reportsWorkersSynced(question, previousBotAnswer)
+  )
+    return false;
+  return /\b(?:the Last Block values match|at the same Last Block|mismatch at the same block)\b/i.test(
+    previousBotAnswer.replace(/\*/g, '')
+  );
 }
 
 function confirmsSameBlock(question: string, previousBotAnswer = ''): boolean {
@@ -171,7 +226,7 @@ function isDesktopMismatchQuestion(
     /\b(?:tdh|merkle|node|block)\b/i.test(context) &&
     (hasMismatch(question) ||
       (hasMismatch(previousBotAnswer) &&
-        /\b(?:same|both|tdh|merkle|block|caught up|recalculated|reconciled|still|it|done)\b/i.test(
+        /\b(?:same|both|they|yes|yep|yeah|correct|finished|completed|tdh|merkle|block|caught up|recalculated|reconciled|still|it|done)\b/i.test(
           question
         )))
   );
@@ -190,19 +245,9 @@ function initialMismatchRecord(
     ].some((pattern) => pattern.test(question))
   )
     return 'desktop.tdh-block-mismatch';
-  const sameBlock =
-    confirmsSameBlock(question, previousBotAnswer) ||
-    (!/\bblocks?\b/i.test(question) &&
-      /\b(?:the Last Block values match|at the same Last Block)\b/i.test(
-        previousBotAnswer
-      ));
-  if (!sameBlock) return 'desktop.tdh-out-of-sync';
-  if (
-    affirmativeReport(
-      question,
-      /\b(?:both|workers) (?:are )?(?:synced|caught up)\b/i
-    )
-  )
+  if (!hasConfirmedBlock(question, previousBotAnswer))
+    return 'desktop.tdh-out-of-sync';
+  if (reportsWorkersSynced(question, previousBotAnswer))
     return 'desktop.tdh-recalculate';
   return 'desktop.tdh-check-workers';
 }
@@ -228,7 +273,7 @@ export function desktopRecordIdForQuestion(
   if (!isDesktopMismatchQuestion(question, previousBotAnswer ?? ''))
     return undefined;
   const recalculated =
-    reportsRecalculation(question) ||
+    reportsRecalculation(question, previousBotAnswer ?? '') ||
     (!/\brecalculat\w*\b/i.test(question) &&
       /\b(?:you have already recalculated|since recalculation did not resolve)\b/i.test(
         previousBotAnswer ?? ''
@@ -244,7 +289,7 @@ export function desktopRecordIdForQuestion(
       : 'desktop.tdh-after-reconciliation';
   }
   if (recalculated) {
-    return confirmsSameBlock(question, previousBotAnswer ?? '')
+    return hasConfirmedBlock(question, previousBotAnswer ?? '')
       ? 'desktop.tdh-same-block-mismatch'
       : 'desktop.tdh-after-recalculation';
   }

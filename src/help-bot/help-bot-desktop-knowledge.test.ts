@@ -348,7 +348,7 @@ describe('Desktop corpus retrieval and answers', () => {
       ['both caught up', 'tdh-recalculate'],
       [
         'I recalculated, still does not match 6529.io',
-        'tdh-after-recalculation'
+        'tdh-same-block-mismatch'
       ]
     ]) {
       const result = await answerer.answer({
@@ -363,6 +363,220 @@ describe('Desktop corpus retrieval and answers', () => {
       expect(result.answer).not.toBe(previousBotAnswer);
       previousBotAnswer = result.answer;
     }
+  });
+
+  it.each([
+    'yes both in sync',
+    "yeah they're in sync",
+    'they are caught up',
+    'both workers are in sync',
+    'they reached that block',
+    'both have reached the target block',
+    'yes',
+    'yep',
+    'they are'
+  ])(
+    'advances the real checkpoint conversation through reconciliation: %s',
+    async (confirmation) => {
+      const { answerer, publicAnswer } = makeAnswerer();
+      let previousBotAnswer: string | undefined;
+      const turns = [
+        ['my node doesnt match 6529.io', 'tdh-out-of-sync'],
+        ['same block different tdh and merkle', 'tdh-check-workers'],
+        [confirmation, 'tdh-recalculate'],
+        ['done, still different', 'tdh-same-block-mismatch']
+      ];
+      for (const [question, id] of turns) {
+        const result = await answerer.answer({
+          question,
+          previousBotAnswer,
+          baseUrl: 'https://6529.io'
+        });
+        if (result.type !== 'ANSWER')
+          throw new Error('Expected the next recovery step');
+        expect(result.record.id).toBe(`desktop.${id}`);
+        expect(result.answer).not.toBe(previousBotAnswer);
+        if (id === 'tdh-recalculate') {
+          expect(result.answer).toContain('Recalculate TDH Now');
+          expect(result.answer).not.toContain('have **Transactions**');
+        }
+        if (id === 'tdh-same-block-mismatch') {
+          expect(result.answer).toContain('Reconcile');
+          expect(result.answer).toContain('most recent 25%');
+          expect(result.answer).toContain('Latest block in DB');
+          expect(result.answer).not.toContain('are the two');
+        }
+        previousBotAnswer = result.answer;
+      }
+      // The recovery conversation must also retain access to the more disruptive
+      // procedure when the user asks for it, with its data-loss explanation.
+      const reset = await answerer.answer({
+        question: 'how do I reset the transaction worker instead?',
+        previousBotAnswer,
+        baseUrl: 'https://6529.io'
+      });
+      expect(reset.type === 'ANSWER' && reset.record.id).toBe(
+        'desktop.transaction-reset'
+      );
+      if (reset.type === 'ANSWER') {
+        expect(reset.answer).toContain('Reset to Block');
+        expect(reset.answer).toContain('Min Block');
+        expect(reset.answer).toMatch(/delet|remov/i);
+      }
+      expect(publicAnswer).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    'are both in sync?',
+    'both in sync?',
+    'they reached that block?',
+    'not both in sync',
+    'only one is in sync',
+    'both in sync but one is behind',
+    'yes but NFTDelegation is stalled',
+    'maybe they reached that block'
+  ])(
+    'does not advance uncertain or partial checkpoint replies: %s',
+    async (question) => {
+      const { answerer } = makeAnswerer();
+      const prior = await answerer.answer({
+        question: 'my node doesnt match 6529.io, same block',
+        baseUrl: 'https://6529.io'
+      });
+      if (prior.type !== 'ANSWER') throw new Error('Expected worker question');
+      const result = await answerer.answer({
+        question,
+        previousBotAnswer: prior.answer,
+        baseUrl: 'https://6529.io'
+      });
+      expect(result.type === 'ANSWER' && result.record.id).not.toBe(
+        'desktop.tdh-recalculate'
+      );
+    }
+  );
+
+  it.each([
+    'done?',
+    'not done, still different',
+    'maybe finished',
+    'reset done, still different'
+  ])('does not infer recalculation completion from %s', (question) => {
+    expect(
+      desktopRecordIdForQuestion(
+        question,
+        'The Last Block values match and both workers are caught up. In 6529 Desktop, use Advanced Options > Recalculate TDH Now. Does TDH still differ?'
+      )
+    ).not.toBe('desktop.tdh-same-block-mismatch');
+  });
+
+  it('calculates and widens block ranges without restarting confirmed diagnostics', async () => {
+    const { answerer } = makeAnswerer();
+    let previousBotAnswer: string | undefined;
+    const turns = [
+      ['my node doesnt match 6529.io', 'tdh-out-of-sync'],
+      ['same block different tdh and merkle', 'tdh-check-workers'],
+      ['yes both in sync', 'tdh-recalculate'],
+      ['done still different', 'tdh-same-block-mismatch'],
+      ['26,000,000', 'tdh-reconcile-range'],
+      ['done', 'tdh-reconcile-recalculate'],
+      ['still different', 'tdh-reconcile-range'],
+      ['finished', 'tdh-reconcile-recalculate'],
+      ['no', 'tdh-reconcile-range'],
+      ['reconciled and recalculated, still different', 'tdh-reconcile-range'],
+      ['done', 'tdh-reconcile-recalculate'],
+      ['still doesnt match', 'tdh-repair-diagnostics']
+    ];
+    const starts = [22840215, 19680430, 16520645, 13360860];
+    let portion = 0;
+    for (const [question, id] of turns) {
+      const result = await answerer.answer({
+        question,
+        previousBotAnswer,
+        baseUrl: 'https://6529.io'
+      });
+      if (result.type !== 'ANSWER') throw new Error(`Expected ${id}`);
+      expect(result.record.id).toBe(`desktop.${id}`);
+      expect(result.answer).not.toContain('{{');
+      if (id === 'tdh-reconcile-range') {
+        expect(result.answer).toContain(
+          `**${starts[portion].toLocaleString('en-US')}**`
+        );
+        portion++;
+        expect(result.answer).toContain(`**${portion * 25}%**`);
+      }
+      if (portion)
+        expect(result.answer).not.toContain(
+          'are the two **Last Block** values identical'
+        );
+      expect(result.answer.length).toBeLessThanOrEqual(
+        MAX_DESKTOP_BRIEF_CHARACTERS
+      );
+      previousBotAnswer = result.answer;
+    }
+    expect(portion).toBe(4);
+  });
+
+  it.each([
+    'not yet',
+    'not recalculated, still different',
+    'done?',
+    'maybe it finished'
+  ])(
+    'does not widen a range before confirmed progress: %s',
+    async (question) => {
+      const { answerer } = makeAnswerer();
+      const previousBotAnswer =
+        'The 25% reconciliation is finished. In 6529 Desktop use Recalculate TDH Now. Once finished, does it match?\n\nRange: 25% of blocks 13,360,860–26,000,000.';
+      const result = await answerer.answer({
+        question,
+        previousBotAnswer,
+        baseUrl: 'https://6529.io'
+      });
+      expect(result.type === 'ANSWER' && result.record.id).toBe(
+        'desktop.tdh-reconcile-recalculate'
+      );
+    }
+  );
+
+  it.each([
+    '13000000',
+    '9007199254740992',
+    '26.5',
+    '-1',
+    'maybe 26000000',
+    '26000000 or 27000000',
+    '26,,000,000'
+  ])(
+    'asks for a valid checkpoint instead of guessing from %s',
+    async (question) => {
+      const { answerer } = makeAnswerer();
+      const previousBotAnswer =
+        'In 6529 Desktop, start with the most recent 25% of blocks. What is the Latest block in DB?';
+      const result = await answerer.answer({
+        question,
+        previousBotAnswer,
+        baseUrl: 'https://6529.io'
+      });
+      expect(result.type === 'ANSWER' && result.record.id).toBe(
+        'desktop.tdh-same-block-mismatch'
+      );
+      if (result.type === 'ANSWER') expect(result.answer).not.toContain('{{');
+    }
+  );
+
+  it('stops widening when the recalculated result matches', async () => {
+    const { answerer } = makeAnswerer();
+    const previousBotAnswer =
+      'In 6529 Desktop use Recalculate TDH Now. Once finished, does it match?\n\nRange: 50% of blocks 13,360,860–26,000,000.';
+    const result = await answerer.answer({
+      question: 'yes',
+      previousBotAnswer,
+      baseUrl: 'https://6529.io'
+    });
+    expect(result.type === 'ANSWER' && result.record.id).toBe(
+      'desktop.tdh-reconcile-success'
+    );
   });
 
   it.each([
@@ -1214,6 +1428,57 @@ describe('Desktop corpus retrieval and answers', () => {
       expect(publicAnswer).not.toHaveBeenCalled();
     }
   );
+
+  it('does not return an unrendered range template when its calculated tag is missing', async () => {
+    const index = JSON.parse(corpus);
+    const record = index.records.find(
+      (candidate: { id: string }) =>
+        candidate.id === 'desktop.tdh-reconcile-range'
+    );
+    record.tags = record.tags.filter(
+      (tag: string) => tag !== 'desktop-calculated'
+    );
+    const knowledge = new FrontendHelpBotKnowledgeSource(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(index)
+    }));
+    const answerer = new HelpBotAnswerer(null, knowledge);
+    const result = await answerer.answer({
+      question: '26000000',
+      previousBotAnswer:
+        'In 6529 Desktop, start with the most recent 25%. What is the Latest block in DB?',
+      baseUrl: 'https://6529.io'
+    });
+    expect(result.type).toBe('NO_RELIABLE_SOURCE');
+  });
+
+  it('keeps new different-block reports out of progressive repair', async () => {
+    const { answerer } = makeAnswerer();
+    const result = await answerer.answer({
+      question: 'actually the blocks are different',
+      previousBotAnswer:
+        'In 6529 Desktop use Recalculate TDH Now. Once finished, does it still differ?\n\nRange: 25% of blocks 13,360,860–26,000,000.',
+      baseUrl: 'https://6529.io'
+    });
+    expect(result.type === 'ANSWER' && result.record.id).toBe(
+      'desktop.tdh-block-mismatch'
+    );
+  });
+
+  it('updates a previously supplied checkpoint without using stale starting blocks', async () => {
+    const { answerer } = makeAnswerer();
+    const result = await answerer.answer({
+      question: 'it says 30000000',
+      previousBotAnswer:
+        'In 6529 Desktop, Reconcile from a specific block.\n\nRange: 25% of blocks 13,360,860–26,000,000.',
+      baseUrl: 'https://6529.io'
+    });
+    expect(result.type === 'ANSWER' && result.record.id).toBe(
+      'desktop.tdh-reconcile-range'
+    );
+    if (result.type === 'ANSWER') expect(result.answer).toContain('25,840,215');
+  });
 
   it('asks for a narrower question rather than cutting oversized fallback instructions', async () => {
     const oversized = JSON.parse(corpus);
