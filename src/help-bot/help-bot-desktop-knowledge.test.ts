@@ -485,7 +485,14 @@ describe('Desktop corpus retrieval and answers', () => {
       ['no', 'tdh-reconcile-range'],
       ['reconciled and recalculated, still different', 'tdh-reconcile-range'],
       ['done', 'tdh-reconcile-recalculate'],
-      ['still doesnt match', 'tdh-repair-diagnostics']
+      ['still doesnt match', 'tdh-reconcile-reset'],
+      ['reset done', 'tdh-reconcile-reset-progress'],
+      ['only Transactions is synced', 'tdh-reconcile-reset-progress'],
+      ['yes both in sync', 'tdh-reconcile-reset-recalculate'],
+      ['not recalculated yet', 'tdh-reconcile-reset-calculation-pending'],
+      ['done', 'tdh-reconcile-reset-result'],
+      ['no', 'tdh-reconcile-reset-diagnostics'],
+      ['still different', 'tdh-reconcile-reset-diagnostics']
     ];
     const starts = [22840215, 19680430, 16520645, 13360860];
     let portion = 0;
@@ -504,6 +511,19 @@ describe('Desktop corpus retrieval and answers', () => {
         );
         portion++;
         expect(result.answer).toContain(`**${portion * 25}%**`);
+      }
+      if (id === 'tdh-reconcile-reset') {
+        expect(result.answer).toContain('Reset to Block');
+        expect(result.answer).toContain('Min Block');
+        expect(result.answer).toMatch(
+          /deletes later local transaction history/i
+        );
+        expect(result.answer).toMatch(/time and RPC/);
+        expect(portion).toBe(4);
+      } else if (id === 'tdh-reconcile-reset-diagnostics') {
+        expect(result.answer).toContain('Do not repeat the reset');
+      } else {
+        expect(result.answer).not.toContain('Reset to Block');
       }
       if (portion)
         expect(result.answer).not.toContain(

@@ -739,9 +739,14 @@ Unknown, invalid, or ambiguous checkpoints request the checkpoint again instead
 of inventing one. Missing stages, invalid template data, and changed minimums
 fail closed. A fresh user confirmation is required after uncertain/unfinished
 work; never treat negated completion or different snapshot blocks as permission
-to widen recovery. Stop on a matching result; after 100% still fails, use the
-existing diagnostic/escalation guidance. Explicit reset/NFT/wallet questions leave
-this dialogue and retain their separate corpus-owned procedures.
+to widen recovery. Stop on a matching result. After 100% reconciliation and
+recalculation still fail, offer the corpus-owned transaction Reset to Block
+procedure, including Min Block as the full-resync fallback and its local data
+replacement/time/RPC effects. Confirm resync before recalculation; retain the
+reset stage across short replies. A persistent mismatch after reset, resync, and
+recalculation leads to diagnostics without repeating recovery actions. Explicit
+reset questions outside this stage and NFT/wallet questions retain their separate
+corpus-owned procedures.
 
 Calculated records cannot participate in ordinary retrieval, and their templates
 are expanded without model generation. Supported placeholders are `percentage`,

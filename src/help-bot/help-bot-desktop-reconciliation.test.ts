@@ -52,3 +52,103 @@ describe('block-based reconciliation arithmetic', () => {
     ).toBeNull();
   });
 });
+
+describe('transaction reset conversation', () => {
+  const range = '\nRange: 100% of blocks 13,360,860–26,000,000.';
+  const instruction =
+    'In 6529 Desktop, use transaction reset, then tell me when both workers are synced.' +
+    range;
+  const recalculate =
+    'The transaction reset and resync are complete. In 6529 Desktop use Recalculate TDH Now. Once finished, do TDH and Merkle Root now match?' +
+    range;
+
+  it.each([
+    ['still different', 'reset'],
+    ['yes', 'success'],
+    ['not recalculated, still different', 'recalculate'],
+    ['maybe finished', 'recalculate']
+  ])(
+    'offers reset only after a completed full repair: %s',
+    (question, stage) => {
+      const prior = 'In 6529 Desktop use Recalculate TDH Now.' + range;
+      expect(desktopReconciliationTurn(question, prior)?.id).toBe(
+        'desktop.tdh-reconcile-' + stage
+      );
+    }
+  );
+
+  it.each([
+    ['reset done', 'reset-progress'],
+    ['only Transactions is synced', 'reset-progress'],
+    ['Transactions synced', 'reset-progress'],
+    ['both synced but NFTDelegation is behind', 'reset-progress'],
+    ['both synced but NFTDelegation not yet', 'reset-progress'],
+    ["Transactions synced but NFTDelegation isn't", 'reset-progress'],
+    ['not both synced', 'reset-progress'],
+    ['are both in sync?', 'reset-progress'],
+    ['reset failed', 'reset-progress'],
+    ['still syncing', 'reset-progress'],
+    ['both synced', 'reset-recalculate'],
+    ['they are in sync', 'reset-recalculate'],
+    ['they reached that block', 'reset-recalculate'],
+    ['yes', 'reset-recalculate'],
+    ['synced', 'reset-recalculate'],
+    [
+      'reset done, both synced and recalculated, still different',
+      'reset-diagnostics'
+    ],
+    ['reset done, both synced and recalculated, all good', 'success']
+  ])('handles resync report %s', (question, stage) => {
+    expect(desktopReconciliationTurn(question, instruction)?.id).toBe(
+      'desktop.tdh-reconcile-' + stage
+    );
+  });
+
+  it.each([
+    ['yes', 'success'],
+    ['it matches', 'success'],
+    ['no', 'reset-diagnostics'],
+    ['still different', 'reset-diagnostics'],
+    ['done', 'reset-result'],
+    ['not yet', 'reset-calculation-pending'],
+    ['not recalculated, still different', 'reset-calculation-pending'],
+    ['workers not synced, still different', 'reset-calculation-pending'],
+    ['calculation failed', 'reset-calculation-pending']
+  ])('handles post-reset recalculation report %s', (question, stage) => {
+    expect(desktopReconciliationTurn(question, recalculate)?.id).toBe(
+      'desktop.tdh-reconcile-' + stage
+    );
+  });
+
+  it.each(['done', 'they finished', 'both completed'])(
+    'accepts shorthand answering the explicit resync question: %s',
+    (question) => {
+      const prior =
+        'After the transaction reset in 6529 Desktop, have Transactions and NFTDelegation both finished syncing?' +
+        range;
+      expect(desktopReconciliationTurn(question, prior)?.id).toBe(
+        'desktop.tdh-reconcile-reset-recalculate'
+      );
+    }
+  );
+
+  it('keeps persistent failure at diagnostics rather than repeating reset', () => {
+    const prior =
+      'In 6529 Desktop, the transaction reset and recalculation did not fix it. Do not repeat the reset.' +
+      range;
+    expect(desktopReconciliationTurn('still different', prior)?.id).toBe(
+      'desktop.tdh-reconcile-reset-diagnostics'
+    );
+    expect(desktopReconciliationTurn('it is fixed', prior)?.id).toBe(
+      'desktop.tdh-reconcile-success'
+    );
+  });
+
+  it.each([
+    'how do I reset my mobile wallet?',
+    'NFT reset',
+    'the blocks are different'
+  ])('leaves reset dialogue for %s', (question) => {
+    expect(desktopReconciliationTurn(question, instruction)).toBeNull();
+  });
+});

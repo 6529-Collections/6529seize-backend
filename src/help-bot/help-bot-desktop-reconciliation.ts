@@ -83,7 +83,7 @@ function deniesCompletion(question: string): boolean {
     /\b(?:not yet|haven't|havent|didn't|didnt|did not|unsure|maybe|not sure|still running|in progress|behind|stalled|stuck|only one)\b|\?/i.test(
       question
     ) ||
-    /\b(?:not|never) (?:yet )?(?:done|finished|completed|recalculated|reconciled)\b/i.test(
+    /\b(?:not|never) (?:yet )?(?:done|finished|completed|recalculated|reconciled|synced|caught up|in sync)\b/i.test(
       question
     )
   );
@@ -97,7 +97,7 @@ function nextRange(
   state: DesktopReconciliationTurn
 ): DesktopReconciliationTurn {
   return state.percentage === 100
-    ? { ...state, id: 'desktop.tdh-repair-diagnostics' }
+    ? { ...state, id: `${PREFIX}reset` }
     : {
         ...state,
         id: `${PREFIX}range`,
@@ -125,7 +125,10 @@ export function desktopReconciliationTurn(
 ): DesktopReconciliationTurn | null {
   if (
     !/6529 Desktop/i.test(previous) ||
-    /\b(?:wallet|mobile|android|ios|ipfs|rpc|reset|refresh)\b/i.test(question)
+    /\b(?:wallet|mobile|android|ios|ipfs|rpc|nfts?|refresh)\b/i.test(
+      question
+    ) ||
+    (/\breset\b/i.test(question) && !/transaction reset/i.test(previous))
   )
     return null;
   // A new snapshot comparison overrides the earlier matching-block context.
@@ -149,6 +152,8 @@ export function desktopReconciliationTurn(
       checkpoint: checkpointReply(question)
     };
   }
+  if (/transaction reset/i.test(previous))
+    return continueReset(question, previous, state);
   const updatedCheckpoint = checkpointReply(question);
   if (updatedCheckpoint !== undefined)
     return { ...state, id: `${PREFIX}range`, checkpoint: updatedCheckpoint };
@@ -183,6 +188,76 @@ function continueRange(
   )
     return { ...state, id: `${PREFIX}recalculate` };
   return { ...state, id: `${PREFIX}progress` };
+}
+
+function continueReset(
+  question: string,
+  previous: string,
+  state: DesktopReconciliationTurn
+): DesktopReconciliationTurn {
+  if (/Do not repeat the reset/i.test(previous))
+    return {
+      ...state,
+      id: `${PREFIX}${reportsSuccess(question) && !reportsFailure(question) ? 'success' : 'reset-diagnostics'}`
+    };
+  const askedForResult =
+    /Recalculate TDH Now|Do TDH and Merkle Root now match/i.test(previous);
+  if (
+    deniesCompletion(question) ||
+    /\b(?:error|failed|failing|only|still syncing|isn't|aren't|isnt|arent)\b/i.test(
+      question
+    )
+  )
+    return {
+      ...state,
+      id: `${PREFIX}${askedForResult ? 'reset-calculation-pending' : 'reset-progress'}`
+    };
+  if (askedForResult) return afterResetRecalculation(question, state);
+  const synced = reportsResetResync(question, previous);
+  if (synced && affirmativeReport(question, /\brecalculated\b/i))
+    return afterResetRecalculation(question, state);
+  if (synced || isYes(question))
+    return { ...state, id: `${PREFIX}reset-recalculate` };
+  return { ...state, id: `${PREFIX}reset-progress` };
+}
+
+function reportsResetResync(question: string, previous: string): boolean {
+  if (
+    /have Transactions and NFTDelegation both finished syncing/i.test(
+      previous
+    ) &&
+    /^(?:(?:they|both)(?: are| have)? )?(?:done|finished|completed)[.!]*$/i.test(
+      question.trim()
+    )
+  )
+    return true;
+  if (
+    !affirmativeReport(
+      question,
+      /\b(?:synced|caught up|in sync|reached (?:that|the|target) block)\b/i
+    )
+  )
+    return false;
+  return (
+    /\b(?:both|they|workers|all|Transactions and NFTDelegation)\b/i.test(
+      question
+    ) || /^(?:synced|caught up|in sync)[.!]*$/i.test(question.trim())
+  );
+}
+
+function afterResetRecalculation(
+  question: string,
+  state: DesktopReconciliationTurn
+): DesktopReconciliationTurn {
+  if (
+    (reportsSuccess(question) && !reportsFailure(question)) ||
+    isYes(question)
+  )
+    return { ...state, id: `${PREFIX}success` };
+  return {
+    ...state,
+    id: `${PREFIX}${reportsFailure(question) ? 'reset-diagnostics' : 'reset-result'}`
+  };
 }
 
 /** Templates and the supported minimum are corpus-owned; all arithmetic is deterministic. */
