@@ -15,7 +15,7 @@ const active: ActiveInputV1 = {
   stage: {
     kind: 'RATING',
     axis: 'REP',
-    after: { category: 'café', other_profile_id: null },
+    after: { category: 'café', other_profile_id: 'peer' },
     signed_sum: '-10',
     matching_count: '1'
   }
@@ -28,7 +28,7 @@ describe('membership evaluator continuation decoding', () => {
         ...active,
         stage: {
           ...active.stage,
-          after: { category: '', other_profile_id: null }
+          after: { category: '', other_profile_id: 'peer' }
         }
       })
     ).toBeDefined();
@@ -47,7 +47,44 @@ describe('membership evaluator continuation decoding', () => {
         wallets: { after_wallet: null }
       }
     },
-    { ...active, seed_fingerprint: 'a'.repeat(32769) }
+    { ...active, seed_fingerprint: 'a'.repeat(32769) },
+    {
+      ...active,
+      stage: {
+        ...active.stage,
+        after: { category: 'café', other_profile_id: null }
+      }
+    },
+    { ...active, stage: { ...active.stage, matching_count: '0' } },
+    {
+      ...active,
+      stage: {
+        kind: 'GRANT_INCLUDE',
+        after_token_id: '1',
+        selected_count: '1',
+        owned_count: '2'
+      }
+    },
+    {
+      ...active,
+      stage: {
+        kind: 'NFT_REQUIREMENT',
+        contract_slot: 0,
+        next_json_index: '0',
+        current_token: '9223372036854775808',
+        after_owner_wallet: null
+      }
+    },
+    {
+      ...active,
+      stage: {
+        kind: 'NFT_REQUIREMENT',
+        contract_slot: 0,
+        next_json_index: '0',
+        current_token: null,
+        after_owner_wallet: 'wallet'
+      }
+    }
   ])('rejects malformed or oversized state %#', (value) => {
     expect(() => validateMembershipActiveInput(value)).toThrow();
   });

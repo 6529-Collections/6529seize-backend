@@ -28,7 +28,8 @@ export type SqlBudgetCode =
   | 'SQL_BUDGET_EXCEEDED'
   | 'SQL_CONCURRENT_STATEMENTS'
   | 'SQL_SCOPE_CLOSED'
-  | 'SQL_STATEMENT_FAILED';
+  | 'SQL_STATEMENT_FAILED'
+  | 'SQL_TRANSACTION_CONTROL';
 
 export class SqlExecutionBudgetExceededError extends Error {
   connectionDestroyed = false;
@@ -59,6 +60,12 @@ export interface SqlBudgetConnection {
   // Completion transfers ownership back to the pool; adapters must not defer it
   // after returning the physical connection to another borrower.
   readonly release: () => void | Promise<void>;
+  /** Actual adapter lifecycle preserves ORM transaction bookkeeping/subscribers. */
+  readonly transaction?: {
+    readonly begin: () => Promise<void>;
+    readonly commit: () => Promise<void>;
+    readonly rollback: () => Promise<void>;
+  };
 }
 
 const scopes = new WeakMap<object, SqlBudgetScope>();
@@ -235,9 +242,16 @@ class SqlBudgetScope {
     }
   }
 
-  async work<T>(executable: () => Promise<T>): Promise<T> {
-    this.phase = 'WORK';
-    this.assertWorkRemaining();
+  async runPhase<T>(
+    phase: SqlBudgetPhase,
+    executable: () => Promise<T>
+  ): Promise<T> {
+    this.phase = phase;
+    const workPhase = phase === 'WORK' || phase === 'SETUP';
+    if (workPhase) this.assertWorkRemaining();
+    const deadline = workPhase
+      ? this.workDeadlineMonotonicMillis
+      : this.budget.deadlineMonotonicMillis;
     return new Promise<T>((resolve, reject) => {
       let settled = false;
       const finish = (error: { value: unknown } | null, result?: T) => {
@@ -251,7 +265,7 @@ class SqlBudgetScope {
       const onAbort = (error: unknown) => finish({ value: error });
       const timer = setTimeout(
         () => this.abort(this.exceeded()),
-        Math.max(0, this.workDeadlineMonotonicMillis - performance.now())
+        Math.max(0, deadline - performance.now())
       );
       this.abortListeners.add(onAbort);
       Promise.resolve()
@@ -267,7 +281,7 @@ class SqlBudgetScope {
   }
 
   /** Own settlement independently of the driver, which can suppress callbacks on destroy. */
-  statement<T>(send: () => Promise<T>): Promise<T> {
+  statement<T>(sql: string, send: () => Promise<T>): Promise<T> {
     if (this.closed || this.destroyed)
       return Promise.reject(
         this.failure?.error ??
@@ -277,6 +291,17 @@ class SqlBudgetScope {
             this.commitOutcome
           )
       );
+    // AfterCommit subscribers execute after the transaction ended. They cannot
+    // start untracked autocommit work on this still-borrowed physical session.
+    if (this.phase === 'COMMIT' && this.commitOutcome === 'ACKNOWLEDGED') {
+      const error = new SqlExecutionBudgetExceededError(
+        'SQL_TRANSACTION_CONTROL',
+        'COMMIT',
+        'ACKNOWLEDGED'
+      );
+      this.abort(error);
+      return Promise.reject(error);
+    }
     if (this.pending) {
       const error = new SqlExecutionBudgetExceededError(
         'SQL_CONCURRENT_STATEMENTS',
@@ -284,6 +309,31 @@ class SqlBudgetScope {
         this.commitOutcome
       );
       this.abort(error);
+      return Promise.reject(error);
+    }
+    // This is an internal transactional DML contract, not a general SQL sandbox.
+    // Ordinary comments cannot disguise an outer transaction boundary. Versioned
+    // executable comments are not accepted in application work.
+    const command = sql.replace(
+      /^(?:\s|\/\*(?!!)[\s\S]*?\*\/|--[^\n]*\n|#[^\n]*\n)*/,
+      ''
+    );
+    const commits = /^COMMIT(?:\s|;|$)/i.test(command);
+    const outerControl =
+      /^(?:COMMIT|BEGIN|START\s+TRANSACTION|END|CREATE|ALTER|DROP|TRUNCATE|RENAME|LOCK\s+TABLES|UNLOCK\s+TABLES)\b/i.test(
+        command
+      ) ||
+      (/^ROLLBACK\b/i.test(command) &&
+        !/^ROLLBACK\s+TO\s+(?:SAVEPOINT\s+)?/i.test(command)) ||
+      /^SET\b[^;]*\bAUTOCOMMIT\b/i.test(command) ||
+      /\/\*!/.test(sql);
+    if (this.phase === 'WORK' && outerControl) {
+      const error = new SqlExecutionBudgetExceededError(
+        'SQL_TRANSACTION_CONTROL',
+        'WORK',
+        this.commitOutcome
+      );
+      this.fail(error);
       return Promise.reject(error);
     }
     const workPhase = this.phase === 'WORK' || this.phase === 'SETUP';
@@ -322,7 +372,7 @@ class SqlBudgetScope {
       );
       this.abortListeners.add(onAbort);
       // COMMIT is conservatively sent only after the live pre-send check passes.
-      if (this.phase === 'COMMIT') this.commitOutcome = 'UNKNOWN';
+      if (commits) this.commitOutcome = 'UNKNOWN';
       let operation: Promise<T>;
       try {
         operation = send();
@@ -336,7 +386,7 @@ class SqlBudgetScope {
             this.abort(this.exceeded());
             return;
           }
-          if (this.phase === 'COMMIT') this.commitOutcome = 'ACKNOWLEDGED';
+          if (commits) this.commitOutcome = 'ACKNOWLEDGED';
           finish(null, value);
         },
         (original: unknown) => {
@@ -448,6 +498,9 @@ function installQueryInterceptor(scope: SqlBudgetScope): () => void {
     let nativeQuery: mysql.Query | undefined;
     scope
       .statement(
+        typeof args[0] === 'string'
+          ? args[0]
+          : (args[0] as { sql: string }).sql,
         () =>
           new Promise<{ result: unknown; fields: unknown }>(
             (resolve, reject) => {
@@ -635,10 +688,15 @@ export async function executeBudgetedSqlTransaction<T>(
       'SET SESSION max_execution_time = ?, innodb_lock_wait_timeout = ?',
       [budget.maxStatementMillis, budget.lockWaitSeconds]
     );
-    await query('SETUP', 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
-    await query('SETUP', 'START TRANSACTION');
+    await scope.runPhase('SETUP', async () => {
+      if (lease.transaction) await lease.transaction.begin();
+      else {
+        await query('SETUP', 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+        await query('SETUP', 'START TRANSACTION');
+      }
+    });
     began = true;
-    result = await scope.work(() => executable(lease.handle));
+    result = await scope.runPhase('WORK', () => executable(lease.handle));
     scope.assertWorkRemaining();
     if (scope.pending) {
       const error = new SqlExecutionBudgetExceededError(
@@ -649,13 +707,31 @@ export async function executeBudgetedSqlTransaction<T>(
       scope.abort(error);
       throw error;
     }
-    await query('COMMIT', 'COMMIT');
+    await scope.runPhase('COMMIT', async () => {
+      if (lease.transaction) await lease.transaction.commit();
+      else await query('COMMIT', 'COMMIT');
+    });
+    if (scope.commitOutcome !== 'ACKNOWLEDGED') {
+      const error = new Error(
+        'SQL transaction lifecycle did not acknowledge outer COMMIT'
+      );
+      scope.abort(error);
+      throw error;
+    }
   } catch (error) {
+    // An AfterCommit subscriber can fail after the real COMMIT acknowledgment.
+    if (scope.commitOutcome === 'ACKNOWLEDGED') {
+      scope.abort(error);
+      return result!;
+    }
     scope.fail(error);
     if (scope.pending || !began) scope.abort(error);
     if (began && !scope.destroyed && scope.commitOutcome === 'NOT_SENT') {
       try {
-        await query('ROLLBACK', 'ROLLBACK');
+        await scope.runPhase('ROLLBACK', async () => {
+          if (lease.transaction) await lease.transaction.rollback();
+          else await query('ROLLBACK', 'ROLLBACK');
+        });
       } catch (rollbackError) {
         scope.abort(rollbackError);
       }

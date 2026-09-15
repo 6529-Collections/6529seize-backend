@@ -1,4 +1,6 @@
-import type { QueryRunner } from 'typeorm';
+import type { DataSource, QueryRunner } from 'typeorm';
+import type { SqlInMemory } from 'typeorm/driver/SqlInMemory';
+import { performance } from 'node:perf_hooks';
 
 interface PhysicalSchemaConnection {
   destroy(): void;
@@ -15,13 +17,14 @@ function schemaStatement<T>(
     const timer = setTimeout(() => {
       try {
         dispose();
-      } finally {
-        reject(
-          new Error(
-            'Membership schema statement outcome is unknown after deadline'
-          )
-        );
+      } catch {
+        // A disposal error must not escape the timer or leave this promise pending.
       }
+      reject(
+        new Error(
+          'Membership schema statement outcome is unknown after deadline'
+        )
+      );
     }, deadlineMillis);
     // Consume late callbacks and synchronous throws, including after disposal.
     Promise.resolve()
@@ -32,6 +35,42 @@ function schemaStatement<T>(
           resolve(value);
         },
         (error: unknown) => {
+          clearTimeout(timer);
+          reject(error);
+        }
+      );
+  });
+}
+
+function schemaConnection(
+  runner: QueryRunner
+): Promise<PhysicalSchemaConnection> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      settled = true;
+      reject(
+        new Error('Membership schema connection deadline exceeded before DDL')
+      );
+    }, 3000);
+    Promise.resolve()
+      .then(() => runner.connect())
+      .then(
+        (physical: PhysicalSchemaConnection) => {
+          if (settled) {
+            try {
+              physical.destroy();
+            } catch {
+              /* Late acquisition is never used. */
+            }
+            return;
+          }
+          settled = true;
+          clearTimeout(timer);
+          resolve(physical);
+        },
+        (error: unknown) => {
+          settled = true;
           clearTimeout(timer);
           reject(error);
         }
@@ -52,7 +91,7 @@ export async function executeMembershipOnlineIndex(
   ) {
     throw new Error('Invalid membership index DDL deadline');
   }
-  const physical: PhysicalSchemaConnection = await runner.connect();
+  const physical = await schemaConnection(runner);
   let disposed = false;
   let failure: unknown;
   let failed = false;
@@ -164,4 +203,284 @@ export async function membershipIndexExists(
   )
     throw new Error('Existing membership index is incompatible');
   return true;
+}
+
+export interface MembershipSchemaInspectionOptions {
+  readonly deadlineMillis?: number;
+  readonly statementMillis?: number;
+}
+export interface MembershipSchemaReader {
+  readonly runner: QueryRunner;
+  log(): Promise<SqlInMemory>;
+}
+
+/** Confines TypeORM's internally created inspection runners to one owned lease. */
+class MembershipSchemaInspection {
+  private readonly owned: QueryRunner;
+  private readonly until: number;
+  private readonly workUntil: number;
+  private readonly statementMillis: number;
+  private physical?: PhysicalSchemaConnection;
+  private revoked = false;
+  private failure?: { error: unknown };
+  private previous?: number;
+  private queue: Promise<unknown> = Promise.resolve();
+  private readonly waiters = new Set<(error: unknown) => void>();
+  private readonly originalQuery: QueryRunner['query'];
+
+  constructor(
+    private readonly source: DataSource,
+    options: MembershipSchemaInspectionOptions
+  ) {
+    const duration = options.deadlineMillis ?? 15000;
+    this.statementMillis = options.statementMillis ?? 3000;
+    for (const value of [duration, this.statementMillis])
+      if (!Number.isSafeInteger(value) || value < 1 || value > 120000)
+        throw new Error('Invalid membership schema inspection budget');
+    this.until = performance.now() + duration;
+    this.workUntil = this.until - Math.min(3000, duration / 4);
+    this.owned = source.createQueryRunner('master');
+    this.originalQuery = this.owned.query.bind(this.owned);
+  }
+  private abort(error: unknown): void {
+    this.failure ??= { error };
+    if (!this.revoked) {
+      this.revoked = true;
+      try {
+        this.physical?.destroy();
+      } catch {
+        /* Revoke even when disposal throws. */
+      }
+    }
+    for (const reject of Array.from(this.waiters)) reject(this.failure.error);
+  }
+  private assertLive(): void {
+    if (this.revoked)
+      throw (
+        this.failure?.error ??
+        new Error('Membership schema inspection is closed')
+      );
+  }
+  private bounded<T>(
+    send: () => Promise<T>,
+    until: number,
+    late?: (value: T) => void
+  ): Promise<T> {
+    this.assertLive();
+    return new Promise<T>((resolve, reject) => {
+      let settled = false;
+      const finish = (error: { value: unknown } | null, value?: T) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this.waiters.delete(onAbort);
+        if (error) reject(error.value);
+        else resolve(value as T);
+      };
+      const onAbort = (error: unknown) => finish({ value: error });
+      const expire = () =>
+        this.abort(new Error('Membership schema inspection deadline exceeded'));
+      const timer = setTimeout(expire, Math.max(0, until - performance.now()));
+      this.waiters.add(onAbort);
+      Promise.resolve()
+        .then(() => {
+          this.assertLive();
+          if (performance.now() >= until) {
+            expire();
+            this.assertLive();
+          }
+          return send();
+        })
+        .then(
+          (value) => {
+            if (settled) {
+              late?.(value);
+              return;
+            }
+            if (performance.now() >= until) {
+              expire();
+              late?.(value);
+              return;
+            }
+            finish(null, value);
+          },
+          (error: unknown) => finish({ value: error })
+        )
+        .catch((error: unknown) => this.abort(error));
+    });
+  }
+  private statement(
+    sql: string,
+    parameters: unknown[] = [],
+    until = this.workUntil,
+    structured = false
+  ) {
+    return this.bounded(
+      () =>
+        structured
+          ? this.originalQuery(sql, parameters, true)
+          : this.originalQuery(sql, parameters),
+      Math.min(until, performance.now() + this.statementMillis)
+    );
+  }
+  private query(
+    sql: string,
+    parameters?: unknown[],
+    structured?: boolean
+  ): Promise<unknown> {
+    // Inspection must not execute DDL even if a future TypeORM log implementation changes.
+    if (!/^\s*(SELECT|SHOW)\b/i.test(sql)) {
+      const error = new Error('Membership schema inspection attempted a write');
+      this.abort(error);
+      return Promise.reject(error);
+    }
+    const operation = this.queue.then(() => {
+      this.assertLive();
+      return this.statement(sql, parameters, this.workUntil, structured);
+    });
+    this.queue = operation.catch((error: unknown) => {
+      this.abort(error);
+      throw error;
+    });
+    // Observe the queue tail even when a caller abandons a failed metadata operation.
+    void this.queue.catch(() => undefined);
+    return operation;
+  }
+  private borrowed(): QueryRunner {
+    const runner = Object.create(this.owned) as QueryRunner;
+    runner.query = ((
+      sql: string,
+      parameters?: unknown[],
+      structured?: boolean
+    ) => this.query(sql, parameters, structured)) as QueryRunner['query'];
+    runner.connect = async () => {
+      this.assertLive();
+      return this.physical;
+    };
+    runner.release = async () => undefined;
+    return runner;
+  }
+  private reader(): MembershipSchemaReader {
+    const facade = Object.create(this.source) as DataSource;
+    facade.createQueryRunner = () => this.borrowed();
+    return {
+      runner: this.borrowed(),
+      log: async () => {
+        this.assertLive();
+        // RdbmsSchemaBuilder.log reads connection.createQueryRunner. Clone only
+        // this builder instance so neither the shared source nor its driver changes.
+        const builder = Object.create(this.source.driver.createSchemaBuilder());
+        Object.defineProperty(builder, 'connection', { value: facade });
+        return builder.log();
+      }
+    };
+  }
+  private async initialize(): Promise<void> {
+    this.physical = await this.bounded(
+      () => this.owned.connect(),
+      this.workUntil,
+      (connection) => {
+        try {
+          connection.destroy();
+        } catch {
+          /* Late acquisition is never used. */
+        }
+      }
+    );
+    const rows = await this.statement(
+      'SELECT @@SESSION.lock_wait_timeout AS value'
+    );
+    const value = rows[0]?.value;
+    const previous = Number(value);
+    if (
+      (typeof value !== 'number' &&
+        (typeof value !== 'string' || !/^(0|[1-9][0-9]*)$/.test(value))) ||
+      !Number.isSafeInteger(previous) ||
+      previous < 1 ||
+      previous > 31536000
+    ) {
+      const error = new Error('Invalid schema metadata lock timeout');
+      this.abort(error);
+      throw error;
+    }
+    this.previous = previous;
+    await this.statement('SET SESSION lock_wait_timeout = ?', [1]);
+  }
+  private async close(): Promise<void> {
+    if (!this.revoked && this.previous !== undefined) {
+      try {
+        await this.statement(
+          'SET SESSION lock_wait_timeout = ?',
+          [this.previous],
+          this.until
+        );
+      } catch (error) {
+        this.abort(error);
+      }
+    }
+    // Restore before release; abandoned borrowed runners are permanently revoked.
+    this.revoked = true;
+    try {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(
+          () => {
+            this.failure ??= {
+              error: new Error(
+                'Membership schema inspection release deadline exceeded'
+              )
+            };
+            try {
+              this.physical?.destroy();
+            } catch {
+              /* Cleanup remains bounded. */
+            }
+            resolve();
+          },
+          Math.max(0, this.until - performance.now())
+        );
+        Promise.resolve()
+          .then(() => this.owned.release())
+          .then(
+            () => {
+              clearTimeout(timer);
+              resolve();
+            },
+            (error: unknown) => {
+              clearTimeout(timer);
+              this.failure ??= { error };
+              try {
+                this.physical?.destroy();
+              } catch {
+                /* Discard failed lease. */
+              }
+              resolve();
+            }
+          );
+      });
+    } catch {
+      /* Cleanup cannot mask the first inspection error. */
+    }
+  }
+  async run<T>(
+    read: (reader: MembershipSchemaReader) => Promise<T>
+  ): Promise<T> {
+    let result: T;
+    try {
+      await this.initialize();
+      result = await this.bounded(() => read(this.reader()), this.workUntil);
+    } finally {
+      await this.close();
+    }
+    if (this.failure) throw this.failure.error;
+    return result;
+  }
+}
+
+/** Bound the entire preflight or verification, including TypeORM metadata reads. */
+export function withMembershipSchemaInspection<T>(
+  source: DataSource,
+  read: (reader: MembershipSchemaReader) => Promise<T>,
+  options: MembershipSchemaInspectionOptions = {}
+): Promise<T> {
+  return new MembershipSchemaInspection(source, options).run(read);
 }

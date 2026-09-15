@@ -4,7 +4,9 @@ import { USER_GROUPS_TABLE } from '@/constants';
 import { UserGroupEntity } from '@/entities/IUserGroup';
 import {
   executeMembershipOnlineIndex,
-  membershipIndexExists
+  membershipIndexExists,
+  withMembershipSchemaInspection,
+  MembershipSchemaInspectionOptions
 } from './membership-additive-schema';
 
 export const membershipEvaluatorSchemaEntities = [UserGroupEntity];
@@ -20,7 +22,8 @@ export const MEMBERSHIP_EVALUATOR_INDEX_ONLINE = `ALTER TABLE \`${USER_GROUPS_TA
 
 /** Inspect the whole isolated plan before this one explicit online addition. */
 export async function applyMembershipEvaluatorSchema(
-  source: DataSource = getDataSource()
+  source: DataSource = getDataSource(),
+  inspectionOptions: MembershipSchemaInspectionOptions = {}
 ) {
   if (
     source.entityMetadatas.length !== 1 ||
@@ -30,49 +33,59 @@ export async function applyMembershipEvaluatorSchema(
       'Membership evaluator schema requires its isolated entity scope'
     );
   }
-  const runner = source.createQueryRunner('master');
-  try {
-    if (!(await runner.hasTable(USER_GROUPS_TABLE))) {
-      throw new Error(
-        'Membership evaluator schema requires an existing group table'
+  const exists = await withMembershipSchemaInspection(
+    source,
+    async ({ runner, log }) => {
+      if (!(await runner.hasTable(USER_GROUPS_TABLE)))
+        throw new Error(
+          'Membership evaluator schema requires an existing group table'
+        );
+      const present = await membershipIndexExists(
+        runner,
+        USER_GROUPS_TABLE,
+        MEMBERSHIP_EVALUATOR_INDEX
       );
-    }
-    const exists = await membershipIndexExists(
-      runner,
-      USER_GROUPS_TABLE,
-      MEMBERSHIP_EVALUATOR_INDEX
-    );
-    const builder = source.driver.createSchemaBuilder();
-    const plan = await builder.log();
-    if (
-      plan.upQueries.length !== (exists ? 0 : 1) ||
-      plan.upQueries.some(
-        (query) =>
-          query.query !== MEMBERSHIP_EVALUATOR_INDEX_PLAN ||
-          query.parameters?.length
+      const plan = await log();
+      if (
+        plan.upQueries.length !== (present ? 0 : 1) ||
+        plan.upQueries.some(
+          (query) =>
+            query.query !== MEMBERSHIP_EVALUATOR_INDEX_PLAN ||
+            query.parameters?.length
+        )
       )
-    ) {
-      throw new Error(
-        'Membership evaluator schema contains unapproved or missing changes'
-      );
-    }
-    if (!exists)
+        throw new Error(
+          'Membership evaluator schema contains unapproved or missing changes'
+        );
+      return present;
+    },
+    inspectionOptions
+  );
+  if (!exists) {
+    const runner = source.createQueryRunner('master');
+    try {
       await executeMembershipOnlineIndex(
         runner,
         MEMBERSHIP_EVALUATOR_INDEX_ONLINE
       );
-    if (
-      !(await membershipIndexExists(
-        runner,
-        USER_GROUPS_TABLE,
-        MEMBERSHIP_EVALUATOR_INDEX
-      )) ||
-      (await builder.log()).upQueries.length
-    ) {
-      throw new Error('Membership evaluator schema verification failed');
+    } finally {
+      await runner.release();
     }
-    return { added_indexes: exists ? 0 : 1, verified_indexes: 1 };
-  } finally {
-    await runner.release();
   }
+  await withMembershipSchemaInspection(
+    source,
+    async ({ runner, log }) => {
+      if (
+        !(await membershipIndexExists(
+          runner,
+          USER_GROUPS_TABLE,
+          MEMBERSHIP_EVALUATOR_INDEX
+        )) ||
+        (await log()).upQueries.length
+      )
+        throw new Error('Membership evaluator schema verification failed');
+    },
+    inspectionOptions
+  );
+  return { added_indexes: exists ? 0 : 1, verified_indexes: 1 };
 }

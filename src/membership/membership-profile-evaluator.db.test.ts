@@ -3,6 +3,8 @@ import {
   ADDRESS_CONSOLIDATION_KEY,
   EXTERNAL_INDEXED_OWNERSHIP_721_TABLE,
   IDENTITIES_TABLE,
+  GRADIENT_CONTRACT,
+  MEMELAB_CONTRACT,
   MEMBERSHIP_GROUP_VERSIONS_TABLE,
   MEMBERSHIP_SOURCE_STATES_TABLE,
   MEMES_CONTRACT,
@@ -15,6 +17,8 @@ import {
   XTDH_GRANT_TOKENS_TABLE
 } from '@/constants';
 import { sqlExecutor, setSqlExecutor } from '@/sql-executor';
+import { Network } from '@/alchemy-sdk';
+import { NEXTGEN_CORE_CONTRACT } from '@/nextgen/nextgen_constants';
 import * as loopDb from '@/db';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
@@ -429,6 +433,83 @@ describeWithSeed(
       expect(result.ids).toEqual(['a-owned']);
       expect(await direct(['a-owned', 'b-leading-zero'])).toEqual(result.ids);
     });
+    it('continues token-centric owner windows to a late consolidated-wallet witness', async () => {
+      await groups([
+        group('a-token', {
+          owns_meme: true,
+          owns_meme_tokens: JSON.stringify(['1'])
+        })
+      ]);
+      await insertRows(ADDRESS_CONSOLIDATION_KEY, [
+        { address: address(17), consolidation_key: identity.consolidation_key }
+      ]);
+      await insertRows(
+        NFT_OWNERS_TABLE,
+        Array.from({ length: 17 }, (_, n) => ({
+          token_id: 1,
+          contract: MEMES_CONTRACT,
+          wallet: address(n + 1),
+          balance: 0,
+          block_reference: 1
+        }))
+      );
+      const result = await complete(
+        await tx((ctx) => evaluator().captureProfile(profile, ctx)),
+        { raw_window: 2, max_windows: 1 }
+      );
+      expect(result.ids).toEqual(['a-token']);
+      expect(
+        result.results.some(
+          (r) =>
+            r.active_input?.stage.kind === 'NFT_REQUIREMENT' &&
+            r.active_input.stage.after_owner_wallet !== null
+        )
+      ).toBe(true);
+      expect(await direct(['a-token'])).toEqual(result.ids);
+    });
+    it('combines all four collection requirements with AND using their actual contracts', async () => {
+      const criteria = {
+        owns_meme: true,
+        owns_meme_tokens: JSON.stringify(['1']),
+        owns_gradient: true,
+        owns_gradient_tokens: JSON.stringify(['2']),
+        owns_nextgen: true,
+        owns_nextgen_tokens: JSON.stringify(['3']),
+        owns_lab: true,
+        owns_lab_tokens: JSON.stringify(['4'])
+      };
+      await groups([
+        group('a-all-four', criteria),
+        group('b-missing-lab', {
+          ...criteria,
+          owns_lab_tokens: JSON.stringify(['99'])
+        })
+      ]);
+      await insertRows(ADDRESS_CONSOLIDATION_KEY, [
+        { address: address(1), consolidation_key: identity.consolidation_key }
+      ]);
+      await insertRows(
+        NFT_OWNERS_TABLE,
+        [
+          MEMES_CONTRACT,
+          GRADIENT_CONTRACT,
+          NEXTGEN_CORE_CONTRACT[Network.ETH_MAINNET],
+          MEMELAB_CONTRACT
+        ].map((contract, n) => ({
+          token_id: n + 1,
+          contract,
+          wallet: address(1),
+          balance: 1,
+          block_reference: 1
+        }))
+      );
+      const result = await complete(
+        await tx((ctx) => evaluator().captureProfile(profile, ctx)),
+        { raw_window: 1, max_windows: 1 }
+      );
+      expect(result.ids).toEqual(['a-all-four']);
+      expect(await direct(['a-all-four', 'b-missing-lab'])).toEqual(result.ids);
+    });
     it('keeps status-only grant predicates and a false PENDING future horizon before early exclusion', async () => {
       const now = Date.now();
       const partition = '1:fixture';
@@ -643,6 +724,20 @@ describeWithSeed(
         execute.mockRestore();
       }
     });
+    it('counts every evaluator statement including the final horizon clock read', async () => {
+      await groups([group('a-scalar', { tdh_min: 0 })]);
+      const seed = await tx((ctx) => evaluator().captureProfile(profile, ctx));
+      const execute = jest.spyOn(sqlExecutor, 'execute');
+      try {
+        const result = await quantum(seed);
+        expect(result.query_count).toBe(execute.mock.calls.length);
+        expect(execute.mock.calls[execute.mock.calls.length - 1][0]).toContain(
+          ' AS CHAR) now'
+        );
+      } finally {
+        execute.mockRestore();
+      }
+    });
     it('falls back to canonical pages when one list references more than8 raw visible groups', async () => {
       const rows = Array.from({ length: 25 }, (_, n) =>
         group(`group-${String(n).padStart(2, '0')}`, {
@@ -694,6 +789,105 @@ describeWithSeed(
       expect(next.eligible_group_ids).toEqual([]);
       expect(next.after_group_id).toBe('a-slow');
       expect(next.active_input).toBeNull();
+    });
+    it('preserves source-collation grant status and mode comparisons', async () => {
+      await groups([
+        group('a-grant', {
+          is_beneficiary_of_grant_id: 'grant',
+          is_beneficiary_of_grant_match_mode:
+            'all_tokens' as GroupBeneficiaryGrantMatchMode
+        })
+      ]);
+      await insertRows(XTDH_GRANTS_TABLE, [
+        grantRow('grant', {
+          status: 'granted',
+          token_mode: 'include',
+          valid_to: 1
+        })
+      ]);
+      await insertRows(ADDRESS_CONSOLIDATION_KEY, [
+        { address: address(1), consolidation_key: identity.consolidation_key }
+      ]);
+      await insertRows(XTDH_GRANT_TOKENS_TABLE, [
+        { tokenset_id: 'tokens', token_id: '1', target_partition: '1:fixture' }
+      ]);
+      await insertRows(EXTERNAL_INDEXED_OWNERSHIP_721_TABLE, [
+        externalOwner('1')
+      ]);
+      const result = await complete(
+        await tx((ctx) => evaluator().captureProfile(profile, ctx))
+      );
+      expect(result.ids).toEqual(['a-grant']);
+      expect(await direct(['a-grant'])).toEqual(result.ids);
+    });
+    it('expires an old false horizon, remains false after the date, and changes only with a versioned status write', async () => {
+      await groups([group('a-grant', { is_beneficiary_of_grant_id: 'grant' })]);
+      const transition = Date.now() - 1000;
+      await insertRows(XTDH_GRANTS_TABLE, [
+        grantRow('grant', { status: 'PENDING', valid_from: transition })
+      ]);
+      await insertRows(ADDRESS_CONSOLIDATION_KEY, [
+        { address: address(1), consolidation_key: identity.consolidation_key }
+      ]);
+      await insertRows(XTDH_GRANT_TOKENS_TABLE, [
+        { tokenset_id: 'tokens', token_id: '1', target_partition: '1:fixture' }
+      ]);
+      await insertRows(EXTERNAL_INDEXED_OWNERSHIP_721_TABLE, [
+        externalOwner('1')
+      ]);
+      const seed = await tx((ctx) => evaluator().captureProfile(profile, ctx));
+      // Restore a fixed evaluation time from before an already crossed boundary.
+      const old = {
+        ...seed,
+        evaluation_time_millis: String(transition - 1000)
+      };
+      await expect(quantum(old)).rejects.toMatchObject({ code: 'EXPIRED' });
+      expect((await complete(seed)).ids).toEqual([]);
+      await sqlExecutor.execute(
+        `UPDATE ${XTDH_GRANTS_TABLE} SET status='GRANTED' WHERE id='grant'`
+      );
+      await sqlExecutor.execute(
+        `UPDATE ${MEMBERSHIP_SOURCE_STATES_TABLE} SET version=version+1 WHERE dimension='GRANTS'`
+      );
+      await expect(quantum(seed)).rejects.toMatchObject({
+        code: 'SOURCE_CHANGED'
+      });
+      expect(
+        (
+          await complete(
+            await tx((ctx) => evaluator().captureProfile(profile, ctx))
+          )
+        ).ids
+      ).toEqual(['a-grant']);
+    });
+    it('narrows raw windows and checkpoints valid dense inputs under the smallest byte ceiling', async () => {
+      const category = '界'.repeat(100);
+      await groups([
+        group('a-dense', {
+          rep_category: category,
+          rep_direction: FilterDirection.Sent,
+          rep_min: 96,
+          rep_max: 96
+        })
+      ]);
+      await insertRows(
+        RATINGS_TABLE,
+        Array.from({ length: 96 }, (_, n) => ({
+          rater_profile_id: profile,
+          matter_target_id: `peer-${String(n).padStart(40, '0')}`,
+          matter: 'REP',
+          matter_category: category,
+          rating: 1,
+          last_modified: new Date()
+        }))
+      );
+      const result = await complete(
+        await tx((ctx) => evaluator().captureProfile(profile, ctx)),
+        { raw_window: 256, max_input_bytes: 65536, max_windows: 256 }
+      );
+      expect(result.ids).toEqual(['a-dense']);
+      expect(result.results.length).toBeGreaterThan(1);
+      expect(result.results.some((r) => r.kind === 'INPUT_PENDING')).toBe(true);
     });
     it('supersedes noncatalogue changes but retains C and resumes unchanged groups after unrelated catalogue changes', async () => {
       await groups([

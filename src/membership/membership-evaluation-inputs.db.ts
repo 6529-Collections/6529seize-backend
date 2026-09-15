@@ -56,6 +56,9 @@ export interface MembershipGrantInput {
   target_partition: string;
   valid_from: string | null;
   valid_to: string | null;
+  status_granted: boolean;
+  mode_all: boolean;
+  mode_include: boolean;
 }
 export interface MembershipGroupInput {
   group: UserGroupEntity;
@@ -63,6 +66,7 @@ export interface MembershipGroupInput {
   candidate: boolean;
   token_counts: number[];
   token_types: (string | null)[];
+  grant_match_mode: 'ANY_TOKEN' | 'ALL_TOKENS' | null;
 }
 export interface MembershipRatingRow {
   rater_profile_id: string;
@@ -150,10 +154,15 @@ export class MembershipMeteredExecutor extends SqlExecutor {
   ) {
     super();
   }
-  canStart(queries = 8, rows = this.input.limits.raw_window + 1): boolean {
+  canStart(
+    queries = 8,
+    rows = this.input.limits.raw_window + 1,
+    bytes = rows === 0 ? 0 : 8192 + rows * 1024
+  ): boolean {
     return (
       this.query_count + queries <= this.input.limits.max_queries &&
       this.input_rows + rows <= this.input.limits.max_input_rows &&
+      this.input_bytes + bytes <= this.input.limits.max_input_bytes &&
       performance.now() + 20 < this.input.deadline_monotonic_millis
     );
   }
@@ -330,7 +339,7 @@ export class MembershipEvaluationInputsDb {
     ctx: MembershipPrimaryContext
   ): Promise<MembershipGroupInput | null> {
     const [row] = await this.read<Record<string, unknown>>(
-      `SELECT ${scalarColumns.map((c) => `g.${c}`).join(',')},CAST(v.catalog_version AS CHAR) group_version,v.is_deleted,(${candidateSql}) candidate,${MEMBERSHIP_TOKEN_COLUMNS.map((c, n) => `JSON_LENGTH(g.${c}) count_${n},JSON_TYPE(g.${c}) type_${n}`).join(',')} FROM ${USER_GROUPS_TABLE} g LEFT JOIN ${MEMBERSHIP_GROUP_VERSIONS_TABLE} v ON v.group_id=g.id WHERE g.id=:id`,
+      `SELECT ${scalarColumns.map((c) => `g.${c}`).join(',')},CAST(v.catalog_version AS CHAR) group_version,v.is_deleted,(${candidateSql}) candidate,CASE WHEN COALESCE(g.is_beneficiary_of_grant_match_mode,'ANY_TOKEN')='ANY_TOKEN' THEN 'ANY_TOKEN' WHEN g.is_beneficiary_of_grant_match_mode='ALL_TOKENS' THEN 'ALL_TOKENS' ELSE NULL END grant_match_mode,${MEMBERSHIP_TOKEN_COLUMNS.map((c, n) => `JSON_LENGTH(g.${c}) count_${n},JSON_TYPE(g.${c}) type_${n}`).join(',')} FROM ${USER_GROUPS_TABLE} g LEFT JOIN ${MEMBERSHIP_GROUP_VERSIONS_TABLE} v ON v.group_id=g.id WHERE g.id=:id`,
       { id },
       ctx
     );
@@ -377,6 +386,8 @@ export class MembershipEvaluationInputsDb {
     return {
       group,
       group_version: normalizeCounter(row.group_version),
+      grant_match_mode:
+        row.grant_match_mode as MembershipGroupInput['grant_match_mode'],
       candidate: membershipTruth(row.candidate),
       token_counts: MEMBERSHIP_TOKEN_COLUMNS.map((_c, n) =>
         row[`count_${n}`] === null ? 0 : membershipInteger(row[`count_${n}`])
@@ -392,11 +403,19 @@ export class MembershipEvaluationInputsDb {
   ): Promise<MembershipGrantInput | null> {
     if (!id) return null;
     const rows = await this.read<MembershipGrantInput>(
-      `SELECT id,status,token_mode,tokenset_id,target_partition,CAST(valid_from AS CHAR) valid_from,CAST(valid_to AS CHAR) valid_to FROM ${XTDH_GRANTS_TABLE} WHERE id=:id`,
+      `SELECT id,status,token_mode,tokenset_id,target_partition,CAST(valid_from AS CHAR) valid_from,CAST(valid_to AS CHAR) valid_to,(status='GRANTED') status_granted,(token_mode='ALL') mode_all,(token_mode='INCLUDE') mode_include FROM ${XTDH_GRANTS_TABLE} WHERE id=:id`,
       { id },
       ctx
     );
-    return rows[0] ?? null;
+    const row = rows[0];
+    return row
+      ? {
+          ...row,
+          status_granted: membershipTruth(row.status_granted),
+          mode_all: membershipTruth(row.mode_all),
+          mode_include: membershipTruth(row.mode_include)
+        }
+      : null;
   }
   async listWindow(
     profile: string,
