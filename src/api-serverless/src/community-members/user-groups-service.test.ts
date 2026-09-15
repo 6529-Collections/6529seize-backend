@@ -917,7 +917,7 @@ describe('UserGroupsService draft membership SQL', () => {
     });
   });
 
-  it('uses the base community view for an empty draft', async () => {
+  it('returns an identity-shaped empty view for an empty draft', async () => {
     const service = buildService();
 
     const result = await service.getSqlAndParamsForPreview(
@@ -927,7 +927,7 @@ describe('UserGroupsService draft membership SQL', () => {
 
     expect(result).not.toBeNull();
     expect(result!.sql).toContain(
-      'user_groups_view as (select * from cm_view)'
+      'user_groups_view as (select * from cm_view where false)'
     );
     expect(result!.params).not.toHaveProperty('preview_included_addresses');
     expect(result!.params).not.toHaveProperty('preview_excluded_addresses');
@@ -991,9 +991,10 @@ describe('UserGroupsService draft membership SQL', () => {
     );
 
     expect(result).not.toBeNull();
-    expect(result!.sql).toContain('i.level_raw >= :level_min');
-    expect(result!.sql).toContain('i.level_raw <= :level_max');
-    expect(result!.params).toMatchObject({ level_min: 0, level_max: 0 });
+    expect(result!.sql).not.toContain('i.level_raw >= :level_min');
+    expect(result!.sql).toContain('i.level_raw < :level_max');
+    expect(result!.sql).toContain('included_profile_ids');
+    expect(result!.params).toEqual({ level_max: 25 });
   });
 
   it('separates NFT and beneficiary grant CTEs with valid delimiters', async () => {

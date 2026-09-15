@@ -1,10 +1,13 @@
 # Membership refresh schema and publication contract
 
-Status: schema foundation only, PR #1739. No eligibility evaluator, producer,
-consumer, queue, schedule, cache, API or read-mode change is enabled here.
+Status: inactive schema foundation and runtime implementation contract. The
+additive schema comes from PR #1739; the current SQL/specification baseline is
+defined by PR #1740 and [eligibility-spec.md](eligibility-spec.md). No membership
+producer, dispatcher, worker or materialized reader is enabled by this contract.
 Implementation work remains tracked by [#2075](https://github.com/6529-Collections/6529seize-backend/issues/2075).
-The overlapping #1740 and #1822 must be reconciled against current main; their
-SQL, spec version and worker are not incorporated by this schema release.
+The overlapping July runtime in #1822 remains unmerged and must be reconciled
+with this contract and the current eligibility baseline before any useful work
+is incorporated into replacement PRs.
 
 ## Decisions
 
@@ -238,7 +241,44 @@ candidate rules, **including currently false rules**, in `valid_until_millis`.
 When crossed, time-dependent groups need direct evaluation and refresh; a null
 value is valid only after proving there is no future boundary. A refresh's lease
 must not extend that horizon. Direct/shadow checks must use the same intended
-rule semantics; this PR does not adopt #1740's unfinished conformance changes.
+rule semantics from [eligibility-spec.md](eligibility-spec.md), retaining the
+shared direct/SQL conformance coverage when adding a primary-read evaluator.
+
+## First runtime increment: repository contracts
+
+The first focused runtime PR should add isolated persistence contracts and
+real-MySQL tests without connecting existing producers, dispatching work, or
+changing authorization reads:
+
+1. Normalize source keys, dimensions and decimal-string counters at the
+   repository boundary. Reject malformed or incomplete version vectors; an
+   absent source key remains unknown. Cover native number/bigint decoding and
+   values above JavaScript's safe integer range without lossy conversion.
+   Reject unsafe numeric results; large values must arrive as bigint or valid
+   decimal strings.
+2. Accept an explicit caller-owned primary transaction for source-version and
+   refresh-request writes. Lock source keys in stable global-before-profile
+   order and use SQL arithmetic for increments. Source mutation, version and
+   request must commit or roll back together; do not create readiness evidence
+   by silently provisioning missing source keys.
+3. Implement durable job start, checkpoint, failure and completion operations
+   under source/job row locks. A duplicate start resumes the same job, a
+   completed job cannot restart, and completion increments/decrements exactly
+   once. Failed jobs keep their barriers; one job cannot clear another's work.
+4. Define the primary-read context that later evaluators will use, including
+   bypass of replica routing and stale caches. Keep current runtime readers
+   unchanged in this increment. Repository tests must prove which connection
+   executes the reads rather than assuming a transaction implies primary use.
+5. Test rollback after each write boundary, duplicate completion, overlapping
+   jobs, concurrent request increments, stable lock ordering and failed-job
+   recovery. Verify that concurrent requests coalesce without losing increments
+   and that all barriers/counters remain correct across competing transactions.
+
+Wiring every real writer, propagating durable TDH/xTDH cycle IDs, bounded
+dispatch/worker infrastructure, publication, shadow validation and reader
+cutover belong to later focused increments. The repository PR alone does not
+close the producer-coverage, consistency or runtime gates in #2065–#2067 and
+#2070–#2074.
 
 ## Rollout and remaining gates
 
