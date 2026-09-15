@@ -248,6 +248,118 @@ describe.each(['API', 'LOOP'])(
       );
     });
 
+    it('establishes a repeatable-read snapshot even when the pooled session defaults to READ COMMITTED', async () => {
+      let connection: mysql.PoolConnection | undefined;
+      let isolation: string | undefined;
+      await withMembershipPrimaryTransaction(db, async (ctx) => {
+        connection = await physical(ctx, adapter);
+        const rows = await db.execute<{ isolation: string }>(
+          'SELECT @@SESSION.transaction_isolation AS isolation',
+          undefined,
+          membershipQueryOptions(ctx)
+        );
+        isolation = rows[0].isolation;
+        await db.execute(
+          'SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED',
+          undefined,
+          membershipQueryOptions(ctx)
+        );
+      });
+      try {
+        await withMembershipPrimaryTransaction(
+          db,
+          async (ctx) => {
+            expect(await physical(ctx, adapter)).toBe(connection);
+            const options = membershipQueryOptions(ctx);
+            expect(await db.execute(query, { id: first }, options)).toEqual([
+              { version: '1' }
+            ]);
+            await observer.execute(update, { id: first });
+            expect(await observer.execute(query, { id: first })).toEqual([
+              { version: '2' }
+            ]);
+            // A second ordinary read must retain the first snapshot; session variables
+            // alone cannot prove next-transaction isolation set by SET TRANSACTION.
+            expect(await db.execute(query, { id: first }, options)).toEqual([
+              { version: '1' }
+            ]);
+            await db.execute(update, { id: second }, options);
+            throw new Error('rollback repeatable snapshot');
+          },
+          {},
+          budget(3000, 500)
+        ).then(
+          () => {
+            throw new Error('Expected rollback');
+          },
+          (error) => {
+            expect(error.message).toBe('rollback repeatable snapshot');
+          }
+        );
+        expect(await observer.execute(query, { id: second })).toEqual([
+          { version: '1' }
+        ]);
+      } finally {
+        await withMembershipPrimaryTransaction(db, async (ctx) => {
+          expect(await physical(ctx, adapter)).toBe(connection);
+          const allowed = [
+            'READ-UNCOMMITTED',
+            'READ-COMMITTED',
+            'REPEATABLE-READ',
+            'SERIALIZABLE'
+          ];
+          if (!isolation || !allowed.includes(isolation))
+            throw new Error('Unexpected saved test isolation');
+          await db.execute(
+            `SET SESSION TRANSACTION ISOLATION LEVEL ${isolation.replace(/-/g, ' ')}`,
+            undefined,
+            membershipQueryOptions(ctx)
+          );
+        });
+      }
+    });
+    it.each(['MEMBERSHIP_OPTIONS', 'BOUND_CONNECTION_ONLY'])(
+      'enforces the default statement deadline through %s without narrower limits',
+      async (kind) => {
+        const start = performance.now();
+        await expect(
+          withMembershipPrimaryTransaction(
+            db,
+            async (ctx) => {
+              const options = membershipQueryOptions(ctx);
+              expect(options.statementLimits).toBeUndefined();
+              const selected =
+                kind === 'MEMBERSHIP_OPTIONS'
+                  ? options
+                  : {
+                      wrappedConnection: options.wrappedConnection,
+                      forcePool: options.forcePool
+                    };
+              // Disable only the SELECT server cap to prove the physical client deadline
+              // still interrupts an unbounded statement and restores transaction safety.
+              await db.execute(
+                'SET SESSION max_execution_time=0',
+                undefined,
+                selected
+              );
+              await db.execute(update, { id: second }, selected);
+              await db.execute('SELECT SLEEP(3)', undefined, selected);
+            },
+            {},
+            budget(3000, 200)
+          )
+        ).rejects.toMatchObject({
+          code: 'SQL_BUDGET_EXCEEDED',
+          commitOutcome: 'NOT_SENT',
+          connectionDestroyed: true
+        });
+        expect(performance.now() - start).toBeLessThan(1500);
+        expect(await observer.execute(query, { id: second })).toEqual([
+          { version: '1' }
+        ]);
+      }
+    );
+
     it('bounds an idle callback and releases its real transaction locks', async () => {
       let context: MembershipPrimaryContext | undefined;
       await expect(
@@ -478,6 +590,30 @@ describe.each(['API', 'LOOP'])(
       }
     });
     if (adapter === 'LOOP') {
+      it('rejects BeforeTransactionStart COMMIT without returning a fabricated successful result', async () => {
+        let sendCommit = false;
+        loopDb.getDataSource().subscribers.push({
+          beforeTransactionStart: async ({ queryRunner }) => {
+            const native =
+              (await queryRunner.connect()) as mysql.PoolConnection;
+            // The interceptor owns this callback; a successful COMMIT here would
+            // mark SETUP acknowledged before any business callback existed.
+            await queryRunner.query('COMMIT');
+            sendCommit = native !== null;
+            throw new Error('setup failed after unexpected COMMIT');
+          }
+        });
+        const work = jest.fn().mockResolvedValue('never');
+        await expect(
+          withMembershipPrimaryTransaction(db, work, {}, budget())
+        ).rejects.toMatchObject({
+          code: 'SQL_TRANSACTION_CONTROL',
+          phase: 'SETUP',
+          commitOutcome: 'NOT_SENT'
+        });
+        expect(work).not.toHaveBeenCalled();
+        expect(sendCommit).toBe(false);
+      });
       it('keeps ORM manager.save and nested savepoints inside the actual outer transaction', async () => {
         const failure = new Error('rollback outer');
         let runner: QueryRunner | undefined;

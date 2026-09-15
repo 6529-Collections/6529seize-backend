@@ -81,7 +81,7 @@ export function normalizeCounter(value: unknown): string {
     );
     return value.toString();
   }
-  const decimal = typeof value === 'bigint' ? String(value) : value;
+  const decimal = typeof value === 'bigint' ? value.toString() : value;
   // Canonical decimal strings of equal length have numeric lexical ordering.
   if (
     typeof decimal !== 'string' ||

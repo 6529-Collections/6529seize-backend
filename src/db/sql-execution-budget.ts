@@ -102,7 +102,7 @@ export function validateSqlExecutionBudget(
 /** SESSION variables can arrive as strings even through the real loop driver. */
 export function normalizeSqlSessionInteger(value: unknown): number {
   if (
-    (typeof value === 'string' && !/^(0|[1-9][0-9]*)$/.test(value)) ||
+    (typeof value === 'string' && !/^(0|[1-9]\d*)$/.test(value)) ||
     !['string', 'number', 'bigint'].includes(typeof value)
   ) {
     throw new Error('Invalid saved SQL session value');
@@ -129,11 +129,13 @@ function sanitizedDriverError(
     typeof error === 'object' &&
     'errno' in error &&
     error.errno === 3572;
-  const code = lockNowait
-    ? 'ER_LOCK_NOWAIT'
-    : typeof rawCode === 'string' && /^(ER_|PROTOCOL_)[A-Z0-9_]+$/.test(rawCode)
-      ? rawCode
-      : undefined;
+  let code: string | undefined;
+  if (lockNowait) code = 'ER_LOCK_NOWAIT';
+  else if (
+    typeof rawCode === 'string' &&
+    /^(ER_|PROTOCOL_)[A-Z0-9_]+$/.test(rawCode)
+  )
+    code = rawCode;
   return new SqlExecutionBudgetExceededError(
     'SQL_STATEMENT_FAILED',
     scope.phase,
@@ -327,10 +329,15 @@ class SqlBudgetScope {
         !/^ROLLBACK\s+TO\s+(?:SAVEPOINT\s+)?/i.test(command)) ||
       /^SET\b[^;]*\bAUTOCOMMIT\b/i.test(command) ||
       /\/\*!/.test(sql);
-    if (this.phase === 'WORK' && outerControl) {
+    // Only the owned outer COMMIT phase can establish a committed outcome.
+    // In particular, BeforeTransactionStart hooks cannot commit SETUP work.
+    if (
+      (commits && this.phase !== 'COMMIT') ||
+      (this.phase === 'WORK' && outerControl)
+    ) {
       const error = new SqlExecutionBudgetExceededError(
         'SQL_TRANSACTION_CONTROL',
-        'WORK',
+        this.phase,
         this.commitOutcome
       );
       this.fail(error);
@@ -373,12 +380,13 @@ class SqlBudgetScope {
       this.abortListeners.add(onAbort);
       // COMMIT is conservatively sent only after the live pre-send check passes.
       if (commits) this.commitOutcome = 'UNKNOWN';
-      let operation: Promise<T>;
-      try {
-        operation = send();
-      } catch (error) {
-        operation = Promise.reject(error);
-      }
+      // Promise construction observes both synchronous throws and asynchronous
+      // rejection while invoking send NOW. Deferring send to a microtask would
+      // separate the live check/COMMIT state from physical transmission and break
+      // the mysql query object's synchronous return contract.
+      const operation = new Promise<T>((resolveOperation) =>
+        resolveOperation(send())
+      );
       operation.then(
         (value) => {
           if (settled) return;
@@ -389,15 +397,15 @@ class SqlBudgetScope {
           if (commits) this.commitOutcome = 'ACKNOWLEDGED';
           finish(null, value);
         },
-        (original: unknown) => {
+        (error_: unknown) => {
           if (settled) return;
-          const error = sanitizedDriverError(original, this);
+          const error = sanitizedDriverError(error_, this);
           this.fail(error);
           const fatal =
-            original &&
-            typeof original === 'object' &&
-            'fatal' in original &&
-            original.fatal;
+            error_ &&
+            typeof error_ === 'object' &&
+            'fatal' in error_ &&
+            error_.fatal;
           if (
             fatal ||
             this.phase === 'COMMIT' ||
@@ -489,7 +497,7 @@ function installQueryInterceptor(scope: SqlBudgetScope): () => void {
   const original = connection.query;
   const originalFormat = connection.config.queryFormat;
   const intercepted = (...args: unknown[]): mysql.Query => {
-    const callback = args[args.length - 1];
+    const callback = args.at(-1);
     if (typeof callback !== 'function') {
       const error = new Error('Budgeted SQL requires an observed callback');
       scope.abort(error);
@@ -647,6 +655,90 @@ async function acquireBudgeted(
   });
 }
 
+type SavedSqlSession = { execution: number; lock: number };
+type SqlBudgetQuery = (
+  phase: SqlBudgetPhase,
+  sql: string,
+  values?: readonly number[]
+) => Promise<unknown[]>;
+
+async function rollbackBudgetedTransaction(
+  scope: SqlBudgetScope,
+  began: boolean,
+  query: SqlBudgetQuery,
+  error: unknown
+): Promise<void> {
+  scope.fail(error);
+  if (scope.pending || !began) scope.abort(error);
+  if (!began || scope.destroyed || scope.commitOutcome !== 'NOT_SENT') return;
+  try {
+    await scope.runPhase('ROLLBACK', async () => {
+      if (scope.connection.transaction)
+        await scope.connection.transaction.rollback();
+      else await query('ROLLBACK', 'ROLLBACK');
+    });
+  } catch (rollbackError) {
+    scope.abort(rollbackError);
+  }
+}
+
+async function restoreBudgetedSession(
+  scope: SqlBudgetScope,
+  saved: SavedSqlSession | undefined,
+  query: SqlBudgetQuery
+): Promise<void> {
+  if (!saved || scope.destroyed) return;
+  try {
+    await query(
+      'RESTORE',
+      'SET SESSION max_execution_time = ?, innodb_lock_wait_timeout = ?',
+      [saved.execution, saved.lock]
+    );
+  } catch (cleanupError) {
+    scope.abort(cleanupError);
+    try {
+      Logger.get('SQL_EXECUTION_BUDGET').warn({
+        event: 'SQL_SESSION_RESTORE_FAILED',
+        commitOutcome: scope.commitOutcome,
+        connectionDestroyed: scope.destroyed
+      });
+    } catch {
+      /* Observability cannot change an acknowledged commit outcome. */
+    }
+  }
+}
+
+async function initializeBudgetedScope(
+  lease: SqlBudgetConnection,
+  budget: Readonly<SqlExecutionBudget>
+): Promise<{ scope: SqlBudgetScope; restoreQuery: () => void }> {
+  let scope: SqlBudgetScope | undefined;
+  const discard = () => {
+    try {
+      lease.physical.destroy();
+    } catch {
+      /* Invalid adapters still require release. */
+    }
+  };
+  try {
+    if (typeof lease.physical.destroy !== 'function')
+      throw new Error('SQL budget requires physical connection disposal');
+    if (!lease.handle || !['object', 'function'].includes(typeof lease.handle))
+      throw new Error('SQL budget requires a connection handle');
+    scope = new SqlBudgetScope(budget, lease);
+    return { scope, restoreQuery: installQueryInterceptor(scope) };
+  } catch (error) {
+    // Connection wrappers or driver instrumentation can throw while installing
+    // the interceptor. No leased session may escape the shared owner's cleanup.
+    if (scope) {
+      scope.abort(error);
+      scope.close();
+    } else discard();
+    await releaseBudgetedLease(lease, budget.deadlineMonotonicMillis, discard);
+    throw error;
+  }
+}
+
 /** Opt-in lifecycle shared by native API/test pools and the actual TypeORM loop. */
 export async function executeBudgetedSqlTransaction<T>(
   acquire: () => Promise<SqlBudgetConnection>,
@@ -655,15 +747,10 @@ export async function executeBudgetedSqlTransaction<T>(
 ): Promise<T> {
   const budget = validateSqlExecutionBudget(input);
   const lease = await acquireBudgeted(acquire, budget);
-  if (typeof lease.physical.destroy !== 'function') {
-    await lease.release();
-    throw new Error('SQL budget requires physical connection disposal');
-  }
-  const scope = new SqlBudgetScope(budget, lease);
-  const restoreQuery = installQueryInterceptor(scope);
-  let saved: { execution: number; lock: number } | undefined;
+  const { scope, restoreQuery } = await initializeBudgetedScope(lease, budget);
+  let saved: SavedSqlSession | undefined;
   let began = false;
-  let result: T;
+  let completedWork: { result: T } | undefined;
   const query = (
     phase: SqlBudgetPhase,
     sql: string,
@@ -696,7 +783,9 @@ export async function executeBudgetedSqlTransaction<T>(
       }
     });
     began = true;
-    result = await scope.runPhase('WORK', () => executable(lease.handle));
+    completedWork = {
+      result: await scope.runPhase('WORK', () => executable(lease.handle))
+    };
     scope.assertWorkRemaining();
     if (scope.pending) {
       const error = new SqlExecutionBudgetExceededError(
@@ -720,44 +809,14 @@ export async function executeBudgetedSqlTransaction<T>(
     }
   } catch (error) {
     // An AfterCommit subscriber can fail after the real COMMIT acknowledgment.
-    if (scope.commitOutcome === 'ACKNOWLEDGED') {
+    if (scope.commitOutcome === 'ACKNOWLEDGED' && completedWork) {
       scope.abort(error);
-      return result!;
+      return completedWork.result;
     }
-    scope.fail(error);
-    if (scope.pending || !began) scope.abort(error);
-    if (began && !scope.destroyed && scope.commitOutcome === 'NOT_SENT') {
-      try {
-        await scope.runPhase('ROLLBACK', async () => {
-          if (lease.transaction) await lease.transaction.rollback();
-          else await query('ROLLBACK', 'ROLLBACK');
-        });
-      } catch (rollbackError) {
-        scope.abort(rollbackError);
-      }
-    }
+    await rollbackBudgetedTransaction(scope, began, query, error);
     throw error;
   } finally {
-    if (saved && !scope.destroyed) {
-      try {
-        await query(
-          'RESTORE',
-          'SET SESSION max_execution_time = ?, innodb_lock_wait_timeout = ?',
-          [saved.execution, saved.lock]
-        );
-      } catch (cleanupError) {
-        scope.abort(cleanupError);
-        try {
-          Logger.get('SQL_EXECUTION_BUDGET').warn({
-            event: 'SQL_SESSION_RESTORE_FAILED',
-            commitOutcome: scope.commitOutcome,
-            connectionDestroyed: scope.destroyed
-          });
-        } catch {
-          /* Observability cannot change an acknowledged commit outcome. */
-        }
-      }
-    }
+    await restoreBudgetedSession(scope, saved, query);
     // Acknowledged commit remains known committed after restoration failure.
     restoreQuery();
     scope.close();
@@ -766,5 +825,7 @@ export async function executeBudgetedSqlTransaction<T>(
       scope.abort(error)
     );
   }
-  return result!;
+  if (!completedWork)
+    throw new Error('SQL transaction completed without a work result');
+  return completedWork.result;
 }
