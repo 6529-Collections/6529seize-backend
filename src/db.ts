@@ -114,6 +114,11 @@ import {
 } from '@/api/waves/wave-score.service';
 
 const mysql = require('mysql');
+import {
+  executeBudgetedSqlTransaction,
+  withSqlBudgetQueryOptions
+} from '@/db/sql-execution-budget';
+import type { PoolConnection } from 'mysql';
 
 const logger = Logger.get('DB');
 
@@ -196,6 +201,31 @@ async function execNativeTransactionally<T>(
   executable: (connectionHolder: ConnectionWrapper<QueryRunner>) => Promise<T>,
   options?: SqlTransactionOptions
 ): Promise<T> {
+  if (options?.executionBudget) {
+    return executeBudgetedSqlTransaction(
+      async () => {
+        const runner = AppDataSource.createQueryRunner('master');
+        try {
+          const physical = (await runner.connect()) as PoolConnection;
+          return {
+            handle: runner,
+            physical,
+            release: () => runner.release(),
+            transaction: {
+              begin: () => runner.startTransaction('REPEATABLE READ'),
+              commit: () => runner.commitTransaction(),
+              rollback: () => runner.rollbackTransaction()
+            }
+          };
+        } catch (error) {
+          await runner.release();
+          throw error;
+        }
+      },
+      options.executionBudget,
+      (handle) => executable({ connection: handle as QueryRunner })
+    );
+  }
   const queryRunner = AppDataSource.createQueryRunner();
   await queryRunner.connect();
   await queryRunner.startTransaction(options?.isolationLevel);
@@ -231,21 +261,37 @@ function prepareStatement(
   });
 }
 
+function serializeQueryRows(result: unknown): unknown[] {
+  // This is the adapter's established JSON wire normalization, not a general
+  // deep clone: Dates, Buffers, toJSON and omitted undefined fields must retain
+  // the same values in both bound and unbound database results.
+  const encoded = JSON.stringify(result);
+  return Object.values(JSON.parse(encoded));
+}
+
 export async function execSQLWithParams(
   sql: string,
   params?: Record<string, any>,
-  options?: { wrappedConnection?: ConnectionWrapper<QueryRunner> }
+  options?: DbQueryOptions
 ): Promise<any> {
   const givenConnection = options?.wrappedConnection?.connection;
+  if (
+    (options?.executionBudgetToken || options?.statementLimits) &&
+    !givenConnection
+  ) {
+    throw new Error(
+      'SQL budget options require their bound transaction connection'
+    );
+  }
   const preparedStatement = prepareStatement(sql, params);
   if (givenConnection) {
-    return givenConnection
-      .query(preparedStatement)
-      .then((result) => Object.values(JSON.parse(JSON.stringify(result))));
+    return withSqlBudgetQueryOptions(givenConnection, options, () =>
+      givenConnection.query(preparedStatement).then(serializeQueryRows)
+    );
   }
   return AppDataSource.manager
     .query(preparedStatement)
-    .then((result) => Object.values(JSON.parse(JSON.stringify(result))));
+    .then(serializeQueryRows);
 }
 
 export async function fetchLastUpload(): Promise<any> {

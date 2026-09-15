@@ -2,6 +2,12 @@ import { DbQueryOptions } from './db-query.options';
 import { RequestContext } from './request.context';
 
 import * as mysql from 'mysql';
+import type { SqlExecutionBudget } from '@/db/sql-execution-budget';
+export type {
+  SqlExecutionBudget,
+  SqlStatementLimits,
+  SqlCommitOutcome
+} from '@/db/sql-execution-budget';
 
 export interface ConnectionWrapper<CONNECTION_TYPE> {
   readonly connection: CONNECTION_TYPE;
@@ -10,6 +16,7 @@ export interface ConnectionWrapper<CONNECTION_TYPE> {
 /** Explicit isolation is opt-in; existing callers keep their server default. */
 export interface SqlTransactionOptions {
   readonly isolationLevel?: 'REPEATABLE READ';
+  readonly executionBudget?: SqlExecutionBudget;
 }
 
 export type BulkUpsertOpts = {

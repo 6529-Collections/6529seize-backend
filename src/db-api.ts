@@ -64,6 +64,7 @@ import { numbers } from './numbers';
 import { redisCompareAndSetJson, redisGet } from './redis';
 import {
   CustomTypeCaster,
+  execBudgetedNativeTransactionally,
   execNativeTransactionally,
   execSQLWithParams
 } from './db/my-sql.helpers';
@@ -192,12 +193,21 @@ export async function connect() {
       params?: Record<string, any>,
       options?: DbQueryOptions
     ) {
+      if (
+        (options?.executionBudgetToken || options?.statementLimits) &&
+        !options.wrappedConnection?.connection
+      ) {
+        throw new Error(
+          'SQL budget options require their bound transaction connection'
+        );
+      }
       const connection = await getConnection(options, sql);
       return await execSQLWithParams<T>(
         sql,
         connection,
         !options?.wrappedConnection?.connection,
-        params
+        params,
+        options
       );
     }
 
@@ -205,6 +215,13 @@ export async function connect() {
       executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>,
       options?: SqlTransactionOptions
     ) {
+      if (options?.executionBudget) {
+        return execBudgetedNativeTransactionally(
+          executable,
+          () => getDbConnectionByPoolName(DbPoolName.WRITE),
+          options.executionBudget
+        );
+      }
       return getDbConnectionByPoolName(DbPoolName.WRITE).then((con) =>
         execNativeTransactionally(executable, con, options)
       );

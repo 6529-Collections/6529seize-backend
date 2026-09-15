@@ -3,6 +3,12 @@ import * as mysql from 'mysql';
 import { PoolConnection, TypeCast } from 'mysql';
 import { Time } from '../time';
 import { Logger } from '../logging';
+import {
+  executeBudgetedSqlTransaction,
+  withSqlBudgetQueryOptions,
+  SqlBudgetQueryOptions,
+  SqlExecutionBudgetExceededError
+} from '@/db/sql-execution-budget';
 
 const logger = Logger.get('MYSQL_HELPERS');
 
@@ -98,6 +104,21 @@ export async function execNativeTransactionally<T>(
   connection: PoolConnection,
   options?: SqlTransactionOptions
 ): Promise<T> {
+  if (options?.executionBudget) {
+    let accepted = false;
+    try {
+      return await execBudgetedNativeTransactionally(
+        executable,
+        () => {
+          accepted = true;
+          return Promise.resolve(connection);
+        },
+        options.executionBudget
+      );
+    } finally {
+      if (!accepted) connection.release();
+    }
+  }
   try {
     if (options?.isolationLevel) {
       await beginIsolatedTransaction(connection, options);
@@ -131,6 +152,27 @@ export async function execNativeTransactionally<T>(
   }
 }
 
+export function execBudgetedNativeTransactionally<T>(
+  executable: (
+    connection: ConnectionWrapper<mysql.PoolConnection>
+  ) => Promise<T>,
+  acquire: () => Promise<mysql.PoolConnection>,
+  budget: NonNullable<SqlTransactionOptions['executionBudget']>
+): Promise<T> {
+  return executeBudgetedSqlTransaction(
+    async () => {
+      const connection = await acquire();
+      return {
+        handle: connection,
+        physical: connection,
+        release: () => connection.release()
+      };
+    },
+    budget,
+    (handle) => executable({ connection: handle as mysql.PoolConnection })
+  );
+}
+
 async function beginIsolatedTransaction(
   connection: PoolConnection,
   options: SqlTransactionOptions
@@ -155,41 +197,50 @@ export async function execSQLWithParams<T>(
   sql: string,
   connection: mysql.PoolConnection,
   closeConnection: boolean,
-  params?: Record<string, any>
+  params?: Record<string, any>,
+  options?: SqlBudgetQueryOptions
 ): Promise<T[]> {
-  return new Promise((resolve, reject) => {
-    connection.config.queryFormat = function (query, values) {
-      if (!values) return query;
-      return prepareStatement(query, values);
-    };
-    const timer = Time.now();
-    connection.query({ sql, values: params }, (err: any, result: T[]) => {
-      // Artwork records and archival metadata are private even in infrastructure
-      // logs. Bulk inserts can embed values directly in SQL, so hide both the
-      // statement and parameters for every query touching this table family.
-      const privateFamily = privateQueryFamily(sql);
-      const queryDescription = describeQuery(sql, params);
-      const queryTook = timer.diffFromNow();
-      if (queryTook.gt(Time.seconds(1))) {
-        logger.warn(
-          `SQL query took ${queryTook.toMillis()} ms to execute: ${queryDescription}`
-        );
-      }
-      if (closeConnection) {
-        connection?.release();
-      }
-      if (err) {
-        logger.error(
-          privateFamily
-            ? `Database error executing private ${privateFamily} query`
-            : `Error "${err}" executing SQL query ${queryDescription}\n`
-        );
-        reject(privateFamily ? privateQueryError(err, privateFamily) : err);
-      } else {
-        resolve(Object.values(JSON.parse(JSON.stringify(result))));
-      }
-    });
-  });
+  return withSqlBudgetQueryOptions(
+    connection,
+    options,
+    () =>
+      new Promise((resolve, reject) => {
+        connection.config.queryFormat = function (query, values) {
+          if (!values) return query;
+          return prepareStatement(query, values);
+        };
+        const timer = Time.now();
+        connection.query({ sql, values: params }, (err: any, result: T[]) => {
+          // Artwork records and archival metadata are private even in infrastructure
+          // logs. Bulk inserts can embed values directly in SQL, so hide both the
+          // statement and parameters for every query touching this table family.
+          const privateFamily = privateQueryFamily(sql);
+          const queryDescription = describeQuery(sql, params);
+          const queryTook = timer.diffFromNow();
+          if (queryTook.gt(Time.seconds(1))) {
+            logger.warn(
+              `SQL query took ${queryTook.toMillis()} ms to execute: ${queryDescription}`
+            );
+          }
+          if (closeConnection) {
+            connection?.release();
+          }
+          if (err) {
+            let description: string;
+            if (err instanceof SqlExecutionBudgetExceededError)
+              description = `${err.code} phase=${err.phase} commit=${err.commitOutcome}`;
+            else if (privateFamily)
+              description = `Database error executing private ${privateFamily} query`;
+            else
+              description = `Error "${err}" executing SQL query ${queryDescription}\n`;
+            logger.error(description);
+            reject(privateFamily ? privateQueryError(err, privateFamily) : err);
+          } else {
+            resolve(Object.values(JSON.parse(JSON.stringify(result))));
+          }
+        });
+      })
+  );
 }
 
 function prepareStatement(query: string, values: Record<string, any>) {
