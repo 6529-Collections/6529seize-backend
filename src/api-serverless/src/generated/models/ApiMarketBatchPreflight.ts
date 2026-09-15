@@ -12,17 +12,23 @@
 
 import { HttpFile } from '../http/http';
 
-export class ApiMarketSettlement {
+/**
+* Read-only simulation of the exact stored BUY_BATCH transaction. Both call and raw gas estimate are pinned to this block; its hash is checked again before responding. This result does not authorize sending or extend the original review expiry. Existing send-arming checks remain mandatory.
+*/
+export class ApiMarketBatchPreflight {
+    'operation_id': string;
+    'revision': string;
+    'transaction_digest': string;
     /**
-    * Whole source order remaining quantity verified at a canonical safe block, distinct from operation remaining_quantity.
+    * Raw eth_estimateGas result, without a safety multiplier
     */
-    'order_remaining_quantity'?: string;
-    'filled_quantity': string;
-    'remaining_quantity': string;
-    'transaction_hash'?: string;
-    'block_number'?: number;
-    'block_hash'?: string;
-    'safe_block_number'?: number;
+    'estimated_gas': string;
+    'block_number': number;
+    'block_hash': string;
+    /**
+    * Ethereum block timestamp in Unix seconds
+    */
+    'block_timestamp': number;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -30,26 +36,26 @@ export class ApiMarketSettlement {
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "order_remaining_quantity",
-            "baseName": "order_remaining_quantity",
+            "name": "operation_id",
+            "baseName": "operation_id",
+            "type": "string",
+            "format": "uuid"
+        },
+        {
+            "name": "revision",
+            "baseName": "revision",
             "type": "string",
             "format": ""
         },
         {
-            "name": "filled_quantity",
-            "baseName": "filled_quantity",
+            "name": "transaction_digest",
+            "baseName": "transaction_digest",
             "type": "string",
             "format": ""
         },
         {
-            "name": "remaining_quantity",
-            "baseName": "remaining_quantity",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "transaction_hash",
-            "baseName": "transaction_hash",
+            "name": "estimated_gas",
+            "baseName": "estimated_gas",
             "type": "string",
             "format": ""
         },
@@ -66,14 +72,14 @@ export class ApiMarketSettlement {
             "format": ""
         },
         {
-            "name": "safe_block_number",
-            "baseName": "safe_block_number",
+            "name": "block_timestamp",
+            "baseName": "block_timestamp",
             "type": "number",
             "format": "int64"
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiMarketSettlement.attributeTypeMap;
+        return ApiMarketBatchPreflight.attributeTypeMap;
     }
 
     public constructor() {
