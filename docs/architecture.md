@@ -720,6 +720,8 @@ Notification invalidation is emitted only after the push worker loads durable no
 
 WebSocket registration and re-authentication persist the identity, JWT expiry and notification grants atomically. Existing connection mutations lock the connection row before subscription rows; identity resync and deletion use the same order, and missing connections cannot gain grants. Only a transaction's owner retries confirmed deadlocks, with at most three whole attempts and bounded jitter; caller-owned transactions and ambiguous failures propagate. Socket acknowledgements follow persistence, and socket/provider operations remain outside the retried transaction. New connections, re-authentication, and identity resyncs each retain a one-percent chance of running bounded cleanup of expired and orphaned subscriptions after persistence. The repository identity update method remains the sole write path for `ws_connections.identity_id`.
 
+If authentication or notification identity sync finds that the stored connection has disappeared, the API requests transport closure and then removes orphan subscription state before returning 410. This condition does not reject the credential and sends no authentication or subscription acknowledgement. Unexpected operation, close or cleanup failures remain 5xx, with fixed action/stage warning labels alongside the existing response error envelope. The mounted web application's health check can reconnect a disconnected socket using its current token; reconnect timing depends on client lifecycle and browser scheduling. The local WebSocket adapter follows the same closure path. This defensive recovery does not establish the cause of any historical connection loss.
+
 Typing updates use the server-authenticated connection profile when resolving private visibility groups. The sender must appear in the current child/parent membership intersection for the active wave before a typing message is sent; recipients retain the same intersection. Successful typing is acknowledged with 200, expected access failures keep client-error status, and unexpected failures emit only bounded operation-stage and error labels.
 
 Terminal WebSocket send failures replace the existing error message with an allowlisted outbound frame type, fixed error category, final HTTP status and numeric SDK attempt/retry-delay metadata. Frame content, connection IDs and exception text are not copied into this diagnostic; missing or malformed metadata remains unknown. The existing operational error fingerprint and single error-event path are retained. SDK retry policy and best-effort send behavior remain unchanged, Gone connections still take the cleanup path, and a diagnostic failure cannot turn a live connection into a cleanup candidate. This metadata describes a failed send, not confirmed client delivery or a rate-limit repair.
@@ -1444,13 +1446,25 @@ chain in ordinal logical-ID order. CloudFormation therefore updates them seriall
 avoiding a parallel burst against CloudWatch Logs subscription API limits while
 preserving filter identities, destinations and patterns. This increases source
 stack update time; it does not rate-limit unrelated callers in the account/region.
-The NFT and wave score refresher throttle alarms require three breaching minutes
-out of five while invocation errors and OOM alarms remain immediate. Wave score
+Selected serialized-worker throttle alarms, including release-note generation,
+require three breaching minutes out of five while invocation errors and OOM
+alarms remain immediate. Release-note generation retains its single reserved
+execution, batch-one SQS mapping and existing queue/publication contracts; the
+alarm qualification is not proof of successful note delivery. Wave score
 refresh keeps one reserved execution; independent source-account SQS alarms
 detect sustained 30-minute backlog in either refresh queue and any visible
 dirty-refresh dead letter. Queue age is a transport guard, not proof of business
 completion. Protected alarm notifications include bounded infrastructure labels
 and numeric thresholds without forwarding free-form CloudWatch reasons.
+Three exact audited low-CPU scale-in controls instead produce sanitized,
+deterministically keyed S3 audit objects when trusted source identity, metric
+configuration, observed low-direction reason grammar and numeric evidence match.
+Recovery requires a proven previous matching low ALARM. Unknown or changed
+transition semantics keep the notification path. Audit success increments a
+bounded counter without fallback email; archive failure retains collector retry
+and failure-alarm behavior. This does not change native scaling actions or
+verify action settings or action success absent from the CloudWatch event.
+Unknown or explicitly failed metadata remains on the existing alert path.
 Separate monitoring-account CloudWatch dashboards combine bounded synthetic
 probe measurements and pipeline freshness with verified source-account REST API
 and production website ALB request metrics across regions. Dashboard access is
