@@ -8,7 +8,8 @@ import {
 
 function removeAnswerUrl(url: string): string {
   if (url.startsWith('(') || url.startsWith('<')) return '';
-  // Preserve sentence punctuation after bare URLs with a single backward scan.
+  // The URL-wrapper matrix in help-bot-desktop-knowledge.test.ts pins punctuation
+  // and bracket behavior. Preserve sentence punctuation with a single backward scan.
   let end = url.length;
   while (end > 0 && '.,;!?'.includes(url[end - 1])) end--;
   return url.slice(end);
@@ -17,10 +18,13 @@ function removeAnswerUrl(url: string): string {
 /** Links are corpus-owned and appended once, independently of model formatting. */
 export function composeDesktopAnswer(
   text: string,
-  record: HelpBotKnowledgeRecord
+  record: HelpBotKnowledgeRecord,
+  source: 'generated' | 'corpus' = 'generated'
 ): string {
   const lines = text.trimEnd().split('\n');
-  if (/^More info:/i.test(lines[lines.length - 1])) lines.pop();
+  // Only generated footers are disposable; authored corpus prose may start this way.
+  if (source === 'generated' && /^More info:/i.test(lines[lines.length - 1]))
+    lines.pop();
   // Anchor each candidate to avoid rescanning runs of unmatched opening brackets.
   const body = lines
     .join('\n')
@@ -58,7 +62,8 @@ export function desktopFallbackAnswer(
       ? record.facts.map((fact, index) => `${index + 1}. ${fact}`).join('\n\n')
       : (record.briefAnswer ??
           'Which part of 6529 Desktop do you need help with? Please describe what you see or the step you are trying to complete.'),
-    record
+    record,
+    'corpus'
   );
   const limit = detailed
     ? MAX_DESKTOP_ANSWER_CHARACTERS

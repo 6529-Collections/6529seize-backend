@@ -488,6 +488,25 @@ describe('Desktop corpus retrieval and answers', () => {
     );
   });
 
+  it('preserves an authored one-line More info answer in corpus fallback', async () => {
+    const match = await source().findMatch('what is Core');
+    if (!match) throw new Error('Expected overview record');
+    const { desktopFallbackAnswer, normalizeDesktopAnswer } =
+      await import('./help-bot-desktop-answer');
+    const briefAnswer =
+      'More info: 6529 Desktop workers index Ethereum locally.';
+    const record = { ...match.record, briefAnswer };
+    const expected = `${briefAnswer}\n\nMore info: [6529 Apps](https://6529.io/about/6529-apps)`;
+    expect(desktopFallbackAnswer(record, 'what is Core')).toBe(expected);
+    expect(
+      normalizeDesktopAnswer(
+        'More info: [bad](https://example.com)',
+        record,
+        'what is Core'
+      )
+    ).toBe(expected);
+  });
+
   it('bounds the entire deterministic reply including a long link footer', async () => {
     const match = await source().findMatch('what is Core');
     if (!match) throw new Error('Expected overview record');
@@ -894,28 +913,58 @@ describe('Desktop corpus retrieval and answers', () => {
     expect(publicAnswer).not.toHaveBeenCalled();
   });
 
-  it('fails closed for a missing dialogue stage in an older Desktop corpus', async () => {
-    const older = JSON.parse(corpus);
-    older.records = older.records.filter(
-      (record: { id: string }) =>
-        record.id !== 'desktop.tdh-after-recalculation'
-    );
-    const knowledge = new FrontendHelpBotKnowledgeSource(async () => ({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify(older)
-    }));
-    const publicAnswer = jest.fn();
-    const answerer = new HelpBotAnswerer(null, knowledge, {
-      answer: publicAnswer
-    } as unknown as HelpBotPublicDataService);
-    const result = await answerer.answer({
-      question: 'My node still does not match 6529.io, I recalculated',
-      baseUrl: 'https://6529.io'
-    });
-    expect(result.type).toBe('NO_RELIABLE_SOURCE');
-    expect(publicAnswer).not.toHaveBeenCalled();
-  });
+  it.each([
+    ['My node does not match 6529.io', 'desktop.tdh-out-of-sync'],
+    [
+      'My node does not match 6529.io, different blocks',
+      'desktop.tdh-block-mismatch'
+    ],
+    ['My node does not match 6529.io, same block', 'desktop.tdh-check-workers'],
+    [
+      'My node does not match 6529.io, same block, both caught up',
+      'desktop.tdh-recalculate'
+    ],
+    [
+      'My node does not match 6529.io, I recalculated',
+      'desktop.tdh-after-recalculation'
+    ],
+    [
+      'My node does not match 6529.io, I recalculated, same block',
+      'desktop.tdh-same-block-mismatch'
+    ],
+    [
+      'My node does not match 6529.io, I reconciled',
+      'desktop.tdh-after-reconciliation'
+    ],
+    [
+      'My node does not match 6529.io, I reconciled and recalculated',
+      'desktop.tdh-repair-diagnostics'
+    ]
+  ])(
+    'fails closed when the selected stage is missing: %s',
+    async (question, stage) => {
+      expect((await source().findMatch(question))?.record.id).toBe(stage);
+      const older = JSON.parse(corpus);
+      older.records = older.records.filter(
+        (record: { id: string }) => record.id !== stage
+      );
+      const knowledge = new FrontendHelpBotKnowledgeSource(async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(older)
+      }));
+      const publicAnswer = jest.fn();
+      const answerer = new HelpBotAnswerer(null, knowledge, {
+        answer: publicAnswer
+      } as unknown as HelpBotPublicDataService);
+      const result = await answerer.answer({
+        question,
+        baseUrl: 'https://6529.io'
+      });
+      expect(result.type).toBe('NO_RELIABLE_SOURCE');
+      expect(publicAnswer).not.toHaveBeenCalled();
+    }
+  );
 
   it('asks for a narrower question rather than cutting oversized fallback instructions', async () => {
     const oversized = JSON.parse(corpus);

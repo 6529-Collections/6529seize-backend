@@ -644,7 +644,9 @@ Normal Desktop replies use a 350-token budget, target two to four short sentence
 and are bounded to 1200 characters including links. Only explicit requests for
 detail permit 1600 tokens/6000 characters. Generation failures, empty output, token
 truncation, and oversized replies fall back to the corpus `brief_answer`, never a
-full fact dump by default. Older records without a short answer use a concise
+full fact dump by default. Authored corpus prose beginning "More info:" is
+preserved; only generated trailing footers are stripped before adding approved
+links. Older records without a short answer use a concise
 clarification fallback. Explicit detailed fallback keeps complete facts and warns
 by asking for a narrower topic if the complete procedure cannot fit.
 
