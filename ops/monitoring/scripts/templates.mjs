@@ -218,7 +218,12 @@ function processingLane(r, lane, common, collectorEnv, permissions) {
   r[`${lane}Collector`] = functionResource(
     'collect',
     collectorEnv,
-    normal ? [db, archiveWrite, sendNormal] : [sendCritical],
+    normal
+      ? [db, archiveWrite, sendNormal]
+      : [
+          sendCritical,
+          statement(['s3:PutObject'], sub('${Archive.Arn}/controls/v1/*'))
+        ],
     {},
     { ReservedConcurrentExecutions: normal ? 4 : 2 }
   );
@@ -1051,7 +1056,8 @@ function sourceTemplate(environment) {
           'nftLinkRefresherLoop',
           'waveScoreRefreshLoop',
           'subscriptionCoverageReconciliationLoop',
-          'nftsLoop'
+          'nftsLoop',
+          'releaseNotesGenerationLoop'
         ].includes(name) && metric === 'Throttles';
       r[`${id}${metric}`] = {
         Type: 'AWS::CloudWatch::Alarm',

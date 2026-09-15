@@ -1440,13 +1440,25 @@ chain in ordinal logical-ID order. CloudFormation therefore updates them seriall
 avoiding a parallel burst against CloudWatch Logs subscription API limits while
 preserving filter identities, destinations and patterns. This increases source
 stack update time; it does not rate-limit unrelated callers in the account/region.
-The NFT and wave score refresher throttle alarms require three breaching minutes
-out of five while invocation errors and OOM alarms remain immediate. Wave score
+Selected serialized-worker throttle alarms, including release-note generation,
+require three breaching minutes out of five while invocation errors and OOM
+alarms remain immediate. Release-note generation retains its single reserved
+execution, batch-one SQS mapping and existing queue/publication contracts; the
+alarm qualification is not proof of successful note delivery. Wave score
 refresh keeps one reserved execution; independent source-account SQS alarms
 detect sustained 30-minute backlog in either refresh queue and any visible
 dirty-refresh dead letter. Queue age is a transport guard, not proof of business
 completion. Protected alarm notifications include bounded infrastructure labels
 and numeric thresholds without forwarding free-form CloudWatch reasons.
+Three exact audited low-CPU scale-in controls instead produce sanitized,
+deterministically keyed S3 audit objects when trusted source identity, metric
+configuration, observed low-direction reason grammar and numeric evidence match.
+Recovery requires a proven previous matching low ALARM. Unknown or changed
+transition semantics keep the notification path. Audit success increments a
+bounded counter without fallback email; archive failure retains collector retry
+and failure-alarm behavior. This does not change native scaling actions or
+verify action settings or action success absent from the CloudWatch event.
+Unknown or explicitly failed metadata remains on the existing alert path.
 Separate monitoring-account CloudWatch dashboards combine bounded synthetic
 probe measurements and pipeline freshness with verified source-account REST API
 and production website ALB request metrics across regions. Dashboard access is
