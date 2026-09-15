@@ -589,8 +589,9 @@ is not evidence that the future runtime or cutover is ready.
 ### Deployment units
 
 For staging, deploy `attachmentsProcessor`, `attachmentsOrchestrator`,
-`helpBotReplyLoop`, then `api`, sequentially. The attachment processor and
+`dropMediaSanitizer`, `helpBotReplyLoop`, then `api`, sequentially. The attachment processor and
 orchestrator publish attachment status through the trusted group-recipient SQL;
+the media sanitizer publishes media-status drop updates through that SQL;
 the help bot publishes drop/reaction updates through the same member SQL;
 the API serves lists, previews, feeds, mention search, containment, and live
 broadcasts. The processor precedes its existing orchestration producer.
@@ -599,8 +600,9 @@ no migration or feature activation is needed. The API's existing catalogue
 prerequisites are unchanged and already deployed.
 
 `releaseNotesGenerationLoop` also reaches group-recipient SQL when posting drops,
-but its catalogue permits production only. Include it in a separately authorized
-production plan. Other loops using only the unchanged direct evaluator or
+but its catalogue permits production only. In production, deploy it after
+`helpBotReplyLoop` and before the final `api` deployment/publication signal.
+Other loops using only the unchanged direct evaluator or
 ungrouped notification methods do not need this SQL-only deployment.
 Rollback uses a reviewed revert and the same services; a materialization read
 switch cannot undo these SQL changes.
