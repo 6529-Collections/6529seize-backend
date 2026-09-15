@@ -10,7 +10,8 @@ import { Logger } from '../../logging';
 import {
   ConnectionWrapper,
   setSqlExecutor,
-  SqlExecutor
+  SqlExecutor,
+  SqlTransactionOptions
 } from '../../sql-executor';
 import { Time } from '../../time';
 import { selectWorkerDatabaseFromEnv } from '@/tests/_setup/testDatabase';
@@ -55,10 +56,11 @@ class DbImpl extends SqlExecutor {
   }
 
   async executeNativeQueriesInTransaction<T>(
-    executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>
+    executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>,
+    options?: SqlTransactionOptions
   ) {
     return getConnectionsFromPool().then((connection) =>
-      execNativeTransactionally(executable, connection)
+      execNativeTransactionally(executable, connection, options)
     );
   }
 }

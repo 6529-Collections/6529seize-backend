@@ -7,6 +7,11 @@ export interface ConnectionWrapper<CONNECTION_TYPE> {
   readonly connection: CONNECTION_TYPE;
 }
 
+/** Explicit isolation is opt-in; existing callers keep their server default. */
+export interface SqlTransactionOptions {
+  readonly isolationLevel?: 'REPEATABLE READ';
+}
+
 export type BulkUpsertOpts = {
   chunkSize?: number; // default 1000
   connection?: ConnectionWrapper<any>; // optional wrapped connection
@@ -26,7 +31,8 @@ export abstract class SqlExecutor {
   ): Promise<T[]>;
 
   abstract executeNativeQueriesInTransaction<T>(
-    executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>
+    executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>,
+    options?: SqlTransactionOptions
   ): Promise<T>;
 
   async oneOrNull<T>(
@@ -168,9 +174,10 @@ export abstract class LazyDbAccessCompatibleService {
   }
 
   public async executeNativeQueriesInTransaction<T>(
-    executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>
+    executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>,
+    options?: SqlTransactionOptions
   ): Promise<T> {
-    return this.db.executeNativeQueriesInTransaction(executable);
+    return this.db.executeNativeQueriesInTransaction(executable, options);
   }
 
   public async getLastInsertId(

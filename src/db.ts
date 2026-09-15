@@ -97,7 +97,8 @@ import {
   dbSupplier,
   setSqlExecutor,
   SqlExecutor,
-  sqlExecutor
+  sqlExecutor,
+  SqlTransactionOptions
 } from './sql-executor';
 import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
 import { equalIgnoreCase } from './strings';
@@ -150,9 +151,10 @@ export async function connect(entities: any[] = [], syncEntities = false) {
     }
 
     async executeNativeQueriesInTransaction<T>(
-      executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>
+      executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>,
+      options?: SqlTransactionOptions
     ) {
-      return execNativeTransactionally(executable);
+      return execNativeTransactionally(executable, options);
     }
   }
 
@@ -191,11 +193,12 @@ export function consolidateTransactions(
 }
 
 async function execNativeTransactionally<T>(
-  executable: (connectionHolder: ConnectionWrapper<QueryRunner>) => Promise<T>
+  executable: (connectionHolder: ConnectionWrapper<QueryRunner>) => Promise<T>,
+  options?: SqlTransactionOptions
 ): Promise<T> {
   const queryRunner = AppDataSource.createQueryRunner();
   await queryRunner.connect();
-  await queryRunner.startTransaction();
+  await queryRunner.startTransaction(options?.isolationLevel);
 
   try {
     const result = await executable({ connection: queryRunner });
