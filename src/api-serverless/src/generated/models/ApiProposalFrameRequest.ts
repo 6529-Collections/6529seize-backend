@@ -10,19 +10,16 @@
  * Do not edit the class manually.
  */
 
-import { ApiMarketBatchAllocation } from '../models/ApiMarketBatchAllocation';
-import { ApiMarketIdentity } from '../models/ApiMarketIdentity';
 import { HttpFile } from '../http/http';
 
-export class ApiMarketBatchSettlementItem {
+export class ApiProposalFrameRequest {
     /**
-    * Whole source order remaining quantity verified at a canonical safe block; absent when unavailable.
+    * Owned drop upload URL or recognized IPFS, IPNS, or Arweave artwork URL
     */
-    'order_remaining_quantity'?: string;
-    'asset_key': string;
-    'order': ApiMarketIdentity;
-    'filled_quantity': string;
-    'allocations': Array<ApiMarketBatchAllocation>;
+    'media_url': string;
+    'mime_type': ApiProposalFrameRequestMimeTypeEnum;
+    'title': string;
+    'layout': ApiProposalFrameRequestLayoutEnum;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -30,40 +27,51 @@ export class ApiMarketBatchSettlementItem {
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "order_remaining_quantity",
-            "baseName": "order_remaining_quantity",
+            "name": "media_url",
+            "baseName": "media_url",
             "type": "string",
             "format": ""
         },
         {
-            "name": "asset_key",
-            "baseName": "asset_key",
+            "name": "mime_type",
+            "baseName": "mime_type",
+            "type": "ApiProposalFrameRequestMimeTypeEnum",
+            "format": ""
+        },
+        {
+            "name": "title",
+            "baseName": "title",
             "type": "string",
             "format": ""
         },
         {
-            "name": "order",
-            "baseName": "order",
-            "type": "ApiMarketIdentity",
-            "format": ""
-        },
-        {
-            "name": "filled_quantity",
-            "baseName": "filled_quantity",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "allocations",
-            "baseName": "allocations",
-            "type": "Array<ApiMarketBatchAllocation>",
+            "name": "layout",
+            "baseName": "layout",
+            "type": "ApiProposalFrameRequestLayoutEnum",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiMarketBatchSettlementItem.attributeTypeMap;
+        return ApiProposalFrameRequest.attributeTypeMap;
     }
 
     public constructor() {
     }
 }
+
+export enum ApiProposalFrameRequestMimeTypeEnum {
+    ImagePng = 'image/png',
+    ImageJpeg = 'image/jpeg',
+    ImageJpg = 'image/jpg',
+    ImageGif = 'image/gif',
+    ImageWebp = 'image/webp',
+    VideoMp4 = 'video/mp4',
+    VideoXMsvideo = 'video/x-msvideo',
+    VideoQuicktime = 'video/quicktime',
+    TextHtml = 'text/html'
+}
+export enum ApiProposalFrameRequestLayoutEnum {
+    Portrait = 'portrait',
+    Landscape = 'landscape'
+}
+

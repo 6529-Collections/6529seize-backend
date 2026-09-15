@@ -84,6 +84,9 @@ export type KnownMarketOrder = Pick<
   'identity' | 'components'
 >;
 export interface MarketPrepared {
+  receipt?: import('@/marketplace/market-receipt-evidence').MarketReceipt;
+  /** Canonical approval evidence retained when preparation is refreshed. */
+  approvalReceipts?: import('@/marketplace/market-receipt-evidence').MarketReceiptTransaction[];
   intent: MarketTradeIntent;
   recipientInProfile: boolean;
   approvalTransactions: MarketTransaction[];
