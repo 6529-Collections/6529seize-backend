@@ -1095,7 +1095,11 @@ function findMatchesInRecords(
     ? (options?.desktopRecordId ?? desktopRecordIdForQuestion(question))
     : undefined;
   return records
-    .filter((record) => !desktopRecordId || record.id === desktopRecordId)
+    .filter(
+      (record) =>
+        !desktopRecordId ||
+        (record.id === desktopRecordId && isDesktopKnowledgeRecord(record))
+    )
     .filter((record) =>
       desktopQuestion
         ? isDesktopKnowledgeRecord(record) || record.tags.includes('desktop')

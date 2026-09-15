@@ -671,7 +671,10 @@ runtime first can misroute generic wallet questions or truncate recovery answers
 or Core application release is required. Older runtimes can read the additional
 records, but need this renderer/routing update for full procedural answers.
 
-Desktop staged replies require the selected stage to exist in the published corpus.
+Desktop staged replies require the selected stage to exist in the published corpus
+and retain its `desktop-core` eligibility. A generic `desktop`-tagged app handoff
+may be retrieved normally but cannot be forced into a diagnostic or clarification
+stage through `desktopRecordId`.
 A new runtime against an older corpus fails closed for a missing stage, including
 a reported recalculation; it must not replay a generic TDH guide or infer a repair
 procedure from another record. Questions (including plural-subject questions such

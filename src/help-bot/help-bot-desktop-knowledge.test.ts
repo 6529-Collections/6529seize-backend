@@ -624,6 +624,52 @@ describe('Desktop corpus retrieval and answers', () => {
     );
   });
 
+  it('allows ordinary app handoff retrieval but rejects it as a forced Desktop stage', async () => {
+    const knowledge = source();
+    const question = 'how do I connect 6529 desktop?';
+    expect((await knowledge.findMatch(question))?.record.id).toBe(
+      'wallet.connection-sharing'
+    );
+    expect(
+      await knowledge.findMatch(question, {
+        desktopScope: true,
+        desktopRecordId: 'wallet.connection-sharing'
+      })
+    ).toBeNull();
+  });
+
+  it.each([
+    ['My node does not match 6529.io', 'desktop.tdh-out-of-sync'],
+    ['what is Core', 'desktop.legacy-core-name'],
+    ['what is 6529 Desktop', 'desktop.overview'],
+    ['Where do I enable an RPC provider?', 'desktop.clarify-context']
+  ])(
+    'rejects a forced record whose Desktop eligibility was lost: %s',
+    async (question, id) => {
+      const changed = JSON.parse(corpus);
+      const record = changed.records.find(
+        (item: { id: string }) => item.id === id
+      );
+      if (!record) throw new Error('Expected Desktop corpus record');
+      record.tags = ['desktop'];
+      const knowledge = new FrontendHelpBotKnowledgeSource(async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(changed)
+      }));
+      const publicAnswer = jest.fn();
+      const answerer = new HelpBotAnswerer(null, knowledge, {
+        answer: publicAnswer
+      } as unknown as HelpBotPublicDataService);
+      const result = await answerer.answer({
+        question,
+        baseUrl: 'https://6529.io'
+      });
+      expect(result.type).toBe('NO_RELIABLE_SOURCE');
+      expect(publicAnswer).not.toHaveBeenCalled();
+    }
+  );
+
   it('does not manufacture a recovery match from the platform name alone', async () => {
     const { answerer } = makeAnswerer();
     const result = await answerer.answer({
