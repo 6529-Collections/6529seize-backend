@@ -40,11 +40,13 @@ async function failedRun(profile: string): Promise<MembershipGcHint> {
       claim.target,
       claim,
       null,
-      'fixture',
-      false,
-      100,
-      3,
-      true,
+      {
+        error_code: 'fixture',
+        supersede: false,
+        retry_millis: 100,
+        max_attempts: 3,
+        park: true
+      },
       ctx
     )
   );

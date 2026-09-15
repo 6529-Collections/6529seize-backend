@@ -74,7 +74,7 @@ export class MembershipGcCheckpointsDb extends LazyDbAccessCompatibleService {
       { id: MEMBERSHIP_GC_CHECKPOINT_ID },
       membershipQueryOptions(ctx)
     );
-    if (!row || row.protocol_version !== 1)
+    if (row?.protocol_version !== 1)
       throw new MembershipWorkerError(
         'INTEGRITY',
         'Membership GC checkpoint is not provisioned with protocol 1'
@@ -182,7 +182,7 @@ export class MembershipGcCheckpointsDb extends LazyDbAccessCompatibleService {
     } catch {
       return null;
     }
-    const existing = progress.pending.find((item) => item.run_id === row.id);
+    const existing = progress.pending.some((item) => item.run_id === row.id);
     if (existing) return null;
     const entry = this.admit(progress, row.id, now, options);
     return {
@@ -259,8 +259,7 @@ export class MembershipGcCheckpointsDb extends LazyDbAccessCompatibleService {
         (progress.next_pending_slot + offset) % MEMBERSHIP_GC_PENDING_CAPACITY;
       const entry = progress.pending.find((item) => item.slot === slot);
       if (
-        !entry ||
-        entry.claim_token !== null ||
+        entry?.claim_token !== null ||
         BigInt(entry.eligible_at_millis) > BigInt(now)
       )
         continue;

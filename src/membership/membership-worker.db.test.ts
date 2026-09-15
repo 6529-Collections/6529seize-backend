@@ -192,6 +192,42 @@ describeWithSeed('membership worker transactional fencing', [], () => {
     ).toEqual([]);
   });
 
+  it('acknowledges a two-digit request after an earlier one-digit publication', async () => {
+    for (let request = 0; request < 8; request++) await membershipTestRequest();
+    const earlier = await resume();
+    await checkpoint(earlier!, true, []);
+    const earlierFinal = await resume();
+    await membershipTestTx((ctx) =>
+      membershipTestRuns().complete(earlierFinal!, true, ctx)
+    );
+    await membershipTestRequest();
+    await membershipTestRequest();
+    const current = await resume();
+    await checkpoint(current!, true, []);
+    const final = await resume();
+    const completed = await membershipTestTx((ctx) =>
+      membershipTestRuns().complete(final!, true, ctx)
+    );
+    expect(completed.request_version).toBe('10');
+    expect(
+      await membershipTestTx((ctx) =>
+        membershipTestTargets().find(membershipTestTarget, ctx)
+      )
+    ).toMatchObject({
+      requested_version: '10',
+      completed_version: '10',
+      active_run_id: null,
+      available_at_millis: null,
+      attempts: 0,
+      last_error: null
+    });
+    expect(
+      await sqlExecutor.execute(
+        `SELECT run_id FROM ${MEMBERSHIP_PUBLICATIONS_TABLE}`
+      )
+    ).toEqual([{ run_id: current!.run_id }]);
+  });
+
   it('preserves a newer request reset when an older run fails permanently', async () => {
     const claim = await membershipTestClaim();
     await membershipTestRequest();
@@ -200,11 +236,13 @@ describeWithSeed('membership worker transactional fencing', [], () => {
         membershipTestTarget,
         claim,
         null,
-        'INTEGRITY',
-        false,
-        1000,
-        1,
-        true,
+        {
+          error_code: 'INTEGRITY',
+          supersede: false,
+          retry_millis: 1000,
+          max_attempts: 1,
+          park: true
+        },
         ctx
       )
     );
@@ -248,11 +286,13 @@ describeWithSeed('membership worker transactional fencing', [], () => {
         membershipTestTarget,
         claim,
         null,
-        'TRANSIENT',
-        false,
-        1000,
-        3,
-        false,
+        {
+          error_code: 'TRANSIENT',
+          supersede: false,
+          retry_millis: 1000,
+          max_attempts: 3,
+          park: false
+        },
         ctx
       )
     );
@@ -279,11 +319,13 @@ describeWithSeed('membership worker transactional fencing', [], () => {
           membershipTestTarget,
           claim,
           null,
-          'TRANSIENT',
-          false,
-          100,
-          3,
-          false,
+          {
+            error_code: 'TRANSIENT',
+            supersede: false,
+            retry_millis: 100,
+            max_attempts: 3,
+            park: false
+          },
           ctx
         )
       )
@@ -310,11 +352,13 @@ describeWithSeed('membership worker transactional fencing', [], () => {
           membershipTestTarget,
           claim,
           null,
-          'TRANSIENT',
-          false,
-          100,
-          3,
-          false,
+          {
+            error_code: 'TRANSIENT',
+            supersede: false,
+            retry_millis: 100,
+            max_attempts: 3,
+            park: false
+          },
           ctx
         )
       )

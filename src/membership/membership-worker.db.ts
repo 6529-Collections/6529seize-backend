@@ -142,8 +142,7 @@ export class MembershipWorkerDb extends LazyDbAccessCompatibleService {
         const target = await this.target(key, true, ctx);
         const now = await this.now(ctx);
         if (
-          !target ||
-          target.available_at_millis === null ||
+          target?.available_at_millis == null ||
           BigInt(target.requested_version) <= BigInt(target.completed_version)
         )
           return null;
@@ -479,8 +478,11 @@ export class MembershipWorkerDb extends LazyDbAccessCompatibleService {
           { id: run.id, cursor: JSON.stringify(cursor), checkpoint, now },
           membershipQueryOptions(ctx)
         );
+        // lockClaim proved this run's version exceeds completed_version while
+        // holding the target lock. Assign exactly; GREATEST with a bound decimal
+        // string can compare lexically (for example keeping 8 instead of 10).
         await this.db.execute(
-          `UPDATE ${MEMBERSHIP_REFRESH_TARGETS_TABLE} SET completed_version=GREATEST(completed_version,:version),active_run_id=NULL,
+          `UPDATE ${MEMBERSHIP_REFRESH_TARGETS_TABLE} SET completed_version=:version,active_run_id=NULL,
         available_at_millis=:available,attempts=IF(requested_version=:version,0,attempts),last_error=IF(requested_version=:version,NULL,last_error),updated_at_millis=:now
         WHERE scope=:scope AND target_id=:target_id`,
           {
@@ -512,13 +514,22 @@ export class MembershipWorkerDb extends LazyDbAccessCompatibleService {
     key: MembershipRefreshTargetKey,
     claim: MembershipWorkerClaim | null,
     expectedRequest: string | null,
-    errorCode: string,
-    supersede: boolean,
-    retryMillis: number,
-    maxAttempts: number,
-    park: boolean,
+    failure: {
+      error_code: string;
+      supersede: boolean;
+      retry_millis: number;
+      max_attempts: number;
+      park: boolean;
+    },
     ctx: MembershipPrimaryContext
   ): Promise<'PENDING' | 'FAILED' | 'SUPERSEDED' | 'FENCED'> {
+    const {
+      error_code: errorCode,
+      supersede,
+      retry_millis: retryMillis,
+      max_attempts: maxAttempts,
+      park
+    } = failure;
     return timeMembershipOperation(
       'MembershipWorkerDb->fail',
       ctx,
@@ -530,8 +541,7 @@ export class MembershipWorkerDb extends LazyDbAccessCompatibleService {
         if (claim) {
           run = await this.run(claim.run_id, true, ctx);
           if (
-            !run ||
-            target.active_run_id !== run.id ||
+            target.active_run_id !== run?.id ||
             run.lease_token !== claim.lease_token ||
             run.checkpoint_version !== claim.checkpoint_version ||
             run.status !== 'RUNNING'
