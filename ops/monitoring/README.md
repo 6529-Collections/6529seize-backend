@@ -44,9 +44,9 @@ Ordinary 4xx responses and moderation decisions are not operational errors. Sile
 catches, console-only handled errors outside the shared logger, failures before
 telemetry reaches AWS, and unconfigured frontend/external providers remain gaps.
 Platform alarms can detect a failed invocation even when JavaScript cannot log it.
-The NFT link refresher, wave score refresher, subscription coverage reconciler
-and NFT processing loop throttle alarms require at least one throttle in three
-of the last five one-minute periods. The NFT refresher's
+The NFT link refresher, wave score refresher, subscription coverage reconciler,
+NFT processing loop and release-note generation throttle alarms require at least
+one throttle in three of the last five one-minute periods. The NFT refresher's
 SQS event source caps concurrency at the
 function's reserved capacity, preventing the poller from overshooting that limit.
 Isolated throttles therefore do not generate immediate alarm/recovery pairs;
@@ -55,12 +55,15 @@ execution: its two FIFO sources and one-minute fallback can contend for that
 capacity even while messages drain normally. Subscription coverage reconciliation
 and NFT processing also reserve one execution while running overlapping
 one-minute and longer schedules. Their short contention can be retried before
-the next scheduled run. The sustained rule delays the first throttle warning
+the next scheduled run. Release-note generation keeps its single reserved
+execution and batch-one SQS consumer; brief polling contention can occur while
+messages drain successfully. Its queue, retry/redrive and publication contracts
+are unchanged. The sustained rule delays the first throttle warning
 until three breaching minutes occur within the five-minute evaluation window;
 it does not measure successful business output or guarantee a detection SLA.
 Recovery follows the same rolling window without a separate cooldown.
 Invocation-error and OOM alarms remain immediate, as do other services' throttle
-alarms, including release-note generation. Direct SNS alarm actions are retained.
+alarms. Direct SNS alarm actions are retained.
 
 Three audited production low-CPU autoscaling controls are recorded without
 operator notifications when the collector positively matches their exact source
