@@ -1,3 +1,4 @@
+import { performance } from 'node:perf_hooks';
 import { DataSource, QueryRunner } from 'typeorm';
 import { UserGroupEntity } from '@/entities/IUserGroup';
 import {
@@ -302,4 +303,55 @@ describe('Membership evaluator explicit online schema scope', () => {
     ).rejects.toBe(failure);
     expect(f.physical.destroy).toHaveBeenCalledTimes(1);
   });
+  it.each(['before-acquire', 'after-acquire', 'after-DDL'] as const)(
+    'rejects elapsed absolute deadlines without relying on timer ordering: %s',
+    async (phase) => {
+      const f = fixture();
+      let now = 0;
+      const descriptor = Object.getOwnPropertyDescriptor(performance, 'now');
+      Object.defineProperty(performance, 'now', {
+        configurable: true,
+        value: () => now
+      });
+      const original = f.runner.query.getMockImplementation()!;
+      if (phase === 'after-acquire')
+        f.runner.connect.mockImplementation(async () => {
+          now = 3001;
+          return f.physical;
+        });
+      if (phase === 'after-DDL')
+        f.runner.query.mockImplementation(async (sql) => {
+          if (sql === MEMBERSHIP_EVALUATOR_INDEX_ONLINE) now = 11;
+          return original(sql);
+        });
+      try {
+        const operation = executeMembershipOnlineIndex(
+          f.runner as unknown as QueryRunner,
+          MEMBERSHIP_EVALUATOR_INDEX_ONLINE,
+          10
+        );
+        // The acquisition microtask has not run; no timer is advanced or serviced.
+        if (phase === 'before-acquire') now = 3001;
+        await expect(operation).rejects.toThrow(
+          phase === 'after-DDL'
+            ? 'unknown after deadline'
+            : 'connection deadline'
+        );
+        if (phase === 'before-acquire') {
+          expect(f.runner.connect).not.toHaveBeenCalled();
+          expect(f.physical.destroy).not.toHaveBeenCalled();
+        } else expect(f.physical.destroy).toHaveBeenCalledTimes(1);
+        if (phase !== 'after-DDL')
+          expect(f.runner.query).not.toHaveBeenCalled();
+        else
+          expect(f.runner.query).not.toHaveBeenCalledWith(
+            'SET SESSION lock_wait_timeout = ?',
+            [31536000]
+          );
+      } finally {
+        if (descriptor) Object.defineProperty(performance, 'now', descriptor);
+        else Reflect.deleteProperty(performance, 'now');
+      }
+    }
+  );
 });

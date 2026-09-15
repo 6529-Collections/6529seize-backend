@@ -6,6 +6,59 @@ interface PhysicalSchemaConnection {
   destroy(): void;
 }
 
+/** Own absolute settlement even when the event loop services a callback before its overdue timer. */
+function schemaDeadline<T>(
+  send: () => Promise<T>,
+  durationMillis: number,
+  message: string,
+  onTimeout: () => void,
+  onLate?: (value: T) => void
+): Promise<T> {
+  const until = performance.now() + durationMillis;
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (error: { value: unknown } | null, value?: T) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error.value);
+      else resolve(value as T);
+    };
+    const expire = () => {
+      if (settled) return;
+      finish({ value: new Error(message) });
+      try {
+        onTimeout();
+      } catch {
+        /* Disposal cannot leave the owner pending. */
+      }
+    };
+    const timer = setTimeout(expire, Math.max(0, until - performance.now()));
+    Promise.resolve()
+      .then(async () => {
+        if (settled || performance.now() >= until) {
+          expire();
+          return;
+        }
+        const value = await send();
+        if (settled || performance.now() >= until) {
+          expire();
+          try {
+            onLate?.(value);
+          } catch {
+            /* A late acquisition is never usable. */
+          }
+          return;
+        }
+        finish(null, value);
+      })
+      .catch((error: unknown) => {
+        if (performance.now() >= until) expire();
+        else finish({ value: error });
+      });
+  });
+}
+
 function schemaStatement<T>(
   runner: QueryRunner,
   statement: string,
@@ -13,69 +66,24 @@ function schemaStatement<T>(
   deadlineMillis: number,
   dispose: () => void
 ): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      try {
-        dispose();
-      } catch {
-        // A disposal error must not escape the timer or leave this promise pending.
-      }
-      reject(
-        new Error(
-          'Membership schema statement outcome is unknown after deadline'
-        )
-      );
-    }, deadlineMillis);
-    // Consume late callbacks and synchronous throws, including after disposal.
-    Promise.resolve()
-      .then(() => runner.query(statement, parameters))
-      .then(
-        (value: T) => {
-          clearTimeout(timer);
-          resolve(value);
-        },
-        (error: unknown) => {
-          clearTimeout(timer);
-          reject(error);
-        }
-      );
-  });
+  return schemaDeadline(
+    () => runner.query(statement, parameters) as Promise<T>,
+    deadlineMillis,
+    'Membership schema statement outcome is unknown after deadline',
+    dispose
+  );
 }
 
 function schemaConnection(
   runner: QueryRunner
 ): Promise<PhysicalSchemaConnection> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      settled = true;
-      reject(
-        new Error('Membership schema connection deadline exceeded before DDL')
-      );
-    }, 3000);
-    Promise.resolve()
-      .then(() => runner.connect())
-      .then(
-        (physical: PhysicalSchemaConnection) => {
-          if (settled) {
-            try {
-              physical.destroy();
-            } catch {
-              /* Late acquisition is never used. */
-            }
-            return;
-          }
-          settled = true;
-          clearTimeout(timer);
-          resolve(physical);
-        },
-        (error: unknown) => {
-          settled = true;
-          clearTimeout(timer);
-          reject(error);
-        }
-      );
-  });
+  return schemaDeadline(
+    () => runner.connect(),
+    3000,
+    'Membership schema connection deadline exceeded before DDL',
+    () => undefined,
+    (physical: PhysicalSchemaConnection) => physical.destroy()
+  );
 }
 
 /** DDL is not transactional: a lost acknowledgement must be reconciled later. */
