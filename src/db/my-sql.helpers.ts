@@ -1,4 +1,4 @@
-import { ConnectionWrapper } from '../sql-executor';
+import { ConnectionWrapper, SqlTransactionOptions } from '../sql-executor';
 import * as mysql from 'mysql';
 import { PoolConnection, TypeCast } from 'mysql';
 import { Time } from '../time';
@@ -95,10 +95,15 @@ function privateQueryError(
 
 export async function execNativeTransactionally<T>(
   executable: (connectionWrapper: ConnectionWrapper<any>) => Promise<T>,
-  connection: PoolConnection
+  connection: PoolConnection,
+  options?: SqlTransactionOptions
 ): Promise<T> {
   try {
-    connection.beginTransaction();
+    if (options?.isolationLevel) {
+      await beginIsolatedTransaction(connection, options);
+    } else {
+      connection.beginTransaction();
+    }
     const result = await executable({ connection: connection });
     return await new Promise((resolve, reject) => {
       connection.commit((err: any) => {
@@ -110,11 +115,37 @@ export async function execNativeTransactionally<T>(
       });
     });
   } catch (e) {
-    connection.rollback();
+    if (options?.isolationLevel) {
+      await new Promise<void>((resolve) =>
+        connection.rollback(() => resolve())
+      );
+    } else {
+      connection.rollback();
+    }
     throw e;
   } finally {
     connection.release();
   }
+}
+
+async function beginIsolatedTransaction(
+  connection: PoolConnection,
+  options: SqlTransactionOptions
+): Promise<void> {
+  if (options.isolationLevel !== 'REPEATABLE READ') {
+    throw new Error('Unsupported explicit transaction isolation');
+  }
+  // SET TRANSACTION applies to the next transaction only, avoiding pooled
+  // connection session-setting leaks into unrelated legacy requests.
+  await new Promise<void>((resolve, reject) => {
+    connection.query(
+      'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',
+      (error) => (error ? reject(error) : resolve())
+    );
+  });
+  await new Promise<void>((resolve, reject) => {
+    connection.beginTransaction((error) => (error ? reject(error) : resolve()));
+  });
 }
 
 export async function execSQLWithParams<T>(
