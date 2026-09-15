@@ -179,16 +179,38 @@ cold starts. Each tick examines at most 40 raw candidates and 20 per lane. Raw
 positions still advance when both lanes encounter the same target, but an
 invocation attempts each normalized target only once. A worker checkpoint during
 the tick therefore cannot cause a second lane to send another page immediately.
-Control and target transactions are separately bounded, and a 120-second reservation is
-committed before send. A send failure or lost acknowledgement cannot undo a
-possibly accepted message; finite reservation expiry permits a later tick to retry.
+Control and target transactions are separately bounded, and a 120-second
+reservation is committed before send. A send failure or lost acknowledgement
+cannot undo a possibly accepted message; finite reservation expiry permits a
+later tick to retry.
 The dispatcher never scans expired leases as a substitute for the target protocol,
 resurrects a parked target, or writes a worker lease/checkpoint.
 
+These are fixed closed-fixture limits, not a production latency SLA. Forty raw
+positions per minute permit at most 57,600 candidate attempts per day before
+multi-page work, duplicate positions, skipped rows and time budgets reduce useful
+throughput. A target moved beyond the fixed due cutoff can be reached by the
+independent primary-key lane. An attempt lost after cursor commit remains eligible
+for that lane or a later sweep; no fixed recovery time is promised for a large
+target population or repeated interruption. Keep both bounds fixed during a sweep.
+
+The deployed fixture uses a 120-second reservation with a one-second send limit
+and two-second target transaction limit. Short one-second reservations in focused
+tests are not deployment settings. The reservation suppresses redispatch; it is
+not a worker execution deadline. A delayed hint can still claim when its exact
+request/reservation pair matches the locked target. A newer reservation makes it
+stale. The queue's 360-second visibility starts when a worker receives a message;
+it is not an initial delivery delay. Cold starts and queue backlog can still
+produce duplicate hints, which the worker must fence. Production remains inactive;
+any later activation requires measured capacity and latency acceptance.
+
 GC has seven seconds reserved independently of dispatch. The heartbeat is one
-only when dispatch returned without failed sends and GC succeeded. Missing or
-zero heartbeat alarms apply only while the schedule is enabled. Due-age and parked
-metrics describe the bounded rows observed by that tick, not a global table count.
+only when dispatch returned without failed sends, a busy control row or budget
+exhaustion, and GC succeeded. `DispatchControlBusy` and `DispatchBudgetExhausted`
+are bounded zero/one Count metrics for each tick. The existing enabled-schedule
+heartbeat alarm detects three consecutive missing or zero heartbeats; these
+metrics distinguish stalled/degraded ticks from healthy idle ticks. Due-age and
+parked metrics describe the bounded rows observed, not a global table count.
 The EventBridge delivery DLQ and Lambda asynchronous failure destination share a
 separate encrypted failure queue; they do not use the worker's processing DLQ.
 

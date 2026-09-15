@@ -68,9 +68,14 @@ const preparedSchema = {
   verified_tables: 21
 };
 
-function boot(stage = 'staging', region = 'eu-west-1') {
-  process.env.MEMBERSHIP_DIAGNOSTIC_STAGE = stage;
-  process.env.AWS_REGION = region;
+function boot(
+  stage: string | null = 'staging',
+  region: string | null = 'eu-west-1'
+) {
+  if (stage === null) delete process.env.MEMBERSHIP_DIAGNOSTIC_STAGE;
+  else process.env.MEMBERSHIP_DIAGNOSTIC_STAGE = stage;
+  if (region === null) delete process.env.AWS_REGION;
+  else process.env.AWS_REGION = region;
   process.env.DB_NAME = 'configured-application';
   let modules: {
     entry: typeof import('@/customReplayLoop/index');
@@ -263,6 +268,53 @@ describe('closed fixture carrier through the actual custom replay entry point', 
       ).rejects.toThrow('requires staging eu-west-1');
       expect(app.initialize).not.toHaveBeenCalled();
       expect(app.db.connect).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['stage', null, 'eu-west-1'],
+    ['region', 'staging', null],
+    ['stage and region', null, null]
+  ] as const)(
+    'rejects all six actions with absent cold-start %s before context, secrets or DB',
+    async (_missing, stage, region) => {
+      const app = boot(stage, region);
+      const invocationContext = {
+        awsRequestId: 'fixture-carrier-missing-environment',
+        getRemainingTimeInMillis: jest.fn(() => 200000)
+      };
+      // A later valid environment cannot repair the frozen absent values.
+      process.env.MEMBERSHIP_DIAGNOSTIC_STAGE = 'staging';
+      process.env.AWS_REGION = 'eu-west-1';
+
+      for (const action of Object.values(actions)) {
+        await expect(
+          app.invoke({ operator_action: action }, invocationContext)
+        ).rejects.toThrow('Membership fixture requires staging eu-west-1');
+      }
+
+      for (const untouched of [
+        invocationContext.getRemainingTimeInMillis,
+        app.initialize,
+        app.env.prepEnvironment,
+        app.db.connect,
+        app.db.getDataSource,
+        app.redis.initRedis,
+        app.primary.withMembershipPrimaryTransaction,
+        app.inspect,
+        app.create,
+        app.preflight,
+        app.schemaPlan,
+        app.prepare,
+        app.status,
+        app.advance,
+        app.cleanup,
+        app.gcProvision,
+        app.dispatchProvision,
+        app.proofRun
+      ]) {
+        expect(untouched).not.toHaveBeenCalled();
+      }
     }
   );
 

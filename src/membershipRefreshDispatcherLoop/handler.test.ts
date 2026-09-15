@@ -440,6 +440,39 @@ describe('membership dispatcher handler integration boundary', () => {
       })
     ]);
   });
+  it.each([
+    { control_busy: true, budget_exhausted: false },
+    { control_busy: false, budget_exhausted: true },
+    { control_busy: true, budget_exhausted: true }
+  ])(
+    'reports degraded dispatch %j without a healthy heartbeat',
+    async (flags) => {
+      const app = boot();
+      const result = { ...dispatchResult, ...flags };
+      app.dispatch.mockResolvedValueOnce(result);
+      await expect(app.invoke(event(), context())).resolves.toEqual({
+        dispatch: result,
+        gc_deleted_members: 0
+      });
+      expect(app.gc).toHaveBeenCalledTimes(1);
+      const metrics = app.metrics();
+      expect(metrics).toEqual([
+        expect.objectContaining({
+          DispatchHeartbeat: 0,
+          DispatchFailedSends: 0,
+          DispatchControlBusy: Number(flags.control_busy),
+          DispatchBudgetExhausted: Number(flags.budget_exhausted),
+          GarbageCollectionFailures: 0
+        })
+      ]);
+      expect(metrics[0]._aws.CloudWatchMetrics[0].Metrics).toEqual(
+        expect.arrayContaining([
+          { Name: 'DispatchControlBusy', Unit: 'Count' },
+          { Name: 'DispatchBudgetExhausted', Unit: 'Count' }
+        ])
+      );
+    }
+  );
   it('records the controlled send failure before throwing, retains GC, and sends other targets normally', async () => {
     const app = boot();
     const ready = await app.transport.assertMembershipFixtureReady(

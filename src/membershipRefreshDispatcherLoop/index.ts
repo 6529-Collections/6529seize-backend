@@ -81,10 +81,16 @@ function emitMetrics(
 ): void {
   const values = {
     DispatchHeartbeat:
-      dispatch !== null && dispatch.send_failed === 0 && gcFailures === 0
+      dispatch !== null &&
+      dispatch.send_failed === 0 &&
+      !dispatch.control_busy &&
+      !dispatch.budget_exhausted &&
+      gcFailures === 0
         ? 1
         : 0,
     DispatchFailedSends: dispatch?.send_failed ?? 0,
+    DispatchControlBusy: Number(dispatch?.control_busy ?? false),
+    DispatchBudgetExhausted: Number(dispatch?.budget_exhausted ?? false),
     DispatchOldestDueAgeSeconds: (dispatch?.oldest_due_age_millis ?? 0) / 1000,
     DispatchParkedTargets: dispatch?.parked_seen ?? 0,
     GarbageCollectionProgress: gcProgress,

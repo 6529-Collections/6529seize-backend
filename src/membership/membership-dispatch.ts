@@ -85,6 +85,8 @@ export class MembershipRefreshDispatcher {
     context: RequestContext = {}
   ): Promise<MembershipDispatchResult> {
     validateMembershipDispatchOptions(options);
+    // A caller deadline is an upper bound. Cap dispatch at 20s within the 30s
+    // Lambda; its handler supplies a tighter deadline to reserve independent GC.
     const deadline = Math.min(
       options.deadline_monotonic_millis,
       performance.now() + 20000
