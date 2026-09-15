@@ -37,7 +37,8 @@ import {
   ConnectionWrapper,
   setSqlExecutor,
   SqlExecutor,
-  sqlExecutor
+  sqlExecutor,
+  SqlTransactionOptions
 } from './sql-executor';
 import { getConsolidationsSql } from './sql_helpers';
 
@@ -201,10 +202,11 @@ export async function connect() {
     }
 
     async executeNativeQueriesInTransaction<T>(
-      executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>
+      executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>,
+      options?: SqlTransactionOptions
     ) {
       return getDbConnectionByPoolName(DbPoolName.WRITE).then((con) =>
-        execNativeTransactionally(executable, con)
+        execNativeTransactionally(executable, con, options)
       );
     }
   }
