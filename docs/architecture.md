@@ -488,6 +488,14 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
    The on-demand media resizer spools each S3 source into its own temporary file before metadata inspection and conversion. A 256 MiB source limit and conservative 512 MiB decoded-work estimate reject unsupported or oversized inputs with HTTP 422; animated GIF admission counts every frame. Resize, rotation and output contracts are preserved for accepted inputs. Multipart upload concurrency is one, and the temporary directory is removed after completion or failure. These admission limits reduce resource risk; they do not guarantee a maximum native allocation for every codec.
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
+### Ordinary Ethereum RPC foundation
+
+Ordinary Ethereum RPC portability is being introduced separately. The
+[RPC foundation](../ops/workstreams/ethereum-rpc-foundation/README.md) adds an
+unused provider-neutral factory and documents the existing regional shared-secret
+configuration path. Existing callers still use their previous providers; this
+foundation does not migrate runtime traffic or remove indexed Alchemy APIs.
+
 ### NFT link media preview size failures
 
 Preview downloads retain their configured byte cap (30 MB by default; the
