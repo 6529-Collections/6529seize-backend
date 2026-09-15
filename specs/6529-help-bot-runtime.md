@@ -625,7 +625,11 @@ fail closed and escalate rather than substitute public database values. A cold
 corpus-load failure propagates to the processor technical-failure/refund path.
 Explicit mobile/browser
 questions do not inherit Desktop scope, including Core questions aimed at those
-platforms. Desktop-versus-website comparisons retain local-node scope. Pass the
+platforms. Explicit Mobile wallet questions normalize the former Core name and
+Android/iOS wording for retrieval, preserving the requested wallet action.
+"Mobile Core wallet" and "Core wallet on mobile" retrieve the same guidance as
+"mobile wallet". Explicit Desktop-to-Mobile wallet questions retain the separate
+local-storage clarification. Desktop-versus-website comparisons retain local-node scope. Pass the
 validated scope to retrieval so prior answer text cannot change it. Ordinary
 desktop-browser layout and website TDH questions retain normal routing.
 

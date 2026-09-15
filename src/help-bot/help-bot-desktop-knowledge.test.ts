@@ -637,10 +637,86 @@ describe('Desktop corpus retrieval and answers', () => {
     });
     expect(result.type).toBe('ANSWER');
     if (result.type !== 'ANSWER') throw new Error('Expected a wallet answer');
-    expect(result.record.id).toBe('wallets.core-mobile-clarification');
-    expect(result.answer).toContain('6529 Desktop');
+    expect(result.record.id).toBe('wallets.mobile-overview');
     expect(result.answer).toContain('6529 Mobile');
     expect(result.answer).not.toContain('6529 Desktop > Wallets');
+  });
+
+  describe.each([
+    ['mobile wallet', 'wallets.mobile-'],
+    ['mobile Core wallet', 'wallets.mobile-'],
+    ['Core wallet on mobile', 'wallets.mobile-'],
+    ['mobile app Core wallet', 'wallets.mobile-'],
+    ['Core wallet on Android', 'wallets.mobile-'],
+    ['Core wallet on iOS', 'wallets.mobile-'],
+    ['desktop wallet', 'desktop.'],
+    ['desktop Core wallet', 'desktop.']
+  ])('wallet instructions using %s', (wallet, prefix) => {
+    it.each([
+      ['How do I create a WALLET?', 'create-import', 'wallets'],
+      ['How do I import a WALLET?', 'create-import', 'wallets'],
+      ['How do I connect my WALLET?', 'connect', 'wallets'],
+      ['How do I back up my WALLET?', 'backup-recovery', 'wallet-backup'],
+      ['I forgot my WALLET password', 'backup-recovery', 'wallet-backup'],
+      ['How do I delete my WALLET?', 'delete-troubleshooting', 'wallets']
+    ])('%s', async (template, mobileId, desktopId) => {
+      const question = template.replace('WALLET', wallet);
+      const expected = prefix + (prefix === 'desktop.' ? desktopId : mobileId);
+      const { answerer } = makeAnswerer();
+      const result = await answerer.answer({
+        question,
+        baseUrl: 'https://6529.io'
+      });
+      expect(result.type === 'ANSWER' && result.record.id).toBe(expected);
+      if (result.type !== 'ANSWER')
+        throw new Error('Expected wallet instructions');
+      expect(result.answer).not.toContain('6529 Desktop (Core)');
+      if (prefix !== 'desktop.') {
+        expect(result.answer).not.toContain('6529 Desktop > Wallets');
+      }
+    });
+  });
+
+  it.each([
+    'Can I use my Desktop Core wallet on mobile?',
+    'Does my 6529 Desktop wallet automatically appear in 6529 Mobile?'
+  ])('keeps cross-platform wallet questions distinct: %s', async (question) => {
+    const { answerer } = makeAnswerer();
+    const result = await answerer.answer({
+      question,
+      baseUrl: 'https://6529.io'
+    });
+    expect(result.type === 'ANSWER' && result.record.id).toBe(
+      'wallets.core-mobile-clarification'
+    );
+    expect(result.type === 'ANSWER' && result.answer).toContain(
+      'does not automatically appear'
+    );
+  });
+
+  it.each([
+    ['mobile Core wallets', 'wallets.mobile-overview'],
+    ['desktop Core wallets', 'desktop.wallets'],
+    [
+      'How do I back up my mobile Core wallets?',
+      'wallets.mobile-backup-recovery'
+    ],
+    ['How do I back up my desktop Core wallets?', 'desktop.wallet-backup'],
+    [
+      'How do I create another mobile Core wallet?',
+      'wallets.mobile-create-import'
+    ],
+    [
+      'How do I delete a Core wallet on mobile?',
+      'wallets.mobile-delete-troubleshooting'
+    ]
+  ])('keeps wallet aliases on the requested task: %s', async (question, id) => {
+    const { answerer } = makeAnswerer();
+    const result = await answerer.answer({
+      question,
+      baseUrl: 'https://6529.io'
+    });
+    expect(result.type === 'ANSWER' && result.record.id).toBe(id);
   });
 
   it('uses only the current name when defining 6529 Desktop', async () => {

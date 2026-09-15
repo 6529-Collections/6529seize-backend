@@ -51,6 +51,28 @@ function excludesDesktop(question: string, desktopContext: boolean): boolean {
   );
 }
 
+/** A named mobile wallet stays mobile even when the user uses the former Core name. */
+export function isMobileWalletQuestion(question: string): boolean {
+  return (
+    /\b(?:mobile|android|ios)\b/i.test(question) &&
+    /\bwallets?\b/i.test(question) &&
+    !/\b(?:desktop|computer|browser|website|web)\b|6529\.io/i.test(question)
+  );
+}
+
+/** Normalize search terms, preserving explicit cross-platform questions for clarification. */
+export function normalizeMobileWalletQuestion(question: string): string {
+  if (!isMobileWalletQuestion(question)) return question;
+  return question
+    .replace(/\b(?:6529\s+)?core\s+(?=(?:app\s+)?wallets?\b)/gi, '')
+    .replace(/\b(?:android|ios)\b/gi, 'mobile')
+    .replace(/\bmobile\s+app\s+(?=wallets?\b)/gi, 'mobile ')
+    .replace(
+      /\b(wallets?)\s+(?:in|on)\s+(?:the\s+)?(?:6529\s+)?mobile(?:\s+app)?\b/gi,
+      'mobile $1'
+    );
+}
+
 /** Explicit app/node context is required; RPC terminology alone is ambiguous. */
 export function isDesktopSupportQuestion(question: string): boolean {
   return hasDesktopSupportTopic(question) && !excludesDesktop(question, true);

@@ -1,7 +1,9 @@
 import {
   desktopRecordIdForQuestion,
   isDesktopKnowledgeRecord,
-  isDesktopSupportQuestion
+  isDesktopSupportQuestion,
+  isMobileWalletQuestion,
+  normalizeMobileWalletQuestion
 } from './help-bot-desktop-knowledge';
 import { Logger } from '@/logging';
 import { CONSOLIDATIONS_LIMIT } from '@/constants';
@@ -609,6 +611,7 @@ function hasMultiWalletTarget(normalizedQuestion: string): boolean {
 
 function hasDisqualifyingWalletContext(normalizedQuestion: string): boolean {
   return (
+    isMobileWalletQuestion(normalizedQuestion) ||
     matchesAny(normalizedQuestion, DISQUALIFYING_DELEGATION_CONTEXT_PATTERNS) ||
     matchesAny(normalizedQuestion, EXTERNAL_WALLET_CONTEXT_PATTERNS)
   );
@@ -1079,11 +1082,12 @@ function findMatchesInRecords(
   limit: number,
   options?: HelpBotKnowledgeQueryOptions
 ): HelpBotKnowledgeMatch[] {
-  const normalizedQuestion = normalizeText(question);
+  const searchQuestion = normalizeMobileWalletQuestion(question);
+  const normalizedQuestion = normalizeText(searchQuestion);
   if (!normalizedQuestion) {
     return [];
   }
-  const questionTokens = tokenize(question);
+  const questionTokens = tokenize(searchQuestion);
   const routedScores = routedRecordScores(normalizedQuestion);
   const desktopQuestion =
     options?.desktopScope ?? isDesktopSupportQuestion(question);
