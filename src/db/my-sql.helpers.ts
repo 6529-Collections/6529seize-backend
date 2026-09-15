@@ -102,6 +102,9 @@ export async function execNativeTransactionally<T>(
     if (options?.isolationLevel) {
       await beginIsolatedTransaction(connection, options);
     } else {
+      // Preserve the existing lifecycle for legacy callers. Membership always
+      // opts into the awaited BEGIN/rollback path; changing all legacy callers
+      // requires its own compatibility validation and deployment inventory.
       connection.beginTransaction();
     }
     const result = await executable({ connection: connection });

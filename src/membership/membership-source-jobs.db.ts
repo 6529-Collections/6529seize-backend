@@ -128,7 +128,7 @@ export class MembershipSourceJobsDb extends LazyDbAccessCompatibleService {
         validateProgress(progress);
         const { keys, sources, jobs } = await this.lock(identity, ctx);
         if (jobs.length) return this.jobState(jobs[0]);
-        if (sources.some(({ state }) => !state || state.active_jobs !== 0)) {
+        if (sources.some(({ state }) => state?.active_jobs !== 0)) {
           throw new MembershipSourceNotReadyError();
         }
         await this.sources().increment(keys, 1, ctx);
@@ -397,8 +397,7 @@ export class MembershipSourceJobsDb extends LazyDbAccessCompatibleService {
     if (
       sources.some(
         ({ state: source }, i) =>
-          !source ||
-          source.active_jobs !== 1 ||
+          source?.active_jobs !== 1 ||
           source.version !== jobs[i].started_version
       )
     ) {

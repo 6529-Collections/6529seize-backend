@@ -23,7 +23,11 @@ export interface MembershipRefreshRequest {
   readonly reason: string;
 }
 
-/** Durable invalidations. A wakeup is optional and must follow caller commit. */
+/**
+ * Durable invalidations; optional wakeups follow caller commit. Acquire source
+ * and catalogue locks before requesting targets, never afterward in the same
+ * transaction. Request-only callers touch only these final target locks.
+ */
 export class MembershipRefreshTargetsDb extends LazyDbAccessCompatibleService {
   async request(
     requests: readonly MembershipRefreshRequest[],

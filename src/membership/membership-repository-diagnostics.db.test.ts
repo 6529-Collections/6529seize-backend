@@ -1,10 +1,14 @@
 import 'reflect-metadata';
+import { QueryRunner } from 'typeorm';
 import {
   MEMBERSHIP_REFRESH_TARGETS_TABLE,
   MEMBERSHIP_SOURCE_JOBS_TABLE,
   MEMBERSHIP_SOURCE_STATES_TABLE
 } from '@/constants';
-import { sqlExecutor } from '@/sql-executor';
+import * as loopDb from '@/db';
+import { DbPoolName, DbQueryOptions } from '@/db-query.options';
+import { Logger } from '@/logging';
+import { setSqlExecutor, sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { runMembershipRepositoryDiagnostics } from './membership-repository-diagnostics';
 import { withMembershipPrimaryTransaction } from './membership-primary';
@@ -38,6 +42,75 @@ describeWithSeed('membership staging repository diagnostic', [], () => {
       MEMBERSHIP_REFRESH_TARGETS_TABLE
     ]) {
       expect(await sqlExecutor.execute(`SELECT * FROM ${table}`)).toEqual([]);
+    }
+  });
+
+  it('runs the complete diagnostic with session limits on the real loop transaction connections', async () => {
+    const testExecutor = sqlExecutor;
+    // connect normally logs its host; this test only records session evidence.
+    const dbInfo = jest.spyOn(Logger.get('DB'), 'info').mockImplementation();
+    let executionSpy: jest.SpyInstance | undefined;
+    try {
+      await loopDb.connect();
+      const loopExecutor = sqlExecutor;
+      const execute = loopExecutor.execute.bind(loopExecutor);
+      const sessions = new Map<QueryRunner, ObservedSession>();
+      executionSpy = jest
+        .spyOn(loopExecutor, 'execute')
+        .mockImplementation(
+          async <T>(
+            sql: string,
+            params?: Record<string, unknown>,
+            options?: DbQueryOptions
+          ): Promise<T[]> => {
+            expect(options?.forcePool).toBe(DbPoolName.WRITE);
+            const runner = options?.wrappedConnection
+              ?.connection as QueryRunner;
+            expect(runner.isTransactionActive).toBe(true);
+            // Observe the bound physical connection directly, outside the adapter.
+            // All diagnostic SQL still executes through the unmodified loop adapter.
+            const before = await readSession(runner);
+            const result = await execute<T>(sql, params, options);
+            const after = await readSession(runner);
+            expect(after.connection_id).toBe(before.connection_id);
+            observeSession(
+              sessions,
+              runner,
+              sql,
+              params,
+              result,
+              before,
+              after
+            );
+            return result;
+          }
+        );
+
+      expect(await runMembershipRepositoryDiagnostics(loopExecutor)).toEqual(
+        expect.objectContaining({
+          status: 'passed',
+          source_scenarios: 'transaction_rolled_back',
+          concurrent_target_requests: 4,
+          fixture_cleanup: { remaining_rows: 0 }
+        })
+      );
+      expect(sessions.size).toBeGreaterThan(4);
+      sessions.forEach((session, runner) => {
+        expect(session.boundsApplied).toBe(1);
+        expect(session.boundsRestored).toBe(1);
+        expect(session.repositoryQueries).toBeGreaterThan(0);
+        expect(runner.isReleased).toBe(true);
+      });
+      executionSpy.mockRestore();
+      expect(await snapshot()).toEqual([[], [], []]);
+    } finally {
+      executionSpy?.mockRestore();
+      try {
+        if (loopDb.getDataSource()?.isInitialized) await loopDb.disconnect();
+      } finally {
+        setSqlExecutor(testExecutor);
+        dbInfo.mockRestore();
+      }
     }
   });
 
@@ -93,6 +166,95 @@ describeWithSeed('membership staging repository diagnostic', [], () => {
     expect(await snapshot()).toEqual(before);
   });
 });
+
+interface SessionSettings {
+  connection_id: string;
+  lock_seconds: number;
+  execution_millis: number;
+}
+
+interface ObservedSession {
+  baseline: SessionSettings;
+  boundsApplied: number;
+  boundsRestored: number;
+  repositoryQueries: number;
+}
+
+async function readSession(runner: QueryRunner): Promise<SessionSettings> {
+  const [session] = await runner.query(`SELECT CONNECTION_ID() connection_id,
+    @@SESSION.innodb_lock_wait_timeout lock_seconds,
+    @@SESSION.max_execution_time execution_millis`);
+  return {
+    connection_id: String(session.connection_id),
+    ...numericSettings(session)
+  };
+}
+
+function numericSettings(settings: {
+  lock_seconds: unknown;
+  execution_millis: unknown;
+}) {
+  // The test MySQL driver represents integer system variables as strings.
+  return {
+    lock_seconds: Number(settings.lock_seconds),
+    execution_millis: Number(settings.execution_millis)
+  };
+}
+
+function observeSession(
+  sessions: Map<QueryRunner, ObservedSession>,
+  runner: QueryRunner,
+  sql: string,
+  params: Record<string, unknown> | undefined,
+  result: unknown[],
+  before: SessionSettings,
+  after: SessionSettings
+) {
+  if (sql.startsWith('SELECT @@SESSION.innodb_lock_wait_timeout')) {
+    expect(sessions.has(runner)).toBe(false);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({
+      lock_seconds: expect.any(String),
+      execution_millis: expect.any(String)
+    });
+    expect(numericSettings(result[0] as SessionSettings)).toEqual(
+      numericSettings(before)
+    );
+    expect(after).toEqual(before);
+    sessions.set(runner, {
+      baseline: before,
+      boundsApplied: 0,
+      boundsRestored: 0,
+      repositoryQueries: 0
+    });
+    return;
+  }
+  const session = sessions.get(runner)!;
+  expect(session).toBeDefined();
+  expect(before.connection_id).toBe(session.baseline.connection_id);
+  const bounded = {
+    connection_id: session.baseline.connection_id,
+    lock_seconds: 2,
+    execution_millis: 1000
+  };
+  if (sql.startsWith('SET SESSION innodb_lock_wait_timeout = 2')) {
+    expect(before).toEqual(session.baseline);
+    expect(after).toEqual(bounded);
+    session.boundsApplied++;
+  } else if (sql.startsWith('SET SESSION innodb_lock_wait_timeout = :')) {
+    expect(params).toEqual({
+      lockSeconds: session.baseline.lock_seconds,
+      executionMillis: session.baseline.execution_millis
+    });
+    expect(before).toEqual(bounded);
+    expect(after).toEqual(session.baseline);
+    session.boundsRestored++;
+  } else {
+    expect(before).toEqual(bounded);
+    expect(after).toEqual(bounded);
+    session.repositoryQueries++;
+  }
+}
 
 async function snapshot() {
   return Promise.all([

@@ -19,15 +19,16 @@ export interface MembershipRefreshTargetKey {
 export const MAX_MEMBERSHIP_SOURCE_KEYS = 64;
 export const MAX_MEMBERSHIP_COUNTER = '9223372036854775807';
 
-const SOURCE_DIMENSIONS: readonly MembershipSourceDimension[] = [
-  'TDH_XTDH',
-  'RATINGS',
-  'OWNERSHIP',
-  'DELEGATIONS',
-  'GRANTS',
-  'IDENTITY',
-  'GROUP_CATALOG'
-];
+const SOURCE_DIMENSIONS: ReadonlySet<MembershipSourceDimension> =
+  new Set<MembershipSourceDimension>([
+    'TDH_XTDH',
+    'RATINGS',
+    'OWNERSHIP',
+    'DELEGATIONS',
+    'GRANTS',
+    'IDENTITY',
+    'GROUP_CATALOG'
+  ]);
 
 export function assertMembershipRecord(
   value: unknown,
@@ -80,10 +81,11 @@ export function normalizeCounter(value: unknown): string {
     );
     return value.toString();
   }
-  const decimal = typeof value === 'bigint' ? value.toString() : value;
+  const decimal = typeof value === 'bigint' ? String(value) : value;
+  // Canonical decimal strings of equal length have numeric lexical ordering.
   if (
     typeof decimal !== 'string' ||
-    !/^(0|[1-9][0-9]{0,18})$/.test(decimal) ||
+    !/^(0|[1-9]\d{0,18})$/.test(decimal) ||
     (decimal.length === MAX_MEMBERSHIP_COUNTER.length &&
       decimal > MAX_MEMBERSHIP_COUNTER)
   ) {
@@ -101,7 +103,7 @@ export function normalizeSourceKey(value: unknown): MembershipSourceKey {
     throw new Error('Invalid membership source scope');
   }
   if (
-    !SOURCE_DIMENSIONS.includes(dimension as MembershipSourceDimension) ||
+    !SOURCE_DIMENSIONS.has(dimension as MembershipSourceDimension) ||
     (dimension === 'GROUP_CATALOG' && scope !== 'GLOBAL')
   ) {
     throw new Error('Invalid membership source dimension');
@@ -126,14 +128,15 @@ function sourceKeyId(key: MembershipSourceKey): string {
 
 function compareSourceKeys(a: MembershipSourceKey, b: MembershipSourceKey) {
   return (
-    compareBinary(a.scope, b.scope) ||
-    compareBinary(a.target_id, b.target_id) ||
-    compareBinary(a.dimension, b.dimension)
+    compareMembershipIds(a.scope, b.scope) ||
+    compareMembershipIds(a.target_id, b.target_id) ||
+    compareMembershipIds(a.dimension, b.dimension)
   );
 }
 
-function compareBinary(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
+export function compareMembershipIds(left: string, right: string): number {
+  if (left < right) return -1;
+  return left > right ? 1 : 0;
 }
 
 /** Matches binary key ordering and locks GLOBAL before PROFILE rows. */

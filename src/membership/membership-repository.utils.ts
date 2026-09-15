@@ -1,6 +1,8 @@
 import { RequestContext } from '@/request.context';
 import { markMembershipTransactionFailed } from './membership-primary';
 
+export { compareMembershipIds } from './membership-validation';
+
 export const MEMBERSHIP_DB_NOW =
   'CAST(UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3)) * 1000 AS UNSIGNED)';
 
@@ -33,8 +35,4 @@ export function requireMembershipLabel(
   ) {
     throw new Error(`Invalid membership ${name}`);
   }
-}
-
-export function compareMembershipIds(a: string, b: string): number {
-  return a < b ? -1 : Number(a > b);
 }

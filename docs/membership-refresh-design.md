@@ -281,6 +281,14 @@ tombstones. Multi-stage catalogue jobs are rejected until their bounded group-
 version fanout contract is implemented. Source jobs are not a producer work
 queue: conflicting job identities remain pending in caller orchestration.
 
+Transaction owners must acquire all required source keys first in canonical
+GLOBAL-before-PROFILE order (including their provisioning/job receipts), then
+affected group-version rows, then refresh targets in sorted scope/target order.
+A request-only transaction takes only the final target locks and never reaches
+back for source locks. Do not compose `request()` followed by a source mutation
+in one transaction. Ordinary deadlock/lock-timeout errors still abort the whole
+transaction; retry the owner from its stable source-job/checkpoint identity.
+
 The IAM-only staging diagnostic in `customReplayLoop` runs source/job scenarios
 inside an intentionally rolled-back primary transaction, including any temporary
 GLOBAL evidence. It separately proves concurrent durable target coalescing and

@@ -79,6 +79,14 @@ const writeRep = (ctx: MembershipPrimaryContext) =>
 const mutate = (ctx: MembershipPrimaryContext) =>
   sources().mutate({ keys: [profileKey], requests: [request] }, writeRep, ctx);
 
+function latch() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 describeWithSeed(
   'Membership source transaction contracts',
   withIdentities([identity]),
@@ -169,6 +177,30 @@ describeWithSeed(
       }
     );
 
+    it('rolls back successful source writes when a later logic error is caught', async () => {
+      await provision();
+      await expect(
+        tx(async (ctx) => {
+          await mutate(ctx);
+          try {
+            await targets().request(
+              [{ ...request, reason: 'invalid reason' }],
+              ctx
+            );
+          } catch {
+            return 'caller swallowed validation error';
+          }
+          return 'unexpected success';
+        })
+      ).rejects.toThrow('Invalid membership refresh reason');
+      expect(await readRep()).toEqual({ rep: 1 });
+      expect((await state()).map((row) => row.state?.version)).toEqual([
+        '0',
+        '0'
+      ]);
+      expect(await getTarget()).toBeNull();
+    });
+
     it('retains newer request state and reactivates parked work without losing exact counters', async () => {
       await tx((ctx) => targets().request([request], ctx));
       await sqlExecutor.execute(
@@ -239,6 +271,70 @@ describeWithSeed(
       ]);
       expect((await getTarget())?.requested_version).toBe('4');
     });
+
+    it.each(['mutation', 'completion'])(
+      'coalesces a request-only transaction while %s holds source locks',
+      async (mode) => {
+        await provision();
+        const started =
+          mode === 'completion'
+            ? await tx((ctx) => jobs().start(job, initial, ctx))
+            : null;
+        const held = latch();
+        const release = latch();
+        const waiting = latch();
+        const requestOnly = tx(async (ctx) => {
+          await targets().request([request], ctx);
+          held.resolve();
+          await release.promise;
+        });
+        await Promise.race([held.promise, requestOnly]);
+        const execute = sqlExecutor.execute.bind(sqlExecutor);
+        const spy = jest
+          .spyOn(sqlExecutor, 'execute')
+          .mockImplementation(async (sql, params, options) => {
+            if (
+              sql
+                .trim()
+                .startsWith(`INSERT INTO ${MEMBERSHIP_REFRESH_TARGETS_TABLE}`)
+            ) {
+              waiting.resolve();
+            }
+            return execute(sql, params, options);
+          });
+        const producer = tx(async (ctx) => {
+          if (started) {
+            await jobs().complete(
+              job,
+              started.progress,
+              [request],
+              writeRep,
+              ctx
+            );
+          } else {
+            await mutate(ctx);
+          }
+        });
+        let outcomes: PromiseSettledResult<void>[] = [];
+        try {
+          // This upsert is issued after the producer acquired source/input locks,
+          // while an independent request-only transaction still owns the target.
+          await Promise.race([waiting.promise, producer]);
+        } finally {
+          release.resolve();
+          outcomes = await Promise.allSettled([requestOnly, producer]);
+          spy.mockRestore();
+        }
+        for (const outcome of outcomes) {
+          if (outcome.status === 'rejected') throw outcome.reason;
+        }
+        expect(await readRep()).toEqual({ rep: 2 });
+        expect((await getTarget())?.requested_version).toBe('2');
+        expect(
+          (await state()).every((row) => row.state?.active_jobs === 0)
+        ).toBe(true);
+      }
+    );
 
     it('hides uncommitted source/version/request changes from another primary snapshot', async () => {
       await provision();

@@ -43,6 +43,7 @@ export function assertMembershipDiagnosticInvocation(
   ) {
     throw new Error('Unsupported membership diagnostic invocation');
   }
+  // The runtime region is intentionally pinned to the staging deployment.
   if (deployment.stage !== 'staging' || deployment.region !== 'eu-west-1') {
     throw new Error('Membership repository diagnostics require staging');
   }
@@ -50,6 +51,18 @@ export function assertMembershipDiagnosticInvocation(
 
 function requireDiagnostic(condition: boolean, check: string): void {
   if (!condition) throw new Error(`Membership diagnostic failed: ${check}`);
+}
+
+function parseSessionLimit(value: unknown): number {
+  const numeric = Number(value);
+  requireDiagnostic(
+    (typeof value === 'number' ||
+      (typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value))) &&
+      Number.isSafeInteger(numeric) &&
+      numeric >= 0,
+    'restorable session limits'
+  );
+  return numeric;
 }
 
 async function requireUnknown(
@@ -141,21 +154,28 @@ class MembershipRepositoryDiagnostic {
     this.checks.push(check);
   }
 
-  /** Limits are restored before the connection returns to its pool. */
+  /**
+   * Limits are restored before the connection returns to its pool. The carrier's
+   * doInDbContext also disconnects its own DataSource in finally; it shares no API pool.
+   */
   private async transaction<T>(
     operation: (ctx: MembershipPrimaryContext) => Promise<T>
   ): Promise<T> {
     return withMembershipPrimaryTransaction(this.db, async (ctx) => {
       const options = membershipQueryOptions(ctx);
       const [previous] = await this.db.execute<{
-        lock_seconds: number;
-        execution_millis: number;
+        lock_seconds: number | string;
+        execution_millis: number | string;
       }>(
         `SELECT @@SESSION.innodb_lock_wait_timeout lock_seconds,
            @@SESSION.max_execution_time execution_millis`,
         {},
         options
       );
+      // The loop driver can return strings; SET SESSION requires numeric values.
+      const lockSeconds = parseSessionLimit(previous.lock_seconds);
+      const executionMillis = parseSessionLimit(previous.execution_millis);
+      requireDiagnostic(lockSeconds > 0, 'restorable lock timeout');
       await this.db.execute(
         'SET SESSION innodb_lock_wait_timeout = 2, SESSION max_execution_time = 1000',
         {},
@@ -167,10 +187,7 @@ class MembershipRepositoryDiagnostic {
         await this.db.execute(
           `SET SESSION innodb_lock_wait_timeout = :lockSeconds,
              SESSION max_execution_time = :executionMillis`,
-          {
-            lockSeconds: previous.lock_seconds,
-            executionMillis: previous.execution_millis
-          },
+          { lockSeconds, executionMillis },
           options
         );
       }
@@ -327,7 +344,9 @@ class MembershipRepositoryDiagnostic {
         this.transaction((ctx) => this.targets.request([request], ctx))
       )
     );
-    // All transactions must settle before cleanup can begin.
+    // All four commits are required for acceptance. A timeout/error fails the
+    // diagnostic, and every transaction must settle before cleanup can begin.
+    // Never retry an ambiguous increment or weaken the exact count to <= 4.
     for (const result of results) {
       if (result.status === 'rejected') throw result.reason;
     }
