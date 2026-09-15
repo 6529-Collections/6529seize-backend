@@ -131,7 +131,7 @@ describeWithSeed('Membership runtime explicit additive schema', [], () => {
     }
   });
 
-  it('bounds preflight behind a queued exclusive metadata lock before either runtime addition', async () => {
+  it('bounds queued exclusive DDL contention and preserves an approved partial addition', async () => {
     const db = await source().initialize();
     const blocker = db.createQueryRunner('master');
     const writer = db.createQueryRunner('master');
@@ -180,11 +180,13 @@ describeWithSeed('Membership runtime explicit additive schema', [], () => {
           (index) => index.Key_name === MEMBERSHIP_RUNTIME_INDEX.name
         )
       ).toBe(false);
+      // MySQL metadata reads can bypass queued exclusive DDL. The approved
+      // CREATE commits before the index ALTER reaches its lock deadline.
       const inspector = db.createQueryRunner('master');
       try {
         expect(
           await inspector.hasTable(MEMBERSHIP_RUNTIME_CHECKPOINTS_TABLE)
-        ).toBe(false);
+        ).toBe(true);
       } finally {
         await inspector.release();
       }
