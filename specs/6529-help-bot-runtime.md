@@ -739,7 +739,9 @@ Unknown, invalid, or ambiguous checkpoints request the checkpoint again instead
 of inventing one. Missing stages, invalid template data, and changed minimums
 fail closed. A fresh user confirmation is required after uncertain/unfinished
 work; never treat negated completion or different snapshot blocks as permission
-to widen recovery. Stop on a matching result. After 100% reconciliation and
+to widen recovery. Execution errors, crashes, or aborted work retain the current
+range and use reconciliation progress or TDH calculation error guidance. They
+cannot trigger widening or reset. Stop on a matching result. After 100% reconciliation and
 recalculation still fail, offer the corpus-owned transaction Reset to Block
 procedure, including Min Block as the full-resync fallback and its local data
 replacement/time/RPC effects. Confirm resync before recalculation; retain the

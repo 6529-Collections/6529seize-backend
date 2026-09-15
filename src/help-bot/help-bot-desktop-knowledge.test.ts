@@ -559,6 +559,42 @@ describe('Desktop corpus retrieval and answers', () => {
     }
   );
 
+  it.each([25, 100])(
+    'holds the %i%% range after execution errors and resumes after success',
+    async (percentage) => {
+      const { answerer } = makeAnswerer();
+      let previousBotAnswer = `In 6529 Desktop use Recalculate TDH Now.\nRange: ${percentage}% of blocks 13,360,860–26,000,000.`;
+      for (const question of [
+        'recalculation failed, still different',
+        'it crashed',
+        'error, it still does not match'
+      ]) {
+        const result = await answerer.answer({
+          question,
+          previousBotAnswer,
+          baseUrl: 'https://6529.io'
+        });
+        if (result.type !== 'ANSWER')
+          throw new Error('Expected error guidance');
+        expect(result.record.id).toBe(
+          'desktop.tdh-reconcile-calculation-pending'
+        );
+        expect(result.answer).toContain(`Range: ${percentage}%`);
+        expect(result.answer).toContain('redacted error');
+        expect(result.answer).not.toContain('Reset to Block');
+        previousBotAnswer = result.answer;
+      }
+      const resumed = await answerer.answer({
+        question: 'finished, it matches',
+        previousBotAnswer,
+        baseUrl: 'https://6529.io'
+      });
+      expect(resumed.type === 'ANSWER' && resumed.record.id).toBe(
+        'desktop.tdh-reconcile-success'
+      );
+    }
+  );
+
   it.each([
     '13000000',
     '9007199254740992',

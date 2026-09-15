@@ -93,6 +93,10 @@ function isYes(question: string): boolean {
   return /^(?:yes|yep|yeah|correct)[.!]*$/i.test(question.trim());
 }
 
+function reportsExecutionFailure(question: string): boolean {
+  return /\b(?:errors?|failed|failing|crashed|aborted)\b/i.test(question);
+}
+
 function nextRange(
   state: DesktopReconciliationTurn
 ): DesktopReconciliationTurn {
@@ -170,6 +174,13 @@ function continueRange(
 ): DesktopReconciliationTurn {
   const askedForResult =
     /Recalculate TDH Now|Do TDH and Merkle Root now match/i.test(previous);
+  if (reportsExecutionFailure(question)) {
+    const calculationFailed = askedForResult && !/\breconcil/i.test(question);
+    return {
+      ...state,
+      id: `${PREFIX}${calculationFailed ? 'calculation-pending' : 'progress'}`
+    };
+  }
   if (deniesCompletion(question))
     return {
       ...state,

@@ -152,3 +152,33 @@ describe('transaction reset conversation', () => {
     expect(desktopReconciliationTurn(question, instruction)).toBeNull();
   });
 });
+
+describe('failed reconciliation does not advance recovery', () => {
+  it.each([25, 50, 75, 100])(
+    'retains the %i%% range when reconciliation fails',
+    (percentage) => {
+      const previous = `In 6529 Desktop, has reconciliation finished?\nRange: ${percentage}% of blocks 13,360,860–26,000,000.`;
+      for (const question of [
+        'reconciliation failed, recalculated but still different',
+        'completed with errors',
+        'it aborted'
+      ]) {
+        expect(desktopReconciliationTurn(question, previous)).toMatchObject({
+          id: 'desktop.tdh-reconcile-progress',
+          percentage,
+          checkpoint: 26000000
+        });
+      }
+    }
+  );
+  it('honors a reported reconciliation failure even after suggesting recalculation', () => {
+    const previous =
+      'In 6529 Desktop use Recalculate TDH Now.\nRange: 100% of blocks 13,360,860–26,000,000.';
+    expect(
+      desktopReconciliationTurn(
+        'reconciliation actually failed, still different',
+        previous
+      )?.id
+    ).toBe('desktop.tdh-reconcile-progress');
+  });
+});
