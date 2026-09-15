@@ -4,6 +4,7 @@ import {
   copyFileSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync
 } from 'node:fs';
@@ -189,6 +190,70 @@ process.exitCode = ${exitCode};
       });
     }
   );
+
+  it('uses the exact public release-request package with the current backend template', () => {
+    const packageName = '@6529-collections/release-request';
+    const expectedVersion = '0.0.5';
+    const expectedIntegrity =
+      'sha512-oTnQnQdarXPu6cMj71NHCQxKwfpxem94axmBRsFW+ze3WUx5oKRlWw8jNtLcNkm13n4EOPQrt+gFr1zdbXPf9w==';
+    const manifest = JSON.parse(
+      readFileSync(path.join(repoRoot, 'package.json'), 'utf8')
+    );
+    const lockfile = JSON.parse(
+      readFileSync(path.join(repoRoot, 'package-lock.json'), 'utf8')
+    );
+    const lockedPackage = lockfile.packages[`node_modules/${packageName}`];
+    const installedManifest = JSON.parse(
+      readFileSync(
+        path.join(repoRoot, 'node_modules', packageName, 'package.json'),
+        'utf8'
+      )
+    );
+
+    expect(manifest.devDependencies[packageName]).toBe(expectedVersion);
+    expect(lockfile.packages[''].devDependencies[packageName]).toBe(
+      expectedVersion
+    );
+    expect(lockedPackage).toMatchObject({
+      version: expectedVersion,
+      resolved: `https://registry.npmjs.org/@6529-collections/release-request/-/release-request-${expectedVersion}.tgz`,
+      integrity: expectedIntegrity
+    });
+    expect(installedManifest).toMatchObject({
+      name: packageName,
+      version: expectedVersion
+    });
+    expect(installedManifest.scripts).not.toHaveProperty('preinstall');
+    expect(installedManifest.scripts).not.toHaveProperty('install');
+    expect(installedManifest.scripts).not.toHaveProperty('postinstall');
+
+    const version = run(
+      path.join(repoBin, '6529'),
+      ['exec', '6529-release-request', '--version'],
+      { env: envWithoutAuthorization() }
+    );
+    const template = run(
+      path.join(repoBin, '6529'),
+      ['exec', '6529-release-request', 'template'],
+      { env: envWithoutAuthorization() }
+    );
+
+    expect(version).toMatchObject({
+      status: 0,
+      stderr: '',
+      stdout: `${expectedVersion}\n`
+    });
+    expect(template).toMatchObject({ status: 0, stderr: '' });
+    const backendPart = JSON.parse(template.stdout).release_parts.find(
+      (part: { repository: string }) => part.repository === '6529seize-backend'
+    );
+    expect(backendPart).toBeDefined();
+    expect(backendPart).toMatchObject({
+      deploy_units: [''],
+      deploy_dependencies: [],
+      operational_deployments: []
+    });
+  });
 
   it.each([
     ['npm', ['ci'], '6529 ci'],
