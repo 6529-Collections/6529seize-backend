@@ -1,4 +1,8 @@
-import { sanitizeSentryEvent } from './sentry-privacy';
+import {
+  sanitizeSentryEvent,
+  sanitizeProviderBreadcrumb,
+  sanitizeProviderTransaction
+} from './sentry-privacy';
 import type { LambdaSentryEvent } from './sentry.context';
 
 const sensitiveRequest = {
@@ -136,5 +140,52 @@ describe('Sentry telemetry privacy', () => {
         request: { url: 'https://[invalid', data: 'private' }
       }).request?.url
     ).toBeUndefined();
+  });
+});
+
+describe('provider URL credentials', () => {
+  const url =
+    'https://eth-mainnet.g.alchemy.com/v2/private-test-key?secret=value';
+  it.each([200, 403, undefined])(
+    'redacts native fetch success/error breadcrumb URLs (%s)',
+    (status) => {
+      const breadcrumb = {
+        category: 'http',
+        data: { url, method: 'POST', status_code: status }
+      };
+      const safe = sanitizeProviderBreadcrumb(breadcrumb);
+      expect(safe.data.url).toBe(
+        'https://eth-mainnet.g.alchemy.com/v2/[redacted]'
+      );
+      expect(safe.data.method).toBe('POST');
+      expect(safe.data.status_code).toBe(status);
+      expect(breadcrumb.data.url).toBe(url);
+      const event = sanitizeSentryEvent({ breadcrumbs: [breadcrumb] });
+      expect(JSON.stringify(event)).not.toContain('private-test-key');
+    }
+  );
+  it('redacts trace descriptions and URL attributes without dropping timing/status', () => {
+    const event = {
+      spans: [
+        {
+          description: `POST ${url}`,
+          data: { 'http.url': url, 'http.status_code': 200 },
+          timestamp: 99
+        }
+      ]
+    };
+    const safe = sanitizeProviderTransaction(event);
+    expect(JSON.stringify(safe)).not.toContain('private-test-key');
+    expect(JSON.stringify(safe)).not.toContain('secret=value');
+    expect(safe.spans[0].timestamp).toBe(99);
+    expect(safe.spans[0].data['http.status_code']).toBe(200);
+  });
+  it('preserves unrelated telemetry references', () => {
+    const breadcrumb = {
+      data: { url: 'https://api.6529.io/health', status_code: 200 }
+    };
+    expect(sanitizeProviderBreadcrumb(breadcrumb)).toBe(breadcrumb);
+    const event = { spans: [{ description: 'GET /health' }] };
+    expect(sanitizeProviderTransaction(event)).toBe(event);
   });
 });

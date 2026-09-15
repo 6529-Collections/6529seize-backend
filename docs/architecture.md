@@ -36,6 +36,31 @@ worker, queue, schedule or materialized reader and preserves existing API and
 frontend behavior. The July draft tables are not mapped or used as readiness
 evidence. Runtime implementation and cutover remain gated by issue #2075.
 
+## Proposal card media
+
+Authenticated `POST /drop-media/proposal-frame` builds a bounded, fixed HTML
+document around the submitter's uploaded image/video or recognized decentralized
+artwork. Tracked image uploads must have completed sanitization. The endpoint
+uses the existing upload profile authentication and API rate limiter, accepts
+no client-authored HTML, and never fetches the source. Its versioned template
+embeds the original media URL, with interactive HTML confined to a sandboxed
+iframe, and publishes only `index.html` through the existing IPFS directory
+uploader. The returned `text/html` URL follows existing decentralized HTML drop
+validation and mint animation handling; the frontend retains a separate
+`additional_media.preview_image` for static previews. Submitter-provided
+`proposal_frame` editing metadata is excluded from public NFT traits and is
+never used to authorize publishing or select mint media. Deploy `claimsBuilder`
+(which excludes that metadata from traits) and `api` before the frontend consumer.
+No new service, database schema, or migration is required.
+
+Decentralized artwork remains untrusted: accepting a reference does not verify
+ownership, MIME, or content safety. The declared MIME selects a rendering element,
+not a trust level. An image/video response cannot execute as a document through
+those elements, and HTML always uses `sandbox="allow-scripts"` without same-origin,
+popup, download, or top-navigation permissions. This preserves the existing
+interactive-art submission model without fetching arbitrary source content on
+the server. The template applies attribute escaping before every media branch;
+its separate URL guard also protects local previews, which do not use this API.
 
 ## Profile collecting and marketplace operations
 
@@ -191,6 +216,20 @@ balance and padded gas checks must pass before review and before opening the
 durable send attempt, including the current block limit and mainnet's
 [EIP-7825 transaction gas limit](https://eips.ethereum.org/EIPS/eip-7825).
 Exceeding a bound requires the user to reduce the selection explicitly.
+
+`POST /market/operations/{id}/preflight` is a read-only, authenticated
+`BUY_BATCH` check. Its small body binds the existing review revision and exact
+transaction digest; the server loads and independently validates stored Seaport
+orders, allocations and calldata. It sends only that transaction to the existing
+Alchemy provider, pinning both `eth_call` and raw `eth_estimateGas` to one fresh
+block and rechecking the block hash. Ownership, current profile membership,
+expiry, revision and recovery fences are checked again before returning. No
+operation, journal, send attempt, gas cap or expiry is changed. A 12-second
+abortable deadline, one concurrent check per actor, 12 checks per actor per
+minute and a two-second per-operation cooldown bound work through fail-closed
+Redis leases. This avoids sending large batch RPC bodies through the browser's
+read provider; independent frontend validation and send-arming resimulation
+remain mandatory. Only the API service must deploy before its frontend consumer.
 
 Restricted ERC1155 seller orders currently support original and filled quantity
 one. Open partial orders support multiple editions and recipients only when
@@ -535,6 +574,18 @@ failures and unsupported interfaces remain failures. ERC1155 `{id}` placeholders
 in the metadata URI and consumed metadata strings use the standard 64-digit
 lowercase hexadecimal token ID. Existing URI normalization and bounded HTTP
 handling apply; this does not establish token existence or media availability.
+
+The Manifold adapter requires selected-token responses to match the requested
+instance ID and rejects known ID mismatches on legacy responses too.
+When present, it reads string metadata from `publicData.selectedToken`
+and normalizes supported decentralized media to HTTP(S) without credentials;
+the existing preview download safety checks still apply. Complete title and media
+avoid an unnecessary canonical-page OG fetch. Listing metadata does not prove an
+active sale, so these cards use the unknown sale state and a view action. Legacy
+claim and edition field extraction remains available when selectedToken is absent,
+including older responses without a recognizable instance ID. A listingType-only
+response keeps those legacy assets and uses an unknown market state with a view
+action, without inferring a claim price.
 
 After persistence, a worker-specific notifier reads active WebSocket recipients
 once and sends the existing `MEDIA_LINK_UPDATED` payload with concurrency 10,
