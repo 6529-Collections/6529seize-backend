@@ -7478,7 +7478,11 @@ paths:
     post:
       tags:
         - Drops
-      summary: Add a drop to a curation
+      summary: Add or move a drop in a curation
+      description: >-
+        Omitting placement preserves the current position of an existing drop
+        and adds a new drop at the top. Placement moves a drop that is already
+        in the curation relative to the current order.
       operationId: addDropCuration
       parameters:
         - name: dropId
@@ -27005,6 +27009,19 @@ components:
           type: integer
           format: int64
           minimum: 1
+        placement:
+          type: string
+          enum:
+            - TOP
+            - BOTTOM
+            - BEFORE
+            - AFTER
+          description: Move an existing drop relative to the current curation order.
+        anchor_drop_id:
+          type: string
+          description: >-
+            Required for BEFORE or AFTER placement; must be in the same
+            curation.
     ApiDropGroupMention:
       type: string
       enum:
