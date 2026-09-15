@@ -134,8 +134,18 @@ function reportsRecalculation(question: string): boolean {
   return affirmativeReport(question, /\brecalculated\b/i);
 }
 
-function confirmsSameBlock(question: string): boolean {
-  const text = question.replace(/\b(?:last|values)\s+/gi, '');
+function confirmsSameBlock(question: string, previousBotAnswer = ''): boolean {
+  // In a reply to an asserted mismatch, "no block is same" corrects the bot.
+  // Keep ordinary negations and plural "no blocks are the same" conservative.
+  const correction = /\bdifferent last block values mean\b/i.test(
+    previousBotAnswer.replace(/\*/g, '')
+  )
+    ? question.replace(
+        /^no\s+(?=(?:the\s+)?(?:last\s+)?block\s+is\s+(?:the\s+)?same\b)/i,
+        ''
+      )
+    : question;
+  const text = correction.replace(/\b(?:last|values)\s+/gi, '');
   return affirmativeReport(
     text,
     /\b(?:same block|blocks? (?:are |is )?(?:the )?(?:identical|same|matches|match))\b/i
@@ -175,14 +185,15 @@ function initialMismatchRecord(
 ): string {
   if (
     [
-      /\bblocks? (?:values )?(?:are |is )?different\b/i,
+      /\bblocks? (?:values )?(?:are|is) different\b/i,
+      /(?:^|[,;.!:]|\bbut\b)\s*(?:the )?(?:last )?blocks? (?:values )?different\b/i,
       /\bdifferent (?:last )?blocks?\b/i,
       /\bblocks? (?:do not|don't|does not|doesn't) match\b/i
     ].some((pattern) => pattern.test(question))
   )
     return 'desktop.tdh-block-mismatch';
   const sameBlock =
-    confirmsSameBlock(question) ||
+    confirmsSameBlock(question, previousBotAnswer) ||
     (!/\bblocks?\b/i.test(question) &&
       /\b(?:the Last Block values match|at the same Last Block)\b/i.test(
         previousBotAnswer
@@ -234,7 +245,7 @@ export function desktopRecordIdForQuestion(
       : 'desktop.tdh-after-reconciliation';
   }
   if (recalculated) {
-    return confirmsSameBlock(question)
+    return confirmsSameBlock(question, previousBotAnswer ?? '')
       ? 'desktop.tdh-same-block-mismatch'
       : 'desktop.tdh-after-recalculation';
   }

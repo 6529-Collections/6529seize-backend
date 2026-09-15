@@ -681,3 +681,8 @@ procedure from another record. Questions (including plural-subject questions suc
 as "Have both workers recalculated?") and negated or uncertain completion reports
 do not authorize advancing to reconciliation, and current corrections override earlier
 acknowledgements.
+Block comparison parsing keeps the subject of each mismatch intact: "same block
+different tdh and merkle" confirms matching blocks and advances to checking workers,
+not the different-snapshot explanation. A singular correction such as "no block is
+same" in reply to that explanation also confirms the block; ordinary negations,
+questions, uncertainty, and plural "no blocks are the same" remain conservative.
