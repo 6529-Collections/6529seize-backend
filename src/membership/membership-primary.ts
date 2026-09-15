@@ -11,6 +11,18 @@ export interface MembershipPrimaryContext extends RequestContext {
 }
 
 const activeContexts = new WeakSet<object>();
+const transactionFailures = new WeakMap<object, { readonly error: unknown }>();
+
+/** Keep the first failure even if a caller catches it and returns successfully. */
+export function markMembershipTransactionFailed(
+  ctx: RequestContext,
+  error: unknown
+): void {
+  // Error handlers must preserve the original error for invalid/expired contexts.
+  if (ctx && activeContexts.has(ctx) && !transactionFailures.has(ctx)) {
+    transactionFailures.set(ctx, { error });
+  }
+}
 
 export function assertMembershipPrimaryContext(
   ctx: RequestContext
@@ -56,10 +68,16 @@ export async function withMembershipPrimaryTransaction<T>(
       }) as MembershipPrimaryContext;
       activeContexts.add(primary);
       try {
-        return await executable(primary);
+        const result = await executable(primary);
+        const failure = transactionFailures.get(primary);
+        if (failure) {
+          throw failure.error;
+        }
+        return result;
       } finally {
         // Revoke before the adapter commits, rolls back, or releases the connection.
         activeContexts.delete(primary);
+        transactionFailures.delete(primary);
       }
     },
     { isolationLevel: 'REPEATABLE READ' }

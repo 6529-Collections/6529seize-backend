@@ -246,9 +246,50 @@ shared direct/SQL conformance coverage when adding a primary-read evaluator.
 
 ## First runtime increment: repository contracts
 
-The first focused runtime PR should add isolated persistence contracts and
-real-MySQL tests without connecting existing producers, dispatching work, or
-changing authorization reads:
+The isolated contracts are implemented in `src/membership/membership-*.ts`.
+They do not connect existing producers or authorization readers. Callers use
+`withMembershipPrimaryTransaction` at the transaction owner, then pass its
+`MembershipPrimaryContext` through every source input write and repository call.
+Contexts cannot nest an unproven connection, be forged, survive transaction exit,
+or inherit an older request cache. Opted-in API and TypeORM transactions use
+explicit repeatable-read isolation; locking reads remain current primary reads.
+Every repository failure marks the whole transaction rollback-only, even when
+the callback catches it. External effects must follow a successful commit.
+
+`MembershipSourceStatesDb.provision` is explicit and records one completed
+`bootstrap:` receipt with the caller's audited coverage revision. Reads require
+that receipt as well as the state row. An existing unproven state is rejected,
+never silently reset or blessed; fixture/bootstrap evidence is not proof of
+unwired production producer coverage. Source counters and timestamps are selected
+as decimal strings before driver JSON conversion and validated at the boundary.
+
+Profile source mutations lock matching GLOBAL dimensions as guards without
+incrementing those global versions. Multi-stage PROFILE jobs automatically add
+matching GLOBAL keys to their barrier set. This first contract conservatively
+serializes jobs touching the same dimension across profiles; parallel disjoint
+profile jobs need a later dataset-writer protocol. The supplied source set is
+hashed into durable job progress. Each stage, failure and repair rotates a
+decimal checkpoint revision, so a delayed invocation cannot act merely because
+stage/cursor text matches again. Completed job identities remain idempotent
+after another cycle starts. A TDH_XTDH job accepts final completion only at
+`STATS_ACTIVATED`; producers must checkpoint actual successful statistics
+activation and all derived outputs for the same cycle before using that stage.
+This check does not replace later tests through the real TDH/xTDH producers.
+
+Single-transaction catalogue edits require explicit affected group versions and
+tombstones. Multi-stage catalogue jobs are rejected until their bounded group-
+version fanout contract is implemented. Source jobs are not a producer work
+queue: conflicting job identities remain pending in caller orchestration.
+
+The IAM-only staging diagnostic in `customReplayLoop` runs source/job scenarios
+inside an intentionally rolled-back primary transaction, including any temporary
+GLOBAL evidence. It separately proves concurrent durable target coalescing and
+cleans only invocation-generated fixture keys. Real local MySQL tests cover
+committed source concurrency, partial-write rollback and stale recovery. No
+production bootstrap, normal background schedule or materialized read is enabled.
+Later evaluator/worker/dispatcher validation must prove its real end-to-end path.
+
+The focused repository increment retains these acceptance requirements:
 
 1. Normalize source keys, dimensions and decimal-string counters at the
    repository boundary. Reject malformed or incomplete version vectors; an

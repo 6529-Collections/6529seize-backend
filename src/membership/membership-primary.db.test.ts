@@ -1,6 +1,7 @@
 import { MEMBERSHIP_SOURCE_STATES_TABLE } from '@/constants';
 import * as loopDb from '@/db';
 import {
+  markMembershipTransactionFailed,
   membershipQueryOptions,
   withMembershipPrimaryTransaction
 } from '@/membership/membership-primary';
@@ -68,6 +69,27 @@ describeWithSeed(
           throw new Error('abort scoped work');
         })
       ).rejects.toThrow('abort scoped work');
+      expect(await sqlExecutor.execute(select)).toEqual([{ version: '1' }]);
+    });
+
+    it('rolls back a real write when the caller catches a marked mutation failure', async () => {
+      const failure = new Error('source write failed after partial progress');
+      await expect(
+        withMembershipPrimaryTransaction(sqlExecutor, async (ctx) => {
+          try {
+            await sqlExecutor.execute(
+              `UPDATE ${MEMBERSHIP_SOURCE_STATES_TABLE} SET version = 7
+              WHERE target_id = 'm2-primary-test'`,
+              undefined,
+              membershipQueryOptions(ctx)
+            );
+            throw failure;
+          } catch (error) {
+            markMembershipTransactionFailed(ctx, error);
+          }
+          return 'caller caught the failure';
+        })
+      ).rejects.toBe(failure);
       expect(await sqlExecutor.execute(select)).toEqual([{ version: '1' }]);
     });
 

@@ -11,6 +11,7 @@ import {
 } from '@/sql-executor';
 import {
   assertMembershipPrimaryContext,
+  markMembershipTransactionFailed,
   MembershipPrimaryContext,
   membershipQueryOptions,
   withMembershipPrimaryTransaction
@@ -43,6 +44,56 @@ class MemoryPrimaryExecutor extends SqlExecutor {
 }
 
 describe('membership primary context lifecycle', () => {
+  it('rejects with the first marked failure even when the caller returns success', async () => {
+    const db = new MemoryPrimaryExecutor();
+    const failure = new Error('repository mutation failed');
+    await expect(
+      withMembershipPrimaryTransaction(db, async (ctx) => {
+        markMembershipTransactionFailed(ctx, failure);
+        markMembershipTransactionFailed(ctx, new Error('later failure'));
+        return 'caller caught the failure';
+      })
+    ).rejects.toBe(failure);
+  });
+
+  it('retains rollback-only state for an undefined thrown value', async () => {
+    await expect(
+      withMembershipPrimaryTransaction(
+        new MemoryPrimaryExecutor(),
+        async (ctx) => {
+          markMembershipTransactionFailed(ctx, undefined);
+          return 'caller recovered';
+        }
+      )
+    ).rejects.toBeUndefined();
+  });
+
+  it('does not mask errors for forged or expired contexts', async () => {
+    const failure = new Error('original failure');
+    for (const ctx of [{}, null, undefined]) {
+      expect(() =>
+        markMembershipTransactionFailed(ctx as RequestContext, failure)
+      ).not.toThrow();
+    }
+    let expired: MembershipPrimaryContext | undefined;
+    await withMembershipPrimaryTransaction(
+      new MemoryPrimaryExecutor(),
+      async (ctx) => {
+        expired = ctx;
+        markMembershipTransactionFailed({ ...ctx }, failure);
+      }
+    );
+    expect(() =>
+      markMembershipTransactionFailed(expired!, failure)
+    ).not.toThrow();
+    await expect(
+      withMembershipPrimaryTransaction(
+        new MemoryPrimaryExecutor(),
+        async () => 'fresh'
+      )
+    ).resolves.toBe('fresh');
+  });
+
   it('mints a bound, immutable context only for the callback lifetime', async () => {
     const db = new MemoryPrimaryExecutor();
     let captured: MembershipPrimaryContext | undefined;

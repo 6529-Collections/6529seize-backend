@@ -1,18 +1,40 @@
 import { doInDbContext } from '../secrets';
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
+import { sqlExecutor } from '@/sql-executor';
+import {
+  assertMembershipDiagnosticInvocation,
+  runMembershipRepositoryDiagnostics
+} from '@/membership/membership-repository-diagnostics';
 
 const logger = Logger.get('CUSTOM_REPLAY_LOOP');
-
-export const handler = sentryContext.wrapLambdaHandler(async () => {
-  await doInDbContext(
-    async () => {
-      await replay();
-    },
-    { logger }
-  );
+// Shared secret loading overwrites process.env. Keep deployment-owned identity
+// from the cold-start environment, before doInDbContext loads those secrets.
+const diagnosticDeployment = Object.freeze({
+  stage: process.env.MEMBERSHIP_DIAGNOSTIC_STAGE,
+  region: process.env.AWS_REGION
 });
 
-async function replay() {
-  logger.info(`[CUSTOM REPLAY NOT IMPLEMENTED]`);
-}
+export const handler = sentryContext.wrapLambdaHandler(
+  async (event: unknown) => {
+    if (
+      event == null ||
+      (typeof event === 'object' &&
+        !Array.isArray(event) &&
+        Object.keys(event).length === 0)
+    ) {
+      logger.info('[CUSTOM REPLAY NOT IMPLEMENTED]');
+      return;
+    }
+    assertMembershipDiagnosticInvocation(event, diagnosticDeployment);
+    const result = await doInDbContext(
+      () => runMembershipRepositoryDiagnostics(sqlExecutor),
+      { logger, syncEntities: false, skipRedis: true }
+    );
+    return {
+      ...result,
+      deployment_stage: diagnosticDeployment.stage,
+      carrier_normal_membership_work: 'absent'
+    };
+  }
+);
