@@ -161,6 +161,9 @@ const EXTERNAL_WALLET_CONTEXT_PATTERNS = [
   /\bledger\b/,
   /\btrezor\b/,
   /\bwallet apps?\b/,
+  /\bapp wallets?\b/,
+  /\bmobile wallets?\b/,
+  /\b6529 mobile\b/,
   /\bbrowser extensions?\b/,
   /\bthis device\b/
 ] as const;

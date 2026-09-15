@@ -90,7 +90,7 @@ function buildPrompt({
             : 'Use two to four short sentences, preferably under 700 characters. Give only the answer or next useful troubleshooting step. Do not enumerate the facts, add background sections, or turn a definition into an onboarding guide.',
           'Respect the user’s reported progress. Do not repeat steps they have completed or repeat your previous answer. If a check is missing, ask one focused question before suggesting repairs. Do not infer that unreported checks passed.',
           'Use the suggested short answer as the default response for this stage. Draw on additional facts only to answer a specific detail the user asks about. Keep each destructive action’s data-loss warning in the same step.',
-          'Use the supplied native menu and button labels. Do not turn Core-only paths or localhost addresses into public website links.',
+          'Use the supplied native menu and button labels. Do not turn Desktop-only paths or localhost addresses into public website links.',
           'Distinguish local indexed data from on-chain holdings, local node TDH from profile TDH, and current behavior from future phases.',
           'Explain the least disruptive relevant action first; do not prescribe every reset for every error. Ask for version, checkpoint or redacted error when needed.',
           'You cannot inspect or operate the user’s computer. Never request passwords, recovery phrases, private keys, or credential-bearing RPC URLs.'

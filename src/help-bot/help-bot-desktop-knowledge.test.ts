@@ -31,7 +31,7 @@ describe('Desktop corpus retrieval and answers', () => {
   const cases = [
     ['how to get started with 6529 desktop app', 'getting-started'],
     ['how do I get started in Core?', 'getting-started'],
-    ['explain Core in depth', 'overview'],
+    ['explain Core in depth', 'legacy-core-name'],
     ['how does 6529 desktop work?', 'overview'],
     ['my tdh in desktop app is out of sync what can i do', 'tdh-out-of-sync'],
     ['why is my Desktop app total TDH different?', 'tdh-out-of-sync'],
@@ -63,7 +63,8 @@ describe('Desktop corpus retrieval and answers', () => {
       'tdh-out-of-sync'
     ],
     ['my node does not match 6529.io', 'tdh-out-of-sync'],
-    ['what is Core', 'overview'],
+    ['my node doesnt match 6529.io', 'tdh-out-of-sync'],
+    ['what is Core', 'legacy-core-name'],
     ['how do I import a Core wallet?', 'wallets'],
     ['I forgot my Core wallet password', 'wallet-backup'],
     ['how do I download a Core recovery file?', 'wallet-backup'],
@@ -96,6 +97,7 @@ describe('Desktop corpus retrieval and answers', () => {
 
   it.each([
     'why is my Desktop app total TDH different?',
+    'my node doesnt match 6529.io',
     'Why is my Desktop TDH different from the website?',
     'Why does Desktop Merkle differ from the website?'
   ])(
@@ -130,7 +132,7 @@ describe('Desktop corpus retrieval and answers', () => {
     const { answerer, publicAnswer } = makeAnswerer({ renderAnswer });
     let previousBotAnswer: string | undefined;
     const turns = [
-      ['what is Core', 'overview'],
+      ['what is Core', 'legacy-core-name'],
       ['Where do I enable an RPC provider?', 'rpc-providers'],
       ['my tdh calculation is out of sync', 'tdh-out-of-sync'],
       [
@@ -160,7 +162,7 @@ describe('Desktop corpus retrieval and answers', () => {
         MAX_DESKTOP_BRIEF_CHARACTERS
       );
       expect(result.answer).not.toBe(previousBotAnswer);
-      if (id === 'overview') {
+      if (id === 'legacy-core-name') {
         expect(result.answer).not.toContain('Set Active');
         expect(result.answer).toMatch(
           /More info: \[6529 Apps\]\(https:\/\/6529\.io\/about\/6529-apps\)$/
@@ -277,6 +279,47 @@ describe('Desktop corpus retrieval and answers', () => {
     expect(desktopRecordIdForQuestion(question)).toBe(
       'desktop.tdh-out-of-sync'
     );
+  });
+
+  it.each([
+    'Have both workers recalculated?',
+    'Have both workers recalculated',
+    'Has my node recalculated?',
+    'Are both blocks the same?',
+    'Are both blocks the same',
+    'Have both workers reconciled?',
+    'Both workers recalculated?',
+    'Both blocks are the same?'
+  ])(
+    'does not treat a progress question as confirmation: %s',
+    async (question) => {
+      const { answerer } = makeAnswerer();
+      const result = await answerer.answer({
+        question,
+        previousBotAnswer:
+          'In 6529 Desktop, your node does not match 6529.io. Compare the Last Block values.',
+        baseUrl: 'https://6529.io'
+      });
+      expect(result.type === 'ANSWER' && result.record.id).toBe(
+        'desktop.tdh-out-of-sync'
+      );
+    }
+  );
+
+  it.each([
+    ['Both workers recalculated', 'tdh-after-recalculation'],
+    ['Both blocks are the same', 'tdh-check-workers'],
+    ['Both workers reconciled', 'tdh-after-reconciliation'],
+    ['Have both workers recalculated? I recalculated', 'tdh-out-of-sync'],
+    ['Are both blocks the same? I recalculated', 'tdh-after-recalculation'],
+    ['I recalculated. Are both blocks the same?', 'tdh-after-recalculation']
+  ])('preserves only confirmed progress in %s', (question, expected) => {
+    expect(
+      desktopRecordIdForQuestion(
+        question,
+        'In 6529 Desktop, your node does not match 6529.io.'
+      )
+    ).toBe(`desktop.${expected}`);
   });
 
   it('accepts an affirmative block comparison after recalculation', () => {
@@ -441,7 +484,7 @@ describe('Desktop corpus retrieval and answers', () => {
       baseUrl: 'https://6529.io'
     });
     expect(result.type === 'ANSWER' && result.answer).toBe(
-      '**6529 Desktop (Core)** is the Windows, macOS, and Linux app that runs your own 6529 node: it indexes Ethereum data and calculates TDH locally. It also includes Core wallets and an IPFS node. Would you like help getting started?\n\nMore info: [6529 Apps](https://6529.io/about/6529-apps)'
+      '**6529 Core** was the former name of **6529 Desktop**. The official current name is 6529 Desktop; the mobile application is called 6529 Mobile. Would you like help with 6529 Desktop or 6529 Mobile?\n\nMore info: [6529 Apps](https://6529.io/about/6529-apps)'
     );
   });
 
@@ -586,6 +629,56 @@ describe('Desktop corpus retrieval and answers', () => {
     }
   );
 
+  it('answers the Core-on-mobile question with the current product names', async () => {
+    const { answerer } = makeAnswerer();
+    const result = await answerer.answer({
+      question: 'How do I use Core wallets on mobile?',
+      baseUrl: 'https://6529.io'
+    });
+    expect(result.type).toBe('ANSWER');
+    if (result.type !== 'ANSWER') throw new Error('Expected a wallet answer');
+    expect(result.record.id).toBe('wallets.core-mobile-clarification');
+    expect(result.answer).toContain('6529 Desktop');
+    expect(result.answer).toContain('6529 Mobile');
+    expect(result.answer).not.toContain('6529 Desktop > Wallets');
+  });
+
+  it('uses only the current name when defining 6529 Desktop', async () => {
+    const { answerer } = makeAnswerer();
+    const result = await answerer.answer({
+      question: 'what is 6529 Desktop',
+      baseUrl: 'https://6529.io'
+    });
+    expect(result.type).toBe('ANSWER');
+    if (result.type !== 'ANSWER') throw new Error('Expected a Desktop answer');
+    expect(result.record.id).toBe('desktop.overview');
+    expect(result.answer).toContain('6529 Desktop');
+    expect(result.answer).not.toMatch(/\bCore\b/);
+  });
+
+  it.each([
+    ['what are App Wallets in 6529 Mobile?', 'mobile-overview'],
+    ['how do I create a wallet in 6529 Mobile?', 'mobile-create-import'],
+    ['how do I import a private key in 6529 Mobile?', 'mobile-create-import'],
+    ['how do I connect an App Wallet?', 'mobile-connect'],
+    ['how do I back up my mobile wallet?', 'mobile-backup-recovery'],
+    ['I forgot my mobile wallet password', 'mobile-backup-recovery'],
+    ['why are App Wallets missing?', 'mobile-delete-troubleshooting'],
+    ['how do I delete an App Wallet?', 'mobile-delete-troubleshooting']
+  ])(
+    'answers Mobile wallet question "%s" from wallets.%s',
+    async (question, id) => {
+      const { answerer } = makeAnswerer();
+      const result = await answerer.answer({
+        question,
+        baseUrl: 'https://6529.io'
+      });
+      expect(result.type === 'ANSWER' && result.record.id).toBe(
+        `wallets.${id}`
+      );
+    }
+  );
+
   it('does not carry Core scope into explicit mobile or website questions', () => {
     expect(
       desktopQuestionWithContext(
@@ -651,7 +744,7 @@ describe('Desktop corpus retrieval and answers', () => {
     const result = await answerer.answer({
       question: 'How do I fix it?',
       previousBotAnswer:
-        'Your 6529 Desktop TDH is out of sync. Core tools are unavailable on mobile and in a browser.',
+        'Your 6529 Desktop TDH is out of sync. Desktop tools are unavailable in 6529 Mobile and in a browser.',
       baseUrl: 'https://6529.io'
     });
     expect(result.type === 'ANSWER' && result.record.id).toBe(

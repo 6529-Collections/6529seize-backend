@@ -31,7 +31,7 @@ function hasDesktopSupportTopic(question: string): boolean {
 }
 
 function hasMismatch(question: string): boolean {
-  return /\b(?:out of sync|mismatch|different|differs?|not match|doesn't match|does not match|don't match|do not match|not matching|still wrong)\b/i.test(
+  return /\b(?:out of sync|mismatch|different|differs?|not match|doesn't match|doesnt match|does not match|don't match|dont match|do not match|not matching|still wrong)\b/i.test(
     question.replace(/’/g, "'")
   );
 }
@@ -87,21 +87,22 @@ export function desktopQuestionWithContext(
     ].some((pattern) => pattern.test(question))
   )
     return null;
-  return `6529 Desktop Core: ${question}`;
+  return `6529 Desktop: ${question}`;
 }
 
 /** Inspect clauses conservatively: uncertain or negated reports cannot advance repair. */
 function affirmativeReport(question: string, action: RegExp): boolean {
-  const clauses = question.replace(/’/g, "'").split(/[,;.!?]|\bbut\b/i);
+  // Keep question marks attached so shorthand questions cannot confirm progress.
+  const clauses = question.replace(/’/g, "'").split(/[,;.!]|\bbut\b|(?<=\?)/i);
   const matching = clauses.filter((clause) => action.test(clause));
   const uncertain =
-    /\b(?:not|never|no|if|should|can|could|would|maybe|unsure|whether)\b|n't\b/i;
+    /\b(?:not|never|no|if|should|can|could|would|maybe|unsure|whether)\b|n't\b|\?/i;
   return (
     matching.length > 0 &&
     matching.every(
       (clause) =>
         !uncertain.test(clause) &&
-        !/^\s*(?:have|has|did|are|is) (?:i|you|it|the)\b/i.test(clause)
+        !/^\s*(?:have|has|had|did|do|does|are|is|was|were)\b/i.test(clause)
     )
   );
 }
@@ -181,7 +182,13 @@ export function desktopRecordIdForQuestion(
   previousBotAnswer?: string | null
 ): string | undefined {
   if (
-    /^(?:what (?:is|is the)|explain|describe|tell me about)\s+(?:6529\s+)?(?:core|desktop(?: app)?)[?.!]*$/i.test(
+    /^(?:what (?:is|is the)|explain|describe|tell me about)\s+(?:6529\s+)?core[?.!]*$/i.test(
+      question.trim()
+    )
+  )
+    return 'desktop.legacy-core-name';
+  if (
+    /^(?:what (?:is|is the)|explain|describe|tell me about)\s+(?:6529\s+)?desktop(?: app)?[?.!]*$/i.test(
       question.trim()
     )
   )
