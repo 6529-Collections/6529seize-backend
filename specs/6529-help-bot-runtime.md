@@ -625,7 +625,11 @@ fail closed and escalate rather than substitute public database values. A cold
 corpus-load failure propagates to the processor technical-failure/refund path.
 Explicit mobile/browser
 questions do not inherit Desktop scope, including Core questions aimed at those
-platforms. Desktop-versus-website comparisons retain local-node scope. Pass the
+platforms. Explicit Mobile wallet questions normalize the former Core name and
+Android/iOS wording for retrieval, preserving the requested wallet action.
+"Mobile Core wallet" and "Core wallet on mobile" retrieve the same guidance as
+"mobile wallet". Explicit Desktop-to-Mobile wallet questions retain the separate
+local-storage clarification. Desktop-versus-website comparisons retain local-node scope. Pass the
 validated scope to retrieval so prior answer text cannot change it. Ordinary
 desktop-browser layout and website TDH questions retain normal routing.
 
@@ -640,7 +644,9 @@ Normal Desktop replies use a 350-token budget, target two to four short sentence
 and are bounded to 1200 characters including links. Only explicit requests for
 detail permit 1600 tokens/6000 characters. Generation failures, empty output, token
 truncation, and oversized replies fall back to the corpus `brief_answer`, never a
-full fact dump by default. Older records without a short answer use a concise
+full fact dump by default. Authored corpus prose beginning "More info:" is
+preserved; only generated trailing footers are stripped before adding approved
+links. Older records without a short answer use a concise
 clarification fallback. Explicit detailed fallback keeps complete facts and warns
 by asking for a narrower topic if the complete procedure cannot fit.
 
@@ -665,7 +671,10 @@ runtime first can misroute generic wallet questions or truncate recovery answers
 or Core application release is required. Older runtimes can read the additional
 records, but need this renderer/routing update for full procedural answers.
 
-Desktop staged replies require the selected stage to exist in the published corpus.
+Desktop staged replies require the selected stage to exist in the published corpus
+and retain its `desktop-core` eligibility. A generic `desktop`-tagged app handoff
+may be retrieved normally but cannot be forced into a diagnostic or clarification
+stage through `desktopRecordId`.
 A new runtime against an older corpus fails closed for a missing stage, including
 a reported recalculation; it must not replay a generic TDH guide or infer a repair
 procedure from another record. Questions (including plural-subject questions such

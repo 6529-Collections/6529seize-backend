@@ -488,6 +488,25 @@ describe('Desktop corpus retrieval and answers', () => {
     );
   });
 
+  it('preserves an authored one-line More info answer in corpus fallback', async () => {
+    const match = await source().findMatch('what is Core');
+    if (!match) throw new Error('Expected overview record');
+    const { desktopFallbackAnswer, normalizeDesktopAnswer } =
+      await import('./help-bot-desktop-answer');
+    const briefAnswer =
+      'More info: 6529 Desktop workers index Ethereum locally.';
+    const record = { ...match.record, briefAnswer };
+    const expected = `${briefAnswer}\n\nMore info: [6529 Apps](https://6529.io/about/6529-apps)`;
+    expect(desktopFallbackAnswer(record, 'what is Core')).toBe(expected);
+    expect(
+      normalizeDesktopAnswer(
+        'More info: [bad](https://example.com)',
+        record,
+        'what is Core'
+      )
+    ).toBe(expected);
+  });
+
   it('bounds the entire deterministic reply including a long link footer', async () => {
     const match = await source().findMatch('what is Core');
     if (!match) throw new Error('Expected overview record');
@@ -605,6 +624,52 @@ describe('Desktop corpus retrieval and answers', () => {
     );
   });
 
+  it('allows ordinary app handoff retrieval but rejects it as a forced Desktop stage', async () => {
+    const knowledge = source();
+    const question = 'how do I connect 6529 desktop?';
+    expect((await knowledge.findMatch(question))?.record.id).toBe(
+      'wallet.connection-sharing'
+    );
+    expect(
+      await knowledge.findMatch(question, {
+        desktopScope: true,
+        desktopRecordId: 'wallet.connection-sharing'
+      })
+    ).toBeNull();
+  });
+
+  it.each([
+    ['My node does not match 6529.io', 'desktop.tdh-out-of-sync'],
+    ['what is Core', 'desktop.legacy-core-name'],
+    ['what is 6529 Desktop', 'desktop.overview'],
+    ['Where do I enable an RPC provider?', 'desktop.clarify-context']
+  ])(
+    'rejects a forced record whose Desktop eligibility was lost: %s',
+    async (question, id) => {
+      const changed = JSON.parse(corpus);
+      const record = changed.records.find(
+        (item: { id: string }) => item.id === id
+      );
+      if (!record) throw new Error('Expected Desktop corpus record');
+      record.tags = ['desktop'];
+      const knowledge = new FrontendHelpBotKnowledgeSource(async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(changed)
+      }));
+      const publicAnswer = jest.fn();
+      const answerer = new HelpBotAnswerer(null, knowledge, {
+        answer: publicAnswer
+      } as unknown as HelpBotPublicDataService);
+      const result = await answerer.answer({
+        question,
+        baseUrl: 'https://6529.io'
+      });
+      expect(result.type).toBe('NO_RELIABLE_SOURCE');
+      expect(publicAnswer).not.toHaveBeenCalled();
+    }
+  );
+
   it('does not manufacture a recovery match from the platform name alone', async () => {
     const { answerer } = makeAnswerer();
     const result = await answerer.answer({
@@ -637,10 +702,86 @@ describe('Desktop corpus retrieval and answers', () => {
     });
     expect(result.type).toBe('ANSWER');
     if (result.type !== 'ANSWER') throw new Error('Expected a wallet answer');
-    expect(result.record.id).toBe('wallets.core-mobile-clarification');
-    expect(result.answer).toContain('6529 Desktop');
+    expect(result.record.id).toBe('wallets.mobile-overview');
     expect(result.answer).toContain('6529 Mobile');
     expect(result.answer).not.toContain('6529 Desktop > Wallets');
+  });
+
+  describe.each([
+    ['mobile wallet', 'wallets.mobile-'],
+    ['mobile Core wallet', 'wallets.mobile-'],
+    ['Core wallet on mobile', 'wallets.mobile-'],
+    ['mobile app Core wallet', 'wallets.mobile-'],
+    ['Core wallet on Android', 'wallets.mobile-'],
+    ['Core wallet on iOS', 'wallets.mobile-'],
+    ['desktop wallet', 'desktop.'],
+    ['desktop Core wallet', 'desktop.']
+  ])('wallet instructions using %s', (wallet, prefix) => {
+    it.each([
+      ['How do I create a WALLET?', 'create-import', 'wallets'],
+      ['How do I import a WALLET?', 'create-import', 'wallets'],
+      ['How do I connect my WALLET?', 'connect', 'wallets'],
+      ['How do I back up my WALLET?', 'backup-recovery', 'wallet-backup'],
+      ['I forgot my WALLET password', 'backup-recovery', 'wallet-backup'],
+      ['How do I delete my WALLET?', 'delete-troubleshooting', 'wallets']
+    ])('%s', async (template, mobileId, desktopId) => {
+      const question = template.replace('WALLET', wallet);
+      const expected = prefix + (prefix === 'desktop.' ? desktopId : mobileId);
+      const { answerer } = makeAnswerer();
+      const result = await answerer.answer({
+        question,
+        baseUrl: 'https://6529.io'
+      });
+      expect(result.type === 'ANSWER' && result.record.id).toBe(expected);
+      if (result.type !== 'ANSWER')
+        throw new Error('Expected wallet instructions');
+      expect(result.answer).not.toContain('6529 Desktop (Core)');
+      if (prefix !== 'desktop.') {
+        expect(result.answer).not.toContain('6529 Desktop > Wallets');
+      }
+    });
+  });
+
+  it.each([
+    'Can I use my Desktop Core wallet on mobile?',
+    'Does my 6529 Desktop wallet automatically appear in 6529 Mobile?'
+  ])('keeps cross-platform wallet questions distinct: %s', async (question) => {
+    const { answerer } = makeAnswerer();
+    const result = await answerer.answer({
+      question,
+      baseUrl: 'https://6529.io'
+    });
+    expect(result.type === 'ANSWER' && result.record.id).toBe(
+      'wallets.core-mobile-clarification'
+    );
+    expect(result.type === 'ANSWER' && result.answer).toContain(
+      'does not automatically appear'
+    );
+  });
+
+  it.each([
+    ['mobile Core wallets', 'wallets.mobile-overview'],
+    ['desktop Core wallets', 'desktop.wallets'],
+    [
+      'How do I back up my mobile Core wallets?',
+      'wallets.mobile-backup-recovery'
+    ],
+    ['How do I back up my desktop Core wallets?', 'desktop.wallet-backup'],
+    [
+      'How do I create another mobile Core wallet?',
+      'wallets.mobile-create-import'
+    ],
+    [
+      'How do I delete a Core wallet on mobile?',
+      'wallets.mobile-delete-troubleshooting'
+    ]
+  ])('keeps wallet aliases on the requested task: %s', async (question, id) => {
+    const { answerer } = makeAnswerer();
+    const result = await answerer.answer({
+      question,
+      baseUrl: 'https://6529.io'
+    });
+    expect(result.type === 'ANSWER' && result.record.id).toBe(id);
   });
 
   it('uses only the current name when defining 6529 Desktop', async () => {
@@ -818,28 +959,58 @@ describe('Desktop corpus retrieval and answers', () => {
     expect(publicAnswer).not.toHaveBeenCalled();
   });
 
-  it('fails closed for a missing dialogue stage in an older Desktop corpus', async () => {
-    const older = JSON.parse(corpus);
-    older.records = older.records.filter(
-      (record: { id: string }) =>
-        record.id !== 'desktop.tdh-after-recalculation'
-    );
-    const knowledge = new FrontendHelpBotKnowledgeSource(async () => ({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify(older)
-    }));
-    const publicAnswer = jest.fn();
-    const answerer = new HelpBotAnswerer(null, knowledge, {
-      answer: publicAnswer
-    } as unknown as HelpBotPublicDataService);
-    const result = await answerer.answer({
-      question: 'My node still does not match 6529.io, I recalculated',
-      baseUrl: 'https://6529.io'
-    });
-    expect(result.type).toBe('NO_RELIABLE_SOURCE');
-    expect(publicAnswer).not.toHaveBeenCalled();
-  });
+  it.each([
+    ['My node does not match 6529.io', 'desktop.tdh-out-of-sync'],
+    [
+      'My node does not match 6529.io, different blocks',
+      'desktop.tdh-block-mismatch'
+    ],
+    ['My node does not match 6529.io, same block', 'desktop.tdh-check-workers'],
+    [
+      'My node does not match 6529.io, same block, both caught up',
+      'desktop.tdh-recalculate'
+    ],
+    [
+      'My node does not match 6529.io, I recalculated',
+      'desktop.tdh-after-recalculation'
+    ],
+    [
+      'My node does not match 6529.io, I recalculated, same block',
+      'desktop.tdh-same-block-mismatch'
+    ],
+    [
+      'My node does not match 6529.io, I reconciled',
+      'desktop.tdh-after-reconciliation'
+    ],
+    [
+      'My node does not match 6529.io, I reconciled and recalculated',
+      'desktop.tdh-repair-diagnostics'
+    ]
+  ])(
+    'fails closed when the selected stage is missing: %s',
+    async (question, stage) => {
+      expect((await source().findMatch(question))?.record.id).toBe(stage);
+      const older = JSON.parse(corpus);
+      older.records = older.records.filter(
+        (record: { id: string }) => record.id !== stage
+      );
+      const knowledge = new FrontendHelpBotKnowledgeSource(async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(older)
+      }));
+      const publicAnswer = jest.fn();
+      const answerer = new HelpBotAnswerer(null, knowledge, {
+        answer: publicAnswer
+      } as unknown as HelpBotPublicDataService);
+      const result = await answerer.answer({
+        question,
+        baseUrl: 'https://6529.io'
+      });
+      expect(result.type).toBe('NO_RELIABLE_SOURCE');
+      expect(publicAnswer).not.toHaveBeenCalled();
+    }
+  );
 
   it('asks for a narrower question rather than cutting oversized fallback instructions', async () => {
     const oversized = JSON.parse(corpus);
