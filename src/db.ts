@@ -130,11 +130,10 @@ export interface DbConnectionSelection {
   readonly failOnInitializationError: true;
 }
 
-export async function connect(
-  entities: any[] = [],
-  syncEntities = false,
+function validateDbConnectionSelection(
+  syncEntities: boolean,
   selection?: DbConnectionSelection
-) {
+): void {
   if (
     selection &&
     (selection.failOnInitializationError !== true ||
@@ -147,6 +146,14 @@ export async function connect(
   if (selection && AppDataSource?.isInitialized) {
     throw new Error('An explicit database context is already initialized');
   }
+}
+
+export async function connect(
+  entities: any[] = [],
+  syncEntities = false,
+  selection?: DbConnectionSelection
+) {
+  validateDbConnectionSelection(syncEntities, selection);
   logger.info(
     `[DB HOST ${process.env.DB_HOST}] [SYNC ENTITIES ${syncEntities}]`
   );

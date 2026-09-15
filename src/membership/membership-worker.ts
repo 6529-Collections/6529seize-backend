@@ -253,11 +253,13 @@ export class MembershipRefreshWorker {
             target,
             claim,
             expectedRequest,
-            code,
-            supersede,
-            options.retry_millis,
-            options.max_attempts,
-            park,
+            {
+              error_code: code,
+              supersede,
+              retry_millis: options.retry_millis,
+              max_attempts: options.max_attempts,
+              park
+            },
             ctx
           );
           const run =

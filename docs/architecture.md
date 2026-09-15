@@ -115,6 +115,13 @@ dispatch and fixture setup/acceptance follow in M5; normal producers, API reader
 production work and cutover remain unavailable. See
 [runtime operations](membership-runtime-operations.md).
 
+The worker catalog entry also generates independent operational-monitoring
+coverage. Its central collector allowlist and application-account log subscription
+require separate monitoring and source-stack deployments after the authorized
+main merges and service log-group creation. Combined staging uses service-owned
+alarms and direct logs until that coverage is installed and verified; see the
+[monitoring rollout sequence](membership-runtime-operations.md#independent-operational-monitoring).
+
 ## Proposal card media
 
 Authenticated `POST /drop-media/proposal-frame` builds a bounded, fixed HTML
