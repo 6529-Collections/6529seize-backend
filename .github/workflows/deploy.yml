@@ -41,6 +41,7 @@ on:
           - marketStatsLoop
           - marketDepthStreamLoop
           - mediaResizerLoop
+          - membershipRefreshLoop
           - mintAnnouncementsLoop
           - nextgenContractLoop
           - nextgenMediaImageResolutions
@@ -92,6 +93,21 @@ on:
           - claims-media-upload
           - nft-link-page-retry
           - membership-refresh
+          - membership-evaluator-index
+          - membership-runtime-control
+      membership_runtime_mode:
+        type: choice
+        description: 'Closed membership worker mode; production requires inactive'
+        required: false
+        default: inactive
+        options:
+          - inactive
+          - staging-fixture-v1
+      membership_worker_mapping_enabled:
+        type: boolean
+        description: 'Enable only the staging fixture worker SQS mapping'
+        required: false
+        default: false
       release_pull_request:
         type: string
         description: 'Merged PR represented by this production release'
@@ -155,16 +171,34 @@ jobs:
       INPUT_SERVICE: ${{ github.event.inputs.service }}
       EXPECTED_SOURCE_SHA: ${{ github.event.inputs.expected_source_sha }}
       DB_SCHEMA_SCOPE: ${{ github.event.inputs.db_schema_scope || 'full' }}
+      MEMBERSHIP_RUNTIME_MODE: ${{ github.event.inputs.membership_runtime_mode || 'inactive' }}
+      MEMBERSHIP_WORKER_MAPPING_ENABLED: ${{ github.event.inputs.membership_worker_mapping_enabled || 'false' }}
     steps:
       - name: Validate dispatch inputs before using credentials
         shell: bash
         run: |
           set -euo pipefail
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]]
-          [[ "$INPUT_SERVICE" =~ ^(api|aggregatedActivityLoop|attachmentsOrchestrator|attachmentsProcessor|artCurationNftWatchLoop|claimsBuilder|claimsMediaArweaveUploader|customReplayLoop|dbDumpsDaily|dbMigrationsLoop|delegationsLoop|discoverEnsLoop|dropMediaIngestStorage|dropMediaSanitizer|dropVideoConversionInvokerLoop|ethPriceLoop|externalCollectionLiveTailingLoop|externalCollectionSnapshottingLoop|helpBotReplyLoop|marketStatsLoop|marketDepthStreamLoop|mediaResizerLoop|mintAnnouncementsLoop|nextgenContractLoop|nextgenMediaImageResolutions|nextgenMediaProxyInterceptor|nextgenMediaUploader|nextgenMetadataLoop|nftHistoryLoop|nftLinkRefresherLoop|nftLinkMediaPreviewLoop|nftOwnersLoop|nftsLoop|overRatesRevocationLoop|ownersBalancesLoop|populateHistoricConsolidatedTdh|pushNotificationsHandler|rateEventProcessingLoop|releaseNotesGenerationLoop|refreshEnsLoop|rememesLoop|royaltiesLoop|s3Uploader|subscriptionsDaily|subscriptionsTopUpLoop|xTdhGrantsReviewerLoop|tdhHistoryLoop|tdhLoop|teamLoop|transactionsLoop|transactionsProcessingLoop|waveDecisionExecutionLoop|waveLeaderboardSnapshotterLoop|waveDropMetricsRefreshLoop|waveScoreRefreshLoop|xTdhLoop|artworkDocumentationStorage|artworkDocumentationProcessor)$ ]]
-          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|wallet-transfer-analysis|claims-media-upload|nft-link-page-retry|membership-refresh)$ ]]
+          [[ "$INPUT_SERVICE" =~ ^(api|aggregatedActivityLoop|attachmentsOrchestrator|attachmentsProcessor|artCurationNftWatchLoop|claimsBuilder|claimsMediaArweaveUploader|customReplayLoop|dbDumpsDaily|dbMigrationsLoop|delegationsLoop|discoverEnsLoop|dropMediaIngestStorage|dropMediaSanitizer|dropVideoConversionInvokerLoop|ethPriceLoop|externalCollectionLiveTailingLoop|externalCollectionSnapshottingLoop|helpBotReplyLoop|marketStatsLoop|marketDepthStreamLoop|mediaResizerLoop|membershipRefreshLoop|mintAnnouncementsLoop|nextgenContractLoop|nextgenMediaImageResolutions|nextgenMediaProxyInterceptor|nextgenMediaUploader|nextgenMetadataLoop|nftHistoryLoop|nftLinkRefresherLoop|nftLinkMediaPreviewLoop|nftOwnersLoop|nftsLoop|overRatesRevocationLoop|ownersBalancesLoop|populateHistoricConsolidatedTdh|pushNotificationsHandler|rateEventProcessingLoop|releaseNotesGenerationLoop|refreshEnsLoop|rememesLoop|royaltiesLoop|s3Uploader|subscriptionsDaily|subscriptionsTopUpLoop|xTdhGrantsReviewerLoop|tdhHistoryLoop|tdhLoop|teamLoop|transactionsLoop|transactionsProcessingLoop|waveDecisionExecutionLoop|waveLeaderboardSnapshotterLoop|waveDropMetricsRefreshLoop|waveScoreRefreshLoop|xTdhLoop|artworkDocumentationStorage|artworkDocumentationProcessor)$ ]]
+          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|wallet-transfer-analysis|claims-media-upload|nft-link-page-retry|membership-refresh|membership-evaluator-index|membership-runtime-control)$ ]]
           if [ "$DB_SCHEMA_SCOPE" != full ] && [ "$INPUT_SERVICE" != dbMigrationsLoop ]; then
             echo "db_schema_scope is only supported for dbMigrationsLoop" >&2
+            exit 1
+          fi
+          membership_mode="${MEMBERSHIP_RUNTIME_MODE:-inactive}"
+          membership_mapping="${MEMBERSHIP_WORKER_MAPPING_ENABLED:-false}"
+          [[ "$membership_mode" =~ ^(inactive|staging-fixture-v1)$ ]]
+          [[ "$membership_mapping" =~ ^(true|false)$ ]]
+          if [ "$INPUT_SERVICE" != membershipRefreshLoop ] && { [ "$membership_mode" != inactive ] || [ "$membership_mapping" != false ]; }; then
+            echo "Membership controls are only supported for membershipRefreshLoop" >&2
+            exit 1
+          fi
+          if [ "$INPUT_ENVIRONMENT" = prod ] && { [ "$membership_mode" != inactive ] || [ "$membership_mapping" != false ]; }; then
+            echo "Production membership runtime must remain inactive" >&2
+            exit 1
+          fi
+          if [ "$membership_mapping" = true ] && [ "$membership_mode" != staging-fixture-v1 ]; then
+            echo "Membership worker mapping requires staging fixture mode" >&2
             exit 1
           fi
           if [ "$INPUT_ENVIRONMENT" = prod ]; then
@@ -399,10 +433,10 @@ jobs:
         if: ${{ !(github.event.inputs.service == 'dropMediaIngestStorage' || github.event.inputs.service == 'artworkDocumentationStorage') && !(github.event.inputs.service == 'nextgenMediaProxyInterceptor') }}
         shell: bash
         env:
-          VERIFICATION_TARGETS_BY_SERVICE: '{"api":["seizeAPI"],"aggregatedActivityLoop":["aggregatedActivityLoop"],"attachmentsOrchestrator":["attachmentsOrchestrator"],"attachmentsProcessor":["attachmentsProcessor"],"artCurationNftWatchLoop":["artCurationNftWatchLoop"],"claimsBuilder":["claimsBuilder"],"claimsMediaArweaveUploader":["claimsMediaArweaveUploader"],"customReplayLoop":["customReplayLoop"],"dbDumpsDaily":["dbDumpsDaily"],"dbMigrationsLoop":["dbMigrationsLoop"],"delegationsLoop":["delegationsLoop"],"discoverEnsLoop":["discoverEnsLoop"],"dropMediaIngestStorage":[],"dropMediaSanitizer":["dropMediaSanitizer"],"dropVideoConversionInvokerLoop":["dropVideoConversionInvokerLoop"],"ethPriceLoop":["ethPriceLoop"],"externalCollectionLiveTailingLoop":["externalCollectionLiveTailingLoop"],"externalCollectionSnapshottingLoop":["externalCollectionSnapshottingLoop"],"helpBotReplyLoop":["helpBotReplyLoop","helpBotDailyActivityCreditLoop"],"marketStatsLoop":["marketStatsMEMES","marketStatsLAB","marketStatsGRADIENT","marketStatsNEXTGEN"],"marketDepthStreamLoop":["marketDepthStreamLoop"],"mediaResizerLoop":["mediaResizerLoop"],"mintAnnouncementsLoop":["mintAnnouncementsLoop"],"nextgenContractLoop":["nextgenContractLoop"],"nextgenMediaImageResolutions":["nextgenMediaImageResolutions"],"nextgenMediaProxyInterceptor":["nextgenMediaProxyInterceptor"],"nextgenMediaUploader":["nextgenMediaUploader"],"nextgenMetadataLoop":["nextgenMetadataLoop"],"nftHistoryLoop":["nftHistoryLoop"],"nftLinkRefresherLoop":["nftLinkRefresherLoop"],"nftLinkMediaPreviewLoop":["nftLinkMediaPreviewLoop"],"nftOwnersLoop":["nftOwnersLoop"],"nftsLoop":["nftsLoop"],"overRatesRevocationLoop":["overRatesRevocationLoop"],"ownersBalancesLoop":["ownersBalancesLoop"],"populateHistoricConsolidatedTdh":["populateHistoricConsolidatedTdh"],"pushNotificationsHandler":["pushNotificationsHandler"],"rateEventProcessingLoop":["rateEventProcessingLoop"],"releaseNotesGenerationLoop":["releaseNotesGenerationLoop"],"refreshEnsLoop":["refreshENS"],"rememesLoop":["rememesS3Loop","rememesRefreshMetadataLoop","rememesFileLoop"],"royaltiesLoop":["royaltiesLoop"],"s3Uploader":["s3Uploader"],"subscriptionsDaily":["subscriptionsDaily","subscriptionCoverageReconciliationLoop"],"subscriptionsTopUpLoop":["subscriptionsTopUpLoop"],"xTdhGrantsReviewerLoop":["xTdhGrantsReviewerLoop"],"tdhHistoryLoop":["tdhHistoryLoop"],"tdhLoop":["tdhLoop"],"teamLoop":["teamLoop"],"transactionsLoop":["memesTransactionsLoop","gradientsTransactionsLoop","memeLabTransactionsLoop"],"transactionsProcessingLoop":["transactionsProcessingLoop"],"waveDecisionExecutionLoop":["waveDecisionExecutionLoop"],"waveLeaderboardSnapshotterLoop":["waveLeaderboardSnapshotterLoop"],"waveDropMetricsRefreshLoop":["waveDropMetricsRefreshLoop"],"waveScoreRefreshLoop":["waveScoreRefreshLoop"],"xTdhLoop":["xTdhLoop"],"artworkDocumentationStorage":[],"artworkDocumentationProcessor":["artworkDocumentationProcessor"]}'
+          VERIFICATION_TARGETS_BY_SERVICE: '{"api":["seizeAPI"],"aggregatedActivityLoop":["aggregatedActivityLoop"],"attachmentsOrchestrator":["attachmentsOrchestrator"],"attachmentsProcessor":["attachmentsProcessor"],"artCurationNftWatchLoop":["artCurationNftWatchLoop"],"claimsBuilder":["claimsBuilder"],"claimsMediaArweaveUploader":["claimsMediaArweaveUploader"],"customReplayLoop":["customReplayLoop"],"dbDumpsDaily":["dbDumpsDaily"],"dbMigrationsLoop":["dbMigrationsLoop"],"delegationsLoop":["delegationsLoop"],"discoverEnsLoop":["discoverEnsLoop"],"dropMediaIngestStorage":[],"dropMediaSanitizer":["dropMediaSanitizer"],"dropVideoConversionInvokerLoop":["dropVideoConversionInvokerLoop"],"ethPriceLoop":["ethPriceLoop"],"externalCollectionLiveTailingLoop":["externalCollectionLiveTailingLoop"],"externalCollectionSnapshottingLoop":["externalCollectionSnapshottingLoop"],"helpBotReplyLoop":["helpBotReplyLoop","helpBotDailyActivityCreditLoop"],"marketStatsLoop":["marketStatsMEMES","marketStatsLAB","marketStatsGRADIENT","marketStatsNEXTGEN"],"marketDepthStreamLoop":["marketDepthStreamLoop"],"mediaResizerLoop":["mediaResizerLoop"],"membershipRefreshLoop":["membershipRefreshLoop"],"mintAnnouncementsLoop":["mintAnnouncementsLoop"],"nextgenContractLoop":["nextgenContractLoop"],"nextgenMediaImageResolutions":["nextgenMediaImageResolutions"],"nextgenMediaProxyInterceptor":["nextgenMediaProxyInterceptor"],"nextgenMediaUploader":["nextgenMediaUploader"],"nextgenMetadataLoop":["nextgenMetadataLoop"],"nftHistoryLoop":["nftHistoryLoop"],"nftLinkRefresherLoop":["nftLinkRefresherLoop"],"nftLinkMediaPreviewLoop":["nftLinkMediaPreviewLoop"],"nftOwnersLoop":["nftOwnersLoop"],"nftsLoop":["nftsLoop"],"overRatesRevocationLoop":["overRatesRevocationLoop"],"ownersBalancesLoop":["ownersBalancesLoop"],"populateHistoricConsolidatedTdh":["populateHistoricConsolidatedTdh"],"pushNotificationsHandler":["pushNotificationsHandler"],"rateEventProcessingLoop":["rateEventProcessingLoop"],"releaseNotesGenerationLoop":["releaseNotesGenerationLoop"],"refreshEnsLoop":["refreshENS"],"rememesLoop":["rememesS3Loop","rememesRefreshMetadataLoop","rememesFileLoop"],"royaltiesLoop":["royaltiesLoop"],"s3Uploader":["s3Uploader"],"subscriptionsDaily":["subscriptionsDaily","subscriptionCoverageReconciliationLoop"],"subscriptionsTopUpLoop":["subscriptionsTopUpLoop"],"xTdhGrantsReviewerLoop":["xTdhGrantsReviewerLoop"],"tdhHistoryLoop":["tdhHistoryLoop"],"tdhLoop":["tdhLoop"],"teamLoop":["teamLoop"],"transactionsLoop":["memesTransactionsLoop","gradientsTransactionsLoop","memeLabTransactionsLoop"],"transactionsProcessingLoop":["transactionsProcessingLoop"],"waveDecisionExecutionLoop":["waveDecisionExecutionLoop"],"waveLeaderboardSnapshotterLoop":["waveLeaderboardSnapshotterLoop"],"waveDropMetricsRefreshLoop":["waveDropMetricsRefreshLoop"],"waveScoreRefreshLoop":["waveScoreRefreshLoop"],"xTdhLoop":["xTdhLoop"],"artworkDocumentationStorage":[],"artworkDocumentationProcessor":["artworkDocumentationProcessor"]}'
         run: |
           set -euo pipefail
-          [[ "$INPUT_SERVICE" =~ ^(api|aggregatedActivityLoop|attachmentsOrchestrator|attachmentsProcessor|artCurationNftWatchLoop|claimsBuilder|claimsMediaArweaveUploader|customReplayLoop|dbDumpsDaily|dbMigrationsLoop|delegationsLoop|discoverEnsLoop|dropMediaIngestStorage|dropMediaSanitizer|dropVideoConversionInvokerLoop|ethPriceLoop|externalCollectionLiveTailingLoop|externalCollectionSnapshottingLoop|helpBotReplyLoop|marketStatsLoop|marketDepthStreamLoop|mediaResizerLoop|mintAnnouncementsLoop|nextgenContractLoop|nextgenMediaImageResolutions|nextgenMediaProxyInterceptor|nextgenMediaUploader|nextgenMetadataLoop|nftHistoryLoop|nftLinkRefresherLoop|nftLinkMediaPreviewLoop|nftOwnersLoop|nftsLoop|overRatesRevocationLoop|ownersBalancesLoop|populateHistoricConsolidatedTdh|pushNotificationsHandler|rateEventProcessingLoop|releaseNotesGenerationLoop|refreshEnsLoop|rememesLoop|royaltiesLoop|s3Uploader|subscriptionsDaily|subscriptionsTopUpLoop|xTdhGrantsReviewerLoop|tdhHistoryLoop|tdhLoop|teamLoop|transactionsLoop|transactionsProcessingLoop|waveDecisionExecutionLoop|waveLeaderboardSnapshotterLoop|waveDropMetricsRefreshLoop|waveScoreRefreshLoop|xTdhLoop|artworkDocumentationStorage|artworkDocumentationProcessor)$ ]]
+          [[ "$INPUT_SERVICE" =~ ^(api|aggregatedActivityLoop|attachmentsOrchestrator|attachmentsProcessor|artCurationNftWatchLoop|claimsBuilder|claimsMediaArweaveUploader|customReplayLoop|dbDumpsDaily|dbMigrationsLoop|delegationsLoop|discoverEnsLoop|dropMediaIngestStorage|dropMediaSanitizer|dropVideoConversionInvokerLoop|ethPriceLoop|externalCollectionLiveTailingLoop|externalCollectionSnapshottingLoop|helpBotReplyLoop|marketStatsLoop|marketDepthStreamLoop|mediaResizerLoop|membershipRefreshLoop|mintAnnouncementsLoop|nextgenContractLoop|nextgenMediaImageResolutions|nextgenMediaProxyInterceptor|nextgenMediaUploader|nextgenMetadataLoop|nftHistoryLoop|nftLinkRefresherLoop|nftLinkMediaPreviewLoop|nftOwnersLoop|nftsLoop|overRatesRevocationLoop|ownersBalancesLoop|populateHistoricConsolidatedTdh|pushNotificationsHandler|rateEventProcessingLoop|releaseNotesGenerationLoop|refreshEnsLoop|rememesLoop|royaltiesLoop|s3Uploader|subscriptionsDaily|subscriptionsTopUpLoop|xTdhGrantsReviewerLoop|tdhHistoryLoop|tdhLoop|teamLoop|transactionsLoop|transactionsProcessingLoop|waveDecisionExecutionLoop|waveLeaderboardSnapshotterLoop|waveDropMetricsRefreshLoop|waveScoreRefreshLoop|xTdhLoop|artworkDocumentationStorage|artworkDocumentationProcessor)$ ]]
           if [ "$INPUT_SERVICE" = api ]; then
             package_path=src/api-serverless/dist/index.zip
           else
@@ -447,7 +481,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$INPUT_SERVICE" =~ ^(api|aggregatedActivityLoop|attachmentsOrchestrator|attachmentsProcessor|artCurationNftWatchLoop|claimsBuilder|claimsMediaArweaveUploader|customReplayLoop|dbDumpsDaily|dbMigrationsLoop|delegationsLoop|discoverEnsLoop|dropMediaIngestStorage|dropMediaSanitizer|dropVideoConversionInvokerLoop|ethPriceLoop|externalCollectionLiveTailingLoop|externalCollectionSnapshottingLoop|helpBotReplyLoop|marketStatsLoop|marketDepthStreamLoop|mediaResizerLoop|mintAnnouncementsLoop|nextgenContractLoop|nextgenMediaImageResolutions|nextgenMediaProxyInterceptor|nextgenMediaUploader|nextgenMetadataLoop|nftHistoryLoop|nftLinkRefresherLoop|nftLinkMediaPreviewLoop|nftOwnersLoop|nftsLoop|overRatesRevocationLoop|ownersBalancesLoop|populateHistoricConsolidatedTdh|pushNotificationsHandler|rateEventProcessingLoop|releaseNotesGenerationLoop|refreshEnsLoop|rememesLoop|royaltiesLoop|s3Uploader|subscriptionsDaily|subscriptionsTopUpLoop|xTdhGrantsReviewerLoop|tdhHistoryLoop|tdhLoop|teamLoop|transactionsLoop|transactionsProcessingLoop|waveDecisionExecutionLoop|waveLeaderboardSnapshotterLoop|waveDropMetricsRefreshLoop|waveScoreRefreshLoop|xTdhLoop|artworkDocumentationStorage|artworkDocumentationProcessor)$ ]]
+          [[ "$INPUT_SERVICE" =~ ^(api|aggregatedActivityLoop|attachmentsOrchestrator|attachmentsProcessor|artCurationNftWatchLoop|claimsBuilder|claimsMediaArweaveUploader|customReplayLoop|dbDumpsDaily|dbMigrationsLoop|delegationsLoop|discoverEnsLoop|dropMediaIngestStorage|dropMediaSanitizer|dropVideoConversionInvokerLoop|ethPriceLoop|externalCollectionLiveTailingLoop|externalCollectionSnapshottingLoop|helpBotReplyLoop|marketStatsLoop|marketDepthStreamLoop|mediaResizerLoop|membershipRefreshLoop|mintAnnouncementsLoop|nextgenContractLoop|nextgenMediaImageResolutions|nextgenMediaProxyInterceptor|nextgenMediaUploader|nextgenMetadataLoop|nftHistoryLoop|nftLinkRefresherLoop|nftLinkMediaPreviewLoop|nftOwnersLoop|nftsLoop|overRatesRevocationLoop|ownersBalancesLoop|populateHistoricConsolidatedTdh|pushNotificationsHandler|rateEventProcessingLoop|releaseNotesGenerationLoop|refreshEnsLoop|rememesLoop|royaltiesLoop|s3Uploader|subscriptionsDaily|subscriptionsTopUpLoop|xTdhGrantsReviewerLoop|tdhHistoryLoop|tdhLoop|teamLoop|transactionsLoop|transactionsProcessingLoop|waveDecisionExecutionLoop|waveLeaderboardSnapshotterLoop|waveDropMetricsRefreshLoop|waveScoreRefreshLoop|xTdhLoop|artworkDocumentationStorage|artworkDocumentationProcessor)$ ]]
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]]
           stack_name="$INPUT_SERVICE-$INPUT_ENVIRONMENT"
           stack_status="$(aws cloudformation describe-stacks             --stack-name "$stack_name"             --query 'Stacks[0].StackStatus'             --output text)"

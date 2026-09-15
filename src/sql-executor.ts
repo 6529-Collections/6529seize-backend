@@ -2,9 +2,21 @@ import { DbQueryOptions } from './db-query.options';
 import { RequestContext } from './request.context';
 
 import * as mysql from 'mysql';
+import type { SqlExecutionBudget } from '@/db/sql-execution-budget';
+export type {
+  SqlExecutionBudget,
+  SqlStatementLimits,
+  SqlCommitOutcome
+} from '@/db/sql-execution-budget';
 
 export interface ConnectionWrapper<CONNECTION_TYPE> {
   readonly connection: CONNECTION_TYPE;
+}
+
+/** Explicit isolation is opt-in; existing callers keep their server default. */
+export interface SqlTransactionOptions {
+  readonly isolationLevel?: 'REPEATABLE READ';
+  readonly executionBudget?: SqlExecutionBudget;
 }
 
 export type BulkUpsertOpts = {
@@ -26,7 +38,8 @@ export abstract class SqlExecutor {
   ): Promise<T[]>;
 
   abstract executeNativeQueriesInTransaction<T>(
-    executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>
+    executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>,
+    options?: SqlTransactionOptions
   ): Promise<T>;
 
   async oneOrNull<T>(
@@ -168,9 +181,10 @@ export abstract class LazyDbAccessCompatibleService {
   }
 
   public async executeNativeQueriesInTransaction<T>(
-    executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>
+    executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>,
+    options?: SqlTransactionOptions
   ): Promise<T> {
-    return this.db.executeNativeQueriesInTransaction(executable);
+    return this.db.executeNativeQueriesInTransaction(executable, options);
   }
 
   public async getLastInsertId(

@@ -36,6 +36,92 @@ worker, queue, schedule or materialized reader and preserves existing API and
 frontend behavior. The July draft tables are not mapped or used as readiness
 evidence. Runtime implementation and cutover remain gated by issue #2075.
 
+The next inactive increment adds source-state, durable producer-job and refresh-
+target repositories under `src/membership`. A runtime-validated primary context
+owns an explicit repeatable-read transaction; every query uses its bound writer
+connection and a fresh request cache scope. Current locking reads provide the
+later publication guard. Repository errors mark that transaction rollback-only,
+including errors a caller catches. Existing callers retain their transaction
+defaults and authorization path.
+
+Source provisioning stores a completed bootstrap receipt with its coverage
+revision; a missing or malformed receipt is unknown. Profile mutations lock
+matching GLOBAL dimensions before profile rows. Multi-stage profile jobs also
+hold GLOBAL barriers, conservatively serializing overlapping datasets. Durable
+source-set hashes and monotonic checkpoint revisions prevent partial-key
+completion and stale stage replay. TDH/xTDH completion requires the statistics-
+activated stage. Single-transaction catalogue edits retain group-version and
+deletion evidence; multi-stage catalogue fanout remains a later contract.
+
+`customReplayLoop` carries the closed IAM-invoked
+`membership_repository_diagnostics_v1` action only in staging. Its deployment
+stage is captured before shared secrets load. Source/job exercises deliberately
+roll back all GLOBAL and PROFILE changes; concurrent refresh-target exercises
+use generated fixture keys and exact cleanup. The carrier has no schedule,
+queue, producer wiring, materialized reader or normal membership work. Deploy
+only `customReplayLoop` for this increment, after the existing membership schema.
+No frontend or Help Bot behavior changes.
+
+The primary profile evaluator captures one canonical identity consolidation key,
+the catalogue version and twelve GLOBAL/PROFILE input versions, a fixed evaluation
+time and group high bound. It uses primary input repositories with bounded raw
+windows, sparse explicit-list discovery and a dense-profile fallback. Large input
+sets continue through a strictly decoded active-group cursor; incomplete input
+never becomes an eligible/empty answer. The worker owns atomic candidate,
+checkpoint and publication operations. The evaluator is not wired into API readers.
+
+Both SQL adapters support an optional connection-bound execution budget. It covers
+pool acquisition, every statement and transaction finalization, including statements
+issued internally by TypeORM. Absolute deadlines destroy the physical connection
+and explicitly settle pending callbacks; stale contexts/options cannot use a
+released connection. Commit acknowledgement is tracked separately from session
+restoration so an uncertain commit can be reconciled from durable state. Existing
+unbudgeted callers retain their previous transaction behavior.
+
+Deploy `dbMigrationsLoop` with explicit scope `membership-evaluator-index` before
+using the new candidate index on `community_groups`. The scope accepts only the
+reviewed nonunique `(is_pure_profile_group, visible, id)` index and requires online
+`INPLACE, LOCK=NONE` DDL. Manual full synchronization first checks the controlled
+membership schema, preventing it from bypassing these explicit additions. The
+original seven-table create-only scope remains unchanged. This increment enables
+no queue, schedule, producer coverage, backfill or materialized reader.
+
+The following worker increment adds `membershipRefreshLoop`: an inactive Lambda,
+its dedicated execution role, Standard SQS work queue/DLQ, disabled batch-one
+mapping, and service-owned alarms. A delivery supplies a target and a finite
+scheduling reservation; private lease tokens and checkpoint revisions remain in
+MySQL. Each bounded quantum commits candidate rows and its exact cursor together.
+Publication requires the current request, source guards, lease, immutable seed and
+exhaustion proof. GROUP/FULL runs page the canonical identity source and request
+PROFILE work; source-collation duplicate identities fail closed.
+
+`membership_runtime_checkpoints` holds independent strictly decoded GC and future
+dispatcher progress rows. GC uses bounded terminal-status scans and pending slots,
+then locks target/run/publication in order. It marks retirement once, honors reader
+grace and deletes bounded raw member windows while progressing past locked rows.
+The explicit `membership-runtime-control` schema scope creates only this table and
+adds `idx_mrun_status_updated_id(status, updated_at_millis, id)` online. Full manual
+sync requires those additions first.
+
+Runtime controls are captured before secret loading. Production accepts only
+`inactive`; its SQS mapping is disabled. The only work mode is a staging-only
+fixture mode with a fixed isolated database and fixed targets, checked before any
+database or secret access. An internal immutable connection selection overrides
+the loaded default database and rejects startup failure without falling back.
+The worker verifies the fixture ownership marker before writes. Closed IAM status
+inspection works without database access; inactive SQS delivery throws rather than
+acknowledging a hint. The worker cannot send messages or invoke itself. External
+dispatch and fixture setup/acceptance follow in M5; normal producers, API readers,
+production work and cutover remain unavailable. See
+[runtime operations](membership-runtime-operations.md).
+
+The worker catalog entry also generates independent operational-monitoring
+coverage. Its central collector allowlist and application-account log subscription
+require separate monitoring and source-stack deployments after the authorized
+main merges and service log-group creation. Combined staging uses service-owned
+alarms and direct logs until that coverage is installed and verified; see the
+[monitoring rollout sequence](membership-runtime-operations.md#independent-operational-monitoring).
+
 ## Proposal card media
 
 Authenticated `POST /drop-media/proposal-frame` builds a bounded, fixed HTML

@@ -2,6 +2,7 @@ import * as mysql from 'mysql';
 import { DbQueryOptions } from '../../db-query.options';
 import {
   CustomTypeCaster,
+  execBudgetedNativeTransactionally,
   execNativeTransactionally,
   execSQLWithParams
 } from '../../db/my-sql.helpers';
@@ -10,7 +11,8 @@ import { Logger } from '../../logging';
 import {
   ConnectionWrapper,
   setSqlExecutor,
-  SqlExecutor
+  SqlExecutor,
+  SqlTransactionOptions
 } from '../../sql-executor';
 import { Time } from '../../time';
 import { selectWorkerDatabaseFromEnv } from '@/tests/_setup/testDatabase';
@@ -42,12 +44,21 @@ class DbImpl extends SqlExecutor {
     params?: Record<string, any>,
     options?: DbQueryOptions
   ): Promise<any> {
+    if (
+      (options?.executionBudgetToken || options?.statementLimits) &&
+      !options.wrappedConnection?.connection
+    ) {
+      throw new Error(
+        'SQL budget options require their bound transaction connection'
+      );
+    }
     return options?.wrappedConnection?.connection
       ? execSQLWithParams<T>(
           sql,
           options.wrappedConnection.connection! as mysql.PoolConnection,
           false,
-          params
+          params,
+          options
         )
       : getConnectionsFromPool().then((connection) =>
           execSQLWithParams<T>(sql, connection, true, params)
@@ -55,10 +66,18 @@ class DbImpl extends SqlExecutor {
   }
 
   async executeNativeQueriesInTransaction<T>(
-    executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>
+    executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>,
+    options?: SqlTransactionOptions
   ) {
+    if (options?.executionBudget) {
+      return execBudgetedNativeTransactionally(
+        executable,
+        getConnectionsFromPool,
+        options.executionBudget
+      );
+    }
     return getConnectionsFromPool().then((connection) =>
-      execNativeTransactionally(executable, connection)
+      execNativeTransactionally(executable, connection, options)
     );
   }
 }

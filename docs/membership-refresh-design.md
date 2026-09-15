@@ -246,9 +246,58 @@ shared direct/SQL conformance coverage when adding a primary-read evaluator.
 
 ## First runtime increment: repository contracts
 
-The first focused runtime PR should add isolated persistence contracts and
-real-MySQL tests without connecting existing producers, dispatching work, or
-changing authorization reads:
+The isolated contracts are implemented in `src/membership/membership-*.ts`.
+They do not connect existing producers or authorization readers. Callers use
+`withMembershipPrimaryTransaction` at the transaction owner, then pass its
+`MembershipPrimaryContext` through every source input write and repository call.
+Contexts cannot nest an unproven connection, be forged, survive transaction exit,
+or inherit an older request cache. Opted-in API and TypeORM transactions use
+explicit repeatable-read isolation; locking reads remain current primary reads.
+Every repository failure marks the whole transaction rollback-only, even when
+the callback catches it. External effects must follow a successful commit.
+
+`MembershipSourceStatesDb.provision` is explicit and records one completed
+`bootstrap:` receipt with the caller's audited coverage revision. Reads require
+that receipt as well as the state row. An existing unproven state is rejected,
+never silently reset or blessed; fixture/bootstrap evidence is not proof of
+unwired production producer coverage. Source counters and timestamps are selected
+as decimal strings before driver JSON conversion and validated at the boundary.
+
+Profile source mutations lock matching GLOBAL dimensions as guards without
+incrementing those global versions. Multi-stage PROFILE jobs automatically add
+matching GLOBAL keys to their barrier set. This first contract conservatively
+serializes jobs touching the same dimension across profiles; parallel disjoint
+profile jobs need a later dataset-writer protocol. The supplied source set is
+hashed into durable job progress. Each stage, failure and repair rotates a
+decimal checkpoint revision, so a delayed invocation cannot act merely because
+stage/cursor text matches again. Completed job identities remain idempotent
+after another cycle starts. A TDH_XTDH job accepts final completion only at
+`STATS_ACTIVATED`; producers must checkpoint actual successful statistics
+activation and all derived outputs for the same cycle before using that stage.
+This check does not replace later tests through the real TDH/xTDH producers.
+
+Single-transaction catalogue edits require explicit affected group versions and
+tombstones. Multi-stage catalogue jobs are rejected until their bounded group-
+version fanout contract is implemented. Source jobs are not a producer work
+queue: conflicting job identities remain pending in caller orchestration.
+
+Transaction owners must acquire all required source keys first in canonical
+GLOBAL-before-PROFILE order (including their provisioning/job receipts), then
+affected group-version rows, then refresh targets in sorted scope/target order.
+A request-only transaction takes only the final target locks and never reaches
+back for source locks. Do not compose `request()` followed by a source mutation
+in one transaction. Ordinary deadlock/lock-timeout errors still abort the whole
+transaction; retry the owner from its stable source-job/checkpoint identity.
+
+The IAM-only staging diagnostic in `customReplayLoop` runs source/job scenarios
+inside an intentionally rolled-back primary transaction, including any temporary
+GLOBAL evidence. It separately proves concurrent durable target coalescing and
+cleans only invocation-generated fixture keys. Real local MySQL tests cover
+committed source concurrency, partial-write rollback and stale recovery. No
+production bootstrap, normal background schedule or materialized read is enabled.
+Later evaluator/worker/dispatcher validation must prove its real end-to-end path.
+
+The focused repository increment retains these acceptance requirements:
 
 1. Normalize source keys, dimensions and decimal-string counters at the
    repository boundary. Reject malformed or incomplete version vectors; an
@@ -282,6 +331,70 @@ close the producer-coverage, consistency or runtime gates in #2065–#2067 and
 
 ## Rollout and remaining gates
 
+### Primary evaluator increment
+
+`PrimaryMembershipProfileEvaluator` implements specification 2 using bounded
+primary input reads. Capture requires exactly one identity row for the profile,
+completed provisioning evidence and idle source barriers. The immutable seed
+records its consolidation key, fixed evaluation time, group high bound and thirteen
+source entries: GLOBAL catalogue plus GLOBAL and PROFILE versions for the other
+six dimensions. Missing evidence is unknown; missing/duplicate identities and
+unsupported numeric domains are explicit errors rather than empty generations.
+
+The evaluator preserves exclusion-before-inclusion, configured criteria combined
+with AND, and grant eligibility determined by status. Grant dates still contribute
+conservative future horizons, including rules that are currently false and rules
+short-circuited by another criterion. It reads these bounded metadata fields before
+such shortcuts. Existing public permission readers continue using their current
+implementation; this library does not activate materialized membership.
+
+Candidate discovery uses an indexed bounded list lookup and the stored pure-group
+classifier. Dense profile lists use a bounded canonical group scan instead of an
+unbounded filtered UNION. Source key ordering follows the actual SQL column
+collation. Ratings, wallet ownership, grant tokens and JSON token lists use bounded
+raw windows. A profile's wallets come from its one captured consolidation key;
+multiple identity rows are an integrity error, not a second aggregation path.
+
+`evaluateQuantum` returns a completed group prefix and either `PAGE_COMPLETE` or
+`INPUT_PENDING`. The latter contains one strictly decoded `ActiveInputV1`: fixed
+fingerprints, the active group's version, a scalar stage and bounded cursors or
+exact counters. The complete persisted cursor is capped at 32 KiB. It never stores
+growing input arrays or acknowledges an unfinished group. Soft yielding requires
+actual input/stage progress; query timeout or missing evidence throws and rolls
+back the transaction. A changed active group restarts only that group's inputs;
+unrelated catalogue changes do not rewrite captured catalogue C, completed prefix,
+evaluation time or high bound. The other twelve source versions must still match.
+
+The optional `SqlExecutionBudget` on `withMembershipPrimaryTransaction` binds an
+absolute monotonic deadline, per-statement limit, finalization reserve and lock
+wait to the leased writer connection. Cached query options still receive live
+checks. Physical connection disposal and explicit callback settlement cover
+stalled reads, DML, lifecycle statements and callbacks that never return. Commit
+outcomes distinguish not sent, uncertain and acknowledged; a restoration failure
+after an acknowledged commit does not turn it into a rollback. Reconcile uncertain
+outcomes through a new transaction. Legacy callers opt out by omitting the budget.
+
+The new nonunique index `idx_user_groups_pure_visible_id` on `community_groups`
+requires the explicit `membership-evaluator-index` scope. That scope uses only
+`UserGroupEntity`, rejects an absent table or any unrelated schema drift before
+DDL, verifies full ascending visible index columns, and applies the pinned online
+addition. Metadata-lock acquisition is limited to one second. DDL has a separate
+120-second client deadline with physical disposal and uncertain-outcome reporting;
+it is not transactionally reversible. Rerun the same scope to inspect exact state
+after a lost acknowledgement, never drop/rebuild the index as retry cleanup.
+
+Manual full schema synchronization connects without automatic sync and rejects
+pending controlled membership DDL before preserving its existing synchronization
+of unrelated entities. Scheduled maintenance remains no-sync. Fresh disposable
+Jest databases initialize their fixture schema explicitly before invoking that
+guard; no local/test escape flag is added to the deployed handler.
+
+These bounds do not establish production cutover capacity. Shared plan reuse,
+actual Aurora query plans, realistic sustained writes/fanout and API p95/p99 remain
+part of #2074; producer coverage and reader fallback remain separate increments.
+
+### Staged rollout
+
 1. Deploy only `dbMigrationsLoop`, then invoke with `schema_scope=membership-refresh`
    (workflow input `db_schema_scope=membership-refresh`). This scope inspects
    TypeORM's plan, accepts only creation of the seven selected tables, executes
@@ -292,10 +405,12 @@ close the producer-coverage, consistency or runtime gates in #2065–#2067 and
    Verify a second sync produces no DDL and old wave-score/July rows survive.
 2. Keep all current readers and source jobs operating as before. No frontend,
    OpenAPI or help-bot knowledge change is required for this internal schema.
-3. Later implement and test producer transaction/barrier coverage, primary-only
-   evaluation, fenced checkpoints/publication and per-group read fallback.
-   Deploy schema before producers, dispatcher/worker before enabling triggers,
-   and keep read and background-work switches independent.
+3. Apply the explicit `membership-evaluator-index` scope before deploying the
+   primary evaluator. Fenced checkpoints/publication and an external dispatcher
+   follow as inactive runtime increments. Producer transaction/barrier coverage
+   and per-group read fallback remain later increments. Deploy schema before
+   producers, dispatcher/worker before enabling triggers, and keep read and
+   background-work switches independent.
 4. Initialize source/catalogue evidence, backfill and run shadow comparisons;
    measure real writes, broad groups, storage, lock time, queue age and API p95/
    p99 against warm/cold legacy behavior (#2074). At the reviewed scale of

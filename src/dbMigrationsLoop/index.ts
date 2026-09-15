@@ -21,6 +21,15 @@ import {
   applyMembershipSchema,
   membershipSchemaEntities
 } from './membership-schema';
+import {
+  applyMembershipEvaluatorSchema,
+  membershipEvaluatorSchemaEntities
+} from './membership-evaluator-schema';
+import { applyFullSchemaWithMembershipGuard } from './membership-controlled-schema';
+import {
+  applyMembershipRuntimeSchema,
+  membershipRuntimeSchemaEntities
+} from './membership-runtime-schema';
 
 const DBMigrate = require('db-migrate');
 
@@ -81,7 +90,9 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
       scope !== 'wallet-transfer-analysis' &&
       scope !== 'claims-media-upload' &&
       scope !== 'nft-link-page-retry' &&
-      scope !== 'membership-refresh')
+      scope !== 'membership-refresh' &&
+      scope !== 'membership-evaluator-index' &&
+      scope !== 'membership-runtime-control')
   ) {
     throw new Error('Unsupported database schema scope for this invocation');
   }
@@ -92,6 +103,24 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const scheduledInvocation = isScheduledInvocation(event);
   const scope = schemaScope(event, scheduledInvocation);
   logger.info(`[RUNNING]`);
+  if (scope === 'membership-runtime-control') {
+    const verification = await doInDbContext(applyMembershipRuntimeSchema, {
+      logger,
+      entities: membershipRuntimeSchemaEntities,
+      syncEntities: false,
+      skipRedis: true
+    });
+    return { schema_scope: scope, ...verification };
+  }
+  if (scope === 'membership-evaluator-index') {
+    const verification = await doInDbContext(applyMembershipEvaluatorSchema, {
+      logger,
+      entities: membershipEvaluatorSchemaEntities,
+      syncEntities: false,
+      skipRedis: true
+    });
+    return { schema_scope: scope, ...verification };
+  }
   if (scope === 'membership-refresh') {
     const verification = await doInDbContext(() => applyMembershipSchema(), {
       logger,
@@ -145,6 +174,7 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   }
   await doInDbContext(
     async () => {
+      if (!scheduledInvocation) await applyFullSchemaWithMembershipGuard();
       if (!scheduledInvocation && !appFeatures.isDbMigrateDisabled()) {
         const dbmigrate = await DBMigrate.getInstance(true, {
           config: './database.json',
@@ -177,7 +207,7 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
     {
       logger,
       entities: Object.values(Entities),
-      syncEntities: !scheduledInvocation
+      syncEntities: false
     }
   );
 
