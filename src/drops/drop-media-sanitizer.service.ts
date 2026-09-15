@@ -319,6 +319,8 @@ function hasAvifSequenceBrand(input: Buffer): boolean {
     return false;
   }
   const boxSize = input.readUInt32BE(0);
+  // Bound admission to a 4 KiB file-type header (up to 1,020 compatible brands).
+  // The decoder still verifies the actual codec and page count below.
   if (boxSize > 4096) {
     throw new PermanentMediaSanitizationError('Invalid AVIF file-type header.');
   }

@@ -346,6 +346,11 @@ jobs:
           DROP_MEDIA_INGEST_REGION="\${DROP_MEDIA_INGEST_REGION:-eu-west-1}"
           DROP_MEDIA_SANITIZER_QUEUE="\${DROP_MEDIA_SANITIZER_QUEUE:-drop-media-sanitizer}"
 
+          if [ "$INPUT_SERVICE" = api ]; then
+            aws s3api head-bucket --bucket "$DROP_MEDIA_INGEST_BUCKET" --region "$DROP_MEDIA_INGEST_REGION"
+            aws sqs get-queue-url --queue-name "$DROP_MEDIA_SANITIZER_QUEUE" --query QueueUrl --output text > /dev/null
+          fi
+
           {
             echo "ATTACHMENTS_INGEST_S3_BUCKET=$ATTACHMENTS_BUCKET"
             echo "DROP_MEDIA_SANITIZE_IMAGES=$DROP_MEDIA_SANITIZE_IMAGES_VALUE"

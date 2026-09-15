@@ -210,9 +210,18 @@ describe('UploadMediaService', () => {
       expect(uploadsDb.createUpload).toHaveBeenCalledWith(
         expect.objectContaining({
           declared_mime_type: 'image/avif',
-          public_key: result.key
+          public_key: result.key,
+          public_url: `${CLOUDFRONT_LINK}/${result.key}`
         })
       );
+      const repeated = await service.getDropMediaMultipartUploadKeyAndUploadId({
+        content_type: 'image/avif',
+        file_name: 'photo.AVIF',
+        author_id: 'author-123'
+      });
+      expect(repeated.key).toMatch(/\/photo\.webp$/);
+      expect(repeated.key).not.toBe(result.key);
+      expect(repeated.media_upload_id).not.toBe(result.media_upload_id);
     }
   );
 

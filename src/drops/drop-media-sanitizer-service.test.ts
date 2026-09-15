@@ -110,14 +110,29 @@ describe('DropMediaSanitizerService', () => {
     }
   });
 
-  it('rejects AVIF sequences before decoding any frame', async () => {
-    const input = Buffer.from(
-      '00000018667479706176697300000000617669666d696631',
-      'hex'
-    );
+  it.each([
+    '00000018667479706176697300000000617669666d696631',
+    '00000018667479706176696600000000617669736d696631'
+  ])(
+    'rejects AVIF sequences with major or compatible avis brands',
+    async (header) => {
+      const input = Buffer.from(header, 'hex');
+      await expect(
+        service.sanitizeBuffer({ input, declaredMimeType: 'image/avif' })
+      ).rejects.toThrow('Animated AVIF is not supported');
+    }
+  );
+
+  it('does not mistake the minor version for a sequence brand', async () => {
+    const input = await Sharp({
+      create: { width: 2, height: 2, channels: 3, background: '#123456' }
+    })
+      .avif()
+      .toBuffer();
+    input.write('avis', 12, 'ascii');
     await expect(
       service.sanitizeBuffer({ input, declaredMimeType: 'image/avif' })
-    ).rejects.toThrow('Animated AVIF is not supported');
+    ).resolves.toMatchObject({ contentType: 'image/webp' });
   });
 
   it('rejects an AVIF wider than the WebP output limit', async () => {
