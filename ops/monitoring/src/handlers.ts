@@ -33,6 +33,7 @@ import {
 import {
   admit,
   archive,
+  archiveLowCpuControl,
   backup,
   enqueue,
   put,
@@ -56,6 +57,11 @@ import {
 } from './dispatch-diagnostics.js';
 import { deliver, edit, DeliveryError, webhookUrl } from './webhook.js';
 import { cloudWatchAlarmMetadata } from './alarm-metadata.js';
+import {
+  classifyLowCpuControl,
+  LOW_CPU_CONTROLS,
+  type LowCpuControlRule
+} from './low-cpu-controls.js';
 import { sentryAlert, verifySignature } from './sentry.js';
 import {
   measureProbe,
@@ -195,8 +201,9 @@ export async function collect(
   await collectAlarm(event);
 }
 
-async function collectAlarm(
-  event: EventBridgeEvent<string, unknown>
+export async function collectAlarm(
+  event: EventBridgeEvent<string, unknown>,
+  controlRules: readonly LowCpuControlRule[] = LOW_CPU_CONTROLS
 ): Promise<void> {
   const detail = record(event.detail);
   const state = record(detail.state).value;
@@ -216,22 +223,26 @@ async function collectAlarm(
     'platform';
   const alarmIdentity =
     typeof detail.alarmName === 'string' ? detail.alarmName : event.id;
-  await accept(
-    {
-      _type: EVENT_TYPE,
-      eventId: `alarm:${event.id}`,
-      occurredAt: event.time,
-      environment: environment(),
-      service,
-      severity: state === 'OK' ? 'recovery' : 'critical',
-      code: state === 'OK' ? 'PLATFORM_RECOVERY' : 'PLATFORM_ALARM',
-      alarm: cloudWatchAlarmMetadata(detail),
-      fingerprint: hash(
-        `${event.account}:${event.region}:${alarmIdentity}:${state}`
-      )
-    },
-    true
-  );
+  const alert: Alert = {
+    _type: EVENT_TYPE,
+    eventId: `alarm:${event.id}`,
+    occurredAt: event.time,
+    environment: environment(),
+    service,
+    severity: state === 'OK' ? 'recovery' : 'critical',
+    code: state === 'OK' ? 'PLATFORM_RECOVERY' : 'PLATFORM_ALARM',
+    alarm: cloudWatchAlarmMetadata(detail),
+    fingerprint: hash(
+      `${event.account}:${event.region}:${alarmIdentity}:${state}`
+    )
+  };
+  const control = classifyLowCpuControl(event, environment(), controlRules);
+  if (control) {
+    await archiveLowCpuControl(alert, control);
+    metric('LowCpuControlAudited', 1);
+    return;
+  }
+  await accept(alert, true);
 }
 
 export async function logs(event: CloudWatchLogsEvent): Promise<void> {

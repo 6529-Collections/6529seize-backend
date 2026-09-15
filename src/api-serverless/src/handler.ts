@@ -25,6 +25,10 @@ import {
   operationalResponse
 } from '../../operational-errors';
 import { ApiCompliantException } from '../../exceptions';
+import {
+  recoverUnavailableWebSocket,
+  WebSocketControlOperation
+} from '@/api/ws/ws-control-failure';
 
 const serverlessHttp = require('serverless-http');
 const logger = Logger.get('API_HANDLER');
@@ -227,6 +231,7 @@ async function wsHandler(
       return { statusCode: 200, body: 'Disconnected' };
     case '$default': {
       let isTypingMessage = false;
+      let controlOperation: WebSocketControlOperation | undefined;
       try {
         const message = JSON.parse(event.body || '{}');
         const logSafeMessage = redactWebSocketMessageForLog(message);
@@ -237,6 +242,7 @@ async function wsHandler(
         );
         switch (message.type) {
           case WsMessageType.AUTHENTICATE: {
+            controlOperation = WsMessageType.AUTHENTICATE;
             const accessToken = (
               message.access_token ?? message.token
             )?.toString();
@@ -281,6 +287,7 @@ async function wsHandler(
             };
           }
           case WsMessageType.SYNC_NOTIFICATION_IDENTITIES: {
+            controlOperation = WsMessageType.SYNC_NOTIFICATION_IDENTITIES;
             const subscriptions = await authenticateNotificationIdentityTokens(
               message.access_tokens
             );
@@ -355,6 +362,20 @@ async function wsHandler(
             };
         }
       } catch (err) {
+        if (
+          await recoverUnavailableWebSocket(
+            err,
+            controlOperation,
+            connectionId!
+          )
+        ) {
+          return {
+            statusCode: 410,
+            body: JSON.stringify({
+              message: 'Connection is no longer available'
+            })
+          };
+        }
         if (isTypingMessage && isExpectedClientError(err)) {
           return {
             statusCode: (err as ApiCompliantException).getStatusCode(),
