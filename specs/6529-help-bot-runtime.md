@@ -679,7 +679,8 @@ A new runtime against an older corpus fails closed for a missing stage, includin
 a reported recalculation; it must not replay a generic TDH guide or infer a repair
 procedure from another record. Questions (including plural-subject questions such
 as "Have both workers recalculated?") and negated or uncertain completion reports
-do not authorize advancing to reconciliation, and current corrections override earlier
+do not authorize advancing to reconciliation. Wh-questions such as "Which workers
+recalculated" remain questions even without a question mark. Current corrections override earlier
 acknowledgements.
 Block comparison parsing keeps the subject of each mismatch intact: "same block
 different tdh and merkle" confirms matching blocks and advances to checking workers,

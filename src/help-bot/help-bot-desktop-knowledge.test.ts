@@ -384,7 +384,14 @@ describe('Desktop corpus retrieval and answers', () => {
     'Are both blocks the same',
     'Have both workers reconciled?',
     'Both workers recalculated?',
-    'Both blocks are the same?'
+    'Both blocks are the same?',
+    'Which workers recalculated',
+    'Who recalculated',
+    'When were both workers recalculated',
+    'Why were both workers reconciled',
+    'How were both workers recalculated',
+    'What was recalculated',
+    'Which blocks are the same'
   ])(
     'does not treat a progress question as confirmation: %s',
     async (question) => {

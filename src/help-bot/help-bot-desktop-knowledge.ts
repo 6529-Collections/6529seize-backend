@@ -124,6 +124,7 @@ function affirmativeReport(question: string, action: RegExp): boolean {
     matching.every(
       (clause) =>
         !uncertain.test(clause) &&
+        !/^\s*(?:who|what|when|where|why|which|how)\b/i.test(clause) &&
         !/^\s*(?:have|has|had|did|do|does|are|is|was|were)\b/i.test(clause)
     )
   );
@@ -137,17 +138,14 @@ function reportsRecalculation(question: string): boolean {
 function confirmsSameBlock(question: string, previousBotAnswer = ''): boolean {
   // In a reply to an asserted mismatch, "no block is same" corrects the bot.
   // Keep ordinary negations and plural "no blocks are the same" conservative.
+  const text = question.replace(/\b(?:last|values)\s+/gi, '');
   const correction = /\bdifferent last block values mean\b/i.test(
     previousBotAnswer.replace(/\*/g, '')
   )
-    ? question.replace(
-        /^no\s+(?=(?:the\s+)?(?:last\s+)?block\s+is\s+(?:the\s+)?same\b)/i,
-        ''
-      )
-    : question;
-  const text = correction.replace(/\b(?:last|values)\s+/gi, '');
+    ? text.replace(/^no\s+(?=(?:the\s+)?block\s+is\s+(?:the\s+)?same\b)/i, '')
+    : text;
   return affirmativeReport(
-    text,
+    correction,
     /\b(?:same block|blocks? (?:are |is )?(?:the )?(?:identical|same|matches|match))\b/i
   );
 }
