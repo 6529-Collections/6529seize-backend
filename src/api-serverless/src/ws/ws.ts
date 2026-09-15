@@ -22,6 +22,7 @@ import { describeWebSocketSendFailure } from './ws-send-diagnostics';
 export class SocketNotAvailableException extends Error {
   constructor() {
     super(`Socket is not available`);
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 }
 
@@ -45,7 +46,10 @@ abstract class ClientConnections {
     connectionId: string;
     message: string;
   }): Promise<void>;
-  abstract closeClient(connectionId: string): Promise<void>;
+  abstract closeClient(
+    connectionId: string,
+    propagateFailure?: boolean
+  ): Promise<void>;
 }
 
 class WebsocketClientConnections extends ClientConnections {
@@ -70,7 +74,10 @@ class WebsocketClientConnections extends ClientConnections {
     }
   }
 
-  override async closeClient(connectionId: string): Promise<void> {
+  override async closeClient(
+    connectionId: string,
+    propagateFailure = false
+  ): Promise<void> {
     const socket = this.sockets[connectionId];
     if (!socket) {
       return;
@@ -78,6 +85,7 @@ class WebsocketClientConnections extends ClientConnections {
     try {
       socket.close();
     } catch (err: any) {
+      if (propagateFailure) throw err;
       this.logger.warn(
         `Failed to close connection ${connectionId}: ${JSON.stringify(err)}`
       );
@@ -132,16 +140,35 @@ class ApiGatewayClientConnections extends ClientConnections {
     }
   }
 
-  override async closeClient(connectionId: string): Promise<void> {
+  override async closeClient(
+    connectionId: string,
+    propagateFailure = false
+  ): Promise<void> {
     try {
       await this.client.send(
         new DeleteConnectionCommand({
           ConnectionId: connectionId
         })
       );
-    } catch (err: any) {
-      // ignore
+    } catch (error: unknown) {
+      if (propagateFailure && !isAlreadyDisconnected(error)) throw error;
     }
+  }
+}
+
+function isAlreadyDisconnected(error: unknown): boolean {
+  try {
+    if (!error || typeof error !== 'object') return false;
+    const name = Reflect.get(error, 'name');
+    const metadata = Reflect.get(error, '$metadata');
+    return (
+      name === 'GoneException' ||
+      (metadata !== null &&
+        typeof metadata === 'object' &&
+        Reflect.get(metadata, 'httpStatusCode') === 410)
+    );
+  } catch {
+    return false;
   }
 }
 
@@ -221,6 +248,13 @@ export class AppWebSockets {
   async deregister({ connectionId }: { connectionId: string }) {
     this.logger.info(`Deregistering socket for connection ${connectionId}`);
     await ClientConnections.Get().closeClient(connectionId);
+    await this.wsConnectionRepository.deleteByConnectionId(connectionId, {});
+  }
+
+  /** Request transport closure before cleaning legacy orphan grants. Unlike
+   * best-effort deregistration, unexpected close/cleanup failures reach the caller. */
+  async closeUnavailableConnection(connectionId: string): Promise<void> {
+    await ClientConnections.Get().closeClient(connectionId, true);
     await this.wsConnectionRepository.deleteByConnectionId(connectionId, {});
   }
 

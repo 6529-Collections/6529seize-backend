@@ -34,7 +34,10 @@ jest.mock('./app', () => ({
 }));
 
 jest.mock('./ws/ws', () => ({
+  SocketNotAvailableException:
+    jest.requireActual('./ws/ws').SocketNotAvailableException,
   appWebSockets: {
+    closeUnavailableConnection: jest.fn(),
     authenticateConnection: jest.fn(),
     syncNotificationIdentities: jest.fn(),
     send: jest.fn(),
