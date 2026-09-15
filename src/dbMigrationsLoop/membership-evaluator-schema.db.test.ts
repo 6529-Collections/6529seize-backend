@@ -106,7 +106,7 @@ describeWithSeed(
       }
     });
 
-    it('bounds preflight behind a queued exclusive metadata lock before any index DDL', async () => {
+    it('bounds an operation behind a queued exclusive metadata lock and leaves the index unapplied', async () => {
       const db = await source().initialize();
       const blocker = db.createQueryRunner('master');
       const writer = db.createQueryRunner('master');
