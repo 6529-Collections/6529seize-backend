@@ -42,7 +42,8 @@ the nine differences recorded in version 1; their history is retained in
 10. [Visibility and privacy](#10-visibility-and-privacy)
 11. [Determinism rules](#11-determinism-rules)
 12. [Resolved version-1 divergences](#12-resolved-version-1-divergences)
-13. [Changelog](#13-changelog)
+13. [Current-consumer conformance and rollout](#13-current-consumer-conformance-and-rollout)
+14. [Changelog](#14-changelog)
 
 ---
 
