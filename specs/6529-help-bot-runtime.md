@@ -202,6 +202,12 @@ Backend-authored facts for Markdown push previews are maintained in
 They are source material for a future frontend help-index update; adding that
 document alone does not make the facts available to the live help bot.
 
+Backend-authored group eligibility facts are maintained in
+[`docs/eligibility-spec.md`](../docs/eligibility-spec.md#help6529-knowledge-authoring-facts),
+including Level zero, empty groups, inclusion/exclusion precedence, rating bounds,
+and preview parity. They remain authoring material until the frontend help corpus
+publishes them; this SQL milestone does not change the live help knowledge source.
+
 ### 4.5 Backend-owned public data query mode
 
 Some questions should be answered from public indexed data, not from the
