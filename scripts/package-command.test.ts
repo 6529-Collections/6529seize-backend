@@ -247,6 +247,7 @@ process.exitCode = ${exitCode};
     const backendPart = JSON.parse(template.stdout).release_parts.find(
       (part: { repository: string }) => part.repository === '6529seize-backend'
     );
+    expect(backendPart).toBeDefined();
     expect(backendPart).toMatchObject({
       deploy_units: [''],
       deploy_dependencies: [],
