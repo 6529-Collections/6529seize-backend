@@ -49,7 +49,8 @@ type PrivateQueryFamily =
   | 'artwork documentation'
   | 'market depth'
   | 'content moderation'
-  | 'CMS agent';
+  | 'CMS agent'
+  | 'membership runtime';
 
 function privateQueryFamily(sql: string): PrivateQueryFamily | null {
   if (
@@ -68,6 +69,13 @@ function privateQueryFamily(sql: string): PrivateQueryFamily | null {
   if (/\bprofile_cms_agent_(?:grants|proposals|events)\b/i.test(sql)) {
     return 'CMS agent';
   }
+  if (
+    /\bmembership_(?:refresh_runs|refresh_targets|runtime_checkpoints|runtime_fixture_control|source_states|source_jobs|group_versions|publications|generation_members)\b/i.test(
+      sql
+    )
+  ) {
+    return 'membership runtime';
+  }
   return null;
 }
 
@@ -80,6 +88,8 @@ function describeQuery(sql: string, params?: Record<string, unknown>): string {
   if (family === 'CMS agent') return '[private CMS agent query]';
   if (family === 'content moderation')
     return '[private content moderation query]';
+  if (family === 'membership runtime')
+    return '[private membership runtime query]';
   const normalized = sql.replace('\n', ' ');
   if (!params) return normalized;
   return `${normalized} with params ${JSON.stringify(params)}`;
@@ -89,7 +99,22 @@ function privateQueryError(
   original: unknown,
   family: PrivateQueryFamily
 ): Error {
+  // Budget errors already have fixed diagnostics and carry transaction authority
+  // outcomes that callers must retain, including an ambiguous COMMIT.
+  if (original instanceof SqlExecutionBudgetExceededError) return original;
   const sanitized = new Error(`Private ${family} database operation failed`);
+  if (
+    family === 'membership runtime' &&
+    original &&
+    typeof original === 'object' &&
+    (('errno' in original && original.errno === 3572) ||
+      ('code' in original && original.code === 'ER_LOCK_NOWAIT'))
+  ) {
+    // mysql's symbol table can label MySQL 8 NOWAIT as unknown. Preserve only
+    // this known numeric condition, never arbitrary driver fields or SQL text.
+    Object.assign(sanitized, { code: 'ER_LOCK_NOWAIT', errno: 3572 });
+    return sanitized;
+  }
   if (original && typeof original === 'object' && 'code' in original) {
     const code = original.code;
     if (typeof code === 'string' && /^(ER_|PROTOCOL_)[A-Z0-9_]+$/.test(code)) {
@@ -211,9 +236,9 @@ export async function execSQLWithParams<T>(
         };
         const timer = Time.now();
         connection.query({ sql, values: params }, (err: any, result: T[]) => {
-          // Artwork records and archival metadata are private even in infrastructure
-          // logs. Bulk inserts can embed values directly in SQL, so hide both the
-          // statement and parameters for every query touching this table family.
+          // Private records and membership authority tokens must stay out of
+          // infrastructure logs. Bulk inserts can embed values directly in SQL,
+          // so hide both statements and parameters for these table families.
           const privateFamily = privateQueryFamily(sql);
           const queryDescription = describeQuery(sql, params);
           const queryTook = timer.diffFromNow();

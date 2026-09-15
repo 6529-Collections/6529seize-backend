@@ -79,7 +79,10 @@ describeWithSeed('membership worker transactional fencing', [], () => {
     });
     await ready.promise;
     try {
-      await expect(resume()).rejects.toMatchObject({ errno: 3572 });
+      await expect(resume()).rejects.toMatchObject({
+        code: 'ER_LOCK_NOWAIT',
+        errno: 3572
+      });
     } finally {
       release.resolve();
     }

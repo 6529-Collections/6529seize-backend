@@ -214,6 +214,7 @@ describeWithSeed('membership generation garbage collection', [], () => {
           reached = true;
         } else {
           await expect(collect(hint)).rejects.toMatchObject({
+            code: 'ER_LOCK_NOWAIT',
             errno: 3572
           });
           await membershipTestTx((ctx) =>
