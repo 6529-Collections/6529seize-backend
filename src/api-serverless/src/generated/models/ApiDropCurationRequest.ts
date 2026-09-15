@@ -68,3 +68,4 @@ export enum ApiDropCurationRequestPlacementEnum {
     Before = 'BEFORE',
     After = 'AFTER'
 }
+
