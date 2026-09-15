@@ -453,6 +453,8 @@ export * from '../models/ApiMarketBatchItem';
 export * from '../models/ApiMarketBatchItemRequest';
 export * from '../models/ApiMarketBatchMirrorTerms';
 export * from '../models/ApiMarketBatchOperation';
+export * from '../models/ApiMarketBatchPreflight';
+export * from '../models/ApiMarketBatchPreflightRequest';
 export * from '../models/ApiMarketBatchPrepareRequest';
 export * from '../models/ApiMarketBatchSendAttempt';
 export * from '../models/ApiMarketBatchSettlement';
@@ -478,6 +480,9 @@ export * from '../models/ApiMarketOrder';
 export * from '../models/ApiMarketOrderToSign';
 export * from '../models/ApiMarketOrders';
 export * from '../models/ApiMarketPrepareRequest';
+export * from '../models/ApiMarketReceipt';
+export * from '../models/ApiMarketReceiptPayment';
+export * from '../models/ApiMarketReceiptTransaction';
 export * from '../models/ApiMarketSendAttempt';
 export * from '../models/ApiMarketSendAttemptRejection';
 export * from '../models/ApiMarketSendAttemptRequest';
@@ -604,6 +609,8 @@ export * from '../models/ApiProfileWave';
 export * from '../models/ApiProfileWaveActivity';
 export * from '../models/ApiProfileWaveActivityPage';
 export * from '../models/ApiProfileWaveActivityType';
+export * from '../models/ApiProposalFrameRequest';
+export * from '../models/ApiProposalFrameResponse';
 export * from '../models/ApiPublishProfileCmsPackageRequest';
 export * from '../models/ApiPushLogoutSession';
 export * from '../models/ApiPushNotificationDevice';
@@ -1317,7 +1324,9 @@ import { ApiMarketBatchCapabilities , ApiMarketBatchCapabilitiesExecutionPolicyE
 import { ApiMarketBatchItem } from '../models/ApiMarketBatchItem';
 import { ApiMarketBatchItemRequest } from '../models/ApiMarketBatchItemRequest';
 import { ApiMarketBatchMirrorTerms } from '../models/ApiMarketBatchMirrorTerms';
-import { ApiMarketBatchOperation  , ApiMarketBatchOperationStateEnum               , ApiMarketBatchOperationKindEnum  , ApiMarketBatchOperationExecutionPolicyEnum        } from '../models/ApiMarketBatchOperation';
+import { ApiMarketBatchOperation  , ApiMarketBatchOperationStateEnum               , ApiMarketBatchOperationKindEnum  , ApiMarketBatchOperationExecutionPolicyEnum         } from '../models/ApiMarketBatchOperation';
+import { ApiMarketBatchPreflight } from '../models/ApiMarketBatchPreflight';
+import { ApiMarketBatchPreflightRequest } from '../models/ApiMarketBatchPreflightRequest';
 import { ApiMarketBatchPrepareRequest, ApiMarketBatchPrepareRequestKindEnum    , ApiMarketBatchPrepareRequestCurrencyEnum  , ApiMarketBatchPrepareRequestExecutionPolicyEnum     } from '../models/ApiMarketBatchPrepareRequest';
 import { ApiMarketBatchSendAttempt , ApiMarketBatchSendAttemptPurposeEnum    , ApiMarketBatchSendAttemptStatusEnum     } from '../models/ApiMarketBatchSendAttempt';
 import { ApiMarketBatchSettlement, ApiMarketBatchSettlementOutcomeEnum        } from '../models/ApiMarketBatchSettlement';
@@ -1336,13 +1345,16 @@ import { ApiMarketListingEntry } from '../models/ApiMarketListingEntry';
 import { ApiMarketListings } from '../models/ApiMarketListings';
 import { ApiMarketMyOperations } from '../models/ApiMarketMyOperations';
 import { ApiMarketOfferItem } from '../models/ApiMarketOfferItem';
-import { ApiMarketOperation  , ApiMarketOperationStateEnum                            } from '../models/ApiMarketOperation';
+import { ApiMarketOperation  , ApiMarketOperationStateEnum                             } from '../models/ApiMarketOperation';
 import { ApiMarketOperationPrepareRequestClass } from '../models/ApiMarketOperationPrepareRequest';
 import { ApiMarketOperationResultClass } from '../models/ApiMarketOperationResult';
 import { ApiMarketOrder     , ApiMarketOrderSideEnum  , ApiMarketOrderScopeEnum            , ApiMarketOrderApplicabilityEnum     } from '../models/ApiMarketOrder';
 import { ApiMarketOrderToSign } from '../models/ApiMarketOrderToSign';
 import { ApiMarketOrders } from '../models/ApiMarketOrders';
 import { ApiMarketPrepareRequest            } from '../models/ApiMarketPrepareRequest';
+import { ApiMarketReceipt } from '../models/ApiMarketReceipt';
+import { ApiMarketReceiptPayment } from '../models/ApiMarketReceiptPayment';
+import { ApiMarketReceiptTransaction, ApiMarketReceiptTransactionPurposeEnum       , ApiMarketReceiptTransactionStatusEnum  , ApiMarketReceiptTransactionConfirmationEnum       } from '../models/ApiMarketReceiptTransaction';
 import { ApiMarketSendAttempt , ApiMarketSendAttemptPurposeEnum    , ApiMarketSendAttemptStatusEnum     } from '../models/ApiMarketSendAttempt';
 import { ApiMarketSendAttemptRejection  , ApiMarketSendAttemptRejectionReasonEnum   } from '../models/ApiMarketSendAttemptRejection';
 import { ApiMarketSendAttemptRequest  , ApiMarketSendAttemptRequestPurposeEnum    } from '../models/ApiMarketSendAttemptRequest';
@@ -1469,6 +1481,8 @@ import { ApiProfileWave } from '../models/ApiProfileWave';
 import { ApiProfileWaveActivity } from '../models/ApiProfileWaveActivity';
 import { ApiProfileWaveActivityPage } from '../models/ApiProfileWaveActivityPage';
 import { ApiProfileWaveActivityType } from '../models/ApiProfileWaveActivityType';
+import { ApiProposalFrameRequest , ApiProposalFrameRequestMimeTypeEnum   , ApiProposalFrameRequestLayoutEnum   } from '../models/ApiProposalFrameRequest';
+import { ApiProposalFrameResponse , ApiProposalFrameResponseMimeTypeEnum   } from '../models/ApiProposalFrameResponse';
 import { ApiPublishProfileCmsPackageRequest } from '../models/ApiPublishProfileCmsPackageRequest';
 import { ApiPushLogoutSession } from '../models/ApiPushLogoutSession';
 import { ApiPushNotificationDevice } from '../models/ApiPushNotificationDevice';
@@ -1892,6 +1906,9 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiMarketOrderSideEnum",
     "ApiMarketOrderScopeEnum",
     "ApiMarketOrderApplicabilityEnum",
+    "ApiMarketReceiptTransactionPurposeEnum",
+    "ApiMarketReceiptTransactionStatusEnum",
+    "ApiMarketReceiptTransactionConfirmationEnum",
     "ApiMarketSendAttemptPurposeEnum",
     "ApiMarketSendAttemptStatusEnum",
     "ApiMarketSendAttemptRejectionReasonEnum",
@@ -1948,6 +1965,9 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiProfilePreferencesNotificationLevelEnum",
     "ApiProfileProxyActionType",
     "ApiProfileWaveActivityType",
+    "ApiProposalFrameRequestMimeTypeEnum",
+    "ApiProposalFrameRequestLayoutEnum",
+    "ApiProposalFrameResponseMimeTypeEnum",
     "ApiRateMatter",
     "ApiRedeemConnectionShareRequestTargetClientTypeEnum",
     "ApiRedeemConnectionShareResponseClientTypeEnum",
@@ -2421,6 +2441,8 @@ let typeMap: {[index: string]: any} = {
     "ApiMarketBatchItemRequest": ApiMarketBatchItemRequest,
     "ApiMarketBatchMirrorTerms": ApiMarketBatchMirrorTerms,
     "ApiMarketBatchOperation": ApiMarketBatchOperation,
+    "ApiMarketBatchPreflight": ApiMarketBatchPreflight,
+    "ApiMarketBatchPreflightRequest": ApiMarketBatchPreflightRequest,
     "ApiMarketBatchPrepareRequest": ApiMarketBatchPrepareRequest,
     "ApiMarketBatchSendAttempt": ApiMarketBatchSendAttempt,
     "ApiMarketBatchSettlement": ApiMarketBatchSettlement,
@@ -2445,6 +2467,9 @@ let typeMap: {[index: string]: any} = {
     "ApiMarketOrderToSign": ApiMarketOrderToSign,
     "ApiMarketOrders": ApiMarketOrders,
     "ApiMarketPrepareRequest": ApiMarketPrepareRequest,
+    "ApiMarketReceipt": ApiMarketReceipt,
+    "ApiMarketReceiptPayment": ApiMarketReceiptPayment,
+    "ApiMarketReceiptTransaction": ApiMarketReceiptTransaction,
     "ApiMarketSendAttempt": ApiMarketSendAttempt,
     "ApiMarketSendAttemptRejection": ApiMarketSendAttemptRejection,
     "ApiMarketSendAttemptRequest": ApiMarketSendAttemptRequest,
@@ -2561,6 +2586,8 @@ let typeMap: {[index: string]: any} = {
     "ApiProfileWave": ApiProfileWave,
     "ApiProfileWaveActivity": ApiProfileWaveActivity,
     "ApiProfileWaveActivityPage": ApiProfileWaveActivityPage,
+    "ApiProposalFrameRequest": ApiProposalFrameRequest,
+    "ApiProposalFrameResponse": ApiProposalFrameResponse,
     "ApiPublishProfileCmsPackageRequest": ApiPublishProfileCmsPackageRequest,
     "ApiPushLogoutSession": ApiPushLogoutSession,
     "ApiPushNotificationDevice": ApiPushNotificationDevice,

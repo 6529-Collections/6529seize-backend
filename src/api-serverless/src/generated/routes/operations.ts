@@ -119,6 +119,8 @@ import { ApiGlobalRepCategoryWaveOverview } from '@/api/generated/models/ApiGlob
 import { ApiGlobalRepCategoryWavesPage } from '@/api/generated/models/ApiGlobalRepCategoryWavesPage';
 import { ApiGroupMembersPreviewRequest } from '@/api/generated/models/ApiGroupMembersPreviewRequest';
 import { ApiMarketBatchCapabilities } from '@/api/generated/models/ApiMarketBatchCapabilities';
+import { ApiMarketBatchPreflight } from '@/api/generated/models/ApiMarketBatchPreflight';
+import { ApiMarketBatchPreflightRequest } from '@/api/generated/models/ApiMarketBatchPreflightRequest';
 import { ApiMarketDepth } from '@/api/generated/models/ApiMarketDepth';
 import { ApiMarketListings } from '@/api/generated/models/ApiMarketListings';
 import { ApiMarketMyOperations } from '@/api/generated/models/ApiMarketMyOperations';
@@ -157,6 +159,8 @@ import { ApiProfileCmsValidationResult } from '@/api/generated/models/ApiProfile
 import { ApiProfileCmsWalletGallerySnapshot } from '@/api/generated/models/ApiProfileCmsWalletGallerySnapshot';
 import { ApiProfilePreferences } from '@/api/generated/models/ApiProfilePreferences';
 import { ApiProfileWaveActivityPage } from '@/api/generated/models/ApiProfileWaveActivityPage';
+import { ApiProposalFrameRequest } from '@/api/generated/models/ApiProposalFrameRequest';
+import { ApiProposalFrameResponse } from '@/api/generated/models/ApiProposalFrameResponse';
 import { ApiPublishProfileCmsPackageRequest } from '@/api/generated/models/ApiPublishProfileCmsPackageRequest';
 import { ApiReviewProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiReviewProfileCmsAgentProposalRequest';
 import { ApiRevokePushInstallationRequest } from '@/api/generated/models/ApiRevokePushInstallationRequest';
@@ -1371,6 +1375,20 @@ export type GetDmUnreadSnapshotRequest = Request<
   Record<string, never>
 >;
 
+export type CreateProposalFramePathParams = Record<string, never>;
+
+export type CreateProposalFrameQuery = Record<string, never>;
+
+export type CreateProposalFrameResponse = ApiProposalFrameResponse;
+
+export type CreateProposalFrameRequest = Request<
+  CreateProposalFramePathParams,
+  ApiResponse<CreateProposalFrameResponse>,
+  ApiProposalFrameRequest,
+  CreateProposalFrameQuery,
+  Record<string, never>
+>;
+
 export type PreviewGroupMembersPathParams = Record<string, never>;
 
 export interface PreviewGroupMembersQuery {
@@ -1504,6 +1522,22 @@ export type ContinueMarketOperationRequest = Request<
   ApiResponse<ContinueMarketOperationResponse>,
   never,
   ContinueMarketOperationQuery,
+  Record<string, never>
+>;
+
+export interface PreflightMarketBatchPathParams {
+  "id": string;
+}
+
+export type PreflightMarketBatchQuery = Record<string, never>;
+
+export type PreflightMarketBatchResponse = ApiMarketBatchPreflight;
+
+export type PreflightMarketBatchRequest = Request<
+  PreflightMarketBatchPathParams,
+  ApiResponse<PreflightMarketBatchResponse>,
+  ApiMarketBatchPreflightRequest,
+  PreflightMarketBatchQuery,
   Record<string, never>
 >;
 

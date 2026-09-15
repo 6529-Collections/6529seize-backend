@@ -1,6 +1,9 @@
 import { Interface } from 'ethers';
 import { MEMELAB_CONTRACT, MEMES_CONTRACT } from '@/constants';
-import { marketBatchFixture } from '@/marketplace/market-batch.test-fixture';
+import {
+  BATCH_FEE,
+  marketBatchFixture
+} from '@/marketplace/market-batch.test-fixture';
 import { MarketBatchPrepared } from '@/marketplace/market-batch.types';
 import { buildMarketBatchTransaction } from '@/marketplace/seaport-batch.builder';
 import { MARKET_SEAPORT_EVENTS } from '@/marketplace/seaport.events';
@@ -142,6 +145,79 @@ export function batchReceiptFixture(erc1155Contract = MEMES_CONTRACT) {
 }
 
 describe('exact atomic batch receipts', () => {
+  test('records one actual network fee, aggregate proven payment and each source order remainder', async () => {
+    const f = batchReceiptFixture();
+    f.receipt.gasUsed = BigInt(385000);
+    f.receipt.gasPrice = BigInt(9);
+    const state = new Interface([
+      'function getOrderStatus(bytes32) view returns (bool,bool,uint256,uint256)'
+    ]);
+    const transition = jest.fn();
+    const deps = {
+      transition,
+      rpc: {
+        getTransaction: jest.fn().mockResolvedValue(f.transaction),
+        getTransactionReceipt: jest.fn().mockResolvedValue(f.receipt),
+        getBlock: jest.fn().mockResolvedValue({
+          number: 11,
+          hash: f.receipt.blockHash,
+          timestamp: 1600
+        }),
+        call: jest
+          .fn()
+          .mockImplementation(async ({ data }) =>
+            state.encodeFunctionResult(
+              'getOrderStatus',
+              state.decodeFunctionData('getOrderStatus', data)[0] ===
+                f.prepared.reviewOrders[0].orderHash
+                ? [true, false, 1, 1]
+                : [true, false, 2, 3]
+            )
+          )
+      }
+    } as unknown as MarketReconcileDependencies;
+    await reconcileMarketOperation(
+      {
+        id: 'batch',
+        state: 'SUBMITTED',
+        request_json: { kind: 'BUY_BATCH' },
+        prepared_json: f.prepared,
+        transaction_hash: f.receipt.hash,
+        liability_wei: '0'
+      } as MarketOperationRow,
+      deps
+    );
+    const saved = transition.mock.calls[0][3].prepared as MarketBatchPrepared;
+    expect(transition.mock.calls[0][2]).toBe('CONFIRMED');
+    expect(saved.receipt?.transactions).toEqual([
+      expect.objectContaining({
+        from: f.prepared.intent.wallet,
+        gasUsed: '385000',
+        effectiveGasPriceWei: '9',
+        networkFeeWei: '3465000',
+        confirmation: 'CONFIRMED'
+      })
+    ]);
+    expect(saved.receipt?.payment).toMatchObject({
+      currency: MARKET_ZERO_ADDRESS,
+      totalWei: '300',
+      netWei: '270'
+    });
+    expect(saved.receipt?.payment?.fees.map((fee) => fee.amountWei)).toEqual([
+      '10',
+      '20'
+    ]);
+    expect(saved.receipt?.payment?.fees.map((fee) => fee.recipient)).toEqual([
+      BATCH_FEE,
+      BATCH_FEE
+    ]);
+    expect(
+      saved.settlement?.items.map((item) => item.orderRemainingQuantity)
+    ).toEqual(['0', '1']);
+    expect(saved.settlement?.items[1].allocations).toEqual(
+      f.prepared.intent.items[1].allocations
+    );
+  });
   test('requires all Meme Lab split deliveries and rejects a same-ID transfer from another collection', () => {
     const value = batchReceiptFixture(MEMELAB_CONTRACT);
     expect(

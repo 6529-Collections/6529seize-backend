@@ -1,6 +1,10 @@
 import { CustomApiCompliantException, ForbiddenException } from '@/exceptions';
 import type { ConnectionWrapper } from '@/sql-executor';
 import { marketChain } from './market-chain';
+import {
+  appendMarketReceiptTransaction,
+  marketReceiptTransaction
+} from '@/marketplace/market-receipt-evidence';
 import { marketOperationsDb, MarketOperationRow } from './market-operations.db';
 import {
   marketOperationRevision,
@@ -295,11 +299,20 @@ export async function reconcileApprovalAttempt(
     );
     const freshCanonical = await chain.rpc.getBlock(receipt.blockNumber);
     if (freshCanonical?.hash !== canonical.hash) return;
+    const approvalReceipts = appendMarketReceiptTransaction(
+      prepared.approvalReceipts,
+      marketReceiptTransaction(
+        receipt,
+        canonical.timestamp,
+        row.wallet,
+        'APPROVAL'
+      )
+    );
     await marketOperationsDb.transition(row.id, ['UNKNOWN'], 'REVIEW', {
       expectedRevision: marketOperationRevision(row),
       expectedAttemptId: attempt.attempt_id,
       sendAttempt: { ...attempt, status: 'RESOLVED' },
-      prepared: { ...prepared, approvalTransactions },
+      prepared: { ...prepared, approvalTransactions, approvalReceipts },
       expiresAt: 0,
       ...(receipt.status === 0 ? { errorCode: 'APPROVAL_REVERTED' } : {})
     });
