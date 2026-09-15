@@ -43,6 +43,7 @@ import {
 } from '@/membership/membership-validation';
 import {
   ActiveInputV1,
+  InputStage,
   MembershipEvaluationError,
   MembershipEvaluationQuantumInput,
   MembershipEvaluationQuantumResult,
@@ -56,6 +57,7 @@ import {
   MembershipIdentityInput,
   MembershipMeteredExecutor,
   MembershipRatingAxis,
+  MembershipRatingRow,
   MEMBERSHIP_MATCH_COLUMNS,
   MEMBERSHIP_OWNS_COLUMNS
 } from '@/membership/membership-evaluation-inputs.db';
@@ -125,7 +127,8 @@ function planFingerprint(plan: MembershipGroupInput): string {
   return membershipFingerprint([
     plan.group,
     plan.token_counts,
-    plan.token_types
+    plan.token_types,
+    plan.grant_match_mode
   ]);
 }
 function grantHorizon(
@@ -196,6 +199,78 @@ function safeSum(value: string, change: number): string {
   return String(sum);
 }
 
+function nftAll(plan: MembershipGroupInput, slot: number): boolean {
+  switch (
+    plan.group[MEMBERSHIP_MATCH_COLUMNS[slot]] ??
+    GroupNftOwnershipMatchMode.ALL_TOKENS
+  ) {
+    case GroupNftOwnershipMatchMode.ALL_TOKENS:
+      return true;
+    case GroupNftOwnershipMatchMode.ANY_TOKEN:
+      return false;
+    default:
+      throw new MembershipEvaluationError(
+        'INTEGRITY',
+        'Unsupported NFT match mode'
+      );
+  }
+}
+function validNftToken(token: {
+  type: string;
+  length: unknown;
+  prefix: string;
+}): boolean {
+  return (
+    token.type === 'STRING' &&
+    membershipInteger(token.length) <= 20 &&
+    /^(0|-?[1-9][0-9]{0,18})$/.test(token.prefix) &&
+    BigInt(token.prefix) >= BigInt('-9223372036854775808') &&
+    BigInt(token.prefix) <= BigInt('9223372036854775807')
+  );
+}
+type NftRequirement = Extract<InputStage, { kind: 'NFT_REQUIREMENT' }>;
+function advanceNftToken(state: NftRequirement): void {
+  state.next_json_index = String(BigInt(state.next_json_index) + BigInt(1));
+  state.current_token = null;
+  state.after_owner_wallet = null;
+}
+function missingNftToken(state: NftRequirement, all: boolean): false | null {
+  if (all) return false;
+  advanceNftToken(state);
+  return null;
+}
+function accumulateRating(
+  state: Extract<InputStage, { kind: 'RATING' }>,
+  row: MembershipRatingRow,
+  axis: MembershipRatingAxis,
+  profile: string
+): void {
+  const outgoing = row.rater_profile_id === profile;
+  const other = axis.incoming ? row.rater_profile_id : row.matter_target_id;
+  if (
+    outgoing !== axis.incoming &&
+    (axis.user === null || other === axis.user) &&
+    (axis.category === null || row.matter_category === axis.category)
+  ) {
+    state.signed_sum = safeSum(state.signed_sum, membershipInteger(row.rating));
+    state.matching_count = String(BigInt(state.matching_count) + BigInt(1));
+  }
+  state.after = { category: row.matter_category, other_profile_id: other };
+}
+interface QuantumEvidence {
+  seed: MembershipEvaluationQuantumInput;
+  catalogue: string;
+  identity: MembershipIdentityInput;
+  now: string;
+}
+interface QuantumProgress {
+  active: ActiveInputV1 | null;
+  horizon: string | null;
+  after: string | null;
+  scanned: number;
+  windows: number;
+  eligible: string[];
+}
 /** Authoritative primary evaluator; successful yields contain only completed raw units. */
 export class PrimaryMembershipProfileEvaluator
   extends LazyDbAccessCompatibleService
@@ -329,6 +404,46 @@ export class PrimaryMembershipProfileEvaluator
     ctx: MembershipPrimaryContext
   ): Promise<MembershipEvaluationQuantumResult> {
     this.validate(input, ctx);
+    // Reserve byte headroom for proof/metadata and at least one bounded input unit.
+    // A caller's raw window is a ceiling; narrow it when its byte ceiling is small.
+    input = {
+      ...input,
+      limits: {
+        ...input.limits,
+        raw_window: Math.min(
+          input.limits.raw_window,
+          Math.max(1, Math.floor((input.limits.max_input_bytes - 32768) / 4096))
+        )
+      }
+    };
+    const meter = new MembershipMeteredExecutor(this.db, input, ctx);
+    const inputs = new MembershipEvaluationInputsDb(meter);
+    const evidence = await this.evidence(input, inputs, meter, ctx);
+    const active = await this.resume(evidence.seed, inputs, ctx);
+    const progress: QuantumProgress = {
+      active,
+      horizon: active?.valid_until_millis ?? null,
+      after: input.after_group_id,
+      scanned: 0,
+      windows: 0,
+      eligible: []
+    };
+    const page = active
+      ? { ids: [active.group_id], after_group_id: active.group_id, done: false }
+      : await new MembershipCandidatePlanDb(inputs).page(input, ctx);
+    for (const id of page.ids) {
+      if (!progress.active && !meter.canStart(8, 32, 16384)) break;
+      if (!(await this.candidate(id, progress, evidence, inputs, meter, ctx)))
+        break;
+    }
+    return this.finish(progress, page, input, inputs, meter, ctx);
+  }
+  private async evidence(
+    input: MembershipEvaluationQuantumInput,
+    inputs: MembershipEvaluationInputsDb,
+    executor: MembershipMeteredExecutor,
+    ctx: MembershipPrimaryContext
+  ): Promise<QuantumEvidence> {
     const expected = normalizeSourceVector(
       input.source_versions,
       membershipProfileSourceKeys(input.profile_id)
@@ -342,9 +457,7 @@ export class PrimaryMembershipProfileEvaluator
         'Catalogue seed and vector disagree'
       );
     const seed = { ...input, source_versions: expected };
-    const meter = new MembershipMeteredExecutor(this.db, input, ctx);
-    const inputs = new MembershipEvaluationInputsDb(meter);
-    const current = await new MembershipSourceStatesDb(() => meter).capture(
+    const current = await new MembershipSourceStatesDb(() => executor).capture(
       membershipProfileSourceKeys(input.profile_id),
       false,
       ctx
@@ -396,13 +509,20 @@ export class PrimaryMembershipProfileEvaluator
         'INVALID_INPUT',
         'Invalid membership group frontier'
       );
-    let active =
+    return { seed, catalogue, identity, now };
+  }
+  private async resume(
+    input: MembershipEvaluationQuantumInput,
+    inputs: MembershipEvaluationInputsDb,
+    ctx: MembershipPrimaryContext
+  ): Promise<ActiveInputV1 | null> {
+    const active =
       input.active_input === null
         ? null
         : validateMembershipActiveInput(input.active_input);
     if (
       active &&
-      (active.seed_fingerprint !== membershipSeedFingerprint(seed) ||
+      (active.seed_fingerprint !== membershipSeedFingerprint(input) ||
         !(await inputs.isGroupRangeValid(
           active.group_id,
           input.after_group_id,
@@ -414,91 +534,108 @@ export class PrimaryMembershipProfileEvaluator
         'INVALID_INPUT',
         'Membership continuation seed/frontier mismatch'
       );
-    let horizon = active?.valid_until_millis ?? null;
-    let after = input.after_group_id;
-    let scanned = 0;
-    let windows = 0;
-    const eligible: string[] = [];
-    const page = active
-      ? { ids: [active.group_id], after_group_id: active.group_id, done: false }
-      : await new MembershipCandidatePlanDb(inputs).page(input, ctx);
-    for (const id of page.ids) {
-      if (!active && !meter.canStart(8, input.limits.raw_window * 2 + 32))
-        break;
-      assertMembershipId(id, 'candidate group ID', 200);
-      const plan = await inputs.group(id, catalogue, ctx);
-      if (plan === null) {
-        active = null;
-        after = id;
-        scanned++;
-        continue;
-      }
-      const grant = await inputs.grant(
-        plan.group.is_beneficiary_of_grant_id,
+    return active;
+  }
+  private async candidate(
+    id: string,
+    progress: QuantumProgress,
+    evidence: QuantumEvidence,
+    inputs: MembershipEvaluationInputsDb,
+    meter: MembershipMeteredExecutor,
+    ctx: MembershipPrimaryContext
+  ): Promise<boolean> {
+    assertMembershipId(id, 'candidate group ID', 200);
+    const plan = await inputs.group(id, evidence.catalogue, ctx);
+    if (plan === null) {
+      progress.active = null;
+      progress.after = id;
+      progress.scanned++;
+      return true;
+    }
+    const grant = await inputs.grant(
+      plan.group.is_beneficiary_of_grant_id,
+      ctx
+    );
+    progress.active = this.prepare(progress.active, plan, grant, evidence.seed);
+    progress.horizon = minimumMembershipHorizon(
+      progress.horizon,
+      progress.active.valid_until_millis
+    );
+    this.requireFuture(progress.horizon, evidence.now);
+    const input = evidence.seed;
+    while (
+      progress.windows < input.limits.max_windows &&
+      meter.canStart(4, input.limits.raw_window * 2 + 4)
+    ) {
+      const result = await this.step(
+        progress.active,
+        plan,
+        grant,
+        evidence.identity,
+        input,
+        inputs,
         ctx
       );
+      progress.windows++;
+      if (result === null) continue;
+      if (result) progress.eligible.push(id);
+      progress.active = null;
+      progress.after = id;
+      progress.scanned++;
+      return true;
+    }
+    return false;
+  }
+  private prepare(
+    active: ActiveInputV1 | null,
+    plan: MembershipGroupInput,
+    grant: MembershipGrantInput | null,
+    seed: MembershipProfileEvaluationSeed
+  ): ActiveInputV1 {
+    if (active?.group_version === plan.group_version) {
       if (
-        active &&
-        active.group_version === plan.group_version &&
-        (active.scalar_plan_fingerprint !== planFingerprint(plan) ||
-          active.grant_metadata_fingerprint !== grantFingerprint(grant))
+        active.scalar_plan_fingerprint !== planFingerprint(plan) ||
+        active.grant_metadata_fingerprint !== grantFingerprint(grant)
       )
         throw new MembershipEvaluationError(
           'INTEGRITY',
           'Input metadata changed without version evidence'
         );
-      if (!active || active.group_version !== plan.group_version)
-        active = {
-          protocol_version: 1,
-          seed_fingerprint: membershipSeedFingerprint(seed),
-          group_id: id,
-          group_version: plan.group_version,
-          scalar_plan_fingerprint: planFingerprint(plan),
-          grant_metadata_fingerprint: grantFingerprint(grant),
-          valid_until_millis: grantHorizon(grant, input.evaluation_time_millis),
-          stage: {
-            kind: 'LISTS',
-            after_list_id: null,
-            included: false,
-            excluded: false
-          }
-        };
-      horizon = minimumMembershipHorizon(horizon, active.valid_until_millis);
-      this.requireFuture(horizon, now);
-      let finished = false;
-      while (
-        windows < input.limits.max_windows &&
-        meter.canStart(4, input.limits.raw_window * 2 + 4)
-      ) {
-        const result = await this.step(
-          active,
-          plan,
-          grant,
-          identity,
-          seed,
-          inputs,
-          ctx
-        );
-        windows++;
-        if (result !== null) {
-          if (result) eligible.push(id);
-          active = null;
-          after = id;
-          scanned++;
-          finished = true;
-          break;
-        }
-      }
-      if (!finished) break;
+      return active;
     }
+    return {
+      protocol_version: 1,
+      seed_fingerprint: membershipSeedFingerprint(seed),
+      group_id: plan.group.id,
+      group_version: plan.group_version,
+      scalar_plan_fingerprint: planFingerprint(plan),
+      grant_metadata_fingerprint: grantFingerprint(grant),
+      valid_until_millis: grantHorizon(grant, seed.evaluation_time_millis),
+      stage: {
+        kind: 'LISTS',
+        after_list_id: null,
+        included: false,
+        excluded: false
+      }
+    };
+  }
+  private async finish(
+    progress: QuantumProgress,
+    page: { ids: string[]; after_group_id: string | null; done: boolean },
+    input: MembershipEvaluationQuantumInput,
+    inputs: MembershipEvaluationInputsDb,
+    meter: MembershipMeteredExecutor,
+    ctx: MembershipPrimaryContext
+  ): Promise<MembershipEvaluationQuantumResult> {
+    const { active, scanned, eligible, horizon } = progress;
     const traversed = scanned === page.ids.length;
-    if (!active && traversed) after = page.after_group_id;
-    const [finishedClock] = await inputs.read<{ now: string }>(
+    const after = !active && traversed ? page.after_group_id : progress.after;
+    const [clock] = await inputs.read<{ now: string }>(
       `SELECT CAST(${MEMBERSHIP_DB_NOW} AS CHAR) now`,
       {},
       ctx
     );
-    this.requireFuture(horizon, normalizeCounter(finishedClock.now));
+    this.requireFuture(horizon, normalizeCounter(clock.now));
     const common = {
       eligible_group_ids: eligible,
       scanned_count: scanned,
@@ -640,29 +777,8 @@ export class PrimaryMembershipProfileEvaluator
         input.limits.raw_window,
         ctx
       );
-      for (const row of rows.slice(0, input.limits.raw_window)) {
-        const outgoing = row.rater_profile_id === input.profile_id;
-        const other = axis.incoming
-          ? row.rater_profile_id
-          : row.matter_target_id;
-        if (
-          outgoing !== axis.incoming &&
-          (axis.user === null || other === axis.user) &&
-          (axis.category === null || row.matter_category === axis.category)
-        ) {
-          state.signed_sum = safeSum(
-            state.signed_sum,
-            membershipInteger(row.rating)
-          );
-          state.matching_count = String(
-            BigInt(state.matching_count) + BigInt(1)
-          );
-        }
-        state.after = {
-          category: row.matter_category,
-          other_profile_id: other
-        };
-      }
+      for (const row of rows.slice(0, input.limits.raw_window))
+        accumulateRating(state, row, axis, input.profile_id);
       if (rows.length > input.limits.raw_window) return null;
       const g = plan.group;
       if (
@@ -689,10 +805,7 @@ export class PrimaryMembershipProfileEvaluator
     const state = active.stage;
     if (state.kind !== 'NFT_REQUIREMENT') throw new Error('Invalid NFT state');
     const count = plan.token_counts[state.contract_slot];
-    const all =
-      (plan.group[MEMBERSHIP_MATCH_COLUMNS[state.contract_slot]] ??
-        GroupNftOwnershipMatchMode.ALL_TOKENS) ===
-      GroupNftOwnershipMatchMode.ALL_TOKENS;
+    const all = nftAll(plan, state.contract_slot);
     if (BigInt(state.next_json_index) >= BigInt(count)) {
       if (!all) return false;
       nextNft(active, state.contract_slot + 1, plan);
@@ -705,19 +818,7 @@ export class PrimaryMembershipProfileEvaluator
         state.next_json_index,
         ctx
       );
-      const valid =
-        token?.type === 'STRING' &&
-        membershipInteger(token.length) <= 20 &&
-        /^(0|-?[1-9][0-9]{0,18})$/.test(token.prefix) &&
-        BigInt(token.prefix) >= BigInt('-9223372036854775808') &&
-        BigInt(token.prefix) <= BigInt('9223372036854775807');
-      if (!valid) {
-        if (all) return false;
-        state.next_json_index = String(
-          BigInt(state.next_json_index) + BigInt(1)
-        );
-        return null;
-      }
+      if (!validNftToken(token)) return missingNftToken(state, all);
       state.current_token = token.prefix;
     }
     const rows = await db.owners(
@@ -731,22 +832,12 @@ export class PrimaryMembershipProfileEvaluator
     );
     const accepted = rows.slice(0, input.limits.raw_window);
     if (accepted.some((r) => r.matched !== null)) {
-      if (!all) {
-        nextNft(active, state.contract_slot + 1, plan);
-        return null;
-      }
-      state.next_json_index = String(BigInt(state.next_json_index) + BigInt(1));
-      state.current_token = null;
-      state.after_owner_wallet = null;
+      if (all) advanceNftToken(state);
+      else nextNft(active, state.contract_slot + 1, plan);
       return null;
     }
-    if (rows.length <= input.limits.raw_window) {
-      if (all) return false;
-      state.next_json_index = String(BigInt(state.next_json_index) + BigInt(1));
-      state.current_token = null;
-      state.after_owner_wallet = null;
-      return null;
-    }
+    if (rows.length <= input.limits.raw_window)
+      return missingNftToken(state, all);
     state.after_owner_wallet = accepted[accepted.length - 1].wallet;
     return null;
   }
@@ -762,10 +853,7 @@ export class PrimaryMembershipProfileEvaluator
     if (state.kind !== 'NFT_ANY' && state.kind !== 'GRANT_ALL_ANY')
       throw new Error('Invalid wallet state');
     const external = state.kind === 'GRANT_ALL_ANY';
-    if (
-      external &&
-      (!grant || grant.status !== 'GRANTED' || grant.token_mode !== 'ALL')
-    )
+    if (external && (!grant || !grant.status_granted || !grant.mode_all))
       return false;
     const contract =
       state.kind === 'NFT_ANY'
@@ -805,17 +893,16 @@ export class PrimaryMembershipProfileEvaluator
     const state = active.stage;
     if (state.kind !== 'GRANT_INCLUDE') throw new Error('Invalid grant state');
     if (!plan.group.is_beneficiary_of_grant_id) return true;
-    if (!grant || grant.status !== 'GRANTED') return false;
+    if (!grant || !grant.status_granted || plan.grant_match_mode === null)
+      return false;
     const all =
-      plan.group.is_beneficiary_of_grant_match_mode ===
-      GroupBeneficiaryGrantMatchMode.ALL_TOKENS;
-    if (grant.token_mode === 'ALL') {
+      plan.grant_match_mode === GroupBeneficiaryGrantMatchMode.ALL_TOKENS;
+    if (grant.mode_all) {
       if (all) return false;
       active.stage = { kind: 'GRANT_ALL_ANY', wallets: { after_wallet: null } };
       return null;
     }
-    if (grant.token_mode !== 'INCLUDE' || grant.tokenset_id === null)
-      return false;
+    if (!grant.mode_include || grant.tokenset_id === null) return false;
     const rows = await db.grantTokens(
       grant,
       state.after_token_id,

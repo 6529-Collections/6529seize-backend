@@ -283,6 +283,52 @@ describe('physical SQL execution budgets', () => {
     expect(driver.destroy).not.toHaveBeenCalled();
   });
 
+  it.each([
+    'COMMIT',
+    '/* ordinary comment */ COMMIT',
+    'ROLLBACK',
+    'START TRANSACTION',
+    'SET autocommit = 1',
+    'TRUNCATE TABLE fixture',
+    '/*! COMMIT */'
+  ])(
+    'prevents application outer transaction control %s before the driver send',
+    async (sql) => {
+      const driver = fakeDriver();
+      await expect(
+        executeBudgetedSqlTransaction(
+          async () => driver.lease,
+          budget(),
+          async () => {
+            await execSQLWithParams(
+              'UPDATE fixture SET value=2',
+              driver.connection,
+              false
+            );
+            try {
+              await execSQLWithParams(sql, driver.connection, false);
+            } catch {
+              /* Still rollback-only. */
+            }
+            return 'caught';
+          }
+        )
+      ).rejects.toMatchObject({
+        code: 'SQL_TRANSACTION_CONTROL',
+        commitOutcome: 'NOT_SENT'
+      });
+      expect(
+        driver.statements.filter((statement) => statement === 'ROLLBACK')
+      ).toHaveLength(1);
+      if (sql === 'START TRANSACTION')
+        expect(
+          driver.statements.filter((statement) => statement === sql)
+        ).toHaveLength(1);
+      else if (sql !== 'ROLLBACK') expect(driver.statements).not.toContain(sql);
+      expect(driver.statements).not.toContain('COMMIT');
+    }
+  );
+
   it('bounds pool acquisition and releases a late connection unused', async () => {
     const driver = fakeDriver();
     let acquired: (value: typeof driver.lease) => void = () => undefined;

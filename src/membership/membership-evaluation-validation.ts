@@ -67,6 +67,11 @@ const stage = z.discriminatedUnion('kind', [
       current_token: z
         .string()
         .regex(/^(0|-?[1-9][0-9]{0,18})$/)
+        .refine(
+          (s) =>
+            BigInt(s) >= BigInt('-9223372036854775808') &&
+            BigInt(s) <= BigInt('9223372036854775807')
+        )
         .nullable(),
       after_owner_wallet: text(50).nullable()
     })
@@ -98,7 +103,22 @@ const active = z
     scalar_plan_fingerprint: fingerprint,
     grant_metadata_fingerprint: fingerprint.nullable(),
     valid_until_millis: counter.nullable(),
-    stage
+    stage: stage.refine((s) => {
+      if (s.kind === 'RATING')
+        return (
+          (s.after.category === null) === (s.after.other_profile_id === null) &&
+          (s.matching_count !== '0' || s.signed_sum === '0')
+        );
+      if (s.kind === 'GRANT_INCLUDE')
+        return (
+          BigInt(s.owned_count) <= BigInt(s.selected_count) &&
+          (s.after_token_id !== null ||
+            (s.selected_count === '0' && s.owned_count === '0'))
+        );
+      if (s.kind === 'NFT_REQUIREMENT')
+        return s.current_token !== null || s.after_owner_wallet === null;
+      return true;
+    })
   })
   .strict();
 export function validateMembershipActiveInput(value: unknown): ActiveInputV1 {

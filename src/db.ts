@@ -207,7 +207,16 @@ async function execNativeTransactionally<T>(
         const runner = AppDataSource.createQueryRunner('master');
         try {
           const physical = (await runner.connect()) as PoolConnection;
-          return { handle: runner, physical, release: () => runner.release() };
+          return {
+            handle: runner,
+            physical,
+            release: () => runner.release(),
+            transaction: {
+              begin: () => runner.startTransaction('REPEATABLE READ'),
+              commit: () => runner.commitTransaction(),
+              rollback: () => runner.rollbackTransaction()
+            }
+          };
         } catch (error) {
           await runner.release();
           throw error;

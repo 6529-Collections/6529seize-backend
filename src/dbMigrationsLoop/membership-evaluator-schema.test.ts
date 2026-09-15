@@ -66,7 +66,8 @@ describe('Membership evaluator explicit online schema scope', () => {
       []
     );
     expect(f.runner.query).toHaveBeenLastCalledWith(
-      expect.stringMatching(/^SHOW INDEX/)
+      'SET SESSION lock_wait_timeout = ?',
+      [31536000]
     );
     expect(f.runner.query).toHaveBeenCalledWith(
       'SET SESSION lock_wait_timeout = ?',
@@ -74,7 +75,7 @@ describe('Membership evaluator explicit online schema scope', () => {
     );
     expect(f.source.synchronize).not.toHaveBeenCalled();
     expect(f.physical.destroy).not.toHaveBeenCalled();
-    expect(f.runner.release).toHaveBeenCalledTimes(1);
+    expect(f.runner.release).toHaveBeenCalledTimes(3);
   });
   it('reconciles an already present exact index without repeating the DDL', async () => {
     const f = fixture(true);
@@ -82,7 +83,10 @@ describe('Membership evaluator explicit online schema scope', () => {
       added_indexes: 0,
       verified_indexes: 1
     });
-    expect(f.runner.connect).not.toHaveBeenCalled();
+    expect(f.runner.query).not.toHaveBeenCalledWith(
+      MEMBERSHIP_EVALUATOR_INDEX_ONLINE,
+      []
+    );
   });
   it.each(
     [
@@ -98,7 +102,10 @@ describe('Membership evaluator explicit online schema scope', () => {
       await expect(applyMembershipEvaluatorSchema(f.source)).rejects.toThrow(
         'unapproved or missing'
       );
-      expect(f.runner.connect).not.toHaveBeenCalled();
+      expect(f.runner.query).not.toHaveBeenCalledWith(
+        MEMBERSHIP_EVALUATOR_INDEX_ONLINE,
+        []
+      );
     }
   );
   it.each([
@@ -109,8 +116,11 @@ describe('Membership evaluator explicit online schema scope', () => {
     { Expression: 'id + 1' }
   ])('rejects incompatible actual index attributes: %j', async (overrides) => {
     const f = fixture(true);
-    f.runner.query.mockResolvedValueOnce(
-      indexRows().map((row) => ({ ...row, ...overrides }))
+    const original = f.runner.query.getMockImplementation()!;
+    f.runner.query.mockImplementation((sql) =>
+      sql.startsWith('SHOW INDEX')
+        ? Promise.resolve(indexRows().map((row) => ({ ...row, ...overrides })))
+        : original(sql)
     );
     await expect(applyMembershipEvaluatorSchema(f.source)).rejects.toThrow(
       'incompatible'
@@ -135,29 +145,146 @@ describe('Membership evaluator explicit online schema scope', () => {
     await expect(applyMembershipEvaluatorSchema(params.source)).rejects.toThrow(
       'unapproved'
     );
-    expect(params.runner.connect).not.toHaveBeenCalled();
+    expect(params.runner.query).not.toHaveBeenCalledWith(
+      MEMBERSHIP_EVALUATOR_INDEX_ONLINE,
+      []
+    );
   });
-  it('settles a suppressed DDL callback at its deadline and discards the connection', async () => {
+  it('bounds SHOW INDEX before DDL and settles even when physical disposal throws', async () => {
     const f = fixture();
     const original = f.runner.query.getMockImplementation()!;
     f.runner.query.mockImplementation((sql) =>
-      sql === MEMBERSHIP_EVALUATOR_INDEX_ONLINE
+      sql.startsWith('SHOW INDEX')
         ? new Promise(() => undefined)
         : original(sql)
     );
+    f.physical.destroy.mockImplementation(() => {
+      throw new Error('dispose failed');
+    });
     await expect(
-      executeMembershipOnlineIndex(
-        f.runner as unknown as QueryRunner,
-        MEMBERSHIP_EVALUATOR_INDEX_ONLINE,
-        10
-      )
-    ).rejects.toThrow('unknown after deadline');
+      applyMembershipEvaluatorSchema(f.source, {
+        deadlineMillis: 50,
+        statementMillis: 10
+      })
+    ).rejects.toThrow('inspection deadline');
     expect(f.physical.destroy).toHaveBeenCalledTimes(1);
     expect(f.runner.query).not.toHaveBeenCalledWith(
-      'SET SESSION lock_wait_timeout = ?',
-      [31536000]
+      MEMBERSHIP_EVALUATOR_INDEX_ONLINE,
+      []
     );
   });
+  it('confines builder-created runners, rejects queued/late reads after revocation and preserves the real factory', async () => {
+    const f = fixture();
+    const factory = f.source.createQueryRunner;
+    let complete: (value: unknown) => void = () => undefined;
+    let abandoned: QueryRunner | undefined;
+    const original = f.runner.query.getMockImplementation()!;
+    f.runner.query.mockImplementation((sql) =>
+      sql === 'SELECT blocked'
+        ? new Promise((resolve) => {
+            complete = resolve;
+          })
+        : original(sql)
+    );
+    f.log.mockReset().mockImplementation(async function (this: {
+      connection: DataSource;
+    }) {
+      const borrowed = this.connection.createQueryRunner();
+      abandoned = borrowed;
+      await Promise.all([
+        borrowed.query('SELECT blocked'),
+        borrowed.query('SELECT queued')
+      ]);
+      await borrowed.query('SELECT late');
+      return { upQueries: [] };
+    });
+    await expect(
+      applyMembershipEvaluatorSchema(f.source, {
+        deadlineMillis: 50,
+        statementMillis: 10
+      })
+    ).rejects.toThrow('inspection deadline');
+    complete([]);
+    await expect(abandoned!.query('SELECT late')).rejects.toThrow();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    for (const forbidden of [
+      'SELECT queued',
+      'SELECT late',
+      MEMBERSHIP_EVALUATOR_INDEX_ONLINE
+    ])
+      expect(f.runner.query.mock.calls.map(([sql]) => sql)).not.toContain(
+        forbidden
+      );
+    expect(f.source.createQueryRunner).toBe(factory);
+    expect(f.physical.destroy).toHaveBeenCalledTimes(1);
+  });
+  it('does not allow a builder log to execute uninspected writes', async () => {
+    const f = fixture();
+    f.log.mockReset().mockImplementation(async function (this: {
+      connection: DataSource;
+    }) {
+      await this.connection
+        .createQueryRunner()
+        .query('CREATE TABLE uninspected(id int)');
+      return { upQueries: [] };
+    });
+    await expect(applyMembershipEvaluatorSchema(f.source)).rejects.toThrow(
+      'attempted a write'
+    );
+    expect(f.runner.query.mock.calls.map(([sql]) => sql)).not.toContain(
+      'CREATE TABLE uninspected(id int)'
+    );
+  });
+  it('bounds post-DDL verification independently and leaves reconciliation to a later invocation', async () => {
+    const f = fixture();
+    const original = f.runner.query.getMockImplementation()!;
+    let inspections = 0;
+    f.runner.query.mockImplementation((sql) => {
+      if (sql.startsWith('SHOW INDEX') && ++inspections === 2)
+        return new Promise(() => undefined);
+      return original(sql);
+    });
+    await expect(
+      applyMembershipEvaluatorSchema(f.source, {
+        deadlineMillis: 50,
+        statementMillis: 10
+      })
+    ).rejects.toThrow('inspection deadline');
+    expect(
+      f.runner.query.mock.calls.filter(
+        ([sql]) => sql === MEMBERSHIP_EVALUATOR_INDEX_ONLINE
+      )
+    ).toHaveLength(1);
+    expect(f.physical.destroy).toHaveBeenCalledTimes(1);
+  });
+  it.each([false, true])(
+    'settles a suppressed DDL callback even if disposal throws: %s',
+    async (throwOnDispose) => {
+      const f = fixture();
+      if (throwOnDispose)
+        f.physical.destroy.mockImplementation(() => {
+          throw new Error('synthetic disposal failure');
+        });
+      const original = f.runner.query.getMockImplementation()!;
+      f.runner.query.mockImplementation((sql) =>
+        sql === MEMBERSHIP_EVALUATOR_INDEX_ONLINE
+          ? new Promise(() => undefined)
+          : original(sql)
+      );
+      await expect(
+        executeMembershipOnlineIndex(
+          f.runner as unknown as QueryRunner,
+          MEMBERSHIP_EVALUATOR_INDEX_ONLINE,
+          10
+        )
+      ).rejects.toThrow('unknown after deadline');
+      expect(f.physical.destroy).toHaveBeenCalledTimes(1);
+      expect(f.runner.query).not.toHaveBeenCalledWith(
+        'SET SESSION lock_wait_timeout = ?',
+        [31536000]
+      );
+    }
+  );
   it('discards an unconfirmed restoration and preserves the first DDL error', async () => {
     const f = fixture();
     const failure = new Error('DDL failed');

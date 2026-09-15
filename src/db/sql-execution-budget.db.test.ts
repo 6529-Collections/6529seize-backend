@@ -1,3 +1,5 @@
+import type { QueryRunner } from 'typeorm';
+import { MembershipSourceStateEntity } from '@/entities/IMembershipSourceState';
 import * as mysql from 'mysql';
 import { performance } from 'node:perf_hooks';
 import * as apiDb from '@/db-api';
@@ -72,7 +74,7 @@ describe.each(['API', 'LOOP'])(
         { first, second }
       );
       if (adapter === 'API') await apiDb.connect();
-      else await loopDb.connect();
+      else await loopDb.connect([MembershipSourceStateEntity]);
       db = sqlExecutor;
     });
     afterEach(async () => {
@@ -475,5 +477,205 @@ describe.each(['API', 'LOOP'])(
         connection!.query = original;
       }
     });
+    if (adapter === 'LOOP') {
+      it('keeps ORM manager.save and nested savepoints inside the actual outer transaction', async () => {
+        const failure = new Error('rollback outer');
+        let runner: QueryRunner | undefined;
+        await expect(
+          withMembershipPrimaryTransaction(
+            db,
+            async (ctx) => {
+              runner = ctx.connection.connection as QueryRunner;
+              expect(runner.isTransactionActive).toBe(true);
+              await db.execute(
+                update,
+                { id: first },
+                membershipQueryOptions(ctx)
+              );
+              await runner.manager.save(MembershipSourceStateEntity, {
+                scope: 'PROFILE',
+                target_id: second,
+                dimension: 'IDENTITY',
+                version: '9',
+                active_jobs: 0,
+                updated_at_millis: '1'
+              });
+              await runner.startTransaction();
+              await runner.query('SELECT 1');
+              await runner.commitTransaction();
+              expect(runner.isTransactionActive).toBe(true);
+              throw failure;
+            },
+            {},
+            budget()
+          )
+        ).rejects.toBe(failure);
+        expect(runner!.isTransactionActive).toBe(false);
+        expect(runner!.isReleased).toBe(true);
+        expect(await observer.execute(query, { id: first })).toEqual([
+          { version: '1' }
+        ]);
+        expect(await observer.execute(query, { id: second })).toEqual([
+          { version: '1' }
+        ]);
+      });
+
+      it('rejects caller outer commit before send and rolls back an earlier write', async () => {
+        await expect(
+          withMembershipPrimaryTransaction(
+            db,
+            async (ctx) => {
+              await db.execute(
+                update,
+                { id: first },
+                membershipQueryOptions(ctx)
+              );
+              await (
+                ctx.connection.connection as QueryRunner
+              ).commitTransaction();
+            },
+            {},
+            budget()
+          )
+        ).rejects.toMatchObject({
+          code: 'SQL_TRANSACTION_CONTROL',
+          commitOutcome: 'NOT_SENT'
+        });
+        expect(await observer.execute(query, { id: first })).toEqual([
+          { version: '1' }
+        ]);
+      });
+
+      it('does not mistake a BeforeCommit subscriber SELECT for an acknowledged COMMIT', async () => {
+        const failure = new Error('before commit failed');
+        loopDb.getDataSource().subscribers.push({
+          beforeTransactionCommit: async ({ queryRunner }) => {
+            await queryRunner.query('SELECT 1');
+            throw failure;
+          }
+        });
+        await expect(
+          withMembershipPrimaryTransaction(
+            db,
+            async (ctx) => {
+              await db.execute(
+                update,
+                { id: first },
+                membershipQueryOptions(ctx)
+              );
+              return 'uncommitted';
+            },
+            {},
+            budget()
+          )
+        ).rejects.toBe(failure);
+        expect(await observer.execute(query, { id: first })).toEqual([
+          { version: '1' }
+        ]);
+      });
+
+      it.each([
+        'beforeTransactionStart',
+        'beforeTransactionCommit',
+        'beforeTransactionRollback'
+      ] as const)('bounds suppressed %s subscribers', async (hook) => {
+        loopDb.getDataSource().subscribers.push({
+          [hook]: async () => new Promise<never>(() => undefined)
+        });
+        const started = performance.now();
+        const failWork = new Error('rollback requested');
+        const operation = withMembershipPrimaryTransaction(
+          db,
+          async (ctx) => {
+            await db.execute(
+              update,
+              { id: first },
+              membershipQueryOptions(ctx)
+            );
+            if (hook === 'beforeTransactionRollback') throw failWork;
+            return 'never';
+          },
+          {},
+          {
+            ...budget(100, 100),
+            finalizationReserveMillis: 100,
+            deadlineMonotonicMillis: performance.now() + 200
+          }
+        );
+        if (hook === 'beforeTransactionRollback')
+          await expect(operation).rejects.toBe(failWork);
+        else
+          await expect(operation).rejects.toMatchObject({
+            commitOutcome: 'NOT_SENT',
+            connectionDestroyed: true
+          });
+        expect(performance.now() - started).toBeLessThan(1000);
+        await waitUntilUnlocked(observer);
+        expect(await observer.execute(query, { id: first })).toEqual([
+          { version: '1' }
+        ]);
+      });
+
+      it('blocks AfterCommit SQL before send while preserving the acknowledged result', async () => {
+        loopDb.getDataSource().subscribers.push({
+          afterTransactionCommit: async ({ queryRunner }) => {
+            await queryRunner.query(
+              `UPDATE ${MEMBERSHIP_SOURCE_STATES_TABLE} SET version=9 WHERE scope='PROFILE' AND target_id=? AND dimension='IDENTITY'`,
+              [second]
+            );
+          }
+        });
+        await expect(
+          withMembershipPrimaryTransaction(
+            db,
+            async (ctx) => {
+              await db.execute(
+                update,
+                { id: first },
+                membershipQueryOptions(ctx)
+              );
+              return 'committed';
+            },
+            {},
+            budget()
+          )
+        ).resolves.toBe('committed');
+        expect(await observer.execute(query, { id: first })).toEqual([
+          { version: '2' }
+        ]);
+        expect(await observer.execute(query, { id: second })).toEqual([
+          { version: '1' }
+        ]);
+      });
+
+      it('preserves actual acknowledged commit when AfterCommit never returns', async () => {
+        loopDb.getDataSource().subscribers.push({
+          afterTransactionCommit: async () =>
+            new Promise<never>(() => undefined)
+        });
+        await expect(
+          withMembershipPrimaryTransaction(
+            db,
+            async (ctx) => {
+              await db.execute(
+                update,
+                { id: first },
+                membershipQueryOptions(ctx)
+              );
+              return 'committed';
+            },
+            {},
+            {
+              ...budget(100, 100),
+              finalizationReserveMillis: 100,
+              deadlineMonotonicMillis: performance.now() + 200
+            }
+          )
+        ).resolves.toBe('committed');
+        expect(await observer.execute(query, { id: first })).toEqual([
+          { version: '2' }
+        ]);
+      });
+    }
   }
 );

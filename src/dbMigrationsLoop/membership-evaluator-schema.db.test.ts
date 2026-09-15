@@ -106,6 +106,66 @@ describeWithSeed(
       }
     });
 
+    it('bounds preflight behind a queued exclusive metadata lock before any index DDL', async () => {
+      const db = await source().initialize();
+      const blocker = db.createQueryRunner('master');
+      const writer = db.createQueryRunner('master');
+      let pending: Promise<unknown> | undefined;
+      try {
+        await dropIndex(db);
+        await blocker.startTransaction();
+        await blocker.query(`SELECT id FROM \`${USER_GROUPS_TABLE}\` LIMIT 1`);
+        await writer.query('SET SESSION lock_wait_timeout=10');
+        pending = writer
+          .query(
+            `ALTER TABLE \`${USER_GROUPS_TABLE}\` COMMENT='queued-schema-fixture'`
+          )
+          .catch((error: unknown) => error);
+        let queued = false;
+        for (let attempt = 0; attempt < 100 && !queued; attempt++) {
+          const processes: { State: string | null; Info: string | null }[] =
+            await db.query('SHOW PROCESSLIST');
+          queued = processes.some(
+            (row) =>
+              row.State?.includes('metadata lock') &&
+              row.Info?.includes('queued-schema-fixture')
+          );
+          if (!queued) await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        expect(queued).toBe(true);
+        const began = performance.now();
+        await expect(
+          applyMembershipEvaluatorSchema(db, {
+            deadlineMillis: 2500,
+            statementMillis: 1500
+          })
+        ).rejects.toThrow();
+        expect(performance.now() - began).toBeLessThan(5000);
+        await blocker.rollbackTransaction();
+        await pending;
+        pending = undefined;
+        const indexes: { Key_name: string }[] = await db.query(
+          `SHOW INDEX FROM \`${USER_GROUPS_TABLE}\``
+        );
+        expect(
+          indexes.some(
+            (index) => index.Key_name === MEMBERSHIP_EVALUATOR_INDEX.name
+          )
+        ).toBe(false);
+        await writer.query(`ALTER TABLE \`${USER_GROUPS_TABLE}\` COMMENT=''`);
+        await expect(applyMembershipEvaluatorSchema(db)).resolves.toMatchObject(
+          { added_indexes: 1 }
+        );
+      } finally {
+        if (blocker.isTransactionActive) await blocker.rollbackTransaction();
+        if (pending) await pending;
+        await writer.query(`ALTER TABLE \`${USER_GROUPS_TABLE}\` COMMENT=''`);
+        await writer.release();
+        await blocker.release();
+        await db.synchronize();
+        await db.destroy();
+      }
+    });
     it('rejects invisible or unrelated drift before an allowed addition', async () => {
       const db = await source().initialize();
       try {
