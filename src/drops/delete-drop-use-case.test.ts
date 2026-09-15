@@ -409,3 +409,91 @@ describe('DeleteDropUseCase', () => {
     });
   });
 });
+
+describe('DeleteDropUseCase chat history batch', () => {
+  it('updates dirty repair and eligible DM unread versions once for a full batch', async () => {
+    const purgeDb = { deleteBatch: jest.fn().mockResolvedValue(undefined) };
+    const wavesDb = {
+      incrementDmUnreadStateVersionsForWaveReaders: jest
+        .fn()
+        .mockResolvedValue(['reader']),
+      findWaveById: jest
+        .fn()
+        .mockResolvedValue({ visibility_group_id: 'parent-group' })
+    };
+    const useCase = new DeleteDropUseCase(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      wavesDb as never,
+      purgeDb as never
+    );
+    jest
+      .spyOn(userGroupsService, 'findIdentitiesInGroups')
+      .mockImplementation(async (groups) =>
+        groups[0] === 'chat-group'
+          ? ['author', 'reader', 'ineligible']
+          : ['reader']
+      );
+    const metrics = jest
+      .spyOn(
+        waveDropMetricsRefreshService,
+        'markWaveDropMetricsDirtyBestEffort'
+      )
+      .mockResolvedValue(undefined);
+    const scores = jest
+      .spyOn(waveScoreService, 'markWaveScoresDirtyBestEffort')
+      .mockResolvedValue(undefined);
+    const scope = { waveId: 'wave', authorId: 'author', cutoffSerialNo: 60000 };
+    const drops = Array.from({ length: 100 }, (_, i) => ({
+      id: `drop-${i}`,
+      serial_no: i + 1,
+      wave_id: 'wave',
+      author_id: 'author',
+      drop_type: DropType.CHAT
+    }));
+    const wave = {
+      id: 'wave',
+      description_drop_id: 'pin',
+      is_direct_message: true,
+      chat_group_id: 'chat-group',
+      visibility_group_id: 'visibility-group',
+      parent_wave_id: 'parent'
+    };
+    const ctx = { connection: {} };
+    await expect(
+      useCase.executeChatHistoryBatch(
+        scope,
+        drops as never,
+        wave as never,
+        ctx as never
+      )
+    ).resolves.toEqual(['reader']);
+    expect(purgeDb.deleteBatch).toHaveBeenCalledTimes(1);
+    expect(metrics).toHaveBeenCalledTimes(1);
+    expect(scores).toHaveBeenCalledTimes(1);
+    expect(
+      wavesDb.incrementDmUnreadStateVersionsForWaveReaders
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      wavesDb.incrementDmUnreadStateVersionsForWaveReaders
+    ).toHaveBeenCalledWith({ waveId: 'wave', readerIds: ['reader'] }, ctx);
+    await expect(
+      useCase.executeChatHistoryBatch(scope, [], wave as never, ctx as never)
+    ).resolves.toEqual([]);
+    expect(purgeDb.deleteBatch).toHaveBeenCalledTimes(1);
+    await expect(
+      useCase.executeChatHistoryBatch(
+        scope,
+        [{ ...drops[0], id: 'pin' }] as never,
+        wave as never,
+        ctx as never
+      )
+    ).rejects.toThrow('Invalid chat history purge batch');
+  });
+});

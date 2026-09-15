@@ -22,6 +22,46 @@ The resizer's HTTP API uses AWS_PROXY payload 1.0 without request templates;
 request bodies remain inside the HTTP event envelope and cannot become this
 top-level operator payload.
 
+## Membership refresh foundation (inactive)
+
+Seven additive membership tables separate committed source/job versions, group
+catalogue changes, durable refresh targets/runs, immutable per-profile generation
+rows and atomic publication pointers. Bounded GROUP/FULL fanout produces PROFILE
+work; readers will validate source dependencies and recompute affected groups.
+The [membership refresh design](membership-refresh-design.md) defines transaction,
+TDH→xTDH completion, lease/checkpoint, publication and scoped-readiness contracts.
+This schema release deploys only `dbMigrationsLoop`, using its explicit
+`membership-refresh` scope to create and verify only these tables. It enables no producers,
+worker, queue, schedule or materialized reader and preserves existing API and
+frontend behavior. The July draft tables are not mapped or used as readiness
+evidence. Runtime implementation and cutover remain gated by issue #2075.
+
+## Proposal card media
+
+Authenticated `POST /drop-media/proposal-frame` builds a bounded, fixed HTML
+document around the submitter's uploaded image/video or recognized decentralized
+artwork. Tracked image uploads must have completed sanitization. The endpoint
+uses the existing upload profile authentication and API rate limiter, accepts
+no client-authored HTML, and never fetches the source. Its versioned template
+embeds the original media URL, with interactive HTML confined to a sandboxed
+iframe, and publishes only `index.html` through the existing IPFS directory
+uploader. The returned `text/html` URL follows existing decentralized HTML drop
+validation and mint animation handling; the frontend retains a separate
+`additional_media.preview_image` for static previews. Submitter-provided
+`proposal_frame` editing metadata is excluded from public NFT traits and is
+never used to authorize publishing or select mint media. Deploy `claimsBuilder`
+(which excludes that metadata from traits) and `api` before the frontend consumer.
+No new service, database schema, or migration is required.
+
+Decentralized artwork remains untrusted: accepting a reference does not verify
+ownership, MIME, or content safety. The declared MIME selects a rendering element,
+not a trust level. An image/video response cannot execute as a document through
+those elements, and HTML always uses `sandbox="allow-scripts"` without same-origin,
+popup, download, or top-navigation permissions. This preserves the existing
+interactive-art submission model without fetching arbitrary source content on
+the server. The template applies attribute escaping before every media branch;
+its separate URL guard also protects local previews, which do not use this API.
+
 ## Profile collecting and marketplace operations
 
 The API owns `/collect/*` and `/market/*`. Collecting derives versioned catalogs
@@ -176,6 +216,20 @@ balance and padded gas checks must pass before review and before opening the
 durable send attempt, including the current block limit and mainnet's
 [EIP-7825 transaction gas limit](https://eips.ethereum.org/EIPS/eip-7825).
 Exceeding a bound requires the user to reduce the selection explicitly.
+
+`POST /market/operations/{id}/preflight` is a read-only, authenticated
+`BUY_BATCH` check. Its small body binds the existing review revision and exact
+transaction digest; the server loads and independently validates stored Seaport
+orders, allocations and calldata. It sends only that transaction to the existing
+Alchemy provider, pinning both `eth_call` and raw `eth_estimateGas` to one fresh
+block and rechecking the block hash. Ownership, current profile membership,
+expiry, revision and recovery fences are checked again before returning. No
+operation, journal, send attempt, gas cap or expiry is changed. A 12-second
+abortable deadline, one concurrent check per actor, 12 checks per actor per
+minute and a two-second per-operation cooldown bound work through fail-closed
+Redis leases. This avoids sending large batch RPC bodies through the browser's
+read provider; independent frontend validation and send-arming resimulation
+remain mandatory. Only the API service must deploy before its frontend consumer.
 
 Restricted ERC1155 seller orders currently support original and filled quantity
 one. Open partial orders support multiple editions and recipients only when
@@ -521,6 +575,18 @@ in the metadata URI and consumed metadata strings use the standard 64-digit
 lowercase hexadecimal token ID. Existing URI normalization and bounded HTTP
 handling apply; this does not establish token existence or media availability.
 
+The Manifold adapter requires selected-token responses to match the requested
+instance ID and rejects known ID mismatches on legacy responses too.
+When present, it reads string metadata from `publicData.selectedToken`
+and normalizes supported decentralized media to HTTP(S) without credentials;
+the existing preview download safety checks still apply. Complete title and media
+avoid an unnecessary canonical-page OG fetch. Listing metadata does not prove an
+active sale, so these cards use the unknown sale state and a view action. Legacy
+claim and edition field extraction remains available when selectedToken is absent,
+including older responses without a recognizable instance ID. A listingType-only
+response keeps those legacy assets and uses an unknown market state with a view
+action, without inferring a claim price.
+
 After persistence, a worker-specific notifier reads active WebSocket recipients
 once and sends the existing `MEDIA_LINK_UPDATED` payload with concurrency 10,
 five-second request limits, and a 15-second broadcast deadline. Notification
@@ -663,15 +729,34 @@ configuration, not historical or versioned inputs persisted with the snapshot.
 The public current-season rules and configured future schedule remain
 independent of any collector identity.
 
-Authenticated profiles can delete their own chat history from one wave through
-`DELETE /waves/{id}/my-chat-history`. The API locks the wave and the profile's
-matching `CHAT` drops in one transaction, preserves the current pinned drop,
-and delegates each remaining drop to the canonical deletion use case so
-submission/winner drops and dependent drop data are unaffected. After commit,
-the API requests the normal wave metric/score repairs, invalidates unread state,
-and broadcasts the deleted drop identities to connected wave clients. Because
-this is self-service privacy cleanup scoped to the authenticated author ID, it
-remains available if the author is no longer eligible to enter the wave.
+Authenticated profiles prepare a chat-history purge through
+`POST /waves/{id}/my-chat-history`, which freezes the author's latest CHAT serial number
+in a signed token bound to the author and wave without deleting anything. Clients
+retain the token before `DELETE /waves/{id}/my-chat-history?purge_token=...`, reuse
+it across retries, and continue until `has_more` is false. Each transaction locks
+the wave and at most 101 eligible CHAT rows, deletes at most 100 through set-based
+SQL, and preserves the current pinned drop. An indexed serial range avoids
+locking the complete history. Newly sent messages remain outside the cutoff.
+Legacy DELETE without a token completes histories of at most 100 eligible drops
+and rejects larger histories before mutation, preventing false partial success.
+Proxies remain forbidden; former wave members can still remove their own chats.
+The batch repository mirrors single-drop dependent-data cleanup, including poll
+and voting children, tombstones, curation order compaction and empty token-watch
+cancellation, and additionally removes boost/NFT-link associations. Metrics deltas,
+latest timestamps, DM unread versions and dirty repair markers run once per batch;
+post-commit refresh requests, unread-cache invalidation, and bounded batches of
+existing DROP_DELETE notifications preserve current client behavior. No schema,
+queue, worker or deployment-unit changes are required; deploy `api` before the
+frontend continuation UI.
+The range queries use the existing `idx_drop_wave_type_author` index declared
+on `DropEntity` in `src/entities/IDrop.ts`; TypeORM schema synchronization already
+owns this index. Wave and dropper metrics rows are initialized by
+`applyInsertedDropMetricsDelta` in the drop-creation transaction, and this path
+preserves the existing deletion-delta/full-resync invariant. Tokens are signed
+but readable and contain only the caller's own scope. Clients treat them as
+opaque handles. They deliberately have no expiry so a delayed retry retains its
+original cutoff; authentication and author/wave binding remain required on every
+request.
 
 Waves have an additive competition read boundary under `/v3/waves`. A wave is
 the chat/visibility hub and owns zero, one, or many competition resources. The

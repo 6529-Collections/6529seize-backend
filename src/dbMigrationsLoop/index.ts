@@ -17,6 +17,10 @@ import { MintingClaimEntity } from '@/entities/IMintingClaim';
 import { applyClaimsMediaUploadSchema } from './claims-media-schema';
 import { NftLinkEntity } from '@/entities/INftLink';
 import { applyNftLinkPageRetrySchema } from './nft-link-page-retry-schema';
+import {
+  applyMembershipSchema,
+  membershipSchemaEntities
+} from './membership-schema';
 
 const DBMigrate = require('db-migrate');
 
@@ -76,7 +80,8 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
     (scope !== 'full' &&
       scope !== 'wallet-transfer-analysis' &&
       scope !== 'claims-media-upload' &&
-      scope !== 'nft-link-page-retry')
+      scope !== 'nft-link-page-retry' &&
+      scope !== 'membership-refresh')
   ) {
     throw new Error('Unsupported database schema scope for this invocation');
   }
@@ -87,6 +92,16 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const scheduledInvocation = isScheduledInvocation(event);
   const scope = schemaScope(event, scheduledInvocation);
   logger.info(`[RUNNING]`);
+  if (scope === 'membership-refresh') {
+    const verification = await doInDbContext(() => applyMembershipSchema(), {
+      logger,
+      entities: membershipSchemaEntities,
+      syncEntities: false,
+      skipRedis: true
+    });
+    logger.info(`[FINISHED MEMBERSHIP SCHEMA] ${JSON.stringify(verification)}`);
+    return { schema_scope: scope, ...verification };
+  }
   if (scope === 'nft-link-page-retry') {
     await doInDbContext(
       async () => {

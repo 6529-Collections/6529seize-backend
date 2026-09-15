@@ -1,8 +1,48 @@
 import { MEMES_CONTRACT } from '@/constants';
-import type { DropMetadataEntity } from '@/entities/IDrop';
+import type { DropMediaEntity, DropMetadataEntity } from '@/entities/IDrop';
 import { buildMintingClaimRowFromDrop } from '@/minting-claims/minting-claim-from-drop.builder';
 
 describe('buildMintingClaimRowFromDrop', () => {
+  it('uses the proposal HTML and preview without publishing its editing metadata as a trait', () => {
+    const htmlUrl =
+      'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/index.html';
+    const previewUrl = 'https://example.com/preview.png';
+    const row = buildMintingClaimRowFromDrop(
+      'drop-proposal',
+      MEMES_CONTRACT,
+      1,
+      [{ url: htmlUrl, mime_type: 'text/html' }] as DropMediaEntity[],
+      [
+        { data_key: 'title', data_value: 'Permanent Pepe' },
+        {
+          data_key: 'additional_media',
+          data_value: JSON.stringify({ preview_image: previewUrl })
+        },
+        {
+          data_key: 'proposal_frame',
+          data_value: JSON.stringify({
+            version: 1,
+            layout: 'portrait',
+            media_url: 'https://untrusted.example/fake.html',
+            mime_type: 'text/html'
+          })
+        }
+      ] as DropMetadataEntity[],
+      14
+    );
+    expect(row).toMatchObject({
+      animation_url: htmlUrl,
+      animation_kind: 'html',
+      animation_details: { format: 'HTML' },
+      image_url: previewUrl
+    });
+    expect(row.attributes).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ trait_type: 'Proposal_frame' })
+      ])
+    );
+  });
+
   it('excludes internal allowlist_batches metadata from public attributes', () => {
     const metadatas: DropMetadataEntity[] = [
       {

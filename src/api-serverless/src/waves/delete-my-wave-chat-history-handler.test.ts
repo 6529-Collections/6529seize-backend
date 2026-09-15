@@ -1,4 +1,5 @@
 const mockDeleteMyWaveChatHistory = jest.fn();
+const mockPrepare = jest.fn();
 const mockGetAuthenticationContext = jest.fn();
 const mockGetFromRequest = jest.fn();
 
@@ -8,7 +9,8 @@ jest.mock('@/api/auth/auth', () => ({
 
 jest.mock('@/api/drops/drop-creation.api.service', () => ({
   dropCreationService: {
-    deleteMyWaveChatHistory: mockDeleteMyWaveChatHistory
+    deleteMyWaveChatHistory: mockDeleteMyWaveChatHistory,
+    prepareMyWaveChatHistoryPurge: mockPrepare
   }
 }));
 
@@ -18,7 +20,10 @@ jest.mock('@/time', () => ({
   }
 }));
 
-import { handleDeleteMyWaveChatHistory } from './delete-my-wave-chat-history.handler';
+import {
+  handleDeleteMyWaveChatHistory,
+  handlePrepareMyWaveChatHistoryPurge
+} from './delete-my-wave-chat-history.handler';
 
 describe('handleDeleteMyWaveChatHistory', () => {
   beforeEach(() => {
@@ -32,7 +37,10 @@ describe('handleDeleteMyWaveChatHistory', () => {
       deleted_drop_ids: ['drop-1'],
       preserved_pinned_drop_id: 'drop-pinned'
     };
-    const req = { params: { id: 'wave-1' } } as any;
+    const req = {
+      params: { id: 'wave-1' },
+      query: { purge_token: 'frozen' }
+    } as any;
     mockGetFromRequest.mockReturnValue(timer);
     mockGetAuthenticationContext.mockResolvedValue(authenticationContext);
     mockDeleteMyWaveChatHistory.mockResolvedValue(response);
@@ -42,7 +50,7 @@ describe('handleDeleteMyWaveChatHistory', () => {
     expect(mockGetFromRequest).toHaveBeenCalledWith(req);
     expect(mockGetAuthenticationContext).toHaveBeenCalledWith(req, timer);
     expect(mockDeleteMyWaveChatHistory).toHaveBeenCalledWith(
-      { waveId: 'wave-1' },
+      { waveId: 'wave-1', purgeToken: 'frozen' },
       { authenticationContext, timer }
     );
   });
@@ -54,4 +62,13 @@ describe('handleDeleteMyWaveChatHistory', () => {
 
     expect(mockDeleteMyWaveChatHistory).not.toHaveBeenCalled();
   });
+});
+
+it('prepares a cutoff without calling deletion', async () => {
+  jest.clearAllMocks();
+  mockPrepare.mockResolvedValue({ purge_token: 'frozen' });
+  await expect(
+    handlePrepareMyWaveChatHistoryPurge({ params: { id: 'wave' } } as never)
+  ).resolves.toEqual({ purge_token: 'frozen' });
+  expect(mockDeleteMyWaveChatHistory).not.toHaveBeenCalled();
 });

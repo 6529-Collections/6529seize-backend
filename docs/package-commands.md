@@ -118,10 +118,14 @@ for normal setup, installs, or script execution.
 
 ## Coordinator Release CLI
 
-The root devDependency `@6529-collections/release-request` is pinned to `0.0.4`
+The root devDependency `@6529-collections/release-request` is pinned to `0.0.5`
 from public npm in `package.json` and `package-lock.json`. It requires Node 20
 or newer and has no install-time scripts. Normal `./bin/6529 ci` installs it;
 no GitHub Packages token or private registry configuration is needed.
+
+This version creates the current `0.000002` request shape, including the
+backend-only `operational_deployments` field, while continuing to validate
+saved `0.000001` requests.
 
 From the repository root, inspect the installed version and current template:
 
