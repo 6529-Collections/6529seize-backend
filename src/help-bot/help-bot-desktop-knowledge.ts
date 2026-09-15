@@ -25,7 +25,7 @@ function hasDesktopSupportTopic(question: string): boolean {
     /\b6529\s+(?:desktop|core)\b/i,
     /\bdesktop\s+(?:app|application|node|wallets?|tdh|merkle)\b/i,
     /\bcore\s+(?:app|wallets?|workers?|rpc|tdh|ipfs|recovery)\b/i,
-    /\b(?:in|with|using|about|start|setup|explain|describe|what is)\s+core\b/i,
+    /\b(?:in|with|using|about|start|setup|explain|describe|what is|installed|downloaded|opened)\s+core\b/i,
     /\bmy\s+node\b/i
   ].some((pattern) => pattern.test(question));
 }
@@ -212,6 +212,7 @@ export function desktopRecordIdForQuestion(
   question: string,
   previousBotAnswer?: string | null
 ): string | undefined {
+  if (isPostInstallationQuestion(question)) return 'desktop.after-installation';
   if (
     /^(?:what (?:is|is the)|explain|describe|tell me about)\s+(?:6529\s+)?core[?.!]*$/i.test(
       question.trim()
@@ -248,4 +249,20 @@ export function desktopRecordIdForQuestion(
       : 'desktop.tdh-after-recalculation';
   }
   return initialMismatchRecord(question, previousBotAnswer ?? '');
+}
+
+/** Installation alone must not override a specific wallet, RPC, or error question. */
+function isPostInstallationQuestion(question: string): boolean {
+  const text = question.replace(/’/g, "'").trim();
+  const installation = /\b(?:installed|opened)\b/i;
+  const nextStep =
+    /\b(?:now what|what (?:do i do |comes )?next|what now|next steps?|get started|getting started|how do i start)\b/i;
+  const specificTopic =
+    /\b(?:wallets?|rpc|tdh|merkle|ipfs|errors?|crash\w*|fail\w*|stuck|sync\w*|connect\w*|pair\w*)\b/i;
+  return (
+    installation.test(text) &&
+    nextStep.test(text) &&
+    !specificTopic.test(text) &&
+    !/\b(?:not|never|haven't|havent|can't|cant|couldn't|couldnt)\b/i.test(text)
+  );
 }

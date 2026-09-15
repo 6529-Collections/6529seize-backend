@@ -1,5 +1,6 @@
 import { answerAppDiscovery } from './help-bot-app-discovery';
 import {
+  composeDesktopAnswer,
   desktopFallbackAnswer,
   normalizeDesktopAnswer
 } from '@/help-bot/help-bot-desktop-answer';
@@ -263,6 +264,9 @@ function ensureKnowledgeMarkdownLinks({
   readonly record: HelpBotKnowledgeRecord;
   readonly baseUrl: string;
 }): string {
+  if (record.answerLinks !== undefined) {
+    return composeDesktopAnswer(text, record);
+  }
   if (record.suppressSourceLinks) {
     return text;
   }
