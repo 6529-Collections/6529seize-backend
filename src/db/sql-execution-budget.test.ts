@@ -252,6 +252,37 @@ describe('physical SQL execution budgets', () => {
     expect(driver.destroy).toHaveBeenCalledTimes(1);
   });
 
+  it('normalizes the supported MySQL NOWAIT errno without exposing driver detail', async () => {
+    const driver = fakeDriver((sql, callback) => {
+      if (sql !== 'SELECT contention') return false;
+      queueMicrotask(() =>
+        callback({
+          code: 'UNKNOWN_CODE_PLEASE_REPORT',
+          errno: 3572,
+          sql: 'private SQL',
+          message: 'private detail'
+        })
+      );
+      return true;
+    });
+    await expect(
+      executeBudgetedSqlTransaction(
+        async () => driver.lease,
+        budget(),
+        async () =>
+          execSQLWithParams('SELECT contention', driver.connection, false)
+      )
+    ).rejects.toMatchObject({
+      code: 'SQL_STATEMENT_FAILED',
+      serverCode: 'ER_LOCK_NOWAIT',
+      phase: 'WORK',
+      commitOutcome: 'NOT_SENT',
+      connectionDestroyed: false
+    });
+    expect(driver.statements).toContain('ROLLBACK');
+    expect(driver.destroy).not.toHaveBeenCalled();
+  });
+
   it('bounds pool acquisition and releases a late connection unused', async () => {
     const driver = fakeDriver();
     let acquired: (value: typeof driver.lease) => void = () => undefined;

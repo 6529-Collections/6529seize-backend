@@ -115,8 +115,16 @@ function sanitizedDriverError(
     error && typeof error === 'object' && 'code' in error
       ? error.code
       : undefined;
-  const code =
-    typeof rawCode === 'string' && /^(ER_|PROTOCOL_)[A-Z0-9_]+$/.test(rawCode)
+  // mysql's older symbol table reports MySQL 8 NOWAIT as unknown; its numeric
+  // server errno is stable. Normalize only this explicitly supported condition.
+  const lockNowait =
+    error &&
+    typeof error === 'object' &&
+    'errno' in error &&
+    error.errno === 3572;
+  const code = lockNowait
+    ? 'ER_LOCK_NOWAIT'
+    : typeof rawCode === 'string' && /^(ER_|PROTOCOL_)[A-Z0-9_]+$/.test(rawCode)
       ? rawCode
       : undefined;
   return new SqlExecutionBudgetExceededError(

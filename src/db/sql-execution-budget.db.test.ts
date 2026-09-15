@@ -326,57 +326,65 @@ describe.each(['API', 'LOOP'])(
       expect(callback).not.toHaveBeenCalled();
     });
 
-    it('aborts a transactional DML lock wait and releases independent locks', async () => {
-      let unblock: () => void = () => undefined;
-      let locked: () => void = () => undefined;
-      const ready = new Promise<void>((resolve) => {
-        locked = resolve;
-      });
-      const hold = new Promise<void>((resolve) => {
-        unblock = resolve;
-      });
-      const blocker = withMembershipPrimaryTransaction(
-        observer,
-        async (ctx) => {
-          await observer.execute(
-            `${query} FOR UPDATE`,
-            { id: second },
-            membershipQueryOptions(ctx)
-          );
-          locked();
-          await hold;
-        }
-      );
-      await ready;
-      try {
-        await expect(
-          withMembershipPrimaryTransaction(
-            db,
-            async (ctx) => {
-              const options = membershipQueryOptions(ctx);
-              await db.execute(update, { id: first }, options);
-              await db.execute(update, { id: second }, options);
-            },
-            {},
-            budget(1000, 80)
-          )
-        ).rejects.toMatchObject({
-          phase: 'WORK',
-          commitOutcome: 'NOT_SENT',
-          connectionDestroyed: true
+    it.each([false, true])(
+      'rolls back lock contention and releases independent locks (NOWAIT=%s)',
+      async (nowait) => {
+        let unblock: () => void = () => undefined;
+        let locked: () => void = () => undefined;
+        const ready = new Promise<void>((resolve) => {
+          locked = resolve;
         });
-      } finally {
-        unblock();
-        await blocker;
+        const hold = new Promise<void>((resolve) => {
+          unblock = resolve;
+        });
+        const blocker = withMembershipPrimaryTransaction(
+          observer,
+          async (ctx) => {
+            await observer.execute(
+              `${query} FOR UPDATE`,
+              { id: second },
+              membershipQueryOptions(ctx)
+            );
+            locked();
+            await hold;
+          }
+        );
+        await ready;
+        try {
+          await expect(
+            withMembershipPrimaryTransaction(
+              db,
+              async (ctx) => {
+                const options = membershipQueryOptions(ctx);
+                await db.execute(update, { id: first }, options);
+                await db.execute(
+                  nowait ? `${query} FOR UPDATE NOWAIT` : update,
+                  { id: second },
+                  options
+                );
+              },
+              {},
+              budget(1000, 80)
+            )
+          ).rejects.toMatchObject({
+            phase: 'WORK',
+            commitOutcome: 'NOT_SENT',
+            connectionDestroyed: !nowait,
+            ...(nowait ? { serverCode: 'ER_LOCK_NOWAIT' } : {})
+          });
+        } finally {
+          unblock();
+          await blocker;
+        }
+        await waitUntilUnlocked(observer);
+        expect(await observer.execute(query, { id: first })).toEqual([
+          { version: '1' }
+        ]);
+        expect(await observer.execute(query, { id: second })).toEqual([
+          { version: '1' }
+        ]);
       }
-      await waitUntilUnlocked(observer);
-      expect(await observer.execute(query, { id: first })).toEqual([
-        { version: '1' }
-      ]);
-      expect(await observer.execute(query, { id: second })).toEqual([
-        { version: '1' }
-      ]);
-    });
+    );
 
     it('reports UNKNOWN after a real COMMIT whose acknowledgment is withheld, then reconciles committed data', async () => {
       let connection: mysql.PoolConnection | undefined;
