@@ -281,6 +281,47 @@ describe('Desktop corpus retrieval and answers', () => {
     );
   });
 
+  it.each([
+    'Have both workers recalculated?',
+    'Have both workers recalculated',
+    'Has my node recalculated?',
+    'Are both blocks the same?',
+    'Are both blocks the same',
+    'Have both workers reconciled?',
+    'Both workers recalculated?',
+    'Both blocks are the same?'
+  ])(
+    'does not treat a progress question as confirmation: %s',
+    async (question) => {
+      const { answerer } = makeAnswerer();
+      const result = await answerer.answer({
+        question,
+        previousBotAnswer:
+          'In 6529 Desktop, your node does not match 6529.io. Compare the Last Block values.',
+        baseUrl: 'https://6529.io'
+      });
+      expect(result.type === 'ANSWER' && result.record.id).toBe(
+        'desktop.tdh-out-of-sync'
+      );
+    }
+  );
+
+  it.each([
+    ['Both workers recalculated', 'tdh-after-recalculation'],
+    ['Both blocks are the same', 'tdh-check-workers'],
+    ['Both workers reconciled', 'tdh-after-reconciliation'],
+    ['Have both workers recalculated? I recalculated', 'tdh-out-of-sync'],
+    ['Are both blocks the same? I recalculated', 'tdh-after-recalculation'],
+    ['I recalculated. Are both blocks the same?', 'tdh-after-recalculation']
+  ])('preserves only confirmed progress in %s', (question, expected) => {
+    expect(
+      desktopRecordIdForQuestion(
+        question,
+        'In 6529 Desktop, your node does not match 6529.io.'
+      )
+    ).toBe(`desktop.${expected}`);
+  });
+
   it('accepts an affirmative block comparison after recalculation', () => {
     expect(
       desktopRecordIdForQuestion(

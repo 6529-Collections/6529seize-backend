@@ -92,16 +92,17 @@ export function desktopQuestionWithContext(
 
 /** Inspect clauses conservatively: uncertain or negated reports cannot advance repair. */
 function affirmativeReport(question: string, action: RegExp): boolean {
-  const clauses = question.replace(/’/g, "'").split(/[,;.!?]|\bbut\b/i);
+  // Keep question marks attached so shorthand questions cannot confirm progress.
+  const clauses = question.replace(/’/g, "'").split(/[,;.!]|\bbut\b|(?<=\?)/i);
   const matching = clauses.filter((clause) => action.test(clause));
   const uncertain =
-    /\b(?:not|never|no|if|should|can|could|would|maybe|unsure|whether)\b|n't\b/i;
+    /\b(?:not|never|no|if|should|can|could|would|maybe|unsure|whether)\b|n't\b|\?/i;
   return (
     matching.length > 0 &&
     matching.every(
       (clause) =>
         !uncertain.test(clause) &&
-        !/^\s*(?:have|has|did|are|is) (?:i|you|it|the)\b/i.test(clause)
+        !/^\s*(?:have|has|had|did|do|does|are|is|was|were)\b/i.test(clause)
     )
   );
 }

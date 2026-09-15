@@ -668,6 +668,7 @@ records, but need this renderer/routing update for full procedural answers.
 Desktop staged replies require the selected stage to exist in the published corpus.
 A new runtime against an older corpus fails closed for a missing stage, including
 a reported recalculation; it must not replay a generic TDH guide or infer a repair
-procedure from another record. Negated or uncertain completion reports do not
-authorize advancing to reconciliation, and current corrections override earlier
+procedure from another record. Questions (including plural-subject questions such
+as "Have both workers recalculated?") and negated or uncertain completion reports
+do not authorize advancing to reconciliation, and current corrections override earlier
 acknowledgements.
