@@ -226,13 +226,14 @@ export async function execSQLWithParams<T>(
             connection?.release();
           }
           if (err) {
-            logger.error(
-              err instanceof SqlExecutionBudgetExceededError
-                ? `${err.code} phase=${err.phase} commit=${err.commitOutcome}`
-                : privateFamily
-                  ? `Database error executing private ${privateFamily} query`
-                  : `Error "${err}" executing SQL query ${queryDescription}\n`
-            );
+            let description: string;
+            if (err instanceof SqlExecutionBudgetExceededError)
+              description = `${err.code} phase=${err.phase} commit=${err.commitOutcome}`;
+            else if (privateFamily)
+              description = `Database error executing private ${privateFamily} query`;
+            else
+              description = `Error "${err}" executing SQL query ${queryDescription}\n`;
+            logger.error(description);
             reject(privateFamily ? privateQueryError(err, privateFamily) : err);
           } else {
             resolve(Object.values(JSON.parse(JSON.stringify(result))));

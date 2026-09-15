@@ -453,4 +453,177 @@ describe('physical SQL execution budgets', () => {
     }
     expect(acquire).not.toHaveBeenCalled();
   });
+  it('rejects a SETUP lifecycle COMMIT before sending or fabricating an undefined result', async () => {
+    const driver = fakeDriver();
+    const executable = jest.fn().mockResolvedValue('never');
+    const lease = {
+      ...driver.lease,
+      transaction: {
+        begin: async () => {
+          await execSQLWithParams('COMMIT', driver.connection, false);
+          throw new Error('setup failed after unexpected COMMIT');
+        },
+        commit: jest.fn(),
+        rollback: jest.fn()
+      }
+    };
+    await expect(
+      executeBudgetedSqlTransaction(async () => lease, budget(), executable)
+    ).rejects.toMatchObject({
+      code: 'SQL_TRANSACTION_CONTROL',
+      phase: 'SETUP',
+      commitOutcome: 'NOT_SENT',
+      connectionDestroyed: true
+    });
+    expect(driver.statements).not.toContain('COMMIT');
+    expect(executable).not.toHaveBeenCalled();
+    expect(driver.release).toHaveBeenCalledTimes(1);
+  });
+  it('permits an explicitly completed void callback without using an unassigned result assertion', async () => {
+    const driver = fakeDriver();
+    await expect(
+      executeBudgetedSqlTransaction(
+        async () => driver.lease,
+        budget(),
+        async () => undefined
+      )
+    ).resolves.toBeUndefined();
+    expect(driver.statements).toContain('COMMIT');
+  });
+  it('allows all three savepoint commands within owned work and still rolls back the outer transaction', async () => {
+    const driver = fakeDriver();
+    const failure = new Error('outer failure');
+    await expect(
+      executeBudgetedSqlTransaction(
+        async () => driver.lease,
+        budget(),
+        async () => {
+          for (const sql of [
+            'SAVEPOINT fixture',
+            'ROLLBACK TO SAVEPOINT fixture',
+            'RELEASE SAVEPOINT fixture'
+          ])
+            await execSQLWithParams(sql, driver.connection, false);
+          throw failure;
+        }
+      )
+    ).rejects.toBe(failure);
+    expect(driver.statements).toEqual(
+      expect.arrayContaining([
+        'SAVEPOINT fixture',
+        'ROLLBACK TO SAVEPOINT fixture',
+        'RELEASE SAVEPOINT fixture',
+        'ROLLBACK'
+      ])
+    );
+    expect(driver.statements).not.toContain('COMMIT');
+  });
+  it('sends physical SQL synchronously while observing a driver throw as a rejected statement', async () => {
+    const driver = fakeDriver((sql) => {
+      if (sql === 'SELECT synchronous_failure')
+        throw Object.assign(new Error('private driver detail'), {
+          code: 'ER_PARSE_ERROR'
+        });
+      return false;
+    });
+    await expect(
+      executeBudgetedSqlTransaction(
+        async () => driver.lease,
+        budget(),
+        async () => {
+          const failed = new Promise<void>((resolve, reject) => {
+            const returned = driver.connection.query(
+              'SELECT healthy',
+              (error) => (error ? reject(error) : resolve())
+            );
+            expect(returned).toBe(driver.queryObject);
+          });
+          await failed;
+          await execSQLWithParams(
+            'SELECT synchronous_failure',
+            driver.connection,
+            false
+          );
+        }
+      )
+    ).rejects.toMatchObject({
+      code: 'SQL_STATEMENT_FAILED',
+      serverCode: 'ER_PARSE_ERROR',
+      commitOutcome: 'NOT_SENT'
+    });
+    expect(driver.statements).toContain('ROLLBACK');
+  });
+  it('rejects a second physical statement during an unknown COMMIT without ever sending it', async () => {
+    const driver = fakeDriver((sql) => sql === 'COMMIT');
+    let commitAttempt!: () => void;
+    const attemptingCommit = new Promise<void>((resolve) => {
+      commitAttempt = resolve;
+    });
+    const lease = {
+      ...driver.lease,
+      transaction: {
+        begin: async () => {
+          await execSQLWithParams(
+            'START TRANSACTION',
+            driver.connection,
+            false
+          );
+        },
+        commit: async () => {
+          const pending = execSQLWithParams('COMMIT', driver.connection, false);
+          commitAttempt();
+          await pending;
+        },
+        rollback: jest.fn()
+      }
+    };
+    const operation = executeBudgetedSqlTransaction(
+      async () => lease,
+      budget(500, 200),
+      async () => 'work'
+    );
+    const rejected = expect(operation).rejects.toMatchObject({
+      code: 'SQL_CONCURRENT_STATEMENTS',
+      commitOutcome: 'UNKNOWN',
+      connectionDestroyed: true
+    });
+    await attemptingCommit;
+    await expect(
+      execSQLWithParams('SELECT overlapping_commit', driver.connection, false)
+    ).rejects.toMatchObject({
+      code: 'SQL_CONCURRENT_STATEMENTS',
+      commitOutcome: 'UNKNOWN'
+    });
+    await rejected;
+    expect(driver.statements).not.toContain('SELECT overlapping_commit');
+    expect(driver.statements).not.toContain('ROLLBACK');
+  });
+  it('disposes and releases an acquired lease if interceptor installation fails', async () => {
+    const driver = fakeDriver();
+    Object.defineProperty(driver.connection, 'query', { writable: false });
+    const work = jest.fn();
+    await expect(
+      executeBudgetedSqlTransaction(async () => driver.lease, budget(), work)
+    ).rejects.toBeInstanceOf(TypeError);
+    expect(work).not.toHaveBeenCalled();
+    expect(driver.destroy).toHaveBeenCalledTimes(1);
+    expect(driver.release).toHaveBeenCalledTimes(1);
+    expect(driver.statements).toEqual([]);
+    expect(() => sqlExecutionBudgetTokenFor(driver.connection)).toThrow(
+      'SQL_SCOPE_CLOSED'
+    );
+  });
+  it('releases an acquired connection rejected for missing physical disposal capability', async () => {
+    const driver = fakeDriver();
+    Reflect.deleteProperty(driver.connection, 'destroy');
+    await expect(
+      executeBudgetedSqlTransaction(
+        async () => driver.lease,
+        budget(),
+        jest.fn()
+      )
+    ).rejects.toThrow('physical connection disposal');
+    expect(driver.release).toHaveBeenCalledTimes(1);
+    expect(driver.statements).toEqual([]);
+  });
 });

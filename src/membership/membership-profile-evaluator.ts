@@ -223,10 +223,30 @@ function validNftToken(token: {
   return (
     token.type === 'STRING' &&
     membershipInteger(token.length) <= 20 &&
-    /^(0|-?[1-9][0-9]{0,18})$/.test(token.prefix) &&
+    /^(0|-?[1-9]\d{0,18})$/.test(token.prefix) &&
     BigInt(token.prefix) >= BigInt('-9223372036854775808') &&
     BigInt(token.prefix) <= BigInt('9223372036854775807')
   );
+}
+type GrantIncludeState = Extract<InputStage, { kind: 'GRANT_INCLUDE' }>;
+type GrantTokenRows = Awaited<
+  ReturnType<MembershipEvaluationInputsDb['grantTokens']>
+>;
+function consumeGrantTokenWindow(
+  state: GrantIncludeState,
+  rows: GrantTokenRows,
+  all: boolean
+): boolean | null {
+  for (const row of rows) {
+    state.after_token_id = row.token_id;
+    if (!membershipTruth(row.selected)) continue;
+    state.selected_count = String(BigInt(state.selected_count) + BigInt(1));
+    if (row.matched !== null) {
+      state.owned_count = String(BigInt(state.owned_count) + BigInt(1));
+      if (!all) return true;
+    } else if (all) return false;
+  }
+  return null;
 }
 type NftRequirement = Extract<InputStage, { kind: 'NFT_REQUIREMENT' }>;
 function advanceNftToken(state: NftRequirement): void {
@@ -911,15 +931,12 @@ export class PrimaryMembershipProfileEvaluator
       input.identity_consolidation_key,
       ctx
     );
-    for (const row of rows.slice(0, input.limits.raw_window)) {
-      state.after_token_id = row.token_id;
-      if (!membershipTruth(row.selected)) continue;
-      state.selected_count = String(BigInt(state.selected_count) + BigInt(1));
-      if (row.matched !== null) {
-        state.owned_count = String(BigInt(state.owned_count) + BigInt(1));
-        if (!all) return true;
-      } else if (all) return false;
-    }
+    const decision = consumeGrantTokenWindow(
+      state,
+      rows.slice(0, input.limits.raw_window),
+      all
+    );
+    if (decision !== null) return decision;
     if (rows.length > input.limits.raw_window) return null;
     return (
       BigInt(state.selected_count) > BigInt(0) &&
