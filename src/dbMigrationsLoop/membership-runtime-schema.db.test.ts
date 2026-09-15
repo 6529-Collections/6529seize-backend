@@ -131,6 +131,82 @@ describeWithSeed('Membership runtime explicit additive schema', [], () => {
     }
   });
 
+  it('bounds preflight behind a queued exclusive metadata lock before either runtime addition', async () => {
+    const db = await source().initialize();
+    const blocker = db.createQueryRunner('master');
+    const writer = db.createQueryRunner('master');
+    let pending: Promise<unknown> | undefined;
+    try {
+      await dropIndex(db);
+      await dropTable(db);
+      await blocker.startTransaction();
+      await blocker.query(
+        `SELECT id FROM \`${MEMBERSHIP_REFRESH_RUNS_TABLE}\` LIMIT 1`
+      );
+      await writer.query('SET SESSION lock_wait_timeout=10');
+      pending = writer
+        .query(
+          `ALTER TABLE \`${MEMBERSHIP_REFRESH_RUNS_TABLE}\` COMMENT='queued-runtime-schema-fixture'`
+        )
+        .catch((error: unknown) => error);
+      let queued = false;
+      for (let attempt = 0; attempt < 100 && !queued; attempt++) {
+        const processes: { State: string | null; Info: string | null }[] =
+          await db.query('SHOW PROCESSLIST');
+        queued = processes.some(
+          (row) =>
+            row.State?.includes('metadata lock') &&
+            row.Info?.includes('queued-runtime-schema-fixture')
+        );
+        if (!queued) await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(queued).toBe(true);
+      const began = performance.now();
+      await expect(
+        applyMembershipRuntimeSchema(db, {
+          deadlineMillis: 2500,
+          statementMillis: 1500
+        })
+      ).rejects.toThrow();
+      expect(performance.now() - began).toBeLessThan(5000);
+      await blocker.rollbackTransaction();
+      await pending;
+      pending = undefined;
+      const indexes: { Key_name: string }[] = await db.query(
+        `SHOW INDEX FROM \`${MEMBERSHIP_REFRESH_RUNS_TABLE}\``
+      );
+      expect(
+        indexes.some(
+          (index) => index.Key_name === MEMBERSHIP_RUNTIME_INDEX.name
+        )
+      ).toBe(false);
+      const inspector = db.createQueryRunner('master');
+      try {
+        expect(
+          await inspector.hasTable(MEMBERSHIP_RUNTIME_CHECKPOINTS_TABLE)
+        ).toBe(false);
+      } finally {
+        await inspector.release();
+      }
+      await writer.query(
+        `ALTER TABLE \`${MEMBERSHIP_REFRESH_RUNS_TABLE}\` COMMENT=''`
+      );
+      await expect(applyMembershipRuntimeSchema(db)).resolves.toMatchObject({
+        added_indexes: 1
+      });
+    } finally {
+      if (blocker.isTransactionActive) await blocker.rollbackTransaction();
+      if (pending) await pending;
+      await writer.query(
+        `ALTER TABLE \`${MEMBERSHIP_REFRESH_RUNS_TABLE}\` COMMENT=''`
+      );
+      await writer.release();
+      await blocker.release();
+      await db.synchronize();
+      await db.destroy();
+    }
+  });
+
   it('requires both exact runtime additions before manual full synchronization', async () => {
     const db = await source().initialize();
     const full = await source(true).initialize();
