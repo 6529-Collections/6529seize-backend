@@ -179,6 +179,43 @@ describe('UploadMediaService', () => {
     );
   });
 
+  it.each(['true', 'false'])(
+    'converts AVIF through private ingest when sanitization is %s',
+    async (enabled) => {
+      process.env.DROP_MEDIA_SANITIZE_IMAGES = enabled;
+      process.env.DROP_MEDIA_INGEST_S3_BUCKET = 'ingest-bucket';
+      const publicS3 = { send: jest.fn() };
+      const ingestS3 = {
+        send: jest.fn().mockResolvedValue({ UploadId: 'upload-avif' })
+      };
+      const uploadsDb = { createUpload: jest.fn() };
+      const service = new UploadMediaService(
+        () => publicS3 as any,
+        () => ingestS3 as any,
+        uploadsDb as any,
+        jest.fn()
+      );
+      const result = await service.getDropMediaMultipartUploadKeyAndUploadId({
+        content_type: 'image/avif',
+        file_name: 'photo.AVIF',
+        author_id: 'author-123'
+      });
+      expect(result.key).toMatch(/\/photo\.webp$/);
+      expect(result.media_upload_id).toBeDefined();
+      expect(publicS3.send).not.toHaveBeenCalled();
+      expect(ingestS3.send.mock.calls[0][0].input).toMatchObject({
+        Bucket: 'ingest-bucket',
+        ContentType: 'image/avif'
+      });
+      expect(uploadsDb.createUpload).toHaveBeenCalledWith(
+        expect.objectContaining({
+          declared_mime_type: 'image/avif',
+          public_key: result.key
+        })
+      );
+    }
+  );
+
   it('keeps non-image multipart uploads in the public bucket when sanitization is enabled', async () => {
     process.env.DROP_MEDIA_SANITIZE_IMAGES = 'true';
 

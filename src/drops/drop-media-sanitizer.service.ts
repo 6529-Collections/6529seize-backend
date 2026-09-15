@@ -140,6 +140,9 @@ export class DropMediaSanitizerService {
     input: Buffer;
     declaredMimeType: string;
   }): Promise<{ buffer: Buffer; contentType: string }> {
+    if (declaredMimeType.toLowerCase() === 'image/avif') {
+      return await sanitizeAvif(input);
+    }
     const animated = declaredMimeType.toLowerCase() === 'image/gif';
     const image = Sharp(input, {
       animated,
@@ -260,6 +263,75 @@ export class DropMediaSanitizerService {
     }
     return bucket;
   }
+}
+
+async function sanitizeAvif(
+  input: Buffer
+): Promise<{ buffer: Buffer; contentType: string }> {
+  if (input.length > 500 * 1024 * 1024) {
+    throw new PermanentMediaSanitizationError(
+      'AVIF uploads must be 500 MB or smaller.'
+    );
+  }
+  if (hasAvifSequenceBrand(input)) {
+    throw new PermanentMediaSanitizationError(
+      'Animated AVIF is not supported. Export a still AVIF image or use GIF.'
+    );
+  }
+  try {
+    const image = Sharp(input, {
+      failOn: 'error',
+      limitInputPixels: 64_000_000
+    }).timeout({ seconds: 60 });
+    const metadata = await image.metadata();
+    if (metadata.format !== 'heif' || metadata.compression !== 'av1') {
+      throw new PermanentMediaSanitizationError(
+        'The file is not an AVIF image.'
+      );
+    }
+    if ((metadata.pages ?? 1) !== 1) {
+      throw new PermanentMediaSanitizationError(
+        'Animated AVIF is not supported. Export a still AVIF image or use GIF.'
+      );
+    }
+    if ((metadata.width ?? 0) > 16383 || (metadata.height ?? 0) > 16383) {
+      throw new PermanentMediaSanitizationError(
+        'AVIF images must be no more than 16,383 pixels on either side.'
+      );
+    }
+    return {
+      // A standard WebP original also works in older supported native viewers.
+      buffer: await image.rotate().webp({ quality: 95 }).toBuffer(),
+      contentType: 'image/webp'
+    };
+  } catch (error) {
+    if (error instanceof PermanentMediaSanitizationError) {
+      throw error;
+    }
+    throw new PermanentMediaSanitizationError(
+      'This AVIF could not be processed. Use a complete still image with no more than 64 million pixels.'
+    );
+  }
+}
+
+function hasAvifSequenceBrand(input: Buffer): boolean {
+  if (input.length < 16 || input.toString('ascii', 4, 8) !== 'ftyp') {
+    return false;
+  }
+  const boxSize = input.readUInt32BE(0);
+  if (boxSize > 4096) {
+    throw new PermanentMediaSanitizationError('Invalid AVIF file-type header.');
+  }
+  const boxEnd = Math.min(boxSize, input.length);
+  for (let offset = 8; offset + 4 <= boxEnd; offset += 4) {
+    if (
+      offset !== 12 &&
+      input.toString('ascii', offset, offset + 4) === 'avis'
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function isAllowedSharpFormat(

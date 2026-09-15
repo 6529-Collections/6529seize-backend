@@ -44,6 +44,100 @@ describe('DropMediaSanitizerService', () => {
     expect(metadata.icc).toBeUndefined();
   });
 
+  it('converts still AVIF to WebP with orientation applied and metadata stripped', async () => {
+    const input = await Sharp({
+      create: { width: 30, height: 20, channels: 4, background: '#33669980' }
+    })
+      .avif()
+      .withMetadata({ orientation: 6, exif: { IFD0: { Make: 'Test Camera' } } })
+      .toBuffer();
+    expect((await Sharp(input).metadata()).exif).toBeDefined();
+    const sanitized = await service.sanitizeBuffer({
+      input,
+      declaredMimeType: 'image/avif'
+    });
+    const metadata = await Sharp(sanitized.buffer).metadata();
+    expect(sanitized.contentType).toBe('image/webp');
+    expect(metadata).toMatchObject({
+      format: 'webp',
+      width: 20,
+      height: 30,
+      hasAlpha: true
+    });
+    for (const field of ['exif', 'xmp', 'icc', 'orientation'] as const) {
+      expect(metadata[field]).toBeUndefined();
+    }
+  });
+
+  it.each(['image/jpeg', 'image/png'])(
+    'rejects AVIF bytes declared as %s',
+    async (declaredMimeType) => {
+      const input = await Sharp({
+        create: { width: 2, height: 2, channels: 3, background: '#123456' }
+      })
+        .avif()
+        .toBuffer();
+      await expect(
+        service.sanitizeBuffer({ input, declaredMimeType })
+      ).rejects.toBeInstanceOf(PermanentMediaSanitizationError);
+    }
+  );
+
+  it('rejects another image format declared as AVIF', async () => {
+    const input = await Sharp({
+      create: { width: 2, height: 2, channels: 3, background: '#123456' }
+    })
+      .png()
+      .toBuffer();
+    await expect(
+      service.sanitizeBuffer({ input, declaredMimeType: 'image/avif' })
+    ).rejects.toThrow('not an AVIF');
+  });
+
+  it('rejects corrupt and truncated AVIF permanently', async () => {
+    const valid = await Sharp({
+      create: { width: 2, height: 2, channels: 3, background: '#123456' }
+    })
+      .avif()
+      .toBuffer();
+    for (const input of [
+      Buffer.from('not an image'),
+      valid.subarray(0, valid.length - 20)
+    ]) {
+      await expect(
+        service.sanitizeBuffer({ input, declaredMimeType: 'image/avif' })
+      ).rejects.toBeInstanceOf(PermanentMediaSanitizationError);
+    }
+  });
+
+  it('rejects AVIF sequences before decoding any frame', async () => {
+    const input = Buffer.from(
+      '00000018667479706176697300000000617669666d696631',
+      'hex'
+    );
+    await expect(
+      service.sanitizeBuffer({ input, declaredMimeType: 'image/avif' })
+    ).rejects.toThrow('Animated AVIF is not supported');
+  });
+
+  it('rejects an AVIF wider than the WebP output limit', async () => {
+    const input = await Sharp({
+      create: { width: 16384, height: 1, channels: 3, background: '#123456' }
+    })
+      .avif()
+      .toBuffer();
+    await expect(
+      service.sanitizeBuffer({ input, declaredMimeType: 'image/avif' })
+    ).rejects.toThrow('16,383 pixels');
+  });
+
+  it('rejects an unbounded AVIF file-type box before decoding', async () => {
+    const input = Buffer.from('ffffffff667479706176696600000000', 'hex');
+    await expect(
+      service.sanitizeBuffer({ input, declaredMimeType: 'image/avif' })
+    ).rejects.toThrow('Invalid AVIF file-type header');
+  });
+
   it('rejects mismatched declared MIME type and image content', async () => {
     const input = await Sharp({
       create: {
