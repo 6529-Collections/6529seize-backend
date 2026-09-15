@@ -686,3 +686,13 @@ different tdh and merkle" confirms matching blocks and advances to checking work
 not the different-snapshot explanation. A singular correction such as "no block is
 same" in reply to that explanation also confirms the block; ordinary negations,
 questions, uncertainty, and plural "no blocks are the same" remain conservative.
+
+App availability and download questions accept short input such as "is there an
+app", "6529 app", and "app link" without requiring a platform. A bounded discovery
+vocabulary excludes wallet procedures, troubleshooting, and named third-party apps.
+Download follow-ups retain scope after the bot names both apps and their downloads.
+These requests use only `about.6529-apps` and its authored `brief_answer` and validated
+`answer_links`, presenting both 6529 Mobile and 6529 Desktop with one final link
+footer. Missing or incomplete app knowledge fails closed; product facts remain in
+the frontend corpus. This route runs before Desktop scope inheritance and never
+needs a generated answer or a public-data query.
