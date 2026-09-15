@@ -28,6 +28,9 @@ const source = () =>
   }));
 
 describe('Desktop corpus retrieval and answers', () => {
+  it('keeps mobile handoff routes out of the published help knowledge', () => {
+    expect(corpus.toLowerCase()).not.toContain('open-mobile');
+  });
   const cases = [
     ['how to get started with 6529 desktop app', 'getting-started'],
     ['how do I get started in Core?', 'getting-started'],
@@ -94,6 +97,62 @@ describe('Desktop corpus retrieval and answers', () => {
     );
     return { answerer, publicAnswer };
   }
+
+  it.each([
+    'installed the desktop app, now what',
+    'I installed 6529 Desktop. What do I do next?',
+    'installed the desktop app, how do I start?',
+    'I opened Core, what next?'
+  ])('starts the node after installation: %s', async (question) => {
+    const renderer = { renderAnswer: jest.fn() };
+    const { answerer, publicAnswer } = makeAnswerer(renderer);
+    const result = await answerer.answer({
+      question,
+      baseUrl: 'https://staging.6529.io'
+    });
+    expect(result.type).toBe('ANSWER');
+    if (result.type !== 'ANSWER')
+      throw new Error('Expected setup instructions');
+    expect(result.record.id).toBe('desktop.after-installation');
+    expect(result.answer).toContain('RPC Providers > Providers List');
+    expect(result.answer).toContain('Set Active');
+    expect(result.answer).toContain('TDH');
+    expect(result.answer).not.toMatch(
+      /open-mobile|Connect Device|Have you installed|https?:/
+    );
+    expect(result.answer.length).toBeLessThan(600);
+    expect(renderer.renderAnswer).not.toHaveBeenCalled();
+    expect(publicAnswer).not.toHaveBeenCalled();
+  });
+
+  it('keeps Desktop context when installation is reported in a reply', async () => {
+    const { answerer } = makeAnswerer();
+    const result = await answerer.answer({
+      question: 'installed it, now what',
+      previousBotAnswer:
+        'Install 6529 Desktop from the Apps page. Have you installed it already?',
+      baseUrl: 'https://6529.io'
+    });
+    expect(result.type === 'ANSWER' && result.record.id).toBe(
+      'desktop.after-installation'
+    );
+  });
+
+  it.each([
+    'I have not installed the desktop app, how do I get started?',
+    'I downloaded the desktop app, now what?',
+    'installed desktop app, now what about my wallet?',
+    'installed desktop app, now what about my wallets?',
+    'installed desktop app, now what about an RPC error?',
+    'installed desktop app but TDH is out of sync'
+  ])(
+    'does not replace a specific or incomplete setup question: %s',
+    (question) => {
+      expect(desktopRecordIdForQuestion(question)).not.toBe(
+        'desktop.after-installation'
+      );
+    }
+  );
 
   it.each([
     'why is my Desktop app total TDH different?',
@@ -1031,6 +1090,48 @@ describe('Desktop corpus retrieval and answers', () => {
       );
     }
   });
+
+  it.each([false, true])(
+    'does not infer legacy Desktop links (renderer: %s)',
+    async (rendered) => {
+      const legacySource = new FrontendHelpBotKnowledgeSource(async () => ({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            records: [
+              {
+                id: 'desktop.overview',
+                title: '6529 Desktop',
+                facts: ['6529 Desktop runs your local node.'],
+                brief_answer: '6529 Desktop runs your local node.',
+                canonical_path: '/core/tdh',
+                related_paths: ['/about/6529-apps'],
+                tags: ['desktop-core']
+              }
+            ]
+          })
+      }));
+      const renderer = rendered
+        ? {
+            renderAnswer: jest
+              .fn()
+              .mockResolvedValue(
+                '6529 Desktop runs your local node.\n\nMore info: https://6529.io/core/tdh'
+              )
+          }
+        : null;
+      const result = await new HelpBotAnswerer(renderer, legacySource).answer({
+        question: 'what is 6529 Desktop',
+        baseUrl: 'https://6529.io'
+      });
+      expect(result.type).toBe('ANSWER');
+      if (result.type !== 'ANSWER')
+        throw new Error('Expected a Desktop answer');
+      expect(result.record.answerLinks).toBeUndefined();
+      expect(result.answer).toBe('6529 Desktop runs your local node.');
+    }
+  );
 
   it('fails closed when an older published corpus has no Core support', async () => {
     const emptySource = new FrontendHelpBotKnowledgeSource(async () => ({

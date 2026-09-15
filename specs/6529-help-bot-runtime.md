@@ -657,9 +657,20 @@ clarification fallback. Explicit detailed fallback keeps complete facts and warn
 by asking for a narrower topic if the complete procedure cannot fit.
 
 The frontend-owned `answer_links` metadata supplies named public 6529.io links.
+For ordinary non-Desktop knowledge answers, an empty list means no links, while
+omitted metadata retains existing canonical-link behavior. Desktop answers use
+only explicitly approved links: omitted metadata and an empty list both omit the
+footer, including for older corpus records. Never infer a public link from a
+native Desktop route or a source-provenance reference. Related paths cannot
+supplement an explicit list; generated links are replaced with the approved final
+footer.
 The backend removes inline model URLs and appends approved links once in a final
 `More info` footer. No irrelevant Apps link is added to native troubleshooting.
 Definitions, onboarding and later troubleshooting stages are separate records.
+Reported installation followed by a request for next steps selects the authored
+`desktop.after-installation` response: activate RPC, allow worker sync, and use
+scheduled TDH. Specific wallet/error questions and negated installation reports
+keep their own topic. Pairing an account is not required to run a node.
 `desktop-dialogue` records render their short response directly on normal turns,
 so acknowledged progress remains stable across replies. Do not repeat steps the
 user reports completing or infer missing diagnostic values.

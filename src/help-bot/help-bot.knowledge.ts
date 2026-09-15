@@ -448,7 +448,11 @@ function normalizeRecord(value: unknown): HelpBotKnowledgeRecord | null {
     keywords: keywords.length ? keywords : aliases.concat([title]),
     facts,
     briefAnswer: readString(raw.brief_answer) ?? undefined,
-    answerLinks: readAnswerLinks(raw.answer_links),
+    // Only ordinary records infer canonical links; Desktop requires explicit approval.
+    answerLinks:
+      raw.answer_links === undefined
+        ? undefined
+        : readAnswerLinks(raw.answer_links),
     relatedPaths: readStringArray(raw.relatedPaths).concat(
       readStringArray(raw.related_paths)
     ),
