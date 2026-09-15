@@ -334,7 +334,7 @@ describe('structured wallet signatures', () => {
 
   it('accepts first-party web signatures from WEB_APP_ORIGIN', async () => {
     process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS = '';
-    process.env.WEB_APP_ORIGIN = 'https://preview.6529.io/path';
+    process.env.WEB_APP_ORIGIN = 'https://preview.6529.io';
     const message = buildStructuredWalletSignatureMessage({
       kind: 'authentication',
       domain: 'preview.6529.io',

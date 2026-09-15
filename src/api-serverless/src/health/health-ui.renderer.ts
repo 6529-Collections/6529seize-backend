@@ -179,6 +179,10 @@ export function renderHealthUI(data: HealthData, baseUrl?: string): string {
 
   const redisStatusClass = getRedisStatusClass(data.redis);
   const arweaveHtml = buildArweaveHtml(data.arweave);
+  const ipfsStatusClass = data.ipfs.healthy
+    ? getStatusClassOk()
+    : getStatusClassDegraded();
+  const ipfsStatusDisplay = data.ipfs.healthy ? 'Healthy' : 'Degraded';
   const redisHtml = buildRedisHtml(data.redis, redisStatusClass);
   const rateLimitHtml = buildRateLimitHtml(data.rate_limit);
 
@@ -488,6 +492,12 @@ export function renderHealthUI(data: HealthData, baseUrl?: string): string {
             <td><strong>Arweave</strong></td>
             <td class="value-cell">
               ${arweaveHtml}
+            </td>
+          </tr>
+          <tr>
+            <td><strong>IPFS</strong></td>
+            <td class="value-cell">
+              <span class="status-badge ${ipfsStatusClass}">${ipfsStatusDisplay}</span>
             </td>
           </tr>
         </tbody>

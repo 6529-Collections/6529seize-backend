@@ -60,6 +60,7 @@ type RpcInternalTransfersResponse = {
     from: string;
     to?: string;
     value?: number;
+    traceAddress?: number[];
   }>;
 };
 
@@ -89,7 +90,7 @@ type ReceiptLog = {
   address: string;
 };
 
-type ReceiptLike = {
+export type ReceiptLike = {
   logs: readonly ReceiptLog[];
 };
 
@@ -113,6 +114,16 @@ function resolveLogValue(data: string) {
     return 0;
   }
   return Number.parseFloat(ethers.formatEther(data));
+}
+
+function normalizeTraceAddress(value: unknown): number[] | undefined {
+  if (
+    !Array.isArray(value) ||
+    !value.every((part) => Number.isInteger(part) && part >= 0)
+  ) {
+    return undefined;
+  }
+  return value;
 }
 
 function getHashKey(hash: string): string {
@@ -374,7 +385,8 @@ function normalizeTraceInternalTransfers(
         hash: trace?.transactionHash ?? '',
         from: trace?.action?.from ?? '',
         to: trace?.action?.to ?? undefined,
-        value: weiToEth(valueWei)
+        value: weiToEth(valueWei),
+        traceAddress: normalizeTraceAddress(trace?.traceAddress)
       };
     })
     .filter((transfer): transfer is NonNullable<typeof transfer> => !!transfer)
@@ -414,10 +426,15 @@ function getTransactionValuesProvider(
   return getRpcProvider(network);
 }
 
+type FindTransactionValuesOptions = {
+  reconcileTokenCounts?: boolean;
+};
+
 export const findTransactionValues = async (
   transactions: Transaction[],
   network: SupportedRpcNetwork = Network.ETH_MAINNET,
-  use6529Rpc = false
+  use6529Rpc = false,
+  options: FindTransactionValuesOptions = {}
 ) => {
   const provider = getTransactionValuesProvider(network, use6529Rpc);
   const fallbackTraceProvider = use6529Rpc ? getRpcProvider(network) : null;
@@ -439,6 +456,38 @@ export const findTransactionValues = async (
   };
 
   const limiter = pLimit(concurrency);
+  if (options.reconcileTokenCounts) {
+    // resolveValue reads the same per-invocation cache below, so this
+    // validation does not add transaction or receipt RPC requests.
+    // Any rejection intentionally fails the batch so its checkpoint cannot
+    // advance past a transfer that was not verified against its receipt.
+    const corrections = await Promise.all(
+      Array.from(context.rowsByHash.values()).map((rows) =>
+        limiter(async () => {
+          const { receipt } = await getTxRpcContext(
+            rows[0].transaction,
+            context.provider,
+            context.txRpcCache
+          );
+          if (!receipt) {
+            throw new Error(
+              `Missing transaction receipt for ${rows[0].transaction}`
+            );
+          }
+          return reconcileTransactionTokenCounts(rows, receipt);
+        })
+      )
+    );
+    const correctionCount = corrections.reduce(
+      (total, count) => total + count,
+      0
+    );
+    if (correctionCount > 0) {
+      logger.warn(
+        `[RECONCILED ${correctionCount} TRANSACTION TOKEN COUNTS FROM RECEIPTS]`
+      );
+    }
+  }
   const transactionsWithValues = await Promise.all(
     transactions.map((t) => limiter(() => resolveValue(t, context)))
   );
@@ -449,6 +498,11 @@ export const findTransactionValues = async (
 
   return transactionsWithValues;
 };
+
+export const findDiscoveredTransactionValues = (transactions: Transaction[]) =>
+  findTransactionValues(transactions, Network.ETH_MAINNET, false, {
+    reconcileTokenCounts: true
+  });
 
 type TransactionRowGroups = {
   rowUnits: bigint;
@@ -678,7 +732,74 @@ async function applyReceiptValueAndRoyalties(
   }
 }
 
-async function applyMintPrimaryProceeds(
+function sumInternalTransferValues(
+  transfers: RpcInternalTransfersResponse['transfers']
+): number {
+  return transfers.reduce((acc, transfer) => acc + (transfer.value ?? 0), 0);
+}
+
+function isTraceAncestor(
+  ancestor: number[] | undefined,
+  descendant: number[] | undefined
+): boolean {
+  if (!ancestor || !descendant) {
+    return false;
+  }
+  return (
+    ancestor.length < descendant.length &&
+    ancestor.every((part, index) => descendant[index] === part)
+  );
+}
+
+function findGrossMintValueFromInternalTransfers(
+  txInternalTransfers: RpcInternalTransfersResponse['transfers'],
+  proceedsTransfers: RpcInternalTransfersResponse['transfers']
+): number {
+  if (proceedsTransfers.length === 0) {
+    return 0;
+  }
+
+  const grossPayments = new Map<
+    string,
+    RpcInternalTransfersResponse['transfers'][number]
+  >();
+  for (const proceedsTransfer of proceedsTransfers) {
+    const grossPayment = txInternalTransfers
+      .filter(
+        (transfer) =>
+          transfer.to &&
+          equalIgnoreCase(transfer.to, proceedsTransfer.from) &&
+          isTraceAncestor(
+            transfer.traceAddress,
+            proceedsTransfer.traceAddress
+          ) &&
+          (transfer.value ?? 0) >= (proceedsTransfer.value ?? 0)
+      )
+      .sort(
+        (first, second) =>
+          (second.traceAddress?.length ?? -1) -
+          (first.traceAddress?.length ?? -1)
+      )[0];
+    if (!grossPayment?.traceAddress) {
+      return 0;
+    }
+    grossPayments.set(grossPayment.traceAddress.join('.'), grossPayment);
+  }
+
+  const uniqueGrossPayments = Array.from(grossPayments.values());
+  const outermostGrossPayments = uniqueGrossPayments.filter(
+    (payment) =>
+      !uniqueGrossPayments.some((otherPayment) =>
+        isTraceAncestor(otherPayment.traceAddress, payment.traceAddress)
+      )
+  );
+  const grossValue = sumInternalTransferValues(outermostGrossPayments);
+  const primaryProceeds = sumInternalTransferValues(proceedsTransfers);
+
+  return grossValue >= primaryProceeds ? grossValue : 0;
+}
+
+async function applyMintInternalValues(
   t: Transaction,
   context: ResolveValueContext,
   rowUnits: bigint,
@@ -708,10 +829,17 @@ async function applyMintPrimaryProceeds(
               (transfer.to && equalIgnoreCase(transfer.to, MEMES_DEPLOYER))
           );
 
-    const primaryProceedsTxTotal = primaryTransfers.reduce(
-      (acc, transfer) => acc + (transfer.value ?? 0),
-      0
+    const primaryProceedsTxTotal = sumInternalTransferValues(primaryTransfers);
+    const grossMintTxTotal = findGrossMintValueFromInternalTransfers(
+      txInternalTransfers,
+      proceedsToMemesDeployer
     );
+
+    if (t.value === 0 && grossMintTxTotal > 0) {
+      const attributedGrossValue =
+        (grossMintTxTotal * Number(rowUnits)) / Number(mintUnits);
+      t.value = attributedGrossValue;
+    }
 
     if (primaryProceedsTxTotal > 0) {
       t.primary_proceeds =
@@ -783,7 +911,7 @@ async function resolveValue(t: Transaction, context: ResolveValueContext) {
       t.value = weiToEth(grossMintWei);
     }
 
-    await applyMintPrimaryProceeds(
+    await applyMintInternalValues(
       t,
       context,
       groups.rowUnits,
@@ -796,6 +924,12 @@ async function resolveValue(t: Transaction, context: ResolveValueContext) {
   }
 
   roundTransactionValues(t);
+  if (isMintLikeTransaction(t) && t.primary_proceeds > t.value) {
+    logger.warn(
+      `[MINT VALUE FALLBACK] [TRANSACTION=${t.transaction}] [TOKEN=${t.contract}:${t.token_id}] [VALUE=${t.value}] [PRIMARY_PROCEEDS=${t.primary_proceeds}]`
+    );
+    t.value = t.primary_proceeds;
+  }
   await applyUsdValues(t);
   return t;
 }
@@ -1046,6 +1180,174 @@ const IFACE = new ethers.Interface([
   'event TransferBatch(address indexed operator,address indexed from,address indexed to,uint256[] ids,uint256[] values)'
 ]);
 
+type NftTransferEdge = {
+  from: string;
+  to: string;
+  contract: string;
+  tokenId: string;
+  amount: bigint;
+};
+
+function extractNftTransferEdgesFromLog(log: ReceiptLog): NftTransferEdge[] {
+  try {
+    if (
+      log.topics.length === 4 &&
+      log.topics[0] === IFACE.getEvent('Transfer')!.topicHash
+    ) {
+      return [
+        {
+          from: ethers.getAddress(`0x${log.topics[1].slice(26)}`),
+          to: ethers.getAddress(`0x${log.topics[2].slice(26)}`),
+          contract: log.address,
+          tokenId: BigInt(log.topics[3]).toString(),
+          amount: BigInt(1)
+        }
+      ];
+    }
+
+    if (log.topics[0] === IFACE.getEvent('TransferSingle')!.topicHash) {
+      const decoded = IFACE.decodeEventLog(
+        'TransferSingle',
+        log.data,
+        log.topics
+      );
+      return [
+        {
+          from: decoded.from as string,
+          to: decoded.to as string,
+          contract: log.address,
+          tokenId: BigInt(decoded.id).toString(),
+          amount: BigInt(decoded.value)
+        }
+      ];
+    }
+
+    if (log.topics[0] === IFACE.getEvent('TransferBatch')!.topicHash) {
+      const decoded = IFACE.decodeEventLog(
+        'TransferBatch',
+        log.data,
+        log.topics
+      );
+      const ids = decoded.ids as bigint[];
+      // Ethers Result.values is an iterator method, so use the event's
+      // positional values argument rather than decoded.values.
+      const batchAmounts = decoded[4] as bigint[];
+      return ids.map((id, index) => ({
+        from: decoded.from as string,
+        to: decoded.to as string,
+        contract: log.address,
+        tokenId: BigInt(id).toString(),
+        amount: BigInt(batchAmounts[index] ?? 0)
+      }));
+    }
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Unknown decoding error';
+    logger.debug(
+      `[NFT_TRANSFER_LOG_PARSE_FAILED] [CONTRACT=${log.address}] [ERROR=${message}]`
+    );
+  }
+
+  return [];
+}
+
+function extractNftTransferEdges(receipt: ReceiptLike): NftTransferEdge[] {
+  const nftEdges: NftTransferEdge[] = [];
+  for (const log of receipt.logs) {
+    nftEdges.push(...extractNftTransferEdgesFromLog(log));
+  }
+  return nftEdges;
+}
+
+function getNftTransferKey(
+  from: string,
+  to: string,
+  contract: string,
+  tokenId: string | number
+): string {
+  return [
+    from.toLowerCase(),
+    to.toLowerCase(),
+    contract.toLowerCase(),
+    BigInt(tokenId).toString()
+  ].join(':');
+}
+
+export function reconcileTransactionTokenCounts(
+  rows: Transaction[],
+  receipt: ReceiptLike
+): number {
+  const contracts = new Set(rows.map((row) => row.contract.toLowerCase()));
+  const receiptCounts = new Map<string, bigint>();
+  const receiptEdgesByKey = new Map<string, NftTransferEdge>();
+  extractNftTransferEdges(receipt)
+    .filter((edge) => contracts.has(edge.contract.toLowerCase()))
+    .forEach((edge) => {
+      const key = getNftTransferKey(
+        edge.from,
+        edge.to,
+        edge.contract,
+        edge.tokenId
+      );
+      receiptEdgesByKey.set(key, edge);
+      receiptCounts.set(
+        key,
+        (receiptCounts.get(key) ?? BigInt(0)) + edge.amount
+      );
+    });
+  const rowKeys = new Set(
+    rows.map((row) =>
+      getNftTransferKey(
+        row.from_address,
+        row.to_address,
+        row.contract,
+        row.token_id
+      )
+    )
+  );
+  const reconciledCounts = rows.map((row) => {
+    const key = getNftTransferKey(
+      row.from_address,
+      row.to_address,
+      row.contract,
+      row.token_id
+    );
+    const tokenCount = receiptCounts.get(key);
+
+    if (tokenCount === undefined) {
+      throw new Error(
+        `No matching NFT transfer log for ${row.transaction} ${row.contract} token ${row.token_id}`
+      );
+    }
+    if (tokenCount > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error(
+        `NFT transfer count exceeds safe integer range for ${row.transaction} ${row.contract} token ${row.token_id}`
+      );
+    }
+
+    return { row, tokenCount: Number(tokenCount) };
+  });
+
+  for (const [key, edge] of Array.from(receiptEdgesByKey.entries())) {
+    if (!rowKeys.has(key)) {
+      throw new Error(
+        `No Alchemy transaction row for receipt transfer ${rows[0]?.transaction ?? 'unknown'} ${edge.contract} token ${edge.tokenId}`
+      );
+    }
+  }
+
+  let correctionCount = 0;
+  for (const { row, tokenCount } of reconciledCounts) {
+    const actualTokenCount = tokenCount;
+    if (Number(row.token_count) !== actualTokenCount) {
+      row.token_count = actualTokenCount;
+      correctionCount++;
+    }
+  }
+
+  return correctionCount;
+}
+
 const isNftItemType = (t: number) =>
   t === ItemType.ERC721 ||
   t === ItemType.ERC1155 ||
@@ -1069,73 +1371,7 @@ function attributeRowFromSeaportTx(
   royaltiesAddress: string
 ): RowAttribution | null {
   // 1) Gather all NFT Transfers in this tx
-  type NftEdge = {
-    from: string;
-    to: string;
-    contract: string;
-    tokenId: string;
-    amount: bigint;
-  };
-  const nftEdges: NftEdge[] = [];
-
-  for (const lg of receipt.logs) {
-    // ERC721 Transfer
-    if (
-      lg.topics.length === 4 &&
-      lg.topics[0] === IFACE.getEvent('Transfer')!.topicHash
-    ) {
-      const from = ethers.getAddress('0x' + lg.topics[1].slice(26));
-      const to = ethers.getAddress('0x' + lg.topics[2].slice(26));
-      const tokenId = BigInt(lg.topics[3]).toString();
-      nftEdges.push({
-        from,
-        to,
-        contract: lg.address,
-        tokenId,
-        amount: BigInt(1)
-      });
-      continue;
-    }
-
-    // ERC1155 TransferSingle
-    if (lg.topics[0] === IFACE.getEvent('TransferSingle')!.topicHash) {
-      const decoded = IFACE.decodeEventLog(
-        'TransferSingle',
-        lg.data,
-        lg.topics
-      );
-      const from = decoded.from as string;
-      const to = decoded.to as string;
-      const id = (decoded.id as bigint).toString();
-      const value = decoded.value as bigint;
-      nftEdges.push({
-        from,
-        to,
-        contract: lg.address,
-        tokenId: id,
-        amount: value
-      });
-      continue;
-    }
-
-    // ERC1155 TransferBatch
-    if (lg.topics[0] === IFACE.getEvent('TransferBatch')!.topicHash) {
-      const decoded = IFACE.decodeEventLog('TransferBatch', lg.data, lg.topics);
-      const from = decoded.from as string;
-      const to = decoded.to as string;
-      const ids = decoded.ids as bigint[];
-      const decodedValues = decoded[4] as bigint[]; // values is at index 4 in the result
-      ids.forEach((bn, i) => {
-        nftEdges.push({
-          from,
-          to,
-          contract: lg.address,
-          tokenId: bn.toString(),
-          amount: decodedValues?.[i] ?? BigInt(0)
-        });
-      });
-    }
-  }
+  const nftEdges = extractNftTransferEdges(receipt);
 
   // 2) Parse Seaport OrderFulfilled events in this tx
   type OrderEvt = {

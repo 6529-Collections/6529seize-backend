@@ -60,7 +60,7 @@ functions:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'memeLabTransactionsLoop_${opt:stage, self:provider.stage}'
       TRANSACTIONS_CONTRACT_ADDRESS: '0x4db52a61dc491e15a2f78f5ac001c14ffe3568cb'
-      
+
 resources:
   Resources:
     MemesTransactionsLoopOOMFilter:
@@ -93,6 +93,42 @@ resources:
         OKActions:
           - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
 
+    MemesTransactionsLoopErrorAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-memesTransactionsLoop-Errors"
+        AlarmDescription: !Sub "Lambda memesTransactionsLoop invocation errors within 5 minutes in ${AWS::Region}"
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: memesTransactionsLoop
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 5
+        DatapointsToAlarm: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    MemesTransactionsLoopThrottleAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-memesTransactionsLoop-Throttles"
+        AlarmDescription: !Sub "Lambda memesTransactionsLoop throttled in 3 of 5 minutes in ${AWS::Region}"
+        Namespace: AWS/Lambda
+        MetricName: Throttles
+        Dimensions:
+          - Name: FunctionName
+            Value: memesTransactionsLoop
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 5
+        DatapointsToAlarm: 3
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
     GradientsTransactionsLoopOOMFilter:
       Type: AWS::Logs::MetricFilter
       Properties:
@@ -123,6 +159,42 @@ resources:
         OKActions:
           - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
 
+    GradientsTransactionsLoopErrorAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-gradientsTransactionsLoop-Errors"
+        AlarmDescription: !Sub "Lambda gradientsTransactionsLoop invocation errors within 5 minutes in ${AWS::Region}"
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: gradientsTransactionsLoop
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 5
+        DatapointsToAlarm: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    GradientsTransactionsLoopThrottleAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-gradientsTransactionsLoop-Throttles"
+        AlarmDescription: !Sub "Lambda gradientsTransactionsLoop throttled in 3 of 5 minutes in ${AWS::Region}"
+        Namespace: AWS/Lambda
+        MetricName: Throttles
+        Dimensions:
+          - Name: FunctionName
+            Value: gradientsTransactionsLoop
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 5
+        DatapointsToAlarm: 3
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
     MemeLabTransactionsLoopOOMFilter:
       Type: AWS::Logs::MetricFilter
       Properties:
@@ -148,6 +220,66 @@ resources:
         Threshold: 1
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    MemeLabTransactionsLoopErrorAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-memeLabTransactionsLoop-Errors"
+        AlarmDescription: !Sub "Lambda memeLabTransactionsLoop invocation errors within 5 minutes in ${AWS::Region}"
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: memeLabTransactionsLoop
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 5
+        DatapointsToAlarm: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    MemeLabTransactionsLoopThrottleAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-memeLabTransactionsLoop-Throttles"
+        AlarmDescription: !Sub "Lambda memeLabTransactionsLoop throttled in 3 of 5 minutes in ${AWS::Region}"
+        Namespace: AWS/Lambda
+        MetricName: Throttles
+        Dimensions:
+          - Name: FunctionName
+            Value: memeLabTransactionsLoop
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 5
+        DatapointsToAlarm: 3
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    TransactionsLoopIncidentAlarm:
+      Type: AWS::CloudWatch::CompositeAlarm
+      DependsOn:
+        - MemesTransactionsLoopErrorAlarm
+        - MemesTransactionsLoopThrottleAlarm
+        - GradientsTransactionsLoopErrorAlarm
+        - GradientsTransactionsLoopThrottleAlarm
+        - MemeLabTransactionsLoopErrorAlarm
+        - MemeLabTransactionsLoopThrottleAlarm
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-transactionIngestion-Incident"
+        AlarmDescription: !Sub "Transaction ingestion errors or sustained throttling in ${AWS::Region}"
+        AlarmRule: !Sub >-
+          ALARM("${AWS::StackName}-memesTransactionsLoop-Errors") OR
+          ALARM("${AWS::StackName}-memesTransactionsLoop-Throttles") OR
+          ALARM("${AWS::StackName}-gradientsTransactionsLoop-Errors") OR
+          ALARM("${AWS::StackName}-gradientsTransactionsLoop-Throttles") OR
+          ALARM("${AWS::StackName}-memeLabTransactionsLoop-Errors") OR
+          ALARM("${AWS::StackName}-memeLabTransactionsLoop-Throttles")
         AlarmActions:
           - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
         OKActions:

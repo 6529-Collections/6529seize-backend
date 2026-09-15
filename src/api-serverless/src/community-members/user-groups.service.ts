@@ -21,9 +21,20 @@ import {
   GroupTdhInclusionStrategy,
   UserGroupEntity
 } from '@/entities/IUserGroup';
-import { userGroupsDb, UserGroupsDb } from '@/user-groups/user-groups.db';
+import {
+  type GroupMembershipSql,
+  type IdentityGroupMembership,
+  type IdentityGroupMembershipPage,
+  userGroupsDb,
+  UserGroupsDb
+} from '@/user-groups/user-groups.db';
 import slugify from 'slugify';
-import { BadRequestException, NotFoundException } from '@/exceptions';
+import { isDeepStrictEqual } from 'node:util';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException
+} from '@/exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import {
   abusivenessCheckService,
@@ -34,6 +45,7 @@ import { ApiChangeGroupVisibility } from '@/api/generated/models/ApiChangeGroupV
 import { ApiGroupFull } from '@/api/generated/models/ApiGroupFull';
 import { ApiGroupFilterDirection } from '@/api/generated/models/ApiGroupFilterDirection';
 import { ApiGroupDescription } from '@/api/generated/models/ApiGroupDescription';
+import { ApiCreateGroupDescription } from '@/api/generated/models/ApiCreateGroupDescription';
 import { ApiGroupBeneficiaryGrantMatchMode } from '@/api/generated/models/ApiGroupBeneficiaryGrantMatchMode';
 import { ApiGroupNftOwnershipMatchMode } from '@/api/generated/models/ApiGroupNftOwnershipMatchMode';
 import {
@@ -62,7 +74,6 @@ import {
 } from '@/groups/user-group-predicates';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
-import { identitiesDb } from '@/identities/identities.db';
 import { enums } from '@/enums';
 import { ids } from '@/ids';
 import { collections } from '@/collections';
@@ -82,6 +93,19 @@ import { XTdhGrantStatus, XTdhGrantTokenMode } from '@/entities/IXTdhGrant';
 import { xTdhGrantsFinder } from '@/xtdh/xtdh-grants.finder';
 import { xTdhGrantApiConverter } from '../xtdh/grants/xtdh-grant.api-converter';
 import { Logger } from '@/logging';
+import {
+  moderationReviewDb,
+  moderationConflict,
+  assertModerationPermitReplay
+} from '@/content-moderation/moderation-review.db';
+import { moderationFingerprint } from '@/content-moderation/moderation-review.types';
+import {
+  profilePreferencesDb,
+  ProfilePreferencesDb
+} from '@/profile-preferences/profile-preferences.db';
+import { ProfileDirectMessagePolicy } from '@/entities/IProfilePreferences';
+import { ConnectionWrapper } from '@/sql-executor';
+import { moderationPresentationService } from '@/content-moderation/moderation-presentation.service';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -94,6 +118,55 @@ type GClean = Omit<
   | 'excluded_identity_group_identities_count'
   | 'is_beneficiary_of_grant'
 >;
+
+type GroupSqlOptions = {
+  forOnlineRecipients?: boolean;
+  // Restrict REP work to profiles that can match a member list/count search.
+  // The caller must still apply the search to the final identity rows.
+  memberSearch?: string | null;
+};
+
+// Required makes new top-level criteria, including optional ones, require an
+// explicit template update. Exact comparison rejects unknown runtime criteria.
+const LEVEL_ZERO_ONLY_GROUP: Required<GClean> = {
+  cic: { min: null, max: null, user_identity: null, direction: null },
+  rep: {
+    min: null,
+    max: null,
+    user_identity: null,
+    direction: null,
+    category: null
+  },
+  level: { min: 0, max: null },
+  tdh: {
+    min: null,
+    max: null,
+    inclusion_strategy: ApiGroupTdhInclusionStrategy.Tdh
+  },
+  owns_nfts: [],
+  identity_group_id: null,
+  excluded_identity_group_id: null,
+  is_beneficiary_of_grant_id: null,
+  is_beneficiary_of_grant_match_mode: ApiGroupBeneficiaryGrantMatchMode.AnyToken
+};
+
+/**
+ * Accepts only the exact level-zero criteria after removing API display fields.
+ * Extra or changed membership rules keep the general query path.
+ */
+function isLevelZeroOnlyGroup(group: GClean): boolean {
+  const criteria: Record<string, unknown> = { ...group };
+  // These API display fields do not define membership.
+  delete criteria.identity_group_identities_count;
+  delete criteria.excluded_identity_group_identities_count;
+  delete criteria.is_beneficiary_of_grant;
+  return isDeepStrictEqual(criteria, LEVEL_ZERO_ONLY_GROUP);
+}
+
+type PreviewIdentityMembership = {
+  readonly includedAddresses: readonly string[];
+  readonly excludedAddresses: readonly string[];
+};
 
 type EligibleGroupsCacheEntry = {
   readonly eligibleGroupIds: string[];
@@ -146,7 +219,8 @@ export class UserGroupsService {
   constructor(
     private readonly userGroupsDb: UserGroupsDb,
     private readonly abusivenessCheckService: AbusivenessCheckService,
-    private readonly metricsRecorder: MetricsRecorder
+    private readonly metricsRecorder: MetricsRecorder,
+    private readonly profilePreferences: ProfilePreferencesDb = profilePreferencesDb
   ) {}
 
   private async timeAsync<T>(
@@ -185,14 +259,19 @@ export class UserGroupsService {
     },
     createdBy: string,
     ctx: RequestContext,
-    isVisible = false
+    isVisible = false,
+    prepareNameBeforeSave?: (
+      connection: ConnectionWrapper<unknown>
+    ) => Promise<string>
   ): Promise<ApiGroupFull> {
     const savedEntity =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
         async (connection) => {
           const ctxWithConnection = { ...ctx, connection };
+          const preparedName = await prepareNameBeforeSave?.(connection);
+          const groupName = preparedName ?? group.name;
           const id =
-            slugify(group.name, {
+            slugify(groupName, {
               replacement: '-',
               lower: true,
               strict: true
@@ -203,35 +282,11 @@ export class UserGroupsService {
           const beneficiaryGrantMatchMode =
             group.is_beneficiary_of_grant_match_mode ??
             DEFAULT_BENEFICIARY_GRANT_MATCH_MODE;
-          if (
-            !beneficiaryOfGrantId &&
-            beneficiaryGrantMatchMode ===
-              GroupBeneficiaryGrantMatchMode.ALL_TOKENS
-          ) {
-            throw new BadRequestException(
-              `Beneficiary grant match mode ALL_TOKENS requires an xTDH grant`
-            );
-          }
-          if (beneficiaryOfGrantId) {
-            const grantEntity = await xTdhRepository.getGrantById(
-              beneficiaryOfGrantId,
-              ctxWithConnection
-            );
-            if (!grantEntity) {
-              throw new NotFoundException(
-                `Can't create group based on grant ${beneficiaryOfGrantId} as it doesn't exist`
-              );
-            }
-            if (
-              beneficiaryGrantMatchMode ===
-                GroupBeneficiaryGrantMatchMode.ALL_TOKENS &&
-              grantEntity.token_mode !== XTdhGrantTokenMode.INCLUDE
-            ) {
-              throw new BadRequestException(
-                `Beneficiary grant match mode ALL_TOKENS can only be used with grants that specify target tokens`
-              );
-            }
-          }
+          await this.validateBeneficiaryGrantCriteria(
+            beneficiaryOfGrantId,
+            beneficiaryGrantMatchMode,
+            ctxWithConnection
+          );
           const inclusionGroups = group.addresses.length
             ? await this.userGroupsDb.insertGroupEntriesAndGetGroupIds(
                 group.addresses,
@@ -251,7 +306,7 @@ export class UserGroupsService {
               created_at: new Date(),
               created_by: createdBy,
               visible: isVisible,
-              name: group.name,
+              name: groupName,
               profile_group_id: inclusionGroups?.profile_group_id ?? null,
               excluded_profile_group_id:
                 exclusionGroups?.profile_group_id ?? null
@@ -324,14 +379,6 @@ export class UserGroupsService {
     if (existingGroup) {
       return (await this.mapForApi([existingGroup], ctx))[0];
     }
-    const handles = await identitiesDb.getHandlesByPrimaryWallets(
-      uniqueIdentityAddresses,
-      ctx.connection
-    );
-    if (handles.length !== uniqueIdentityAddresses.length) {
-      throw new BadRequestException(`Invalid identity addresses.`);
-    }
-    const name = `DM - ${[creatorProfile.handle, ...handles].join(' / ')}`;
     const userGroup: Omit<
       NewUserGroupEntity,
       'profile_group_id' | 'excluded_profile_group_id'
@@ -339,7 +386,7 @@ export class UserGroupsService {
       addresses: string[];
       excluded_addresses: string[];
     } = {
-      name,
+      name: `DM - ${creatorProfile.handle}`,
       cic_min: null,
       cic_max: null,
       cic_user: null,
@@ -375,7 +422,51 @@ export class UserGroupsService {
       is_beneficiary_of_grant_match_mode: DEFAULT_BENEFICIARY_GRANT_MATCH_MODE
     };
 
-    return await this.save(userGroup, creatorProfile.id!, ctx, true);
+    return await this.save(
+      userGroup,
+      creatorProfile.id!,
+      ctx,
+      true,
+      async (connection) => {
+        const lockedRecipients =
+          await this.profilePreferences.getDirectMessageRecipientsForAdmission(
+            uniqueIdentityAddresses,
+            creatorProfile.id!,
+            connection
+          );
+        this.assertDirectMessageRecipientsAllowed(
+          uniqueIdentityAddresses,
+          lockedRecipients
+        );
+        const handles = lockedRecipients.map((recipient) => recipient.handle);
+        return `DM - ${[creatorProfile.handle, ...handles].join(' / ')}`;
+      }
+    );
+  }
+
+  private assertDirectMessageRecipientsAllowed(
+    identityAddresses: string[],
+    recipients: Awaited<
+      ReturnType<ProfilePreferencesDb['getDirectMessageRecipients']>
+    >
+  ): void {
+    if (recipients.length !== identityAddresses.length) {
+      throw new BadRequestException(`Invalid identity addresses.`);
+    }
+    const blockedRecipient = recipients.find(
+      (recipient) =>
+        recipient.direct_message_policy === ProfileDirectMessagePolicy.NOBODY ||
+        (recipient.direct_message_policy ===
+          ProfileDirectMessagePolicy.PEOPLE_I_FOLLOW &&
+          !recipient.follows_creator)
+    );
+    if (!blockedRecipient) return;
+    const message =
+      blockedRecipient.direct_message_policy ===
+      ProfileDirectMessagePolicy.PEOPLE_I_FOLLOW
+        ? `You can't start a new direct message with @${blockedRecipient.handle} because they only accept messages from people they follow.`
+        : `You can't start a new direct message with @${blockedRecipient.handle} because they don't accept new direct messages.`;
+    throw new ForbiddenException(message);
   }
 
   private async whichOfGivenGroupsIsUserEligibleFor(
@@ -958,6 +1049,23 @@ export class UserGroupsService {
     });
   }
 
+  public async getGroupsUserIsEligibleForByIds(
+    profileId: string | null,
+    groupIds: readonly string[],
+    timer?: Timer | undefined
+  ): Promise<string[]> {
+    if (!profileId || !groupIds.length) {
+      return [];
+    }
+    return await this.whichOfGivenGroupsIsUserEligibleFor(
+      {
+        profileId,
+        givenGroups: collections.distinct(Array.from(groupIds))
+      },
+      timer
+    );
+  }
+
   private async getGroupsUserIsEligibleForWithCache(
     profileId: string,
     timer?: Timer | undefined
@@ -1334,16 +1442,128 @@ export class UserGroupsService {
       group_id: string;
       profile_id: string;
     },
-    ctx: RequestContext
+    ctx: RequestContext,
+    beforeReplace?:
+      | ((
+          params: {
+            readonly currentGroup: ApiGroupFull;
+            readonly replacedGroupId: string;
+          },
+          ctx: RequestContext
+        ) => Promise<void>)
+      | undefined
   ): Promise<ApiGroupFull> {
+    const replay = await moderationReviewDb.savedRequest(
+      profile_id,
+      'GROUP_NAME',
+      ctx.moderationRequestId,
+      ctx
+    );
+    if (replay) {
+      if (
+        replay.scope.save_subject_id !== group_id ||
+        replay.scope.old_version_id !== (old_version_id ?? null) ||
+        replay.scope.visible !== visible ||
+        !replay.published_subject_id
+      )
+        moderationConflict();
+      return this.getByIdOrThrow(replay.published_subject_id, ctx);
+    }
+    const initialGroup = await this.getByIdOrThrow(group_id, ctx);
+    if (initialGroup.created_by?.id !== profile_id)
+      throw new ForbiddenException(
+        'Only the group creator can save this group'
+      );
+    const rawGroup =
+      await this.userGroupsDb.getByIdWithoutVisibilityCheck(group_id);
+    if (!rawGroup) throw new NotFoundException('Group not found');
+    const rawOld = old_version_id
+      ? await this.userGroupsDb.getByIdWithoutVisibilityCheck(old_version_id)
+      : null;
+    if (rawOld && rawOld.created_by !== profile_id)
+      throw new ForbiddenException(
+        'Only the group creator can replace this group'
+      );
+    const writeFingerprint = moderationFingerprint({
+      group: rawGroup,
+      replaced: rawOld,
+      visible
+    });
+    const proposedDefinition = await moderationReviewDb.groupDefinition(
+      group_id,
+      ctx
+    );
+    const replacedDefinition = old_version_id
+      ? await moderationReviewDb.groupDefinition(old_version_id, ctx)
+      : null;
+    const contextFingerprint = moderationFingerprint({
+      definition: proposedDefinition,
+      visible
+    });
+    const nameReview = await this.abusivenessCheckService.checkFilterName({
+      text: rawGroup.name,
+      handle: initialGroup.created_by?.handle ?? '',
+      group_id,
+      profile_id,
+      actor_profile_id: ctx.authenticationContext?.getLoggedInUsersProfileId(),
+      current_revision: replacedDefinition
+        ? moderationFingerprint(replacedDefinition)
+        : null,
+      old_version_id: old_version_id ?? null,
+      visible,
+      context_fingerprint: contextFingerprint,
+      previously_reviewed:
+        !!rawOld && rawOld.visible && rawOld.name === rawGroup.name
+    });
+    if (nameReview.status !== 'ALLOWED')
+      throw new BadRequestException(
+        `Group name is not allowed: ${nameReview.explanation}`
+      );
     const { updatedGroup, replacedGroup } =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
         async (connection) => {
           const ctxWithConnection = { ...ctx, connection };
+          const groupIdsToLock = Array.from(
+            new Set(
+              [group_id, old_version_id].filter((id): id is string => !!id)
+            )
+          ).sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+          for (const id of groupIdsToLock)
+            await moderationReviewDb.lockGroup(id, ctxWithConnection);
+          const replayedGroup = await this.replayReviewedGroup(
+            nameReview.moderation_item_id,
+            ctxWithConnection
+          );
+          if (replayedGroup)
+            return { updatedGroup: replayedGroup, replacedGroup: null };
+          const currentGroup =
+            await this.userGroupsDb.getByIdWithoutVisibilityCheck(
+              group_id,
+              connection
+            );
+          const currentOld = old_version_id
+            ? await this.userGroupsDb.getByIdWithoutVisibilityCheck(
+                old_version_id,
+                connection
+              )
+            : null;
+          if (
+            moderationFingerprint({
+              group: currentGroup,
+              replaced: currentOld,
+              visible
+            }) !== writeFingerprint
+          )
+            moderationConflict();
           const groupEntity = await this.getByIdOrThrow(
             group_id,
             ctxWithConnection
           );
+          if (groupEntity.created_by?.id !== profile_id) {
+            throw new BadRequestException(
+              `You are not allowed to change group ${group_id}. You can save a new one instead.`
+            );
+          }
           let oldGroupEntity: ApiGroupFull | null = null;
           if (old_version_id) {
             if (old_version_id === groupEntity.id) {
@@ -1360,20 +1580,14 @@ export class UserGroupsService {
                 `You are not allowed to change group ${old_version_id}. You can save a new one instead.`
               );
             }
-            if (
-              oldGroupEntity.name !== groupEntity.name ||
-              !oldGroupEntity.visible
-            ) {
-              await this.doNameAbusivenessCheck(groupEntity);
-            }
-            await this.userGroupsDb.deleteById(old_version_id, connection);
-          } else {
-            await this.doNameAbusivenessCheck(groupEntity);
-          }
-          if (groupEntity.created_by?.id !== profile_id) {
-            throw new BadRequestException(
-              `You are not allowed to change group ${group_id}. You can save a new one instead.`
+            await beforeReplace?.(
+              {
+                currentGroup: groupEntity,
+                replacedGroupId: old_version_id
+              },
+              ctxWithConnection
             );
+            await this.userGroupsDb.deleteById(old_version_id, connection);
           }
           await this.userGroupsDb.changeVisibilityAndSetId(
             {
@@ -1383,6 +1597,23 @@ export class UserGroupsService {
             },
             connection
           );
+          if (nameReview.moderation_item_id) {
+            await moderationReviewDb.consume(
+              nameReview.moderation_item_id,
+              old_version_id ?? group_id,
+              {
+                ...ctxWithConnection,
+                moderationPermitGeneration:
+                  nameReview.moderation_permit_generation
+              },
+              group_id
+            );
+            await moderationReviewDb.setPublishedRevision(
+              nameReview.moderation_item_id,
+              moderationFingerprint({ text: rawGroup.name }),
+              ctxWithConnection
+            );
+          }
           await this.metricsRecorder.recordActiveIdentity(
             { identityId: profile_id },
             ctxWithConnection
@@ -1402,6 +1633,18 @@ export class UserGroupsService {
       replacedGroup
     );
     return updatedGroup;
+  }
+
+  private async replayReviewedGroup(
+    itemId: string | undefined,
+    ctx: RequestContext
+  ): Promise<ApiGroupFull | null> {
+    if (!itemId) return null;
+    const reviewed = await moderationReviewDb.get(itemId, ctx, true);
+    if (!reviewed.permit_consumed_at) return null;
+    assertModerationPermitReplay(reviewed, ctx.moderationRequestId);
+    if (!reviewed.published_subject_id) moderationConflict();
+    return this.getByIdOrThrow(reviewed.published_subject_id, ctx);
   }
 
   /**
@@ -1526,19 +1769,6 @@ export class UserGroupsService {
     );
   }
 
-  private async doNameAbusivenessCheck(groupEntity: ApiGroupFull) {
-    const abusivenessDetectionResult =
-      await this.abusivenessCheckService.checkFilterName({
-        text: groupEntity.name,
-        handle: groupEntity.created_by?.handle ?? ''
-      });
-    if (abusivenessDetectionResult.status !== 'ALLOWED') {
-      throw new BadRequestException(
-        `Group name is not allowed: ${abusivenessDetectionResult.explanation}`
-      );
-    }
-  }
-
   public async getByIdOrThrow(
     id: string,
     ctx: RequestContext
@@ -1563,9 +1793,14 @@ export class UserGroupsService {
     return (await this.mapForApi([group], ctx)).at(0)!;
   }
 
+  /**
+   * Builds membership SQL after checking access to the requested group.
+   * Online-recipient optimization is opt-in; a null group keeps the general query.
+   */
   public async getSqlAndParamsByGroupId(
     groupId: string | null,
-    ctx: RequestContext
+    ctx: RequestContext,
+    options: GroupSqlOptions = {}
   ): Promise<{
     sql: string;
     params: Record<string, any>;
@@ -1610,19 +1845,74 @@ export class UserGroupsService {
       if (!group.visible) {
         return this.getEmptyMemberSetSql();
       }
-      return await this.getSqlAndParams(group.group, groupId, ctx);
+      return await this.getSqlAndParams(
+        group.group,
+        groupId,
+        ctx,
+        undefined,
+        options
+      );
     }
   }
 
+  public async getSqlAndParamsForPreview(
+    description: ApiCreateGroupDescription,
+    ctx: RequestContext,
+    options: GroupSqlOptions = {}
+  ): Promise<{
+    sql: string;
+    params: Record<string, any>;
+  } | null> {
+    const beneficiaryGrantMatchMode =
+      enums.resolve(
+        GroupBeneficiaryGrantMatchMode,
+        description.is_beneficiary_of_grant_match_mode
+      ) ?? DEFAULT_BENEFICIARY_GRANT_MATCH_MODE;
+    await this.validateBeneficiaryGrantCriteria(
+      description.is_beneficiary_of_grant_id ?? null,
+      beneficiaryGrantMatchMode,
+      ctx
+    );
+    const group: GClean = {
+      tdh: structuredClone(description.tdh),
+      rep: structuredClone(description.rep),
+      cic: structuredClone(description.cic),
+      level: structuredClone(description.level),
+      owns_nfts: structuredClone(description.owns_nfts),
+      identity_group_id: null,
+      excluded_identity_group_id: null,
+      is_beneficiary_of_grant_id:
+        description.is_beneficiary_of_grant_id ?? null,
+      is_beneficiary_of_grant_match_mode:
+        description.is_beneficiary_of_grant_match_mode ??
+        ApiGroupBeneficiaryGrantMatchMode.AnyToken
+    };
+    return await this.getSqlAndParams(
+      group,
+      null,
+      ctx,
+      {
+        includedAddresses: description.identity_addresses ?? [],
+        excludedAddresses: description.excluded_identity_addresses ?? []
+      },
+      options
+    );
+  }
+
+  /**
+   * Builds membership SQL for trusted broadcasts without a caller visibility check.
+   * Missing groups return null so callers send to no recipients.
+   */
   public async getSqlAndParamsByGroupIdForSystemBroadcast(
     groupId: string | null,
-    ctx: RequestContext
+    ctx: RequestContext,
+    options: GroupSqlOptions = {}
   ): Promise<{
     sql: string;
     params: Record<string, any>;
   } | null> {
     if (groupId === null) {
-      return await this.getSqlAndParamsByGroupId(groupId, ctx);
+      return await this.getSqlAndParamsByGroupId(groupId, ctx, options);
     }
     const group = await this.userGroupsDb.getByIdWithoutVisibilityCheck(
       groupId,
@@ -1638,18 +1928,92 @@ export class UserGroupsService {
     if (!apiGroup) {
       return null;
     }
-    return await this.getSqlAndParams(apiGroup.group, groupId, ctx);
+    return await this.getSqlAndParams(
+      apiGroup.group,
+      groupId,
+      ctx,
+      undefined,
+      options
+    );
   }
 
+  public async findGroupIdsWithMembersOutsideContainingGroup(
+    containingGroup: ApiGroupFull,
+    containedGroups: readonly ApiGroupFull[],
+    ctx: RequestContext
+  ): Promise<string[]> {
+    const distinctContainedGroups = collections.distinctBy(
+      containedGroups.filter((group) => group.id !== containingGroup.id),
+      (group) => group.id
+    );
+    if (!distinctContainedGroups.length) {
+      return [];
+    }
+
+    const buildMembershipSql = async (
+      group: ApiGroupFull
+    ): Promise<GroupMembershipSql> => {
+      // This is the sole source of membership SQL passed to the namespacer;
+      // group-controlled criteria remain in the returned bind parameters.
+      const membership = await this.getSqlAndParams(
+        structuredClone(group.group),
+        group.id,
+        ctx
+      );
+      if (!membership) {
+        throw new BadRequestException(
+          `Unable to validate membership for group ${group.id}`
+        );
+      }
+      return {
+        key: group.id,
+        sql: membership.sql,
+        params: membership.params
+      };
+    };
+
+    const [containingMembership, ...containedMemberships] = await Promise.all([
+      buildMembershipSql(containingGroup),
+      ...distinctContainedGroups.map(buildMembershipSql)
+    ]);
+    return await this.userGroupsDb.findMembershipKeysOutsideContainingGroup(
+      containingMembership,
+      containedMemberships,
+      ctx
+    );
+  }
+
+  /**
+   * Builds the membership view and bind parameters for persisted or preview rules.
+   * Only exact level-zero online lookups use the optimized query; previews and
+   * every other criteria shape retain the general query.
+   */
   private async getSqlAndParams(
     group: GClean,
     group_id: string | null,
-    ctx: RequestContext
+    ctx: RequestContext,
+    previewIdentityMembership?: PreviewIdentityMembership,
+    options: GroupSqlOptions = {}
   ): Promise<{
     sql: string;
     params: Record<string, any>;
   } | null> {
     ctx.timer?.start(`${this.constructor.name}->getSqlAndParams`);
+    if (
+      options.forOnlineRecipients === true &&
+      previewIdentityMembership === undefined &&
+      isLevelZeroOnlyGroup(group)
+    ) {
+      ctx.timer?.stop(`${this.constructor.name}->getSqlAndParams`);
+      // Every raw score, including negative values, maps to level >= 0.
+      // Keep this opt-in broadcast query free of unnecessary CTEs and joins.
+      return {
+        sql: `with ${UserGroupsService.GENERATED_VIEW} as (
+          select i.* from ${IDENTITIES_TABLE} i
+        )`,
+        params: {}
+      };
+    }
     const filterUsers = [
       group.cic.user_identity,
       group.rep.user_identity
@@ -1677,9 +2041,10 @@ export class UserGroupsService {
     group.rep.user_identity = group.rep.user_identity
       ? usersToUserIds[group.rep.user_identity]
       : null;
-    const hadLevelMaxCriterion = group.level.max !== null;
+    const hasLevelCriterion =
+      group.level.min !== null || group.level.max !== null;
     group.level.min =
-      group.level.min !== null
+      group.level.min !== null && group.level.min > 0
         ? getLevelComponentsBorderByLevel(group.level.min)
         : null;
     group.level.max =
@@ -1696,7 +2061,7 @@ export class UserGroupsService {
       ) ?? DEFAULT_BENEFICIARY_GRANT_MATCH_MODE,
       params
     );
-    const repPart = this.getRepPart(group, params);
+    const repPart = this.getRepPart(group, params, options.memberSearch);
     const cicPart = this.getCicPart(group, params, repPart);
     const nftsPart = this.getNftsPart(
       group,
@@ -1717,7 +2082,8 @@ export class UserGroupsService {
       group,
       group_id,
       params,
-      hadLevelMaxCriterion
+      hasLevelCriterion,
+      previewIdentityMembership
     );
     const sql = `with ${repPart ?? ''} ${cicPart ?? ''} ${
       nftsPart ?? ''
@@ -1733,11 +2099,11 @@ export class UserGroupsService {
     group: GClean,
     groupId: string | null,
     params: Record<string, any>,
-    hadLevelMaxCriterion: boolean
+    hasLevelCriterion: boolean,
+    previewIdentityMembership?: PreviewIdentityMembership
   ): string {
     const anyOtherDescriptionButInclusion = !!(
-      hadLevelMaxCriterion ||
-      group.level.min !== null ||
+      hasLevelCriterion ||
       group.tdh.max !== null ||
       group.tdh.min !== null ||
       group.owns_nfts.length ||
@@ -1750,6 +2116,81 @@ export class UserGroupsService {
       group.cic.user_identity ||
       group.is_beneficiary_of_grant_id !== null
     );
+    if (previewIdentityMembership === undefined) {
+      return this.getPersistedInclusionExclusionPart(
+        group,
+        groupId,
+        params,
+        anyOtherDescriptionButInclusion
+      );
+    }
+    const includedAddresses = previewIdentityMembership.includedAddresses;
+    const excludedAddresses = previewIdentityMembership.excludedAddresses;
+    const hasIncludedIdentities =
+      group.identity_group_id !== null || includedAddresses.length > 0;
+    const hasExcludedIdentities =
+      group.excluded_identity_group_id !== null || excludedAddresses.length > 0;
+    if (
+      !anyOtherDescriptionButInclusion &&
+      !hasIncludedIdentities &&
+      !hasExcludedIdentities
+    ) {
+      return ` ${UserGroupsService.GENERATED_VIEW} as (select * from cm_view where false)`;
+    }
+    const excludedSources: string[] = [];
+    if (group.excluded_identity_group_id !== null) {
+      excludedSources.push(
+        `select exc.profile_id from ${PROFILE_GROUPS_TABLE} exc where exc.profile_group_id = :excluded_profile_group_id`
+      );
+      params['excluded_profile_group_id'] = group.excluded_identity_group_id;
+    }
+    if (excludedAddresses.length > 0) {
+      excludedSources.push(
+        `select i.profile_id from ${ADDRESS_CONSOLIDATION_KEY} a join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key where a.address in (:preview_excluded_addresses)`
+      );
+      params['preview_excluded_addresses'] = excludedAddresses;
+    }
+    if (!anyOtherDescriptionButInclusion && !hasIncludedIdentities) {
+      return ` ${
+        UserGroupsService.GENERATED_VIEW
+      } as (select i.* from ${IDENTITIES_TABLE} i where not exists (select 1 from (${excludedSources.join(
+        ' union '
+      )}) excluded_profile_ids where excluded_profile_ids.profile_id = i.profile_id))`;
+    }
+    const includedSources: string[] = [];
+    if (anyOtherDescriptionButInclusion) {
+      includedSources.push(`select i.profile_id from cm_view i`);
+    }
+    if (group.identity_group_id !== null) {
+      includedSources.push(
+        `select profile_id from ${PROFILE_GROUPS_TABLE} where profile_group_id = :profile_group_id`
+      );
+      params['profile_group_id'] = group.identity_group_id;
+    }
+    if (includedAddresses.length > 0) {
+      includedSources.push(
+        `select i.profile_id from ${ADDRESS_CONSOLIDATION_KEY} a join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key where a.address in (:preview_included_addresses)`
+      );
+      params['preview_included_addresses'] = includedAddresses;
+    }
+    const exclusionClause = excludedSources.length
+      ? `where included_profile_ids.profile_id not in (${excludedSources.join(
+          ' union '
+        )})`
+      : '';
+    return ` included_profile_ids as (select distinct profile_id from (${includedSources.join(
+      ' union all '
+    )}) idxs), ${
+      UserGroupsService.GENERATED_VIEW
+    } as (select i.* from ${IDENTITIES_TABLE} i join included_profile_ids on i.profile_id = included_profile_ids.profile_id ${exclusionClause}) `;
+  }
+
+  private getPersistedInclusionExclusionPart(
+    group: GClean,
+    groupId: string | null,
+    params: Record<string, any>,
+    anyOtherDescriptionButInclusion: boolean
+  ): string {
     if (
       !anyOtherDescriptionButInclusion &&
       group.identity_group_id === null &&
@@ -1778,20 +2219,63 @@ export class UserGroupsService {
         ? `where included_profile_ids.profile_id not in (select exc.profile_id from ${PROFILE_GROUPS_TABLE} exc where exc.profile_group_id = :excluded_profile_group_id)`
         : ``
     }) `;
-    params['excluded_profile_group_id'] = group.excluded_identity_group_id;
+    if (group.excluded_identity_group_id !== null) {
+      params['excluded_profile_group_id'] = group.excluded_identity_group_id;
+    }
     return sql;
+  }
+
+  private async validateBeneficiaryGrantCriteria(
+    beneficiaryGrantId: string | null,
+    beneficiaryGrantMatchMode: GroupBeneficiaryGrantMatchMode,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (
+      !beneficiaryGrantId &&
+      beneficiaryGrantMatchMode === GroupBeneficiaryGrantMatchMode.ALL_TOKENS
+    ) {
+      throw new BadRequestException(
+        `Beneficiary grant match mode ALL_TOKENS requires an xTDH grant`
+      );
+    }
+    if (!beneficiaryGrantId) {
+      return;
+    }
+    const grantEntity = await xTdhRepository.getGrantById(
+      beneficiaryGrantId,
+      ctx
+    );
+    if (!grantEntity) {
+      throw new NotFoundException(
+        `Can't create group based on grant ${beneficiaryGrantId} as it doesn't exist`
+      );
+    }
+    if (
+      beneficiaryGrantMatchMode === GroupBeneficiaryGrantMatchMode.ALL_TOKENS &&
+      grantEntity.token_mode !== XTdhGrantTokenMode.INCLUDE
+    ) {
+      throw new BadRequestException(
+        `Beneficiary grant match mode ALL_TOKENS can only be used with grants that specify target tokens`
+      );
+    }
   }
 
   private getTypeOfNftPart({
     viewName,
     comGroupFieldName,
+    tokenParamName,
     tokenOwnerships,
-    contract
+    contract,
+    groupId,
+    params
   }: {
     viewName: string;
     comGroupFieldName: string;
+    tokenParamName: string;
     tokenOwnerships: ApiGroupOwnsNft[];
     contract: string;
+    groupId: string | null;
+    params: Record<string, any>;
   }): string | null {
     let nftPart: string | null = null;
     if (tokenOwnerships.length) {
@@ -1801,41 +2285,63 @@ export class UserGroupsService {
                               join ${ADDRESS_CONSOLIDATION_KEY} ac on ac.address = lower(wallet)
                               join ${IDENTITIES_TABLE} i on i.consolidation_key = ac.consolidation_key
                      where contract = '${contract}'), `;
-      const ownsSpecificTokens =
-        tokenOwnerships.map((it) => it.tokens).flat().length > 0;
+      const specificTokens = tokenOwnerships
+        .flatMap((it) => it.tokens ?? [])
+        .map(String);
+      const ownsSpecificTokens = specificTokens.length > 0;
       if (ownsSpecificTokens) {
-        const criteriaTokensSql = `(SELECT token_id
-                                             FROM community_groups,
-                                                  JSON_TABLE(community_groups.${comGroupFieldName}, '$[*]'
-                                                             COLUMNS (token_id VARCHAR(255) PATH '$')) AS tokens
-                                             WHERE community_groups.id =
-                                                   :user_group_id)`;
         const matchMode =
           enums.resolve(
             GroupNftOwnershipMatchMode,
-            tokenOwnerships.find((it) => it.tokens.length > 0)?.match_mode
+            tokenOwnerships.find((it) => (it.tokens?.length ?? 0) > 0)
+              ?.match_mode
           ) ?? DEFAULT_NFT_OWNERSHIP_MATCH_MODE;
-        if (matchMode === GroupNftOwnershipMatchMode.ANY_TOKEN) {
+        if (groupId !== null) {
+          const criteriaTokensSql = `(SELECT token_id
+                                       FROM community_groups,
+                                            JSON_TABLE(community_groups.${comGroupFieldName}, '$[*]'
+                                                       COLUMNS (token_id VARCHAR(255) PATH '$')) AS tokens
+                                       WHERE community_groups.id =
+                                             :user_group_id)`;
+          if (matchMode === GroupNftOwnershipMatchMode.ANY_TOKEN) {
+            nftPart += `
+              ${viewName} as (SELECT distinct ${viewName}_s1.profile_id
+                                FROM ${viewName}_s1
+                                         JOIN ${criteriaTokensSql} AS criteria_tokens
+                                              ON ${viewName}_s1.token_id = criteria_tokens.token_id)
+         `;
+          } else {
+            nftPart += `
+              ${viewName} as (SELECT profile_id
+                                FROM ${viewName}_s1
+                                         JOIN ${criteriaTokensSql} AS criteria_tokens
+                                              ON ${viewName}_s1.token_id = criteria_tokens.token_id
+                                GROUP BY profile_id
+                                HAVING COUNT(DISTINCT ${viewName}_s1.token_id) = (SELECT COUNT(DISTINCT token_id)
+                                                                               FROM community_groups,
+                                                                                    JSON_TABLE(
+                                                                                            community_groups.${comGroupFieldName},
+                                                                                            '$[*]'
+                                                                                            COLUMNS (token_id VARCHAR(255) PATH '$')) AS tokens
+                                                                               WHERE community_groups.id = :user_group_id))
+         `;
+          }
+        } else if (matchMode === GroupNftOwnershipMatchMode.ANY_TOKEN) {
+          params[tokenParamName] = collections.distinct(specificTokens);
           nftPart += `
-            ${viewName} as (SELECT distinct ${viewName}_s1.profile_id
+            ${viewName} as (SELECT distinct profile_id
                               FROM ${viewName}_s1
-                                       JOIN ${criteriaTokensSql} AS criteria_tokens
-                                            ON ${viewName}_s1.token_id = criteria_tokens.token_id)
+                             WHERE token_id in (:${tokenParamName}))
        `;
         } else {
+          params[tokenParamName] = collections.distinct(specificTokens);
+          params[`${tokenParamName}_count`] = params[tokenParamName].length;
           nftPart += `
             ${viewName} as (SELECT profile_id
                               FROM ${viewName}_s1
-                                       JOIN ${criteriaTokensSql} AS criteria_tokens
-                                            ON ${viewName}_s1.token_id = criteria_tokens.token_id
+                             WHERE token_id in (:${tokenParamName})
                               GROUP BY profile_id
-                              HAVING COUNT(DISTINCT ${viewName}_s1.token_id) = (SELECT COUNT(DISTINCT token_id)
-                                                                             FROM community_groups,
-                                                                                  JSON_TABLE(
-                                                                                          community_groups.${comGroupFieldName},
-                                                                                          '$[*]'
-                                                                                          COLUMNS (token_id VARCHAR(255) PATH '$')) AS tokens
-                                                                             WHERE community_groups.id = :user_group_id))
+                              HAVING COUNT(DISTINCT token_id) = :${tokenParamName}_count)
        `;
         }
       } else {
@@ -1857,34 +2363,46 @@ export class UserGroupsService {
     const memesPart = this.getTypeOfNftPart({
       viewName: 'meme_owners_of_group',
       comGroupFieldName: 'owns_meme_tokens',
+      tokenParamName: 'meme_token_ids',
       tokenOwnerships: group.owns_nfts.filter(
         (it) => it.name === ApiGroupOwnsNftNameEnum.Memes
       ),
-      contract: MEMES_CONTRACT
+      contract: MEMES_CONTRACT,
+      groupId: group_id,
+      params
     });
     const labsPart = this.getTypeOfNftPart({
       viewName: 'labs_owners_of_group',
       comGroupFieldName: 'owns_lab_tokens',
+      tokenParamName: 'lab_token_ids',
       tokenOwnerships: group.owns_nfts.filter(
         (it) => it.name === ApiGroupOwnsNftNameEnum.Memelab
       ),
-      contract: MEMELAB_CONTRACT
+      contract: MEMELAB_CONTRACT,
+      groupId: group_id,
+      params
     });
     const gradientsPart = this.getTypeOfNftPart({
       viewName: 'gradients_owners_of_group',
       comGroupFieldName: 'owns_gradient_tokens',
+      tokenParamName: 'gradient_token_ids',
       tokenOwnerships: group.owns_nfts.filter(
         (it) => it.name === ApiGroupOwnsNftNameEnum.Gradients
       ),
-      contract: GRADIENT_CONTRACT
+      contract: GRADIENT_CONTRACT,
+      groupId: group_id,
+      params
     });
     const nextgensPart = this.getTypeOfNftPart({
       viewName: 'nextgens_owners_of_group',
       comGroupFieldName: 'owns_nextgen_tokens',
+      tokenParamName: 'nextgen_token_ids',
       tokenOwnerships: group.owns_nfts.filter(
         (it) => it.name === ApiGroupOwnsNftNameEnum.Nextgen
       ),
-      contract: NEXTGEN_CORE_CONTRACT[Network.ETH_MAINNET]
+      contract: NEXTGEN_CORE_CONTRACT[Network.ETH_MAINNET],
+      groupId: group_id,
+      params
     });
     const nftsParts = [memesPart, labsPart, gradientsPart, nextgensPart].filter(
       (it) => it !== null
@@ -1892,7 +2410,9 @@ export class UserGroupsService {
     if (nftsParts.length === 0) {
       return null;
     }
-    params['user_group_id'] = group_id;
+    if (group_id !== null) {
+      params['user_group_id'] = group_id;
+    }
     const nftsPart = nftsParts.join(', ');
 
     return ` ${repPart || cicPart ? ',' : ''} ${nftsPart}`;
@@ -1968,7 +2488,7 @@ export class UserGroupsService {
   ) {
     let cmPart = ` ${repPart || cicPart || nftsPart ? ', ' : ' '}`;
     if (beneficiariesPart) {
-      cmPart = ` ${beneficiariesPart}, ${cmPart} `;
+      cmPart += `${beneficiariesPart}, `;
     }
     cmPart += ` cm_view as (select i.* from ${IDENTITIES_TABLE} i `;
     if (repPart !== null) {
@@ -2070,7 +2590,7 @@ export class UserGroupsService {
         direction === ApiGroupFilterDirection.Received
           ? 'rater_profile_id'
           : 'matter_target_id';
-      let groupedCicQuery = `${repPart ? ', ' : ' '}grouped_cics as (select ${profileColumn} as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'CIC'`;
+      let groupedCicQuery = `${repPart ? ', ' : ' '}grouped_cics as (select ${profileColumn} as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'CIC' and rating <> 0`;
       if (cicGroup.user_identity !== null) {
         groupedCicQuery += ` and ${counterpartyColumn} = :cic_user`;
       }
@@ -2096,7 +2616,39 @@ export class UserGroupsService {
     return cicPart;
   }
 
-  private getRepPart(group: GClean, params: Record<string, any>) {
+  private getRepMemberSearchPart(
+    direction: ApiGroupFilterDirection,
+    memberSearchInput: string | null | undefined,
+    params: Record<string, unknown>
+  ): string {
+    const memberSearch = memberSearchInput?.trim().toLowerCase();
+    if (!memberSearch) {
+      return '';
+    }
+    params.rep_member_search = memberSearch;
+    const profileColumn =
+      direction === ApiGroupFilterDirection.Received
+        ? 'matter_target_id'
+        : 'rater_profile_id';
+    // Restrict aggregation/materialization without multiplying ratings when a
+    // profile has multiple identities. Keep the existing comparison collation
+    // and complete live sum; this does not guarantee a smaller ratings scan.
+    return ` and ${profileColumn} in (
+      select candidates.profile_id from (
+        select distinct member.profile_id from ${IDENTITIES_TABLE} member
+        where member.profile_id is not null and (
+          instr(lower(ifnull(member.handle, member.primary_address)), :rep_member_search) > 0
+          or instr(lower(member.primary_address), :rep_member_search) > 0
+        )
+      ) candidates
+    )`;
+  }
+
+  private getRepPart(
+    group: GClean,
+    params: Record<string, any>,
+    memberSearch?: string | null
+  ) {
     let repPart = null;
     const repGroup = group.rep;
     if (
@@ -2106,6 +2658,11 @@ export class UserGroupsService {
       repGroup.min !== null
     ) {
       const direction = repGroup.direction ?? ApiGroupFilterDirection.Received;
+      const memberSearchPart = this.getRepMemberSearchPart(
+        direction,
+        memberSearch,
+        params
+      );
       if (repGroup.user_identity) {
         params.rep_user = repGroup.user_identity;
       }
@@ -2117,7 +2674,7 @@ export class UserGroupsService {
         direction === ApiGroupFilterDirection.Received
           ? 'rater_profile_id'
           : 'matter_target_id';
-      let groupedRepQuery = `grouped_reps as (select ${profileColumn} as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP'`;
+      let groupedRepQuery = `grouped_reps as (select ${profileColumn} as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0`;
       if (repGroup.user_identity !== null) {
         groupedRepQuery += ` and ${counterpartyColumn} = :rep_user`;
       }
@@ -2125,7 +2682,7 @@ export class UserGroupsService {
         groupedRepQuery += ` and matter_category = :rep_category`;
         params.rep_category = repGroup.category;
       }
-      groupedRepQuery += ` group by 1)`;
+      groupedRepQuery += `${memberSearchPart} group by 1)`;
       repPart = `${groupedRepQuery}, rep_exchanges as (select i.profile_id from ${IDENTITIES_TABLE} i left join grouped_reps r on r.profile_id = i.profile_id where true `;
       if (repGroup.max !== null) {
         repPart += `and coalesce(r.rating, 0) <= :rep_amount_max `;
@@ -2183,6 +2740,44 @@ export class UserGroupsService {
     return await this.userGroupsDb.getByIds(ids, ctx);
   }
 
+  async getApiGroupsByIds(
+    ids: string[],
+    ctx: RequestContext
+  ): Promise<ApiGroupFull[]> {
+    if (!ids.length) {
+      return [];
+    }
+    return await this.mapForApi(await this.getByIds(ids, ctx), ctx);
+  }
+
+  async getApiGroupsVisibleToRequesterByIds(
+    ids: string[],
+    ctx: RequestContext
+  ): Promise<ApiGroupFull[]> {
+    if (!ids.length) {
+      return [];
+    }
+    const groups = await this.getByIds(ids, ctx);
+    if (groups.every((group) => !group.is_private)) {
+      return await this.mapForApi(groups, ctx);
+    }
+    const authenticatedUserId =
+      ctx.authenticationContext?.getActingAsId() ?? null;
+    const eligibleGroupIds = authenticatedUserId
+      ? await this.getGroupsUserIsEligibleFor(authenticatedUserId, ctx.timer)
+      : [];
+    return await this.mapForApi(
+      groups.filter(
+        (group) =>
+          !group.is_private ||
+          // UserGroupEntity stores the creator as an id, unlike ApiGroupFull.
+          group.created_by === authenticatedUserId ||
+          eligibleGroupIds.includes(group.id)
+      ),
+      ctx
+    );
+  }
+
   async findUserGroupsIdentityGroupIdentities(
     identityGroupId: string
   ): Promise<string[]> {
@@ -2204,6 +2799,10 @@ export class UserGroupsService {
     ctx: RequestContext
   ): Promise<ApiGroupFull[]> {
     ctx.timer?.start('userGroupsService->mapForApi');
+    const displayNames = await moderationPresentationService.groupNames(
+      groups,
+      ctx
+    );
     const relatedProfiles = await identityFetcher.getOverviewsByIds(
       collections.distinct(
         groups
@@ -2243,7 +2842,7 @@ export class UserGroupsService {
       );
     const result = groups.map<ApiGroupFull>((it) => ({
       id: it.id,
-      name: it.name,
+      name: displayNames[it.id],
       visible: it.visible,
       is_private: !!it.is_private,
       created_at: new Date(it.created_at).getTime(),
@@ -2379,6 +2978,26 @@ export class UserGroupsService {
     ctx: RequestContext
   ): Promise<string[]> {
     return await this.userGroupsDb.findIdentitiesInGroups(groupIds, ctx);
+  }
+
+  async findIdentityGroupMemberships(
+    filters: { groupIds: string[]; profileIds: string[] },
+    ctx: RequestContext
+  ): Promise<IdentityGroupMembership[]> {
+    return await this.userGroupsDb.findIdentityGroupMemberships(filters, ctx);
+  }
+
+  async findIdentityGroupMembershipPage(
+    filters: {
+      groupIds: string[];
+      after: IdentityGroupMembership | null;
+    },
+    ctx: RequestContext
+  ): Promise<IdentityGroupMembershipPage> {
+    return await this.userGroupsDb.findIdentityGroupMembershipPage(
+      filters,
+      ctx
+    );
   }
 
   private getIdentitySideTdhPart(

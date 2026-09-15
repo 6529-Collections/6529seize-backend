@@ -1,9 +1,14 @@
 import {
   CreateOrUpdateDropModel,
   CreateOrUpdateDropPartModel,
+  DropMediaModel,
   DropPartIdentifierModel,
   DropReferencedNftModel
 } from './create-or-update-drop.model';
+import {
+  formatDropContentLimitViolation,
+  getDropContentLimitViolation
+} from './drop-content-limits';
 import { Time, Timer } from '@/time';
 import { ConnectionWrapper } from '@/sql-executor';
 import { dropsDb, DropsDb } from './drops.db';
@@ -42,7 +47,10 @@ import {
   ActivityEventTargetType
 } from '@/entities/IActivityEvent';
 import { ProfileActivityLogType } from '@/entities/IProfileActivityLog';
-import { DropQuoteNotificationData } from '@/notifications/user-notification.types';
+import {
+  DropQuoteNotificationData,
+  DropReplyNotificationData
+} from '@/notifications/user-notification.types';
 import { userNotifier, UserNotifier } from '@/notifications/user.notifier';
 import {
   activityRecorder,
@@ -82,7 +90,13 @@ import {
 import { extractUrlCandidatesFromText } from '@/nft-links/nft-link-candidates';
 import { validateLinkUrl } from '@/nft-links/nft-link-resolver.validator';
 import { env } from '@/env';
-import { CLOUDFRONT_LINK, UUID_REGEX, WALLET_REGEX } from '@/constants';
+import {
+  CLOUDFRONT_LINK,
+  DEVS_6529_MENTION,
+  DEVS_6529_MENTION_TOKEN,
+  UUID_REGEX,
+  WALLET_REGEX
+} from '@/constants';
 import { getAlchemyInstance } from '@/alchemy';
 import { profilesService } from '@/profiles/profiles.service';
 import { isApproveWaveClosed } from '@/waves/wave-approve.helpers';
@@ -99,28 +113,97 @@ import {
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-media';
 import { Logger } from '@/logging';
+import { validateMainStageMediaSize } from '@/drops/main-stage-media-validator';
+import { RequestContext } from '@/request.context';
+import {
+  getPrePublicationContentFingerprint,
+  prePublicationModerationService,
+  PrePublicationModerationService
+} from '@/content-moderation/pre-publication-moderation.service';
+import {
+  contentModerationDb,
+  ContentModerationDb
+} from '@/content-moderation/content-moderation.db';
+import {
+  moderationReviewDb,
+  moderationConflict,
+  assertModerationPermitReplay
+} from '@/content-moderation/moderation-review.db';
+import { moderationFingerprint } from '@/content-moderation/moderation-review.types';
 
 const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
 const GIPHY_CHAT_LINK_HOST_REGEX = /^media\d*\.giphy\.com$/;
 const ALLOWED_GIF_CHAT_LINK_EXTENSION_REGEX = /\.(?:gif|mp4|jpg|webp)$/i;
-const ALL_GROUP_MENTION_REGEX = /(^|[^a-z0-9_@])@all(?![a-z0-9_@])/i;
+const MISSING_DEVELOPER_MENTION_WARNING_INTERVAL_MS = 5 * 60 * 1000;
+
+interface DropRelationshipNotifications {
+  readonly replyNotification: DropReplyNotificationData | null;
+  readonly quoteNotifications: DropQuoteNotificationData[];
+}
+
+export type PrePublicationPreparation =
+  | {
+      readonly dropId: string;
+      readonly operation: 'CREATE' | 'UPDATE';
+      readonly authorProfileId: string;
+      readonly contentFingerprint: string;
+      readonly reviewItemId?: string;
+      readonly permitGeneration?: number;
+      readonly authenticationContext?: RequestContext['authenticationContext'];
+      readonly requestId?: string;
+      readonly currentRevision?: string | null;
+    }
+  | { readonly trustedSystem: true };
+
+const GROUP_MENTION_TOKENS: Readonly<Record<DropGroupMention, string>> = {
+  [DropGroupMention.ALL]: 'all',
+  [DropGroupMention.CONTRIBUTORS]: 'contributors',
+  [DropGroupMention.ADMINS]: 'admins',
+  [DropGroupMention.DEVS_6529]: DEVS_6529_MENTION_TOKEN
+};
+const ADMIN_ONLY_GROUP_MENTIONS = [
+  DropGroupMention.ALL,
+  DropGroupMention.CONTRIBUTORS
+] as const;
+const ESCALATION_GROUP_MENTIONS = new Set<DropGroupMention>([
+  DropGroupMention.ADMINS,
+  DropGroupMention.DEVS_6529
+]);
+
+function createGroupMentionPattern(token: string): RegExp {
+  return new RegExp(`(^|[^a-z0-9_@])@${token}(?![a-z0-9_@])`, 'i');
+}
+
+const GROUP_MENTION_PATTERNS: Readonly<Record<DropGroupMention, RegExp>> = {
+  [DropGroupMention.ALL]: createGroupMentionPattern(
+    GROUP_MENTION_TOKENS[DropGroupMention.ALL]
+  ),
+  [DropGroupMention.CONTRIBUTORS]: createGroupMentionPattern(
+    GROUP_MENTION_TOKENS[DropGroupMention.CONTRIBUTORS]
+  ),
+  [DropGroupMention.ADMINS]: createGroupMentionPattern(
+    GROUP_MENTION_TOKENS[DropGroupMention.ADMINS]
+  ),
+  [DropGroupMention.DEVS_6529]: createGroupMentionPattern(
+    GROUP_MENTION_TOKENS[DropGroupMention.DEVS_6529]
+  )
+};
+
+function hasGroupMentionToken(
+  content: string | null,
+  mentionedGroup: DropGroupMention
+): boolean {
+  return GROUP_MENTION_PATTERNS[mentionedGroup].test(content ?? '');
+}
 
 export function normalizeDropGroupMentions({
-  mentionedGroups,
   parts
 }: {
-  mentionedGroups?: readonly DropGroupMention[] | null;
   parts: readonly Pick<CreateOrUpdateDropPartModel, 'content'>[];
 }): DropGroupMention[] {
-  const hasAllMentionInContent = parts.some((part) =>
-    ALL_GROUP_MENTION_REGEX.test(part.content ?? '')
+  return Object.values(DropGroupMention).filter((mentionedGroup) =>
+    parts.some((part) => hasGroupMentionToken(part.content, mentionedGroup))
   );
-  return collections
-    .distinct([...(mentionedGroups ?? [])])
-    .filter(
-      (mentionedGroup) =>
-        mentionedGroup !== DropGroupMention.ALL || hasAllMentionInContent
-    );
 }
 
 function isActiveIdentityNomination(nomination: { has_won: boolean }): boolean {
@@ -147,9 +230,17 @@ export function validateDropMediaAttachment({
   const parsedUrl = parseDropMediaUrl(url);
 
   if (
+    mimeType === 'model/gltf-binary' &&
+    !parsedUrl.pathname.toLowerCase().endsWith('.glb')
+  ) {
+    throw new BadRequestException('GLB media must use a .glb filename');
+  }
+
+  if (
     mimeType.startsWith('image/') ||
     mimeType.startsWith('video/') ||
-    mimeType.startsWith('audio/')
+    mimeType.startsWith('audio/') ||
+    mimeType === 'model/gltf-binary'
   ) {
     if (parsedUrl.origin !== CLOUDFRONT_LINK) {
       throw new BadRequestException(
@@ -210,6 +301,9 @@ export function sanitizeDropStructuredFields(
 }
 
 export class CreateOrUpdateDropUseCase {
+  // Intentionally throttled per warm Lambda container, not per wave. One
+  // warning is enough to surface the shared missing environment configuration.
+  private nextMissingDeveloperMentionWarningAt = 0;
   private readonly logger = Logger.get(CreateOrUpdateDropUseCase.name);
 
   public constructor(
@@ -226,8 +320,25 @@ export class CreateOrUpdateDropUseCase {
     private readonly dropNftLinksDb: DropNftLinksDb,
     private readonly artCurationTokenWatchService: ArtCurationTokenWatchService,
     private readonly attachmentsDb: AttachmentsDb,
-    private readonly dropMediaUploadsDb: DropMediaUploadsDb
+    private readonly dropMediaUploadsDb: DropMediaUploadsDb,
+    private readonly moderationService: Pick<
+      PrePublicationModerationService,
+      'evaluate' | 'assertPostingAllowed'
+    > = prePublicationModerationService,
+    private readonly moderationDb: Pick<
+      ContentModerationDb,
+      'filterBlockedNotificationRows'
+    > = contentModerationDb
   ) {}
+
+  private assertDropContentLimits(
+    parts: readonly CreateOrUpdateDropPartModel[]
+  ): void {
+    const violation = getDropContentLimitViolation(parts);
+    if (violation) {
+      throw new BadRequestException(formatDropContentLimitViolation(violation));
+    }
+  }
 
   private getRequiredAuthorId(model: CreateOrUpdateDropModel): string {
     const authorId = model.author_id;
@@ -245,17 +356,15 @@ export class CreateOrUpdateDropUseCase {
     return dropId;
   }
 
-  private getAllDropsNotificationsSubscribersLimit(): number {
-    return env.getIntOrNull('ALL_DROPS_NOTIFICATIONS_SUBSCRIBERS_LIMIT') ?? 15;
-  }
-
   private normalizeMentionedGroups(
     model: CreateOrUpdateDropModel
   ): CreateOrUpdateDropModel {
     return {
       ...model,
+      // Content is the source of truth on creates and edits. The update path
+      // deletes the old rows before insertDropGroupMentions persists this
+      // freshly derived set, so removed tokens do not leave stale metadata.
       mentioned_groups: normalizeDropGroupMentions({
-        mentionedGroups: model.mentioned_groups,
         parts: model.parts
       })
     };
@@ -269,16 +378,24 @@ export class CreateOrUpdateDropUseCase {
       connection,
       preResolvedIdentityNomination,
       bypassChatLinkRestrictions,
-      bypassChatSlowModeRestrictions
+      bypassChatSlowModeRestrictions,
+      prePublication
     }: {
       timer?: Timer;
       connection: ConnectionWrapper<any>;
       preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
       bypassChatLinkRestrictions?: boolean;
       bypassChatSlowModeRestrictions?: boolean;
+      prePublication: PrePublicationPreparation;
     }
-  ): Promise<{ drop_id: string; pending_push_notification_ids: number[] }> {
+  ): Promise<{
+    drop_id: string;
+    replayed?: boolean;
+    pending_push_notification_ids: number[];
+    dm_unread_recipient_ids: string[];
+  }> {
     let resolvedModel = sanitizeDropStructuredFields(model);
+    this.assertDropContentLimits(resolvedModel.parts);
     timer?.start(`${CreateOrUpdateDropUseCase.name}->execute`);
     let authorId = resolvedModel.author_id;
     if (!authorId) {
@@ -320,8 +437,57 @@ export class CreateOrUpdateDropUseCase {
       connection,
       preResolvedIdentityNomination,
       bypassChatLinkRestrictions,
-      bypassChatSlowModeRestrictions
+      bypassChatSlowModeRestrictions,
+      prePublication
     });
+  }
+
+  public async preparePrePublication(
+    model: CreateOrUpdateDropModel,
+    ctx: RequestContext
+  ): Promise<PrePublicationPreparation> {
+    const sanitizedModel = sanitizeDropStructuredFields(model);
+    const operation: 'CREATE' | 'UPDATE' =
+      sanitizedModel.drop_id === null ? 'CREATE' : 'UPDATE';
+    const dropId = sanitizedModel.drop_id ?? randomUUID();
+    const authorProfileId = this.getRequiredAuthorId(sanitizedModel);
+    const currentRevision = sanitizedModel.drop_id
+      ? await moderationReviewDb.currentRevision(
+          {
+            subject_type: 'DROP',
+            subject_id: sanitizedModel.drop_id,
+            published_subject_id: null
+          } as Parameters<typeof moderationReviewDb.currentRevision>[0],
+          ctx
+        )
+      : null;
+    const moderationInput = {
+      dropId,
+      authorProfileId,
+      operation,
+      title: sanitizedModel.title,
+      waveId: sanitizedModel.wave_id,
+      currentRevision,
+      contextFingerprint: moderationFingerprint(sanitizedModel),
+      // File attachment contents intentionally remain in their existing
+      // asynchronous validation pipeline and are not inspected here.
+      parts: sanitizedModel.parts.map((part) => ({ content: part.content }))
+    };
+    const review = await this.moderationService.evaluate(moderationInput, {
+      ...ctx,
+      connection: undefined
+    });
+    return {
+      dropId,
+      operation,
+      authorProfileId,
+      contentFingerprint: getPrePublicationContentFingerprint(moderationInput),
+      reviewItemId: review?.itemId,
+      permitGeneration: review?.permitGeneration,
+      authenticationContext: ctx.authenticationContext,
+      requestId: ctx.moderationRequestId,
+      currentRevision
+    };
   }
 
   public async preResolveIdentityNomination(
@@ -388,24 +554,77 @@ export class CreateOrUpdateDropUseCase {
       connection,
       preResolvedIdentityNomination,
       bypassChatLinkRestrictions,
-      bypassChatSlowModeRestrictions
+      bypassChatSlowModeRestrictions,
+      prePublication
     }: {
       timer?: Timer;
       connection: ConnectionWrapper<any>;
       preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
       bypassChatLinkRestrictions?: boolean;
       bypassChatSlowModeRestrictions?: boolean;
+      prePublication: PrePublicationPreparation;
     }
-  ): Promise<{ drop_id: string; pending_push_notification_ids: number[] }> {
+  ): Promise<{
+    drop_id: string;
+    replayed?: boolean;
+    pending_push_notification_ids: number[];
+    dm_unread_recipient_ids: string[];
+  }> {
+    this.assertDropContentLimits(model.parts);
+    if (!('trustedSystem' in prePublication)) {
+      const tx = {
+        timer,
+        connection,
+        moderationRequestId: prePublication.requestId,
+        moderationPermitGeneration: prePublication.permitGeneration,
+        authenticationContext: prePublication.authenticationContext
+      };
+      await moderationReviewDb.lockProfile(this.getRequiredAuthorId(model), tx);
+      if (model.drop_id) await moderationReviewDb.lockDrop(model.drop_id, tx);
+      if (prePublication.reviewItemId) {
+        const reviewed = await moderationReviewDb.get(
+          prePublication.reviewItemId,
+          tx,
+          true
+        );
+        if (reviewed.permit_consumed_at) {
+          assertModerationPermitReplay(reviewed, prePublication.requestId);
+          if (
+            !reviewed.published_subject_id ||
+            reviewed.author_profile_id !== model.author_id
+          )
+            moderationConflict();
+          return {
+            drop_id: reviewed.published_subject_id,
+            replayed: true,
+            pending_push_notification_ids: [],
+            dm_unread_recipient_ids: []
+          };
+        }
+      }
+      await this.moderationService.assertPostingAllowed(
+        this.getRequiredAuthorId(model),
+        tx
+      );
+    }
     if (model.drop_type === DropType.WINNER) {
       throw new BadRequestException(`Can't modify a winner drop`);
     }
     const normalizedModel = this.normalizeMentionedGroups(model);
+    const preExistingGroupMentions =
+      normalizedModel.drop_id !== null &&
+      normalizedModel.mentioned_groups.includes(DropGroupMention.CONTRIBUTORS)
+        ? await this.dropsDb.getDropGroupMentions(
+            normalizedModel.drop_id,
+            connection
+          )
+        : [];
     const { validatedModel, groupIdsUserIsEligibleFor } =
       await this.validateReferences(normalizedModel, isDescriptionDrop, {
         timer,
         connection,
-        preResolvedIdentityNomination
+        preResolvedIdentityNomination,
+        preExistingGroupMentions
       });
     const authorId = this.getRequiredAuthorId(validatedModel);
     const preExistingDropId = validatedModel.drop_id;
@@ -446,14 +665,64 @@ export class CreateOrUpdateDropUseCase {
         { timer, connection }
       );
     }
+    const operation = preExistingDropId === null ? 'CREATE' : 'UPDATE';
+    const candidateDropId =
+      'trustedSystem' in prePublication
+        ? (preExistingDropId ?? randomUUID())
+        : prePublication.dropId;
+    if (
+      !('trustedSystem' in prePublication) &&
+      (prePublication.operation !== operation ||
+        (preExistingDropId !== null && candidateDropId !== preExistingDropId) ||
+        prePublication.authorProfileId !== authorId ||
+        prePublication.contentFingerprint !==
+          getPrePublicationContentFingerprint({
+            title: validatedModel.title,
+            parts: validatedModel.parts
+          }))
+    ) {
+      throw new Error('Pre-publication preparation does not match drop write');
+    }
     let dropId: string;
+    if (!('trustedSystem' in prePublication) && prePublication.reviewItemId) {
+      const tx = {
+        timer,
+        connection,
+        moderationRequestId: prePublication.requestId,
+        moderationPermitGeneration: prePublication.permitGeneration,
+        authenticationContext: prePublication.authenticationContext
+      };
+      const reviewed = await moderationReviewDb.get(
+        prePublication.reviewItemId,
+        tx,
+        true
+      );
+      const current = preExistingDropId
+        ? await moderationReviewDb.currentRevision(reviewed, tx)
+        : null;
+      if (current !== (prePublication.currentRevision ?? null))
+        moderationConflict();
+      const replay = await moderationReviewDb.consume(
+        prePublication.reviewItemId,
+        candidateDropId,
+        tx
+      );
+      if (replay)
+        return {
+          drop_id: replay,
+          replayed: true,
+          pending_push_notification_ids: [],
+          dm_unread_recipient_ids: []
+        };
+    }
     let pendingPushNotificationIds: number[] = [];
+    let dmUnreadRecipientIds: string[] = [];
     if (preExistingDropId) {
       dropId = preExistingDropId;
-      const [dropBeforeUpdate, existingMentionedGroups] = await Promise.all([
-        this.dropsDb.findDropById(dropId, connection),
-        this.dropsDb.getDropGroupMentions(dropId, connection)
-      ]);
+      const dropBeforeUpdate = await this.dropsDb.findDropById(
+        dropId,
+        connection
+      );
       if (dropBeforeUpdate === null) {
         throw new NotFoundException(`Drop ${dropId} not found`);
       }
@@ -492,8 +761,7 @@ export class CreateOrUpdateDropUseCase {
         {
           model: {
             ...validatedModel,
-            drop_id: dropId,
-            mentioned_groups: existingMentionedGroups
+            drop_id: dropId
           },
           createdAt: dropBeforeUpdate.created_at,
           serialNo: dropBeforeUpdate.serial_no,
@@ -503,7 +771,7 @@ export class CreateOrUpdateDropUseCase {
         { connection, timer }
       );
     } else {
-      dropId = randomUUID();
+      dropId = candidateDropId;
       const createdAt = Time.currentMillis();
       pendingPushNotificationIds = await this.insertAllDropComponents(
         {
@@ -515,14 +783,24 @@ export class CreateOrUpdateDropUseCase {
         },
         { connection, timer }
       );
-      await this.ensureDirectMessageReaderMetricsForNewDrop(
-        {
-          wave,
-          authorId,
-          createdAt
-        },
-        { connection, timer }
-      );
+      if (wave.is_direct_message === true) {
+        const insertedDrop = await this.dropsDb.findDropById(
+          dropId,
+          connection
+        );
+        if (!insertedDrop) {
+          throw new NotFoundException(`Drop ${dropId} not found after insert`);
+        }
+        dmUnreadRecipientIds = await this.recordDirectMessageUnreadForNewDrop(
+          {
+            wave,
+            authorId,
+            createdAt,
+            serialNo: insertedDrop.serial_no
+          },
+          { connection, timer }
+        );
+      }
       await Promise.all([
         this.metricsRecorder.recordDrop(
           {
@@ -547,61 +825,139 @@ export class CreateOrUpdateDropUseCase {
       },
       { timer, connection }
     );
+    if (!preExistingDropId) {
+      await this.dropsDb.applyInsertedDropMetricsDelta(
+        {
+          wave_id: validatedModel.wave_id,
+          author_id: authorId,
+          drop_type: validatedModel.drop_type
+        },
+        { timer, connection }
+      );
+    }
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->execute`);
+    if (!('trustedSystem' in prePublication) && prePublication.reviewItemId) {
+      await moderationReviewDb.setPublishedRevision(
+        prePublication.reviewItemId,
+        moderationFingerprint({
+          title: validatedModel.title,
+          parts: validatedModel.parts.map((part) => ({ content: part.content }))
+        }),
+        { timer, connection }
+      );
+    }
     return {
       drop_id: dropId,
-      pending_push_notification_ids: pendingPushNotificationIds
+      pending_push_notification_ids: pendingPushNotificationIds,
+      dm_unread_recipient_ids: dmUnreadRecipientIds
     };
   }
 
-  private async ensureDirectMessageReaderMetricsForNewDrop(
+  private async recordDirectMessageUnreadForNewDrop(
     {
       wave,
       authorId,
-      createdAt
+      createdAt,
+      serialNo
     }: {
       wave: WaveEntity;
       authorId: string;
       createdAt: number;
+      serialNo: number;
     },
     { connection, timer }: { connection: ConnectionWrapper<any>; timer?: Timer }
-  ) {
+  ): Promise<string[]> {
     if (wave.is_direct_message !== true) {
-      return;
+      return [];
     }
     const directMessageGroupId = wave.chat_group_id;
     if (!directMessageGroupId) {
-      return;
+      return [];
     }
     const readerIds = await this.userGroupsService.findIdentitiesInGroups(
       [directMessageGroupId],
       { timer, connection }
     );
-    const recipientIds = readerIds.filter((readerId) => readerId !== authorId);
-    const existingReaderMetricIds =
-      await this.wavesApiDb.findExistingWaveReaderMetricReaderIds(
+    const candidateRecipientIds = collections.distinct(
+      readerIds.filter((readerId) => readerId !== authorId)
+    );
+    const visibleRecipientIds =
+      await this.filterDirectMessageUnreadRecipientsByVisibility(
+        wave,
+        candidateRecipientIds,
+        { timer, connection }
+      );
+    const recipientRows = await this.moderationDb.filterBlockedNotificationRows(
+      visibleRecipientIds.map((profileId) => ({
+        identity_id: profileId,
+        additional_identity_id: authorId
+      })),
+      connection
+    );
+    const recipientIds = recipientRows.map((row) => row.identity_id);
+    await this.wavesApiDb.recordDirectMessageUnreadDrop(
+      {
+        waveId: wave.id,
+        recipientIds,
+        dropSerialNo: serialNo,
+        dropCreatedAt: createdAt
+      },
+      { timer, connection }
+    );
+    return recipientIds;
+  }
+
+  private async filterDirectMessageUnreadRecipientsByVisibility(
+    wave: WaveEntity,
+    candidateRecipientIds: string[],
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+  ): Promise<string[]> {
+    const visibilityGroupIds = [wave.visibility_group_id].filter(
+      (groupId): groupId is string =>
+        groupId !== null && groupId !== wave.chat_group_id
+    );
+    if (wave.parent_wave_id) {
+      const parentWave = await this.wavesApiDb.findWaveById(
+        wave.parent_wave_id,
+        connection
+      );
+      if (!parentWave) {
+        this.logger.warn(
+          `Cannot resolve parent wave ${wave.parent_wave_id} while recording DM unread state for wave ${wave.id}`
+        );
+        return [];
+      }
+      if (
+        parentWave.visibility_group_id &&
+        parentWave.visibility_group_id !== wave.chat_group_id
+      ) {
+        visibilityGroupIds.push(parentWave.visibility_group_id);
+      }
+    }
+    const requiredVisibilityGroupIds = collections.distinct(visibilityGroupIds);
+    if (!candidateRecipientIds.length || !requiredVisibilityGroupIds.length) {
+      return candidateRecipientIds;
+    }
+
+    const visibilityMemberships =
+      await this.userGroupsService.findIdentityGroupMemberships(
         {
-          waveId: wave.id,
-          readerIds: recipientIds
+          groupIds: requiredVisibilityGroupIds,
+          profileIds: candidateRecipientIds
         },
         { timer, connection }
       );
-    const existingReaderMetricIdSet = new Set(existingReaderMetricIds);
-    const missingReaderMetricIds = recipientIds.filter(
-      (readerId) => !existingReaderMetricIdSet.has(readerId)
-    );
-    if (!missingReaderMetricIds.length) {
-      return;
+    const visibleGroupsByProfileId = new Map<string, Set<string>>();
+    for (const membership of visibilityMemberships) {
+      const visibleGroupIds =
+        visibleGroupsByProfileId.get(membership.profileId) ?? new Set<string>();
+      visibleGroupIds.add(membership.groupId);
+      visibleGroupsByProfileId.set(membership.profileId, visibleGroupIds);
     }
-    // Reader metrics are part of DM write consistency: without this row the
-    // unread summary cannot distinguish current unread activity from old history.
-    await this.wavesApiDb.insertMissingWaveReaderMetrics(
-      {
-        waveId: wave.id,
-        readerIds: missingReaderMetricIds,
-        latestReadTimestamp: Math.max(0, createdAt - 1)
-      },
-      { timer, connection }
+    return candidateRecipientIds.filter((profileId) =>
+      requiredVisibilityGroupIds.every((groupId) =>
+        visibleGroupsByProfileId.get(profileId)?.has(groupId)
+      )
     );
   }
 
@@ -611,11 +967,13 @@ export class CreateOrUpdateDropUseCase {
     {
       timer,
       connection,
-      preResolvedIdentityNomination
+      preResolvedIdentityNomination,
+      preExistingGroupMentions
     }: {
       timer?: Timer;
       connection: ConnectionWrapper<any>;
       preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
+      preExistingGroupMentions: readonly DropGroupMention[];
     }
   ): Promise<{
     validatedModel: CreateOrUpdateDropModel;
@@ -632,7 +990,8 @@ export class CreateOrUpdateDropUseCase {
           model,
           groupIdsUserIsEligibleFor,
           isDescriptionDrop,
-          preResolvedIdentityNomination
+          preResolvedIdentityNomination,
+          preExistingGroupMentions
         },
         { timer, connection }
       ),
@@ -652,12 +1011,14 @@ export class CreateOrUpdateDropUseCase {
       isDescriptionDrop,
       model,
       groupIdsUserIsEligibleFor,
-      preResolvedIdentityNomination
+      preResolvedIdentityNomination,
+      preExistingGroupMentions
     }: {
       isDescriptionDrop: boolean;
       model: CreateOrUpdateDropModel;
       groupIdsUserIsEligibleFor: string[];
       preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
+      preExistingGroupMentions: readonly DropGroupMention[];
     },
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ): Promise<CreateOrUpdateDropModel> {
@@ -681,7 +1042,8 @@ export class CreateOrUpdateDropUseCase {
     this.verifyGroupMentions({
       model,
       wave,
-      groupIdsUserIsEligibleFor
+      groupIdsUserIsEligibleFor,
+      preExistingGroupMentions
     });
     await Promise.all([
       this.verifyParticipatoryLimitations(
@@ -1011,18 +1373,16 @@ export class CreateOrUpdateDropUseCase {
   ) {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->verifyMedia`);
     const authorId = this.getRequiredAuthorId(model);
+    const enforceMainStageLimit =
+      model.drop_type === DropType.PARTICIPATORY &&
+      wave.id === env.getStringOrNull('MAIN_STAGE_WAVE_ID');
     for (const part of model.parts) {
       for (const media of part.media) {
-        validateDropMediaAttachment({
-          mimeType: media.mime_type,
-          url: media.url,
-          dropType: model.drop_type
-        });
-        await this.verifyDropMediaUploadReference({
-          mediaUploadId: media.media_upload_id ?? null,
-          mediaUrl: media.url,
-          mimeType: media.mime_type,
-          authorId
+        await this.verifyMediaReference({
+          media,
+          dropType: model.drop_type,
+          authorId,
+          enforceMainStageLimit
         });
       }
     }
@@ -1056,6 +1416,33 @@ export class CreateOrUpdateDropUseCase {
       }
     }
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyMedia`);
+  }
+
+  private async verifyMediaReference({
+    media,
+    dropType,
+    authorId,
+    enforceMainStageLimit
+  }: {
+    media: DropMediaModel;
+    dropType: DropType;
+    authorId: string;
+    enforceMainStageLimit: boolean;
+  }): Promise<void> {
+    validateDropMediaAttachment({
+      mimeType: media.mime_type,
+      url: media.url,
+      dropType
+    });
+    await this.verifyDropMediaUploadReference({
+      mediaUploadId: media.media_upload_id ?? null,
+      mediaUrl: media.url,
+      mimeType: media.mime_type,
+      authorId
+    });
+    if (enforceMainStageLimit) {
+      await validateMainStageMediaSize(media.url);
+    }
   }
 
   private async verifyDropMediaUploadReference({
@@ -1502,6 +1889,7 @@ export class CreateOrUpdateDropUseCase {
     // Keep this guard at the persistence boundary too; this method can be
     // reused independently of execute() and the normalization is idempotent.
     const model = this.normalizeMentionedGroups(inputModel);
+    this.assertDropContentLimits(model.parts);
     const dropId = this.getRequiredDropId(model);
     const authorId = this.getRequiredAuthorId(model);
     const parts = model.parts;
@@ -1544,9 +1932,9 @@ export class CreateOrUpdateDropUseCase {
           hide_link_preview: model.hide_link_preview,
           is_additional_action_promised: model.is_additional_action_promised
         },
-        connection
+        connection,
+        { deferMetrics: true }
       ),
-      this.createDropReplyNotifications({ model, wave }, { timer, connection }),
       this.identitySubscriptionsDb.addIdentitySubscription(
         {
           subscriber_id: authorId,
@@ -1714,12 +2102,14 @@ export class CreateOrUpdateDropUseCase {
         connection
       }
     );
-    await this.recordQuoteNotifications({ model, wave }, { timer, connection });
     const pendingPushNotificationIds = await this.notifyWaveDropRecipients(
       {
         model,
         wave,
-        directlyMentionedIdentityIds: resolvedMentionedUsers.mentionedUserIds
+        directlyMentionedIdentityIds: resolvedMentionedUsers.mentionedUserIds,
+        // Group mention notifications, including @all, are create-only so an
+        // edit cannot resend a wave-wide or permission-derived notification.
+        groupMentionNotificationsEnabled: updatedAt === null
       },
       { timer, connection }
     );
@@ -1792,100 +2182,367 @@ export class CreateOrUpdateDropUseCase {
   private verifyGroupMentions({
     model,
     wave,
-    groupIdsUserIsEligibleFor
+    groupIdsUserIsEligibleFor,
+    preExistingGroupMentions = []
   }: {
     model: CreateOrUpdateDropModel;
     wave: WaveEntity;
     groupIdsUserIsEligibleFor: string[];
+    preExistingGroupMentions?: readonly DropGroupMention[];
   }) {
     if (!model.mentioned_groups.length) {
       return;
     }
-    if (model.drop_id !== null) {
-      throw new BadRequestException(
-        `Group mentions can only be used when creating a drop`
-      );
-    }
+    // @all and @contributors are broadcast mentions, so only wave creators and
+    // admins may invoke them. @admins and @devs6529 remain available to every
+    // chat participant as escalation shortcuts.
     const isCreator = wave.created_by === this.getRequiredAuthorId(model);
     const isAdmin =
       wave.admin_group_id !== null &&
       groupIdsUserIsEligibleFor.includes(wave.admin_group_id);
-    if (!isCreator && !isAdmin) {
+    // Before @contributors became admin-only, ordinary participants could
+    // create drops containing it. Edits do not resend group notifications, so
+    // those authors may retain the existing token but cannot add a new one.
+    const canRetainLegacyContributorMention =
+      model.drop_id !== null &&
+      preExistingGroupMentions.includes(DropGroupMention.CONTRIBUTORS);
+    const restrictedMention = ADMIN_ONLY_GROUP_MENTIONS.find(
+      (group) =>
+        model.mentioned_groups.includes(group) &&
+        !(
+          group === DropGroupMention.CONTRIBUTORS &&
+          canRetainLegacyContributorMention
+        )
+    );
+    if (restrictedMention && !isCreator && !isAdmin) {
       throw new ForbiddenException(
-        `Only wave creators or admins can mention groups`
+        `Only wave creators or admins can mention @${GROUP_MENTION_TOKENS[restrictedMention]}`
       );
     }
   }
 
-  private async recordQuoteNotifications(
-    { model, wave }: { model: CreateOrUpdateDropModel; wave: WaveEntity },
+  private getPermissionMentionSourceGroupIds({
+    model,
+    wave
+  }: {
+    model: CreateOrUpdateDropModel;
+    wave: WaveEntity;
+  }): string[] {
+    return collections.distinct(
+      [
+        model.mentioned_groups.includes(DropGroupMention.CONTRIBUTORS)
+          ? wave.chat_group_id
+          : null,
+        model.mentioned_groups.includes(DropGroupMention.ADMINS)
+          ? wave.admin_group_id
+          : null
+      ].filter((groupId): groupId is string => groupId !== null)
+    );
+  }
+
+  private collectPermissionMentionCandidates({
+    model,
+    wave,
+    followerIdentityIds,
+    permissionGroupMemberIds,
+    configuredDeveloperIds
+  }: {
+    model: CreateOrUpdateDropModel;
+    wave: WaveEntity;
+    followerIdentityIds: string[];
+    permissionGroupMemberIds: ReadonlySet<string>;
+    configuredDeveloperIds: string[];
+  }): string[] {
+    return collections.distinct([
+      ...Array.from(permissionGroupMemberIds),
+      ...configuredDeveloperIds,
+      ...(model.mentioned_groups.includes(DropGroupMention.ADMINS)
+        ? [wave.created_by]
+        : []),
+      // Product rule: when Chat access is Anyone, every wave follower is
+      // allowed to contribute and is therefore in the @contributors audience.
+      // Followers provide the finite, wave-relevant subset of that otherwise
+      // unbounded public audience. Visibility and mute filtering still apply.
+      ...(model.mentioned_groups.includes(DropGroupMention.CONTRIBUTORS) &&
+      wave.chat_group_id === null
+        ? followerIdentityIds
+        : [])
+    ]);
+  }
+
+  private async resolvePermissionGroupMentionRecipients(
+    {
+      model,
+      wave,
+      followerIdentityIds
+    }: {
+      model: CreateOrUpdateDropModel;
+      wave: WaveEntity;
+      followerIdentityIds: string[];
+    },
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
-  ) {
-    timer?.start(`${CreateOrUpdateDropUseCase.name}->recordQuoteNotifications`);
+  ): Promise<string[]> {
+    const permissionMentionGroups = [
+      DropGroupMention.CONTRIBUTORS,
+      DropGroupMention.ADMINS,
+      DropGroupMention.DEVS_6529
+    ];
+    if (
+      !permissionMentionGroups.some((group) =>
+        model.mentioned_groups.includes(group)
+      )
+    ) {
+      return [];
+    }
+    const sourceGroupIds = this.getPermissionMentionSourceGroupIds({
+      model,
+      wave
+    });
+    const configuredDeveloperIds = model.mentioned_groups.includes(
+      DropGroupMention.DEVS_6529
+    )
+      ? collections.distinct(
+          env
+            .getStringArray('DEVS_6529_MENTION_PROFILE_IDS', ',')
+            .map((id) => id.trim())
+            .filter(Boolean)
+        )
+      : [];
+    this.warnIfDeveloperMentionHasNoRecipients({
+      model,
+      configuredDeveloperIds
+    });
+    const permissionGroupMemberIds =
+      await this.findPermissionMentionGroupMemberIds(sourceGroupIds, {
+        timer,
+        connection
+      });
+    const existingConfiguredDeveloperIds = configuredDeveloperIds.length
+      ? await identitiesDb
+          .getIdentitiesByIds(configuredDeveloperIds, connection)
+          .then((identities) =>
+            identities
+              .map((identity) => identity.profile_id)
+              .filter((profileId): profileId is string => profileId !== null)
+          )
+      : [];
+    const candidates = this.collectPermissionMentionCandidates({
+      model,
+      wave,
+      followerIdentityIds,
+      permissionGroupMemberIds,
+      configuredDeveloperIds: existingConfiguredDeveloperIds
+    });
+    if (wave.visibility_group_id === null || !candidates.length) {
+      return candidates;
+    }
+    // Visibility applies uniformly to every permission-derived recipient,
+    // including the wave creator and configured developers. This preserves
+    // the pre-refactor behavior and prevents global mentions exposing profiles
+    // that cannot view the wave.
+    const visibleMemberships =
+      await this.userGroupsService.findIdentityGroupMemberships(
+        {
+          groupIds: [wave.visibility_group_id],
+          profileIds: candidates
+        },
+        { timer, connection }
+      );
+    const visibleRecipientIds = new Set(
+      visibleMemberships.map((membership) => membership.profileId)
+    );
+    return candidates.filter((profileId) => visibleRecipientIds.has(profileId));
+  }
+
+  private getBroadcastPreferenceGroups(
+    mentionedGroups: readonly DropGroupMention[]
+  ): DropGroupMention[] {
+    // The existing ALL follower preference is the persisted key for both
+    // broadcast mention types, including @contributors-only drops.
+    return ADMIN_ONLY_GROUP_MENTIONS.some((group) =>
+      mentionedGroups.includes(group)
+    )
+      ? [DropGroupMention.ALL]
+      : [];
+  }
+
+  private async resolvePreferenceAwarePermissionGroupMentionRecipients(
+    {
+      model,
+      wave,
+      followerRecipients
+    }: {
+      model: CreateOrUpdateDropModel;
+      wave: WaveEntity;
+      followerRecipients: readonly {
+        identity_id: string;
+        has_group_mention: boolean;
+      }[];
+    },
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+  ): Promise<string[]> {
+    const contributorGroups = model.mentioned_groups.includes(
+      DropGroupMention.CONTRIBUTORS
+    )
+      ? [DropGroupMention.CONTRIBUTORS]
+      : [];
+    const escalationGroups = model.mentioned_groups.filter((group) =>
+      ESCALATION_GROUP_MENTIONS.has(group)
+    );
+    const followerIdentityIds = followerRecipients.map(
+      (recipient) => recipient.identity_id
+    );
+    const [contributorIdentityIds, escalationIdentityIds] = await Promise.all([
+      this.resolvePermissionGroupMentionRecipients(
+        {
+          model: { ...model, mentioned_groups: contributorGroups },
+          wave,
+          followerIdentityIds
+        },
+        { timer, connection }
+      ),
+      this.resolvePermissionGroupMentionRecipients(
+        {
+          model: { ...model, mentioned_groups: escalationGroups },
+          wave,
+          followerIdentityIds
+        },
+        { timer, connection }
+      )
+    ]);
+    const broadcastPreferenceIdentityIds = new Set(
+      // has_group_mention reflects the persisted ALL key. Product semantics
+      // intentionally reuse it for both @all and @contributors broadcasts;
+      // contributor recipients must therefore be joined followers with the
+      // shared broadcast preference enabled too, even when the Chat audience
+      // comes from an explicit chat_group_id.
+      followerRecipients
+        .filter((recipient) => recipient.has_group_mention)
+        .map((recipient) => recipient.identity_id)
+    );
+    return collections.distinct([
+      ...contributorIdentityIds.filter((identityId) =>
+        broadcastPreferenceIdentityIds.has(identityId)
+      ),
+      ...escalationIdentityIds
+    ]);
+  }
+
+  private warnIfDeveloperMentionHasNoRecipients({
+    model,
+    configuredDeveloperIds
+  }: {
+    model: CreateOrUpdateDropModel;
+    configuredDeveloperIds: string[];
+  }): void {
+    if (
+      !model.mentioned_groups.includes(DropGroupMention.DEVS_6529) ||
+      configuredDeveloperIds.length
+    ) {
+      return;
+    }
+    const now = Time.currentMillis();
+    if (now < this.nextMissingDeveloperMentionWarningAt) {
+      return;
+    }
+    this.nextMissingDeveloperMentionWarningAt =
+      now + MISSING_DEVELOPER_MENTION_WARNING_INTERVAL_MS;
+    this.logger.warn(
+      `[${DEVS_6529_MENTION} is configured with no DEVS_6529_MENTION_PROFILE_IDS recipients]`
+    );
+  }
+
+  private async findPermissionMentionGroupMemberIds(
+    groupIds: string[],
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+  ): Promise<Set<string>> {
+    const memberIds = new Set<string>();
+    if (!groupIds.length) {
+      return memberIds;
+    }
+
+    // The database query is paged to keep each read bounded. The complete,
+    // de-duplicated recipient set is retained because the notifier requires
+    // the full audience for this drop.
+    let cursor: { groupId: string; profileId: string } | null = null;
+    do {
+      const page = await this.userGroupsService.findIdentityGroupMembershipPage(
+        { groupIds, after: cursor },
+        { timer, connection }
+      );
+      for (const membership of page.memberships) {
+        memberIds.add(membership.profileId);
+      }
+      cursor = page.nextCursor;
+    } while (cursor);
+    return memberIds;
+  }
+
+  private async resolveDropRelationshipNotifications(
+    { model }: { model: CreateOrUpdateDropModel },
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+  ): Promise<DropRelationshipNotifications> {
+    timer?.start(
+      `${CreateOrUpdateDropUseCase.name}->resolveDropRelationshipNotifications`
+    );
     const dropId = this.getRequiredDropId(model);
     const authorId = this.getRequiredAuthorId(model);
-    let idx = 1;
-    const quoteNotificationDatas: DropQuoteNotificationData[] = [];
-    for (const createDropPart of model.parts) {
-      const quotedDrop = createDropPart.quoted_drop;
-      if (quotedDrop) {
-        const quotedEntity = await this.dropsDb
-          .getDropsByIds([quotedDrop.drop_id], connection)
-          .then((it) => it[0]);
-        quoteNotificationDatas.push({
-          quote_drop_id: dropId,
-          quote_drop_part: idx,
-          quote_drop_author_id: authorId,
-          quoted_drop_id: quotedDrop.drop_id,
-          quoted_drop_part: quotedDrop.drop_part_id,
-          quoted_drop_author_id: quotedEntity.author_id,
-          wave_id: model.wave_id
-        });
-      }
-      idx++;
+    const relatedDropIds = collections.distinct([
+      ...(model.reply_to ? [model.reply_to.drop_id] : []),
+      ...model.parts.flatMap((part) =>
+        part.quoted_drop ? [part.quoted_drop.drop_id] : []
+      )
+    ]);
+    if (!relatedDropIds.length) {
+      timer?.stop(
+        `${CreateOrUpdateDropUseCase.name}->resolveDropRelationshipNotifications`
+      );
+      return { replyNotification: null, quoteNotifications: [] };
     }
-    await Promise.all(
-      quoteNotificationDatas.map((it) =>
-        this.userNotifier.notifyOfDropQuote(
-          it,
-          wave.visibility_group_id,
-          connection,
-          timer
-        )
+    const relatedDropAuthors = new Map(
+      (await this.dropsDb.getDropsByIds(relatedDropIds, connection)).map(
+        (drop) => [drop.id, drop.author_id]
       )
     );
-    timer?.stop(`${CreateOrUpdateDropUseCase.name}->recordQuoteNotifications`);
-  }
-
-  private async createDropReplyNotifications(
-    { model, wave }: { model: CreateOrUpdateDropModel; wave: WaveEntity },
-    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
-  ) {
-    const replyTo = model.reply_to;
-    if (replyTo) {
-      const dropId = this.getRequiredDropId(model);
-      const authorId = this.getRequiredAuthorId(model);
-      timer?.start(`${CreateOrUpdateDropUseCase.name}->getReplyDropEntity`);
-      const replyToEntity = await this.dropsDb
-        .getDropsByIds([replyTo.drop_id], connection)
-        .then((r) => r[0]);
-      timer?.stop(`${CreateOrUpdateDropUseCase.name}->getReplyDropEntity`);
-      timer?.start(`${CreateOrUpdateDropUseCase.name}->notifyOfDropReply`);
-      await this.userNotifier.notifyOfDropReply(
-        {
+    const getRelatedDropAuthor = (relatedDropId: string): string => {
+      const relatedDropAuthor = relatedDropAuthors.get(relatedDropId);
+      if (!relatedDropAuthor) {
+        throw new NotFoundException(`Drop ${relatedDropId} not found`);
+      }
+      return relatedDropAuthor;
+    };
+    const replyNotification = model.reply_to
+      ? {
           reply_drop_id: dropId,
           reply_drop_author_id: authorId,
-          replied_drop_id: replyTo.drop_id,
-          replied_drop_part: replyTo.drop_part_id,
-          replied_drop_author_id: replyToEntity.author_id,
-          wave_id: wave.id
-        },
-        wave.visibility_group_id,
-        connection,
-        timer
-      );
-      timer?.stop(`${CreateOrUpdateDropUseCase.name}->notifyOfDropReply`);
-    }
+          replied_drop_id: model.reply_to.drop_id,
+          replied_drop_part: model.reply_to.drop_part_id,
+          replied_drop_author_id: getRelatedDropAuthor(model.reply_to.drop_id),
+          wave_id: model.wave_id
+        }
+      : null;
+    const quoteNotifications = model.parts.flatMap<DropQuoteNotificationData>(
+      (part, index) => {
+        const quotedDrop = part.quoted_drop;
+        return quotedDrop
+          ? [
+              {
+                quote_drop_id: dropId,
+                quote_drop_part: index + 1,
+                quote_drop_author_id: authorId,
+                quoted_drop_id: quotedDrop.drop_id,
+                quoted_drop_part: quotedDrop.drop_part_id,
+                quoted_drop_author_id: getRelatedDropAuthor(quotedDrop.drop_id),
+                wave_id: model.wave_id
+              }
+            ]
+          : [];
+      }
+    );
+    timer?.stop(
+      `${CreateOrUpdateDropUseCase.name}->resolveDropRelationshipNotifications`
+    );
+    return { replyNotification, quoteNotifications };
   }
 
   private async resolveMentionedUsers(
@@ -1952,43 +2609,77 @@ export class CreateOrUpdateDropUseCase {
     {
       model,
       wave,
-      directlyMentionedIdentityIds
+      directlyMentionedIdentityIds,
+      groupMentionNotificationsEnabled
     }: {
       model: CreateOrUpdateDropModel;
       wave: WaveEntity;
       directlyMentionedIdentityIds: string[];
+      groupMentionNotificationsEnabled: boolean;
     },
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ): Promise<number[]> {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->notifyWaveDropRecipients`);
     const dropId = this.getRequiredDropId(model);
     const authorId = this.getRequiredAuthorId(model);
-    const [followerRecipients, waveSubscribersCount] = await Promise.all([
+    const notificationMentionedGroups = groupMentionNotificationsEnabled
+      ? model.mentioned_groups
+      : [];
+    const broadcastPreferenceGroups = this.getBroadcastPreferenceGroups(
+      notificationMentionedGroups
+    );
+    const [followerRecipients, relationshipNotifications] = await Promise.all([
       this.identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications(
         {
           waveId: wave.id,
           authorId,
-          mentionedGroups: model.mentioned_groups
+          mentionedGroups: broadcastPreferenceGroups
         },
         connection
       ),
-      this.identitySubscriptionsDb.countWaveSubscribers(wave.id, connection)
+      this.resolveDropRelationshipNotifications(
+        { model },
+        { timer, connection }
+      )
     ]);
-    const eligibleDirectMentionedIdentityIds =
-      await this.filterIdentityIdsEligibleToReadWave(
-        wave,
-        directlyMentionedIdentityIds,
+    const permissionGroupMentionIdentityIds =
+      await this.resolvePreferenceAwarePermissionGroupMentionRecipients(
+        {
+          model: { ...model, mentioned_groups: notificationMentionedGroups },
+          wave,
+          followerRecipients
+        },
         { timer, connection }
       );
+    const candidateMentionedIdentityIds = collections.distinct([
+      ...directlyMentionedIdentityIds,
+      ...permissionGroupMentionIdentityIds
+    ]);
+    const eligibleNotificationIdentityIds = new Set(
+      await this.filterIdentityIdsEligibleToReadWave(
+        wave,
+        [
+          ...candidateMentionedIdentityIds,
+          ...followerRecipients.map((recipient) => recipient.identity_id)
+        ],
+        { timer, connection }
+      )
+    );
+    const eligibleMentionedIdentityIds = candidateMentionedIdentityIds.filter(
+      (identityId) => eligibleNotificationIdentityIds.has(identityId)
+    );
+    const eligibleFollowerRecipients = followerRecipients.filter((recipient) =>
+      eligibleNotificationIdentityIds.has(recipient.identity_id)
+    );
     const mutedDirectMentionedIdentityIds = new Set(
       await this.identitySubscriptionsDb.findMutedWaveReaders(
         wave.id,
-        eligibleDirectMentionedIdentityIds,
+        eligibleMentionedIdentityIds,
         connection
       )
     );
     const directMentionIdentityIds = collections.distinct(
-      eligibleDirectMentionedIdentityIds.filter(
+      eligibleMentionedIdentityIds.filter(
         (identityId) =>
           identityId !== authorId &&
           !mutedDirectMentionedIdentityIds.has(identityId)
@@ -1996,21 +2687,20 @@ export class CreateOrUpdateDropUseCase {
     );
     const mentionedIdentityIds = collections.distinct([
       ...directMentionIdentityIds,
-      ...followerRecipients
-        .filter((recipient) => recipient.has_group_mention)
-        .map((recipient) => recipient.identity_id)
+      ...(notificationMentionedGroups.includes(DropGroupMention.ALL)
+        ? eligibleFollowerRecipients
+            .filter((recipient) => recipient.has_group_mention)
+            .map((recipient) => recipient.identity_id)
+        : [])
     ]);
     const mentionedIdentityIdsSet = new Set(mentionedIdentityIds);
-    const allDropsSubscriberIds =
-      waveSubscribersCount < this.getAllDropsNotificationsSubscribersLimit()
-        ? followerRecipients
-            .filter(
-              (recipient) =>
-                recipient.subscribed_to_all_drops &&
-                !mentionedIdentityIdsSet.has(recipient.identity_id)
-            )
-            .map((recipient) => recipient.identity_id)
-        : [];
+    const allDropsSubscriberIds = eligibleFollowerRecipients
+      .filter(
+        (recipient) =>
+          recipient.subscribed_to_all_drops &&
+          !mentionedIdentityIdsSet.has(recipient.identity_id)
+      )
+      .map((recipient) => recipient.identity_id);
 
     const pendingPushNotificationIds =
       await this.userNotifier.notifyWaveDropCreatedRecipients(
@@ -2018,6 +2708,8 @@ export class CreateOrUpdateDropUseCase {
           waveId: wave.id,
           dropId,
           relatedIdentityId: authorId,
+          replyNotification: relationshipNotifications.replyNotification,
+          quoteNotifications: relationshipNotifications.quoteNotifications,
           mentionedIdentityIds,
           allDropsSubscriberIds
         },
@@ -2043,7 +2735,7 @@ export class CreateOrUpdateDropUseCase {
       );
       if (!parentWave) {
         this.logger.warn(
-          `Cannot resolve parent wave ${wave.parent_wave_id} while filtering direct mention recipients for wave ${wave.id}`
+          `Cannot resolve parent wave ${wave.parent_wave_id} while filtering notification recipients for wave ${wave.id}`
         );
         return [];
       }
@@ -2086,5 +2778,7 @@ export const createOrUpdateDrop = new CreateOrUpdateDropUseCase(
   dropNftLinksDb,
   artCurationTokenWatchService,
   attachmentsDb,
-  dropMediaUploadsDb
+  dropMediaUploadsDb,
+  prePublicationModerationService,
+  contentModerationDb
 );

@@ -345,7 +345,8 @@ export async function verifyStructuredWalletSignature({
   }
 
   if (consumeNonce) {
-    const nonceWasConsumed = await consumeStructuredSignatureNonce(parsed);
+    const nonceWasConsumed =
+      await consumeStructuredWalletSignatureNonce(parsed);
     if (!nonceWasConsumed) {
       return null;
     }
@@ -610,11 +611,8 @@ export async function verifyContractWalletSignatureHash({
     const contract = new ethers.Contract(address, EIP1271_ABI, provider);
     const result = await contract.isValidSignature(messageHash, signature);
     return String(result).toLowerCase() === EIP1271_MAGIC_VALUE;
-  } catch (error) {
-    logger.warn(
-      'Structured contract-wallet signature verification failed',
-      error
-    );
+  } catch {
+    logger.warn('Structured contract-wallet signature verification failed');
     return false;
   }
 }
@@ -630,12 +628,16 @@ function getAlchemyProviderForChain(
   return new ethers.JsonRpcProvider(getRpcUrlFromNetwork(network));
 }
 
-async function consumeStructuredSignatureNonce(
+export async function consumeStructuredWalletSignatureNonce(
   parsed: ParsedStructuredWalletSignatureMessage
 ): Promise<boolean> {
   const key = buildReplayKey(parsed);
   const expiresAtMs = parsed.expirationTime.getTime();
-  const ttlSeconds = Math.max(1, Math.ceil((expiresAtMs - Date.now()) / 1000));
+  const remainingLifetimeMs = expiresAtMs - Date.now();
+  if (remainingLifetimeMs <= 0) {
+    return false;
+  }
+  const ttlSeconds = Math.ceil(remainingLifetimeMs / 1000);
   const redis = getRedisClient();
   if (!redis) {
     if (canUseLocalNonceReplayFallback()) {

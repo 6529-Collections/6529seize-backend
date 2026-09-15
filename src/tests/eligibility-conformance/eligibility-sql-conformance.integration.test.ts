@@ -19,6 +19,16 @@ import {
 import { withUserGroups } from '@/tests/fixtures/user-group.fixture';
 import { withWaves } from '@/tests/fixtures/wave.fixture';
 import { loadMaterializedVectors, MaterializedVector } from './vector-loader';
+import { CommunityMembersDb } from '@/api/community-members/community-members.db';
+import { CommunityMembersQuery } from '@/api/community-members/community-members.types';
+import { ApiCommunityMembersSortOption } from '@/api/generated/models/ApiCommunityMembersSortOption';
+import { ApiCreateGroupDescription } from '@/api/generated/models/ApiCreateGroupDescription';
+import { PageSortDirection } from '@/api/page-request';
+import {
+  UserGroupEntity,
+  GroupBeneficiaryGrantMatchMode
+} from '@/entities/IUserGroup';
+import { BadRequestException } from '@/exceptions';
 
 /**
  * Set-based SQL conformance harness (docs/eligibility-spec.md,
@@ -110,6 +120,10 @@ describeWithSeed(
       mock(),
       mock()
     );
+    const membersDb = new CommunityMembersDb(
+      () => sqlExecutor,
+      userGroupsService
+    );
 
     beforeEach(() => {
       mcache.clear();
@@ -150,8 +164,133 @@ describeWithSeed(
             `[${vector.name}] group ${group.id}: SQL member set says member=${actual}, spec expects ${specEligible}`
           );
         }
+        await assertCurrentConsumers(vector, group, specEligible);
       }
       return failures;
+    }
+
+    function memberQuery(
+      vector: MaterializedVector,
+      groupId: string
+    ): CommunityMembersQuery {
+      return {
+        group_id: groupId,
+        // A unique wallet selects the subject while exercising the actual
+        // member-search pushdown and the identity-shaped member projection.
+        param: vector.walletsByIdentitySym[vector.raw.subject][0],
+        page: 1,
+        page_size: 20,
+        sort: ApiCommunityMembersSortOption.Level,
+        sort_direction: PageSortDirection.ASC
+      };
+    }
+
+    async function assertMembersAndCount(
+      vector: MaterializedVector,
+      groupId: string,
+      expected: boolean,
+      preview?: ApiCreateGroupDescription
+    ): Promise<void> {
+      const query = memberQuery(vector, groupId);
+      const rows = await membersDb.getCommunityMembers(query, {}, preview);
+      const count = await membersDb.countCommunityMembers(query, {}, preview);
+      const subject = vector.identityRows.find(
+        (row) => row.profile_id === vector.subjectProfileId
+      )!;
+      expect({
+        vector: vector.name,
+        groupId,
+        preview: !!preview,
+        wallets: rows.map((row) => row.wallet),
+        count
+      }).toEqual({
+        vector: vector.name,
+        groupId,
+        preview: !!preview,
+        wallets: expected ? [subject.primary_address] : [],
+        count: expected ? 1 : 0
+      });
+      if (expected) {
+        expect(rows[0]).toMatchObject({
+          display: subject.handle,
+          level: subject.level_raw,
+          tdh: subject.tdh,
+          xtdh: subject.xtdh,
+          rep: subject.rep,
+          cic: subject.cic,
+          consolidation_key: subject.consolidation_key
+        });
+      }
+    }
+
+    async function assertCurrentConsumers(
+      vector: MaterializedVector,
+      group: UserGroupEntity,
+      expected: boolean
+    ): Promise<void> {
+      await assertMembersAndCount(vector, group.id, expected);
+      const broadcast =
+        await userGroupsService.getSqlAndParamsByGroupIdForSystemBroadcast(
+          group.id,
+          {},
+          { forOnlineRecipients: true }
+        );
+      expect(broadcast).not.toBeNull();
+      const recipients = await sqlExecutor.execute<{ profile_id: string }>(
+        `${broadcast!.sql} select profile_id from ${UserGroupsService.GENERATED_VIEW} where profile_id = :subject`,
+        { ...broadcast!.params, subject: vector.subjectProfileId }
+      );
+      expect(recipients.map((row) => row.profile_id)).toEqual(
+        expected ? [vector.subjectProfileId] : []
+      );
+      if (!group.visible) {
+        // Visibility belongs to saved groups. Unsaved previews have no such flag.
+        return;
+      }
+      const [apiGroup] = await userGroupsService.getApiGroupsByIds(
+        [group.id],
+        {}
+      );
+      const addresses = (profileGroupId: string | null) =>
+        vector.profileGroupRows
+          .filter((row) => row.profile_group_id === profileGroupId)
+          .map(
+            (row) =>
+              vector.identityRows.find(
+                (identity) => identity.profile_id === row.profile_id
+              )!.primary_address
+          );
+      const preview: ApiCreateGroupDescription = {
+        ...apiGroup.group,
+        identity_addresses: addresses(group.profile_group_id),
+        excluded_identity_addresses: addresses(group.excluded_profile_group_id)
+      };
+      const grant = group.is_beneficiary_of_grant_id
+        ? vector.grantsById[group.is_beneficiary_of_grant_id]
+        : undefined;
+      if (
+        group.is_beneficiary_of_grant_match_mode ===
+          GroupBeneficiaryGrantMatchMode.ALL_TOKENS &&
+        grant?.tokenMode === 'ALL'
+      ) {
+        // This deliberately invalid legacy vector cannot be created or previewed.
+        await expect(
+          membersDb.getCommunityMembers(
+            memberQuery(vector, group.id),
+            {},
+            preview
+          )
+        ).rejects.toBeInstanceOf(BadRequestException);
+        await expect(
+          membersDb.countCommunityMembers(
+            memberQuery(vector, group.id),
+            {},
+            preview
+          )
+        ).rejects.toBeInstanceOf(BadRequestException);
+        return;
+      }
+      await assertMembersAndCount(vector, group.id, expected, preview);
     }
 
     for (const [dimension, dimensionVectors] of groupVectorsByDimension(
@@ -166,6 +305,72 @@ describeWithSeed(
       });
     }
 
+    it('preserves the full empty member projection for invisible public groups and the unfiltered visible list', async () => {
+      const invisible = vectors.find(
+        (vector) => vector.name === 'invisible-group'
+      )!;
+      const invisibleQuery = {
+        ...memberQuery(invisible, invisible.groupEntities[0].id),
+        param: null
+      };
+      expect(await membersDb.getCommunityMembers(invisibleQuery, {})).toEqual(
+        []
+      );
+      expect(await membersDb.countCommunityMembers(invisibleQuery, {})).toBe(0);
+      const zero = vectors.find(
+        (vector) => vector.name === 'level-bounds-raw-negative-1'
+      )!;
+      const visibleQuery = {
+        ...memberQuery(zero, zero.groupIdBySym['min-zero']),
+        param: null,
+        page_size: 1000
+      };
+      const rows = await membersDb.getCommunityMembers(visibleQuery, {});
+      const expectedCount = vectors.reduce(
+        (sum, vector) => sum + vector.identityRows.length,
+        0
+      );
+      expect(rows).toHaveLength(expectedCount);
+      expect(await membersDb.countCommunityMembers(visibleQuery, {})).toBe(
+        expectedCount
+      );
+      expect(rows.some((row) => row.level === -1)).toBe(true);
+    });
+
+    it('uses the same level bounds in wave privilege containment', async () => {
+      const vector = vectors.find(
+        (item) => item.name === 'level-bounds-raw-negative-1'
+      )!;
+      const [zero, one, maxZero] = await userGroupsService.getApiGroupsByIds(
+        [
+          vector.groupIdBySym['min-zero'],
+          vector.groupIdBySym['min-one'],
+          vector.groupIdBySym['max-zero']
+        ],
+        {}
+      );
+      const byId = new Map(
+        [zero, one, maxZero].map((group) => [group.id, group])
+      );
+      const containing = byId.get(vector.groupIdBySym['min-zero'])!;
+      const positive = byId.get(vector.groupIdBySym['min-one'])!;
+      const lowest = byId.get(vector.groupIdBySym['max-zero'])!;
+      expect(
+        await userGroupsService.findGroupIdsWithMembersOutsideContainingGroup(
+          containing,
+          [positive, lowest],
+          {}
+        )
+      ).toEqual([]);
+      expect(
+        await userGroupsService.findGroupIdsWithMembersOutsideContainingGroup(
+          positive,
+          [lowest],
+          {}
+        )
+      ).toEqual([lowest.id]);
+    });
+
     it('in-memory engine over the same seeded database matches the spec expectations', async () => {
       const failures: string[] = [];
       for (const vector of vectors) {
@@ -178,6 +383,16 @@ describeWithSeed(
         const actual = eligible
           .filter((id) => vectorGroupIds.has(id))
           .sort((a, b) => a.localeCompare(b));
+        const targeted =
+          await userGroupsService.getGroupsUserIsEligibleForByIds(
+            vector.subjectProfileId,
+            Array.from(vectorGroupIds)
+          );
+        expect(targeted.sort((a, b) => a.localeCompare(b))).toEqual(
+          [...vector.expectedEligibleGroupIds].sort((a, b) =>
+            a.localeCompare(b)
+          )
+        );
         const expected = [...vector.expectedEligibleGroupIds].sort((a, b) =>
           a.localeCompare(b)
         );

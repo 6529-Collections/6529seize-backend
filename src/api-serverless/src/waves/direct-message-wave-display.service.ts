@@ -33,6 +33,7 @@ export type WaveDisplayOverride = {
   readonly name?: string;
   readonly picture?: string | null;
   readonly contributors?: WaveDisplayContributor[];
+  readonly participantCount?: number;
 };
 
 export function resolveWavePictureOverride(
@@ -210,7 +211,8 @@ export class DirectMessageWaveDisplayService {
             ...(hasMoreThanTwoParties || picture
               ? { picture: picture ?? null }
               : {}),
-            contributors
+            contributors,
+            participantCount: participantProfileIds.length
           };
         }
         return acc;

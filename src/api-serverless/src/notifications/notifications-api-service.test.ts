@@ -1,9 +1,12 @@
 import { AuthenticationContext } from '@/auth-context';
 import { ApiDropGroupMention } from '@/api/generated/models/ApiDropGroupMention';
 import { ApiNotificationCause } from '@/api/generated/models/ApiNotificationCause';
+import { ApiSubscriptionCoverageStatus } from '@/api/generated/models/ApiSubscriptionCoverageStatus';
 import { NotificationsApiService } from '@/api/notifications/notifications.api.service';
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
+import { NotFoundException } from '@/exceptions';
+import { DbPoolName } from '@/db-query.options';
 
 jest.mock('@/api/waves/wave-unread-cache', () => ({
   invalidateWaveUnreadCacheForReaderWave: jest.fn().mockResolvedValue(undefined)
@@ -481,6 +484,197 @@ describe('NotificationsApiService V2 notifications', () => {
       unread_count: 2
     });
   });
+
+  it('maps actorless subscription coverage notifications in V2', async () => {
+    const { service, notificationsReader, identityFetcher, dropsService } =
+      createService();
+    const data = {
+      recipient_profile_id: 'viewer-1',
+      profile_handle: 'alice',
+      status: 'RUNNING_LOW',
+      consolidation_key: '0xabc',
+      mint_capacity: 3,
+      allocated_mints: 3,
+      fully_funded_drops: 3,
+      funded_through: {
+        token_id: 530,
+        mint_at: '2026-08-17T00:00:00.000Z'
+      },
+      next_unfunded: {
+        token_id: 531,
+        mint_at: '2026-08-24T00:00:00.000Z',
+        requested_mints: 1,
+        funded_mints: 0,
+        missing_mints: 1
+      },
+      minimum_top_up_eth: '0.06529',
+      top_up_deadline: null,
+      calculation_version: 1,
+      forecast_fingerprint: 'risk-531-x1'
+    } as const;
+    notificationsReader.getNotificationsForIdentity.mockResolvedValue({
+      notifications: [
+        {
+          id: 20,
+          created_at: 5000,
+          read_at: null,
+          cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE,
+          data
+        }
+      ],
+      total_unread: 1
+    });
+
+    const authenticationContext =
+      AuthenticationContext.fromProfileId('viewer-1');
+    await expect(
+      service.getNotificationsV2(
+        {
+          id_less_than: null,
+          limit: 10,
+          cause: null,
+          cause_exclude: null,
+          unread_only: false
+        },
+        authenticationContext,
+        { authenticationContext }
+      )
+    ).resolves.toEqual({
+      notifications: [
+        {
+          id: 20,
+          created_at: 5000,
+          read_at: null,
+          cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE,
+          related_identity: null,
+          related_drops: [],
+          additional_context: {
+            ...data,
+            status: ApiSubscriptionCoverageStatus.RunningLow,
+            funded_through: {
+              ...data.funded_through,
+              mint_at: new Date(data.funded_through.mint_at)
+            },
+            next_unfunded: {
+              ...data.next_unfunded,
+              mint_at: new Date(data.next_unfunded.mint_at)
+            }
+          }
+        }
+      ],
+      unread_count: 1
+    });
+    expect(identityFetcher.getApiIdentityOverviewsByIds).toHaveBeenCalledWith(
+      [],
+      expect.objectContaining({ authenticationContext })
+    );
+    expect(dropsService.findDropsV2ByIds).toHaveBeenCalledWith(
+      [],
+      expect.objectContaining({ authenticationContext })
+    );
+  });
+});
+
+describe('NotificationsApiService V1 system notifications', () => {
+  it('maps actorless subscription coverage notifications', async () => {
+    const data = {
+      recipient_profile_id: 'viewer-1',
+      profile_handle: 'alice',
+      status: 'ACTION_REQUIRED',
+      consolidation_key: '0xabc',
+      mint_capacity: 2,
+      allocated_mints: 2,
+      fully_funded_drops: 0,
+      funded_through: null,
+      next_unfunded: {
+        token_id: 528,
+        mint_at: '2026-08-03T00:00:00.000Z',
+        requested_mints: 3,
+        funded_mints: 2,
+        missing_mints: 1
+      },
+      minimum_top_up_eth: '0.06529',
+      top_up_deadline: null,
+      calculation_version: 1,
+      forecast_fingerprint: 'risk-528-x3'
+    } as const;
+    const notificationsReader = {
+      getNotificationsForIdentity: jest.fn().mockResolvedValue({
+        notifications: [
+          {
+            id: 21,
+            created_at: 6000,
+            read_at: null,
+            cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE,
+            data
+          }
+        ],
+        total_unread: 1
+      })
+    };
+    const userGroupsService = {
+      getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue([])
+    };
+    const identityFetcher = {
+      getOverviewsByIds: jest.fn().mockResolvedValue({})
+    };
+    const dropsService = {
+      findDropsByIds: jest.fn().mockResolvedValue({})
+    };
+    const service = new NotificationsApiService(
+      notificationsReader as any,
+      userGroupsService as any,
+      identityFetcher as any,
+      dropsService as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any
+    );
+    const authenticationContext =
+      AuthenticationContext.fromProfileId('viewer-1');
+
+    await expect(
+      service.getNotifications(
+        {
+          id_less_than: null,
+          limit: 10,
+          cause: null,
+          cause_exclude: null,
+          unread_only: false
+        },
+        authenticationContext
+      )
+    ).resolves.toEqual({
+      notifications: [
+        {
+          id: 21,
+          created_at: 6000,
+          read_at: null,
+          cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE,
+          related_identity: null,
+          related_drops: [],
+          additional_context: {
+            ...data,
+            status: ApiSubscriptionCoverageStatus.ActionRequired,
+            next_unfunded: {
+              ...data.next_unfunded,
+              mint_at: new Date(data.next_unfunded.mint_at)
+            }
+          }
+        }
+      ],
+      unread_count: 1
+    });
+    expect(identityFetcher.getOverviewsByIds).toHaveBeenCalledWith(
+      [],
+      expect.objectContaining({ authenticationContext })
+    );
+    expect(dropsService.findDropsByIds).toHaveBeenCalledWith(
+      [],
+      authenticationContext
+    );
+  });
 });
 
 describe('NotificationsApiService realtime invalidation', () => {
@@ -491,6 +685,7 @@ describe('NotificationsApiService realtime invalidation', () => {
       markWaveNotificationsAsRead: jest.fn().mockResolvedValue(undefined)
     };
     const wavesApiDb = {
+      findById: jest.fn().mockResolvedValue({ is_direct_message: false }),
       updateWaveReaderMetricLatestReadTimestamp: jest
         .fn()
         .mockResolvedValue(undefined)
@@ -523,7 +718,13 @@ describe('NotificationsApiService realtime invalidation', () => {
       identity_id: 'profile-1'
     });
     await service.markAllNotificationsAsRead('profile-1', {});
-    await service.markWaveNotificationsAsRead('wave-1', 'profile-1', {});
+    await service.markWaveNotificationsAsRead(
+      'wave-1',
+      'profile-1',
+      {},
+      43,
+      false
+    );
 
     expect(
       identityNotificationsDb.updateNotificationReadAt
@@ -541,6 +742,14 @@ describe('NotificationsApiService realtime invalidation', () => {
     expect(
       identityNotificationsDb.markWaveNotificationsAsRead
     ).toHaveBeenCalledWith('wave-1', 'profile-1', {});
+    expect(wavesApiDb.findById).toHaveBeenCalledWith(
+      'wave-1',
+      undefined,
+      DbPoolName.WRITE
+    );
+    expect(
+      wavesApiDb.updateWaveReaderMetricLatestReadTimestamp
+    ).toHaveBeenCalledWith('wave-1', 'profile-1', {});
     expect(
       wsListenersNotifier.notifyAboutIdentityNotificationsChanged
     ).toHaveBeenNthCalledWith(1, ['profile-1']);
@@ -553,6 +762,160 @@ describe('NotificationsApiService realtime invalidation', () => {
     expect(
       wsListenersNotifier.notifyAboutIdentityNotificationsChanged
     ).toHaveBeenNthCalledWith(4, ['profile-1']);
+  });
+
+  it.each([
+    {
+      label: 'rich',
+      readThroughSerialNo: 43,
+      requestDmUnreadState: true,
+      expectedResponse: 'state'
+    },
+    {
+      label: 'legacy bodyless',
+      readThroughSerialNo: undefined,
+      requestDmUnreadState: false,
+      expectedResponse: 'null'
+    }
+  ] as const)(
+    'persists and broadcasts an authoritative $label direct-message read',
+    async ({ readThroughSerialNo, requestDmUnreadState, expectedResponse }) => {
+      const dmUnreadState = {
+        profile_id: 'profile-1',
+        wave_id: 'wave-1',
+        unread_count: 1,
+        first_unread_drop_serial_no: 44,
+        latest_drop_serial_no: 44,
+        latest_read_serial_no: 43,
+        version: 9
+      };
+      const identityNotificationsDb = {
+        markWaveNotificationsAsRead: jest.fn().mockResolvedValue(undefined)
+      };
+      const wavesApiDb = {
+        findById: jest.fn().mockResolvedValue({
+          is_direct_message: true,
+          visibility_group_id: 'dm-group',
+          parent_wave_id: null
+        }),
+        markDirectMessageReadThroughSerial: jest
+          .fn()
+          .mockResolvedValue(undefined),
+        findDmUnreadConversationStates: jest
+          .fn()
+          .mockResolvedValue([dmUnreadState])
+      };
+      const wsListenersNotifier = {
+        findConnectedNotificationRecipients: jest
+          .fn()
+          .mockResolvedValue([
+            { connectionId: 'connection-1', identityId: 'profile-1' }
+          ]),
+        notifyAboutDmUnreadStateChanged: jest.fn().mockResolvedValue(undefined),
+        notifyAboutIdentityNotificationsChanged: jest
+          .fn()
+          .mockResolvedValue(undefined)
+      };
+      const userGroupsService = {
+        getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(['dm-group'])
+      };
+      const service = new NotificationsApiService(
+        {} as any,
+        userGroupsService as any,
+        {} as any,
+        {} as any,
+        identityNotificationsDb as any,
+        {} as any,
+        wavesApiDb as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        wsListenersNotifier as any
+      );
+
+      await expect(
+        service.markWaveNotificationsAsRead(
+          'wave-1',
+          'profile-1',
+          {},
+          readThroughSerialNo,
+          requestDmUnreadState
+        )
+      ).resolves.toEqual(expectedResponse === 'state' ? dmUnreadState : null);
+
+      expect(
+        wavesApiDb.markDirectMessageReadThroughSerial
+      ).toHaveBeenCalledWith(
+        {
+          waveId: 'wave-1',
+          readerId: 'profile-1',
+          readThroughSerialNo
+        },
+        {}
+      );
+      expect(wavesApiDb.findDmUnreadConversationStates).toHaveBeenCalledWith(
+        {
+          identityId: 'profile-1',
+          eligibleGroups: ['dm-group'],
+          waveIds: ['wave-1']
+        },
+        {},
+        DbPoolName.WRITE
+      );
+      expect(
+        wsListenersNotifier.notifyAboutDmUnreadStateChanged
+      ).toHaveBeenCalledWith(
+        [dmUnreadState],
+        [{ connectionId: 'connection-1', identityId: 'profile-1' }]
+      );
+      expect(
+        wsListenersNotifier.notifyAboutIdentityNotificationsChanged
+      ).toHaveBeenCalledWith(['profile-1']);
+    }
+  );
+
+  it('rejects a direct-message read before mutating state when the profile is not a member', async () => {
+    const identityNotificationsDb = {
+      markWaveNotificationsAsRead: jest.fn().mockResolvedValue(undefined)
+    };
+    const wavesApiDb = {
+      findById: jest.fn().mockResolvedValue({
+        is_direct_message: true,
+        visibility_group_id: 'dm-group',
+        parent_wave_id: null
+      }),
+      markDirectMessageReadThroughSerial: jest.fn()
+    };
+    const userGroupsService = {
+      getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue([])
+    };
+    const service = new NotificationsApiService(
+      {} as any,
+      userGroupsService as any,
+      {} as any,
+      {} as any,
+      identityNotificationsDb as any,
+      {} as any,
+      wavesApiDb as any,
+      {} as any
+    );
+
+    await expect(
+      service.markWaveNotificationsAsRead(
+        'wave-1',
+        'profile-1',
+        {},
+        undefined,
+        true
+      )
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    expect(
+      identityNotificationsDb.markWaveNotificationsAsRead
+    ).not.toHaveBeenCalled();
+    expect(
+      wavesApiDb.markDirectMessageReadThroughSerial
+    ).not.toHaveBeenCalled();
   });
 });
 
@@ -572,7 +935,6 @@ describe('NotificationsApiService wave notification preferences', () => {
     const identitySubscriptionsDb = {
       executeNativeQueriesInTransaction: jest.fn(async (fn) => fn(connection)),
       getWaveSubscriptionState: jest.fn().mockResolvedValue(subscriptionState),
-      countWaveSubscribersForUpdate: jest.fn().mockResolvedValue(0),
       subscribeToAllDrops: jest.fn().mockResolvedValue(undefined),
       unsubscribeFromAllDrops: jest.fn().mockResolvedValue(undefined)
     };
@@ -630,9 +992,6 @@ describe('NotificationsApiService wave notification preferences', () => {
       'wave-1',
       connection
     );
-    expect(
-      identitySubscriptionsDb.countWaveSubscribersForUpdate
-    ).toHaveBeenCalledWith('wave-1', connection);
   });
 
   it('replaces enabled group notifications for followers', async () => {
@@ -680,7 +1039,7 @@ describe('NotificationsApiService wave notification preferences', () => {
     ).not.toHaveBeenCalled();
   });
 
-  it('skips the cap check when the user is already subscribed', async () => {
+  it('does not resubscribe when the user is already subscribed', async () => {
     const { service, identitySubscriptionsDb } = createService({
       subscriptionState: {
         is_following: true,
@@ -698,9 +1057,6 @@ describe('NotificationsApiService wave notification preferences', () => {
       enabled_group_notifications: [ApiDropGroupMention.All]
     });
 
-    expect(
-      identitySubscriptionsDb.countWaveSubscribersForUpdate
-    ).not.toHaveBeenCalled();
     expect(identitySubscriptionsDb.subscribeToAllDrops).not.toHaveBeenCalled();
   });
 
@@ -721,9 +1077,6 @@ describe('NotificationsApiService wave notification preferences', () => {
       enabled_group_notifications: []
     });
 
-    expect(
-      identitySubscriptionsDb.countWaveSubscribersForUpdate
-    ).not.toHaveBeenCalled();
     expect(identitySubscriptionsDb.subscribeToAllDrops).not.toHaveBeenCalled();
   });
 

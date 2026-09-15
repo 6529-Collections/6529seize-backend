@@ -23,10 +23,19 @@ import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
 import { Logger } from '@/logging';
 import { getMaxMemeId } from '@/nftsLoop/db.nfts';
 import { numbers } from '@/numbers';
+import {
+  getMintingClaimSeasonWindow,
+  isSeasonInMintingClaimCreationWindow
+} from '@/minting-claims/minting-claim-season';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { ethers } from 'ethers';
 import { env } from '@/env';
+import {
+  assertValidComputedMediaDetails,
+  getImageDetailIssues,
+  getAnimationDetailIssues
+} from '@/minting-claims/media-details-validation';
 import {
   memeCardDropMappingsDb,
   MemeCardDropMappingsDb
@@ -37,23 +46,15 @@ const MEME_CALENDAR_TIMEOUT_MS = 10_000;
 
 async function resolveAnimationDetails(
   animationUrl: string,
-  existing: MintingClaimAnimationDetails | null | undefined
-): Promise<MintingClaimAnimationDetails | null | undefined> {
-  if (existing && 'format' in existing && existing.format === 'HTML') {
+  animationKind: MintingClaimRowInput['animation_kind']
+): Promise<MintingClaimAnimationDetails> {
+  if (animationKind === 'html') {
     return animationDetailsHtml();
   }
-  if (existing && 'format' in existing && existing.format === 'GLB') {
-    try {
-      return await computeAnimationDetailsGlb(animationUrl);
-    } catch {
-      return existing;
-    }
+  if (animationKind === 'glb') {
+    return await computeAnimationDetailsGlb(animationUrl);
   }
-  try {
-    return await computeAnimationDetailsVideo(animationUrl);
-  } catch {
-    return existing;
-  }
+  return await computeAnimationDetailsVideo(animationUrl);
 }
 
 function parseAirdropConfigFromMetadatas(
@@ -232,6 +233,9 @@ export class MintingClaimsService {
     claimId: number,
     ctx: RequestContext
   ): Promise<number> {
+    const maxSeasonId = await this.mintingClaimsDb.getMaxSeasonId(ctx);
+    const { currentSeason, nextSeason } =
+      getMintingClaimSeasonWindow(maxSeasonId);
     const calendarUrl = `${MEME_CALENDAR_API_BASE}/${claimId}`;
     try {
       const { buffer } = await fetchPublicUrlToBuffer(calendarUrl, {
@@ -245,22 +249,25 @@ export class MintingClaimsService {
         season?: unknown;
       };
       const season = numbers.parseIntOrNull(parsed?.season);
-      if (season !== null && season > 0) {
+      if (
+        season !== null &&
+        isSeasonInMintingClaimCreationWindow(season, maxSeasonId)
+      ) {
         this.logger.info(
           `Using meme-calendar season=${season} for claim_id=${claimId}`
         );
         return season;
       }
       this.logger.warn(
-        `Invalid season from meme-calendar for claim_id=${claimId}, value=${parsed?.season}; falling back to max season`
+        `Invalid season from meme-calendar for claim_id=${claimId}, value=${parsed?.season}; expected ${currentSeason} or ${nextSeason}, falling back to current season`
       );
     } catch (error) {
       this.logger.warn(
-        `Failed to resolve season from meme-calendar for claim_id=${claimId}; falling back to max season`,
+        `Failed to resolve season from meme-calendar for claim_id=${claimId}; falling back to current season`,
         { error }
       );
     }
-    return await this.mintingClaimsDb.getMaxSeasonId(ctx);
+    return currentSeason;
   }
 
   private async resolveNextClaimId(ctx: RequestContext): Promise<number> {
@@ -307,19 +314,18 @@ export class MintingClaimsService {
   ): Promise<MintingClaimRowInput> {
     let image_details = row.image_details;
     if (row.image_url) {
-      try {
-        image_details = await computeImageDetails(row.image_url);
-      } catch {
-        image_details = row.image_details;
-      }
+      image_details = await computeImageDetails(row.image_url);
+      assertValidComputedMediaDetails(getImageDetailIssues(image_details));
     }
     let animation_details = row.animation_details;
     if (row.animation_url) {
-      const resolved = await resolveAnimationDetails(
+      animation_details = await resolveAnimationDetails(
         row.animation_url,
-        row.animation_details ?? undefined
+        row.animation_kind
       );
-      animation_details = resolved ?? row.animation_details;
+      assertValidComputedMediaDetails(
+        getAnimationDetailIssues(animation_details)
+      );
     }
     return {
       ...row,

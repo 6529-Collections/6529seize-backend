@@ -1,6 +1,10 @@
+import { optionalWaveReadAccessSql } from '@/waves/wave-read-access-sql';
 import { sendIdentityPushNotification } from '../api-serverless/src/push-notifications/push-notifications.service';
 import {
   IDENTITIES_TABLE,
+  CONTENT_MODERATION_DROP_STATES_TABLE,
+  CONTENT_MODERATION_PROFILE_BLOCKS_TABLE,
+  DROPS_TABLE,
   IDENTITY_MUTES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   WAVE_READER_METRICS_TABLE
@@ -23,6 +27,17 @@ import {
   identityMutesDb as defaultIdentityMutesDb,
   IdentityMutesDb
 } from '@/api/identity-mutes/identity-mutes.db';
+import {
+  contentModerationDb as defaultContentModerationDb,
+  ContentModerationDb
+} from '@/content-moderation/content-moderation.db';
+import { DropModerationStatus } from '@/entities/IContentModeration';
+import {
+  profilePreferencesDb as defaultProfilePreferencesDb,
+  ProfilePreferencesDb
+} from '@/profile-preferences/profile-preferences.db';
+import { isNotificationEnabled } from '@/profile-preferences/profile-notification-policy';
+import { DEFAULT_PROFILE_PREFERENCES } from '@/entities/IProfilePreferences';
 
 type SerializableNotificationInsertRow = Record<string, string | number | null>;
 
@@ -45,7 +60,18 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
 
   constructor(
     dbSupplier: () => SqlExecutor,
-    private readonly identityMutesDb: IdentityMutesDb = defaultIdentityMutesDb
+    private readonly identityMutesDb: Pick<
+      IdentityMutesDb,
+      'filterMutedNotificationRows'
+    > = defaultIdentityMutesDb,
+    private readonly contentModerationDb: Pick<
+      ContentModerationDb,
+      'filterBlockedNotificationRows' | 'filterUnavailableDropNotificationRows'
+    > = defaultContentModerationDb,
+    private readonly profilePreferencesDb: Pick<
+      ProfilePreferencesDb,
+      'getMany'
+    > = defaultProfilePreferencesDb
   ) {
     super(dbSupplier);
   }
@@ -59,11 +85,10 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     connection?: ConnectionWrapper<any>
   ) {
     if (this.isNotifierActivated()) {
-      const [filteredNotification] =
-        await this.filterMutedNotificationRowsForWrite(
-          [notification],
-          connection
-        );
+      const [filteredNotification] = await this.filterNotificationRowsForWrite(
+        [notification],
+        connection
+      );
       if (!filteredNotification) {
         return;
       }
@@ -111,7 +136,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     notifications: NewIdentityNotification[],
     connection: ConnectionWrapper<any>
   ): Promise<number[]> {
-    const unmutedNotifications = await this.filterMutedNotificationRowsForWrite(
+    const unmutedNotifications = await this.filterNotificationRowsForWrite(
       notifications,
       connection
     );
@@ -164,6 +189,57 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         error
       );
       return notifications;
+    }
+  }
+
+  private async filterNotificationRowsForWrite<
+    T extends NewIdentityNotification
+  >(notifications: T[], connection?: ConnectionWrapper<any>): Promise<T[]> {
+    const unmuted = await this.filterMutedNotificationRowsForWrite(
+      notifications,
+      connection
+    );
+    if (!unmuted.length) return [];
+    let available: T[];
+    try {
+      const unblocked =
+        await this.contentModerationDb.filterBlockedNotificationRows(
+          unmuted,
+          connection
+        );
+      available =
+        await this.contentModerationDb.filterUnavailableDropNotificationRows(
+          unblocked,
+          connection
+        );
+    } catch (error) {
+      this.logger.error(
+        'Failed to apply content moderation on notification write',
+        error
+      );
+      throw error;
+    }
+    if (!available.length) return [];
+    try {
+      const preferences = await this.profilePreferencesDb.getMany(
+        Array.from(
+          new Set(available.map((notification) => notification.identity_id))
+        ),
+        connection
+      );
+      return available.filter((notification) =>
+        isNotificationEnabled(
+          notification.cause,
+          preferences.get(notification.identity_id) ??
+            DEFAULT_PROFILE_PREFERENCES
+        )
+      );
+    } catch (error) {
+      this.logger.error(
+        'Failed to filter notification rows by profile preferences; inserting unfiltered notifications',
+        error
+      );
+      return available;
     }
   }
 
@@ -342,26 +418,56 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       .execute<IdentityNotificationEntity>(
         `
         SELECT n.* FROM ${IDENTITY_NOTIFICATIONS_TABLE} n
-        JOIN ${IDENTITIES_TABLE} i ON n.additional_identity_id = i.profile_id
         LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
           ON r.wave_id = n.wave_id
           AND r.reader_id = n.identity_id
         LEFT JOIN ${IDENTITY_MUTES_TABLE} m
           ON m.muter_id = n.identity_id
           AND m.muted_identity_id = n.additional_identity_id
+        LEFT JOIN ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} b
+          ON b.blocker_profile_id = n.identity_id
+          AND b.blocked_profile_id = n.additional_identity_id
+        LEFT JOIN ${CONTENT_MODERATION_DROP_STATES_TABLE} d1
+          ON d1.drop_id = n.related_drop_id
+        LEFT JOIN ${CONTENT_MODERATION_DROP_STATES_TABLE} d2
+          ON d2.drop_id = n.related_drop_2_id
+        LEFT JOIN ${DROPS_TABLE} rd1
+          ON rd1.id = n.related_drop_id
+        LEFT JOIN ${DROPS_TABLE} rd2
+          ON rd2.id = n.related_drop_2_id
         WHERE n.identity_id = :identity_id ${
           param.id_less_than === null ? `` : `AND n.id < :id_less_than`
         }
+        AND (
+          n.additional_identity_id IS NULL
+          OR EXISTS (
+            SELECT 1
+            FROM ${IDENTITIES_TABLE} i
+            WHERE i.profile_id = n.additional_identity_id
+          )
+        )
         AND (n.visibility_group_id IS NULL ${
           param.eligible_group_ids.length
             ? ` OR n.visibility_group_id IN (:eligible_group_ids) `
             : ``
         })
+        AND ${optionalWaveReadAccessSql('n.wave_id', param.eligible_group_ids.length > 0, 'eligible_group_ids')}
         ${causes ? ` AND n.cause IN (:causes)` : ``}
         ${causesExclude ? ` AND n.cause NOT IN (:causesExclude)` : ``}
         ${param.unread_only ? ` AND n.read_at IS NULL` : ``}
         AND COALESCE(r.muted, FALSE) = FALSE
         AND m.id IS NULL
+        AND b.id IS NULL
+        AND (
+          d1.status IS NULL
+          OR d1.status = '${DropModerationStatus.VISIBLE}'
+          OR rd1.author_id = n.identity_id
+        )
+        AND (
+          d2.status IS NULL
+          OR d2.status = '${DropModerationStatus.VISIBLE}'
+          OR rd2.author_id = n.identity_id
+        )
         ORDER BY n.id DESC LIMIT :limit
       `,
         { ...param, causes, causesExclude },
@@ -422,6 +528,17 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         LEFT JOIN ${IDENTITY_MUTES_TABLE} m
           ON m.muter_id = n.identity_id
           AND m.muted_identity_id = n.additional_identity_id
+        LEFT JOIN ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} b
+          ON b.blocker_profile_id = n.identity_id
+          AND b.blocked_profile_id = n.additional_identity_id
+        LEFT JOIN ${CONTENT_MODERATION_DROP_STATES_TABLE} d1
+          ON d1.drop_id = n.related_drop_id
+        LEFT JOIN ${CONTENT_MODERATION_DROP_STATES_TABLE} d2
+          ON d2.drop_id = n.related_drop_2_id
+        LEFT JOIN ${DROPS_TABLE} rd1
+          ON rd1.id = n.related_drop_id
+        LEFT JOIN ${DROPS_TABLE} rd2
+          ON rd2.id = n.related_drop_2_id
         WHERE (
           (
             n.identity_id = :identity_id
@@ -431,8 +548,20 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
                 ? ` OR n.visibility_group_id IN (:eligibleGroupIds) `
                 : ``
             })
+            AND ${optionalWaveReadAccessSql('n.wave_id', eligibleGroupIds.length > 0)}
             AND COALESCE(r.muted, FALSE) = FALSE
             AND m.id IS NULL
+            AND b.id IS NULL
+            AND (
+              d1.status IS NULL
+              OR d1.status = '${DropModerationStatus.VISIBLE}'
+              OR rd1.author_id = n.identity_id
+            )
+            AND (
+              d2.status IS NULL
+              OR d2.status = '${DropModerationStatus.VISIBLE}'
+              OR rd2.author_id = n.identity_id
+            )
           )
         )${causeClause}
       `,
@@ -459,7 +588,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async findIdentitiesNotification(
+  async findIdentitiesNotifiedForDropCreation(
     waveId: string,
     dropId: string,
     connection?: ConnectionWrapper<any>
@@ -468,8 +597,23 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       .execute<{
         identity_id: string;
       }>(
-        `select identity_id from ${IDENTITY_NOTIFICATIONS_TABLE} where wave_id = :waveId and (related_drop_id = :dropId or related_drop_2_id = :dropId)`,
-        { waveId, dropId },
+        `
+          select distinct identity_id
+          from ${IDENTITY_NOTIFICATIONS_TABLE}
+          where wave_id = :waveId
+            and related_drop_id = :dropId
+            and cause in (:causes)
+        `,
+        {
+          waveId,
+          dropId,
+          causes: [
+            IdentityNotificationCause.DROP_REPLIED,
+            IdentityNotificationCause.DROP_QUOTED,
+            IdentityNotificationCause.IDENTITY_MENTIONED,
+            IdentityNotificationCause.ALL_DROPS
+          ]
+        },
         { wrappedConnection: connection }
       )
       .then((it) => it.map((it) => it.identity_id));

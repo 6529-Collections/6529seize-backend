@@ -1,55 +1,23 @@
-# requires `gh` authenticated for the repo
-# Make sure all actual lambdas are represented in SERVICES.
-# If you want to deploy to staging then make sure you set the correct branch and environment!
-SERVICES=(
-  api
-  aggregatedActivityLoop
-  attachmentsOrchestrator
-  attachmentsProcessor
-  cloudwatchAlarmsToDiscordLoop
-  claimsBuilder
-  claimsMediaArweaveUploader
-  customReplayLoop
-  dbDumpsDaily
-  dbMigrationsLoop
-  delegationsLoop
-  discoverEnsLoop
-  dropVideoConversionInvokerLoop
-  ethPriceLoop
-  marketStatsLoop
-  mediaResizerLoop
-  nextgenContractLoop
-  nextgenMediaImageResolutions
-  nextgenMediaProxyInterceptor
-  nextgenMediaUploader
-  nextgenMetadataLoop
-  nftHistoryLoop
-  nftLinkMediaPreviewLoop
-  nftOwnersLoop
-  nftsLoop
-  overRatesRevocationLoop
-  ownersBalancesLoop
-  populateHistoricConsolidatedTdh
-  pushNotificationsHandler
-  rateEventProcessingLoop
-  refreshEnsLoop
-  rememesLoop
-  royaltiesLoop
-  s3Uploader
-  subscriptionsDaily
-  subscriptionsTopUpLoop
-  tdhHistoryLoop
-  tdhLoop
-  teamLoop
-  transactionsLoop
-  transactionsProcessingLoop
-  waveDecisionExecutionLoop
-  waveLeaderboardSnapshotterLoop
-)
+#!/usr/bin/env bash
+set -euo pipefail
 
-for s in "${SERVICES[@]}"; do
-  gh workflow run "Deploy a service" \
-    -f environment=prod \
-    -f service="$s" \
-    -R 6529-Collections/6529seize-backend
+if [ "$#" -lt 3 ]; then
+  echo "Usage: $0 <branch> <staging|prod> <service>... [-- release_input=value ...]" >&2
+  echo "List the required services in dependency order; each run must succeed before the next starts." >&2
+  exit 2
+fi
+deploy_branch="$1"
+deploy_environment="$2"
+shift 2
+deploy_services=()
+while [ "$#" -gt 0 ] && [ "$1" != -- ]; do
+  deploy_services+=("$1")
+  shift
+done
+if [ "$#" -gt 0 ]; then shift; fi
+if [ "${#deploy_services[@]}" -eq 0 ]; then exit 2; fi
+deploy_script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+for deploy_service in "${deploy_services[@]}"; do
+  bash "$deploy_script_directory/deploy-lambda.sh" \
+    "$deploy_branch" "$deploy_environment" "$deploy_service" "$@"
 done

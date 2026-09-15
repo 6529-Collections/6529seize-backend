@@ -1,5 +1,6 @@
 import { consolidationTools } from '../consolidation-tools';
 import {
+  ConsolidatedTdhPersistenceScope,
   fetchAllConsolidatedTdh,
   fetchAllTDH,
   fetchConsolidationDisplay,
@@ -20,7 +21,9 @@ import {
 } from '../entities/ITDH';
 import { Logger } from '../logging';
 import { fetchNextgenTokens } from '../nextgen/nextgen.db';
+import { sqs } from '../sqs';
 import { equalIgnoreCase } from '../strings';
+import { XTDH_LOOP_PHASE } from '../xtdh/xtdh-loop-phase';
 import {
   calculateBoosts,
   calculateRanks,
@@ -29,10 +32,20 @@ import {
   getGenesisAndNaka
 } from './tdh';
 import { calculateTdhEditions } from './tdh_editions';
+import { getConsolidationWallets } from './consolidation-wallets';
 import { calculateMemesTdh } from './tdh_memes';
-import { updateNftTDH } from './tdh_nft';
+import { calculateNftTDH } from './tdh_nft';
 
 const logger = Logger.get('TDH_CONSOLIDATION');
+const XTDH_LOOP_QUEUE_NAME = 'xtdh-start.fifo';
+
+export type TdhConsolidationRequest =
+  | { readonly mode: 'FULL' }
+  | {
+      readonly mode: 'PARTIAL';
+      readonly wallets: string[];
+      readonly currentConsolidatedTdh: ConsolidatedTDH[];
+    };
 
 export async function consolidateTDHForWallets(
   tdh: TDHENS[],
@@ -258,13 +271,19 @@ export const consolidateMissingWallets = async (
 export const consolidateAndPersistTDH = async (
   block: number,
   blockTimestamp: Date,
-  startingWallets?: string[]
+  request: TdhConsolidationRequest
 ): Promise<ConsolidatedTDH[]> => {
-  const { adjustedSeasons, consolidatedTdh } = await consolidateTDH(
-    block,
-    blockTimestamp,
-    startingWallets
-  );
+  const startingWallets =
+    request.mode === 'PARTIAL' ? request.wallets : undefined;
+  const currentConsolidatedTdh =
+    request.mode === 'PARTIAL' ? request.currentConsolidatedTdh : undefined;
+  const { adjustedSeasons, consolidatedTdh, consolidationKeysToReplace } =
+    await consolidateTDH(
+      block,
+      blockTimestamp,
+      startingWallets,
+      currentConsolidatedTdh
+    );
   const memesTdh = (await calculateMemesTdh(
     adjustedSeasons,
     consolidatedTdh,
@@ -272,27 +291,57 @@ export const consolidateAndPersistTDH = async (
   )) as ConsolidatedTDHMemes[];
 
   const tdhEditions = await calculateTdhEditions(consolidatedTdh, true);
+  const nftTdh = calculateNftTDH(consolidatedTdh);
 
+  assertNoOverlappingConsolidationWallets(consolidatedTdh);
+  let persistenceScope: ConsolidatedTdhPersistenceScope = { mode: 'FULL' };
+  if (request.mode === 'PARTIAL') {
+    if (!consolidationKeysToReplace) {
+      throw new Error(
+        'Partial TDH consolidation did not resolve exact persistence keys'
+      );
+    }
+    persistenceScope = {
+      mode: 'PARTIAL',
+      wallets: request.wallets,
+      consolidationKeysToReplace
+    };
+  }
   await persistConsolidatedTDH(
     block,
     consolidatedTdh,
     memesTdh,
     tdhEditions,
-    startingWallets
+    nftTdh,
+    persistenceScope
   );
-  await updateNftTDH(consolidatedTdh, startingWallets);
   await persistTDHBlock(block, blockTimestamp, consolidatedTdh);
+  if (request.mode === 'PARTIAL') {
+    await enqueuePartialTdhUniverseRecalculation();
+  }
 
   return consolidatedTdh;
 };
 
+async function enqueuePartialTdhUniverseRecalculation(): Promise<void> {
+  await sqs.sendToQueueName({
+    queueName: XTDH_LOOP_QUEUE_NAME,
+    message: {
+      phase: XTDH_LOOP_PHASE.UNIVERSE,
+      queued_at_ms: Date.now()
+    }
+  });
+}
+
 export const consolidateTDH = async (
   block: number,
   blockTimestamp: Date,
-  startingWallets?: string[]
+  startingWallets?: string[],
+  currentConsolidatedTdh?: ConsolidatedTDH[]
 ): Promise<{
   adjustedSeasons: MemesSeason[];
   consolidatedTdh: ConsolidatedTDH[];
+  consolidationKeysToReplace?: string[];
 }> => {
   const tdh: TDHENS[] = await fetchAllTDH(block, startingWallets);
   const NEXTGEN_NFTS: NextGenToken[] = await fetchNextgenTokens();
@@ -329,6 +378,7 @@ export const consolidateTDH = async (
   }
 
   let rankedTdh: ConsolidatedTDH[];
+  let consolidationKeysToReplace: string[] | undefined;
   if (startingWallets) {
     const startingWalletsSet = new Set(
       startingWallets.filter(Boolean).map((sw) => sw.toLowerCase())
@@ -337,10 +387,16 @@ export const consolidateTDH = async (
       t.wallets.some(
         (tw: string) => !!tw && startingWalletsSet.has(tw.toLowerCase())
       );
-    const allCurrentTdh = await fetchAllConsolidatedTdh();
+    const allCurrentTdh =
+      currentConsolidatedTdh ?? (await fetchAllConsolidatedTdh());
+    const rowsToReplace = allCurrentTdh.filter(containsStartingWallet);
+    consolidationKeysToReplace = rowsToReplace.map(
+      (row) => row.consolidation_key
+    );
     const allTdh = allCurrentTdh
       .filter((t: ConsolidatedTDH) => !containsStartingWallet(t))
       .concat(consolidatedBoostedTdh);
+    assertNoOverlappingConsolidationWallets(allTdh);
     const allRankedTdh = await calculateRanks(
       allGradientsTDH,
       allNextgenTDH,
@@ -364,9 +420,33 @@ export const consolidateTDH = async (
   logger.info(`[FINAL ENTRIES ${rankedTdh.length}]`);
   return {
     adjustedSeasons: ADJUSTED_SEASONS,
-    consolidatedTdh: rankedTdh
+    consolidatedTdh: rankedTdh,
+    consolidationKeysToReplace
   };
 };
+
+export function assertNoOverlappingConsolidationWallets(
+  consolidations: ConsolidatedTDH[]
+): void {
+  const consolidationByWallet = new Map<string, string>();
+  for (const consolidation of consolidations) {
+    const wallets = getConsolidationWallets(consolidation);
+    for (const rawWallet of wallets) {
+      const wallet = rawWallet.toLowerCase();
+      const existingConsolidation = consolidationByWallet.get(wallet);
+      if (
+        existingConsolidation &&
+        existingConsolidation !== consolidation.consolidation_key
+      ) {
+        throw new Error(
+          `Wallet ${wallet} appears in multiple TDH consolidations: ` +
+            `${existingConsolidation} and ${consolidation.consolidation_key}`
+        );
+      }
+      consolidationByWallet.set(wallet, consolidation.consolidation_key);
+    }
+  }
+}
 
 export function consolidateCards(
   consolidationTokens: TokenTDH[],

@@ -124,6 +124,13 @@ export class DropMentionedWaveEntity {
   readonly wave_id!: string;
 }
 
+/**
+ * Global mention tokens present in the drop's current content.
+ *
+ * These rows are presentation/query metadata, not a record of which profiles
+ * received notifications. Editing a drop replaces them without replaying the
+ * original or edited group notification audience.
+ */
 @Entity(DROP_MENTIONED_GROUPS_TABLE)
 export class DropGroupMentionEntity {
   @PrimaryColumn({ type: 'varchar', length: 100 })

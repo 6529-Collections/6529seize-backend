@@ -37,6 +37,35 @@ functions:
       SUBSCRIPTIONS_RESET: false
       DISABLE_DISCORD_NOTIFICATIONS: ${self:custom.disableDiscord.${opt:stage, self:provider.stage}, false}
 
+  subscriptionCoverageReconciliationLoop:
+    handler: index.subscriptionCoverageReconciliationHandler
+    memorySize: 1024
+    reservedConcurrency: 1
+    name: subscriptionCoverageReconciliationLoop
+    description: ${env:VERSION_DESCRIPTION}
+    events:
+      - schedule:
+          rate: rate(1 minute)
+          input:
+            mode: 'DIRTY'
+      - schedule:
+          rate: rate(1 hour)
+          input:
+            mode: 'FULL'
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'subscriptionCoverageReconciliationLoop_${opt:stage, self:provider.stage}'
+      SUBSCRIPTION_COVERAGE_ENVIRONMENT: ${opt:stage, self:provider.stage}
+      FEATURE_SUBSCRIPTION_COVERAGE_NOTIFICATIONS: ${env:FEATURE_SUBSCRIPTION_COVERAGE_NOTIFICATIONS, 'true'}
+      SUBSCRIPTION_COVERAGE_DRY_RUN: ${env:SUBSCRIPTION_COVERAGE_DRY_RUN, 'false'}
+      SUBSCRIPTION_COVERAGE_BASELINE_ONLY: ${env:SUBSCRIPTION_COVERAGE_BASELINE_ONLY, 'false'}
+      SUBSCRIPTION_COVERAGE_NOTIFY_INITIAL_CRITICAL: ${env:SUBSCRIPTION_COVERAGE_NOTIFY_INITIAL_CRITICAL, 'false'}
+      SUBSCRIPTION_COVERAGE_PUSH_ENABLED: ${env:SUBSCRIPTION_COVERAGE_PUSH_ENABLED, 'true'}
+
 resources:
   Resources:
     SubscriptionsDailyOOMFilter:
@@ -58,6 +87,45 @@ resources:
         AlarmDescription: !Sub "Lambda subscriptionsDaily OutOfMemory in ${AWS::Region}"
         Namespace: "Lambda/OOM"
         MetricName: "subscriptionsDaily_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    SubscriptionCoverageReconciliationLoopLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/subscriptionCoverageReconciliationLoop
+        RetentionInDays: 60
+
+    SubscriptionCoverageReconciliationLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn:
+        - SubscriptionCoverageReconciliationLoopLogGroup
+      Properties:
+        LogGroupName:
+          Ref: SubscriptionCoverageReconciliationLoopLogGroup
+        FilterPattern: 'Runtime.OutOfMemory'
+        MetricTransformations:
+          - MetricNamespace: 'Lambda/OOM'
+            MetricName: 'subscriptionCoverageReconciliationLoop_OOMErrorCount'
+            MetricValue: 1
+            DefaultValue: 0
+
+    SubscriptionCoverageReconciliationLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: SubscriptionCoverageReconciliationLoopOOMFilter
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-subscriptionCoverageReconciliationLoop-OOM'
+        AlarmDescription: !Sub 'Lambda subscriptionCoverageReconciliationLoop OutOfMemory in ${AWS::Region}'
+        Namespace: 'Lambda/OOM'
+        MetricName: 'subscriptionCoverageReconciliationLoop_OOMErrorCount'
         Statistic: Sum
         Period: 60
         EvaluationPeriods: 1

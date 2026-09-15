@@ -152,7 +152,7 @@ export function getDropMediaInfoForPush(
   return getMediaInfoForUrl(url);
 }
 
-function isSupportedMediaUrl(url: string): boolean {
+export function isSupportedMediaUrl(url: string): boolean {
   const cleanUrl = url.split(/[?#]/)[0].toLowerCase();
   return Object.keys(SUPPORTED_MEDIA_EXTENSIONS_BY_LABEL).some((extension) =>
     cleanUrl.endsWith(extension)
@@ -269,8 +269,12 @@ function replaceMarkdownMediaReferences(input: string): string {
 }
 
 export function sanitizePushNotificationText(input: string): string {
-  return replaceMarkdownMediaReferences(input)
-    .replace(MEDIA_URL_PATTERN, ' ')
+  return removePushNotificationMediaUrls(replaceMarkdownMediaReferences(input))
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
+}
+
+/** Remove bare media destinations without trimming adjacent readable text. */
+export function removePushNotificationMediaUrls(input: string): string {
+  return input.replace(MEDIA_URL_PATTERN, ' ');
 }

@@ -3,7 +3,12 @@ import {
   frontendHelpBotKnowledgeSource,
   HelpBotKnowledgeSource,
   HelpBotKnowledgeRecord,
-  HelpBotKnowledgeMatch
+  HelpBotKnowledgeMatch,
+  isAmbiguousWalletManagementQuestion,
+  isMultiWalletLimitQuestion,
+  isMultiWalletRemovalQuestion,
+  isMultiWalletReplacementQuestion,
+  isMultiWalletSetupQuestion
 } from './help-bot.knowledge';
 import {
   HelpBotCalendarService,
@@ -27,6 +32,10 @@ import {
   HELP_BOT_QUESTION_CREDIT_COST,
   HELP_BOT_SIGNUP_CREDIT_GRANT
 } from './help-bot.config';
+import {
+  frontendStreamKnowledgeSource,
+  HelpBotStreamKnowledgeSource
+} from './help-bot-stream-knowledge';
 
 export interface HelpBotAnswerRequest {
   readonly question: string;
@@ -73,6 +82,8 @@ const HELP_BOT_CREDIT_CATEGORY_PATH = `/rep/categories/${encodeURIComponent(
   HELP_BOT_CREDIT_CATEGORY
 )}`;
 const MAX_KNOWLEDGE_SOURCE_LINKS = 3;
+const MAX_STREAM_KNOWLEDGE_SOURCE_LINKS = 2;
+const MAX_RENDERED_ANSWER_CHARACTERS = 1200;
 const ROUTE_METADATA_FACT_PATTERN =
   /\b(?:lives|live|is|are)\s+(?:at|on)\s+\/[a-z0-9/{]/i;
 
@@ -170,7 +181,8 @@ function linkLabelForPath(
 
 function buildKnowledgeSourceLinks(
   record: HelpBotKnowledgeRecord,
-  baseUrl: string
+  baseUrl: string,
+  maxLinks = MAX_KNOWLEDGE_SOURCE_LINKS
 ): HelpBotSourceLink[] {
   const canonicalPath = safeCanonicalPath(record);
   const candidatePaths = [canonicalPath, ...record.relatedPaths];
@@ -190,7 +202,7 @@ function buildKnowledgeSourceLinks(
       label: linkLabelForPath(path, canonicalPath, record.linkLabel),
       url
     });
-    if (links.length >= MAX_KNOWLEDGE_SOURCE_LINKS) {
+    if (links.length >= maxLinks) {
       break;
     }
   }
@@ -256,10 +268,378 @@ function ensureKnowledgeMarkdownLinks({
     : replaceMoreInfoLine(withCanonicalLink, links);
 }
 
+interface StreamEvidenceSummary {
+  readonly kind?: string;
+  readonly title?: string;
+  readonly scope?: string;
+  readonly classification?: string;
+  readonly summary?: string;
+  readonly text?: string;
+  readonly technical?: {
+    readonly declaration?: {
+      readonly canonicalSignature?: string;
+      readonly displaySignature?: string;
+      readonly inputs?: unknown[];
+      readonly outputs?: unknown[];
+      readonly visibility?: string;
+      readonly stateMutability?: string;
+    };
+  };
+}
+
+interface StreamDevelopmentStatusItem {
+  readonly text?: string;
+}
+
+interface StreamDevelopmentStatusEvidence extends StreamEvidenceSummary {
+  readonly structured?: {
+    readonly checkedAt?: string;
+    readonly exactStatusUnavailable?: boolean;
+    readonly headline?: string;
+    readonly recentlyCompleted?: readonly StreamDevelopmentStatusItem[];
+    readonly workingOn?: readonly StreamDevelopmentStatusItem[];
+    readonly beforeLaunch?: readonly StreamDevelopmentStatusItem[];
+  };
+}
+
+function streamEvidenceSummary(fact: string): string | null {
+  try {
+    const evidence = JSON.parse(fact) as StreamEvidenceSummary;
+    const declaration = evidence.technical?.declaration;
+    const technicalSummary = declaration
+      ? [
+          declaration.canonicalSignature ??
+            declaration.displaySignature ??
+            evidence.title,
+          `inputs ${JSON.stringify(declaration.inputs ?? [])}`,
+          `outputs ${JSON.stringify(declaration.outputs ?? [])}`,
+          declaration.visibility,
+          declaration.stateMutability,
+          evidence.scope,
+          evidence.classification
+        ]
+          .filter(Boolean)
+          .join('; ')
+      : null;
+    return `${evidence.title ?? 'Evidence'}: ${
+      technicalSummary ??
+      evidence.summary ??
+      evidence.text ??
+      'See the pinned review evidence.'
+    }`;
+  } catch {
+    return null;
+  }
+}
+
+function streamDevelopmentStatusEvidence(
+  record: HelpBotKnowledgeRecord
+): StreamDevelopmentStatusEvidence | null {
+  if (!record.tags.includes('development_status')) {
+    return null;
+  }
+  for (const fact of record.facts) {
+    if (!fact.startsWith('{')) {
+      continue;
+    }
+    try {
+      const evidence = JSON.parse(fact) as StreamDevelopmentStatusEvidence;
+      if (evidence.kind === 'development_status' && evidence.structured) {
+        return evidence;
+      }
+    } catch {
+      // Ignore non-evidence facts.
+    }
+  }
+  return null;
+}
+
+function developmentStatusTexts(
+  items: readonly StreamDevelopmentStatusItem[] | undefined
+): string[] {
+  return (items ?? []).map((item) => item.text?.trim() ?? '').filter(Boolean);
+}
+
+function appendNumberedStatusItems(
+  lines: string[],
+  label: string,
+  items: readonly string[]
+): void {
+  if (!items.length) {
+    return;
+  }
+  lines.push(`${label}:`);
+  items.forEach((item, index) => lines.push(`${index + 1}. ${item}`));
+}
+
+function isContractSizeStatusQuestion(question: string): boolean {
+  return /\b(?:headroom|bytecode|contract[ -]size|size target)\b/.test(
+    question
+  );
+}
+
+function buildStreamDevelopmentStatusAnswer(
+  question: string,
+  record: HelpBotKnowledgeRecord,
+  baseUrl: string
+): string | null {
+  const evidence = streamDevelopmentStatusEvidence(record);
+  const structured = evidence?.structured;
+  if (!structured) {
+    return null;
+  }
+  if (structured.exactStatusUnavailable) {
+    return composeStreamAnswer(
+      'The exact current Stream development status could not fit in the verified evidence packet. Please use the linked development update for the complete figures and checklist.',
+      record,
+      baseUrl
+    );
+  }
+  const normalizedQuestion = question.toLowerCase();
+  const wantsCompleted =
+    /\b(?:completed|finished|done)\b/.test(normalizedQuestion) ||
+    isContractSizeStatusQuestion(normalizedQuestion);
+  const wantsWorking = /\b(?:working|in progress|progress|underway)\b/.test(
+    normalizedQuestion
+  );
+  const wantsBeforeLaunch =
+    /\b(?:before launch|launch|remain|remaining|still needed|left to do)\b/.test(
+      normalizedQuestion
+    );
+  const specificQuestion = wantsCompleted || wantsWorking || wantsBeforeLaunch;
+  const lines: string[] = [];
+  if (structured.checkedAt) {
+    lines.push(
+      `The latest checked Stream development update is dated ${structured.checkedAt.slice(0, 10)}.`
+    );
+  }
+  if (!specificQuestion && structured.headline) {
+    lines.push(structured.headline);
+  }
+  const substantiveLineStart = lines.length;
+
+  const completed = developmentStatusTexts(structured.recentlyCompleted);
+  const matchingCompletedItems = isContractSizeStatusQuestion(
+    normalizedQuestion
+  )
+    ? completed.filter((item) =>
+        /\b(?:headroom|contract-size|size limit)\b/i.test(item)
+      )
+    : completed;
+  const completedItems = matchingCompletedItems.length
+    ? matchingCompletedItems
+    : completed;
+  if (wantsCompleted) {
+    appendNumberedStatusItems(lines, 'Recently completed', completedItems);
+  }
+  if (wantsWorking || !specificQuestion) {
+    appendNumberedStatusItems(
+      lines,
+      'Work in progress',
+      developmentStatusTexts(structured.workingOn)
+    );
+  }
+  if (wantsBeforeLaunch || !specificQuestion) {
+    appendNumberedStatusItems(
+      lines,
+      'Before launch',
+      developmentStatusTexts(structured.beforeLaunch)
+    );
+  }
+  if (lines.length === substantiveLineStart) {
+    if (structured.headline) {
+      lines.push(structured.headline);
+    }
+    appendNumberedStatusItems(
+      lines,
+      'Work in progress',
+      developmentStatusTexts(structured.workingOn)
+    );
+    appendNumberedStatusItems(
+      lines,
+      'Before launch',
+      developmentStatusTexts(structured.beforeLaunch)
+    );
+  }
+  if (!lines.length) {
+    return null;
+  }
+  return composeStreamAnswer(lines.join('\n'), record, baseUrl);
+}
+
+function truncateAtNaturalBoundary(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  const prefix = value.slice(0, maxLength + 1);
+  const sentenceEnd = Math.max(
+    prefix.lastIndexOf('. '),
+    prefix.lastIndexOf('? '),
+    prefix.lastIndexOf('! ')
+  );
+  const boundary =
+    sentenceEnd >= Math.floor(maxLength * 0.6)
+      ? sentenceEnd + 1
+      : prefix.lastIndexOf(' ');
+  return prefix.slice(0, boundary > 0 ? boundary : maxLength).trimEnd();
+}
+
+function truncateStreamProse(value: string, maxLength: number): string {
+  if (maxLength <= 0) {
+    return '';
+  }
+  if (value.length <= maxLength) {
+    return value;
+  }
+  const candidate = truncateAtNaturalBoundary(value, maxLength);
+  if (/[.!?]$/.test(candidate)) {
+    return candidate;
+  }
+  if (maxLength === 1) {
+    return '…';
+  }
+  const shortened = truncateAtNaturalBoundary(value, maxLength - 1).replace(
+    /[,:;]$/,
+    ''
+  );
+  return `${shortened}…`;
+}
+
+function startsWithLinkTarget(value: string, index: number): boolean {
+  return (
+    value.startsWith('https://', index) ||
+    value.startsWith('http://', index) ||
+    value[index] === '/'
+  );
+}
+
+function skipUrl(value: string, start: number): number {
+  let index = start;
+  while (
+    index < value.length &&
+    value[index] !== ' ' &&
+    value[index] !== '\t' &&
+    value[index] !== '\n' &&
+    value[index] !== ')'
+  ) {
+    index += 1;
+  }
+  return index;
+}
+
+function stripLinksFromStreamLine(line: string): string {
+  let result = '';
+  let index = 0;
+  while (index < line.length) {
+    if (
+      line.startsWith('https://', index) ||
+      line.startsWith('http://', index)
+    ) {
+      index = skipUrl(line, index);
+      continue;
+    }
+    if (line[index] === '[') {
+      const labelEnd = line.indexOf(']', index + 1);
+      const targetStart = labelEnd + 2;
+      if (
+        labelEnd !== -1 &&
+        line[labelEnd + 1] === '(' &&
+        startsWithLinkTarget(line, targetStart)
+      ) {
+        result += line.slice(index + 1, labelEnd);
+        const targetEnd = line.indexOf(')', targetStart);
+        index = targetEnd === -1 ? line.length : targetEnd + 1;
+        continue;
+      }
+    }
+    result += line[index];
+    index += 1;
+  }
+  return result;
+}
+
+function normalizeStreamWhitespace(value: string): string {
+  let result = '';
+  let previousWasSpace = false;
+  for (const character of value) {
+    if (character === ' ' || character === '\t') {
+      previousWasSpace = true;
+      continue;
+    }
+    if (character === '\n') {
+      result = result.trimEnd();
+      result += '\n';
+      previousWasSpace = false;
+      continue;
+    }
+    if (previousWasSpace && result && !result.endsWith('\n')) {
+      result += ' ';
+    }
+    result += character;
+    previousWasSpace = false;
+  }
+  return result.trim();
+}
+
+function stripModelGeneratedStreamLinks(value: string): string {
+  const lines = value
+    .split('\n')
+    .filter((line) => !line.trimStart().toLowerCase().startsWith('more info:'))
+    .map(stripLinksFromStreamLine);
+  return normalizeStreamWhitespace(lines.join('\n'));
+}
+
+function composeStreamAnswer(
+  text: string,
+  record: HelpBotKnowledgeRecord,
+  baseUrl: string
+): string {
+  const body = stripModelGeneratedStreamLinks(stripHelpBotSelfIntro(text));
+  const links = buildKnowledgeSourceLinks(
+    record,
+    baseUrl,
+    MAX_STREAM_KNOWLEDGE_SOURCE_LINKS
+  );
+  if (!links.length || record.suppressSourceLinks) {
+    return truncateStreamProse(body, MAX_RENDERED_ANSWER_CHARACTERS);
+  }
+  const footer = `More info: ${sourceLinksMarkdown(links)}`;
+  const separator = body ? '\n\n' : '';
+  const bodyBudget = Math.max(
+    0,
+    MAX_RENDERED_ANSWER_CHARACTERS - separator.length - footer.length
+  );
+  const boundedBody = truncateStreamProse(body, bodyBudget);
+  return boundedBody ? `${boundedBody}\n\n${footer}` : footer;
+}
+
+function buildStreamEvidenceAnswer(
+  record: HelpBotKnowledgeRecord,
+  baseUrl: string
+): string {
+  const ambiguity = record.facts.find((fact) => fact.startsWith('AMBIGUITY:'));
+  const summaries = record.facts
+    .filter((fact) => fact.startsWith('{'))
+    .map(streamEvidenceSummary)
+    .filter((summary): summary is string => !!summary)
+    .slice(0, 3);
+  const answer = ambiguity
+    ? ambiguity.slice('AMBIGUITY:'.length).trim()
+    : summaries.join(' ');
+  return composeStreamAnswer(
+    answer || 'See the pinned Stream review evidence for this question.',
+    record,
+    baseUrl
+  );
+}
+
 function buildDeterministicAnswer(
   record: HelpBotKnowledgeRecord,
   baseUrl: string
 ): string {
+  if (record.kind === 'public_review_knowledge') {
+    return buildStreamEvidenceAnswer(record, baseUrl);
+  }
   return ensureKnowledgeMarkdownLinks({
     text: record.facts.join(' '),
     record,
@@ -272,12 +652,17 @@ function normalizeRenderedAnswer(
   record: HelpBotKnowledgeRecord,
   baseUrl: string
 ): string {
+  if (record.kind === 'public_review_knowledge') {
+    return composeStreamAnswer(text, record, baseUrl);
+  }
   const withUrl = ensureKnowledgeMarkdownLinks({
     text: stripHelpBotSelfIntro(text),
     record,
     baseUrl
   });
-  return withUrl.length <= 1200 ? withUrl : `${withUrl.slice(0, 1197)}...`;
+  return withUrl.length <= MAX_RENDERED_ANSWER_CHARACTERS
+    ? withUrl
+    : `${withUrl.slice(0, MAX_RENDERED_ANSWER_CHARACTERS - 3)}...`;
 }
 
 function buildPublicDataRecord(): HelpBotKnowledgeRecord {
@@ -693,6 +1078,7 @@ const PRODUCT_CONTEXT_PATTERNS = [
   /\bnextgen\b/,
   /\brememe(s)?\b/,
   /\bdrop forge\b/,
+  /\bstream\b/,
   /\bsubscription(s)?\b/,
   /\beligibility\b/,
   /\bprofile(s)?\b/,
@@ -916,7 +1302,14 @@ function mergeKnowledgeMatches(
 
 function isLikelyProductText(value: string | null | undefined): boolean {
   const normalized = normalizeBoundaryText(value ?? '');
-  return PRODUCT_CONTEXT_PATTERNS.some((pattern) => pattern.test(normalized));
+  return (
+    PRODUCT_CONTEXT_PATTERNS.some((pattern) => pattern.test(normalized)) ||
+    isMultiWalletSetupQuestion(normalized) ||
+    isMultiWalletLimitQuestion(normalized) ||
+    isMultiWalletRemovalQuestion(normalized) ||
+    isMultiWalletReplacementQuestion(normalized) ||
+    isAmbiguousWalletManagementQuestion(normalized)
+  );
 }
 
 function isLikelyProductQuestion(
@@ -1082,7 +1475,7 @@ function buildGenericHelpAnswer(question: string): string | null {
   if (!isGenericHelpRequest(normalizedQuestion)) {
     return null;
   }
-  return `What do you need help with? I can answer public 6529 product questions about TDH, REP/CIC/NIC, Waves, drops, delegation, consolidations, subscriptions, profiles, The Memes, Meme Lab, Gradients, NextGen, public data, the API, and where to find things on 6529.io. I use ${HELP_BOT_CREDIT_CATEGORY} REP too: each question costs ${HELP_BOT_QUESTION_CREDIT_COST} credit, with grants from signup, profile setup, and daily activity. Reply with a topic or question.`;
+  return `What do you need help with? I can answer public 6529 product questions about TDH, REP/CIC/NIC, Waves, drops, delegation, consolidations, subscriptions, profiles, The Memes, Meme Lab, Gradients, NextGen, the Stream review, public data, the API, and where to find things on 6529.io. I use ${HELP_BOT_CREDIT_CATEGORY} REP too: each question costs ${HELP_BOT_QUESTION_CREDIT_COST} credit, with grants from signup, profile setup, and daily activity. Reply with a topic or question.`;
 }
 
 function buildSocialAnswer(question: string): string | null {
@@ -1110,7 +1503,8 @@ export class HelpBotAnswerer {
     private readonly renderer?: HelpBotLlmRenderer | null,
     private readonly knowledgeSource: HelpBotKnowledgeSource = frontendHelpBotKnowledgeSource,
     private readonly publicDataService?: HelpBotPublicDataService | null,
-    private readonly calendarService?: HelpBotCalendarService | null
+    private readonly calendarService?: HelpBotCalendarService | null,
+    private readonly streamKnowledgeSource: HelpBotStreamKnowledgeSource = frontendStreamKnowledgeSource
   ) {}
 
   public async answer(
@@ -1165,6 +1559,11 @@ export class HelpBotAnswerer {
         answer: socialAnswer,
         record: buildSocialRecord()
       };
+    }
+
+    const streamMatch = await this.findStreamKnowledgeMatch(request);
+    if (streamMatch) {
+      return this.answerFromKnowledgeMatch(request, streamMatch);
     }
 
     const expectsCalendarAnswer = isCalendarTimingQuestion(
@@ -1223,6 +1622,13 @@ export class HelpBotAnswerer {
       };
     }
 
+    return this.answerFromKnowledgeMatch(request, match);
+  }
+
+  private async answerFromKnowledgeMatch(
+    request: HelpBotAnswerRequest,
+    match: HelpBotKnowledgeMatch
+  ): Promise<HelpBotAnswerResult> {
     const exactDefinitionMatch = isExactDefinitionMatch(
       request.question,
       match.record
@@ -1245,6 +1651,20 @@ export class HelpBotAnswerer {
 
     const maybeWithWeakCaveat = (answer: string) =>
       escalateToTechTeam ? appendWeakMatchPrefix(answer) : answer;
+
+    const developmentStatusAnswer = buildStreamDevelopmentStatusAnswer(
+      request.question,
+      answerRecord,
+      request.baseUrl
+    );
+    if (developmentStatusAnswer) {
+      return {
+        type: 'ANSWER',
+        answer: maybeWithWeakCaveat(developmentStatusAnswer),
+        record: answerRecord,
+        escalateToTechTeam
+      };
+    }
 
     if (!this.renderer) {
       return {
@@ -1289,6 +1709,20 @@ export class HelpBotAnswerer {
       record: answerRecord,
       escalateToTechTeam
     };
+  }
+
+  private async findStreamKnowledgeMatch(
+    request: HelpBotAnswerRequest
+  ): Promise<HelpBotKnowledgeMatch | null> {
+    try {
+      return await this.streamKnowledgeSource.findMatch(
+        request.question,
+        request.previousBotAnswer
+      );
+    } catch (error) {
+      this.logger.warn('Help bot Stream knowledge source failed closed', error);
+      return null;
+    }
   }
 
   private async answerFromCalendar(

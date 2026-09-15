@@ -3,14 +3,101 @@ import { fetchJsonWithTimeout, fetchTextWithTimeout } from '../lib/http';
 import { buildPrimaryAction } from '../lib/market';
 import { numbers } from '@/numbers';
 import { formatTokenAmount } from '@/nft-links/lib/onchain';
-import { CanonicalLink } from '@/nft-links/types';
+import { CanonicalLink, NormalizedNftCard } from '@/nft-links/types';
 import { env } from '@/env';
+import { requiredNftPage404 } from '../nft-link-page-retry';
+import { normalizeMetadataUri } from '../lib/uri';
 
 type AnyObj = Record<string, any>;
 
 function pick<T>(...vals: Array<T | undefined | null>): T | undefined {
   for (const v of vals) if (v !== undefined && v !== null) return v;
   return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function responseInstanceId(value: unknown): string | undefined {
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
+    return String(value);
+  }
+  return typeof value === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(value)
+    ? value
+    : undefined;
+}
+
+function assertMatchingInstance(
+  data: unknown,
+  instanceId: string,
+  requireId: boolean
+): void {
+  if (!isRecord(data)) {
+    throw new Error('Invalid Manifold instance response');
+  }
+  const returnedId = responseInstanceId(data.id);
+  if (returnedId === undefined ? requireId : returnedId !== instanceId) {
+    throw new Error('Invalid Manifold instance response');
+  }
+}
+
+function metadataText(value: unknown): string | undefined {
+  return typeof value === 'string' ? value.trim() || undefined : undefined;
+}
+
+function selectedTokenImage(value: unknown): string | undefined {
+  const text = metadataText(value);
+  if (!text) return undefined;
+  try {
+    const normalized = normalizeMetadataUri(text);
+    if (!normalized || !/^https?:\/\//i.test(normalized)) return undefined;
+    const url = new URL(normalized);
+    if (url.username || url.password) return undefined;
+    // Download-time DNS/IP, redirect and size checks remain in the preview pipeline.
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveSelectedToken(
+  token: unknown,
+  canonical: CanonicalLink
+): AdapterResult {
+  if (!isRecord(token)) {
+    throw new Error('Invalid Manifold selected token');
+  }
+  const imageUrl = selectedTokenImage(token.image);
+  return withUnknownSale(
+    {
+      title: metadataText(token.name),
+      description: metadataText(token.description),
+      media: imageUrl ? { kind: 'image', imageUrl } : undefined
+    },
+    canonical
+  );
+}
+
+function withUnknownSale(
+  asset: NormalizedNftCard['asset'],
+  canonical: CanonicalLink
+): AdapterResult {
+  return {
+    patch: {
+      asset,
+      // Listing metadata is not proof of a claim, live price or availability.
+      market: {
+        saleType: 'UNKNOWN',
+        cta: buildPrimaryAction(
+          canonical.platform,
+          'UNKNOWN',
+          canonical.viewUrl
+        )
+      },
+      links: { viewUrl: canonical.viewUrl, buyOrBidUrl: canonical.viewUrl }
+    }
+  };
 }
 
 function safeExtractInstanceIdFromHtml(html: string): string | undefined {
@@ -40,6 +127,105 @@ function isSafeManifoldHost(viewUrl: string): boolean {
   } catch {
     return false;
   }
+}
+
+function resolveInstanceMetadata(
+  data: AnyObj | undefined,
+  instanceId: string,
+  canonical: CanonicalLink
+): AdapterResult {
+  const publicData: unknown = data?.publicData;
+  const hasSelectedToken =
+    isRecord(publicData) && 'selectedToken' in publicData;
+  // New token metadata requires a positive ID binding. Legacy responses may omit
+  // an ID; keep their extraction compatible, but never accept a known mismatch.
+  assertMatchingInstance(data, instanceId, hasSelectedToken);
+  if (isRecord(publicData) && 'selectedToken' in publicData) {
+    return resolveSelectedToken(publicData.selectedToken, canonical);
+  }
+
+  // Very loose extraction; exact shape varies.
+  const title = pick<string>(
+    data?.name,
+    data?.title,
+    data?.instance?.name,
+    data?.instance?.title,
+    data?.data?.name,
+    data?.data?.title
+  );
+
+  const imageUrl = pick<string>(
+    data?.image,
+    data?.imageUrl,
+    data?.data?.image,
+    data?.data?.imageUrl
+  );
+
+  const description = pick<string>(data?.description, data?.data?.description);
+
+  if (isRecord(publicData) && 'listingType' in publicData) {
+    return withUnknownSale(
+      {
+        title,
+        description,
+        media: imageUrl ? { kind: 'image', imageUrl } : undefined
+      },
+      canonical
+    );
+  }
+
+  const priceAmount = pick<any>(
+    data?.price,
+    data?.data?.price,
+    data?.mintPrice,
+    data?.data?.mintPrice,
+    data?.publicData?.mintPrice?.value
+  );
+
+  const priceCurrency = pick<any>(
+    data?.currency,
+    data?.data?.currency,
+    data?.currencySymbol,
+    data?.data?.currencySymbol,
+    data?.publicData?.mintPrice?.currency
+  );
+
+  const priceDecimals =
+    numbers.parseIntOrNull(
+      pick<any>(
+        data?.decimals,
+        data?.data?.decimals,
+        data?.publicData?.mintPrice?.decimals
+      )
+    ) ?? 0;
+  // Claims are usually CLAIM sale type; price may require onchain reads.
+  const saleType = 'CLAIM' as const;
+  const patch: any = {
+    asset: {
+      title,
+      description,
+      media: imageUrl ? { kind: 'image', imageUrl } : undefined
+    },
+    market: {
+      saleType,
+      price:
+        priceAmount != null && priceCurrency != null
+          ? {
+              amount: formatTokenAmount(BigInt(priceAmount), priceDecimals),
+              currency: String(priceCurrency)
+            }
+          : undefined,
+      cta: buildPrimaryAction(canonical.platform, saleType, canonical.viewUrl)
+    },
+    links: {
+      viewUrl: canonical.viewUrl,
+      buyOrBidUrl: canonical.viewUrl
+    }
+  };
+
+  return {
+    patch
+  };
 }
 
 export class ManifoldAdapter implements PlatformAdapter {
@@ -77,8 +263,10 @@ export class ManifoldAdapter implements PlatformAdapter {
           }
         });
         instanceId = safeExtractInstanceIdFromHtml(html);
-      } catch {
-        // ignore
+      } catch (error) {
+        const pageFailure = requiredNftPage404(error, canonical);
+        if (pageFailure) throw pageFailure;
+        // Other page failures retain the existing resolution/retry behavior.
       }
     }
 
@@ -104,79 +292,6 @@ export class ManifoldAdapter implements PlatformAdapter {
       }
     }
 
-    // Very loose extraction; exact shape varies.
-    const title = pick<string>(
-      data?.name,
-      data?.title,
-      data?.instance?.name,
-      data?.instance?.title,
-      data?.data?.name,
-      data?.data?.title
-    );
-
-    const imageUrl = pick<string>(
-      data?.image,
-      data?.imageUrl,
-      data?.data?.image,
-      data?.data?.imageUrl
-    );
-
-    const description = pick<string>(
-      data?.description,
-      data?.data?.description
-    );
-
-    const priceAmount = pick<any>(
-      data?.price,
-      data?.data?.price,
-      data?.mintPrice,
-      data?.data?.mintPrice,
-      data?.publicData?.mintPrice?.value
-    );
-
-    const priceCurrency = pick<any>(
-      data?.currency,
-      data?.data?.currency,
-      data?.currencySymbol,
-      data?.data?.currencySymbol,
-      data?.publicData?.mintPrice?.currency
-    );
-
-    const priceDecimals =
-      numbers.parseIntOrNull(
-        pick<any>(
-          data?.decimals,
-          data?.data?.decimals,
-          data?.publicData?.mintPrice?.decimals
-        )
-      ) ?? 0;
-    // Claims are usually CLAIM sale type; price may require onchain reads.
-    const saleType = 'CLAIM' as const;
-    const patch: any = {
-      asset: {
-        title,
-        description,
-        media: imageUrl ? { kind: 'image', imageUrl } : undefined
-      },
-      market: {
-        saleType,
-        price:
-          priceAmount != null && priceCurrency != null
-            ? {
-                amount: formatTokenAmount(BigInt(priceAmount), priceDecimals),
-                currency: String(priceCurrency)
-              }
-            : undefined,
-        cta: buildPrimaryAction(canonical.platform, saleType, canonical.viewUrl)
-      },
-      links: {
-        viewUrl: canonical.viewUrl,
-        buyOrBidUrl: canonical.viewUrl
-      }
-    };
-
-    return {
-      patch
-    };
+    return resolveInstanceMetadata(data, instanceId, canonical);
   }
 }

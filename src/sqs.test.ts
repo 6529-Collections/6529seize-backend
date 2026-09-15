@@ -49,6 +49,16 @@ describe('SQS', () => {
     expect(sendMock).toHaveBeenCalledTimes(1);
   });
 
+  it('forwards an optional cancellation signal to the AWS transport', async () => {
+    const abortSignal = new AbortController().signal;
+    await new SQS().send({
+      message: { rawUrl: 'test' },
+      queue: 'https://sqs.us-east-1.amazonaws.com/123/standard-queue',
+      abortSignal
+    });
+    expect(sendMock).toHaveBeenCalledWith(expect.anything(), { abortSignal });
+  });
+
   it('uses provided message group id when supplied', async () => {
     const sqs = new SQS();
 

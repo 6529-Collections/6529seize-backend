@@ -11,7 +11,9 @@
  */
 
 import { ApiDropMedia } from '../models/ApiDropMedia';
+import { ApiDropModeration } from '../models/ApiDropModeration';
 import { ApiDropType } from '../models/ApiDropType';
+import { ApiDropViewerModerationContext } from '../models/ApiDropViewerModerationContext';
 import { HttpFile } from '../http/http';
 
 export class ApiLightDrop {
@@ -26,6 +28,8 @@ export class ApiLightDrop {
     'serial_no': number;
     'drop_type': ApiDropType;
     'title': string | null;
+    'viewer_context'?: ApiDropViewerModerationContext;
+    'moderation'?: ApiDropModeration;
     'part_1_text': string | null;
     'part_1_medias': Array<ApiDropMedia>;
     'has_quote': boolean;
@@ -82,6 +86,18 @@ export class ApiLightDrop {
             "name": "title",
             "baseName": "title",
             "type": "string",
+            "format": ""
+        },
+        {
+            "name": "viewer_context",
+            "baseName": "viewer_context",
+            "type": "ApiDropViewerModerationContext",
+            "format": ""
+        },
+        {
+            "name": "moderation",
+            "baseName": "moderation",
+            "type": "ApiDropModeration",
             "format": ""
         },
         {

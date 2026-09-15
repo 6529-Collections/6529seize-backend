@@ -201,7 +201,8 @@ describe('AuthDb', () => {
         refreshTokenHash: 'refresh-hash',
         now,
         clientType: 'desktop'
-      }
+      },
+      { forcePool: DbPoolName.WRITE }
     );
 
     await authDb.rotateNativeSessionRefreshToken({
@@ -219,6 +220,43 @@ describe('AuthDb', () => {
         sessionId: 'session-1',
         clientType: 'desktop'
       })
+    );
+  });
+
+  it('reads rotating session credentials from the authoritative write pool', async () => {
+    const { authDb, oneOrNull } = createExecutor();
+    const now = new Date();
+    oneOrNull.mockResolvedValue(null);
+
+    await authDb.getActiveWebSessionBySecretHash(
+      'session-1',
+      'secret-hash',
+      now
+    );
+    await authDb.getActiveWebSessionById('session-1', now);
+    await authDb.getActiveNativeSessionByRefreshHash(
+      '0xabc',
+      'refresh-hash',
+      now
+    );
+
+    expect(oneOrNull).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('secret_hash = :secretHash'),
+      expect.objectContaining({ id: 'session-1', secretHash: 'secret-hash' }),
+      { forcePool: DbPoolName.WRITE }
+    );
+    expect(oneOrNull).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('where id = :id'),
+      expect.objectContaining({ id: 'session-1' }),
+      { forcePool: DbPoolName.WRITE }
+    );
+    expect(oneOrNull).toHaveBeenNthCalledWith(
+      3,
+      expect.stringContaining('refresh_token_hash = :refreshTokenHash'),
+      expect.objectContaining({ refreshTokenHash: 'refresh-hash' }),
+      { forcePool: DbPoolName.WRITE }
     );
   });
 

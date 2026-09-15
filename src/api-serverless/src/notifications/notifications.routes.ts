@@ -4,6 +4,8 @@ import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
 import { ApiResponse } from '../api-response';
 import { ApiDropGroupMention } from '../generated/models/ApiDropGroupMention';
 import { ApiNotificationsResponse } from '../generated/models/ApiNotificationsResponse';
+import { ApiMarkWaveReadRequest } from '../generated/models/ApiMarkWaveReadRequest';
+import { ApiMarkWaveReadResponse } from '../generated/models/ApiMarkWaveReadResponse';
 import { ApiUpdateWaveNotificationPreferencesRequest } from '../generated/models/ApiUpdateWaveNotificationPreferencesRequest';
 import { ApiWaveNotificationPreferences } from '../generated/models/ApiWaveNotificationPreferences';
 import { BadRequestException, ForbiddenException } from '../../../exceptions';
@@ -24,6 +26,15 @@ const WaveNotificationPreferencesSchema =
       .items(Joi.string().valid(...Object.values(ApiDropGroupMention)))
       .optional()
   });
+
+const MarkWaveReadSchema = Joi.object<ApiMarkWaveReadRequest>({
+  read_through_serial_no: Joi.number()
+    .integer()
+    .min(0)
+    .max(Number.MAX_SAFE_INTEGER)
+    .optional(),
+  request_dm_unread_state: Joi.boolean().optional()
+}).unknown(false);
 
 const causesValidator = (value: unknown, helpers: Joi.CustomHelpers) => {
   if (typeof value !== 'string') return null;
@@ -190,8 +201,8 @@ router.post(
   '/wave/:wave_id/read',
   needsAuthenticatedUser(),
   async (
-    req: Request<{ wave_id: string }, any, any, any, any>,
-    res: Response<ApiResponse<any>>
+    req: Request<{ wave_id: string }, any, ApiMarkWaveReadRequest, any, any>,
+    res: Response<ApiResponse<ApiMarkWaveReadResponse>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -204,12 +215,19 @@ router.post(
       throw new ForbiddenException(`Proxies cannot access notifications`);
     }
     const waveId = req.params.wave_id;
-    await notificationsApiService.markWaveNotificationsAsRead(
-      waveId,
-      authenticationContext.getActingAsId()!,
-      { timer }
+    const request = getValidatedByJoiOrThrow(
+      req.body ?? {},
+      MarkWaveReadSchema
     );
-    res.send({});
+    const dmUnreadState =
+      await notificationsApiService.markWaveNotificationsAsRead(
+        waveId,
+        authenticationContext.getActingAsId()!,
+        { timer },
+        request.read_through_serial_no,
+        request.request_dm_unread_state === true
+      );
+    res.send({ dm_unread_state: dmUnreadState });
   }
 );
 

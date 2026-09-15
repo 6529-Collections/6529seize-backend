@@ -1,3 +1,4 @@
+import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import {
   userGroupsService,
   UserGroupsService
@@ -32,6 +33,7 @@ import {
   IDENTITY_SUBSCRIPTIONS_TABLE,
   NFT_LINKS_TABLE,
   PROFILE_WAVES_TABLE,
+  PROFILES_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE,
   RATINGS_TABLE,
   TDH_NFT_TABLE,
@@ -94,6 +96,20 @@ export interface DropReplyPreview {
 export interface AuthorWaveParticipation {
   readonly is_participant: boolean;
   readonly is_winner: boolean;
+}
+
+export interface ReleaseNoteDropReference {
+  readonly id: string;
+  readonly serial_no: number;
+  readonly content: string | null;
+  readonly run_number: string | null;
+  readonly deployed_at: string | null;
+}
+
+export interface WaveSearchAuthor {
+  readonly id: string;
+  readonly handle: string;
+  readonly pfp: string | null;
 }
 
 export type AuthorWaveParticipationByWave = Record<
@@ -250,6 +266,46 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       );
     } finally {
       ctx.timer?.stop(timerLabel);
+    }
+  }
+
+  async findWaveChatDropsByAuthorForUpdate(
+    {
+      waveId,
+      authorId
+    }: {
+      readonly waveId: string;
+      readonly authorId: string;
+    },
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    if (!ctx.connection) {
+      throw new Error(
+        'findWaveChatDropsByAuthorForUpdate requires a connection'
+      );
+    }
+    const timerName = `${this.constructor.name}->findWaveChatDropsByAuthorForUpdate`;
+    ctx.timer?.start(timerName);
+    try {
+      return await this.db.execute<DropEntity>(
+        `
+          select *
+          from ${DROPS_TABLE}
+          where wave_id = :waveId
+            and author_id = :authorId
+            and drop_type = :dropType
+          order by serial_no asc, id asc
+          for update
+        `,
+        {
+          waveId,
+          authorId,
+          dropType: DropType.CHAT
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
     }
   }
 
@@ -418,110 +474,59 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   }
 
   private getVisibleWaveFilterSql(groupIdsUserIsEligibleFor: string[]): string {
-    return [
-      'w.visibility_group_id is null',
-      groupIdsUserIsEligibleFor.length
-        ? `w.visibility_group_id in (:groupsUserIsEligibleFor)`
-        : null
-    ]
-      .filter((it): it is string => !!it)
-      .join(' or ');
+    return waveReadAccessSql(
+      'w',
+      groupIdsUserIsEligibleFor.length > 0,
+      'groupsUserIsEligibleFor'
+    );
   }
 
   async insertDrop(
     newDropEntity: NewDropEntity,
-    connection: ConnectionWrapper<any>
+    connection: ConnectionWrapper<any>,
+    options: { deferMetrics?: boolean } = {}
   ) {
     const dropId = newDropEntity.id;
     const waveId = newDropEntity.wave_id;
     const replyToDropId = newDropEntity.reply_to_drop_id;
     const newDropSerialNo = newDropEntity.serial_no;
     const hideLinkPreview = newDropEntity.hide_link_preview ?? false;
-    const now = Time.currentMillis();
-    await Promise.all([
-      this.db.execute(
-        `
-            insert into ${WAVE_METRICS_TABLE}
-            (wave_id, drops_count, subscribers_count, participatory_drops_count, latest_drop_timestamp)
-            values (:waveId, ${
-              newDropEntity.drop_type === DropType.CHAT ? 1 : 0
-            }, 0, ${
-              newDropEntity.drop_type === DropType.PARTICIPATORY ? 1 : 0
-            }, :now)
-            on duplicate key update drops_count = (drops_count + ${
-              newDropEntity.drop_type === DropType.CHAT ? 1 : 0
-            }),
-                                    participatory_drops_count = (participatory_drops_count + ${
-                                      newDropEntity.drop_type ===
-                                      DropType.PARTICIPATORY
-                                        ? 1
-                                        : 0
-                                    }),
-                                    latest_drop_timestamp     = :now
-        `,
-        { waveId, now },
-        { wrappedConnection: connection }
-      ),
-      this.db.execute(
-        `
-            insert into ${WAVE_DROPPER_METRICS_TABLE}
-            (wave_id, dropper_id, drops_count, participatory_drops_count, latest_drop_timestamp)
-            values (:waveId, :dropperId, ${
-              newDropEntity.drop_type === DropType.CHAT ? 1 : 0
-            }, ${
-              newDropEntity.drop_type === DropType.PARTICIPATORY ? 1 : 0
-            }, :now)
-            on duplicate key update drops_count = (drops_count + ${
-              newDropEntity.drop_type === DropType.CHAT ? 1 : 0
-            }),
-                                    participatory_drops_count = (participatory_drops_count + ${
-                                      newDropEntity.drop_type ===
-                                      DropType.PARTICIPATORY
-                                        ? 1
-                                        : 0
-                                    }),
-                                    latest_drop_timestamp     = :now
-        `,
-        { waveId, dropperId: newDropEntity.author_id, now },
-        { wrappedConnection: connection }
-      ),
-      this.db.execute(
-        `insert into ${DROPS_TABLE} (id,
-                                     author_id,
-                                     drop_type,
-                                     wave_id,
-                                     created_at,
-                                     updated_at,
-                                     title,
-                                     parts_count,
-                                     signature,
-                                     is_additional_action_promised,
-                                     hide_link_preview,
-                                     reply_to_drop_id,
-                                     reply_to_part_id${
-                                       newDropSerialNo !== null
-                                         ? `, serial_no`
-                                         : ``
-                                     })
-         values (:id,
-                 :author_id,
-                 :drop_type,
-                 :wave_id,
-                 :created_at,
-                 :updated_at,
-                 :title,
-                 :parts_count,
-                 :signature,
-                 :is_additional_action_promised,
-                 :hide_link_preview,
-                 :reply_to_drop_id,
-                 :reply_to_part_id
-              ${newDropSerialNo !== null ? `, :serial_no` : ``})`,
+    await this.db.execute(
+      `insert into ${DROPS_TABLE} (id,
+                                   author_id,
+                                   drop_type,
+                                   wave_id,
+                                   created_at,
+                                   updated_at,
+                                   title,
+                                   parts_count,
+                                   signature,
+                                   is_additional_action_promised,
+                                   hide_link_preview,
+                                   reply_to_drop_id,
+                                   reply_to_part_id${
+                                     newDropSerialNo !== null
+                                       ? `, serial_no`
+                                       : ``
+                                   })
+       values (:id,
+               :author_id,
+               :drop_type,
+               :wave_id,
+               :created_at,
+               :updated_at,
+               :title,
+               :parts_count,
+               :signature,
+               :is_additional_action_promised,
+               :hide_link_preview,
+               :reply_to_drop_id,
+               :reply_to_part_id
+            ${newDropSerialNo !== null ? `, :serial_no` : ``})`,
 
-        { ...newDropEntity, hide_link_preview: hideLinkPreview },
-        { wrappedConnection: connection }
-      )
-    ]);
+      { ...newDropEntity, hide_link_preview: hideLinkPreview },
+      { wrappedConnection: connection }
+    );
     if (replyToDropId) {
       const serialNo = await this.db
         .oneOrNull<{
@@ -585,6 +590,64 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         {},
         { wrappedConnection: connection }
       );
+    }
+    if (!options.deferMetrics) {
+      await this.applyInsertedDropMetricsDelta(newDropEntity, { connection });
+    }
+  }
+
+  async applyInsertedDropMetricsDelta(
+    drop: Pick<DropEntity, 'wave_id' | 'author_id' | 'drop_type'>,
+    ctx: RequestContext
+  ) {
+    // These shared rows serialize concurrent drops in the same wave. Call this
+    // at the transaction tail so their locks are released as soon as possible.
+    // Keep wave before dropper metrics in insert and delete paths to avoid lock
+    // order inversion.
+    const timerName = `${this.constructor.name}->applyInsertedDropMetricsDelta`;
+    ctx.timer?.start(timerName);
+    try {
+      const now = Time.currentMillis();
+      const chatDropsDelta = drop.drop_type === DropType.CHAT ? 1 : 0;
+      const participatoryDropsDelta =
+        drop.drop_type === DropType.PARTICIPATORY ? 1 : 0;
+      await this.db.execute(
+        `
+          insert into ${WAVE_METRICS_TABLE}
+          (wave_id, drops_count, subscribers_count, participatory_drops_count, latest_drop_timestamp)
+          values (:waveId, :chatDropsDelta, 0, :participatoryDropsDelta, :now)
+          on duplicate key update drops_count = (drops_count + :chatDropsDelta),
+                                  participatory_drops_count = (participatory_drops_count + :participatoryDropsDelta),
+                                  latest_drop_timestamp = :now
+        `,
+        {
+          waveId: drop.wave_id,
+          chatDropsDelta,
+          participatoryDropsDelta,
+          now
+        },
+        { wrappedConnection: ctx.connection }
+      );
+      await this.db.execute(
+        `
+          insert into ${WAVE_DROPPER_METRICS_TABLE}
+          (wave_id, dropper_id, drops_count, participatory_drops_count, latest_drop_timestamp)
+          values (:waveId, :dropperId, :chatDropsDelta, :participatoryDropsDelta, :now)
+          on duplicate key update drops_count = (drops_count + :chatDropsDelta),
+                                  participatory_drops_count = (participatory_drops_count + :participatoryDropsDelta),
+                                  latest_drop_timestamp = :now
+        `,
+        {
+          waveId: drop.wave_id,
+          dropperId: drop.author_id,
+          chatDropsDelta,
+          participatoryDropsDelta,
+          now
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
     }
   }
 
@@ -730,11 +793,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return this.db.oneOrNull<DropEntity>(
       `
         select d.* from ${DROPS_TABLE} d
-         join waves w on d.wave_id = w.id and (${
-           group_ids_user_is_eligible_for.length
-             ? `w.visibility_group_id in (:group_ids_user_is_eligible_for) or`
-             : ``
-         } w.visibility_group_id is null)
+         join waves w on d.wave_id = w.id and ${waveReadAccessSql('w', group_ids_user_is_eligible_for.length > 0, 'group_ids_user_is_eligible_for')}
          where d.id = :id
         `,
       {
@@ -819,11 +878,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          join ${
            UserGroupsService.GENERATED_VIEW
          } cm on cm.profile_id = d.author_id
-         join ${WAVES_TABLE} w on d.wave_id = w.id and (${
-           group_ids_user_is_eligible_for.length
-             ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or`
-             : ``
-         } w.visibility_group_id is null) ${wave_id ? `and w.id = :wave_id` : ``}
+         join ${WAVES_TABLE} w on d.wave_id = w.id and ${waveReadAccessSql('w', group_ids_user_is_eligible_for.length > 0, 'groupsUserIsEligibleFor')} ${wave_id ? `and w.id = :wave_id` : ``}
          where ${
            drop_type ? ` d.drop_type = :drop_type and ` : ``
          } d.serial_no < :serialNoLessThan ${
@@ -1153,11 +1208,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   ): Promise<{ id: string; serial_no: number }[]> {
     const sql = `select d.id, d.serial_no
       from ${DROPS_TABLE} d
-      join ${WAVES_TABLE} w on d.wave_id = w.id and (${
-        group_ids_user_is_eligible_for.length
-          ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or`
-          : ``
-      } w.visibility_group_id is null)
+      join ${WAVES_TABLE} w on d.wave_id = w.id and ${waveReadAccessSql('w', group_ids_user_is_eligible_for.length > 0, 'groupsUserIsEligibleFor')}
       where d.wave_id = :wave_id
         and d.serial_no >= :min_serial_no
         and d.serial_no <= :max_serial_no
@@ -1311,7 +1362,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         join ${DROPS_TABLE} d
           on d.id = dc.drop_id
           and d.wave_id = pw.wave_id
-        where w.visibility_group_id is null
+        where ${waveReadAccessSql('w', false)}
           and coalesce(w.is_direct_message, false) = false
         order by d.serial_no desc
         limit :limit offset :offset
@@ -1439,6 +1490,93 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     return result[0]?.drop_id ?? null;
+  }
+
+  async findReleaseNoteDropBySourceSha(
+    {
+      waveId,
+      authorId,
+      repository,
+      sha,
+      commitUrl
+    }: {
+      waveId: string;
+      authorId: string;
+      repository: string;
+      sha: string;
+      commitUrl: string;
+    },
+    ctx: RequestContext
+  ): Promise<ReleaseNoteDropReference | null> {
+    if (
+      !/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i.test(repository) ||
+      !/^[a-f0-9]{40}$/.test(sha)
+    ) {
+      throw new Error('Invalid release-note source repository or SHA');
+    }
+    const expectedCommitUrl = `https://github.com/${repository}/commit/${sha}`;
+    if (commitUrl !== expectedCommitUrl) {
+      throw new Error(
+        'Release-note source commit URL does not match its identity'
+      );
+    }
+    const escapedCommitUrl = commitUrl.replace(/[\\%_]/g, String.raw`\$&`);
+    const metadataMatch = `
+      exists (
+        select 1 from ${DROP_METADATA_TABLE} repository_metadata
+        where repository_metadata.drop_id = d.id
+          and repository_metadata.data_key = 'release_note_repository'
+          and repository_metadata.data_value = :repository
+      )
+      and exists (
+        select 1 from ${DROP_METADATA_TABLE} sha_metadata
+        where sha_metadata.drop_id = d.id
+          and sha_metadata.data_key = 'release_note_sha'
+          and sha_metadata.data_value = :sha
+      )`;
+    const result = await this.db.execute<ReleaseNoteDropReference>(
+      String.raw`select d.id,
+              d.serial_no,
+              dp.content,
+              (
+                select run_metadata.data_value
+                from ${DROP_METADATA_TABLE} run_metadata
+                where run_metadata.drop_id = d.id
+                  and run_metadata.data_key = 'release_note_run_number'
+                limit 1
+              ) as run_number,
+              (
+                select deployed_metadata.data_value
+                from ${DROP_METADATA_TABLE} deployed_metadata
+                where deployed_metadata.drop_id = d.id
+                  and deployed_metadata.data_key = 'release_note_deployed_at'
+                limit 1
+              ) as deployed_at
+       from ${DROPS_TABLE} d
+       join ${DROPS_PARTS_TABLE} dp
+         on dp.drop_id = d.id and dp.drop_part_id = 1
+       where d.wave_id = :waveId
+         and d.author_id = :authorId
+         and (
+           (${metadataMatch})
+           or (
+             dp.content like '### Frontend Deploy %'
+             and dp.content like :commitUrlPattern escape '\\'
+           )
+         )
+       order by case when ${metadataMatch} then 0 else 1 end,
+                d.serial_no desc
+       limit 1`,
+      {
+        waveId,
+        authorId,
+        repository,
+        sha,
+        commitUrlPattern: `%${escapedCommitUrl}%`
+      },
+      { wrappedConnection: ctx.connection }
+    );
+    return result[0] ?? null;
   }
 
   async findDropIdsWithMetadata(
@@ -2027,16 +2165,16 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   ) {
     ctx.timer?.start('dropsDb->applyDeletedDropMetricsDelta');
     try {
-      // Mirrors insertDrop: CHAT increments drops_count, PARTICIPATORY increments
-      // participatory_drops_count, and WINNER only affects latest_drop_timestamp.
+      // Mirrors applyInsertedDropMetricsDelta: CHAT increments drops_count,
+      // PARTICIPATORY increments participatory_drops_count, and WINNER only
+      // affects latest_drop_timestamp.
       // This keeps DELETE fast; the async full resync is the authoritative repair
       // for stale counters, retries, and races.
       const chatDropsDelta = drop.drop_type === DropType.CHAT ? 1 : 0;
       const participatoryDropsDelta =
         drop.drop_type === DropType.PARTICIPATORY ? 1 : 0;
-      await Promise.all([
-        this.db.execute(
-          `
+      await this.db.execute(
+        `
           update ${WAVE_METRICS_TABLE} wm
           set wm.drops_count = greatest(wm.drops_count - :chatDropsDelta, 0),
               wm.participatory_drops_count = greatest(
@@ -2050,15 +2188,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
               )
           where wm.wave_id = :waveId
         `,
-          {
-            waveId: drop.wave_id,
-            chatDropsDelta,
-            participatoryDropsDelta
-          },
-          { wrappedConnection: ctx.connection }
-        ),
-        this.db.execute(
-          `
+        {
+          waveId: drop.wave_id,
+          chatDropsDelta,
+          participatoryDropsDelta
+        },
+        { wrappedConnection: ctx.connection }
+      );
+      await this.db.execute(
+        `
           update ${WAVE_DROPPER_METRICS_TABLE} wdm
           set wdm.drops_count = greatest(wdm.drops_count - :chatDropsDelta, 0),
               wdm.participatory_drops_count = greatest(
@@ -2074,15 +2212,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           where wdm.wave_id = :waveId
             and wdm.dropper_id = :dropperId
         `,
-          {
-            waveId: drop.wave_id,
-            dropperId: drop.author_id,
-            chatDropsDelta,
-            participatoryDropsDelta
-          },
-          { wrappedConnection: ctx.connection }
-        )
-      ]);
+        {
+          waveId: drop.wave_id,
+          dropperId: drop.author_id,
+          chatDropsDelta,
+          participatoryDropsDelta
+        },
+        { wrappedConnection: ctx.connection }
+      );
     } finally {
       ctx.timer?.stop('dropsDb->applyDeletedDropMetricsDelta');
     }
@@ -3435,6 +3572,80 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  async searchDropsInWave(
+    param: {
+      wave_id: string;
+      term?: string;
+      author_id?: string;
+      after?: number;
+      before?: number;
+      limit: number;
+      offset: number;
+    },
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->searchDropsInWave`);
+      const normalizedTerm = param.term?.trim().replace(/\s+/g, ' ');
+      const filters = ['d.wave_id = :wave_id'];
+      const queryParams: Record<string, string | number> = {
+        wave_id: param.wave_id,
+        limit: param.limit,
+        offset: param.offset
+      };
+
+      if (normalizedTerm) {
+        const booleanPrefixQuery = normalizedTerm
+          .replace(/[+\-><()~*:"@]/g, ' ')
+          .split(/\s+/)
+          .filter(Boolean)
+          .map((token) => `+${token}*`)
+          .join(' ');
+        if (!booleanPrefixQuery) {
+          return [];
+        }
+        const likeTerm = normalizedTerm.replace(/[\\%_]/g, '\\$&');
+        filters.push(String.raw`EXISTS (
+          SELECT 1
+          FROM ${DROPS_PARTS_TABLE} p
+          WHERE p.drop_id = d.id
+            AND MATCH(p.content) AGAINST (:term IN BOOLEAN MODE) > 0
+            AND LOWER(p.content) LIKE LOWER(CONCAT('%', :likeTerm, '%')) ESCAPE '\\'
+        )`);
+        queryParams.term = booleanPrefixQuery;
+        queryParams.likeTerm = likeTerm;
+      }
+
+      if (param.author_id) {
+        filters.push('d.author_id = :author_id');
+        queryParams.author_id = param.author_id;
+      }
+      if (param.after !== undefined) {
+        filters.push('d.created_at >= :after');
+        queryParams.after = param.after;
+      }
+      if (param.before !== undefined) {
+        filters.push('d.created_at < :before');
+        queryParams.before = param.before;
+      }
+
+      return this.db.execute<DropEntity>(
+        `
+        SELECT
+            d.*
+        FROM ${DROPS_TABLE} d
+        WHERE ${filters.join('\n          AND ')}
+        ORDER BY d.created_at DESC
+        LIMIT :limit OFFSET :offset
+      `,
+        queryParams,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->searchDropsInWave`);
+    }
+  }
+
   async searchDropsContainingPhraseInWave(
     param: {
       wave_id: string;
@@ -3444,36 +3655,35 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
-    try {
-      ctx.timer?.start(
-        `${this.constructor.name}->searchDropsContainingPhraseInWave`
-      );
-      const normalizedTerm = param.term.trim().replace(/\s+/g, ' ');
-      if (!normalizedTerm.length) {
-        return [];
-      }
-      const booleanPhrase = `"${normalizedTerm}"`;
-      const likeTerm = normalizedTerm.replace(/[\\%_]/g, '\\$&');
-      return this.db.execute<DropEntity>(
-        `
-        SELECT
-            d.*
-        FROM ${DROPS_PARTS_TABLE} p
-        JOIN ${DROPS_TABLE} d on p.drop_id = d.id
-        WHERE d.wave_id = :wave_id AND
-              MATCH(p.content) AGAINST (:term IN BOOLEAN MODE) > 0 AND
-              LOWER(p.content) LIKE LOWER(CONCAT('%', :likeTerm, '%')) ESCAPE '\\\\'
-        ORDER BY d.created_at DESC
-        LIMIT :limit OFFSET :offset
-      `,
-        { ...param, term: booleanPhrase, likeTerm },
-        { wrappedConnection: ctx.connection }
-      );
-    } finally {
-      ctx.timer?.stop(
-        `${this.constructor.name}->searchDropsContainingPhraseInWave`
-      );
-    }
+    return this.searchDropsInWave(param, ctx);
+  }
+
+  async searchWaveAuthors(
+    param: { wave_id: string; handle: string; limit: number },
+    ctx: RequestContext
+  ): Promise<WaveSearchAuthor[]> {
+    const normalizedHandle = param.handle
+      .trim()
+      .toLowerCase()
+      .replace(/[\\%_]/g, String.raw`\$&`);
+    return this.db.execute<WaveSearchAuthor>(
+      String.raw`SELECT DISTINCT
+          p.external_id AS id,
+          p.handle,
+          p.pfp_url AS pfp
+       FROM ${PROFILES_TABLE} p
+       INNER JOIN ${DROPS_TABLE} d ON d.author_id = p.external_id
+       WHERE d.wave_id = :wave_id
+         AND p.normalised_handle LIKE CONCAT(:handle, '%') ESCAPE '\\'
+       ORDER BY handle ASC
+       LIMIT :limit`,
+      {
+        wave_id: param.wave_id,
+        handle: normalizedHandle,
+        limit: param.limit
+      },
+      { wrappedConnection: ctx.connection }
+    );
   }
 
   public async countBoostsOfGivenDrops(
@@ -3575,7 +3785,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         JOIN ${DROP_BOOSTS_TABLE} p on p.drop_id = d.id
         join ${WAVES_TABLE} w on w.id = d.wave_id
         where p.boosted_at > :count_only_boosts_after
-        and (w.visibility_group_id is null ${eligibile_groups.length ? `or w.visibility_group_id in (:eligibile_groups)` : ''})
+        and ${waveReadAccessSql('w', eligibile_groups.length > 0, 'eligibile_groups')}
         ${author_id ? ` and d.author_id = :author_id ` : ''}
         ${wave_id ? ` and d.wave_id = :wave_id ` : ''}
         group by 1, 2
@@ -3640,7 +3850,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         join ${DROP_BOOSTS_TABLE} p on p.drop_id = d.id
         join ${WAVES_TABLE} w on w.id = d.wave_id
         where p.boosted_at > :count_only_boosts_after
-        and (w.visibility_group_id is null ${eligibile_groups.length ? `or w.visibility_group_id in (:eligibile_groups)` : ''})
+        and ${waveReadAccessSql('w', eligibile_groups.length > 0, 'eligibile_groups')}
         ${author_id ? ` and d.author_id = :author_id ` : ''}
         ${wave_id ? ` and d.wave_id = :wave_id ` : ''}
         group by 1, 2 

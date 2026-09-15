@@ -3,7 +3,6 @@ import { AuthenticationContext } from '../../../auth-context';
 import { collections } from '../../../collections';
 import { IdentityNotificationCause } from '../../../entities/IIdentityNotification';
 import { enums } from '../../../enums';
-import { BadRequestException } from '../../../exceptions';
 import {
   identityNotificationsDb,
   IdentityNotificationsDb
@@ -17,15 +16,16 @@ import { RequestContext } from '../../../request.context';
 import { Time } from '../../../time';
 import { ApiDropV2 } from '@/api/generated/models/ApiDropV2';
 import { ApiIdentityOverview } from '@/api/generated/models/ApiIdentityOverview';
+import { ApiNotificationAdditionalContextV2 } from '@/api/generated/models/ApiNotificationAdditionalContextV2';
 import { ApiNotificationV2 } from '@/api/generated/models/ApiNotificationV2';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
+import { ApiSubscriptionCoverageStatus } from '@/api/generated/models/ApiSubscriptionCoverageStatus';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import {
   DropReactionProfileRow,
   reactionsDb as defaultReactionsDb,
   ReactionsDb
 } from '@/api/drops/reactions.db';
-import { seizeSettings } from '@/api/seize-settings';
 import {
   apiWaveOverviewMapper as defaultApiWaveOverviewMapper,
   ApiWaveOverviewMapper
@@ -37,6 +37,7 @@ import {
 } from '../community-members/user-groups.service';
 import { DropsApiService, dropsService } from '../drops/drops.api.service';
 import { ApiDrop } from '../generated/models/ApiDrop';
+import { ApiDmUnreadConversationState } from '../generated/models/ApiDmUnreadConversationState';
 import { ApiDropGroupMention } from '../generated/models/ApiDropGroupMention';
 import { ApiNotification } from '../generated/models/ApiNotification';
 import { ApiNotificationCause } from '../generated/models/ApiNotificationCause';
@@ -62,6 +63,8 @@ import {
   wsListenersNotifier as defaultWsListenersNotifier,
   WsListenersNotifier
 } from '@/api/ws/ws-listeners-notifier';
+import { DbPoolName } from '@/db-query.options';
+import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
 
 interface DropReactedNotificationAdditionalContextV2 {
   reaction: string;
@@ -148,27 +151,84 @@ export class NotificationsApiService {
   public async markWaveNotificationsAsRead(
     waveId: string,
     identityId: string,
-    ctx: RequestContext
-  ) {
+    ctx: RequestContext,
+    readThroughSerialNo?: number,
+    requestDmUnreadState = false
+  ): Promise<ApiDmUnreadConversationState | null> {
     ctx.timer?.start(`${this.constructor.name}->markWaveNotificationsAsRead`);
+    const wave = await this.wavesApiDb.findById(
+      waveId,
+      ctx.connection,
+      DbPoolName.WRITE
+    );
+    let groupsUserIsEligibleFor: string[] | undefined;
+    if (wave?.is_direct_message) {
+      groupsUserIsEligibleFor =
+        await this.userGroupsService.getGroupsUserIsEligibleFor(
+          identityId,
+          ctx.timer
+        );
+      await assertWaveAndParentVisibleOrThrow({
+        wave,
+        groupsUserIsEligibleFor,
+        message: `Wave ${waveId} not found.`,
+        wavesApiDb: this.wavesApiDb,
+        ctx
+      });
+    }
     await this.identityNotificationsDb.markWaveNotificationsAsRead(
       waveId,
       identityId,
       ctx
     );
-    await this.wavesApiDb.updateWaveReaderMetricLatestReadTimestamp(
-      waveId,
-      identityId,
-      ctx
-    );
+    if (wave?.is_direct_message) {
+      await this.wavesApiDb.markDirectMessageReadThroughSerial(
+        { waveId, readerId: identityId, readThroughSerialNo },
+        ctx
+      );
+    } else {
+      await this.wavesApiDb.updateWaveReaderMetricLatestReadTimestamp(
+        waveId,
+        identityId,
+        ctx
+      );
+    }
     await invalidateWaveUnreadCacheForReaderWave({
       identityId,
       waveId
     });
+    const dmRecipients = wave?.is_direct_message
+      ? await this.wsListenersNotifier.findConnectedNotificationRecipients([
+          identityId
+        ])
+      : [];
+    const shouldLoadDmUnreadState =
+      wave?.is_direct_message === true &&
+      (requestDmUnreadState || dmRecipients.length > 0);
+    const dmUnreadState = shouldLoadDmUnreadState
+      ? ((
+          await this.wavesApiDb.findDmUnreadConversationStates(
+            {
+              identityId,
+              eligibleGroups: groupsUserIsEligibleFor,
+              waveIds: [waveId]
+            },
+            ctx,
+            DbPoolName.WRITE
+          )
+        )[0] ?? null)
+      : null;
+    if (dmUnreadState && dmRecipients.length) {
+      await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged(
+        [dmUnreadState],
+        dmRecipients
+      );
+    }
     await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
       identityId
     ]);
     ctx.timer?.stop(`${this.constructor.name}->markWaveNotificationsAsRead`);
+    return requestDmUnreadState ? dmUnreadState : null;
   }
 
   public async getNotifications(
@@ -429,6 +489,9 @@ export class NotificationsApiService {
           dropIds.push(data.drop_id);
           break;
         }
+        case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
+          break;
+        }
         default: {
           assertUnreachable(notificationCause);
         }
@@ -463,7 +526,8 @@ export class NotificationsApiService {
     switch (notificationCause) {
       case IdentityNotificationCause.IDENTITY_SUBSCRIBED:
       case IdentityNotificationCause.IDENTITY_REP:
-      case IdentityNotificationCause.IDENTITY_NIC: {
+      case IdentityNotificationCause.IDENTITY_NIC:
+      case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
         return null;
       }
       case IdentityNotificationCause.IDENTITY_MENTIONED:
@@ -490,7 +554,8 @@ export class NotificationsApiService {
       case IdentityNotificationCause.IDENTITY_SUBSCRIBED:
       case IdentityNotificationCause.IDENTITY_REP:
       case IdentityNotificationCause.IDENTITY_NIC:
-      case IdentityNotificationCause.WAVE_CREATED: {
+      case IdentityNotificationCause.WAVE_CREATED:
+      case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
         return [];
       }
       case IdentityNotificationCause.IDENTITY_MENTIONED:
@@ -737,6 +802,19 @@ export class NotificationsApiService {
           related_identity: profiles[data.additional_identity_id],
           related_drops: [drops[data.drop_id]],
           additional_context: {}
+        };
+      }
+      case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: null,
+          related_drops: [],
+          additional_context: this.getSubscriptionCoverageAdditionalContext(
+            notification.data
+          )
         };
       }
       default: {
@@ -1014,10 +1092,50 @@ export class NotificationsApiService {
           additional_context: {}
         };
       }
+      case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: null,
+          related_drops: [],
+          additional_context: this.getSubscriptionCoverageAdditionalContext(
+            notification.data
+          )
+        };
+      }
       default: {
         return assertUnreachable(notificationCause);
       }
     }
+  }
+
+  private getSubscriptionCoverageAdditionalContext(
+    data: Extract<
+      UserNotification,
+      { cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE }
+    >['data']
+  ): ApiNotificationAdditionalContextV2 {
+    return {
+      ...data,
+      status: enums.resolveOrThrow(ApiSubscriptionCoverageStatus, data.status),
+      funded_through: data.funded_through
+        ? {
+            ...data.funded_through,
+            mint_at: new Date(data.funded_through.mint_at)
+          }
+        : null,
+      next_unfunded: data.next_unfunded
+        ? {
+            ...data.next_unfunded,
+            mint_at: new Date(data.next_unfunded.mint_at)
+          }
+        : null,
+      top_up_deadline: data.top_up_deadline
+        ? new Date(data.top_up_deadline)
+        : null
+    };
   }
 
   public async getWaveSubscription(
@@ -1072,18 +1190,6 @@ export class NotificationsApiService {
           subscriptionState.is_following &&
           !subscriptionState.subscribed_to_all_drops
         ) {
-          const waveMembersCount =
-            await this.identitySubscriptionsDb.countWaveSubscribersForUpdate(
-              waveId,
-              connection
-            );
-          const subscribersLimit =
-            seizeSettings().all_drops_notifications_subscribers_limit;
-          if (waveMembersCount >= subscribersLimit) {
-            throw new BadRequestException(
-              `Wave has too many subscribers (${waveMembersCount}). Max is ${subscribersLimit}.`
-            );
-          }
           await this.identitySubscriptionsDb.subscribeToAllDrops(
             identityId,
             waveId,

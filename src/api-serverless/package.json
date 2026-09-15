@@ -4,14 +4,15 @@
   "description": "Serverless aws-nodejs-typescript template",
   "main": "serverless.ts",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "NODE_ENV=local nodemon",
-    "restructure-openapi": "ts-node restructure-openapi.ts",
-    "generate": "rm -rf dist && rm -rf tmp_gen_outp && node ./node_modules/@openapitools/openapi-generator-cli/main generate -i openapi.yaml -g typescript -o tmp_gen_outp --additional-properties=modelPropertyNaming=snake_case && rm -rf src/generated && mkdir src/generated && mv tmp_gen_outp/models src/generated/models && rm -rf tmp_gen_outp && mkdir src/generated/http && echo 'export type HttpFile = any;' > src/generated/http/http.ts && node -e \"const fs=require('fs'); const p='src/generated/models/all.ts'; if (fs.existsSync(p)) fs.unlinkSync(p);\" && ts-node generate-openapi-routes.ts",
-    "generate:openapi": "npm run restructure-openapi && npm run generate",
-    "prebuild": "npm run generate",
-    "build": "node esbuild.config.mjs && cp openapi.yaml dist/ && cp openapi.oracle.yaml dist/ && mkdir dist/tmp && cp node_modules/swagger-ui-dist/* dist/tmp && rm dist/tmp/index.js && cp dist/tmp/* dist/ && rm -rf dist/tmp",
-    "postbuild": "cd dist && zip -r index.zip *"
+    "preinstall": "node ../../scripts/require-6529-command.cjs",
+    "test": "node ../../scripts/require-6529-command.cjs && echo \"Error: no test specified\" && exit 1",
+    "dev": "node ../../scripts/require-6529-command.cjs && NODE_ENV=local nodemon",
+    "restructure-openapi": "node ../../scripts/require-6529-command.cjs && ts-node restructure-openapi.ts",
+    "generate": "node ../../scripts/require-6529-command.cjs && rm -rf dist && rm -rf tmp_gen_outp && node ./node_modules/@openapitools/openapi-generator-cli/main generate -i openapi.yaml -g typescript -o tmp_gen_outp --additional-properties=modelPropertyNaming=snake_case && rm -rf src/generated && mkdir src/generated && mv tmp_gen_outp/models src/generated/models && rm -rf tmp_gen_outp && mkdir src/generated/http && echo 'export type HttpFile = any;' > src/generated/http/http.ts && node -e \"const fs=require('fs'); const p='src/generated/models/all.ts'; if (fs.existsSync(p)) fs.unlinkSync(p);\" && ts-node generate-openapi-routes.ts",
+    "generate:openapi": "node ../../scripts/require-6529-command.cjs && ../../bin/6529 run restructure-openapi && ../../bin/6529 run generate",
+    "prebuild": "node ../../scripts/require-6529-command.cjs && ../../bin/6529 run generate",
+    "build": "node ../../scripts/require-6529-command.cjs && node esbuild.config.mjs && cp openapi.yaml dist/ && cp openapi.oracle.yaml dist/ && mkdir dist/tmp && cp node_modules/swagger-ui-dist/* dist/tmp && rm dist/tmp/index.js && cp dist/tmp/* dist/ && rm -rf dist/tmp",
+    "postbuild": "node ../../scripts/require-6529-command.cjs && cd dist && zip -r index.zip *"
   },
   "dependencies": {
     "@aws-sdk/client-managedblockchain": "^3.980.0",
@@ -34,7 +35,7 @@
     "mcache": "^0.4.0",
     "merkletreejs": "^0.6.0",
     "mp4box": "^2.3.0",
-    "multer": "^2.0.2",
+    "multer": "2.3.0",
     "node-fetch": "^2.7.0",
     "passport": "^0.7.0",
     "passport-anonymous": "^1.0.1",
@@ -42,6 +43,7 @@
     "path": "^0.12.7",
     "pdf-lib": "^1.17.1",
     "serverless-http": "^4.0.0",
+    "siwe": "^3.0.0",
     "slugify": "^1.6.6",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.0",
@@ -56,7 +58,8 @@
     "@types/jsonwebtoken": "^9.0.3",
     "@types/memory-cache": "^0.2.2",
     "@types/multer": "^2.0.0",
-    "@types/node": "^14.14.25",
+    "@types/node": "^18.19.130",
+    "@types/ws": "^8.18.1",
     "esbuild": "^0.28.1",
     "eslint": "^9.27.0",
     "eslint-config-prettier": "^10.1.5",
@@ -73,6 +76,9 @@
   "author": "The serverless webpack authors (https://github.com/elastic-coders/serverless-webpack)",
   "license": "MIT",
   "overrides": {
+    "@effect/platform-node": {
+      "undici": "6.28.1"
+    },
     "jsonpath-plus": "10.3.0",
     "minimatch@3": {
       "brace-expansion": "^2.0.2"

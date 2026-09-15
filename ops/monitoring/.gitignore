@@ -1,0 +1,4 @@
+node_modules/
+dist/
+packaged*.json
+.aws-sam/

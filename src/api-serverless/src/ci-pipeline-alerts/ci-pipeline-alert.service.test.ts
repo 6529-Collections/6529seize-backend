@@ -11,12 +11,13 @@ jest.mock('@/identities/identities.db', () => ({
 }));
 
 import fc from 'fast-check';
+import { normalizeDropGroupMentions } from '@/drops/create-or-update-drop.use-case';
+import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
 import {
   CiPipelineAlertService,
   formatMarkdownLink,
-  normalizeConfiguredHandle,
+  normalizeContributorGithubLogins,
   normalizeTargetEnvironment,
-  parseProfileHandles,
   truncate
 } from './ci-pipeline-alert.service';
 
@@ -24,7 +25,7 @@ const baseRequest = {
   repo: '6529seize-frontend',
   workflow: 'Web Deploy - PROD',
   status: 'failure' as const,
-  title: 'Seize PROD WEB DEPLOY: CI pipeline is broken!!!',
+  title: 'WEB deploy failed',
   description: 'abc123 - Fix deploy',
   triggered_by_github_login: 'prxt6529',
   run_id: '12345',
@@ -45,33 +46,35 @@ describe('CiPipelineAlertService', () => {
   };
   let identitiesRepository: { getIdsByHandles: jest.Mock };
   let releaseNotesQueue: { enqueueBestEffort: jest.Mock };
+  let alertTargetStore: {
+    rememberDeployTarget: jest.Mock;
+    resolveDeployTarget: jest.Mock;
+  };
 
   beforeEach(() => {
     originalEnv = {
       CI_PIPELINES_STAGING_WAVE_ID: process.env.CI_PIPELINES_STAGING_WAVE_ID,
       CI_PIPELINES_PROD_WAVE_ID: process.env.CI_PIPELINES_PROD_WAVE_ID,
-      CI_PIPELINES_BOT_PROFILE_ID: process.env.CI_PIPELINES_BOT_PROFILE_ID,
-      CI_PIPELINES_FAILURE_MENTION_PROFILE_HANDLES:
-        process.env.CI_PIPELINES_FAILURE_MENTION_PROFILE_HANDLES
+      CI_PIPELINES_BOT_PROFILE_ID: process.env.CI_PIPELINES_BOT_PROFILE_ID
     };
     process.env.CI_PIPELINES_STAGING_WAVE_ID = 'staging-wave';
     process.env.CI_PIPELINES_PROD_WAVE_ID = 'prod-wave';
     process.env.CI_PIPELINES_BOT_PROFILE_ID = 'bot-profile';
-    process.env.CI_PIPELINES_FAILURE_MENTION_PROFILE_HANDLES =
-      '@prxt0, @alice, @[Bob], alice, missing';
     dropCreationApiService = {
       createDrop: jest.fn().mockResolvedValue({ id: 'drop-1' }),
       toggleHideLinkPreview: jest.fn().mockResolvedValue({})
     };
     identitiesRepository = {
       getIdsByHandles: jest.fn().mockResolvedValue({
-        prxt0: 'profile-initiator',
-        ALICE: 'profile-1',
-        Bob: 'profile-2'
+        prxt0: 'profile-initiator'
       })
     };
     releaseNotesQueue = {
-      enqueueBestEffort: jest.fn().mockResolvedValue(undefined)
+      enqueueBestEffort: jest.fn().mockResolvedValue(true)
+    };
+    alertTargetStore = {
+      rememberDeployTarget: jest.fn().mockResolvedValue(undefined),
+      resolveDeployTarget: jest.fn().mockResolvedValue(null)
     };
   });
 
@@ -122,56 +125,6 @@ describe('CiPipelineAlertService', () => {
     );
   });
 
-  it('normalizes arbitrary configured profile handles', () => {
-    const handleCharacters =
-      'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-'.split(
-        ''
-      );
-    const handleArbitrary = fc
-      .array(fc.constantFrom(...handleCharacters), {
-        minLength: 1,
-        maxLength: 30
-      })
-      .map((chars) => chars.join(''));
-
-    fc.assert(
-      fc.property(handleArbitrary, (handle) => {
-        expect(normalizeConfiguredHandle(` @${handle} `)).toBe(handle);
-        expect(normalizeConfiguredHandle(` @[${handle}] `)).toBe(handle);
-      })
-    );
-  });
-
-  it('dedupes arbitrary configured profile handles case-insensitively', () => {
-    const handleCharacters =
-      'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-'.split(
-        ''
-      );
-    const handleArbitrary = fc
-      .array(fc.constantFrom(...handleCharacters), {
-        minLength: 1,
-        maxLength: 20
-      })
-      .map((chars) => chars.join(''));
-
-    fc.assert(
-      fc.property(fc.array(handleArbitrary, { maxLength: 20 }), (handles) => {
-        const input = handles
-          .flatMap((handle) => [` @${handle} `, ` @[${handle.toUpperCase()}] `])
-          .join(',');
-        const parsedHandles = parseProfileHandles(input);
-        const normalizedHandles = parsedHandles.map((handle) =>
-          handle.toLowerCase()
-        );
-
-        expect(new Set(normalizedHandles).size).toBe(parsedHandles.length);
-        for (const parsedHandle of parsedHandles) {
-          expect(parsedHandle).not.toMatch(/^@/);
-        }
-      })
-    );
-  });
-
   it('normalizes arbitrary target environment casing and spacing', () => {
     fc.assert(
       fc.property(
@@ -188,7 +141,21 @@ describe('CiPipelineAlertService', () => {
     );
   });
 
-  it('posts failures with configured profile mentions', async () => {
+  it('normalizes and deduplicates contributor GitHub logins', () => {
+    expect(
+      normalizeContributorGithubLogins([
+        ' GelatoGenesis ',
+        'gelatogenesis',
+        'ragnep',
+        'dependabot[bot]',
+        'trailing-',
+        'double--hyphen',
+        'invalid login'
+      ])
+    ).toEqual(['GelatoGenesis', 'ragnep', 'dependabot[bot]']);
+  });
+
+  it('posts failures with the global developer mention and preserves initiator attribution', async () => {
     const service = new CiPipelineAlertService(
       dropCreationApiService as any,
       identitiesRepository as any
@@ -198,10 +165,7 @@ describe('CiPipelineAlertService', () => {
     await service.postAlert(baseRequest, ctx as any);
 
     expect(identitiesRepository.getIdsByHandles).toHaveBeenCalledWith([
-      'prxt0',
-      'alice',
-      'Bob',
-      'missing'
+      'prxt0'
     ]);
     expect(dropCreationApiService.createDrop).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -216,32 +180,24 @@ describe('CiPipelineAlertService', () => {
             {
               mentioned_profile_id: 'profile-initiator',
               handle_in_content: 'prxt0'
-            },
-            {
-              mentioned_profile_id: 'profile-1',
-              handle_in_content: 'ALICE'
-            },
-            {
-              mentioned_profile_id: 'profile-2',
-              handle_in_content: 'Bob'
             }
           ],
           parts: [
             expect.objectContaining({
               content: expect.stringContaining(
                 [
-                  '[PROD] Seize PROD WEB DEPLOY: CI pipeline is broken!!! 🚨',
+                  '[🚀 PRODUCTION] WEB deploy failed 🚨',
                   '',
                   'abc123 - Fix deploy',
                   '',
-                  'Service: Frontend - web',
+                  'Service: web',
                   'Workflow: Web Deploy - PROD',
                   'Branch: main',
                   'Commit: [abc12345](https://github.com/6529-Collections/6529seize-frontend/commit/abc1234567890)',
                   'Initiated by: @[prxt0]',
                   'Run: [#6082](https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345)',
                   '',
-                  'cc @[prxt0] @[ALICE] @[Bob]'
+                  'cc @devs6529'
                 ].join('\n')
               )
             })
@@ -254,6 +210,11 @@ describe('CiPipelineAlertService', () => {
         })
       })
     );
+    const createDropRequest =
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest;
+    expect(
+      normalizeDropGroupMentions({ parts: createDropRequest.parts })
+    ).toEqual([DropGroupMention.DEVS_6529]);
     expect(dropCreationApiService.toggleHideLinkPreview).not.toHaveBeenCalled();
   });
 
@@ -267,7 +228,7 @@ describe('CiPipelineAlertService', () => {
       {
         ...baseRequest,
         status: 'success',
-        title: 'Seize Lambda staging api DEPLOY CI pipeline complete',
+        title: 'WEB deploy complete',
         environment: 'staging'
       },
       {}
@@ -293,11 +254,11 @@ describe('CiPipelineAlertService', () => {
             expect.objectContaining({
               content: expect.stringContaining(
                 [
-                  '[STAGING 🚧] Seize Lambda staging api DEPLOY CI pipeline complete ✅',
+                  '[🚧 STAGING] WEB deploy complete ✅',
                   '',
                   'abc123 - Fix deploy',
                   '',
-                  'Service: Frontend - web',
+                  'Service: web',
                   'Workflow: Web Deploy - PROD',
                   'Branch: main',
                   'Commit: [abc12345](https://github.com/6529-Collections/6529seize-frontend/commit/abc1234567890)',
@@ -316,11 +277,11 @@ describe('CiPipelineAlertService', () => {
         .parts[0].content
     ).toBe(
       [
-        '[STAGING 🚧] Seize Lambda staging api DEPLOY CI pipeline complete ✅',
+        '[🚧 STAGING] WEB deploy complete ✅',
         '',
         'abc123 - Fix deploy',
         '',
-        'Service: Frontend - web',
+        'Service: web',
         'Workflow: Web Deploy - PROD',
         'Branch: main',
         'Commit: [abc12345](https://github.com/6529-Collections/6529seize-frontend/commit/abc1234567890)',
@@ -338,6 +299,327 @@ describe('CiPipelineAlertService', () => {
         .parts[0].content
     ).not.toContain('cc @[');
     expect(dropCreationApiService.toggleHideLinkPreview).not.toHaveBeenCalled();
+  });
+
+  it.each(['api', 'overRatesRevocationLoop'])(
+    'preserves the exact backend service identifier %s',
+    async (serviceName) => {
+      const service = new CiPipelineAlertService(
+        dropCreationApiService as any,
+        identitiesRepository as any,
+        releaseNotesQueue as any,
+        alertTargetStore as any
+      );
+
+      await service.postAlert(
+        {
+          ...baseRequest,
+          repo: '6529seize-backend',
+          workflow: 'Deploy a service',
+          title: `${serviceName} deploy complete`,
+          status: 'success',
+          service: serviceName
+        },
+        {}
+      );
+
+      const content =
+        dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+          .parts[0].content;
+      expect(content).toContain(
+        `[🚀 PRODUCTION] ${serviceName} deploy complete ✅`
+      );
+      expect(content).toContain(`Service: ${serviceName}`);
+    }
+  );
+
+  it('remembers a successful WEB deploy as an E2E reply target', async () => {
+    dropCreationApiService.createDrop.mockResolvedValue({
+      id: 'deploy-drop',
+      parts: [{ part_id: 7 }]
+    });
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any,
+      alertTargetStore as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        alert_type: 'deploy',
+        status: 'success',
+        title: 'WEB deploy complete'
+      },
+      {}
+    );
+
+    expect(alertTargetStore.rememberDeployTarget).toHaveBeenCalledWith(
+      {
+        repo: '6529seize-frontend',
+        environment: 'prod',
+        runId: '12345'
+      },
+      {
+        dropId: 'deploy-drop',
+        dropPartId: 7,
+        sha: 'abc1234567890',
+        triggeredByGithubLogin: 'prxt6529'
+      }
+    );
+  });
+
+  it('replies to the WEB deploy for an automatic E2E success', async () => {
+    alertTargetStore.resolveDeployTarget.mockResolvedValue({
+      dropId: 'deploy-drop',
+      dropPartId: 7,
+      sha: 'b'.repeat(40),
+      triggeredByGithubLogin: 'prxt6529'
+    });
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any,
+      alertTargetStore as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        alert_type: 'web_e2e',
+        workflow: 'Production E2E',
+        status: 'success',
+        title: 'WEB E2E passed',
+        triggered_by_github_login: 'github-actions[bot]',
+        run_id: '900',
+        run_number: '791',
+        run_url:
+          'https://github.com/6529-Collections/6529seize-frontend/actions/runs/900',
+        run_attempt: 2,
+        parent_deploy_run_id: '12345',
+        validation_pack: 'all'
+      },
+      {}
+    );
+
+    expect(alertTargetStore.resolveDeployTarget).toHaveBeenCalledWith({
+      repo: '6529seize-frontend',
+      environment: 'prod',
+      runId: '12345'
+    });
+    expect(
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+    ).toMatchObject({
+      reply_to: { drop_id: 'deploy-drop', drop_part_id: 7 },
+      mentioned_users: [],
+      parts: [
+        {
+          content:
+            '[🚀 PRODUCTION] WEB E2E passed ✅ [Run #791 (attempt 2)](https://github.com/6529-Collections/6529seize-frontend/actions/runs/900)'
+        }
+      ]
+    });
+    expect(identitiesRepository.getIdsByHandles).not.toHaveBeenCalled();
+  });
+
+  it('posts an unambiguous manual E2E failure as a sibling reply', async () => {
+    identitiesRepository.getIdsByHandles.mockResolvedValue({
+      ragne: 'profile-validator',
+      prxt0: 'profile-initiator'
+    });
+    alertTargetStore.resolveDeployTarget.mockResolvedValue({
+      dropId: 'deploy-drop',
+      dropPartId: 7,
+      sha: 'c'.repeat(40),
+      triggeredByGithubLogin: 'prxt6529'
+    });
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any,
+      alertTargetStore as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        alert_type: 'web_e2e',
+        workflow: 'Staging E2E',
+        title: 'WEB E2E failed',
+        triggered_by_github_login: 'ragnep',
+        run_attempt: 1,
+        parent_deploy_run_id: '791',
+        validation_pack: 'core',
+        environment: 'staging'
+      },
+      {}
+    );
+
+    const request =
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest;
+    expect(alertTargetStore.resolveDeployTarget).toHaveBeenCalledWith({
+      repo: '6529seize-frontend',
+      environment: 'staging',
+      runId: '791'
+    });
+    expect(request.reply_to).toEqual({
+      drop_id: 'deploy-drop',
+      drop_part_id: 7
+    });
+    expect(request.mentioned_users).toEqual([
+      {
+        mentioned_profile_id: 'profile-validator',
+        handle_in_content: 'ragne'
+      },
+      {
+        mentioned_profile_id: 'profile-initiator',
+        handle_in_content: 'prxt0'
+      }
+    ]);
+    expect(request.parts[0].content).toContain(
+      [
+        '[🚧 STAGING] WEB E2E failed 🚨',
+        '',
+        'Validation: Manual by @[ragne]',
+        'Pack: core',
+        'Deploy initiated by: @[prxt0]'
+      ].join('\n')
+    );
+    expect(request.parts[0].content).toContain(
+      'Run: [#6082](https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345)'
+    );
+    expect(request.parts[0].content).not.toContain('(attempt 1)');
+    expect(request.parts[0].content.endsWith('\n\ncc @devs6529')).toBe(true);
+  });
+
+  it('posts a manual E2E success standalone when its deployment run is missing', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any,
+      alertTargetStore as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        alert_type: 'web_e2e',
+        workflow: 'Staging E2E',
+        title: 'WEB E2E passed',
+        status: 'success',
+        triggered_by_github_login: 'ragnep',
+        parent_deploy_run_id: null,
+        validation_pack: 'all',
+        environment: 'staging'
+      },
+      {}
+    );
+
+    const request =
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest;
+    expect(request).not.toHaveProperty('reply_to');
+    expect(request.mentioned_users).toEqual([]);
+    expect(request.parts[0].content).toBe(
+      '[🚧 STAGING] WEB E2E passed ✅ [Run #6082](https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345)'
+    );
+    expect(identitiesRepository.getIdsByHandles).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { environment: 'staging', waveId: 'staging-wave' },
+    { environment: 'prod', waveId: 'prod-wave' }
+  ] as const)(
+    'attributes $environment deployments to an unmapped automation actor',
+    async ({ environment, waveId }) => {
+      const service = new CiPipelineAlertService(
+        dropCreationApiService as any,
+        identitiesRepository as any
+      );
+
+      await service.postAlert(
+        {
+          ...baseRequest,
+          status: 'success',
+          environment,
+          triggered_by_github_login: 'github-actions[bot]'
+        },
+        {}
+      );
+
+      expect(identitiesRepository.getIdsByHandles).not.toHaveBeenCalled();
+      expect(
+        dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+      ).toEqual(
+        expect.objectContaining({
+          wave_id: waveId,
+          mentioned_users: [],
+          parts: [
+            expect.objectContaining({
+              content: expect.stringContaining('Initiated by: unknown')
+            })
+          ]
+        })
+      );
+    }
+  );
+
+  it('does not render or notify all contributors on each deployment', async () => {
+    identitiesRepository.getIdsByHandles.mockResolvedValue({
+      GelatoGenesis: 'profile-gelato',
+      ragne: 'profile-ragne'
+    });
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        status: 'success',
+        environment: 'staging',
+        triggered_by_github_login: 'github-actions[bot]',
+        contributor_github_logins: [
+          'GelatoGenesis',
+          'ragnep',
+          'external-user',
+          'gelatogenesis'
+        ]
+      },
+      {}
+    );
+
+    expect(identitiesRepository.getIdsByHandles).not.toHaveBeenCalled();
+    const createDropRequest =
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest;
+    expect(createDropRequest.mentioned_users).toEqual([]);
+    expect(createDropRequest.parts[0].content).toContain(
+      'Initiated by: unknown'
+    );
+    expect(createDropRequest.parts[0].content).not.toContain('Contributors:');
+  });
+
+  it('ignores contributor metadata for a manually initiated deployment', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        status: 'success',
+        contributor_github_logins: ['GelatoGenesis']
+      },
+      {}
+    );
+
+    const content =
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+        .parts[0].content;
+    expect(content).toContain('Initiated by: @[prxt0]');
+    expect(content).not.toContain('Contributors:');
   });
 
   it('posts with an unknown initiator when the 6529 mapping is missing', async () => {
@@ -432,6 +714,7 @@ describe('CiPipelineAlertService', () => {
       run_id: baseRequest.run_id,
       run_number: baseRequest.run_number,
       run_url: baseRequest.run_url,
+      triggered_by_github_login: baseRequest.triggered_by_github_login,
       sha: baseRequest.sha,
       branch: baseRequest.branch,
       environment: 'prod',
@@ -448,6 +731,85 @@ describe('CiPipelineAlertService', () => {
     ).toBeLessThan(
       releaseNotesQueue.enqueueBestEffort.mock.invocationCallOrder[0]
     );
+  });
+
+  it('enqueues exact Desktop release metadata from the production S3 milestone', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any
+    );
+    const frontendSha = '63630a3e27c37296bbe39d9813b014a824265a56';
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        repo: '6529-core',
+        workflow: 'Publish',
+        service: 'desktop',
+        status: 'success',
+        release_notes_prompt_path:
+          'ops/release-notes/desktop-release-notes.prompt.md',
+        release_group_id: 'desktop-v0.3.13',
+        release_group_services: ['desktop'],
+        release_version: '0.3.13',
+        frontend_sha: frontendSha,
+        deployed_at: '2026-08-14T10:00:00.000Z'
+      },
+      {}
+    );
+
+    expect(releaseNotesQueue.enqueueBestEffort).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repo: '6529-core',
+        workflow: 'Publish',
+        service: 'desktop',
+        release_version: '0.3.13',
+        frontend_sha: frontendSha,
+        release_group_id: 'desktop-v0.3.13',
+        release_group_services: ['desktop']
+      })
+    );
+  });
+
+  it('posts a production failure alert when Desktop release-note enqueueing fails', async () => {
+    releaseNotesQueue.enqueueBestEffort.mockResolvedValue(false);
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        repo: '6529-core',
+        workflow: 'Publish',
+        service: 'desktop',
+        status: 'success',
+        release_notes_prompt_path:
+          'ops/release-notes/desktop-release-notes.prompt.md',
+        release_group_id: 'desktop-v0.3.13',
+        release_group_services: ['desktop'],
+        release_version: '0.3.13',
+        frontend_sha: '63630a3e27c37296bbe39d9813b014a824265a56',
+        deployed_at: '2026-08-14T10:00:00.000Z'
+      },
+      {}
+    );
+
+    expect(releaseNotesQueue.enqueueBestEffort).toHaveBeenCalledTimes(1);
+    expect(dropCreationApiService.createDrop).toHaveBeenCalledTimes(2);
+    const failureContent =
+      dropCreationApiService.createDrop.mock.calls[1][0].createDropRequest
+        .parts[0].content;
+    expect(failureContent).toContain(
+      '[🚀 PRODUCTION] Desktop release note failed 🚨'
+    );
+    expect(failureContent).toContain(
+      'Production v0.3.13 release note could not be queued. Frontend commit 63630a3e.'
+    );
+    expect(failureContent).toContain('cc @devs6529');
   });
 
   it('does not enqueue an unreviewed repository prompt path', async () => {
@@ -513,7 +875,7 @@ describe('CiPipelineAlertService', () => {
     );
   });
 
-  it('fans one v2 deploy success out to every PR-scoped release-note group', async () => {
+  it('fans one deploy success out to every PR-scoped release-note group', async () => {
     const service = new CiPipelineAlertService(
       dropCreationApiService as any,
       identitiesRepository as any,
@@ -527,11 +889,13 @@ describe('CiPipelineAlertService', () => {
         workflow: 'Deploy a service',
         service: 'api',
         status: 'success',
+        triggered_by_github_login: 'github-actions[bot]',
+        contributor_github_logins: ['Alice', 'BOB', 'alice'],
         release_notes_prompt_path: 'ops/release-notes/release-notes.prompt.md',
         release_note_groups: [
           {
             release_group_id: 'pr-1801',
-            release_group_services: ['worker', 'api'],
+            release_group_services: ['dbMigrationsLoop', 'api'],
             pull_request_number: 1801,
             publish_release_note: true
           },
@@ -552,8 +916,9 @@ describe('CiPipelineAlertService', () => {
       1,
       expect.objectContaining({
         release_group_id: 'pr-1801',
-        release_group_services: ['api', 'worker'],
+        release_group_services: ['api', 'dbMigrationsLoop'],
         pull_request_number: 1801,
+        contributor_github_logins: ['Alice', 'BOB'],
         publish_release_note: true
       })
     );
@@ -563,6 +928,7 @@ describe('CiPipelineAlertService', () => {
         release_group_id: 'pr-1802',
         release_group_services: ['api'],
         pull_request_number: 1802,
+        contributor_github_logins: ['Alice', 'BOB'],
         publish_release_note: false
       })
     );
@@ -596,7 +962,7 @@ describe('CiPipelineAlertService', () => {
         .parts[0].content
     ).toBe(
       [
-        '[PROD] Desktop Publish completed 🚀 ✅',
+        '[🚀 PRODUCTION] Desktop Publish completed 🚀 ✅',
         '',
         'Production v0.3.11 publish completed with S3 and Arweave links published and CloudFront invalidated.',
         '',
@@ -622,7 +988,7 @@ describe('CiPipelineAlertService', () => {
 
       expect(
         dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest.parts[0].content.startsWith(
-          '[PROD] Web Deploy - PROD 🚨'
+          '[🚀 PRODUCTION] Web Deploy - PROD 🚨'
         )
       ).toBe(true);
     }
@@ -642,8 +1008,10 @@ describe('CiPipelineAlertService', () => {
     const content =
       dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
         .parts[0].content;
-    expect(content.startsWith('[PROD] Build succeeded ✅')).toBe(true);
-    expect(content.startsWith('[PROD] Build succeeded ✅ ❌ 🚨')).toBe(false);
+    expect(content.startsWith('[🚀 PRODUCTION] Build succeeded ✅')).toBe(true);
+    expect(content.startsWith('[🚀 PRODUCTION] Build succeeded ✅ ❌ 🚨')).toBe(
+      false
+    );
   });
 
   it('preserves the outcome and run metadata when text is long', async () => {

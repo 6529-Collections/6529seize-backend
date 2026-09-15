@@ -140,6 +140,10 @@ function readVectorFiles(): EligibilityConformanceVector[] {
       throw new Error(`Duplicate vector name: ${vector.name}`);
     }
     names.add(vector.name);
+    const groupIds = vector.groups.map((group) => group.id);
+    if (new Set(groupIds).size !== groupIds.length) {
+      throw new Error(`Duplicate group id in vector: ${vector.name}`);
+    }
   }
   return vectors;
 }

@@ -8,9 +8,9 @@ import {
   HELP_BOT_FAILURE_REACTION,
   HELP_BOT_OUT_OF_SCOPE_REPLY,
   HELP_BOT_SUCCESS_REACTION,
+  HELP_BOT_TECH_TEAM_MENTION,
   HELP_BOT_TECHNICAL_FAILURE_REPLY,
-  buildHelpBotNoReliableSourceReply,
-  getHelpBotTechTeamMentionHandles
+  buildHelpBotNoReliableSourceReply
 } from './help-bot.config';
 import { HelpBotAnswerer, HelpBotLlmRenderer } from './help-bot.answerer';
 import { HelpBotBedrockRenderer } from './help-bot.bedrock-renderer';
@@ -42,10 +42,6 @@ import {
   helpBotCreditsService,
   HelpBotCreditsService
 } from './help-bot-credits.service';
-import {
-  helpBotMentionResolver,
-  HelpBotMentionResolver
-} from './help-bot-mention-resolver';
 
 function buildRenderer(): HelpBotLlmRenderer & HelpBotPublicDataLlm {
   return new HelpBotBedrockRenderer(HELP_BOT_BEDROCK_MODEL_ID);
@@ -74,8 +70,7 @@ export class HelpBotProcessorService {
     private readonly dropsService: DropsApiService,
     private readonly profileResolver: HelpBotProfileResolver,
     private readonly answererFactory: () => HelpBotAnswerer,
-    private readonly creditsService: HelpBotCreditsService,
-    private readonly mentionResolver: HelpBotMentionResolver
+    private readonly creditsService: HelpBotCreditsService
   ) {}
 
   public async processInteraction(
@@ -119,10 +114,9 @@ export class HelpBotProcessorService {
         return;
       }
 
-      const reviewedAnswer = await this.buildReviewedAnswer({
+      const reviewedAnswer = this.buildReviewedAnswer({
         answer: answer.answer,
-        escalateToTechTeam: answer.escalateToTechTeam ?? false,
-        ctx
+        escalateToTechTeam: answer.escalateToTechTeam ?? false
       });
       const reply = await this.dropWriter.reply(
         {
@@ -130,8 +124,7 @@ export class HelpBotProcessorService {
           waveId: interaction.wave_id,
           replyToDropId: getInteractionTargetDropId(interaction),
           interactionId: interaction.id,
-          message: reviewedAnswer.message,
-          mentionedHandles: reviewedAnswer.mentionedHandles
+          message: reviewedAnswer
         },
         ctx
       );
@@ -205,9 +198,6 @@ export class HelpBotProcessorService {
     readonly escalateToTechTeam: boolean;
     readonly ctx: RequestContext;
   }): Promise<void> {
-    const mentionedHandles = escalateToTechTeam
-      ? await this.resolveTechTeamMentionHandles(ctx)
-      : [];
     const reply = await this.dropWriter.reply(
       {
         botProfileId,
@@ -215,9 +205,8 @@ export class HelpBotProcessorService {
         replyToDropId: getInteractionTargetDropId(interaction),
         interactionId: interaction.id,
         message: escalateToTechTeam
-          ? buildHelpBotNoReliableSourceReply(mentionedHandles)
-          : HELP_BOT_OUT_OF_SCOPE_REPLY,
-        mentionedHandles
+          ? buildHelpBotNoReliableSourceReply()
+          : HELP_BOT_OUT_OF_SCOPE_REPLY
       },
       ctx
     );
@@ -246,56 +235,17 @@ export class HelpBotProcessorService {
     }
   }
 
-  private async buildReviewedAnswer({
+  private buildReviewedAnswer({
     answer,
-    escalateToTechTeam,
-    ctx
+    escalateToTechTeam
   }: {
     readonly answer: string;
     readonly escalateToTechTeam: boolean;
-    readonly ctx: RequestContext;
-  }): Promise<{
-    readonly message: string;
-    readonly mentionedHandles: string[];
-  }> {
+  }): string {
     if (!escalateToTechTeam) {
-      return { message: answer, mentionedHandles: [] };
+      return answer;
     }
-    const mentionedHandles = await this.resolveTechTeamMentionHandles(ctx);
-    if (!mentionedHandles.length) {
-      return { message: answer, mentionedHandles: [] };
-    }
-    const reviewLine = `I'm flagging this so the tech team can double-check: ${mentionedHandles
-      .map((handle) => `@[${handle}]`)
-      .join(' ')}`;
-    return {
-      message: `${answer}\n\n${reviewLine}`,
-      mentionedHandles
-    };
-  }
-
-  private async resolveTechTeamMentionHandles(
-    ctx: RequestContext
-  ): Promise<string[]> {
-    const configuredHandles = getHelpBotTechTeamMentionHandles();
-    if (!configuredHandles.length) {
-      return [];
-    }
-    try {
-      const resolvedHandles = await this.mentionResolver.resolveMentionHandles(
-        configuredHandles,
-        ctx
-      );
-      if (!resolvedHandles.length) {
-        this.logger.warn(
-          `No configured help bot tech team handles resolved to profiles`
-        );
-      }
-      return resolvedHandles;
-    } catch (error) {
-      this.logger.error(`Failed to resolve help bot tech team handles`, error);
-      return [];
-    }
+    return `${answer}\n\nI'm flagging this so the tech team can double-check: ${HELP_BOT_TECH_TEAM_MENTION}`;
   }
 
   private async replyWithTechnicalFailure({
@@ -427,6 +377,5 @@ export const helpBotProcessorService = new HelpBotProcessorService(
       new HelpBotCalendarService()
     );
   },
-  helpBotCreditsService,
-  helpBotMentionResolver
+  helpBotCreditsService
 );

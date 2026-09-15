@@ -1,0 +1,2 @@
+# These exact upstream bytes are bound by format-identification source hashes.
+*.json -text

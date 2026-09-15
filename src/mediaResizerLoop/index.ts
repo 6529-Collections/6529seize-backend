@@ -1,6 +1,14 @@
+import { withMediaDependencySmoke } from '@/media/media-dependency-smoke';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
+import { Readable } from 'node:stream';
 import Sharp from 'sharp';
+import {
+  INPUT_PIXEL_BACKSTOP,
+  isUnprocessableResizeInput,
+  UnprocessableResizeInput,
+  withResizeInputFile
+} from '@/mediaResizerLoop/resize-resource-safety';
 import { Logger } from '../logging';
 import { wrapLambdaHandler } from '../sentry.context';
 
@@ -17,7 +25,7 @@ const s3Client = new S3Client({
   region: BUCKET_REGION
 });
 
-export const handler = wrapLambdaHandler(async (event: any) => {
+const liveHandler = wrapLambdaHandler(async (event: any) => {
   let path = event.queryStringParameters?.path;
   if (!path) {
     return notFound();
@@ -76,24 +84,37 @@ export const handler = wrapLambdaHandler(async (event: any) => {
         fit = 'cover';
         break;
     }
-    const sharp = Sharp({
-      failOn: 'none',
-      animated: originImage.ContentType === 'image/gif',
-      limitInputPixels: 1_000_000_000
-    })
-      .resize(width, height, { withoutEnlargement: true, fit })
-      .rotate();
-    const upload = new Upload({
-      client: s3Client,
-      params: {
-        Bucket: BUCKET,
-        Key: path,
-        Body: (originImage.Body as any).pipe(sharp),
-        ContentType: originImage.ContentType,
-        CacheControl: 'public, max-age=86400'
+    const animated = originImage.ContentType === 'image/gif';
+    await withResizeInputFile(
+      originImage.Body as Readable,
+      originImage.ContentLength,
+      animated,
+      async (inputPath) => {
+        const sharp = Sharp(inputPath, {
+          failOn: 'none',
+          animated,
+          limitInputPixels: INPUT_PIXEL_BACKSTOP
+        })
+          .resize(width, height, { withoutEnlargement: true, fit })
+          .rotate();
+        try {
+          const upload = new Upload({
+            client: s3Client,
+            queueSize: 1,
+            params: {
+              Bucket: BUCKET,
+              Key: path,
+              Body: sharp,
+              ContentType: originImage.ContentType,
+              CacheControl: 'public, max-age=86400'
+            }
+          });
+          await upload.done();
+        } finally {
+          sharp.destroy();
+        }
       }
-    });
-    await upload.done();
+    );
     const filesFileServerUrl = `${FILE_SERVER_URL}/${path}`;
     logger.info(
       `[${path}] Resized successfully. Redirecting to ${filesFileServerUrl}`
@@ -106,6 +127,9 @@ export const handler = wrapLambdaHandler(async (event: any) => {
       }
     };
   } catch (e: any) {
+    if (isUnprocessableResizeInput(e)) {
+      return unprocessableInput(e);
+    }
     logger.error(
       `[${path}] Resizing failed (Config: Region: ${BUCKET_REGION}, Bucket ${BUCKET}) ${
         e.message ?? e
@@ -115,8 +139,24 @@ export const handler = wrapLambdaHandler(async (event: any) => {
   }
 });
 
+function unprocessableInput(error: unknown) {
+  const code =
+    error instanceof UnprocessableResizeInput ? error.code : 'INVALID_IMAGE';
+  logger.warn(`Image resize rejected: ${code}`);
+  return {
+    statusCode: 422,
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'public, max-age=300'
+    },
+    body: JSON.stringify({ error: 'Image cannot be resized', code })
+  };
+}
+
 function notFound() {
   return {
     statusCode: 404
   };
 }
+
+export const handler = withMediaDependencySmoke(liveHandler);

@@ -1,8 +1,4 @@
-const RAW_BODY_PATHS = new Set([
-  '/gh-hooks',
-  '/dev-alerts',
-  '/deploy/github/webhook'
-]);
+const RAW_BODY_PATHS = new Set(['/gh-hooks', '/dev-alerts']);
 
 export function shouldCaptureRawBody(requestUrl?: string): boolean {
   const path = (requestUrl ?? '').split('?')[0];

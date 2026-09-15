@@ -16,7 +16,11 @@ import {
 import { RateMatter } from '../../../entities/IRating';
 import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
 import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
-import { getRaterInfoFromRequest, RateProfileRequest } from './rating.helper';
+import {
+  getRaterAuthenticationContext,
+  getRatingTargetProfileId,
+  RateProfileRequest
+} from './rating.helper';
 import { RatingStats } from '../../../rates/ratings.db';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { ApiChangeProfileRepRating } from '../generated/models/ApiChangeProfileRepRating';
@@ -279,6 +283,7 @@ router.post(
       req.body,
       ChangeProfileRepRatingSchema
     );
+    const authContext = await getRaterAuthenticationContext(req);
     timer.start(`abusivenessDetection`);
     const proposedCategory = category?.trim() ?? '';
     if (proposedCategory !== '') {
@@ -288,7 +293,10 @@ router.post(
         );
       }
       const abusivenessDetectionResult =
-        await abusivenessCheckService.checkRepPhrase(category);
+        await abusivenessCheckService.checkRepPhrase(category, {
+          authenticationContext: authContext,
+          timer
+        });
       if (abusivenessDetectionResult.status === 'DISALLOWED') {
         throw new BadRequestException(
           abusivenessDetectionResult.explanation ??
@@ -297,9 +305,11 @@ router.post(
       }
     }
     timer.stop(`abusivenessDetection`);
-    timer.start(`getRaterInfoFromRequest`);
-    const { authContext, targetProfileId } = await getRaterInfoFromRequest(req);
-    timer.stop(`getRaterInfoFromRequest`);
+    const targetProfileId = await getRatingTargetProfileId(
+      req.params.identity,
+      authContext,
+      timer
+    );
     await ratingsService.updateRating(
       {
         authenticationContext: authContext,

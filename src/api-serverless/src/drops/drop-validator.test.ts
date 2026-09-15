@@ -1,5 +1,12 @@
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
-import { NewDropSchema, UpdateDropSchema } from '@/api/drops/drop.validator';
+import {
+  DROP_PART_MAX_UTF16_CODE_UNITS,
+  DROP_PART_MAX_UTF8_BYTES,
+  DROP_TOTAL_MAX_UTF16_CODE_UNITS,
+  NewDropSchema,
+  NewWaveDropSchema,
+  UpdateDropSchema
+} from '@/api/drops/drop.validator';
 
 describe('NewDropSchema', () => {
   const futureTimestamp = Date.now() + 60_000;
@@ -400,6 +407,142 @@ describe('UpdateDropSchema', () => {
 
     expect(result.error?.message).toContain(
       '"hide_link_preview" is not allowed'
+    );
+  });
+});
+
+describe('shared drop content limits', () => {
+  const schemas = [
+    [
+      'create drop',
+      NewDropSchema,
+      { wave_id: 'wave-1', drop_type: ApiDropType.Chat }
+    ],
+    ['update drop', UpdateDropSchema, {}],
+    ['create-wave initial drop', NewWaveDropSchema, {}]
+  ] as const;
+
+  function validate(
+    schema: (typeof schemas)[number][1],
+    parts: Array<{ content: string }>
+  ) {
+    return schema.validate({
+      ...(schema === NewDropSchema
+        ? { wave_id: 'wave-1', drop_type: ApiDropType.Chat }
+        : {}),
+      title: null,
+      parts,
+      referenced_nfts: [],
+      mentioned_users: [],
+      mentioned_waves: [],
+      metadata: [],
+      signature: null
+    });
+  }
+
+  it.each(schemas)(
+    '%s accepts exactly %s UTF-16 code units in one part and rejects +1',
+    (_name, schema) => {
+      const exact = validate(schema, [
+        { content: 'a'.repeat(DROP_PART_MAX_UTF16_CODE_UNITS) }
+      ]);
+      expect(exact.error).toBeUndefined();
+
+      const secret = 'content-that-must-not-appear-in-validation-errors';
+      const over = validate(schema, [
+        {
+          content: 'a'.repeat(DROP_PART_MAX_UTF16_CODE_UNITS + 1) + secret
+        }
+      ]);
+      expect(over.error?.message).toContain('UTF-16 code units');
+      expect(over.error?.message).not.toContain(secret);
+    }
+  );
+
+  it.each(schemas)(
+    '%s accepts exactly %s UTF-8 bytes for BMP text and rejects +1 byte',
+    (_name, schema) => {
+      const exact = validate(schema, [{ content: '漢'.repeat(21_845) }]);
+      expect(exact.error).toBeUndefined();
+
+      const over = validate(schema, [{ content: '漢'.repeat(21_846) }]);
+      expect(over.error?.message).toContain('UTF-8 bytes');
+      expect(over.error?.message).not.toContain('漢');
+    }
+  );
+
+  it.each(schemas)(
+    '%s counts emoji surrogate pairs as two UTF-16 code units',
+    (_name, schema) => {
+      const exact = validate(schema, [
+        { content: '😀'.repeat(DROP_PART_MAX_UTF16_CODE_UNITS / 2) }
+      ]);
+      expect(exact.error).toBeUndefined();
+      expect(exact.value.parts[0].content.length).toBe(
+        DROP_PART_MAX_UTF16_CODE_UNITS
+      );
+
+      const over = validate(schema, [
+        {
+          content: '😀'.repeat(DROP_PART_MAX_UTF16_CODE_UNITS / 2) + '😀'
+        }
+      ]);
+      expect(over.error?.message).toContain('UTF-16 code units');
+    }
+  );
+
+  it.each(schemas)(
+    '%s applies the UTF-8 byte boundary to unpaired surrogate code units',
+    (_name, schema) => {
+      const exact = validate(schema, [
+        { content: String.fromCharCode(0xd800).repeat(21_845) }
+      ]);
+      expect(exact.error).toBeUndefined();
+
+      const over = validate(schema, [
+        { content: String.fromCharCode(0xd800).repeat(21_846) }
+      ]);
+      expect(over.error?.message).toContain('UTF-8 bytes');
+    }
+  );
+
+  it.each(schemas)(
+    '%s accepts exactly %s total UTF-16 code units and rejects +1',
+    (_name, schema) => {
+      const exact = validate(schema, [
+        { content: 'a'.repeat(25_000) },
+        { content: 'b'.repeat(25_000) }
+      ]);
+      expect(exact.error).toBeUndefined();
+
+      const over = validate(schema, [
+        { content: 'a'.repeat(25_000) },
+        { content: 'b'.repeat(25_000) },
+        { content: 'c' }
+      ]);
+      expect(over.error?.message).toContain('total content');
+      expect(over.error?.message).toContain('UTF-16 code units');
+    }
+  );
+
+  it('uses distinct error messages for the byte and aggregate limits', () => {
+    const byteError = validate(NewDropSchema, [
+      { content: '漢'.repeat(21_846) }
+    ]);
+    const aggregateError = validate(NewDropSchema, [
+      { content: 'a'.repeat(25_000) },
+      { content: 'b'.repeat(25_000) },
+      { content: 'c' }
+    ]);
+
+    expect(byteError.error?.message).toContain(
+      `${DROP_PART_MAX_UTF8_BYTES} UTF-8 bytes`
+    );
+    expect(aggregateError.error?.message).toContain(
+      `${DROP_TOTAL_MAX_UTF16_CODE_UNITS} UTF-16 code units`
+    );
+    expect(aggregateError.error?.message).not.toContain(
+      `${DROP_PART_MAX_UTF8_BYTES} UTF-8 bytes`
     );
   });
 });

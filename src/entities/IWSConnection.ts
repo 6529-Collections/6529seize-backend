@@ -2,6 +2,11 @@ import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import { WS_CONNECTIONS_TABLE } from '@/constants';
 
 @Entity(WS_CONNECTIONS_TABLE)
+@Index('idx_ws_connections_identity_expiry', [
+  'identity_id',
+  'jwt_expiry',
+  'connection_id'
+])
 export class WSConnectionEntity {
   @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
   readonly connection_id!: string;

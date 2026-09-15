@@ -13,6 +13,10 @@ import {
 } from '../entities/ISubscription';
 import { insertWithoutUpdate } from '../orm_helpers';
 import { sqlExecutor } from '../sql-executor';
+import {
+  MINIMUM_SUBSCRIPTION_ELIGIBILITY,
+  normalizeSubscriptionEligibility
+} from './subscription-eligibility';
 
 export async function fetchAllAutoSubscriptions() {
   return await getDataSource()
@@ -101,7 +105,10 @@ export async function fetchSubscriptionEligibility(
   const eligibility = await fetchSubscriptionEligibilityForKeys([
     consolidationKey
   ]);
-  return eligibility.get(consolidationKey.toLowerCase()) ?? 1;
+  return (
+    eligibility.get(consolidationKey.toLowerCase()) ??
+    MINIMUM_SUBSCRIPTION_ELIGIBILITY
+  );
 }
 
 const ELIGIBILITY_KEYS_CHUNK_SIZE = 5000;
@@ -117,7 +124,7 @@ export async function fetchSubscriptionEligibilityForKeys(
   const eligibility = new Map<string, number>();
   consolidationKeys.forEach((key) => {
     if (key) {
-      eligibility.set(key.toLowerCase(), 1);
+      eligibility.set(key.toLowerCase(), MINIMUM_SUBSCRIPTION_ELIGIBILITY);
     }
   });
   if (eligibility.size === 0) {
@@ -146,8 +153,11 @@ export async function fetchSubscriptionEligibilityForKeys(
       { chunk, seasonId }
     );
     cardSetsResult.forEach((row) => {
-      if (row.consolidation_key && row.sets) {
-        eligibility.set(row.consolidation_key.toLowerCase(), row.sets);
+      if (row.consolidation_key) {
+        eligibility.set(
+          row.consolidation_key.toLowerCase(),
+          normalizeSubscriptionEligibility(row.sets)
+        );
       }
     });
   }

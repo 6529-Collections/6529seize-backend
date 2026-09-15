@@ -24,7 +24,9 @@ export class AppFeatures {
   }
 
   public isProfileCmsWalletGalleryEnabled(): boolean {
-    return this.isFeatureEnabled('PROFILE_CMS_WALLET_GALLERY');
+    return (
+      (process.env.FEATURE_PROFILE_CMS_WALLET_GALLERY ?? 'true') === 'true'
+    );
   }
 
   public isUnifiedCompetitionReadsEnabled(): boolean {

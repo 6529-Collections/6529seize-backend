@@ -2,64 +2,1084 @@
   {
     "name": "level-min-at-border",
     "dimension": "level",
-    "description": "level_min stores a level number; level_raw 100 is exactly level 3's lower border, so level_min 3 passes and level_min 4 fails on both engines (spec §4).",
-    "identities": [{ "id": "subject", "level_raw": 100 }],
+    "description": "level_min stores a level number; level_raw 100 is exactly level 3's lower border, so level_min 3 passes and level_min 4 fails on both engines (spec \u00a74).",
+    "identities": [
+      {
+        "id": "subject",
+        "level_raw": 100
+      }
+    ],
     "subject": "subject",
     "groups": [
-      { "id": "g-min-3", "level_min": 3 },
-      { "id": "g-min-4", "level_min": 4 }
+      {
+        "id": "g-min-3",
+        "level_min": 3
+      },
+      {
+        "id": "g-min-4",
+        "level_min": 4
+      }
     ],
-    "expected": { "eligible_group_ids": ["g-min-3"] }
+    "expected": {
+      "eligible_group_ids": ["g-min-3"]
+    }
   },
   {
     "name": "level-max-exact-border-agree",
     "dimension": "level",
-    "description": "At the exact lower border of the level (level_raw 100 = border of level 3) both level_max encodings agree (spec §4).",
-    "identities": [{ "id": "subject", "level_raw": 100 }],
+    "description": "At the exact lower border of the level (level_raw 100 = border of level 3) both level_max encodings agree (spec \u00a74).",
+    "identities": [
+      {
+        "id": "subject",
+        "level_raw": 100
+      }
+    ],
     "subject": "subject",
-    "groups": [{ "id": "g-max-3", "level_max": 3 }],
-    "expected": { "eligible_group_ids": ["g-max-3"] }
+    "groups": [
+      {
+        "id": "g-max-3",
+        "level_max": 3
+      }
+    ],
+    "expected": {
+      "eligible_group_ids": ["g-max-3"]
+    }
   },
   {
     "name": "level-max-inside-level",
     "dimension": "level",
     "description": "level_raw 150 is inside level 3's band and passes level_max 3.",
-    "identities": [{ "id": "subject", "level_raw": 150 }],
+    "identities": [
+      {
+        "id": "subject",
+        "level_raw": 150
+      }
+    ],
     "subject": "subject",
     "groups": [
-      { "id": "g-max-3", "level_max": 3 },
-      { "id": "g-max-2", "level_max": 2 }
+      {
+        "id": "g-max-3",
+        "level_max": 3
+      },
+      {
+        "id": "g-max-2",
+        "level_max": 2
+      }
     ],
-    "expected": { "eligible_group_ids": ["g-max-3"] }
+    "expected": {
+      "eligible_group_ids": ["g-max-3"]
+    }
   },
   {
     "name": "level-max-zero",
     "dimension": "level",
     "description": "level_max 0 is a real bound and admits only level-0 profiles.",
-    "identities": [{ "id": "subject", "level_raw": 25 }],
+    "identities": [
+      {
+        "id": "subject",
+        "level_raw": 25
+      }
+    ],
     "subject": "subject",
-    "groups": [{ "id": "g-max-0", "level_max": 0 }],
-    "expected": { "eligible_group_ids": [] }
+    "groups": [
+      {
+        "id": "g-max-0",
+        "level_max": 0
+      }
+    ],
+    "expected": {
+      "eligible_group_ids": []
+    }
   },
   {
     "name": "level-max-one-hundred",
     "dimension": "level",
     "description": "Level 100 is the highest possible level, so level_max 100 is an intentionally unbounded upper limit.",
-    "identities": [{ "id": "subject", "level_raw": 30000000 }],
+    "identities": [
+      {
+        "id": "subject",
+        "level_raw": 30000000
+      }
+    ],
     "subject": "subject",
-    "groups": [{ "id": "g-max-100", "level_max": 100 }],
-    "expected": { "eligible_group_ids": ["g-max-100"] }
+    "groups": [
+      {
+        "id": "g-max-100",
+        "level_max": 100
+      }
+    ],
+    "expected": {
+      "eligible_group_ids": ["g-max-100"]
+    }
   },
   {
     "name": "level-min-zero-noop",
     "dimension": "level",
     "description": "level_min 0 is vacuous because every profile is at least level 0.",
-    "identities": [{ "id": "subject", "level_raw": 0 }],
+    "identities": [
+      {
+        "id": "subject",
+        "level_raw": 0
+      }
+    ],
     "subject": "subject",
     "groups": [
-      { "id": "g-min-0", "level_min": 0 },
-      { "id": "g-min-1", "level_min": 1 }
+      {
+        "id": "g-min-0",
+        "level_min": 0
+      },
+      {
+        "id": "g-min-1",
+        "level_min": 1
+      }
     ],
-    "expected": { "eligible_group_ids": ["g-min-0"] }
+    "expected": {
+      "eligible_group_ids": ["g-min-0"]
+    }
+  },
+  {
+    "name": "level-bounds-raw-negative-100",
+    "dimension": "level",
+    "description": "Raw score -100 maps to level 0; explicit zero remains a criterion through bounds, inclusion, exclusion, and combined rules.",
+    "identities": [
+      {
+        "id": "subject",
+        "level_raw": -100
+      },
+      {
+        "id": "other"
+      }
+    ],
+    "subject": "subject",
+    "profile_groups": [
+      {
+        "id": "other",
+        "members": ["other"]
+      },
+      {
+        "id": "subject-list",
+        "members": ["subject"]
+      }
+    ],
+    "groups": [
+      {
+        "id": "absent"
+      },
+      {
+        "id": "min-zero",
+        "level_min": 0
+      },
+      {
+        "id": "min-zero-max-zero",
+        "level_min": 0,
+        "level_max": 0
+      },
+      {
+        "id": "max-zero",
+        "level_max": 0
+      },
+      {
+        "id": "min-one",
+        "level_min": 1
+      },
+      {
+        "id": "min-zero-max-one",
+        "level_min": 0,
+        "level_max": 1
+      },
+      {
+        "id": "min-one-max-one",
+        "level_min": 1,
+        "level_max": 1
+      },
+      {
+        "id": "max-hundred",
+        "level_max": 100
+      },
+      {
+        "id": "min-hundred-max-hundred",
+        "level_min": 100,
+        "level_max": 100
+      },
+      {
+        "id": "min-zero-included-other",
+        "level_min": 0,
+        "profile_group_id": "other"
+      },
+      {
+        "id": "included-other",
+        "profile_group_id": "other"
+      },
+      {
+        "id": "zero-excluded",
+        "level_min": 0,
+        "excluded_profile_group_id": "subject-list"
+      },
+      {
+        "id": "zero-other-axis-fails",
+        "level_min": 0,
+        "tdh_min": 1
+      }
+    ],
+    "expected": {
+      "eligible_group_ids": [
+        "min-zero",
+        "max-hundred",
+        "min-zero-included-other",
+        "min-zero-max-zero",
+        "max-zero",
+        "min-zero-max-one"
+      ]
+    }
+  },
+  {
+    "name": "level-bounds-raw-negative-1",
+    "dimension": "level",
+    "description": "Raw score -1 maps to level 0; explicit zero remains a criterion through bounds, inclusion, exclusion, and combined rules.",
+    "identities": [
+      {
+        "id": "subject",
+        "level_raw": -1
+      },
+      {
+        "id": "other"
+      }
+    ],
+    "subject": "subject",
+    "profile_groups": [
+      {
+        "id": "other",
+        "members": ["other"]
+      },
+      {
+        "id": "subject-list",
+        "members": ["subject"]
+      }
+    ],
+    "groups": [
+      {
+        "id": "absent"
+      },
+      {
+        "id": "min-zero",
+        "level_min": 0
+      },
+      {
+        "id": "min-zero-max-zero",
+        "level_min": 0,
+        "level_max": 0
+      },
+      {
+        "id": "max-zero",
+        "level_max": 0
+      },
+      {
+        "id": "min-one",
+        "level_min": 1
+      },
+      {
+        "id": "min-zero-max-one",
+        "level_min": 0,
+        "level_max": 1
+      },
+      {
+        "id": "min-one-max-one",
+        "level_min": 1,
+        "level_max": 1
+      },
+      {
+        "id": "max-hundred",
+        "level_max": 100
+      },
+      {
+        "id": "min-hundred-max-hundred",
+        "level_min": 100,
+        "level_max": 100
+      },
+      {
+        "id": "min-zero-included-other",
+        "level_min": 0,
+        "profile_group_id": "other"
+      },
+      {
+        "id": "included-other",
+        "profile_group_id": "other"
+      },
+      {
+        "id": "zero-excluded",
+        "level_min": 0,
+        "excluded_profile_group_id": "subject-list"
+      },
+      {
+        "id": "zero-other-axis-fails",
+        "level_min": 0,
+        "tdh_min": 1
+      }
+    ],
+    "expected": {
+      "eligible_group_ids": [
+        "min-zero",
+        "max-hundred",
+        "min-zero-included-other",
+        "min-zero-max-zero",
+        "max-zero",
+        "min-zero-max-one"
+      ]
+    }
+  },
+  {
+    "name": "level-bounds-raw-0",
+    "dimension": "level",
+    "description": "Raw score 0 maps to level 0; explicit zero remains a criterion through bounds, inclusion, exclusion, and combined rules.",
+    "identities": [
+      {
+        "id": "subject",
+        "level_raw": 0
+      },
+      {
+        "id": "other"
+      }
+    ],
+    "subject": "subject",
+    "profile_groups": [
+      {
+        "id": "other",
+        "members": ["other"]
+      },
+      {
+        "id": "subject-list",
+        "members": ["subject"]
+      }
+    ],
+    "groups": [
+      {
+        "id": "absent"
+      },
+      {
+        "id": "min-zero",
+        "level_min": 0
+      },
+      {
+        "id": "min-zero-max-zero",
+        "level_min": 0,
+        "level_max": 0
+      },
+      {
+        "id": "max-zero",
+        "level_max": 0
+      },
+      {
+        "id": "min-one",
+        "level_min": 1
+      },
+      {
+        "id": "min-zero-max-one",
+        "level_min": 0,
+        "level_max": 1
+      },
+      {
+        "id": "min-one-max-one",
+        "level_min": 1,
+        "level_max": 1
+      },
+      {
+        "id": "max-hundred",
+        "level_max": 100
+      },
+      {
+        "id": "min-hundred-max-hundred",
+        "level_min": 100,
+        "level_max": 100
+      },
+      {
+        "id": "min-zero-included-other",
+        "level_min": 0,
+        "profile_group_id": "other"
+      },
+      {
+        "id": "included-other",
+        "profile_group_id": "other"
+      },
+      {
+        "id": "zero-excluded",
+        "level_min": 0,
+        "excluded_profile_group_id": "subject-list"
+      },
+      {
+        "id": "zero-other-axis-fails",
+        "level_min": 0,
+        "tdh_min": 1
+      }
+    ],
+    "expected": {
+      "eligible_group_ids": [
+        "min-zero",
+        "max-hundred",
+        "min-zero-included-other",
+        "min-zero-max-zero",
+        "max-zero",
+        "min-zero-max-one"
+      ]
+    }
+  },
+  {
+    "name": "level-bounds-raw-1",
+    "dimension": "level",
+    "description": "Raw score 1 maps to level 0; explicit zero remains a criterion through bounds, inclusion, exclusion, and combined rules.",
+    "identities": [
+      {
+        "id": "subject",
+        "level_raw": 1
+      },
+      {
+        "id": "other"
+      }
+    ],
+    "subject": "subject",
+    "profile_groups": [
+      {
+        "id": "other",
+        "members": ["other"]
+      },
+      {
+        "id": "subject-list",
+        "members": ["subject"]
+      }
+    ],
+    "groups": [
+      {
+        "id": "absent"
+      },
+      {
+        "id": "min-zero",
+        "level_min": 0
+      },
+      {
+        "id": "min-zero-max-zero",
+        "level_min": 0,
+        "level_max": 0
+      },
+      {
+        "id": "max-zero",
+        "level_max": 0
+      },
+      {
+        "id": "min-one",
+        "level_min": 1
+      },
+      {
+        "id": "min-zero-max-one",
+        "level_min": 0,
+        "level_max": 1
+      },
+      {
+        "id": "min-one-max-one",
+        "level_min": 1,
+        "level_max": 1
+      },
+      {
+        "id": "max-hundred",
+        "level_max": 100
+      },
+      {
+        "id": "min-hundred-max-hundred",
+        "level_min": 100,
+        "level_max": 100
+      },
+      {
+        "id": "min-zero-included-other",
+        "level_min": 0,
+        "profile_group_id": "other"
+      },
+      {
+        "id": "included-other",
+        "profile_group_id": "other"
+      },
+      {
+        "id": "zero-excluded",
+        "level_min": 0,
+        "excluded_profile_group_id": "subject-list"
+      },
+      {
+        "id": "zero-other-axis-fails",
+        "level_min": 0,
+        "tdh_min": 1
+      }
+    ],
+    "expected": {
+      "eligible_group_ids": [
+        "min-zero",
+        "max-hundred",
+        "min-zero-included-other",
+        "min-zero-max-zero",
+        "max-zero",
+        "min-zero-max-one"
+      ]
+    }
+  },
+  {
+    "name": "level-bounds-raw-24",
+    "dimension": "level",
+    "description": "Raw score 24 maps to level 0; explicit zero remains a criterion through bounds, inclusion, exclusion, and combined rules.",
+    "identities": [
+      {
+        "id": "subject",
+        "level_raw": 24
+      },
+      {
+        "id": "other"
+      }
+    ],
+    "subject": "subject",
+    "profile_groups": [
+      {
+        "id": "other",
+        "members": ["other"]
+      },
+      {
+        "id": "subject-list",
+        "members": ["subject"]
+      }
+    ],
+    "groups": [
+      {
+        "id": "absent"
+      },
+      {
+        "id": "min-zero",
+        "level_min": 0
+      },
+      {
+        "id": "min-zero-max-zero",
+        "level_min": 0,
+        "level_max": 0
+      },
+      {
+        "id": "max-zero",
+        "level_max": 0
+      },
+      {
+        "id": "min-one",
+        "level_min": 1
+      },
+      {
+        "id": "min-zero-max-one",
+        "level_min": 0,
+        "level_max": 1
+      },
+      {
+        "id": "min-one-max-one",
+        "level_min": 1,
+        "level_max": 1
+      },
+      {
+        "id": "max-hundred",
+        "level_max": 100
+      },
+      {
+        "id": "min-hundred-max-hundred",
+        "level_min": 100,
+        "level_max": 100
+      },
+      {
+        "id": "min-zero-included-other",
+        "level_min": 0,
+        "profile_group_id": "other"
+      },
+      {
+        "id": "included-other",
+        "profile_group_id": "other"
+      },
+      {
+        "id": "zero-excluded",
+        "level_min": 0,
+        "excluded_profile_group_id": "subject-list"
+      },
+      {
+        "id": "zero-other-axis-fails",
+        "level_min": 0,
+        "tdh_min": 1
+      }
+    ],
+    "expected": {
+      "eligible_group_ids": [
+        "min-zero",
+        "max-hundred",
+        "min-zero-included-other",
+        "min-zero-max-zero",
+        "max-zero",
+        "min-zero-max-one"
+      ]
+    }
+  },
+  {
+    "name": "level-bounds-raw-25",
+    "dimension": "level",
+    "description": "Raw score 25 maps to level 1; explicit zero remains a criterion through bounds, inclusion, exclusion, and combined rules.",
+    "identities": [
+      {
+        "id": "subject",
+        "level_raw": 25
+      },
+      {
+        "id": "other"
+      }
+    ],
+    "subject": "subject",
+    "profile_groups": [
+      {
+        "id": "other",
+        "members": ["other"]
+      },
+      {
+        "id": "subject-list",
+        "members": ["subject"]
+      }
+    ],
+    "groups": [
+      {
+        "id": "absent"
+      },
+      {
+        "id": "min-zero",
+        "level_min": 0
+      },
+      {
+        "id": "min-zero-max-zero",
+        "level_min": 0,
+        "level_max": 0
+      },
+      {
+        "id": "max-zero",
+        "level_max": 0
+      },
+      {
+        "id": "min-one",
+        "level_min": 1
+      },
+      {
+        "id": "min-zero-max-one",
+        "level_min": 0,
+        "level_max": 1
+      },
+      {
+        "id": "min-one-max-one",
+        "level_min": 1,
+        "level_max": 1
+      },
+      {
+        "id": "max-hundred",
+        "level_max": 100
+      },
+      {
+        "id": "min-hundred-max-hundred",
+        "level_min": 100,
+        "level_max": 100
+      },
+      {
+        "id": "min-zero-included-other",
+        "level_min": 0,
+        "profile_group_id": "other"
+      },
+      {
+        "id": "included-other",
+        "profile_group_id": "other"
+      },
+      {
+        "id": "zero-excluded",
+        "level_min": 0,
+        "excluded_profile_group_id": "subject-list"
+      },
+      {
+        "id": "zero-other-axis-fails",
+        "level_min": 0,
+        "tdh_min": 1
+      }
+    ],
+    "expected": {
+      "eligible_group_ids": [
+        "min-zero",
+        "max-hundred",
+        "min-zero-included-other",
+        "min-one",
+        "min-zero-max-one",
+        "min-one-max-one"
+      ]
+    }
+  },
+  {
+    "name": "level-bounds-raw-49",
+    "dimension": "level",
+    "description": "Raw score 49 maps to level 1; explicit zero remains a criterion through bounds, inclusion, exclusion, and combined rules.",
+    "identities": [
+      {
+        "id": "subject",
+        "level_raw": 49
+      },
+      {
+        "id": "other"
+      }
+    ],
+    "subject": "subject",
+    "profile_groups": [
+      {
+        "id": "other",
+        "members": ["other"]
+      },
+      {
+        "id": "subject-list",
+        "members": ["subject"]
+      }
+    ],
+    "groups": [
+      {
+        "id": "absent"
+      },
+      {
+        "id": "min-zero",
+        "level_min": 0
+      },
+      {
+        "id": "min-zero-max-zero",
+        "level_min": 0,
+        "level_max": 0
+      },
+      {
+        "id": "max-zero",
+        "level_max": 0
+      },
+      {
+        "id": "min-one",
+        "level_min": 1
+      },
+      {
+        "id": "min-zero-max-one",
+        "level_min": 0,
+        "level_max": 1
+      },
+      {
+        "id": "min-one-max-one",
+        "level_min": 1,
+        "level_max": 1
+      },
+      {
+        "id": "max-hundred",
+        "level_max": 100
+      },
+      {
+        "id": "min-hundred-max-hundred",
+        "level_min": 100,
+        "level_max": 100
+      },
+      {
+        "id": "min-zero-included-other",
+        "level_min": 0,
+        "profile_group_id": "other"
+      },
+      {
+        "id": "included-other",
+        "profile_group_id": "other"
+      },
+      {
+        "id": "zero-excluded",
+        "level_min": 0,
+        "excluded_profile_group_id": "subject-list"
+      },
+      {
+        "id": "zero-other-axis-fails",
+        "level_min": 0,
+        "tdh_min": 1
+      }
+    ],
+    "expected": {
+      "eligible_group_ids": [
+        "min-zero",
+        "max-hundred",
+        "min-zero-included-other",
+        "min-one",
+        "min-zero-max-one",
+        "min-one-max-one"
+      ]
+    }
+  },
+  {
+    "name": "level-bounds-raw-50",
+    "dimension": "level",
+    "description": "Raw score 50 maps to level 2; explicit zero remains a criterion through bounds, inclusion, exclusion, and combined rules.",
+    "identities": [
+      {
+        "id": "subject",
+        "level_raw": 50
+      },
+      {
+        "id": "other"
+      }
+    ],
+    "subject": "subject",
+    "profile_groups": [
+      {
+        "id": "other",
+        "members": ["other"]
+      },
+      {
+        "id": "subject-list",
+        "members": ["subject"]
+      }
+    ],
+    "groups": [
+      {
+        "id": "absent"
+      },
+      {
+        "id": "min-zero",
+        "level_min": 0
+      },
+      {
+        "id": "min-zero-max-zero",
+        "level_min": 0,
+        "level_max": 0
+      },
+      {
+        "id": "max-zero",
+        "level_max": 0
+      },
+      {
+        "id": "min-one",
+        "level_min": 1
+      },
+      {
+        "id": "min-zero-max-one",
+        "level_min": 0,
+        "level_max": 1
+      },
+      {
+        "id": "min-one-max-one",
+        "level_min": 1,
+        "level_max": 1
+      },
+      {
+        "id": "max-hundred",
+        "level_max": 100
+      },
+      {
+        "id": "min-hundred-max-hundred",
+        "level_min": 100,
+        "level_max": 100
+      },
+      {
+        "id": "min-zero-included-other",
+        "level_min": 0,
+        "profile_group_id": "other"
+      },
+      {
+        "id": "included-other",
+        "profile_group_id": "other"
+      },
+      {
+        "id": "zero-excluded",
+        "level_min": 0,
+        "excluded_profile_group_id": "subject-list"
+      },
+      {
+        "id": "zero-other-axis-fails",
+        "level_min": 0,
+        "tdh_min": 1
+      }
+    ],
+    "expected": {
+      "eligible_group_ids": [
+        "min-zero",
+        "max-hundred",
+        "min-zero-included-other",
+        "min-one"
+      ]
+    }
+  },
+  {
+    "name": "level-bounds-raw-24999999",
+    "dimension": "level",
+    "description": "Raw score 24999999 maps to level 99; explicit zero remains a criterion through bounds, inclusion, exclusion, and combined rules.",
+    "identities": [
+      {
+        "id": "subject",
+        "level_raw": 24999999
+      },
+      {
+        "id": "other"
+      }
+    ],
+    "subject": "subject",
+    "profile_groups": [
+      {
+        "id": "other",
+        "members": ["other"]
+      },
+      {
+        "id": "subject-list",
+        "members": ["subject"]
+      }
+    ],
+    "groups": [
+      {
+        "id": "absent"
+      },
+      {
+        "id": "min-zero",
+        "level_min": 0
+      },
+      {
+        "id": "min-zero-max-zero",
+        "level_min": 0,
+        "level_max": 0
+      },
+      {
+        "id": "max-zero",
+        "level_max": 0
+      },
+      {
+        "id": "min-one",
+        "level_min": 1
+      },
+      {
+        "id": "min-zero-max-one",
+        "level_min": 0,
+        "level_max": 1
+      },
+      {
+        "id": "min-one-max-one",
+        "level_min": 1,
+        "level_max": 1
+      },
+      {
+        "id": "max-hundred",
+        "level_max": 100
+      },
+      {
+        "id": "min-hundred-max-hundred",
+        "level_min": 100,
+        "level_max": 100
+      },
+      {
+        "id": "min-zero-included-other",
+        "level_min": 0,
+        "profile_group_id": "other"
+      },
+      {
+        "id": "included-other",
+        "profile_group_id": "other"
+      },
+      {
+        "id": "zero-excluded",
+        "level_min": 0,
+        "excluded_profile_group_id": "subject-list"
+      },
+      {
+        "id": "zero-other-axis-fails",
+        "level_min": 0,
+        "tdh_min": 1
+      }
+    ],
+    "expected": {
+      "eligible_group_ids": [
+        "min-zero",
+        "max-hundred",
+        "min-zero-included-other",
+        "min-one"
+      ]
+    }
+  },
+  {
+    "name": "level-bounds-raw-25000000",
+    "dimension": "level",
+    "description": "Raw score 25000000 maps to level 100; explicit zero remains a criterion through bounds, inclusion, exclusion, and combined rules.",
+    "identities": [
+      {
+        "id": "subject",
+        "level_raw": 25000000
+      },
+      {
+        "id": "other"
+      }
+    ],
+    "subject": "subject",
+    "profile_groups": [
+      {
+        "id": "other",
+        "members": ["other"]
+      },
+      {
+        "id": "subject-list",
+        "members": ["subject"]
+      }
+    ],
+    "groups": [
+      {
+        "id": "absent"
+      },
+      {
+        "id": "min-zero",
+        "level_min": 0
+      },
+      {
+        "id": "min-zero-max-zero",
+        "level_min": 0,
+        "level_max": 0
+      },
+      {
+        "id": "max-zero",
+        "level_max": 0
+      },
+      {
+        "id": "min-one",
+        "level_min": 1
+      },
+      {
+        "id": "min-zero-max-one",
+        "level_min": 0,
+        "level_max": 1
+      },
+      {
+        "id": "min-one-max-one",
+        "level_min": 1,
+        "level_max": 1
+      },
+      {
+        "id": "max-hundred",
+        "level_max": 100
+      },
+      {
+        "id": "min-hundred-max-hundred",
+        "level_min": 100,
+        "level_max": 100
+      },
+      {
+        "id": "min-zero-included-other",
+        "level_min": 0,
+        "profile_group_id": "other"
+      },
+      {
+        "id": "included-other",
+        "profile_group_id": "other"
+      },
+      {
+        "id": "zero-excluded",
+        "level_min": 0,
+        "excluded_profile_group_id": "subject-list"
+      },
+      {
+        "id": "zero-other-axis-fails",
+        "level_min": 0,
+        "tdh_min": 1
+      }
+    ],
+    "expected": {
+      "eligible_group_ids": [
+        "min-zero",
+        "max-hundred",
+        "min-zero-included-other",
+        "min-one",
+        "min-hundred-max-hundred"
+      ]
+    }
   }
 ]

@@ -2,6 +2,7 @@ import { calculateLevel } from '../../../profiles/profile-level';
 import { RequestContext } from '../../../request.context';
 import { ApiCommunityMemberOverview } from '../generated/models/ApiCommunityMemberOverview';
 import { ApiCommunityMembersPage } from '../generated/models/ApiCommunityMembersPage';
+import { ApiCreateGroupDescription } from '../generated/models/ApiCreateGroupDescription';
 import { communityMembersDb, CommunityMembersDb } from './community-members.db';
 import { CommunityMembersQuery } from './community-members.types';
 
@@ -10,11 +11,12 @@ export class CommunityMembersService {
 
   async getCommunityMembersPage(
     query: CommunityMembersQuery,
-    ctx: RequestContext
+    ctx: RequestContext,
+    previewGroup?: ApiCreateGroupDescription
   ): Promise<ApiCommunityMembersPage> {
     const [data, count] = await Promise.all([
-      this.getAndConvertCommunityMembers(query, ctx),
-      this.communityMembersDb.countCommunityMembers(query, ctx)
+      this.getAndConvertCommunityMembers(query, ctx, previewGroup),
+      this.communityMembersDb.countCommunityMembers(query, ctx, previewGroup)
     ]);
     return {
       next: count > query.page_size * query.page,
@@ -26,10 +28,11 @@ export class CommunityMembersService {
 
   private async getAndConvertCommunityMembers(
     query: CommunityMembersQuery,
-    ctx: RequestContext
+    ctx: RequestContext,
+    previewGroup?: ApiCreateGroupDescription
   ): Promise<ApiCommunityMemberOverview[]> {
     return await this.communityMembersDb
-      .getCommunityMembers(query, ctx)
+      .getCommunityMembers(query, ctx, previewGroup)
       .then(async (members) => {
         const consolidationKeys = members.map(
           (member) => member.consolidation_key

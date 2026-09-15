@@ -6,6 +6,7 @@ import {
   HelpBotKnowledgeSource,
   StaticHelpBotKnowledgeSource
 } from './help-bot.knowledge';
+import { HelpBotStreamKnowledgeSource } from './help-bot-stream-knowledge';
 
 const BASE_URL = 'https://6529.io';
 const TEST_INDEX: HelpBotKnowledgeIndex = {
@@ -182,6 +183,311 @@ function answerer(
 }
 
 describe('HelpBotAnswerer', () => {
+  it('uses dedicated Stream evidence before generic FAQ matching and public-data planning', async () => {
+    const renderer: HelpBotLlmRenderer = {
+      renderAnswer: jest
+        .fn()
+        .mockResolvedValue('Stream supports two sale paths.')
+    };
+    const streamKnowledgeSource: HelpBotStreamKnowledgeSource = {
+      findMatch: jest.fn().mockResolvedValue({
+        score: 100,
+        record: {
+          id: '6529-stream@2026-07-27.1',
+          kind: 'public_review_knowledge',
+          title: '6529 Stream review evidence',
+          linkLabel: '6529 Stream Review',
+          canonicalPath: '/reviews/6529-stream/versions/2026-07-27.1',
+          aliases: ['stream'],
+          keywords: ['stream', 'sale'],
+          facts: ['Fixed-price and auction evidence.'],
+          relatedPaths: [],
+          tags: ['stream'],
+          sourceRefs: []
+        }
+      })
+    };
+    const publicDataService = {
+      answer: jest.fn().mockResolvedValue({
+        answer: 'wrong mode',
+        queryId: 'wrong'
+      })
+    };
+    const genericSource: HelpBotKnowledgeSource = {
+      findMatch: jest.fn().mockResolvedValue({
+        score: 3,
+        record: {
+          ...TEST_INDEX.records[0],
+          id: 'about.faq',
+          title: 'FAQ'
+        }
+      })
+    };
+
+    const answer = await new HelpBotAnswerer(
+      renderer,
+      genericSource,
+      publicDataService as unknown as HelpBotPublicDataService,
+      undefined,
+      streamKnowledgeSource
+    ).answer({
+      question: 'how many sale modes does Stream support?',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('6529-stream@2026-07-27.1');
+    }
+    expect(publicDataService.answer).not.toHaveBeenCalled();
+    expect(genericSource.findMatch).not.toHaveBeenCalled();
+  });
+
+  it('renders exact Stream development status without giving the LLM factual latitude', async () => {
+    const renderer: HelpBotLlmRenderer = {
+      renderAnswer: jest.fn().mockResolvedValue('There are 1,536 bytes left.')
+    };
+    const streamKnowledgeSource: HelpBotStreamKnowledgeSource = {
+      findMatch: jest.fn().mockResolvedValue({
+        score: 400,
+        record: {
+          id: '6529-stream@2026-08-01.1',
+          kind: 'public_review_knowledge',
+          title: '6529 Stream review evidence',
+          linkLabel: '6529 Stream Review',
+          canonicalPath: '/reviews/6529-stream#development-update',
+          aliases: ['stream'],
+          keywords: ['stream', 'development'],
+          facts: [
+            JSON.stringify({
+              id: 'status:latest-development',
+              kind: 'development_status',
+              title: 'Latest Stream development update',
+              structured: {
+                checkedAt: '2026-08-01T00:00:00.000Z',
+                headline: 'The permanent Core now meets its size target.',
+                recentlyCompleted: [
+                  {
+                    text: 'The permanent Core is 5,579 bytes under the EIP-170 limit.'
+                  }
+                ],
+                workingOn: [],
+                beforeLaunch: [
+                  {
+                    text: 'Run the public testnet rehearsal and publish the verified addresses and source.'
+                  },
+                  {
+                    text: 'Complete an independent external audit and retest every accepted fix.'
+                  },
+                  {
+                    text: 'Approve the final settings, deployment records, and operating rehearsals.'
+                  }
+                ]
+              }
+            })
+          ],
+          relatedPaths: [],
+          tags: ['stream', 'development_status'],
+          sourceRefs: []
+        }
+      })
+    };
+
+    const answer = await new HelpBotAnswerer(
+      renderer,
+      new StaticHelpBotKnowledgeSource(TEST_INDEX),
+      undefined,
+      undefined,
+      streamKnowledgeSource
+    ).answer({
+      question:
+        'According to the current Stream development update, what is the contract-size headroom and what remains before launch?',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.answer).toContain('5,579 bytes under the EIP-170 limit');
+      expect(answer.answer).toContain(
+        'Run the public testnet rehearsal and publish the verified addresses and source.'
+      );
+      expect(answer.answer).toContain(
+        'Complete an independent external audit and retest every accepted fix.'
+      );
+      expect(answer.answer).toContain(
+        'Approve the final settings, deployment records, and operating rehearsals.'
+      );
+      expect(answer.answer).not.toContain('1,536');
+    }
+    expect(renderer.renderAnswer).not.toHaveBeenCalled();
+  });
+
+  it('fails closed without the LLM when an exact Stream status packet is oversized', async () => {
+    const renderer: HelpBotLlmRenderer = {
+      renderAnswer: jest.fn().mockResolvedValue('Invented status')
+    };
+    const streamKnowledgeSource: HelpBotStreamKnowledgeSource = {
+      findMatch: jest.fn().mockResolvedValue({
+        score: 400,
+        record: {
+          id: '6529-stream@2026-08-01.1',
+          kind: 'public_review_knowledge',
+          title: '6529 Stream review evidence',
+          linkLabel: '6529 Stream Review',
+          canonicalPath: '/reviews/6529-stream#development-update',
+          aliases: ['stream'],
+          keywords: ['stream', 'development'],
+          facts: [
+            JSON.stringify({
+              id: 'status:latest-development',
+              kind: 'development_status',
+              structured: {
+                checkedAt: '2026-08-01T00:00:00.000Z',
+                exactStatusUnavailable: true
+              }
+            })
+          ],
+          relatedPaths: [],
+          tags: ['stream', 'development_status'],
+          sourceRefs: []
+        }
+      })
+    };
+
+    const answer = await new HelpBotAnswerer(
+      renderer,
+      new StaticHelpBotKnowledgeSource(TEST_INDEX),
+      undefined,
+      undefined,
+      streamKnowledgeSource
+    ).answer({
+      question: 'what is the current Stream contract-size headroom?',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.answer).toContain(
+        'could not fit in the verified evidence packet'
+      );
+      expect(answer.answer).not.toContain('Invented status');
+    }
+    expect(renderer.renderAnswer).not.toHaveBeenCalled();
+  });
+
+  it('keeps Stream source links complete and inside the response budget', async () => {
+    const canonicalPath =
+      '/reviews/6529-stream/versions/2026-07-27.1/for-artists#fixed-price-sales';
+    const renderer: HelpBotLlmRenderer = {
+      renderAnswer: jest
+        .fn()
+        .mockResolvedValue(
+          `${'Stream supports fixed-price sales and English auctions. '.repeat(
+            30
+          )}[6529 Stream Review](https://6529.io${canonicalPath}`
+        )
+    };
+    const streamKnowledgeSource: HelpBotStreamKnowledgeSource = {
+      findMatch: jest.fn().mockResolvedValue({
+        score: 100,
+        record: {
+          id: '6529-stream@2026-07-27.1',
+          kind: 'public_review_knowledge',
+          title: '6529 Stream review evidence',
+          linkLabel: '6529 Stream Review',
+          canonicalPath,
+          aliases: ['stream'],
+          keywords: ['stream', 'sale'],
+          facts: ['Fixed-price and auction evidence.'],
+          relatedPaths: [
+            '/reviews/6529-stream/versions/2026-07-27.1/artwork-lifecycle',
+            '/reviews/6529-stream/versions/2026-07-27.1/curation-authorization'
+          ],
+          tags: ['stream'],
+          sourceRefs: []
+        }
+      })
+    };
+
+    const answer = await new HelpBotAnswerer(
+      renderer,
+      new StaticHelpBotKnowledgeSource(TEST_INDEX),
+      undefined,
+      undefined,
+      streamKnowledgeSource
+    ).answer({
+      question: 'what sale methods does Stream support?',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.answer.length).toBeLessThanOrEqual(1200);
+      expect(answer.answer).toContain(
+        `More info: [6529 Stream Review](${BASE_URL}${canonicalPath}) | [Artwork Lifecycle](${BASE_URL}/reviews/6529-stream/versions/2026-07-27.1/artwork-lifecycle)`
+      );
+      expect(answer.answer).not.toContain('curation-authorization');
+      expect(answer.answer).not.toContain(
+        `[6529 Stream Review](${BASE_URL}${canonicalPath}\n`
+      );
+      expect(answer.answer.match(/https:\/\/6529\.io/g)).toHaveLength(2);
+    }
+  });
+
+  it('falls back to the concise Stream summary when the exhaustive corpus is unavailable', async () => {
+    const index: HelpBotKnowledgeIndex = {
+      ...TEST_INDEX,
+      records: [
+        {
+          id: 'about.faq',
+          kind: 'faq',
+          title: 'About FAQ',
+          linkLabel: 'FAQ',
+          canonicalPath: '/about/faq',
+          aliases: ['6529'],
+          keywords: ['6529', 'stream'],
+          facts: ['Generic FAQ facts.'],
+          relatedPaths: [],
+          tags: [],
+          sourceRefs: []
+        },
+        {
+          id: 'public-reviews.stream',
+          kind: 'public_review',
+          title: '6529 Stream',
+          linkLabel: '6529 Stream Review',
+          canonicalPath: '/reviews/6529-stream',
+          aliases: ['stream', '6529 stream'],
+          keywords: ['stream', 'contract', 'review'],
+          facts: ['Stream is a public contract review.'],
+          relatedPaths: [],
+          tags: ['stream'],
+          sourceRefs: []
+        }
+      ]
+    };
+    const unavailableStream: HelpBotStreamKnowledgeSource = {
+      findMatch: jest.fn().mockResolvedValue(null)
+    };
+
+    const answer = await new HelpBotAnswerer(
+      undefined,
+      new StaticHelpBotKnowledgeSource(index),
+      undefined,
+      undefined,
+      unavailableStream
+    ).answer({
+      question: 'what is 6529 Stream?',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.record.id).toBe('public-reviews.stream');
+      expect(answer.answer).toContain('Stream is a public contract review.');
+    }
+  });
+
   it('returns a deterministic answer for frontend-index knowledge', async () => {
     const answer = await answerer().answer({
       question: 'what is TDH?',
@@ -564,17 +870,30 @@ describe('HelpBotAnswerer', () => {
     });
   });
 
-  it('treats consolidation questions as product context when unindexed', async () => {
-    await expect(
-      answerer().answer({
-        question: 'how do i register a consolidation?',
-        baseUrl: BASE_URL
-      })
-    ).resolves.toEqual({
-      type: 'NO_RELIABLE_SOURCE',
-      escalateToTechTeam: true
-    });
-  });
+  it.each([
+    'how do i register a consolidation?',
+    'how do i add another wallet?',
+    'how many wallets can i add?',
+    'what is the maximum number of addresses i can link?',
+    'what is the max wallets?',
+    'how many wallets are allowed?',
+    'how do i remove a wallet?',
+    'how do i replace a wallet?',
+    'where do i connect an additional wallet?'
+  ])(
+    'treats unindexed multi-wallet question "%s" as product context',
+    async (question) => {
+      await expect(
+        answerer().answer({
+          question,
+          baseUrl: BASE_URL
+        })
+      ).resolves.toEqual({
+        type: 'NO_RELIABLE_SOURCE',
+        escalateToTechTeam: true
+      });
+    }
+  );
 
   it('asks for a topic when the user only asks for help', async () => {
     const publicDataService = {

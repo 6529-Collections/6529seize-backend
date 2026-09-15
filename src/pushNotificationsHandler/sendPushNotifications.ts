@@ -9,11 +9,15 @@ import { Logger } from '../logging';
 import { numbers } from '../numbers';
 import { emojify } from './emojify';
 import { sanitizePushNotificationText } from './push-notification-text';
+import { fitPushNotificationPayload } from './push-notification-payload-budget';
+import {
+  createPushSendDiagnostic,
+  PushSendDiagnostic,
+  reportPushImageRetry,
+  reportPushSendDiagnostic
+} from '@/pushNotificationsHandler/push-send-diagnostics';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_SEND');
-
-const MAX_TITLE_LENGTH = 50;
-const MAX_BODY_LENGTH = 250;
 
 const DEFAULT_PUSH_NOTIFICATION_TITLE = 'New notification';
 const DEFAULT_PUSH_NOTIFICATION_BODY = 'View drop';
@@ -32,6 +36,8 @@ export interface PushNotificationMessageInput {
 export interface PushNotificationSendResult {
   input: PushNotificationMessageInput;
   response: SendResponse;
+  /** Private diagnostic carrier; the original provider response stays unchanged. */
+  diagnosticError?: PushSendDiagnostic;
 }
 
 function preparePushNotificationLine(value: string | null | undefined): string {
@@ -79,39 +85,71 @@ export async function sendMessages(
   const results: PushNotificationSendResult[] = [];
   for (let i = 0; i < inputs.length; i += FCM_BATCH_SIZE) {
     const chunk = inputs.slice(i, i + FCM_BATCH_SIZE);
-    const messages = chunk.map((input) => buildMessage(input, true));
-
-    let response: BatchResponse;
-    try {
-      response = await admin.messaging().sendEach(messages);
-    } catch (error) {
-      logger.error(`Error sending notification batch: ${error}`);
-      results.push(
-        ...chunk.map((input) => buildFailedSendResult(input, error))
-      );
-      continue;
-    }
-
-    logger.info(
-      `Sent notification batch: ${response.successCount} succeeded, ${response.failureCount} failed`
-    );
-
-    const retryResults = await Promise.all(
-      response.responses.map((sendResponse, index) =>
-        handleSendResponse(chunk[index], sendResponse)
-      )
-    );
-    results.push(...retryResults);
+    results.push(...(await sendChunk(chunk)));
   }
   return results;
 }
 
+function prepareMessage(input: PushNotificationMessageInput) {
+  try {
+    return { input, message: buildMessage(input, true) };
+  } catch (error) {
+    const diagnostic = createPushSendDiagnostic(error, 'prepare');
+    reportPushSendDiagnostic(diagnostic);
+    return { input, result: buildFailedSendResult(input, error, diagnostic) };
+  }
+}
+
+async function sendChunk(
+  chunk: PushNotificationMessageInput[]
+): Promise<PushNotificationSendResult[]> {
+  const prepared = chunk.map(prepareMessage);
+  const sendable = prepared.filter(
+    (item): item is { input: PushNotificationMessageInput; message: Message } =>
+      item.message !== undefined
+  );
+  const sent = await sendPreparedMessages(sendable);
+  let next = 0;
+  return prepared.map((item) => item.result ?? sent[next++]);
+}
+
+async function sendPreparedMessages(
+  prepared: { input: PushNotificationMessageInput; message: Message }[]
+): Promise<PushNotificationSendResult[]> {
+  if (prepared.length === 0) return [];
+
+  let response: BatchResponse;
+  try {
+    response = await admin
+      .messaging()
+      .sendEach(prepared.map((item) => item.message));
+  } catch (error) {
+    const diagnostic = createPushSendDiagnostic(error, 'sdk_batch');
+    reportPushSendDiagnostic(diagnostic);
+    return prepared.map(({ input }) =>
+      buildFailedSendResult(input, error, diagnostic)
+    );
+  }
+
+  logger.info(
+    `Sent notification batch: ${response.successCount} succeeded, ${response.failureCount} failed`
+  );
+
+  return await Promise.all(
+    response.responses.map((sendResponse, index) =>
+      handleSendResponse(prepared[index].input, sendResponse)
+    )
+  );
+}
+
 function buildFailedSendResult(
   input: PushNotificationMessageInput,
-  error: unknown
+  error: unknown,
+  diagnosticError: PushSendDiagnostic
 ): PushNotificationSendResult {
   return {
     input,
+    diagnosticError,
     response: {
       success: false,
       error: error as SendResponse['error']
@@ -123,21 +161,17 @@ function buildMessage(
   input: PushNotificationMessageInput,
   includeImage: boolean
 ): Message {
-  const title = truncatePreparedLine(
-    preparePushNotificationLine(input.title) || DEFAULT_PUSH_NOTIFICATION_TITLE,
-    MAX_TITLE_LENGTH
-  );
-  const body = truncatePreparedLine(
-    preparePushNotificationLine(input.body) || DEFAULT_PUSH_NOTIFICATION_BODY,
-    MAX_BODY_LENGTH
-  );
+  const title =
+    preparePushNotificationLine(input.title) || DEFAULT_PUSH_NOTIFICATION_TITLE;
+  const body =
+    preparePushNotificationLine(input.body) || DEFAULT_PUSH_NOTIFICATION_BODY;
 
   const notification: Notification = { title, body };
   if (includeImage && isFcmAcceptableImageUrl(input.imageUrl)) {
     notification.imageUrl = input.imageUrl!.trim();
   }
 
-  return {
+  return fitPushNotificationPayload({
     notification,
     token: input.token,
     data: buildMessageData(input),
@@ -154,7 +188,7 @@ function buildMessage(
         }
       }
     }
-  };
+  });
 }
 
 function buildMessageData(
@@ -173,17 +207,6 @@ function buildMessageData(
   return data;
 }
 
-function truncatePreparedLine(value: string, maxLength: number): string {
-  const characters = Array.from(value);
-  if (characters.length <= maxLength) {
-    return value;
-  }
-  if (maxLength <= 3) {
-    return characters.slice(0, maxLength).join('');
-  }
-  return `${characters.slice(0, maxLength - 3).join('')}...`;
-}
-
 async function handleSendResponse(
   input: PushNotificationMessageInput,
   response: SendResponse
@@ -195,14 +218,13 @@ async function handleSendResponse(
 
   const error = response.error;
   if (input.imageUrl && error?.code === 'messaging/invalid-payload') {
-    logger.info(
-      `Invalid payload (e.g. imageUrl), retrying without image: ${error.message}`
-    );
+    reportPushImageRetry();
     return retryMessageWithoutImage(input);
   }
 
-  logger.error(`Error sending notification: ${error}`);
-  return { input, response };
+  const diagnosticError = createPushSendDiagnostic(error, 'sdk_response');
+  reportPushSendDiagnostic(diagnosticError);
+  return { input, response, diagnosticError };
 }
 
 async function retryMessageWithoutImage(
@@ -218,14 +240,9 @@ async function retryMessageWithoutImage(
         messageId
       }
     };
-  } catch (error: any) {
-    logger.error(`Error sending notification without image: ${error}`);
-    return {
-      input,
-      response: {
-        success: false,
-        error
-      }
-    };
+  } catch (error) {
+    const diagnostic = createPushSendDiagnostic(error, 'image_retry');
+    reportPushSendDiagnostic(diagnostic);
+    return buildFailedSendResult(input, error, diagnostic);
   }
 }

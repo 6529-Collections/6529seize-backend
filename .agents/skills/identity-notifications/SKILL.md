@@ -47,13 +47,13 @@ Use this workflow when a new event should appear in identity notification lists,
 8. Update `src/api-serverless/openapi.yaml`:
    - add the cause to `ApiNotificationCause`
    - add or update response fields only if the API shape changes
-   - run `cd src/api-serverless && npm run restructure-openapi && npm run generate`
+   - run `cd src/api-serverless && 6529 run generate:openapi`
 9. Add or update focused tests:
    - `src/notifications/user-notification-mapper.test.ts`
    - `src/notifications/user.notifier.test.ts`
    - `src/pushNotificationsHandler/*push-notification*.test.ts` when push output changes
    - `src/api-serverless/src/notifications/notifications-api-service.test.ts`
-10. Run `npm run lint` from the repo root.
+10. Run `6529 run lint` from the repo root.
 
 ## Storage Fields
 
@@ -86,6 +86,6 @@ Prefer existing columns before adding schema:
 - [ ] `getAllRelatedIds()` case added in notifications API service.
 - [ ] V2 API mapping updated, and V1 mapping updated if still exposed.
 - [ ] OpenAPI schema updated with new enum value.
-- [ ] Types regenerated with `cd src/api-serverless && npm run restructure-openapi && npm run generate`.
+- [ ] Types regenerated with `cd src/api-serverless && 6529 run generate:openapi`.
 - [ ] Tests cover mapper, notifier, push output, and API mapping as applicable.
-- [ ] `npm run lint` passes.
+- [ ] `6529 run lint` passes.

@@ -35,6 +35,7 @@ const ALLOWED_FORMAT_MIME_TYPES = {
 } as const;
 
 type AllowedSharpFormat = keyof typeof ALLOWED_FORMAT_MIME_TYPES;
+type SharpInstance = ReturnType<typeof Sharp>;
 const SANITIZER_CLAIM_STALE_MS = Time.minutes(20).toMillis();
 
 export class PermanentMediaSanitizationError extends Error {
@@ -279,9 +280,9 @@ function declaredMimeTypeMatchesDetectedFormat(
 }
 
 function formatSharpOutput(
-  image: Sharp.Sharp,
+  image: SharpInstance,
   format: AllowedSharpFormat
-): Sharp.Sharp {
+): SharpInstance {
   switch (format) {
     case 'jpeg':
       return image.jpeg({ quality: 95, mozjpeg: true });

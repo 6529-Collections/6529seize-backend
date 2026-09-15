@@ -16,6 +16,7 @@ import {
   IdentityRepNotification,
   IdentitySubscriptionNotification,
   PriorityAlertNotification,
+  SubscriptionCoverageNotification,
   UserNotification,
   WaveCreatedNotification
 } from './user-notification.types';
@@ -58,6 +59,8 @@ export class UserNotificationMapper {
         return this.mapAllDropsNotification(entity);
       case IdentityNotificationCause.PRIORITY_ALERT:
         return this.mapPriorityAlertNotification(entity);
+      case IdentityNotificationCause.SUBSCRIPTION_COVERAGE:
+        return this.mapSubscriptionCoverageNotification(entity);
       default: {
         return assertUnreachable(cause);
       }
@@ -303,6 +306,21 @@ export class UserNotificationMapper {
         additional_identity_id: entity.additional_identity_id!,
         drop_id: entity.related_drop_id!,
         wave_id: entity.wave_id!
+      }
+    };
+  }
+
+  private mapSubscriptionCoverageNotification(
+    entity: IdentityNotificationDeserialized
+  ): SubscriptionCoverageNotification {
+    return {
+      id: entity.id,
+      created_at: entity.created_at,
+      read_at: entity.read_at,
+      cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE,
+      data: {
+        ...entity.additional_data,
+        recipient_profile_id: entity.identity_id
       }
     };
   }

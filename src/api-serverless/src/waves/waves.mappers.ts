@@ -79,6 +79,7 @@ import {
   mapWaveScore
 } from '@/api/waves/wave-score.api-mapper';
 import { WaveUnreadSummary } from '@/api/waves/wave-unread-cache';
+import { moderationPresentationService } from '@/content-moderation/moderation-presentation.service';
 
 type WaveMappingRelatedData = {
   contributors: Record<
@@ -374,7 +375,11 @@ export class WavesMappers {
     const voteCreditor: ApiProfileMin | null = resolveProfile(
       waveEntity.voting_credit_creditor
     );
+    const authenticatedUserCanView =
+      waveEntity.visibility_group_id === null ||
+      groupIdsUserIsEligibleFor.includes(waveEntity.visibility_group_id);
     const authenticatedUserEligibleToVote =
+      authenticatedUserCanView &&
       !waveIsClosed &&
       !noRightToVote &&
       (!waveEntity.voting_group_id ||
@@ -406,6 +411,7 @@ export class WavesMappers {
       }
     };
     const authenticatedUserEligibleToParticipate =
+      authenticatedUserCanView &&
       !waveIsClosed &&
       !noRightToParticipate &&
       (!waveEntity.participation_group_id ||
@@ -434,11 +440,13 @@ export class WavesMappers {
       terms: waveEntity.participation_terms,
       submission_strategy: mapWaveFieldsToApiSubmissionStrategy(waveEntity)
     };
-    const authenticatedUserEligibleForAdmin = isWaveCreatorOrAdmin({
-      authenticatedProfileId: relatedData.authenticatedUserId,
-      wave: waveEntity,
-      groupIdsUserIsEligibleFor
-    });
+    const authenticatedUserEligibleForAdmin =
+      authenticatedUserCanView &&
+      isWaveCreatorOrAdmin({
+        authenticatedProfileId: relatedData.authenticatedUserId,
+        wave: waveEntity,
+        groupIdsUserIsEligibleFor
+      });
     const nextDropAllowed = resolveNextDropAllowed({
       wave: waveEntity,
       authenticatedProfileId: relatedData.authenticatedUserId,
@@ -446,6 +454,7 @@ export class WavesMappers {
       nextDropTimestamp: chatDropCooldowns[waveEntity.id]?.next_drop_timestamp
     });
     const authenticatedUserEligibleToChat =
+      authenticatedUserCanView &&
       (waveEntity.chat_group_id === null ||
         groupIdsUserIsEligibleFor.includes(waveEntity.chat_group_id)) &&
       waveEntity.chat_enabled &&
@@ -757,6 +766,10 @@ export class WavesMappers {
         },
         ctx.connection
       );
+    const curationDisplayNames = await moderationPresentationService.groupNames(
+      curationEntities,
+      ctx
+    );
     const curations: Record<string, ApiGroup> = curationEntities.reduce(
       (acc, curationEntity) => {
         const isHidden =
@@ -770,7 +783,7 @@ export class WavesMappers {
         } else {
           acc[curationEntity.id] = {
             id: curationEntity.id,
-            name: curationEntity.name,
+            name: curationDisplayNames[curationEntity.id],
             author: profileMins[curationEntity.created_by],
             created_at: new Date(curationEntity.created_at).getTime(),
             is_hidden: false,

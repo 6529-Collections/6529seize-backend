@@ -190,10 +190,18 @@ The two engines approach the same rule differently:
   `inBounds(level_min, level_max, level)` — a comparison **between level
   numbers**.
 - **SQL** (`getSqlAndParams` → `getGeneralPart`): compares the raw score to
-  `i.level_raw >= border(level_min)` and
-  `i.level_raw < border(level_max + 1)`. Level 100 has no upper bound.
+  `i.level_raw >= border(level_min)` only when `level_min > 0`, and
+  `i.level_raw < border(level_max + 1)` when `level_max < 100`.
+  A minimum of zero needs no raw-score predicate: negative raw scores are
+  level zero too. Level 100 has no upper bound.
 
-For `level_min` the encodings coincide: `level ≥ N ⟺ level_raw ≥ border(N)`.
+For positive `level_min`, `level ≥ N ⟺ level_raw ≥ border(N)`. This equivalence
+**does not hold at zero**. Preserve whether either level criterion was supplied
+before normalizing bounds, so an explicit minimum zero or maximum 100 still
+activates the criteria branch (including its union with an inclusion list).
+An absent criterion must not turn an empty group or a pure inclusion list into
+an unrestricted group. The optimized online-recipient path follows the same
+rule and admits negative raw scores for a minimum-zero-only group.
 
 For `level_max`, level N spans `[border(N), border(N+1))`; the exclusive next
 border therefore encodes `level ≤ N` exactly.
@@ -392,8 +400,8 @@ No criteria, no inclusion, no exclusion: **nobody** is eligible.
 
 The `groupId = null` system member-set request is not a group evaluation. It
 intentionally means "all identities" for broadcasts with no configured group
-restriction, so this degenerate-group rule applies only to persisted group
-definitions.
+restriction. This exception does not apply to an unsaved preview: an empty
+preview and an empty saved definition both match nobody.
 
 ## 10. Visibility and privacy
 
@@ -401,7 +409,11 @@ definitions.
   only loads visible groups as candidates (`UserGroupsDb.getByIds` filters
   `visible = true`; the identity-shortcut query joins `ug.visible = 1`). An
   invisible group is eligible to nobody. The member-set SQL path returns an
-  empty member set for invisible groups.
+  empty member set for invisible groups. That empty CTE must retain the full
+  identity projection (`select * from identities where false`), because member
+  listing, sorting, and filtering consume identity columns even for no rows.
+  The narrowed projection reported in #2068 belonged to unmerged #1822; this
+  conformance coverage prevents reintroduction, not a claimed production incident.
 - `is_private` is **not** an eligibility rule; it gates who may _see_ the
   group definition through the API (`UserGroupsDb.getById` returns private
   groups only to their creator or to already-eligible identities).
@@ -554,9 +566,61 @@ Received`), ignoring `cic_direction = 'SENT'`. The in-memory engine honors
 - **In-memory**: not eligible. **SQL**: members computed normally.
 - Vector: `invisible-group`.
 
-## 13. Changelog
+## 13. Current-consumer conformance and rollout
+
+The 72 shared vectors (250 group definitions) exercise direct evaluation, real-MySQL membership SQL,
+member lists and counts with wallet search, unsaved previews, and trusted online
+broadcast SQL. A legacy-invalid `ALL_TOKENS` rule over an `ALL` grant remains an
+empty saved member set; preview validation rejects it. Existing consumer suites
+also cover REP search aggregation, wave privilege containment, private groups,
+moderation, and real WebSocket delivery through child/parent intersections.
+One identity row per profile is the supported invariant.
+
+This milestone changes the current SQL evaluator without enabling a membership
+producer, dispatcher, worker, or materialized reader. It requires no schema or
+OpenAPI change. The seven-table refresh/publication contract remains in
+[membership-refresh-design.md](membership-refresh-design.md); SQL conformance
+is not evidence that the future runtime or cutover is ready.
+
+### Deployment units
+
+For staging, deploy `attachmentsProcessor`, `attachmentsOrchestrator`,
+`helpBotReplyLoop`, then `api`, sequentially. The attachment processor and
+orchestrator publish attachment status through the trusted group-recipient SQL;
+the help bot publishes drop/reaction updates through the same member SQL;
+the API serves lists, previews, feeds, mention search, containment, and live
+broadcasts. The processor precedes its existing orchestration producer.
+All use the same existing tables and message/API contracts during rollout;
+no migration or feature activation is needed. The API's existing catalogue
+prerequisites are unchanged and already deployed.
+
+`releaseNotesGenerationLoop` also reaches group-recipient SQL when posting drops,
+but its catalogue permits production only. Include it in a separately authorized
+production plan. Other loops using only the unchanged direct evaluator or
+ungrouped notification methods do not need this SQL-only deployment.
+Rollback uses a reviewed revert and the same services; a materialization read
+switch cannot undo these SQL changes.
+
+### Help6529 knowledge authoring facts
+
+- A minimum Level of zero includes all profiles, including those with a negative
+  underlying score. A maximum Level of zero includes only Level 0 profiles.
+- An explicit zero is a configured rule. An empty group with no rules or identity
+  lists has no members; an inclusion-only group contains its listed identities.
+- Included identities bypass other criteria; exclusions take precedence over
+  inclusion and criteria. Invisible groups have no eligible members.
+- Member lists and unsaved previews apply the same eligibility rules. REP/CIC
+  bounds are inclusive, absent aggregates count as zero, and filtered ratings
+  with no bounds require a nonzero total. Fractional xTDH is floored for bounds.
+
+These backend-authored facts are source material for the frontend help corpus.
+They are not yet published in the live frontend `/help-index.json`; that corpus
+update remains a documented knowledge gap for this backend-only release.
+
+## 14. Changelog
 
 | spec_version | Date       | Changes                                                                                                                                                                                                                                                                                 |
 | ------------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2            | 2026-09-15 | Clarified negative-score minimum-zero semantics, preview parity, full empty projections, and current-consumer coverage. |
 | 2            | 2026-07-23 | Resolved D-1…D-9 by aligning the set-based SQL member-set generator with the normative in-memory rules; both conformance harnesses now require identical outcomes.                                                                                                                      |
 | 1            | 2026-07-08 | Initial specification extracted from the in-memory predicates and the member-set SQL generator, including the new NFT-ownership match modes (`owns_*_tokens_match_mode`) and grant-beneficiary match mode (`is_beneficiary_of_grant_match_mode`). Divergences D-1…D-9 recorded as open. |

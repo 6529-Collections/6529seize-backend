@@ -1,6 +1,9 @@
 import { AiPrompter } from './ai-prompter';
 import { getBedrockClient } from '@/bedrock';
-import { getConfiguredBedrockAnthropicModelId } from '@/bedrock.config';
+import {
+  DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID,
+  getConfiguredBedrockAnthropicModelId
+} from '@/bedrock.config';
 import {
   BedrockRuntimeClient,
   InvokeModelCommand,
@@ -10,12 +13,7 @@ import { TextDecoder } from 'node:util';
 
 export const ABUSIVENESS_BEDROCK_MODEL_ID_ENV = 'ABUSIVENESS_BEDROCK_MODEL_ID';
 export const DEFAULT_ABUSIVENESS_BEDROCK_MODEL_ID =
-  'anthropic.claude-3-sonnet-20240229-v1:0';
-
-const MODEL_ID = getConfiguredBedrockAnthropicModelId(
-  ABUSIVENESS_BEDROCK_MODEL_ID_ENV,
-  DEFAULT_ABUSIVENESS_BEDROCK_MODEL_ID
-);
+  DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID;
 
 export function buildAbusivenessBedrockInvokeModelInput(
   modelId: string,
@@ -32,7 +30,6 @@ export function buildAbusivenessBedrockInvokeModelInput(
         { role: 'user', content: [{ type: 'text', text: `${prompt}` }] }
       ],
       temperature: 0.7,
-      top_p: 0.8,
       top_k: 30
     })
   };
@@ -44,7 +41,13 @@ class BedrockAiPrompter implements AiPrompter {
   public async promptAndGetReply(prompt: string): Promise<string> {
     const response = await this.getBedrock().send(
       new InvokeModelCommand(
-        buildAbusivenessBedrockInvokeModelInput(MODEL_ID, prompt)
+        buildAbusivenessBedrockInvokeModelInput(
+          getConfiguredBedrockAnthropicModelId(
+            ABUSIVENESS_BEDROCK_MODEL_ID_ENV,
+            DEFAULT_ABUSIVENESS_BEDROCK_MODEL_ID
+          ),
+          prompt
+        )
       )
     );
     const rawRes = response.body;

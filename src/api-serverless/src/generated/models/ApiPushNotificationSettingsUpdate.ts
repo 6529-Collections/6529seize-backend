@@ -23,6 +23,7 @@ export class ApiPushNotificationSettingsUpdate {
     'drop_reacted'?: boolean;
     'drop_boosted'?: boolean;
     'wave_created'?: boolean;
+    'subscription_coverage'?: boolean;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -86,6 +87,12 @@ export class ApiPushNotificationSettingsUpdate {
         {
             "name": "wave_created",
             "baseName": "wave_created",
+            "type": "boolean",
+            "format": ""
+        },
+        {
+            "name": "subscription_coverage",
+            "baseName": "subscription_coverage",
             "type": "boolean",
             "format": ""
         }    ];

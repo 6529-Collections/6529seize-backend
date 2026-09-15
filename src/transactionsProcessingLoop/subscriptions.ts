@@ -19,7 +19,6 @@ import { Transaction } from '../entities/ITransaction';
 import { TransactionsProcessedSubscriptionsBlock } from '../entities/ITransactionsProcessing';
 import { ethTools } from '../eth-tools';
 import { Logger } from '../logging';
-import { sendDiscordUpdate } from '../notifier-discord';
 import {
   sendInsufficientBalanceWaveError,
   sendNoBalanceFoundWaveError,
@@ -32,6 +31,7 @@ import {
   getLastProcessingBlock,
   persistBlock
 } from './db.transactions_processing';
+import { markSubscriptionCoverageDirty } from '../subscription-coverage/subscription-coverage-dirty';
 
 const logger = Logger.get('TRANSACTIONS_PROCESSING_SUBSCRIPTIONS');
 
@@ -93,9 +93,15 @@ export const redeemSubscriptions = async (reset?: boolean) => {
   logger.info(`[${airdrops.length} AIRDROPS TO PROCESS]`);
 
   const waveNotifications: SubscriptionWaveNotification[] = [];
+  const dirtyConsolidationKeys = new Set<string>();
   await getDataSource().transaction(async (entityManager) => {
     for (const drop of airdrops) {
-      await processAirdrop(drop, entityManager, waveNotifications);
+      await processAirdrop(
+        drop,
+        entityManager,
+        waveNotifications,
+        dirtyConsolidationKeys
+      );
     }
     const transactionBlockRepo = entityManager.getRepository(
       TransactionsProcessedSubscriptionsBlock
@@ -104,13 +110,18 @@ export const redeemSubscriptions = async (reset?: boolean) => {
     logger.info(`[BLOCK ${maxBlockTransaction.block} PERSISTED]`);
   });
 
+  await markSubscriptionCoverageDirty(
+    Array.from(dirtyConsolidationKeys),
+    'SUBSCRIPTION_REDEEMED'
+  );
   await sendSubscriptionWaveNotifications(waveNotifications);
 };
 
 export async function processAirdrop(
   transaction: Transaction,
   entityManager: EntityManager,
-  waveNotifications: SubscriptionWaveNotification[] = []
+  waveNotifications: SubscriptionWaveNotification[] = [],
+  dirtyConsolidationKeys?: Set<string>
 ): Promise<void> {
   const validation = await validateNonSubscriptionAirdrop(
     transaction,
@@ -122,7 +133,12 @@ export async function processAirdrop(
   }
 
   for (let i = 0; i < transaction.token_count; i++) {
-    await processSubscription(transaction, entityManager, waveNotifications);
+    await processSubscription(
+      transaction,
+      entityManager,
+      waveNotifications,
+      dirtyConsolidationKeys
+    );
   }
 }
 
@@ -218,7 +234,8 @@ export async function validateNonSubscriptionAirdrop(
 async function processSubscription(
   transaction: Transaction,
   entityManager: EntityManager,
-  waveNotifications: SubscriptionWaveNotification[]
+  waveNotifications: SubscriptionWaveNotification[],
+  dirtyConsolidationKeys?: Set<string>
 ) {
   const finalSubscription: NFTFinalSubscription | undefined = (
     await entityManager.query(
@@ -235,13 +252,7 @@ async function processSubscription(
   if (!finalSubscription) {
     const transactionLink = buildTransactionLink(transaction.transaction);
     const message = `🚨 No subscription found for airdrop address: ${transaction.to_address} \nTransaction: ${transactionLink}`;
-    logger.warn(message);
-    await sendDiscordUpdate(
-      process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
-      message,
-      'Subscriptions',
-      'warn'
-    );
+    logger.errorWithCode('SUBSCRIPTION_NOT_FOUND', message);
     waveNotifications.push({
       kind: 'no-subscription-found',
       airdropAddress: transaction.to_address,
@@ -257,13 +268,7 @@ async function processSubscription(
   if (!balance) {
     const transactionLink = buildTransactionLink(transaction.transaction);
     const message = `🚨 No balance found for consolidation key: ${finalSubscription.consolidation_key} \nTransaction: ${transactionLink}`;
-    logger.error(message);
-    await sendDiscordUpdate(
-      process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
-      message,
-      'Subscriptions',
-      'error'
-    );
+    logger.errorWithCode('SUBSCRIPTION_BALANCE_NOT_FOUND', message);
     waveNotifications.push({
       kind: 'no-balance-found',
       consolidationKey: finalSubscription.consolidation_key,
@@ -276,13 +281,7 @@ async function processSubscription(
   } else if (MEMES_MINT_PRICE > balance.balance) {
     const transactionLink = buildTransactionLink(transaction.transaction);
     const message = `🚨 Insufficient balance for consolidation key: ${finalSubscription.consolidation_key} \nTransaction: ${transactionLink}`;
-    logger.error(message);
-    await sendDiscordUpdate(
-      process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
-      message,
-      'Subscriptions',
-      'error'
-    );
+    logger.errorWithCode('SUBSCRIPTION_BALANCE_INSUFFICIENT', message);
     waveNotifications.push({
       kind: 'insufficient-balance',
       consolidationKey: finalSubscription.consolidation_key,
@@ -337,6 +336,7 @@ async function processSubscription(
   await entityManager
     .getRepository(NFTFinalSubscription)
     .save(finalSubscription);
+  dirtyConsolidationKeys?.add(finalSubscription.consolidation_key);
 }
 
 function buildTransactionLink(transactionHash: string): string {

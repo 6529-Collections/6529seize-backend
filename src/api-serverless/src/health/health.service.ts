@@ -1,3 +1,4 @@
+import fetch from 'node-fetch';
 import { Logger } from '../../../logging';
 import { getRedisClient } from '../../../redis';
 import { sqlExecutor } from '../../../sql-executor';
@@ -7,6 +8,8 @@ const logger = Logger.get('HEALTH');
 let arweaveHealthClient: { arweave: any; key: any } | null = null;
 const ARWEAVE_HEALTH_TIMEOUT_MS = 5_000;
 const ARWEAVE_HEALTH_CACHE_TTL_MS = 60_000;
+const IPFS_HEALTH_TIMEOUT_MS = 5_000;
+const IPFS_HEALTH_USER_AGENT = '6529-api-health/1.0';
 let arweaveHealthCache: {
   data: HealthData['arweave'];
   expiresAt: number;
@@ -199,6 +202,48 @@ async function getArweaveHealthSafe(): Promise<HealthData['arweave']> {
   }
 }
 
+async function fetchIpfsHealth(
+  signal: AbortSignal
+): Promise<HealthData['ipfs']> {
+  const apiEndpoint = process.env.IPFS_API_ENDPOINT;
+  if (!apiEndpoint) {
+    throw new Error('IPFS_API_ENDPOINT not configured');
+  }
+
+  const normalizedApiEndpoint = apiEndpoint.endsWith('/')
+    ? apiEndpoint.slice(0, -1)
+    : apiEndpoint;
+  const response = await fetch(`${normalizedApiEndpoint}/health`, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': IPFS_HEALTH_USER_AGENT
+    },
+    signal
+  });
+  if (!response.ok) {
+    throw new Error(`IPFS health check returned status ${response.status}`);
+  }
+
+  return { healthy: true };
+}
+
+export async function getIpfsHealth(): Promise<HealthData['ipfs']> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    IPFS_HEALTH_TIMEOUT_MS
+  );
+
+  try {
+    return await fetchIpfsHealth(controller.signal);
+  } catch (err) {
+    logger.warn('IPFS health check failed', err);
+    return { healthy: false };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 function getRateLimitHealth(): HealthData['rate_limit'] {
   try {
     const rateLimitingConfig = getRateLimitConfig();
@@ -272,15 +317,28 @@ export interface HealthData {
       estimated_3500mb_uploads?: string;
     };
   };
+  ipfs: {
+    healthy: boolean;
+  };
 }
 
 export async function getHealthData(): Promise<HealthData> {
-  const isDbHealthy = await checkDbHealth();
-  const { response: redisResponse, isOk: isRedisOk } = await getRedisHealth();
-  const arweaveResponse = await getArweaveHealthSafe();
+  const [
+    isDbHealthy,
+    { response: redisResponse, isOk: isRedisOk },
+    arweaveResponse,
+    ipfsResponse
+  ] = await Promise.all([
+    checkDbHealth(),
+    getRedisHealth(),
+    getArweaveHealthSafe(),
+    getIpfsHealth()
+  ]);
   const rateLimitResponse = getRateLimitHealth();
   const overallStatus =
-    isDbHealthy && isRedisOk && arweaveResponse.healthy ? 'ok' : 'degraded';
+    isDbHealthy && isRedisOk && arweaveResponse.healthy && ipfsResponse.healthy
+      ? 'ok'
+      : 'degraded';
 
   return {
     status: overallStatus,
@@ -296,6 +354,7 @@ export async function getHealthData(): Promise<HealthData> {
     db: isDbHealthy ? 'ok' : 'degraded',
     redis: redisResponse,
     rate_limit: rateLimitResponse,
-    arweave: arweaveResponse
+    arweave: arweaveResponse,
+    ipfs: ipfsResponse
   };
 }

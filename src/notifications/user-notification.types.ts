@@ -104,6 +104,38 @@ export interface IdentityNicNotificationData {
   total: number;
 }
 
+export type SubscriptionCoverageNotificationStatus =
+  | 'EARLY_WARNING'
+  | 'RUNNING_LOW'
+  | 'ACTION_REQUIRED';
+
+export interface SubscriptionCoverageNotificationDrop {
+  token_id: number;
+  mint_at: string;
+}
+
+export interface SubscriptionCoverageNotificationNextUnfunded extends SubscriptionCoverageNotificationDrop {
+  requested_mints: number;
+  funded_mints: number;
+  missing_mints: number;
+}
+
+export interface SubscriptionCoverageNotificationData {
+  recipient_profile_id: string;
+  profile_handle: string;
+  status: SubscriptionCoverageNotificationStatus;
+  consolidation_key: string;
+  mint_capacity: number;
+  allocated_mints: number;
+  fully_funded_drops: number;
+  funded_through: SubscriptionCoverageNotificationDrop | null;
+  next_unfunded: SubscriptionCoverageNotificationNextUnfunded | null;
+  minimum_top_up_eth: string | null;
+  top_up_deadline: string | null;
+  calculation_version: number;
+  forecast_fingerprint: string;
+}
+
 export interface UserNotificationBase {
   id: number;
   created_at: number;
@@ -175,6 +207,11 @@ export interface PriorityAlertNotification extends UserNotificationBase {
   data: PriorityAlertNotificationData;
 }
 
+export interface SubscriptionCoverageNotification extends UserNotificationBase {
+  cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE;
+  data: SubscriptionCoverageNotificationData;
+}
+
 export type UserNotification =
   | IdentitySubscriptionNotification
   | IdentityMentionNotification
@@ -188,7 +225,8 @@ export type UserNotification =
   | DropQuoteNotification
   | WaveCreatedNotification
   | AllDropsNotification
-  | PriorityAlertNotification;
+  | PriorityAlertNotification
+  | SubscriptionCoverageNotification;
 
 export interface UserNotificationsResponse {
   readonly notifications: UserNotification[];

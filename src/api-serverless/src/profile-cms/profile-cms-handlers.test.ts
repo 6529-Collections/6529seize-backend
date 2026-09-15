@@ -4,6 +4,7 @@ import { ApiProfileCmsAgentPatchValidationResult } from '@/api/generated/models/
 import { ApiProfileCmsAgentSchemaBundle } from '@/api/generated/models/ApiProfileCmsAgentSchemaBundle';
 import { ApiProfileCmsAgentSourcePacket } from '@/api/generated/models/ApiProfileCmsAgentSourcePacket';
 import { ApiProfileCmsPackage } from '@/api/generated/models/ApiProfileCmsPackage';
+import { ApiProfileCmsPackageStorageUploadResult } from '@/api/generated/models/ApiProfileCmsPackageStorageUploadResult';
 import { ApiProfileCmsPrimaryPackage } from '@/api/generated/models/ApiProfileCmsPrimaryPackage';
 import {
   ArchiveProfileCmsPackageRequest,
@@ -14,6 +15,7 @@ import {
   GetPrimaryProfileCmsPackageRequest,
   RollbackProfileCmsPackageRequest,
   SaveProfileCmsPackageDraftRequest,
+  UploadProfileCmsPackageStorageRequest,
   ValidateProfileCmsAgentPatchRequest,
   ValidateProfileCmsPackageRequest
 } from '@/api/generated/routes/operations';
@@ -35,7 +37,8 @@ const mockProfileCmsApiService = {
   getByVersion: jest.fn(),
   rollbackPrimary: jest.fn(),
   archivePackage: jest.fn(),
-  exportPackage: jest.fn()
+  exportPackage: jest.fn(),
+  uploadToStorage: jest.fn()
 };
 
 jest.mock('@/api/auth/auth', () => ({
@@ -55,6 +58,7 @@ import {
   handleGetPrimaryProfileCmsPackage,
   handleRollbackProfileCmsPackage,
   handleSaveProfileCmsPackageDraft,
+  handleUploadProfileCmsPackageStorage,
   handleValidateProfileCmsAgentPatch,
   handleValidateProfileCmsPackage
 } from './profile-cms.handlers';
@@ -403,6 +407,39 @@ describe('profile CMS handlers', () => {
 
     await expect(handleArchiveProfileCmsPackage(request)).resolves.toBe(
       apiPackage
+    );
+  });
+
+  it('uploads package storage through the API handler with authentication context', async () => {
+    const authenticationContext = AuthenticationContext.fromProfileId(
+      PROFILE_CMS_FIXTURE_PROFILE_ID
+    );
+    const cmsPackage = createValidProfileCmsPackage();
+    const uploadResult = {
+      receipt: {
+        provider: 'arweave',
+        uri: `ar://${'a'.repeat(43)}`,
+        content_hash: cmsPackage.integrity.package_hash,
+        provider_content_id: 'a'.repeat(43),
+        canonical: true,
+        recorded_at: '2026-06-17T00:00:00.000Z'
+      }
+    } as unknown as ApiProfileCmsPackageStorageUploadResult;
+    mockGetAuthenticationContext.mockResolvedValue(authenticationContext);
+    mockProfileCmsApiService.uploadToStorage.mockResolvedValue(uploadResult);
+
+    const request = {
+      params: { id: 'cms-package-id' },
+      body: undefined,
+      query: {}
+    } as unknown as UploadProfileCmsPackageStorageRequest;
+
+    await expect(handleUploadProfileCmsPackageStorage(request)).resolves.toBe(
+      uploadResult
+    );
+    expect(mockProfileCmsApiService.uploadToStorage).toHaveBeenCalledWith(
+      'cms-package-id',
+      { authenticationContext, timer: undefined }
     );
   });
 

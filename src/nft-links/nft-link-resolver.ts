@@ -8,6 +8,8 @@ import { NftLinkResolverValidationError } from '@/nft-links/nft-link-resolver-va
 import { formatTokenAmount } from '@/nft-links/lib/onchain';
 import { RequestContext } from '@/request.context';
 import { env } from '@/env';
+import { getNftLinkResolutionBudget } from '@/nft-links/resolution-budget';
+import { requiredNftPage404 } from './nft-link-page-retry';
 
 export class NftLinkResolver {
   private isOgFetchAllowed(viewUrl: string): boolean {
@@ -102,7 +104,13 @@ export class NftLinkResolver {
 
     if (!this.isOgFetchAllowed(canonical.viewUrl)) return null;
     const timeoutMs = env.getIntOrNull('OG_TIMEOUT_MS') ?? 5000;
-    const html = await fetchTextWithTimeout(canonical.viewUrl, { timeoutMs });
+    let html: string;
+    try {
+      html = await fetchTextWithTimeout(canonical.viewUrl, { timeoutMs });
+    } catch (error) {
+      // Title-only enrichment is not a required media-page failure.
+      throw (needsImage && requiredNftPage404(error, canonical)) || error;
+    }
 
     const og = extractOg(html);
     const fallbackPriceAmount =
@@ -140,6 +148,8 @@ export class NftLinkResolver {
   ): Promise<NormalizedNftCard> {
     try {
       ctx.timer?.start(`${this.constructor.name}->resolve`);
+      const budget = getNftLinkResolutionBudget();
+      budget?.check();
       const canonical = validateLinkUrl(url);
       let card = this.buildBaseCard(canonical);
 
@@ -153,11 +163,13 @@ export class NftLinkResolver {
       }
 
       // OG fallback (allowlisted domains only; our validator ensures this)
+      budget?.check();
       const ogRes = await this.enrichWithOgIfMissing(card, canonical);
       if (ogRes) {
         card = this.deepMerge(card, ogRes.patch);
       }
 
+      budget?.check();
       if (!card.asset.media) {
         throw new NftLinkResolverValidationError(
           `Unable to enrich ${url}. Missing media.`

@@ -18,7 +18,8 @@ export const PUSH_NOTIFICATION_TYPES = [
   'drop_voted',
   'drop_reacted',
   'drop_boosted',
-  'wave_created'
+  'wave_created',
+  'subscription_coverage'
 ] as const;
 
 export type PushNotificationType = (typeof PUSH_NOTIFICATION_TYPES)[number];
@@ -34,6 +35,7 @@ export interface PushNotificationSettingsData {
   drop_reacted: boolean;
   drop_boosted: boolean;
   wave_created: boolean;
+  subscription_coverage: boolean;
 }
 
 export const DEFAULT_PUSH_NOTIFICATION_SETTINGS: PushNotificationSettingsData =
@@ -47,7 +49,8 @@ export const DEFAULT_PUSH_NOTIFICATION_SETTINGS: PushNotificationSettingsData =
     drop_voted: true,
     drop_reacted: true,
     drop_boosted: true,
-    wave_created: true
+    wave_created: true,
+    subscription_coverage: true
   };
 
 @Entity(PUSH_NOTIFICATION_SETTINGS_TABLE)
@@ -87,6 +90,9 @@ export class PushNotificationSettingsEntity {
 
   @Column({ type: 'boolean', default: true })
   wave_created!: boolean;
+
+  @Column({ type: 'boolean', default: true })
+  subscription_coverage!: boolean;
 
   @CreateDateColumn()
   created_at?: Time;

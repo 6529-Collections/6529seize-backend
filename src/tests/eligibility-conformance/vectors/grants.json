@@ -63,7 +63,11 @@
     "subject": "subject",
     "grants": [
       { "id": "grant-full", "token_mode": "INCLUDE", "tokens": ["10", "11"] },
-      { "id": "grant-partial", "token_mode": "INCLUDE", "tokens": ["10", "11", "12"] }
+      {
+        "id": "grant-partial",
+        "token_mode": "INCLUDE",
+        "tokens": ["10", "11", "12"]
+      }
     ],
     "external_ownership": [
       { "grant": "grant-full", "token_id": "10", "owner": "subject" },
@@ -111,7 +115,12 @@
     "identities": [{ "id": "subject" }],
     "subject": "subject",
     "grants": [
-      { "id": "grant-pending", "token_mode": "INCLUDE", "status": "PENDING", "tokens": ["1"] }
+      {
+        "id": "grant-pending",
+        "token_mode": "INCLUDE",
+        "status": "PENDING",
+        "tokens": ["1"]
+      }
     ],
     "external_ownership": [
       { "grant": "grant-pending", "token_id": "1", "owner": "subject" }

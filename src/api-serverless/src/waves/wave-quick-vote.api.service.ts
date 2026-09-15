@@ -1,3 +1,4 @@
+import { assertWaveAndParentVisibleOrThrow } from './wave-access.helpers';
 import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import { ApiUndiscoveredDrop } from '@/api/generated/models/ApiUndiscoveredDrop';
 import { DropsMappers, dropsMappers } from '@/api/drops/drops.mappers';
@@ -96,12 +97,13 @@ export class WaveQuickVoteApiService {
     if (!wave) {
       throw new NotFoundException(`Wave ${param.waveId} not found`);
     }
-    if (
-      wave.visibility_group_id !== null &&
-      !groupsUserIsEligibleFor.includes(wave.visibility_group_id)
-    ) {
-      throw new NotFoundException(`Wave ${param.waveId} not found`);
-    }
+    await assertWaveAndParentVisibleOrThrow({
+      wave,
+      groupsUserIsEligibleFor,
+      message: `Wave ${param.waveId} not found`,
+      wavesApiDb: this.wavesApiDb,
+      ctx
+    });
     if (wave.type === WaveType.CHAT) {
       throw new BadRequestException(`Voting is not allowed in chat waves`);
     }

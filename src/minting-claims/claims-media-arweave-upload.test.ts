@@ -1,4 +1,7 @@
 import { describe, expect, it, beforeEach, jest } from '@jest/globals';
+import { createHash } from 'node:crypto';
+import { validGlb } from '@/tests/fixtures/glb';
+import { BadRequestException } from '@/exceptions';
 import type { MintingClaimRow } from '@/api/minting-claims/api.minting-claims.db';
 import { arweaveFileUploader } from '@/arweave';
 import { GRADIENT_CONTRACT, MEMES_CONTRACT } from '@/constants';
@@ -266,6 +269,82 @@ describe('validateMintingClaimReadyForArweaveUpload', () => {
     });
   });
 
+  it('accepts a historical positive season for Arweave republishing', async () => {
+    const attributes = buildMemesRawAttributes().map((attribute) =>
+      attribute.trait_type === 'Type - Season'
+        ? { ...attribute, value: 1 }
+        : attribute
+    );
+
+    await expect(
+      validateMintingClaimReadyForArweaveUpload(
+        baseClaim({ attributes: JSON.stringify(attributes) }),
+        MEMES_CONTRACT
+      )
+    ).resolves.toEqual({
+      imageUrl: 'https://cdn.example.com/image.png',
+      typeMemeId: 9,
+      seasonValue: 1
+    });
+    expect(fetchMaxSeasonIdMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a non-positive season before Arweave upload', async () => {
+    const attributes = buildMemesRawAttributes().map((attribute) =>
+      attribute.trait_type === 'Type - Season'
+        ? { ...attribute, value: 0 }
+        : attribute
+    );
+
+    await expect(
+      validateMintingClaimReadyForArweaveUpload(
+        baseClaim({ attributes: JSON.stringify(attributes) }),
+        MEMES_CONTRACT
+      )
+    ).rejects.toThrow(
+      'Invalid fields for Arweave upload: Season (must be a positive integer, got 0).'
+    );
+    expect(fetchMaxSeasonIdMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a season above the current and next-season window', async () => {
+    const attributes = buildMemesRawAttributes().map((attribute) =>
+      attribute.trait_type === 'Type - Season'
+        ? { ...attribute, value: 16 }
+        : attribute
+    );
+
+    await expect(
+      validateMintingClaimReadyForArweaveUpload(
+        baseClaim({ attributes: JSON.stringify(attributes) }),
+        MEMES_CONTRACT
+      )
+    ).rejects.toThrow(
+      'Invalid fields for Arweave upload: Season (must not exceed 15; current max season is 14, got 16).'
+    );
+    expect(fetchMaxSeasonIdMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts the next season at the upper boundary', async () => {
+    const attributes = buildMemesRawAttributes().map((attribute) =>
+      attribute.trait_type === 'Type - Season'
+        ? { ...attribute, value: 15 }
+        : attribute
+    );
+
+    await expect(
+      validateMintingClaimReadyForArweaveUpload(
+        baseClaim({ attributes: JSON.stringify(attributes) }),
+        MEMES_CONTRACT
+      )
+    ).resolves.toEqual({
+      imageUrl: 'https://cdn.example.com/image.png',
+      typeMemeId: 9,
+      seasonValue: 15
+    });
+    expect(fetchMaxSeasonIdMock).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects missing MEMES traits before Arweave upload', async () => {
     const attributes = buildMemesRawAttributes().filter(
       (attribute) => attribute.trait_type !== 'Boost'
@@ -312,6 +391,108 @@ describe('validateMintingClaimReadyForArweaveUpload', () => {
       'Invalid fields for Arweave upload: MEMES animation_details (missing keys: sha256).'
     );
   });
+
+  it('rejects placeholder image details before Arweave upload', async () => {
+    await expect(
+      validateMintingClaimReadyForArweaveUpload(
+        baseClaim({
+          image_details: JSON.stringify({
+            bytes: 0,
+            format: 'PNG',
+            sha256: '',
+            width: 0,
+            height: 0
+          })
+        }),
+        MEMES_CONTRACT
+      )
+    ).rejects.toThrow(/MEMES image_details/);
+  });
+
+  describe.each(['PNG', 'MP4', 'GLB'])('%s decimal byte limit', (format) => {
+    function claimWithBytes(bytes: number): MintingClaimRow {
+      const details = JSON.stringify({
+        bytes,
+        format,
+        sha256: 'a'.repeat(64),
+        width: 800,
+        height: 800,
+        duration: 4,
+        codecs: ['h264']
+      });
+      return baseClaim(
+        format === 'PNG'
+          ? { image_details: details }
+          : {
+              animation_url: `https://cdn.example.com/animation.${format.toLowerCase()}`,
+              animation_details: details
+            }
+      );
+    }
+
+    it.each([249_999_999, 250_000_000])('accepts %i bytes', async (bytes) => {
+      await expect(
+        validateMintingClaimReadyForArweaveUpload(
+          claimWithBytes(bytes),
+          MEMES_CONTRACT
+        )
+      ).resolves.toBeDefined();
+    });
+
+    it.each([250_000_001, 262_144_000])('rejects %i bytes', async (bytes) => {
+      await expect(
+        validateMintingClaimReadyForArweaveUpload(
+          claimWithBytes(bytes),
+          MEMES_CONTRACT
+        )
+      ).rejects.toThrow('bytes exceeds the Main Stage media limit');
+    });
+  });
+
+  it('rejects placeholder video details before Arweave upload', async () => {
+    await expect(
+      validateMintingClaimReadyForArweaveUpload(
+        baseClaim({
+          animation_url: 'https://cdn.example.com/animation.mp4',
+          animation_details: JSON.stringify({
+            bytes: 0,
+            format: 'MP4',
+            duration: 0,
+            sha256: '',
+            width: 0,
+            height: 0,
+            codecs: []
+          })
+        }),
+        MEMES_CONTRACT
+      )
+    ).rejects.toThrow(/MEMES animation_details/);
+  });
+
+  it.each([[], [''], ''])(
+    'rejects otherwise valid video details with empty codecs: %p',
+    async (codecs) => {
+      await expect(
+        validateMintingClaimReadyForArweaveUpload(
+          baseClaim({
+            animation_url: 'https://cdn.example.com/animation.mp4',
+            animation_details: JSON.stringify({
+              bytes: 456,
+              format: 'MP4',
+              duration: 4,
+              sha256: 'b'.repeat(64),
+              width: 1000,
+              height: 1000,
+              codecs
+            })
+          }),
+          MEMES_CONTRACT
+        )
+      ).rejects.toThrow(
+        'MEMES animation_details (codecs must contain non-empty strings)'
+      );
+    }
+  );
 });
 
 describe('uploadMintingClaimToArweave', () => {
@@ -369,6 +550,10 @@ describe('uploadMintingClaimToArweave', () => {
     );
 
     expect(uploadFileMock).toHaveBeenCalledTimes(2);
+    expect(fetchPublicUrlToBufferMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ maxBytes: 250_000_000 })
+    );
     const metadataUploadBuffer = uploadFileMock.mock.calls[1]?.[0] as Buffer;
     const uploadedMetadata = JSON.parse(metadataUploadBuffer.toString('utf8'));
 
@@ -474,6 +659,189 @@ describe('uploadMintingClaimToArweave', () => {
     );
     expect(uploadedMetadata.image_url).toBe(
       'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
+    );
+  });
+
+  it('reuses checkpointed Arweave transactions when source hashes still match', async () => {
+    uploadFileMock.mockReset();
+    uploadFileMock.mockResolvedValueOnce({
+      url: 'https://arweave.net/_MSzxiISR3AgFJqhzBoAbCtFGMglSqRmZi5NTgZLfL4'
+    });
+    fetchPublicUrlToBufferMock
+      .mockResolvedValueOnce({
+        buffer: Buffer.from('image-bytes'),
+        contentType: 'image/png',
+        finalUrl: 'https://cdn.example.com/image.png'
+      })
+      .mockResolvedValueOnce({
+        buffer: Buffer.from('animation-bytes'),
+        contentType: 'video/mp4',
+        finalUrl: 'https://cdn.example.com/animation.mp4'
+      });
+
+    const result = await uploadMintingClaimToArweave(
+      MEMES_CONTRACT,
+      baseClaim({
+        image_location: 'image-checkpoint-tx',
+        image_details: JSON.stringify({
+          bytes: 11,
+          format: 'PNG',
+          sha256:
+            '2c8648d103e3dd7ad87660da0f126a1443b6d21ac1bd3ec000c5e24e2373a90c',
+          width: 800,
+          height: 800
+        }),
+        animation_url: 'https://cdn.example.com/animation.mp4',
+        animation_location: 'animation-checkpoint-tx',
+        animation_details: JSON.stringify({
+          bytes: 15,
+          codecs: ['avc1'],
+          duration: 1,
+          format: 'MP4',
+          sha256:
+            '79badeea50fb56bc902cf2704ad33da0a69421fdf81b9657066be4eef6014f51',
+          width: 800,
+          height: 800
+        })
+      })
+    );
+
+    expect(result.imageLocationUrl).toBe(
+      'https://arweave.net/image-checkpoint-tx'
+    );
+    expect(result.animationLocationUrl).toBe(
+      'https://arweave.net/animation-checkpoint-tx'
+    );
+    expect(uploadFileMock).toHaveBeenCalledTimes(1);
+    expect(uploadFileMock).toHaveBeenCalledWith(
+      expect.any(Buffer),
+      'application/json'
+    );
+  });
+
+  it('stops publication when the image checkpoint cannot be persisted', async () => {
+    const failure = new Error('checkpoint unavailable');
+    const onImageUploaded = jest
+      .fn<(_location: string) => Promise<void>>()
+      .mockRejectedValue(failure);
+    const onAnimationUploaded = jest.fn<(_location: string) => Promise<void>>();
+
+    await expect(
+      uploadMintingClaimToArweave(MEMES_CONTRACT, baseClaim(), {
+        onImageUploaded,
+        onAnimationUploaded
+      })
+    ).rejects.toBe(failure);
+
+    expect(uploadFileMock).toHaveBeenCalledTimes(1);
+    expect(uploadFileMock.mock.calls[0]?.[1]).toBe('image/png');
+    expect(onAnimationUploaded).not.toHaveBeenCalled();
+  });
+
+  it.each([1, 2, 3])(
+    'checks ownership before publication phase %s',
+    async (failedPhase) => {
+      uploadFileMock.mockReset();
+      fetchPublicUrlToBufferMock.mockReset();
+      uploadFileMock.mockResolvedValue({
+        url: 'https://arweave.net/checkpoint-tx'
+      });
+      fetchPublicUrlToBufferMock
+        .mockResolvedValueOnce({
+          buffer: Buffer.from('image-bytes'),
+          contentType: 'image/png',
+          finalUrl: 'https://cdn.example.com/image.png'
+        })
+        .mockResolvedValueOnce({
+          buffer: Buffer.from('video-bytes'),
+          contentType: 'video/mp4',
+          finalUrl: 'https://cdn.example.com/animation.mp4'
+        });
+      let phase = 0;
+      const failure = new Error('upload ownership lost');
+      const beforePublish = jest
+        .fn<() => Promise<void>>()
+        .mockImplementation(async () => {
+          phase += 1;
+          if (phase === failedPhase) throw failure;
+        });
+      await expect(
+        uploadMintingClaimToArweave(
+          MEMES_CONTRACT,
+          baseClaim({
+            animation_url: 'https://cdn.example.com/animation.mp4',
+            animation_details: JSON.stringify({
+              bytes: 11,
+              format: 'MP4',
+              sha256: 'b'.repeat(64),
+              width: 800,
+              height: 800,
+              duration: 1,
+              codecs: ['avc1']
+            })
+          }),
+          { beforePublish }
+        )
+      ).rejects.toBe(failure);
+      expect(uploadFileMock).toHaveBeenCalledTimes(failedPhase - 1);
+    }
+  );
+
+  it('reuses persisted media when metadata publication fails and is retried', async () => {
+    const imageUrl = 'https://arweave.net/image-checkpoint-tx';
+    const metadataUrl = 'https://arweave.net/metadata-retry-tx';
+    const failure = new Error('metadata publication unavailable');
+    uploadFileMock.mockReset();
+    uploadFileMock
+      .mockResolvedValueOnce({ url: imageUrl })
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValueOnce({ url: metadataUrl });
+    const persisted = baseClaim({
+      image_details: JSON.stringify({
+        bytes: 11,
+        format: 'PNG',
+        sha256: createHash('sha256').update('image-bytes').digest('hex'),
+        width: 800,
+        height: 800
+      })
+    });
+    const onImageUploaded = jest
+      .fn<(_location: string) => Promise<void>>()
+      .mockImplementation(async (location) => {
+        persisted.image_location = location;
+      });
+
+    await expect(
+      uploadMintingClaimToArweave(
+        MEMES_CONTRACT,
+        { ...persisted },
+        {
+          onImageUploaded
+        }
+      )
+    ).rejects.toBe(failure);
+    expect(persisted.image_location).toBe(imageUrl);
+
+    await expect(
+      uploadMintingClaimToArweave(
+        MEMES_CONTRACT,
+        { ...persisted },
+        {
+          onImageUploaded
+        }
+      )
+    ).resolves.toEqual({
+      imageLocationUrl: imageUrl,
+      animationLocationUrl: null,
+      metadataLocationUrl: metadataUrl
+    });
+    expect(uploadFileMock.mock.calls.map((call) => call[1])).toEqual([
+      'image/png',
+      'application/json',
+      'application/json'
+    ]);
+    expect(uploadFileMock.mock.calls[1]?.[0]).toEqual(
+      uploadFileMock.mock.calls[2]?.[0]
     );
   });
 
@@ -810,7 +1178,7 @@ describe('uploadMintingClaimToArweave', () => {
   it('uploads GLB MEMES metadata in the expected object shape', async () => {
     uploadFileMock.mockReset();
     fetchPublicUrlToBufferMock.mockResolvedValue({
-      buffer: Buffer.from('glb-bytes'),
+      buffer: validGlb(),
       contentType: 'model/gltf-binary',
       finalUrl: 'https://cdn.example.com/model.glb'
     });
@@ -853,6 +1221,39 @@ describe('uploadMintingClaimToArweave', () => {
       sha256: 'b'.repeat(64)
     });
   });
+
+  it.each([null, 'https://arweave.net/existing-animation'])(
+    'rejects invalid GLB before animation publication or checkpoint reuse (%s)',
+    async (animationLocation) => {
+      const buffer = Buffer.from('renamed text pretending to be a GLB');
+      fetchPublicUrlToBufferMock.mockResolvedValue({
+        buffer,
+        contentType: 'model/gltf-binary',
+        finalUrl: 'https://cdn.example.com/art.glb'
+      });
+      const onImageUploaded = jest
+        .fn<(_location: string) => Promise<void>>()
+        .mockResolvedValue(undefined);
+      await expect(
+        uploadMintingClaimToArweave(
+          MEMES_CONTRACT,
+          baseClaim({
+            animation_url: 'https://cdn.example.com/art.glb',
+            animation_location: animationLocation,
+            animation_details: JSON.stringify({
+              bytes: buffer.length,
+              format: 'GLB',
+              sha256: createHash('sha256').update(buffer).digest('hex')
+            })
+          }),
+          { onImageUploaded }
+        )
+      ).rejects.toThrow(BadRequestException);
+      expect(onImageUploaded).toHaveBeenCalledTimes(1);
+      expect(uploadFileMock).toHaveBeenCalledTimes(1);
+      expect(uploadFileMock.mock.calls[0]?.[1]).toBe('image/png');
+    }
+  );
 
   it('preserves non-MEMES metadata shape', async () => {
     uploadFileMock.mockReset();

@@ -1,0 +1,652 @@
+import { Interface } from 'ethers';
+import { MEMELAB_CONTRACT } from '@/constants';
+import type { MarketPrepared } from '@/marketplace/market-preparation';
+import type { MarketOperationRow } from '@/marketplace/market-operations.db';
+import {
+  MarketReconcileDependencies,
+  MarketReceiptEvidence,
+  MarketTransactionEvidence,
+  reconcileMarketOperation,
+  validateMarketReceipt
+} from '@/marketplace/market-reconciliation';
+import {
+  buildMarketFulfillment,
+  buildMarketOrder
+} from '@/marketplace/seaport.builder';
+import {
+  MARKET_SEAPORT,
+  MARKET_WETH,
+  MARKET_ZERO_ADDRESS,
+  MARKET_ZERO_HASH
+} from '@/marketplace/seaport.registry';
+import { MARKET_SEAPORT_EVENTS } from '@/marketplace/seaport.events';
+import { MarketTradeIntent } from '@/marketplace/provider.types';
+import { CustomApiCompliantException } from '@/exceptions';
+import * as quoteValidation from '@/marketplace/quote-validation';
+import { marketReceiptTransaction } from '@/marketplace/market-receipt-evidence';
+
+const maker = '0x1111111111111111111111111111111111111111';
+const buyer = '0x2222222222222222222222222222222222222222';
+const recipient = '0x3333333333333333333333333333333333333333';
+const contract = '0x33fd426905f149f8376e227d0c9d3340aad17af1';
+const txHash = '0x' + '1'.repeat(64),
+  blockHash = '0x' + '2'.repeat(64);
+const listing: MarketTradeIntent = {
+  kind: 'LIST',
+  chainId: 1,
+  wallet: maker,
+  recipient: maker,
+  asset: { contract, tokenId: '56', standard: 'ERC1155' },
+  quantity: '2',
+  currency: MARKET_ZERO_ADDRESS,
+  maxTotalWei: '200',
+  minNetWei: '198',
+  fees: [{ recipient: maker, amountWei: '2' }],
+  includeOptionalCreatorFees: false,
+  startTime: '1700000000',
+  endTime: '1900000000'
+};
+
+function fixture(assetContract = contract) {
+  const selectedListing = {
+    ...listing,
+    asset: { ...listing.asset, contract: assetContract }
+  };
+  const order = buildMarketOrder(selectedListing, '4', '5').order;
+  const intent = {
+    ...selectedListing,
+    kind: 'BUY' as const,
+    wallet: buyer,
+    recipient,
+    order: { protocolAddress: MARKET_SEAPORT, orderHash: order.orderHash }
+  };
+  const transaction = buildMarketFulfillment(intent, order, '0x1234');
+  const prepared: MarketPrepared = {
+    intent,
+    recipientInProfile: false,
+    approvalTransactions: [],
+    transaction,
+    reviewOrder: order,
+    snapshot: {
+      block_number: 90,
+      block_hash: blockHash,
+      block_timestamp: 1800000000
+    },
+    feePolicyVersion: MARKET_ZERO_HASH
+  };
+  const fill = MARKET_SEAPORT_EVENTS.encodeEventLog(
+    MARKET_SEAPORT_EVENTS.getEvent('OrderFulfilled')!,
+    [
+      order.orderHash,
+      maker,
+      MARKET_ZERO_ADDRESS,
+      recipient,
+      [[3, assetContract, '56', '2']],
+      [
+        [0, MARKET_ZERO_ADDRESS, '0', '198', maker],
+        [0, MARKET_ZERO_ADDRESS, '0', '2', maker]
+      ]
+    ]
+  );
+  const token = new Interface([
+    'event TransferSingle(address indexed operator,address indexed from,address indexed to,uint256 id,uint256 value)'
+  ]);
+  const transfer = token.encodeEventLog(token.getEvent('TransferSingle')!, [
+    MARKET_SEAPORT,
+    maker,
+    recipient,
+    '56',
+    '2'
+  ]);
+  const receipt: MarketReceiptEvidence = {
+    hash: txHash,
+    blockNumber: 100,
+    blockHash,
+    status: 1,
+    logs: [
+      { address: MARKET_SEAPORT, ...fill },
+      { address: assetContract, ...transfer }
+    ]
+  };
+  const submitted: MarketTransactionEvidence = {
+    hash: txHash,
+    from: buyer,
+    to: MARKET_SEAPORT,
+    data: transaction.data,
+    value: BigInt(transaction.value),
+    chainId: BigInt(1)
+  };
+  const row = {
+    id: 'operation',
+    state: 'SUBMITTED',
+    prepared_json: prepared,
+    request_json: { kind: 'BUY' },
+    transaction_hash: txHash,
+    liability_wei: '200'
+  } as MarketOperationRow;
+  return { prepared, receipt, submitted, row };
+}
+function deps(value: ReturnType<typeof fixture>, safeNumber = 99) {
+  const transition = jest.fn().mockResolvedValue(undefined);
+  const rpc = {
+    getTransaction: jest.fn().mockResolvedValue(value.submitted),
+    getTransactionReceipt: jest.fn().mockResolvedValue(value.receipt),
+    getBlock: jest
+      .fn()
+      .mockImplementation(async (tag) =>
+        tag === 'safe'
+          ? { number: safeNumber, hash: blockHash, timestamp: 1800000000 }
+          : { number: 100, hash: blockHash, timestamp: 1800000000 }
+      ),
+    call: jest.fn()
+  };
+  return { rpc, transition } as unknown as MarketReconcileDependencies;
+}
+
+describe('safe marketplace reconciliation', () => {
+  it('preserves the terminal failure reason when filling in a reverted transaction cost', async () => {
+    const f = fixture(),
+      d = deps(f, 100);
+    f.row.state = 'FAILED';
+    f.row.error_code = 'TRANSACTION_REVERTED';
+    f.receipt.status = 0;
+    f.receipt.gasUsed = BigInt(21000);
+    f.receipt.gasPrice = BigInt(7);
+    await reconcileMarketOperation(f.row, d);
+    const call = (d.transition as jest.Mock).mock.calls[0];
+    expect(call.slice(0, 3)).toEqual(['operation', ['FAILED'], 'FAILED']);
+    expect(call[3].errorCode).toBe('TRANSACTION_REVERTED');
+    expect(call[3]).not.toHaveProperty('liabilityWei');
+    expect(call[3].prepared.receipt.transactions[0].networkFeeWei).toBe(
+      '147000'
+    );
+  });
+  it('keeps safe settlement confirmed when optional payment derivation cannot finish', async () => {
+    const f = fixture(),
+      d = deps(f, 100);
+    const validate = quoteValidation.validateMarketOrder;
+    const spy = jest
+      .spyOn(quoteValidation, 'validateMarketOrder')
+      .mockImplementationOnce(validate)
+      .mockImplementationOnce(() => {
+        throw new Error('Supplement unavailable');
+      });
+    try {
+      await reconcileMarketOperation(f.row, d);
+      expect(spy).toHaveBeenCalledTimes(2);
+      const call = (d.transition as jest.Mock).mock.calls[0];
+      expect(call.slice(0, 3)).toEqual([
+        'operation',
+        ['SUBMITTED'],
+        'CONFIRMED'
+      ]);
+      expect(call[3].liabilityWei).toBe('0');
+      expect(call[3].prepared.settlement.filledQuantity).toBe('2');
+      expect(call[3].prepared.receipt.payment).toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+  it('retains confirmed approval costs when a signed order progresses but supplemental RPC reads fail', async () => {
+    const f = fixture(),
+      d = deps(f, 100);
+    const signedOrder = buildMarketOrder(listing, '4', '5');
+    const approval = marketReceiptTransaction(
+      {
+        ...f.receipt,
+        blockNumber: 95,
+        gasUsed: BigInt(45000),
+        gasPrice: BigInt(3)
+      },
+      1799999900,
+      maker,
+      'APPROVAL',
+      99
+    )!;
+    const row = {
+      ...f.row,
+      state: 'LIVE' as const,
+      transaction_hash: null,
+      order_hash: signedOrder.order.orderHash,
+      request_json: { kind: 'LIST' },
+      prepared_json: {
+        ...f.prepared,
+        intent: listing,
+        signedOrder,
+        approvalReceipts: [approval],
+        receipt: { transactions: [approval] }
+      }
+    };
+    const state = new Interface([
+      'function getCounter(address) view returns (uint256)',
+      'function getOrderStatus(bytes32) view returns (bool,bool,uint256,uint256)'
+    ]);
+    (d.rpc.call as jest.Mock).mockImplementation(async (request) =>
+      request.data.slice(0, 10) === state.getFunction('getCounter')!.selector
+        ? state.encodeFunctionResult('getCounter', ['4'])
+        : state.encodeFunctionResult('getOrderStatus', [false, false, '1', '2'])
+    );
+    (d.rpc.getBlock as jest.Mock).mockImplementation(async (tag) => {
+      if (tag === 95) throw new Error('Supplement unavailable');
+      return { number: 100, hash: blockHash, timestamp: 1800000000 };
+    });
+    await reconcileMarketOperation(row, d);
+    const call = (d.transition as jest.Mock).mock.calls[0];
+    expect(call.slice(0, 3)).toEqual(['operation', ['LIVE'], 'LIVE']);
+    expect(call[3].prepared.settlement.filledQuantity).toBe('1');
+    expect(call[3].prepared.receipt.transactions).toEqual([approval]);
+    expect(call[3].prepared.receipt.transactions[0].networkFeeWei).toBe(
+      '135000'
+    );
+    expect(call[3].prepared.receipt.payment).toBeUndefined();
+  });
+  it('supplements a confirmed receipt without reopening the operation or changing liability', async () => {
+    const f = fixture(),
+      d = deps(f, 100);
+    f.row.state = 'CONFIRMED';
+    f.receipt.gasUsed = BigInt(21000);
+    f.receipt.gasPrice = BigInt(7);
+    await reconcileMarketOperation(f.row, d);
+    const call = (d.transition as jest.Mock).mock.calls[0];
+    expect(call.slice(0, 3)).toEqual(['operation', ['CONFIRMED'], 'CONFIRMED']);
+    expect(call[3]).toHaveProperty('expectedRevision');
+    expect(call[3]).not.toHaveProperty('liabilityWei');
+    expect(call[3].prepared.receipt.payment.totalWei).toBe('200');
+  });
+  it.each(['missing', 'reorg', 'revert', 'mismatch'])(
+    'keeps prior confirmed status authoritative when supplementation finds %s',
+    async (reason) => {
+      const f = fixture(),
+        d = deps(f, 100);
+      f.row.state = 'CONFIRMED';
+      if (reason === 'missing')
+        (d.rpc.getTransactionReceipt as jest.Mock).mockResolvedValue(null);
+      if (reason === 'reorg')
+        (d.rpc.getBlock as jest.Mock).mockResolvedValue({
+          hash: MARKET_ZERO_HASH,
+          number: 100
+        });
+      if (reason === 'revert') f.receipt.status = 0;
+      if (reason === 'mismatch') f.receipt.logs = [];
+      await reconcileMarketOperation(f.row, d);
+      expect(d.transition).not.toHaveBeenCalled();
+    }
+  );
+  it('records actual gas and proven payment only at safe confirmation, independently of review caps', async () => {
+    const f = fixture();
+    f.receipt.gasUsed = BigInt(21000);
+    f.receipt.gasPrice = BigInt(7);
+    f.prepared.gas = {
+      gas_limit: '90000',
+      max_fee_per_gas: '100',
+      gas_reserve_wei: '9000000'
+    };
+    const pending = deps(f);
+    await reconcileMarketOperation(f.row, pending);
+    const included = (pending.transition as jest.Mock).mock.calls[0][3].prepared
+      .receipt;
+    expect(included.payment).toBeUndefined();
+    expect(included.transactions[0]).toMatchObject({
+      confirmation: 'INCLUDED',
+      networkFeeWei: '147000',
+      from: buyer
+    });
+    const safe = deps(f, 100);
+    await reconcileMarketOperation(f.row, safe);
+    const confirmed = (safe.transition as jest.Mock).mock.calls[0][3].prepared
+      .receipt;
+    expect(confirmed.payment).toMatchObject({
+      currency: MARKET_ZERO_ADDRESS,
+      totalWei: '200',
+      netWei: '198',
+      payoutWallet: maker
+    });
+    expect(confirmed.transactions[0]).toMatchObject({
+      confirmation: 'CONFIRMED',
+      blockTimestamp: 1800000000,
+      networkFeeWei: '147000'
+    });
+  });
+  it('confirms exact delivery with costs unavailable and never substitutes the gas reserve', async () => {
+    const f = fixture(),
+      d = deps(f, 100);
+    f.prepared.gas = {
+      gas_limit: '90000',
+      max_fee_per_gas: '100',
+      gas_reserve_wei: '9000000'
+    };
+    await reconcileMarketOperation(f.row, d);
+    expect((d.transition as jest.Mock).mock.calls[0][2]).toBe('CONFIRMED');
+    const receipt = (d.transition as jest.Mock).mock.calls[0][3].prepared
+      .receipt;
+    expect(receipt.transactions[0]).not.toHaveProperty('networkFeeWei');
+    expect(receipt.payment.totalWei).toBe('200');
+  });
+  it('records reverted transaction cost without claiming a payment or completed purchase', async () => {
+    const f = fixture(),
+      d = deps(f, 100);
+    f.receipt.status = 0;
+    f.receipt.gasUsed = BigInt(25000);
+    f.receipt.gasPrice = BigInt(9);
+    await reconcileMarketOperation(f.row, d);
+    const call = (d.transition as jest.Mock).mock.calls[0];
+    expect(call[2]).toBe('FAILED');
+    expect(call[3].prepared.receipt.payment).toBeUndefined();
+    expect(call[3].prepared.receipt.transactions[0]).toMatchObject({
+      status: 'REVERTED',
+      networkFeeWei: '225000'
+    });
+  });
+  it('requires exact Meme Lab custody evidence and rejects another contract with the same token ID', () => {
+    const value = fixture(MEMELAB_CONTRACT);
+    expect(
+      validateMarketReceipt(
+        value.prepared,
+        'BUY',
+        value.submitted,
+        value.receipt
+      ).filledQuantity
+    ).toBe('2');
+    expect(() =>
+      validateMarketReceipt(value.prepared, 'BUY', value.submitted, {
+        ...value.receipt,
+        logs: value.receipt.logs.map((entry) =>
+          entry.address === MEMELAB_CONTRACT
+            ? { ...entry, address: contract }
+            : entry
+        )
+      })
+    ).toThrow(/delivery/);
+  });
+  it.each([
+    { status: 409, code: 'OPERATION_CHANGED', conflict: true },
+    { status: 409, code: 'OTHER_CONFLICT', conflict: false },
+    { status: 503, code: 'DB_UNAVAILABLE', conflict: false }
+  ])(
+    'contains only the expected concurrent recovery transition ($status/$code)',
+    async ({ status, code, conflict }) => {
+      const f = fixture(),
+        d = deps(f);
+      const failure = new CustomApiCompliantException(
+        status,
+        'transition failed',
+        code
+      );
+      (d.transition as jest.Mock).mockRejectedValue(failure);
+      const recovery = reconcileMarketOperation(
+        {
+          ...f.row,
+          state: 'LIVE',
+          transaction_hash: null,
+          order_hash: '0x' + 'ff'.repeat(32),
+          prepared_json: {
+            ...f.prepared,
+            intent: listing,
+            signedOrder: buildMarketOrder(listing, '4', '5')
+          }
+        },
+        d
+      );
+      if (conflict) await expect(recovery).resolves.toBeUndefined();
+      else await expect(recovery).rejects.toBe(failure);
+      expect(d.transition).toHaveBeenCalledTimes(1);
+      expect(d.transition).toHaveBeenCalledWith(
+        'operation',
+        ['LIVE'],
+        'UNKNOWN',
+        {
+          errorCode: 'RECONCILIATION_MISMATCH'
+        }
+      );
+    }
+  );
+  it('requires both exact OrderFulfilled flows and actual NFT delivery', () => {
+    const f = fixture();
+    expect(
+      validateMarketReceipt(f.prepared, 'BUY', f.submitted, f.receipt)
+        .filledQuantity
+    ).toBe('2');
+    expect(() =>
+      validateMarketReceipt(f.prepared, 'BUY', f.submitted, {
+        ...f.receipt,
+        logs: f.receipt.logs.slice(0, 1)
+      })
+    ).toThrow(/delivery/);
+    expect(() =>
+      validateMarketReceipt(
+        f.prepared,
+        'BUY',
+        { ...f.submitted, value: BigInt(201) },
+        f.receipt
+      )
+    ).toThrow(/reviewed/);
+    expect(() =>
+      validateMarketReceipt(f.prepared, 'BUY', f.submitted, {
+        ...f.receipt,
+        logs: [...f.receipt.logs, f.receipt.logs[0]]
+      })
+    ).toThrow(/exactly one/);
+    expect(() =>
+      validateMarketReceipt(
+        {
+          ...f.prepared,
+          snapshot: { ...f.prepared.snapshot, block_number: 100 }
+        },
+        'BUY',
+        f.submitted,
+        f.receipt
+      )
+    ).toThrow(/predates/);
+  });
+  it('does not release a mined fill until its canonical block is safe', async () => {
+    const f = fixture(),
+      d = deps(f);
+    await reconcileMarketOperation(f.row, d);
+    expect(d.transition).toHaveBeenCalledWith(
+      'operation',
+      ['SUBMITTED'],
+      'MINED',
+      expect.not.objectContaining({ liabilityWei: '0' })
+    );
+    const safe = deps(f, 100);
+    await reconcileMarketOperation(f.row, safe);
+    expect(safe.transition).toHaveBeenCalledWith(
+      'operation',
+      ['SUBMITTED'],
+      'CONFIRMED',
+      expect.objectContaining({
+        liabilityWei: '0',
+        prepared: expect.objectContaining({
+          settlement: expect.objectContaining({
+            safeBlockNumber: 100,
+            filledQuantity: '2'
+          })
+        })
+      })
+    );
+  });
+  it('retains liability when a receipt is missing or its block was reorganized', async () => {
+    const f = fixture(),
+      d = deps(f, 100);
+    (d.rpc.getBlock as jest.Mock).mockImplementation(async (tag) => ({
+      number: 100,
+      hash: tag === 'safe' ? blockHash : MARKET_ZERO_HASH,
+      timestamp: 1800000000
+    }));
+    await reconcileMarketOperation(f.row, d);
+    expect(d.transition).toHaveBeenCalledWith(
+      'operation',
+      ['SUBMITTED'],
+      'UNKNOWN',
+      { errorCode: 'RECEIPT_REORG' }
+    );
+    const missing = deps(f, 100);
+    (missing.rpc.getTransactionReceipt as jest.Mock).mockResolvedValue(null);
+    await reconcileMarketOperation({ ...f.row, state: 'MINED' }, missing);
+    expect(missing.transition).toHaveBeenCalledWith(
+      'operation',
+      ['MINED'],
+      'UNKNOWN',
+      {}
+    );
+  });
+  it('does not release a reverted transaction before its block is safe', async () => {
+    const f = fixture();
+    f.receipt.status = 0;
+    const unsafe = deps(f);
+    await reconcileMarketOperation(f.row, unsafe);
+    expect(unsafe.transition).toHaveBeenCalledWith(
+      'operation',
+      ['SUBMITTED'],
+      'MINED',
+      expect.objectContaining({ errorCode: 'TRANSACTION_REVERTED' })
+    );
+    const safe = deps(f, 100);
+    await reconcileMarketOperation(f.row, safe);
+    expect(safe.transition).toHaveBeenCalledWith(
+      'operation',
+      ['SUBMITTED'],
+      'FAILED',
+      expect.objectContaining({
+        errorCode: 'TRANSACTION_REVERTED',
+        liabilityWei: '0'
+      })
+    );
+  });
+  it('uses safe on-chain partial fractions without prematurely invalidating a newer maker counter', async () => {
+    const f = fixture();
+    const intent = {
+      ...listing,
+      kind: 'OFFER' as const,
+      currency: MARKET_WETH,
+      recipient: maker
+    };
+    const signedOrder = buildMarketOrder(intent, '4', '5');
+    const prepared = {
+      ...f.prepared,
+      intent,
+      transaction: undefined,
+      reviewOrder: undefined,
+      signedOrder
+    };
+    const row = {
+      ...f.row,
+      state: 'LIVE' as const,
+      transaction_hash: null,
+      order_hash: signedOrder.order.orderHash,
+      prepared_json: prepared
+    };
+    const d = deps(f, 100);
+    const state = new Interface([
+      'function getCounter(address) view returns (uint256)',
+      'function getOrderStatus(bytes32) view returns (bool,bool,uint256,uint256)'
+    ]);
+    (d.rpc.call as jest.Mock).mockImplementation(async (request) =>
+      request.data.slice(0, 10) === state.getFunction('getCounter')!.selector
+        ? state.encodeFunctionResult('getCounter', ['3'])
+        : state.encodeFunctionResult('getOrderStatus', [false, false, '1', '2'])
+    );
+    await reconcileMarketOperation(row, d);
+    expect(d.transition).toHaveBeenCalledWith(
+      'operation',
+      ['LIVE'],
+      'LIVE',
+      expect.objectContaining({
+        liabilityWei: '100',
+        prepared: expect.objectContaining({
+          settlement: expect.objectContaining({
+            filledQuantity: '1',
+            remainingQuantity: '1'
+          })
+        })
+      })
+    );
+    expect(d.rpc.call).toHaveBeenCalledWith(
+      expect.objectContaining({ blockTag: 100 })
+    );
+  });
+  it('releases signed liabilities only for safe expiry, cancellation, counter invalidation or complete fills', async () => {
+    const f = fixture(),
+      intent = {
+        ...listing,
+        kind: 'OFFER' as const,
+        currency: MARKET_WETH,
+        recipient: maker
+      };
+    const signedOrder = buildMarketOrder(intent, '4', '5');
+    const row = {
+      ...f.row,
+      state: 'UNKNOWN' as const,
+      transaction_hash: null,
+      order_hash: signedOrder.order.orderHash,
+      prepared_json: {
+        ...f.prepared,
+        intent,
+        transaction: undefined,
+        reviewOrder: undefined,
+        signedOrder
+      }
+    };
+    const state = new Interface([
+      'function getCounter(address) view returns (uint256)',
+      'function getOrderStatus(bytes32) view returns (bool,bool,uint256,uint256)'
+    ]);
+    for (const [counter, cancelled, filled, size, timestamp, expected] of [
+      ['4', false, '0', '0', 1900000000, 'EXPIRED'],
+      ['5', false, '0', '0', 1800000000, 'CANCELLED'],
+      ['4', true, '0', '0', 1800000000, 'CANCELLED'],
+      ['4', false, '2', '2', 1800000000, 'CONFIRMED']
+    ] as const) {
+      const d = deps(f, 100);
+      (d.rpc.getBlock as jest.Mock).mockResolvedValue({
+        number: 100,
+        hash: blockHash,
+        timestamp
+      });
+      (d.rpc.call as jest.Mock).mockImplementation(async (request) =>
+        request.data.slice(0, 10) === state.getFunction('getCounter')!.selector
+          ? state.encodeFunctionResult('getCounter', [counter])
+          : state.encodeFunctionResult('getOrderStatus', [
+              false,
+              cancelled,
+              filled,
+              size
+            ])
+      );
+      await reconcileMarketOperation(row, d);
+      expect(d.transition).toHaveBeenCalledWith(
+        'operation',
+        ['UNKNOWN'],
+        expected,
+        expect.objectContaining({ liabilityWei: '0' })
+      );
+    }
+  });
+  it('does not release a signed offer on an RPC timeout', async () => {
+    const f = fixture(),
+      intent = {
+        ...listing,
+        kind: 'OFFER' as const,
+        currency: MARKET_WETH,
+        recipient: maker
+      };
+    const d = deps(f);
+    (d.rpc.getBlock as jest.Mock).mockRejectedValue(
+      new Error('temporarily unavailable')
+    );
+    await reconcileMarketOperation(
+      {
+        ...f.row,
+        state: 'LIVE',
+        transaction_hash: null,
+        prepared_json: {
+          ...f.prepared,
+          intent,
+          signedOrder: buildMarketOrder(intent, '4', '5')
+        }
+      },
+      d
+    );
+    expect(d.transition).not.toHaveBeenCalled();
+  });
+});

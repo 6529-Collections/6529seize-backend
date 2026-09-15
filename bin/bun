@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+echo "Bun is not supported in this npm repository." >&2
+echo "Use \`6529 ci\` for installs and \`6529 run <script>\` for package scripts." >&2
+echo "If \`6529\` is unavailable, run \`./bin/6529 bootstrap\` from the repository root." >&2
+exit 1

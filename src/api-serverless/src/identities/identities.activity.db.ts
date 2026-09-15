@@ -1,3 +1,4 @@
+import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import { DROPS_TABLE, WAVES_TABLE } from '@/constants';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
@@ -34,7 +35,7 @@ export class IdentitiesActivityDb extends LazyDbAccessCompatibleService {
           where d.author_id = :profileId
             and d.created_at >= :startInclusive
             and d.created_at < :endExclusive
-            and w.visibility_group_id is null
+            and ${waveReadAccessSql('w', false)}
             and coalesce(w.is_direct_message, false) = false
           group by 1
           order by 1

@@ -1,102 +1,295 @@
 ---
 name: deploy-6529
-description: Route and execute 6529 backend, frontend, or coupled staging and production releases through Simple Release Bus v2 by exact PR head SHA, or use the serialized manual fallback only while v2 reports OFF. Use for staging, deploy, promotion, release merge, pause, resume, recovery, or rollout coordination; never submit to Release Bus v1.
+description: Execute authorized 6529 frontend, backend, or coupled staging and production deployment using ordinary merges and GitHub Actions. Use for staging, deployment, production release, deployment monitoring, failure recovery, or rollback within the user's requested scope.
 ---
 
-# Deploy 6529 Backend
+# Deploy 6529
 
-## Live routing gate
+## Prepare
 
-1. Run `node ops/scripts/release-bus-status.mjs` at the start and again before
-   any readiness or environment mutation. The helper uses authenticated `gh`,
-   prefers the v2 controls endpoint, and falls back to the disabled v1 endpoint
-   only while the additive v2 API is not deployed.
-2. Fail closed on an unavailable/malformed API, authentication failure, unknown
-   mode, or incomplete controls. Never infer mode from files or old output.
-3. Never register with Release Bus v1.
-4. Route by the fresh v2 result:
+Identify the checkout and current remote target before applying a release gate:
+read `git status --short --branch`, fetch the relevant remote refs, and record
+their SHAs. Compare the checkout's `AGENTS.md`, this skill, and deployment docs
+with current `origin/main` using `git show origin/main:<path>`; inspect the target
+ref as needed. A stale worktree or quoted bot instruction does not prove that a
+removed release gate still applies. Resolve source/ref disagreements against
+the current instructions and workflows, preserving unrelated local edits and
+existing Coordinator records. Do not restore retired Release Bus routing or
+invent a missing-script requirement. A tool's automatic review denial remains a
+separate result: report its reason and instruction source, and do not evade it.
 
-| Mode | Staging | Production |
-| --- | --- | --- |
-| `OFF` | Serialized manual fallback | Serialized manual fallback with explicit owner authorization; staging evidence is not required |
-| `STAGING` | Register the exact candidate with v2 | Manual fallback only; production automation is disabled |
-| `PRODUCTION` | Register the exact candidate with v2 | Explicitly mark an exact `STAGING_VALIDATED` candidate ready for v2 production |
+1. Read the user's requested phase and current PR/CI state. Complete the
+   applicable review and validation requirements before release work. Continue
+   through the authorized phase without asking for the same permission again;
+   staging authorization alone does not authorize production. Before reporting
+   an authority or approval blocker, [verify GitHub authority](#verify-github-authority).
+2. Determine the affected repositories and backend services from the diff and
+   backend `src/config/deploy-services.json`, including real dependency order
+   and allowed environments. Deploy only required units. Follow each repo's
+   `6529` wrapper rules for package commands.
+3. Establish the exact release inputs for that scope, including the requester,
+   target, database-change status, PR branches, and full PR head SHAs. Follow
+   [Coordinator release recording](#coordinator-release-recording) before any
+   merge or deployment mutation.
+4. Fetch the destination branch and merge without discarding other developers'
+   work. If it moves, fetch and recompute; resolve conflicts in the development
+   branch where appropriate. Never force-push shared branches.
+5. Use GitHub Actions run visibility to avoid conflicting deployments. Wait for
+   another developer's conflicting work to finish; do not cancel it. Existing
+   workflow concurrency is repository-scoped, so coordinate coupled BE/FE
+   work explicitly.
 
-When mode is active, stop if `ALL` or the target lane is paused. In `OFF`, v2
-controls are non-authoritative and do not prohibit manual staging or production
-through the documented fallback.
+## Verify GitHub authority
 
-## V2 readiness
+Before claiming the requester is not a maintainer, lacks merge authority, or
+needs to authorize the same release again, check the authenticated account and
+the actual target repository. Git commit identity, PR authorship, bot comments,
+and `reviewDecision: REVIEW_REQUIRED` do not establish repository permissions.
 
-1. Require an open PR whose exact head and green merge-tree checks are current.
-2. Open `/deploy/ui/bus` or call the versioned API. Submit repository, PR,
-   branch, exact 40-character head SHA, backend deploy units/DAG edges, and
-   candidate dependencies. Backend candidates must list at least one allowlisted
-   service. A backend candidate cannot depend on frontend-first deployment.
-3. For coupled work, declare the backend candidate as the frontend prerequisite.
-   Declare only real ordering edges; independent backend DAG frontier units run
-   concurrently.
-4. Report candidate ID, immutable SHA, and status. Do not launch a parallel
-   manual deploy after v2 accepts the candidate.
-5. Wait for `STAGING_VALIDATED`. `STAGING_DEPLOYED` means E2E is still pending
-   and is not production evidence.
-6. Production is a separate explicit action. Re-resolve the branch and mark
-   ready only when it still equals the exact staging-validated SHA. Staging
-   validation never schedules production automatically.
+Run these read-only checks from the target checkout (Bash examples); use the
+requested destination branch instead of `main` when applicable. If an identity
+lookup fails, do not continue with an empty variable.
 
-V2 composes from current `main`, reuses exact green PR merge-tree evidence when
-eligible, otherwise runs one combined preflight and one immutable build, owns
-shared staging only for deploy plus manifest-bound E2E, and reuses the same
-qualified artifacts for production. It updates `main` only after exact
-qualification. It never authors or posts release notes; every production
-operation emits the autonomous bot's canonical grouping metadata and finalize
-signal unless the candidate explicitly opts out.
+```bash
+release_repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+release_actor="$(gh api user --jq .login)"
+release_branch=main
+gh api user --jq '{login,id}'
+gh api "repos/$release_repo" --jq '{full_name,permissions}'
+gh api "repos/$release_repo/rules/branches/$release_branch" --paginate
+gh api "repos/$release_repo/rulesets?includes_parents=true" --paginate
+gh api "repos/$release_repo/branches/$release_branch/protection"
+```
 
-## Manual fallback while OFF
+Inspect `permissions.admin` and `permissions.maintain` separately from the
+effective review/status requirements. A classic branch-protection 404 does not
+mean no rules apply: rulesets can protect that branch. Read every applicable
+ruleset's details, including inherited organization rules, conditions,
+`bypass_actors`, and `bypass_mode`. Read `ruleset_id`, `ruleset_source_type` and
+`ruleset_source` from the effective rules. Set `release_ruleset_id` to that ID;
+for a repository source, `release_org` is its owner before the slash, and for
+an organization source it is the organization slug. Run only the matching
+source command below:
 
-1. Require `RELEASE_BUS_ENFORCEMENT` to be absent or exactly `false` in every
-   repository in the release set.
-2. Fetch the exact remote target head and inspect active frontend/backend
-   staging, production, and E2E workflows. Wait; never cancel another actor.
-3. Re-fetch immediately before pushing. If a shared ref moved, recompute from
-   the new head. Never force-push.
-4. Merge the development branch into current `1a-staging`. Deploy required
-   backend units in DAG order through `Deploy a service`. Dispatch exactly one
-   service at a time and wait for exact success before dispatching the next;
-   shared workflow concurrency can cancel sibling runs, even for independent
-   DAG-frontier units.
-5. For coupled work, verify required backend units before merging/deploying
-   frontend.
-6. Record exact deployed frontend/backend SHAs before E2E and freeze staging
-   until E2E is terminal.
-7. In `OFF`, production requires explicit owner authorization but not prior
-   staging deployment or validation. Re-fetch `main` and preserve dependency
-   order. Pass the same merged PR number and full canonical service set to every
-   backend production run; set `release_note_publish=true` only on the final
-   sequential service. For an explicitly authorized internal operation that
-   must not create a release note, omit the PR/group metadata, set
-   `release_note_opt_out=true`, and leave `release_note_publish=false`; opt-out
-   and publish are mutually exclusive. Never author or post the note—the
-   autonomous bot owns it.
+```bash
+gh api "repos/$release_repo/rulesets/$release_ruleset_id" # Repository source
+gh api "orgs/$release_org/rulesets/$release_ruleset_id" # Organization source
+```
 
-## Monitoring and recovery
+Use the team ID in the actual required-reviewer or bypass rule; do not substitute
+a similarly named team or a team from the other repository. Set
+`release_team_id` to that ID, then resolve its slug and check the authenticated
+actor's membership only if resolution succeeds and returns a nonempty slug:
 
-- Use train details, operations, workflow links, manifest identity, failure
-  class, and recovery message in `/deploy/ui/bus`.
-- Infrastructure and retryable exact deployment failures retry the same
-  idempotent operation. They do not isolate candidates.
-- A merge conflict marks only the direct candidate `NEEDS_REBASE` and holds
-  transitive dependants. Fix the branch and register its new SHA.
-- A control-plane defect pauses automation and leaves candidates unblamed. Keep
-  exact state, use the OFF/manual fallback only after an operator deliberately
-  disables v2, and resume explicitly after repair.
-- Failed E2E never creates staging validation. Do not mutate staging while the
-  manifest owner still holds the environment lock.
-- If production `main` moved, v2 must recompose and requalify; never force the
-  recorded composition over a newer ref.
+```bash
+if release_team_slug="$(gh api "orgs/$release_org/teams" --paginate \
+  --jq ".[] | select(.id == $release_team_id) | .slug")" && [ -n "$release_team_slug" ]; then
+  gh api "orgs/$release_org/teams/$release_team_slug/memberships/$release_actor" \
+    --jq '{state,role}'
+else
+  printf '%s\n' 'Team membership is unknown; check the team ID and visibility.'
+fi
+```
 
-## Closeout
+- Require a successful membership response with `state: active` before claiming
+  active membership. A team role of `member` or `maintainer` can establish
+  membership; the repository role and rule still determine merge/bypass powers.
+- Treat permission/team lookup 403 or 404, missing fields, and unavailable APIs
+  as unknown visibility, not proof of non-membership or lack of authority.
+  Report the exact failed check and use existing authorized credential tooling;
+  do not ask the user to repeat authorization based on that uncertainty.
+- Distinguish membership from a qualifying PR approval. Set `release_pr` to the
+  requested PR number and read its author, head, reviews, and merge state with
+  `gh pr view "$release_pr" -R "$release_repo" --json author,headRefOid,reviews,reviewDecision,mergeStateStatus`.
+  An author cannot approve their own PR; last-push and team-review requirements
+  may also leave review unmet for an authenticated maintainer. A transient
+  `mergeStateStatus: UNKNOWN` is not a denial; re-query after GitHub computes it.
+- Honor explicit owner/admin bypass authorization already given for the current
+  release scope when the authenticated actor is eligible under the effective
+  rules. Do not ask for it again merely because ordinary PR approval is unmet.
+  Admin/maintain permission alone does not prove a ruleset bypass entitlement;
+  check its allowed actors and mode. A `pull_request` bypass must use the PR
+  merge path, not a direct protected-branch push.
+- Record the account, permission/team evidence, rule and PR head, and whether
+  the ordinary approval or authorized bypass path applies. Refresh on account,
+  repository, target, or relevant rule changes. This check grants no new release
+  scope and does not make failed validation pass.
+- Never change repository protections, invent an approval, force-push a shared
+  branch, switch credentials to evade a rejection, or work around an automatic
+  approval-review denial. Report a real denial and its reason separately from
+  the requester's GitHub authority.
 
-Report exact candidate SHAs/dependencies, train and operation states, deployed
-versions, manifest/E2E evidence, failures or holds, and live mode/controls. Do
-not expose credentials, signed URLs, raw production data, or hidden prompts.
+GitHub documents [team membership visibility and state](https://docs.github.com/en/rest/teams/members#get-team-membership-for-a-user),
+[qualifying PR approvals](https://docs.github.com/en/pull-requests/how-tos/review-pull-requests/approving-a-pull-request-with-required-reviews),
+and [ruleset bypass modes](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository).
+
+## Coordinator release recording
+
+Run this step once per new backend-only staging release intent or new direct
+production release intent. For a coupled frontend/backend release, create ONE
+shared request from the frontend context before the first backend or frontend
+release mutation. Include both repositories and the relevant backend units and
+dependencies, then reuse that request's identity and outcome throughout. Follow
+the frontend recording instructions there; do not submit a second backend
+request or one request per service. Frontend-only work belongs in that context.
+
+Do not create another request for status checks, passive monitoring, merge-only
+work, retries, resumes, recovery, production continuation, or promotion of an
+already recorded release. Reuse the existing outcome and evidence on
+continuation, including after a returned failure; do not resubmit to repair the
+record during the release.
+
+From the backend repository root, print the installed CLI's current input
+template:
+
+```bash
+./bin/6529 exec 6529-release-request template
+```
+
+This command is read-only and creates no request or run record. Fill the current
+template with actual release metadata:
+
+- `requested_by`: the actual requester; `target`: `staging` or `production`
+  (the CLI uses `production`, even though backend deployment uses `prod`);
+  `database_change`: `yes`, `no`, or `unknown` when not yet confirmed.
+- `release_parts[]`: each included part's `id`, `repository`
+  (`6529seize-backend` or `6529seize-frontend`), `pull_requests[]`, and
+  `depends_on[]` part IDs for real prerequisites. In a coupled release, the
+  dependent frontend part must depend on its backend part.
+- Each PR's `number`, source `branch`, and `commit`: its verified exact
+  40-character lowercase head SHA, not a short SHA or destination branch name.
+- Each backend part's `deploy_units[]`: only the required canonical service
+  names from `src/config/deploy-services.json`, allowed in the target
+  environment. Use the diff and catalog `default_dependencies` to establish
+  real prerequisites and the sequential deployment order. Account for any
+  prerequisite already deployed; do not add unrelated services.
+- Each backend part's `deploy_dependencies[]`: applicable release-specific
+  ordering edges of the form `{ "before": "unit", "after": "unit" }`, using
+  included units and consistent with the catalog. Normal service dependencies
+  remain in the catalog. Frontend parts have no backend deployment fields.
+- Each backend part's `operational_deployments[]`: use `["monitoring"]` only
+  when the release includes the separate `ops/monitoring` package and its
+  `Deploy operational monitoring` workflow. A monitoring-only backend part uses
+  empty `deploy_units` and `deploy_dependencies` arrays. Keep the array empty
+  for ordinary backend-service releases. This field records the package in the
+  request; it does not make the Coordinator deploy it.
+
+For a backend-only release, remove the frontend template part and any references
+to it. Replace all sample values with verified inputs, retaining empty
+dependency arrays when applicable. Do not provide `schema_version`, `request_id`,
+or `created_at`; the CLI generates them. The central inbox is public: include
+only release metadata, never tokens, cookies, signed URLs, environment values,
+production data, or private context. `requested_by` is descriptive context, not
+authentication or approval; the central workflow records the actual GitHub
+sender.
+
+Pass the completed JSON exactly once through standard input to:
+
+```bash
+./bin/6529 exec 6529-release-request submit --input -
+```
+
+Use a shell conditional to capture the command's actual exit status so `set -e`
+does not abort on an ordinary returned failure. Do not mask the status with
+`|| true`. Do not create an extra input file or call `create` separately:
+`submit` owns creation, validation, local records, central workflow dispatch,
+waiting, and result handling. It saves run records under
+`.release-coordinator/runs/` and valid requests under `.release-coordinator/outbox/`.
+Do not duplicate submission, choose or dispatch its workflow, or poll it
+separately through direct `gh` commands.
+
+Version `0.0.5` runs synchronously in the foreground and waits for the central
+GitHub workflow. Queueing and execution can add waiting time before deployment.
+Do not retry, background, detach, or wrap it in an invented shell timeout. If the
+wait does not return, report the available evidence and escalate to the
+Coordinator owner; do not interrupt it merely to continue deployment.
+
+Handle the outcome before returning to Prepare:
+
+- Success (exit `0`): retain and report `request_id`, `inbox_issue_number`,
+  `inbox_issue_url`, `workflow_run_url`, `run_path`, and `request_path`, then
+  continue the existing authorized direct deployment steps.
+- Ordinary returned failure (exit `1` through `127`): report one short warning
+  with the reason or first error and any available request ID, Issue/workflow
+  links, and local record paths. Keep the local records and continue the same
+  authorized deployment path without requiring a recording fix.
+- Signal-style interruption (exit `128` or higher): report the status and
+  available evidence, stop release work, and escalate to the Coordinator owner.
+  Do not silently treat an interrupted or unfinished wait as an ordinary failure.
+
+An accepted request records the release intent in the public Coordinator inbox.
+It grants no approval or deployment authority and does not replace the existing
+authorization, merge, dependency-order, deployment, validation, or release-note
+requirements. This recording step is independent of the retired Release Bus;
+do not restore its runtime, routing, controls, or authentication. At closeout,
+include the recording outcome and retained evidence described above.
+
+## Staging
+
+1. For backend changes, merge the development branch into current `1a-staging`
+   and push. Dispatch `.github/workflows/deploy.yml` (`Deploy a service`) with
+   `--ref 1a-staging`, `environment=staging`, and the first required `service`.
+2. Identify the dispatched run by repository, workflow, branch, service, and
+   commit. Wait for success, then dispatch the next required service in
+   dependency order. Continue in the same task until the authorized backend
+   sequence is complete.
+3. After required backend dependencies are deployed, merge the frontend
+   development branch into current `1a-staging` and push. The existing
+   `Web Deploy - STAGING` push trigger deploys automatically for application
+   and workflow changes; its existing `ops/**`-only exclusion remains. When an
+   authorized ops-only change needs deployment, dispatch `deploy-staging.yml`
+   on `1a-staging` explicitly.
+4. Wait for the frontend build, artifact verification, deployed-version check,
+   and health checks. Successful Web Deploy completion starts Staging E2E
+   separately. Do not wait for E2E before reporting deployment complete or
+   continuing to the next authorized environment; report its current status
+   separately. Fix known regressions attributable to the change.
+
+## Production
+
+1. With production authorization, merge the backend development branch into
+   current `main`, then dispatch `Deploy a service` with `--ref main`,
+   `environment=prod`, and each required service sequentially. Wait for each
+   dependency to succeed before continuing.
+2. Supply the merged PR number and complete canonical service set for the
+   release to each backend production run. Set `release_note_publish=true`
+   only for the final successful service. Use `release_note_groups` when the
+   release contains multiple PR groups, preserving their service membership.
+   Keep autonomous release notes enabled, including for internal maintenance.
+   Only if the user explicitly asks to suppress notes, omit PR/group metadata,
+   set `release_note_opt_out=true`, and leave `release_note_publish=false`.
+3. After required backend dependencies are deployed, merge the frontend
+   development branch into current `main` and dispatch
+   `.github/workflows/build-upload-deploy-prod.yml` (`Web Deploy - PROD`) with
+   `--ref main`. The workflow builds, verifies, and deploys. Its successful
+   completion automatically starts a separate Production E2E workflow.
+4. Complete the deployment after its artifact, version, and health checks pass.
+   Report Production E2E separately; it does not gate release completion.
+   Preserve the workflow's autonomous release-note notification; never compose
+   or publish the note yourself.
+
+## Failure and closeout
+
+Inspect failed jobs and logs before retrying. A failed deployment, artifact,
+version, or health check blocks deployment completion; a green build alone is
+not sufficient. Automatic E2E is asynchronous and reports its own result.
+Do not hold up releases for pending E2E or unrelated failures such as Museum
+checks on a change outside Museum. Keep relevant build, unit/contract, and
+security checks. If an aggregate PR check is blocked solely by unrelated E2E,
+record the result and use the authorized merge path without changing repository
+protections or claiming those tests passed. Fix known attributable regressions
+through the development branch and the authorized deployment sequence.
+
+Roll back through the ordinary deployment workflow using a reviewed
+revert or compatible known-good source, preserving shared branch history and
+checking database/API compatibility first.
+
+Report the PRs, deployed services and order, deployment run links, available
+E2E results, and any remaining failure. The workflows resolve and
+verify commits and artifact digests automatically; developers supply ordinary
+branch/environment/service choices. Keep credentials and private data out of
+reports.
+
+## Reference
+
+Read [Deployment](../../../docs/deployment.md) for workflow commands and release-note inputs.
