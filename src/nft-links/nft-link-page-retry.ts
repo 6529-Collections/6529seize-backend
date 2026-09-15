@@ -55,7 +55,9 @@ export function requiredNftPage404(
     !(error instanceof HttpError) ||
     error.status !== 404 ||
     error.url !== canonical.viewUrl ||
-    !error.responseMatchesRequest
+    (!error.responseMatchesRequest &&
+      (canonical.platform !== 'TRANSIENT' ||
+        !error.responseMatchesTransientWwwAlias))
   )
     return null;
   return new RequiredNftPageNotFoundError(nftPageRetryScope(canonical));

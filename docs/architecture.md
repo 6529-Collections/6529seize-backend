@@ -580,9 +580,13 @@ Success clears the delay and retains the ordinary two-minute refresh interval.
 Failure keeps cached metadata, media, price and last-success time. A processing
 lock timestamp fences late writes after another worker takes ownership.
 
-Only typed errors from the required canonical HTML fetch qualify. Optional
-title enrichment, redirects to another URL, asset/metadata API 404s, 429s,
-5xx responses and contract reverts retain their existing retry policy. Retry
+Only typed errors from the required canonical HTML fetch qualify. A Transient
+HTTPS redirect from `transient.xyz` to `www.transient.xyz` also qualifies when
+the path and query are identical and neither URL introduces credentials,
+an explicit port or a fragment. Only a boolean identity result is retained;
+the final redirect URL is not stored on the error. Optional title enrichment,
+all other URL redirects, asset/metadata API 404s, 429s, 5xx responses and
+contract reverts retain their existing retry policy. Retry
 state is internal to persistence and is not added to the public NFT-link model.
 Old writers invalidate stale retry state by advancing the attempt timestamp or
 clearing the failure fields. Queued messages from older producers remain
