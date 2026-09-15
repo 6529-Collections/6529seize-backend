@@ -1,0 +1,124 @@
+[
+  {
+    "name": "inclusion-list-basic",
+    "dimension": "lists",
+    "description": "A pure inclusion-list group admits exactly its listed members (spec §9.1).",
+    "identities": [{ "id": "subject" }, { "id": "alice" }],
+    "subject": "subject",
+    "profile_groups": [
+      { "id": "pg-with-subject", "members": ["subject"] },
+      { "id": "pg-with-alice", "members": ["alice"] }
+    ],
+    "groups": [
+      { "id": "g-subject-listed", "profile_group_id": "pg-with-subject" },
+      { "id": "g-alice-listed", "profile_group_id": "pg-with-alice" }
+    ],
+    "expected": { "eligible_group_ids": ["g-subject-listed"] }
+  },
+  {
+    "name": "inclusion-overrides-criteria",
+    "dimension": "lists",
+    "description": "The identity-membership shortcut: a listed profile is eligible regardless of criteria it fails; an unlisted profile must pass the criteria (spec §9.1).",
+    "identities": [{ "id": "subject", "tdh": 5 }, { "id": "alice" }],
+    "subject": "subject",
+    "profile_groups": [
+      { "id": "pg-with-subject", "members": ["subject"] },
+      { "id": "pg-with-alice", "members": ["alice"] }
+    ],
+    "groups": [
+      {
+        "id": "g-shortcut",
+        "profile_group_id": "pg-with-subject",
+        "tdh_min": 1000
+      },
+      {
+        "id": "g-no-shortcut",
+        "profile_group_id": "pg-with-alice",
+        "tdh_min": 1000
+      }
+    ],
+    "expected": { "eligible_group_ids": ["g-shortcut"] }
+  },
+  {
+    "name": "exclusion-ban-precedence",
+    "dimension": "lists",
+    "description": "Exclusion overrides everything: passing criteria and even being in the inclusion list (spec §9.2).",
+    "identities": [{ "id": "subject", "tdh": 10 }],
+    "subject": "subject",
+    "profile_groups": [{ "id": "pg-ban", "members": ["subject"] }],
+    "groups": [
+      {
+        "id": "g-banned-despite-criteria",
+        "tdh_min": 1,
+        "excluded_profile_group_id": "pg-ban"
+      },
+      {
+        "id": "g-banned-despite-inclusion",
+        "profile_group_id": "pg-ban",
+        "excluded_profile_group_id": "pg-ban"
+      }
+    ],
+    "expected": { "eligible_group_ids": [] }
+  },
+  {
+    "name": "exclusion-only-group",
+    "dimension": "lists",
+    "description": "A group with only an exclusion list admits everyone who is not excluded (spec §9.3).",
+    "identities": [{ "id": "subject" }, { "id": "alice" }],
+    "subject": "subject",
+    "profile_groups": [
+      { "id": "pg-with-alice", "members": ["alice"] },
+      { "id": "pg-with-subject", "members": ["subject"] }
+    ],
+    "groups": [
+      {
+        "id": "g-everyone-but-alice",
+        "excluded_profile_group_id": "pg-with-alice"
+      },
+      {
+        "id": "g-everyone-but-subject",
+        "excluded_profile_group_id": "pg-with-subject"
+      }
+    ],
+    "expected": { "eligible_group_ids": ["g-everyone-but-alice"] }
+  },
+  {
+    "name": "exclusion-with-criteria",
+    "dimension": "lists",
+    "description": "Exclusion composes with criteria: non-excluded profiles still have to pass the criteria (spec §9.2).",
+    "identities": [{ "id": "subject", "tdh": 10 }, { "id": "alice" }],
+    "subject": "subject",
+    "profile_groups": [{ "id": "pg-with-alice", "members": ["alice"] }],
+    "groups": [
+      {
+        "id": "g-criteria-pass",
+        "excluded_profile_group_id": "pg-with-alice",
+        "tdh_min": 5
+      },
+      {
+        "id": "g-criteria-fail",
+        "excluded_profile_group_id": "pg-with-alice",
+        "tdh_min": 20
+      }
+    ],
+    "expected": { "eligible_group_ids": ["g-criteria-pass"] }
+  },
+  {
+    "name": "empty-group",
+    "dimension": "lists",
+    "description": "A degenerate group with no criteria and no lists has no eligible profiles.",
+    "identities": [{ "id": "subject" }],
+    "subject": "subject",
+    "groups": [{ "id": "g-empty" }],
+    "expected": { "eligible_group_ids": [] }
+  },
+  {
+    "name": "invisible-group",
+    "dimension": "lists",
+    "description": "visible=0 disqualifies the group for everyone in both engines.",
+    "identities": [{ "id": "subject", "tdh": 10 }],
+    "subject": "subject",
+    "groups": [{ "id": "g-invisible", "tdh_min": 1, "visible": false }],
+    "expected": { "eligible_group_ids": [] }
+  }
+]
