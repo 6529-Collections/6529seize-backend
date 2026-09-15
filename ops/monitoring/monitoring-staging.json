@@ -1013,6 +1013,15 @@
               {
                 "Effect": "Allow",
                 "Action": [
+                  "s3:PutObject"
+                ],
+                "Resource": {
+                  "Fn::Sub": "${Archive.Arn}/controls/v1/*"
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
                   "sqs:SendMessage"
                 ],
                 "Resource": {
