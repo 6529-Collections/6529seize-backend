@@ -416,8 +416,6 @@ preview and an empty saved definition both match nobody.
   empty member set for invisible groups. That empty CTE must retain the full
   identity projection (`select * from identities where false`), because member
   listing, sorting, and filtering consume identity columns even for no rows.
-  The narrowed projection reported in #2068 belonged to unmerged #1822; this
-  conformance coverage prevents reintroduction, not a claimed production incident.
 - `is_private` is **not** an eligibility rule; it gates who may _see_ the
   group definition through the API (`UserGroupsDb.getById` returns private
   groups only to their creator or to already-eligible identities).
@@ -572,13 +570,15 @@ Received`), ignoring `cic_direction = 'SENT'`. The in-memory engine honors
 
 ## 13. Current-consumer conformance and rollout
 
-The 72 shared vectors (300 group definitions) exercise direct evaluation, real-MySQL membership SQL,
+The 72 shared vectors (306 group definitions) exercise direct evaluation, real-MySQL membership SQL,
 member lists and counts with wallet search, unsaved previews, and trusted online
 broadcast SQL. A legacy-invalid `ALL_TOKENS` rule over an `ALL` grant remains an
 empty saved member set; preview validation rejects it. Existing consumer suites
 also cover REP search aggregation, wave privilege containment, private groups,
 moderation, and real WebSocket delivery through child/parent intersections.
-One identity row per profile is the supported invariant.
+One identity row per profile is the supported invariant. The empty-projection
+regression in #2068 was found in unmerged #1822; current-consumer coverage
+prevents its reintroduction.
 
 This milestone changes the current SQL evaluator without enabling a membership
 producer, dispatcher, worker, or materialized reader. It requires no schema or

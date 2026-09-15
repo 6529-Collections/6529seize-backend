@@ -2558,6 +2558,8 @@ export class UserGroupsService {
     if (max !== null && max < 0) {
       return 'and false ';
     }
+    // Strictly increasing borders make reversed ranges empty:
+    // min > max implies border(min) >= border(max + 1).
     let sql = '';
     if (min !== null && min > 0) {
       sql += 'and i.level_raw >= :level_min ';

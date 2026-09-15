@@ -2,7 +2,7 @@
   {
     "name": "composite-all-dimensions-and",
     "dimension": "composite",
-    "description": "All configured criteria dimensions must pass together (logical AND, spec \u00a71.1 step 4): one failing axis rejects the group.",
+    "description": "All configured criteria dimensions must pass together (logical AND, spec §1.1 step 4): one failing axis rejects the group.",
     "identities": [
       {
         "id": "subject",
@@ -68,16 +68,70 @@
         "owns_meme": true,
         "owns_meme_tokens": ["100"],
         "owns_meme_tokens_match_mode": "ANY_TOKEN"
+      },
+      {
+        "id": "g-negative-max-rep-pass",
+        "level_max": -1,
+        "rep_min": 10
+      },
+      {
+        "id": "g-negative-max-cic-pass",
+        "level_max": -1,
+        "cic_min": 5
+      },
+      {
+        "id": "g-negative-max-tdh-pass",
+        "level_max": -1,
+        "tdh_min": 100
+      },
+      {
+        "id": "g-negative-max-all-pass",
+        "tdh_min": 100,
+        "rep_min": 10,
+        "cic_min": 5,
+        "owns_meme": true,
+        "owns_meme_tokens": ["100"],
+        "owns_meme_tokens_match_mode": "ANY_TOKEN",
+        "level_max": -1
+      },
+      {
+        "id": "g-negative-max-all-included",
+        "tdh_min": 100,
+        "rep_min": 10,
+        "cic_min": 5,
+        "owns_meme": true,
+        "owns_meme_tokens": ["100"],
+        "owns_meme_tokens_match_mode": "ANY_TOKEN",
+        "level_max": -1,
+        "profile_group_id": "pg-subject"
+      },
+      {
+        "id": "g-negative-max-all-excluded",
+        "tdh_min": 100,
+        "rep_min": 10,
+        "cic_min": 5,
+        "owns_meme": true,
+        "owns_meme_tokens": ["100"],
+        "owns_meme_tokens_match_mode": "ANY_TOKEN",
+        "level_max": -1,
+        "profile_group_id": "pg-subject",
+        "excluded_profile_group_id": "pg-subject"
       }
     ],
     "expected": {
-      "eligible_group_ids": ["g-all-pass"]
-    }
+      "eligible_group_ids": ["g-all-pass", "g-negative-max-all-included"]
+    },
+    "profile_groups": [
+      {
+        "id": "pg-subject",
+        "members": ["subject"]
+      }
+    ]
   },
   {
     "name": "multi-group-mixed-dimensions",
     "dimension": "composite",
-    "description": "One profile evaluated against several single-dimension groups at once; the result is the set of passing groups (spec \u00a71, \u00a711 rule 3).",
+    "description": "One profile evaluated against several single-dimension groups at once; the result is the set of passing groups (spec §1, §11 rule 3).",
     "identities": [
       {
         "id": "subject",
