@@ -120,7 +120,7 @@ export async function executeMembershipOnlineIndex(
   const previous = Number(original);
   if (
     (typeof original !== 'number' &&
-      (typeof original !== 'string' || !/^[0-9]+$/.test(original))) ||
+      (typeof original !== 'string' || !/^\d+$/.test(original))) ||
     !Number.isSafeInteger(previous) ||
     previous < 1 ||
     previous > 31536000
@@ -402,7 +402,7 @@ class MembershipSchemaInspection {
     const previous = Number(value);
     if (
       (typeof value !== 'number' &&
-        (typeof value !== 'string' || !/^(0|[1-9][0-9]*)$/.test(value))) ||
+        (typeof value !== 'string' || !/^(0|[1-9]\d*)$/.test(value))) ||
       !Number.isSafeInteger(previous) ||
       previous < 1 ||
       previous > 31536000

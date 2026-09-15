@@ -261,6 +261,14 @@ function prepareStatement(
   });
 }
 
+function serializeQueryRows(result: unknown): unknown[] {
+  // This is the adapter's established JSON wire normalization, not a general
+  // deep clone: Dates, Buffers, toJSON and omitted undefined fields must retain
+  // the same values in both bound and unbound database results.
+  const encoded = JSON.stringify(result);
+  return Object.values(JSON.parse(encoded));
+}
+
 export async function execSQLWithParams(
   sql: string,
   params?: Record<string, any>,
@@ -278,16 +286,12 @@ export async function execSQLWithParams(
   const preparedStatement = prepareStatement(sql, params);
   if (givenConnection) {
     return withSqlBudgetQueryOptions(givenConnection, options, () =>
-      givenConnection
-        .query(preparedStatement)
-        .then((result: unknown) =>
-          Object.values(JSON.parse(JSON.stringify(result)))
-        )
+      givenConnection.query(preparedStatement).then(serializeQueryRows)
     );
   }
   return AppDataSource.manager
     .query(preparedStatement)
-    .then((result) => Object.values(JSON.parse(JSON.stringify(result))));
+    .then(serializeQueryRows);
 }
 
 export async function fetchLastUpload(): Promise<any> {

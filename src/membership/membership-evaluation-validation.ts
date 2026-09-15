@@ -23,7 +23,7 @@ const counter = z.string().refine((s) => {
 });
 const signed = z
   .string()
-  .regex(/^(0|-?[1-9][0-9]{0,38})$/)
+  .regex(/^(0|-?[1-9]\d{0,38})$/)
   .refine(
     (s) =>
       BigInt(s) >= -(BigInt(1) << BigInt(127)) &&
@@ -31,7 +31,7 @@ const signed = z
   );
 const token = z
   .string()
-  .regex(/^(0|[1-9][0-9]{0,19})$/)
+  .regex(/^(0|[1-9]\d{0,19})$/)
   .refine((s) => BigInt(s) <= BigInt('18446744073709551615'));
 const wallet = z.object({ after_wallet: text(50).nullable() }).strict();
 const slot = z.number().int().min(0).max(3);
@@ -66,7 +66,7 @@ const stage = z.discriminatedUnion('kind', [
       next_json_index: counter,
       current_token: z
         .string()
-        .regex(/^(0|-?[1-9][0-9]{0,18})$/)
+        .regex(/^(0|-?[1-9]\d{0,18})$/)
         .refine(
           (s) =>
             BigInt(s) >= BigInt('-9223372036854775808') &&
@@ -156,11 +156,12 @@ export function membershipSeedFingerprint(
 }
 export function membershipInteger(value: unknown): number {
   if (
-    (typeof value !== 'number' &&
-      typeof value !== 'string' &&
-      typeof value !== 'bigint') ||
-    !/^-?\d+$/.test(String(value))
+    typeof value !== 'number' &&
+    typeof value !== 'string' &&
+    typeof value !== 'bigint'
   )
+    throw new MembershipEvaluationError('INTEGRITY', 'Invalid integer input');
+  if (!/^-?\d+$/.test(value.toString()))
     throw new MembershipEvaluationError('INTEGRITY', 'Invalid integer input');
   const n = Number(value);
   if (!Number.isSafeInteger(n))

@@ -140,7 +140,18 @@ const waveColumns = [
   'participation_group_id',
   'voting_group_id'
 ];
-const candidateSql = `g.visible=1 AND (${waveColumns.map((column) => `EXISTS(SELECT 1 FROM ${WAVES_TABLE} w WHERE w.${column}=g.id LIMIT 1)`).join(' OR ')} OR EXISTS(SELECT 1 FROM ${WAVE_CURATIONS_TABLE} wc WHERE wc.community_group_id=g.id LIMIT 1))`;
+const waveReferencesSql = waveColumns
+  .map(
+    (column) =>
+      `EXISTS(SELECT 1 FROM ${WAVES_TABLE} w WHERE w.${column}=g.id LIMIT 1)`
+  )
+  .join(' OR ');
+const candidateSql = `g.visible=1 AND (${waveReferencesSql} OR EXISTS(SELECT 1 FROM ${WAVE_CURATIONS_TABLE} wc WHERE wc.community_group_id=g.id LIMIT 1))`;
+const groupScalarSql = scalarColumns.map((column) => `g.${column}`).join(',');
+const groupTokenMetadataSql = MEMBERSHIP_TOKEN_COLUMNS.map(
+  (column, index) =>
+    `JSON_LENGTH(g.${column}) count_${index},JSON_TYPE(g.${column}) type_${index}`
+).join(',');
 
 /** Counts every real statement, including source proof queries using this executor. */
 export class MembershipMeteredExecutor extends SqlExecutor {
@@ -189,7 +200,7 @@ export class MembershipMeteredExecutor extends SqlExecutor {
     this.input_rows += rows.length;
     this.input_bytes += Buffer.byteLength(
       JSON.stringify(rows, (_key, value: unknown) =>
-        typeof value === 'bigint' ? String(value) : value
+        typeof value === 'bigint' ? value.toString() : value
       )
     );
     if (
@@ -281,8 +292,10 @@ export class MembershipEvaluationInputsDb {
     const order = await this.groupOrder(ctx);
     const cast = (param: string) =>
       `CONVERT(:${param} USING ${order.character_set}) COLLATE ${order.collation}`;
+    const lowerBound =
+      after === null ? 'TRUE' : `${cast('id')}>${cast('after')}`;
     const [row] = await this.read<{ valid: number }>(
-      `SELECT (${after === null ? 'TRUE' : `${cast('id')}>${cast('after')}`} AND ${cast('id')}<=${cast('through')}) AS valid`,
+      `SELECT (${lowerBound} AND ${cast('id')}<=${cast('through')}) AS valid`,
       { id, after, through },
       ctx
     );
@@ -326,7 +339,7 @@ export class MembershipEvaluationInputsDb {
         )
       )
     );
-    if (!match || !/^[a-zA-Z0-9_]+$/.test(match))
+    if (!match || !/^\w+$/.test(match))
       throw new MembershipEvaluationError(
         'INTEGRITY',
         'Required membership source index missing'
@@ -339,7 +352,7 @@ export class MembershipEvaluationInputsDb {
     ctx: MembershipPrimaryContext
   ): Promise<MembershipGroupInput | null> {
     const [row] = await this.read<Record<string, unknown>>(
-      `SELECT ${scalarColumns.map((c) => `g.${c}`).join(',')},CAST(v.catalog_version AS CHAR) group_version,v.is_deleted,(${candidateSql}) candidate,CASE WHEN COALESCE(g.is_beneficiary_of_grant_match_mode,'ANY_TOKEN')='ANY_TOKEN' THEN 'ANY_TOKEN' WHEN g.is_beneficiary_of_grant_match_mode='ALL_TOKENS' THEN 'ALL_TOKENS' ELSE NULL END grant_match_mode,${MEMBERSHIP_TOKEN_COLUMNS.map((c, n) => `JSON_LENGTH(g.${c}) count_${n},JSON_TYPE(g.${c}) type_${n}`).join(',')} FROM ${USER_GROUPS_TABLE} g LEFT JOIN ${MEMBERSHIP_GROUP_VERSIONS_TABLE} v ON v.group_id=g.id WHERE g.id=:id`,
+      `SELECT ${groupScalarSql},CAST(v.catalog_version AS CHAR) group_version,v.is_deleted,(${candidateSql}) candidate,CASE WHEN COALESCE(g.is_beneficiary_of_grant_match_mode,'ANY_TOKEN')='ANY_TOKEN' THEN 'ANY_TOKEN' WHEN g.is_beneficiary_of_grant_match_mode='ALL_TOKENS' THEN 'ALL_TOKENS' ELSE NULL END grant_match_mode,${groupTokenMetadataSql} FROM ${USER_GROUPS_TABLE} g LEFT JOIN ${MEMBERSHIP_GROUP_VERSIONS_TABLE} v ON v.group_id=g.id WHERE g.id=:id`,
       { id },
       ctx
     );
