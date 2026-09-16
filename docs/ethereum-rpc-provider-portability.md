@@ -275,10 +275,11 @@ a change.
 - Do not treat this decision as a blocker for migrating unrelated ordinary
   server-side reads.
 
-## Frontend implementation plan
+## Frontend implementation status
 
 The frontend owns a concise execution record in its `ops/workstreams/`
-directory. Its implementation scope is:
+directory. Implementation is merged; production deployment is tracked separately.
+Completed work and retained boundaries are:
 
 1. Completed in merged [PR #3915](https://github.com/6529-Collections/6529seize-frontend/pull/3915):
    deleted the unused `services/alchemy-api.ts` facade, the unused
@@ -287,10 +288,10 @@ directory. Its implementation scope is:
    code completion does not imply deployment.
 2. Retain `services/alchemy/types.ts` and `services/alchemy/utils.ts` while
    production code imports them.
-3. Add one server-only provider-neutral construction path for ordinary
-   mainnet reads and configure it with `ETHEREUM_RPC_URL`.
-4. Migrate server-owned Open Graph block, ENS, and contract reads away from
-   default and hard-coded transports.
+3. Completed in merged PR #3911: added one server-only provider-neutral
+   construction path for ordinary mainnet reads configured with `ETHEREUM_RPC_URL`.
+4. Completed in merged PR #3911: migrated server-owned Open Graph block, ENS,
+   and contract reads away from default and hard-coded transports.
 5. Keep browser wallet transports and transaction submission outside this
    server-RPC decision. Wallet libraries must continue to follow their own
    chain and connector contracts.
