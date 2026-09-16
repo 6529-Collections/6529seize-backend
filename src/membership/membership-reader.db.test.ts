@@ -3,10 +3,12 @@ import {
   MEMBERSHIP_GROUP_VERSIONS_TABLE,
   MEMBERSHIP_PUBLICATIONS_TABLE,
   MEMBERSHIP_REFRESH_RUNS_TABLE,
+  MEMBERSHIP_REFRESH_TARGETS_TABLE,
   MEMBERSHIP_SOURCE_STATES_TABLE,
   PROFILE_GROUPS_TABLE,
   RATINGS_TABLE,
   USER_GROUPS_TABLE,
+  WAVES_TABLE,
   IDENTITIES_TABLE
 } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
@@ -17,11 +19,32 @@ import {
   withUserGroups
 } from '@/tests/fixtures/user-group.fixture';
 import { MembershipReader } from './membership-reader';
-import { membershipProfileSourceKeys } from './membership-profile-evaluator';
+import {
+  membershipProfileSourceKeys,
+  PrimaryMembershipProfileEvaluator
+} from './membership-profile-evaluator';
 import { MembershipSourceStatesDb } from './membership-source-states.db';
-import { withMembershipPrimaryTransaction } from './membership-primary';
-import { userGroupsService } from '@/api/community-members/user-groups.service';
+import {
+  membershipQueryOptions,
+  withMembershipPrimaryTransaction
+} from './membership-primary';
+import {
+  UserGroupsService,
+  userGroupsService
+} from '@/api/community-members/user-groups.service';
+import { UserGroupsDb } from '@/user-groups/user-groups.db';
 import { performance } from 'node:perf_hooks';
+import { aWave } from '@/tests/fixtures/wave.fixture';
+import { MembershipRefreshTargetsDb } from './membership-refresh-targets.db';
+import { MembershipRefreshWorker } from './membership-worker';
+import { membershipTestOptions } from './membership-worker-test.helpers';
+import {
+  membershipCatalogueMutation,
+  membershipGlobalMutation,
+  withMembershipSourceMutation
+} from './membership-producer-writes';
+import * as producerPolicy from './membership-producer-policy';
+import * as readerPolicy from './membership-reader-policy';
 
 const profileId = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000097';
 const runId = 'bbbbbbbb-bbbb-4bbb-8bbb-000000000097';
@@ -105,6 +128,69 @@ const read = (shadow = false) =>
     shadow
   );
 
+async function publishWithWorker() {
+  const target = { scope: 'PROFILE' as const, target_id: profileId };
+  await withMembershipPrimaryTransaction(sqlExecutor, (ctx) =>
+    new MembershipRefreshTargetsDb(() => sqlExecutor).request(
+      [{ ...target, reason: 'reader-sustained-change' }],
+      ctx
+    )
+  );
+  const worker = new MembershipRefreshWorker(
+    sqlExecutor,
+    new PrimaryMembershipProfileEvaluator(() => sqlExecutor)
+  );
+  for (let invocation = 0; invocation < 30; invocation++) {
+    const result = await worker.runTarget(target, membershipTestOptions());
+    if (result.outcome === 'COMPLETED') return;
+    expect(result.outcome).toBe('PENDING');
+  }
+  throw new Error('Real evaluator and worker did not complete the profile');
+}
+
+async function trackedRepChange(value: number) {
+  const active = jest
+    .spyOn(producerPolicy, 'isMembershipSourceTrackingActive')
+    .mockReturnValue(true);
+  try {
+    await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+      withMembershipSourceMutation(
+        connection,
+        membershipGlobalMutation(['RATINGS'], 'reader-sustained-change'),
+        () =>
+          sqlExecutor
+            .execute(
+              `UPDATE ${IDENTITIES_TABLE} SET rep=:rep WHERE profile_id=:profile`,
+              { rep: value, profile: profileId },
+              { wrappedConnection: connection }
+            )
+            .then(() => undefined),
+        { connection }
+      )
+    );
+  } finally {
+    active.mockRestore();
+  }
+}
+
+async function controlledApiRead() {
+  const controlled = jest
+    .spyOn(readerPolicy, 'membershipReaderPolicy')
+    .mockReturnValue({ read: true, shadow: true });
+  try {
+    const service = new UserGroupsService(
+      new UserGroupsDb(() => sqlExecutor),
+      {} as never,
+      {} as never,
+      undefined,
+      new MembershipReader(() => sqlExecutor, 'isolated-fixture')
+    );
+    return service.getGroupsUserIsEligibleFor(profileId);
+  } finally {
+    controlled.mockRestore();
+  }
+}
+
 describeWithSeed(
   'scoped membership reader on primary MySQL',
   [
@@ -113,6 +199,16 @@ describeWithSeed(
     {
       table: PROFILE_GROUPS_TABLE,
       rows: [{ profile_group_id: 'reader-list', profile_id: profileId }]
+    },
+    {
+      table: WAVES_TABLE,
+      rows: [list, rep, newlyJoined].map((group) => {
+        const { serial_no: _serialNo, ...wave } = aWave(
+          { visibility_group_id: group.id },
+          { id: `wave-${group.id}`, name: group.id }
+        );
+        return wave;
+      })
     }
   ],
   () => {
@@ -279,5 +375,172 @@ describeWithSeed(
       const result = await read();
       expect(result.eligible_group_ids).toContain(rep.id);
     });
+
+    it('keeps clean groups materialized across a concurrent tracked change and repeated source churn, then recovers with a real worker publication', async () => {
+      await publishWithWorker();
+      const baseline = await read(true);
+      expect(baseline.materialized_count).toBe(3);
+      expect(baseline.direct_count).toBe(0);
+      expect(baseline.shadow_equal).toBe(true);
+      expect(new Set(await controlledApiRead())).toEqual(
+        new Set([list.id, rep.id, newlyJoined.id])
+      );
+
+      let captured!: () => void;
+      let release!: () => void;
+      const snapshotCaptured = new Promise<void>((resolve) => {
+        captured = resolve;
+      });
+      const continueRead = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const overlapping = new MembershipReader(
+        () => sqlExecutor,
+        'isolated-fixture'
+      ).read(
+        profileId,
+        async (ctx) => {
+          await sqlExecutor.oneOrNull(
+            `SELECT rep FROM ${IDENTITIES_TABLE} WHERE profile_id=:profile`,
+            { profile: profileId },
+            membershipQueryOptions(ctx)
+          );
+          captured();
+          await continueRead;
+          return [list.id, rep.id, newlyJoined.id];
+        },
+        (profile, ids, ctx) =>
+          userGroupsService.evaluateGroupsOnPrimary(profile, ids, ctx),
+        true
+      );
+      await snapshotCaptured;
+      try {
+        await trackedRepChange(0);
+      } finally {
+        release();
+      }
+      const beforeCommit = await overlapping;
+      expect(beforeCommit.materialized_count).toBe(3);
+      expect(beforeCommit.direct_count).toBe(0);
+      expect(beforeCommit.shadow_equal).toBe(true);
+      expect(new Set(await controlledApiRead())).toEqual(
+        new Set([list.id, newlyJoined.id])
+      );
+
+      for (let change = 0; change < 8; change++) {
+        const value = change % 2 === 0 ? 20 : 0;
+        await trackedRepChange(value);
+        const result = await read(true);
+        expect(result.materialized_count).toBe(2);
+        expect(result.direct_count).toBe(1);
+        expect(result.fallback_reasons).toEqual({ source_changed: 1 });
+        expect(result.eligible_group_ids).toContain(list.id);
+        expect(result.eligible_group_ids).toContain(newlyJoined.id);
+        expect(result.eligible_group_ids.includes(rep.id)).toBe(value >= 10);
+        expect(result.direct_duration_ms).toBeGreaterThanOrEqual(0);
+        expect(result.shadow_equal).toBe(true);
+      }
+
+      await publishWithWorker();
+      const recovered = await read(true);
+      expect(recovered.materialized_count).toBe(3);
+      expect(recovered.direct_count).toBe(0);
+      expect(recovered.fallback_reasons).toEqual({});
+      expect(recovered.shadow_equal).toBe(true);
+      expect(new Set(await controlledApiRead())).toEqual(
+        new Set([list.id, newlyJoined.id])
+      );
+    }, 120000);
+
+    it('keeps clean groups readable while a failed group refresh is parked and a routine full refresh runs', async () => {
+      await publishWithWorker();
+      const group = { scope: 'GROUP' as const, target_id: rep.id };
+      const tracking = jest
+        .spyOn(producerPolicy, 'isMembershipSourceTrackingActive')
+        .mockReturnValue(true);
+      try {
+        await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+          withMembershipSourceMutation(
+            connection,
+            membershipCatalogueMutation(
+              [{ group_id: rep.id, is_deleted: false }],
+              'reader-failed-group'
+            ),
+            () =>
+              sqlExecutor
+                .execute(
+                  `UPDATE ${USER_GROUPS_TABLE} SET rep_min=15 WHERE id=:group`,
+                  { group: rep.id },
+                  { wrappedConnection: connection }
+                )
+                .then(() => undefined),
+            { connection }
+          )
+        );
+      } finally {
+        tracking.mockRestore();
+      }
+      await sqlExecutor.execute(
+        `UPDATE ${MEMBERSHIP_REFRESH_TARGETS_TABLE}
+         SET attempts=3,last_error='injected worker failure',
+             available_at_millis=9223372036854775807
+         WHERE scope='GROUP' AND target_id=:group`,
+        { group: rep.id }
+      );
+      const parked = await read(true);
+      expect(parked.materialized_count).toBe(2);
+      expect(parked.direct_count).toBe(1);
+      expect(parked.fallback_reasons).toEqual({ group_changed: 1 });
+      expect(parked.shadow_equal).toBe(true);
+      expect(new Set(await controlledApiRead())).toEqual(
+        new Set([list.id, rep.id, newlyJoined.id])
+      );
+
+      const full = { scope: 'FULL' as const, target_id: '*' };
+      await withMembershipPrimaryTransaction(sqlExecutor, (ctx) =>
+        new MembershipRefreshTargetsDb(() => sqlExecutor).request(
+          [{ ...full, reason: 'routine-full-refresh' }],
+          ctx
+        )
+      );
+      const worker = new MembershipRefreshWorker(
+        sqlExecutor,
+        new PrimaryMembershipProfileEvaluator(() => sqlExecutor)
+      );
+      expect(
+        (await worker.runTarget(full, membershipTestOptions())).outcome
+      ).toBe('PENDING');
+      const duringFull = await read(true);
+      expect(duringFull.materialized_count).toBe(2);
+      expect(duringFull.fallback_reasons).toEqual({ group_changed: 1 });
+      expect(duringFull.shadow_equal).toBe(true);
+
+      await withMembershipPrimaryTransaction(sqlExecutor, (ctx) =>
+        new MembershipRefreshTargetsDb(() => sqlExecutor).request(
+          [{ ...group, reason: 'reader-retry-group' }],
+          ctx
+        )
+      );
+      for (const target of [group, full]) {
+        let completed = false;
+        for (let invocation = 0; invocation < 30; invocation++) {
+          const result = await worker.runTarget(
+            target,
+            membershipTestOptions()
+          );
+          if (result.outcome === 'COMPLETED') {
+            completed = true;
+            break;
+          }
+          expect(result.outcome).toBe('PENDING');
+        }
+        expect(completed).toBe(true);
+      }
+      await publishWithWorker();
+      const recovered = await read(true);
+      expect(recovered.materialized_count).toBe(3);
+      expect(recovered.direct_count).toBe(0);
+      expect(recovered.shadow_equal).toBe(true);
+    }, 120000);
   }
 );
