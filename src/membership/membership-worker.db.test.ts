@@ -22,7 +22,8 @@ import { MembershipWorkerClaim } from './membership-worker.types';
 async function checkpoint(
   claim: MembershipWorkerClaim,
   done = false,
-  groups = ['g1']
+  groups = ['g1'],
+  horizon: string | null = null
 ) {
   return membershipTestTx(async (ctx) => {
     const run = await membershipTestRuns().run(claim.run_id, false, ctx);
@@ -35,7 +36,7 @@ async function checkpoint(
       },
       groups,
       Math.max(1, groups.length),
-      null,
+      horizon,
       ctx
     );
   });
@@ -178,6 +179,55 @@ describeWithSeed('membership worker transactional fencing', [], () => {
       attempts: 0
     });
     expect(target?.available_at_millis).not.toBeNull();
+  });
+
+  it('schedules the next profile refresh at a future grant boundary atomically', async () => {
+    const claim = await membershipTestClaim();
+    const horizon = String(Date.now() + 120_000);
+    await checkpoint(claim, true, [], horizon);
+    const finalClaim = await resume();
+    await membershipTestTx((ctx) =>
+      membershipTestRuns().complete(finalClaim!, true, ctx)
+    );
+    expect(
+      await sqlExecutor.execute(
+        `SELECT run_id FROM ${MEMBERSHIP_PUBLICATIONS_TABLE}`
+      )
+    ).toEqual([{ run_id: claim.run_id }]);
+    expect(
+      await membershipTestTx((ctx) =>
+        membershipTestTargets().find(membershipTestTarget, ctx)
+      )
+    ).toMatchObject({
+      requested_version: '2',
+      completed_version: '1',
+      available_at_millis: horizon,
+      reason: 'grant-time-boundary',
+      active_run_id: null
+    });
+    expect(await resume()).toBeNull();
+  });
+
+  it('preserves a newer request instead of adding a duplicate grant timer', async () => {
+    const claim = await membershipTestClaim();
+    await checkpoint(claim, true, [], String(Date.now() + 120_000));
+    const finalClaim = await resume();
+    await membershipTestRequest();
+    await membershipTestTx((ctx) =>
+      membershipTestRuns().complete(finalClaim!, true, ctx)
+    );
+    const target = await membershipTestTx((ctx) =>
+      membershipTestTargets().find(membershipTestTarget, ctx)
+    );
+    expect(target).toMatchObject({
+      requested_version: '2',
+      completed_version: '1',
+      active_run_id: null
+    });
+    expect(target?.available_at_millis).not.toBeNull();
+    expect(BigInt(target!.available_at_millis!)).toBeLessThan(
+      BigInt(Date.now() + 100_000)
+    );
   });
 
   it('requires explicit exhaustion before publication', async () => {

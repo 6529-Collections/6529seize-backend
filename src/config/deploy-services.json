@@ -190,7 +190,9 @@
         "delegationsLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "xTdhLoop"
+      ]
     },
     {
       "name": "discoverEnsLoop",
@@ -655,7 +657,9 @@
         "populateHistoricConsolidatedTdh"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "xTdhLoop"
+      ]
     },
     {
       "name": "pushNotificationsHandler",
@@ -872,7 +876,9 @@
         "tdhLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "xTdhLoop"
+      ]
     },
     {
       "name": "teamLoop",

@@ -28,7 +28,7 @@ export function createMembershipQueueSender(
   logger: Logger
 ) {
   if (
-    runtime.mode !== 'staging-fixture-v1' ||
+    runtime.mode === 'inactive' ||
     !credentials.accessKeyId ||
     !credentials.secretAccessKey ||
     !credentials.sessionToken
@@ -61,10 +61,10 @@ export function createMembershipQueueSender(
       },
       context: MembershipQueueSendContext
     ): Promise<void> {
-      const hint = validateMembershipRuntimeHint({
-        protocol_version: 1,
-        ...value
-      });
+      const hint = validateMembershipRuntimeHint(
+        { protocol_version: 1, ...value },
+        runtime.mode
+      );
       if (
         context.signal.aborted ||
         !Number.isFinite(context.deadline_monotonic_millis) ||

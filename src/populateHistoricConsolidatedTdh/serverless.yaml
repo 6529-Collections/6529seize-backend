@@ -25,6 +25,8 @@ functions:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
+      MEMBERSHIP_SOURCE_TRACKING_MODE: ${env:MEMBERSHIP_SOURCE_TRACKING_MODE, 'inactive'}
+      MEMBERSHIP_SOURCE_TRACKING_STAGE: ${opt:stage, self:provider.stage}
       HISTORIC_CONSOLIDATED_TDH_ITERATIONS: 1
       HISTORIC_CONSOLIDATED_TDH_UPLOAD: false
       SENTRY_DSN: ${env:SENTRY_DSN}
