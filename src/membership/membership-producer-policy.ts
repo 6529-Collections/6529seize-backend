@@ -8,7 +8,7 @@ export type MembershipSourceTrackingMode = 'inactive' | 'tracking-v1';
  */
 export function resolveMembershipSourceTrackingMode(
   raw: string | undefined,
-  stage: string | undefined = process.env.MEMBERSHIP_SOURCE_TRACKING_STAGE
+  stage: string | undefined
 ): MembershipSourceTrackingMode {
   if (raw === undefined || raw === 'inactive') return 'inactive';
   if (raw === 'tracking-v1' && stage === 'staging') return 'tracking-v1';
@@ -17,7 +17,20 @@ export function resolveMembershipSourceTrackingMode(
 
 export function isMembershipSourceTrackingEnabled(
   raw: string | undefined,
-  stage?: string
+  stage: string | undefined
 ): boolean {
   return resolveMembershipSourceTrackingMode(raw, stage) === 'tracking-v1';
+}
+
+/** Captured at module evaluation, before shared secrets can alter process.env. */
+export const membershipSourceTrackingDeployment = Object.freeze({
+  mode: resolveMembershipSourceTrackingMode(
+    process.env.MEMBERSHIP_SOURCE_TRACKING_MODE,
+    process.env.MEMBERSHIP_SOURCE_TRACKING_STAGE
+  ),
+  stage: process.env.MEMBERSHIP_SOURCE_TRACKING_STAGE ?? null
+});
+
+export function isMembershipSourceTrackingActive(): boolean {
+  return membershipSourceTrackingDeployment.mode === 'tracking-v1';
 }
