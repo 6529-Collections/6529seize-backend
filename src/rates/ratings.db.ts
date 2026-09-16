@@ -837,7 +837,7 @@ from grouped_rates r
     const results = await this.db.execute(
       `select * from ${RATINGS_TABLE} where matter = 'REP' and matter_target_id in (:targets) and matter_category in (:categories)`,
       param,
-      { wrappedConnection: ctx.connection }
+      ctx.connection ? { wrappedConnection: ctx.connection } : undefined
     );
     ctx?.timer?.stop(
       `${this.constructor.name}->getAllRepRatingsForTargetsAndCategories`

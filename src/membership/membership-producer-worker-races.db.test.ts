@@ -143,56 +143,57 @@ describeWithSeed(
         entities: [NFTOwner, NftOwnersSyncState],
         synchronize: false
       });
-      await producerDb.initialize();
-      const dataSource = jest
-        .spyOn(loopDb, 'getDataSource')
-        .mockReturnValue(producerDb);
-      await sqlExecutor.bulkInsert(
-        ADDRESS_CONSOLIDATION_KEY,
-        [{ address: wallet, consolidation_key: wallet }],
-        ['address', 'consolidation_key']
-      );
-      const entered = latch();
-      const resume = latch();
-      const producer = runMembershipGlobalSourceJob(
-        'nft-owners:0:1',
-        ['OWNERSHIP'],
-        'nft-owners-reconciled',
-        async () => {
-          entered.resolve();
-          await resume.promise;
-          await persistNftOwners(
-            new Set([wallet]),
-            [
-              {
-                wallet,
-                contract: MEMES_CONTRACT,
-                token_id: 1,
-                balance: 1,
-                block_reference: 1
-              }
-            ],
-            true
-          );
-          await setNftOwnersSyncBlock(1);
-        }
-      );
+      let dataSource: jest.SpyInstance | undefined;
       try {
-        await entered.promise;
-        const blocked = await worker().runTarget(
-          profileTarget,
-          membershipTestOptions()
+        await producerDb.initialize();
+        dataSource = jest
+          .spyOn(loopDb, 'getDataSource')
+          .mockReturnValue(producerDb);
+        await sqlExecutor.bulkInsert(
+          ADDRESS_CONSOLIDATION_KEY,
+          [{ address: wallet, consolidation_key: wallet }],
+          ['address', 'consolidation_key']
         );
-        expect(blocked.outcome).not.toBe('COMPLETED');
-        expect(
-          await sqlExecutor.execute(
-            `SELECT run_id FROM ${MEMBERSHIP_PUBLICATIONS_TABLE}`
-          )
-        ).toEqual([]);
-      } finally {
-        resume.resolve();
-      }
-      try {
+        const entered = latch();
+        const resume = latch();
+        const producer = runMembershipGlobalSourceJob(
+          'nft-owners:0:1',
+          ['OWNERSHIP'],
+          'nft-owners-reconciled',
+          async () => {
+            entered.resolve();
+            await resume.promise;
+            await persistNftOwners(
+              new Set([wallet]),
+              [
+                {
+                  wallet,
+                  contract: MEMES_CONTRACT,
+                  token_id: 1,
+                  balance: 1,
+                  block_reference: 1
+                }
+              ],
+              true
+            );
+            await setNftOwnersSyncBlock(1);
+          }
+        );
+        try {
+          await entered.promise;
+          const blocked = await worker().runTarget(
+            profileTarget,
+            membershipTestOptions()
+          );
+          expect(blocked.outcome).not.toBe('COMPLETED');
+          expect(
+            await sqlExecutor.execute(
+              `SELECT run_id FROM ${MEMBERSHIP_PUBLICATIONS_TABLE}`
+            )
+          ).toEqual([]);
+        } finally {
+          resume.resolve();
+        }
         await producer;
         expect(await getNftOwnersSyncBlock()).toBe(1);
         expect((await runUntilSettled(fullTarget)).outcome).toBe('COMPLETED');
@@ -237,8 +238,8 @@ describeWithSeed(
         );
         expect(await publicationMembers()).toEqual([]);
       } finally {
-        dataSource.mockRestore();
-        await producerDb.destroy();
+        dataSource?.mockRestore();
+        if (producerDb.isInitialized) await producerDb.destroy();
       }
     });
 
