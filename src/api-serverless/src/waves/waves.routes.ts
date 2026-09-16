@@ -494,6 +494,82 @@ router.delete(
   }
 );
 
+router.post(
+  '/:id/subscribe-dm',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ id: string }, any, any, any, any>,
+    res: Response<ApiResponse<ApiWaveSubscriptionActions>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const authenticatedProfileId = authenticationContext.getActingAsId();
+    if (!authenticatedProfileId) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
+    if (
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ProfileProxyActionType.READ_WAVE
+      ]
+    ) {
+      throw new ForbiddenException(
+        `Proxy is not allowed to subscribe to waves`
+      );
+    }
+    const activeActions = await waveApiService.addWaveDmSubscription({
+      subscriber: authenticatedProfileId,
+      waveId: req.params.id
+    });
+    await waveScoreService.requestWaveScoreRefreshBestEffort(
+      [req.params.id],
+      WaveScoreDirtyRefreshReason.WAVE_SUBSCRIPTION_CHANGED,
+      { authenticationContext, timer }
+    );
+    res.send({
+      actions: activeActions
+    });
+  }
+);
+
+router.delete(
+  '/:id/subscribe-dm',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ id: string }, any, any, any, any>,
+    res: Response<ApiResponse<ApiWaveSubscriptionActions>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const authenticatedProfileId = authenticationContext.getActingAsId();
+    if (!authenticatedProfileId) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
+    if (
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ProfileProxyActionType.READ_WAVE
+      ]
+    ) {
+      throw new ForbiddenException(
+        `Proxy is not allowed to unsubscribe from waves`
+      );
+    }
+    const activeActions = await waveApiService.removeWaveDmSubscription({
+      subscriber: authenticatedProfileId,
+      waveId: req.params.id
+    });
+    await waveScoreService.requestWaveScoreRefreshBestEffort(
+      [req.params.id],
+      WaveScoreDirtyRefreshReason.WAVE_SUBSCRIPTION_CHANGED,
+      { authenticationContext, timer }
+    );
+    res.send({
+      actions: activeActions
+    });
+  }
+);
+
 router.get(
   '/:id/drops',
   maybeAuthenticatedUser(),

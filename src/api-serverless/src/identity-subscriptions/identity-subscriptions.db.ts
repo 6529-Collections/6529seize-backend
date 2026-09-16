@@ -327,6 +327,29 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
       .then((it) => it.map((it) => it.subscriber_id));
   }
 
+  async findWaveDmSubscribers(
+    waveId: string,
+    excludeIdentityId: string | null,
+    connection: ConnectionWrapper<any>
+  ): Promise<string[]> {
+    return this.db
+      .execute<{ subscriber_id: string }>(
+        `select subscriber_id from ${IDENTITY_SUBSCRIPTIONS_TABLE}
+         where target_id = :waveId
+           and target_type = :target_type
+           and target_action = :target_action
+           ${excludeIdentityId ? 'and subscriber_id <> :excludeIdentityId' : ''}`,
+        {
+          waveId,
+          target_type: ActivityEventTargetType.WAVE,
+          target_action: ActivityEventAction.DM_ON_DROP_CREATED,
+          ...(excludeIdentityId ? { excludeIdentityId } : {})
+        },
+        { wrappedConnection: connection }
+      )
+      .then((it) => it.map((it) => it.subscriber_id));
+  }
+
   async findWaveSubscribedAllSubscribers(
     waveId: string,
     connection: ConnectionWrapper<any>

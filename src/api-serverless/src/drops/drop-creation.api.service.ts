@@ -15,7 +15,7 @@ import {
   CreateOrUpdateDropModel,
   DropPartIdentifierModel
 } from '../../../drops/create-or-update-drop.model';
-import { ConnectionWrapper } from '../../../sql-executor';
+import { ConnectionWrapper, sqlExecutor } from '../../../sql-executor';
 import { dropsMappers, DropsMappers } from './drops.mappers';
 import {
   deleteDrop,
@@ -41,6 +41,8 @@ import {
 } from '@/api/drops/drop-polls.api.service';
 import { ApiCreateDropPollRequest } from '@/api/generated/models/ApiCreateDropPollRequest';
 import { invalidateWaveUnreadCacheForWave } from '@/api/waves/wave-unread-cache';
+import { wavesApiDb } from '@/api/waves/waves.api.db';
+import { waveDmNotifier } from '@/waves/wave-dm-notifier';
 import {
   waveScoreService,
   WaveScoreDirtyRefreshReason
@@ -128,6 +130,16 @@ export class DropCreationApiService {
     await this.sendPendingPushNotifications({
       dropId: drop.id,
       pendingPushNotificationIds
+    });
+    void this.notifyDmSubscribersOfNewDrop({
+      waveId: createModel.wave_id,
+      dropId: drop.id,
+      authorId,
+      dropParts: createModel.parts
+    }).catch((error) => {
+      this.logger.error(
+        `Failed to send DM notifications for drop ${drop.id}: ${error}`
+      );
     });
     void this.ensureNftLinkTrackingForDrop(drop.id, ctx);
     await this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx);
@@ -382,6 +394,45 @@ export class DropCreationApiService {
       this.logger.error(
         `Failed to send push notifications for drop ${dropId} with pending ids ${pendingPushNotificationIds.join(',')}`,
         error
+      );
+    }
+  }
+
+  private async notifyDmSubscribersOfNewDrop({
+    waveId,
+    dropId,
+    authorId,
+    dropParts
+  }: {
+    waveId: string;
+    dropId: string;
+    authorId: string;
+    dropParts: { content: string | null }[];
+  }) {
+    try {
+      const wave = await wavesApiDb.findWaveById(waveId);
+      if (!wave) {
+        return;
+      }
+      if (wave.is_direct_message === true) {
+        return;
+      }
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          await waveDmNotifier.notifyDmSubscribersOfNewDrop(
+            {
+              wave,
+              dropId,
+              authorId,
+              dropParts
+            },
+            connection
+          );
+        }
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to send DM notifications for drop ${dropId} in wave ${waveId}: ${error}`
       );
     }
   }

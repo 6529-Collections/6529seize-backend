@@ -116,6 +116,9 @@ export class FeedApiService {
         const identity = it.target_id;
         return `wave-created-${identity}`;
       }
+      case ActivityEventAction.DM_ON_DROP_CREATED: {
+        return `dm-on-drop-created-${it.target_id}`;
+      }
       default: {
         assertUnreachable(it.action);
       }
@@ -246,6 +249,9 @@ export class FeedApiService {
           serial_no: eventId,
           type: ApiFeedItemType.DropReplied
         };
+      }
+      case ActivityEventAction.DM_ON_DROP_CREATED: {
+        return null;
       }
       default: {
         return assertUnreachable(action);

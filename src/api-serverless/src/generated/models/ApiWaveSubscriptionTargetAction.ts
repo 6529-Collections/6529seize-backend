@@ -13,5 +13,6 @@
 import { HttpFile } from '../http/http';
 
 export enum ApiWaveSubscriptionTargetAction {
-    DropCreated = 'DROP_CREATED'
+    DropCreated = 'DROP_CREATED',
+    DmOnDropCreated = 'DM_ON_DROP_CREATED'
 }

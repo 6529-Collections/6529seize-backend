@@ -1472,6 +1472,105 @@ export class WaveApiService {
     );
   }
 
+  async addWaveDmSubscription({
+    subscriber,
+    waveId
+  }: {
+    subscriber: string;
+    waveId: string;
+  }): Promise<ApiWaveSubscriptionTargetAction[]> {
+    const groupsUserIsEligibleFor =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(subscriber);
+    await this.findWaveByIdOrThrow(waveId, groupsUserIsEligibleFor, {});
+    return await this.identitySubscriptionsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const existingActions =
+          await this.identitySubscriptionsDb.findIdentitySubscriptionActionsOfTarget(
+            {
+              subscriber_id: subscriber,
+              target_id: waveId,
+              target_type: ActivityEventTargetType.WAVE
+            },
+            connection
+          );
+        if (!existingActions.includes(ActivityEventAction.DM_ON_DROP_CREATED)) {
+          await this.identitySubscriptionsDb.addIdentitySubscription(
+            {
+              subscriber_id: subscriber,
+              target_id: waveId,
+              target_type: ActivityEventTargetType.WAVE,
+              target_action: ActivityEventAction.DM_ON_DROP_CREATED,
+              wave_id: waveId,
+              subscribed_to_all_drops: false
+            },
+            connection
+          );
+        }
+        await this.metricsRecorder.recordActiveIdentity(
+          { identityId: subscriber },
+          { connection }
+        );
+        return await this.identitySubscriptionsDb
+          .findIdentitySubscriptionActionsOfTarget(
+            {
+              subscriber_id: subscriber,
+              target_id: waveId,
+              target_type: ActivityEventTargetType.WAVE
+            },
+            connection
+          )
+          .then((result) =>
+            result.map((it) =>
+              enums.resolveOrThrow(ApiWaveSubscriptionTargetAction, it)
+            )
+          );
+      }
+    );
+  }
+
+  async removeWaveDmSubscription({
+    subscriber,
+    waveId
+  }: {
+    subscriber: string;
+    waveId: string;
+  }): Promise<ApiWaveSubscriptionTargetAction[]> {
+    const groupsUserIsEligibleFor =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(subscriber);
+    await this.findWaveByIdOrThrow(waveId, groupsUserIsEligibleFor, {});
+    return this.identitySubscriptionsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        await this.identitySubscriptionsDb.deleteIdentitySubscription(
+          {
+            subscriber_id: subscriber,
+            target_id: waveId,
+            target_type: ActivityEventTargetType.WAVE,
+            target_action: ActivityEventAction.DM_ON_DROP_CREATED
+          },
+          connection
+        );
+        await this.metricsRecorder.recordActiveIdentity(
+          { identityId: subscriber },
+          { connection }
+        );
+        return await this.identitySubscriptionsDb
+          .findIdentitySubscriptionActionsOfTarget(
+            {
+              subscriber_id: subscriber,
+              target_id: waveId,
+              target_type: ActivityEventTargetType.WAVE
+            },
+            connection
+          )
+          .then((result) =>
+            result.map((it) =>
+              enums.resolveOrThrow(ApiWaveSubscriptionTargetAction, it)
+            )
+          );
+      }
+    );
+  }
+
   public async getWavesOverview(
     {
       type,

@@ -11270,6 +11270,47 @@ paths:
                 $ref: "#/components/schemas/ApiWaveSubscriptionActions"
         "404":
           description: Wave not found
+  /waves/{id}/subscribe-dm:
+    post:
+      tags:
+        - Waves
+      summary: Subscribe authenticated user to receive DM notifications for new drops in a wave.
+      operationId: subscribeToWaveDm
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiWaveSubscriptionActions"
+        "404":
+          description: Wave not found
+    delete:
+      tags:
+        - Waves
+      summary: Unsubscribe authenticated user from DM notifications for a wave.
+      operationId: unsubscribeFromWaveDm
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiWaveSubscriptionActions"
+        "404":
+          description: Wave not found
   /v2/official-waves:
     get:
       tags:
@@ -17779,6 +17820,7 @@ components:
         - DROP_CREATED
         - DROP_REPLIED
         - DROP_VOTED
+        - DM_ON_DROP_CREATED
     ApiIdentitySubscriptionTargetType:
       type: string
       enum:
@@ -24035,6 +24077,7 @@ components:
       type: string
       enum:
         - DROP_CREATED
+        - DM_ON_DROP_CREATED
     ApiWavesV2ListType:
       type: string
       enum:

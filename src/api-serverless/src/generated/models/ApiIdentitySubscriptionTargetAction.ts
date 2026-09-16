@@ -16,5 +16,6 @@ export enum ApiIdentitySubscriptionTargetAction {
     WaveCreated = 'WAVE_CREATED',
     DropCreated = 'DROP_CREATED',
     DropReplied = 'DROP_REPLIED',
-    DropVoted = 'DROP_VOTED'
+    DropVoted = 'DROP_VOTED',
+    DmOnDropCreated = 'DM_ON_DROP_CREATED'
 }
