@@ -13,6 +13,7 @@
 import { HttpFile } from '../http/http';
 
 export enum ApiMediaUploadMimeType {
+    ImageAvif = 'image/avif',
     ImagePng = 'image/png',
     ImageJpeg = 'image/jpeg',
     ImageJpg = 'image/jpg',

@@ -34,7 +34,7 @@ functions:
       SENTRY_DSN: ${env:SENTRY_DSN, ''}
       SENTRY_ENVIRONMENT: 'dropMediaSanitizer_${opt:stage, self:provider.stage}'
       DROP_MEDIA_INGEST_S3_BUCKET: !Sub '6529-drop-media-ingest-${AWS::AccountId}'
-      DROP_MEDIA_INGEST_S3_REGION: eu-west-1
+      DROP_MEDIA_INGEST_S3_REGION: ${env:DROP_MEDIA_INGEST_S3_REGION, 'eu-west-1'}
 
 resources:
   Resources:
@@ -47,7 +47,7 @@ resources:
     DropMediaSanitizerQueue:
       Type: AWS::SQS::Queue
       Properties:
-        QueueName: drop-media-sanitizer
+        QueueName: ${env:DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME, 'drop-media-sanitizer'}
         VisibilityTimeout: 930
         RedrivePolicy:
           deadLetterTargetArn:
@@ -57,7 +57,7 @@ resources:
     DropMediaSanitizerDLQ:
       Type: AWS::SQS::Queue
       Properties:
-        QueueName: drop-media-sanitizer-dlq
+        QueueName: ${env:DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME, 'drop-media-sanitizer'}-dlq
 
     DropMediaSanitizerQueuePolicy:
       Type: AWS::SQS::QueuePolicy
