@@ -117,10 +117,9 @@ readers, production work and cutover remain unavailable. See
 
 The worker and dispatcher catalog entries also generate independent operational
 monitoring coverage. Their central collector allowlists and application-account
-log subscriptions require separate monitoring and source-stack deployments after
-the authorized main merges and service log-group creation. Combined staging uses
-service-owned alarms and direct logs until coverage is verified. See the
-[monitoring rollout sequence](membership-runtime-operations.md#independent-operational-monitoring).
+log subscriptions were deployed and verified in both environments during the
+inactive M2–M5 release. See the
+[monitoring rollout sequence](membership-runtime-operations.md#historical-independent-operational-monitoring).
 
 ### External membership dispatcher and isolated staging fixture
 
