@@ -134,6 +134,11 @@ A single logout deletes `push_notification_devices` and settings for the selecte
 profile/device. Sign-out-all deletes every registration/settings row for that
 device, including forgotten local profiles. A sessions-only revocation omits the
 profile when another connected wallet still owns it or the account has no profile.
+Every revoke variant, including sessions-only, advances the installation revision.
+The client increments and securely persists that revision with its queued logout
+before sending the request, retries with the same revision, and drains pending
+logouts before registering with the stored current revision. Sessions-only logout
+must follow this same sequence even though it retains profile registrations.
 The frontend removes identifiable profile tray entries for a single logout and
 uses global native tray removal only for explicit sign-out-all.
 
