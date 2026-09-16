@@ -3,6 +3,10 @@ import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
 import { sqlExecutor } from '@/sql-executor';
 import {
+  membershipFixtureAction,
+  handleMembershipFixtureAction
+} from '@/membership/membership-runtime-fixture-carrier';
+import {
   assertMembershipDiagnosticInvocation,
   runMembershipRepositoryDiagnostics
 } from '@/membership/membership-repository-diagnostics';
@@ -16,7 +20,13 @@ const diagnosticDeployment = Object.freeze({
 });
 
 export const handler = sentryContext.wrapLambdaHandler(
-  async (event: unknown) => {
+  async (event: unknown, context) => {
+    const fixtureAction = membershipFixtureAction(event);
+    if (fixtureAction)
+      return handleMembershipFixtureAction(fixtureAction, context, {
+        stage: diagnosticDeployment.stage ?? '',
+        region: diagnosticDeployment.region ?? ''
+      });
     if (
       event == null ||
       (typeof event === 'object' &&

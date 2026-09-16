@@ -69,7 +69,9 @@ jobs:
           ./bin/6529 run format:check
           ./bin/6529 run ci:assert-source-clean
       - name: Test backend
-        timeout-minutes: 30
+        # The complete four-shard M3 run took 28m9s. Membership's
+        # real lease/reader test additionally waits 90s + 120s without clock edits.
+        timeout-minutes: 45
         run: |
           set -euo pipefail
           rm -rf pr-ci-jest-inventory

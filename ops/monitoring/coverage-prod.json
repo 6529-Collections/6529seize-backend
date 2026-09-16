@@ -259,6 +259,18 @@
       ]
     },
     {
+      "service": "membershipRefreshDispatcherLoop",
+      "region": "us-east-1",
+      "functions": [
+        "membershipRefreshDispatcherLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
       "service": "mintAnnouncementsLoop",
       "region": "us-east-1",
       "functions": [

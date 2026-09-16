@@ -103,6 +103,15 @@ const hint = z
   })
   .strict();
 export type MembershipRuntimeHint = z.infer<typeof hint>;
+
+export function validateMembershipRuntimeHint(
+  value: unknown
+): MembershipRuntimeHint {
+  const parsed = hint.safeParse(value);
+  if (!parsed.success) throw new Error('Unsupported membership fixture hint');
+  return parsed.data;
+}
+
 const envelope = z
   .object({
     Records: z
@@ -151,10 +160,9 @@ export function parseMembershipWorkerDelivery(
   } catch {
     throw new Error('Invalid membership worker hint JSON');
   }
-  const body = hint.safeParse(decoded);
-  if (!body.success) throw new Error('Unsupported membership fixture hint');
+  const body = validateMembershipRuntimeHint(decoded);
   return {
-    hint: body.data,
+    hint: body,
     message_id: record.messageId,
     receive_count: Number(record.attributes.ApproximateReceiveCount)
   };

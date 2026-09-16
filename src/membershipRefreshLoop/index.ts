@@ -10,8 +10,13 @@ import {
   membershipWorkerBudget
 } from '@/membership/membership-worker';
 import type { MembershipWorkerOptions } from '@/membership/membership-worker.types';
+import type { MembershipRefreshScope } from '@/membership/membership-schema.types';
 import { withMembershipPrimaryTransaction } from '@/membership/membership-primary';
 import { MembershipRuntimeFixtureDb } from '@/membership/membership-runtime-fixture.db';
+import {
+  MembershipRuntimeTransportDb,
+  type MembershipTransportDisposition
+} from '@/membership/membership-runtime-transport.db';
 import {
   isMembershipRuntimeStatus,
   MEMBERSHIP_FIXTURE_DATABASE,
@@ -30,7 +35,8 @@ const deployment = Object.freeze({
 });
 
 function workerOptions(
-  context: Pick<Context, 'getRemainingTimeInMillis'>
+  context: Pick<Context, 'getRemainingTimeInMillis'>,
+  scope: MembershipRefreshScope
 ): MembershipWorkerOptions {
   const remaining = context.getRemainingTimeInMillis();
   if (!Number.isFinite(remaining) || remaining < 10_000)
@@ -46,7 +52,7 @@ function workerOptions(
     lease_millis: 90_000,
     // Closed staging acceptance requires independently scheduled continuation.
     max_quanta: 1,
-    page_size: 2,
+    page_size: scope === 'PROFILE' ? 2 : 1,
     input_limits: {
       max_queries: 300,
       max_input_rows: 100_000,
@@ -57,6 +63,30 @@ function workerOptions(
     retry_millis: 60_000,
     max_attempts: 3
   };
+}
+
+function suppressOrFailTransport(
+  disposition: MembershipTransportDisposition,
+  delivery: ReturnType<typeof parseMembershipWorkerDelivery>,
+  requestId: string
+): boolean {
+  if (disposition.outcome === 'PROCEED') return false;
+  logger.info(
+    JSON.stringify({
+      event: 'membership_fixture_transport',
+      request_id: requestId,
+      message_id: delivery.message_id,
+      receive_count: delivery.receive_count,
+      target: delivery.hint.target,
+      disposition: disposition.outcome,
+      receipt: disposition.receipt
+    })
+  );
+  if (disposition.outcome === 'HELD_MESSAGE')
+    throw new Error(
+      'Membership fixture holds a committed checkpoint before SQS acknowledgement'
+    );
+  return true;
 }
 
 export async function handleMembershipWorkerInvocation(
@@ -76,7 +106,7 @@ export async function handleMembershipWorkerInvocation(
     };
   }
   const delivery = parseMembershipWorkerDelivery(event, runtime);
-  const options = workerOptions(context);
+  const options = workerOptions(context, delivery.hint.target.scope);
   const result = await doInDbContext(
     async () => {
       await withMembershipPrimaryTransaction(
@@ -88,10 +118,49 @@ export async function handleMembershipWorkerInvocation(
         {},
         membershipWorkerBudget(options)
       );
-      return new MembershipRefreshWorker(
+      const transport = new MembershipRuntimeTransportDb(sqlExecutor);
+      const inspect = (
+        result: Awaited<ReturnType<MembershipRefreshWorker['runTarget']>> | null
+      ) =>
+        withMembershipPrimaryTransaction(
+          sqlExecutor,
+          (primary) =>
+            transport.inspectDelivery(
+              delivery.hint.target,
+              delivery.message_id,
+              result,
+              primary
+            ),
+          {},
+          membershipWorkerBudget(options)
+        );
+      if (
+        suppressOrFailTransport(
+          await inspect(null),
+          delivery,
+          context.awsRequestId
+        )
+      )
+        return {
+          outcome: 'NO_WORK' as const,
+          run_id: null,
+          checkpoint_version: null,
+          quanta: 0,
+          processed_count: '0',
+          query_count: 0,
+          input_rows: 0
+        };
+      const result = await new MembershipRefreshWorker(
         sqlExecutor,
         new PrimaryMembershipProfileEvaluator(() => sqlExecutor)
       ).runTarget(delivery.hint.target, options, {}, delivery.hint.delivery);
+      if (result.outcome === 'PENDING')
+        suppressOrFailTransport(
+          await inspect(result),
+          delivery,
+          context.awsRequestId
+        );
+      return result;
     },
     {
       logger,
