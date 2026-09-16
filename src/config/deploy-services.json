@@ -657,9 +657,7 @@
         "populateHistoricConsolidatedTdh"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": [
-        "xTdhLoop"
-      ]
+      "default_dependencies": []
     },
     {
       "name": "pushNotificationsHandler",

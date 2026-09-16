@@ -9,11 +9,11 @@ every relevant writer is on compatible code and an audited source/bootstrap
 coverage receipt exists. Tracking is captured before shared secrets load. In
 tracking mode, missing source evidence fails the source transaction rather than
 creating a zero-version key or claiming readiness. Each committed mutation
-coalesces a durable PROFILE, GROUP or FULL target; no SQS send is required for
-the invalidation to survive. With processing disabled, the bounded target-key
-space and upserted counters retain work for a later controlled drain. Monitor
-target count, oldest due age and database write overhead before enabling
-tracking for sustained traffic.
+  coalesces a durable PROFILE, GROUP or FULL target; no SQS send is required for
+  the invalidation to survive. With processing disabled, repeated invalidations
+  of one target share a row, while the number of distinct targets can still
+  grow. Monitor target count, oldest due age and database write overhead before
+  enabling tracking for sustained traffic.
 
 The worker and dispatcher have an additional staging-only
 `staging-controlled-v1` admission mode for the application database. Their SQS

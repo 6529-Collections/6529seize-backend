@@ -253,7 +253,7 @@ jobs:
             exit 1
           fi
           if [ "$source_tracking_mode" = tracking-v1 ]; then
-            if [ "$INPUT_ENVIRONMENT" != staging ] || ! [[ "$INPUT_SERVICE" =~ ^(api|overRatesRevocationLoop|tdhLoop|xTdhLoop|xTdhGrantsReviewerLoop|delegationsLoop|nftOwnersLoop|externalCollectionSnapshottingLoop|externalCollectionLiveTailingLoop|helpBotReplyLoop|populateHistoricConsolidatedTdh)$ ]]; then
+            if [ "$INPUT_ENVIRONMENT" != staging ] || ! [[ "$INPUT_SERVICE" =~ ^(api|overRatesRevocationLoop|tdhLoop|xTdhLoop|xTdhGrantsReviewerLoop|delegationsLoop|nftOwnersLoop|externalCollectionSnapshottingLoop|externalCollectionLiveTailingLoop|helpBotReplyLoop)$ ]]; then
               echo "Membership source tracking requires an allowed staging producer" >&2
               exit 1
             fi
