@@ -11,6 +11,7 @@ import type {
 @Entity(MEMBERSHIP_REFRESH_RUNS_TABLE)
 @Index('idx_mrun_target_created', ['scope', 'target_id', 'created_at_millis'])
 @Index('idx_mrun_status_lease', ['status', 'lease_expires_at_millis'])
+@Index('idx_mrun_status_updated_id', ['status', 'updated_at_millis', 'id'])
 export class MembershipRefreshRunEntity {
   @PrimaryColumn({
     type: 'varchar',

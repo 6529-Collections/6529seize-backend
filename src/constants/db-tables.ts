@@ -273,3 +273,5 @@ export const MEMBERSHIP_REFRESH_RUNS_TABLE = 'membership_refresh_runs';
 export const MEMBERSHIP_GENERATION_MEMBERS_TABLE =
   'membership_generation_members';
 export const MEMBERSHIP_PUBLICATIONS_TABLE = 'membership_publications';
+export const MEMBERSHIP_RUNTIME_CHECKPOINTS_TABLE =
+  'membership_runtime_checkpoints';
