@@ -665,6 +665,7 @@ export class IdentitiesService {
               ctx
             );
           } catch (error) {
+            if (isMembershipSourceTrackingActive()) throw error;
             this.logger.error(
               `Failed to grant signup help bot credits for profile ${profile.external_id}`,
               error
