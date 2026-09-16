@@ -10,6 +10,15 @@ import {
   WalletTransferWalletDailyEntity
 } from '@/entities/IWalletTransferAnalysis';
 import { handler } from './index';
+import {
+  applyMembershipRuntimeSchema,
+  membershipRuntimeSchemaEntities
+} from './membership-runtime-schema';
+import {
+  applyMembershipEvaluatorSchema,
+  membershipEvaluatorSchemaEntities
+} from './membership-evaluator-schema';
+import { applyFullSchemaWithMembershipGuard } from './membership-controlled-schema';
 import { moderationRetentionSchemaDb } from './moderation-retention-schema.db';
 import { applyClaimsMediaUploadSchema } from './claims-media-schema';
 import { NftLinkEntity } from '@/entities/INftLink';
@@ -20,6 +29,24 @@ import {
 } from './membership-schema';
 
 jest.mock('@/db', () => ({ getDataSource: jest.fn() }));
+jest.mock('./membership-runtime-schema', () => ({
+  ...jest.requireActual('./membership-runtime-schema'),
+  applyMembershipRuntimeSchema: jest.fn().mockResolvedValue({
+    created_tables: 1,
+    added_indexes: 1,
+    verified_tables: 2,
+    verified_indexes: 1
+  })
+}));
+jest.mock('./membership-evaluator-schema', () => ({
+  ...jest.requireActual('./membership-evaluator-schema'),
+  applyMembershipEvaluatorSchema: jest
+    .fn()
+    .mockResolvedValue({ added_indexes: 1, verified_indexes: 1 })
+}));
+jest.mock('./membership-controlled-schema', () => ({
+  applyFullSchemaWithMembershipGuard: jest.fn().mockResolvedValue(undefined)
+}));
 
 jest.mock('./membership-schema', () => ({
   ...jest.requireActual('./membership-schema'),
@@ -89,6 +116,70 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     jest
       .mocked(moderationRetentionSchemaDb.missingColumns)
       .mockResolvedValue([]);
+  });
+
+  it('applies only the runtime control scope without full synchronization or maintenance', async () => {
+    await expect(
+      invoke({ schema_scope: 'membership-runtime-control' })
+    ).resolves.toEqual({
+      schema_scope: 'membership-runtime-control',
+      created_tables: 1,
+      added_indexes: 1,
+      verified_tables: 2,
+      verified_indexes: 1
+    });
+    expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
+      logger: expect.anything(),
+      entities: membershipRuntimeSchemaEntities,
+      syncEntities: false,
+      skipRedis: true
+    });
+    expect(applyMembershipRuntimeSchema).toHaveBeenCalledTimes(1);
+    expect(applyFullSchemaWithMembershipGuard).not.toHaveBeenCalled();
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+    expect(competitionRepository.backfillLegacyMappings).not.toHaveBeenCalled();
+  });
+
+  it('does not fall through after runtime schema drift', async () => {
+    jest
+      .mocked(applyMembershipRuntimeSchema)
+      .mockRejectedValueOnce(new Error('runtime drift'));
+    await expect(
+      invoke({ schema_scope: 'membership-runtime-control' })
+    ).rejects.toThrow('runtime drift');
+    expect(applyFullSchemaWithMembershipGuard).not.toHaveBeenCalled();
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+  });
+
+  it('applies only the evaluator index scope without full synchronization or maintenance', async () => {
+    await expect(
+      invoke({ schema_scope: 'membership-evaluator-index' })
+    ).resolves.toEqual({
+      schema_scope: 'membership-evaluator-index',
+      added_indexes: 1,
+      verified_indexes: 1
+    });
+    expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
+      logger: expect.anything(),
+      entities: membershipEvaluatorSchemaEntities,
+      syncEntities: false,
+      skipRedis: true
+    });
+    expect(applyMembershipEvaluatorSchema).toHaveBeenCalledTimes(1);
+    expect(applyFullSchemaWithMembershipGuard).not.toHaveBeenCalled();
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+    expect(competitionRepository.backfillLegacyMappings).not.toHaveBeenCalled();
+  });
+
+  it('stops full manual work before migrations if controlled schema is pending', async () => {
+    jest
+      .mocked(applyFullSchemaWithMembershipGuard)
+      .mockRejectedValueOnce(new Error('pending controlled DDL'));
+    await expect(invoke({ schema_scope: 'full' })).rejects.toThrow(
+      'pending controlled DDL'
+    );
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+    expect(competitionRepository.backfillLegacyMappings).not.toHaveBeenCalled();
   });
 
   it('creates and verifies only membership tables without full sync or maintenance', async () => {
@@ -199,8 +290,9 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
         logger: expect.anything(),
         entities: Object.values(Entities),
-        syncEntities: true
+        syncEntities: false
       });
+      expect(applyFullSchemaWithMembershipGuard).toHaveBeenCalledTimes(1);
       expect(migrations.getInstance).toHaveBeenCalledWith(true, {
         config: './database.json',
         env: 'main'
@@ -226,6 +318,7 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       entities: Object.values(Entities),
       syncEntities: false
     });
+    expect(applyFullSchemaWithMembershipGuard).not.toHaveBeenCalled();
     expect(migrations.getInstance).not.toHaveBeenCalled();
     expect(competitionRepository.backfillLegacyMappings).toHaveBeenCalledTimes(
       1
@@ -286,7 +379,9 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     'wallet-transfer-analysis',
     'claims-media-upload',
     'nft-link-page-retry',
-    'membership-refresh'
+    'membership-refresh',
+    'membership-evaluator-index',
+    'membership-runtime-control'
   ])('rejects explicit %s scope on scheduled events', async (scope) => {
     await expect(
       invoke({ ...scheduledEvent, schema_scope: scope })

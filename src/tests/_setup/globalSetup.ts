@@ -1,6 +1,8 @@
 import { MySqlContainer } from '@testcontainers/mysql';
 import 'tsconfig-paths/register';
 import * as dbMigrationsLoop from '../../dbMigrationsLoop';
+import { DataSource } from 'typeorm';
+import * as Entities from '@/entities/entities';
 import {
   getTestDatabaseNamePrefix,
   getTestWorkerCount,
@@ -43,13 +45,48 @@ module.exports = async (globalConfig?: unknown) => {
     workerCount
   });
 
-  for (let workerId = 1; workerId <= workerCount; workerId++) {
-    process.env.DB_NAME = `${databasePrefix}_${workerId}`;
-    await dbMigrationsLoop.handler(
-      undefined as any,
-      undefined as any,
-      undefined as any
-    );
+  try {
+    for (let workerId = 1; workerId <= workerCount; workerId++) {
+      process.env.DB_NAME = `${databasePrefix}_${workerId}`;
+      // The application's full-sync guard must reject missing controlled schema.
+      // Only this newly created disposable container gets unrestricted creation.
+      const fixture = new DataSource({
+        type: 'mysql',
+        host: container.getHost(),
+        port: container.getMappedPort(3306),
+        username: container.getUsername(),
+        password: container.getUserPassword(),
+        database: `${databasePrefix}_${workerId}`,
+        charset: 'utf8mb4',
+        timezone: 'Etc/UTC',
+        entities: Object.values(Entities).filter(
+          (entity) => typeof entity === 'function'
+        ),
+        synchronize: true
+      });
+      try {
+        await fixture.initialize();
+      } catch (error) {
+        // The driver can own a pool before initialize marks the source ready.
+        // Preserve its startup error even when partial cleanup has nothing to close.
+        try {
+          if (fixture.isInitialized) await fixture.destroy();
+          else await fixture.driver.disconnect();
+        } catch {
+          // initialize may already have cleaned up the failed driver.
+        }
+        throw error;
+      }
+      await fixture.destroy();
+      await dbMigrationsLoop.handler(
+        undefined as any,
+        undefined as any,
+        undefined as any
+      );
+    }
+  } catch (error) {
+    await container.stop();
+    throw error;
   }
 
   // 4️⃣  Make container handle available in global scope

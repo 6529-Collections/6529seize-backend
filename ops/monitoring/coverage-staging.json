@@ -255,6 +255,30 @@
       ]
     },
     {
+      "service": "membershipRefreshLoop",
+      "region": "eu-west-1",
+      "functions": [
+        "membershipRefreshLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "membershipRefreshDispatcherLoop",
+      "region": "eu-west-1",
+      "functions": [
+        "membershipRefreshDispatcherLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
       "service": "mintAnnouncementsLoop",
       "region": "eu-west-1",
       "functions": [

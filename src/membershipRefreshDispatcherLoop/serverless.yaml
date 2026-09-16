@@ -1,0 +1,392 @@
+service: membershipRefreshDispatcherLoop
+
+package:
+  artifact: dist/index.zip
+
+provider:
+  name: aws
+  stage: staging
+  region: eu-west-1
+  runtime: nodejs22.x
+  memorySize: 512
+  timeout: 30
+  architecture: arm64
+  logRetentionInDays: 60
+
+custom:
+  membershipDispatcher: ${file(../../serverless-config/membership-runtime.js):dispatcher}
+
+functions:
+  membershipRefreshDispatcherLoop:
+    handler: index.handler
+    name: membershipRefreshDispatcherLoop
+    description: ${env:VERSION_DESCRIPTION}
+    role: !GetAtt MembershipDispatcherRole.Arn
+    reservedConcurrency: 1
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      MEMBERSHIP_RUNTIME_STAGE: ${self:custom.membershipDispatcher.stage}
+      MEMBERSHIP_RUNTIME_MODE: ${self:custom.membershipDispatcher.mode}
+      MEMBERSHIP_DISPATCH_SCHEDULE_ENABLED: '${self:custom.membershipDispatcher.scheduleEnabled}'
+      MEMBERSHIP_WORK_QUEUE_ARN:
+        Fn::ImportValue: membershipRefreshLoop-${self:custom.membershipDispatcher.stage}-WorkQueueArn-v1
+      MEMBERSHIP_WORK_QUEUE_URL:
+        Fn::ImportValue: membershipRefreshLoop-${self:custom.membershipDispatcher.stage}-WorkQueueUrl-v1
+      # Construct this ARN independently: a Rule reference here creates a cycle.
+      MEMBERSHIP_DISPATCH_RULE_ARN: !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/membership-refresh-dispatch-${self:custom.membershipDispatcher.stage}-v1
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: membershipRefreshDispatcherLoop_${self:custom.membershipDispatcher.stage}
+
+resources:
+  Conditions:
+    DispatcherScheduleEnabled:
+      Fn::Equals:
+        ['${self:custom.membershipDispatcher.scheduleState}', 'ENABLED']
+  Resources:
+    MembershipDispatcherFailureQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: membership-refresh-dispatch-failures-${self:custom.membershipDispatcher.stage}-v1
+        MessageRetentionPeriod: 1209600
+        SqsManagedSseEnabled: true
+    MembershipDispatcherFailureQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref MembershipDispatcherFailureQueue
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: events.amazonaws.com
+              Action: sqs:SendMessage
+              Resource: !GetAtt MembershipDispatcherFailureQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/membership-refresh-dispatch-${self:custom.membershipDispatcher.stage}-v1
+    MembershipDispatcherRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: membership-dispatcher-runtime
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/membershipRefreshDispatcherLoop:*
+                - Effect: Allow
+                  Action:
+                    - ec2:CreateNetworkInterface
+                    - ec2:DescribeNetworkInterfaces
+                    - ec2:DescribeSubnets
+                    - ec2:DeleteNetworkInterface
+                    - ec2:AssignPrivateIpAddresses
+                    - ec2:UnassignPrivateIpAddresses
+                  Resource: '*'
+                - Effect: Allow
+                  Action: secretsmanager:GetSecretValue
+                  Resource: ${self:custom.membershipDispatcher.secretArn}
+                - Effect: Allow
+                  Action: sqs:SendMessage
+                  Resource:
+                    - Fn::ImportValue: membershipRefreshLoop-${self:custom.membershipDispatcher.stage}-WorkQueueArn-v1
+                    - !GetAtt MembershipDispatcherFailureQueue.Arn
+    MembershipDispatcherInvokePermission:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName: !Ref MembershipRefreshDispatcherLoopLambdaFunction
+        Action: lambda:InvokeFunction
+        Principal: events.amazonaws.com
+        SourceArn: !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/membership-refresh-dispatch-${self:custom.membershipDispatcher.stage}-v1
+    MembershipDispatcherAsyncConfig:
+      Type: AWS::Lambda::EventInvokeConfig
+      Properties:
+        FunctionName: !Ref MembershipRefreshDispatcherLoopLambdaFunction
+        Qualifier: $LATEST
+        MaximumEventAgeInSeconds: 60
+        MaximumRetryAttempts: 0
+        DestinationConfig:
+          OnFailure:
+            Destination: !GetAtt MembershipDispatcherFailureQueue.Arn
+    MembershipDispatcherSchedule:
+      Type: AWS::Events::Rule
+      DependsOn:
+        - MembershipDispatcherInvokePermission
+        - MembershipDispatcherFailureQueuePolicy
+        - MembershipDispatcherAsyncConfig
+      Properties:
+        Name: membership-refresh-dispatch-${self:custom.membershipDispatcher.stage}-v1
+        Description: Independent bounded membership recovery pass; fixture activation only
+        ScheduleExpression: rate(1 minute)
+        State: ${self:custom.membershipDispatcher.scheduleState}
+        Targets:
+          - Id: membership-dispatcher
+            Arn: !GetAtt MembershipRefreshDispatcherLoopLambdaFunction.Arn
+            RetryPolicy:
+              MaximumEventAgeInSeconds: 60
+              MaximumRetryAttempts: 0
+            DeadLetterConfig:
+              Arn: !GetAtt MembershipDispatcherFailureQueue.Arn
+    MembershipDispatcherOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn: MembershipRefreshDispatcherLoopLogGroup
+      Properties:
+        LogGroupName: /aws/lambda/membershipRefreshDispatcherLoop
+        FilterPattern: Runtime.OutOfMemory
+        MetricTransformations:
+          - MetricNamespace: Membership/Runtime
+            MetricName: DispatcherOOM-${self:custom.membershipDispatcher.stage}
+            MetricValue: '1'
+            DefaultValue: 0
+    MembershipDispatcherOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub ${AWS::StackName}-DispatcherOOM
+        Namespace: Membership/Runtime
+        MetricName: DispatcherOOM-${self:custom.membershipDispatcher.stage}
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+    MembershipDispatcherErrorsAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub ${AWS::StackName}-DispatcherErrors
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: !Ref MembershipRefreshDispatcherLoopLambdaFunction
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+    MembershipDispatcherThrottlesAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub ${AWS::StackName}-DispatcherThrottles
+        Namespace: AWS/Lambda
+        MetricName: Throttles
+        Dimensions:
+          - Name: FunctionName
+            Value: !Ref MembershipRefreshDispatcherLoopLambdaFunction
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+    MembershipDispatcherFailureQueueDepthAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub ${AWS::StackName}-DispatcherFailureQueueDepth
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: !GetAtt MembershipDispatcherFailureQueue.QueueName
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+    MembershipDispatcherEventDeliveryFailuresAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub ${AWS::StackName}-DispatcherEventDeliveryFailures
+        Namespace: AWS/Events
+        MetricName: FailedInvocations
+        Dimensions:
+          - Name: RuleName
+            Value: membership-refresh-dispatch-${self:custom.membershipDispatcher.stage}-v1
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+    MembershipDispatcherEventDlqDeliveryFailuresAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub ${AWS::StackName}-DispatcherEventDlqDeliveryFailures
+        Namespace: AWS/Events
+        MetricName: InvocationsFailedToBeSentToDlq
+        Dimensions:
+          - Name: RuleName
+            Value: membership-refresh-dispatch-${self:custom.membershipDispatcher.stage}-v1
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+    MembershipDispatcherAsyncDestinationFailuresAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub ${AWS::StackName}-DispatcherAsyncDestinationFailures
+        Namespace: AWS/Lambda
+        MetricName: DestinationDeliveryFailures
+        Dimensions:
+          - Name: FunctionName
+            Value: !Ref MembershipRefreshDispatcherLoopLambdaFunction
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+    MembershipDispatcherFailedSendsAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub ${AWS::StackName}-DispatcherFailedSends
+        Namespace: Membership/Runtime
+        MetricName: DispatchFailedSends
+        Dimensions:
+          - Name: Stage
+            Value: ${self:custom.membershipDispatcher.stage}
+          - Name: Service
+            Value: membershipRefreshDispatcherLoop
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+    MembershipDispatcherOldestDueAgeAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub ${AWS::StackName}-DispatcherOldestDueAge
+        AlarmDescription: Oldest due age observed by bounded candidate discovery; not a complete population scan
+        Namespace: Membership/Runtime
+        MetricName: DispatchOldestDueAgeSeconds
+        Dimensions:
+          - Name: Stage
+            Value: ${self:custom.membershipDispatcher.stage}
+          - Name: Service
+            Value: membershipRefreshDispatcherLoop
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 2
+        Threshold: 600
+        ComparisonOperator: GreaterThanThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+    MembershipDispatcherParkedTargetsAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub ${AWS::StackName}-DispatcherParkedTargets
+        AlarmDescription: Parked targets observed by bounded candidate discovery; not a total population count
+        Namespace: Membership/Runtime
+        MetricName: DispatchParkedTargets
+        Dimensions:
+          - Name: Stage
+            Value: ${self:custom.membershipDispatcher.stage}
+          - Name: Service
+            Value: membershipRefreshDispatcherLoop
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+    MembershipDispatcherGarbageCollectionFailuresAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub ${AWS::StackName}-DispatcherGarbageCollectionFailures
+        Namespace: Membership/Runtime
+        MetricName: GarbageCollectionFailures
+        Dimensions:
+          - Name: Stage
+            Value: ${self:custom.membershipDispatcher.stage}
+          - Name: Service
+            Value: membershipRefreshDispatcherLoop
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+    MembershipDispatcherHeartbeatAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Condition: DispatcherScheduleEnabled
+      Properties:
+        AlarmName: !Sub ${AWS::StackName}-DispatcherHeartbeat
+        AlarmDescription: Enabled fixture schedule must emit a healthy heartbeat every minute; three missing ticks alarm
+        Namespace: Membership/Runtime
+        MetricName: DispatchHeartbeat
+        Dimensions:
+          - Name: Stage
+            Value: ${self:custom.membershipDispatcher.stage}
+          - Name: Service
+            Value: membershipRefreshDispatcherLoop
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 3
+        Threshold: 1
+        ComparisonOperator: LessThanThreshold
+        TreatMissingData: breaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

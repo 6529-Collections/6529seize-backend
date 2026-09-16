@@ -36,6 +36,137 @@ worker, queue, schedule or materialized reader and preserves existing API and
 frontend behavior. The July draft tables are not mapped or used as readiness
 evidence. Runtime implementation and cutover remain gated by issue #2075.
 
+The next inactive increment adds source-state, durable producer-job and refresh-
+target repositories under `src/membership`. A runtime-validated primary context
+owns an explicit repeatable-read transaction; every query uses its bound writer
+connection and a fresh request cache scope. Current locking reads provide the
+later publication guard. Repository errors mark that transaction rollback-only,
+including errors a caller catches. Existing callers retain their transaction
+defaults and authorization path.
+
+Source provisioning stores a completed bootstrap receipt with its coverage
+revision; a missing or malformed receipt is unknown. Profile mutations lock
+matching GLOBAL dimensions before profile rows. Multi-stage profile jobs also
+hold GLOBAL barriers, conservatively serializing overlapping datasets. Durable
+source-set hashes and monotonic checkpoint revisions prevent partial-key
+completion and stale stage replay. TDH/xTDH completion requires the statistics-
+activated stage. Single-transaction catalogue edits retain group-version and
+deletion evidence; multi-stage catalogue fanout remains a later contract.
+
+`customReplayLoop` carries the closed IAM-invoked
+`membership_repository_diagnostics_v1` action only in staging. Its deployment
+stage is captured before shared secrets load. Source/job exercises deliberately
+roll back all GLOBAL and PROFILE changes; concurrent refresh-target exercises
+use generated fixture keys and exact cleanup. The carrier has no schedule,
+queue, producer wiring, materialized reader or normal membership work. Deploy
+only `customReplayLoop` for this increment, after the existing membership schema.
+No frontend or Help Bot behavior changes.
+
+The primary profile evaluator captures one canonical identity consolidation key,
+the catalogue version and twelve GLOBAL/PROFILE input versions, a fixed evaluation
+time and group high bound. It uses primary input repositories with bounded raw
+windows, sparse explicit-list discovery and a dense-profile fallback. Large input
+sets continue through a strictly decoded active-group cursor; incomplete input
+never becomes an eligible/empty answer. The worker owns atomic candidate,
+checkpoint and publication operations. The evaluator is not wired into API readers.
+
+Both SQL adapters support an optional connection-bound execution budget. It covers
+pool acquisition, every statement and transaction finalization, including statements
+issued internally by TypeORM. Absolute deadlines destroy the physical connection
+and explicitly settle pending callbacks; stale contexts/options cannot use a
+released connection. Commit acknowledgement is tracked separately from session
+restoration so an uncertain commit can be reconciled from durable state. Existing
+unbudgeted callers retain their previous transaction behavior.
+
+Deploy `dbMigrationsLoop` with explicit scope `membership-evaluator-index` before
+using the new candidate index on `community_groups`. The scope accepts only the
+reviewed nonunique `(is_pure_profile_group, visible, id)` index and requires online
+`INPLACE, LOCK=NONE` DDL. Manual full synchronization first checks the controlled
+membership schema, preventing it from bypassing these explicit additions. The
+original seven-table create-only scope remains unchanged. This increment enables
+no queue, schedule, producer coverage, backfill or materialized reader.
+
+The following worker increment adds `membershipRefreshLoop`: an inactive Lambda,
+its dedicated execution role, Standard SQS work queue/DLQ, disabled batch-one
+mapping, and service-owned alarms. A delivery supplies a target and a finite
+scheduling reservation; private lease tokens and checkpoint revisions remain in
+MySQL. Each bounded quantum commits candidate rows and its exact cursor together.
+Publication requires the current request, source guards, lease, immutable seed and
+exhaustion proof. GROUP/FULL runs page the canonical identity source and request
+PROFILE work; source-collation duplicate identities fail closed.
+
+`membership_runtime_checkpoints` holds independent strictly decoded GC and
+dispatcher progress rows. GC uses bounded terminal-status scans and pending slots,
+then locks target/run/publication in order. It marks retirement once, honors reader
+grace and deletes bounded raw member windows while progressing past locked rows.
+The explicit `membership-runtime-control` schema scope creates only this table and
+adds `idx_mrun_status_updated_id(status, updated_at_millis, id)` online. Full manual
+sync requires those additions first.
+
+Runtime controls are captured before secret loading. Production accepts only
+`inactive`; its SQS mapping is disabled. The only work mode is a staging-only
+fixture mode with a fixed isolated database and fixed targets, checked before any
+database or secret access. An internal immutable connection selection overrides
+the loaded default database and rejects startup failure without falling back.
+The worker verifies the fixture ownership marker and READY state before writes.
+Closed IAM status inspection works without database access; inactive SQS delivery throws rather than
+acknowledging a hint. The worker cannot send messages or invoke itself. External
+dispatch is provided by `membershipRefreshDispatcherLoop`; normal producers, API
+readers, production work and cutover remain unavailable. See
+[runtime operations](membership-runtime-operations.md).
+
+The worker and dispatcher catalog entries also generate independent operational
+monitoring coverage. Their central collector allowlists and application-account
+log subscriptions require separate monitoring and source-stack deployments after
+the authorized main merges and service log-group creation. Combined staging uses
+service-owned alarms and direct logs until coverage is verified. See the
+[monitoring rollout sequence](membership-runtime-operations.md#independent-operational-monitoring).
+
+### External membership dispatcher and isolated staging fixture
+
+`membershipRefreshDispatcherLoop` is a separate 512 MB, 30-second Lambda with
+reserved concurrency one and a disabled-by-default one-minute EventBridge rule.
+It imports the worker stack's work queue identity. Its dedicated role can send to
+that queue and its own failure destination; it cannot consume work or invoke a
+Lambda. EventBridge and Lambda asynchronous delivery have bounded event age,
+zero automatic retries and a separate encrypted failure queue.
+
+Each tick advances a durable, strictly decoded checkpoint across alternating
+due-time and target-primary-key scans. A raw position commits before the target
+is locked and reserved. Each normalized target is attempted once per invocation,
+so overlapping scan lanes cannot immediately re-enqueue a checkpointed page.
+The finite availability reservation commits before the
+bounded SQS send. Failed or uncertain sends leave that reservation to expire;
+subsequent independent ticks recover the target without a self-continuation chain.
+Parked targets, live leases, stale hints and incompatible protocol state never
+gain membership authority through dispatch. Separate GC work retains its own
+deadline allowance even when dispatch fails. Metrics cover successful heartbeat,
+observed due age, observed parked targets, failed sends and GC progress/failure;
+service alarms also cover delivery destinations, errors, throttles and OOM.
+
+The existing IAM-only `customReplayLoop` carries six exact staging fixture
+actions: preflight, bounded prepare, status, scenario advance, database proof and
+bounded cleanup. The database proof owns its transactions and concurrent reader;
+it records natural lease expiry, stale-token rejection and reader-grace retention
+separately from the independently scheduled SQS proof. Private lease tokens never
+cross the carrier response boundary.
+These actions select only `membership_runtime_drill_v1` through the immutable
+connection option, never the secret-loaded application database. A fixed manifest
+owns 21 schema objects, three profiles and 36 referenced broad groups. Preparation
+uses the actual source provisioning/job/barrier/catalogue contracts before marking
+READY; it does not certify source coverage for the application database.
+Create-only schema inspection rejects foreign populated objects and unexpected
+DDL. The sole generated-column metadata receipt is reconciled only after verifying
+the exact existing expression; it never permits a generated-column rebuild.
+
+For the transport drill, a fixed fixture target records the original SQS message
+and actual committed run/checkpoint, then deliberately fails that message outside
+the receipt transaction. Independent dispatch suppresses new hints for that target
+while other targets continue. The closed correction action permits the original
+DLQ message to resume the same generation after explicit redrive. This protocol
+exists only in the isolated staging fixture. Both runtime services deploy inactive
+in production, and fixture actions reject production before secret or DB access.
+
 ## Proposal card media
 
 Authenticated `POST /drop-media/proposal-frame` builds a bounded, fixed HTML
