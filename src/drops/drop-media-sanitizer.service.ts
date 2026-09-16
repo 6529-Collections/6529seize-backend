@@ -133,6 +133,7 @@ export class DropMediaSanitizerService {
     });
   }
 
+  /** Strip image metadata, applying strict conversion limits to AVIF inputs. */
   async sanitizeBuffer({
     input,
     declaredMimeType
@@ -265,6 +266,7 @@ export class DropMediaSanitizerService {
   }
 }
 
+/** Decode a bounded still AVIF and publish an oriented, metadata-free WebP. */
 async function sanitizeAvif(
   input: Buffer
 ): Promise<{ buffer: Buffer; contentType: string }> {
@@ -314,6 +316,7 @@ async function sanitizeAvif(
   }
 }
 
+/** Reject sequence brands in a bounded ftyp box, skipping minor-version bytes. */
 function hasAvifSequenceBrand(input: Buffer): boolean {
   if (input.length < 16 || input.toString('ascii', 4, 8) !== 'ftyp') {
     return false;
