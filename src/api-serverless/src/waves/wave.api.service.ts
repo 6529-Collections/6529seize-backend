@@ -2089,11 +2089,14 @@ export class WaveApiService {
                 ctxWithConnection
               );
             const deletedWaveIds = [waveId, ...subwaveIds];
-            const deletedWaves = await Promise.all(
-              deletedWaveIds.map((id) =>
-                this.wavesApiDb.findWaveById(id, connection)
-              )
-            );
+            const deletedWaves: WaveEntity[] = [waveEntity];
+            for (const subwaveId of subwaveIds) {
+              const subwave = await this.wavesApiDb.findWaveById(
+                subwaveId,
+                connection
+              );
+              if (subwave) deletedWaves.push(subwave);
+            }
             const deletedCurations =
               await this.curationsDb.findWaveCurationsByWaveIds(
                 deletedWaveIds,
@@ -2106,9 +2109,7 @@ export class WaveApiService {
             await recordMembershipWaveSelection(
               recordCatalogue,
               [
-                ...deletedWaves.flatMap((wave) =>
-                  wave ? membershipWaveGroupIds(wave) : []
-                ),
+                ...deletedWaves.flatMap(membershipWaveGroupIds),
                 ...deletedCurations.map(
                   (curation) => curation.community_group_id
                 )
