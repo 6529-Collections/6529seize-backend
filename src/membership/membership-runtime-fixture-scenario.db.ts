@@ -12,6 +12,8 @@ import { MEMBERSHIP_FIXTURE_GROUPS } from './membership-runtime-policy';
 import { MembershipWorkerDb } from './membership-worker.db';
 import { MembershipWorkerRun } from './membership-worker.types';
 import { MembershipRefreshTargetKey } from './membership-validation';
+import { MEMBERSHIP_DB_NOW } from './membership-repository.utils';
+import { isMembershipFixturePublicationSettled } from './membership-runtime-fixture-settled';
 
 export class MembershipFixtureScenarioDb {
   readonly runs: MembershipWorkerDb;
@@ -56,21 +58,24 @@ export class MembershipFixtureScenarioDb {
       false,
       ctx
     );
-    if (
-      target?.active_run_id !== null ||
-      target.requested_version !== target.completed_version
-    )
+    const publication = await this.db.oneOrNull<{ run_id: string }>(
+      `SELECT run_id FROM ${MEMBERSHIP_PUBLICATIONS_TABLE} WHERE profile_id=:profile`,
+      { profile },
+      membershipQueryOptions(ctx)
+    );
+    if (!publication)
       throw new Error('Fixture profile has no settled current publication');
-    const run = await this.runs.run(
-      await this.publicationId(profile, ctx),
-      false,
-      ctx
+    const run = await this.runs.run(publication.run_id, false, ctx);
+    const clock = await this.db.oneOrNull<{ now: string }>(
+      `SELECT CAST(${MEMBERSHIP_DB_NOW} AS CHAR) now`,
+      {},
+      membershipQueryOptions(ctx)
     );
     if (
-      run?.status !== 'COMPLETED' ||
-      run.scope !== 'PROFILE' ||
-      run.target_id !== profile ||
-      run.request_version !== target.completed_version
+      !target ||
+      !run ||
+      !clock ||
+      !isMembershipFixturePublicationSettled(target, run, clock.now)
     )
       throw new Error('Fixture profile has no settled current publication');
     return run;

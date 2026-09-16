@@ -20,6 +20,7 @@ import { MembershipSourceStatesDb } from './membership-source-states.db';
 import { MembershipRefreshWorker } from './membership-worker';
 import { PrimaryMembershipProfileEvaluator } from './membership-profile-evaluator';
 import { membershipTestOptions } from './membership-worker-test.helpers';
+import { MEMBERSHIP_DB_NOW } from './membership-repository.utils';
 import {
   MEMBERSHIP_GENERATION_MEMBERS_TABLE,
   IDENTITIES_TABLE,
@@ -195,9 +196,19 @@ describe('closed staging fixture actual MySQL setup', () => {
           const target = await tx((ctx) =>
             new MembershipRefreshTargetsDb(() => db).find(key, ctx)
           );
+          const clock = await db.oneOrNull<{ now: string }>(
+            `SELECT CAST(${MEMBERSHIP_DB_NOW} AS CHAR) now`
+          );
           if (
             target?.active_run_id === null &&
-            target.requested_version === target.completed_version
+            (target.requested_version === target.completed_version ||
+              (key.scope === 'PROFILE' &&
+                target.reason === 'grant-time-boundary' &&
+                target.available_at_millis !== null &&
+                clock !== null &&
+                BigInt(target.requested_version) ===
+                  BigInt(target.completed_version) + BigInt(1) &&
+                BigInt(target.available_at_millis) > BigInt(clock.now)))
           )
             return result;
         }

@@ -59,7 +59,7 @@ export class ExternalIndexingRepository extends LazyDbAccessCompatibleService {
             c.last_event_time       = :now_ms,
             c.snapshot_lock_owner   = :snapshot_lock_owner,
             c.snapshot_lock_at      = :now_ms,
-            c.snapshot_target_block = :snapshot_target_block,
+            c.snapshot_target_block = COALESCE(c.snapshot_target_block, :snapshot_target_block),
             c.updated_at            = :now_ms
         `,
           {
@@ -224,7 +224,8 @@ export class ExternalIndexingRepository extends LazyDbAccessCompatibleService {
               AND snapshot_lock_owner = :lock_owner
               AND snapshot_target_block = :at_block
           `,
-          args
+          args,
+          { wrappedConnection: ctx.connection }
         )
         .then((res) => this.getAffetedRows(res));
       return affectedRows === 1;
@@ -253,7 +254,8 @@ export class ExternalIndexingRepository extends LazyDbAccessCompatibleService {
             WHERE \`partition\` = :partition
               AND indexed_since_block = 0
           `,
-          { partition, at_block, now_ms: Time.currentMillis() }
+          { partition, at_block, now_ms: Time.currentMillis() },
+          { wrappedConnection: ctx.connection }
         )
         .then((res) => {
           return this.getAffetedRows(res);

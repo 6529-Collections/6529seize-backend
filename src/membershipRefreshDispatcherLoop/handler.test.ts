@@ -234,6 +234,12 @@ describe('membership dispatcher handler integration boundary', () => {
         stage,
         region,
         mode: 'inactive',
+        source_tracking_control: 'per-producer',
+        source_readiness: 'unverified',
+        materialized_read_control: 'api-separate',
+        background_processing_mode: 'inactive',
+        background_processing_code_admission: 'unavailable',
+        background_processing_trigger_enabled: false,
         normal_membership_work: 'unavailable',
         queue_arn: runtime.queue_arn,
         rule_arn: runtime.rule_arn,
@@ -271,6 +277,19 @@ describe('membership dispatcher handler integration boundary', () => {
     setEnvironment(staging);
     await expect(app.invoke(event(), context())).rejects.toThrow('inactive');
     expect(app.initialize).not.toHaveBeenCalled();
+  });
+  it('uses the application database and ordinary dispatcher in controlled staging', async () => {
+    const app = boot({ ...staging, mode: 'staging-controlled-v1' });
+    await expect(app.invoke(event(), context())).resolves.toEqual({
+      dispatch: dispatchResult,
+      gc_deleted_members: 0
+    });
+    expect(app.ready).not.toHaveBeenCalled();
+    expect(app.held).not.toHaveBeenCalled();
+    expect(app.initialize.mock.calls[0][1]).not.toHaveProperty(
+      'databaseSelection'
+    );
+    expect(app.dispatch).toHaveBeenCalledTimes(1);
   });
   it('retains deployment and credentials across secret overwrites and binds real domain services to the selected executor', async () => {
     const app = boot();

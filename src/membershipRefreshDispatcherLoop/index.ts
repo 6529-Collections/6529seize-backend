@@ -177,7 +177,15 @@ export async function handleMembershipDispatcherInvocation(
       stage: runtime.stage,
       region: runtime.region,
       mode: runtime.mode,
-      normal_membership_work: 'unavailable',
+      source_tracking_control: 'per-producer',
+      source_readiness: 'unverified',
+      materialized_read_control: 'api-separate',
+      background_processing_mode: runtime.mode,
+      background_processing_code_admission:
+        runtime.mode === 'staging-controlled-v1' ? 'controlled' : 'unavailable',
+      background_processing_trigger_enabled: runtime.schedule_enabled,
+      normal_membership_work:
+        runtime.mode === 'staging-controlled-v1' ? 'unverified' : 'unavailable',
       queue_arn: runtime.queue_arn,
       rule_arn: runtime.rule_arn,
       schedule_enabled: runtime.schedule_enabled
@@ -197,35 +205,44 @@ export async function handleMembershipDispatcherInvocation(
   try {
     return await doInDbContext(
       async () => {
-        const fixture = await withMembershipPrimaryTransaction(
-          sqlExecutor,
-          (primary) => assertMembershipFixtureReady(sqlExecutor, primary),
-          {},
-          {
-            deadlineMonotonicMillis: Math.min(
-              dispatchUntil,
-              performance.now() + 2000
-            ),
-            maxStatementMillis: 500,
-            finalizationReserveMillis: 400,
-            lockWaitSeconds: 1
-          }
-        );
+        const fixture =
+          runtime.mode === 'staging-fixture-v1'
+            ? await withMembershipPrimaryTransaction(
+                sqlExecutor,
+                (primary) => assertMembershipFixtureReady(sqlExecutor, primary),
+                {},
+                {
+                  deadlineMonotonicMillis: Math.min(
+                    dispatchUntil,
+                    performance.now() + 2000
+                  ),
+                  maxStatementMillis: 500,
+                  finalizationReserveMillis: 400,
+                  lockWaitSeconds: 1
+                }
+              )
+            : null;
         let dispatch: MembershipDispatchResult | null = null;
         let gcProgress = 0;
         let gcFailures = 0;
         let dispatchError: unknown;
         let dispatchFailed = false;
         try {
-          const transport = new MembershipRuntimeTransportDb(sqlExecutor);
-          const send = fixtureSender(fixture, sender.send, {
-            request_id: context.awsRequestId,
-            event_id: tick.event_id
-          });
+          const transport = fixture
+            ? new MembershipRuntimeTransportDb(sqlExecutor)
+            : null;
+          const send = fixture
+            ? fixtureSender(fixture, sender.send, {
+                request_id: context.awsRequestId,
+                event_id: tick.event_id
+              })
+            : sender.send;
           dispatch = await new MembershipRefreshDispatcher(
             sqlExecutor,
             send,
-            (target, primary) => transport.heldTarget(target, primary)
+            transport
+              ? (target, primary) => transport.heldTarget(target, primary)
+              : undefined
           ).run({
             deadline_monotonic_millis: dispatchUntil,
             control_millis: 2000,
@@ -278,10 +295,14 @@ export async function handleMembershipDispatcherInvocation(
         entities: [],
         syncEntities: false,
         skipRedis: true,
-        databaseSelection: {
-          database: MEMBERSHIP_FIXTURE_DATABASE,
-          failOnInitializationError: true
-        }
+        ...(runtime.mode === 'staging-fixture-v1'
+          ? {
+              databaseSelection: {
+                database: MEMBERSHIP_FIXTURE_DATABASE,
+                failOnInitializationError: true
+              }
+            }
+          : {})
       }
     );
   } finally {

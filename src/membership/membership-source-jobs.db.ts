@@ -116,6 +116,61 @@ function normalizeJob(
 
 /** Durable producer stages. No external effect belongs inside these callbacks. */
 export class MembershipSourceJobsDb extends LazyDbAccessCompatibleService {
+  async get(
+    identity: MembershipSourceJobIdentity,
+    ctx: MembershipPrimaryContext
+  ): Promise<MembershipSourceJobState> {
+    const state = await this.find(identity, ctx);
+    if (!state) throw new Error('Unknown membership producer job');
+    return state;
+  }
+
+  async find(
+    identity: MembershipSourceJobIdentity,
+    ctx: MembershipPrimaryContext
+  ): Promise<MembershipSourceJobState | null> {
+    return timeMembershipOperation(
+      'MembershipSourceJobsDb->find',
+      ctx,
+      async () => {
+        const { jobs } = await this.lock(identity, ctx);
+        return jobs.length ? this.jobState(jobs[0]) : null;
+      }
+    );
+  }
+
+  /** Recover a sender whose source inputs committed but its SQS publish did not. */
+  async findActiveGlobalJobId(
+    dimension: MembershipSourceKey['dimension'],
+    ctx: MembershipPrimaryContext
+  ): Promise<string | null> {
+    return timeMembershipOperation(
+      'MembershipSourceJobsDb->findActiveGlobalJobId',
+      ctx,
+      async () => {
+        const key: MembershipSourceKey = {
+          scope: 'GLOBAL',
+          target_id: '*',
+          dimension
+        };
+        const [source] = await this.sources().read([key], true, ctx);
+        if (!source.state || !source.provisioned)
+          throw new MembershipSourceNotReadyError();
+        const rows = await this.db.execute<{ job_id: string }>(
+          `SELECT job_id FROM ${MEMBERSHIP_SOURCE_JOBS_TABLE}
+           WHERE scope = 'GLOBAL' AND target_id = '*'
+             AND dimension = :dimension AND status IN ('RUNNING', 'FAILED')
+           LIMIT 2 FOR UPDATE`,
+          { dimension },
+          membershipQueryOptions(ctx)
+        );
+        if (rows.length !== source.state.active_jobs || rows.length > 1)
+          throw new Error('Inconsistent membership producer barrier');
+        return rows[0]?.job_id ?? null;
+      }
+    );
+  }
+
   async start(
     identity: MembershipSourceJobIdentity,
     progress: MembershipSourceJobProgress,

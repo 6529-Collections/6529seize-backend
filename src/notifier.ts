@@ -14,14 +14,17 @@ function getSnsClient(region?: string): SNSClient {
   return snsClient;
 }
 
-export async function notifyTdhCalculationsDone() {
+export async function notifyTdhCalculationsDone(membershipCycleId?: string) {
   logger.info('[NOTIFYING TDH CALCULATIONS DONE]');
   const snsQueue = process.env.TDH_CALCULATIONS_DONE_SNS;
   if (snsQueue) {
     const uid = randomUUID();
     const input = {
       TopicArn: snsQueue,
-      Message: JSON.stringify({ randomId: uid }),
+      Message: JSON.stringify({
+        randomId: uid,
+        ...(membershipCycleId ? { membership_cycle_id: membershipCycleId } : {})
+      }),
       MessageGroupId: uid,
       MessageDeduplicationId: uid
     };

@@ -169,6 +169,7 @@ describe('WaveApiService profile wave safeguards', () => {
       {} as any,
       { recordActiveIdentity: jest.fn().mockResolvedValue(undefined) } as any,
       {
+        findWaveCurationsByWaveIds: jest.fn().mockResolvedValue([]),
         deleteDropCurationsByWaveId: jest.fn().mockResolvedValue(undefined),
         deleteWaveCurationsByWaveId: jest.fn().mockResolvedValue(undefined)
       } as any,
@@ -260,6 +261,7 @@ describe('WaveApiService profile wave safeguards', () => {
       {} as any,
       { recordActiveIdentity: jest.fn().mockResolvedValue(undefined) } as any,
       {
+        findWaveCurationsByWaveIds: jest.fn().mockResolvedValue([]),
         deleteDropCurationsByWaveId: jest.fn().mockResolvedValue(undefined),
         deleteWaveCurationsByWaveId: jest.fn().mockResolvedValue(undefined)
       } as any,

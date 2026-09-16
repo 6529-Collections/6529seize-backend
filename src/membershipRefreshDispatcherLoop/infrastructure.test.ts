@@ -328,7 +328,8 @@ describe('compiled membership dispatcher infrastructure', () => {
   it.each([
     ['staging', 'inactive', 'false'],
     ['prod', 'inactive', 'false'],
-    ['staging', 'staging-fixture-v1', 'true']
+    ['staging', 'staging-fixture-v1', 'true'],
+    ['staging', 'staging-controlled-v1', 'false']
   ] as const)(
     'compiles %s/%s schedule %s with no privilege expansion or cycles',
     (stage, mode, schedule) => {

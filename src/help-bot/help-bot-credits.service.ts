@@ -10,6 +10,11 @@ import { revokeRepBasedDropOverVotes } from '@/drops/participation-drops-over-vo
 import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';
 import { RequestContext } from '@/request.context';
 import {
+  membershipGlobalMutation,
+  withMembershipSourceMutation
+} from '@/membership/membership-producer-writes';
+import { isMembershipSourceTrackingActive } from '@/membership/membership-producer-policy';
+import {
   ConnectionWrapper,
   dbSupplier,
   LazyDbAccessCompatibleService,
@@ -73,7 +78,8 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
     }: {
       readonly profileId: string;
     },
-    ctx: RequestContext
+    ctx: RequestContext,
+    sourceCoverage?: 'xtdh-universe'
   ): Promise<HelpBotCreditGrantResult> {
     return await this.grantAutomaticCredits(
       {
@@ -82,7 +88,8 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
         sourceId: getHelpBotCreditEventSourceId(profileId),
         amount: HELP_BOT_SIGNUP_CREDIT_GRANT
       },
-      ctx
+      ctx,
+      sourceCoverage
     );
   }
 
@@ -147,16 +154,18 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
       };
     }
 
-    return await this.withConnection(ctx, async (connection) => {
-      await this.ensureBotRatingRow({ botProfileId, profileId }, connection);
-      const balance = await this.getCreditCategoryBalanceForUpdate(
-        { profileId },
-        connection
-      );
-      const existingSpend = await this.db.oneOrNull<{
-        readonly amount: number;
-      }>(
-        `
+    return await this.withConnection(
+      ctx,
+      async (connection) => {
+        await this.ensureBotRatingRow({ botProfileId, profileId }, connection);
+        const balance = await this.getCreditCategoryBalanceForUpdate(
+          { profileId },
+          connection
+        );
+        const existingSpend = await this.db.oneOrNull<{
+          readonly amount: number;
+        }>(
+          `
           SELECT amount
           FROM ${HELP_BOT_CREDIT_EVENTS_TABLE}
           WHERE profile_id = :profileId
@@ -164,63 +173,65 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
             AND source_id = :interactionId
           FOR UPDATE
         `,
-        {
-          profileId,
-          spendEventType: HelpBotCreditEventType.QUESTION_SPEND,
-          interactionId
-        },
-        { wrappedConnection: connection }
-      );
-      if (existingSpend && Number(existingSpend.amount) < 0) {
+          {
+            profileId,
+            spendEventType: HelpBotCreditEventType.QUESTION_SPEND,
+            interactionId
+          },
+          { wrappedConnection: connection }
+        );
+        if (existingSpend && Number(existingSpend.amount) < 0) {
+          return {
+            charged: true,
+            balance,
+            botProfileMissing: false
+          };
+        }
+        if (balance < HELP_BOT_QUESTION_CREDIT_COST) {
+          return {
+            charged: false,
+            balance,
+            botProfileMissing: false
+          };
+        }
+
+        const inserted = await this.insertCreditEvent(
+          {
+            profileId,
+            botProfileId,
+            eventType: HelpBotCreditEventType.QUESTION_SPEND,
+            sourceId: interactionId,
+            amount: -HELP_BOT_QUESTION_CREDIT_COST
+          },
+          connection
+        );
+        if (!inserted) {
+          return {
+            charged: true,
+            balance,
+            botProfileMissing: false
+          };
+        }
+
+        await this.applyBotRatingDelta(
+          {
+            botProfileId,
+            profileId,
+            delta: -HELP_BOT_QUESTION_CREDIT_COST,
+            oldRating: balance,
+            changeReason: 'HELP_BOT_QUESTION_SPEND'
+          },
+          connection
+        );
+
         return {
           charged: true,
-          balance,
+          balance: balance - HELP_BOT_QUESTION_CREDIT_COST,
           botProfileMissing: false
         };
-      }
-      if (balance < HELP_BOT_QUESTION_CREDIT_COST) {
-        return {
-          charged: false,
-          balance,
-          botProfileMissing: false
-        };
-      }
-
-      const inserted = await this.insertCreditEvent(
-        {
-          profileId,
-          botProfileId,
-          eventType: HelpBotCreditEventType.QUESTION_SPEND,
-          sourceId: interactionId,
-          amount: -HELP_BOT_QUESTION_CREDIT_COST
-        },
-        connection
-      );
-      if (!inserted) {
-        return {
-          charged: true,
-          balance,
-          botProfileMissing: false
-        };
-      }
-
-      await this.applyBotRatingDelta(
-        {
-          botProfileId,
-          profileId,
-          delta: -HELP_BOT_QUESTION_CREDIT_COST,
-          oldRating: balance,
-          changeReason: 'HELP_BOT_QUESTION_SPEND'
-        },
-        connection
-      );
-
-      return {
-        charged: true,
-        balance: balance - HELP_BOT_QUESTION_CREDIT_COST,
-        botProfileMissing: false
-      };
-    });
+      },
+      [botProfileId, profileId]
+    );
   }
 
   public async refundQuestionCredit(
@@ -238,9 +249,11 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
       return false;
     }
 
-    return await this.withConnection(ctx, async (connection) => {
-      const spend = await this.db.oneOrNull<{ readonly amount: number }>(
-        `
+    return await this.withConnection(
+      ctx,
+      async (connection) => {
+        const spend = await this.db.oneOrNull<{ readonly amount: number }>(
+          `
           SELECT amount
           FROM ${HELP_BOT_CREDIT_EVENTS_TABLE}
           WHERE profile_id = :profileId
@@ -248,54 +261,57 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
             AND source_id = :interactionId
           FOR UPDATE
         `,
-        {
-          profileId,
-          spendEventType: HelpBotCreditEventType.QUESTION_SPEND,
-          interactionId
-        },
-        { wrappedConnection: connection }
-      );
-      if (!spend || Number(spend.amount) >= 0) {
-        return false;
-      }
+          {
+            profileId,
+            spendEventType: HelpBotCreditEventType.QUESTION_SPEND,
+            interactionId
+          },
+          { wrappedConnection: connection }
+        );
+        if (!spend || Number(spend.amount) >= 0) {
+          return false;
+        }
 
-      const refundAmount = Math.abs(Number(spend.amount));
-      const inserted = await this.insertCreditEvent(
-        {
-          profileId,
-          botProfileId,
-          eventType: HelpBotCreditEventType.QUESTION_REFUND,
-          sourceId: interactionId,
-          amount: refundAmount
-        },
-        connection
-      );
-      if (!inserted) {
-        return false;
-      }
+        const refundAmount = Math.abs(Number(spend.amount));
+        const inserted = await this.insertCreditEvent(
+          {
+            profileId,
+            botProfileId,
+            eventType: HelpBotCreditEventType.QUESTION_REFUND,
+            sourceId: interactionId,
+            amount: refundAmount
+          },
+          connection
+        );
+        if (!inserted) {
+          return false;
+        }
 
-      await this.ensureBotRatingRow({ botProfileId, profileId }, connection);
-      const currentRating = await this.getBotRatingForUpdate(
-        { botProfileId, profileId },
-        connection
-      );
-      await this.applyBotRatingDelta(
-        {
-          botProfileId,
-          profileId,
-          delta: refundAmount,
-          oldRating: currentRating,
-          changeReason: 'HELP_BOT_QUESTION_REFUND'
-        },
-        connection
-      );
-      return true;
-    });
+        await this.ensureBotRatingRow({ botProfileId, profileId }, connection);
+        const currentRating = await this.getBotRatingForUpdate(
+          { botProfileId, profileId },
+          connection
+        );
+        await this.applyBotRatingDelta(
+          {
+            botProfileId,
+            profileId,
+            delta: refundAmount,
+            oldRating: currentRating,
+            changeReason: 'HELP_BOT_QUESTION_REFUND'
+          },
+          connection
+        );
+        return true;
+      },
+      [botProfileId, profileId]
+    );
   }
 
   private async grantAutomaticCredits(
     request: AutomaticCreditGrantRequest,
-    ctx: RequestContext
+    ctx: RequestContext,
+    sourceCoverage?: 'xtdh-universe'
   ): Promise<HelpBotCreditGrantResult> {
     const botProfileId = await this.resolveBotProfileId(ctx);
     if (!botProfileId) {
@@ -307,67 +323,72 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
       };
     }
 
-    return await this.withConnection(ctx, async (connection) => {
-      const inserted = await this.insertCreditEvent(
-        {
-          profileId: request.profileId,
-          botProfileId,
-          eventType: request.eventType,
-          sourceId: request.sourceId,
-          amount: 0
-        },
-        connection
-      );
-      if (!inserted) {
-        return {
-          amountGranted: 0,
-          balance: await this.getBotCreditBalance(
-            { profileId: request.profileId },
-            connection
-          ),
-          alreadyGranted: true,
-          botProfileMissing: false
-        };
-      }
-
-      await this.ensureBotRatingRow(
-        { botProfileId, profileId: request.profileId },
-        connection
-      );
-      const currentBalance = await this.getBotRatingForUpdate(
-        { botProfileId, profileId: request.profileId },
-        connection
-      );
-      const amountGranted = request.amount;
-      if (amountGranted > 0) {
-        await this.applyBotRatingDelta(
+    return await this.withConnection(
+      ctx,
+      async (connection) => {
+        const inserted = await this.insertCreditEvent(
           {
+            profileId: request.profileId,
             botProfileId,
-            profileId: request.profileId,
-            delta: amountGranted,
-            oldRating: currentBalance,
-            changeReason: 'HELP_BOT_AUTOMATIC_GRANT'
-          },
-          connection
-        );
-        await this.updateCreditEventAmount(
-          {
-            profileId: request.profileId,
             eventType: request.eventType,
             sourceId: request.sourceId,
-            amount: amountGranted
+            amount: 0
           },
           connection
         );
-      }
+        if (!inserted) {
+          return {
+            amountGranted: 0,
+            balance: await this.getBotCreditBalance(
+              { profileId: request.profileId },
+              connection
+            ),
+            alreadyGranted: true,
+            botProfileMissing: false
+          };
+        }
 
-      return {
-        amountGranted,
-        balance: currentBalance + amountGranted,
-        alreadyGranted: false,
-        botProfileMissing: false
-      };
-    });
+        await this.ensureBotRatingRow(
+          { botProfileId, profileId: request.profileId },
+          connection
+        );
+        const currentBalance = await this.getBotRatingForUpdate(
+          { botProfileId, profileId: request.profileId },
+          connection
+        );
+        const amountGranted = request.amount;
+        if (amountGranted > 0) {
+          await this.applyBotRatingDelta(
+            {
+              botProfileId,
+              profileId: request.profileId,
+              delta: amountGranted,
+              oldRating: currentBalance,
+              changeReason: 'HELP_BOT_AUTOMATIC_GRANT'
+            },
+            connection
+          );
+          await this.updateCreditEventAmount(
+            {
+              profileId: request.profileId,
+              eventType: request.eventType,
+              sourceId: request.sourceId,
+              amount: amountGranted
+            },
+            connection
+          );
+        }
+
+        return {
+          amountGranted,
+          balance: currentBalance + amountGranted,
+          alreadyGranted: false,
+          botProfileMissing: false
+        };
+      },
+      [botProfileId, request.profileId],
+      sourceCoverage
+    );
   }
 
   private async resolveBotProfileId(
@@ -378,12 +399,26 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
 
   private async withConnection<T>(
     ctx: RequestContext,
-    executable: (connection: ConnectionWrapper<any>) => Promise<T>
+    executable: (connection: ConnectionWrapper<any>) => Promise<T>,
+    _ratingProfileIds: readonly string[],
+    sourceCoverage?: 'xtdh-universe'
   ): Promise<T> {
-    if (ctx.connection) {
-      return await executable(ctx.connection);
+    if (sourceCoverage && isMembershipSourceTrackingActive()) {
+      if (!ctx.connection)
+        throw new Error('xTDH signup credit coverage requires its transaction');
+      return executable(ctx.connection);
     }
-    return await this.executeNativeQueriesInTransaction(executable);
+    const tracked = (connection: ConnectionWrapper<any>) =>
+      withMembershipSourceMutation(
+        connection,
+        membershipGlobalMutation(['RATINGS'], 'help-bot-credit'),
+        () => executable(connection),
+        ctx
+      );
+    if (ctx.connection) {
+      return await tracked(ctx.connection);
+    }
+    return await this.executeNativeQueriesInTransaction(tracked);
   }
 
   private async insertCreditEvent(
