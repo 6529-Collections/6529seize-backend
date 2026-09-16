@@ -6,6 +6,7 @@ import { getNftLinkResolutionBudget } from '@/nft-links/resolution-budget';
 
 export class HttpError extends Error {
   public readonly responseMatchesRequest: boolean;
+  public readonly responseMatchesTransientWwwAlias: boolean;
   constructor(
     public readonly status: number,
     public readonly url: string,
@@ -15,6 +16,14 @@ export class HttpError extends Error {
     super(message);
     Object.setPrototypeOf(this, HttpError.prototype);
     this.responseMatchesRequest = responseUrl === url;
+    // Retain only identity evidence, never an arbitrary final redirect URL.
+    // The provider's HTTPS www alias must keep the exact path and query.
+    const transientOrigin = 'https://transient.xyz';
+    this.responseMatchesTransientWwwAlias =
+      url.startsWith(`${transientOrigin}/`) &&
+      !url.includes('#') &&
+      responseUrl ===
+        `https://www.transient.xyz${url.slice(transientOrigin.length)}`;
   }
 }
 
