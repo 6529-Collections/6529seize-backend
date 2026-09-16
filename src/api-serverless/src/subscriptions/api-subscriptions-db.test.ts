@@ -18,6 +18,11 @@ import {
   fetchUpcomingMemeSubscriptionCounts
 } from './api.subscriptions.db';
 
+// These aggregate tests cover open future cards; cutoff behavior has its own suite.
+jest.mock('./subscription-cutoff', () => ({
+  getSubscriptionCutoffMemeId: jest.fn().mockResolvedValue(516)
+}));
+
 describe('fetchPastMemeSubscriptionCounts', () => {
   afterEach(() => {
     jest.restoreAllMocks();
