@@ -39,6 +39,16 @@ import { findNftTDH } from './nft_tdh';
 import { updateTDH } from './tdh';
 import { consolidateAndPersistTDH } from './tdh_consolidation';
 import { uploadTDH } from './tdh_upload';
+import { isMembershipSourceTrackingActive } from '@/membership/membership-producer-policy';
+import {
+  checkpointMembershipTdhInputs,
+  failMembershipTdhCycle,
+  findActiveMembershipTdhCycle,
+  getMembershipTdhCycleState,
+  membershipTdhCycleCalculationDate,
+  membershipTdhCycleId,
+  startMembershipTdhCycle
+} from '@/membership/membership-tdh-cycle';
 
 const logger = Logger.get('TDH_LOOP');
 const ALERT_TITLE = 'TDH Loop';
@@ -75,9 +85,18 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 });
 
 export async function tdhLoop(force?: boolean) {
-  await tdh(force);
-  await findNftTDH();
-  await notifier.notifyTdhCalculationsDone();
+  const result = await tdh(force);
+  if (isMembershipSourceTrackingActive() && !result.cycleId) return;
+  if (result.sourceWritesNeeded || !isMembershipSourceTrackingActive()) {
+    try {
+      await findNftTDH();
+      if (result.cycleId) await checkpointMembershipTdhInputs(result.cycleId);
+    } catch (error) {
+      if (result.cycleId) await failMembershipTdhCycle(result.cycleId);
+      throw error;
+    }
+  }
+  await notifier.notifyTdhCalculationsDone(result.cycleId ?? undefined);
 }
 
 async function recordMetrics() {
@@ -137,27 +156,61 @@ async function recordMetrics() {
   }
 }
 
-async function tdh(force?: boolean) {
+async function tdh(force?: boolean): Promise<{
+  block: number;
+  cycleId: string | null;
+  sourceWritesNeeded: boolean;
+}> {
   const lastTDHCalc = Time.latestUtcMidnight().toDate();
 
   const lastTdhDB = await fetchLatestTDHBDate();
   const lastTdhFromNow = lastTdhDB.timestamp.diffFromNow();
 
-  if (lastTdhFromNow.gt(Time.hours(24)) || force) {
-    const { block, blockTimestamp, tdh } = await updateTDH(lastTDHCalc);
-    const consolidatedTdh = await consolidateAndPersistTDH(
-      block,
-      blockTimestamp,
-      { mode: 'FULL' }
-    );
-    await recordMetrics();
-    await uploadTDH(block, blockTimestamp, tdh, false, true);
-    await uploadTDH(block, blockTimestamp, consolidatedTdh, true, true);
-    return block;
+  const tracking = isMembershipSourceTrackingActive();
+  const active = tracking ? await findActiveMembershipTdhCycle() : null;
+  if (active && !active.cycleId.startsWith('tdh-full:'))
+    throw new Error('Another tracked TDH source cycle is still active');
+  const cycleId = tracking
+    ? (active?.cycleId ??
+      membershipTdhCycleId('tdh-full', [
+        lastTDHCalc.toISOString(),
+        force ? 'force' : 'daily'
+      ]))
+    : null;
+  const prior =
+    active?.state ??
+    (cycleId ? await getMembershipTdhCycleState(cycleId) : null);
+  if (tracking && prior?.status === 'COMPLETED')
+    return { block: lastTdhDB.block, cycleId: null, sourceWritesNeeded: false };
+  const due = lastTdhFromNow.gt(Time.hours(24)) || !!force;
+  if (!due && !prior && tracking)
+    return { block: lastTdhDB.block, cycleId: null, sourceWritesNeeded: false };
+  if (prior && prior.progress.stage !== 'STARTED')
+    return { block: lastTdhDB.block, cycleId, sourceWritesNeeded: false };
+  if (due || prior) {
+    if (cycleId) await startMembershipTdhCycle(cycleId);
+    try {
+      const calculationDate = active
+        ? membershipTdhCycleCalculationDate(active.cycleId)
+        : lastTDHCalc;
+      const { block, blockTimestamp, tdh } = await updateTDH(calculationDate);
+      const consolidatedTdh = await consolidateAndPersistTDH(
+        block,
+        blockTimestamp,
+        { mode: 'FULL' }
+      );
+      await recordMetrics();
+      await uploadTDH(block, blockTimestamp, tdh, false, true);
+      await uploadTDH(block, blockTimestamp, consolidatedTdh, true, true);
+      return { block, cycleId, sourceWritesNeeded: true };
+    } catch (error) {
+      if (cycleId) await failMembershipTdhCycle(cycleId);
+      throw error;
+    }
   } else {
     logger.info(
       `[TODAY'S TDH ALREADY CALCULATED ${lastTdhFromNow} ago] [SKIPPING...]`
     );
-    return lastTdhDB.block;
+    return { block: lastTdhDB.block, cycleId: null, sourceWritesNeeded: false };
   }
 }

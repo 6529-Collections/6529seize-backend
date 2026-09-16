@@ -29,6 +29,11 @@ import {
   withGlobalSourceKeys
 } from './membership-source-states.db';
 import { MembershipSourceKey } from './membership-validation';
+import * as producerPolicy from './membership-producer-policy';
+import {
+  membershipGlobalMutation,
+  withMembershipSourceMutation
+} from './membership-producer-writes';
 
 const identity = anIdentity({ rep: 1 });
 const profileKey: MembershipSourceKey = {
@@ -174,6 +179,40 @@ describeWithSeed(
   'Membership source transaction contracts',
   withIdentities([identity]),
   () => {
+    it('accepts a caller context carrying its explicit WRITE connection and commits one source claim', async () => {
+      await provision([globalKey]);
+      const active = jest
+        .spyOn(producerPolicy, 'isMembershipSourceTrackingActive')
+        .mockReturnValue(true);
+      try {
+        await sqlExecutor.executeNativeQueriesInTransaction(
+          async (connection) =>
+            withMembershipSourceMutation(
+              connection,
+              membershipGlobalMutation(['RATINGS'], 'caller-context'),
+              () =>
+                sqlExecutor
+                  .execute(
+                    `UPDATE ${IDENTITIES_TABLE} SET rep = rep + 1 WHERE profile_id = :id`,
+                    { id: identity.profile_id },
+                    { wrappedConnection: connection }
+                  )
+                  .then(() => undefined),
+              { connection }
+            )
+        );
+        expect(await readRep()).toEqual({ rep: 2 });
+        expect((await state())[0].state?.version).toBe('1');
+        expect(
+          await tx((ctx) =>
+            targets().find({ scope: 'FULL', target_id: '*' }, ctx)
+          )
+        ).not.toBeNull();
+      } finally {
+        active.mockRestore();
+      }
+    });
+
     it('keeps absent evidence unknown and refuses mutation or jobs without provisioning', async () => {
       expect((await state()).every((row) => row.state === null)).toBe(true);
       await expect(tx(mutate)).rejects.toThrow('evidence');

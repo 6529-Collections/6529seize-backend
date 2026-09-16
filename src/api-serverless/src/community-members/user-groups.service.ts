@@ -55,6 +55,10 @@ import {
 import { Time, Timer } from '@/time';
 import * as mcache from 'memory-cache';
 import { RequestContext } from '@/request.context';
+import {
+  membershipCatalogueMutation,
+  withMembershipSourceMutation
+} from '@/membership/membership-producer-writes';
 import { NEXTGEN_CORE_CONTRACT } from '@/nextgen/nextgen_constants';
 import { Network } from '@/alchemy-sdk';
 import {
@@ -287,37 +291,47 @@ export class UserGroupsService {
             beneficiaryGrantMatchMode,
             ctxWithConnection
           );
-          const inclusionGroups = group.addresses.length
-            ? await this.userGroupsDb.insertGroupEntriesAndGetGroupIds(
-                group.addresses,
+          return withMembershipSourceMutation(
+            connection,
+            membershipCatalogueMutation(
+              [{ group_id: id, is_deleted: false }],
+              'group-created'
+            ),
+            async () => {
+              const inclusionGroups = group.addresses.length
+                ? await this.userGroupsDb.insertGroupEntriesAndGetGroupIds(
+                    group.addresses,
+                    connection
+                  )
+                : null;
+              const exclusionGroups = group.excluded_addresses.length
+                ? await this.userGroupsDb.insertGroupEntriesAndGetGroupIds(
+                    group.excluded_addresses,
+                    connection
+                  )
+                : null;
+              await this.userGroupsDb.save(
+                {
+                  ...group,
+                  id,
+                  created_at: new Date(),
+                  created_by: createdBy,
+                  visible: isVisible,
+                  name: groupName,
+                  profile_group_id: inclusionGroups?.profile_group_id ?? null,
+                  excluded_profile_group_id:
+                    exclusionGroups?.profile_group_id ?? null
+                },
                 connection
-              )
-            : null;
-          const exclusionGroups = group.excluded_addresses.length
-            ? await this.userGroupsDb.insertGroupEntriesAndGetGroupIds(
-                group.excluded_addresses,
-                connection
-              )
-            : null;
-          await this.userGroupsDb.save(
-            {
-              ...group,
-              id,
-              created_at: new Date(),
-              created_by: createdBy,
-              visible: isVisible,
-              name: groupName,
-              profile_group_id: inclusionGroups?.profile_group_id ?? null,
-              excluded_profile_group_id:
-                exclusionGroups?.profile_group_id ?? null
+              );
+              await this.metricsRecorder.recordActiveIdentity(
+                { identityId: createdBy },
+                ctxWithConnection
+              );
+              return await this.getByIdOrThrow(id, ctxWithConnection);
             },
-            connection
+            ctx
           );
-          await this.metricsRecorder.recordActiveIdentity(
-            { identityId: createdBy },
-            ctxWithConnection
-          );
-          return await this.getByIdOrThrow(id, ctxWithConnection);
         }
       );
     await giveReadReplicaTimeToCatchUp();
@@ -1521,111 +1535,127 @@ export class UserGroupsService {
       );
     const { updatedGroup, replacedGroup } =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
-        async (connection) => {
-          const ctxWithConnection = { ...ctx, connection };
-          const groupIdsToLock = Array.from(
-            new Set(
-              [group_id, old_version_id].filter((id): id is string => !!id)
-            )
-          ).sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
-          for (const id of groupIdsToLock)
-            await moderationReviewDb.lockGroup(id, ctxWithConnection);
-          const replayedGroup = await this.replayReviewedGroup(
-            nameReview.moderation_item_id,
-            ctxWithConnection
-          );
-          if (replayedGroup)
-            return { updatedGroup: replayedGroup, replacedGroup: null };
-          const currentGroup =
-            await this.userGroupsDb.getByIdWithoutVisibilityCheck(
-              group_id,
-              connection
-            );
-          const currentOld = old_version_id
-            ? await this.userGroupsDb.getByIdWithoutVisibilityCheck(
-                old_version_id,
-                connection
-              )
-            : null;
-          if (
-            moderationFingerprint({
-              group: currentGroup,
-              replaced: currentOld,
-              visible
-            }) !== writeFingerprint
-          )
-            moderationConflict();
-          const groupEntity = await this.getByIdOrThrow(
-            group_id,
-            ctxWithConnection
-          );
-          if (groupEntity.created_by?.id !== profile_id) {
-            throw new BadRequestException(
-              `You are not allowed to change group ${group_id}. You can save a new one instead.`
-            );
-          }
-          let oldGroupEntity: ApiGroupFull | null = null;
-          if (old_version_id) {
-            if (old_version_id === groupEntity.id) {
-              throw new BadRequestException(
-                'Old version id should not be the same as the current'
-              );
-            }
-            oldGroupEntity = await this.getByIdOrThrow(
-              old_version_id,
-              ctxWithConnection
-            );
-            if (oldGroupEntity.created_by?.id !== profile_id) {
-              throw new BadRequestException(
-                `You are not allowed to change group ${old_version_id}. You can save a new one instead.`
-              );
-            }
-            await beforeReplace?.(
-              {
-                currentGroup: groupEntity,
-                replacedGroupId: old_version_id
-              },
-              ctxWithConnection
-            );
-            await this.userGroupsDb.deleteById(old_version_id, connection);
-          }
-          await this.userGroupsDb.changeVisibilityAndSetId(
-            {
-              currentId: group_id,
-              newId: old_version_id,
-              visibility: visible
-            },
-            connection
-          );
-          if (nameReview.moderation_item_id) {
-            await moderationReviewDb.consume(
-              nameReview.moderation_item_id,
-              old_version_id ?? group_id,
-              {
-                ...ctxWithConnection,
-                moderationPermitGeneration:
-                  nameReview.moderation_permit_generation
-              },
-              group_id
-            );
-            await moderationReviewDb.setPublishedRevision(
-              nameReview.moderation_item_id,
-              moderationFingerprint({ text: rawGroup.name }),
-              ctxWithConnection
-            );
-          }
-          await this.metricsRecorder.recordActiveIdentity(
-            { identityId: profile_id },
-            ctxWithConnection
-          );
-          return {
-            updatedGroup: await this.getByIdOrThrow(
-              old_version_id ?? group_id,
-              ctxWithConnection
+        async (connection) =>
+          withMembershipSourceMutation(
+            connection,
+            membershipCatalogueMutation(
+              old_version_id
+                ? [
+                    { group_id, is_deleted: true },
+                    { group_id: old_version_id, is_deleted: false }
+                  ]
+                : [{ group_id, is_deleted: false }],
+              'group-visibility'
             ),
-            replacedGroup: oldGroupEntity
-          };
-        }
+            async () => {
+              const ctxWithConnection = { ...ctx, connection };
+              const groupIdsToLock = Array.from(
+                new Set(
+                  [group_id, old_version_id].filter((id): id is string => !!id)
+                )
+              ).sort((left, right) =>
+                left < right ? -1 : left > right ? 1 : 0
+              );
+              for (const id of groupIdsToLock)
+                await moderationReviewDb.lockGroup(id, ctxWithConnection);
+              const replayedGroup = await this.replayReviewedGroup(
+                nameReview.moderation_item_id,
+                ctxWithConnection
+              );
+              if (replayedGroup)
+                return { updatedGroup: replayedGroup, replacedGroup: null };
+              const currentGroup =
+                await this.userGroupsDb.getByIdWithoutVisibilityCheck(
+                  group_id,
+                  connection
+                );
+              const currentOld = old_version_id
+                ? await this.userGroupsDb.getByIdWithoutVisibilityCheck(
+                    old_version_id,
+                    connection
+                  )
+                : null;
+              if (
+                moderationFingerprint({
+                  group: currentGroup,
+                  replaced: currentOld,
+                  visible
+                }) !== writeFingerprint
+              )
+                moderationConflict();
+              const groupEntity = await this.getByIdOrThrow(
+                group_id,
+                ctxWithConnection
+              );
+              if (groupEntity.created_by?.id !== profile_id) {
+                throw new BadRequestException(
+                  `You are not allowed to change group ${group_id}. You can save a new one instead.`
+                );
+              }
+              let oldGroupEntity: ApiGroupFull | null = null;
+              if (old_version_id) {
+                if (old_version_id === groupEntity.id) {
+                  throw new BadRequestException(
+                    'Old version id should not be the same as the current'
+                  );
+                }
+                oldGroupEntity = await this.getByIdOrThrow(
+                  old_version_id,
+                  ctxWithConnection
+                );
+                if (oldGroupEntity.created_by?.id !== profile_id) {
+                  throw new BadRequestException(
+                    `You are not allowed to change group ${old_version_id}. You can save a new one instead.`
+                  );
+                }
+                await beforeReplace?.(
+                  {
+                    currentGroup: groupEntity,
+                    replacedGroupId: old_version_id
+                  },
+                  ctxWithConnection
+                );
+                await this.userGroupsDb.deleteById(old_version_id, connection);
+              }
+              await this.userGroupsDb.changeVisibilityAndSetId(
+                {
+                  currentId: group_id,
+                  newId: old_version_id,
+                  visibility: visible
+                },
+                connection
+              );
+              if (nameReview.moderation_item_id) {
+                await moderationReviewDb.consume(
+                  nameReview.moderation_item_id,
+                  old_version_id ?? group_id,
+                  {
+                    ...ctxWithConnection,
+                    moderationPermitGeneration:
+                      nameReview.moderation_permit_generation
+                  },
+                  group_id
+                );
+                await moderationReviewDb.setPublishedRevision(
+                  nameReview.moderation_item_id,
+                  moderationFingerprint({ text: rawGroup.name }),
+                  ctxWithConnection
+                );
+              }
+              await this.metricsRecorder.recordActiveIdentity(
+                { identityId: profile_id },
+                ctxWithConnection
+              );
+              return {
+                updatedGroup: await this.getByIdOrThrow(
+                  old_version_id ?? group_id,
+                  ctxWithConnection
+                ),
+                replacedGroup: oldGroupEntity
+              };
+            },
+            ctx
+          )
       );
     await giveReadReplicaTimeToCatchUp();
     await this.invalidateEligibilityCachesAfterVisibilityChange(
