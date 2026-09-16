@@ -145,7 +145,7 @@
             "MONITOR_EVENT_BUS_ARN": {
               "Ref": "MonitoringEventBusArn"
             },
-            "ALLOWED_LOG_GROUPS": "/aws/lambda/seizeAPI,/aws/lambda/aggregatedActivityLoop,/aws/lambda/attachmentsOrchestrator,/aws/lambda/attachmentsProcessor,/aws/lambda/artCurationNftWatchLoop,/aws/lambda/claimsBuilder,/aws/lambda/claimsMediaArweaveUploader,/aws/lambda/customReplayLoop,/aws/lambda/dbDumpsDaily,/aws/lambda/dbMigrationsLoop,/aws/lambda/delegationsLoop,/aws/lambda/discoverEnsLoop,/aws/lambda/dropMediaSanitizer,/aws/lambda/ethPriceLoop,/aws/lambda/externalCollectionLiveTailingLoop,/aws/lambda/externalCollectionSnapshottingLoop,/aws/lambda/helpBotReplyLoop,/aws/lambda/helpBotDailyActivityCreditLoop,/aws/lambda/marketStatsMEMES,/aws/lambda/marketStatsLAB,/aws/lambda/marketStatsGRADIENT,/aws/lambda/marketStatsNEXTGEN,/aws/lambda/marketDepthStreamLoop,/aws/lambda/mediaResizerLoop,/aws/lambda/mintAnnouncementsLoop,/aws/lambda/nextgenContractLoop,/aws/lambda/nextgenMediaImageResolutions,/aws/lambda/nextgenMediaProxyInterceptor,/aws/lambda/nextgenMediaUploader,/aws/lambda/nextgenMetadataLoop,/aws/lambda/nftHistoryLoop,/aws/lambda/nftLinkRefresherLoop,/aws/lambda/nftLinkMediaPreviewLoop,/aws/lambda/nftOwnersLoop,/aws/lambda/nftsLoop,/aws/lambda/overRatesRevocationLoop,/aws/lambda/ownersBalancesLoop,/aws/lambda/populateHistoricConsolidatedTdh,/aws/lambda/pushNotificationsHandler,/aws/lambda/rateEventProcessingLoop,/aws/lambda/releaseNotesGenerationLoop,/aws/lambda/refreshENS,/aws/lambda/rememesS3Loop,/aws/lambda/rememesRefreshMetadataLoop,/aws/lambda/rememesFileLoop,/aws/lambda/royaltiesLoop,/aws/lambda/s3Uploader,/aws/lambda/subscriptionsDaily,/aws/lambda/subscriptionCoverageReconciliationLoop,/aws/lambda/subscriptionsTopUpLoop,/aws/lambda/xTdhGrantsReviewerLoop,/aws/lambda/tdhHistoryLoop,/aws/lambda/tdhLoop,/aws/lambda/teamLoop,/aws/lambda/memesTransactionsLoop,/aws/lambda/gradientsTransactionsLoop,/aws/lambda/memeLabTransactionsLoop,/aws/lambda/transactionsProcessingLoop,/aws/lambda/waveDecisionExecutionLoop,/aws/lambda/waveLeaderboardSnapshotterLoop,/aws/lambda/waveDropMetricsRefreshLoop,/aws/lambda/waveScoreRefreshLoop,/aws/lambda/xTdhLoop,/aws/lambda/artworkDocumentationProcessor"
+            "ALLOWED_LOG_GROUPS": "/aws/lambda/seizeAPI,/aws/lambda/aggregatedActivityLoop,/aws/lambda/attachmentsOrchestrator,/aws/lambda/attachmentsProcessor,/aws/lambda/artCurationNftWatchLoop,/aws/lambda/claimsBuilder,/aws/lambda/claimsMediaArweaveUploader,/aws/lambda/customReplayLoop,/aws/lambda/dbDumpsDaily,/aws/lambda/dbMigrationsLoop,/aws/lambda/delegationsLoop,/aws/lambda/discoverEnsLoop,/aws/lambda/dropMediaSanitizer,/aws/lambda/ethPriceLoop,/aws/lambda/externalCollectionLiveTailingLoop,/aws/lambda/externalCollectionSnapshottingLoop,/aws/lambda/helpBotReplyLoop,/aws/lambda/helpBotDailyActivityCreditLoop,/aws/lambda/marketStatsMEMES,/aws/lambda/marketStatsLAB,/aws/lambda/marketStatsGRADIENT,/aws/lambda/marketStatsNEXTGEN,/aws/lambda/marketDepthStreamLoop,/aws/lambda/mediaResizerLoop,/aws/lambda/membershipRefreshLoop,/aws/lambda/membershipRefreshDispatcherLoop,/aws/lambda/mintAnnouncementsLoop,/aws/lambda/nextgenContractLoop,/aws/lambda/nextgenMediaImageResolutions,/aws/lambda/nextgenMediaProxyInterceptor,/aws/lambda/nextgenMediaUploader,/aws/lambda/nextgenMetadataLoop,/aws/lambda/nftHistoryLoop,/aws/lambda/nftLinkRefresherLoop,/aws/lambda/nftLinkMediaPreviewLoop,/aws/lambda/nftOwnersLoop,/aws/lambda/nftsLoop,/aws/lambda/overRatesRevocationLoop,/aws/lambda/ownersBalancesLoop,/aws/lambda/populateHistoricConsolidatedTdh,/aws/lambda/pushNotificationsHandler,/aws/lambda/rateEventProcessingLoop,/aws/lambda/releaseNotesGenerationLoop,/aws/lambda/refreshENS,/aws/lambda/rememesS3Loop,/aws/lambda/rememesRefreshMetadataLoop,/aws/lambda/rememesFileLoop,/aws/lambda/royaltiesLoop,/aws/lambda/s3Uploader,/aws/lambda/subscriptionsDaily,/aws/lambda/subscriptionCoverageReconciliationLoop,/aws/lambda/subscriptionsTopUpLoop,/aws/lambda/xTdhGrantsReviewerLoop,/aws/lambda/tdhHistoryLoop,/aws/lambda/tdhLoop,/aws/lambda/teamLoop,/aws/lambda/memesTransactionsLoop,/aws/lambda/gradientsTransactionsLoop,/aws/lambda/memeLabTransactionsLoop,/aws/lambda/transactionsProcessingLoop,/aws/lambda/waveDecisionExecutionLoop,/aws/lambda/waveLeaderboardSnapshotterLoop,/aws/lambda/waveDropMetricsRefreshLoop,/aws/lambda/waveScoreRefreshLoop,/aws/lambda/xTdhLoop,/aws/lambda/artworkDocumentationProcessor"
           }
         }
       }
@@ -780,6 +780,40 @@
         "FilterPattern": "\"6529.ops.error.v1\""
       }
     },
+    "membershipRefreshLoopErrorLogs": {
+      "Type": "AWS::Logs::SubscriptionFilter",
+      "DependsOn": [
+        "LogPermission",
+        "membershipRefreshDispatcherLoopErrorLogs"
+      ],
+      "Properties": {
+        "DestinationArn": {
+          "Fn::GetAtt": [
+            "LogRelay",
+            "Arn"
+          ]
+        },
+        "LogGroupName": "/aws/lambda/membershipRefreshLoop",
+        "FilterPattern": "\"6529.ops.error.v1\""
+      }
+    },
+    "membershipRefreshDispatcherLoopErrorLogs": {
+      "Type": "AWS::Logs::SubscriptionFilter",
+      "DependsOn": [
+        "LogPermission",
+        "mediaResizerLoopErrorLogs"
+      ],
+      "Properties": {
+        "DestinationArn": {
+          "Fn::GetAtt": [
+            "LogRelay",
+            "Arn"
+          ]
+        },
+        "LogGroupName": "/aws/lambda/membershipRefreshDispatcherLoop",
+        "FilterPattern": "\"6529.ops.error.v1\""
+      }
+    },
     "mintAnnouncementsLoopErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
@@ -1328,7 +1362,7 @@
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
         "LogPermission",
-        "mediaResizerLoopErrorLogs"
+        "membershipRefreshLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -3023,6 +3057,138 @@
           {
             "Name": "FunctionName",
             "Value": "mediaResizerLoop"
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        }
+      }
+    },
+    "membershipRefreshLoopErrors": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-membershipRefreshLoop-Errors"
+        },
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": "membershipRefreshLoop"
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        }
+      }
+    },
+    "membershipRefreshLoopThrottles": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-membershipRefreshLoop-Throttles"
+        },
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Throttles",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": "membershipRefreshLoop"
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        }
+      }
+    },
+    "membershipRefreshDispatcherLoopErrors": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-membershipRefreshDispatcherLoop-Errors"
+        },
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": "membershipRefreshDispatcherLoop"
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        }
+      }
+    },
+    "membershipRefreshDispatcherLoopThrottles": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-membershipRefreshDispatcherLoop-Throttles"
+        },
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Throttles",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": "membershipRefreshDispatcherLoop"
           }
         ],
         "Statistic": "Sum",

@@ -177,7 +177,9 @@ describe('generated deployment source guard', () => {
         'wallet-transfer-analysis',
         'claims-media-upload',
         'nft-link-page-retry',
-        'membership-refresh'
+        'membership-refresh',
+        'membership-evaluator-index',
+        'membership-runtime-control'
       ]
     });
     expect(job.env.DB_SCHEMA_SCOPE).toBe(
@@ -265,7 +267,8 @@ describe('generated deployment source guard', () => {
     'wallet-transfer-analysis',
     'claims-media-upload',
     'nft-link-page-retry',
-    'membership-refresh'
+    'membership-refresh',
+    'membership-evaluator-index'
   ])('forwards validated %s as one JSON invocation payload', (scope) => {
     const result = invokeMigrationScope(scope);
     expect(result.error).toBeUndefined();
@@ -350,4 +353,170 @@ describe('generated deployment source guard', () => {
       expect(result.stdout).toContain('did not acknowledge');
     }
   );
+  it.each(['staging', 'prod'] as const)(
+    'accepts inactive worker defaults for %s',
+    (environment) => {
+      expect(
+        validateDispatch(sourceSha, environment, {
+          INPUT_SERVICE: 'membershipRefreshLoop'
+        }).status
+      ).toBe(0);
+    }
+  );
+
+  it('allows the exact staging fixture mapping and binds control inputs as data', () => {
+    expect(
+      validateDispatch(sourceSha, 'staging', {
+        INPUT_SERVICE: 'membershipRefreshLoop',
+        MEMBERSHIP_RUNTIME_MODE: 'staging-fixture-v1',
+        MEMBERSHIP_WORKER_MAPPING_ENABLED: 'true'
+      }).status
+    ).toBe(0);
+    expect(
+      workflow.on.workflow_dispatch.inputs.membership_runtime_mode.default
+    ).toBe('inactive');
+    expect(
+      workflow.on.workflow_dispatch.inputs.membership_worker_mapping_enabled
+        .default
+    ).toBe(false);
+    expect(job.env.MEMBERSHIP_RUNTIME_MODE).toBe(
+      "${{ github.event.inputs.membership_runtime_mode || 'inactive' }}"
+    );
+    expect(job.env.MEMBERSHIP_WORKER_MAPPING_ENABLED).toBe(
+      "${{ github.event.inputs.membership_worker_mapping_enabled || 'false' }}"
+    );
+  });
+
+  it.each<Record<string, string>>([
+    { INPUT_SERVICE: 'api', MEMBERSHIP_RUNTIME_MODE: 'staging-fixture-v1' },
+    { INPUT_SERVICE: 'api', MEMBERSHIP_WORKER_MAPPING_ENABLED: 'true' },
+    { MEMBERSHIP_WORKER_MAPPING_ENABLED: 'true' },
+    { MEMBERSHIP_WORKER_MAPPING_ENABLED: 'TRUE' },
+    { MEMBERSHIP_WORKER_MAPPING_ENABLED: '0' },
+    { MEMBERSHIP_RUNTIME_MODE: 'active' },
+    { MEMBERSHIP_RUNTIME_MODE: '$(exit 73)' }
+  ])(
+    'rejects unsupported worker controls before credentials: %j',
+    (overrides) => {
+      expect(
+        validateDispatch(sourceSha, 'staging', {
+          INPUT_SERVICE: 'membershipRefreshLoop',
+          ...overrides
+        }).status
+      ).toBe(1);
+    }
+  );
+
+  it('rejects production fixture mode even when mapping is disabled', () => {
+    expect(
+      validateDispatch(sourceSha, 'prod', {
+        INPUT_SERVICE: 'membershipRefreshLoop',
+        MEMBERSHIP_RUNTIME_MODE: 'staging-fixture-v1'
+      }).status
+    ).toBe(1);
+  });
+
+  it('restricts runtime-control schema to the migration carrier and validates its acknowledgment', () => {
+    expect(
+      validateDispatch(sourceSha, 'prod', {
+        INPUT_SERVICE: 'membershipRefreshLoop',
+        DB_SCHEMA_SCOPE: 'membership-runtime-control'
+      }).status
+    ).toBe(1);
+    expect(invokeMigrationScope('membership-runtime-control').status).toBe(0);
+    expect(
+      invokeMigrationScope(
+        'membership-runtime-control',
+        { StatusCode: 200 },
+        { schema_scope: 'membership-refresh' }
+      ).status
+    ).toBe(1);
+  });
+  it.each(['staging', 'prod'] as const)(
+    'accepts inactive dispatcher defaults for %s',
+    (environment) => {
+      expect(
+        validateDispatch(sourceSha, environment, {
+          INPUT_SERVICE: 'membershipRefreshDispatcherLoop'
+        }).status
+      ).toBe(0);
+    }
+  );
+  it('binds the schedule input and permits only explicit fixture activation', () => {
+    expect(
+      workflow.on.workflow_dispatch.inputs.membership_dispatch_schedule_enabled
+    ).toMatchObject({ type: 'boolean', default: false });
+    expect(job.env.MEMBERSHIP_DISPATCH_SCHEDULE_ENABLED).toBe(
+      "${{ github.event.inputs.membership_dispatch_schedule_enabled || 'false' }}"
+    );
+    expect(
+      validateDispatch(sourceSha, 'staging', {
+        INPUT_SERVICE: 'membershipRefreshDispatcherLoop',
+        MEMBERSHIP_RUNTIME_MODE: 'staging-fixture-v1',
+        MEMBERSHIP_DISPATCH_SCHEDULE_ENABLED: 'true'
+      }).status
+    ).toBe(0);
+  });
+  it.each<Record<string, string>>([
+    { MEMBERSHIP_DISPATCH_SCHEDULE_ENABLED: 'true' },
+    { MEMBERSHIP_DISPATCH_SCHEDULE_ENABLED: 'TRUE' },
+    { MEMBERSHIP_DISPATCH_SCHEDULE_ENABLED: '0' },
+    { MEMBERSHIP_DISPATCH_SCHEDULE_ENABLED: '$(exit 73)' },
+    {
+      MEMBERSHIP_RUNTIME_MODE: 'staging-fixture-v1',
+      MEMBERSHIP_WORKER_MAPPING_ENABLED: 'true'
+    },
+    { INPUT_SERVICE: 'api', MEMBERSHIP_RUNTIME_MODE: 'staging-fixture-v1' },
+    { INPUT_SERVICE: 'api', MEMBERSHIP_DISPATCH_SCHEDULE_ENABLED: 'true' },
+    {
+      INPUT_SERVICE: 'membershipRefreshLoop',
+      MEMBERSHIP_RUNTIME_MODE: 'staging-fixture-v1',
+      MEMBERSHIP_DISPATCH_SCHEDULE_ENABLED: 'true'
+    }
+  ])('rejects unsafe or cross-service dispatcher controls %j', (overrides) => {
+    expect(
+      validateDispatch(sourceSha, 'staging', {
+        INPUT_SERVICE: 'membershipRefreshDispatcherLoop',
+        ...overrides
+      }).status
+    ).toBe(1);
+  });
+  it.each(['false', 'true'])(
+    'rejects production fixture mode with schedule %s',
+    (schedule) => {
+      expect(
+        validateDispatch(sourceSha, 'prod', {
+          INPUT_SERVICE: 'membershipRefreshDispatcherLoop',
+          MEMBERSHIP_RUNTIME_MODE: 'staging-fixture-v1',
+          MEMBERSHIP_DISPATCH_SCHEDULE_ENABLED: schedule
+        }).status
+      ).toBe(1);
+    }
+  );
+  it('catalogs the dispatcher behind worker exports with its own health target', () => {
+    const catalog = JSON.parse(
+      readFileSync(
+        path.resolve(__dirname, '../src/config/deploy-services.json'),
+        'utf8'
+      )
+    ) as {
+      services: { name: string; [key: string]: unknown }[];
+    };
+    expect(
+      catalog.services.find(
+        (service) => service.name === 'membershipRefreshDispatcherLoop'
+      )
+    ).toEqual({
+      name: 'membershipRefreshDispatcherLoop',
+      allowed_environments: ['staging', 'prod'],
+      deploy_adapter: 'serverless',
+      aws_region: { staging: 'eu-west-1', prod: 'us-east-1' },
+      verification_targets: ['membershipRefreshDispatcherLoop'],
+      validation_profile: 'lambda-version',
+      default_dependencies: ['membershipRefreshLoop']
+    });
+    expect(workflow.on.workflow_dispatch.inputs.service.options).toContain(
+      'membershipRefreshDispatcherLoop'
+    );
+  });
 });
