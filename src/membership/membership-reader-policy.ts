@@ -31,7 +31,7 @@ function controlled(mode: string | undefined, profileId: string): boolean {
     .split(',')
     .map((id) => id.trim())
     .filter(Boolean);
-  // An explicit small cohort is required even on staging.
+  // Keep the 20-profile cap aligned with the deploy generator's allowlist validation.
   return ids.length > 0 && ids.length <= 20 && ids.includes(profileId);
 }
 

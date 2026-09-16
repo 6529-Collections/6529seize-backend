@@ -79,6 +79,18 @@ interface Generation {
   identityKey: string;
 }
 
+interface ReadEvidence {
+  source: Map<string, MembershipSourceEvidence> | null;
+  catalogue: MembershipSourceEvidence | null;
+  identityKey: string | null;
+}
+
+interface ReadinessPartition {
+  directIds: string[];
+  readyIds: string[];
+  reasons: Partial<Record<MembershipFallbackReason, number>>;
+}
+
 function decodedObject(value: unknown): Record<string, unknown> | null {
   try {
     const object = typeof value === 'string' ? JSON.parse(value) : value;
@@ -159,138 +171,182 @@ export class MembershipReader extends LazyDbAccessCompatibleService {
   ): Promise<MembershipScopedReadResult> {
     return withMembershipPrimaryTransaction(
       this.db,
-      async (ctx) => {
-        const ids = Array.from(new Set(await candidates(ctx)));
-        if (ids.length > MAX_CONTROLLED_CANDIDATES) {
-          return {
-            eligible_group_ids: [],
-            candidate_count: ids.length,
-            coverage_complete: false,
-            materialized_count: 0,
-            direct_count: 0,
-            direct_duration_ms: 0,
-            shadow_duration_ms: null,
-            fallback_reasons: { candidate_cap: 1 },
-            shadow_direct_group_ids: null,
-            shadow_equal: null
-          };
-        }
-        const now = await this.now(ctx);
-        const foundGeneration = await this.generation(profileId, now, ctx);
-        const generation =
-          foundGeneration === 'INVALID' ? null : foundGeneration;
-        const publicationFailure =
-          foundGeneration === 'INVALID'
-            ? ('publication_invalid' as const)
-            : ('publication_missing' as const);
-        const groups = await this.groups(ids, generation?.through ?? null, ctx);
-        const currentIds = groups.map((group) => group.id);
-        const reasons: Partial<Record<MembershipFallbackReason, number>> = {};
-        const directIds: string[] = [];
-        const readyIds: string[] = [];
-        const reason = (name: MembershipFallbackReason) => {
-          reasons[name] = (reasons[name] ?? 0) + 1;
-        };
-
-        let source: Map<string, MembershipSourceEvidence> | null = null;
-        let catalogue: MembershipSourceEvidence | null = null;
-        let identityKey: string | null = null;
-        if (generation && this.coverageRevision) {
-          const evidence = await new MembershipSourceStatesDb(
-            () => this.db
-          ).read(membershipProfileSourceKeys(profileId), false, ctx);
-          const receipts = await this.coverageReceipts(profileId, ctx);
-          source = new Map(
-            evidence.map((entry) => {
-              const key = membershipSourceKeyId(entry.key);
-              return [
-                key,
-                {
-                  ...entry,
-                  provisioned:
-                    entry.provisioned &&
-                    receipts.get(key) === this.coverageRevision
-                }
-              ] as const;
-            })
-          );
-          catalogue =
-            source.get(membershipSourceKeyId(MEMBERSHIP_CATALOG_KEY)) ?? null;
-          const identityRows = await this.db.execute<{
-            consolidation_key: string;
-          }>(
-            `SELECT consolidation_key FROM ${IDENTITIES_TABLE} WHERE profile_id=:profile LIMIT 2`,
-            { profile: profileId },
-            membershipQueryOptions(ctx)
-          );
-          identityKey =
-            identityRows.length === 1
-              ? identityRows[0].consolidation_key
-              : null;
-        }
-        // An unconfigured coverage revision is deliberately not readiness proof.
-        if (generation && !this.coverageRevision) {
-          const identityRows = await this.db.execute<{
-            consolidation_key: string;
-          }>(
-            `SELECT consolidation_key FROM ${IDENTITIES_TABLE} WHERE profile_id=:profile LIMIT 2`,
-            { profile: profileId },
-            membershipQueryOptions(ctx)
-          );
-          identityKey =
-            identityRows.length === 1
-              ? identityRows[0].consolidation_key
-              : null;
-        }
-        for (const group of groups) {
-          const failure = this.fallbackReason(
-            group,
-            generation,
-            source,
-            catalogue,
-            identityKey,
-            now,
-            publicationFailure
-          );
-          if (failure) {
-            directIds.push(group.id);
-            reason(failure);
-          } else readyIds.push(group.id);
-        }
-        const stored =
-          readyIds.length && generation
-            ? await this.members(profileId, generation.run.id, readyIds, ctx)
-            : new Set<string>();
-        const directStarted = performance.now();
-        const directResult = directIds.length
-          ? new Set(await direct(profileId, directIds, ctx))
-          : new Set<string>();
-        const directDuration = directIds.length
-          ? performance.now() - directStarted
-          : 0;
-        const eligible = currentIds.filter((id) =>
-          readyIds.includes(id) ? stored.has(id) : directResult.has(id)
-        );
-        const shadowStarted = performance.now();
-        const baseline = shadow
-          ? Array.from(new Set(await direct(profileId, currentIds, ctx)))
-          : null;
-        return {
-          eligible_group_ids: eligible,
-          candidate_count: currentIds.length,
-          coverage_complete: true,
-          materialized_count: readyIds.length,
-          direct_count: directIds.length,
-          direct_duration_ms: directDuration,
-          shadow_duration_ms: shadow ? performance.now() - shadowStarted : null,
-          fallback_reasons: reasons,
-          shadow_direct_group_ids: baseline,
-          shadow_equal: baseline === null ? null : sameSet(eligible, baseline)
-        };
-      },
+      (ctx) => this.readSnapshot(profileId, candidates, direct, shadow, ctx),
       {},
       readerBudget(deadlineMonotonicMillis)
     );
+  }
+
+  private async readSnapshot(
+    profileId: string,
+    candidates: MembershipCandidateIds,
+    direct: MembershipDirectEvaluator,
+    shadow: boolean,
+    ctx: MembershipPrimaryContext
+  ): Promise<MembershipScopedReadResult> {
+    const ids = Array.from(new Set(await candidates(ctx)));
+    if (ids.length > MAX_CONTROLLED_CANDIDATES)
+      return this.candidateCapResult(ids.length);
+    const now = await this.now(ctx);
+    const foundGeneration = await this.generation(profileId, now, ctx);
+    const generation = foundGeneration === 'INVALID' ? null : foundGeneration;
+    const publicationFailure =
+      foundGeneration === 'INVALID'
+        ? ('publication_invalid' as const)
+        : ('publication_missing' as const);
+    const groups = await this.groups(ids, generation?.through ?? null, ctx);
+    const evidence = await this.readEvidence(profileId, generation, ctx);
+    const partition = this.partitionReadiness(
+      groups,
+      generation,
+      evidence,
+      now,
+      publicationFailure
+    );
+    return this.assembleRead(
+      profileId,
+      groups,
+      generation,
+      partition,
+      direct,
+      shadow,
+      ctx
+    );
+  }
+
+  private candidateCapResult(
+    candidateCount: number
+  ): MembershipScopedReadResult {
+    return {
+      eligible_group_ids: [],
+      candidate_count: candidateCount,
+      coverage_complete: false,
+      materialized_count: 0,
+      direct_count: 0,
+      direct_duration_ms: 0,
+      shadow_duration_ms: null,
+      fallback_reasons: { candidate_cap: 1 },
+      shadow_direct_group_ids: null,
+      shadow_equal: null
+    };
+  }
+
+  private async readEvidence(
+    profileId: string,
+    generation: Generation | null,
+    ctx: MembershipPrimaryContext
+  ): Promise<ReadEvidence> {
+    if (!generation)
+      return { source: null, catalogue: null, identityKey: null };
+    let source: Map<string, MembershipSourceEvidence> | null = null;
+    if (this.coverageRevision) {
+      const evidence = await new MembershipSourceStatesDb(() => this.db).read(
+        membershipProfileSourceKeys(profileId),
+        false,
+        ctx
+      );
+      const receipts = await this.coverageReceipts(profileId, ctx);
+      source = new Map(
+        evidence.map((entry) => {
+          const key = membershipSourceKeyId(entry.key);
+          return [
+            key,
+            {
+              ...entry,
+              provisioned:
+                entry.provisioned && receipts.get(key) === this.coverageRevision
+            }
+          ] as const;
+        })
+      );
+    }
+    // An unconfigured coverage revision is deliberately not readiness proof.
+    const identityRows = await this.db.execute<{ consolidation_key: string }>(
+      `SELECT consolidation_key FROM ${IDENTITIES_TABLE} WHERE profile_id=:profile LIMIT 2`,
+      { profile: profileId },
+      membershipQueryOptions(ctx)
+    );
+    return {
+      source,
+      catalogue:
+        source?.get(membershipSourceKeyId(MEMBERSHIP_CATALOG_KEY)) ?? null,
+      identityKey:
+        identityRows.length === 1 ? identityRows[0].consolidation_key : null
+    };
+  }
+
+  private partitionReadiness(
+    groups: readonly CandidateGroup[],
+    generation: Generation | null,
+    evidence: ReadEvidence,
+    now: string,
+    publicationFailure: 'publication_missing' | 'publication_invalid'
+  ): ReadinessPartition {
+    const partition: ReadinessPartition = {
+      directIds: [],
+      readyIds: [],
+      reasons: {}
+    };
+    for (const group of groups) {
+      const failure = this.fallbackReason(
+        group,
+        generation,
+        evidence,
+        now,
+        publicationFailure
+      );
+      if (!failure) {
+        partition.readyIds.push(group.id);
+        continue;
+      }
+      partition.directIds.push(group.id);
+      partition.reasons[failure] = (partition.reasons[failure] ?? 0) + 1;
+    }
+    return partition;
+  }
+
+  private async assembleRead(
+    profileId: string,
+    groups: readonly CandidateGroup[],
+    generation: Generation | null,
+    partition: ReadinessPartition,
+    direct: MembershipDirectEvaluator,
+    shadow: boolean,
+    ctx: MembershipPrimaryContext
+  ): Promise<MembershipScopedReadResult> {
+    const { readyIds, directIds, reasons } = partition;
+    const stored =
+      readyIds.length && generation
+        ? await this.members(profileId, generation.run.id, readyIds, ctx)
+        : new Set<string>();
+    const directStarted = performance.now();
+    const directResult = directIds.length
+      ? new Set(await direct(profileId, directIds, ctx))
+      : new Set<string>();
+    const directDuration = directIds.length
+      ? performance.now() - directStarted
+      : 0;
+    const ready = new Set(readyIds);
+    const currentIds = groups.map((group) => group.id);
+    const eligible = currentIds.filter((id) =>
+      ready.has(id) ? stored.has(id) : directResult.has(id)
+    );
+    const shadowStarted = performance.now();
+    const baseline = shadow
+      ? Array.from(new Set(await direct(profileId, currentIds, ctx)))
+      : null;
+    return {
+      eligible_group_ids: eligible,
+      candidate_count: currentIds.length,
+      coverage_complete: true,
+      materialized_count: readyIds.length,
+      direct_count: directIds.length,
+      direct_duration_ms: directDuration,
+      shadow_duration_ms: shadow ? performance.now() - shadowStarted : null,
+      fallback_reasons: reasons,
+      shadow_direct_group_ids: baseline,
+      shadow_equal: baseline === null ? null : sameSet(eligible, baseline)
+    };
   }
 
   /** Fresh direct primary fallback with a strict candidate and shared time cap. */
@@ -433,15 +489,15 @@ export class MembershipReader extends LazyDbAccessCompatibleService {
   private fallbackReason(
     group: CandidateGroup,
     generation: Generation | null,
-    source: Map<string, MembershipSourceEvidence> | null,
-    catalogue: MembershipSourceEvidence | null,
-    identityKey: string | null,
+    evidence: ReadEvidence,
     now: string,
     publicationFailure: 'publication_missing' | 'publication_invalid'
   ): MembershipFallbackReason | null {
     if (!generation) return publicationFailure;
-    if (identityKey === null) return 'identity_missing';
-    if (identityKey !== generation.identityKey) return 'identity_changed';
+    if (evidence.identityKey === null) return 'identity_missing';
+    if (evidence.identityKey !== generation.identityKey)
+      return 'identity_changed';
+    const catalogue = evidence.catalogue;
     if (
       !catalogue?.state ||
       !catalogue.provisioned ||
@@ -449,6 +505,27 @@ export class MembershipReader extends LazyDbAccessCompatibleService {
       BigInt(catalogue.state.version) < BigInt(generation.run.catalog_version)
     )
       return 'catalogue_unready';
+    const groupFailure = this.groupVersionFailure(group, generation);
+    if (groupFailure) return groupFailure;
+    const sourceFailure = this.sourceFailure(
+      group,
+      generation,
+      evidence.source
+    );
+    if (sourceFailure) return sourceFailure;
+    if (
+      group.is_beneficiary_of_grant_id !== null &&
+      generation.run.valid_until_millis !== null &&
+      BigInt(generation.run.valid_until_millis) <= BigInt(now)
+    )
+      return 'time_boundary';
+    return null;
+  }
+
+  private groupVersionFailure(
+    group: CandidateGroup,
+    generation: Generation
+  ): MembershipFallbackReason | null {
     if (group.group_version === null || group.is_deleted === null)
       return 'group_version_missing';
     try {
@@ -462,6 +539,14 @@ export class MembershipReader extends LazyDbAccessCompatibleService {
       return 'group_version_missing';
     }
     if (!group.within_generation) return 'generation_range';
+    return null;
+  }
+
+  private sourceFailure(
+    group: CandidateGroup,
+    generation: Generation,
+    source: Map<string, MembershipSourceEvidence> | null
+  ): MembershipFallbackReason | null {
     for (const dimension of Array.from(membershipGroupDependencies(group))) {
       for (const scope of ['GLOBAL', 'PROFILE'] as const) {
         const key = membershipSourceKeyId({
@@ -480,12 +565,6 @@ export class MembershipReader extends LazyDbAccessCompatibleService {
           return 'source_changed';
       }
     }
-    if (
-      group.is_beneficiary_of_grant_id !== null &&
-      generation.run.valid_until_millis !== null &&
-      BigInt(generation.run.valid_until_millis) <= BigInt(now)
-    )
-      return 'time_boundary';
     return null;
   }
 

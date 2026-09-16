@@ -107,6 +107,30 @@ describe('UserGroupsService controlled membership read boundary', () => {
     ]);
   });
 
+  it('uses primary direct fallback if a mismatch lacks its direct baseline', async () => {
+    policy.mockReturnValue({ read: true, shadow: true });
+    const reader = {
+      read: jest.fn().mockResolvedValue({
+        ...incomplete,
+        coverage_complete: true,
+        candidate_count: 1,
+        shadow_equal: false
+      }),
+      readDirect: jest.fn().mockResolvedValue(['group-1'])
+    };
+    const service = new UserGroupsService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      reader as any
+    );
+    expect(await service.getGroupsUserIsEligibleFor('profile-1')).toEqual([
+      'group-1'
+    ]);
+    expect(reader.readDirect).toHaveBeenCalledTimes(1);
+  });
+
   it('uses primary direct fallback for a targeted authorization query', async () => {
     policy.mockReturnValue({ read: true, shadow: false });
     const reader = {

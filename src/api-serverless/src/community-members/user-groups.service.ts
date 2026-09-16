@@ -1754,9 +1754,11 @@ export class UserGroupsService {
                 new Set(
                   [group_id, old_version_id].filter((id): id is string => !!id)
                 )
-              ).sort((left, right) =>
-                left < right ? -1 : left > right ? 1 : 0
-              );
+              ).sort((left, right) => {
+                if (left < right) return -1;
+                if (left > right) return 1;
+                return 0;
+              });
               for (const id of groupIdsToLock)
                 await moderationReviewDb.lockGroup(id, ctxWithConnection);
               const replayedGroup = await this.replayReviewedGroup(
