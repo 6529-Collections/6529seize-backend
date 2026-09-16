@@ -322,19 +322,18 @@ jobs:
             DROP_MEDIA_SANITIZE_IMAGES_VALUE="false"
           fi
 
-          if [ "$DROP_MEDIA_SANITIZE_IMAGES_VALUE" = "true" ]; then
-            if [ -z "$DROP_MEDIA_INGEST_BUCKET" ]; then
-              echo "DROP_MEDIA_INGEST_S3_BUCKET is not configured for ${{ github.event.inputs.environment }}"
-              exit 1
-            fi
-            if [ -z "$DROP_MEDIA_INGEST_REGION" ]; then
-              echo "DROP_MEDIA_INGEST_S3_REGION is not configured"
-              exit 1
-            fi
-            if [ -z "$DROP_MEDIA_SANITIZER_QUEUE" ]; then
-              echo "DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME is not configured"
-              exit 1
-            fi
+          # AVIF conversion always uses private ingest, even when general image
+          # sanitization is disabled. The shared bucket is owned by staging.
+          if [ -z "$DROP_MEDIA_INGEST_BUCKET" ]; then
+            DROP_MEDIA_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+            DROP_MEDIA_INGEST_BUCKET="6529-drop-media-ingest-$DROP_MEDIA_ACCOUNT_ID"
+          fi
+          DROP_MEDIA_INGEST_REGION="${DROP_MEDIA_INGEST_REGION:-eu-west-1}"
+          DROP_MEDIA_SANITIZER_QUEUE="${DROP_MEDIA_SANITIZER_QUEUE:-drop-media-sanitizer}"
+
+          if [ "$INPUT_SERVICE" = api ]; then
+            aws s3api head-bucket --bucket "$DROP_MEDIA_INGEST_BUCKET" --region "$DROP_MEDIA_INGEST_REGION"
+            aws sqs get-queue-url --queue-name "$DROP_MEDIA_SANITIZER_QUEUE" --query QueueUrl --output text > /dev/null
           fi
 
           {
