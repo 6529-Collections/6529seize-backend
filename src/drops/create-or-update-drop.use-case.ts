@@ -1446,6 +1446,7 @@ export class CreateOrUpdateDropUseCase {
     }
   }
 
+  /** Bind tracked media to its author, public URL, converted MIME and state. */
   private async verifyDropMediaUploadReference({
     mediaUploadId,
     mediaUrl,

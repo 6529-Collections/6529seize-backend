@@ -100,6 +100,7 @@ export class UploadMediaService {
     });
   }
 
+  /** Reserve a unique public key using the converted format for AVIF uploads. */
   async getDropMediaMultipartUploadKeyAndUploadId({
     content_type,
     file_name,
@@ -345,6 +346,7 @@ export class UploadMediaService {
     };
   }
 
+  /** Complete private ingest once and report the eventual public media type. */
   private async completeSanitizedImageMultipartUpload({
     upload,
     parts
@@ -444,6 +446,7 @@ export class UploadMediaService {
     };
   }
 
+  /** Keep concurrent completion responses consistent with the published format. */
   private processingResponse(
     upload: DropMediaUploadEntity
   ): ApiCompleteMultipartUploadResponse {
@@ -505,8 +508,8 @@ export class UploadMediaService {
     return uploadId;
   }
 
+  /** Always convert AVIF for older viewers, regardless of the sanitizer flag. */
   private shouldSanitizeMultipartUpload(contentType: string): boolean {
-    // AVIF always needs conversion for supported clients that cannot decode it.
     return (
       contentType === 'image/avif' ||
       (isDropMediaSanitizationEnabled() && isImageMimeType(contentType))

@@ -18,6 +18,7 @@ export function isImageMimeType(contentType: string): boolean {
   return contentType.toLowerCase().startsWith('image/');
 }
 
+/** Map the declared upload type to the format served after sanitization. */
 export function getPublishedDropMediaMimeType(contentType: string): string {
   return contentType === 'image/avif' ? 'image/webp' : contentType;
 }
