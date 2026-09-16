@@ -20,6 +20,18 @@ import { MembershipSourceKey } from './membership-validation';
 const sources = new MembershipSourceStatesDb(dbSupplier);
 const jobs = new MembershipSourceJobsDb(dbSupplier);
 
+export async function getActiveMembershipGlobalJobId(
+  dimension: MembershipSourceDimension,
+  ctx: RequestContext = {}
+): Promise<string | null> {
+  if (!isMembershipSourceTrackingActive()) return null;
+  return withMembershipPrimaryTransaction(
+    dbSupplier(),
+    (primary) => jobs.findActiveGlobalJobId(dimension, primary),
+    ctx
+  );
+}
+
 export function membershipProducerJobId(
   producer: string,
   identity: readonly (string | number)[]
@@ -42,10 +54,14 @@ export async function withMembershipSourceMutation<T>(
   ctx: RequestContext = {}
 ): Promise<T> {
   if (!mutation || !isMembershipSourceTrackingActive()) return write();
+  // Existing writers commonly carry the transaction in their request context.
+  // The adapter receives that transaction separately and requires requestCtx
+  // itself to be connection-free.
+  const { connection: _connection, ...requestCtx } = ctx;
   return withMembershipPrimaryMutationContext(
     connection,
     (primary) => sources.mutate(mutation, write, primary),
-    ctx
+    requestCtx
   );
 }
 
@@ -57,11 +73,12 @@ export async function withMembershipProfileRuleReferenceMutation<T>(
   ctx: RequestContext = {}
 ): Promise<T> {
   if (!isMembershipSourceTrackingActive()) return write();
+  const { connection: _connection, ...requestCtx } = ctx;
   return withMembershipPrimaryMutationContext(
     connection,
     (primary) =>
       sources.mutateProfileRuleReferences(sourceProfileId, write, primary),
-    ctx
+    requestCtx
   );
 }
 

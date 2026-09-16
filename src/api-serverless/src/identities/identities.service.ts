@@ -662,7 +662,8 @@ export class IdentitiesService {
           try {
             await helpBotCreditsService.grantSignupCredits(
               { profileId: profile.external_id },
-              ctx
+              ctx,
+              sourceCoverage === 'xtdh-universe' ? 'xtdh-universe' : undefined
             );
           } catch (error) {
             if (isMembershipSourceTrackingActive()) throw error;
