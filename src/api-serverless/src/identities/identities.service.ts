@@ -522,9 +522,8 @@ export class IdentitiesService {
     });
   }
 
-  public async bulkCreateIdentities(
-    addresses: string[],
-    ctx: RequestContext,
+  private assertBulkIdentitySourceCoverage(
+    addresses: readonly string[],
     sourceCoverage?: 'profile-creation' | 'xtdh-universe'
   ) {
     if (
@@ -535,6 +534,36 @@ export class IdentitiesService {
     ) {
       throw new MembershipSourceNotReadyError();
     }
+  }
+
+  private async grantSignupCreditsForProfiles(
+    profiles: readonly Profile[],
+    ctx: RequestContext,
+    sourceCoverage?: 'profile-creation' | 'xtdh-universe'
+  ) {
+    for (const profile of profiles) {
+      try {
+        await helpBotCreditsService.grantSignupCredits(
+          { profileId: profile.external_id },
+          ctx,
+          sourceCoverage === 'xtdh-universe' ? 'xtdh-universe' : undefined
+        );
+      } catch (error) {
+        if (isMembershipSourceTrackingActive()) throw error;
+        this.logger.error(
+          `Failed to grant signup help bot credits for profile ${profile.external_id}`,
+          error
+        );
+      }
+    }
+  }
+
+  public async bulkCreateIdentities(
+    addresses: string[],
+    ctx: RequestContext,
+    sourceCoverage?: 'profile-creation' | 'xtdh-universe'
+  ) {
+    this.assertBulkIdentitySourceCoverage(addresses, sourceCoverage);
     try {
       ctx.timer?.start(`${this.constructor.name}->bulkCreateIdentities`);
       if (!addresses.length) {
@@ -658,21 +687,11 @@ export class IdentitiesService {
           newProfileEntities.map((it) => it.external_id),
           ctx
         );
-        for (const profile of newProfileEntities) {
-          try {
-            await helpBotCreditsService.grantSignupCredits(
-              { profileId: profile.external_id },
-              ctx,
-              sourceCoverage === 'xtdh-universe' ? 'xtdh-universe' : undefined
-            );
-          } catch (error) {
-            if (isMembershipSourceTrackingActive()) throw error;
-            this.logger.error(
-              `Failed to grant signup help bot credits for profile ${profile.external_id}`,
-              error
-            );
-          }
-        }
+        await this.grantSignupCreditsForProfiles(
+          newProfileEntities,
+          ctx,
+          sourceCoverage
+        );
       }
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->bulkCreateIdentities`);

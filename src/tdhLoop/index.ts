@@ -156,6 +156,25 @@ async function recordMetrics() {
   }
 }
 
+async function resolveTdhSourceCycle(
+  calculationDate: Date,
+  force: boolean | undefined,
+  tracking: boolean
+) {
+  if (!tracking) return { active: null, cycleId: null, prior: null };
+  const active = await findActiveMembershipTdhCycle();
+  if (active && !active.cycleId.startsWith('tdh-full:'))
+    throw new Error('Another tracked TDH source cycle is still active');
+  const cycleId =
+    active?.cycleId ??
+    membershipTdhCycleId('tdh-full', [
+      calculationDate.toISOString(),
+      force ? 'force' : 'daily'
+    ]);
+  const prior = active?.state ?? (await getMembershipTdhCycleState(cycleId));
+  return { active, cycleId, prior };
+}
+
 async function tdh(force?: boolean): Promise<{
   block: number;
   cycleId: string | null;
@@ -167,19 +186,11 @@ async function tdh(force?: boolean): Promise<{
   const lastTdhFromNow = lastTdhDB.timestamp.diffFromNow();
 
   const tracking = isMembershipSourceTrackingActive();
-  const active = tracking ? await findActiveMembershipTdhCycle() : null;
-  if (active && !active.cycleId.startsWith('tdh-full:'))
-    throw new Error('Another tracked TDH source cycle is still active');
-  const cycleId = tracking
-    ? (active?.cycleId ??
-      membershipTdhCycleId('tdh-full', [
-        lastTDHCalc.toISOString(),
-        force ? 'force' : 'daily'
-      ]))
-    : null;
-  const prior =
-    active?.state ??
-    (cycleId ? await getMembershipTdhCycleState(cycleId) : null);
+  const { active, cycleId, prior } = await resolveTdhSourceCycle(
+    lastTDHCalc,
+    force,
+    tracking
+  );
   if (tracking && prior?.status === 'COMPLETED')
     return { block: lastTdhDB.block, cycleId: null, sourceWritesNeeded: false };
   const due = lastTdhFromNow.gt(Time.hours(24)) || !!force;

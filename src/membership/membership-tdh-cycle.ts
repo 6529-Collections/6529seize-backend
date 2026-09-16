@@ -41,9 +41,8 @@ export function membershipTdhCycleId(
 }
 
 export function membershipTdhCycleCalculationDate(cycleId: string): Date {
-  const match = cycleId.match(
-    /^tdh-full:(\d{4}-\d{2}-\d{2}T00:00:00\.000Z):[0-9a-f]{16}$/
-  );
+  const match =
+    /^tdh-full:(\d{4}-\d{2}-\d{2}T00:00:00\.000Z):[0-9a-f]{16}$/.exec(cycleId);
   if (!match) throw new Error('TDH cycle has no replayable calculation date');
   const date = new Date(match[1]);
   if (Number.isNaN(date.getTime()) || date.toISOString() !== match[1])

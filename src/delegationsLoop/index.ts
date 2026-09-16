@@ -53,8 +53,10 @@ import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
 import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
 import { updateTDH } from '../tdhLoop/tdh';
-import { consolidateAndPersistTDH } from '../tdhLoop/tdh_consolidation';
-import { enqueuePartialTdhUniverseRecalculation } from '../tdhLoop/tdh_consolidation';
+import {
+  consolidateAndPersistTDH,
+  enqueuePartialTdhUniverseRecalculation
+} from '../tdhLoop/tdh_consolidation';
 import { isMembershipSourceTrackingActive } from '@/membership/membership-producer-policy';
 import {
   checkpointMembershipTdhInputs,
