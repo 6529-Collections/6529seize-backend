@@ -25,6 +25,7 @@ functions:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
+      MEMBERSHIP_DIAGNOSTIC_STAGE: ${opt:stage, self:provider.stage}
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'customReplayLoop_${opt:stage, self:provider.stage}'
 

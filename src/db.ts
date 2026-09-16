@@ -97,7 +97,8 @@ import {
   dbSupplier,
   setSqlExecutor,
   SqlExecutor,
-  sqlExecutor
+  sqlExecutor,
+  SqlTransactionOptions
 } from './sql-executor';
 import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
 import { equalIgnoreCase } from './strings';
@@ -113,12 +114,46 @@ import {
 } from '@/api/waves/wave-score.service';
 
 const mysql = require('mysql');
+import {
+  executeBudgetedSqlTransaction,
+  withSqlBudgetQueryOptions
+} from '@/db/sql-execution-budget';
+import type { PoolConnection } from 'mysql';
 
 const logger = Logger.get('DB');
 
 let AppDataSource: DataSource;
 
-export async function connect(entities: any[] = [], syncEntities = false) {
+/** Internal selection applied after secret loading; null opens a server-only connection. */
+export interface DbConnectionSelection {
+  readonly database: string | null;
+  readonly failOnInitializationError: true;
+}
+
+function validateDbConnectionSelection(
+  syncEntities: boolean,
+  selection?: DbConnectionSelection
+): void {
+  if (
+    selection &&
+    (selection.failOnInitializationError !== true ||
+      syncEntities ||
+      (selection.database !== null &&
+        !/^[a-z][a-z0-9_]{0,63}$/.test(selection.database)))
+  ) {
+    throw new Error('Invalid explicit database selection');
+  }
+  if (selection && AppDataSource?.isInitialized) {
+    throw new Error('An explicit database context is already initialized');
+  }
+}
+
+export async function connect(
+  entities: any[] = [],
+  syncEntities = false,
+  selection?: DbConnectionSelection
+) {
+  validateDbConnectionSelection(syncEntities, selection);
   logger.info(
     `[DB HOST ${process.env.DB_HOST}] [SYNC ENTITIES ${syncEntities}]`
   );
@@ -129,7 +164,9 @@ export async function connect(entities: any[] = [], syncEntities = false) {
     port: parseInt(process.env.DB_PORT!),
     username: process.env.DB_USER,
     password: process.env.DB_PASS,
-    database: process.env.DB_NAME,
+    database: selection
+      ? (selection.database ?? undefined)
+      : process.env.DB_NAME,
     entities: entities,
     synchronize: syncEntities,
     logging: false,
@@ -137,9 +174,22 @@ export async function connect(entities: any[] = [], syncEntities = false) {
     timezone: 'Etc/UTC'
   });
 
-  await AppDataSource.initialize().catch((error) =>
-    logger.error(`DB INIT ERROR: ${error}`)
-  );
+  try {
+    await AppDataSource.initialize();
+  } catch (error) {
+    if (selection) {
+      // initialize() can fail during driver.connect(), before TypeORM's own cleanup.
+      // It can also have cleaned up already; preserve the original startup error.
+      try {
+        if (AppDataSource.isInitialized) await AppDataSource.destroy();
+        else await AppDataSource.driver.disconnect();
+      } catch {
+        // A driver with no pool has nothing left to disconnect.
+      }
+      throw error;
+    }
+    logger.error(`DB INIT ERROR: ${error}`);
+  }
   class DbImpl extends SqlExecutor {
     async execute(
       sql: string,
@@ -150,9 +200,10 @@ export async function connect(entities: any[] = [], syncEntities = false) {
     }
 
     async executeNativeQueriesInTransaction<T>(
-      executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>
+      executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>,
+      options?: SqlTransactionOptions
     ) {
-      return execNativeTransactionally(executable);
+      return execNativeTransactionally(executable, options);
     }
   }
 
@@ -191,11 +242,37 @@ export function consolidateTransactions(
 }
 
 async function execNativeTransactionally<T>(
-  executable: (connectionHolder: ConnectionWrapper<QueryRunner>) => Promise<T>
+  executable: (connectionHolder: ConnectionWrapper<QueryRunner>) => Promise<T>,
+  options?: SqlTransactionOptions
 ): Promise<T> {
+  if (options?.executionBudget) {
+    return executeBudgetedSqlTransaction(
+      async () => {
+        const runner = AppDataSource.createQueryRunner('master');
+        try {
+          const physical = (await runner.connect()) as PoolConnection;
+          return {
+            handle: runner,
+            physical,
+            release: () => runner.release(),
+            transaction: {
+              begin: () => runner.startTransaction('REPEATABLE READ'),
+              commit: () => runner.commitTransaction(),
+              rollback: () => runner.rollbackTransaction()
+            }
+          };
+        } catch (error) {
+          await runner.release();
+          throw error;
+        }
+      },
+      options.executionBudget,
+      (handle) => executable({ connection: handle as QueryRunner })
+    );
+  }
   const queryRunner = AppDataSource.createQueryRunner();
   await queryRunner.connect();
-  await queryRunner.startTransaction();
+  await queryRunner.startTransaction(options?.isolationLevel);
 
   try {
     const result = await executable({ connection: queryRunner });
@@ -228,21 +305,37 @@ function prepareStatement(
   });
 }
 
+function serializeQueryRows(result: unknown): unknown[] {
+  // This is the adapter's established JSON wire normalization, not a general
+  // deep clone: Dates, Buffers, toJSON and omitted undefined fields must retain
+  // the same values in both bound and unbound database results.
+  const encoded = JSON.stringify(result);
+  return Object.values(JSON.parse(encoded));
+}
+
 export async function execSQLWithParams(
   sql: string,
   params?: Record<string, any>,
-  options?: { wrappedConnection?: ConnectionWrapper<QueryRunner> }
+  options?: DbQueryOptions
 ): Promise<any> {
   const givenConnection = options?.wrappedConnection?.connection;
+  if (
+    (options?.executionBudgetToken || options?.statementLimits) &&
+    !givenConnection
+  ) {
+    throw new Error(
+      'SQL budget options require their bound transaction connection'
+    );
+  }
   const preparedStatement = prepareStatement(sql, params);
   if (givenConnection) {
-    return givenConnection
-      .query(preparedStatement)
-      .then((result) => Object.values(JSON.parse(JSON.stringify(result))));
+    return withSqlBudgetQueryOptions(givenConnection, options, () =>
+      givenConnection.query(preparedStatement).then(serializeQueryRows)
+    );
   }
   return AppDataSource.manager
     .query(preparedStatement)
-    .then((result) => Object.values(JSON.parse(JSON.stringify(result))));
+    .then(serializeQueryRows);
 }
 
 export async function fetchLastUpload(): Promise<any> {
