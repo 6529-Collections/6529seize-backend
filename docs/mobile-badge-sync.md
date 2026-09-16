@@ -105,6 +105,13 @@ refresh-token/address pairs. The installation credential authorizes device
 cleanup without a live wallet JWT, allowing the secure client outbox to finish
 an offline logout after local accounts are removed. Each supplied refresh token
 revokes only its matching native session; other devices and web sessions remain.
+Native refresh tokens are generated and rotated with `randomBytes(64)` (512 bits),
+returned to the client establishing or refreshing that session, and stored as a
+keyed hash in the database. The mobile client keeps the bearer token in native
+secure storage and a process-local cache, not in device-list responses. Revocation
+requires the exact token for each supplied session; installation proof alone does
+not authorize revoking other sessions. A stolen bearer token can revoke its own
+session, so its confidentiality remains part of the auth contract.
 
 This route runs behind the shared API rate-limiting middleware, including for
 requests without a wallet JWT. With `API_RATE_LIMIT_ENABLED=true` and Redis
@@ -149,6 +156,12 @@ Revocation commits first, then enqueues `installation_badge_refresh` by device I
 A failed queue handoff returns an error for client retry. Repeated revisions are
 idempotent and cannot erase a later login; new registration must present the
 current revision. Registration and revocation lock the same database row.
+An authenticated stale retry may return a higher stored revision than requested.
+The frontend treats success as acknowledgement of that queued job and does not
+overwrite its securely stored revision with the response, avoiding a rollback.
+An empty sessions-only request still fences older registrations. For a claimed
+installation, advancing the revision requires installation ownership and the
+exact next revision, so knowing a device ID cannot exhaust or race that counter.
 Locking rejects a missing transaction connection before issuing any query.
 Unclaimed installations start at revision zero, and the API requires revoke
 revisions of at least one. Once claimed through registration or legacy token
@@ -179,8 +192,14 @@ Registration uses the database row lock and revision fence; it does not acquire
 the Redis device lock. Redis coordinates revocation with worker recipient checks
 and submissions, not registration with delivery. A login committed before the
 worker reads registrations is included in that count. A registration committed
-after the read can leave the submitted badge temporarily stale until a later
-read/unread event or ordinary push recalculates it; registration alone does not
+after a single-profile logout contributes only profiles currently registered;
+the deleted profile remains excluded unless deliberately registered again. Before
+the first registration, an early logout has no profile row to delete: its secret's
+revision fence rejects delayed registration with the old revision, while another
+credential can establish the installation. A valid subsequent login can therefore
+receive a nonzero aggregate badge without restoring the logged-out registration.
+A registration committed after the read can leave the submitted badge temporarily
+stale until a later read/unread event or ordinary push recalculates it; registration alone does not
 schedule a corrective badge update. Revocation must not bypass Redis
 during an outage: a pending alert could otherwise submit after its last recipient
 check and after logout. The client keeps that revocation queued until coordination

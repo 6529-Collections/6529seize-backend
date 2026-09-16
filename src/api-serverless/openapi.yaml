@@ -34255,6 +34255,7 @@ components:
           type: integer
           format: int64
           minimum: 0
+          maximum: 4294967295
           description: >-
             Current installation revision; stale registration requests are
             rejected.
