@@ -67,7 +67,7 @@ the catalogue version and twelve GLOBAL/PROFILE input versions, a fixed evaluati
 time and group high bound. It uses primary input repositories with bounded raw
 windows, sparse explicit-list discovery and a dense-profile fallback. Large input
 sets continue through a strictly decoded active-group cursor; incomplete input
-never becomes an eligible/empty answer. The worker owns the later atomic candidate,
+never becomes an eligible/empty answer. The worker owns atomic candidate,
 checkpoint and publication operations. The evaluator is not wired into API readers.
 
 Both SQL adapters support an optional connection-bound execution budget. It covers
@@ -85,6 +85,42 @@ reviewed nonunique `(is_pure_profile_group, visible, id)` index and requires onl
 membership schema, preventing it from bypassing these explicit additions. The
 original seven-table create-only scope remains unchanged. This increment enables
 no queue, schedule, producer coverage, backfill or materialized reader.
+
+The following worker increment adds `membershipRefreshLoop`: an inactive Lambda,
+its dedicated execution role, Standard SQS work queue/DLQ, disabled batch-one
+mapping, and service-owned alarms. A delivery supplies a target and a finite
+scheduling reservation; private lease tokens and checkpoint revisions remain in
+MySQL. Each bounded quantum commits candidate rows and its exact cursor together.
+Publication requires the current request, source guards, lease, immutable seed and
+exhaustion proof. GROUP/FULL runs page the canonical identity source and request
+PROFILE work; source-collation duplicate identities fail closed.
+
+`membership_runtime_checkpoints` holds independent strictly decoded GC and future
+dispatcher progress rows. GC uses bounded terminal-status scans and pending slots,
+then locks target/run/publication in order. It marks retirement once, honors reader
+grace and deletes bounded raw member windows while progressing past locked rows.
+The explicit `membership-runtime-control` schema scope creates only this table and
+adds `idx_mrun_status_updated_id(status, updated_at_millis, id)` online. Full manual
+sync requires those additions first.
+
+Runtime controls are captured before secret loading. Production accepts only
+`inactive`; its SQS mapping is disabled. The only work mode is a staging-only
+fixture mode with a fixed isolated database and fixed targets, checked before any
+database or secret access. An internal immutable connection selection overrides
+the loaded default database and rejects startup failure without falling back.
+The worker verifies the fixture ownership marker before writes. Closed IAM status
+inspection works without database access; inactive SQS delivery throws rather than
+acknowledging a hint. The worker cannot send messages or invoke itself. External
+dispatch and fixture setup/acceptance follow in M5; normal producers, API readers,
+production work and cutover remain unavailable. See
+[runtime operations](membership-runtime-operations.md).
+
+The worker catalog entry also generates independent operational-monitoring
+coverage. Its central collector allowlist and application-account log subscription
+require separate monitoring and source-stack deployments after the authorized
+main merges and service log-group creation. Combined staging uses service-owned
+alarms and direct logs until that coverage is installed and verified; see the
+[monitoring rollout sequence](membership-runtime-operations.md#independent-operational-monitoring).
 
 ## Proposal card media
 

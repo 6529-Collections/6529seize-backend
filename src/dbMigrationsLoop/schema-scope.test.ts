@@ -11,6 +11,10 @@ import {
 } from '@/entities/IWalletTransferAnalysis';
 import { handler } from './index';
 import {
+  applyMembershipRuntimeSchema,
+  membershipRuntimeSchemaEntities
+} from './membership-runtime-schema';
+import {
   applyMembershipEvaluatorSchema,
   membershipEvaluatorSchemaEntities
 } from './membership-evaluator-schema';
@@ -25,6 +29,15 @@ import {
 } from './membership-schema';
 
 jest.mock('@/db', () => ({ getDataSource: jest.fn() }));
+jest.mock('./membership-runtime-schema', () => ({
+  ...jest.requireActual('./membership-runtime-schema'),
+  applyMembershipRuntimeSchema: jest.fn().mockResolvedValue({
+    created_tables: 1,
+    added_indexes: 1,
+    verified_tables: 2,
+    verified_indexes: 1
+  })
+}));
 jest.mock('./membership-evaluator-schema', () => ({
   ...jest.requireActual('./membership-evaluator-schema'),
   applyMembershipEvaluatorSchema: jest
@@ -103,6 +116,39 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     jest
       .mocked(moderationRetentionSchemaDb.missingColumns)
       .mockResolvedValue([]);
+  });
+
+  it('applies only the runtime control scope without full synchronization or maintenance', async () => {
+    await expect(
+      invoke({ schema_scope: 'membership-runtime-control' })
+    ).resolves.toEqual({
+      schema_scope: 'membership-runtime-control',
+      created_tables: 1,
+      added_indexes: 1,
+      verified_tables: 2,
+      verified_indexes: 1
+    });
+    expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
+      logger: expect.anything(),
+      entities: membershipRuntimeSchemaEntities,
+      syncEntities: false,
+      skipRedis: true
+    });
+    expect(applyMembershipRuntimeSchema).toHaveBeenCalledTimes(1);
+    expect(applyFullSchemaWithMembershipGuard).not.toHaveBeenCalled();
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+    expect(competitionRepository.backfillLegacyMappings).not.toHaveBeenCalled();
+  });
+
+  it('does not fall through after runtime schema drift', async () => {
+    jest
+      .mocked(applyMembershipRuntimeSchema)
+      .mockRejectedValueOnce(new Error('runtime drift'));
+    await expect(
+      invoke({ schema_scope: 'membership-runtime-control' })
+    ).rejects.toThrow('runtime drift');
+    expect(applyFullSchemaWithMembershipGuard).not.toHaveBeenCalled();
+    expect(migrations.getInstance).not.toHaveBeenCalled();
   });
 
   it('applies only the evaluator index scope without full synchronization or maintenance', async () => {
@@ -334,7 +380,8 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     'claims-media-upload',
     'nft-link-page-retry',
     'membership-refresh',
-    'membership-evaluator-index'
+    'membership-evaluator-index',
+    'membership-runtime-control'
   ])('rejects explicit %s scope on scheduled events', async (scope) => {
     await expect(
       invoke({ ...scheduledEvent, schema_scope: scope })

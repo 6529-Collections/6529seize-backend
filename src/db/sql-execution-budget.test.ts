@@ -72,6 +72,8 @@ function executor(driver: ReturnType<typeof fakeDriver>): SqlExecutor {
 describe('physical SQL execution budgets', () => {
   it('restores numeric session values and rejects a cached token after healthy release', async () => {
     const driver = fakeDriver();
+    const originalFormat = jest.fn((sql: string) => sql);
+    driver.connection.config.queryFormat = originalFormat;
     let token: ReturnType<typeof sqlExecutionBudgetTokenFor> | undefined;
     const value = await executeBudgetedSqlTransaction(
       async () => driver.lease,
@@ -94,6 +96,7 @@ describe('physical SQL execution budgets', () => {
     expect(driver.statements).toContain('COMMIT');
     expect(driver.destroy).not.toHaveBeenCalled();
     expect(driver.release).toHaveBeenCalledTimes(1);
+    expect(driver.connection.config.queryFormat).toBe(originalFormat);
     const late = jest.fn().mockResolvedValue([]);
     expect(() =>
       withSqlBudgetQueryOptions(
@@ -114,6 +117,8 @@ describe('physical SQL execution budgets', () => {
       }
       return false;
     });
+    const originalFormat = jest.fn((sql: string) => sql);
+    driver.connection.config.queryFormat = originalFormat;
     const db = executor(driver);
     let context: MembershipPrimaryContext | undefined;
     let cached: ReturnType<typeof membershipQueryOptions> | undefined;
@@ -139,6 +144,7 @@ describe('physical SQL execution budgets', () => {
       connectionDestroyed: true
     });
     expect(driver.destroy).toHaveBeenCalledTimes(1);
+    expect(driver.connection.config.queryFormat).toBe(originalFormat);
     expect(() => assertMembershipPrimaryContext(context!)).toThrow(
       'active primary'
     );
@@ -423,21 +429,26 @@ describe('physical SQL execution budgets', () => {
     expect(driver.destroy).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['9007199254740993', '-1', '1.1', '00', null, NaN])(
-    'rejects invalid saved value %s before SET',
-    async (saved) => {
-      const driver = fakeDriver(undefined, saved);
-      await expect(
-        executeBudgetedSqlTransaction(
-          async () => driver.lease,
-          budget(),
-          async () => undefined
-        )
-      ).rejects.toThrow('saved SQL session');
-      expect(driver.statements).toHaveLength(1);
-      expect(driver.destroy).toHaveBeenCalledTimes(1);
-    }
-  );
+  it.each([
+    '9007199254740993',
+    BigInt('9007199254740993'),
+    '-1',
+    '1.1',
+    '00',
+    null,
+    NaN
+  ])('rejects invalid saved value %s before SET', async (saved) => {
+    const driver = fakeDriver(undefined, saved);
+    await expect(
+      executeBudgetedSqlTransaction(
+        async () => driver.lease,
+        budget(),
+        async () => undefined
+      )
+    ).rejects.toThrow('saved SQL session');
+    expect(driver.statements).toHaveLength(1);
+    expect(driver.destroy).toHaveBeenCalledTimes(1);
+  });
 
   it('preserves exact valid zero and validates limits before acquiring a pool slot', async () => {
     expect(normalizeSqlSessionInteger('0')).toBe(0);
