@@ -331,6 +331,70 @@ close the producer-coverage, consistency or runtime gates in #2065–#2067 and
 
 ## Rollout and remaining gates
 
+### Primary evaluator increment
+
+`PrimaryMembershipProfileEvaluator` implements specification 2 using bounded
+primary input reads. Capture requires exactly one identity row for the profile,
+completed provisioning evidence and idle source barriers. The immutable seed
+records its consolidation key, fixed evaluation time, group high bound and thirteen
+source entries: GLOBAL catalogue plus GLOBAL and PROFILE versions for the other
+six dimensions. Missing evidence is unknown; missing/duplicate identities and
+unsupported numeric domains are explicit errors rather than empty generations.
+
+The evaluator preserves exclusion-before-inclusion, configured criteria combined
+with AND, and grant eligibility determined by status. Grant dates still contribute
+conservative future horizons, including rules that are currently false and rules
+short-circuited by another criterion. It reads these bounded metadata fields before
+such shortcuts. Existing public permission readers continue using their current
+implementation; this library does not activate materialized membership.
+
+Candidate discovery uses an indexed bounded list lookup and the stored pure-group
+classifier. Dense profile lists use a bounded canonical group scan instead of an
+unbounded filtered UNION. Source key ordering follows the actual SQL column
+collation. Ratings, wallet ownership, grant tokens and JSON token lists use bounded
+raw windows. A profile's wallets come from its one captured consolidation key;
+multiple identity rows are an integrity error, not a second aggregation path.
+
+`evaluateQuantum` returns a completed group prefix and either `PAGE_COMPLETE` or
+`INPUT_PENDING`. The latter contains one strictly decoded `ActiveInputV1`: fixed
+fingerprints, the active group's version, a scalar stage and bounded cursors or
+exact counters. The complete persisted cursor is capped at 32 KiB. It never stores
+growing input arrays or acknowledges an unfinished group. Soft yielding requires
+actual input/stage progress; query timeout or missing evidence throws and rolls
+back the transaction. A changed active group restarts only that group's inputs;
+unrelated catalogue changes do not rewrite captured catalogue C, completed prefix,
+evaluation time or high bound. The other twelve source versions must still match.
+
+The optional `SqlExecutionBudget` on `withMembershipPrimaryTransaction` binds an
+absolute monotonic deadline, per-statement limit, finalization reserve and lock
+wait to the leased writer connection. Cached query options still receive live
+checks. Physical connection disposal and explicit callback settlement cover
+stalled reads, DML, lifecycle statements and callbacks that never return. Commit
+outcomes distinguish not sent, uncertain and acknowledged; a restoration failure
+after an acknowledged commit does not turn it into a rollback. Reconcile uncertain
+outcomes through a new transaction. Legacy callers opt out by omitting the budget.
+
+The new nonunique index `idx_user_groups_pure_visible_id` on `community_groups`
+requires the explicit `membership-evaluator-index` scope. That scope uses only
+`UserGroupEntity`, rejects an absent table or any unrelated schema drift before
+DDL, verifies full ascending visible index columns, and applies the pinned online
+addition. Metadata-lock acquisition is limited to one second. DDL has a separate
+120-second client deadline with physical disposal and uncertain-outcome reporting;
+it is not transactionally reversible. Rerun the same scope to inspect exact state
+after a lost acknowledgement, never drop/rebuild the index as retry cleanup.
+
+Manual full schema synchronization connects without automatic sync and rejects
+pending controlled membership DDL before preserving its existing synchronization
+of unrelated entities. Scheduled maintenance remains no-sync. Fresh disposable
+Jest databases initialize their fixture schema explicitly before invoking that
+guard; no local/test escape flag is added to the deployed handler.
+
+These bounds do not establish production cutover capacity. Shared plan reuse,
+actual Aurora query plans, realistic sustained writes/fanout and API p95/p99 remain
+part of #2074; producer coverage and reader fallback remain separate increments.
+
+### Staged rollout
+
 1. Deploy only `dbMigrationsLoop`, then invoke with `schema_scope=membership-refresh`
    (workflow input `db_schema_scope=membership-refresh`). This scope inspects
    TypeORM's plan, accepts only creation of the seven selected tables, executes
@@ -341,10 +405,12 @@ close the producer-coverage, consistency or runtime gates in #2065–#2067 and
    Verify a second sync produces no DDL and old wave-score/July rows survive.
 2. Keep all current readers and source jobs operating as before. No frontend,
    OpenAPI or help-bot knowledge change is required for this internal schema.
-3. Later implement and test producer transaction/barrier coverage, primary-only
-   evaluation, fenced checkpoints/publication and per-group read fallback.
-   Deploy schema before producers, dispatcher/worker before enabling triggers,
-   and keep read and background-work switches independent.
+3. Apply the explicit `membership-evaluator-index` scope before deploying the
+   primary evaluator. Fenced checkpoints/publication and an external dispatcher
+   follow as inactive runtime increments. Producer transaction/barrier coverage
+   and per-group read fallback remain later increments. Deploy schema before
+   producers, dispatcher/worker before enabling triggers, and keep read and
+   background-work switches independent.
 4. Initialize source/catalogue evidence, backfill and run shadow comparisons;
    measure real writes, broad groups, storage, lock time, queue age and API p95/
    p99 against warm/cold legacy behavior (#2074). At the reviewed scale of

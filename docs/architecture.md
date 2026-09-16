@@ -60,8 +60,31 @@ roll back all GLOBAL and PROFILE changes; concurrent refresh-target exercises
 use generated fixture keys and exact cleanup. The carrier has no schedule,
 queue, producer wiring, materialized reader or normal membership work. Deploy
 only `customReplayLoop` for this increment, after the existing membership schema.
-The future evaluator interface describes bounded primary pages; its worker and
-dispatcher are separate increments. No frontend or Help Bot behavior changes.
+No frontend or Help Bot behavior changes.
+
+The primary profile evaluator captures one canonical identity consolidation key,
+the catalogue version and twelve GLOBAL/PROFILE input versions, a fixed evaluation
+time and group high bound. It uses primary input repositories with bounded raw
+windows, sparse explicit-list discovery and a dense-profile fallback. Large input
+sets continue through a strictly decoded active-group cursor; incomplete input
+never becomes an eligible/empty answer. The worker owns the later atomic candidate,
+checkpoint and publication operations. The evaluator is not wired into API readers.
+
+Both SQL adapters support an optional connection-bound execution budget. It covers
+pool acquisition, every statement and transaction finalization, including statements
+issued internally by TypeORM. Absolute deadlines destroy the physical connection
+and explicitly settle pending callbacks; stale contexts/options cannot use a
+released connection. Commit acknowledgement is tracked separately from session
+restoration so an uncertain commit can be reconciled from durable state. Existing
+unbudgeted callers retain their previous transaction behavior.
+
+Deploy `dbMigrationsLoop` with explicit scope `membership-evaluator-index` before
+using the new candidate index on `community_groups`. The scope accepts only the
+reviewed nonunique `(is_pure_profile_group, visible, id)` index and requires online
+`INPLACE, LOCK=NONE` DDL. Manual full synchronization first checks the controlled
+membership schema, preventing it from bypassing these explicit additions. The
+original seven-table create-only scope remains unchanged. This increment enables
+no queue, schedule, producer coverage, backfill or materialized reader.
 
 ## Proposal card media
 
