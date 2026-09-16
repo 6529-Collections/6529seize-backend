@@ -1,5 +1,6 @@
 import { RequestContext } from '@/request.context';
 import { ConnectionWrapper, dbSupplier } from '@/sql-executor';
+import type { QueryRunner } from 'typeorm';
 import { createHash } from 'node:crypto';
 import {
   withMembershipPrimaryMutationContext,
@@ -18,6 +19,22 @@ import { MembershipSourceKey } from './membership-validation';
 
 const sources = new MembershipSourceStatesDb(dbSupplier);
 const jobs = new MembershipSourceJobsDb(dbSupplier);
+
+async function releaseMembershipProducerRunner(
+  runner: QueryRunner,
+  lockName: string,
+  acquired: boolean
+) {
+  try {
+    // The named lock belongs to this pinned QueryRunner connection.
+    if (acquired)
+      await runner.query('SELECT RELEASE_LOCK(?) released', [lockName]);
+  } finally {
+    // TypeORM release is safe after a failed connect; it is also required
+    // when RELEASE_LOCK itself raises.
+    await runner.release();
+  }
+}
 
 export async function getActiveMembershipGlobalJobId(
   dimension: MembershipSourceDimension,
@@ -86,9 +103,11 @@ export function membershipProfileMutation(
   dimensions: readonly MembershipSourceDimension[],
   reason: string
 ): MembershipSourceMutation {
-  const ids = Array.from(new Set(profileIds.filter(Boolean))).sort((a, b) =>
-    a < b ? -1 : a > b ? 1 : 0
-  );
+  const ids = Array.from(new Set(profileIds.filter(Boolean))).sort((a, b) => {
+    if (a < b) return -1;
+    if (a > b) return 1;
+    return 0;
+  });
   if (!ids.length || ids.length * dimensions.length > 64 || ids.length > 128)
     return membershipGlobalMutation(dimensions, reason);
   const keys: MembershipSourceKey[] = ids.flatMap((target_id) =>
@@ -164,10 +183,10 @@ export async function runMembershipGlobalSourceJob(
   // Only active tracked producer jobs need its dedicated advisory-lock handle.
   const { getDataSource } = await import('@/db');
   const runner = getDataSource().createQueryRunner();
-  await runner.connect();
   const lockName = `membership-producer:${createHash('sha256').update(jobId).digest('hex').slice(0, 32)}`;
   let acquired = false;
   try {
+    await runner.connect();
     const lock: Array<{ acquired: number }> = await runner.query(
       'SELECT GET_LOCK(?, 0) acquired',
       [lockName]
@@ -225,9 +244,6 @@ export async function runMembershipGlobalSourceJob(
       throw error;
     }
   } finally {
-    if (acquired) {
-      await runner.query('SELECT RELEASE_LOCK(?) released', [lockName]);
-    }
-    await runner.release();
+    await releaseMembershipProducerRunner(runner, lockName, acquired);
   }
 }
