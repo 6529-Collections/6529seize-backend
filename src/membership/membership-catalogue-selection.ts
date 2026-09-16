@@ -30,8 +30,12 @@ const membershipWaveGroupFields = [
 export function membershipWaveGroupIds(
   wave: Pick<WaveBaseType, (typeof membershipWaveGroupFields)[number]>
 ): string[] {
-  return membershipWaveGroupFields.flatMap((field) =>
-    wave[field] ? [wave[field]] : []
+  return Array.from(
+    new Set(
+      membershipWaveGroupFields.flatMap((field) =>
+        wave[field] ? [wave[field]] : []
+      )
+    )
   );
 }
 

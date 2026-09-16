@@ -770,9 +770,12 @@ export class WaveApiService {
                 ctxWithConnection
               );
 
+              // The new wave is not committed yet, so an all-wave candidate
+              // query cannot see a group referenced only by this wave.
               const groupIdsUserIsEligibleFor =
-                await this.userGroupsService.getGroupsUserIsEligibleFor(
+                await this.userGroupsService.getGroupsUserIsEligibleForByIds(
                   actingAsId,
+                  membershipWaveGroupIds(waveEntity),
                   timer
                 );
               const noRightToVote =
@@ -2362,10 +2365,17 @@ export class WaveApiService {
             if (!waveEntity) {
               throw new NotFoundException(`Wave ${waveId} not found`);
             }
+            // Evaluate the final roles explicitly; the catalogue query in a
+            // separate transaction cannot observe the uncommitted wave edit.
+            const responseGroupsUserIsEligibleFor =
+              await this.userGroupsService.getGroupsUserIsEligibleForByIds(
+                authenticatedProfileId,
+                membershipWaveGroupIds(waveEntity)
+              );
             return await this.waveMappers.waveEntityToApiWave(
               {
                 waveEntity,
-                groupIdsUserIsEligibleFor: groupsUserIsEligibleFor,
+                groupIdsUserIsEligibleFor: responseGroupsUserIsEligibleFor,
                 noRightToVote,
                 noRightToParticipate
               },
