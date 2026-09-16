@@ -43,7 +43,7 @@ export class ApiWaveConfig {
     'next_decision_time': number | null;
     'admin_drop_deletion_enabled': boolean;
     /**
-    * When true on an APPROVE wave, after a submission is formalized as a winner, all remaining participatory drops have their votes reset to zero, forcing the community to re-vote on the next candidate in sequence.
+    * When true on an APPROVE wave, after a submission is formalized as a winner, all remaining participatory drops have their votes reset to zero, forcing the community to re-vote on the next candidate in sequence. Only effective on APPROVE waves.
     */
     'reset_votes_after_win': boolean;
     'total_no_of_decisions': number | null;

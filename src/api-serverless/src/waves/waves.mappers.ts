@@ -149,6 +149,7 @@ export class WavesMappers {
       | 'chat_links_disabled'
       | 'voting_credit_scope'
       | 'parent_wave_id'
+      | 'reset_votes_after_win'
     > | null;
   }): Promise<InsertWaveEntity> {
     let creditorId = request.voting.creditor_id;
@@ -253,7 +254,10 @@ export class WavesMappers {
       participation_terms: request.participation.terms,
       admin_drop_deletion_enabled: request.wave.admin_drop_deletion_enabled,
       forbid_negative_votes: request.voting.forbid_negative_votes,
-      reset_votes_after_win: request.wave.reset_votes_after_win ?? existingWaveSettings?.reset_votes_after_win ?? false,
+      reset_votes_after_win:
+        request.wave.reset_votes_after_win ??
+        existingWaveSettings?.reset_votes_after_win ??
+        false,
       is_direct_message: isDirectMessage
     };
   }
@@ -375,7 +379,11 @@ export class WavesMappers {
     const voteCreditor: ApiProfileMin | null = resolveProfile(
       waveEntity.voting_credit_creditor
     );
+    const authenticatedUserCanView =
+      waveEntity.visibility_group_id === null ||
+      groupIdsUserIsEligibleFor.includes(waveEntity.visibility_group_id);
     const authenticatedUserEligibleToVote =
+      authenticatedUserCanView &&
       !waveIsClosed &&
       !noRightToVote &&
       (!waveEntity.voting_group_id ||
@@ -407,6 +415,7 @@ export class WavesMappers {
       }
     };
     const authenticatedUserEligibleToParticipate =
+      authenticatedUserCanView &&
       !waveIsClosed &&
       !noRightToParticipate &&
       (!waveEntity.participation_group_id ||
@@ -435,11 +444,13 @@ export class WavesMappers {
       terms: waveEntity.participation_terms,
       submission_strategy: mapWaveFieldsToApiSubmissionStrategy(waveEntity)
     };
-    const authenticatedUserEligibleForAdmin = isWaveCreatorOrAdmin({
-      authenticatedProfileId: relatedData.authenticatedUserId,
-      wave: waveEntity,
-      groupIdsUserIsEligibleFor
-    });
+    const authenticatedUserEligibleForAdmin =
+      authenticatedUserCanView &&
+      isWaveCreatorOrAdmin({
+        authenticatedProfileId: relatedData.authenticatedUserId,
+        wave: waveEntity,
+        groupIdsUserIsEligibleFor
+      });
     const nextDropAllowed = resolveNextDropAllowed({
       wave: waveEntity,
       authenticatedProfileId: relatedData.authenticatedUserId,
@@ -447,6 +458,7 @@ export class WavesMappers {
       nextDropTimestamp: chatDropCooldowns[waveEntity.id]?.next_drop_timestamp
     });
     const authenticatedUserEligibleToChat =
+      authenticatedUserCanView &&
       (waveEntity.chat_group_id === null ||
         groupIdsUserIsEligibleFor.includes(waveEntity.chat_group_id)) &&
       waveEntity.chat_enabled &&

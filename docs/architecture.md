@@ -528,6 +528,15 @@ Important details:
 - If media upload enqueueing fails, the API tries to roll `media_uploading` back to `false`.
 - `claimsMediaArweaveUploader` consumes `{ contract, claim_id }`, re-fetches the claim, uploads media and metadata to Arweave, then stores Arweave transaction ids back on the claim row.
 
+#### Sequential APPROVE waves (`reset_votes_after_win`)
+
+When `reset_votes_after_win = true` on an APPROVE wave, after a winner is formalized:
+
+1. `waveDecisionExecutionLoop` calls `formalizeDecision` which commits the decision and enqueues the claim build.
+2. `formalizeDecision` invokes `resetVotesForParticipatoryDropsInWave`, which deletes all vote state (voter state, ranks, real votes, credit spendings, leaderboard entries) for the wave's remaining PARTICIPATORY drops via joined DELETEs.
+3. `formalizeDecision` returns `didReset = true`, causing `createApproveDecisions` to **break** out of the candidate loop — the remaining candidates' pre-reset vote counts are stale.
+4. The next `waveDecisionExecutionLoop` cycle re-fetches candidates with fresh (zeroed) vote counts, enforcing sequential community approval.
+
 ## Deployment Model
 
 Repository package execution has a single command boundary. Developers,

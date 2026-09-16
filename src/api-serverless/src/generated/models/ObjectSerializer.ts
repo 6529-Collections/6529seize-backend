@@ -765,7 +765,7 @@ import { ApiCreateNewWaveVotingConfigClass } from '../models/ApiCreateNewWaveVot
 import { ApiCreateNewWaveVotingConfigBase          } from '../models/ApiCreateNewWaveVotingConfigBase';
 import { ApiCreateOrUpdateProfileRequest        } from '../models/ApiCreateOrUpdateProfileRequest';
 import { ApiCreateProfileCmsWalletGallerySnapshotRequest } from '../models/ApiCreateProfileCmsWalletGallerySnapshotRequest';
-import { ApiCreateWaveConfig          } from '../models/ApiCreateWaveConfig';
+import { ApiCreateWaveConfig           } from '../models/ApiCreateWaveConfig';
 import { ApiCreateWaveDropRequest } from '../models/ApiCreateWaveDropRequest';
 import { ApiCreateWaveMetadataRequest } from '../models/ApiCreateWaveMetadataRequest';
 import { ApiCreateWaveOutcome        } from '../models/ApiCreateWaveOutcome';
@@ -1071,7 +1071,7 @@ import { ApiValidateProfileCmsPackageRequest } from '../models/ApiValidateProfil
 import { ApiWallet } from '../models/ApiWallet';
 import { ApiWave } from '../models/ApiWave';
 import { ApiWaveChatConfig } from '../models/ApiWaveChatConfig';
-import { ApiWaveConfig               } from '../models/ApiWaveConfig';
+import { ApiWaveConfig                } from '../models/ApiWaveConfig';
 import { ApiWaveContributorOverview } from '../models/ApiWaveContributorOverview';
 import { ApiWaveCreditNft } from '../models/ApiWaveCreditNft';
 import { ApiWaveCreditScope } from '../models/ApiWaveCreditScope';
@@ -1094,7 +1094,7 @@ import { ApiWaveMentionSearchResult } from '../models/ApiWaveMentionSearchResult
 import { ApiWaveMetadata } from '../models/ApiWaveMetadata';
 import { ApiWaveMetadataType } from '../models/ApiWaveMetadataType';
 import { ApiWaveMetrics } from '../models/ApiWaveMetrics';
-import { ApiWaveMin                         } from '../models/ApiWaveMin';
+import { ApiWaveMin                          } from '../models/ApiWaveMin';
 import { ApiWaveNotificationPreferences } from '../models/ApiWaveNotificationPreferences';
 import { ApiWaveOutcome        } from '../models/ApiWaveOutcome';
 import { ApiWaveOutcomeCredit } from '../models/ApiWaveOutcomeCredit';
