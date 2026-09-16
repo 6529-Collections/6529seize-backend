@@ -36,6 +36,33 @@ worker, queue, schedule or materialized reader and preserves existing API and
 frontend behavior. The July draft tables are not mapped or used as readiness
 evidence. Runtime implementation and cutover remain gated by issue #2075.
 
+The next inactive increment adds source-state, durable producer-job and refresh-
+target repositories under `src/membership`. A runtime-validated primary context
+owns an explicit repeatable-read transaction; every query uses its bound writer
+connection and a fresh request cache scope. Current locking reads provide the
+later publication guard. Repository errors mark that transaction rollback-only,
+including errors a caller catches. Existing callers retain their transaction
+defaults and authorization path.
+
+Source provisioning stores a completed bootstrap receipt with its coverage
+revision; a missing or malformed receipt is unknown. Profile mutations lock
+matching GLOBAL dimensions before profile rows. Multi-stage profile jobs also
+hold GLOBAL barriers, conservatively serializing overlapping datasets. Durable
+source-set hashes and monotonic checkpoint revisions prevent partial-key
+completion and stale stage replay. TDH/xTDH completion requires the statistics-
+activated stage. Single-transaction catalogue edits retain group-version and
+deletion evidence; multi-stage catalogue fanout remains a later contract.
+
+`customReplayLoop` carries the closed IAM-invoked
+`membership_repository_diagnostics_v1` action only in staging. Its deployment
+stage is captured before shared secrets load. Source/job exercises deliberately
+roll back all GLOBAL and PROFILE changes; concurrent refresh-target exercises
+use generated fixture keys and exact cleanup. The carrier has no schedule,
+queue, producer wiring, materialized reader or normal membership work. Deploy
+only `customReplayLoop` for this increment, after the existing membership schema.
+The future evaluator interface describes bounded primary pages; its worker and
+dispatcher are separate increments. No frontend or Help Bot behavior changes.
+
 ## Proposal card media
 
 Authenticated `POST /drop-media/proposal-frame` builds a bounded, fixed HTML
