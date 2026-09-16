@@ -20,7 +20,10 @@ export function isImageMimeType(contentType: string): boolean {
 
 /** Map the declared upload type to the format served after sanitization. */
 export function getPublishedDropMediaMimeType(contentType: string): string {
-  return contentType === 'image/avif' ? 'image/webp' : contentType;
+  if (contentType === 'image/avif') {
+    return 'image/webp';
+  }
+  return contentType === 'image/jpg' ? 'image/jpeg' : contentType;
 }
 
 export function getDropMediaIngestS3Bucket(): string {

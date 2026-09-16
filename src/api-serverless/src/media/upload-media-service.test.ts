@@ -336,6 +336,7 @@ describe('UploadMediaService', () => {
     const uploadsDb = {
       findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue({
         id: 'media-upload-123',
+        declared_mime_type: 'image/jpg',
         profile_id: 'author-123',
         status: 'uploading',
         ingest_bucket: 'ingest-bucket',
@@ -384,6 +385,7 @@ describe('UploadMediaService', () => {
     });
     expect(result).toEqual({
       media_url: `${CLOUDFRONT_LINK}/drops/key.jpg`,
+      mime_type: 'image/jpeg',
       media_upload_id: 'media-upload-123',
       media_status: ApiDropMediaStatus.Processing
     });

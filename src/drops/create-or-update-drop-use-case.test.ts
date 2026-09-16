@@ -145,6 +145,35 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).rejects.toThrow('does not belong to the drop author');
   });
 
+  it.each([
+    ['image/jpeg', 'image/jpeg'],
+    ['image/jpg', 'image/jpeg'],
+    ['image/jpeg', 'image/jpg'],
+    ['image/jpg', 'image/jpg']
+  ])(
+    'accepts JPEG upload %s from a client using %s',
+    async (declared, submitted) => {
+      const useCase = createUseCaseWithMocks({
+        dropMediaUploadsDb: {
+          findById: jest.fn().mockResolvedValue({
+            declared_mime_type: declared,
+            status: DropMediaUploadStatus.READY,
+            public_url: 'https://media.example/still.jpg',
+            profile_id: 'author-profile'
+          })
+        }
+      });
+      await expect(
+        (useCase as any).verifyDropMediaUploadReference({
+          mediaUploadId: 'upload-id',
+          mediaUrl: 'https://media.example/still.jpg',
+          mimeType: submitted,
+          authorId: 'author-profile'
+        })
+      ).resolves.toBeUndefined();
+    }
+  );
+
   function createIdentitySubmissionModel(identity: string) {
     return {
       drop_id: null,
