@@ -1,7 +1,11 @@
 import type { RequestContext } from '@/request.context';
 import type { WaveBaseType } from '@/entities/IWave';
+import { USER_GROUPS_TABLE } from '@/constants';
 import { dbSupplier, type ConnectionWrapper } from '@/sql-executor';
-import { withMembershipPrimaryMutationContext } from './membership-primary';
+import {
+  membershipQueryOptions,
+  withMembershipPrimaryMutationContext
+} from './membership-primary';
 import { isMembershipSourceTrackingActive } from './membership-producer-policy';
 import { membershipCatalogueMutation } from './membership-producer-writes';
 import {
@@ -71,8 +75,25 @@ export async function withMembershipCatalogueSelection<T>(
       const sources = new MembershipSourceStatesDb(dbSupplier);
       await sources.capture([MEMBERSHIP_CATALOG_KEY], true, primary);
       return work(async (changes, reason) => {
+        // A wave can outlive the group it referenced. Do not resurrect that
+        // group's tombstone while removing the stale wave reference.
+        const existing = new Set(
+          (
+            await dbSupplier().execute<{ id: string }>(
+              `SELECT id FROM ${USER_GROUPS_TABLE} WHERE id IN (:ids)`,
+              { ids: changes.map(({ group_id }) => group_id) },
+              membershipQueryOptions(primary)
+            )
+          ).map(({ id }) => id)
+        );
         await sources.mutate(
-          membershipCatalogueMutation(changes, reason),
+          membershipCatalogueMutation(
+            changes.map(({ group_id }) => ({
+              group_id,
+              is_deleted: !existing.has(group_id)
+            })),
+            reason
+          ),
           async () => undefined,
           primary
         );

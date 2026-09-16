@@ -80,11 +80,11 @@ describeWithSeed('wave membership catalogue mutation', [], () => {
       ).toEqual([{ version: '1' }]);
       expect(
         await sqlExecutor.execute(
-          `SELECT group_id, CAST(catalog_version AS CHAR) catalog_version FROM ${MEMBERSHIP_GROUP_VERSIONS_TABLE} ORDER BY group_id`
+          `SELECT group_id, CAST(catalog_version AS CHAR) catalog_version, is_deleted FROM ${MEMBERSHIP_GROUP_VERSIONS_TABLE} ORDER BY group_id`
         )
       ).toEqual([
-        { group_id: 'g1', catalog_version: '1' },
-        { group_id: 'g2', catalog_version: '1' }
+        { group_id: 'g1', catalog_version: '1', is_deleted: true },
+        { group_id: 'g2', catalog_version: '1', is_deleted: true }
       ]);
       expect(
         await sqlExecutor.execute(
