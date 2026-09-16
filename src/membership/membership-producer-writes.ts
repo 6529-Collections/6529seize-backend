@@ -1,6 +1,5 @@
 import { RequestContext } from '@/request.context';
 import { ConnectionWrapper, dbSupplier } from '@/sql-executor';
-import { getDataSource } from '@/db';
 import { createHash } from 'node:crypto';
 import {
   withMembershipPrimaryMutationContext,
@@ -161,6 +160,9 @@ export async function runMembershipGlobalSourceJob(
     job_id: jobId,
     keys: membershipGlobalMutation(dimensions, reason).keys
   };
+  // Keep the TypeORM loop module out of API reader module initialization.
+  // Only active tracked producer jobs need its dedicated advisory-lock handle.
+  const { getDataSource } = await import('@/db');
   const runner = getDataSource().createQueryRunner();
   await runner.connect();
   const lockName = `membership-producer:${createHash('sha256').update(jobId).digest('hex').slice(0, 32)}`;
