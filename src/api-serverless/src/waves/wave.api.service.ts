@@ -2093,6 +2093,8 @@ export class WaveApiService {
               );
             let deletedMembershipGroups: string[] = [];
             if (isMembershipSourceTrackingActive()) {
+              // Wave deletion removes no community_groups rows. Capture every
+              // reference before deleting wave and curation records below.
               const deletedWaves: WaveEntity[] = [waveEntity];
               for (const subwaveId of subwaveIds) {
                 const subwave = await this.wavesApiDb.findWaveById(

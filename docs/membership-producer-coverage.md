@@ -6,6 +6,9 @@ Unknown or active source evidence stops the write. Keep tracking inactive until
 this inventory, bootstrap receipts, and the combined writer deployment have
 been reviewed together. `membership-producer-coverage.test.ts` fails if a
 guarded low-level writer gains a new call site without an inventory update.
+`populateHistoricConsolidatedTdh` is an out-of-scope manual replay service. Its
+deployment has no membership tracking control and the deploy guard rejects
+`tracking-v1` for it; do not run historical replay during tracked validation.
 
 | Authoritative write and caller | Deploy unit | Source claim and refresh target | Atomic or replay contract |
 | --- | --- | --- | --- |

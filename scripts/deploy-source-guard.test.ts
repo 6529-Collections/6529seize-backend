@@ -424,6 +424,22 @@ describe('generated deployment source guard', () => {
         MEMBERSHIP_SOURCE_TRACKING_MODE: 'tracking-v1'
       }).status
     ).toBe(1);
+    // Historical TDH replay is a general deploy unit, not a tracked producer.
+    expect(
+      validateDispatch(sourceSha, 'staging', {
+        INPUT_SERVICE: 'populateHistoricConsolidatedTdh',
+        MEMBERSHIP_SOURCE_TRACKING_MODE: 'tracking-v1'
+      }).status
+    ).toBe(1);
+    expect(
+      readFileSync(
+        path.resolve(
+          __dirname,
+          '../src/populateHistoricConsolidatedTdh/serverless.yaml'
+        ),
+        'utf8'
+      )
+    ).not.toContain('MEMBERSHIP_SOURCE_TRACKING_MODE');
   });
 
   it('requires an audited allowlist for controlled staging API reads', () => {
