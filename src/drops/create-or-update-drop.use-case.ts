@@ -1,3 +1,4 @@
+import { getPublishedDropMediaMimeType } from '@/drops/drop-media-upload.config';
 import {
   CreateOrUpdateDropModel,
   CreateOrUpdateDropPartModel,
@@ -1445,6 +1446,7 @@ export class CreateOrUpdateDropUseCase {
     }
   }
 
+  /** Bind tracked media to its author, public URL, converted MIME and state. */
   private async verifyDropMediaUploadReference({
     mediaUploadId,
     mediaUrl,
@@ -1466,7 +1468,13 @@ export class CreateOrUpdateDropUseCase {
     if (upload.public_url !== mediaUrl) {
       throw new BadRequestException(`media_upload_id does not match media url`);
     }
-    if (upload.declared_mime_type !== mimeType) {
+    // Older clients can still send the supported JPEG alias after sanitization.
+    const normalizedMimeType =
+      mimeType === 'image/jpg' ? 'image/jpeg' : mimeType;
+    if (
+      getPublishedDropMediaMimeType(upload.declared_mime_type) !==
+      normalizedMimeType
+    ) {
       throw new BadRequestException(
         `media_upload_id does not match media type`
       );
