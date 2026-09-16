@@ -1,3 +1,10 @@
+import {
+  desktopRecordIdForQuestion,
+  isDesktopKnowledgeRecord,
+  isDesktopSupportQuestion,
+  isMobileWalletQuestion,
+  normalizeMobileWalletQuestion
+} from './help-bot-desktop-knowledge';
 import { Logger } from '@/logging';
 import { CONSOLIDATIONS_LIMIT } from '@/constants';
 import {
@@ -16,6 +23,9 @@ export interface HelpBotKnowledgeRecord {
   readonly aliases: string[];
   readonly keywords: string[];
   readonly facts: string[];
+  readonly briefAnswer?: string;
+  readonly reconciliationMinBlock?: number;
+  readonly answerLinks?: readonly { label: string; url: string }[];
   readonly relatedPaths: string[];
   readonly tags: string[];
   readonly sourceRefs: string[];
@@ -34,11 +44,21 @@ export interface HelpBotKnowledgeMatch {
   readonly score: number;
 }
 
+export interface HelpBotKnowledgeQueryOptions {
+  /** Scope already established from the current question, before adding prior answer text. */
+  readonly desktopScope?: boolean;
+  readonly desktopRecordId?: string;
+}
+
 export interface HelpBotKnowledgeSource {
-  findMatch(question: string): Promise<HelpBotKnowledgeMatch | null>;
+  findMatch(
+    question: string,
+    options?: HelpBotKnowledgeQueryOptions
+  ): Promise<HelpBotKnowledgeMatch | null>;
   findMatches?(
     question: string,
-    limit?: number
+    limit?: number,
+    options?: HelpBotKnowledgeQueryOptions
   ): Promise<HelpBotKnowledgeMatch[]>;
 }
 
@@ -144,6 +164,9 @@ const EXTERNAL_WALLET_CONTEXT_PATTERNS = [
   /\bledger\b/,
   /\btrezor\b/,
   /\bwallet apps?\b/,
+  /\bapp wallets?\b/,
+  /\bmobile wallets?\b/,
+  /\b6529 mobile\b/,
   /\bbrowser extensions?\b/,
   /\bthis device\b/
 ] as const;
@@ -384,6 +407,20 @@ function readSourceRefs(raw: Record<string, unknown>): string[] {
   );
 }
 
+function readAnswerLinks(value: unknown): { label: string; url: string }[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .flatMap((item) => {
+      const link = asRecord(item);
+      const label = readString(link?.label);
+      const url = readString(link?.url);
+      if (!label || !url || !/^https:\/\/6529\.io\/[a-zA-Z0-9/_-]*$/.test(url))
+        return [];
+      return [{ label, url }];
+    })
+    .slice(0, 3);
+}
+
 function normalizeRecord(value: unknown): HelpBotKnowledgeRecord | null {
   const raw = asRecord(value);
   if (!raw) {
@@ -411,6 +448,18 @@ function normalizeRecord(value: unknown): HelpBotKnowledgeRecord | null {
     aliases: aliases.length ? aliases : [title],
     keywords: keywords.length ? keywords : aliases.concat([title]),
     facts,
+    briefAnswer: readString(raw.brief_answer) ?? undefined,
+    reconciliationMinBlock:
+      typeof raw.reconciliation_min_block === 'number' &&
+      Number.isSafeInteger(raw.reconciliation_min_block) &&
+      raw.reconciliation_min_block >= 0
+        ? raw.reconciliation_min_block
+        : undefined,
+    // Only ordinary records infer canonical links; Desktop requires explicit approval.
+    answerLinks:
+      raw.answer_links === undefined
+        ? undefined
+        : readAnswerLinks(raw.answer_links),
     relatedPaths: readStringArray(raw.relatedPaths).concat(
       readStringArray(raw.related_paths)
     ),
@@ -573,6 +622,7 @@ function hasMultiWalletTarget(normalizedQuestion: string): boolean {
 
 function hasDisqualifyingWalletContext(normalizedQuestion: string): boolean {
   return (
+    isMobileWalletQuestion(normalizedQuestion) ||
     matchesAny(normalizedQuestion, DISQUALIFYING_DELEGATION_CONTEXT_PATTERNS) ||
     matchesAny(normalizedQuestion, EXTERNAL_WALLET_CONTEXT_PATTERNS)
   );
@@ -1005,25 +1055,84 @@ function routedScore(
   );
 }
 
+function desktopRecordScore(
+  question: string,
+  questionTokens: Set<string>,
+  record: HelpBotKnowledgeRecord
+): number {
+  const matchingPhrases = uniqueStrings([
+    record.title,
+    ...record.aliases
+  ]).filter(
+    (phrase) =>
+      !/^(?:6529 )?(?:desktop|core|mobile)(?: app)?$/.test(
+        normalizeText(phrase)
+      ) && containsNormalizedPhrase(question, phrase)
+  );
+  const specificPhraseScore = matchingPhrases.reduce(
+    (score, phrase) =>
+      score + 3 + Math.min(3, normalizedPhraseTokens(phrase).length - 1),
+    0
+  );
+  const topicScore =
+    specificPhraseScore +
+    keywordScore(questionTokens, {
+      ...record,
+      keywords: record.keywords.filter(
+        (word) => word !== 'desktop' && word !== 'core'
+      ),
+      tags: []
+    });
+  // Mentioning the application alone must not make every recovery procedure a match.
+  return topicScore > 0 ? topicScore + 12 : 0;
+}
+
 function findMatchesInRecords(
   question: string,
   records: readonly HelpBotKnowledgeRecord[],
-  limit: number
+  limit: number,
+  options?: HelpBotKnowledgeQueryOptions
 ): HelpBotKnowledgeMatch[] {
-  const normalizedQuestion = normalizeText(question);
+  const searchQuestion = normalizeMobileWalletQuestion(question);
+  const normalizedQuestion = normalizeText(searchQuestion);
   if (!normalizedQuestion) {
     return [];
   }
-  const questionTokens = tokenize(question);
+  const questionTokens = tokenize(searchQuestion);
   const routedScores = routedRecordScores(normalizedQuestion);
+  const desktopQuestion =
+    options?.desktopScope ?? isDesktopSupportQuestion(question);
+  const desktopRecordId = desktopQuestion
+    ? (options?.desktopRecordId ?? desktopRecordIdForQuestion(question))
+    : undefined;
   return records
-    .map((record) => ({
-      record,
-      score:
-        phraseScore(normalizedQuestion, record) +
-        keywordScore(questionTokens, record) +
-        routedScore(routedScores, record)
-    }))
+    .filter(
+      (record) =>
+        !record.tags.includes('desktop-calculated') ||
+        record.id === desktopRecordId
+    )
+    .filter(
+      (record) =>
+        !desktopRecordId ||
+        (record.id === desktopRecordId && isDesktopKnowledgeRecord(record))
+    )
+    .filter((record) =>
+      desktopQuestion
+        ? isDesktopKnowledgeRecord(record) || record.tags.includes('desktop')
+        : !isDesktopKnowledgeRecord(record)
+    )
+    .map((record) => {
+      let score: number;
+      if (desktopRecordId) score = 100;
+      else if (desktopQuestion)
+        score = desktopRecordScore(normalizedQuestion, questionTokens, record);
+      else
+        score =
+          phraseScore(normalizedQuestion, record) +
+          keywordScore(questionTokens, record) +
+          routedScore(routedScores, record);
+      return { record, score };
+    })
     .filter((match) => match.score >= MINIMUM_MATCH_SCORE)
     .sort((a, b) => b.score - a.score || a.record.id.localeCompare(b.record.id))
     .slice(0, Math.max(1, limit));
@@ -1031,9 +1140,10 @@ function findMatchesInRecords(
 
 function findMatchInRecords(
   question: string,
-  records: readonly HelpBotKnowledgeRecord[]
+  records: readonly HelpBotKnowledgeRecord[],
+  options?: HelpBotKnowledgeQueryOptions
 ): HelpBotKnowledgeMatch | null {
-  const matches = findMatchesInRecords(question, records, 1);
+  const matches = findMatchesInRecords(question, records, 1, options);
   return matches[0] ?? null;
 }
 
@@ -1041,16 +1151,18 @@ export class StaticHelpBotKnowledgeSource implements HelpBotKnowledgeSource {
   constructor(private readonly index: HelpBotKnowledgeIndex) {}
 
   public async findMatch(
-    question: string
+    question: string,
+    options?: HelpBotKnowledgeQueryOptions
   ): Promise<HelpBotKnowledgeMatch | null> {
-    return findMatchInRecords(question, this.index.records);
+    return findMatchInRecords(question, this.index.records, options);
   }
 
   public async findMatches(
     question: string,
-    limit = 1
+    limit = 1,
+    options?: HelpBotKnowledgeQueryOptions
   ): Promise<HelpBotKnowledgeMatch[]> {
-    return findMatchesInRecords(question, this.index.records, limit);
+    return findMatchesInRecords(question, this.index.records, limit, options);
   }
 }
 
@@ -1063,18 +1175,22 @@ export class FrontendHelpBotKnowledgeSource implements HelpBotKnowledgeSource {
   ) {}
 
   public async findMatch(
-    question: string
+    question: string,
+    options?: HelpBotKnowledgeQueryOptions
   ): Promise<HelpBotKnowledgeMatch | null> {
     const index = await this.loadIndex();
-    return index ? findMatchInRecords(question, index.records) : null;
+    return index ? findMatchInRecords(question, index.records, options) : null;
   }
 
   public async findMatches(
     question: string,
-    limit = 1
+    limit = 1,
+    options?: HelpBotKnowledgeQueryOptions
   ): Promise<HelpBotKnowledgeMatch[]> {
     const index = await this.loadIndex();
-    return index ? findMatchesInRecords(question, index.records, limit) : [];
+    return index
+      ? findMatchesInRecords(question, index.records, limit, options)
+      : [];
   }
 
   private async loadIndex(): Promise<HelpBotKnowledgeIndex | null> {

@@ -1309,6 +1309,44 @@ describe('HelpBotAnswerer', () => {
     }
   });
 
+  it.each([true, false])(
+    'uses only explicitly approved footer links (links enabled: %s)',
+    async (enabled) => {
+      const index: HelpBotKnowledgeIndex = {
+        ...TEST_INDEX,
+        records: [
+          {
+            ...TEST_INDEX.records[0],
+            relatedPaths: ['/open-mobile'],
+            answerLinks: enabled
+              ? [{ label: 'TDH', url: `${BASE_URL}/network/tdh` }]
+              : []
+          }
+        ]
+      };
+      const renderer = {
+        renderAnswer: jest
+          .fn()
+          .mockResolvedValue(
+            'TDH is Total Days Held. See [TDH](https://6529.io/network/tdh).\n\nMore info: [Open Mobile](https://staging.6529.io/open-mobile)'
+          )
+      };
+      const result = await answerer(
+        renderer,
+        undefined,
+        undefined,
+        index
+      ).answer({ question: 'what is TDH?', baseUrl: BASE_URL });
+      expect(result.type).toBe('ANSWER');
+      if (result.type !== 'ANSWER') throw new Error('Expected an answer');
+      expect(result.answer).not.toContain('open-mobile');
+      expect(result.answer).toBe(
+        'TDH is Total Days Held. See TDH.' +
+          (enabled ? `\n\nMore info: [TDH](${BASE_URL}/network/tdh)` : '')
+      );
+    }
+  );
+
   it('keeps renderer-provided markdown links to canonical URLs', async () => {
     const renderer: HelpBotLlmRenderer = {
       renderAnswer: jest
