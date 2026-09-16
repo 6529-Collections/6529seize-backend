@@ -54,6 +54,8 @@ import {
   ContentModerationDb,
   contentModerationDb
 } from '@/content-moderation/content-moderation.db';
+import { isMembershipSourceTrackingActive } from '@/membership/membership-producer-policy';
+import { MembershipSourceNotReadyError } from '@/membership/membership-source-states.db';
 
 let pfpS3Client: S3Client | undefined;
 
@@ -328,7 +330,17 @@ export class IdentitiesService {
     throw new Error('Failed to upload image');
   }
 
-  public async updatePrimaryAddresses(addresses: Set<string>) {
+  public async updatePrimaryAddresses(
+    addresses: Set<string>,
+    sourceCoverage?: 'delegations-cycle'
+  ) {
+    if (
+      addresses.size > 0 &&
+      isMembershipSourceTrackingActive() &&
+      sourceCoverage !== 'delegations-cycle'
+    ) {
+      throw new MembershipSourceNotReadyError();
+    }
     for (const address of Array.from(addresses)) {
       const identity =
         await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
@@ -510,7 +522,19 @@ export class IdentitiesService {
     });
   }
 
-  public async bulkCreateIdentities(addresses: string[], ctx: RequestContext) {
+  public async bulkCreateIdentities(
+    addresses: string[],
+    ctx: RequestContext,
+    sourceCoverage?: 'profile-creation' | 'xtdh-universe'
+  ) {
+    if (
+      addresses.length > 0 &&
+      isMembershipSourceTrackingActive() &&
+      sourceCoverage !== 'profile-creation' &&
+      sourceCoverage !== 'xtdh-universe'
+    ) {
+      throw new MembershipSourceNotReadyError();
+    }
     try {
       ctx.timer?.start(`${this.constructor.name}->bulkCreateIdentities`);
       if (!addresses.length) {
