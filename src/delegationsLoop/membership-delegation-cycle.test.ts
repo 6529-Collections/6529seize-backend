@@ -59,4 +59,19 @@ describe('Delegation source cycle recovery', () => {
     expect(mockFindDelegationTransactions).not.toHaveBeenCalled();
     expect(mockPersistBlock).not.toHaveBeenCalled();
   });
+
+  it('keeps the barrier when an earlier procedural delegation write may be partial', async () => {
+    mockFindActiveCycle.mockResolvedValueOnce({
+      cycleId: 'delegation:prior-block',
+      state: {
+        status: 'FAILED',
+        progress: { stage: 'STARTED', after_id: null, revision: '1' }
+      }
+    });
+    await expect(handler({} as never, {} as never, jest.fn())).rejects.toThrow(
+      'operator repair'
+    );
+    expect(mockFindDelegationTransactions).not.toHaveBeenCalled();
+    expect(mockEnqueueUniverse).not.toHaveBeenCalled();
+  });
 });

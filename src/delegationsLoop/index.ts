@@ -86,6 +86,14 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         : null;
       if (active && !active.cycleId.startsWith('delegation:'))
         throw new Error('Another tracked TDH source cycle is still active');
+      if (active?.state.progress.stage === 'STARTED')
+        // Consolidation registrations/revocations are procedural writes. A
+        // crashed attempt may have removed a row from before startBlock, so
+        // replaying that suffix cannot prove the same result. Keep the source
+        // barrier until an operator rebuilds and repairs the cycle.
+        throw new Error(
+          'Incomplete delegation source inputs require operator repair'
+        );
       const effectiveStartBlock =
         startBlock ?? (await fetchLatestNftDelegationBlock());
       if (!isMembershipSourceTrackingActive()) {
