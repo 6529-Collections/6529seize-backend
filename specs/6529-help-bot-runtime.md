@@ -616,3 +616,150 @@ private user data beyond what is needed for debugging and abuse controls.
 - Should the default Bedrock model move from the US geo inference profile to a
   global or region-specific profile once production access, residency, and
   latency are verified?
+
+## 6529 Desktop (Core) support
+
+The frontend help index owns `desktop.*` records tagged `desktop-core`, including
+native menu labels, RPC activation, automatic workers, TDH validation and repair,
+Core wallets, IPFS, and diagnostics. Immutable Core source references establish
+provenance; the runtime consumes record facts and does not read Core source or
+inspect a user's machine. These records use a real Apps canonical route with
+source-link suppression rather than constructing public `/core` links.
+
+Explicit local-Desktop support questions and scoped follow-ups retrieve the
+corpus before calendar/public-data planning. A public total-TDH query cannot
+diagnose local node state. If the loaded corpus has no matching Desktop knowledge,
+fail closed and escalate rather than substitute public database values. A cold
+corpus-load failure propagates to the processor technical-failure/refund path.
+Explicit mobile/browser
+questions do not inherit Desktop scope, including Core questions aimed at those
+platforms. Explicit Mobile wallet questions normalize the former Core name and
+Android/iOS wording for retrieval, preserving the requested wallet action.
+"Mobile Core wallet" and "Core wallet on mobile" retrieve the same guidance as
+"mobile wallet". Explicit Desktop-to-Mobile wallet questions retain the separate
+local-storage clarification. Desktop-versus-website comparisons retain local-node scope. Pass the
+validated scope to retrieval so prior answer text cannot change it. Ordinary
+desktop-browser layout and website TDH questions retain normal routing.
+
+Desktop retrieval filters to Core records and existing Desktop-tagged app handoffs
+before ranking. Bare RPC/reconciliation terminology without local-app context asks
+which application the user means. Node/reference mismatch symptoms retain Desktop
+scope even without the words Core or TDH. Current symptoms and reported completed
+steps select the appropriate corpus record; previous answer prose is not appended
+to ranking queries. Negated completion reports do not advance recovery.
+
+Normal Desktop replies use a 350-token budget, target two to four short sentences,
+and are bounded to 1200 characters including links. Only explicit requests for
+detail permit 1600 tokens/6000 characters. Generation failures, empty output, token
+truncation, and oversized replies fall back to the corpus `brief_answer`, never a
+full fact dump by default. Authored corpus prose beginning "More info:" is
+preserved; only generated trailing footers are stripped before adding approved
+links. Older records without a short answer use a concise
+clarification fallback. Explicit detailed fallback keeps complete facts and warns
+by asking for a narrower topic if the complete procedure cannot fit.
+
+The frontend-owned `answer_links` metadata supplies named public 6529.io links.
+For ordinary non-Desktop knowledge answers, an empty list means no links, while
+omitted metadata retains existing canonical-link behavior. Desktop answers use
+only explicitly approved links: omitted metadata and an empty list both omit the
+footer, including for older corpus records. Never infer a public link from a
+native Desktop route or a source-provenance reference. Related paths cannot
+supplement an explicit list; generated links are replaced with the approved final
+footer.
+The backend removes inline model URLs and appends approved links once in a final
+`More info` footer. No irrelevant Apps link is added to native troubleshooting.
+Definitions, onboarding and later troubleshooting stages are separate records.
+Reported installation followed by a request for next steps selects the authored
+`desktop.after-installation` response: activate RPC, allow worker sync, and use
+scheduled TDH. Specific wallet/error questions and negated installation reports
+keep their own topic. Pairing an account is not required to run a node.
+`desktop-dialogue` records render their short response directly on normal turns,
+so acknowledged progress remains stable across replies. Do not repeat steps the
+user reports completing or infer missing diagnostic values.
+Ordinary answers retain their 220-token/1200-character policy; Stream is unchanged.
+
+The bot must distinguish Reconcile, Rebuild Ownership, Reset to Block, Reset to Block with Min Block, NFT Full Refresh, NFT Reset, and Recalculate TDH Now. Recovery changes local
+indexed data, not on-chain holdings. Wallet secrets and credential-bearing RPC
+URLs are never requested. Test fixtures are snapshots only; the published frontend
+index remains the sole runtime source of Desktop product knowledge.
+
+Rollout: deploy `helpBotReplyLoop` first for the new routing and answer policy,
+then publish the companion frontend corpus. The backend safely declines unsupported
+Core procedures until the corpus arrives. Publishing the new records into an old
+runtime first can misroute generic wallet questions or truncate recovery answers. No API, database migration, new service,
+or Core application release is required. Older runtimes can read the additional
+records, but need this renderer/routing update for full procedural answers.
+
+Desktop staged replies require the selected stage to exist in the published corpus
+and retain its `desktop-core` eligibility. A generic `desktop`-tagged app handoff
+may be retrieved normally but cannot be forced into a diagnostic or clarification
+stage through `desktopRecordId`.
+A new runtime against an older corpus fails closed for a missing stage, including
+a reported recalculation; it must not replay a generic TDH guide or infer a repair
+procedure from another record. Questions (including plural-subject questions such
+as "Have both workers recalculated?") and negated or uncertain completion reports
+do not authorize advancing to reconciliation. Wh-questions such as "Which workers
+recalculated" remain questions even without a question mark. Current corrections override earlier
+acknowledgements.
+Worker-check replies accept ordinary confirmations such as "yes both in sync",
+"they reached that block", and a direct "yes" to the two-worker checkpoint
+question. A checkpoint report preserves the already-established same-block
+comparison; a new contradictory or uncertain comparison overrides it. Partial,
+negated, and questioning worker reports cannot advance the recovery procedure.
+After the recalculation instruction, "done, still different" reports completion
+of that step and retains the matching-block context, so the next response gives
+the corpus-owned reconciliation procedure instead of repeating block/worker checks.
+An unrelated completed reset or refresh is not treated as completed recalculation.
+Block comparison parsing keeps the subject of each mismatch intact: "same block
+different tdh and merkle" confirms matching blocks and advances to checking workers,
+not the different-snapshot explanation. A singular correction such as "no block is
+same" in reply to that explanation also confirms the block; ordinary negations,
+questions, uncertainty, and plural "no blocks are the same" remain conservative.
+
+App availability and download questions accept short input such as "is there an
+app", "6529 app", and "app link" without requiring a platform. A bounded discovery
+vocabulary excludes wallet procedures, troubleshooting, and named third-party apps.
+Download follow-ups retain scope after the bot names both apps and their downloads.
+These requests use only `about.6529-apps` and its authored `brief_answer` and validated
+`answer_links`, presenting both 6529 Mobile and 6529 Desktop with one final link
+footer. Missing or incomplete app knowledge fails closed; product facts remain in
+the frontend corpus. This route runs before Desktop scope inheritance and never
+needs a generated answer or a public-data query.
+
+
+### Progressive Desktop reconciliation
+
+After a same-block mismatch persists through recalculation, ask for the local
+Transactions checkpoint (`Latest block in DB` in its Logs). Do not default to
+full-history reconciliation. Corpus-owned `desktop-calculated` records provide
+`reconciliation_min_block` and numeric answer templates. Validate the minimum and
+checkpoint as safe integers, with checkpoint at least the minimum, and calculate
+`minimum + floor((checkpoint - minimum) * (100 - percentage) / 100)` using exact
+integer arithmetic. Percentages refer to blocks, never transaction counts.
+
+Start at 25%, then widen to 50%, 75%, and 100% after completed reconciliation and
+TDH recalculation still leave a mismatch. Keep the percentage and supplied block
+interval in the visible final `Range:` sentence so immediate replies such as
+`done`, `still different`, and `no` preserve progress. A new explicit checkpoint
+updates the calculation. The actual reconciliation endpoint is captured by the
+worker at execution time; this can be slightly newer than the supplied checkpoint.
+Unknown, invalid, or ambiguous checkpoints request the checkpoint again instead
+of inventing one. Missing stages, invalid template data, and changed minimums
+fail closed. A fresh user confirmation is required after uncertain/unfinished
+work; never treat negated completion or different snapshot blocks as permission
+to widen recovery. Execution errors, crashes, or aborted work retain the current
+range and use reconciliation progress or TDH calculation error guidance. They
+cannot trigger widening or reset. Stop on a matching result. After 100% reconciliation and
+recalculation still fail, offer the corpus-owned transaction Reset to Block
+procedure, including Min Block as the full-resync fallback and its local data
+replacement/time/RPC effects. Confirm resync before recalculation; retain the
+reset stage across short replies. A persistent mismatch after reset, resync, and
+recalculation leads to diagnostics without repeating recovery actions. Explicit
+reset questions outside this stage and NFT/wallet questions retain their separate
+corpus-owned procedures.
+
+Calculated records cannot participate in ordinary retrieval, and their templates
+are expanded without model generation. Supported placeholders are `percentage`,
+`minimum_block`, `checkpoint`, and `from_block`. Deploy this backend before the
+companion corpus templates. No new API, persistence, service, or Desktop build is
+needed; the reply loop consumes the updated frontend-owned corpus.
