@@ -255,13 +255,43 @@ Successful early logout stores its separate fence and later retries use the
 same secret, even after that logout revoked the native session. If the
 initial request has no valid session proof, cleanup remains pending; this also
 covers a never-registered client's session expiring before offline reconciliation.
-Device IDs are visible to profiles and do not authorize device-wide deletion by themselves. Conflicting legacy
-tokens or a lost installation credential require operator-assisted reconciliation
-after ownership verification; the client keeps cleanup pending and blocks new
-registration rather than taking over another profile's rows. Once claimed, legacy
-registration calls without the secret are rejected. Keep the schema on rollback;
-roll back the frontend before API producer changes, then drain jobs before
-rolling back the worker. Old clients cannot register against a claimed installation.
+Device IDs are visible to profiles and do not authorize device-wide deletion by themselves.
+The frontend now binds a fresh push device UUID to the existing native Device
+plugin identifier. The first upgrade from an unbound UUID, and a backup restored
+onto a different native device, create a separate registration namespace and
+credential. Original logout requests remain stored with their original identity,
+secret and revision. An old namespace's failure no longer blocks registration or
+logout on the current phone; a failure within the current namespace still blocks
+registration until its logout is reconciled.
+
+Migration uses `token_scoped: true` on the revocation endpoint, with an independent
+cleanup credential and revision. Under the existing device and database locks,
+it removes only rows for the old device ID and the exact current native FCM token.
+It does not claim the legacy installation, advance its registration revision,
+revoke native sessions, or delete a different token's registrations. Initial
+cleanup requires token ownership or a live native session to establish its own
+fence; subsequent retries are idempotent. After its final matching row is removed,
+the old installation's matching retained token is cleared to prevent stale badge
+jobs targeting the replacement phone. This cleanup does not enqueue an old-device
+badge correction. Replacement registration enqueues the new device's badge refresh.
+
+Profile preferences survive logout. Authenticated registration may supply
+`previous_device_id` to copy only the acting profile's preferences when the new
+installation has none. Existing destination preferences win. Verified modern
+registration updates the token/platform for all profiles on that installation;
+legacy registrations retain their original per-profile behavior. Other device IDs
+are unaffected.
+
+Unproven old-token registrations are deliberately preserved: moving to a new phone
+is not authority to sign another phone out. Legacy conflicting cleanup may remain
+pending for support review, but does not prevent the replacement from receiving
+pushes. Lost or unreadable current credentials still fail closed. No database wipe
+or operator enrollment is required for the new installation to register. Once
+claimed, legacy registration calls without the secret are rejected. Keep the schema
+on rollback. A migrated client needs its device binding and multi-installation
+outbox reader preserved; reverting to the older storage reader is unsafe. Keep
+the recovery API available until a compatible client is in place and pending
+work drains before rolling back the worker. Old clients cannot register against a claimed installation.
 
 Offline logout is eventually reconciled only when the client can run and reach
 the API. Secure-storage failure prevents local credential removal; clearing app

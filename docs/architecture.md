@@ -1630,3 +1630,7 @@ offline recovery, security boundaries and schema-first deployment order.
 Before first registration, `push_notification_device_logout_fences` stores logout
 revisions by device ID and secret hash without claiming installation ownership.
 Registration atomically adopts only its own secret's fence and removes that row.
+
+### Push installation recovery
+
+Native push UUIDs are bound by the frontend to the native device identifier so restored backups use a separate installation. Old logout jobs retain their credentials/revisions but cannot block the new namespace. The existing revoke endpoint supports independently fenced token-scoped cleanup, removing only exact old-device/token targets without claiming or advancing that installation. It retires a matching retained token when no matching registrations remain. Registration can copy the authenticated profile's previous device preferences without overwriting destination settings and queues a replacement-device badge refresh. Credentialed token rotation updates all profiles on that installation. No extra queue, table, migration or service is introduced.
