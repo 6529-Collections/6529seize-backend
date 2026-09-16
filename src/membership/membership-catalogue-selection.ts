@@ -8,6 +8,7 @@ import {
 } from './membership-primary';
 import { isMembershipSourceTrackingActive } from './membership-producer-policy';
 import { membershipCatalogueMutation } from './membership-producer-writes';
+import { compareMembershipIds } from './membership-validation';
 import {
   MEMBERSHIP_CATALOG_KEY,
   MembershipSourceStatesDb,
@@ -47,7 +48,7 @@ export async function recordMembershipWaveSelection(
 ): Promise<void> {
   const ids = Array.from(
     new Set(groupIds.filter((id): id is string => !!id))
-  ).sort();
+  ).sort(compareMembershipIds);
   for (let offset = 0; offset < ids.length; offset += 128) {
     await record(
       ids.slice(offset, offset + 128).map((group_id) => ({

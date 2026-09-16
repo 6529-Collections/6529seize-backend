@@ -22,7 +22,7 @@ export interface MembershipRuntimeEnvironment {
   readonly stage: string | undefined;
   readonly region: string | undefined;
   readonly mode: string | undefined;
-  readonly mapping_enabled?: string | undefined;
+  readonly mapping_enabled?: string;
   readonly queue_arn: string | undefined;
   readonly queue_url: string | undefined;
 }

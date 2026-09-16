@@ -74,15 +74,44 @@ describe('Membership producer writer inventory', () => {
   });
 
   it('marks both shared identity callers and the delegation caller with their owning barrier', () => {
-    const read = (file: string) => fs.readFileSync(path.resolve(file), 'utf8');
-    expect(read('src/profiles/profiles.service.ts')).toMatch(
-      /bulkCreateIdentities\([\s\S]*?'profile-creation'/
-    );
-    expect(read('src/xtdh/recalculate-xtdh.use-case.ts')).toMatch(
-      /bulkCreateIdentities\([\s\S]*?'xtdh-universe'/
-    );
-    expect(read('src/delegationsLoop/index.ts')).toContain(
-      "updatePrimaryAddresses(wallets, 'delegations-cycle')"
+    const actual: string[] = [];
+    for (const file of sourceFiles(path.resolve('src'))) {
+      const relative = path.relative(process.cwd(), file).replace(/\\/g, '/');
+      const source = ts.createSourceFile(
+        file,
+        fs.readFileSync(file, 'utf8'),
+        ts.ScriptTarget.Latest,
+        true
+      );
+      const visit = (node: ts.Node): void => {
+        if (
+          ts.isCallExpression(node) &&
+          ts.isPropertyAccessExpression(node.expression) &&
+          ts.isIdentifier(node.expression.expression) &&
+          node.expression.expression.text === 'identitiesService' &&
+          ['bulkCreateIdentities', 'updatePrimaryAddresses'].includes(
+            node.expression.name.text
+          )
+        ) {
+          const marker = node.arguments.at(-1);
+          actual.push(
+            `${relative}:${node.expression.name.text}:${
+              marker && ts.isStringLiteralLike(marker)
+                ? marker.text
+                : 'missing-literal-marker'
+            }`
+          );
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(source);
+    }
+    expect(actual.sort()).toEqual(
+      [
+        'src/delegationsLoop/index.ts:updatePrimaryAddresses:delegations-cycle',
+        'src/profiles/profiles.service.ts:bulkCreateIdentities:profile-creation',
+        'src/xtdh/recalculate-xtdh.use-case.ts:bulkCreateIdentities:xtdh-universe'
+      ].sort()
     );
   });
 });

@@ -138,9 +138,9 @@ ${indent(yamlList(serviceNames))}
         type: choice
         description: 'API membership shadow comparison; off by default'
         required: false
-        default: off
+        default: 'off'
         options:
-          - off
+          - 'off'
           - staging-controlled-v1
       membership_reader_profile_ids:
         type: string

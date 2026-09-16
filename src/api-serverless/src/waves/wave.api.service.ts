@@ -108,6 +108,8 @@ import {
   recordMembershipWaveSelection,
   withMembershipCatalogueSelection
 } from '@/membership/membership-catalogue-selection';
+import { isMembershipSourceTrackingActive } from '@/membership/membership-producer-policy';
+import { compareMembershipIds } from '@/membership/membership-validation';
 import { waveMetadataDb } from '@/api/waves/wave-metadata.db';
 import { dropPollsDb } from '@/api/drops/drop-polls.db';
 import { RateMatter } from '@/entities/IRating';
@@ -550,6 +552,59 @@ export class WaveApiService {
     );
   }
 
+  private async insertWaveOutcomes(
+    waveId: string,
+    request: ApiCreateNewWave,
+    ctx: RequestContextWithConnection
+  ): Promise<void> {
+    const outcomeEntities: WaveOutcomeEntity[] = [];
+    const distributionItemEntities: WaveOutcomeDistributionItemEntity[] = [];
+    for (
+      let outcomeIndex = 0;
+      outcomeIndex < request.outcomes.length;
+      outcomeIndex++
+    ) {
+      const apiOutcome = request.outcomes[outcomeIndex];
+      if (!apiOutcome) continue;
+      const waveOutcomePosition = outcomeIndex + 1;
+      outcomeEntities.push({
+        wave_id: waveId,
+        type: enums.resolveOrThrow(WaveOutcomeType, apiOutcome.type),
+        subtype: apiOutcome.subtype
+          ? enums.resolveOrThrow(WaveOutcomeSubType, apiOutcome.subtype)
+          : null,
+        description: apiOutcome.description,
+        credit: apiOutcome.credit
+          ? enums.resolveOrThrow(WaveOutcomeCredit, apiOutcome.credit)
+          : null,
+        rep_category: apiOutcome.rep_category ?? null,
+        amount: apiOutcome.amount ?? null,
+        wave_outcome_position: waveOutcomePosition
+      });
+      const apiDistributionItems = apiOutcome.distribution ?? [];
+      for (
+        let distributionIndex = 0;
+        distributionIndex < apiDistributionItems.length;
+        distributionIndex++
+      ) {
+        const apiDistributionItem = apiDistributionItems[distributionIndex];
+        if (!apiDistributionItem) continue;
+        distributionItemEntities.push({
+          amount: numbers.parseIntOrNull(apiDistributionItem.amount),
+          description: apiDistributionItem.description ?? null,
+          wave_outcome_position: waveOutcomePosition,
+          wave_outcome_distribution_item_position: distributionIndex + 1,
+          wave_id: waveId
+        });
+      }
+    }
+    await this.wavesApiDb.insertOutcomes(outcomeEntities, ctx);
+    await this.wavesApiDb.insertOutcomeDistributionItems(
+      distributionItemEntities,
+      ctx
+    );
+  }
+
   public async createWave(
     createWaveRequest: ApiCreateNewWave,
     isDirectMessage: boolean,
@@ -609,64 +664,9 @@ export class WaveApiService {
                   isDirectMessage
                 });
               await this.wavesApiDb.insertWave(newEntity, ctxWithConnection);
-              const apiOutcomes = createWaveRequest.outcomes;
-              const outcomeEntities: WaveOutcomeEntity[] = [];
-              const distiributionItemEntities: WaveOutcomeDistributionItemEntity[] =
-                [];
-              for (
-                let outcomeIndex = 0;
-                outcomeIndex < apiOutcomes.length;
-                outcomeIndex++
-              ) {
-                const apiOutcome = apiOutcomes[outcomeIndex];
-                if (!apiOutcome) {
-                  continue;
-                }
-                const waveOutcomePosition = outcomeIndex + 1;
-                outcomeEntities.push({
-                  wave_id: id,
-                  type: enums.resolveOrThrow(WaveOutcomeType, apiOutcome.type),
-                  subtype: apiOutcome.subtype
-                    ? enums.resolveOrThrow(
-                        WaveOutcomeSubType,
-                        apiOutcome.subtype
-                      )
-                    : null,
-                  description: apiOutcome.description,
-                  credit: apiOutcome.credit
-                    ? enums.resolveOrThrow(WaveOutcomeCredit, apiOutcome.credit)
-                    : null,
-                  rep_category: apiOutcome.rep_category ?? null,
-                  amount: apiOutcome.amount ?? null,
-                  wave_outcome_position: waveOutcomePosition
-                });
-                const apiDistributionItems = apiOutcome.distribution ?? [];
-                for (
-                  let distributionIndex = 0;
-                  distributionIndex < apiDistributionItems.length;
-                  distributionIndex++
-                ) {
-                  const apiDistributionItem =
-                    apiDistributionItems[distributionIndex];
-                  if (!apiDistributionItem) {
-                    continue;
-                  }
-                  distiributionItemEntities.push({
-                    amount: numbers.parseIntOrNull(apiDistributionItem.amount),
-                    description: apiDistributionItem.description ?? null,
-                    wave_outcome_position: waveOutcomePosition,
-                    wave_outcome_distribution_item_position:
-                      distributionIndex + 1,
-                    wave_id: id
-                  });
-                }
-              }
-              await this.wavesApiDb.insertOutcomes(
-                outcomeEntities,
-                ctxWithConnection
-              );
-              await this.wavesApiDb.insertOutcomeDistributionItems(
-                distiributionItemEntities,
+              await this.insertWaveOutcomes(
+                id,
+                createWaveRequest,
                 ctxWithConnection
               );
               const {
@@ -2091,32 +2091,35 @@ export class WaveApiService {
                 waveId,
                 ctxWithConnection
               );
-            const deletedWaveIds = [waveId, ...subwaveIds];
-            const deletedWaves: WaveEntity[] = [waveEntity];
-            for (const subwaveId of subwaveIds) {
-              const subwave = await this.wavesApiDb.findWaveById(
-                subwaveId,
-                connection
-              );
-              if (subwave) deletedWaves.push(subwave);
+            let deletedMembershipGroups: string[] = [];
+            if (isMembershipSourceTrackingActive()) {
+              const deletedWaves: WaveEntity[] = [waveEntity];
+              for (const subwaveId of subwaveIds) {
+                const subwave = await this.wavesApiDb.findWaveById(
+                  subwaveId,
+                  connection
+                );
+                if (subwave) deletedWaves.push(subwave);
+              }
+              const deletedCurations =
+                await this.curationsDb.findWaveCurationsByWaveIds(
+                  [waveId, ...subwaveIds],
+                  connection
+                );
+              deletedMembershipGroups = [
+                ...deletedWaves.flatMap(membershipWaveGroupIds),
+                ...deletedCurations.map(
+                  (curation) => curation.community_group_id
+                )
+              ];
             }
-            const deletedCurations =
-              await this.curationsDb.findWaveCurationsByWaveIds(
-                deletedWaveIds,
-                connection
-              );
             for (const subwaveId of subwaveIds) {
               await this.deleteWaveData(subwaveId, ctxWithConnection);
             }
             await this.deleteWaveData(waveId, ctxWithConnection);
             await recordMembershipWaveSelection(
               recordCatalogue,
-              [
-                ...deletedWaves.flatMap(membershipWaveGroupIds),
-                ...deletedCurations.map(
-                  (curation) => curation.community_group_id
-                )
-              ],
+              deletedMembershipGroups,
               'wave-deleted'
             );
             await this.metricsRecorder.recordActiveIdentity(
@@ -2172,6 +2175,67 @@ export class WaveApiService {
     ]);
   }
 
+  private async validateWaveUpdateAccessAndConstraints({
+    waveId,
+    request,
+    waveBeforeUpdate,
+    authenticatedProfileId,
+    groupsUserIsEligibleFor,
+    ctxWithConnection,
+    currentMillis
+  }: {
+    waveId: string;
+    request: ApiUpdateWaveRequest;
+    waveBeforeUpdate: WaveEntity;
+    authenticatedProfileId: string;
+    groupsUserIsEligibleFor: string[];
+    ctxWithConnection: RequestContextWithConnection;
+    currentMillis: number;
+  }): Promise<void> {
+    if (
+      waveBeforeUpdate.next_decision_time !== null &&
+      waveBeforeUpdate.next_decision_time < currentMillis
+    ) {
+      throw new ForbiddenException(
+        `Wave has unresolved decisions and can't be edited at the moment. Try again later`
+      );
+    }
+    if (
+      waveBeforeUpdate.visibility_group_id !== null &&
+      !groupsUserIsEligibleFor.includes(waveBeforeUpdate.visibility_group_id)
+    ) {
+      throw new ForbiddenException(`You can't update a wave you can't view`);
+    }
+    if (
+      waveBeforeUpdate.created_by !== authenticatedProfileId &&
+      (waveBeforeUpdate.admin_group_id === null ||
+        !groupsUserIsEligibleFor.includes(waveBeforeUpdate.admin_group_id))
+    ) {
+      throw new ForbiddenException(
+        `You can't update a wave you didn't create and are not an admin of`
+      );
+    }
+    const isSelectedProfileWave = await profileWavesDb
+      .findSelectedWaveIdsByWaveIds([waveId], ctxWithConnection)
+      .then((waveIds) => waveIds.has(waveId));
+    if (isSelectedProfileWave && request.visibility.scope.group_id !== null) {
+      throw new BadRequestException(`Profile waves must remain public`);
+    }
+    if (
+      waveBeforeUpdate.type === WaveType.APPROVE &&
+      request.wave.max_winners !== null
+    ) {
+      const noOfDecisionsDone = await this.wavesApiDb
+        .countWaveDecisionsByWaveIds([waveId], ctxWithConnection)
+        .then((it) => it[waveId] ?? 0);
+      if (request.wave.max_winners < noOfDecisionsDone) {
+        throw new BadRequestException(
+          `max_winners can't be lower than already declared winners count`
+        );
+      }
+    }
+  }
+
   async updateWave(
     waveId: string,
     request: ApiUpdateWaveRequest,
@@ -2206,58 +2270,15 @@ export class WaveApiService {
               throw new NotFoundException(`Wave ${waveId} not found`);
             }
             const currentMillis = Time.currentMillis();
-            if (
-              waveBeforeUpdate.next_decision_time !== null &&
-              waveBeforeUpdate.next_decision_time < currentMillis
-            ) {
-              throw new ForbiddenException(
-                `Wave has unresolved decisions and can't be edited at the moment. Try again later`
-              );
-            }
-            if (
-              waveBeforeUpdate.visibility_group_id !== null &&
-              !groupsUserIsEligibleFor.includes(
-                waveBeforeUpdate.visibility_group_id
-              )
-            ) {
-              throw new ForbiddenException(
-                `You can't update a wave you can't view`
-              );
-            }
-            if (waveBeforeUpdate.created_by !== authenticatedProfileId) {
-              if (
-                waveBeforeUpdate.admin_group_id === null ||
-                !groupsUserIsEligibleFor.includes(
-                  waveBeforeUpdate.admin_group_id
-                )
-              ) {
-                throw new ForbiddenException(
-                  `You can't update a wave you didn't create and are not an admin of`
-                );
-              }
-            }
-            const isSelectedProfileWave = await profileWavesDb
-              .findSelectedWaveIdsByWaveIds([waveId], ctxWithConnection)
-              .then((waveIds) => waveIds.has(waveId));
-            if (
-              isSelectedProfileWave &&
-              request.visibility.scope.group_id !== null
-            ) {
-              throw new BadRequestException(`Profile waves must remain public`);
-            }
-            if (
-              waveBeforeUpdate.type === WaveType.APPROVE &&
-              request.wave.max_winners !== null
-            ) {
-              const noOfDecisionsDone = await this.wavesApiDb
-                .countWaveDecisionsByWaveIds([waveId], ctxWithConnection)
-                .then((it) => it[waveId] ?? 0);
-              if (request.wave.max_winners < noOfDecisionsDone) {
-                throw new BadRequestException(
-                  `max_winners can't be lower than already declared winners count`
-                );
-              }
-            }
+            await this.validateWaveUpdateAccessAndConstraints({
+              waveId,
+              request,
+              waveBeforeUpdate,
+              authenticatedProfileId,
+              groupsUserIsEligibleFor,
+              ctxWithConnection,
+              currentMillis
+            });
             this.assertMaxVotesPerIdentityToDropCanBeUpdated({
               request,
               waveBeforeUpdate
@@ -2305,10 +2326,10 @@ export class WaveApiService {
             await this.wavesApiDb.insertWave(updatedEntity, ctxWithConnection);
             const oldMembershipGroups = Array.from(
               new Set(membershipWaveGroupIds(waveBeforeUpdate))
-            ).sort();
+            ).sort(compareMembershipIds);
             const newMembershipGroups = Array.from(
               new Set(membershipWaveGroupIds(updatedEntity))
-            ).sort();
+            ).sort(compareMembershipIds);
             if (
               oldMembershipGroups.join('\u0000') !==
               newMembershipGroups.join('\u0000')

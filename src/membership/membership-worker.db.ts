@@ -489,6 +489,9 @@ export class MembershipWorkerDb extends LazyDbAccessCompatibleService {
         // own horizon when it publishes; do not add a duplicate request here.
         const scheduleHorizon =
           publish && !newerRequest && run.valid_until_millis !== null;
+        let availableAt: string | null = null;
+        if (newerRequest) availableAt = now;
+        else if (scheduleHorizon) availableAt = run.valid_until_millis;
         await this.db.execute(
           `UPDATE ${MEMBERSHIP_REFRESH_TARGETS_TABLE} SET completed_version=:version,active_run_id=NULL,
         requested_version=:requested,available_at_millis=:available,reason=:reason,
@@ -500,11 +503,7 @@ export class MembershipWorkerDb extends LazyDbAccessCompatibleService {
             requested: scheduleHorizon
               ? membershipAddCounter(run.request_version, 1)
               : target.requested_version,
-            available: newerRequest
-              ? now
-              : scheduleHorizon
-                ? run.valid_until_millis
-                : null,
+            available: availableAt,
             reason: scheduleHorizon ? 'grant-time-boundary' : target.reason,
             attempts: newerRequest ? target.attempts : 0,
             error: newerRequest ? target.last_error : null,
