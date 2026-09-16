@@ -30,6 +30,7 @@ const deployment = Object.freeze({
   stage: process.env.MEMBERSHIP_RUNTIME_STAGE,
   region: process.env.AWS_REGION,
   mode: process.env.MEMBERSHIP_RUNTIME_MODE,
+  mapping_enabled: process.env.MEMBERSHIP_WORKER_MAPPING_ENABLED,
   queue_arn: process.env.MEMBERSHIP_WORK_QUEUE_ARN,
   queue_url: process.env.MEMBERSHIP_WORK_QUEUE_URL
 });
@@ -101,7 +102,15 @@ export async function handleMembershipWorkerInvocation(
       stage: runtime.stage,
       region: runtime.region,
       mode: runtime.mode,
-      normal_membership_work: 'unavailable',
+      source_tracking_control: 'per-producer',
+      source_readiness: 'unverified',
+      materialized_read_control: 'api-separate',
+      background_processing_mode: runtime.mode,
+      background_processing_code_admission:
+        runtime.mode === 'staging-controlled-v1' ? 'controlled' : 'unavailable',
+      background_processing_trigger_enabled: runtime.mapping_enabled,
+      normal_membership_work:
+        runtime.mode === 'staging-controlled-v1' ? 'unverified' : 'unavailable',
       queue_arn: runtime.queue_arn
     };
   }
@@ -109,52 +118,60 @@ export async function handleMembershipWorkerInvocation(
   const options = workerOptions(context, delivery.hint.target.scope);
   const result = await doInDbContext(
     async () => {
-      await withMembershipPrimaryTransaction(
-        sqlExecutor,
-        (primary) =>
-          new MembershipRuntimeFixtureDb(sqlExecutor).assertOwnedDatabase(
-            primary
-          ),
-        {},
-        membershipWorkerBudget(options)
-      );
-      const transport = new MembershipRuntimeTransportDb(sqlExecutor);
-      const inspect = (
-        result: Awaited<ReturnType<MembershipRefreshWorker['runTarget']>> | null
-      ) =>
-        withMembershipPrimaryTransaction(
+      const fixtureMode = runtime.mode === 'staging-fixture-v1';
+      let inspect:
+        | ((
+            result: Awaited<
+              ReturnType<MembershipRefreshWorker['runTarget']>
+            > | null
+          ) => Promise<MembershipTransportDisposition>)
+        | undefined;
+      if (fixtureMode) {
+        await withMembershipPrimaryTransaction(
           sqlExecutor,
           (primary) =>
-            transport.inspectDelivery(
-              delivery.hint.target,
-              delivery.message_id,
-              result,
+            new MembershipRuntimeFixtureDb(sqlExecutor).assertOwnedDatabase(
               primary
             ),
           {},
           membershipWorkerBudget(options)
         );
-      if (
-        suppressOrFailTransport(
-          await inspect(null),
-          delivery,
-          context.awsRequestId
+        const transport = new MembershipRuntimeTransportDb(sqlExecutor);
+        inspect = (result) =>
+          withMembershipPrimaryTransaction(
+            sqlExecutor,
+            (primary) =>
+              transport.inspectDelivery(
+                delivery.hint.target,
+                delivery.message_id,
+                result,
+                primary
+              ),
+            {},
+            membershipWorkerBudget(options)
+          );
+        if (
+          suppressOrFailTransport(
+            await inspect(null),
+            delivery,
+            context.awsRequestId
+          )
         )
-      )
-        return {
-          outcome: 'NO_WORK' as const,
-          run_id: null,
-          checkpoint_version: null,
-          quanta: 0,
-          processed_count: '0',
-          query_count: 0,
-          input_rows: 0
-        };
+          return {
+            outcome: 'NO_WORK' as const,
+            run_id: null,
+            checkpoint_version: null,
+            quanta: 0,
+            processed_count: '0',
+            query_count: 0,
+            input_rows: 0
+          };
+      }
       const result = await new MembershipRefreshWorker(
         sqlExecutor,
         new PrimaryMembershipProfileEvaluator(() => sqlExecutor)
       ).runTarget(delivery.hint.target, options, {}, delivery.hint.delivery);
-      if (result.outcome === 'PENDING')
+      if (result.outcome === 'PENDING' && inspect)
         suppressOrFailTransport(
           await inspect(result),
           delivery,
@@ -167,10 +184,14 @@ export async function handleMembershipWorkerInvocation(
       entities: [],
       syncEntities: false,
       skipRedis: true,
-      databaseSelection: {
-        database: MEMBERSHIP_FIXTURE_DATABASE,
-        failOnInitializationError: true
-      }
+      ...(runtime.mode === 'staging-fixture-v1'
+        ? {
+            databaseSelection: {
+              database: MEMBERSHIP_FIXTURE_DATABASE,
+              failOnInitializationError: true
+            }
+          }
+        : {})
     }
   );
   logger.info(

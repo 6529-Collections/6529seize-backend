@@ -17,8 +17,7 @@ export function validateMembershipDispatchDeployment(
   if (
     environment.rule_arn !== expected ||
     !['true', 'false'].includes(environment.schedule_enabled ?? '') ||
-    (environment.schedule_enabled === 'true' &&
-      runtime.mode !== 'staging-fixture-v1')
+    (environment.schedule_enabled === 'true' && runtime.mode === 'inactive')
   )
     throw new Error('Invalid membership dispatch deployment');
   return Object.freeze({
@@ -50,7 +49,7 @@ export function parseMembershipScheduledEvent(
   runtime: MembershipDispatchDeployment,
   nowMillis = Date.now()
 ) {
-  if (runtime.mode !== 'staging-fixture-v1' || !runtime.schedule_enabled)
+  if (runtime.mode === 'inactive' || !runtime.schedule_enabled)
     throw new Error('Membership dispatch is inactive');
   const parsed = scheduledEvent.safeParse(event);
   if (!parsed.success)

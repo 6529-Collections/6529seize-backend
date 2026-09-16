@@ -8,7 +8,10 @@ export class RecalculateXTdhStatsUseCase {
 
   constructor(private readonly xtdhRepository: XTdhRepository) {}
 
-  public async handle(ctx: RequestContext) {
+  public async handle(
+    ctx: RequestContext,
+    activate?: (slot: 'a' | 'b') => Promise<void>
+  ) {
     try {
       ctx.timer?.start(`${this.constructor.name}->handle`);
       this.logger.info(`Determining currently active meta`);
@@ -40,12 +43,8 @@ export class RecalculateXTdhStatsUseCase {
       await metricsRecorder.recordXtdhGranted({ xtdhGranted }, ctx);
       this.logger.info(`Token stats indexed`);
       this.logger.info(`Activating slot ${slot}`);
-      await this.xtdhRepository.markStatsJustReindexed(
-        {
-          slot
-        },
-        ctx
-      );
+      if (activate) await activate(slot);
+      else await this.xtdhRepository.markStatsJustReindexed({ slot }, ctx);
       this.logger.info(`Slot ${slot} activated`);
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->handle`);

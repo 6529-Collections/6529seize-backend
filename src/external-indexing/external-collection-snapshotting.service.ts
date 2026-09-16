@@ -10,6 +10,11 @@ import {
   ExternalIndexingRepository
 } from './external-indexing.repository';
 import { RequestContext } from '../request.context';
+import {
+  membershipProducerJobId,
+  runMembershipGlobalSourceJob
+} from '../membership/membership-producer-writes';
+import { isMembershipSourceTrackingActive } from '@/membership/membership-producer-policy';
 import { ExternalIndexedOwnership721Entity } from '../entities/IExternalIndexedOwnership721';
 import { randomUUID } from 'crypto';
 import { ExternalIndexerRpc, externalIndexerRpc } from './external-indexer-rpc';
@@ -206,70 +211,90 @@ export class ExternalCollectionSnapshottingService {
         )
         .filter((it) => !!it) as ExternalIndexedOwnership721Entity[];
 
-      await this.externalIndexingRepository.upsertOwners(currentRows, ctx);
-      log.info('Snapshot: current state upserted', {
-        count: currentRows.length
-      });
-
-      const historyRows = owners
-        .map<ExternalIndexedOwnership721HistoryEntity | null>((owner, i) =>
-          owner === null
-            ? null
-            : {
-                partition,
-                token_id: ids[i].toString(),
-                block_number: atBlock,
-                log_index: 0,
-                owner,
-                since_block: atBlock,
-                since_time: sinceTimeMs,
-                acquired_as_sale: 1,
-                sale_epoch_start_block: atBlock,
-                sale_epoch_tx: null,
-                created_at: now,
-                updated_at: now
-              }
-        )
-        .filter((it): it is ExternalIndexedOwnership721HistoryEntity => !!it);
-
-      await this.externalIndexingRepository.upsertOwnersHistory(
-        historyRows,
-        ctx
+      const lagSeconds = Math.max(
+        0,
+        Time.now().minusSeconds(tsSec).toSeconds()
       );
-      log.info('Snapshot: history baseline upserted', {
-        count: historyRows.length
-      });
 
-      const tsDiffFromNowSec = Time.now().minusSeconds(tsSec).toSeconds();
-      const lagSeconds = Math.max(0, tsDiffFromNowSec);
+      await runMembershipGlobalSourceJob(
+        membershipProducerJobId('external-snapshot', [partition, atBlock]),
+        ['OWNERSHIP'],
+        'external-ownership-snapshot',
+        async (writeCtx) => {
+          await this.externalIndexingRepository.upsertOwners(
+            currentRows,
+            writeCtx
+          );
+          log.info('Snapshot: current state upserted', {
+            count: currentRows.length
+          });
 
-      const committed =
-        await this.externalIndexingRepository.commitSnapshotSuccess(
-          {
-            partition,
-            at_block: Number(atBlock),
-            lock_owner: job.lockOwner,
-            last_event_time: Time.currentMillis(),
-            standard:
-              standard === IndexedContractStandard.LEGACY_721
-                ? IndexedContractStandard.LEGACY_721
-                : IndexedContractStandard.ERC721,
-            adapter: adapterName,
-            total_supply: totalSupply,
-            lag_blocks: 0,
-            lag_seconds: lagSeconds,
-            collection_name: collectionName
-          },
-          ctx
-        );
+          const historyRows = owners
+            .map<ExternalIndexedOwnership721HistoryEntity | null>((owner, i) =>
+              owner === null
+                ? null
+                : {
+                    partition,
+                    token_id: ids[i].toString(),
+                    block_number: atBlock,
+                    log_index: 0,
+                    owner,
+                    since_block: atBlock,
+                    since_time: sinceTimeMs,
+                    acquired_as_sale: 1,
+                    sale_epoch_start_block: atBlock,
+                    sale_epoch_tx: null,
+                    created_at: now,
+                    updated_at: now
+                  }
+            )
+            .filter(
+              (it): it is ExternalIndexedOwnership721HistoryEntity => !!it
+            );
 
-      if (!committed) {
-        throw new Error('Commit conditions failed (status/lock mismatch)');
-      }
+          await this.externalIndexingRepository.upsertOwnersHistory(
+            historyRows,
+            writeCtx
+          );
+          log.info('Snapshot: history baseline upserted', {
+            count: historyRows.length
+          });
+        },
+        ctx,
+        {
+          complete: async (completeCtx) => {
+            const committed =
+              await this.externalIndexingRepository.commitSnapshotSuccess(
+                {
+                  partition,
+                  at_block: Number(atBlock),
+                  lock_owner: job.lockOwner,
+                  last_event_time: Time.currentMillis(),
+                  standard:
+                    standard === IndexedContractStandard.LEGACY_721
+                      ? IndexedContractStandard.LEGACY_721
+                      : IndexedContractStandard.ERC721,
+                  adapter: adapterName,
+                  total_supply: totalSupply,
+                  lag_blocks: 0,
+                  lag_seconds: lagSeconds,
+                  collection_name: collectionName
+                },
+                completeCtx
+              );
 
-      await this.externalIndexingRepository.setIndexedSinceIfEmpty(
-        { partition, at_block: Number(atBlock) },
-        ctx
+            if (!committed) {
+              throw new Error(
+                'Commit conditions failed (status/lock mismatch)'
+              );
+            }
+
+            await this.externalIndexingRepository.setIndexedSinceIfEmpty(
+              { partition, at_block: Number(atBlock) },
+              completeCtx
+            );
+          }
+        }
       );
 
       succeeded = true;
@@ -278,15 +303,17 @@ export class ExternalCollectionSnapshottingService {
       const msg = e?.message ?? String(e);
       log.error('Snapshot job failed', { name: e?.name, message: msg });
 
-      await this.externalIndexingRepository.failSnapshotAndUnlockWithMessage(
-        {
-          partition,
-          lock_owner: job.lockOwner,
-          last_event_time: Time.currentMillis(),
-          error_message: msg
-        },
-        ctx
-      );
+      if (!isMembershipSourceTrackingActive()) {
+        await this.externalIndexingRepository.failSnapshotAndUnlockWithMessage(
+          {
+            partition,
+            lock_owner: job.lockOwner,
+            last_event_time: Time.currentMillis(),
+            error_message: msg
+          },
+          ctx
+        );
+      }
       throw e;
     } finally {
       if (!succeeded) {

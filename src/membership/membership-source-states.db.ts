@@ -1,7 +1,8 @@
 import {
   MEMBERSHIP_GROUP_VERSIONS_TABLE,
   MEMBERSHIP_SOURCE_JOBS_TABLE,
-  MEMBERSHIP_SOURCE_STATES_TABLE
+  MEMBERSHIP_SOURCE_STATES_TABLE,
+  USER_GROUPS_TABLE
 } from '@/constants';
 import { MembershipSourceStateEntity } from '@/entities/IMembershipSourceState';
 import { LazyDbAccessCompatibleService } from '@/sql-executor';
@@ -233,6 +234,62 @@ export class MembershipSourceStatesDb extends LazyDbAccessCompatibleService {
         await this.recordGroupChanges(mutation.group_changes ?? [], ctx);
         await new MembershipRefreshTargetsDb(() => this.db).request(
           mutation.requests,
+          ctx
+        );
+        return result;
+      }
+    );
+  }
+
+  /**
+   * Profile consolidation may rewrite more than 128 group REP/CIC references.
+   * The indexed INSERT SELECT versions every affected group in one transaction
+   * without dropping IDs from a bounded JavaScript list.
+   */
+  async mutateProfileRuleReferences<T>(
+    sourceProfileId: string,
+    write: (ctx: MembershipPrimaryContext) => Promise<T>,
+    ctx: MembershipPrimaryContext
+  ): Promise<T> {
+    return timeMembershipOperation(
+      'MembershipSourceStatesDb->mutateProfileRuleReferences',
+      ctx,
+      async () => {
+        const [catalog] = await this.capture(
+          [MEMBERSHIP_CATALOG_KEY],
+          true,
+          ctx
+        );
+        const options = membershipQueryOptions(ctx);
+        const affected = await this.db.oneOrNull<{ count: number }>(
+          `SELECT COUNT(*) count FROM ${USER_GROUPS_TABLE}
+           WHERE rep_user = :sourceProfileId OR cic_user = :sourceProfileId`,
+          { sourceProfileId },
+          options
+        );
+        if (!Number(affected?.count ?? 0)) return write(ctx);
+        const nextVersion = (BigInt(catalog.version) + BigInt(1)).toString();
+        await this.db.execute(
+          `INSERT INTO ${MEMBERSHIP_GROUP_VERSIONS_TABLE}
+           (group_id, catalog_version, is_deleted, updated_at_millis)
+           SELECT id, :nextVersion, false, ${MEMBERSHIP_DB_NOW}
+           FROM ${USER_GROUPS_TABLE}
+           WHERE rep_user = :sourceProfileId OR cic_user = :sourceProfileId
+           ON DUPLICATE KEY UPDATE catalog_version = VALUES(catalog_version),
+             is_deleted = VALUES(is_deleted), updated_at_millis = ${MEMBERSHIP_DB_NOW}`,
+          { sourceProfileId, nextVersion },
+          options
+        );
+        const result = await write(ctx);
+        await this.increment([MEMBERSHIP_CATALOG_KEY], 0, ctx);
+        await new MembershipRefreshTargetsDb(() => this.db).request(
+          [
+            {
+              scope: 'FULL',
+              target_id: '*',
+              reason: 'profile-rule-reference-move'
+            }
+          ],
           ctx
         );
         return result;

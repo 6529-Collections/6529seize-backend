@@ -23,7 +23,11 @@ function resolveRuntime(input) {
   if (input.region !== selected.region)
     throw new Error('Membership runtime region does not match stage');
   const mode = input.mode === undefined ? 'inactive' : input.mode;
-  if (mode !== 'inactive' && mode !== 'staging-fixture-v1')
+  if (
+    mode !== 'inactive' &&
+    mode !== 'staging-fixture-v1' &&
+    mode !== 'staging-controlled-v1'
+  )
     throw new Error('Unsupported membership runtime mode');
   if (input.stage === 'prod' && mode !== 'inactive')
     throw new Error('Production membership runtime must remain inactive');
@@ -46,8 +50,8 @@ function resolveWorker(input) {
     throw new Error(
       'Membership worker mapping must be an exact boolean string'
     );
-  if (mapping === 'true' && runtime.mode !== 'staging-fixture-v1')
-    throw new Error('Membership mapping requires staging fixture mode');
+  if (mapping === 'true' && runtime.mode === 'inactive')
+    throw new Error('Membership mapping requires an active staging mode');
   return Object.freeze({ ...runtime, mappingEnabled: mapping === 'true' });
 }
 
@@ -62,8 +66,8 @@ function resolveDispatcher(input) {
     throw new Error(
       'Membership dispatcher schedule must be an exact boolean string'
     );
-  if (schedule === 'true' && runtime.mode !== 'staging-fixture-v1')
-    throw new Error('Membership schedule requires staging fixture mode');
+  if (schedule === 'true' && runtime.mode === 'inactive')
+    throw new Error('Membership schedule requires an active staging mode');
   return Object.freeze({
     ...runtime,
     scheduleEnabled: schedule === 'true',

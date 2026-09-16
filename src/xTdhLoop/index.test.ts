@@ -83,6 +83,43 @@ describe('xTdhLoop handler', () => {
     });
   });
 
+  it('carries a source cycle through SNS universe and direct stats messages', () => {
+    expect(
+      resolveXTdhLoopWork({
+        Records: [
+          {
+            body: JSON.stringify({
+              Type: 'Notification',
+              Message: JSON.stringify({
+                randomId: 'sns-message',
+                membership_cycle_id: 'tdh-full:cycle-1'
+              })
+            })
+          }
+        ]
+      })
+    ).toEqual({
+      phase: XTDH_LOOP_PHASE.UNIVERSE,
+      messageGroupId: 'sns-message',
+      membershipCycleId: 'tdh-full:cycle-1'
+    });
+    expect(
+      resolveXTdhLoopWork({
+        Records: [
+          {
+            body: JSON.stringify({
+              phase: XTDH_LOOP_PHASE.STATS,
+              membership_cycle_id: 'tdh-full:cycle-1'
+            })
+          }
+        ]
+      })
+    ).toEqual({
+      phase: XTDH_LOOP_PHASE.STATS,
+      membershipCycleId: 'tdh-full:cycle-1'
+    });
+  });
+
   it('warns when a mixed SQS batch is observed', () => {
     expect(
       resolveXTdhLoopWork({

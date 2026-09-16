@@ -91,7 +91,8 @@ describe('compiled membership worker infrastructure', () => {
   it.each([
     ['staging', 'inactive', 'false'],
     ['prod', 'inactive', 'false'],
-    ['staging', 'staging-fixture-v1', 'true']
+    ['staging', 'staging-fixture-v1', 'true'],
+    ['staging', 'staging-controlled-v1', 'false']
   ] as const)(
     'compiles exact %s/%s mapping %s with a bounded dedicated role',
     (stage, mode, mapping) => {
@@ -114,6 +115,7 @@ describe('compiled membership worker infrastructure', () => {
           Variables: {
             MEMBERSHIP_RUNTIME_STAGE: stage,
             MEMBERSHIP_RUNTIME_MODE: mode,
+            MEMBERSHIP_WORKER_MAPPING_ENABLED: mapping,
             MEMBERSHIP_WORK_QUEUE_ARN: {
               'Fn::GetAtt': ['MembershipWorkQueue', 'Arn']
             },

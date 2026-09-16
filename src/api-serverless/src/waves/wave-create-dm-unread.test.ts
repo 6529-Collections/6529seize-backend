@@ -141,6 +141,9 @@ describe('WaveApiService direct-message creation unread synchronization', () => 
         .fn()
         .mockResolvedValue(['creator-1', 'recipient-1']),
       getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(['dm-group']),
+      getGroupsUserIsEligibleForByIds: jest
+        .fn()
+        .mockResolvedValue(['dm-group']),
       onWaveRelatedGroupsChanged: jest.fn().mockResolvedValue(undefined)
     };
     const waveMappers = {
@@ -223,6 +226,10 @@ describe('WaveApiService direct-message creation unread synchronization', () => 
         timer: timer as any
       })
     ).resolves.toEqual({ id: 'wave-1' });
+
+    expect(
+      userGroupsService.getGroupsUserIsEligibleForByIds
+    ).toHaveBeenCalledWith('creator-1', ['dm-group'], timer);
 
     expect(
       wavesApiDb.findDmUnreadConversationStatesForIdentities

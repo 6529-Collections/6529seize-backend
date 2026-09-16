@@ -11,6 +11,10 @@ import { identitiesDb, IdentitiesDb } from '../identities/identities.db';
 import { assertUnreachable } from '../assertions';
 import { xTdhRepository, XTdhRepository } from './xtdh.repository';
 import { appFeatures } from '../app-features';
+import {
+  membershipGlobalMutation,
+  withMembershipSourceMutation
+} from '@/membership/membership-producer-writes';
 
 const GRANT_VALIDATION_FAILED_CODE = 'GRANT_VALIDATION_DENIED';
 
@@ -84,6 +88,19 @@ export class ReviewXTdhGrantsInQueueUseCase {
       return false;
     }
     seenGrants.add(grantId);
+    if (!ctx.connection) throw new Error('Grant review requires a transaction');
+    return withMembershipSourceMutation(
+      ctx.connection,
+      membershipGlobalMutation(['GRANTS'], 'grant-review'),
+      () => this.reviewCandidate(grantCandidate, ctx)
+    );
+  }
+
+  private async reviewCandidate(
+    grantCandidate: XTdhGrantEntity & { tokens: string[] },
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const grantId = grantCandidate.id;
     const now = Time.currentMillis();
     try {
       const grantCandidateEnd = grantCandidate.valid_to

@@ -111,20 +111,55 @@ ${indent(yamlList(serviceNames))}
           - membership-runtime-control
       membership_runtime_mode:
         type: choice
-        description: 'Closed membership runtime mode; production requires inactive'
+        description: 'Membership processing mode; production requires inactive'
         required: false
         default: inactive
         options:
           - inactive
           - staging-fixture-v1
+          - staging-controlled-v1
+      membership_source_tracking_mode:
+        type: choice
+        description: 'Independent source tracking; inactive by default and staging only'
+        required: false
+        default: inactive
+        options:
+          - inactive
+          - tracking-v1
+      membership_read_mode:
+        type: choice
+        description: 'API membership reader; legacy by default and controlled staging only'
+        required: false
+        default: legacy
+        options:
+          - legacy
+          - staging-controlled-v1
+      membership_shadow_mode:
+        type: choice
+        description: 'API membership shadow comparison; off by default'
+        required: false
+        default: 'off'
+        options:
+          - 'off'
+          - staging-controlled-v1
+      membership_reader_profile_ids:
+        type: string
+        description: 'Comma-separated controlled staging profile IDs (maximum 20)'
+        required: false
+        default: ''
+      membership_reader_coverage_revision:
+        type: string
+        description: 'Audited staging source coverage revision required for trusted reads'
+        required: false
+        default: ''
       membership_worker_mapping_enabled:
         type: boolean
-        description: 'Enable only the staging fixture worker SQS mapping'
+        description: 'Enable a staging membership worker SQS mapping explicitly'
         required: false
         default: false
       membership_dispatch_schedule_enabled:
         type: boolean
-        description: 'Enable only the staging fixture dispatcher schedule'
+        description: 'Enable a staging membership dispatcher schedule explicitly'
         required: false
         default: false
       release_pull_request:
@@ -191,6 +226,13 @@ jobs:
       EXPECTED_SOURCE_SHA: \${{ github.event.inputs.expected_source_sha }}
       DB_SCHEMA_SCOPE: \${{ github.event.inputs.db_schema_scope || 'full' }}
       MEMBERSHIP_RUNTIME_MODE: \${{ github.event.inputs.membership_runtime_mode || 'inactive' }}
+      MEMBERSHIP_SOURCE_TRACKING_MODE: \${{ github.event.inputs.membership_source_tracking_mode || 'inactive' }}
+      MEMBERSHIP_SOURCE_TRACKING_STAGE: \${{ github.event.inputs.environment }}
+      MEMBERSHIP_READ_MODE: \${{ github.event.inputs.membership_read_mode || 'legacy' }}
+      MEMBERSHIP_SHADOW_MODE: \${{ github.event.inputs.membership_shadow_mode || 'off' }}
+      MEMBERSHIP_READER_PROFILE_IDS: \${{ github.event.inputs.membership_reader_profile_ids || '' }}
+      MEMBERSHIP_READER_COVERAGE_REVISION: \${{ github.event.inputs.membership_reader_coverage_revision || '' }}
+      MEMBERSHIP_READER_STAGE: \${{ github.event.inputs.environment }}
       MEMBERSHIP_WORKER_MAPPING_ENABLED: \${{ github.event.inputs.membership_worker_mapping_enabled || 'false' }}
       MEMBERSHIP_DISPATCH_SCHEDULE_ENABLED: \${{ github.event.inputs.membership_dispatch_schedule_enabled || 'false' }}
     steps:
@@ -198,32 +240,66 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]]
-          [[ "$INPUT_SERVICE" =~ ^(${serviceCasePattern})$ ]]
-          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|wallet-transfer-analysis|claims-media-upload|nft-link-page-retry|membership-refresh|membership-evaluator-index|membership-runtime-control)$ ]]
+          [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]] || exit 1
+          [[ "$INPUT_SERVICE" =~ ^(${serviceCasePattern})$ ]] || exit 1
+          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|wallet-transfer-analysis|claims-media-upload|nft-link-page-retry|membership-refresh|membership-evaluator-index|membership-runtime-control)$ ]] || exit 1
           if [ "$DB_SCHEMA_SCOPE" != full ] && [ "$INPUT_SERVICE" != dbMigrationsLoop ]; then
             echo "db_schema_scope is only supported for dbMigrationsLoop" >&2
             exit 1
           fi
           membership_mode="\${MEMBERSHIP_RUNTIME_MODE:-inactive}"
+          source_tracking_mode="\${MEMBERSHIP_SOURCE_TRACKING_MODE:-inactive}"
+          read_mode="\${MEMBERSHIP_READ_MODE:-legacy}"
+          shadow_mode="\${MEMBERSHIP_SHADOW_MODE:-off}"
+          reader_profile_ids="\${MEMBERSHIP_READER_PROFILE_IDS:-}"
+          reader_coverage_revision="\${MEMBERSHIP_READER_COVERAGE_REVISION:-}"
           membership_mapping="\${MEMBERSHIP_WORKER_MAPPING_ENABLED:-false}"
           membership_schedule="\${MEMBERSHIP_DISPATCH_SCHEDULE_ENABLED:-false}"
-          [[ "$membership_mode" =~ ^(inactive|staging-fixture-v1)$ ]]
-          [[ "$membership_mapping" =~ ^(true|false)$ ]]
-          [[ "$membership_schedule" =~ ^(true|false)$ ]]
+          [[ "$membership_mode" =~ ^(inactive|staging-fixture-v1|staging-controlled-v1)$ ]] || exit 1
+          [[ "$source_tracking_mode" =~ ^(inactive|tracking-v1)$ ]] || exit 1
+          [[ "$read_mode" =~ ^(legacy|staging-controlled-v1)$ ]] || exit 1
+          [[ "$shadow_mode" =~ ^(off|staging-controlled-v1)$ ]] || exit 1
+          [[ "$membership_mapping" =~ ^(true|false)$ ]] || exit 1
+          [[ "$membership_schedule" =~ ^(true|false)$ ]] || exit 1
           if [[ "$INPUT_SERVICE" != membershipRefreshLoop && "$INPUT_SERVICE" != membershipRefreshDispatcherLoop ]] && [ "$membership_mode" != inactive ]; then
             echo "Membership mode requires a membership runtime service" >&2
             exit 1
           fi
-          if [ "$membership_mapping" = true ] && { [ "$INPUT_SERVICE" != membershipRefreshLoop ] || [ "$membership_mode" != staging-fixture-v1 ]; }; then
-            echo "Membership mapping requires the staging fixture worker" >&2
+          if [ "$source_tracking_mode" = tracking-v1 ]; then
+            if [ "$INPUT_ENVIRONMENT" != staging ] || ! [[ "$INPUT_SERVICE" =~ ^(api|overRatesRevocationLoop|tdhLoop|xTdhLoop|xTdhGrantsReviewerLoop|delegationsLoop|nftOwnersLoop|externalCollectionSnapshottingLoop|externalCollectionLiveTailingLoop|helpBotReplyLoop)$ ]]; then
+              echo "Membership source tracking requires an allowed staging producer" >&2
+              exit 1
+            fi
+          fi
+          if [ "$INPUT_SERVICE" != api ] && { [ "$read_mode" != legacy ] || [ "$shadow_mode" != off ] || [ -n "$reader_profile_ids" ] || [ -n "$reader_coverage_revision" ]; }; then
+            echo "Membership reader controls require the API service" >&2
             exit 1
           fi
-          if [ "$membership_schedule" = true ] && { [ "$INPUT_SERVICE" != membershipRefreshDispatcherLoop ] || [ "$membership_mode" != staging-fixture-v1 ]; }; then
-            echo "Membership schedule requires the staging fixture dispatcher" >&2
+          if [ "$INPUT_ENVIRONMENT" = prod ] && { [ "$read_mode" != legacy ] || [ "$shadow_mode" != off ] || [ -n "$reader_profile_ids" ] || [ -n "$reader_coverage_revision" ]; }; then
+            echo "Production membership reads and shadow must remain disabled" >&2
             exit 1
           fi
-          if [ "$INPUT_ENVIRONMENT" = prod ] && { [ "$membership_mode" != inactive ] || [ "$membership_mapping" != false ] || [ "$membership_schedule" != false ]; }; then
+          if { [ "$read_mode" = staging-controlled-v1 ] || [ "$shadow_mode" = staging-controlled-v1 ]; } && { [ -z "$reader_profile_ids" ] || [ -z "$reader_coverage_revision" ]; }; then
+            echo "Controlled membership reads require profile and audited coverage controls" >&2
+            exit 1
+          fi
+          if [ -n "$reader_profile_ids" ] && ! [[ "$reader_profile_ids" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+){0,19}$ ]]; then
+            echo "Invalid membership reader profile allowlist" >&2
+            exit 1
+          fi
+          if [ -n "$reader_coverage_revision" ] && ! [[ "$reader_coverage_revision" =~ ^[A-Za-z0-9._-]{1,100}$ ]]; then
+            echo "Invalid membership reader coverage revision" >&2
+            exit 1
+          fi
+          if [ "$membership_mapping" = true ] && { [ "$INPUT_SERVICE" != membershipRefreshLoop ] || [ "$membership_mode" = inactive ]; }; then
+            echo "Membership mapping requires an active staging worker" >&2
+            exit 1
+          fi
+          if [ "$membership_schedule" = true ] && { [ "$INPUT_SERVICE" != membershipRefreshDispatcherLoop ] || [ "$membership_mode" = inactive ]; }; then
+            echo "Membership schedule requires an active staging dispatcher" >&2
+            exit 1
+          fi
+          if [ "$INPUT_ENVIRONMENT" = prod ] && { [ "$membership_mode" != inactive ] || [ "$membership_mapping" != false ] || [ "$membership_schedule" != false ] || [ "$source_tracking_mode" != inactive ]; }; then
             echo "Production membership runtime must remain inactive" >&2
             exit 1
           fi
@@ -436,7 +512,7 @@ jobs:
           aws lambda update-function-code --function-name seizeAPI --zip-file fileb://src/api-serverless/dist/index.zip --no-cli-pager > /dev/null 2>&1
           sleep 10
           aws lambda get-function-configuration --function-name seizeAPI --query 'Environment.Variables' --output json --no-cli-pager > /tmp/current_env.json 2>/dev/null || echo '{}' > /tmp/current_env.json
-          jq --arg commit "$GIT_COMMIT" --arg claimsMediaArweaveUploadSqsUrl "$CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL" --arg attachmentsIngestS3Bucket "$ATTACHMENTS_INGEST_S3_BUCKET" --arg dropMediaSanitizeImages "$DROP_MEDIA_SANITIZE_IMAGES" --arg dropMediaIngestS3Bucket "$DROP_MEDIA_INGEST_S3_BUCKET" --arg dropMediaIngestS3Region "$DROP_MEDIA_INGEST_S3_REGION" --arg dropMediaIngestStage "$DROP_MEDIA_INGEST_STAGE" --arg dropMediaSanitizerSqsQueueName "$DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME" --arg apiGatewayWsEndpoint "$API_GATEWAY_WS_ENDPOINT" '. + {GIT_COMMIT: $commit, CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL: $claimsMediaArweaveUploadSqsUrl, ATTACHMENTS_INGEST_S3_BUCKET: $attachmentsIngestS3Bucket, DROP_MEDIA_SANITIZE_IMAGES: $dropMediaSanitizeImages, DROP_MEDIA_INGEST_S3_BUCKET: $dropMediaIngestS3Bucket, DROP_MEDIA_INGEST_S3_REGION: $dropMediaIngestS3Region, DROP_MEDIA_INGEST_STAGE: $dropMediaIngestStage, DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME: $dropMediaSanitizerSqsQueueName, API_GATEWAY_WS_ENDPOINT: $apiGatewayWsEndpoint}' /tmp/current_env.json > /tmp/app_env.json
+          jq --arg commit "$GIT_COMMIT" --arg claimsMediaArweaveUploadSqsUrl "$CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL" --arg attachmentsIngestS3Bucket "$ATTACHMENTS_INGEST_S3_BUCKET" --arg dropMediaSanitizeImages "$DROP_MEDIA_SANITIZE_IMAGES" --arg dropMediaIngestS3Bucket "$DROP_MEDIA_INGEST_S3_BUCKET" --arg dropMediaIngestS3Region "$DROP_MEDIA_INGEST_S3_REGION" --arg dropMediaIngestStage "$DROP_MEDIA_INGEST_STAGE" --arg dropMediaSanitizerSqsQueueName "$DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME" --arg apiGatewayWsEndpoint "$API_GATEWAY_WS_ENDPOINT" --arg sourceTrackingMode "$MEMBERSHIP_SOURCE_TRACKING_MODE" --arg sourceTrackingStage "$MEMBERSHIP_SOURCE_TRACKING_STAGE" --arg readMode "$MEMBERSHIP_READ_MODE" --arg shadowMode "$MEMBERSHIP_SHADOW_MODE" --arg readerProfileIds "$MEMBERSHIP_READER_PROFILE_IDS" --arg readerCoverageRevision "$MEMBERSHIP_READER_COVERAGE_REVISION" --arg readerStage "$MEMBERSHIP_READER_STAGE" '. + {GIT_COMMIT: $commit, CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL: $claimsMediaArweaveUploadSqsUrl, ATTACHMENTS_INGEST_S3_BUCKET: $attachmentsIngestS3Bucket, DROP_MEDIA_SANITIZE_IMAGES: $dropMediaSanitizeImages, DROP_MEDIA_INGEST_S3_BUCKET: $dropMediaIngestS3Bucket, DROP_MEDIA_INGEST_S3_REGION: $dropMediaIngestS3Region, DROP_MEDIA_INGEST_STAGE: $dropMediaIngestStage, DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME: $dropMediaSanitizerSqsQueueName, API_GATEWAY_WS_ENDPOINT: $apiGatewayWsEndpoint, MEMBERSHIP_SOURCE_TRACKING_MODE: $sourceTrackingMode, MEMBERSHIP_SOURCE_TRACKING_STAGE: $sourceTrackingStage, MEMBERSHIP_READ_MODE: $readMode, MEMBERSHIP_SHADOW_MODE: $shadowMode, MEMBERSHIP_READER_PROFILE_IDS: $readerProfileIds, MEMBERSHIP_READER_COVERAGE_REVISION: $readerCoverageRevision, MEMBERSHIP_READER_STAGE: $readerStage}' /tmp/current_env.json > /tmp/app_env.json
           jq --arg enabled "$ARTWORK_DOCUMENTATION_ENABLED_VALUE" --arg selfService "$ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_VALUE" --arg archiveRegion "$DEPLOY_REGION" --arg archiveBucket "6529-artwork-documentation-987989283142-$DEPLOY_REGION" '. + {ARTWORK_DOCUMENTATION_ENABLED: (if $enabled == "" then (.ARTWORK_DOCUMENTATION_ENABLED // "false") else $enabled end), ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED: (if $selfService == "" then (.ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED // "false") else $selfService end), ARTWORK_DOCUMENTATION_S3_REGION: $archiveRegion, ARTWORK_DOCUMENTATION_S3_BUCKET: $archiveBucket}' /tmp/app_env.json > /tmp/artwork_env.json
           jq '{Variables: .}' /tmp/artwork_env.json > /tmp/env_config.json
           aws lambda update-function-configuration --function-name seizeAPI --description "$VERSION_DESCRIPTION" --environment file:///tmp/env_config.json --memory-size "$API_MEMORY_SIZE" --timeout "$API_TIMEOUT" --no-cli-pager > /dev/null 2>&1

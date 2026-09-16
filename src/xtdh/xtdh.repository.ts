@@ -1141,7 +1141,8 @@ SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COAL
           active_slot: slot,
           as_of_midnight_ms: lastMidnightMillis,
           last_updated_at: now
-        }
+        },
+        { wrappedConnection: ctx.connection }
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->markStatsJustReindexed`);
