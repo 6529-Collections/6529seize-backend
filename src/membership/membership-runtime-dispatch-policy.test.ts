@@ -89,6 +89,18 @@ describe('membership dispatcher deployment and event boundary', () => {
       )
     ).toThrow('inactive');
   });
+  it('accepts a controlled staging schedule with a native event', () => {
+    expect(
+      parseMembershipScheduledEvent(
+        event(),
+        validateMembershipDispatchDeployment({
+          ...staging,
+          mode: 'staging-controlled-v1'
+        }),
+        now
+      )
+    ).toEqual({ event_id: event().id, scheduled_at: event().time });
+  });
   it.each([-30000, 0, 120000])(
     'accepts the exact time boundary at age %s ms',
     (age) => {
