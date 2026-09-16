@@ -8,6 +8,9 @@ module.exports = {
     '^@/(.*)$': '<rootDir>/src/$1'
   },
   testMatch: [
+    '<rootDir>/src/drops/drop-media-sanitizer-service.test.ts',
+    '<rootDir>/src/api-serverless/src/media/upload-media-service.test.ts',
+    '<rootDir>/src/api-serverless/src/media/media-upload-validators.test.ts',
     '<rootDir>/scripts/c2pa-installer.test.ts',
     '<rootDir>/src/artwork-documentation/assets/artwork-assets-c2pa.test.ts',
     '<rootDir>/src/media/media-runtime.test.ts',

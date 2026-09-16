@@ -24,6 +24,7 @@ import {
   createDropMediaIngestKey,
   getDropMediaIngestS3,
   getDropMediaIngestS3Bucket,
+  getPublishedDropMediaMimeType,
   isDropMediaSanitizationEnabled,
   isImageMimeType
 } from '@/drops/drop-media-upload.config';
@@ -99,6 +100,7 @@ export class UploadMediaService {
     });
   }
 
+  /** Reserve a unique public key using the converted format for AVIF uploads. */
   async getDropMediaMultipartUploadKeyAndUploadId({
     content_type,
     file_name,
@@ -108,7 +110,13 @@ export class UploadMediaService {
     file_name: string;
     content_type: string;
   }): Promise<ApiStartMultipartMediaUploadResponse> {
-    const key = this.createDropMediaKey({ file_name, author_id });
+    const key = this.createDropMediaKey({
+      file_name:
+        content_type === 'image/avif'
+          ? file_name.replace(/\.[^.]+$/, '.webp')
+          : file_name,
+      author_id
+    });
 
     return await this.createMultipartUpload({
       key,
@@ -338,6 +346,7 @@ export class UploadMediaService {
     };
   }
 
+  /** Complete private ingest once and report the eventual public media type. */
   private async completeSanitizedImageMultipartUpload({
     upload,
     parts
@@ -348,6 +357,7 @@ export class UploadMediaService {
     if (upload.status === DropMediaUploadStatus.READY) {
       return {
         media_url: upload.public_url,
+        mime_type: getPublishedDropMediaMimeType(upload.declared_mime_type),
         media_upload_id: upload.id,
         media_status: ApiDropMediaStatus.Ready
       };
@@ -410,6 +420,7 @@ export class UploadMediaService {
     ) {
       return {
         media_url: upload.public_url,
+        mime_type: getPublishedDropMediaMimeType(upload.declared_mime_type),
         media_upload_id: upload.id,
         media_status: ApiDropMediaStatus.Processing
       };
@@ -429,16 +440,19 @@ export class UploadMediaService {
 
     return {
       media_url: upload.public_url,
+      mime_type: getPublishedDropMediaMimeType(upload.declared_mime_type),
       media_upload_id: upload.id,
       media_status: ApiDropMediaStatus.Processing
     };
   }
 
+  /** Keep concurrent completion responses consistent with the published format. */
   private processingResponse(
     upload: DropMediaUploadEntity
   ): ApiCompleteMultipartUploadResponse {
     return {
       media_url: upload.public_url,
+      mime_type: getPublishedDropMediaMimeType(upload.declared_mime_type),
       media_upload_id: upload.id,
       media_status: ApiDropMediaStatus.Processing
     };
@@ -494,8 +508,12 @@ export class UploadMediaService {
     return uploadId;
   }
 
+  /** Always convert AVIF for older viewers, regardless of the sanitizer flag. */
   private shouldSanitizeMultipartUpload(contentType: string): boolean {
-    return isDropMediaSanitizationEnabled() && isImageMimeType(contentType);
+    return (
+      contentType === 'image/avif' ||
+      (isDropMediaSanitizationEnabled() && isImageMimeType(contentType))
+    );
   }
 
   private async findTrackedDropMediaUpload({
