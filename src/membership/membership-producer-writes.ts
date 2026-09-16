@@ -1,5 +1,6 @@
 import { RequestContext } from '@/request.context';
 import { ConnectionWrapper, dbSupplier } from '@/sql-executor';
+import { getDataSource } from '@/db';
 import { createHash } from 'node:crypto';
 import {
   withMembershipPrimaryMutationContext,
@@ -44,6 +45,22 @@ export async function withMembershipSourceMutation<T>(
   return withMembershipPrimaryMutationContext(
     connection,
     (primary) => sources.mutate(mutation, write, primary),
+    ctx
+  );
+}
+
+/** Version every group whose REP/CIC rule is rewritten by a profile merge. */
+export async function withMembershipProfileRuleReferenceMutation<T>(
+  connection: ConnectionWrapper<unknown>,
+  sourceProfileId: string,
+  write: () => Promise<T>,
+  ctx: RequestContext = {}
+): Promise<T> {
+  if (!isMembershipSourceTrackingActive()) return write();
+  return withMembershipPrimaryMutationContext(
+    connection,
+    (primary) =>
+      sources.mutateProfileRuleReferences(sourceProfileId, write, primary),
     ctx
   );
 }
@@ -111,85 +128,87 @@ export async function runMembershipGlobalSourceJob(
   jobId: string,
   dimensions: readonly MembershipSourceDimension[],
   reason: string,
-  write: () => Promise<void>,
-  ctx: RequestContext = {}
+  write: (ctx: RequestContext) => Promise<void>,
+  ctx: RequestContext = {},
+  options: {
+    readonly atomicWrite?: boolean;
+    readonly complete?: (ctx: RequestContext) => Promise<void>;
+  } = {}
 ): Promise<void> {
   if (!isMembershipSourceTrackingActive()) {
-    await write();
+    await write(ctx);
+    await options.complete?.(ctx);
     return;
   }
   const identity = {
     job_id: jobId,
     keys: membershipGlobalMutation(dimensions, reason).keys
   };
-  const db = dbSupplier();
-  await db.executeNativeQueriesInTransaction(async (lockConnection) => {
-    const lockName = `membership-producer:${createHash('sha256').update(jobId).digest('hex').slice(0, 32)}`;
-    const lock = await db.oneOrNull<{ acquired: number }>(
-      'SELECT GET_LOCK(:lockName, 0) acquired',
-      { lockName },
-      { wrappedConnection: lockConnection }
+  const runner = getDataSource().createQueryRunner();
+  await runner.connect();
+  const lockName = `membership-producer:${createHash('sha256').update(jobId).digest('hex').slice(0, 32)}`;
+  let acquired = false;
+  try {
+    const lock: Array<{ acquired: number }> = await runner.query(
+      'SELECT GET_LOCK(?, 0) acquired',
+      [lockName]
     );
-    if (Number(lock?.acquired) !== 1)
+    acquired = Number(lock[0]?.acquired) === 1;
+    if (!acquired)
       throw new Error('Membership producer cycle is already running');
+    const started = await withMembershipPrimaryTransaction(
+      dbSupplier(),
+      async (primary) => {
+        const current = await jobs.start(
+          identity,
+          { stage: 'STARTED', after_id: null },
+          primary
+        );
+        return current.status === 'FAILED'
+          ? jobs.resume(identity, current.progress, primary)
+          : current;
+      },
+      ctx
+    );
+    if (started.status === 'COMPLETED') return;
     try {
-      const started = await withMembershipPrimaryTransaction(
+      if (!options.atomicWrite) await write(ctx);
+      await withMembershipPrimaryTransaction(
         dbSupplier(),
-        async (primary) => {
-          const current = await jobs.start(
-            identity,
-            { stage: 'STARTED', after_id: null },
-            primary
-          );
-          return current.status === 'FAILED'
-            ? jobs.resume(identity, current.progress, primary)
-            : current;
-        },
+        (primary) =>
+          jobs
+            .complete(
+              identity,
+              started.progress,
+              [{ scope: 'FULL', target_id: '*', reason }],
+              async () => {
+                if (options.atomicWrite) await write(primary);
+                await options.complete?.(primary);
+              },
+              primary
+            )
+            .then(() => undefined),
         ctx
       );
-      if (started.status === 'COMPLETED') return;
+    } catch (error) {
       try {
-        await write();
         await withMembershipPrimaryTransaction(
           dbSupplier(),
           (primary) =>
             jobs
-              .complete(
-                identity,
-                started.progress,
-                [{ scope: 'FULL', target_id: '*', reason }],
-                async () => undefined,
-                primary
-              )
+              .fail(identity, started.progress, 'SOURCE_WRITE_FAILED', primary)
               .then(() => undefined),
           ctx
         );
-      } catch (error) {
-        try {
-          await withMembershipPrimaryTransaction(
-            dbSupplier(),
-            (primary) =>
-              jobs
-                .fail(
-                  identity,
-                  started.progress,
-                  'SOURCE_WRITE_FAILED',
-                  primary
-                )
-                .then(() => undefined),
-            ctx
-          );
-        } catch {
-          // A RUNNING or FAILED barrier remains authoritative until repair.
-        }
-        throw error;
+      } catch {
+        // A RUNNING or FAILED barrier remains authoritative until repair.
       }
-    } finally {
-      await db.execute(
-        'SELECT RELEASE_LOCK(:lockName) released',
-        { lockName },
-        { wrappedConnection: lockConnection }
-      );
+      throw error;
     }
-  });
+  } finally {
+    if (acquired) {
+      await runner.query('SELECT RELEASE_LOCK(?) released', [lockName]);
+    }
+    await runner.release();
+  }
 }
