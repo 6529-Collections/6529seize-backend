@@ -1,5 +1,42 @@
 # Inactive membership runtime operations
 
+## Milestones 6–7 controls and activation boundary
+
+The source-producer and scoped-reader integrations are released behind separate
+controls. Source tracking defaults to `inactive`; ordinary writes retain their
+existing behavior. A staging deployment can opt into `tracking-v1` only after
+every relevant writer is on compatible code and an audited source/bootstrap
+coverage receipt exists. Tracking is captured before shared secrets load. In
+tracking mode, missing source evidence fails the source transaction rather than
+creating a zero-version key or claiming readiness. Each committed mutation
+coalesces a durable PROFILE, GROUP or FULL target; no SQS send is required for
+the invalidation to survive. With processing disabled, the bounded target-key
+space and upserted counters retain work for a later controlled drain. Monitor
+target count, oldest due age and database write overhead before enabling
+tracking for sustained traffic.
+
+The worker and dispatcher have an additional staging-only
+`staging-controlled-v1` admission mode for the application database. Their SQS
+mapping and EventBridge schedule remain independently disabled by default; a
+mode change alone does not start background processing or establish source
+readiness. The existing isolated fixture mode remains separate. Production
+continues to accept only `inactive` for both services. No general bootstrap,
+backfill, reader cutover or routine schedule is part of this release.
+
+API materialized reads default to the legacy direct path and shadow comparison
+defaults off. Controlled staging reads require an explicit profile allowlist and
+are evaluated from one primary snapshot. Missing publication, catalogue/source
+evidence, active jobs, changed group rules or expired grant horizons fall back
+to direct evaluation. Shadow results count as comparisons only when the same
+candidate set and evaluation time are completely evaluated. The normal
+production reader remains on the legacy path, regardless of published rows.
+
+Before later production activation, complete the independent deployed-runtime
+proof in [#2090](https://github.com/6529-Collections/6529seize-backend/issues/2090),
+the audited source/catalogue bootstrap, controlled backlog drain, representative
+load and shadow-parity acceptance. The deferred #2090 drill has not passed in
+this inactive release.
+
 The runtime packages the fenced worker, external dispatcher and GC. Existing
 authorization readers and producer jobs remain in use. Both runtime services
 default to inactive; deployment alone does not provision source readiness or

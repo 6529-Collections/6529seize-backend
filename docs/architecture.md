@@ -167,6 +167,36 @@ DLQ message to resume the same generation after explicit redrive. This protocol
 exists only in the isolated staging fixture. Both runtime services deploy inactive
 in production, and fixture actions reject production before secret or DB access.
 
+### Controlled source producers and scoped membership reads
+
+Real eligibility writers connect to the source-state and refresh-target
+contracts under a deployment-owned source-tracking gate. Single-transaction
+writers use the same primary connection for their input mutation, version
+increment, group-version evidence where applicable, and durable refresh
+request. Multi-stage TDH/xTDH and delegation work uses durable cycle IDs and
+source-job barriers through downstream completion. Source tracking is independent
+of the SQS worker mapping, dispatcher schedule and API reader controls. Missing
+coverage/bootstrap evidence remains unknown; deployment of writer code alone
+does not make a source ready.
+
+The worker and dispatcher retain the isolated staging fixture and add a
+separate controlled staging application-database path. Production processing
+remains inactive, with the SQS mapping and EventBridge schedule disabled. The
+dispatcher recovers committed requests without requiring a producer send. The
+staging controlled path has bounded hints and per-invocation work budgets; it
+does not establish production throughput or completion of the deferred live
+acceptance drill.
+
+The scoped reader joins a completed PROFILE publication to current group
+definitions, group versions and relevant GLOBAL/PROFILE source versions on one
+primary snapshot. It reuses clean positive and negative decisions and directly
+evaluates dirty or newly relevant groups, including possible new membership.
+Missing evidence and expired grant horizons take the direct path. Controlled
+shadow comparison evaluates the same candidates and time on the primary and
+records only bounded coverage, fallback and parity metrics. Normal production
+authorization still uses the existing direct SQL path; no materialized answer
+enters the legacy TTL caches.
+
 ## Proposal card media
 
 Authenticated `POST /drop-media/proposal-frame` builds a bounded, fixed HTML
