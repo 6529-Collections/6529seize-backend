@@ -1,0 +1,53 @@
+# Subscription status for closed upcoming cards
+
+Product guidance requires subscription changes and top-ups by 00:00 UTC on the
+day before a Meme Card mint. This change does not calculate or redefine that
+deadline. It reuses the backend's existing closed-card boundary: the latest
+ingested Meme, plus one unreleased card on a Monday, Wednesday, or Friday when
+the latest ingested Meme is from an earlier UTC date. The API now uses that same
+card boundary for automatic-mode updates, direct card subscription and quantity
+updates, counts, and subscription-status reads.
+
+After that boundary, the profile Upcoming Drops API and the homepage's
+per-card upcoming-status API use the saved card subscription. A missing card
+record is unsubscribed; current Automatic mode must not supply a subscription
+for a closed card. Existing card opt-ins and opt-outs remain authoritative.
+Enabling Automatic mode, including through the first top-up, applies to later
+cards. Turning it off also leaves the closed card's saved choice unchanged.
+
+Automatic-mode updates retain the cutoff calculated before selecting the card
+rows to update. An update accepted before midnight may finish afterward; there
+is no second cutoff check for mode changes. This preserves the existing behavior
+for both direct mode changes and first top-ups. A deposit made before midnight
+but first processed afterward still uses processing time. Deposit-time eligibility
+and reconciliation of delayed deposits into a finalized list are outside this
+change.
+
+Closed-card aggregate subscription counts use the finalized subscription list,
+so a later top-up or mode change does not change the displayed mint-day count.
+Future-card counts continue to use current preferences and available balance.
+
+The latest card id and its MySQL `TIMESTAMP` epoch are read together; host
+timezone conversion does not determine the UTC mint day. Direct selection and
+quantity writes recheck the cutoff in their transaction before returning, so a
+cutoff reached during the preceding asynchronous work rejects and rolls back the
+write. This does not add a lock shared with the daily finalization job.
+
+The existing schedule assumes NFT ingestion is current through the preceding
+release and infers at most one unreleased card on a mint day. Prolonged ingestion
+outages or skipped releases require operational reconciliation; this change does
+not derive historical releases from a calendar. The upcoming-list starting id
+deliberately uses `getMaxMemeId(true)` (completed cards), while the cutoff uses the
+latest ingested card, so today's ingested card remains visible and closed.
+
+This status handling does not change the daily list-generation job or rebuild
+finalized subscription lists. Subscription selection and allocation remain
+separate: a selected card can have no assigned phase. The frontend displays
+`No subscription allocation` only for a subscribed first upcoming card after
+normalized distribution is published and successful lookups establish that no
+subscription phase is assigned. An API failure is not evidence of no allocation.
+
+Response shapes are unchanged. The frontend help corpus documents these states.
+Deploy `api` and `subscriptionsTopUpLoop` (which bundles the shared mode updater)
+before the companion frontend change. No entity synchronization or migration is
+required.
