@@ -1842,6 +1842,9 @@ export class UserGroupsService {
       );
     } else {
       const group = await this.getByIdOrThrow(groupId, ctx);
+      if (!group.visible) {
+        return this.getEmptyMemberSetSql();
+      }
       return await this.getSqlAndParams(
         group.group,
         groupId,
@@ -1917,6 +1920,9 @@ export class UserGroupsService {
     );
     if (!group) {
       return null;
+    }
+    if (!group.visible) {
+      return this.getEmptyMemberSetSql();
     }
     const apiGroup = (await this.mapForApi([group], ctx)).at(0);
     if (!apiGroup) {
@@ -1999,20 +2005,13 @@ export class UserGroupsService {
       isLevelZeroOnlyGroup(group)
     ) {
       ctx.timer?.stop(`${this.constructor.name}->getSqlAndParams`);
-      // The general query selects eligible profile IDs, then joins them back to
-      // all identity rows in getPersistedInclusionExclusionPart. EXISTS preserves
-      // that row multiplicity, including mixed-level rows for the same profile.
-      // Filtering the outer i.level_raw instead would change existing results.
+      // Every raw score, including negative values, maps to level >= 0.
+      // Keep this opt-in broadcast query free of unnecessary CTEs and joins.
       return {
         sql: `with ${UserGroupsService.GENERATED_VIEW} as (
           select i.* from ${IDENTITIES_TABLE} i
-          where exists (
-            select 1 from ${IDENTITIES_TABLE} eligible
-            where eligible.profile_id = i.profile_id
-              and eligible.level_raw >= :level_min
-          )
         )`,
-        params: { level_min: 0 }
+        params: {}
       };
     }
     const filterUsers = [
@@ -2042,15 +2041,6 @@ export class UserGroupsService {
     group.rep.user_identity = group.rep.user_identity
       ? usersToUserIds[group.rep.user_identity]
       : null;
-    group.level.min =
-      group.level.min !== null
-        ? getLevelComponentsBorderByLevel(group.level.min)
-        : null;
-    group.level.max =
-      group.level.max !== null
-        ? getLevelComponentsBorderByLevel(group.level.max)
-        : null;
-
     const params: Record<string, any> = {};
     const beneficiaryOwnersPart = this.getBeneficiaryOwnersPart(
       group.is_beneficiary_of_grant_id,
@@ -2079,6 +2069,7 @@ export class UserGroupsService {
     );
     const inclusionExclusionPart = this.getInclusionExclusionPart(
       group,
+      group_id,
       params,
       previewIdentityMembership
     );
@@ -2094,12 +2085,13 @@ export class UserGroupsService {
 
   private getInclusionExclusionPart(
     group: GClean,
+    groupId: string | null,
     params: Record<string, any>,
     previewIdentityMembership?: PreviewIdentityMembership
   ): string {
     const anyOtherDescriptionButInclusion = !!(
-      group.level.max !== null ||
       group.level.min !== null ||
+      group.level.max !== null ||
       group.tdh.max !== null ||
       group.tdh.min !== null ||
       group.owns_nfts.length ||
@@ -2115,6 +2107,7 @@ export class UserGroupsService {
     if (previewIdentityMembership === undefined) {
       return this.getPersistedInclusionExclusionPart(
         group,
+        groupId,
         params,
         anyOtherDescriptionButInclusion
       );
@@ -2130,7 +2123,7 @@ export class UserGroupsService {
       !hasIncludedIdentities &&
       !hasExcludedIdentities
     ) {
-      return ` ${UserGroupsService.GENERATED_VIEW} as (select * from cm_view)`;
+      return ` ${UserGroupsService.GENERATED_VIEW} as (select * from cm_view where false)`;
     }
     const excludedSources: string[] = [];
     if (group.excluded_identity_group_id !== null) {
@@ -2182,6 +2175,7 @@ export class UserGroupsService {
 
   private getPersistedInclusionExclusionPart(
     group: GClean,
+    groupId: string | null,
     params: Record<string, any>,
     anyOtherDescriptionButInclusion: boolean
   ): string {
@@ -2190,7 +2184,8 @@ export class UserGroupsService {
       group.identity_group_id === null &&
       group.excluded_identity_group_id === null
     ) {
-      return ` ${UserGroupsService.GENERATED_VIEW} as (select * from cm_view)`;
+      const emptyGroupFilter = groupId === null ? '' : ' where false';
+      return ` ${UserGroupsService.GENERATED_VIEW} as (select * from cm_view${emptyGroupFilter})`;
     }
     let sql = ` included_profile_ids as (select distinct profile_id from (${
       anyOtherDescriptionButInclusion
@@ -2310,7 +2305,7 @@ export class UserGroupsService {
                                          JOIN ${criteriaTokensSql} AS criteria_tokens
                                               ON ${viewName}_s1.token_id = criteria_tokens.token_id
                                 GROUP BY profile_id
-                                HAVING COUNT(DISTINCT ${viewName}_s1.token_id) = (SELECT COUNT(*)
+                                HAVING COUNT(DISTINCT ${viewName}_s1.token_id) = (SELECT COUNT(DISTINCT token_id)
                                                                                FROM community_groups,
                                                                                     JSON_TABLE(
                                                                                             community_groups.${comGroupFieldName},
@@ -2547,16 +2542,34 @@ export class UserGroupsService {
       cmPart += `and ${identitySideTdhPart} <= :tdh_max `;
       params.tdh_max = group.tdh.max;
     }
-    if (group.level.min !== null) {
-      cmPart += `and i.level_raw >= :level_min `;
-      params.level_min = group.level.min;
-    }
-    if (group.level.max !== null) {
-      cmPart += `and i.level_raw <= :level_max `;
-      params.level_max = group.level.max;
-    }
+    cmPart += this.getLevelBoundsPart(group, params);
     cmPart += '), ';
     return cmPart;
+  }
+
+  /** Converts level bounds to raw-score predicates without changing the rule. */
+  private getLevelBoundsPart(
+    group: GClean,
+    params: Record<string, any>
+  ): string {
+    const { min, max } = group.level;
+    // All raw scores map to levels 0..100. A negative upper bound is
+    // impossible, while a nonpositive lower bound is vacuous.
+    if (max !== null && max < 0) {
+      return 'and false ';
+    }
+    // Strictly increasing borders make reversed ranges empty:
+    // min > max implies border(min) >= border(max + 1).
+    let sql = '';
+    if (min !== null && min > 0) {
+      sql += 'and i.level_raw >= :level_min ';
+      params.level_min = getLevelComponentsBorderByLevel(min);
+    }
+    if (max !== null && max < 100) {
+      sql += 'and i.level_raw < :level_max ';
+      params.level_max = getLevelComponentsBorderByLevel(max + 1);
+    }
+    return sql;
   }
 
   private getCicPart(
@@ -2566,40 +2579,43 @@ export class UserGroupsService {
   ) {
     const cicGroup = group.cic;
     let cicPart = null;
-    if (cicGroup.user_identity || cicGroup.min || cicGroup.max) {
-      const direction = cicGroup.user_identity
-        ? (cicGroup.direction ?? ApiGroupFilterDirection.Received)
-        : ApiGroupFilterDirection.Received;
+    if (
+      cicGroup.user_identity !== null ||
+      cicGroup.min !== null ||
+      cicGroup.max !== null
+    ) {
+      const direction = cicGroup.direction ?? ApiGroupFilterDirection.Received;
       if (cicGroup.user_identity) {
         params.cic_user = cicGroup.user_identity;
       }
-      let groupedCicQuery;
+      const profileColumn =
+        direction === ApiGroupFilterDirection.Received
+          ? 'matter_target_id'
+          : 'rater_profile_id';
+      const counterpartyColumn =
+        direction === ApiGroupFilterDirection.Received
+          ? 'rater_profile_id'
+          : 'matter_target_id';
+      let groupedCicQuery = `${repPart ? ', ' : ' '}grouped_cics as (select ${profileColumn} as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'CIC' and rating <> 0`;
       if (cicGroup.user_identity !== null) {
-        groupedCicQuery = `${repPart ? ', ' : ' '}grouped_cics as (select ${
-          direction === ApiGroupFilterDirection.Received
-            ? 'matter_target_id'
-            : 'rater_profile_id'
-        } as profile_id, rating from ${RATINGS_TABLE} where matter = 'CIC' and rating <> 0 and ${
-          direction === ApiGroupFilterDirection.Received
-            ? 'rater_profile_id'
-            : 'matter_target_id'
-        } = :cic_user)`;
-        params.cic_user = cicGroup.user_identity;
-      } else {
-        groupedCicQuery = `${repPart ? ', ' : ' '}grouped_cics as (select ${
-          direction === ApiGroupFilterDirection.Received
-            ? 'matter_target_id'
-            : 'rater_profile_id'
-        } as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'CIC' and rating <> 0 group by 1)`;
+        groupedCicQuery += ` and ${counterpartyColumn} = :cic_user`;
       }
-      cicPart = `${groupedCicQuery}, cic_exchanges as (select profile_id from grouped_cics where true `;
+      groupedCicQuery += ` group by 1)`;
+      cicPart = `${groupedCicQuery}, cic_exchanges as (select i.profile_id from ${IDENTITIES_TABLE} i left join grouped_cics c on c.profile_id = i.profile_id where true `;
       if (cicGroup.max !== null) {
-        cicPart += `and rating <= :cic_amount_max `;
+        cicPart += `and coalesce(c.rating, 0) <= :cic_amount_max `;
         params.cic_amount_max = cicGroup.max;
       }
       if (cicGroup.min !== null) {
-        cicPart += `and rating >= :cic_amount_min `;
+        cicPart += `and coalesce(c.rating, 0) >= :cic_amount_min `;
         params.cic_amount_min = cicGroup.min;
+      }
+      if (
+        cicGroup.user_identity !== null &&
+        cicGroup.min === null &&
+        cicGroup.max === null
+      ) {
+        cicPart += `and coalesce(c.rating, 0) <> 0 `;
       }
       cicPart += `) `;
     }
@@ -2642,10 +2658,10 @@ export class UserGroupsService {
     let repPart = null;
     const repGroup = group.rep;
     if (
-      repGroup.category ||
-      repGroup.user_identity ||
-      repGroup.max ||
-      repGroup.min
+      repGroup.category !== null ||
+      repGroup.user_identity !== null ||
+      repGroup.max !== null ||
+      repGroup.min !== null
     ) {
       const direction = repGroup.direction ?? ApiGroupFilterDirection.Received;
       const memberSearchPart = this.getRepMemberSearchPart(
@@ -2656,59 +2672,38 @@ export class UserGroupsService {
       if (repGroup.user_identity) {
         params.rep_user = repGroup.user_identity;
       }
-      let groupedRepQuery: string;
-      if (repGroup.user_identity !== null && repGroup.category !== null) {
-        groupedRepQuery = `grouped_reps as (select ${
-          direction === ApiGroupFilterDirection.Received
-            ? 'matter_target_id'
-            : 'rater_profile_id'
-        } as profile_id, matter_category, rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0 and ${
-          direction === ApiGroupFilterDirection.Received
-            ? 'rater_profile_id'
-            : 'matter_target_id'
-        } = :rep_user${memberSearchPart})`;
-      } else if (
-        repGroup.user_identity !== null &&
-        repGroup.category === null
-      ) {
-        groupedRepQuery = `grouped_reps as (select ${
-          direction === ApiGroupFilterDirection.Received
-            ? 'matter_target_id'
-            : 'rater_profile_id'
-        } as profile_id, matter_category, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0 and ${
-          direction === ApiGroupFilterDirection.Received
-            ? 'rater_profile_id'
-            : 'matter_target_id'
-        } = :rep_user${memberSearchPart} group by 1, 2)`;
-      } else if (
-        repGroup.user_identity === null &&
-        repGroup.category !== null
-      ) {
-        groupedRepQuery = `grouped_reps as (select ${
-          direction === ApiGroupFilterDirection.Received
-            ? 'matter_target_id'
-            : 'rater_profile_id'
-        } as profile_id, matter_category, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0${memberSearchPart} group by 1, 2)`;
-      } else {
-        groupedRepQuery = `grouped_reps as (select ${
-          direction === ApiGroupFilterDirection.Received
-            ? 'matter_target_id'
-            : 'rater_profile_id'
-        } as profile_id, null as matter_category, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0${memberSearchPart} group by 1, 2)`;
+      const profileColumn =
+        direction === ApiGroupFilterDirection.Received
+          ? 'matter_target_id'
+          : 'rater_profile_id';
+      const counterpartyColumn =
+        direction === ApiGroupFilterDirection.Received
+          ? 'rater_profile_id'
+          : 'matter_target_id';
+      let groupedRepQuery = `grouped_reps as (select ${profileColumn} as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0`;
+      if (repGroup.user_identity !== null) {
+        groupedRepQuery += ` and ${counterpartyColumn} = :rep_user`;
       }
-
-      repPart = `${groupedRepQuery}, rep_exchanges as (select distinct profile_id from grouped_reps where true `;
       if (repGroup.category !== null) {
-        repPart += `and matter_category = :rep_category `;
+        groupedRepQuery += ` and matter_category = :rep_category`;
         params.rep_category = repGroup.category;
       }
+      groupedRepQuery += `${memberSearchPart} group by 1)`;
+      repPart = `${groupedRepQuery}, rep_exchanges as (select i.profile_id from ${IDENTITIES_TABLE} i left join grouped_reps r on r.profile_id = i.profile_id where true `;
       if (repGroup.max !== null) {
-        repPart += `and rating <= :rep_amount_max `;
+        repPart += `and coalesce(r.rating, 0) <= :rep_amount_max `;
         params.rep_amount_max = repGroup.max;
       }
       if (repGroup.min !== null) {
-        repPart += `and rating >= :rep_amount_min `;
+        repPart += `and coalesce(r.rating, 0) >= :rep_amount_min `;
         params.rep_amount_min = repGroup.min;
+      }
+      if (
+        (repGroup.user_identity !== null || repGroup.category !== null) &&
+        repGroup.min === null &&
+        repGroup.max === null
+      ) {
+        repPart += `and coalesce(r.rating, 0) <> 0 `;
       }
       repPart += `) `;
     }
@@ -3019,12 +3014,22 @@ export class UserGroupsService {
       case GroupTdhInclusionStrategy.TDH:
         return `${identityAlias}.tdh`;
       case GroupTdhInclusionStrategy.XTDH:
-        return `${identityAlias}.xtdh`;
+        return `floor(${identityAlias}.xtdh)`;
       case GroupTdhInclusionStrategy.BOTH:
-        return `(${identityAlias}.tdh + ${identityAlias}.xtdh)`;
+        return `floor(${identityAlias}.tdh + ${identityAlias}.xtdh)`;
       default:
         return assertUnreachable(tdhInclusionStrategy);
     }
+  }
+
+  private getEmptyMemberSetSql(): {
+    sql: string;
+    params: Record<string, never>;
+  } {
+    return {
+      sql: `with ${UserGroupsService.GENERATED_VIEW} as (select * from ${IDENTITIES_TABLE} where false)`,
+      params: {}
+    };
   }
 }
 
