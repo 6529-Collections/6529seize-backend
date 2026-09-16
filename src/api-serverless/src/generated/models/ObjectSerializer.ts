@@ -555,6 +555,9 @@ export * from '../models/ApiOutgoingIdentitySubscriptionsPage';
 export * from '../models/ApiOwnerBalance';
 export * from '../models/ApiOwnerBalanceMemes';
 export * from '../models/ApiOwnerBalancePage';
+export * from '../models/ApiPageAccessMode';
+export * from '../models/ApiPageAccessSectionSettings';
+export * from '../models/ApiPageAccessSettings';
 export * from '../models/ApiPageBase';
 export * from '../models/ApiPageSortDirection';
 export * from '../models/ApiPageWithNextUriBase';
@@ -1424,6 +1427,9 @@ import { ApiOutgoingIdentitySubscriptionsPage } from '../models/ApiOutgoingIdent
 import { ApiOwnerBalance } from '../models/ApiOwnerBalance';
 import { ApiOwnerBalanceMemes } from '../models/ApiOwnerBalanceMemes';
 import { ApiOwnerBalancePage } from '../models/ApiOwnerBalancePage';
+import { ApiPageAccessMode } from '../models/ApiPageAccessMode';
+import { ApiPageAccessSectionSettings   } from '../models/ApiPageAccessSectionSettings';
+import { ApiPageAccessSettings } from '../models/ApiPageAccessSettings';
 import { ApiPageBase } from '../models/ApiPageBase';
 import { ApiPageSortDirection } from '../models/ApiPageSortDirection';
 import { ApiPageWithNextUriBase } from '../models/ApiPageWithNextUriBase';
@@ -1928,6 +1934,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiNftLinkMediaPreviewStatusEnum",
     "ApiNotificationCause",
     "ApiOgMetadataEntityType",
+    "ApiPageAccessMode",
     "ApiPageSortDirection",
     "ApiProfileClassification",
     "ApiProfileCmsAgentConstraintsHashNormalizationEnum",
@@ -2531,6 +2538,8 @@ let typeMap: {[index: string]: any} = {
     "ApiOwnerBalance": ApiOwnerBalance,
     "ApiOwnerBalanceMemes": ApiOwnerBalanceMemes,
     "ApiOwnerBalancePage": ApiOwnerBalancePage,
+    "ApiPageAccessSectionSettings": ApiPageAccessSectionSettings,
+    "ApiPageAccessSettings": ApiPageAccessSettings,
     "ApiPageBase": ApiPageBase,
     "ApiPageWithNextUriBase": ApiPageWithNextUriBase,
     "ApiPageWithoutCount": ApiPageWithoutCount,
