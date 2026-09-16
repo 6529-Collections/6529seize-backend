@@ -473,19 +473,23 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
         batches.push(uniqueIds.slice(i, i + 100));
       }
 
-      const results = await Promise.all(
-        batches.map((batchIds) =>
-          this.db.execute<UserGroupEntity>(
-            `
+      const readBatch = (batchIds: string[]) =>
+        this.db.execute<UserGroupEntity>(
+          `
             select *
             from ${USER_GROUPS_TABLE} 
             where id in (:ids) and visible = true
             `,
-            { ids: batchIds },
-            { wrappedConnection: ctx?.connection }
-          )
-        )
-      );
+          { ids: batchIds },
+          { wrappedConnection: ctx?.connection }
+        );
+      const results: UserGroupEntity[][] = [];
+      if (ctx.connection) {
+        // One bound primary connection cannot execute concurrent statements.
+        for (const batch of batches) results.push(await readBatch(batch));
+      } else {
+        results.push(...(await Promise.all(batches.map(readBatch))));
+      }
 
       ctx.timer?.stop('userGroupsDb->getByIds');
       return results.flat();
@@ -505,13 +509,15 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
   }
 
   async getIdentityByProfileId(
-    profileId: string
+    profileId: string,
+    ctx?: RequestContext
   ): Promise<IdentityEntity | null> {
     const res = await this.db.oneOrNull<IdentityEntity>(
       `
       select * from ${IDENTITIES_TABLE} where profile_id = :profileId
     `,
-      { profileId }
+      { profileId },
+      { wrappedConnection: ctx?.connection }
     );
     if (!res) {
       return null;
@@ -527,7 +533,8 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
   }
 
   async getGivenCicAndRep(
-    profileId: string
+    profileId: string,
+    ctx?: RequestContext
   ): Promise<{ cic: number; rep: number }> {
     return this.db
       .execute<{
@@ -535,7 +542,8 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
         rating: number;
       }>(
         `select matter, sum(rating) as rating from ratings where rater_profile_id = :profileId group by 1`,
-        { profileId }
+        { profileId },
+        { wrappedConnection: ctx?.connection }
       )
       .then((res) =>
         res.reduce(
@@ -554,9 +562,11 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
   }
 
   async getGroupsUserIsEligibleByIdentity({
-    profileId
+    profileId,
+    ctx
   }: {
     profileId: string;
+    ctx?: RequestContext;
   }): Promise<string[]> {
     const sql = `
     select distinct ug.id as group_id 
@@ -573,14 +583,16 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     return this.db
       .execute<{
         group_id: string;
-      }>(sql, { profileId })
+      }>(sql, { profileId }, { wrappedConnection: ctx?.connection })
       .then((res) => res.map((it) => it.group_id));
   }
 
   async getGroupsUserIsExcludedFromByIdentity({
-    profileId
+    profileId,
+    ctx
   }: {
     profileId: string;
+    ctx?: RequestContext;
   }): Promise<string[]> {
     const sql = `
     select distinct ug.id as group_id
@@ -596,14 +608,15 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     return this.db
       .execute<{
         group_id: string;
-      }>(sql, { profileId })
+      }>(sql, { profileId }, { wrappedConnection: ctx?.connection })
       .then((res) => res.map((it) => it.group_id));
   }
 
   async getRatings(
     profileId: string,
     users: string[],
-    categories: string[]
+    categories: string[],
+    ctx?: RequestContext
   ): Promise<
     {
       rater_profile_id: string;
@@ -672,7 +685,11 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
       matter: RateMatter;
       matter_category: string;
       rating: number;
-    }>(sql, { profileId, users, categories });
+    }>(
+      sql,
+      { profileId, users, categories },
+      { wrappedConnection: ctx?.connection }
+    );
   }
 
   async migrateProfileIdsInGroups(
@@ -928,7 +945,10 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     return result;
   }
 
-  async getAllWaveRelatedGroups(ctx: RequestContext): Promise<string[]> {
+  async getAllWaveRelatedGroups(
+    ctx: RequestContext,
+    maxIds?: number
+  ): Promise<string[]> {
     ctx.timer?.start('userGroupsDb->getAllWaveRelatedGroups');
     const result = await this.db.execute<{
       id: string;
@@ -947,8 +967,9 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
           union all
           select wcg.community_group_id as id from ${WAVE_CURATIONS_TABLE} wcg
         ) x where id is not null
+        ${maxIds === undefined ? '' : 'limit :maxIds'}
         `,
-      undefined,
+      maxIds === undefined ? undefined : { maxIds },
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop('userGroupsDb->getAllWaveRelatedGroups');
