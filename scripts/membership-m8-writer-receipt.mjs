@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import {
   LambdaClient,
   GetFunctionConfigurationCommand
@@ -8,7 +8,7 @@ import {
 const repository = '6529-Collections/6529seize-backend';
 const account = '987989283142';
 const region = 'eu-west-1';
-const units = Object.freeze({
+export const units = Object.freeze({
   api: 'seizeAPI',
   helpBotReplyLoop: 'helpBotReplyLoop',
   xTdhLoop: 'xTdhLoop',
@@ -21,7 +21,7 @@ const units = Object.freeze({
   externalCollectionLiveTailingLoop: 'externalCollectionLiveTailingLoop'
 });
 
-function argumentsForReceipt(argv) {
+export function argumentsForReceipt(argv) {
   if (
     argv.length !== 4 ||
     argv[0] !== '--expected-sha' ||
@@ -40,8 +40,8 @@ function argumentsForReceipt(argv) {
     !runs ||
     typeof runs !== 'object' ||
     Array.isArray(runs) ||
-    JSON.stringify(Object.keys(runs).sort()) !==
-      JSON.stringify(Object.keys(units).sort())
+    JSON.stringify(Object.keys(runs).sort((a, b) => a.localeCompare(b))) !==
+      JSON.stringify(Object.keys(units).sort((a, b) => a.localeCompare(b)))
   )
     throw new Error('Deploy run map must contain the exact ten writer units');
   for (const [unit, id] of Object.entries(runs))
@@ -50,19 +50,10 @@ function argumentsForReceipt(argv) {
   return { sha, runs };
 }
 
-function githubRun(id, sha, unit) {
-  const raw = execFileSync(
-    'gh',
-    ['api', `repos/${repository}/actions/runs/${id}`],
-    {
-      encoding: 'utf8',
-      maxBuffer: 1024 * 1024,
-      timeout: 30000
-    }
-  );
-  const run = JSON.parse(raw);
+export function validateGithubRun(run, id, sha, unit) {
   const expectedTitle = `Deploy ${unit} to staging`;
   if (
+    String(run.id) !== String(id) ||
     run.head_sha !== sha ||
     run.conclusion !== 'success' ||
     run.event !== 'workflow_dispatch' ||
@@ -76,10 +67,36 @@ function githubRun(id, sha, unit) {
     );
 }
 
-function writerEvidence(configuration, functionName, sha, runId) {
+async function githubRun(id, sha, unit) {
+  const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
+  if (!token)
+    throw new Error(
+      'GH_TOKEN or GITHUB_TOKEN is required to verify deploy runs'
+    );
+  const response = await fetch(
+    `https://api.github.com/repos/${repository}/actions/runs/${id}`,
+    {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'membership-m8-writer-receipt',
+        Authorization: `Bearer ${token}`
+      },
+      signal: AbortSignal.timeout(30000)
+    }
+  );
+  if (!response.ok)
+    throw new Error(`Unable to read deploy run ${id}: HTTP ${response.status}`);
+  validateGithubRun(await response.json(), id, sha, unit);
+}
+
+export function writerEvidence(configuration, functionName, sha, runId) {
   const env = configuration.Environment?.Variables ?? {};
   const lastModified = Date.parse(configuration.LastModified ?? '');
   const deployedAbbreviation = configuration.Description?.split(' - ', 1)[0];
+  const deployedSourceSha =
+    functionName === 'seizeAPI'
+      ? env.GIT_COMMIT
+      : env.MEMBERSHIP_DEPLOY_SOURCE_SHA;
   if (
     configuration.FunctionArn !==
       `arn:aws:lambda:${region}:${account}:function:${functionName}` ||
@@ -90,6 +107,7 @@ function writerEvidence(configuration, functionName, sha, runId) {
     !deployedAbbreviation ||
     deployedAbbreviation.length < 7 ||
     !sha.startsWith(deployedAbbreviation) ||
+    deployedSourceSha !== sha ||
     env.MEMBERSHIP_SOURCE_TRACKING_MODE !== 'tracking-v1' ||
     env.MEMBERSHIP_SOURCE_TRACKING_STAGE !== 'staging' ||
     !Number.isSafeInteger(lastModified) ||
@@ -113,13 +131,26 @@ function writerEvidence(configuration, functionName, sha, runId) {
   };
 }
 
+export function requireDrainWindow(evidence, now) {
+  const earliestDrain = Math.max(
+    ...Object.values(evidence).map(
+      (item) =>
+        Number(item.last_modified_millis) + item.timeout_seconds * 1000 + 60000
+    )
+  );
+  if (now < earliestDrain)
+    throw new Error(
+      `Old writer invocation drain window has ${Math.ceil((earliestDrain - now) / 1000)} seconds remaining`
+    );
+}
+
 async function main() {
   const { sha, runs } = argumentsForReceipt(process.argv.slice(2));
   const client = new LambdaClient({ region });
   try {
     const evidence = {};
     for (const [unit, functionName] of Object.entries(units)) {
-      githubRun(runs[unit], sha, unit);
+      await githubRun(runs[unit], sha, unit);
       const response = await client.send(
         new GetFunctionConfigurationCommand({ FunctionName: functionName })
       );
@@ -137,19 +168,8 @@ async function main() {
       sha,
       runs.helpBotReplyLoop
     );
-    const earliestDrain = Math.max(
-      ...Object.values(evidence).map(
-        (item) =>
-          Number(item.last_modified_millis) +
-          item.timeout_seconds * 1000 +
-          60000
-      )
-    );
     const now = Date.now();
-    if (now < earliestDrain)
-      throw new Error(
-        `Old writer invocation drain window has ${Math.ceil((earliestDrain - now) / 1000)} seconds remaining`
-      );
+    requireDrainWindow(evidence, now);
     process.stdout.write(
       JSON.stringify({
         operator_action: 'membership_bootstrap_record_writers_v1',
@@ -166,9 +186,10 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  process.stderr.write(
-    `${error instanceof Error ? error.message : 'Unknown writer receipt error'}\n`
-  );
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+  main().catch((error) => {
+    process.stderr.write(
+      `${error instanceof Error ? error.message : 'Unknown writer receipt error'}\n`
+    );
+    process.exitCode = 1;
+  });

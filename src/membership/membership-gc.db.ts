@@ -36,7 +36,7 @@ import {
   normalizeMembershipBackfillProgress
 } from './membership-backfill.types';
 
-/** One independently guarded quantum. Never holds a runtime checkpoint lock. */
+/** One GC quantum; FULL runs share-lock backfill control before target/run locks. */
 export class MembershipGcDb extends LazyDbAccessCompatibleService {
   async collect(
     hint: MembershipGcHint,

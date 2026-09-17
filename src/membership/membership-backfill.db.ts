@@ -55,6 +55,14 @@ interface ControlRow {
   progress: unknown;
 }
 
+interface ProbeIndexRow {
+  table_name: string;
+  index_name: string;
+  seq_in_index: number;
+  column_name: string;
+  non_unique: number;
+}
+
 interface ParentRow {
   id: string;
 }
@@ -155,6 +163,7 @@ export class MembershipBackfillDb extends LazyDbAccessCompatibleService {
             );
           return this.observation(existing.progress);
         }
+        await this.requireProbeIndexes(ctx);
         const sources = await new MembershipSourceStatesDb(
           () => this.db
         ).capture(MEMBERSHIP_FANOUT_KEYS, true, ctx);
@@ -359,6 +368,8 @@ export class MembershipBackfillDb extends LazyDbAccessCompatibleService {
           // seen on an earlier page may have expired during this transaction.
           const finalNow = await this.now(ctx);
           progress.scan_pass_stable =
+            progress.scan_started_at_millis !== null &&
+            BigInt(progress.scan_started_at_millis) <= BigInt(finalNow) &&
             globalVersions !== null &&
             finalGlobal !== null &&
             GLOBAL_DIMENSIONS.every(
@@ -432,6 +443,61 @@ export class MembershipBackfillDb extends LazyDbAccessCompatibleService {
     )
       throw new Error('Completed backfill parent has invalid fanout evidence');
     return run;
+  }
+
+  private async requireProbeIndexes(
+    ctx: MembershipPrimaryContext
+  ): Promise<void> {
+    const expected = [
+      {
+        table: MEMBERSHIP_SOURCE_STATES_TABLE,
+        name: 'idx_mss_scope_updated_target',
+        columns: ['scope', 'updated_at_millis', 'target_id']
+      },
+      {
+        table: MEMBERSHIP_SOURCE_STATES_TABLE,
+        name: 'idx_mss_scope_active_target',
+        columns: ['scope', 'active_jobs', 'target_id']
+      },
+      {
+        table: MEMBERSHIP_REFRESH_TARGETS_TABLE,
+        name: 'idx_mrt_scope_updated_target',
+        columns: ['scope', 'updated_at_millis', 'target_id']
+      }
+    ];
+    const rows = await this.db.execute<ProbeIndexRow>(
+      `SELECT TABLE_NAME table_name,INDEX_NAME index_name,
+       SEQ_IN_INDEX seq_in_index,COLUMN_NAME column_name,
+       NON_UNIQUE non_unique
+       FROM information_schema.STATISTICS
+       WHERE TABLE_SCHEMA=DATABASE()
+         AND ((TABLE_NAME=:source AND INDEX_NAME IN
+           ('idx_mss_scope_updated_target','idx_mss_scope_active_target'))
+           OR (TABLE_NAME=:target AND INDEX_NAME='idx_mrt_scope_updated_target'))`,
+      {
+        source: MEMBERSHIP_SOURCE_STATES_TABLE,
+        target: MEMBERSHIP_REFRESH_TARGETS_TABLE
+      },
+      membershipQueryOptions(ctx)
+    );
+    for (const index of expected) {
+      const found = rows
+        .filter(
+          (row) =>
+            row.table_name === index.table && row.index_name === index.name
+        )
+        .sort((a, b) => Number(a.seq_in_index) - Number(b.seq_in_index));
+      if (
+        found.length !== index.columns.length ||
+        found.some(
+          (row, position) =>
+            Number(row.non_unique) !== 1 ||
+            Number(row.seq_in_index) !== position + 1 ||
+            row.column_name !== index.columns[position]
+        )
+      )
+        throw new Error('Membership backfill probe indexes are not ready');
+    }
   }
 
   private async identityPage(

@@ -15,13 +15,20 @@ import {
 } from './membership-bootstrap.db';
 import { MembershipBackfillDb } from './membership-backfill.db';
 import { MEMBERSHIP_BACKFILL_CHECKPOINT_ID } from './membership-backfill.types';
+import { MembershipRunGarbageCollector } from './membership-gc';
 import { MembershipGcDb } from './membership-gc.db';
 import { PrimaryMembershipProfileEvaluator } from './membership-profile-evaluator';
-import { withMembershipPrimaryTransaction } from './membership-primary';
+import {
+  membershipQueryOptions,
+  withMembershipPrimaryTransaction
+} from './membership-primary';
 import { MembershipRefreshTargetsDb } from './membership-refresh-targets.db';
 import { MembershipSourceStatesDb } from './membership-source-states.db';
 import { MembershipRefreshWorker } from './membership-worker';
-import { membershipTestOptions } from './membership-worker-test.helpers';
+import {
+  membershipTestLatch,
+  membershipTestOptions
+} from './membership-worker-test.helpers';
 
 const profiles = [
   'aaaaaaaa-aaaa-4aaa-8aaa-000000000081',
@@ -134,6 +141,30 @@ describeWithSeed(
         /Membership bootstrap is not (prepared|complete)/
       );
       await readyBootstrap();
+      const original = sqlExecutor.execute.bind(sqlExecutor);
+      const execute = jest.spyOn(sqlExecutor, 'execute');
+      let indexChecked = false;
+      execute.mockImplementation((sql, params, options) => {
+        if (sql.includes('FROM information_schema.STATISTICS')) {
+          indexChecked = true;
+          return Promise.resolve([]);
+        }
+        return original(sql, params, options);
+      });
+      try {
+        await expect(tx((ctx) => backfill().start(ctx))).rejects.toThrow(
+          'Membership backfill probe indexes are not ready'
+        );
+        expect(indexChecked).toBe(true);
+      } finally {
+        execute.mockRestore();
+      }
+      expect(
+        await sqlExecutor.oneOrNull(
+          `SELECT scope FROM ${MEMBERSHIP_REFRESH_TARGETS_TABLE}
+           WHERE scope='FULL' AND target_id='*'`
+        )
+      ).toBeNull();
       const first = await tx((ctx) => backfill().start(ctx));
       const repeated = await tx((ctx) => backfill().start(ctx));
       expect(repeated.progress.generation_id).toBe(
@@ -192,6 +223,106 @@ describeWithSeed(
       expect(
         (await tx((ctx) => gc().collect(hint, gcOptions, ctx))).outcome
       ).toBe('RETIRED');
+    });
+
+    it('protects the recorded FULL parent during RUNNING and PAUSED, then permits retirement after convergence', async () => {
+      await readyBootstrap();
+      await tx((ctx) => backfill().start(ctx));
+      const full = await finishTarget('FULL', '*');
+      const recorded = await tx((ctx) => backfill().observe(1, ctx));
+      expect(recorded.progress.state).toBe('RUNNING');
+      expect(recorded.progress.parent_run_id).toBe(full.run_id);
+      const hint = {
+        run_id: full.run_id!,
+        target: { scope: 'FULL' as const, target_id: '*' },
+        pending: null
+      };
+      expect(
+        (await tx((ctx) => gc().collect(hint, gcOptions, ctx))).outcome
+      ).toBe('PROTECTED');
+      // A malformed scheduling hint cannot steer the same run around the
+      // FULL guard because GC verifies the locked run against the hint.
+      expect(
+        (
+          await tx((ctx) =>
+            gc().collect(
+              {
+                ...hint,
+                target: { scope: 'PROFILE', target_id: profiles[0] }
+              },
+              gcOptions,
+              ctx
+            )
+          )
+        ).outcome
+      ).toBe('QUARANTINED');
+      expect((await tx((ctx) => backfill().pause(ctx))).progress.state).toBe(
+        'PAUSED'
+      );
+      expect(
+        (await tx((ctx) => gc().collect(hint, gcOptions, ctx))).outcome
+      ).toBe('PROTECTED');
+      const before = await sqlExecutor.oneOrNull<{ retirement: string | null }>(
+        `SELECT JSON_EXTRACT(progress_cursor,'$.gc.retired_at_millis') retirement
+         FROM ${MEMBERSHIP_REFRESH_RUNS_TABLE} WHERE id=:id`,
+        { id: hint.run_id }
+      );
+      expect(before?.retirement).toBeNull();
+      await tx((ctx) => backfill().resume(ctx));
+      for (const profile of profiles) await finishTarget('PROFILE', profile);
+      const converged = await observeUntilConverged();
+      expect(converged.progress.state).toBe('SCAN_CONVERGED');
+      expect(
+        (await tx((ctx) => gc().collect(hint, gcOptions, ctx))).outcome
+      ).toBe('RETIRED');
+      const afterRetirement = await tx((ctx) => backfill().observe(1, ctx));
+      expect(afterRetirement.progress).toEqual(converged.progress);
+      expect(afterRetirement.child_publications_converged).toBe(true);
+    });
+
+    it('treats backfill checkpoint lock timeout as a recoverable GC busy result', async () => {
+      await readyBootstrap();
+      await tx((ctx) => backfill().start(ctx));
+      const full = await finishTarget('FULL', '*');
+      await tx((ctx) => backfill().observe(1, ctx));
+      const ready = membershipTestLatch();
+      const release = membershipTestLatch();
+      const blocker = tx(async (ctx) => {
+        await sqlExecutor.execute(
+          `SELECT id FROM ${MEMBERSHIP_RUNTIME_CHECKPOINTS_TABLE}
+           WHERE id=:id FOR UPDATE`,
+          { id: MEMBERSHIP_BACKFILL_CHECKPOINT_ID },
+          membershipQueryOptions(ctx)
+        );
+        ready.resolve();
+        await release.promise;
+      });
+      await ready.promise;
+      try {
+        const result = await new MembershipRunGarbageCollector(sqlExecutor)[
+          'collect'
+        ](
+          {
+            run_id: full.run_id!,
+            target: { scope: 'FULL', target_id: '*' },
+            pending: null
+          },
+          gcOptions,
+          membershipTestOptions({
+            transaction_millis: 4000,
+            max_statement_millis: 2500,
+            lock_wait_seconds: 1
+          }),
+          {}
+        );
+        expect(result.outcome).toBe('LOCK_BUSY');
+      } finally {
+        release.resolve();
+        await blocker;
+      }
+      expect((await tx((ctx) => backfill().status(ctx)))?.progress.state).toBe(
+        'RUNNING'
+      );
     });
 
     it('rejects a clean pass when a tracked child changes behind its cursor', async () => {

@@ -131,7 +131,10 @@ three indexes are required by the final backfill convergence probes.
    function, the full source SHA, Lambda function version, code SHA-256,
    last modification time, timeout, deployment run ID, effective `tracking-v1`
    mode and `staging` stage. Collect these facts from the deployed AWS resources
-   and workflow evidence. Shape validation in the bootstrap code cannot itself
+   and workflow evidence. The API's deployed `GIT_COMMIT` and every other
+   writer's deployed `MEMBERSHIP_DEPLOY_SOURCE_SHA` must equal the full staging
+   SHA; the human-readable Lambda description alone is insufficient. Shape
+   validation in the bootstrap code cannot itself
    verify AWS state or prove that old invocations drained.
 
 5. With tracking active, run bounded `GROUP_SCAN` and
@@ -188,6 +191,10 @@ govern pacing. Do not seed source states, advance cursors, clear
 failures or send worker messages by ad hoc SQL. Requery status after an
 uncertain response. A repeated backfill start must identify the same generation
 rather than enqueue a second FULL request.
+If GC or observation reports `ER_LOCK_WAIT_TIMEOUT` while the backfill control
+is locked, let the transaction roll back, requery durable status, and retry the
+bounded call after the competing transaction finishes; GC records this as
+`LOCK_BUSY` for later discovery rather than retiring the protected parent.
 
 | Action                                                          | Stage and effect                                                                                                                                                                             |
 | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -223,7 +230,7 @@ eleven AWS functions are active and the old invocation window has passed,
 generate the exact carrier payload from the reviewed staging checkout:
 
 ```bash
-./bin/6529 run --silent membership:m8:writer-receipt -- \
+GH_TOKEN="$(gh auth token)" ./bin/6529 run --silent membership:m8:writer-receipt -- \
   --expected-sha "$membership_m8_sha" \
   --deploy-runs "$membership_writer_deploy_runs_file" \
   > "$membership_writer_receipt_file"
@@ -235,9 +242,12 @@ aws lambda invoke --region eu-west-1 --function-name customReplayLoop \
 
 Both file variables must be absolute task-local paths. Preserve the AWS and
 workflow evidence with the output; recheck drift after later deployments. The
-collector validates the deployed descriptions, modes and versions, GitHub run
-source, and an old-invocation drain window at least one Lambda timeout plus one
-minute past the latest modification. Its JSON is a point-in-time receipt, not
+collector validates the deployed full source SHA, descriptions, modes and
+versions, GitHub run source, and an old-invocation drain window at least one
+Lambda timeout plus one minute past the latest modification. It emits
+`verified_at_millis` and
+`old_invocations_drained_at_millis` at the same final collection time, after
+that window. Its JSON is a point-in-time receipt, not
 continuous AWS monitoring.
 After `COMPLETE`, use the same invocation shape with the backfill actions in the
 table. Bootstrap status and backfill status are distinct; inspect both, the

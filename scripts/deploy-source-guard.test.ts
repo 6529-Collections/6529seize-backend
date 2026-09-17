@@ -484,6 +484,46 @@ describe('generated deployment source guard', () => {
     ).not.toContain('MEMBERSHIP_SOURCE_TRACKING_MODE');
   });
 
+  it('embeds the full workflow SHA in every non-API tracked writer function', () => {
+    const writerUnits = [
+      'helpBotReplyLoop',
+      'xTdhLoop',
+      'tdhLoop',
+      'delegationsLoop',
+      'overRatesRevocationLoop',
+      'xTdhGrantsReviewerLoop',
+      'nftOwnersLoop',
+      'externalCollectionSnapshottingLoop',
+      'externalCollectionLiveTailingLoop'
+    ];
+    for (const unit of writerUnits) {
+      const serverless = readFileSync(
+        path.resolve(__dirname, `../src/${unit}/serverless.yaml`),
+        'utf8'
+      );
+      const tracking = serverless.match(/MEMBERSHIP_SOURCE_TRACKING_MODE:/g);
+      const deployedSha = serverless.match(
+        /MEMBERSHIP_DEPLOY_SOURCE_SHA: \$\{env:GITHUB_SHA, ''\}/g
+      );
+      expect(deployedSha?.length).toBe(tracking?.length);
+    }
+    expect(steps.find((step) => step.name === 'Deploy API')?.run).toContain(
+      'GIT_COMMIT: $commit'
+    );
+  });
+
+  it('validates the operator writer-receipt collector without AWS calls', () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        '--test',
+        path.resolve(__dirname, 'membership-m8-writer-receipt.node.test.mjs')
+      ],
+      { encoding: 'utf8', timeout: 10_000 }
+    );
+    expect(result.status).toBe(0);
+  });
+
   it('requires an audited allowlist for controlled staging API reads', () => {
     const controls = {
       INPUT_SERVICE: 'api',
