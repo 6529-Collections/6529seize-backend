@@ -129,7 +129,7 @@ resources:
         - MembershipDispatcherAsyncConfig
       Properties:
         Name: membership-refresh-dispatch-${self:custom.membershipDispatcher.stage}-v1
-        Description: Independent bounded membership recovery pass; fixture activation only
+        Description: Independent bounded membership recovery pass; explicit staging activation only
         ScheduleExpression: rate(1 minute)
         State: ${self:custom.membershipDispatcher.scheduleState}
         Targets:

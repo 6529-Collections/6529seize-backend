@@ -160,6 +160,26 @@ export class MembershipSourceStatesDb extends LazyDbAccessCompatibleService {
     evidence: MembershipSourceProvisioning,
     ctx: MembershipPrimaryContext
   ): Promise<void> {
+    return this.provisionWithPrefix(keys, evidence, 'bootstrap:', ctx);
+  }
+
+  /** Only a caller that inserted these identities in this transaction may use this path. */
+  async provisionBorn(
+    keys: readonly MembershipSourceKey[],
+    evidence: MembershipSourceProvisioning,
+    ctx: MembershipPrimaryContext
+  ): Promise<void> {
+    if (keys.some((key) => key.scope !== 'PROFILE'))
+      throw new Error('Membership birth receipt requires PROFILE keys');
+    return this.provisionWithPrefix(keys, evidence, 'birth:', ctx);
+  }
+
+  private async provisionWithPrefix(
+    keys: readonly MembershipSourceKey[],
+    evidence: MembershipSourceProvisioning,
+    prefix: 'bootstrap:' | 'birth:',
+    ctx: MembershipPrimaryContext
+  ): Promise<void> {
     return timeMembershipOperation(
       'MembershipSourceStatesDb->provision',
       ctx,
@@ -190,7 +210,7 @@ export class MembershipSourceStatesDb extends LazyDbAccessCompatibleService {
             0, 0, ${MEMBERSHIP_DB_NOW}, ${MEMBERSHIP_DB_NOW}, NULL)`,
             {
               ...key,
-              job_id: `bootstrap:${evidence.bootstrap_id}`,
+              job_id: `${prefix}${evidence.bootstrap_id}`,
               progress: JSON.stringify({
                 stage: 'PROVISIONED',
                 after_id: null,
@@ -337,7 +357,8 @@ export class MembershipSourceStatesDb extends LazyDbAccessCompatibleService {
     const receipts = await this.db.execute<{ progress: unknown }>(
       `SELECT progress FROM ${MEMBERSHIP_SOURCE_JOBS_TABLE}
        WHERE scope = :scope AND target_id = :target_id AND dimension = :dimension
-         AND job_id LIKE 'bootstrap:%' AND status = 'COMPLETED'
+         AND (job_id LIKE 'bootstrap:%' OR job_id LIKE 'birth:%')
+         AND status = 'COMPLETED'
          AND started_version = 0 AND completed_version = 0
        LIMIT 2 ${lock ? 'FOR UPDATE' : ''}`,
       { ...key },

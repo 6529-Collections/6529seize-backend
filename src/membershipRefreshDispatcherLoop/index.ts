@@ -6,6 +6,7 @@ import { wrapLambdaHandler } from '@/sentry.context';
 import { sqlExecutor } from '@/sql-executor';
 import { withMembershipPrimaryTransaction } from '@/membership/membership-primary';
 import { MembershipRefreshDispatcher } from '@/membership/membership-dispatch';
+import { requireMembershipBootstrapReady } from '@/membership/membership-bootstrap.db';
 import type {
   MembershipDispatchResult,
   MembershipDispatchSender
@@ -182,10 +183,16 @@ export async function handleMembershipDispatcherInvocation(
       materialized_read_control: 'api-separate',
       background_processing_mode: runtime.mode,
       background_processing_code_admission:
-        runtime.mode === 'staging-controlled-v1' ? 'controlled' : 'unavailable',
+        runtime.mode === 'staging-controlled-v1' ||
+        runtime.mode === 'staging-backfill-v1'
+          ? 'controlled'
+          : 'unavailable',
       background_processing_trigger_enabled: runtime.schedule_enabled,
       normal_membership_work:
-        runtime.mode === 'staging-controlled-v1' ? 'unverified' : 'unavailable',
+        runtime.mode === 'staging-controlled-v1' ||
+        runtime.mode === 'staging-backfill-v1'
+          ? 'unverified'
+          : 'unavailable',
       queue_arn: runtime.queue_arn,
       rule_arn: runtime.rule_arn,
       schedule_enabled: runtime.schedule_enabled
@@ -222,6 +229,22 @@ export async function handleMembershipDispatcherInvocation(
                 }
               )
             : null;
+        if (!fixture)
+          await withMembershipPrimaryTransaction(
+            sqlExecutor,
+            requireMembershipBootstrapReady,
+            {},
+            {
+              deadlineMonotonicMillis: Math.min(
+                dispatchUntil,
+                performance.now() + 2000
+              ),
+              maxStatementMillis: 500,
+              finalizationReserveMillis: 400,
+              lockWaitSeconds: 1
+            }
+          );
+        const highCapacity = runtime.mode === 'staging-backfill-v1';
         let dispatch: MembershipDispatchResult | null = null;
         let gcProgress = 0;
         let gcFailures = 0;
@@ -253,8 +276,8 @@ export async function handleMembershipDispatcherInvocation(
             finalization_reserve_millis: 400,
             lock_wait_seconds: 1,
             reservation_millis: 120000,
-            max_candidates: 40,
-            max_per_lane: 20
+            max_candidates: highCapacity ? 120 : 40,
+            max_per_lane: highCapacity ? 60 : 20
           });
         } catch (error) {
           dispatchFailed = true;

@@ -26,6 +26,8 @@ import {
 import { Profile, ProfileClassification } from '../entities/IProfile';
 import { AddressConsolidationKey } from '../entities/IAddressConsolidationKey';
 import { randomUUID } from 'crypto';
+import { provisionBornProfiles } from '@/membership/membership-bootstrap.db';
+import { withMembershipPrimaryMutationContext } from '@/membership/membership-primary';
 import { RequestContext } from '../request.context';
 import { Timer } from '../time';
 import { Wallet } from '../entities/IWallet';
@@ -183,6 +185,10 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     if (!addresses.length) {
       return;
     }
+    const born = addresses.map((address) => ({
+      address,
+      profileId: randomUUID()
+    }));
     const identitiesSql = `insert into ${IDENTITIES_TABLE} (
                                          profile_id,
                                          consolidation_key,
@@ -191,10 +197,10 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
                                          rep,
                                          cic,
                                          level_raw)
-        values ${addresses
+        values ${born
           .map(
-            (address) =>
-              `(${mysql.escape(randomUUID())}, ${mysql.escape(
+            ({ address, profileId }) =>
+              `(${mysql.escape(profileId)}, ${mysql.escape(
                 address
               )}, ${mysql.escape(address)}, 0, 0, 0, 0)`
           )
@@ -213,6 +219,14 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
         wrappedConnection: connection
       })
     ]);
+    for (let offset = 0; offset < born.length; offset += 64) {
+      await withMembershipPrimaryMutationContext(connection, (primary) =>
+        provisionBornProfiles(
+          born.slice(offset, offset + 64).map((item) => item.profileId),
+          primary
+        )
+      );
+    }
   }
 
   async updateIdentityProfile(

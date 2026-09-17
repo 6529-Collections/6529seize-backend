@@ -9,6 +9,11 @@ import type { MembershipRefreshScope } from '@/membership/membership-schema.type
   'scope',
   'target_id'
 ])
+@Index('idx_mrt_scope_updated_target', [
+  'scope',
+  'updated_at_millis',
+  'target_id'
+])
 export class MembershipRefreshTargetEntity {
   @PrimaryColumn({ type: 'varchar', length: 20, nullable: false })
   readonly scope!: MembershipRefreshScope;

@@ -179,7 +179,8 @@ describe('generated deployment source guard', () => {
         'nft-link-page-retry',
         'membership-refresh',
         'membership-evaluator-index',
-        'membership-runtime-control'
+        'membership-runtime-control',
+        'membership-backfill-probes'
       ]
     });
     expect(job.env.DB_SCHEMA_SCOPE).toBe(
@@ -268,7 +269,8 @@ describe('generated deployment source guard', () => {
     'claims-media-upload',
     'nft-link-page-retry',
     'membership-refresh',
-    'membership-evaluator-index'
+    'membership-evaluator-index',
+    'membership-backfill-probes'
   ])('forwards validated %s as one JSON invocation payload', (scope) => {
     const result = invokeMigrationScope(scope);
     expect(result.error).toBeUndefined();
@@ -387,6 +389,46 @@ describe('generated deployment source guard', () => {
     );
   });
 
+  it('admits explicit backfill mode only for staging membership runtime services', () => {
+    expect(
+      workflow.on.workflow_dispatch.inputs.membership_runtime_mode.options
+    ).toContain('staging-backfill-v1');
+    expect(
+      validateDispatch(sourceSha, 'staging', {
+        INPUT_SERVICE: 'membershipRefreshLoop',
+        MEMBERSHIP_RUNTIME_MODE: 'staging-backfill-v1',
+        MEMBERSHIP_WORKER_MAPPING_ENABLED: 'true'
+      }).status
+    ).toBe(0);
+    expect(
+      validateDispatch(sourceSha, 'staging', {
+        INPUT_SERVICE: 'membershipRefreshDispatcherLoop',
+        MEMBERSHIP_RUNTIME_MODE: 'staging-backfill-v1',
+        MEMBERSHIP_DISPATCH_SCHEDULE_ENABLED: 'true'
+      }).status
+    ).toBe(0);
+    expect(
+      validateDispatch(sourceSha, 'staging', {
+        INPUT_SERVICE: 'api',
+        MEMBERSHIP_RUNTIME_MODE: 'staging-backfill-v1'
+      }).status
+    ).toBe(1);
+    expect(
+      validateDispatch(sourceSha, 'prod', {
+        INPUT_SERVICE: 'membershipRefreshLoop',
+        MEMBERSHIP_RUNTIME_MODE: 'staging-backfill-v1',
+        MEMBERSHIP_WORKER_MAPPING_ENABLED: 'false'
+      }).status
+    ).toBe(1);
+    expect(
+      validateDispatch(sourceSha, 'prod', {
+        INPUT_SERVICE: 'membershipRefreshDispatcherLoop',
+        MEMBERSHIP_RUNTIME_MODE: 'staging-backfill-v1',
+        MEMBERSHIP_DISPATCH_SCHEDULE_ENABLED: 'false'
+      }).status
+    ).toBe(1);
+  });
+
   it('keeps producer, reader and shadow controls inactive by default and stage-owned', () => {
     const inputs = workflow.on.workflow_dispatch.inputs;
     expect(inputs.membership_source_tracking_mode.default).toBe('inactive');
@@ -440,6 +482,46 @@ describe('generated deployment source guard', () => {
         'utf8'
       )
     ).not.toContain('MEMBERSHIP_SOURCE_TRACKING_MODE');
+  });
+
+  it('embeds the full workflow SHA in every non-API tracked writer function', () => {
+    const writerUnits = [
+      'helpBotReplyLoop',
+      'xTdhLoop',
+      'tdhLoop',
+      'delegationsLoop',
+      'overRatesRevocationLoop',
+      'xTdhGrantsReviewerLoop',
+      'nftOwnersLoop',
+      'externalCollectionSnapshottingLoop',
+      'externalCollectionLiveTailingLoop'
+    ];
+    for (const unit of writerUnits) {
+      const serverless = readFileSync(
+        path.resolve(__dirname, `../src/${unit}/serverless.yaml`),
+        'utf8'
+      );
+      const tracking = serverless.match(/MEMBERSHIP_SOURCE_TRACKING_MODE:/g);
+      const deployedSha = serverless.match(
+        /MEMBERSHIP_DEPLOY_SOURCE_SHA: \$\{env:GITHUB_SHA, ''\}/g
+      );
+      expect(deployedSha?.length).toBe(tracking?.length);
+    }
+    expect(steps.find((step) => step.name === 'Deploy API')?.run).toContain(
+      'GIT_COMMIT: $commit'
+    );
+  });
+
+  it('validates the operator writer-receipt collector without AWS calls', () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        '--test',
+        path.resolve(__dirname, 'membership-m8-writer-receipt-check.mjs')
+      ],
+      { encoding: 'utf8', timeout: 10_000 }
+    );
+    expect(result.status).toBe(0);
   });
 
   it('requires an audited allowlist for controlled staging API reads', () => {
@@ -506,6 +588,22 @@ describe('generated deployment source guard', () => {
     expect(
       invokeMigrationScope(
         'membership-runtime-control',
+        { StatusCode: 200 },
+        { schema_scope: 'membership-refresh' }
+      ).status
+    ).toBe(1);
+  });
+  it('restricts backfill probe schema to the migration carrier and validates its acknowledgment', () => {
+    expect(
+      validateDispatch(sourceSha, 'staging', {
+        INPUT_SERVICE: 'api',
+        DB_SCHEMA_SCOPE: 'membership-backfill-probes'
+      }).status
+    ).toBe(1);
+    expect(invokeMigrationScope('membership-backfill-probes').status).toBe(0);
+    expect(
+      invokeMigrationScope(
+        'membership-backfill-probes',
         { StatusCode: 200 },
         { schema_scope: 'membership-refresh' }
       ).status

@@ -90,8 +90,8 @@ describe('membership dispatch strict cursor', () => {
   it('enforces invocation, per-lane and phase-reserve ceilings', () => {
     validateMembershipDispatchOptions(membershipDispatchTestOptions());
     for (const override of [
-      { max_candidates: 41 },
-      { max_per_lane: 21 },
+      { max_candidates: 121 },
+      { max_per_lane: 61 },
       { reservation_millis: 120001 },
       { control_millis: 200, finalization_reserve_millis: 200 },
       { deadline_monotonic_millis: Number.NaN }

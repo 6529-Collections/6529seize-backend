@@ -56,8 +56,11 @@ it('streams exact source bytes into bounded multipart parts and records the immu
     2 * 1024 ** 2 + 7
   ]);
   expect(
-    Buffer.concat(uploaded.map((part) => part.input.Body as Buffer))
-  ).toEqual(Buffer.concat(chunks));
+    Buffer.compare(
+      Buffer.concat(uploaded.map((part) => part.input.Body as Buffer)),
+      Buffer.concat(chunks)
+    )
+  ).toBe(0);
   expect(result).toEqual({
     object_version: 'immutable-v1',
     size_bytes: chunks.reduce((size, chunk) => size + chunk.length, 0),

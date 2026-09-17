@@ -27,6 +27,10 @@ import {
   applyMembershipSchema,
   membershipSchemaEntities
 } from './membership-schema';
+import {
+  applyMembershipBackfillIndexSchema,
+  membershipBackfillIndexEntities
+} from './membership-backfill-index-schema';
 
 jest.mock('@/db', () => ({ getDataSource: jest.fn() }));
 jest.mock('./membership-runtime-schema', () => ({
@@ -43,6 +47,12 @@ jest.mock('./membership-evaluator-schema', () => ({
   applyMembershipEvaluatorSchema: jest
     .fn()
     .mockResolvedValue({ added_indexes: 1, verified_indexes: 1 })
+}));
+jest.mock('./membership-backfill-index-schema', () => ({
+  ...jest.requireActual('./membership-backfill-index-schema'),
+  applyMembershipBackfillIndexSchema: jest
+    .fn()
+    .mockResolvedValue({ added_indexes: 3, verified_indexes: 3 })
 }));
 jest.mock('./membership-controlled-schema', () => ({
   applyFullSchemaWithMembershipGuard: jest.fn().mockResolvedValue(undefined)
@@ -116,6 +126,25 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     jest
       .mocked(moderationRetentionSchemaDb.missingColumns)
       .mockResolvedValue([]);
+  });
+
+  it('applies only the online backfill probe indexes', async () => {
+    await expect(
+      invoke({ schema_scope: 'membership-backfill-probes' })
+    ).resolves.toEqual({
+      schema_scope: 'membership-backfill-probes',
+      added_indexes: 3,
+      verified_indexes: 3
+    });
+    expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
+      logger: expect.anything(),
+      entities: membershipBackfillIndexEntities,
+      syncEntities: false,
+      skipRedis: true
+    });
+    expect(applyMembershipBackfillIndexSchema).toHaveBeenCalledTimes(1);
+    expect(applyFullSchemaWithMembershipGuard).not.toHaveBeenCalled();
+    expect(migrations.getInstance).not.toHaveBeenCalled();
   });
 
   it('applies only the runtime control scope without full synchronization or maintenance', async () => {
@@ -381,7 +410,8 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     'nft-link-page-retry',
     'membership-refresh',
     'membership-evaluator-index',
-    'membership-runtime-control'
+    'membership-runtime-control',
+    'membership-backfill-probes'
   ])('rejects explicit %s scope on scheduled events', async (scope) => {
     await expect(
       invoke({ ...scheduledEvent, schema_scope: scope })

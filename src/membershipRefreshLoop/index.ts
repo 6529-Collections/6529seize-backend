@@ -13,6 +13,7 @@ import type { MembershipWorkerOptions } from '@/membership/membership-worker.typ
 import type { MembershipRefreshScope } from '@/membership/membership-schema.types';
 import { withMembershipPrimaryTransaction } from '@/membership/membership-primary';
 import { MembershipRuntimeFixtureDb } from '@/membership/membership-runtime-fixture.db';
+import { requireMembershipBootstrapReady } from '@/membership/membership-bootstrap.db';
 import {
   MembershipRuntimeTransportDb,
   type MembershipTransportDisposition
@@ -37,28 +38,34 @@ const deployment = Object.freeze({
 
 function workerOptions(
   context: Pick<Context, 'getRemainingTimeInMillis'>,
-  scope: MembershipRefreshScope
+  scope: MembershipRefreshScope,
+  mode:
+    | 'inactive'
+    | 'staging-fixture-v1'
+    | 'staging-controlled-v1'
+    | 'staging-backfill-v1'
 ): MembershipWorkerOptions {
   const remaining = context.getRemainingTimeInMillis();
   if (!Number.isFinite(remaining) || remaining < 10_000)
     throw new Error('Insufficient membership invocation budget');
+  const highCapacity = mode === 'staging-backfill-v1';
   return {
     deadline_monotonic_millis:
       performance.now() + Math.min(45_000, remaining - 5_000),
-    transaction_millis: 15_000,
-    max_statement_millis: 1_000,
+    transaction_millis: highCapacity ? 30_000 : 15_000,
+    max_statement_millis: highCapacity ? 2_000 : 1_000,
     finalization_reserve_millis: 2_000,
     checkpoint_reserve_millis: 2_000,
     lock_wait_seconds: 1,
-    lease_millis: 90_000,
+    lease_millis: highCapacity ? 120_000 : 90_000,
     // Closed staging acceptance requires independently scheduled continuation.
     max_quanta: 1,
-    page_size: scope === 'PROFILE' ? 2 : 1,
+    page_size: highCapacity ? 128 : scope === 'PROFILE' ? 2 : 1,
     input_limits: {
-      max_queries: 300,
-      max_input_rows: 100_000,
-      max_input_bytes: 8_000_000,
-      max_windows: 100,
+      max_queries: highCapacity ? 1000 : 300,
+      max_input_rows: highCapacity ? 250_000 : 100_000,
+      max_input_bytes: highCapacity ? 16_000_000 : 8_000_000,
+      max_windows: highCapacity ? 200 : 100,
       raw_window: 128
     },
     retry_millis: 60_000,
@@ -107,18 +114,35 @@ export async function handleMembershipWorkerInvocation(
       materialized_read_control: 'api-separate',
       background_processing_mode: runtime.mode,
       background_processing_code_admission:
-        runtime.mode === 'staging-controlled-v1' ? 'controlled' : 'unavailable',
+        runtime.mode === 'staging-controlled-v1' ||
+        runtime.mode === 'staging-backfill-v1'
+          ? 'controlled'
+          : 'unavailable',
       background_processing_trigger_enabled: runtime.mapping_enabled,
       normal_membership_work:
-        runtime.mode === 'staging-controlled-v1' ? 'unverified' : 'unavailable',
+        runtime.mode === 'staging-controlled-v1' ||
+        runtime.mode === 'staging-backfill-v1'
+          ? 'unverified'
+          : 'unavailable',
       queue_arn: runtime.queue_arn
     };
   }
   const delivery = parseMembershipWorkerDelivery(event, runtime);
-  const options = workerOptions(context, delivery.hint.target.scope);
+  const options = workerOptions(
+    context,
+    delivery.hint.target.scope,
+    runtime.mode
+  );
   const result = await doInDbContext(
     async () => {
       const fixtureMode = runtime.mode === 'staging-fixture-v1';
+      if (!fixtureMode)
+        await withMembershipPrimaryTransaction(
+          sqlExecutor,
+          requireMembershipBootstrapReady,
+          {},
+          membershipWorkerBudget(options)
+        );
       let inspect:
         | ((
             result: Awaited<

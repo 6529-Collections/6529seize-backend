@@ -7,6 +7,10 @@ import {
   handleMembershipFixtureAction
 } from '@/membership/membership-runtime-fixture-carrier';
 import {
+  membershipBootstrapAction,
+  handleMembershipBootstrapAction
+} from '@/membership/membership-bootstrap-carrier';
+import {
   assertMembershipDiagnosticInvocation,
   runMembershipRepositoryDiagnostics
 } from '@/membership/membership-repository-diagnostics';
@@ -21,6 +25,12 @@ const diagnosticDeployment = Object.freeze({
 
 export const handler = sentryContext.wrapLambdaHandler(
   async (event: unknown, context) => {
+    const bootstrapAction = membershipBootstrapAction(event);
+    if (bootstrapAction)
+      return handleMembershipBootstrapAction(bootstrapAction, context, {
+        stage: diagnosticDeployment.stage,
+        region: diagnosticDeployment.region
+      });
     const fixtureAction = membershipFixtureAction(event);
     if (fixtureAction)
       return handleMembershipFixtureAction(fixtureAction, context, {

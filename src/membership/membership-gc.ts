@@ -88,8 +88,12 @@ export class MembershipRunGarbageCollector {
         typeof error === 'object' &&
         'code' in error &&
         (error.code === 'ER_LOCK_NOWAIT' ||
-          ('errno' in error && error.errno === 3572) ||
-          ('serverCode' in error && error.serverCode === 'ER_LOCK_NOWAIT'))
+          error.code === 'ER_LOCK_WAIT_TIMEOUT' ||
+          ('errno' in error &&
+            (error.errno === 3572 || error.errno === 1205)) ||
+          ('serverCode' in error &&
+            (error.serverCode === 'ER_LOCK_NOWAIT' ||
+              error.serverCode === 'ER_LOCK_WAIT_TIMEOUT')))
       )
         return {
           run_id: hint.run_id,

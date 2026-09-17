@@ -196,6 +196,56 @@ records only bounded coverage, fallback and parity metrics. Normal production
 authorization still uses the existing direct SQL path; no materialized answer
 enters the legacy TTL caches.
 
+### Staging bootstrap and initial backfill
+
+The milestone 8 bootstrap adds a versioned control record and audited coverage
+receipt. It provisions the seven GLOBAL source keys and walks existing canonical
+profiles in a bounded pretracking pass, supplying each with six PROFILE source
+keys before its first tracked write. The pass starts after a durable 16-minute
+fence, allowing pre-prepare creator transactions to drain. This first pass is
+provisional. After all compatible writer versions and modes are verified and
+old invocations have drained, an immutable receipt records eleven Lambda
+functions across ten deployment units. Bounded group and
+posttracking profile passes catch up with concurrent changes. Existing candidate
+groups need catalogue-version evidence; after `prepare`, a newly born profile is
+provisioned and requested atomically by a compatible creator even during the
+staged tracking rollout. The birth-capable creators must be deployed and their
+old invocations drained before `prepare`. Concurrent rule edits keep their
+newer versions: baseline insertion never replaces a committed group mutation.
+The final receipt is issued only after completed source stages and stable
+catalogue/identity verification establish coverage. Existing rows without that
+evidence are unknown, not a zero-version baseline.
+
+An initial FULL request has its own durable generation identity, captured
+source/catalogue baseline and high bound. GROUP/FULL work pages profile IDs and
+requests PROFILE targets; their parent completion means fanout is done. Child
+PROFILE work evaluates bounded group pages and atomically swaps an immutable
+publication pointer only after current source, catalogue, lease and request
+checks. Completed empty generations have a publication pointer with no positive
+member rows. Profiles created or restored beyond a captured fanout bound get
+their own tracked request. The dispatcher recovers durable targets on scheduled
+ticks and sends SQS hints; the consume-only worker checkpoints and returns,
+avoiding a recursive continuation chain. Backfill status separates parent
+fanout, child publications, due/retry/parked targets and freshness.
+
+This bootstrap and load path is staging controlled. `membershipRefreshLoop`
+and `membershipRefreshDispatcherLoop` retain independent mapping and schedule
+switches; normal API authorization remains `legacy` SQL. Deployment order is
+the online backfill probe indexes and API receiver, compatible worker,
+dispatcher, downstream receivers,
+then tracked writers, with actual service dependencies from
+`src/config/deploy-services.json`. Activate tracking only after GLOBAL and
+pretracking profile-key preparation and every writer version is verified;
+advance the posttracking profile/catalogue scans and issue the coverage receipt
+before starting backfill. A safe pause
+disables dispatch first, lets in-flight work settle, then disables the worker
+mapping if needed. Source tracking can continue to accumulate durable targets
+while processing is paused. A rollback to any untracked writer invalidates
+coverage until the gap is reconciled. Production remains inactive; deployed
+staging recovery and representative performance gates precede any later
+production activation or materialized-read cutover. The operator sequence and
+remaining proof are in [membership runtime operations](membership-runtime-operations.md).
+
 ## Proposal card media
 
 Authenticated `POST /drop-media/proposal-frame` builds a bounded, fixed HTML

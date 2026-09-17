@@ -174,13 +174,13 @@ export function validateMembershipDispatchOptions(
     options.max_candidates,
     'dispatch candidates',
     1,
-    40
+    120
   );
   assertMembershipBoundedInteger(
     options.max_per_lane,
     'dispatch lane candidates',
     1,
-    20
+    60
   );
   if (
     options.control_millis <= options.finalization_reserve_millis ||

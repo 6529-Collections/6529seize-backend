@@ -35,6 +35,9 @@ jest.mock('@/membership/membership-primary', () => ({
       } as unknown as MembershipPrimaryContext)
   )
 }));
+jest.mock('@/membership/membership-bootstrap.db', () => ({
+  requireMembershipBootstrapReady: jest.fn(async () => ({ stage: 'COMPLETE' }))
+}));
 const staging = {
   stage: 'staging',
   region: 'eu-west-1',

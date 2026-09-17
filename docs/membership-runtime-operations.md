@@ -1,4 +1,4 @@
-# Inactive membership runtime operations
+# Membership runtime operations
 
 ## Milestones 6–7 controls and activation boundary
 
@@ -41,6 +41,346 @@ The runtime packages the fenced worker, external dispatcher and GC. Both
 services default to inactive; deployment alone does not provision source
 readiness or start background work. The isolated fixture and controlled
 application-database modes are staging only and require explicit controls.
+
+## Milestone 8 staging bootstrap and backfill
+
+Milestone 8 establishes source and catalogue evidence and performs an initial
+backfill in staging. Ordinary API authorization stays on `legacy` direct SQL;
+production tracking, workers, schedules, shadow comparison and materialized
+reads stay off. A deployed Lambda, a schema row, or a finished FULL fanout is not
+evidence that all profiles have a current publication. Record the exact source
+commit, Lambda versions, bootstrap receipt, backfill generation and run IDs,
+queue/event correlations, counts and observed results before calling this stage
+complete. The procedure below is an activation plan until those live records
+exist; it does not claim that staging has already been bootstrapped.
+
+### Preconditions and safe ordering
+
+Complete the reviewed development PR and checks, then record this new
+backend-only staging release intent once through the Coordinator CLI before
+merging or dispatching any release workflow. Reuse that record for all service
+deployments and control changes in this release. Fetch current shared refs,
+merge into the latest `1a-staging` without force push, and do not cancel another
+developer's deployment. The sequence below starts only after those gates.
+
+Deploy `dbMigrationsLoop` at the reviewed staging SHA and invoke
+`db_schema_scope=membership-backfill-probes` before the API, bootstrap carrier,
+or any backfill observation. Verify `added_indexes=3`, `verified_indexes=3`,
+then repeat the scope and require `added_indexes=0`. It adds only
+`idx_mss_scope_updated_target(scope,updated_at_millis,target_id)` and
+`idx_mss_scope_active_target(scope,active_jobs,target_id)` on
+`membership_source_states`, and
+`idx_mrt_scope_updated_target(scope,updated_at_millis,target_id)` on
+`membership_refresh_targets`. Each addition uses `ALGORITHM=INPLACE, LOCK=NONE`
+with a one-second metadata lock wait. Reconcile an uncertain or partial result
+by rerunning the same scope; retain existing indexes and source rows. These
+three indexes are required by the final backfill convergence probes.
+
+1. Deploy compatible schema and API receiver code first. Confirm the API's
+   deploy-notification catalogue accepts every service in this release; a green
+   Lambda deploy alone did not establish that in the prior rollout. Deploy the
+   closed `customReplayLoop` operator carrier before invoking bootstrap actions,
+   and the worker before its dispatcher. Deploy every eligibility writer and downstream
+   receiver at a compatible version while source tracking and both runtime
+   triggers remain off. Follow real dependencies, including `xTdhLoop` before
+   `tdhLoop` and `delegationsLoop`, and wait for each selected service's artifact,
+   runtime and health checks. Deploy the birth-capable `api`, `xTdhLoop`,
+   `tdhLoop` and `delegationsLoop` creator paths and drain their older
+   invocations before bootstrap `prepare`.
+   Do not include unrelated services.
+2. Inventory the actual write paths and durable multi-stage source jobs. TDH is
+   complete only after xTDH statistics activation and derived levels; delegation
+   and consolidation have their own completion barriers. Confirm no older writer
+   version can still commit an uncovered mutation. The source/bootstrap receipt
+   must name the audited coverage revision and required GLOBAL and PROFILE
+   dimensions. Unknown source keys, unfinished jobs and missing writer coverage
+   stay unready. Never synthesize completion receipts from existing data rows.
+3. Run the versioned, idempotent bootstrap preparation: provision the seven
+   GLOBAL keys, then perform a bounded `PRETRACK_PROFILE_SCAN` of existing
+   canonical profiles and their six PROFILE source dimensions. Preserve its
+   durable cursor, high bound, counts and failures; resume the same operation
+   after interruption. This pretracking pass prevents an existing profile's
+   first tracked write from encountering a missing key. It is provisional and
+   does not certify complete coverage or absence of untracked changes. From
+   `prepare` onward, both compatible creator paths must provision a new
+   profile's six keys, birth receipt and PROFILE request in their identity
+   transaction even while tracking remains inactive. Otherwise a profile born
+   between this pass and tracking activation can make a later tracked write fail.
+   `prepare` records a 16-minute fence before pretracking can begin. Wait for
+   that fence so an older creator transaction with a pre-prepare snapshot has
+   ended before its profile can be skipped by the scan. Status reports the
+   durable `pretrack_not_before_millis`; an early advance stays at
+   `GLOBAL_READY`.
+4. Activate `membership_source_tracking_mode=tracking-v1` on all compatible
+   staging writers, one service at a time, with the SQS mapping and dispatcher
+   rule still disabled. Confirm the effective control and writer version for
+   every required unit, drain old invocations, and record the immutable audited
+   writer inventory. The current ten deployment units are `api`, `helpBotReplyLoop`,
+   `xTdhLoop`, `tdhLoop`, `delegationsLoop`, `overRatesRevocationLoop`,
+   `xTdhGrantsReviewerLoop`, `nftOwnersLoop`,
+   `externalCollectionSnapshottingLoop` and
+   `externalCollectionLiveTailingLoop`. The `helpBotReplyLoop` unit also deploys
+   `helpBotDailyActivityCreditLoop`, so the receipt contains eleven Lambda
+   function records. Tracked mutations durably bump versions
+   and refresh targets in the same transaction.
+   If any required writer is untracked, the bootstrap receipt is incomplete and
+   materialized readiness cannot be asserted.
+
+   The immutable writer receipt records the expected staging SHA,
+   `verified_at_millis`, `old_invocations_drained_at_millis`, and, for each
+   function, the full source SHA, Lambda function version, code SHA-256,
+   last modification time, timeout, deployment run ID, effective `tracking-v1`
+   mode and `staging` stage. Collect these facts from the deployed AWS resources
+   and workflow evidence. The API's deployed `GIT_COMMIT` and every other
+   writer's deployed `MEMBERSHIP_DEPLOY_SOURCE_SHA` must equal the full staging
+   SHA; the human-readable Lambda description alone is insufficient. Shape
+   validation in the bootstrap code cannot itself
+   verify AWS state or prove that old invocations drained.
+
+5. With tracking active, run bounded `GROUP_SCAN` and
+   `POSTTRACK_PROFILE_SCAN` catch-up passes. Catalogue baseline inserts only
+   missing group-version evidence; it never overwrites a version committed by a
+   concurrent rule, list, visibility, deletion or restoration mutation. Stable
+   GLOBAL catalogue/identity version sweeps and source-job checks precede
+   `VERIFY` and `COMPLETE`. A profile created during the rollout is covered by
+   its birth receipt and the catch-up scan. A new or restored profile beyond a
+   FULL fanout bound must retain its own durable PROFILE request. No completed
+   receipt may be inferred from a partly populated table.
+6. Start one idempotent initial FULL backfill tied to the verified source and
+   catalogue receipt. Enable the compatible staging worker mapping first and
+   the dispatcher schedule last. The dispatcher recovers due database targets
+   through independent EventBridge ticks; the worker consumes SQS and checkpoints
+   bounded PROFILE, GROUP and FULL work. Keep worker concurrency, page size,
+   statement deadlines and queue pressure within measured staging limits.
+   Start in `staging-controlled-v1` to collect independent continuation and
+   retry evidence at concurrency two. After that drill, stop the schedule,
+   settle in-flight work and measure SQL/queue pressure before switching both
+   runtime services to `staging-backfill-v1`. That mode raises the worker cap to
+   16, uses pages of at most 128 groups or profiles and lets the dispatcher
+   examine at most 120 raw candidates per one-minute tick. These are ceilings,
+   not throughput guarantees. Increase load only while database latency,
+   queue age, worker failure rate and publication progress remain acceptable.
+   Stop or slow the schedule if database load, locks, queue age or failure rate
+   exceeds the recorded operating budget.
+7. Observe the parent FULL fanout separately from its child PROFILE targets.
+   `SCAN_CONVERGED` is a point-in-time audit of the parent's captured identity
+   high bound, not proof that profiles created or restored later are complete.
+   The intended population needs completed publications, including empty
+   generations, with source and catalogue freshness checked at publication.
+   Inspect due, leased, retrying and parked work; a zero SQS depth can coexist
+   with database backlog. Compare controlled representative results against
+   authoritative direct SQL without switching ordinary API authorization away
+   from `legacy`.
+
+The source and catalogue receipt is a precondition for backfill, not a snapshot
+that freezes future writers. Source versions fence stale candidate publication;
+later committed changes retain their durable requests. Grant horizons create
+future PROFILE requests when a publication has a known time boundary. Verify
+those scheduled requests cross naturally during the staging drill, including a
+currently false PENDING grant and separate GRANTED/DISABLED source changes.
+
+### Start, status, stop and recovery
+
+The IAM-only `customReplayLoop` carrier accepts exact staging operator actions;
+it has no caller-supplied profile, group, database, cursor or page size. Each
+advance/observe call performs at most one 64-item page under a 45-second
+transaction budget and a five-second statement cap. Invoke one call at a time,
+check the CLI result for `FunctionError` and inspect the returned payload,
+record its Lambda request ID and progress, and let the measured SQL budget
+govern pacing. Do not seed source states, advance cursors, clear
+failures or send worker messages by ad hoc SQL. Requery status after an
+uncertain response. A repeated backfill start must identify the same generation
+rather than enqueue a second FULL request.
+If GC or observation reports `ER_LOCK_WAIT_TIMEOUT` while the backfill control
+is locked, let the transaction roll back, requery durable status, and retry the
+bounded call after the competing transaction finishes; GC records this as
+`LOCK_BUSY` for later discovery rather than retiring the protected parent.
+
+| Action                                                          | Stage and effect                                                                                                                                                                             |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `membership_bootstrap_prepare_v1`                               | Provision seven GLOBAL keys and create the `membership-bootstrap-v1` control. Call only after compatible creators and old-invocation drain are verified.                                     |
+| `membership_bootstrap_advance_v1`                               | Advance one bounded pretracking profile, group, posttracking profile or verification quantum. Reinvoke through `WAITING_FOR_WRITERS`, then again through `COMPLETE` after recording writers. |
+| `membership_bootstrap_status_v1`                                | Read the current bootstrap stage, scan bounds/cursors/counts and receipt.                                                                                                                    |
+| `membership_bootstrap_record_writers_v1`                        | Record the immutable externally verified ten-unit writer receipt after the pretracking scan and active writer rollout. Its payload also has `tracked_writer_receipt`.                        |
+| `membership_backfill_start_v1`                                  | Create or return one initial FULL generation only when bootstrap is `COMPLETE`; the request and checkpoint commit together.                                                                  |
+| `membership_backfill_status_v1`                                 | Read stored generation, parent and child-audit progress without advancing the scan.                                                                                                          |
+| `membership_backfill_observe_v1`                                | Inspect one bounded child-publication page after parent fanout; repeat until a measured convergence or recorded incomplete state.                                                            |
+| `membership_backfill_pause_v1`, `membership_backfill_resume_v1` | Change the audit control's intent; they do **not** stop the AWS schedule, queue mapping or active worker invocations.                                                                        |
+
+Use the returned JSON as the durable control receipt. For example:
+
+```bash
+aws lambda invoke --region eu-west-1 --function-name customReplayLoop \
+  --cli-binary-format raw-in-base64-out \
+  --payload '{"operator_action":"membership_bootstrap_prepare_v1"}' \
+  /tmp/membership-m8-prepare-result.json
+aws lambda invoke --region eu-west-1 --function-name customReplayLoop \
+  --cli-binary-format raw-in-base64-out \
+  --payload '{"operator_action":"membership_bootstrap_advance_v1"}' \
+  /tmp/membership-m8-advance-result.json
+aws lambda invoke --region eu-west-1 --function-name customReplayLoop \
+  --cli-binary-format raw-in-base64-out \
+  --payload '{"operator_action":"membership_bootstrap_status_v1"}' \
+  /tmp/membership-m8-status-result.json
+```
+
+For the writer receipt, create a task-local JSON map from the ten deployment
+unit names above to their successful staging GitHub Actions run IDs. After all
+eleven AWS functions are active and the old invocation window has passed,
+generate the exact carrier payload from the reviewed staging checkout:
+
+```bash
+GH_TOKEN="$(gh auth token)" ./bin/6529 run --silent membership:m8:writer-receipt -- \
+  --expected-sha "$membership_m8_sha" \
+  --deploy-runs "$membership_writer_deploy_runs_file" \
+  > "$membership_writer_receipt_file"
+aws lambda invoke --region eu-west-1 --function-name customReplayLoop \
+  --cli-binary-format raw-in-base64-out \
+  --payload "fileb://$membership_writer_receipt_file" \
+  /tmp/membership-m8-writer-result.json
+```
+
+Both file variables must be absolute task-local paths. Preserve the AWS and
+workflow evidence with the output; recheck drift after later deployments. The
+collector validates the deployed full source SHA, descriptions, modes and
+versions, GitHub run source, and an old-invocation drain window at least one
+Lambda timeout plus one minute past the latest modification. It emits
+`verified_at_millis` and
+`old_invocations_drained_at_millis` at the same final collection time, after
+that window. Its JSON is a point-in-time receipt, not
+continuous AWS monitoring.
+After `COMPLETE`, use the same invocation shape with the backfill actions in the
+table. Bootstrap status and backfill status are distinct; inspect both, the
+source jobs, database backlog, CloudWatch metrics and actual AWS trigger state.
+
+The existing deployment switches are exact workflow inputs. Each service
+deployment resets any omitted membership switch to its safe default, so supply
+the intended value on every selected deployment and verify the resulting Lambda
+configuration. The commands below are templates for an authorized staging
+release after its reviewed code is on `1a-staging`; dispatch one service at a
+time and wait for its workflow, artifact, version and health checks before the
+next. Set `membership_m8_sha` to the verified full staging SHA, and choose the
+single required service for each invocation.
+
+```bash
+# Compatible runtime, not processing yet.
+gh workflow run deploy.yml -R 6529-Collections/6529seize-backend \
+  --ref 1a-staging -f environment=staging -f service=membershipRefreshLoop \
+  -f expected_source_sha="$membership_m8_sha" \
+  -f membership_runtime_mode=staging-controlled-v1 \
+  -f membership_worker_mapping_enabled=false
+gh workflow run deploy.yml -R 6529-Collections/6529seize-backend \
+  --ref 1a-staging -f environment=staging -f service=membershipRefreshDispatcherLoop \
+  -f expected_source_sha="$membership_m8_sha" \
+  -f membership_runtime_mode=staging-controlled-v1 \
+  -f membership_dispatch_schedule_enabled=false
+
+# After the final audited bootstrap receipt: enable consumer before schedule.
+gh workflow run deploy.yml -R 6529-Collections/6529seize-backend \
+  --ref 1a-staging -f environment=staging -f service=membershipRefreshLoop \
+  -f expected_source_sha="$membership_m8_sha" \
+  -f membership_runtime_mode=staging-controlled-v1 \
+  -f membership_worker_mapping_enabled=true
+gh workflow run deploy.yml -R 6529-Collections/6529seize-backend \
+  --ref 1a-staging -f environment=staging -f service=membershipRefreshDispatcherLoop \
+  -f expected_source_sha="$membership_m8_sha" \
+  -f membership_runtime_mode=staging-controlled-v1 \
+  -f membership_dispatch_schedule_enabled=true
+```
+
+For a sustained initial drain, halt in the order below, then redeploy the
+worker with `membership_runtime_mode=staging-backfill-v1` and its mapping
+enabled. Wait for its artifact/runtime check and verify 16/16 reserved/mapping
+concurrency. Redeploy the dispatcher with that mode and its schedule enabled
+last. Its reserved concurrency stays one. If a rate or database budget is
+exceeded, disable the dispatcher schedule first and then the worker mapping;
+do not change target counters or publication rows to accelerate the display.
+
+Verify the actual triggers and queue without reading secrets:
+
+```bash
+aws lambda list-event-source-mappings --region eu-west-1 \
+  --event-source-arn arn:aws:sqs:eu-west-1:987989283142:membership-refresh-work-staging-v1 \
+  --query 'EventSourceMappings[].{UUID:UUID,State:State,BatchSize:BatchSize,MaximumConcurrency:ScalingConfig.MaximumConcurrency}'
+aws events describe-rule --region eu-west-1 \
+  --name membership-refresh-dispatch-staging-v1 \
+  --query '{State:State,ScheduleExpression:ScheduleExpression,Arn:Arn}'
+aws sqs get-queue-attributes --region eu-west-1 \
+  --queue-url https://sqs.eu-west-1.amazonaws.com/987989283142/membership-refresh-work-staging-v1 \
+  --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesDelayed ApproximateNumberOfMessagesNotVisible
+```
+
+For a controlled pause, disable the dispatcher schedule first, allow current
+worker invocations to settle, then disable the worker mapping if a full stop is
+needed. Record SQS visible/delayed/in-flight and DLQ counts, database targets
+and leases, and effective Lambda controls. Source tracking may remain on during
+a processing pause: committed requests continue to accumulate and require
+backlog monitoring. Resume with the same generation and durable cursors after
+correcting the cause, enable mapping before schedule, and verify the independent
+dispatcher recovers expired reservations and leases. Redrive an actual DLQ
+message only after preserving its failure evidence and correcting its cause;
+use bounded redrive and verify its requested-version fence. Do not delete or
+rewrite checkpoints to make a status display green.
+
+Stop by redeploying `membershipRefreshDispatcherLoop` with
+the currently selected `membership_runtime_mode` and
+`membership_dispatch_schedule_enabled=false`, waiting for the run and the
+disabled rule before touching the worker. If a full stop is required, redeploy
+`membershipRefreshLoop` with that same mode and
+`membership_worker_mapping_enabled=false`, then verify the disabled mapping.
+These are ordinary staging workflow deployments at the reviewed SHA, not direct
+changes to a CloudFormation-owned rule or mapping. Resume with the enable
+sequence above after inspecting durable status and queue age.
+
+If a writer must revert to untracked operation, treat the existing coverage
+receipt as invalid for materialized readiness. Keep direct reads, stop background
+load as needed, redeploy compatible writers, repeat the source/catalogue audit
+and reconcile the gap before any subsequent backfill/read activation. Rollback
+retains additive schema, publication history and target requests. Use reviewed
+reverts and ordinary deployment workflows; never drop membership tables or
+force-push shared branches as routine recovery.
+
+Any later writer code or mode change also requires a fresh coverage assessment.
+The stored receipt describes a particular deployed fleet; it does not monitor
+AWS configuration after recording. Do not infer continuing coverage from a
+matching revision string alone.
+
+### Live staging acceptance and remaining gates
+
+The controlled application-database mode is the smallest available staging
+path when it can preserve other users' data and independently prove the
+[#2090](https://github.com/6529-Collections/6529seize-backend/issues/2090)
+cases. Use task-owned profiles/groups or naturally scoped application data; do
+not erase shared source state for a drill. Correlate more than 16 distinct
+EventBridge/dispatcher/SQS/worker invocations on one generation, natural
+retry/DLQ/redrive, a failed send after committed reservation and natural expiry,
+interrupted FULL and DIRTY work including a large group, partial-run source
+supersession, time/grant and identity changes, fanout bounds, lease reclaim,
+reader overlap/GC, and safe shutdown. Record which items actually
+pass; keep #2090, #2071 or #2072 open for any missing live criteria. Small
+fixtures and synthetic logs do not prove this deployed behavior. #2074's
+representative capacity and API p95/p99 cutover gates remain separate.
+
+After the bounded drill, leave normal API reads in `legacy` and the worker
+mapping and dispatcher rule in an explicitly verified safe staging state. A
+fresh related staging E2E run must pass before milestone 8 Phase 3 is complete.
+For a backend-only release, dispatch the frontend `staging-e2e.yml` workflow on
+`main` with `automatic_deploy_run_id` set to the successful **currently live**
+`Web Deploy - STAGING` run ID. Its workflow binds the test source to that exact
+frontend deployment; record the backend staging commit and service runs
+separately. The dispatch is:
+
+```bash
+gh workflow run staging-e2e.yml -R 6529-Collections/6529seize-frontend \
+  --ref main -f automatic_deploy_run_id="$membership_live_web_deploy_run_id"
+```
+
+Run the relevant full packs after the controlled backend work and
+wait for a green result. Do not reuse an older E2E result as proof of this
+activation.
+The handoff must separate implemented controls, actual live evidence and
+unpassed production activation prerequisites. No production merge, deployment
+or activation follows from this staging result.
 
 ## Historical M2–M5 runtime deployment
 
@@ -151,11 +491,11 @@ for identity, subscription-capacity, termination-protection and delivery checks.
 
 ## Closed controls
 
-| Workflow input                         | Default    | Allowed activation                                         |
-| -------------------------------------- | ---------- | ---------------------------------------------------------- |
-| `membership_runtime_mode`              | `inactive` | `staging-fixture-v1` or `staging-controlled-v1` in staging |
-| `membership_worker_mapping_enabled`    | `false`    | `true` only with an active staging runtime mode            |
-| `membership_dispatch_schedule_enabled` | `false`    | `true` only with an active staging runtime mode            |
+| Workflow input                         | Default    | Allowed activation                                                                |
+| -------------------------------------- | ---------- | --------------------------------------------------------------------------------- |
+| `membership_runtime_mode`              | `inactive` | `staging-fixture-v1`, `staging-controlled-v1` or `staging-backfill-v1` in staging |
+| `membership_worker_mapping_enabled`    | `false`    | `true` only with an active staging runtime mode                                   |
+| `membership_dispatch_schedule_enabled` | `false`    | `true` only with an active staging runtime mode                                   |
 
 Malformed values, unrelated services, wrong regions and production activation are
 rejected. Compiled CloudFormation uses booleans, not boolean-looking strings.
