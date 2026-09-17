@@ -29,7 +29,11 @@ export interface MembershipRuntimeEnvironment {
 export interface MembershipRuntimeDeployment {
   readonly stage: 'staging' | 'prod';
   readonly region: 'eu-west-1' | 'us-east-1';
-  readonly mode: 'inactive' | 'staging-fixture-v1' | 'staging-controlled-v1';
+  readonly mode:
+    | 'inactive'
+    | 'staging-fixture-v1'
+    | 'staging-controlled-v1'
+    | 'staging-backfill-v1';
   readonly mapping_enabled: boolean;
   readonly queue_arn: string;
   readonly queue_url: string;
@@ -47,7 +51,8 @@ export function validateMembershipRuntimeDeployment(
     ) ||
     (mode !== 'inactive' &&
       mode !== 'staging-fixture-v1' &&
-      mode !== 'staging-controlled-v1') ||
+      mode !== 'staging-controlled-v1' &&
+      mode !== 'staging-backfill-v1') ||
     (mode !== 'inactive' && stage !== 'staging') ||
     (mapping_enabled !== undefined &&
       !['true', 'false'].includes(mapping_enabled)) ||
@@ -138,12 +143,12 @@ export function validateMembershipRuntimeHint(
   mode: MembershipRuntimeDeployment['mode'] = 'staging-fixture-v1'
 ): MembershipRuntimeHint {
   const parsed =
-    mode === 'staging-controlled-v1'
+    mode === 'staging-controlled-v1' || mode === 'staging-backfill-v1'
       ? controlledHint.safeParse(value)
       : fixtureHint.safeParse(value);
   if (!parsed.success)
     throw new Error(
-      mode === 'staging-controlled-v1'
+      mode === 'staging-controlled-v1' || mode === 'staging-backfill-v1'
         ? 'Unsupported membership controlled hint'
         : 'Unsupported membership fixture hint'
     );

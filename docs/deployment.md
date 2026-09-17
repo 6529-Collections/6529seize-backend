@@ -108,6 +108,19 @@ two additions. Reinvocation verifies existing compatible state; an uncertain or
 partial DDL result is reconciled without deleting existing data. Manual full sync
 requires this scope first.
 
+For the M8 staging backfill, deploy `dbMigrationsLoop` and invoke
+`db_schema_scope=membership-backfill-probes` before deploying the API or
+invoking bootstrap. This isolated scope adds two exact online indexes to
+`membership_source_states` for updated rows and active jobs, and one to
+`membership_refresh_targets` for updated PROFILE targets. It inspects the
+complete TypeORM plan, uses `ALGORITHM=INPLACE, LOCK=NONE` with a one-second
+metadata lock wait, and verifies all three definitions. Require
+`verified_indexes=3`; a second invocation must return `added_indexes=0`.
+Reconcile an uncertain partial result with the same scope. Keep the indexes
+on rollback: the backfill `observe` path names them with `FORCE INDEX` and
+cannot run without them. Measure rows examined and statement latency on the
+real staging population before accepting the full audit.
+
 Deploy `membershipRefreshLoop` afterward. Defaults are
 `membership_runtime_mode=inactive` and `membership_worker_mapping_enabled=false`.
 Production rejects any activation. Verify the compiled and actual disabled SQS

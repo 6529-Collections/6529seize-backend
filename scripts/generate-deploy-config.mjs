@@ -109,6 +109,7 @@ ${indent(yamlList(serviceNames))}
           - membership-refresh
           - membership-evaluator-index
           - membership-runtime-control
+          - membership-backfill-probes
       membership_runtime_mode:
         type: choice
         description: 'Membership processing mode; production requires inactive'
@@ -118,6 +119,7 @@ ${indent(yamlList(serviceNames))}
           - inactive
           - staging-fixture-v1
           - staging-controlled-v1
+          - staging-backfill-v1
       membership_source_tracking_mode:
         type: choice
         description: 'Independent source tracking; inactive by default and staging only'
@@ -242,7 +244,7 @@ jobs:
           set -euo pipefail
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]] || exit 1
           [[ "$INPUT_SERVICE" =~ ^(${serviceCasePattern})$ ]] || exit 1
-          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|wallet-transfer-analysis|claims-media-upload|nft-link-page-retry|membership-refresh|membership-evaluator-index|membership-runtime-control)$ ]] || exit 1
+          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|wallet-transfer-analysis|claims-media-upload|nft-link-page-retry|membership-refresh|membership-evaluator-index|membership-runtime-control|membership-backfill-probes)$ ]] || exit 1
           if [ "$DB_SCHEMA_SCOPE" != full ] && [ "$INPUT_SERVICE" != dbMigrationsLoop ]; then
             echo "db_schema_scope is only supported for dbMigrationsLoop" >&2
             exit 1
@@ -255,7 +257,7 @@ jobs:
           reader_coverage_revision="\${MEMBERSHIP_READER_COVERAGE_REVISION:-}"
           membership_mapping="\${MEMBERSHIP_WORKER_MAPPING_ENABLED:-false}"
           membership_schedule="\${MEMBERSHIP_DISPATCH_SCHEDULE_ENABLED:-false}"
-          [[ "$membership_mode" =~ ^(inactive|staging-fixture-v1|staging-controlled-v1)$ ]] || exit 1
+          [[ "$membership_mode" =~ ^(inactive|staging-fixture-v1|staging-controlled-v1|staging-backfill-v1)$ ]] || exit 1
           [[ "$source_tracking_mode" =~ ^(inactive|tracking-v1)$ ]] || exit 1
           [[ "$read_mode" =~ ^(legacy|staging-controlled-v1)$ ]] || exit 1
           [[ "$shadow_mode" =~ ^(off|staging-controlled-v1)$ ]] || exit 1

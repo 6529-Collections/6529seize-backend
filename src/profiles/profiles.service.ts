@@ -66,6 +66,8 @@ import {
   membershipGlobalMutation,
   withMembershipSourceMutation
 } from '@/membership/membership-producer-writes';
+import { provisionBornProfiles } from '@/membership/membership-bootstrap.db';
+import { withMembershipPrimaryMutationContext } from '@/membership/membership-primary';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -267,6 +269,11 @@ export class ProfilesService {
               basetdh_rate: 0
             },
             ctx.connection!
+          );
+          await withMembershipPrimaryMutationContext(
+            ctx.connection!,
+            (primary) => provisionBornProfiles([id], primary),
+            { ...ctx, connection: undefined }
           );
           creatorOrUpdatorIdentityResponse = await identitiesDb
             .getEverythingRelatedToIdentitiesByAddresses(

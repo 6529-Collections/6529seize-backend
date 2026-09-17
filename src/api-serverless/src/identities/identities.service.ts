@@ -56,6 +56,8 @@ import {
 } from '@/content-moderation/content-moderation.db';
 import { isMembershipSourceTrackingActive } from '@/membership/membership-producer-policy';
 import { MembershipSourceNotReadyError } from '@/membership/membership-source-states.db';
+import { provisionBornProfiles } from '@/membership/membership-bootstrap.db';
+import { withMembershipPrimaryMutationContext } from '@/membership/membership-primary';
 
 let pfpS3Client: S3Client | undefined;
 
@@ -602,6 +604,22 @@ export class IdentitiesService {
       );
       if (newIdentities.length) {
         await identitiesDb.bulkInsertIdentities(newIdentities, ctx.connection!);
+        // A new canonical profile has no historical source state. Record its
+        // birth in the same transaction as the identity, including while the
+        // bootstrap is scanning with producer tracking still inactive.
+        for (let offset = 0; offset < newIdentities.length; offset += 64) {
+          await withMembershipPrimaryMutationContext(
+            ctx.connection!,
+            (primary) =>
+              provisionBornProfiles(
+                newIdentities
+                  .slice(offset, offset + 64)
+                  .map((identity) => identity.profile_id!),
+                primary
+              ),
+            { ...ctx, connection: undefined }
+          );
+        }
         allIdentitiesAndProfiles =
           await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
             addresses,

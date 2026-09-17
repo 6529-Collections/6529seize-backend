@@ -1,5 +1,5 @@
 import { MEMBERSHIP_SOURCE_STATES_TABLE } from '@/constants';
-import { Column, Entity, PrimaryColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import type {
   MembershipSourceScope,
   MembershipSourceDimension
@@ -7,6 +7,12 @@ import type {
 
 /** See docs/membership-refresh-design.md for the publication protocol. */
 @Entity(MEMBERSHIP_SOURCE_STATES_TABLE)
+@Index('idx_mss_scope_updated_target', [
+  'scope',
+  'updated_at_millis',
+  'target_id'
+])
+@Index('idx_mss_scope_active_target', ['scope', 'active_jobs', 'target_id'])
 export class MembershipSourceStateEntity {
   @PrimaryColumn({ type: 'varchar', length: 20, nullable: false })
   readonly scope!: MembershipSourceScope;

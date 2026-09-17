@@ -1,7 +1,8 @@
 import {
   MEMBERSHIP_GENERATION_MEMBERS_TABLE,
   MEMBERSHIP_PUBLICATIONS_TABLE,
-  MEMBERSHIP_REFRESH_RUNS_TABLE
+  MEMBERSHIP_REFRESH_RUNS_TABLE,
+  MEMBERSHIP_RUNTIME_CHECKPOINTS_TABLE
 } from '@/constants';
 import { LazyDbAccessCompatibleService } from '@/sql-executor';
 import {
@@ -29,6 +30,11 @@ import {
   assertMembershipBoundedInteger,
   assertMembershipId
 } from './membership-validation';
+import {
+  MEMBERSHIP_BACKFILL_CHECKPOINT_ID,
+  MembershipBackfillProgress,
+  normalizeMembershipBackfillProgress
+} from './membership-backfill.types';
 
 /** One independently guarded quantum. Never holds a runtime checkpoint lock. */
 export class MembershipGcDb extends LazyDbAccessCompatibleService {
@@ -60,6 +66,10 @@ export class MembershipGcDb extends LazyDbAccessCompatibleService {
         deleted_count: 0,
         retry_at_millis: retry
       });
+      // Backfill operators lock the control before targets/runs. Take a shared
+      // control lock first here so an observed FULL parent cannot disappear.
+      const backfill =
+        hint.target.scope === 'FULL' ? await this.backfillControl(ctx) : null;
       const repository = new MembershipWorkerDb(() => this.db);
       const target = await repository.target(hint.target, true, ctx);
       if (!target) return result('QUARANTINED');
@@ -88,6 +98,8 @@ export class MembershipGcDb extends LazyDbAccessCompatibleService {
           run.status
         )
       )
+        return result('PROTECTED');
+      if (await this.protectBackfillParent(run, backfill, ctx))
         return result('PROTECTED');
       if (
         run.lease_token !== null ||
@@ -120,6 +132,55 @@ export class MembershipGcDb extends LazyDbAccessCompatibleService {
       if (!hint.pending) return result('ELIGIBLE', now);
       return this.deleteWindow(run, options.member_batch, now, ctx);
     });
+  }
+
+  private async backfillControl(
+    ctx: MembershipPrimaryContext
+  ): Promise<MembershipBackfillProgress | null> {
+    const row = await this.db.oneOrNull<{
+      protocol_version: number;
+      progress: unknown;
+    }>(
+      `SELECT protocol_version,progress FROM ${MEMBERSHIP_RUNTIME_CHECKPOINTS_TABLE}
+       WHERE id=:id FOR SHARE`,
+      { id: MEMBERSHIP_BACKFILL_CHECKPOINT_ID },
+      membershipQueryOptions(ctx)
+    );
+    if (!row) return null;
+    if (row.protocol_version !== 1)
+      throw new Error('Unsupported membership backfill control protocol');
+    return normalizeMembershipBackfillProgress(row.progress);
+  }
+
+  private async protectBackfillParent(
+    run: MembershipWorkerRun,
+    control: MembershipBackfillProgress | null,
+    ctx: MembershipPrimaryContext
+  ): Promise<boolean> {
+    if (
+      run.scope !== 'FULL' ||
+      control === null ||
+      control.state === 'SCAN_CONVERGED' ||
+      run.status !== 'COMPLETED' ||
+      BigInt(run.request_version) < BigInt(control.full_requested_version) ||
+      BigInt(run.created_at_millis) < BigInt(control.started_at_millis)
+    )
+      return false;
+    if (control.parent_run_id !== null) return run.id === control.parent_run_id;
+    // Before the operator records a parent, retain only one latest completed
+    // candidate. Older superseded/full generations remain collectable.
+    const latest = await this.db.oneOrNull<{ id: string }>(
+      `SELECT id FROM ${MEMBERSHIP_REFRESH_RUNS_TABLE}
+       WHERE scope='FULL' AND target_id='*' AND status='COMPLETED'
+         AND request_version>=:version AND created_at_millis>=:started
+       ORDER BY request_version DESC,created_at_millis DESC LIMIT 1`,
+      {
+        version: control.full_requested_version,
+        started: control.started_at_millis
+      },
+      membershipQueryOptions(ctx)
+    );
+    return latest?.id === run.id;
   }
 
   private async isPublished(

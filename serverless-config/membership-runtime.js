@@ -26,7 +26,8 @@ function resolveRuntime(input) {
   if (
     mode !== 'inactive' &&
     mode !== 'staging-fixture-v1' &&
-    mode !== 'staging-controlled-v1'
+    mode !== 'staging-controlled-v1' &&
+    mode !== 'staging-backfill-v1'
   )
     throw new Error('Unsupported membership runtime mode');
   if (input.stage === 'prod' && mode !== 'inactive')
@@ -52,7 +53,11 @@ function resolveWorker(input) {
     );
   if (mapping === 'true' && runtime.mode === 'inactive')
     throw new Error('Membership mapping requires an active staging mode');
-  return Object.freeze({ ...runtime, mappingEnabled: mapping === 'true' });
+  return Object.freeze({
+    ...runtime,
+    mappingEnabled: mapping === 'true',
+    workerConcurrency: runtime.mode === 'staging-backfill-v1' ? 16 : 2
+  });
 }
 
 /**

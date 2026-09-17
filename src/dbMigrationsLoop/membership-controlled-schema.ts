@@ -10,6 +10,7 @@ import { MEMBERSHIP_EVALUATOR_INDEX } from './membership-evaluator-schema';
 import { MEMBERSHIP_REFRESH_RUNS_TABLE, USER_GROUPS_TABLE } from '@/constants';
 import { MembershipRuntimeCheckpointEntity } from '@/entities/IMembershipRuntimeCheckpoint';
 import { MEMBERSHIP_RUNTIME_INDEX } from './membership-runtime-schema';
+import { MEMBERSHIP_BACKFILL_INDEXES } from './membership-backfill-index-schema';
 
 /** Manual full sync may not bypass separately reviewed membership schema scopes. */
 export async function applyFullSchemaWithMembershipGuard(
@@ -55,6 +56,11 @@ export async function applyFullSchemaWithMembershipGuard(
           throw new Error(
             'Membership runtime index must exist before full synchronization'
           );
+        for (const index of MEMBERSHIP_BACKFILL_INDEXES)
+          if (!(await membershipIndexExists(runner, index.table, index)))
+            throw new Error(
+              'Membership backfill indexes must exist before full synchronization'
+            );
       }
     );
   } finally {

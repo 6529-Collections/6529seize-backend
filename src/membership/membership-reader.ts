@@ -602,7 +602,8 @@ export class MembershipReader extends LazyDbAccessCompatibleService {
       progress: unknown;
     }>(
       `SELECT scope,target_id,dimension,progress FROM ${MEMBERSHIP_SOURCE_JOBS_TABLE}
-       WHERE job_id LIKE 'bootstrap:%' AND status='COMPLETED'
+       WHERE (job_id LIKE 'bootstrap:%' OR job_id LIKE 'birth:%')
+         AND status='COMPLETED'
          AND started_version=0 AND completed_version=0
          AND ((scope='GLOBAL' AND target_id='*') OR (scope='PROFILE' AND target_id=:profile))
        LIMIT 64`,
