@@ -484,7 +484,7 @@ describe('generated deployment source guard', () => {
     ).not.toContain('MEMBERSHIP_SOURCE_TRACKING_MODE');
   });
 
-  it('embeds the full workflow SHA in every non-API tracked writer function', () => {
+  it('embeds the full workflow SHA and deploy description in every non-API tracked writer function', () => {
     const writerUnits = [
       'helpBotReplyLoop',
       'xTdhLoop',
@@ -505,7 +505,11 @@ describe('generated deployment source guard', () => {
       const deployedSha = serverless.match(
         /MEMBERSHIP_DEPLOY_SOURCE_SHA: \$\{env:GITHUB_SHA, ''\}/g
       );
+      const description = serverless.match(
+        /description: \$\{env:VERSION_DESCRIPTION\}/g
+      );
       expect(deployedSha?.length).toBe(tracking?.length);
+      expect(description?.length).toBe(tracking?.length);
     }
     expect(steps.find((step) => step.name === 'Deploy API')?.run).toContain(
       'GIT_COMMIT: $commit'
