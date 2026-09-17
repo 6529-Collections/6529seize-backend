@@ -174,14 +174,19 @@ export function validateMembershipDispatchOptions(
     options.max_candidates,
     'dispatch candidates',
     1,
-    120
+    240
   );
   assertMembershipBoundedInteger(
     options.max_per_lane,
     'dispatch lane candidates',
     1,
-    60
+    120
   );
+  if (
+    options.prioritize_full !== undefined &&
+    typeof options.prioritize_full !== 'boolean'
+  )
+    throw new Error('Invalid FULL priority control');
   if (
     options.control_millis <= options.finalization_reserve_millis ||
     options.target_millis <= options.finalization_reserve_millis

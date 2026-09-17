@@ -294,6 +294,20 @@ describe('membership dispatcher handler integration boundary', () => {
     );
     expect(app.dispatch).toHaveBeenCalledTimes(1);
   });
+  it('gives both backfill lanes a bounded 120-candidate turn', async () => {
+    const app = boot({ ...staging, mode: 'staging-backfill-v1' });
+    await expect(app.invoke(event(), context())).resolves.toEqual({
+      dispatch: dispatchResult,
+      gc_deleted_members: 0
+    });
+    expect(app.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        max_candidates: 240,
+        max_per_lane: 120,
+        prioritize_full: true
+      })
+    );
+  });
   it('retains deployment and credentials across secret overwrites and binds real domain services to the selected executor', async () => {
     const app = boot();
     jest.mocked(app.env.prepEnvironment).mockImplementation(async () => {

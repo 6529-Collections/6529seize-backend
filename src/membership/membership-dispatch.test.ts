@@ -106,6 +106,44 @@ describe('membership external dispatcher orchestration', () => {
     expect(reserve).toHaveBeenCalledTimes(2);
     expect(send).toHaveBeenCalledTimes(2);
   });
+  it('probes FULL first without sending it twice when a keyset lane reaches it', async () => {
+    const full = { scope: 'FULL' as const, target_id: '*' };
+    const positions = jest
+      .spyOn(MembershipDispatchCheckpointsDb.prototype, 'reserve')
+      .mockResolvedValueOnce({ ...key, key: full })
+      .mockResolvedValueOnce({ ...key, lane: 'TARGET_PK' });
+    const reserve = jest
+      .spyOn(MembershipDispatchDb.prototype, 'reserve')
+      .mockImplementation(async (target) => ({
+        outcome: 'RESERVED',
+        hint: target.scope === 'FULL' ? { ...hint, target: full } : hint,
+        observed_due_age_millis: 0
+      }));
+    const send = jest.fn(
+      async (_delivery: MembershipDispatchHint) => undefined
+    );
+    const result = await new MembershipRefreshDispatcher(db, send).run(
+      membershipDispatchTestOptions({
+        max_candidates: 3,
+        prioritize_full: true
+      })
+    );
+    expect(positions).toHaveBeenCalledTimes(2);
+    expect(reserve.mock.calls.map(([target]) => target)).toEqual([
+      full,
+      hint.target
+    ]);
+    expect(send.mock.calls.map(([delivery]) => delivery.target)).toEqual([
+      full,
+      hint.target
+    ]);
+    expect(result).toMatchObject({
+      raw_candidates: 3,
+      sent: 2,
+      skipped: 1,
+      outcomes: { SENT: 2, DUPLICATE_TARGET: 1 }
+    });
+  });
   it.each([1, 2])(
     'performs no dependent action after an UNKNOWN phase %s commit',
     async (phase) => {
