@@ -249,6 +249,15 @@ Lambda timeout plus one minute past the latest modification. It emits
 `old_invocations_drained_at_millis` at the same final collection time, after
 that window. Its JSON is a point-in-time receipt, not
 continuous AWS monitoring.
+The posttracking profile sweep needs a stable GLOBAL IDENTITY version for all
+pages. The scheduled staging delegation cycle normally changes that version
+before a full sweep can finish. After the tracked delegation release is
+verified, disable its staging EventBridge rule, wait for the current cycle and
+downstream xTDH work to complete, then advance the bounded bootstrap scan to
+`COMPLETE`. Record the rule state before and after. Re-enable the same rule
+immediately after `COMPLETE` and verify that its persisted block marker lets
+it catch up. Keep the API and all source tracking active throughout; an active
+or changed source version still requires a status check and safe retry.
 After `COMPLETE`, use the same invocation shape with the backfill actions in the
 table. Bootstrap status and backfill status are distinct; inspect both, the
 source jobs, database backlog, CloudWatch metrics and actual AWS trigger state.
