@@ -517,7 +517,7 @@ describe('generated deployment source guard', () => {
       process.execPath,
       [
         '--test',
-        path.resolve(__dirname, 'membership-m8-writer-receipt.node.test.mjs')
+        path.resolve(__dirname, 'membership-m8-writer-receipt-check.mjs')
       ],
       { encoding: 'utf8', timeout: 10_000 }
     );
