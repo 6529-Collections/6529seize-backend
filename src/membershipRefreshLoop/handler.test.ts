@@ -238,6 +238,26 @@ describe('membership worker handler cold-start boundary', () => {
       hint.delivery
     );
   });
+  it('continues bounded backfill work within one application-database delivery', async () => {
+    const app = boot({ ...staging, mode: 'staging-backfill-v1' });
+    const incoming = event();
+    incoming.Records[0].body = JSON.stringify({
+      ...hint,
+      target: { scope: 'PROFILE', target_id: 'real-profile-id' }
+    });
+    await expect(app.invoke(incoming, context())).resolves.toEqual(result);
+    expect(app.work).toHaveBeenCalledWith(
+      { scope: 'PROFILE', target_id: 'real-profile-id' },
+      expect.objectContaining({
+        max_quanta: 16,
+        page_size: 128,
+        transaction_millis: 30000,
+        lease_millis: 120000
+      }),
+      {},
+      hint.delivery
+    );
+  });
   it.each([
     { scope: 'FULL', target_id: '*' },
     { scope: 'GROUP', target_id: 'membership-drill-group-001' }

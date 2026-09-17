@@ -277,7 +277,7 @@ export async function handleMembershipDispatcherInvocation(
             lock_wait_seconds: 1,
             reservation_millis: 120000,
             max_candidates: highCapacity ? 120 : 40,
-            max_per_lane: highCapacity ? 60 : 20
+            max_per_lane: highCapacity ? 120 : 20
           });
         } catch (error) {
           dispatchFailed = true;

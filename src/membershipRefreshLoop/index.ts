@@ -58,8 +58,9 @@ function workerOptions(
     checkpoint_reserve_millis: 2_000,
     lock_wait_seconds: 1,
     lease_millis: highCapacity ? 120_000 : 90_000,
-    // Closed staging acceptance requires independently scheduled continuation.
-    max_quanta: 1,
+    // Controlled acceptance keeps independent continuations; backfill can
+    // resume several committed checkpoints within the same bounded invocation.
+    max_quanta: highCapacity ? 16 : 1,
     page_size: highCapacity ? 128 : scope === 'PROFILE' ? 2 : 1,
     input_limits: {
       max_queries: highCapacity ? 1000 : 300,
