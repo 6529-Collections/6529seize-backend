@@ -6,6 +6,7 @@ import {
 } from '@/constants';
 import { MembershipRefreshTargetEntity } from '@/entities/IMembershipRefreshTarget';
 import { MembershipSourceStateEntity } from '@/entities/IMembershipSourceState';
+import { MEMBERSHIP_BACKFILL_INDEXES } from '@/membership/membership-backfill-indexes';
 import {
   executeMembershipOnlineIndex,
   membershipIndexExists,
@@ -18,23 +19,7 @@ export const membershipBackfillIndexEntities = [
   MembershipRefreshTargetEntity
 ];
 
-export const MEMBERSHIP_BACKFILL_INDEXES = [
-  {
-    table: MEMBERSHIP_SOURCE_STATES_TABLE,
-    name: 'idx_mss_scope_updated_target',
-    columns: ['scope', 'updated_at_millis', 'target_id']
-  },
-  {
-    table: MEMBERSHIP_SOURCE_STATES_TABLE,
-    name: 'idx_mss_scope_active_target',
-    columns: ['scope', 'active_jobs', 'target_id']
-  },
-  {
-    table: MEMBERSHIP_REFRESH_TARGETS_TABLE,
-    name: 'idx_mrt_scope_updated_target',
-    columns: ['scope', 'updated_at_millis', 'target_id']
-  }
-] as const;
+export { MEMBERSHIP_BACKFILL_INDEXES };
 
 function columns(index: (typeof MEMBERSHIP_BACKFILL_INDEXES)[number]): string {
   return index.columns.map((column) => `\`${column}\``).join(', ');

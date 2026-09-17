@@ -7,6 +7,7 @@ import {
 import {
   fetchAllConsolidatedTdh,
   fetchLatestNftDelegationBlock,
+  hasConsolidationsFromBlock,
   persistConsolidations,
   persistDelegations,
   persistNftDelegationBlock
@@ -86,7 +87,11 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
       const active = isMembershipSourceTrackingActive()
         ? await findActiveMembershipTdhCycle()
         : null;
-      if (active && !active.cycleId.startsWith('delegation:'))
+      if (
+        active &&
+        !active.cycleId.startsWith('delegation:') &&
+        !active.cycleId.startsWith('delegation-no-ownership:')
+      )
         throw new Error('Another tracked TDH source cycle is still active');
       if (active?.state.progress.stage === 'STARTED')
         // Consolidation registrations/revocations are procedural writes. A
@@ -106,16 +111,35 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         );
         return;
       }
+      // Read the chain before claiming a source job so a no-consolidation
+      // cycle never holds OWNERSHIP while the independent NFT owner loop runs.
+      // The chosen response is also the one persisted under that job.
+      const pending = active
+        ? null
+        : await findNewDelegations(effectiveStartBlock);
+      // The source range is inclusive. A chain reorg can remove an earlier
+      // consolidation even when the new response has no events, so deleting
+      // its old row must still retain the ownership barrier.
+      const touchesConsolidations = pending
+        ? pending.consolidations.length > 0 ||
+          (await hasConsolidationsFromBlock(effectiveStartBlock))
+        : false;
       const cycleId =
         active?.cycleId ??
-        membershipTdhCycleId('delegation', [effectiveStartBlock]);
+        membershipTdhCycleId(
+          touchesConsolidations ? 'delegation' : 'delegation-no-ownership',
+          [effectiveStartBlock]
+        );
       const existing =
         active?.state ?? (await getMembershipTdhCycleState(cycleId));
       if (existing?.status === 'COMPLETED') return;
       const state = await startMembershipTdhCycle(cycleId);
       if (state?.progress.stage === 'STARTED') {
         try {
-          const response = await handleDelegations(effectiveStartBlock);
+          const response = await handleDelegations(
+            effectiveStartBlock,
+            pending!
+          );
           await checkpointMembershipTdhInputs(cycleId, {}, async (primary) => {
             await dbSupplier().execute(
               `INSERT INTO ${NFTDELEGATION_BLOCKS_TABLE} (block, timestamp)
@@ -164,8 +188,12 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
   );
 });
 
-async function handleDelegations(startBlock: number | undefined) {
-  const delegationsResponse = await findNewDelegations(startBlock);
+async function handleDelegations(
+  startBlock: number | undefined,
+  prefetched?: Awaited<ReturnType<typeof findNewDelegations>>
+) {
+  const delegationsResponse =
+    prefetched ?? (await findNewDelegations(startBlock));
   await persistConsolidations(startBlock, delegationsResponse.consolidations);
   await persistDelegations(
     startBlock,

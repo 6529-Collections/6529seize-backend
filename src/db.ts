@@ -1500,6 +1500,15 @@ export async function fetchRoyalties(startDate: Date, endDate: Date) {
   return results;
 }
 
+export async function hasConsolidationsFromBlock(
+  startBlock: number | undefined
+): Promise<boolean> {
+  if (!startBlock) return false;
+  return AppDataSource.getRepository(Consolidation).exist({
+    where: { block: MoreThanOrEqual(startBlock) }
+  });
+}
+
 export async function persistConsolidations(
   startBlock: number | undefined,
   consolidations: ConsolidationEvent[]
