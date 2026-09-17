@@ -301,7 +301,11 @@ describe('membership dispatcher handler integration boundary', () => {
       gc_deleted_members: 0
     });
     expect(app.dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({ max_candidates: 240, max_per_lane: 120 })
+      expect.objectContaining({
+        max_candidates: 240,
+        max_per_lane: 120,
+        prioritize_full: true
+      })
     );
   });
   it('retains deployment and credentials across secret overwrites and binds real domain services to the selected executor', async () => {

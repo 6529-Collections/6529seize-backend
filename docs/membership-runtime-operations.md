@@ -158,7 +158,9 @@ three indexes are required by the final backfill convergence probes.
    runtime services to `staging-backfill-v1`. That mode raises the worker cap to
    16, uses pages of at most 128 groups or profiles and permits at most 16
    committed quanta within a 45-second worker budget. The dispatcher examines
-   at most 240 raw candidates, with at most 120 per lane, per one-minute tick.
+   at most 240 raw candidates, with at most 120 per keyset lane, per one-minute
+   tick. One candidate is a direct FULL-target probe before the two durable
+   keyset lanes, so profile backlog cannot indefinitely delay parent fanout.
    These are ceilings,
    not throughput guarantees. Increase load only while database latency,
    queue age, worker failure rate and publication progress remain acceptable.
