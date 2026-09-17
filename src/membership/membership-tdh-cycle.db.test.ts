@@ -125,4 +125,50 @@ describeWithSeed('TDH source cycle handoff', withIdentities([identity]), () => {
     );
     expect(evidence.every(({ state }) => state?.active_jobs === 0)).toBe(true);
   });
+
+  it('leaves ownership available for a delegation cycle without consolidation writes', async () => {
+    const delegationKeys = membershipGlobalMutation(
+      ['DELEGATIONS', 'OWNERSHIP'],
+      'tdh-source-cycle'
+    ).keys;
+    await withMembershipPrimaryTransaction(sqlExecutor, (ctx) =>
+      sources.provision(
+        delegationKeys,
+        { bootstrap_id: 'tdh-test', coverage_revision: 'cycle-test' },
+        ctx
+      )
+    );
+    const noOwnerId = membershipTdhCycleId('delegation-no-ownership', [123]);
+    await startMembershipTdhCycle(noOwnerId);
+    expect((await findActiveMembershipTdhCycle())?.cycleId).toBe(noOwnerId);
+    const during = await withMembershipPrimaryTransaction(sqlExecutor, (ctx) =>
+      sources.read([...keys, ...delegationKeys], false, ctx)
+    );
+    expect(
+      during.find(({ key }) => key.dimension === 'OWNERSHIP')?.state
+        ?.active_jobs
+    ).toBe(0);
+    expect(
+      during
+        .filter(({ key }) => key.dimension !== 'OWNERSHIP')
+        .every(({ state }) => state?.active_jobs === 1)
+    ).toBe(true);
+
+    await checkpointMembershipTdhInputs(noOwnerId);
+    await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+      checkpointMembershipTdhUniverse(noOwnerId, connection, async () => {})
+    );
+    await activateMembershipTdhStats(noOwnerId, async () => {});
+    await completeMembershipTdhCycle(noOwnerId);
+
+    const legacyId = membershipTdhCycleId('delegation', [124]);
+    await startMembershipTdhCycle(legacyId);
+    const legacy = await withMembershipPrimaryTransaction(sqlExecutor, (ctx) =>
+      sources.read(delegationKeys, false, ctx)
+    );
+    expect(
+      legacy.find(({ key }) => key.dimension === 'OWNERSHIP')?.state
+        ?.active_jobs
+    ).toBe(1);
+  });
 });
