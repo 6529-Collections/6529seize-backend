@@ -8,6 +8,7 @@ import {
   MEMBERSHIP_RUNTIME_CHECKPOINTS_TABLE
 } from '@/constants';
 import { LazyDbAccessCompatibleService } from '@/sql-executor';
+import { MEMBERSHIP_BACKFILL_INDEXES } from './membership-backfill-indexes';
 import {
   MembershipPrimaryContext,
   membershipQueryOptions
@@ -448,35 +449,17 @@ export class MembershipBackfillDb extends LazyDbAccessCompatibleService {
   private async requireProbeIndexes(
     ctx: MembershipPrimaryContext
   ): Promise<void> {
-    const expected = [
-      {
-        table: MEMBERSHIP_SOURCE_STATES_TABLE,
-        name: 'idx_mss_scope_updated_target',
-        columns: ['scope', 'updated_at_millis', 'target_id']
-      },
-      {
-        table: MEMBERSHIP_SOURCE_STATES_TABLE,
-        name: 'idx_mss_scope_active_target',
-        columns: ['scope', 'active_jobs', 'target_id']
-      },
-      {
-        table: MEMBERSHIP_REFRESH_TARGETS_TABLE,
-        name: 'idx_mrt_scope_updated_target',
-        columns: ['scope', 'updated_at_millis', 'target_id']
-      }
-    ];
+    const expected = MEMBERSHIP_BACKFILL_INDEXES;
     const rows = await this.db.execute<ProbeIndexRow>(
       `SELECT TABLE_NAME table_name,INDEX_NAME index_name,
        SEQ_IN_INDEX seq_in_index,COLUMN_NAME column_name,
        NON_UNIQUE non_unique
        FROM information_schema.STATISTICS
        WHERE TABLE_SCHEMA=DATABASE()
-         AND ((TABLE_NAME=:source AND INDEX_NAME IN
-           ('idx_mss_scope_updated_target','idx_mss_scope_active_target'))
-           OR (TABLE_NAME=:target AND INDEX_NAME='idx_mrt_scope_updated_target'))`,
+         AND TABLE_NAME IN (:tables) AND INDEX_NAME IN (:names)`,
       {
-        source: MEMBERSHIP_SOURCE_STATES_TABLE,
-        target: MEMBERSHIP_REFRESH_TARGETS_TABLE
+        tables: Array.from(new Set(expected.map((index) => index.table))),
+        names: expected.map((index) => index.name)
       },
       membershipQueryOptions(ctx)
     );
