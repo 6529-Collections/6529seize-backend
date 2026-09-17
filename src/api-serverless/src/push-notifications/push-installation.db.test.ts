@@ -738,4 +738,194 @@ describe('push installation logout', () => {
       secret_hash: expect.stringMatching(/^[a-f0-9]{64}$/)
     });
   });
+  it('recovers a mixed-token legacy cohort without claiming or deleting the other phone', async () => {
+    for (const profile of ['A', 'B', 'forgotten'])
+      await registerInstallationDevice(device(profile), {}, {});
+    for (const profile of ['other-A', 'other-B', 'other-C']) {
+      await registerInstallationDevice(
+        { ...device(profile), token: 'old-phone-token' },
+        {},
+        {}
+      );
+    }
+    await registerInstallationDevice(
+      device('A', 'another-device'),
+      credential,
+      {}
+    );
+    await expect(
+      registerInstallationDevice(device('A'), credential, {})
+    ).rejects.toThrow('ambiguous');
+    const cleanup = {
+      device_id: 'phone',
+      installation_secret: 'c'.repeat(64),
+      revision: 1,
+      token: 'fcm-token',
+      token_scoped: true,
+      all_profiles: true,
+      sessions: []
+    };
+    await revokeInstallation(cleanup, {});
+    expect(await registrations()).toEqual([
+      { device_id: 'another-device', profile_id: 'A' },
+      ...['other-A', 'other-B', 'other-C'].map((profile_id) => ({
+        device_id: 'phone',
+        profile_id
+      }))
+    ]);
+    expect(await storedInstallation()).toMatchObject({
+      secret_hash: null,
+      revision: 0
+    });
+    for (const profile of ['A', 'B'])
+      await registerInstallationDevice(
+        { ...device(profile, 'replacement'), token: 'new-current-token' },
+        credential,
+        {}
+      );
+    await revokeInstallation(cleanup, {});
+    expect(
+      (await registrations()).filter((row) => row.device_id === 'replacement')
+    ).toHaveLength(2);
+    expect(
+      (await registrations()).filter(
+        (row) => row.device_id === 'another-device'
+      )
+    ).toHaveLength(1);
+  });
+
+  it('token cleanup does not advance a claimed installation or revoke its sessions', async () => {
+    await registerInstallationDevice(device('A'), credential, {});
+    await registerInstallationDevice(device('B'), credential, {});
+    await revokeInstallation(
+      {
+        device_id: 'phone',
+        installation_secret: 'c'.repeat(64),
+        revision: 1,
+        token: 'fcm-token',
+        token_scoped: true,
+        all_profiles: false,
+        profile_id: 'A',
+        sessions: []
+      },
+      {}
+    );
+    expect(await storedInstallation()).toMatchObject({
+      revision: 0,
+      token: 'fcm-token'
+    });
+    expect(await registrations()).toEqual([
+      { device_id: 'phone', profile_id: 'B' }
+    ]);
+    await revokeInstallation(
+      {
+        device_id: 'phone',
+        installation_secret: 'd'.repeat(64),
+        revision: 1,
+        token: 'fcm-token',
+        token_scoped: true,
+        all_profiles: true,
+        sessions: []
+      },
+      {}
+    );
+    expect(await storedInstallation()).toMatchObject({
+      revision: 0,
+      token: null
+    });
+    expect(await registrations()).toEqual([]);
+  });
+
+  it('does not permit token cleanup based on a public device ID or similar token', async () => {
+    await registerInstallationDevice(device('A'), credential, {});
+    for (const token of [undefined, 'FCM-token', 'fcm-token-extra']) {
+      await expect(
+        revokeInstallation(
+          {
+            device_id: 'phone',
+            installation_secret: 'c'.repeat(64),
+            revision: 1,
+            token,
+            token_scoped: true,
+            all_profiles: true,
+            sessions: []
+          },
+          {}
+        )
+      ).rejects.toThrow();
+    }
+    expect(await registrations()).toEqual([
+      { device_id: 'phone', profile_id: 'A' }
+    ]);
+  });
+
+  it('rotates every profile token in the verified installation without changing another phone', async () => {
+    for (const profile of ['A', 'B'])
+      await registerInstallationDevice(device(profile), credential, {});
+    await registerInstallationDevice(
+      device('A', 'other-phone'),
+      credential,
+      {}
+    );
+    await registerInstallationDevice(
+      { ...device('A'), token: 'new-token' },
+      credential,
+      {}
+    );
+    expect(
+      await sqlExecutor.execute(
+        `SELECT device_id, profile_id, token FROM ${PUSH_NOTIFICATION_DEVICES_TABLE} ORDER BY device_id, profile_id`
+      )
+    ).toEqual([
+      { device_id: 'other-phone', profile_id: 'A', token: 'fcm-token' },
+      { device_id: 'phone', profile_id: 'A', token: 'new-token' },
+      { device_id: 'phone', profile_id: 'B', token: 'new-token' }
+    ]);
+  });
+
+  it('carries only the authenticated profile preferences to a replacement and preserves later edits', async () => {
+    await registerInstallationDevice(device('A'), credential, {});
+    const preferences =
+      await pushNotificationSettingsDb.upsertPushNotificationSettings(
+        'A',
+        'phone',
+        { identity_mentioned: false }
+      );
+    await revoke(1);
+    const replacementCredential = {
+      ...credential,
+      previous_device_id: 'phone'
+    };
+    await registerInstallationDevice(
+      device('A', 'replacement'),
+      replacementCredential,
+      {}
+    );
+    expect(
+      await pushNotificationSettingsDb.getPushNotificationSettings(
+        'A',
+        'replacement'
+      )
+    ).toEqual(preferences);
+    expect(await registrations()).toEqual([
+      { device_id: 'replacement', profile_id: 'A' }
+    ]);
+    const updated =
+      await pushNotificationSettingsDb.upsertPushNotificationSettings(
+        'A',
+        'replacement',
+        { identity_mentioned: true }
+      );
+    await registerInstallationDevice(
+      device('A', 'replacement'),
+      replacementCredential,
+      {}
+    );
+    expect(
+      await pushNotificationSettingsDb.getPushNotificationSettings(
+        'A',
+        'replacement'
+      )
+    ).toEqual(updated);
+  });
 });

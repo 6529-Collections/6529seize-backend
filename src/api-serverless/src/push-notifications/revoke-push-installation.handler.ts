@@ -11,9 +11,14 @@ const schema: Joi.ObjectSchema<ApiRevokePushInstallationRequest> = Joi.object({
   device_id: Joi.string().max(100).required(),
   installation_secret: Joi.string().hex().length(64).required(),
   revision: Joi.number().integer().min(1).max(4294967295).required(),
-  token: Joi.string().max(4096).optional(),
+  token: Joi.string().max(4096).when('token_scoped', {
+    is: true,
+    then: Joi.required(),
+    otherwise: Joi.optional()
+  }),
   profile_id: Joi.string().max(100).optional(),
   all_profiles: Joi.boolean().required(),
+  token_scoped: Joi.boolean().optional(),
   sessions: Joi.array()
     .max(50)
     .items(
@@ -38,6 +43,7 @@ export async function handleRevokePushInstallation(
   );
   // The durable installation retains the last delivery target after its final
   // profile disappears. Enqueue failures propagate so the client's outbox retries.
-  await requestInstallationBadgeRefresh(installation.device_id);
+  if (!request.token_scoped)
+    await requestInstallationBadgeRefresh(installation.device_id);
   return { revision: installation.revision };
 }

@@ -105,6 +105,13 @@ refresh-token/address pairs. The installation credential authorizes device
 cleanup without a live wallet JWT, allowing the secure client outbox to finish
 an offline logout after local accounts are removed. Each supplied refresh token
 revokes only its matching native session; other devices and web sessions remain.
+Native refresh tokens are generated and rotated with `randomBytes(64)` (512 bits),
+returned to the client establishing or refreshing that session, and stored as a
+keyed hash in the database. The mobile client keeps the bearer token in native
+secure storage and a process-local cache, not in device-list responses. Revocation
+requires the exact token for each supplied session; installation proof alone does
+not authorize revoking other sessions. A stolen bearer token can revoke its own
+session, so its confidentiality remains part of the auth contract.
 
 This route runs behind the shared API rate-limiting middleware, including for
 requests without a wallet JWT. With `API_RATE_LIMIT_ENABLED=true` and Redis
@@ -134,6 +141,11 @@ A single logout deletes `push_notification_devices` and settings for the selecte
 profile/device. Sign-out-all deletes every registration/settings row for that
 device, including forgotten local profiles. A sessions-only revocation omits the
 profile when another connected wallet still owns it or the account has no profile.
+Every revoke variant, including sessions-only, advances the installation revision.
+The client increments and securely persists that revision with its queued logout
+before sending the request, retries with the same revision, and drains pending
+logouts before registering with the stored current revision. Sessions-only logout
+must follow this same sequence even though it retains profile registrations.
 The frontend removes identifiable profile tray entries for a single logout and
 uses global native tray removal only for explicit sign-out-all.
 
@@ -144,6 +156,12 @@ Revocation commits first, then enqueues `installation_badge_refresh` by device I
 A failed queue handoff returns an error for client retry. Repeated revisions are
 idempotent and cannot erase a later login; new registration must present the
 current revision. Registration and revocation lock the same database row.
+An authenticated stale retry may return a higher stored revision than requested.
+The frontend treats success as acknowledgement of that queued job and does not
+overwrite its securely stored revision with the response, avoiding a rollback.
+An empty sessions-only request still fences older registrations. For a claimed
+installation, advancing the revision requires installation ownership and the
+exact next revision, so knowing a device ID cannot exhaust or race that counter.
 Locking rejects a missing transaction connection before issuing any query.
 Unclaimed installations start at revision zero, and the API requires revoke
 revisions of at least one. Once claimed through registration or legacy token
@@ -174,8 +192,14 @@ Registration uses the database row lock and revision fence; it does not acquire
 the Redis device lock. Redis coordinates revocation with worker recipient checks
 and submissions, not registration with delivery. A login committed before the
 worker reads registrations is included in that count. A registration committed
-after the read can leave the submitted badge temporarily stale until a later
-read/unread event or ordinary push recalculates it; registration alone does not
+after a single-profile logout contributes only profiles currently registered;
+the deleted profile remains excluded unless deliberately registered again. Before
+the first registration, an early logout has no profile row to delete: its secret's
+revision fence rejects delayed registration with the old revision, while another
+credential can establish the installation. A valid subsequent login can therefore
+receive a nonzero aggregate badge without restoring the logged-out registration.
+A registration committed after the read can leave the submitted badge temporarily
+stale until a later read/unread event or ordinary push recalculates it; registration alone does not
 schedule a corrective badge update. Revocation must not bypass Redis
 during an outage: a pending alert could otherwise submit after its last recipient
 check and after logout. The client keeps that revocation queued until coordination
@@ -231,13 +255,43 @@ Successful early logout stores its separate fence and later retries use the
 same secret, even after that logout revoked the native session. If the
 initial request has no valid session proof, cleanup remains pending; this also
 covers a never-registered client's session expiring before offline reconciliation.
-Device IDs are visible to profiles and do not authorize device-wide deletion by themselves. Conflicting legacy
-tokens or a lost installation credential require operator-assisted reconciliation
-after ownership verification; the client keeps cleanup pending and blocks new
-registration rather than taking over another profile's rows. Once claimed, legacy
-registration calls without the secret are rejected. Keep the schema on rollback;
-roll back the frontend before API producer changes, then drain jobs before
-rolling back the worker. Old clients cannot register against a claimed installation.
+Device IDs are visible to profiles and do not authorize device-wide deletion by themselves.
+The frontend now binds a fresh push device UUID to the existing native Device
+plugin identifier. The first upgrade from an unbound UUID, and a backup restored
+onto a different native device, create a separate registration namespace and
+credential. Original logout requests remain stored with their original identity,
+secret and revision. An old namespace's failure no longer blocks registration or
+logout on the current phone; a failure within the current namespace still blocks
+registration until its logout is reconciled.
+
+Migration uses `token_scoped: true` on the revocation endpoint, with an independent
+cleanup credential and revision. Under the existing device and database locks,
+it removes only rows for the old device ID and the exact current native FCM token.
+It does not claim the legacy installation, advance its registration revision,
+revoke native sessions, or delete a different token's registrations. Initial
+cleanup requires token ownership or a live native session to establish its own
+fence; subsequent retries are idempotent. After its final matching row is removed,
+the old installation's matching retained token is cleared to prevent stale badge
+jobs targeting the replacement phone. This cleanup does not enqueue an old-device
+badge correction. Replacement registration enqueues the new device's badge refresh.
+
+Profile preferences survive logout. Authenticated registration may supply
+`previous_device_id` to copy only the acting profile's preferences when the new
+installation has none. Existing destination preferences win. Verified modern
+registration updates the token/platform for all profiles on that installation;
+legacy registrations retain their original per-profile behavior. Other device IDs
+are unaffected.
+
+Unproven old-token registrations are deliberately preserved: moving to a new phone
+is not authority to sign another phone out. Legacy conflicting cleanup may remain
+pending for support review, but does not prevent the replacement from receiving
+pushes. Lost or unreadable current credentials still fail closed. No database wipe
+or operator enrollment is required for the new installation to register. Once
+claimed, legacy registration calls without the secret are rejected. Keep the schema
+on rollback. A migrated client needs its device binding and multi-installation
+outbox reader preserved; reverting to the older storage reader is unsafe. Keep
+the recovery API available until a compatible client is in place and pending
+work drains before rolling back the worker. Old clients cannot register against a claimed installation.
 
 Offline logout is eventually reconciled only when the client can run and reach
 the API. Secure-storage failure prevents local credential removal; clearing app

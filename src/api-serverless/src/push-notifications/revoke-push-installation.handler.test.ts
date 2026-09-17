@@ -103,3 +103,18 @@ it.each(['busy', 'unavailable'])(
     expect(revokeInstallation).toHaveBeenCalledTimes(1);
   }
 );
+
+it('does not enqueue an obsolete badge correction during token-scoped migration', async () => {
+  const migration = { ...body, token: 'current-token', token_scoped: true };
+  await expect(
+    handleRevokePushInstallation(request(migration))
+  ).resolves.toEqual({ revision: 1 });
+  expect(revokeInstallation).toHaveBeenCalledWith(migration, {});
+  expect(requestInstallationBadgeRefresh).not.toHaveBeenCalled();
+});
+it('requires a token for migration cleanup before any mutation', async () => {
+  await expect(
+    handleRevokePushInstallation(request({ ...body, token_scoped: true }))
+  ).rejects.toThrow();
+  expect(revokeInstallation).not.toHaveBeenCalled();
+});

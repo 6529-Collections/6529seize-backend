@@ -6,6 +6,7 @@ import {
   PUSH_NOTIFICATION_DEVICE_LOGOUT_FENCES_TABLE
 } from '@/constants';
 import { PushInstallationEntity } from '@/entities/IPushInstallation';
+import { PUSH_NOTIFICATION_TYPES } from '@/entities/IPushNotificationSettings';
 import { PushNotificationDevice } from '@/entities/IPushNotification';
 import { CustomApiCompliantException, ForbiddenException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
@@ -24,6 +25,7 @@ export interface InstallationRevocation extends InstallationProof {
   installation_secret: string;
   revision: number;
   all_profiles: boolean;
+  token_scoped?: boolean;
   profile_id?: string;
   sessions: { address: string; native_refresh_token: string }[];
 }
@@ -42,7 +44,7 @@ function matchesToken(stored: string, provided: string | undefined): boolean {
 const conflict = () =>
   new CustomApiCompliantException(409, 'Stale push installation revision');
 
-type InstallationOperation = 'registration' | 'revocation';
+type InstallationOperation = 'registration' | 'revocation' | 'token_cleanup';
 
 // The installation row already serializes this read; avoid missing-key gap locks.
 async function getLogoutFence(proof: InstallationProof, ctx: RequestContext) {
@@ -81,6 +83,7 @@ async function lockInstallation(
     options
   );
   if (!installation) throw new Error('Push installation lock failed');
+  if (operation === 'token_cleanup') return installation;
   if (installation.secret_hash) {
     if (
       !proof.installation_secret ||
@@ -141,7 +144,11 @@ async function lockInstallation(
 
 export async function registerInstallationDevice(
   device: PushNotificationDevice,
-  credential: { installation_secret?: string; installation_revision?: number },
+  credential: {
+    installation_secret?: string;
+    installation_revision?: number;
+    previous_device_id?: string;
+  },
   ctx: RequestContext
 ): Promise<void> {
   const timer = 'PushInstallationDb->register';
@@ -159,6 +166,27 @@ export async function registerInstallationDevice(
       )
         throw conflict();
       const options = { wrappedConnection: connection };
+      if (credential.previous_device_id && credential.installation_secret) {
+        const columns = PUSH_NOTIFICATION_TYPES.join(', ');
+        // Only the authenticated profile's preferences are copied, never its
+        // registrations. An existing destination preference always wins.
+        await sqlExecutor.execute(
+          `INSERT IGNORE INTO ${PUSH_NOTIFICATION_SETTINGS_TABLE} (device_id, profile_id, ${columns})
+           SELECT :device_id, profile_id, ${columns} FROM ${PUSH_NOTIFICATION_SETTINGS_TABLE}
+           WHERE device_id = :previous_device_id AND profile_id = :profile_id`,
+          { ...device, previous_device_id: credential.previous_device_id },
+          options
+        );
+      }
+      if (installation.secret_hash) {
+        // A verified installation has one current native token. Refresh every
+        // connected profile, including those that are not currently active.
+        await sqlExecutor.execute(
+          `UPDATE ${PUSH_NOTIFICATION_DEVICES_TABLE} SET token = :token, platform = :platform WHERE device_id = :device_id`,
+          { ...device, platform: device.platform ?? null },
+          options
+        );
+      }
       await sqlExecutor.execute(
         `INSERT INTO ${PUSH_NOTIFICATION_DEVICES_TABLE} (device_id, token, profile_id, platform)
          VALUES (:device_id, :token, :profile_id, :platform)
@@ -193,9 +221,11 @@ export async function revokeInstallation(
         const installation = await lockInstallation(
           request,
           { ...ctx, connection },
-          'revocation'
+          request.token_scoped ? 'token_cleanup' : 'revocation'
         );
         const transactionCtx = { ...ctx, connection };
+        if (request.token_scoped)
+          return revokeTokenCohort(request, transactionCtx);
         if (!installation.secret_hash) {
           return revokeBeforeRegistration(request, transactionCtx);
         }
@@ -216,11 +246,8 @@ export async function revokeInstallation(
             params,
             options
           );
-          await sqlExecutor.execute(
-            `DELETE FROM ${PUSH_NOTIFICATION_SETTINGS_TABLE} WHERE device_id = :device_id${scope}`,
-            params,
-            options
-          );
+          // Preferences survive sign-out and can follow this profile to a
+          // replacement installation; settings alone are not delivery targets.
         }
         await revokeNativeSessions(request.sessions, transactionCtx);
         await sqlExecutor.execute(
@@ -262,6 +289,65 @@ async function revokeBeforeRegistration(
       revision: request.revision
     },
     { wrappedConnection: ctx.connection }
+  );
+  return { device_id: request.device_id, revision: request.revision };
+}
+
+/** Token possession permits removing only that delivery target, not claiming its device ID. */
+async function revokeTokenCohort(
+  request: InstallationRevocation,
+  ctx: RequestContext
+) {
+  if (!request.token)
+    throw new ForbiddenException('Token-scoped cleanup requires a token');
+  const fence = await getLogoutFence(request, ctx);
+  const currentRevision = fence?.revision ?? 0;
+  if (request.revision <= currentRevision)
+    return { device_id: request.device_id, revision: currentRevision };
+  if (request.revision !== currentRevision + 1) throw conflict();
+  const options = { wrappedConnection: ctx.connection };
+  const targets = await sqlExecutor.execute<PushNotificationDevice>(
+    `SELECT * FROM ${PUSH_NOTIFICATION_DEVICES_TABLE} WHERE device_id = :device_id ORDER BY profile_id FOR UPDATE`,
+    { device_id: request.device_id },
+    options
+  );
+  if (
+    !fence &&
+    !targets.some((row) => matchesToken(row.token, request.token))
+  ) {
+    await requireLiveNativeSession(request.sessions, ctx);
+  }
+  const scope = request.all_profiles ? '' : ' AND profile_id = :profile_id';
+  if (request.all_profiles || request.profile_id) {
+    await sqlExecutor.execute(
+      `DELETE FROM ${PUSH_NOTIFICATION_DEVICES_TABLE} WHERE device_id = :device_id AND BINARY token = BINARY :token${scope}`,
+      {
+        device_id: request.device_id,
+        token: request.token,
+        profile_id: request.profile_id
+      },
+      options
+    );
+  }
+  await sqlExecutor.execute(
+    `UPDATE ${PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE} SET token = NULL
+     WHERE device_id = :device_id AND BINARY token = BINARY :token
+     AND NOT EXISTS (SELECT 1 FROM ${PUSH_NOTIFICATION_DEVICES_TABLE}
+       WHERE device_id = :device_id AND BINARY token = BINARY :token)`,
+    { device_id: request.device_id, token: request.token },
+    options
+  );
+  // This fence belongs only to the cleanup credential. Never advance or replace
+  // another installation's credential or registration revision.
+  await sqlExecutor.execute(
+    `INSERT INTO ${PUSH_NOTIFICATION_DEVICE_LOGOUT_FENCES_TABLE} (device_id, secret_hash, revision)
+     VALUES (:device_id, :secret_hash, :revision) ON DUPLICATE KEY UPDATE revision = VALUES(revision)`,
+    {
+      device_id: request.device_id,
+      secret_hash: digest(request.installation_secret),
+      revision: request.revision
+    },
+    options
   );
   return { device_id: request.device_id, revision: request.revision };
 }
