@@ -38,6 +38,7 @@ jest.mock('../identity', () => ({
 import { RequestContext } from '../request.context';
 import { RecalculateXTdhUseCase } from './recalculate-xtdh.use-case';
 import { XTDH_LOOP_PHASE } from './xtdh-loop-phase';
+import * as sourcePolicy from '@/membership/membership-producer-policy';
 
 describe('RecalculateXTdhUseCase phase handling', () => {
   const connection = { connection: {} };
@@ -208,5 +209,21 @@ describe('RecalculateXTdhUseCase phase handling', () => {
     expect(stats.handle).toHaveBeenCalledTimes(1);
     expect(repository.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
     expect(mockSqsSend).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when xTDH is disabled during an active source cycle', async () => {
+    const active = jest
+      .spyOn(sourcePolicy, 'isMembershipSourceTrackingActive')
+      .mockReturnValue(true);
+    try {
+      const { repository, useCase } = makeUseCase();
+      mockIsXTdhEnabled.mockReturnValue(false);
+      await expect(
+        (useCase as any).recalculateXTdh({ connection } as RequestContext)
+      ).rejects.toThrow('requires xTDH universe processing');
+      expect(repository.updateProducedXTDH).not.toHaveBeenCalled();
+    } finally {
+      active.mockRestore();
+    }
   });
 });

@@ -5,6 +5,25 @@ const mockFindNftTdh = jest.fn();
 const mockUploadTdh = jest.fn();
 const mockNotifyTdhCalculationsDone = jest.fn();
 const mockGetStringOrNull = jest.fn();
+const mockTracking = jest.fn();
+const mockFindActiveCycle = jest.fn();
+const mockGetCycleState = jest.fn();
+const mockStartCycle = jest.fn();
+const mockCycleCalculationDate = jest.fn();
+
+jest.mock('@/membership/membership-producer-policy', () => ({
+  isMembershipSourceTrackingActive: mockTracking
+}));
+
+jest.mock('@/membership/membership-tdh-cycle', () => ({
+  membershipTdhCycleId: jest.fn(() => 'tdh-full:new-day'),
+  findActiveMembershipTdhCycle: mockFindActiveCycle,
+  getMembershipTdhCycleState: mockGetCycleState,
+  startMembershipTdhCycle: mockStartCycle,
+  membershipTdhCycleCalculationDate: mockCycleCalculationDate,
+  checkpointMembershipTdhInputs: jest.fn(),
+  failMembershipTdhCycle: jest.fn()
+}));
 
 jest.mock('../db', () => ({
   fetchLatestTDHBDate: mockFetchLatestTdhDate
@@ -44,7 +63,13 @@ describe('tdhLoop xTDH completion trigger', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockTracking.mockReturnValue(false);
+    mockFindActiveCycle.mockResolvedValue(null);
+    mockGetCycleState.mockResolvedValue(null);
     mockGetStringOrNull.mockReturnValue(null);
+    mockCycleCalculationDate.mockReturnValue(
+      new Date('2026-08-31T00:00:00.000Z')
+    );
     mockFetchLatestTdhDate.mockResolvedValue({
       block: 122,
       timestamp: {
@@ -102,5 +127,44 @@ describe('tdhLoop xTDH completion trigger', () => {
     expect(mockConsolidateAndPersistTdh).not.toHaveBeenCalled();
     expect(mockFindNftTdh).toHaveBeenCalledTimes(2);
     expect(mockNotifyTdhCalculationsDone).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-emits the pending prior-day cycle without replaying committed inputs', async () => {
+    mockTracking.mockReturnValue(true);
+    mockFindActiveCycle.mockResolvedValue({
+      cycleId: 'tdh-full:prior-day',
+      state: {
+        status: 'RUNNING',
+        progress: { stage: 'UNIVERSE_COMMITTED', after_id: null, revision: '2' }
+      }
+    });
+
+    await tdhLoop();
+
+    expect(mockUpdateTdh).not.toHaveBeenCalled();
+    expect(mockFindNftTdh).not.toHaveBeenCalled();
+    expect(mockStartCycle).not.toHaveBeenCalled();
+    expect(mockNotifyTdhCalculationsDone).toHaveBeenCalledWith(
+      'tdh-full:prior-day'
+    );
+  });
+
+  it('replays a STARTED prior-day cycle with its original calculation date', async () => {
+    mockTracking.mockReturnValue(true);
+    mockFindActiveCycle.mockResolvedValue({
+      cycleId: 'tdh-full:prior-day',
+      state: {
+        status: 'RUNNING',
+        progress: { stage: 'STARTED', after_id: null, revision: '0' }
+      }
+    });
+
+    await tdhLoop();
+
+    expect(mockCycleCalculationDate).toHaveBeenCalledWith('tdh-full:prior-day');
+    expect(mockUpdateTdh).toHaveBeenCalledWith(blockTimestamp);
+    expect(mockNotifyTdhCalculationsDone).toHaveBeenCalledWith(
+      'tdh-full:prior-day'
+    );
   });
 });

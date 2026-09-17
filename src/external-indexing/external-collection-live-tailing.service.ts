@@ -9,6 +9,11 @@ import {
 } from './external-indexing.repository';
 import { ExternalIndexedOwnership721Entity } from '../entities/IExternalIndexedOwnership721';
 import { ExternalIndexedOwnership721HistoryEntity } from '../entities/IExternalIndexedOwnership721History';
+import { IndexedContractStatus } from '../entities/IExternalIndexedContract';
+import {
+  getActiveMembershipGlobalJobId,
+  runMembershipGlobalSourceJob
+} from '../membership/membership-producer-writes';
 import { ExternalIndexedTransfersEntity } from '../entities/IExternalIndexedTransfer';
 import { externalIndexerRpc, ExternalIndexerRpc } from './external-indexer-rpc';
 import {
@@ -255,11 +260,20 @@ export class ExternalCollectionLiveTailService {
       });
     }
 
-    await this.indexingRepo.upsertTransfers(transfers, ctx);
-    await this.indexingRepo.upsertOwnersHistory(historyRows, ctx);
-    await this.indexingRepo.upsertOwners(
-      Array.from(currentByToken.values()),
-      ctx
+    await runMembershipGlobalSourceJob(
+      `external-live:${partition}:${fromBlock}:${toBlock}`,
+      ['OWNERSHIP'],
+      'external-ownership-live',
+      async (writeCtx) => {
+        await this.indexingRepo.upsertTransfers(transfers, writeCtx);
+        await this.indexingRepo.upsertOwnersHistory(historyRows, writeCtx);
+        await this.indexingRepo.upsertOwners(
+          Array.from(currentByToken.values()),
+          writeCtx
+        );
+      },
+      ctx,
+      { atomicWrite: true }
     );
 
     clog.info('Processed live events', {
@@ -276,10 +290,33 @@ export class ExternalCollectionLiveTailService {
     this.log.info('Starting live tail cycle...');
 
     try {
-      const collections = await this.indexingRepo.findLiveTailingCollections(
-        100,
+      const activeJobId = await getActiveMembershipGlobalJobId(
+        'OWNERSHIP',
         ctx
       );
+      const activeRange = activeJobId?.match(
+        /^external-live:(.+):(\d+):(\d+)$/
+      );
+      if (activeJobId && !activeRange) {
+        this.log.info('Another ownership producer is still active');
+        return;
+      }
+      const activeCollection = activeRange
+        ? await this.indexingRepo.findCollectionInfo(
+            { partition: activeRange[1] },
+            ctx
+          )
+        : null;
+      if (activeRange && !activeCollection)
+        throw new Error('Active ownership range has no collection');
+      if (
+        activeCollection &&
+        activeCollection.status !== IndexedContractStatus.LIVE_TAILING
+      )
+        throw new Error('Active ownership range is no longer live tailing');
+      const collections = activeCollection
+        ? [activeCollection]
+        : await this.indexingRepo.findLiveTailingCollections(100, ctx);
       if (collections.length === 0) {
         this.log.info('No collections in LIVE_TAILING state');
         return;
@@ -298,12 +335,24 @@ export class ExternalCollectionLiveTailService {
           safe_head_block,
           last_indexed_block
         } = c;
-        const fromBlock = Math.max(safe_head_block, last_indexed_block) + 1;
-        const toBlock = Math.min(fromBlock + range - 1, safeTarget);
+        const fromBlock = activeRange
+          ? Number(activeRange[2])
+          : Math.max(safe_head_block, last_indexed_block) + 1;
+        const toBlock = activeRange
+          ? Number(activeRange[3])
+          : Math.min(fromBlock + range - 1, safeTarget);
 
         const perLog = Logger.get(
           `${this.log.name} ${JSON.stringify({ chain, contract })}`
         );
+
+        // Retry the exact prior range only after it is safely beyond the
+        // reorganization depth. The active source job keeps readers on the
+        // direct path while the chain catches up.
+        if (activeRange && toBlock > safeTarget) {
+          perLog.warn('Active ownership range is ahead of the safe head');
+          continue;
+        }
 
         if (fromBlock > safeTarget || fromBlock > toBlock) {
           const safeTs =

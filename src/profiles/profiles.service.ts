@@ -62,6 +62,10 @@ import {
   dropPollsDb,
   DropPollsDb
 } from '@/api-serverless/src/drops/drop-polls.db';
+import {
+  membershipGlobalMutation,
+  withMembershipSourceMutation
+} from '@/membership/membership-producer-writes';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -178,24 +182,37 @@ export class ProfilesService {
     if (!addresses.length) {
       return {};
     }
-    ctx.timer?.start(
-      `${this.constructor.name}->createProfilesAndIdentitiesForThoseWhoAreMissingAndGetProfileIdsByAddresses`
-    );
-    await identitiesService.bulkCreateIdentities(addresses, ctx);
-    const allIdentitiesAndProfiles =
-      await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
-        addresses,
-        ctx.connection!
-      );
-    ctx.timer?.stop(
-      `${this.constructor.name}->createProfilesAndIdentitiesForThoseWhoAreMissingAndGetProfileIdsByAddresses`
-    );
-    return Object.entries(allIdentitiesAndProfiles).reduce(
-      (acc, [address, { identity }]) => {
-        acc[address] = identity.profile_id!;
-        return acc;
+    if (!ctx.connection)
+      throw new Error('Profile creation requires a caller-owned transaction');
+    return withMembershipSourceMutation(
+      ctx.connection,
+      membershipGlobalMutation(['IDENTITY'], 'bulk-profile-creation'),
+      async () => {
+        ctx.timer?.start(
+          `${this.constructor.name}->createProfilesAndIdentitiesForThoseWhoAreMissingAndGetProfileIdsByAddresses`
+        );
+        await identitiesService.bulkCreateIdentities(
+          addresses,
+          ctx,
+          'profile-creation'
+        );
+        const allIdentitiesAndProfiles =
+          await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
+            addresses,
+            ctx.connection!
+          );
+        ctx.timer?.stop(
+          `${this.constructor.name}->createProfilesAndIdentitiesForThoseWhoAreMissingAndGetProfileIdsByAddresses`
+        );
+        return Object.entries(allIdentitiesAndProfiles).reduce(
+          (acc, [address, { identity }]) => {
+            acc[address] = identity.profile_id!;
+            return acc;
+          },
+          {} as Record<string, string>
+        );
       },
-      {} as Record<string, string>
+      ctx
     );
   }
 
@@ -212,146 +229,158 @@ export class ProfilesService {
     }: CreateOrUpdateProfileCommand,
     ctx: RequestContext
   ): Promise<ApiIdentity> {
-    const identityResponse =
-      await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
-        [creator_or_updater_wallet],
-        ctx.connection!
-      );
-    let creatorOrUpdatorIdentityResponse =
-      identityResponse[creator_or_updater_wallet];
-    if (!creatorOrUpdatorIdentityResponse) {
-      const id = randomUUID();
-      await identitiesDb.insertIdentity(
-        {
-          consolidation_key: creator_or_updater_wallet,
-          primary_address: creator_or_updater_wallet,
-          profile_id: id,
-          handle: null,
-          normalised_handle: null,
-          tdh: 0,
-          rep: 0,
-          cic: 0,
-          level_raw: 0,
-          pfp: pfp_url,
-          banner1: null,
-          banner2: null,
-          classification: null,
-          sub_classification: null,
-          xtdh: 0,
-          produced_xtdh: 0,
-          granted_xtdh: 0,
-          xtdh_rate: 0,
-          basetdh_rate: 0
-        },
-        ctx.connection!
-      );
-      creatorOrUpdatorIdentityResponse = await identitiesDb
-        .getEverythingRelatedToIdentitiesByAddresses(
-          [creator_or_updater_wallet],
-          ctx.connection!
-        )
-        .then((it) => it[creator_or_updater_wallet]);
-    }
-    const creatorOrUpdatorProfile = creatorOrUpdatorIdentityResponse?.profile;
-    const someoneElsesProfileWithSameHandle = await this.identitiesDb
-      .getIdentityByHandle(handle, ctx.connection!)
-      .then((it) => {
-        if (
-          it &&
-          creatorOrUpdatorProfile &&
-          it.profile_id === creatorOrUpdatorProfile.external_id
-        ) {
-          return null;
+    if (!ctx.connection)
+      throw new Error('Profile update requires a caller-owned transaction');
+    return withMembershipSourceMutation(
+      ctx.connection,
+      membershipGlobalMutation(['IDENTITY'], 'profile-upsert'),
+      async () => {
+        const identityResponse =
+          await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
+            [creator_or_updater_wallet],
+            ctx.connection!
+          );
+        let creatorOrUpdatorIdentityResponse =
+          identityResponse[creator_or_updater_wallet];
+        if (!creatorOrUpdatorIdentityResponse) {
+          const id = randomUUID();
+          await identitiesDb.insertIdentity(
+            {
+              consolidation_key: creator_or_updater_wallet,
+              primary_address: creator_or_updater_wallet,
+              profile_id: id,
+              handle: null,
+              normalised_handle: null,
+              tdh: 0,
+              rep: 0,
+              cic: 0,
+              level_raw: 0,
+              pfp: pfp_url,
+              banner1: null,
+              banner2: null,
+              classification: null,
+              sub_classification: null,
+              xtdh: 0,
+              produced_xtdh: 0,
+              granted_xtdh: 0,
+              xtdh_rate: 0,
+              basetdh_rate: 0
+            },
+            ctx.connection!
+          );
+          creatorOrUpdatorIdentityResponse = await identitiesDb
+            .getEverythingRelatedToIdentitiesByAddresses(
+              [creator_or_updater_wallet],
+              ctx.connection!
+            )
+            .then((it) => it[creator_or_updater_wallet]);
         }
-        return it ?? null;
-      });
-    if (someoneElsesProfileWithSameHandle) {
-      throw new BadRequestException(`Handle ${handle} is already taken`);
-    }
-    const identityId = creatorOrUpdatorIdentityResponse.identity.profile_id!;
-    const createProfileCommand: CreateOrUpdateProfileCommand = {
-      handle,
-      banner_1,
-      banner_2,
-      website,
-      creator_or_updater_wallet,
-      classification,
-      sub_classification,
-      pfp_url
-    };
-    if (!creatorOrUpdatorProfile) {
-      await this.profilesDb.insertProfileRecord(
-        identityId,
-        {
-          command: createProfileCommand
-        },
-        ctx.connection!
-      );
-      await this.createProfileEditLogs({
-        profileId: identityId,
-        profileBeforeChange: null,
-        newHandle: handle,
-        newBanner1: banner_1 ?? undefined,
-        newBanner2: banner_2 ?? undefined,
-        authenticatedWallet: creator_or_updater_wallet,
-        newClassification: classification,
-        connectionHolder: ctx.connection!,
-        newSubClassification: sub_classification,
-        newPfpUrl: pfp_url
-      });
-    } else {
-      const identityId = creatorOrUpdatorIdentityResponse.identity.profile_id!;
-      await this.profilesDb.updateProfileRecord(
-        {
-          oldHandle: creatorOrUpdatorProfile.normalised_handle,
-          command: {
-            handle,
-            banner_1,
-            banner_2,
-            website,
-            creator_or_updater_wallet,
-            classification,
-            sub_classification,
-            pfp_url
-          }
-        },
-        ctx.connection!
-      );
-      await this.createProfileEditLogs({
-        profileId: identityId,
-        profileBeforeChange: creatorOrUpdatorProfile,
-        newHandle: handle,
-        newBanner1: banner_1 ?? undefined,
-        newBanner2: banner_2 ?? undefined,
-        newSubClassification: sub_classification,
-        authenticatedWallet: creator_or_updater_wallet,
-        newClassification: classification,
-        newPfpUrl: pfp_url,
-        connectionHolder: ctx.connection!
-      });
-    }
-    await identitiesDb.updateIdentityProfile(
-      creatorOrUpdatorIdentityResponse.identity.consolidation_key,
-      {
-        profile_id: identityId,
-        handle: createProfileCommand.handle,
-        normalised_handle: createProfileCommand.handle.toLowerCase(),
-        banner1: createProfileCommand.banner_1 ?? null,
-        banner2: createProfileCommand.banner_2 ?? null,
-        classification: createProfileCommand.classification,
-        sub_classification: createProfileCommand.sub_classification,
-        pfp: pfp_url
+        const creatorOrUpdatorProfile =
+          creatorOrUpdatorIdentityResponse?.profile;
+        const someoneElsesProfileWithSameHandle = await this.identitiesDb
+          .getIdentityByHandle(handle, ctx.connection!)
+          .then((it) => {
+            if (
+              it &&
+              creatorOrUpdatorProfile &&
+              it.profile_id === creatorOrUpdatorProfile.external_id
+            ) {
+              return null;
+            }
+            return it ?? null;
+          });
+        if (someoneElsesProfileWithSameHandle) {
+          throw new BadRequestException(`Handle ${handle} is already taken`);
+        }
+        const identityId =
+          creatorOrUpdatorIdentityResponse.identity.profile_id!;
+        const createProfileCommand: CreateOrUpdateProfileCommand = {
+          handle,
+          banner_1,
+          banner_2,
+          website,
+          creator_or_updater_wallet,
+          classification,
+          sub_classification,
+          pfp_url
+        };
+        if (!creatorOrUpdatorProfile) {
+          await this.profilesDb.insertProfileRecord(
+            identityId,
+            {
+              command: createProfileCommand
+            },
+            ctx.connection!
+          );
+          await this.createProfileEditLogs({
+            profileId: identityId,
+            profileBeforeChange: null,
+            newHandle: handle,
+            newBanner1: banner_1 ?? undefined,
+            newBanner2: banner_2 ?? undefined,
+            authenticatedWallet: creator_or_updater_wallet,
+            newClassification: classification,
+            connectionHolder: ctx.connection!,
+            newSubClassification: sub_classification,
+            newPfpUrl: pfp_url
+          });
+        } else {
+          const identityId =
+            creatorOrUpdatorIdentityResponse.identity.profile_id!;
+          await this.profilesDb.updateProfileRecord(
+            {
+              oldHandle: creatorOrUpdatorProfile.normalised_handle,
+              command: {
+                handle,
+                banner_1,
+                banner_2,
+                website,
+                creator_or_updater_wallet,
+                classification,
+                sub_classification,
+                pfp_url
+              }
+            },
+            ctx.connection!
+          );
+          await this.createProfileEditLogs({
+            profileId: identityId,
+            profileBeforeChange: creatorOrUpdatorProfile,
+            newHandle: handle,
+            newBanner1: banner_1 ?? undefined,
+            newBanner2: banner_2 ?? undefined,
+            newSubClassification: sub_classification,
+            authenticatedWallet: creator_or_updater_wallet,
+            newClassification: classification,
+            newPfpUrl: pfp_url,
+            connectionHolder: ctx.connection!
+          });
+        }
+        await identitiesDb.updateIdentityProfile(
+          creatorOrUpdatorIdentityResponse.identity.consolidation_key,
+          {
+            profile_id: identityId,
+            handle: createProfileCommand.handle,
+            normalised_handle: createProfileCommand.handle.toLowerCase(),
+            banner1: createProfileCommand.banner_1 ?? null,
+            banner2: createProfileCommand.banner_2 ?? null,
+            classification: createProfileCommand.classification,
+            sub_classification: createProfileCommand.sub_classification,
+            pfp: pfp_url
+          },
+          ctx.connection!
+        );
+        const updatedIdentity =
+          await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
+            {
+              identityKey: handle
+            },
+            ctx
+          );
+        return updatedIdentity!;
       },
-      ctx.connection!
+      ctx
     );
-    const updatedIdentity =
-      await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
-        {
-          identityKey: handle
-        },
-        ctx
-      );
-    return updatedIdentity!;
   }
 
   async mergeProfileSet(

@@ -34,6 +34,8 @@ import {
 } from './membership-runtime-fixture-db-proof.types';
 import { MembershipWorkerDb, MembershipRunSeed } from './membership-worker.db';
 import { MembershipRefreshTargetsDb } from './membership-refresh-targets.db';
+import { MEMBERSHIP_DB_NOW } from './membership-repository.utils';
+import { isMembershipFixturePublicationSettled } from './membership-runtime-fixture-settled';
 import { MembershipEvaluationInputsDb } from './membership-evaluation-inputs.db';
 import { PrimaryMembershipProfileEvaluator } from './membership-profile-evaluator';
 import { MembershipRefreshWorker } from './membership-worker';
@@ -328,17 +330,19 @@ export class MembershipFixtureDbProofService {
       false,
       ctx
     );
-    if (
-      target?.active_run_id !== null ||
-      target.requested_version !== target.completed_version
-    )
-      return false;
+    if (!target) return false;
     const snapshot = await this.publication(profile, ctx);
     if (!snapshot) return false;
     const run = await this.runs.run(snapshot.run_id, false, ctx);
+    const clock = await this.db.oneOrNull<{ now: string }>(
+      `SELECT CAST(${MEMBERSHIP_DB_NOW} AS CHAR) now`,
+      {},
+      membershipQueryOptions(ctx)
+    );
     return (
-      run?.status === 'COMPLETED' &&
-      run.request_version === target.completed_version
+      !!run &&
+      !!clock &&
+      isMembershipFixturePublicationSettled(target, run, clock.now)
     );
   }
 
@@ -621,8 +625,12 @@ export class MembershipFixtureDbProofService {
             false,
             ctx
           );
-          requireProof(target?.requested_version === requestVersion);
-          return this.settled(profile, ctx);
+          const settled = await this.settled(profile, ctx);
+          requireProof(
+            target?.requested_version === requestVersion ||
+              (settled && target?.completed_version === requestVersion)
+          );
+          return settled;
         })
       )
         return;

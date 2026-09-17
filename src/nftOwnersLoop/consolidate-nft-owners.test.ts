@@ -1,10 +1,25 @@
-import { fetchConsolidationGroupsForAddresses } from '@/db';
+import {
+  fetchConsolidationGroupsForAddresses,
+  fetchTransactionsAfterBlock
+} from '@/db';
 import { NFTOwner } from '@/entities/INFTOwner';
 import {
   fetchAllNftOwners,
-  persistConsolidatedNftOwners
+  getMaxNftOwnersBlockReference,
+  getNftOwnersSyncBlock,
+  persistConsolidatedNftOwners,
+  persistNftOwners
 } from './db.nft_owners';
-import { consolidateNftOwners } from './nft_owners';
+import { consolidateNftOwners, updateNftOwners } from './nft_owners';
+import {
+  getActiveMembershipGlobalJobId,
+  runMembershipGlobalSourceJob
+} from '../membership/membership-producer-writes';
+
+jest.mock('../membership/membership-producer-writes', () => ({
+  getActiveMembershipGlobalJobId: jest.fn(),
+  runMembershipGlobalSourceJob: jest.fn()
+}));
 
 jest.mock('@/db', () => ({
   fetchConsolidationGroupsForAddresses: jest.fn(),
@@ -32,6 +47,13 @@ const mockedPersistConsolidatedNftOwners =
   persistConsolidatedNftOwners as jest.MockedFunction<
     typeof persistConsolidatedNftOwners
   >;
+const mockedGetActiveJob =
+  getActiveMembershipGlobalJobId as jest.MockedFunction<
+    typeof getActiveMembershipGlobalJobId
+  >;
+const mockedRunJob = runMembershipGlobalSourceJob as jest.MockedFunction<
+  typeof runMembershipGlobalSourceJob
+>;
 
 const MEMES = '0xmemes';
 
@@ -88,5 +110,67 @@ describe('consolidateNftOwners', () => {
     await consolidateNftOwners(new Set());
     expect(mockedFetchConsolidationGroupsForAddresses).not.toHaveBeenCalled();
     expect(mockedPersistConsolidatedNftOwners).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateNftOwners source recovery', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (getMaxNftOwnersBlockReference as jest.Mock).mockResolvedValue(10);
+    (getNftOwnersSyncBlock as jest.Mock).mockResolvedValue(10);
+    mockedGetActiveJob.mockResolvedValue('nft-owners:10:20');
+    mockedRunJob.mockImplementation(async (_jobId, _dims, _reason, write) =>
+      write({})
+    );
+    mockedFetchConsolidationGroupsForAddresses.mockResolvedValue(new Map());
+  });
+
+  it('rebuilds a partially committed owner range instead of applying its delta twice', async () => {
+    (fetchTransactionsAfterBlock as jest.Mock).mockResolvedValue([
+      {
+        transaction: '0xmint',
+        from_address: '0x0000000000000000000000000000000000000000',
+        to_address: '0xalice',
+        contract: MEMES,
+        token_id: 1,
+        token_count: 1
+      }
+    ]);
+
+    await updateNftOwners();
+
+    expect(fetchTransactionsAfterBlock).toHaveBeenCalledWith(
+      expect.any(Array),
+      0,
+      20
+    );
+    expect(fetchAllNftOwners).not.toHaveBeenCalled();
+    expect(runMembershipGlobalSourceJob).toHaveBeenCalledWith(
+      'nft-owners:10:20',
+      ['OWNERSHIP'],
+      'nft-owners-reconciled',
+      expect.any(Function)
+    );
+    expect(persistNftOwners).toHaveBeenCalledWith(
+      new Set(['0xalice']),
+      expect.arrayContaining([
+        expect.objectContaining({ wallet: '0xalice', balance: 1 })
+      ]),
+      true
+    );
+  });
+
+  it('finishes a prior job after its sync marker advanced without replaying owner writes', async () => {
+    (getNftOwnersSyncBlock as jest.Mock).mockResolvedValue(20);
+
+    await updateNftOwners();
+
+    expect(fetchTransactionsAfterBlock).not.toHaveBeenCalled();
+    expect(runMembershipGlobalSourceJob).toHaveBeenCalledWith(
+      'nft-owners:10:20',
+      ['OWNERSHIP'],
+      'nft-owners-reconciled',
+      expect.any(Function)
+    );
   });
 });

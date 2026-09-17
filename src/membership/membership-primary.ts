@@ -145,3 +145,39 @@ export async function withMembershipPrimaryTransaction<T>(
     revoke();
   }
 }
+
+/**
+ * Bind membership source writes to an existing caller-owned WRITE transaction.
+ * The caller owns commit/rollback and must not catch the error returned here.
+ * This adapter cannot turn a replica or an already committed connection into a
+ * primary transaction. Use it only from the transaction owner's callback.
+ */
+export async function withMembershipPrimaryMutationContext<T>(
+  connection: ConnectionWrapper<unknown>,
+  executable: (ctx: MembershipPrimaryContext) => Promise<T>,
+  ctx: RequestContext = {}
+): Promise<T> {
+  if (!connection?.connection || ctx.connection) {
+    throw new Error(
+      'Membership mutation requires a caller-owned WRITE transaction'
+    );
+  }
+  const primary = Object.freeze({
+    moderationRequestId: ctx.moderationRequestId,
+    moderationPermitGeneration: ctx.moderationPermitGeneration,
+    timer: ctx.timer,
+    authenticationContext: ctx.authenticationContext,
+    connection: Object.freeze({ connection: connection.connection }),
+    requestScope: { promisesByKey: new Map<string, Promise<unknown>>() }
+  }) as MembershipPrimaryContext;
+  activeContexts.add(primary);
+  try {
+    const result = await executable(primary);
+    const failure = transactionFailures.get(primary);
+    if (failure) throw failure.error;
+    return result;
+  } finally {
+    activeContexts.delete(primary);
+    transactionFailures.delete(primary);
+  }
+}

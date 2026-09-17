@@ -178,6 +178,12 @@ describe('membership worker handler cold-start boundary', () => {
         stage,
         region,
         mode: 'inactive',
+        source_tracking_control: 'per-producer',
+        source_readiness: 'unverified',
+        materialized_read_control: 'api-separate',
+        background_processing_mode: 'inactive',
+        background_processing_code_admission: 'unavailable',
+        background_processing_trigger_enabled: false,
         normal_membership_work: 'unavailable',
         queue_arn: runtime.queue_arn
       });
@@ -208,6 +214,26 @@ describe('membership worker handler cold-start boundary', () => {
     setEnvironment(staging);
     await expect(app.invoke(event(), context())).rejects.toThrow('inactive');
     expect(app.initialize).not.toHaveBeenCalled();
+  });
+  it('uses the application database for a controlled staging delivery', async () => {
+    const app = boot({ ...staging, mode: 'staging-controlled-v1' });
+    const incoming = event();
+    incoming.Records[0].body = JSON.stringify({
+      ...hint,
+      target: { scope: 'PROFILE', target_id: 'real-profile-id' }
+    });
+    await expect(app.invoke(incoming, context())).resolves.toEqual(result);
+    expect(app.marker).not.toHaveBeenCalled();
+    expect(app.inspect).not.toHaveBeenCalled();
+    expect(app.initialize.mock.calls[0][1]).not.toHaveProperty(
+      'databaseSelection'
+    );
+    expect(app.work).toHaveBeenCalledWith(
+      { scope: 'PROFILE', target_id: 'real-profile-id' },
+      expect.any(Object),
+      {},
+      hint.delivery
+    );
   });
   it.each([
     { scope: 'FULL', target_id: '*' },

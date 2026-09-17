@@ -32,6 +32,7 @@ import slugify from 'slugify';
 import { isDeepStrictEqual } from 'node:util';
 import {
   BadRequestException,
+  CustomApiCompliantException,
   ForbiddenException,
   NotFoundException
 } from '@/exceptions';
@@ -55,6 +56,10 @@ import {
 import { Time, Timer } from '@/time';
 import * as mcache from 'memory-cache';
 import { RequestContext } from '@/request.context';
+import {
+  membershipCatalogueMutation,
+  withMembershipSourceMutation
+} from '@/membership/membership-producer-writes';
 import { NEXTGEN_CORE_CONTRACT } from '@/nextgen/nextgen_constants';
 import { Network } from '@/alchemy-sdk';
 import {
@@ -105,6 +110,11 @@ import {
 } from '@/profile-preferences/profile-preferences.db';
 import { ProfileDirectMessagePolicy } from '@/entities/IProfilePreferences';
 import { ConnectionWrapper } from '@/sql-executor';
+import { MembershipPrimaryContext } from '@/membership/membership-primary';
+import { MembershipReader } from '@/membership/membership-reader';
+import { membershipReaderPolicy } from '@/membership/membership-reader-policy';
+import type { MembershipCandidateIds } from '@/membership/membership-reader.types';
+import { performance } from 'node:perf_hooks';
 import { moderationPresentationService } from '@/content-moderation/moderation-presentation.service';
 
 export type NewUserGroupEntity = Omit<
@@ -213,6 +223,17 @@ const DEFAULT_BENEFICIARY_GRANT_MATCH_MODE =
   GroupBeneficiaryGrantMatchMode.ANY_TOKEN;
 const DEFAULT_NFT_OWNERSHIP_MATCH_MODE = GroupNftOwnershipMatchMode.ALL_TOKENS;
 
+async function resolveEligibilityReads<T extends readonly unknown[]>(
+  tasks: { [K in keyof T]: () => T[K] | Promise<T[K]> },
+  serial: boolean
+): Promise<T> {
+  if (!serial)
+    return Promise.all(tasks.map((task) => task())) as unknown as Promise<T>;
+  const results: unknown[] = [];
+  for (const task of tasks) results.push(await task());
+  return results as unknown as T;
+}
+
 export class UserGroupsService {
   public static readonly GENERATED_VIEW = 'user_groups_view';
 
@@ -220,7 +241,8 @@ export class UserGroupsService {
     private readonly userGroupsDb: UserGroupsDb,
     private readonly abusivenessCheckService: AbusivenessCheckService,
     private readonly metricsRecorder: MetricsRecorder,
-    private readonly profilePreferences: ProfilePreferencesDb = profilePreferencesDb
+    private readonly profilePreferences: ProfilePreferencesDb = profilePreferencesDb,
+    private readonly membershipReader: MembershipReader = new MembershipReader()
   ) {}
 
   private async timeAsync<T>(
@@ -287,37 +309,47 @@ export class UserGroupsService {
             beneficiaryGrantMatchMode,
             ctxWithConnection
           );
-          const inclusionGroups = group.addresses.length
-            ? await this.userGroupsDb.insertGroupEntriesAndGetGroupIds(
-                group.addresses,
+          return withMembershipSourceMutation(
+            connection,
+            membershipCatalogueMutation(
+              [{ group_id: id, is_deleted: false }],
+              'group-created'
+            ),
+            async () => {
+              const inclusionGroups = group.addresses.length
+                ? await this.userGroupsDb.insertGroupEntriesAndGetGroupIds(
+                    group.addresses,
+                    connection
+                  )
+                : null;
+              const exclusionGroups = group.excluded_addresses.length
+                ? await this.userGroupsDb.insertGroupEntriesAndGetGroupIds(
+                    group.excluded_addresses,
+                    connection
+                  )
+                : null;
+              await this.userGroupsDb.save(
+                {
+                  ...group,
+                  id,
+                  created_at: new Date(),
+                  created_by: createdBy,
+                  visible: isVisible,
+                  name: groupName,
+                  profile_group_id: inclusionGroups?.profile_group_id ?? null,
+                  excluded_profile_group_id:
+                    exclusionGroups?.profile_group_id ?? null
+                },
                 connection
-              )
-            : null;
-          const exclusionGroups = group.excluded_addresses.length
-            ? await this.userGroupsDb.insertGroupEntriesAndGetGroupIds(
-                group.excluded_addresses,
-                connection
-              )
-            : null;
-          await this.userGroupsDb.save(
-            {
-              ...group,
-              id,
-              created_at: new Date(),
-              created_by: createdBy,
-              visible: isVisible,
-              name: groupName,
-              profile_group_id: inclusionGroups?.profile_group_id ?? null,
-              excluded_profile_group_id:
-                exclusionGroups?.profile_group_id ?? null
+              );
+              await this.metricsRecorder.recordActiveIdentity(
+                { identityId: createdBy },
+                ctxWithConnection
+              );
+              return await this.getByIdOrThrow(id, ctxWithConnection);
             },
-            connection
+            ctx
           );
-          await this.metricsRecorder.recordActiveIdentity(
-            { identityId: createdBy },
-            ctxWithConnection
-          );
-          return await this.getByIdOrThrow(id, ctxWithConnection);
         }
       );
     await giveReadReplicaTimeToCatchUp();
@@ -479,7 +511,8 @@ export class UserGroupsService {
       givenGroups?: string[];
       preloadedGroupEntities?: UserGroupEntity[];
     },
-    timer?: Timer
+    timer?: Timer,
+    primary?: MembershipPrimaryContext
   ): Promise<string[]> {
     return this.timeAsync(
       timer,
@@ -488,7 +521,7 @@ export class UserGroupsService {
         const givenGroupEntities =
           preloadedGroupEntities ??
           (givenGroups?.length
-            ? await this.getGivenGroupEntities(givenGroups, timer)
+            ? await this.getGivenGroupEntities(givenGroups, timer, primary)
             : []);
         if (!givenGroupEntities.length) {
           return [];
@@ -496,7 +529,8 @@ export class UserGroupsService {
         const prefetchedData = await this.prefetchEligibilityCheckData(
           profileId,
           givenGroupEntities,
-          timer
+          timer,
+          primary
         );
         if (!prefetchedData) {
           return [];
@@ -513,7 +547,8 @@ export class UserGroupsService {
   private async prefetchEligibilityCheckData(
     profileId: string,
     candidateGroupEntities: UserGroupEntity[],
-    timer?: Timer
+    timer?: Timer,
+    primary?: MembershipPrimaryContext
   ): Promise<PrefetchedEligibilityCheckData | null> {
     // The needed datasets are derived from the FULL candidate set, which is a
     // superset of what the previous sequential flow fetched (it derived each
@@ -543,51 +578,68 @@ export class UserGroupsService {
       ownings,
       groupedRatings,
       groupIdsWhereProfileIsBeneficiary
-    ] = await Promise.all([
-      this.timeAsync(
-        timer,
-        'whichOfGivenGroupsIsUserEligibleFor->getIdentityByProfileId',
-        () => this.userGroupsDb.getIdentityByProfileId(profileId)
-      ),
-      this.getGroupsUserIsDirectlyInvolvedIn(
-        {
-          profileId,
-          candidates: candidateGroupEntities.map((it) => it.id)
-        },
-        timer
-      ),
-      needsSentCicAndRep
-        ? this.timeAsync(
+    ] = await resolveEligibilityReads(
+      [
+        () =>
+          this.timeAsync(
             timer,
-            'whichOfGivenGroupsIsUserEligibleFor->getGivenCicAndRep',
-            () => this.userGroupsDb.getGivenCicAndRep(profileId)
-          )
-        : undefined,
-      needsOwnings
-        ? this.userGroupsDb.getAllProfileOwnedTokensByProfileIdGroupedByContract(
-            profileId,
-            { timer }
-          )
-        : undefined,
-      needsGranularRatings
-        ? this.timeAsync(
-            timer,
-            'whichOfGivenGroupsIsUserEligibleFor->getIncomingOutgoingGroupedRatings',
+            'whichOfGivenGroupsIsUserEligibleFor->getIdentityByProfileId',
             () =>
-              this.getIncomingOutgoingGroupedRatings(
-                profileId,
-                users,
-                categories
+              primary
+                ? this.userGroupsDb.getIdentityByProfileId(profileId, primary)
+                : this.userGroupsDb.getIdentityByProfileId(profileId)
+          ),
+        () =>
+          this.getGroupsUserIsDirectlyInvolvedIn(
+            {
+              profileId,
+              candidates: candidateGroupEntities.map((it) => it.id)
+            },
+            timer,
+            primary
+          ),
+        () =>
+          needsSentCicAndRep
+            ? this.timeAsync(
+                timer,
+                'whichOfGivenGroupsIsUserEligibleFor->getGivenCicAndRep',
+                () =>
+                  primary
+                    ? this.userGroupsDb.getGivenCicAndRep(profileId, primary)
+                    : this.userGroupsDb.getGivenCicAndRep(profileId)
               )
-          )
-        : undefined,
-      beneficiaryGrantGroups.length
-        ? this.userGroupsDb.findBeneficiaryGrantGroupIdsForProfile(
-            { beneficiaryGrantGroups, profileId },
-            { timer }
-          )
-        : undefined
-    ]);
+            : undefined,
+        () =>
+          needsOwnings
+            ? this.userGroupsDb.getAllProfileOwnedTokensByProfileIdGroupedByContract(
+                profileId,
+                primary ?? { timer }
+              )
+            : undefined,
+        () =>
+          needsGranularRatings
+            ? this.timeAsync(
+                timer,
+                'whichOfGivenGroupsIsUserEligibleFor->getIncomingOutgoingGroupedRatings',
+                () =>
+                  this.getIncomingOutgoingGroupedRatings(
+                    profileId,
+                    users,
+                    categories,
+                    primary
+                  )
+              )
+            : undefined,
+        () =>
+          beneficiaryGrantGroups.length
+            ? this.userGroupsDb.findBeneficiaryGrantGroupIdsForProfile(
+                { beneficiaryGrantGroups, profileId },
+                primary ?? { timer }
+              )
+            : undefined
+      ] as const,
+      primary !== undefined
+    );
     if (!identityEntity) {
       return null;
     }
@@ -656,15 +708,17 @@ export class UserGroupsService {
 
   private async getGivenGroupEntities(
     givenGroups: string[],
-    timer?: Timer
+    timer?: Timer,
+    primary?: MembershipPrimaryContext
   ): Promise<UserGroupEntity[]> {
     return this.timeAsync(
       timer,
       'whichOfGivenGroupsIsUserEligibleFor->getGivenGroupEntities',
       () =>
-        this.userGroupsDb.getByIds(givenGroups, {
-          timer
-        })
+        this.userGroupsDb.getByIds(
+          givenGroups,
+          primary ? { timer, connection: primary.connection } : { timer }
+        )
     );
   }
 
@@ -786,13 +840,17 @@ export class UserGroupsService {
   private async getIncomingOutgoingGroupedRatings(
     profileId: string,
     users: string[],
-    categories: string[]
+    categories: string[],
+    primary?: MembershipPrimaryContext
   ): Promise<GroupedProfileRatings> {
-    const ratings = await this.userGroupsDb.getRatings(
-      profileId,
-      users,
-      categories
-    );
+    const ratings = primary
+      ? await this.userGroupsDb.getRatings(
+          profileId,
+          users,
+          categories,
+          primary
+        )
+      : await this.userGroupsDb.getRatings(profileId, users, categories);
     const { outgoingRatings, incomingRatings } = ratings.reduce(
       (acc, rating) => {
         if (rating.rater_profile_id === profileId) {
@@ -962,7 +1020,8 @@ export class UserGroupsService {
       profileId: string;
       candidates: string[];
     },
-    timer?: Timer
+    timer?: Timer,
+    primary?: MembershipPrimaryContext
   ): Promise<DirectGroupInvolvement> {
     return this.timeAsync(
       timer,
@@ -971,24 +1030,29 @@ export class UserGroupsService {
         const [
           groupsIdsUserIsEligibleByIdentity,
           groupIdsUserIsBannedFromByIdentity
-        ] = await Promise.all([
-          this.timeAsync(
-            timer,
-            'whichOfGivenGroupsIsUserEligibleFor->getGroupsUserIsDirectlyInvolvedIn->eligibleByIdentity',
+        ] = await resolveEligibilityReads(
+          [
             () =>
-              this.userGroupsDb.getGroupsUserIsEligibleByIdentity({
-                profileId
-              })
-          ),
-          this.timeAsync(
-            timer,
-            'whichOfGivenGroupsIsUserEligibleFor->getGroupsUserIsDirectlyInvolvedIn->excludedByIdentity',
+              this.timeAsync(
+                timer,
+                'whichOfGivenGroupsIsUserEligibleFor->getGroupsUserIsDirectlyInvolvedIn->eligibleByIdentity',
+                () =>
+                  this.userGroupsDb.getGroupsUserIsEligibleByIdentity({
+                    ...(primary ? { profileId, ctx: primary } : { profileId })
+                  })
+              ),
             () =>
-              this.userGroupsDb.getGroupsUserIsExcludedFromByIdentity({
-                profileId
-              })
-          )
-        ]);
+              this.timeAsync(
+                timer,
+                'whichOfGivenGroupsIsUserEligibleFor->getGroupsUserIsDirectlyInvolvedIn->excludedByIdentity',
+                () =>
+                  this.userGroupsDb.getGroupsUserIsExcludedFromByIdentity({
+                    ...(primary ? { profileId, ctx: primary } : { profileId })
+                  })
+              )
+          ] as const,
+          primary !== undefined
+        );
 
         return {
           groupsIdsUserIsEligibleByIdentity:
@@ -1023,6 +1087,134 @@ export class UserGroupsService {
     if (!profileId) {
       return [];
     }
+    const policy = membershipReaderPolicy(profileId);
+    const candidates: MembershipCandidateIds = (ctx) =>
+      this.userGroupsDb.getAllWaveRelatedGroups(ctx, 513);
+    if (policy.read) {
+      const deadline = performance.now() + 12_000;
+      const result = await this.tryScopedMembershipRead(
+        profileId,
+        candidates,
+        policy.shadow,
+        deadline
+      );
+      if (result) return result;
+      return this.directMembershipFallback(
+        profileId,
+        (ctx) => this.userGroupsDb.getAllWaveRelatedGroups(ctx, 1025),
+        deadline
+      );
+    }
+    const legacy = await this.getGroupsUserIsEligibleForLegacy(
+      profileId,
+      timer
+    );
+    if (policy.shadow && !policy.read)
+      await this.tryScopedMembershipRead(profileId, candidates, true);
+    return legacy;
+  }
+
+  private async tryScopedMembershipRead(
+    profileId: string,
+    candidates: MembershipCandidateIds,
+    shadow: boolean,
+    deadline?: number
+  ): Promise<string[] | null> {
+    const started = Time.currentMillis();
+    try {
+      const result = await this.membershipReader.read(
+        profileId,
+        candidates,
+        (profile, ids, ctx) => this.evaluateGroupsOnPrimary(profile, ids, ctx),
+        shadow,
+        deadline
+      );
+      logger.info(
+        `[MEMBERSHIP_SCOPED_READ] ${JSON.stringify({
+          coverage_complete: result.coverage_complete,
+          candidate_count: result.candidate_count,
+          materialized_count: result.materialized_count,
+          direct_count: result.direct_count,
+          direct_duration_ms: result.direct_duration_ms,
+          shadow_duration_ms: result.shadow_duration_ms,
+          fallback_reasons: result.fallback_reasons,
+          shadow_equal: result.shadow_equal,
+          duration_ms: Time.currentMillis() - started
+        })}`
+      );
+      if (!result.coverage_complete) return null;
+      // A complete direct comparison is authoritative when validation finds
+      // drift in a controlled staging cohort.
+      return result.shadow_equal === false
+        ? result.shadow_direct_group_ids
+        : result.eligible_group_ids;
+    } catch (error) {
+      logger.warn(
+        `[MEMBERSHIP_SCOPED_READ] ${JSON.stringify({
+          coverage_complete: false,
+          shadow_equal: null,
+          error_name: error instanceof Error ? error.name : 'Unknown',
+          duration_ms: Time.currentMillis() - started
+        })}`
+      );
+      return null;
+    }
+  }
+
+  private async directMembershipFallback(
+    profileId: string,
+    candidates: MembershipCandidateIds,
+    deadline: number
+  ): Promise<string[]> {
+    const started = Time.currentMillis();
+    try {
+      const ids = await this.membershipReader.readDirect(
+        profileId,
+        candidates,
+        (profile, groupIds, ctx) =>
+          this.evaluateGroupsOnPrimary(profile, groupIds, ctx),
+        deadline
+      );
+      logger.info(
+        `[MEMBERSHIP_PRIMARY_DIRECT_FALLBACK] ${JSON.stringify({
+          coverage_complete: true,
+          result_count: ids.length,
+          duration_ms: Time.currentMillis() - started
+        })}`
+      );
+      return ids;
+    } catch (error) {
+      logger.warn(
+        `[MEMBERSHIP_PRIMARY_DIRECT_FALLBACK] ${JSON.stringify({
+          coverage_complete: false,
+          error_name: error instanceof Error ? error.name : 'Unknown',
+          duration_ms: Time.currentMillis() - started
+        })}`
+      );
+      throw new CustomApiCompliantException(
+        503,
+        'Membership eligibility is temporarily unavailable'
+      );
+    }
+  }
+
+  /** Reuses the current direct rules with all inputs bound to the reader snapshot. */
+  public async evaluateGroupsOnPrimary(
+    profileId: string,
+    groupIds: readonly string[],
+    ctx: MembershipPrimaryContext
+  ): Promise<string[]> {
+    return this.whichOfGivenGroupsIsUserEligibleFor(
+      { profileId, givenGroups: Array.from(groupIds) },
+      ctx.timer,
+      ctx
+    );
+  }
+
+  private async getGroupsUserIsEligibleForLegacy(
+    profileId: string,
+    timer?: Timer | undefined
+  ): Promise<string[]> {
     const timerKey = 'getGroupsUserIsEligibleFor';
     return this.timeAsync(timer, timerKey, async () => {
       const existingPromise = eligibleGroupsPromisesByProfileId.get(profileId);
@@ -1057,10 +1249,33 @@ export class UserGroupsService {
     if (!profileId || !groupIds.length) {
       return [];
     }
+    const policy = membershipReaderPolicy(profileId);
+    const uniqueIds = collections.distinct(Array.from(groupIds));
+    if (policy.read) {
+      const deadline = performance.now() + 12_000;
+      const result = await this.tryScopedMembershipRead(
+        profileId,
+        async () => uniqueIds,
+        policy.shadow,
+        deadline
+      );
+      if (result) return result;
+      return this.directMembershipFallback(
+        profileId,
+        async () => uniqueIds,
+        deadline
+      );
+    }
+    if (policy.shadow && !policy.read)
+      await this.tryScopedMembershipRead(
+        profileId,
+        async () => uniqueIds,
+        true
+      );
     return await this.whichOfGivenGroupsIsUserEligibleFor(
       {
         profileId,
-        givenGroups: collections.distinct(Array.from(groupIds))
+        givenGroups: uniqueIds
       },
       timer
     );
@@ -1521,111 +1736,129 @@ export class UserGroupsService {
       );
     const { updatedGroup, replacedGroup } =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
-        async (connection) => {
-          const ctxWithConnection = { ...ctx, connection };
-          const groupIdsToLock = Array.from(
-            new Set(
-              [group_id, old_version_id].filter((id): id is string => !!id)
-            )
-          ).sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
-          for (const id of groupIdsToLock)
-            await moderationReviewDb.lockGroup(id, ctxWithConnection);
-          const replayedGroup = await this.replayReviewedGroup(
-            nameReview.moderation_item_id,
-            ctxWithConnection
-          );
-          if (replayedGroup)
-            return { updatedGroup: replayedGroup, replacedGroup: null };
-          const currentGroup =
-            await this.userGroupsDb.getByIdWithoutVisibilityCheck(
-              group_id,
-              connection
-            );
-          const currentOld = old_version_id
-            ? await this.userGroupsDb.getByIdWithoutVisibilityCheck(
-                old_version_id,
-                connection
-              )
-            : null;
-          if (
-            moderationFingerprint({
-              group: currentGroup,
-              replaced: currentOld,
-              visible
-            }) !== writeFingerprint
-          )
-            moderationConflict();
-          const groupEntity = await this.getByIdOrThrow(
-            group_id,
-            ctxWithConnection
-          );
-          if (groupEntity.created_by?.id !== profile_id) {
-            throw new BadRequestException(
-              `You are not allowed to change group ${group_id}. You can save a new one instead.`
-            );
-          }
-          let oldGroupEntity: ApiGroupFull | null = null;
-          if (old_version_id) {
-            if (old_version_id === groupEntity.id) {
-              throw new BadRequestException(
-                'Old version id should not be the same as the current'
-              );
-            }
-            oldGroupEntity = await this.getByIdOrThrow(
-              old_version_id,
-              ctxWithConnection
-            );
-            if (oldGroupEntity.created_by?.id !== profile_id) {
-              throw new BadRequestException(
-                `You are not allowed to change group ${old_version_id}. You can save a new one instead.`
-              );
-            }
-            await beforeReplace?.(
-              {
-                currentGroup: groupEntity,
-                replacedGroupId: old_version_id
-              },
-              ctxWithConnection
-            );
-            await this.userGroupsDb.deleteById(old_version_id, connection);
-          }
-          await this.userGroupsDb.changeVisibilityAndSetId(
-            {
-              currentId: group_id,
-              newId: old_version_id,
-              visibility: visible
-            },
-            connection
-          );
-          if (nameReview.moderation_item_id) {
-            await moderationReviewDb.consume(
-              nameReview.moderation_item_id,
-              old_version_id ?? group_id,
-              {
-                ...ctxWithConnection,
-                moderationPermitGeneration:
-                  nameReview.moderation_permit_generation
-              },
-              group_id
-            );
-            await moderationReviewDb.setPublishedRevision(
-              nameReview.moderation_item_id,
-              moderationFingerprint({ text: rawGroup.name }),
-              ctxWithConnection
-            );
-          }
-          await this.metricsRecorder.recordActiveIdentity(
-            { identityId: profile_id },
-            ctxWithConnection
-          );
-          return {
-            updatedGroup: await this.getByIdOrThrow(
-              old_version_id ?? group_id,
-              ctxWithConnection
+        async (connection) =>
+          withMembershipSourceMutation(
+            connection,
+            membershipCatalogueMutation(
+              old_version_id
+                ? [
+                    { group_id, is_deleted: true },
+                    { group_id: old_version_id, is_deleted: false }
+                  ]
+                : [{ group_id, is_deleted: false }],
+              'group-visibility'
             ),
-            replacedGroup: oldGroupEntity
-          };
-        }
+            async () => {
+              const ctxWithConnection = { ...ctx, connection };
+              const groupIdsToLock = Array.from(
+                new Set(
+                  [group_id, old_version_id].filter((id): id is string => !!id)
+                )
+              ).sort((left, right) => {
+                if (left < right) return -1;
+                if (left > right) return 1;
+                return 0;
+              });
+              for (const id of groupIdsToLock)
+                await moderationReviewDb.lockGroup(id, ctxWithConnection);
+              const replayedGroup = await this.replayReviewedGroup(
+                nameReview.moderation_item_id,
+                ctxWithConnection
+              );
+              if (replayedGroup)
+                return { updatedGroup: replayedGroup, replacedGroup: null };
+              const currentGroup =
+                await this.userGroupsDb.getByIdWithoutVisibilityCheck(
+                  group_id,
+                  connection
+                );
+              const currentOld = old_version_id
+                ? await this.userGroupsDb.getByIdWithoutVisibilityCheck(
+                    old_version_id,
+                    connection
+                  )
+                : null;
+              if (
+                moderationFingerprint({
+                  group: currentGroup,
+                  replaced: currentOld,
+                  visible
+                }) !== writeFingerprint
+              )
+                moderationConflict();
+              const groupEntity = await this.getByIdOrThrow(
+                group_id,
+                ctxWithConnection
+              );
+              if (groupEntity.created_by?.id !== profile_id) {
+                throw new BadRequestException(
+                  `You are not allowed to change group ${group_id}. You can save a new one instead.`
+                );
+              }
+              let oldGroupEntity: ApiGroupFull | null = null;
+              if (old_version_id) {
+                if (old_version_id === groupEntity.id) {
+                  throw new BadRequestException(
+                    'Old version id should not be the same as the current'
+                  );
+                }
+                oldGroupEntity = await this.getByIdOrThrow(
+                  old_version_id,
+                  ctxWithConnection
+                );
+                if (oldGroupEntity.created_by?.id !== profile_id) {
+                  throw new BadRequestException(
+                    `You are not allowed to change group ${old_version_id}. You can save a new one instead.`
+                  );
+                }
+                await beforeReplace?.(
+                  {
+                    currentGroup: groupEntity,
+                    replacedGroupId: old_version_id
+                  },
+                  ctxWithConnection
+                );
+                await this.userGroupsDb.deleteById(old_version_id, connection);
+              }
+              await this.userGroupsDb.changeVisibilityAndSetId(
+                {
+                  currentId: group_id,
+                  newId: old_version_id,
+                  visibility: visible
+                },
+                connection
+              );
+              if (nameReview.moderation_item_id) {
+                await moderationReviewDb.consume(
+                  nameReview.moderation_item_id,
+                  old_version_id ?? group_id,
+                  {
+                    ...ctxWithConnection,
+                    moderationPermitGeneration:
+                      nameReview.moderation_permit_generation
+                  },
+                  group_id
+                );
+                await moderationReviewDb.setPublishedRevision(
+                  nameReview.moderation_item_id,
+                  moderationFingerprint({ text: rawGroup.name }),
+                  ctxWithConnection
+                );
+              }
+              await this.metricsRecorder.recordActiveIdentity(
+                { identityId: profile_id },
+                ctxWithConnection
+              );
+              return {
+                updatedGroup: await this.getByIdOrThrow(
+                  old_version_id ?? group_id,
+                  ctxWithConnection
+                ),
+                replacedGroup: oldGroupEntity
+              };
+            },
+            ctx
+          )
       );
     await giveReadReplicaTimeToCatchUp();
     await this.invalidateEligibilityCachesAfterVisibilityChange(

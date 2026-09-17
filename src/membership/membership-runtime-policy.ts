@@ -22,13 +22,15 @@ export interface MembershipRuntimeEnvironment {
   readonly stage: string | undefined;
   readonly region: string | undefined;
   readonly mode: string | undefined;
+  readonly mapping_enabled?: string;
   readonly queue_arn: string | undefined;
   readonly queue_url: string | undefined;
 }
 export interface MembershipRuntimeDeployment {
   readonly stage: 'staging' | 'prod';
   readonly region: 'eu-west-1' | 'us-east-1';
-  readonly mode: 'inactive' | 'staging-fixture-v1';
+  readonly mode: 'inactive' | 'staging-fixture-v1' | 'staging-controlled-v1';
+  readonly mapping_enabled: boolean;
   readonly queue_arn: string;
   readonly queue_url: string;
 }
@@ -37,14 +39,19 @@ export interface MembershipRuntimeDeployment {
 export function validateMembershipRuntimeDeployment(
   input: MembershipRuntimeEnvironment
 ): MembershipRuntimeDeployment {
-  const { stage, region, mode, queue_arn, queue_url } = input;
+  const { stage, region, mode, mapping_enabled, queue_arn, queue_url } = input;
   if (
     !(
       (stage === 'staging' && region === 'eu-west-1') ||
       (stage === 'prod' && region === 'us-east-1')
     ) ||
-    (mode !== 'inactive' && mode !== 'staging-fixture-v1') ||
-    (mode === 'staging-fixture-v1' && stage !== 'staging')
+    (mode !== 'inactive' &&
+      mode !== 'staging-fixture-v1' &&
+      mode !== 'staging-controlled-v1') ||
+    (mode !== 'inactive' && stage !== 'staging') ||
+    (mapping_enabled !== undefined &&
+      !['true', 'false'].includes(mapping_enabled)) ||
+    (mapping_enabled === 'true' && mode === 'inactive')
   )
     throw new Error('Invalid membership runtime deployment');
   const queueName = `membership-refresh-work-${stage}-v1`;
@@ -54,7 +61,14 @@ export function validateMembershipRuntimeDeployment(
       `https://sqs.${region}.amazonaws.com/987989283142/${queueName}`
   )
     throw new Error('Invalid membership runtime queue identity');
-  return Object.freeze({ stage, region, mode, queue_arn, queue_url });
+  return Object.freeze({
+    stage,
+    region,
+    mode,
+    mapping_enabled: mapping_enabled === 'true',
+    queue_arn,
+    queue_url
+  });
 }
 
 export function isMembershipRuntimeStatus(event: unknown): boolean {
@@ -93,22 +107,46 @@ const target = z.discriminatedUnion('scope', [
     })
     .strict()
 ]);
-const hint = z
-  .object({
-    protocol_version: z.literal(1),
-    target,
-    delivery: z
-      .object({ requested_version: counter, reserved_until_millis: counter })
-      .strict()
-  })
-  .strict();
-export type MembershipRuntimeHint = z.infer<typeof hint>;
+const canonicalId = (max: number) =>
+  z
+    .string()
+    .max(max)
+    .regex(/^[A-Za-z0-9_-]+$/);
+const controlledTarget = z.discriminatedUnion('scope', [
+  z
+    .object({ scope: z.literal('PROFILE'), target_id: canonicalId(100) })
+    .strict(),
+  z.object({ scope: z.literal('GROUP'), target_id: canonicalId(200) }).strict(),
+  z.object({ scope: z.literal('FULL'), target_id: z.literal('*') }).strict()
+]);
+const hintFor = (targetSchema: typeof target | typeof controlledTarget) =>
+  z
+    .object({
+      protocol_version: z.literal(1),
+      target: targetSchema,
+      delivery: z
+        .object({ requested_version: counter, reserved_until_millis: counter })
+        .strict()
+    })
+    .strict();
+const fixtureHint = hintFor(target);
+const controlledHint = hintFor(controlledTarget);
+export type MembershipRuntimeHint = z.infer<typeof controlledHint>;
 
 export function validateMembershipRuntimeHint(
-  value: unknown
+  value: unknown,
+  mode: MembershipRuntimeDeployment['mode'] = 'staging-fixture-v1'
 ): MembershipRuntimeHint {
-  const parsed = hint.safeParse(value);
-  if (!parsed.success) throw new Error('Unsupported membership fixture hint');
+  const parsed =
+    mode === 'staging-controlled-v1'
+      ? controlledHint.safeParse(value)
+      : fixtureHint.safeParse(value);
+  if (!parsed.success)
+    throw new Error(
+      mode === 'staging-controlled-v1'
+        ? 'Unsupported membership controlled hint'
+        : 'Unsupported membership fixture hint'
+    );
   return parsed.data;
 }
 
@@ -141,7 +179,7 @@ export function parseMembershipWorkerDelivery(
   event: unknown,
   deployment: MembershipRuntimeDeployment
 ) {
-  if (deployment.mode !== 'staging-fixture-v1') {
+  if (deployment.mode === 'inactive') {
     throw new Error('Membership runtime is inactive');
   }
   const parsed = envelope.safeParse(event);
@@ -160,7 +198,7 @@ export function parseMembershipWorkerDelivery(
   } catch {
     throw new Error('Invalid membership worker hint JSON');
   }
-  const body = validateMembershipRuntimeHint(decoded);
+  const body = validateMembershipRuntimeHint(decoded, deployment.mode);
   return {
     hint: body,
     message_id: record.messageId,
