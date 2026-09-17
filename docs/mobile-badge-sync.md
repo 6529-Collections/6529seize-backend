@@ -27,10 +27,15 @@ Updates depend on APNs delivery and the user's badge permission.
    locks expire after 120 seconds, longer than the worker's 60-second timeout.
 5. Firebase sends only `aps.badge` with the exact aggregate, including zero.
    There is no `notification` title/body, sound, feed item, redirect or
-   `content-available` wakeup. APNs headers use push type `alert`, priority `5`,
+   `content-available` wakeup. APNs headers use push type `alert`, priority `10`,
    collapse ID `device-badge-refresh`, and expiration `0` to avoid storing stale
    corrective counts for an offline device. Ordinary visible pushes keep their
    own delivery semantics and are not collapsed with badge refreshes.
+   Priority `10` requests immediate delivery of the badge correction rather than
+   power-saving delivery batches. It does not guarantee delivery or ordering.
+   Updating an existing deployment for this priority correction requires only
+   `pushNotificationsHandler`; no API, database, frontend or native-app change
+   is required.
 
 ## Failure and concurrency behavior
 

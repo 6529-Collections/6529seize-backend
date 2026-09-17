@@ -16,16 +16,17 @@ beforeEach(() => {
   });
 });
 
-it.each([0, 1, 2])(
-  'sends a badge-only APNs payload with exact count %s',
+it.each([0, 1, 2, 3])(
+  'requests immediate badge-only APNs delivery with exact count %s',
   async (count) => {
     await sendBadgeUpdate('ios-token', count);
+    expect(send).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledWith({
       token: 'ios-token',
       apns: {
         headers: {
           'apns-push-type': 'alert',
-          'apns-priority': '5',
+          'apns-priority': '10',
           'apns-collapse-id': 'device-badge-refresh',
           'apns-expiration': '0'
         },
