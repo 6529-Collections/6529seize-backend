@@ -294,14 +294,14 @@ describe('membership dispatcher handler integration boundary', () => {
     );
     expect(app.dispatch).toHaveBeenCalledTimes(1);
   });
-  it('keeps the backfill dispatcher at 120 raw candidates while admitting the full lane', async () => {
+  it('gives both backfill lanes a bounded 120-candidate turn', async () => {
     const app = boot({ ...staging, mode: 'staging-backfill-v1' });
     await expect(app.invoke(event(), context())).resolves.toEqual({
       dispatch: dispatchResult,
       gc_deleted_members: 0
     });
     expect(app.dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({ max_candidates: 120, max_per_lane: 120 })
+      expect.objectContaining({ max_candidates: 240, max_per_lane: 120 })
     );
   });
   it('retains deployment and credentials across secret overwrites and binds real domain services to the selected executor', async () => {
