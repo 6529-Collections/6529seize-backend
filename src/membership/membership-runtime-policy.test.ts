@@ -119,6 +119,44 @@ describe('closed membership runtime deployment and delivery policy', () => {
       receive_count: 999999
     });
   });
+  it('accepts canonical ordinary targets only in staging controlled mode', () => {
+    const controlled = validateMembershipRuntimeDeployment({
+      ...staging,
+      mode: 'staging-controlled-v1'
+    });
+    const real = {
+      ...validHint,
+      target: { scope: 'PROFILE', target_id: 'real-profile' }
+    };
+    expect(
+      parseMembershipWorkerDelivery(
+        { Records: [{ ...record(), body: JSON.stringify(real) }] },
+        controlled
+      ).hint.target
+    ).toEqual(real.target);
+    expect(() =>
+      parseMembershipWorkerDelivery(
+        { Records: [{ ...record(), body: JSON.stringify(real) }] },
+        runtime
+      )
+    ).toThrow('fixture hint');
+    expect(() =>
+      parseMembershipWorkerDelivery(
+        {
+          Records: [
+            {
+              ...record(),
+              body: JSON.stringify({
+                ...real,
+                target: { ...real.target, force: true }
+              })
+            }
+          ]
+        },
+        controlled
+      )
+    ).toThrow('controlled hint');
+  });
   it('accepts exactly the three profile, 36 group, and FULL fixture targets', () => {
     expect(MEMBERSHIP_FIXTURE_PROFILES).toHaveLength(3);
     expect(MEMBERSHIP_FIXTURE_GROUPS).toHaveLength(36);

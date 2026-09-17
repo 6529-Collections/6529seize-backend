@@ -1,5 +1,6 @@
 import { ApiIdentitySubscriptionTargetAction } from '@/api/generated/models/ApiIdentitySubscriptionTargetAction';
 import { IdentitiesService } from './identities.service';
+import * as membershipPolicy from '@/membership/membership-producer-policy';
 
 describe('IdentitiesService subscriptions', () => {
   it('rejects following a profile blocked by the subscriber', async () => {
@@ -43,5 +44,55 @@ describe('IdentitiesService subscriptions', () => {
     expect(
       identitySubscriptionsDb.findIdentitySubscriptionActionsOfTarget
     ).not.toHaveBeenCalled();
+  });
+});
+
+describe('IdentitiesService membership source coverage', () => {
+  const service = new IdentitiesService(
+    {} as any,
+    {} as any,
+    {} as any,
+    {} as any,
+    {} as any
+  );
+
+  it('refuses an identity/profile insert without a caller-owned barrier when tracking is active', async () => {
+    const active = jest
+      .spyOn(membershipPolicy, 'isMembershipSourceTrackingActive')
+      .mockReturnValue(true);
+    try {
+      await expect(service.bulkCreateIdentities(['0xabc'], {})).rejects.toThrow(
+        'Membership source evidence is missing'
+      );
+    } finally {
+      active.mockRestore();
+    }
+  });
+
+  it('refuses a primary-address update outside the delegation cycle', async () => {
+    const active = jest
+      .spyOn(membershipPolicy, 'isMembershipSourceTrackingActive')
+      .mockReturnValue(true);
+    try {
+      await expect(
+        service.updatePrimaryAddresses(new Set(['0xabc']))
+      ).rejects.toThrow('Membership source evidence is missing');
+    } finally {
+      active.mockRestore();
+    }
+  });
+
+  it('allows empty write sets without source admission', async () => {
+    const active = jest
+      .spyOn(membershipPolicy, 'isMembershipSourceTrackingActive')
+      .mockReturnValue(true);
+    try {
+      await expect(service.bulkCreateIdentities([], {})).resolves.toEqual({});
+      await expect(
+        service.updatePrimaryAddresses(new Set())
+      ).resolves.toBeUndefined();
+    } finally {
+      active.mockRestore();
+    }
   });
 });

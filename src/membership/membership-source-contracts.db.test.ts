@@ -1,5 +1,6 @@
 import {
   IDENTITIES_TABLE,
+  USER_GROUPS_TABLE,
   MEMBERSHIP_GROUP_VERSIONS_TABLE,
   MEMBERSHIP_REFRESH_TARGETS_TABLE,
   MEMBERSHIP_SOURCE_JOBS_TABLE,
@@ -8,6 +9,10 @@ import {
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
+import {
+  aUserGroup,
+  withUserGroups
+} from '@/tests/fixtures/user-group.fixture';
 import {
   MembershipPrimaryContext,
   membershipQueryOptions,
@@ -24,6 +29,11 @@ import {
   withGlobalSourceKeys
 } from './membership-source-states.db';
 import { MembershipSourceKey } from './membership-validation';
+import * as producerPolicy from './membership-producer-policy';
+import {
+  membershipGlobalMutation,
+  withMembershipSourceMutation
+} from './membership-producer-writes';
 
 const identity = anIdentity({ rep: 1 });
 const profileKey: MembershipSourceKey = {
@@ -62,6 +72,84 @@ const provision = (
       ctx
     )
   );
+
+const catalogueGroups = Array.from({ length: 130 }, (_, index) =>
+  aUserGroup(
+    { rep_user: identity.profile_id! },
+    { id: `catalogue-fanout-${index}`, name: `Catalogue fanout ${index}` }
+  )
+);
+
+describeWithSeed(
+  'Membership profile rule reference fanout',
+  [withIdentities([identity]), withUserGroups(catalogueGroups)],
+  () => {
+    it('versions every referenced group above the 128 target cap in one transaction', async () => {
+      await provision([MEMBERSHIP_CATALOG_KEY]);
+      await tx((ctx) =>
+        sources().mutateProfileRuleReferences(
+          identity.profile_id!,
+          () =>
+            sqlExecutor
+              .execute(
+                `UPDATE ${USER_GROUPS_TABLE} SET rep_user = NULL WHERE rep_user = :profileId`,
+                { profileId: identity.profile_id },
+                membershipQueryOptions(ctx)
+              )
+              .then(() => undefined),
+          ctx
+        )
+      );
+      expect(
+        await sqlExecutor.oneOrNull<{
+          count: number;
+          minVersion: string;
+          maxVersion: string;
+        }>(
+          `SELECT COUNT(*) count, CAST(MIN(catalog_version) AS CHAR) minVersion,
+                  CAST(MAX(catalog_version) AS CHAR) maxVersion
+           FROM ${MEMBERSHIP_GROUP_VERSIONS_TABLE}`
+        )
+      ).toEqual({ count: 130, minVersion: '1', maxVersion: '1' });
+      expect(
+        await sqlExecutor.oneOrNull<{ count: number }>(
+          `SELECT COUNT(*) count FROM ${USER_GROUPS_TABLE} WHERE rep_user IS NOT NULL`
+        )
+      ).toEqual({ count: 0 });
+    });
+
+    it('rolls back group refs and all version rows together', async () => {
+      await provision([MEMBERSHIP_CATALOG_KEY]);
+      await expect(
+        tx((ctx) =>
+          sources().mutateProfileRuleReferences(
+            identity.profile_id!,
+            async () => {
+              await sqlExecutor.execute(
+                `UPDATE ${USER_GROUPS_TABLE} SET rep_user = NULL WHERE rep_user = :profileId`,
+                { profileId: identity.profile_id },
+                membershipQueryOptions(ctx)
+              );
+              throw new Error('rollback fanout');
+            },
+            ctx
+          )
+        )
+      ).rejects.toThrow('rollback fanout');
+      expect(
+        await sqlExecutor.oneOrNull<{ count: number }>(
+          `SELECT COUNT(*) count FROM ${MEMBERSHIP_GROUP_VERSIONS_TABLE}`
+        )
+      ).toEqual({ count: 0 });
+      expect(
+        await sqlExecutor.oneOrNull<{ count: number }>(
+          `SELECT COUNT(*) count FROM ${USER_GROUPS_TABLE} WHERE rep_user = :profileId`,
+          { profileId: identity.profile_id }
+        )
+      ).toEqual({ count: 130 });
+    });
+  }
+);
 const state = () =>
   tx((ctx) => sources().read([profileKey, globalKey], false, ctx));
 const getTarget = () => tx((ctx) => targets().find(request, ctx));
@@ -91,6 +179,40 @@ describeWithSeed(
   'Membership source transaction contracts',
   withIdentities([identity]),
   () => {
+    it('accepts a caller context carrying its explicit WRITE connection and commits one source claim', async () => {
+      await provision([globalKey]);
+      const active = jest
+        .spyOn(producerPolicy, 'isMembershipSourceTrackingActive')
+        .mockReturnValue(true);
+      try {
+        await sqlExecutor.executeNativeQueriesInTransaction(
+          async (connection) =>
+            withMembershipSourceMutation(
+              connection,
+              membershipGlobalMutation(['RATINGS'], 'caller-context'),
+              () =>
+                sqlExecutor
+                  .execute(
+                    `UPDATE ${IDENTITIES_TABLE} SET rep = rep + 1 WHERE profile_id = :id`,
+                    { id: identity.profile_id },
+                    { wrappedConnection: connection }
+                  )
+                  .then(() => undefined),
+              { connection }
+            )
+        );
+        expect(await readRep()).toEqual({ rep: 2 });
+        expect((await state())[0].state?.version).toBe('1');
+        expect(
+          await tx((ctx) =>
+            targets().find({ scope: 'FULL', target_id: '*' }, ctx)
+          )
+        ).not.toBeNull();
+      } finally {
+        active.mockRestore();
+      }
+    });
+
     it('keeps absent evidence unknown and refuses mutation or jobs without provisioning', async () => {
       expect((await state()).every((row) => row.state === null)).toBe(true);
       await expect(tx(mutate)).rejects.toThrow('evidence');

@@ -13,6 +13,10 @@ import {
 import { Time } from '../time';
 import { randomUUID } from 'node:crypto';
 import { xTdhRepository, XTdhRepository } from './xtdh.repository';
+import {
+  membershipGlobalMutation,
+  withMembershipSourceMutation
+} from '../membership/membership-producer-writes';
 
 export class XTdhGrantsFinder {
   constructor(private readonly xTdhRepository: XTdhRepository) {}
@@ -223,85 +227,93 @@ export class XTdhGrantsFinder {
     try {
       ctx.timer?.start(`${this.constructor.name}->updateTdhGrant`);
       return await this.xTdhRepository.executeNativeQueriesInTransaction(
-        async (connection) => {
-          const ctxWithConnection = { ...ctx, connection };
-          const grantBeforeUpdate = await this.xTdhRepository.lockGrantById(
-            grantId,
-            ctxWithConnection
-          );
-          if (!grantBeforeUpdate) {
-            throw new NotFoundException(`Grant ${grantId} not found`);
-          }
-          if (
-            grantBeforeUpdate.grantor_id !==
-            ctxWithConnection.authenticationContext?.getLoggedInUsersProfileId()
-          ) {
-            throw new ForbiddenException(
-              `Only grantor itself can change its grants`
-            );
-          }
-
-          const status = grantBeforeUpdate.status;
-          if (
-            [XTdhGrantStatus.FAILED, XTdhGrantStatus.DISABLED].includes(status)
-          ) {
-            throw new BadRequestException(
-              `Grant ${grantId} is in status ${status}. Only grants with following statuses can be updated: ${[XTdhGrantStatus.PENDING, XTdhGrantStatus.GRANTED].join(`, `)}.`
-            );
-          }
-          const validToBeforeUpdate = grantBeforeUpdate.valid_to
-            ? Time.millis(grantBeforeUpdate.valid_to)
-            : null;
-          if (validToBeforeUpdate) {
-            if (
-              validToBeforeUpdate.isInPast() &&
-              (proposedValidTo === null ||
-                proposedValidTo.gt(validToBeforeUpdate))
-            ) {
-              throw new BadRequestException(
-                `Extending validity of an expired grant is not allowed`
+        async (connection) =>
+          withMembershipSourceMutation(
+            connection,
+            membershipGlobalMutation(['GRANTS'], 'grant-updated'),
+            async () => {
+              const ctxWithConnection = { ...ctx, connection };
+              const grantBeforeUpdate = await this.xTdhRepository.lockGrantById(
+                grantId,
+                ctxWithConnection
               );
-            }
-          }
-          let newFinalId = grantBeforeUpdate.id;
-          const validFrom =
-            grantBeforeUpdate.valid_from !== null
-              ? Time.millis(grantBeforeUpdate.valid_from)
-              : null;
-          const replacementGrantNeeded =
-            proposedValidTo === null ||
-            (validFrom === null &&
-              proposedValidTo.minus(Time.now()).gt(Time.days(1))) ||
-            (validFrom !== null &&
-              proposedValidTo.minus(validFrom).gt(Time.days(1)));
-          await this.xTdhRepository.updateStatus(
-            {
-              grantId,
-              status: XTdhGrantStatus.DISABLED,
-              error: replacementGrantNeeded
-                ? 'User updated the grant validity'
-                : `User disabled the grant`
+              if (!grantBeforeUpdate) {
+                throw new NotFoundException(`Grant ${grantId} not found`);
+              }
+              if (
+                grantBeforeUpdate.grantor_id !==
+                ctxWithConnection.authenticationContext?.getLoggedInUsersProfileId()
+              ) {
+                throw new ForbiddenException(
+                  `Only grantor itself can change its grants`
+                );
+              }
+
+              const status = grantBeforeUpdate.status;
+              if (
+                [XTdhGrantStatus.FAILED, XTdhGrantStatus.DISABLED].includes(
+                  status
+                )
+              ) {
+                throw new BadRequestException(
+                  `Grant ${grantId} is in status ${status}. Only grants with following statuses can be updated: ${[XTdhGrantStatus.PENDING, XTdhGrantStatus.GRANTED].join(`, `)}.`
+                );
+              }
+              const validToBeforeUpdate = grantBeforeUpdate.valid_to
+                ? Time.millis(grantBeforeUpdate.valid_to)
+                : null;
+              if (validToBeforeUpdate) {
+                if (
+                  validToBeforeUpdate.isInPast() &&
+                  (proposedValidTo === null ||
+                    proposedValidTo.gt(validToBeforeUpdate))
+                ) {
+                  throw new BadRequestException(
+                    `Extending validity of an expired grant is not allowed`
+                  );
+                }
+              }
+              let newFinalId = grantBeforeUpdate.id;
+              const validFrom =
+                grantBeforeUpdate.valid_from !== null
+                  ? Time.millis(grantBeforeUpdate.valid_from)
+                  : null;
+              const replacementGrantNeeded =
+                proposedValidTo === null ||
+                (validFrom === null &&
+                  proposedValidTo.minus(Time.now()).gt(Time.days(1))) ||
+                (validFrom !== null &&
+                  proposedValidTo.minus(validFrom).gt(Time.days(1)));
+              await this.xTdhRepository.updateStatus(
+                {
+                  grantId,
+                  status: XTdhGrantStatus.DISABLED,
+                  error: replacementGrantNeeded
+                    ? 'User updated the grant validity'
+                    : `User disabled the grant`
+                },
+                ctxWithConnection
+              );
+              if (replacementGrantNeeded) {
+                const replacementGrantId = randomUUID();
+                await this.xTdhRepository.insertGrant(
+                  {
+                    ...grantBeforeUpdate,
+                    id: replacementGrantId,
+                    created_at: Time.currentMillis(),
+                    updated_at: Time.currentMillis(),
+                    valid_to: proposedValidTo?.toMillis() ?? null,
+                    replaced_grant_id: grantId
+                  },
+                  [],
+                  ctxWithConnection
+                );
+                newFinalId = replacementGrantId;
+              }
+              return this.getGrantByIdOrThrow(newFinalId, ctxWithConnection);
             },
-            ctxWithConnection
-          );
-          if (replacementGrantNeeded) {
-            const replacementGrantId = randomUUID();
-            await this.xTdhRepository.insertGrant(
-              {
-                ...grantBeforeUpdate,
-                id: replacementGrantId,
-                created_at: Time.currentMillis(),
-                updated_at: Time.currentMillis(),
-                valid_to: proposedValidTo?.toMillis() ?? null,
-                replaced_grant_id: grantId
-              },
-              [],
-              ctxWithConnection
-            );
-            newFinalId = replacementGrantId;
-          }
-          return this.getGrantByIdOrThrow(newFinalId, ctxWithConnection);
-        }
+            ctx
+          )
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->updateTdhGrant`);

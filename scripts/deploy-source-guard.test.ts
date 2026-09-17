@@ -387,6 +387,85 @@ describe('generated deployment source guard', () => {
     );
   });
 
+  it('keeps producer, reader and shadow controls inactive by default and stage-owned', () => {
+    const inputs = workflow.on.workflow_dispatch.inputs;
+    expect(inputs.membership_source_tracking_mode.default).toBe('inactive');
+    expect(inputs.membership_read_mode.default).toBe('legacy');
+    expect(inputs.membership_shadow_mode.default).toBe('off');
+    expect(inputs.membership_reader_profile_ids.default).toBe('');
+    expect(inputs.membership_reader_coverage_revision.default).toBe('');
+    expect(job.env.MEMBERSHIP_SOURCE_TRACKING_STAGE).toBe(
+      '${{ github.event.inputs.environment }}'
+    );
+    expect(job.env.MEMBERSHIP_READER_STAGE).toBe(
+      '${{ github.event.inputs.environment }}'
+    );
+    expect(steps.find((step) => step.name === 'Deploy API')?.run).toContain(
+      'MEMBERSHIP_READER_COVERAGE_REVISION: $readerCoverageRevision'
+    );
+  });
+
+  it('allows only explicit staging producer tracking', () => {
+    expect(
+      validateDispatch(sourceSha, 'staging', {
+        INPUT_SERVICE: 'tdhLoop',
+        MEMBERSHIP_SOURCE_TRACKING_MODE: 'tracking-v1'
+      }).status
+    ).toBe(0);
+    expect(
+      validateDispatch(sourceSha, 'prod', {
+        INPUT_SERVICE: 'tdhLoop',
+        MEMBERSHIP_SOURCE_TRACKING_MODE: 'tracking-v1'
+      }).status
+    ).toBe(1);
+    expect(
+      validateDispatch(sourceSha, 'staging', {
+        INPUT_SERVICE: 'membershipRefreshLoop',
+        MEMBERSHIP_SOURCE_TRACKING_MODE: 'tracking-v1'
+      }).status
+    ).toBe(1);
+    // Historical TDH replay is a general deploy unit, not a tracked producer.
+    expect(
+      validateDispatch(sourceSha, 'staging', {
+        INPUT_SERVICE: 'populateHistoricConsolidatedTdh',
+        MEMBERSHIP_SOURCE_TRACKING_MODE: 'tracking-v1'
+      }).status
+    ).toBe(1);
+    expect(
+      readFileSync(
+        path.resolve(
+          __dirname,
+          '../src/populateHistoricConsolidatedTdh/serverless.yaml'
+        ),
+        'utf8'
+      )
+    ).not.toContain('MEMBERSHIP_SOURCE_TRACKING_MODE');
+  });
+
+  it('requires an audited allowlist for controlled staging API reads', () => {
+    const controls = {
+      INPUT_SERVICE: 'api',
+      MEMBERSHIP_READ_MODE: 'staging-controlled-v1',
+      MEMBERSHIP_SHADOW_MODE: 'staging-controlled-v1',
+      MEMBERSHIP_READER_PROFILE_IDS: 'profile-a,profile-b',
+      MEMBERSHIP_READER_COVERAGE_REVISION: 'audited-v1'
+    };
+    expect(validateDispatch(sourceSha, 'staging', controls).status).toBe(0);
+    expect(validateDispatch(sourceSha, 'prod', controls).status).toBe(1);
+    expect(
+      validateDispatch(sourceSha, 'staging', {
+        ...controls,
+        MEMBERSHIP_READER_COVERAGE_REVISION: ''
+      }).status
+    ).toBe(1);
+    expect(
+      validateDispatch(sourceSha, 'staging', {
+        ...controls,
+        MEMBERSHIP_READER_PROFILE_IDS: 'bad profile'
+      }).status
+    ).toBe(1);
+  });
+
   it.each<Record<string, string>>([
     { INPUT_SERVICE: 'api', MEMBERSHIP_RUNTIME_MODE: 'staging-fixture-v1' },
     { INPUT_SERVICE: 'api', MEMBERSHIP_WORKER_MAPPING_ENABLED: 'true' },
