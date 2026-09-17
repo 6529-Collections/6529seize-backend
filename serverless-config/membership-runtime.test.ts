@@ -37,7 +37,7 @@ describe('typed membership deployment controls', () => {
     expect(config.mappingEnabled).toBe(false);
     expect(Object.isFrozen(config)).toBe(true);
   });
-  it('accepts only the explicit staging fixture activation', () => {
+  it('accepts explicit staging fixture and controlled modes', () => {
     expect(
       resolveWorker({
         stage: 'staging',
@@ -46,6 +46,14 @@ describe('typed membership deployment controls', () => {
         mappingEnabled: 'true'
       }).mappingEnabled
     ).toBe(true);
+    expect(
+      resolveWorker({
+        stage: 'staging',
+        region: 'eu-west-1',
+        mode: 'staging-controlled-v1',
+        mappingEnabled: 'false'
+      })
+    ).toMatchObject({ mode: 'staging-controlled-v1', mappingEnabled: false });
   });
   it.each([
     { stage: 'production' },
@@ -92,6 +100,15 @@ describe('typed dispatcher controls', () => {
       });
     }
   );
+  it('keeps controlled staging schedule disabled unless explicitly enabled', () => {
+    expect(
+      resolveDispatcher({
+        stage: 'staging',
+        region: 'eu-west-1',
+        mode: 'staging-controlled-v1'
+      })
+    ).toMatchObject({ scheduleEnabled: false, scheduleState: 'DISABLED' });
+  });
   it.each([
     { stage: 'production' },
     { region: 'us-east-1' },

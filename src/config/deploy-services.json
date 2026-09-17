@@ -190,7 +190,9 @@
         "delegationsLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "xTdhLoop"
+      ]
     },
     {
       "name": "discoverEnsLoop",
@@ -872,7 +874,9 @@
         "tdhLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "xTdhLoop"
+      ]
     },
     {
       "name": "teamLoop",

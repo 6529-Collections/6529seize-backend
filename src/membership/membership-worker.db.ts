@@ -481,17 +481,32 @@ export class MembershipWorkerDb extends LazyDbAccessCompatibleService {
         // lockClaim proved this run's version exceeds completed_version while
         // holding the target lock. Assign exactly; GREATEST with a bound decimal
         // string can compare lexically (for example keeping 8 instead of 10).
+        const newerRequest =
+          BigInt(target.requested_version) > BigInt(run.request_version);
+        // A grant start/expiry is a future source input even without another
+        // writer. Keep one durable PROFILE request due at that horizon. A newer
+        // request already in flight supersedes this timer and will capture its
+        // own horizon when it publishes; do not add a duplicate request here.
+        const scheduleHorizon =
+          publish && !newerRequest && run.valid_until_millis !== null;
+        let availableAt: string | null = null;
+        if (newerRequest) availableAt = now;
+        else if (scheduleHorizon) availableAt = run.valid_until_millis;
         await this.db.execute(
           `UPDATE ${MEMBERSHIP_REFRESH_TARGETS_TABLE} SET completed_version=:version,active_run_id=NULL,
-        available_at_millis=:available,attempts=IF(requested_version=:version,0,attempts),last_error=IF(requested_version=:version,NULL,last_error),updated_at_millis=:now
+        requested_version=:requested,available_at_millis=:available,reason=:reason,
+        attempts=:attempts,last_error=:error,updated_at_millis=:now
         WHERE scope=:scope AND target_id=:target_id`,
           {
             ...claim.target,
             version: run.request_version,
-            available:
-              BigInt(target.requested_version) > BigInt(run.request_version)
-                ? now
-                : null,
+            requested: scheduleHorizon
+              ? membershipAddCounter(run.request_version, 1)
+              : target.requested_version,
+            available: availableAt,
+            reason: scheduleHorizon ? 'grant-time-boundary' : target.reason,
+            attempts: newerRequest ? target.attempts : 0,
+            error: newerRequest ? target.last_error : null,
             now
           },
           membershipQueryOptions(ctx)

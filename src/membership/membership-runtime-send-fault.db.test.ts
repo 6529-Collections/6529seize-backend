@@ -116,11 +116,18 @@ describe('fixed dispatcher failure receipt on actual MySQL', () => {
       expect(page.run_id).toBe(runId);
     }
     expect(page.outcome).toBe('COMPLETED');
+    const publishedRun = await fixture.tx((ctx) =>
+      new MembershipWorkerDb(() => fixture.db).run(runId!, false, ctx)
+    );
     expect(await authority()).toMatchObject({
-      requested_version: hint.delivery.requested_version,
+      requested_version: String(
+        BigInt(hint.delivery.requested_version) + BigInt(1)
+      ),
       completed_version: hint.delivery.requested_version,
       attempts: 0,
-      active_run_id: null
+      active_run_id: null,
+      reason: 'grant-time-boundary',
+      available_at_millis: publishedRun?.valid_until_millis
     });
     expect(
       await fixture.db.execute(

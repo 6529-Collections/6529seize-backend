@@ -1,11 +1,53 @@
 # Inactive membership runtime operations
 
-The runtime packages the fenced worker, external dispatcher and GC. Existing
-authorization readers and producer jobs remain in use. Both runtime services
-default to inactive; deployment alone does not provision source readiness or
-start background work. The only activation mode is the isolated staging fixture.
+## Milestones 6–7 controls and activation boundary
 
-## Deploy in dependency order
+The source-producer and scoped-reader integrations are released behind separate
+controls. Source tracking defaults to `inactive`; ordinary writes retain their
+existing behavior. A staging deployment can opt into `tracking-v1` only after
+every relevant writer is on compatible code and an audited source/bootstrap
+coverage receipt exists. Tracking is captured before shared secrets load. In
+tracking mode, missing source evidence fails the source transaction rather than
+creating a zero-version key or claiming readiness. Each committed mutation
+coalesces a durable PROFILE, GROUP or FULL target; no SQS send is required for
+the invalidation to survive. With processing disabled, repeated invalidations
+of one target share a row, while the number of distinct targets can still
+grow. Monitor target count, oldest due age and database write overhead before
+enabling tracking for sustained traffic.
+
+The worker and dispatcher have an additional staging-only
+`staging-controlled-v1` admission mode for the application database. Their SQS
+mapping and EventBridge schedule remain independently disabled by default; a
+mode change alone does not start background processing or establish source
+readiness. The existing isolated fixture mode remains separate. Production
+continues to accept only `inactive` for both services. No general bootstrap,
+backfill, reader cutover or routine schedule is part of this release.
+
+API materialized reads default to the legacy direct path and shadow comparison
+defaults off. Controlled staging reads require an explicit profile allowlist and
+are evaluated from one primary snapshot. Missing publication, catalogue/source
+evidence, active jobs, changed group rules or expired grant horizons fall back
+to direct evaluation. Shadow results count as comparisons only when the same
+candidate set and evaluation time are completely evaluated. The normal
+production reader remains on the legacy path, regardless of published rows.
+
+Before later production activation, complete the independent deployed-runtime
+proof in [#2090](https://github.com/6529-Collections/6529seize-backend/issues/2090),
+the audited source/catalogue bootstrap, controlled backlog drain, representative
+load and shadow-parity acceptance. The deferred #2090 drill has not passed in
+this inactive release.
+
+The runtime packages the fenced worker, external dispatcher and GC. Both
+services default to inactive; deployment alone does not provision source
+readiness or start background work. The isolated fixture and controlled
+application-database modes are staging only and require explicit controls.
+
+## Historical M2–M5 runtime deployment
+
+The schema, fixture carrier and independent monitoring below were deployed in
+the completed inactive M2–M5 release. They are not additional deployment units
+for M6–M7 unless verification finds a missing prerequisite. M6–M7 deploys the
+API, worker, dispatcher and affected producer services in dependency order.
 
 1. Deploy `dbMigrationsLoop` at the reviewed source and invoke
    `db_schema_scope=membership-evaluator-index` if that prerequisite is not already
@@ -36,7 +78,7 @@ scope after resolving the cause. A client timeout does not establish rollback;
 inspect actual schema through the same idempotent scope. Never drop/rebuild data
 as retry cleanup. Manual full synchronization cannot bypass these additions.
 
-## Independent operational monitoring
+## Historical independent operational monitoring
 
 The worker and dispatcher stacks install their own alarms. Central
 structured-error monitoring is a separate deployment: the generated monitoring
@@ -48,18 +90,15 @@ dispatcher heartbeat remains service-owned. The central source alarms coexist
 under distinct names; this change does not replace existing alarms or their
 delivery topics.
 
-During combined staging acceptance, use the service-owned worker/dispatcher
-alarms and direct CloudWatch logs. New central structured-log coverage remains
-**pending** until the authorized M2–M5 main merges and the separate monitoring
-rollout complete. `Deploy operational monitoring` accepts reviewed merged `main`
-source only. Do not merge early or change that boundary to install staging
-coverage.
+The M2–M5 release completed the separate central monitoring rollout for staging
+and production. Its deployment procedure is retained below for future changes;
+M6–M7 does not alter `ops/monitoring` and does not request another monitoring
+deployment.
 
-In Phase 4, after the reviewed membership changes are on `main`, complete the
-following sequence for staging and then production. Keep production runtime
-controls inactive. Record `operational_deployments: ["monitoring"]` on the
-existing Coordinator backend release part; that declaration records required
-work and does not deploy it.
+For a future monitoring change, complete the following sequence for staging and
+then production after its reviewed source is on `main`. Keep production runtime
+controls inactive. Record `operational_deployments: ["monitoring"]` only when
+that release actually changes `ops/monitoring`.
 
 1. Complete the environment's schema and dependent inactive service deployments
    in dependency order. Verify every function and log group in the exact merged
@@ -112,17 +151,18 @@ for identity, subscription-capacity, termination-protection and delivery checks.
 
 ## Closed controls
 
-| Workflow input                         | Default    | Allowed activation                                             |
-| -------------------------------------- | ---------- | -------------------------------------------------------------- |
-| `membership_runtime_mode`              | `inactive` | `staging-fixture-v1` only for the worker/dispatcher in staging |
-| `membership_worker_mapping_enabled`    | `false`    | `true` only with the staging fixture mode                      |
-| `membership_dispatch_schedule_enabled` | `false`    | `true` only for the staging fixture dispatcher                 |
+| Workflow input                         | Default    | Allowed activation                                         |
+| -------------------------------------- | ---------- | ---------------------------------------------------------- |
+| `membership_runtime_mode`              | `inactive` | `staging-fixture-v1` or `staging-controlled-v1` in staging |
+| `membership_worker_mapping_enabled`    | `false`    | `true` only with an active staging runtime mode            |
+| `membership_dispatch_schedule_enabled` | `false`    | `true` only with an active staging runtime mode            |
 
 Malformed values, unrelated services, wrong regions and production activation are
 rejected. Compiled CloudFormation uses booleans, not boolean-looking strings.
 Deployment-owned stage/region/mode/queue identity is frozen before shared secrets
-load. Production is pinned to `prod`/`us-east-1`; fixture mode to
-`staging`/`eu-west-1`. There is no shared-database work mode.
+load. Production is pinned to `prod`/`us-east-1`; active modes to
+`staging`/`eu-west-1`. The controlled mode uses the application database only
+when explicitly selected in staging.
 
 The runtime IAM status event is `{"operator_action":"membership_runtime_status_v1"}`.
 It reports mode and queue identity without loading secrets or accessing MySQL.
@@ -298,6 +338,6 @@ remains `INTERRUPTED`; it cannot silently become a successful replay. Lease toke
 are private durable state and are removed from all carrier responses. Record DONE
 and retain the evidence before bounded fixture cleanup.
 
-Production promotion requires the combined live drill and related green E2E.
-Production promotion keeps both runtime services inactive
-and leaves all normal producer/read activation for later increments.
+Production materialisation activation requires the deferred live drill in #2090.
+This inactive M6–M7 release can promote after related green staging E2E while
+keeping source tracking, processing triggers, materialized reads and shadow off.

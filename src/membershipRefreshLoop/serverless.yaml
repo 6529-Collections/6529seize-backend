@@ -29,6 +29,7 @@ functions:
     environment:
       MEMBERSHIP_RUNTIME_STAGE: ${self:custom.membershipWorker.stage}
       MEMBERSHIP_RUNTIME_MODE: ${self:custom.membershipWorker.mode}
+      MEMBERSHIP_WORKER_MAPPING_ENABLED: '${self:custom.membershipWorker.mappingEnabled}'
       MEMBERSHIP_WORK_QUEUE_ARN: !GetAtt MembershipWorkQueue.Arn
       MEMBERSHIP_WORK_QUEUE_URL: !Ref MembershipWorkQueue
       SENTRY_DSN: ${env:SENTRY_DSN}

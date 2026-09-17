@@ -58,6 +58,9 @@ describe('WaveApiService updateWave immutability', () => {
     };
     const userGroupsService = {
       getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(eligibleGroups),
+      getGroupsUserIsEligibleForByIds: jest
+        .fn()
+        .mockResolvedValue(eligibleGroups),
       getApiGroupsByIds: jest.fn(async (ids: string[]) =>
         ids.map((id) => ({ id }))
       ),
@@ -102,6 +105,7 @@ describe('WaveApiService updateWave immutability', () => {
     return {
       service,
       wavesApiDb,
+      userGroupsService,
       waveMappers,
       metricsRecorder,
       dropVotingService,
@@ -683,8 +687,24 @@ describe('WaveApiService updateWave immutability', () => {
         serial_no: 1
       }
     );
-    const { service, wavesApiDb, ctx } = createService({ waveBeforeUpdate });
+    const updatedWave = aWave(
+      {
+        created_by: 'profile-1',
+        visibility_group_id: 'private-group'
+      },
+      {
+        id: 'parent-wave',
+        name: 'Parent Wave',
+        serial_no: 1
+      }
+    );
+    const { service, wavesApiDb, userGroupsService, waveMappers, ctx } =
+      createService({ waveBeforeUpdate, updatedWave });
     wavesApiDb.findSubwaveIdsByParentWaveId.mockResolvedValue(['subwave-1']);
+    wavesApiDb.findWaveById.mockReset().mockResolvedValue(updatedWave);
+    userGroupsService.getGroupsUserIsEligibleForByIds.mockResolvedValue([
+      'private-group'
+    ]);
 
     await expect(
       service.updateWave(
@@ -698,6 +718,15 @@ describe('WaveApiService updateWave immutability', () => {
     ).resolves.toEqual({ id: 'parent-wave' });
 
     expect(wavesApiDb.insertWave).toHaveBeenCalled();
+    expect(
+      userGroupsService.getGroupsUserIsEligibleForByIds
+    ).toHaveBeenCalledWith('profile-1', ['private-group']);
+    expect(waveMappers.waveEntityToApiWave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groupIdsUserIsEligibleFor: ['private-group']
+      }),
+      expect.anything()
+    );
   });
 });
 
