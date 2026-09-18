@@ -7,6 +7,13 @@ The main runtime pieces are:
 - Many independently deployed background Lambdas for chain ingestion, derived data, media processing, notifications, and operations.
 - MySQL as the source of truth.
 - Redis as shared cache, rate-limit, dedupe, and short-lived coordination storage.
+
+Legacy all-wave eligibility cache misses use a per-profile Redis lease so API
+instances share one computation. Followers wait for a version-validated result
+or a new lease, with a 12-second request budget. Owner-checked Lua publication
+and a per-profile invalidation marker prevent stale owners from publishing
+after lease replacement or explicit invalidation. See
+[eligible-groups-coordination.md](eligible-groups-coordination.md).
 - SQS and EventBridge as the async execution fabric.
 - S3, CloudFront, Arweave, Ethereum/RPC providers, Firebase, Sentry, CloudWatch, Discord, and SNS around the core.
 

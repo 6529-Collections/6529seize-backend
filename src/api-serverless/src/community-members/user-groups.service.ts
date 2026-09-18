@@ -117,6 +117,14 @@ import { membershipReaderPolicy } from '@/membership/membership-reader-policy';
 import type { MembershipCandidateIds } from '@/membership/membership-reader.types';
 import { performance } from 'node:perf_hooks';
 import { moderationPresentationService } from '@/content-moderation/moderation-presentation.service';
+import {
+  acquireEligibleGroupsLease,
+  invalidateEligibleGroupsResult,
+  publishEligibleGroupsResult,
+  readEligibleGroupsInvalidation,
+  releaseEligibleGroupsLease,
+  renewEligibleGroupsLease
+} from './eligible-groups-lease';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -183,6 +191,11 @@ type EligibleGroupsCacheEntry = {
   readonly eligibleGroupIds: string[];
   readonly computedAtMillis: number;
   readonly waveGroupsVersion: number;
+  readonly invalidation?: string;
+};
+
+type EligibleGroupsMemoryCacheEntry = EligibleGroupsCacheEntry & {
+  readonly invalidation: string;
 };
 
 type ProfileGroupRating = {
@@ -214,10 +227,8 @@ type PrefetchedEligibilityCheckData = {
 const DEFAULT_ELIGIBLE_GROUPS_CACHE_TTL_SEC = 60;
 const ELIGIBLE_GROUPS_MEMORY_CACHE_PREFIX = 'eligible-groups-v2';
 const ELIGIBLE_GROUPS_REDIS_CACHE_PREFIX = 'cache_6529_eligible_groups';
-const ELIGIBLE_GROUPS_REDIS_LOCK_PREFIX = 'cache_6529_eligible_groups_lock';
-const ELIGIBLE_GROUPS_REDIS_LOCK_TTL_MS = 10_000;
-const ELIGIBLE_GROUPS_REDIS_LOCK_WAIT_RETRIES = 4;
-const ELIGIBLE_GROUPS_REDIS_LOCK_WAIT_MS = 75;
+const ELIGIBLE_GROUPS_REQUEST_BUDGET_MS = 12_000;
+const ELIGIBLE_GROUPS_LEASE_RENEW_MS = 2_000;
 const eligibleGroupsPromisesByProfileId = new Map<string, Promise<string[]>>();
 const logger = Logger.get('USER_GROUPS_SERVICE');
 const DEFAULT_BENEFICIARY_GRANT_MATCH_MODE =
@@ -1076,13 +1087,14 @@ export class UserGroupsService {
   public async invalidateGroupsUserIsEligibleFor(profileId: string) {
     mcache.del(this.getEligibleGroupsMemoryCacheKey(profileId));
     eligibleGroupsPromisesByProfileId.delete(profileId);
-    const redisClient = getRedisClient();
-    if (!redisClient) {
-      return;
+    try {
+      await invalidateEligibleGroupsResult(
+        profileId,
+        this.getEligibleGroupsCacheTtlSec()
+      );
+    } catch {
+      this.eligibilityUnavailable('invalidation_redis_error');
     }
-    await redisClient
-      .del(this.getEligibleGroupsRedisCacheKey(profileId))
-      .catch(() => undefined);
   }
 
   public async getGroupsUserIsEligibleFor(
@@ -1231,10 +1243,27 @@ export class UserGroupsService {
         );
       }
 
-      const promise = this.getGroupsUserIsEligibleForWithCache(
-        profileId,
-        timer
-      );
+      const controller = new AbortController();
+      let timeout: ReturnType<typeof setTimeout>;
+      const promise = Promise.race([
+        this.getGroupsUserIsEligibleForWithCache(
+          profileId,
+          timer,
+          controller.signal
+        ),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => {
+            controller.abort();
+            logger.warn('[ELIGIBILITY_COORDINATION] {"outcome":"timeout"}');
+            reject(
+              new CustomApiCompliantException(
+                503,
+                'Membership eligibility is temporarily unavailable'
+              )
+            );
+          }, ELIGIBLE_GROUPS_REQUEST_BUDGET_MS);
+        })
+      ]).finally(() => clearTimeout(timeout));
       eligibleGroupsPromisesByProfileId.set(profileId, promise);
       try {
         return await promise;
@@ -1288,18 +1317,21 @@ export class UserGroupsService {
 
   private async getGroupsUserIsEligibleForWithCache(
     profileId: string,
-    timer?: Timer | undefined
+    timer?: Timer | undefined,
+    signal?: AbortSignal
   ): Promise<string[]> {
     const timerKey = 'getGroupsUserIsEligibleFor';
+    const deadline = performance.now() + ELIGIBLE_GROUPS_REQUEST_BUDGET_MS;
     const ttlSec = this.getEligibleGroupsCacheTtlSec();
-    const [latestProfileGroupChangeMillis, waveGroupsVersion] =
+    const [latestProfileGroupChangeMillis, waveGroupsVersion, invalidation] =
       await Promise.all([
         this.timeAsync(
           timer,
           `${timerKey}->getLatestProfileGroupChangeMillis`,
           () => this.userGroupsDb.getLatestProfileGroupChangeMillis(profileId)
         ),
-        this.getWaveGroupsCacheVersion(timer)
+        this.getWaveGroupsCacheVersion(timer),
+        this.getEligibleGroupsInvalidation(profileId)
       ]);
 
     const memoryCacheEntry = this.timeSync(
@@ -1308,9 +1340,10 @@ export class UserGroupsService {
       () =>
         mcache.get(
           this.getEligibleGroupsMemoryCacheKey(profileId)
-        ) as EligibleGroupsCacheEntry | null
+        ) as EligibleGroupsMemoryCacheEntry | null
     );
     if (
+      memoryCacheEntry?.invalidation === invalidation &&
       this.isEligibleGroupsCacheEntryValid(
         memoryCacheEntry,
         latestProfileGroupChangeMillis,
@@ -1324,14 +1357,26 @@ export class UserGroupsService {
       profileId,
       timer
     );
+    const invalidationAfterRead =
+      await this.getEligibleGroupsInvalidation(profileId);
     if (
+      invalidation === invalidationAfterRead &&
+      this.isEligibleGroupsResultMarkerValid(
+        redisCacheEntry,
+        invalidationAfterRead
+      ) &&
       this.isEligibleGroupsCacheEntryValid(
         redisCacheEntry,
         latestProfileGroupChangeMillis,
         waveGroupsVersion
       )
     ) {
-      this.putEligibleGroupsMemoryCache(profileId, redisCacheEntry, ttlSec);
+      this.putEligibleGroupsMemoryCache(
+        profileId,
+        redisCacheEntry,
+        ttlSec,
+        invalidationAfterRead
+      );
       this.logEligibilityRead({
         profileId,
         level: 'redis',
@@ -1340,72 +1385,232 @@ export class UserGroupsService {
       return redisCacheEntry.eligibleGroupIds;
     }
 
-    const acquiredRedisLock = await this.tryAcquireEligibleGroupsRedisLock(
-      profileId,
-      timer
-    );
-    if (!acquiredRedisLock) {
-      const waitedCacheEntry = await this.waitForEligibleGroupsRedisCacheEntry({
+    let waited = false;
+    while (!signal?.aborted && performance.now() < deadline) {
+      let lease;
+      try {
+        lease = await acquireEligibleGroupsLease(profileId);
+      } catch (error) {
+        logger.warn(
+          'Eligible groups lease acquisition failed',
+          error instanceof Error ? error.name : 'Unknown'
+        );
+        this.eligibilityUnavailable('redis_error');
+      }
+      if (lease) {
+        return this.computeWithEligibleGroupsLease({
+          profileId,
+          lease,
+          ttlSec,
+          deadline,
+          timer,
+          takeover: waited,
+          signal
+        });
+      }
+      waited = true;
+      const markerBeforeRead =
+        await this.getEligibleGroupsInvalidation(profileId);
+      const peerEntry = await this.getEligibleGroupsRedisCacheEntry(
         profileId,
-        latestProfileGroupChangeMillis,
-        waveGroupsVersion,
-        ttlSec,
         timer
-      });
-      if (waitedCacheEntry) {
+      );
+      const [currentProfileChange, currentWaveVersion, markerAfterRead] =
+        await Promise.all([
+          this.userGroupsDb.getLatestProfileGroupChangeMillis(profileId),
+          this.getWaveGroupsCacheVersion(timer),
+          this.getEligibleGroupsInvalidation(profileId)
+        ]);
+      if (
+        !signal?.aborted &&
+        markerBeforeRead === markerAfterRead &&
+        this.isEligibleGroupsResultMarkerValid(peerEntry, markerAfterRead) &&
+        this.isEligibleGroupsCacheEntryValid(
+          peerEntry,
+          currentProfileChange,
+          currentWaveVersion
+        )
+      ) {
+        this.putEligibleGroupsMemoryCache(
+          profileId,
+          peerEntry,
+          ttlSec,
+          markerAfterRead
+        );
         this.logEligibilityRead({
           profileId,
           level: 'lock_wait',
-          resultCount: waitedCacheEntry.eligibleGroupIds.length
+          resultCount: peerEntry.eligibleGroupIds.length
         });
-        return waitedCacheEntry.eligibleGroupIds;
+        return peerEntry.eligibleGroupIds;
+      }
+      const remaining = deadline - performance.now();
+      if (remaining > 0) {
+        await Time.millis(
+          Math.min(remaining, 125 + Math.random() * 175)
+        ).sleep();
       }
     }
+    this.eligibilityUnavailable('timeout');
+  }
 
-    const computeStartMillis = Time.currentMillis();
-    const results = await this.computeGroupsUserIsEligibleFor(profileId, timer);
-    const computedAtMillis = Time.currentMillis();
-    const latestProfileGroupChangeMillisAfterCompute = await this.timeAsync(
-      timer,
-      `${timerKey}->getLatestProfileGroupChangeMillisAfterCompute`,
-      () => this.userGroupsDb.getLatestProfileGroupChangeMillis(profileId)
-    );
-    if (
-      this.hasProfileGroupChangeAdvanced(
-        latestProfileGroupChangeMillis,
-        latestProfileGroupChangeMillisAfterCompute
+  private async computeWithEligibleGroupsLease({
+    profileId,
+    lease,
+    ttlSec,
+    deadline,
+    timer,
+    takeover,
+    signal
+  }: {
+    profileId: string;
+    lease: { token: string; invalidation: string };
+    ttlSec: number;
+    deadline: number;
+    timer?: Timer;
+    takeover: boolean;
+    signal?: AbortSignal;
+  }): Promise<string[]> {
+    let lostLease = false;
+    let renewal = Promise.resolve();
+    const onAbort = () => {
+      lostLease = true;
+      clearInterval(interval);
+      void releaseEligibleGroupsLease(profileId, lease.token).catch(
+        () => undefined
+      );
+    };
+    const interval = setInterval(() => {
+      renewal = renewal.then(async () => {
+        if (lostLease) return;
+        try {
+          lostLease = !(await renewEligibleGroupsLease(profileId, lease.token));
+        } catch {
+          lostLease = true;
+        }
+      });
+    }, ELIGIBLE_GROUPS_LEASE_RENEW_MS);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+    try {
+      // A peer may have published between our first cache read and SET NX.
+      const peerEntry = await this.getEligibleGroupsRedisCacheEntry(
+        profileId,
+        timer
+      );
+      const [beforeProfileChange, beforeWaveVersion, beforeInvalidation] =
+        await Promise.all([
+          this.userGroupsDb.getLatestProfileGroupChangeMillis(profileId),
+          this.getWaveGroupsCacheVersion(timer),
+          this.getEligibleGroupsInvalidation(profileId)
+        ]);
+      if (
+        beforeInvalidation === lease.invalidation &&
+        this.isEligibleGroupsResultMarkerValid(peerEntry, beforeInvalidation) &&
+        this.isEligibleGroupsCacheEntryValid(
+          peerEntry,
+          beforeProfileChange,
+          beforeWaveVersion
+        )
+      ) {
+        return peerEntry.eligibleGroupIds;
+      }
+      const computeStartMillis = Time.currentMillis();
+      const results = await this.computeGroupsUserIsEligibleFor(
+        profileId,
+        timer
+      );
+      const computedAtMillis = Time.currentMillis();
+      const [afterProfileChange, afterWaveVersion] = await Promise.all([
+        this.userGroupsDb.getLatestProfileGroupChangeMillis(profileId),
+        this.getWaveGroupsCacheVersion(timer)
+      ]);
+      if (
+        lostLease ||
+        signal?.aborted ||
+        performance.now() >= deadline ||
+        this.hasProfileGroupChangeAdvanced(
+          beforeProfileChange,
+          afterProfileChange
+        ) ||
+        beforeWaveVersion !== afterWaveVersion
       )
-    ) {
+        this.eligibilityUnavailable('inputs_changed_or_timeout');
+      await renewal;
+      const cacheEntry: EligibleGroupsCacheEntry = {
+        eligibleGroupIds: results,
+        computedAtMillis,
+        waveGroupsVersion: afterWaveVersion,
+        invalidation: lease.invalidation
+      };
+      let published: boolean;
+      try {
+        published = await publishEligibleGroupsResult(
+          profileId,
+          lease.token,
+          lease.invalidation,
+          JSON.stringify(cacheEntry),
+          ttlSec
+        );
+      } catch {
+        this.eligibilityUnavailable('publish_redis_error');
+      }
+      if (!published) this.eligibilityUnavailable('lease_lost_or_invalidated');
+      const [finalProfileChange, finalWaveVersion, finalInvalidation] =
+        await Promise.all([
+          this.userGroupsDb.getLatestProfileGroupChangeMillis(profileId),
+          this.getWaveGroupsCacheVersion(timer),
+          this.getEligibleGroupsInvalidation(profileId)
+        ]);
+      if (
+        signal?.aborted ||
+        performance.now() >= deadline ||
+        this.hasProfileGroupChangeAdvanced(
+          beforeProfileChange,
+          finalProfileChange
+        ) ||
+        finalWaveVersion !== beforeWaveVersion ||
+        finalInvalidation !== lease.invalidation
+      )
+        this.eligibilityUnavailable('inputs_changed_after_publish');
+      this.putEligibleGroupsMemoryCache(
+        profileId,
+        cacheEntry,
+        ttlSec,
+        lease.invalidation
+      );
       this.logEligibilityRead({
         profileId,
         level: 'computed',
         computeMs: computedAtMillis - computeStartMillis,
         resultCount: results.length,
-        cached: false
+        cached: true,
+        coordination: takeover ? 'takeover' : 'owner'
       });
       return results;
+    } finally {
+      clearInterval(interval);
+      signal?.removeEventListener('abort', onAbort);
+      await renewal;
+      await releaseEligibleGroupsLease(profileId, lease.token).catch(
+        (error) => {
+          logger.warn(
+            'Eligible groups lease release failed',
+            error instanceof Error ? error.name : 'Unknown'
+          );
+        }
+      );
     }
+  }
 
-    const cacheEntry: EligibleGroupsCacheEntry = {
-      eligibleGroupIds: results,
-      computedAtMillis,
-      waveGroupsVersion
-    };
-    this.putEligibleGroupsMemoryCache(profileId, cacheEntry, ttlSec);
-    await this.putEligibleGroupsRedisCache(
-      profileId,
-      cacheEntry,
-      ttlSec,
-      timer
+  private eligibilityUnavailable(reason: string): never {
+    logger.warn(
+      `[ELIGIBILITY_COORDINATION] ${JSON.stringify({ outcome: reason })}`
     );
-    this.logEligibilityRead({
-      profileId,
-      level: 'computed',
-      computeMs: computedAtMillis - computeStartMillis,
-      resultCount: results.length,
-      cached: true
-    });
-    return results;
+    throw new CustomApiCompliantException(
+      503,
+      'Membership eligibility is temporarily unavailable'
+    );
   }
 
   private logEligibilityRead(param: {
@@ -1414,6 +1619,7 @@ export class UserGroupsService {
     readonly computeMs?: number;
     readonly resultCount: number;
     readonly cached?: boolean;
+    readonly coordination?: 'owner' | 'takeover';
   }) {
     // Memory-cache hits are deliberately not logged: they are the dominant
     // path and would flood the logs without adding attribution value.
@@ -1460,22 +1666,29 @@ export class UserGroupsService {
     return `${ELIGIBLE_GROUPS_REDIS_CACHE_PREFIX}:${profileId}`;
   }
 
-  private getEligibleGroupsRedisLockKey(profileId: string): string {
-    return `${ELIGIBLE_GROUPS_REDIS_LOCK_PREFIX}:${profileId}`;
-  }
-
   private putEligibleGroupsMemoryCache(
     profileId: string,
     cacheEntry: EligibleGroupsCacheEntry,
-    ttlSec: number
+    ttlSec: number,
+    invalidation: string
   ) {
     this.timeSync(undefined, 'getGroupsUserIsEligibleFor->memoryCachePut', () =>
       mcache.put(
         this.getEligibleGroupsMemoryCacheKey(profileId),
-        cacheEntry,
+        { ...cacheEntry, invalidation },
         Time.seconds(ttlSec).toMillis()
       )
     );
+  }
+
+  private async getEligibleGroupsInvalidation(
+    profileId: string
+  ): Promise<string> {
+    try {
+      return await readEligibleGroupsInvalidation(profileId);
+    } catch {
+      this.eligibilityUnavailable('invalidation_read_redis_error');
+    }
   }
 
   private async getWaveGroupsCacheVersion(
@@ -1483,17 +1696,24 @@ export class UserGroupsService {
   ): Promise<number> {
     const redisClient = getRedisClient();
     if (!redisClient) {
-      return 0;
+      this.eligibilityUnavailable('redis_unavailable');
     }
     return await this.timeAsync(
       timer,
       'getGroupsUserIsEligibleFor->waveGroupsVersionRedisGet',
       async () => {
-        const cachedVersion = await redisClient
-          .get(WAVE_GROUPS_VERSION_CACHE_KEY)
-          .catch(() => null);
+        let cachedVersion: string | null;
+        try {
+          cachedVersion = await redisClient.get(WAVE_GROUPS_VERSION_CACHE_KEY);
+        } catch {
+          this.eligibilityUnavailable('version_redis_error');
+        }
+        if (cachedVersion === null) return 0;
         const parsed = Number(cachedVersion);
-        return Number.isFinite(parsed) ? parsed : 0;
+        if (!Number.isSafeInteger(parsed) || parsed < 0) {
+          this.eligibilityUnavailable('invalid_version');
+        }
+        return parsed;
       }
     );
   }
@@ -1504,104 +1724,23 @@ export class UserGroupsService {
   ): Promise<EligibleGroupsCacheEntry | null> {
     const redisClient = getRedisClient();
     if (!redisClient) {
-      return null;
+      this.eligibilityUnavailable('redis_unavailable');
     }
     return await this.timeAsync(
       timer,
       'getGroupsUserIsEligibleFor->redisCacheGet',
       async () => {
-        const cachedValue = await redisClient
-          .get(this.getEligibleGroupsRedisCacheKey(profileId))
-          .catch(() => null);
+        let cachedValue: string | null;
+        try {
+          cachedValue = await redisClient.get(
+            this.getEligibleGroupsRedisCacheKey(profileId)
+          );
+        } catch {
+          this.eligibilityUnavailable('result_redis_error');
+        }
         return this.parseEligibleGroupsCacheEntry(cachedValue);
       }
     );
-  }
-
-  private async putEligibleGroupsRedisCache(
-    profileId: string,
-    cacheEntry: EligibleGroupsCacheEntry,
-    ttlSec: number,
-    timer?: Timer | undefined
-  ) {
-    const redisClient = getRedisClient();
-    if (!redisClient) {
-      return;
-    }
-    await this.timeAsync(
-      timer,
-      'getGroupsUserIsEligibleFor->redisCacheSet',
-      async () => {
-        await redisClient
-          .set(
-            this.getEligibleGroupsRedisCacheKey(profileId),
-            JSON.stringify(cacheEntry),
-            { EX: ttlSec }
-          )
-          .catch(() => undefined);
-      }
-    );
-  }
-
-  private async tryAcquireEligibleGroupsRedisLock(
-    profileId: string,
-    timer?: Timer | undefined
-  ): Promise<boolean> {
-    const redisClient = getRedisClient();
-    if (!redisClient) {
-      return true;
-    }
-    return await this.timeAsync(
-      timer,
-      'getGroupsUserIsEligibleFor->redisLockSet',
-      async () => {
-        const response = await redisClient
-          .set(this.getEligibleGroupsRedisLockKey(profileId), '1', {
-            PX: ELIGIBLE_GROUPS_REDIS_LOCK_TTL_MS,
-            NX: true
-          })
-          .catch((err) => {
-            logger.warn('Failed to acquire eligible groups Redis lock', err);
-            return null;
-          });
-        return response === 'OK';
-      }
-    );
-  }
-
-  private async waitForEligibleGroupsRedisCacheEntry({
-    profileId,
-    latestProfileGroupChangeMillis,
-    waveGroupsVersion,
-    ttlSec,
-    timer
-  }: {
-    profileId: string;
-    latestProfileGroupChangeMillis: number | null;
-    waveGroupsVersion: number;
-    ttlSec: number;
-    timer?: Timer;
-  }): Promise<EligibleGroupsCacheEntry | null> {
-    for (let i = 0; i < ELIGIBLE_GROUPS_REDIS_LOCK_WAIT_RETRIES; i++) {
-      if (i > 0) {
-        await Time.millis(ELIGIBLE_GROUPS_REDIS_LOCK_WAIT_MS).sleep();
-      }
-      const cacheEntry = await this.getEligibleGroupsRedisCacheEntry(
-        profileId,
-        timer
-      );
-      if (
-        this.isEligibleGroupsCacheEntryValid(
-          cacheEntry,
-          latestProfileGroupChangeMillis,
-          waveGroupsVersion
-        )
-      ) {
-        this.putEligibleGroupsMemoryCache(profileId, cacheEntry, ttlSec);
-        return cacheEntry;
-      }
-    }
-    return null;
   }
 
   private parseEligibleGroupsCacheEntry(
@@ -1621,18 +1760,32 @@ export class UserGroupsService {
         typeof parsed.computedAtMillis === 'number' &&
         Number.isFinite(parsed.computedAtMillis) &&
         typeof parsed.waveGroupsVersion === 'number' &&
-        Number.isFinite(parsed.waveGroupsVersion)
+        Number.isFinite(parsed.waveGroupsVersion) &&
+        (parsed.invalidation === undefined ||
+          typeof parsed.invalidation === 'string')
       ) {
         return {
           eligibleGroupIds: parsed.eligibleGroupIds,
           computedAtMillis: parsed.computedAtMillis,
-          waveGroupsVersion: parsed.waveGroupsVersion
+          waveGroupsVersion: parsed.waveGroupsVersion,
+          invalidation: parsed.invalidation
         };
       }
     } catch {
       return null;
     }
     return null;
+  }
+
+  private isEligibleGroupsResultMarkerValid(
+    entry: EligibleGroupsCacheEntry | null,
+    marker: string
+  ): boolean {
+    return (
+      !!entry &&
+      (entry.invalidation === marker ||
+        (marker === '' && entry.invalidation === undefined))
+    );
   }
 
   private isEligibleGroupsCacheEntryValid(
