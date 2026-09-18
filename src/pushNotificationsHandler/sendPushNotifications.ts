@@ -93,7 +93,8 @@ export async function sendBadgeUpdate(
     apns: {
       headers: {
         'apns-push-type': 'alert',
-        'apns-priority': '5',
+        // Badge corrections should not wait for power-saving delivery batches.
+        'apns-priority': '10',
         'apns-collapse-id': 'device-badge-refresh',
         // Do not store a count for later delivery to an offline device.
         'apns-expiration': '0'
