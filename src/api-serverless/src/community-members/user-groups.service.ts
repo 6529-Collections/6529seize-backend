@@ -1087,13 +1087,18 @@ export class UserGroupsService {
   public async invalidateGroupsUserIsEligibleFor(profileId: string) {
     mcache.del(this.getEligibleGroupsMemoryCacheKey(profileId));
     eligibleGroupsPromisesByProfileId.delete(profileId);
+    if (!getRedisClient()) return;
     try {
       await invalidateEligibleGroupsResult(
         profileId,
         this.getEligibleGroupsCacheTtlSec()
       );
     } catch {
-      this.eligibilityUnavailable('invalidation_redis_error');
+      // The database write may already be committed. Preserve the caller's
+      // success result while reads fail closed during a Redis outage.
+      logger.warn(
+        '[ELIGIBILITY_COORDINATION] {"outcome":"invalidation_redis_error"}'
+      );
     }
   }
 

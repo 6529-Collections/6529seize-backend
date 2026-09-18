@@ -20,6 +20,14 @@ stale permission grant. The frontend fetch helper surfaces a 503 as an error;
 existing caller retry controls can issue a new request. It does not
 automatically replay a write.
 
+Group-save invalidation remains best effort after the database transaction
+commits. A Redis failure there is logged; returning an error would invite a
+retry of an already committed write. While Redis is unavailable, eligibility
+reads fail with 503. After Redis recovers, the existing profile-change and
+global-version checks still apply, and an entry missed by invalidation can
+remain until its configured TTL. This is a pre-existing write-side freshness
+limit during Redis outages.
+
 The result key is unchanged. New results add an `invalidation` string to the
 JSON; old readers ignore this extra field. New readers accept old results only
 while no new-code invalidation marker exists for that profile. New lease and
