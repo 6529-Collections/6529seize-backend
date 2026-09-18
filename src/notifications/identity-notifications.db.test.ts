@@ -1,3 +1,4 @@
+import { DbPoolName } from '@/db-query.options';
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import { ConnectionWrapper, SqlExecutor } from '@/sql-executor';
 import {
@@ -370,6 +371,23 @@ describe('IdentityNotificationsDb', () => {
     );
     expect(db.execute.mock.calls[0][0]).toContain(
       'OR rd2.author_id = n.identity_id'
+    );
+  });
+
+  it('uses the primary pool when refreshing a badge after a read', async () => {
+    const db = { oneOrNull: jest.fn().mockResolvedValue({ cnt: 0 }) };
+    const repo = new IdentityNotificationsDb(
+      () => db as unknown as SqlExecutor
+    );
+    await expect(
+      repo.countUnreadNotificationsForIdentity('profile-a', [], undefined, {
+        forcePool: DbPoolName.WRITE
+      })
+    ).resolves.toBe(0);
+    expect(db.oneOrNull).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ identity_id: 'profile-a' }),
+      { wrappedConnection: undefined, forcePool: DbPoolName.WRITE }
     );
   });
 
