@@ -38,6 +38,12 @@ import { CreateWalletAuthSession201Response } from '../generated/models/CreateWa
 import { LogoutWalletAuthSessionRequest } from '../generated/models/LogoutWalletAuthSessionRequest';
 import { RefreshWalletAuthSessionRequest } from '../generated/models/RefreshWalletAuthSessionRequest';
 import { assertLegacyRefreshEnabled } from './auth-legacy-refresh';
+import {
+  getCommunityApp,
+  validateRedirectUri,
+  createAuthCode,
+  exchangeAuthCode
+} from './community-app-auth.service';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { Timer } from '../../../time';
 import { authDb } from './auth.db';
@@ -658,6 +664,80 @@ router.post(
       throw new UnauthorisedException('Invalid connection share code');
     }
     res.status(201).send(redeemed.response);
+  }
+);
+
+// === Community App Identity Assertion ===
+
+const CommunityAppAuthorizeQuerySchema = Joi.object({
+  app: Joi.string().max(64).required(),
+  redirect_uri: Joi.string().uri().required(),
+  state: Joi.string().max(256).allow('').optional()
+});
+
+router.get(
+  '/authorize/app-info',
+  async function (req: Request, res: Response) {
+    const query = getValidatedByJoiOrThrow(req.query, CommunityAppAuthorizeQuerySchema);
+    const app = getCommunityApp(query.app);
+    if (!app) {
+      throw new BadRequestException('Unknown community app');
+    }
+    validateRedirectUri(app, query.redirect_uri);
+    res.status(200).send({
+      app_id: app.id,
+      name: app.name,
+      description: app.description
+    });
+  }
+);
+
+const CommunityAppApproveSchema = Joi.object({
+  app: Joi.string().max(64).required(),
+  redirect_uri: Joi.string().uri().required(),
+  state: Joi.string().max(256).allow('').optional()
+});
+
+router.post(
+  '/authorize/approve',
+  needsAuthenticatedUser(),
+  async function (req: Request, res: Response) {
+    const body = getValidatedByJoiOrThrow(req.body, CommunityAppApproveSchema);
+    const app = getCommunityApp(body.app);
+    if (!app) {
+      throw new BadRequestException('Unknown community app');
+    }
+    validateRedirectUri(app, body.redirect_uri);
+    const address = getAuthenticatedWalletOrNull(req);
+    if (!address) {
+      throw new UnauthorisedException('Authentication required');
+    }
+    const code = await createAuthCode(address, app.id);
+    const redirectUrl = new URL(body.redirect_uri);
+    redirectUrl.searchParams.set('code', code);
+    if (body.state) {
+      redirectUrl.searchParams.set('state', body.state);
+    }
+    res.status(200).send({ redirect_url: redirectUrl.toString() });
+  }
+);
+
+const CommunityAppExchangeSchema = Joi.object({
+  code: Joi.string().hex().length(64).required()
+});
+
+router.post(
+  '/authorize/exchange',
+  async function (req: Request, res: Response) {
+    const body = getValidatedByJoiOrThrow(req.body, CommunityAppExchangeSchema);
+    const result = await exchangeAuthCode(body.code);
+    if (!result || !result.address) {
+      throw new UnauthorisedException('Invalid or expired authorization code');
+    }
+    res.status(200).send({
+      address: result.address,
+      app: result.app
+    });
   }
 );
 
