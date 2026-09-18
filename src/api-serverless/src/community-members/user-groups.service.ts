@@ -56,6 +56,7 @@ import {
 import { Time, Timer } from '@/time';
 import * as mcache from 'memory-cache';
 import { RequestContext } from '@/request.context';
+import { readWaveCatalogueWithDiagnostics } from './wave-catalogue-read-diagnostics';
 import {
   membershipCatalogueMutation,
   withMembershipSourceMutation
@@ -740,15 +741,19 @@ export class UserGroupsService {
       );
     }
 
-    const cachedValue = await this.timeAsync(
-      timer,
-      `${timerPrefix}->redisGet`,
-      () => redisClient.get(WAVE_GROUPS_CACHE_KEY)
+    const cachedGroups = await readWaveCatalogueWithDiagnostics(
+      redisClient,
+      () =>
+        this.timeAsync(timer, `${timerPrefix}->redisGet`, () =>
+          redisClient.get(WAVE_GROUPS_CACHE_KEY)
+        ),
+      (raw) =>
+        this.timeSync(timer, `${timerPrefix}->redisJsonParse`, () =>
+          JSON.parse(raw)
+        ) as UserGroupEntity[]
     );
-    if (cachedValue) {
-      return this.timeSync(timer, `${timerPrefix}->redisJsonParse`, () =>
-        JSON.parse(cachedValue)
-      ) as UserGroupEntity[];
+    if (cachedGroups.hit) {
+      return cachedGroups.value;
     }
 
     // The waves + wave_curations scan only runs when the Redis entity blob

@@ -5,6 +5,8 @@ import { numbers } from './numbers';
 import { Time } from './time';
 
 let redis: Redis;
+let redisReadyEvents = 0;
+let redisReconnectEvents = 0;
 
 export const WAVE_GROUPS_CACHE_KEY = 'cache_6529_wave_groups';
 export const WAVE_GROUPS_VERSION_CACHE_KEY = 'cache_6529_wave_groups_version';
@@ -305,7 +307,21 @@ export async function initRedis() {
     logger.error('Error connecting to Redis: ' + error)
   );
   redis.on('connect', () => logger.info('Redis connected!'));
+  redis.on('ready', () => {
+    redisReadyEvents++;
+  });
+  redis.on('reconnecting', () => {
+    redisReconnectEvents++;
+  });
   await redis.connect();
+}
+
+/** Process-local connection events for interval diagnostics; no stale timestamps. */
+export function getRedisConnectionEventCounts() {
+  return {
+    ready: redisReadyEvents,
+    reconnecting: redisReconnectEvents
+  };
 }
 
 export async function clearWaveGroupsCache() {
