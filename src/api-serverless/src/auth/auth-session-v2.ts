@@ -1118,7 +1118,7 @@ function deriveRotatedWebSessionSecret({
     .digest('hex');
 }
 
-function hashSecret(secret: string): string {
+export function hashSecret(secret: string): string {
   return createHmac('sha256', getSessionHashSecret())
     .update(secret, 'utf8')
     .digest('hex');
