@@ -137,6 +137,7 @@ export async function readWaveCatalogueWithDiagnostics<T>(
               endingEvents.ready - startingEvents!.ready,
             redis_reconnect_events_during_read:
               endingEvents.reconnecting - startingEvents!.reconnecting,
+            event_loop_monitor_active: monitor !== undefined,
             event_loop_delay_samples: monitor ? Number(monitor.count) : 0,
             event_loop_delay_max_ms:
               monitor && Number(monitor.count) > 0

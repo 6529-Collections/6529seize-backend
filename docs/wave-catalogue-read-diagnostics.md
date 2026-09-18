@@ -14,7 +14,8 @@ API runtime configuration. Missing, invalid, negative or greater-than-one
 values disable sampling. Start at `0.01` (one percent). The code also caps output
 at **60 samples per minute per process** and at **8 simultaneous event-loop
 monitors per process**. A sampled event still logs if the monitor cap is reached;
-its delay sample count is zero and delay maximum is null. Sampling is per read,
+`event_loop_monitor_active` is false, its delay sample count is zero and delay
+maximum is null. Sampling is per read,
 not per user or request. A busy process reaching the cap samples at a lower
 effective rate; compare counts by time bin and do not extrapolate capped bins.
 
@@ -105,7 +106,8 @@ filter @message like /\[WAVE_CATALOGUE_READ\]/
 | parse @message /\[WAVE_CATALOGUE_READ\] (?<event_json>\{.*\})/
 | fields jsonParse(event_json) as e
 | filter e.cache_outcome = "hit"
-| fields e.event_loop_delay_samples as loop_samples,
+| fields e.event_loop_monitor_active as monitor_active,
+    e.event_loop_delay_samples as loop_samples,
     e.event_loop_delay_max_ms as loop_max_ms,
     e.get_ms as get_ms
 | stats count(*) as samples,
@@ -114,7 +116,7 @@ filter @message like /\[WAVE_CATALOGUE_READ\]/
     pct(get_ms, 95) as get_p95_ms,
     pct(loop_max_ms, 50) as loop_max_p50_ms,
     pct(loop_max_ms, 95) as loop_max_p95_ms
-  by bin(5m) as period
+  by monitor_active, bin(5m) as period
 | sort period asc
 ```
 

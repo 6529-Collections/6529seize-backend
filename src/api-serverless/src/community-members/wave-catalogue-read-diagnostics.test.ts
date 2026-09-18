@@ -183,6 +183,7 @@ describe('wave catalogue Redis read diagnostics', () => {
     );
     const event = loggedEvent(log);
     expect(event.get_ms).toBeGreaterThanOrEqual(50);
+    expect(event.event_loop_monitor_active).toBe(true);
     expect(event.event_loop_delay_samples).toBeGreaterThan(0);
     expect(event.event_loop_delay_max_ms).toEqual(expect.any(Number));
   });
