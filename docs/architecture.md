@@ -1663,3 +1663,14 @@ Registration atomically adopts only its own secret's fence and removes that row.
 ### Push installation recovery
 
 Native push UUIDs are bound by the frontend to the native device identifier so restored backups use a separate installation. Old logout jobs retain their credentials/revisions but cannot block the new namespace. The existing revoke endpoint supports independently fenced token-scoped cleanup, removing only exact old-device/token targets without claiming or advancing that installation. It retires a matching retained token when no matching registrations remain. Registration can copy the authenticated profile's previous device preferences without overwriting destination settings and queues a replacement-device badge refresh. Credentialed token rotation updates all profiles on that installation. No extra queue, table, migration or service is introduced.
+
+
+### Foreground iOS badge refresh
+
+`POST /push-notifications/installations/badge-refresh` verifies an established
+installation credential and revision using the primary database, then enqueues
+the existing `installation_badge_refresh` message. The native frontend requests
+this on launch/resume after registration succeeds. Only the worker computes the
+aggregate; the endpoint does not mutate unread state, registrations or schema.
+Queue acknowledgement is separate from APNs delivery. See
+[Mobile badge synchronization](./mobile-badge-sync.md#app-launch-and-resume-refresh).

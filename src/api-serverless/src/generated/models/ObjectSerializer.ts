@@ -625,6 +625,8 @@ export * from '../models/ApiRedeemConnectionShareRequest';
 export * from '../models/ApiRedeemConnectionShareResponse';
 export * from '../models/ApiRedeemRefreshTokenRequest';
 export * from '../models/ApiRedeemRefreshTokenResponse';
+export * from '../models/ApiRefreshPushInstallationBadgeRequest';
+export * from '../models/ApiRefreshPushInstallationBadgeResponse';
 export * from '../models/ApiRegisterPushNotificationTokenRequest';
 export * from '../models/ApiRepCategoriesPage';
 export * from '../models/ApiRepCategory';
@@ -1497,6 +1499,8 @@ import { ApiRedeemConnectionShareRequest , ApiRedeemConnectionShareRequestTarget
 import { ApiRedeemConnectionShareResponse    , ApiRedeemConnectionShareResponseClientTypeEnum     } from '../models/ApiRedeemConnectionShareResponse';
 import { ApiRedeemRefreshTokenRequest } from '../models/ApiRedeemRefreshTokenRequest';
 import { ApiRedeemRefreshTokenResponse } from '../models/ApiRedeemRefreshTokenResponse';
+import { ApiRefreshPushInstallationBadgeRequest } from '../models/ApiRefreshPushInstallationBadgeRequest';
+import { ApiRefreshPushInstallationBadgeResponse } from '../models/ApiRefreshPushInstallationBadgeResponse';
 import { ApiRegisterPushNotificationTokenRequest } from '../models/ApiRegisterPushNotificationTokenRequest';
 import { ApiRepCategoriesPage } from '../models/ApiRepCategoriesPage';
 import { ApiRepCategory } from '../models/ApiRepCategory';
@@ -2601,6 +2605,8 @@ let typeMap: {[index: string]: any} = {
     "ApiRedeemConnectionShareResponse": ApiRedeemConnectionShareResponse,
     "ApiRedeemRefreshTokenRequest": ApiRedeemRefreshTokenRequest,
     "ApiRedeemRefreshTokenResponse": ApiRedeemRefreshTokenResponse,
+    "ApiRefreshPushInstallationBadgeRequest": ApiRefreshPushInstallationBadgeRequest,
+    "ApiRefreshPushInstallationBadgeResponse": ApiRefreshPushInstallationBadgeResponse,
     "ApiRegisterPushNotificationTokenRequest": ApiRegisterPushNotificationTokenRequest,
     "ApiRepCategoriesPage": ApiRepCategoriesPage,
     "ApiRepCategory": ApiRepCategory,

@@ -162,6 +162,8 @@ import { ApiProfileWaveActivityPage } from '@/api/generated/models/ApiProfileWav
 import { ApiProposalFrameRequest } from '@/api/generated/models/ApiProposalFrameRequest';
 import { ApiProposalFrameResponse } from '@/api/generated/models/ApiProposalFrameResponse';
 import { ApiPublishProfileCmsPackageRequest } from '@/api/generated/models/ApiPublishProfileCmsPackageRequest';
+import { ApiRefreshPushInstallationBadgeRequest } from '@/api/generated/models/ApiRefreshPushInstallationBadgeRequest';
+import { ApiRefreshPushInstallationBadgeResponse } from '@/api/generated/models/ApiRefreshPushInstallationBadgeResponse';
 import { ApiReviewProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiReviewProfileCmsAgentProposalRequest';
 import { ApiRevokePushInstallationRequest } from '@/api/generated/models/ApiRevokePushInstallationRequest';
 import { ApiRevokePushInstallationResponse } from '@/api/generated/models/ApiRevokePushInstallationResponse';
@@ -2236,6 +2238,20 @@ export type PutProfilePreferencesRequest = Request<
   ApiResponse<PutProfilePreferencesResponse>,
   ApiUpdateProfilePreferences,
   PutProfilePreferencesQuery,
+  Record<string, never>
+>;
+
+export type RefreshPushInstallationBadgePathParams = Record<string, never>;
+
+export type RefreshPushInstallationBadgeQuery = Record<string, never>;
+
+export type RefreshPushInstallationBadgeResponse = ApiRefreshPushInstallationBadgeResponse;
+
+export type RefreshPushInstallationBadgeRequest = Request<
+  RefreshPushInstallationBadgePathParams,
+  ApiResponse<RefreshPushInstallationBadgeResponse>,
+  ApiRefreshPushInstallationBadgeRequest,
+  RefreshPushInstallationBadgeQuery,
   Record<string, never>
 >;
 
