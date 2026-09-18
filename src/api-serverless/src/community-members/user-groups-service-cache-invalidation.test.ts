@@ -202,7 +202,8 @@ function buildRedisMock() {
   return {
     get: jest.fn().mockResolvedValue(null),
     set: jest.fn().mockResolvedValue('OK'),
-    del: jest.fn().mockResolvedValue(1)
+    del: jest.fn().mockResolvedValue(1),
+    eval: jest.fn().mockResolvedValue(1)
   };
 }
 
@@ -239,8 +240,13 @@ describe('UserGroupsService eligibility cache invalidation scoping', () => {
       await saveGroup(aNewGroup());
       expect(clearWaveGroupsCache).not.toHaveBeenCalled();
       expect(evictWaveGroupsEntityCache).toHaveBeenCalledTimes(1);
-      expect(redis.del).toHaveBeenCalledWith(
-        `cache_6529_eligible_groups:${CREATOR_ID}`
+      expect(redis.eval).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          keys: expect.arrayContaining([
+            `cache_6529_eligible_groups:${CREATOR_ID}`
+          ])
+        })
       );
     });
 
@@ -254,8 +260,13 @@ describe('UserGroupsService eligibility cache invalidation scoping', () => {
       await saveGroup(aNewGroup({ tdh_min: 10 }));
       expect(clearWaveGroupsCache).toHaveBeenCalledTimes(1);
       expect(evictWaveGroupsEntityCache).not.toHaveBeenCalled();
-      expect(redis.del).toHaveBeenCalledWith(
-        `cache_6529_eligible_groups:${CREATOR_ID}`
+      expect(redis.eval).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          keys: expect.arrayContaining([
+            `cache_6529_eligible_groups:${CREATOR_ID}`
+          ])
+        })
       );
     });
 
