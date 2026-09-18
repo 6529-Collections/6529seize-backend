@@ -19,11 +19,12 @@ maximum is null. Sampling is per read,
 not per user or request. A busy process reaching the cap samples at a lower
 effective rate; compare counts by time bin and do not extrapolate capped bins.
 
-No Redis command or cache payload is added. Every catalogue read performs a
-small process-local counter update; selected reads scan the returned string to
-measure its UTF-8 bytes, start one 20 ms event-loop-delay monitor during the
-GET, and emit one log line. The byte scan happens after the measured GET and
-before the measured JSON parse. The monitor is disabled when that GET settles,
+No Redis command or cache payload is added. Every catalogue read checks the
+configured rate, makes a cryptographic random selection when sampling is
+enabled, and updates a process-local counter. Selected reads scan the returned
+string to measure its UTF-8 bytes, start one 20 ms event-loop-delay monitor
+during the GET, and emit one log line. The byte scan happens after the measured
+GET and before the measured JSON parse. The monitor is disabled when that GET settles,
 so it cannot accumulate idle Lambda freeze/thaw time between requests. The
 per-minute log cap also resets after a long idle period. All connection counts
 are event deltas during the read, rather than ages since the last event.

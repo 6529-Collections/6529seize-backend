@@ -1,7 +1,16 @@
 import { loggerContext } from '@/logger-context';
+import * as perfHooks from 'node:perf_hooks';
 import { readWaveCatalogueWithDiagnostics } from './wave-catalogue-read-diagnostics';
 
 const events = { ready: 1, reconnecting: 0 };
+jest.mock('node:perf_hooks', () => {
+  const actual =
+    jest.requireActual<typeof import('node:perf_hooks')>('node:perf_hooks');
+  return {
+    ...actual,
+    monitorEventLoopDelay: jest.fn(actual.monitorEventLoopDelay)
+  };
+});
 jest.mock('@/redis', () => ({
   getRedisConnectionEventCounts: () => ({ ...events })
 }));
@@ -186,6 +195,43 @@ describe('wave catalogue Redis read diagnostics', () => {
     expect(event.event_loop_monitor_active).toBe(true);
     expect(event.event_loop_delay_samples).toBeGreaterThan(0);
     expect(event.event_loop_delay_max_ms).toEqual(expect.any(Number));
+  });
+
+  it('keeps the GET result and monitor capacity when monitor teardown fails', async () => {
+    const monitor = {
+      enable: jest.fn(),
+      disable: jest.fn(() => {
+        throw new Error('monitor teardown failed');
+      }),
+      count: 0,
+      max: 0
+    };
+    const create = jest.mocked(perfHooks.monitorEventLoopDelay);
+    create.mockReturnValue(
+      monitor as unknown as ReturnType<typeof perfHooks.monitorEventLoopDelay>
+    );
+    try {
+      for (let index = 0; index < 9; index++) {
+        await expect(
+          readWaveCatalogueWithDiagnostics(
+            { isReady: true, isOpen: true },
+            async () => '[]',
+            JSON.parse
+          )
+        ).resolves.toEqual({ hit: true, value: [] });
+      }
+      expect(log).toHaveBeenCalledTimes(9);
+      expect(
+        Array.from({ length: 9 }, (_, index) => loggedEvent(log, index)).every(
+          (event) => event.event_loop_monitor_active === true
+        )
+      ).toBe(true);
+    } finally {
+      create.mockImplementation(
+        jest.requireActual<typeof import('node:perf_hooks')>('node:perf_hooks')
+          .monitorEventLoopDelay
+      );
+    }
   });
 
   it('caps per-process output and resets the cap after an idle minute', async () => {

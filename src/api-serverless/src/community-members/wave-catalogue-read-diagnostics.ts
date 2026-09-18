@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto';
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import { loggerContext } from '@/logger-context';
 import { getRedisConnectionEventCounts } from '@/redis';
@@ -6,12 +7,35 @@ const LOG_PREFIX = '[WAVE_CATALOGUE_READ]';
 const MAX_SAMPLES_PER_MINUTE = 60;
 const MAX_SIMULTANEOUS_MONITORS = 8;
 const EVENT_LOOP_RESOLUTION_MS = 20;
+const RANDOM_SCALE = 1_000_000;
+
+type CatalogueClient = {
+  readonly isReady?: boolean;
+  readonly isOpen?: boolean;
+};
+type ConnectionEvents = ReturnType<typeof getRedisConnectionEventCounts>;
+type Outcome = 'hit' | 'miss' | 'error';
+type ErrorStage = 'get' | 'parse' | null;
+
+interface ReadSample {
+  readonly concurrentReadsAtStart: number;
+  maxConcurrentReads: number;
+  readonly readyStart: boolean | null;
+  readonly openStart: boolean | null;
+  readonly startingEvents: ConnectionEvents;
+  monitor?: ReturnType<typeof monitorEventLoopDelay>;
+  getMs: number | null;
+  parseMs: number | null;
+  bytes: number | null;
+  outcome: Outcome;
+  errorStage: ErrorStage;
+}
 
 let activeReads = 0;
 let activeMonitors = 0;
 let sampleWindowStartMs = 0;
 let samplesInWindow = 0;
-const activeSamples = new Set<{ maxConcurrentReads: number }>();
+const activeSamples = new Set<ReadSample>();
 
 function shouldSample(): boolean {
   const rate = Number(process.env.WAVE_CATALOGUE_READ_SAMPLE_RATE ?? '0');
@@ -23,7 +47,10 @@ function shouldSample(): boolean {
     sampleWindowStartMs = now;
     samplesInWindow = 0;
   }
-  if (samplesInWindow >= MAX_SAMPLES_PER_MINUTE || Math.random() >= rate) {
+  if (
+    samplesInWindow >= MAX_SAMPLES_PER_MINUTE ||
+    randomInt(RANDOM_SCALE) >= rate * RANDOM_SCALE
+  ) {
     return false;
   }
   samplesInWindow++;
@@ -34,120 +61,159 @@ function milliseconds(start: number): number {
   return Math.round((performance.now() - start) * 1000) / 1000;
 }
 
+function startMonitor(): ReturnType<typeof monitorEventLoopDelay> | undefined {
+  if (activeMonitors >= MAX_SIMULTANEOUS_MONITORS) {
+    return undefined;
+  }
+  try {
+    const monitor = monitorEventLoopDelay({
+      resolution: EVENT_LOOP_RESOLUTION_MS
+    });
+    monitor.enable();
+    activeMonitors++;
+    return monitor;
+  } catch {
+    return undefined;
+  }
+}
+
+function stopMonitor(sample: ReadSample): void {
+  if (!sample.monitor) {
+    return;
+  }
+  try {
+    sample.monitor.disable();
+  } catch {
+    // Monitor failure must not replace the GET result or error.
+  } finally {
+    activeMonitors--;
+  }
+}
+
+function startSample(client: CatalogueClient): ReadSample | null {
+  if (!shouldSample()) {
+    return null;
+  }
+  try {
+    const sample: ReadSample = {
+      concurrentReadsAtStart: activeReads,
+      maxConcurrentReads: activeReads,
+      readyStart: client.isReady ?? null,
+      openStart: client.isOpen ?? null,
+      startingEvents: getRedisConnectionEventCounts(),
+      getMs: null,
+      parseMs: null,
+      bytes: null,
+      outcome: 'error',
+      errorStage: 'get'
+    };
+    sample.monitor = startMonitor();
+    activeSamples.add(sample);
+    return sample;
+  } catch {
+    // Diagnostic setup must not affect eligibility.
+    return null;
+  }
+}
+
+async function getCatalogueRaw(
+  get: () => Promise<string | null>,
+  sample: ReadSample | null
+): Promise<string | null> {
+  const started = sample ? performance.now() : 0;
+  try {
+    return await get();
+  } finally {
+    if (sample) {
+      sample.getMs = milliseconds(started);
+      stopMonitor(sample);
+    }
+  }
+}
+
+function logSample(client: CatalogueClient, sample: ReadSample): void {
+  try {
+    const endingEvents = getRedisConnectionEventCounts();
+    // Direct structured output avoids the Logger prefix's jwtSub field.
+    process.stdout.write(
+      `${LOG_PREFIX} ${JSON.stringify({
+        request_id: loggerContext.get()?.requestId ?? null,
+        cache_outcome: sample.outcome,
+        error_stage: sample.errorStage,
+        catalogue_bytes: sample.bytes,
+        get_ms: sample.getMs,
+        parse_ms: sample.parseMs,
+        concurrent_reads_at_start: sample.concurrentReadsAtStart,
+        max_concurrent_reads_during_read: sample.maxConcurrentReads,
+        redis_ready_start: sample.readyStart,
+        redis_ready_end: client.isReady ?? null,
+        redis_open_start: sample.openStart,
+        redis_open_end: client.isOpen ?? null,
+        redis_ready_events_during_read:
+          endingEvents.ready - sample.startingEvents.ready,
+        redis_reconnect_events_during_read:
+          endingEvents.reconnecting - sample.startingEvents.reconnecting,
+        event_loop_monitor_active: sample.monitor !== undefined,
+        event_loop_delay_samples: sample.monitor
+          ? Number(sample.monitor.count)
+          : 0,
+        event_loop_delay_max_ms:
+          sample.monitor && Number(sample.monitor.count) > 0
+            ? Math.round((sample.monitor.max / 1e6) * 1000) / 1000
+            : null
+      })}\n`
+    );
+  } catch {
+    // Logging must not change cache or permission behavior.
+  }
+}
+
 /** One process-local observation of the real GET and hit parsing path. */
 export async function readWaveCatalogueWithDiagnostics<T>(
-  client: { readonly isReady?: boolean; readonly isOpen?: boolean },
+  client: CatalogueClient,
   get: () => Promise<string | null>,
   parse: (raw: string) => T
 ): Promise<{ hit: true; value: T } | { hit: false }> {
-  const sampled = shouldSample();
   activeReads++;
-  const sample = sampled
-    ? { concurrentReadsAtStart: activeReads, maxConcurrentReads: activeReads }
-    : null;
-  activeSamples.forEach((current) => {
-    current.maxConcurrentReads = Math.max(
-      current.maxConcurrentReads,
+  activeSamples.forEach((sample) => {
+    sample.maxConcurrentReads = Math.max(
+      sample.maxConcurrentReads,
       activeReads
     );
   });
-  if (sample) {
-    activeSamples.add(sample);
-  }
-
-  const startedReady = sample ? (client.isReady ?? null) : null;
-  const startedOpen = sample ? (client.isOpen ?? null) : null;
-  const startingEvents = sampled ? getRedisConnectionEventCounts() : null;
-  let monitor: ReturnType<typeof monitorEventLoopDelay> | undefined;
-  if (sample && activeMonitors < MAX_SIMULTANEOUS_MONITORS) {
-    try {
-      const created = monitorEventLoopDelay({
-        resolution: EVENT_LOOP_RESOLUTION_MS
-      });
-      created.enable();
-      monitor = created;
-      activeMonitors++;
-    } catch {
-      // Diagnostic setup must not affect eligibility.
-    }
-  }
-
-  let getMs: number | null = null;
-  let parseMs: number | null = null;
-  let bytes: number | null = null;
-  let outcome: 'hit' | 'miss' | 'error' = 'error';
-  let errorStage: 'get' | 'parse' | null = 'get';
+  const sample = startSample(client);
   try {
-    const getStart = sampled ? performance.now() : 0;
-    let raw: string | null;
-    try {
-      raw = await get();
-    } finally {
-      if (sampled) {
-        getMs = milliseconds(getStart);
-      }
-      if (monitor) {
-        monitor.disable();
-        activeMonitors--;
-      }
-    }
+    const raw = await getCatalogueRaw(get, sample);
     if (!raw) {
-      outcome = 'miss';
-      errorStage = null;
-      bytes = 0;
+      if (sample) {
+        sample.outcome = 'miss';
+        sample.errorStage = null;
+        sample.bytes = 0;
+      }
       return { hit: false };
     }
 
-    errorStage = 'parse';
-    if (sampled) {
-      bytes = Buffer.byteLength(raw, 'utf8');
+    if (sample) {
+      sample.errorStage = 'parse';
+      sample.bytes = Buffer.byteLength(raw, 'utf8');
     }
-    const parseStart = sampled ? performance.now() : 0;
+    const parseStart = sample ? performance.now() : 0;
     try {
       const value = parse(raw);
-      outcome = 'hit';
-      errorStage = null;
+      if (sample) {
+        sample.outcome = 'hit';
+        sample.errorStage = null;
+      }
       return { hit: true, value };
     } finally {
-      if (sampled) {
-        parseMs = milliseconds(parseStart);
+      if (sample) {
+        sample.parseMs = milliseconds(parseStart);
       }
     }
   } finally {
     if (sample) {
       activeSamples.delete(sample);
-      const endingEvents = getRedisConnectionEventCounts();
-      try {
-        // Direct structured output avoids the Logger prefix's jwtSub field.
-        process.stdout.write(
-          `${LOG_PREFIX} ${JSON.stringify({
-            request_id: loggerContext.get()?.requestId ?? null,
-            cache_outcome: outcome,
-            error_stage: errorStage,
-            catalogue_bytes: bytes,
-            get_ms: getMs,
-            parse_ms: parseMs,
-            concurrent_reads_at_start: sample.concurrentReadsAtStart,
-            max_concurrent_reads_during_read: sample.maxConcurrentReads,
-            redis_ready_start: startedReady,
-            redis_ready_end: client.isReady ?? null,
-            redis_open_start: startedOpen,
-            redis_open_end: client.isOpen ?? null,
-            redis_ready_events_during_read:
-              endingEvents.ready - startingEvents!.ready,
-            redis_reconnect_events_during_read:
-              endingEvents.reconnecting - startingEvents!.reconnecting,
-            event_loop_monitor_active: monitor !== undefined,
-            event_loop_delay_samples: monitor ? Number(monitor.count) : 0,
-            event_loop_delay_max_ms:
-              monitor && Number(monitor.count) > 0
-                ? Math.round((monitor.max / 1e6) * 1000) / 1000
-                : null
-          })}\n`
-        );
-      } catch {
-        // Logging must not change cache or permission behavior.
-      }
+      logSample(client, sample);
     }
     activeReads--;
   }
