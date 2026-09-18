@@ -3,7 +3,7 @@
 The legacy all-wave eligibility path retains its 60-second result cache and
 existing permission rules. On a cache miss, an API instance acquires an
 eight-second Redis lease for that profile. The owner rechecks the result after
-acquisition, computes if still needed, and renews the lease every two seconds.
+acquisition, computes if still needed, and renews the lease every second.
 Other instances poll the result at staggered 125–300 ms intervals. They reuse
 only a result validated against a newly read profile-group change time and
 wave-group version. If an owner fails or its lease expires, one follower can

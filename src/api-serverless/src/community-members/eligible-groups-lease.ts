@@ -3,7 +3,7 @@ import { getRedisClient } from '@/redis';
 
 const LEASE_MS = 8_000;
 const MIN_INVALIDATION_MARKER_MS = 60_000;
-const MAX_REQUEST_MS = 12_000;
+export const ELIGIBLE_GROUPS_REQUEST_BUDGET_MS = 12_000;
 
 // The legacy result key has no hash tag for normal profile IDs. Using its
 // complete bytes as the tag puts all three keys in one Redis Cluster slot.
@@ -110,7 +110,7 @@ export async function invalidateEligibleGroupsResult(
   // under this TTL, including one that was being computed at invalidation.
   const markerMs = Math.max(
     MIN_INVALIDATION_MARKER_MS,
-    cacheTtlSec * 1_000 + MAX_REQUEST_MS
+    cacheTtlSec * 1_000 + ELIGIBLE_GROUPS_REQUEST_BUDGET_MS
   );
   await client.eval(
     `redis.call('INCR', KEYS[2])

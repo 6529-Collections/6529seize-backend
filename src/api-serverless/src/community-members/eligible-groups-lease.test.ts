@@ -25,7 +25,7 @@ let client: RedisClientType;
 const profile = 'profile-for-lease-test';
 
 beforeAll(async () => {
-  container = await new GenericContainer('redis:latest')
+  container = await new GenericContainer('redis:7.4.5-alpine')
     .withExposedPorts(6379)
     .start();
   client = createClient({
@@ -249,6 +249,49 @@ it('rechecks a result published just before lease acquisition', async () => {
     .mockResolvedValue(['unexpected']);
   await expect(readCache(service)).resolves.toEqual(['peer-result']);
   expect(compute).not.toHaveBeenCalled();
+});
+
+it('rejects a follower result invalidated between its marker reads', async () => {
+  const keys = eligibleGroupsLeaseKeys(profile);
+  const lease = (await acquireEligibleGroupsLease(profile))!;
+  await client.set(
+    keys.result,
+    JSON.stringify({
+      eligibleGroupIds: ['stale-permission'],
+      computedAtMillis: Date.now(),
+      waveGroupsVersion: 7,
+      invalidation: ''
+    })
+  );
+  const get = client.get.bind(client);
+  let resultReads = 0;
+  (getRedisClient as jest.Mock).mockReturnValue({
+    get: async (key: string) => {
+      if (key === keys.result) {
+        resultReads++;
+        if (resultReads === 1) return null;
+        if (resultReads === 2) {
+          const stale = await get(key);
+          await invalidateEligibleGroupsResult(profile, 60);
+          await releaseEligibleGroupsLease(profile, lease.token);
+          return stale;
+        }
+      }
+      return get(key);
+    },
+    set: client.set.bind(client),
+    eval: client.eval.bind(client)
+  });
+  const service = serviceForTest().service;
+  const compute = jest
+    .spyOn(
+      service as unknown as ComputeMethod,
+      'computeGroupsUserIsEligibleFor'
+    )
+    .mockResolvedValue(['current-permission']);
+  await expect(readCache(service)).resolves.toEqual(['current-permission']);
+  expect(resultReads).toBeGreaterThanOrEqual(2);
+  expect(compute).toHaveBeenCalledTimes(1);
 });
 
 it('releases a failed owner so one follower takes over', async () => {
