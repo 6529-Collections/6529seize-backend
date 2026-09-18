@@ -305,3 +305,35 @@ best-effort queue handoff for ordinary notification read operations.
 
 APNs references: [payload keys](https://developer.apple.com/library/archive/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/PayloadKeyReference.html)
 and [push request headers](https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns).
+
+
+## App launch and resume refresh
+
+After all connected profiles finish registration, the iOS frontend requests
+`POST /push-notifications/installations/badge-refresh` on launch and resume.
+The endpoint verifies the established installation secret and current revision
+against the primary database, then queues the existing
+`installation_badge_refresh` worker message. It cannot claim an installation,
+alter registrations, mark notifications read, or accept a client-provided count.
+The worker calculates the current aggregate, including zero, using its existing
+preferences, visibility rules and priority-10 APNs payload.
+
+The API returns `queued: true` only after queue acceptance, or `queued: false`
+when `PUSH_NOTIFICATIONS_ACTIVATED` is disabled. Invalid credentials fail with
+403; stale revisions fail with 409. The shared API rate limiter applies; no new
+queue, worker, schema or environment setting is introduced. Frontend duplicate
+requests in flight coalesce, time out after 15 seconds, and failures leave
+notification state untouched. A later activation or successful registration can
+request another correction; there is no polling loop or local badge setter.
+
+Deploy this API addition before the companion frontend. The existing badge
+worker must already support installation refreshes and priority 10. Delivery
+remains asynchronous and best effort.
+
+To test on staging, send one badge-only priority-10 push with `aps.badge = 69`
+to the selected test iPhone without changing database unread state. Confirm 69,
+open the app on Home, allow registration and the refresh request to finish,
+then background it. Expect the real aggregate across all registered profiles,
+not just the active profile. Repeat with a known aggregate of zero. Do not read
+notifications during this test; correlate the endpoint request and worker count
+to distinguish launch refresh from the existing read-triggered correction.
