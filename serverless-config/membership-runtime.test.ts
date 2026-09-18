@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+
 const { resolveWorker, resolveDispatcher } =
   require('./membership-runtime.js') as {
     resolveDispatcher(input: {
@@ -23,6 +26,7 @@ const { resolveWorker, resolveDispatcher } =
       region: string;
       mode: string;
       mappingEnabled: boolean;
+      workerConcurrency: number;
       secretArn: string;
     }>;
   };
@@ -35,6 +39,7 @@ describe('typed membership deployment controls', () => {
     const config = resolveWorker({ stage, region });
     expect(config.mode).toBe('inactive');
     expect(config.mappingEnabled).toBe(false);
+    expect(config.workerConcurrency).toBe(2);
     expect(Object.isFrozen(config)).toBe(true);
   });
   it('accepts explicit staging fixture and controlled modes', () => {
@@ -55,6 +60,27 @@ describe('typed membership deployment controls', () => {
       })
     ).toMatchObject({ mode: 'staging-controlled-v1', mappingEnabled: false });
   });
+  it('limits explicit staging backfill to 16 worker invocations', () => {
+    expect(
+      resolveWorker({
+        stage: 'staging',
+        region: 'eu-west-1',
+        mode: 'staging-backfill-v1',
+        mappingEnabled: 'true'
+      })
+    ).toMatchObject({
+      mode: 'staging-backfill-v1',
+      mappingEnabled: true,
+      workerConcurrency: 16
+    });
+    expect(
+      resolveWorker({
+        stage: 'staging',
+        region: 'eu-west-1',
+        mode: 'staging-controlled-v1'
+      }).workerConcurrency
+    ).toBe(2);
+  });
   it.each([
     { stage: 'production' },
     { region: 'us-east-1' },
@@ -65,7 +91,8 @@ describe('typed membership deployment controls', () => {
     { mappingEnabled: 'TRUE' },
     { mappingEnabled: '' },
     { mappingEnabled: 'true' },
-    { stage: 'prod', region: 'us-east-1', mode: 'staging-fixture-v1' }
+    { stage: 'prod', region: 'us-east-1', mode: 'staging-fixture-v1' },
+    { stage: 'prod', region: 'us-east-1', mode: 'staging-backfill-v1' }
   ])('rejects unsupported or unsafe configuration %j', (overrides) => {
     expect(() =>
       resolveWorker({ stage: 'staging', region: 'eu-west-1', ...overrides })
@@ -109,6 +136,35 @@ describe('typed dispatcher controls', () => {
       })
     ).toMatchObject({ scheduleEnabled: false, scheduleState: 'DISABLED' });
   });
+  it('admits explicit staging backfill scheduling without changing dispatcher concurrency or rate', () => {
+    expect(
+      resolveDispatcher({
+        stage: 'staging',
+        region: 'eu-west-1',
+        mode: 'staging-backfill-v1',
+        scheduleEnabled: 'true'
+      })
+    ).toMatchObject({ scheduleEnabled: true, scheduleState: 'ENABLED' });
+    const worker = readFileSync(
+      path.join(__dirname, '../src/membershipRefreshLoop/serverless.yaml'),
+      'utf8'
+    );
+    const dispatcher = readFileSync(
+      path.join(
+        __dirname,
+        '../src/membershipRefreshDispatcherLoop/serverless.yaml'
+      ),
+      'utf8'
+    );
+    expect(worker).toContain(
+      'reservedConcurrency: ${self:custom.membershipWorker.workerConcurrency}'
+    );
+    expect(worker).toContain(
+      'maximumConcurrency: ${self:custom.membershipWorker.workerConcurrency}'
+    );
+    expect(dispatcher).toContain('reservedConcurrency: 1');
+    expect(dispatcher).toContain('ScheduleExpression: rate(1 minute)');
+  });
   it.each([
     { stage: 'production' },
     { region: 'us-east-1' },
@@ -123,6 +179,12 @@ describe('typed dispatcher controls', () => {
       stage: 'prod',
       region: 'us-east-1',
       mode: 'staging-fixture-v1',
+      scheduleEnabled: 'false'
+    },
+    {
+      stage: 'prod',
+      region: 'us-east-1',
+      mode: 'staging-backfill-v1',
       scheduleEnabled: 'false'
     }
   ])('rejects unsupported dispatcher configuration %j', (overrides) => {

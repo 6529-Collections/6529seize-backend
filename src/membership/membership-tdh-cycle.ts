@@ -21,7 +21,10 @@ const jobs = new MembershipSourceJobsDb(dbSupplier);
 const INPUTS_COMMITTED = 'TDH_INPUTS_COMMITTED';
 const UNIVERSE_COMMITTED = 'UNIVERSE_COMMITTED';
 
-export type MembershipTdhCycleKind = 'tdh-full' | 'delegation';
+export type MembershipTdhCycleKind =
+  | 'tdh-full'
+  | 'delegation'
+  | 'delegation-no-ownership';
 
 export function membershipTdhCycleId(
   kind: MembershipTdhCycleKind,
@@ -52,7 +55,11 @@ export function membershipTdhCycleCalculationDate(cycleId: string): Date {
 
 function cycleIdentity(cycleId: string): MembershipSourceJobIdentity {
   const kind = cycleId.split(':', 1)[0];
-  if (kind !== 'tdh-full' && kind !== 'delegation')
+  if (
+    kind !== 'tdh-full' &&
+    kind !== 'delegation' &&
+    kind !== 'delegation-no-ownership'
+  )
     throw new Error('Invalid membership TDH cycle ID');
   const dimensions =
     kind === 'delegation'
@@ -64,7 +71,15 @@ function cycleIdentity(cycleId: string): MembershipSourceJobIdentity {
           'OWNERSHIP',
           'DELEGATIONS'
         ] as const)
-      : (['TDH_XTDH', 'RATINGS', 'IDENTITY', 'GRANTS'] as const);
+      : kind === 'delegation-no-ownership'
+        ? ([
+            'TDH_XTDH',
+            'RATINGS',
+            'IDENTITY',
+            'GRANTS',
+            'DELEGATIONS'
+          ] as const)
+        : (['TDH_XTDH', 'RATINGS', 'IDENTITY', 'GRANTS'] as const);
   return {
     job_id: cycleId,
     keys: membershipGlobalMutation(dimensions, 'tdh-source-cycle').keys

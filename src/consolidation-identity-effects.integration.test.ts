@@ -5,6 +5,7 @@ import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   IDENTITIES_TABLE,
+  MEMBERSHIP_SOURCE_JOBS_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE,
   PROFILES_TABLE,
   WAVE_READER_METRICS_TABLE
@@ -31,6 +32,8 @@ import { IdentitiesService } from '@/api/identities/identities.service';
 import { AddressConsolidationKey } from '@/entities/IAddressConsolidationKey';
 import { Profile } from '@/entities/IProfile';
 import { ProfileActivityLog } from '@/entities/IProfileActivityLog';
+import { MembershipBootstrapDb } from '@/membership/membership-bootstrap.db';
+import { withMembershipPrimaryTransaction } from '@/membership/membership-primary';
 
 describeWithSeed(
   'IdentityConsolidationEffects level calculation',
@@ -352,6 +355,9 @@ describeWithSeed(
       );
     });
     it('does correct merges', async () => {
+      await withMembershipPrimaryTransaction(sqlExecutor, (primary) =>
+        new MembershipBootstrapDb(() => sqlExecutor).prepare(primary)
+      );
       await sqlExecutor.execute(
         `insert into ${WAVE_READER_METRICS_TABLE} (wave_id, reader_id, latest_read_timestamp, muted)
          values ('wave-1', 'bobPID', 100, false),
@@ -380,6 +386,12 @@ describeWithSeed(
       const identities = await sqlExecutor.execute<IdentityEntity>(
         `select * from ${IDENTITIES_TABLE}`
       );
+      const birthReceipts = await sqlExecutor.oneOrNull<{ count: number }>(
+        `SELECT COUNT(*) count FROM ${MEMBERSHIP_SOURCE_JOBS_TABLE}
+         WHERE scope='PROFILE' AND target_id='generated-id'
+           AND job_id LIKE 'birth:%' AND status='COMPLETED'`
+      );
+      expect(Number(birthReceipts?.count)).toBe(6);
       expect(identities.length).toBe(3);
       const groupedIdentitiesByPrimaryAddress = identities.reduce(
         (acc, it) => {

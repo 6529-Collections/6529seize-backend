@@ -111,8 +111,37 @@ export class MembershipRefreshDispatcher {
       DUE: 0,
       TARGET_PK: 0
     };
+    if (options.prioritize_full) {
+      const priority: MembershipDispatchPosition = {
+        lane: 'DUE',
+        key: { scope: 'FULL', target_id: '*' },
+        exhausted: false
+      };
+      if (
+        !this.hasTime(
+          options.target_millis +
+            options.send_millis +
+            options.cleanup_reserve_millis,
+          deadline,
+          result
+        )
+      )
+        return result;
+      this.countCandidate('DUE', result);
+      visited.add('FULL/*');
+      if (
+        !(await this.dispatchPosition(
+          priority,
+          options,
+          deadline,
+          context,
+          result
+        ))
+      )
+        return result;
+    }
     for (
-      let attempt = 0;
+      let attempt = result.raw_candidates;
       attempt < options.max_candidates && closed.size < 2;
       attempt++
     ) {

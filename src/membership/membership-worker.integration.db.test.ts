@@ -144,6 +144,22 @@ describeWithSeed(
       });
     });
 
+    it('continues committed backfill checkpoints within one bounded invocation', async () => {
+      await fixtureGroups(3);
+      const result = await worker().runTarget(
+        target,
+        membershipTestOptions({ max_quanta: 16, page_size: 128 })
+      );
+      expect(result.outcome).toBe('COMPLETED');
+      expect(result.quanta).toBeGreaterThan(1);
+      expect(
+        await sqlExecutor.execute(
+          `SELECT run_id FROM ${MEMBERSHIP_PUBLICATIONS_TABLE} WHERE profile_id=:profile`,
+          { profile }
+        )
+      ).toEqual([{ run_id: result.run_id }]);
+    });
+
     it('publishes a real zero-member generation after complete negative evaluation', async () => {
       await fixtureGroups(3, 100);
       const results = await finish();

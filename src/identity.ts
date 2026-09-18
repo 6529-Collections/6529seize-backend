@@ -16,6 +16,8 @@ import {
   WAVE_READER_METRICS_TABLE
 } from '@/constants';
 import { randomUUID } from 'node:crypto';
+import { provisionBornProfiles } from '@/membership/membership-bootstrap.db';
+import { withMembershipPrimaryMutationContext } from '@/membership/membership-primary';
 import { identitySubscriptionsDb } from '@/api/identity-subscriptions/identity-subscriptions.db';
 import {
   identitiesService,
@@ -113,7 +115,8 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
   }
 
   private mergeDuplicates(
-    identitiesToSave: IdentityEntity[]
+    identitiesToSave: IdentityEntity[],
+    generateProfileId: () => string
   ): IdentityEntity[] {
     return Object.values(
       identitiesToSave.reduce(
@@ -127,7 +130,7 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
           } else {
             const oldIdentity = acc[profileId];
             if (oldIdentity.tdh < it.tdh) {
-              const newProfileId = this.profileIdGenerator.generate();
+              const newProfileId = generateProfileId();
               const oldIdentitiesNewVersion: IdentityEntity = {
                 ...oldIdentity,
                 profile_id: newProfileId,
@@ -145,7 +148,7 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
               acc[profileId] = it;
               acc[newProfileId] = oldIdentitiesNewVersion;
             } else {
-              const newProfileId = this.profileIdGenerator.generate();
+              const newProfileId = generateProfileId();
               acc[newProfileId] = {
                 ...it,
                 profile_id: newProfileId,
@@ -181,8 +184,11 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
       .some((it) => it.toLowerCase() === wallet.toLowerCase());
   }
 
-  private detachIdentityFromProfile(identity: IdentityEntity): IdentityEntity {
-    const newProfileId = this.profileIdGenerator.generate();
+  private detachIdentityFromProfile(
+    identity: IdentityEntity,
+    generateProfileId: () => string
+  ): IdentityEntity {
+    const newProfileId = generateProfileId();
     return {
       ...identity,
       profile_id: newProfileId,
@@ -266,7 +272,8 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
   }
 
   private async applyExplicitProfileRetention(
-    identitiesToMerge: IdentityMergeTarget[]
+    identitiesToMerge: IdentityMergeTarget[],
+    generateProfileId: () => string
   ) {
     const mergeGroups = Object.values(
       identitiesToMerge.reduce(
@@ -314,7 +321,8 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
             retainedConsolidationKey.toLowerCase()
           ) {
             mergeTarget.targetIdentity = this.detachIdentityFromProfile(
-              mergeTarget.targetIdentity
+              mergeTarget.targetIdentity,
+              generateProfileId
             );
           }
         } catch (e: any) {
@@ -938,6 +946,12 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
     connection: ConnectionWrapper<any>
   ): Promise<WaveUnreadCacheInvalidations> {
     logger.info(`Syncing identities with tdh_consolidations`);
+    const generatedProfileIds = new Set<string>();
+    const generateProfileId = () => {
+      const id = this.profileIdGenerator.generate();
+      generatedProfileIds.add(id);
+      return id;
+    };
     const affectedWaveIdsForUnreadCache: string[] = [];
     const affectedReaderWavesForUnreadCache: WaveUnreadReaderWave[] = [];
     const newConsolidations =
@@ -990,7 +1004,7 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
               return {
                 consolidation_key: consolidation.consolidation_key,
                 primary_address: primaryAddress,
-                profile_id: this.profileIdGenerator.generate(),
+                profile_id: generateProfileId(),
                 handle: null,
                 normalised_handle: null,
                 tdh: consolidation.tdh,
@@ -1029,7 +1043,7 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
         let targetIdentity = originalIdentity ?? {
           consolidation_key: consolidationThatNeedsWork.consolidation_key,
           primary_address: newPrimaryAddress,
-          profile_id: this.profileIdGenerator.generate(),
+          profile_id: generateProfileId(),
           handle: null,
           normalised_handle: null,
           tdh: consolidationThatNeedsWork.tdh,
@@ -1098,7 +1112,10 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
           originalIdentity
         });
       }
-      await this.applyExplicitProfileRetention(identitiesToMerge);
+      await this.applyExplicitProfileRetention(
+        identitiesToMerge,
+        generateProfileId
+      );
       affectedReaderWavesForUnreadCache.push(
         ...(await this.findWaveUnreadReaderWavesForMergeTargets(
           identitiesToMerge,
@@ -1122,7 +1139,7 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
           brandNewIdentities.push({
             consolidation_key: address,
             primary_address: address,
-            profile_id: this.profileIdGenerator.generate(),
+            profile_id: generateProfileId(),
             handle: null,
             normalised_handle: null,
             tdh: 0,
@@ -1168,11 +1185,26 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
             }))
         )
       );
-      const identitiesReadyForSaving = this.mergeDuplicates(identitiesToSave);
+      const identitiesReadyForSaving = this.mergeDuplicates(
+        identitiesToSave,
+        generateProfileId
+      );
       await identitiesDb.bulkInsertIdentities(
         identitiesReadyForSaving,
         connection
       );
+      const bornIds = Array.from(
+        new Set(
+          identitiesReadyForSaving
+            .map((identity) => identity.profile_id)
+            .filter((id): id is string => !!id && generatedProfileIds.has(id))
+        )
+      );
+      for (let offset = 0; offset < bornIds.length; offset += 64) {
+        await withMembershipPrimaryMutationContext(connection, (primary) =>
+          provisionBornProfiles(bornIds.slice(offset, offset + 64), primary)
+        );
+      }
       for (const identitiesToMergeElement of identitiesToMerge) {
         const toBeMerged = identitiesToMergeElement.sourceIdentities
           .map((it) => it.profile_id)

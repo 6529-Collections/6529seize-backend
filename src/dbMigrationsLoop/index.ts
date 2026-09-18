@@ -30,6 +30,10 @@ import {
   applyMembershipRuntimeSchema,
   membershipRuntimeSchemaEntities
 } from './membership-runtime-schema';
+import {
+  applyMembershipBackfillIndexSchema,
+  membershipBackfillIndexEntities
+} from './membership-backfill-index-schema';
 
 const DBMigrate = require('db-migrate');
 
@@ -92,7 +96,8 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
       scope !== 'nft-link-page-retry' &&
       scope !== 'membership-refresh' &&
       scope !== 'membership-evaluator-index' &&
-      scope !== 'membership-runtime-control')
+      scope !== 'membership-runtime-control' &&
+      scope !== 'membership-backfill-probes')
   ) {
     throw new Error('Unsupported database schema scope for this invocation');
   }
@@ -103,6 +108,18 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const scheduledInvocation = isScheduledInvocation(event);
   const scope = schemaScope(event, scheduledInvocation);
   logger.info(`[RUNNING]`);
+  if (scope === 'membership-backfill-probes') {
+    const verification = await doInDbContext(
+      applyMembershipBackfillIndexSchema,
+      {
+        logger,
+        entities: membershipBackfillIndexEntities,
+        syncEntities: false,
+        skipRedis: true
+      }
+    );
+    return { schema_scope: scope, ...verification };
+  }
   if (scope === 'membership-runtime-control') {
     const verification = await doInDbContext(applyMembershipRuntimeSchema, {
       logger,

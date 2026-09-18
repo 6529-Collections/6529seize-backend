@@ -134,6 +134,28 @@ describe('closed membership runtime deployment and delivery policy', () => {
         controlled
       ).hint.target
     ).toEqual(real.target);
+    const backfill = validateMembershipRuntimeDeployment({
+      ...staging,
+      mode: 'staging-backfill-v1'
+    });
+    expect(
+      parseMembershipWorkerDelivery(
+        { Records: [{ ...record(), body: JSON.stringify(real) }] },
+        backfill
+      ).hint.target
+    ).toEqual(real.target);
+    expect(() =>
+      validateMembershipRuntimeDeployment({
+        ...staging,
+        mode: backfill.mode,
+        stage: 'prod',
+        region: 'us-east-1',
+        queue_arn:
+          'arn:aws:sqs:us-east-1:987989283142:membership-refresh-work-prod-v1',
+        queue_url:
+          'https://sqs.us-east-1.amazonaws.com/987989283142/membership-refresh-work-prod-v1'
+      })
+    ).toThrow('Invalid membership runtime');
     expect(() =>
       parseMembershipWorkerDelivery(
         { Records: [{ ...record(), body: JSON.stringify(real) }] },

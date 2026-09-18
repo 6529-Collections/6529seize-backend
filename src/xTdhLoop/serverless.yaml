@@ -34,6 +34,7 @@ functions:
     environment:
       MEMBERSHIP_SOURCE_TRACKING_MODE: ${env:MEMBERSHIP_SOURCE_TRACKING_MODE, 'inactive'}
       MEMBERSHIP_SOURCE_TRACKING_STAGE: ${opt:stage, self:provider.stage}
+      MEMBERSHIP_DEPLOY_SOURCE_SHA: ${env:GITHUB_SHA, ''}
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: "xTdhLoop_${opt:stage, self:provider.stage}"
       XTDH_LOOP_QUEUE_URL:

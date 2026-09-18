@@ -25,6 +25,9 @@ jest.mock('@/membership/membership-primary', () => ({
       } as unknown as MembershipPrimaryContext)
   )
 }));
+jest.mock('@/membership/membership-bootstrap.db', () => ({
+  requireMembershipBootstrapReady: jest.fn(async () => ({ stage: 'COMPLETE' }))
+}));
 
 const staging = {
   stage: 'staging',
@@ -231,6 +234,26 @@ describe('membership worker handler cold-start boundary', () => {
     expect(app.work).toHaveBeenCalledWith(
       { scope: 'PROFILE', target_id: 'real-profile-id' },
       expect.any(Object),
+      {},
+      hint.delivery
+    );
+  });
+  it('continues bounded backfill work within one application-database delivery', async () => {
+    const app = boot({ ...staging, mode: 'staging-backfill-v1' });
+    const incoming = event();
+    incoming.Records[0].body = JSON.stringify({
+      ...hint,
+      target: { scope: 'PROFILE', target_id: 'real-profile-id' }
+    });
+    await expect(app.invoke(incoming, context())).resolves.toEqual(result);
+    expect(app.work).toHaveBeenCalledWith(
+      { scope: 'PROFILE', target_id: 'real-profile-id' },
+      expect.objectContaining({
+        max_quanta: 16,
+        page_size: 128,
+        transaction_millis: 30000,
+        lease_millis: 120000
+      }),
       {},
       hint.delivery
     );

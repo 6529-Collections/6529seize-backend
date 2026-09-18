@@ -56,6 +56,8 @@ export interface MembershipDispatchOptions {
   reservation_millis: number;
   max_candidates: number;
   max_per_lane: number;
+  /** Reserve FULL directly before the bounded keyset lanes. */
+  prioritize_full?: boolean;
 }
 export type MembershipDispatchSkip =
   | 'MISSING'
