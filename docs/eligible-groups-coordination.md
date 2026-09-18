@@ -20,6 +20,12 @@ stale permission grant. The frontend fetch helper surfaces a 503 as an error;
 existing caller retry controls can issue a new request. It does not
 automatically replay a write.
 
+The repository's local/test database harness explicitly sets
+`FORCE_AVOID_REDIS=true` and continues to evaluate rules directly without a
+profile-result cache. That path is limited to `NODE_ENV=local` or `test`;
+production cache misses still require Redis coordination and return 503 if it
+is unavailable.
+
 Group-save invalidation remains best effort after the database transaction
 commits. A Redis failure there is logged; returning an error would invite a
 retry of an already committed write. While Redis is unavailable, eligibility

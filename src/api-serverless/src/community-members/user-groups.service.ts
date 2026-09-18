@@ -1327,6 +1327,15 @@ export class UserGroupsService {
     signal?: AbortSignal
   ): Promise<string[]> {
     const deadline = performance.now() + ELIGIBLE_GROUPS_REQUEST_BUDGET_MS;
+    // DB integration tests deliberately disable Redis to exercise rule logic.
+    // Production cache misses still require shared coordination and fail 503.
+    if (
+      (process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'local') &&
+      process.env.FORCE_AVOID_REDIS === 'true' &&
+      !getRedisClient()
+    ) {
+      return this.computeGroupsUserIsEligibleFor(profileId, timer);
+    }
     const ttlSec = this.getEligibleGroupsCacheTtlSec();
     const cached = await this.getInitiallyCachedEligibleGroups(
       profileId,

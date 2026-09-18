@@ -538,6 +538,21 @@ describe('UserGroupsService eligibility cache', () => {
     expect(userGroupsDb.getAllWaveRelatedGroups).toHaveBeenCalledTimes(1);
   });
 
+  it('returns 503 on a production cache miss without Redis', async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+    const userGroupsDb = buildUserGroupsDbMock();
+    try {
+      await expect(
+        buildService(userGroupsDb).getGroupsUserIsEligibleFor(PROFILE_ID)
+      ).rejects.toMatchObject({ status: 503 });
+      expect(userGroupsDb.getAllWaveRelatedGroups).not.toHaveBeenCalled();
+    } finally {
+      process.env.NODE_ENV = previousNodeEnv;
+    }
+  });
+
   it('skips the wave-group id scan when the wave-group entity blob is warm', async () => {
     const waveGroup = buildUserGroup();
     const redis = buildRedisMock();
