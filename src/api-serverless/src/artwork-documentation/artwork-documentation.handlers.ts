@@ -22,6 +22,7 @@ import {
   parseIfMatch
 } from '@/artwork-documentation/artwork-documentation.validation';
 import { validateDocumentationBody } from './artwork-documentation.http';
+import { logDocumentationModuleRejection } from './artwork-documentation-diagnostics';
 
 type DocumentationRequest = Pick<
   Request<unknown, unknown, unknown, unknown>,
@@ -177,28 +178,33 @@ export function handleCreateDocumentationWork(
 export function handlePatchDocumentationModule(
   req: Operations.ArtworkDocumentationPatchDocumentationModuleRequest
 ): Promise<Operations.ArtworkDocumentationPatchDocumentationModuleResponse> {
-  return execute(req, (ctx) => {
-    if (!MODULE_IDS.includes(req.params.moduleId as ModuleId))
-      fail(422, 'INVALID_MODULE');
-    return core.patchModule(
-      req.params.id,
-      req.params.moduleId as ModuleId,
-      body(
-        req,
-        Joi.object({
-          schema_version: Joi.number().valid(1).required(),
-          operations: Joi.array()
-            .items(fieldOperation)
-            .min(1)
-            .max(100)
-            .required(),
-          expected_artist_record_version: Joi.number().integer().min(0),
-          replacement_reason: string(1000).min(20)
-        })
-      ),
-      mutation(req, true),
-      ctx
-    );
+  return execute(req, async (ctx) => {
+    try {
+      if (!MODULE_IDS.includes(req.params.moduleId as ModuleId))
+        fail(422, 'INVALID_MODULE');
+      return await core.patchModule(
+        req.params.id,
+        req.params.moduleId as ModuleId,
+        body(
+          req,
+          Joi.object({
+            schema_version: Joi.number().valid(1).required(),
+            operations: Joi.array()
+              .items(fieldOperation)
+              .min(1)
+              .max(100)
+              .required(),
+            expected_artist_record_version: Joi.number().integer().min(0),
+            replacement_reason: string(1000).min(20)
+          })
+        ),
+        mutation(req, true),
+        ctx
+      );
+    } catch (error) {
+      logDocumentationModuleRejection(req.params.moduleId, req.body, error);
+      throw error;
+    }
   });
 }
 export function handlePinDocumentationArtist(
