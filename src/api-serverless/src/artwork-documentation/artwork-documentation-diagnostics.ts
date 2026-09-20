@@ -113,19 +113,22 @@ export function logDocumentationModuleRejection(
         ? correlation
         : undefined;
     // The normal logger also includes jwtSub. Remove it for this entry only.
+    // One line keeps every diagnostic field correlated in CloudWatch.
     loggerContext.run({ requestId }, () =>
-      logger.warn({
-        event: 'documentation_module_validation_rejected',
-        operation: 'patch_module',
-        module,
-        status: 422,
-        code:
-          error.code && validationCodes.has(error.code)
-            ? error.code
-            : 'VALIDATION_REJECTED',
-        operation_fields: knownOperationFields(module as ModuleId, body),
-        ...(rejectedField ? { rejected_field: rejectedField } : {})
-      })
+      logger.warn(
+        JSON.stringify({
+          event: 'documentation_module_validation_rejected',
+          operation: 'patch_module',
+          module,
+          status: 422,
+          code:
+            error.code && validationCodes.has(error.code)
+              ? error.code
+              : 'VALIDATION_REJECTED',
+          operation_fields: knownOperationFields(module as ModuleId, body),
+          ...(rejectedField ? { rejected_field: rejectedField } : {})
+        })
+      )
     );
   } catch {
     // Diagnostics must never replace the original validation failure.

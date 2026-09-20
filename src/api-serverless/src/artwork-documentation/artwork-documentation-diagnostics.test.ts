@@ -1,3 +1,5 @@
+import { Console } from 'node:console';
+import { Writable } from 'node:stream';
 import {
   applyOperations,
   getProfile
@@ -41,7 +43,10 @@ describe('documentation module rejection diagnostics', () => {
     warn = jest
       .spyOn(Logger.get('ARTWORK_DOCUMENTATION_VALIDATION'), 'warn')
       .mockImplementation((message) => {
-        entries.push({ message, context: loggerContext.get() });
+        entries.push({
+          message: JSON.parse(String(message)),
+          context: loggerContext.get()
+        });
       });
   });
   afterEach(() => jest.restoreAllMocks());
@@ -246,6 +251,62 @@ describe('documentation module rejection diagnostics', () => {
     logDocumentationModuleRejection('artwork', {}, new Error(privateMarker));
     logDocumentationModuleRejection('artwork', {}, null);
     expect(entries).toEqual([]);
+  });
+
+  it('keeps the real Winston Console output on one correlated line', () => {
+    warn.mockRestore();
+    jest.replaceProperty(process, 'env', {
+      ...process.env,
+      LOG_LEVEL_ARTWORK_DOCUMENTATION_VALIDATION: 'info'
+    });
+    const output: string[] = [];
+    const stdout = new Writable({
+      write(chunk, _encoding, callback) {
+        output.push(String(chunk));
+        callback();
+      }
+    });
+    jest.replaceProperty(globalThis, 'console', new Console(stdout, stdout));
+    const operations = [
+      { op: 'set' as const, field: 'title', answer: answer(privateMarker) },
+      {
+        op: 'set' as const,
+        field: 'declared_dimensions',
+        answer: answer({ width: 0, height: 100 })
+      }
+    ];
+    const failure = rejected(() => applyOperations('artwork', {}, operations));
+    loggerContext.run({ requestId: correlation, jwtSub: privateMarker }, () => {
+      logDocumentationModuleRejection('artwork', { operations }, failure);
+      expect(loggerContext.get()).toEqual({
+        requestId: correlation,
+        jwtSub: privateMarker
+      });
+    });
+
+    expect(output).toHaveLength(1);
+    const emitted = output[0];
+    expect(emitted.match(/\r?\n/g)).toHaveLength(1);
+    const match =
+      /^\[[^\]]+\] \[([a-z0-9_-]+)\] \[([^\]]*)\] \[warn\] \[ARTWORK_DOCUMENTATION_VALIDATION\] : (\{[^\r\n]*\})\r?\n$/i.exec(
+        emitted
+      );
+    expect(match).not.toBeNull();
+    expect(match?.[1]).toBe(correlation);
+    expect(match?.[2]).toBe('');
+    expect(JSON.parse(match?.[3] ?? 'null')).toEqual({
+      event: 'documentation_module_validation_rejected',
+      operation: 'patch_module',
+      module: 'artwork',
+      status: 422,
+      code: 'INVALID_VALUE',
+      operation_fields: [
+        { operation: 'set', field: 'declared_dimensions' },
+        { operation: 'set', field: 'title' }
+      ],
+      rejected_field: { module: 'artwork', field: 'declared_dimensions' }
+    });
+    expect(emitted).not.toContain(privateMarker);
   });
 
   it('does not let logging failures change the validation outcome', () => {
