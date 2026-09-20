@@ -1,7 +1,43 @@
 import { createHash } from 'node:crypto';
-import { CustomApiCompliantException } from '@/exceptions';
+import {
+  ApiCompliantException,
+  CustomApiCompliantException
+} from '@/exceptions';
 import { canonicalizeJson } from '@/profile-cms/protocol/v1/canonical-json';
-import { Answer, Json, ValueSchema } from './artwork-documentation.types';
+import {
+  Answer,
+  Json,
+  ModuleId,
+  ValueSchema
+} from './artwork-documentation.types';
+
+type ValidationField = Readonly<{ module: ModuleId; field: string }>;
+// Keep diagnostic attribution out of API errors, their serialization and Sentry.
+const validationFields = new WeakMap<Error, ValidationField>();
+
+export function withDocumentationValidationField<T>(
+  module: ModuleId,
+  field: string,
+  operation: () => T
+): T {
+  try {
+    return operation();
+  } catch (error) {
+    if (
+      error instanceof ApiCompliantException &&
+      error.getStatusCode() === 422 &&
+      !validationFields.has(error)
+    )
+      validationFields.set(error, { module, field });
+    throw error;
+  }
+}
+
+export function documentationValidationField(
+  error: unknown
+): ValidationField | undefined {
+  return error instanceof Error ? validationFields.get(error) : undefined;
+}
 
 export function fail(status: number, code: string): never {
   throw new CustomApiCompliantException(
