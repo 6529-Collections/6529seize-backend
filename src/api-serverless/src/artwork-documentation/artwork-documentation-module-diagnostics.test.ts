@@ -69,13 +69,11 @@ describe('module PATCH rejection logging boundary', () => {
     await expect(handlePatchDocumentationModule(req)).rejects.toBe(failure);
     expect(req.body).toBeUndefined();
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        code: 'INVALID_VALUE',
-        operation_fields: [{ operation: 'set', field: 'declared_dimensions' }],
-        rejected_field: { module: 'artwork', field: 'declared_dimensions' }
-      })
-    );
+    expect(JSON.parse(String(warn.mock.calls[0][0]))).toMatchObject({
+      code: 'INVALID_VALUE',
+      operation_fields: [{ operation: 'set', field: 'declared_dimensions' }],
+      rejected_field: { module: 'artwork', field: 'declared_dimensions' }
+    });
   });
 
   it('also identifies HTTP shape validation without passing untrusted field names to logs', async () => {
@@ -89,9 +87,10 @@ describe('module PATCH rejection logging boundary', () => {
       code: 'INVALID_REQUEST'
     });
     expect(mockCore.patchModule).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(
-      expect.objectContaining({ code: 'INVALID_REQUEST', operation_fields: [] })
-    );
+    expect(JSON.parse(String(warn.mock.calls[0][0]))).toMatchObject({
+      code: 'INVALID_REQUEST',
+      operation_fields: []
+    });
     expect(JSON.stringify(warn.mock.calls)).not.toContain('PRIVATE_');
   });
 
