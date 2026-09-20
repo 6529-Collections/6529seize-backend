@@ -55,12 +55,11 @@ it('streams exact source bytes into bounded multipart parts and records the immu
     16 * 1024 ** 2,
     2 * 1024 ** 2 + 7
   ]);
-  expect(
-    Buffer.compare(
-      Buffer.concat(uploaded.map((part) => part.input.Body as Buffer)),
-      Buffer.concat(chunks)
-    )
-  ).toBe(0);
+  // Compare bytes natively: Jest's object equality enumerates every Buffer index.
+  const uploadedBytes = Buffer.concat(
+    uploaded.map((part) => part.input.Body as Buffer)
+  );
+  expect(uploadedBytes.equals(Buffer.concat(chunks))).toBe(true);
   expect(result).toEqual({
     object_version: 'immutable-v1',
     size_bytes: chunks.reduce((size, chunk) => size + chunk.length, 0),
