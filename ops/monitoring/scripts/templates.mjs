@@ -10,11 +10,15 @@ const catalog = JSON.parse(
 const retained = JSON.parse(
   await readFile(new URL('retained-services.json', base), 'utf8')
 );
-catalog.services.splice(
-  catalog.services.findIndex((service) => service.name === retained.insert_before),
-  0,
-  ...retained.services
+const retainedInsertionIndex = catalog.services.findIndex(
+  (service) => service.name === retained.insert_before
 );
+if (retainedInsertionIndex < 0) {
+  throw new Error(
+    `Missing retained-service insertion point: ${retained.insert_before}`
+  );
+}
+catalog.services.splice(retainedInsertionIndex, 0, ...retained.services);
 const ref = (name) => ({ Ref: name });
 const supplemental = JSON.parse(
   await readFile(new URL('platform-functions.json', base), 'utf8')

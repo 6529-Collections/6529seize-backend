@@ -59,6 +59,13 @@ recording, exact artifact/runtime verification and autonomous release metadata.
    are disabled; environment values alone do not prove trigger state. Wait for
    existing producer invocations and xTDH phase deliveries to settle normally.
    Do not flush the xTDH queue or discard legitimate work.
+   Record the pre-cleanup deployment-branch SHA, successful inactive deployment
+   run IDs and a fresh Lambda environment inventory in the deployment record.
+   **Do not merge while any producer remains active or unaccounted for.** The
+   current workflow and old source must still be present for this shutdown;
+   do not rely on passing removed inputs after the cleanup merge. The cleaned
+   producer templates contain no source-tracking environment settings, and the
+   source has no tracking reader, so their later deployment cannot reactivate it.
 2. Record disabled controls, invocation counts, source-job/refresh-target/run
    state and queue/DLQ depths. An empty SQS queue does **not** prove an empty DB
    backlog. Frozen source barriers/targets can remain; the maintained reader
