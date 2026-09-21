@@ -19,25 +19,16 @@ import {
   XTdhLoopMessage,
   XTdhLoopPhase
 } from './xtdh-loop-phase';
-import { isMembershipSourceTrackingActive } from '@/membership/membership-producer-policy';
-import {
-  activateMembershipTdhStats,
-  checkpointMembershipTdhUniverse,
-  completeMembershipTdhCycle,
-  getMembershipTdhCycleState
-} from '@/membership/membership-tdh-cycle';
 
 const MIN_STATS_ENQUEUE_REMAINING_MS = 15_000;
 
 interface HandleUniversePhaseOptions {
   readonly messageGroupId?: string;
-  readonly membershipCycleId?: string;
   readonly getRemainingTimeInMillis?: () => number;
 }
 
 interface ActivateLoopOptions {
   readonly messageGroupId?: string;
-  readonly membershipCycleId?: string;
 }
 
 export class RecalculateXTdhUseCase {
@@ -58,62 +49,23 @@ export class RecalculateXTdhUseCase {
         `handleUniversePhase must own the transaction before enqueueing xTDH stats phase`
       );
     }
-    if (isMembershipSourceTrackingActive() && !options.membershipCycleId)
-      throw new Error('Tracked xTDH universe requires a source cycle ID');
     this.getRequiredXTdhLoopQueueUrl();
-    await this.recalculateXTdhUniverse(ctx, options.membershipCycleId);
+    await this.recalculateXTdhUniverse(ctx);
     this.assertEnoughTimeToEnqueueStats(options.getRemainingTimeInMillis);
     await this.activateLoop(ctx, XTDH_LOOP_PHASE.STATS, options);
   }
 
-  public async handleStatsPhase(
-    ctx: RequestContext,
-    membershipCycleId?: string
-  ) {
-    if (!isMembershipSourceTrackingActive()) {
-      await this.recalculateXTdhStats.handle(ctx);
-      return;
-    }
-    if (!membershipCycleId)
-      throw new Error('Tracked xTDH statistics require a source cycle ID');
-    if (!appFeatures.isXTdhEnabled())
-      throw new Error('Tracked TDH cycle requires xTDH statistics processing');
-    const state = await getMembershipTdhCycleState(membershipCycleId, ctx);
-    if (state?.status === 'COMPLETED') return;
-    if (state?.progress.stage === 'STATS_ACTIVATED') {
-      await completeMembershipTdhCycle(membershipCycleId, ctx);
-      return;
-    }
-    if (
-      state?.status !== 'RUNNING' ||
-      state.progress.stage !== 'UNIVERSE_COMMITTED'
-    )
-      throw new Error('xTDH statistics require committed universe inputs');
-    await this.recalculateXTdhStats.handle(ctx, async (slot) => {
-      await activateMembershipTdhStats(
-        membershipCycleId,
-        (primary) =>
-          this.xtdhRepository.markStatsJustReindexed({ slot }, primary),
-        ctx
-      );
-    });
-    await completeMembershipTdhCycle(membershipCycleId, ctx);
+  public async handleStatsPhase(ctx: RequestContext) {
+    await this.recalculateXTdhStats.handle(ctx);
   }
 
-  private async recalculateXTdhUniverse(ctx: RequestContext, cycleId?: string) {
+  private async recalculateXTdhUniverse(ctx: RequestContext) {
     if (ctx.connection) {
-      if (cycleId)
-        await checkpointMembershipTdhUniverse(
-          cycleId,
-          ctx.connection,
-          () => this.recalculateXTdh(ctx),
-          ctx
-        );
-      else await this.recalculateXTdh(ctx);
+      await this.recalculateXTdh(ctx);
     } else {
       await this.xtdhRepository.executeNativeQueriesInTransaction(
         async (connection) => {
-          await this.recalculateXTdhUniverse({ ...ctx, connection }, cycleId);
+          await this.recalculateXTdh({ ...ctx, connection });
         }
       );
     }
@@ -123,10 +75,6 @@ export class RecalculateXTdhUseCase {
     try {
       ctx.timer?.start(`${this.constructor.name}->recalculateXTdh`);
       if (!appFeatures.isXTdhEnabled()) {
-        if (isMembershipSourceTrackingActive())
-          throw new Error(
-            'Tracked TDH cycle requires xTDH universe processing'
-          );
         this.logger.warn(`XTDH is disabled`);
         return;
       }
@@ -147,8 +95,7 @@ export class RecalculateXTdhUseCase {
         this.logger.info(`Creating the missing identities`);
         await identitiesService.bulkCreateIdentities(
           walletsWithoutIdentities,
-          ctx,
-          'xtdh-universe'
+          ctx
         );
         this.logger.info(`Missing identities created`);
       }
@@ -204,7 +151,7 @@ export class RecalculateXTdhUseCase {
           options.messageGroupId ??
           (phase === XTDH_LOOP_PHASE.STATS ? DEFAULT_MESSAGE_GROUP_ID : null);
         await sqs.send({
-          message: this.buildLoopMessage(phase, options.membershipCycleId),
+          message: this.buildLoopMessage(phase),
           queue: xtdhLoopQueueUrl,
           ...(messageGroupId ? { messageGroupId } : {})
         });
@@ -214,13 +161,9 @@ export class RecalculateXTdhUseCase {
     }
   }
 
-  private buildLoopMessage(
-    phase: XTdhLoopPhase,
-    membershipCycleId?: string
-  ): XTdhLoopMessage {
+  private buildLoopMessage(phase: XTdhLoopPhase): XTdhLoopMessage {
     return {
       phase,
-      ...(membershipCycleId ? { membership_cycle_id: membershipCycleId } : {}),
       // Keep same-phase FIFO message bodies unique under content-based dedupe.
       queued_at_ms: Date.now()
     };

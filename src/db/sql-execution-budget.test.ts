@@ -10,11 +10,11 @@ import {
 } from './sql-execution-budget';
 import { execSQLWithParams } from './my-sql.helpers';
 import {
-  assertMembershipPrimaryContext,
-  membershipQueryOptions,
-  MembershipPrimaryContext,
-  withMembershipPrimaryTransaction
-} from '@/membership/membership-primary';
+  assertPrimaryTransactionContext,
+  primaryQueryOptions,
+  PrimaryTransactionContext,
+  withPrimaryTransaction
+} from '@/db/primary-transaction';
 import { SqlExecutor } from '@/sql-executor';
 
 type Callback = (error: unknown, rows?: unknown) => void;
@@ -120,13 +120,13 @@ describe('physical SQL execution budgets', () => {
     const originalFormat = jest.fn((sql: string) => sql);
     driver.connection.config.queryFormat = originalFormat;
     const db = executor(driver);
-    let context: MembershipPrimaryContext | undefined;
-    let cached: ReturnType<typeof membershipQueryOptions> | undefined;
-    const operation = withMembershipPrimaryTransaction(
+    let context: PrimaryTransactionContext | undefined;
+    let cached: ReturnType<typeof primaryQueryOptions> | undefined;
+    const operation = withPrimaryTransaction(
       db,
       async (ctx) => {
         context = ctx;
-        cached = membershipQueryOptions(ctx);
+        cached = primaryQueryOptions(ctx);
         try {
           await db.execute('SELECT withheld', undefined, cached);
         } catch {
@@ -145,7 +145,7 @@ describe('physical SQL execution budgets', () => {
     });
     expect(driver.destroy).toHaveBeenCalledTimes(1);
     expect(driver.connection.config.queryFormat).toBe(originalFormat);
-    expect(() => assertMembershipPrimaryContext(context!)).toThrow(
+    expect(() => assertPrimaryTransactionContext(context!)).toThrow(
       'active primary'
     );
     await expect(db.execute('SELECT late', undefined, cached)).rejects.toThrow(

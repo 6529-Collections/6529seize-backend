@@ -83,7 +83,7 @@ describe('xTdhLoop handler', () => {
     });
   });
 
-  it('carries a source cycle through SNS universe and direct stats messages', () => {
+  it('accepts queued messages from the retired producer and preserves SNS message groups', () => {
     expect(
       resolveXTdhLoopWork({
         Records: [
@@ -100,8 +100,7 @@ describe('xTdhLoop handler', () => {
       })
     ).toEqual({
       phase: XTDH_LOOP_PHASE.UNIVERSE,
-      messageGroupId: 'sns-message',
-      membershipCycleId: 'tdh-full:cycle-1'
+      messageGroupId: 'sns-message'
     });
     expect(
       resolveXTdhLoopWork({
@@ -115,8 +114,7 @@ describe('xTdhLoop handler', () => {
         ]
       })
     ).toEqual({
-      phase: XTDH_LOOP_PHASE.STATS,
-      membershipCycleId: 'tdh-full:cycle-1'
+      phase: XTDH_LOOP_PHASE.STATS
     });
   });
 

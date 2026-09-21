@@ -6,7 +6,7 @@ import {
 } from '@/constants';
 import { MembershipRefreshTargetEntity } from '@/entities/IMembershipRefreshTarget';
 import { MembershipSourceStateEntity } from '@/entities/IMembershipSourceState';
-import { MEMBERSHIP_BACKFILL_INDEXES } from '@/membership/membership-backfill-indexes';
+import { MEMBERSHIP_BACKFILL_INDEXES } from './membership-backfill-indexes';
 import {
   executeMembershipOnlineIndex,
   membershipIndexExists,

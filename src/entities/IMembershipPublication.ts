@@ -1,7 +1,7 @@
 import { MEMBERSHIP_PUBLICATIONS_TABLE } from '@/constants';
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 
-/** See docs/membership-refresh-design.md for the publication protocol. */
+/** Retained schema for the retired experiment; see docs/membership-retirement.md. */
 @Entity(MEMBERSHIP_PUBLICATIONS_TABLE)
 @Index('idx_mp_run', ['run_id'])
 export class MembershipPublicationEntity {

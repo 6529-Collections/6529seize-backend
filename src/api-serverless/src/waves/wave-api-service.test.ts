@@ -682,7 +682,7 @@ describe('WaveApiService updateWave immutability', () => {
     }
   );
 
-  it('allows parent visibility updates while subwaves exist', async () => {
+  it('allows parent visibility updates with subwaves and checks every final wave role', async () => {
     const waveBeforeUpdate = aWave(
       {
         created_by: 'profile-1',
@@ -697,7 +697,11 @@ describe('WaveApiService updateWave immutability', () => {
     const updatedWave = aWave(
       {
         created_by: 'profile-1',
-        visibility_group_id: 'private-group'
+        visibility_group_id: 'private-group',
+        admin_group_id: 'admin-group',
+        chat_group_id: 'chat-group',
+        participation_group_id: 'participation-group',
+        voting_group_id: 'voting-group'
       },
       {
         id: 'parent-wave',
@@ -727,7 +731,13 @@ describe('WaveApiService updateWave immutability', () => {
     expect(wavesApiDb.insertWave).toHaveBeenCalled();
     expect(
       userGroupsService.getGroupsUserIsEligibleForByIds
-    ).toHaveBeenCalledWith('profile-1', ['private-group']);
+    ).toHaveBeenCalledWith('profile-1', [
+      'private-group',
+      'admin-group',
+      'chat-group',
+      'participation-group',
+      'voting-group'
+    ]);
     expect(waveMappers.waveEntityToApiWave).toHaveBeenCalledWith(
       expect.objectContaining({
         groupIdsUserIsEligibleFor: ['private-group']

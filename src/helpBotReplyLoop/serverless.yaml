@@ -30,9 +30,6 @@ functions:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
-      MEMBERSHIP_SOURCE_TRACKING_MODE: ${env:MEMBERSHIP_SOURCE_TRACKING_MODE, 'inactive'}
-      MEMBERSHIP_SOURCE_TRACKING_STAGE: ${opt:stage, self:provider.stage}
-      MEMBERSHIP_DEPLOY_SOURCE_SHA: ${env:GITHUB_SHA, ''}
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'helpBotReplyLoop_${opt:stage, self:provider.stage}'
       API_GATEWAY_WS_ENDPOINT: ${env:API_GATEWAY_WS_ENDPOINT}
@@ -52,9 +49,6 @@ functions:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
-      MEMBERSHIP_SOURCE_TRACKING_MODE: ${env:MEMBERSHIP_SOURCE_TRACKING_MODE, 'inactive'}
-      MEMBERSHIP_SOURCE_TRACKING_STAGE: ${opt:stage, self:provider.stage}
-      MEMBERSHIP_DEPLOY_SOURCE_SHA: ${env:GITHUB_SHA, ''}
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'helpBotDailyActivityCreditLoop_${opt:stage, self:provider.stage}'
       API_GATEWAY_WS_ENDPOINT: ${env:API_GATEWAY_WS_ENDPOINT}
