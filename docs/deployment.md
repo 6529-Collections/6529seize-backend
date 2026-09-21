@@ -79,12 +79,12 @@ run IDs to correlate E2E replies.
 ### Retired membership materialisation
 
 The dedicated worker and dispatcher are no longer ordinary deployment choices.
-Follow [membership retirement](membership-retirement.md) before deploying this
-cleanup: disable remaining producer tracking using the previous revision's
-controls, then deploy application services. Existing stacks and monitoring stay
-in place until a separate authorized retirement. Historical additive schema
-scopes and full-sync guards remain available for schema compatibility; this
-cleanup requires no migration or `dbMigrationsLoop` deployment.
+Follow the [combined retirement runbook](membership-retirement.md): verify the
+application rollout, back up and inventory resources/data, deploy the updated
+`dbMigrationsLoop`, remove monitoring subscriptions, delete dispatcher then
+worker, and execute explicit database cleanup last. The removed additive schema
+scopes are rejected. Full sync never invokes retirement DDL. The operator CLI
+requires an explicit environment; production retirement requires a future authorized phase.
 
 ### Operational failures
 

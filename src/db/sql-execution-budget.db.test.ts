@@ -1,10 +1,13 @@
 import type { QueryRunner } from 'typeorm';
-import { MembershipSourceStateEntity } from '@/entities/IMembershipSourceState';
+import {
+  SqlTransactionFixtureEntity,
+  SQL_TRANSACTION_FIXTURE_TABLE,
+  createSqlTransactionFixture
+} from './sql-transaction-fixture';
 import * as mysql from 'mysql';
 import { performance } from 'node:perf_hooks';
 import * as apiDb from '@/db-api';
 import * as loopDb from '@/db';
-import { MEMBERSHIP_SOURCE_STATES_TABLE } from '@/constants';
 import {
   setSqlExecutor,
   SqlExecutionBudget,
@@ -21,8 +24,8 @@ import {
 
 const first = 'm3-budget-first';
 const second = 'm3-budget-second';
-const query = `SELECT CAST(version AS CHAR) AS version FROM ${MEMBERSHIP_SOURCE_STATES_TABLE} WHERE scope='PROFILE' AND target_id=:id AND dimension='IDENTITY'`;
-const update = `UPDATE ${MEMBERSHIP_SOURCE_STATES_TABLE} SET version=version+1 WHERE scope='PROFILE' AND target_id=:id AND dimension='IDENTITY'`;
+const query = `SELECT CAST(version AS CHAR) AS version FROM ${SQL_TRANSACTION_FIXTURE_TABLE} WHERE id=:id`;
+const update = `UPDATE ${SQL_TRANSACTION_FIXTURE_TABLE} SET version=version+1 WHERE id=:id`;
 function budget(work = 1000, statement = 300): SqlExecutionBudget {
   return {
     deadlineMonotonicMillis: performance.now() + work + 1000,
@@ -65,16 +68,17 @@ async function waitUntilUnlocked(db: SqlExecutor): Promise<void> {
 describe.each(['API', 'LOOP'])(
   'SQL execution budget through actual %s adapter',
   (adapter) => {
+    beforeEach(createSqlTransactionFixture);
     let observer: SqlExecutor;
     let db: SqlExecutor;
     beforeEach(async () => {
       observer = sqlExecutor;
       await observer.execute(
-        `INSERT INTO ${MEMBERSHIP_SOURCE_STATES_TABLE} (scope,target_id,dimension,version,active_jobs,updated_at_millis) VALUES ('PROFILE',:first,'IDENTITY',1,0,1),('PROFILE',:second,'IDENTITY',1,0,1)`,
+        `INSERT INTO ${SQL_TRANSACTION_FIXTURE_TABLE} (id,version) VALUES (:first,1),(:second,1)`,
         { first, second }
       );
       if (adapter === 'API') await apiDb.connect();
-      else await loopDb.connect([MembershipSourceStateEntity]);
+      else await loopDb.connect([SqlTransactionFixtureEntity]);
       db = sqlExecutor;
     });
     afterEach(async () => {
@@ -82,9 +86,10 @@ describe.each(['API', 'LOOP'])(
       else await loopDb.disconnect();
       setSqlExecutor(observer);
       await observer.execute(
-        `DELETE FROM ${MEMBERSHIP_SOURCE_STATES_TABLE} WHERE scope='PROFILE' AND target_id IN (:ids) AND dimension='IDENTITY'`,
+        `DELETE FROM ${SQL_TRANSACTION_FIXTURE_TABLE} WHERE id IN (:ids)`,
         { ids: [first, second] }
       );
+      await observer.execute(`DROP TABLE ${SQL_TRANSACTION_FIXTURE_TABLE}`);
       jest.restoreAllMocks();
     });
 
@@ -605,13 +610,9 @@ describe.each(['API', 'LOOP'])(
               runner = ctx.connection.connection as QueryRunner;
               expect(runner.isTransactionActive).toBe(true);
               await db.execute(update, { id: first }, primaryQueryOptions(ctx));
-              await runner.manager.save(MembershipSourceStateEntity, {
-                scope: 'PROFILE',
-                target_id: second,
-                dimension: 'IDENTITY',
-                version: '9',
-                active_jobs: 0,
-                updated_at_millis: '1'
+              await runner.manager.save(SqlTransactionFixtureEntity, {
+                id: second,
+                version: '9'
               });
               await runner.startTransaction();
               await runner.query('SELECT 1');
@@ -721,7 +722,7 @@ describe.each(['API', 'LOOP'])(
         loopDb.getDataSource().subscribers.push({
           afterTransactionCommit: async ({ queryRunner }) => {
             await queryRunner.query(
-              `UPDATE ${MEMBERSHIP_SOURCE_STATES_TABLE} SET version=9 WHERE scope='PROFILE' AND target_id=? AND dimension='IDENTITY'`,
+              `UPDATE ${SQL_TRANSACTION_FIXTURE_TABLE} SET version=9 WHERE id=?`,
               [second]
             );
           }

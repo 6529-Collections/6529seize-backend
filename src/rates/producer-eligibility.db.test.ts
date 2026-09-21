@@ -27,11 +27,6 @@ import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-lo
 import { xTdhRepository } from '@/xtdh/xtdh.repository';
 import { reReviewRatesInXTdhGrantsUseCase } from '@/xtdh/re-review-rates-in-xtdh-grants.use-case';
 import { userGroupsService } from '@/api/community-members/user-groups.service';
-import {
-  MEMBERSHIP_SOURCE_STATES_TABLE,
-  MEMBERSHIP_SOURCE_JOBS_TABLE,
-  MEMBERSHIP_REFRESH_TARGETS_TABLE
-} from '@/constants';
 
 const raterId = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000181';
 const recipientId = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000182';
@@ -159,13 +154,11 @@ describeWithSeed(
       if (originalMode === undefined)
         delete process.env.MEMBERSHIP_SOURCE_TRACKING_MODE;
       else process.env.MEMBERSHIP_SOURCE_TRACKING_MODE = originalMode;
-      for (const table of [
-        MEMBERSHIP_SOURCE_STATES_TABLE,
-        MEMBERSHIP_SOURCE_JOBS_TABLE,
-        MEMBERSHIP_REFRESH_TARGETS_TABLE
-      ]) {
-        expect(await sqlExecutor.execute(`SELECT * FROM ${table}`)).toEqual([]);
-      }
+      expect(
+        await sqlExecutor.execute(
+          `SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND LEFT(TABLE_NAME, 11) = 'membership_'`
+        )
+      ).toEqual([]);
     });
 
     it('commits bulk REP writes and direct eligibility reflects additions and removals', async () => {

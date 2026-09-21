@@ -333,25 +333,6 @@ test('source catalog coverage is complete and monitoring delivery has no applica
       'utf8'
     )
   );
-  const retained = JSON.parse(
-    readFileSync(new URL('../retained-services.json', import.meta.url), 'utf8')
-  );
-  for (const service of retained.services) {
-    assert.equal(
-      catalog.services.some(
-        (item: { name: string }) => item.name === service.name
-      ),
-      false
-    );
-  }
-  const retainedInsertionIndex = catalog.services.findIndex(
-    (service: { name: string }) => service.name === retained.insert_before
-  );
-  assert.ok(
-    retainedInsertionIndex >= 0,
-    'retained-service insertion point exists'
-  );
-  catalog.services.splice(retainedInsertionIndex, 0, ...retained.services);
   for (const env of ['prod', 'staging']) {
     const monitor = JSON.parse(
       readFileSync(

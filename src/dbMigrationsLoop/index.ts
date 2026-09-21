@@ -17,19 +17,7 @@ import { MintingClaimEntity } from '@/entities/IMintingClaim';
 import { applyClaimsMediaUploadSchema } from './claims-media-schema';
 import { NftLinkEntity } from '@/entities/INftLink';
 import { applyNftLinkPageRetrySchema } from './nft-link-page-retry-schema';
-import {
-  applyMembershipSchema,
-  membershipSchemaEntities
-} from './membership-schema';
-import {
-  applyMembershipEvaluatorSchema,
-  membershipEvaluatorSchemaEntities
-} from './membership-evaluator-schema';
-import { applyFullSchemaWithMembershipGuard } from './membership-controlled-schema';
-import {
-  applyMembershipRuntimeSchema,
-  membershipRuntimeSchemaEntities
-} from './membership-runtime-schema';
+import { getDataSource } from '@/db';
 
 const DBMigrate = require('db-migrate');
 
@@ -87,12 +75,10 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
   if (
     scheduledInvocation ||
     (scope !== 'full' &&
+      scope !== 'maintenance' &&
       scope !== 'wallet-transfer-analysis' &&
       scope !== 'claims-media-upload' &&
-      scope !== 'nft-link-page-retry' &&
-      scope !== 'membership-refresh' &&
-      scope !== 'membership-evaluator-index' &&
-      scope !== 'membership-runtime-control')
+      scope !== 'nft-link-page-retry')
   ) {
     throw new Error('Unsupported database schema scope for this invocation');
   }
@@ -103,34 +89,6 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const scheduledInvocation = isScheduledInvocation(event);
   const scope = schemaScope(event, scheduledInvocation);
   logger.info(`[RUNNING]`);
-  if (scope === 'membership-runtime-control') {
-    const verification = await doInDbContext(applyMembershipRuntimeSchema, {
-      logger,
-      entities: membershipRuntimeSchemaEntities,
-      syncEntities: false,
-      skipRedis: true
-    });
-    return { schema_scope: scope, ...verification };
-  }
-  if (scope === 'membership-evaluator-index') {
-    const verification = await doInDbContext(applyMembershipEvaluatorSchema, {
-      logger,
-      entities: membershipEvaluatorSchemaEntities,
-      syncEntities: false,
-      skipRedis: true
-    });
-    return { schema_scope: scope, ...verification };
-  }
-  if (scope === 'membership-refresh') {
-    const verification = await doInDbContext(() => applyMembershipSchema(), {
-      logger,
-      entities: membershipSchemaEntities,
-      syncEntities: false,
-      skipRedis: true
-    });
-    logger.info(`[FINISHED MEMBERSHIP SCHEMA] ${JSON.stringify(verification)}`);
-    return { schema_scope: scope, ...verification };
-  }
   if (scope === 'nft-link-page-retry') {
     await doInDbContext(
       async () => {
@@ -174,8 +132,13 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   }
   await doInDbContext(
     async () => {
-      if (!scheduledInvocation) await applyFullSchemaWithMembershipGuard();
-      if (!scheduledInvocation && !appFeatures.isDbMigrateDisabled()) {
+      if (!scheduledInvocation && scope === 'full')
+        await getDataSource().synchronize();
+      if (
+        !scheduledInvocation &&
+        scope === 'full' &&
+        !appFeatures.isDbMigrateDisabled()
+      ) {
         const dbmigrate = await DBMigrate.getInstance(true, {
           config: './database.json',
           env: 'main'

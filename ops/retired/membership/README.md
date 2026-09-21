@@ -1,14 +1,11 @@
-# Retired membership infrastructure inventory
+# Membership retirement record
 
-These files preserve the original worker/dispatcher CloudFormation resource
-layout and Serverless resolver for audit. They are **not deployable packages**:
-relative paths describe the original source layout, no artifacts/handlers are
-provided, and neither service is in the application deployment catalog.
-Do not deploy an empty or modified template over an existing stack.
+The retired worker/dispatcher source templates and resolver have been removed.
+Git history before this cleanup retains them for audit; they were never a
+standalone recovery package. Recovery must use the exact deployed templates,
+artifacts and private backups captured for the target environment.
 
-Use the actual deployed CloudFormation templates and stack IDs for a separately
-authorized retirement: inspect exports/imports and retention requirements,
-remove monitoring references, delete the dispatcher stack, wait for completion,
-then delete the worker stack. The full shutdown, rollout, rollback and database
-boundaries are in [membership retirement](../../../docs/membership-retirement.md).
-No cloud resource is deleted by moving these files.
+See [the combined retirement runbook](../../../docs/membership-retirement.md) for
+inventory, monitoring dependency removal, dispatcher-before-worker deletion,
+explicit database cleanup, recovery and the separate production authorization.
+Removing these source files does not itself delete any cloud or database object.

@@ -10,50 +10,15 @@ import {
   WalletTransferWalletDailyEntity
 } from '@/entities/IWalletTransferAnalysis';
 import { handler } from './index';
-import {
-  applyMembershipRuntimeSchema,
-  membershipRuntimeSchemaEntities
-} from './membership-runtime-schema';
-import {
-  applyMembershipEvaluatorSchema,
-  membershipEvaluatorSchemaEntities
-} from './membership-evaluator-schema';
-import { applyFullSchemaWithMembershipGuard } from './membership-controlled-schema';
+import { getDataSource } from '@/db';
 import { moderationRetentionSchemaDb } from './moderation-retention-schema.db';
 import { applyClaimsMediaUploadSchema } from './claims-media-schema';
 import { NftLinkEntity } from '@/entities/INftLink';
 import { applyNftLinkPageRetrySchema } from './nft-link-page-retry-schema';
-import {
-  applyMembershipSchema,
-  membershipSchemaEntities
-} from './membership-schema';
-
-jest.mock('@/db', () => ({ getDataSource: jest.fn() }));
-jest.mock('./membership-runtime-schema', () => ({
-  ...jest.requireActual('./membership-runtime-schema'),
-  applyMembershipRuntimeSchema: jest.fn().mockResolvedValue({
-    created_tables: 1,
-    added_indexes: 1,
-    verified_tables: 2,
-    verified_indexes: 1
-  })
-}));
-jest.mock('./membership-evaluator-schema', () => ({
-  ...jest.requireActual('./membership-evaluator-schema'),
-  applyMembershipEvaluatorSchema: jest
-    .fn()
-    .mockResolvedValue({ added_indexes: 1, verified_indexes: 1 })
-}));
-jest.mock('./membership-controlled-schema', () => ({
-  applyFullSchemaWithMembershipGuard: jest.fn().mockResolvedValue(undefined)
-}));
-
-jest.mock('./membership-schema', () => ({
-  ...jest.requireActual('./membership-schema'),
-  applyMembershipSchema: jest
-    .fn()
-    .mockResolvedValue({ created_tables: 7, verified_tables: 7 })
-}));
+jest.mock('@/db', () => {
+  const synchronize = jest.fn().mockResolvedValue(undefined);
+  return { getDataSource: () => ({ synchronize }) };
+});
 
 jest.mock('./nft-link-page-retry-schema', () => ({
   applyNftLinkPageRetrySchema: jest.fn().mockResolvedValue(1)
@@ -118,98 +83,15 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       .mockResolvedValue([]);
   });
 
-  it('applies only the runtime control scope without full synchronization or maintenance', async () => {
-    await expect(
-      invoke({ schema_scope: 'membership-runtime-control' })
-    ).resolves.toEqual({
-      schema_scope: 'membership-runtime-control',
-      created_tables: 1,
-      added_indexes: 1,
-      verified_tables: 2,
-      verified_indexes: 1
-    });
-    expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
-      logger: expect.anything(),
-      entities: membershipRuntimeSchemaEntities,
-      syncEntities: false,
-      skipRedis: true
-    });
-    expect(applyMembershipRuntimeSchema).toHaveBeenCalledTimes(1);
-    expect(applyFullSchemaWithMembershipGuard).not.toHaveBeenCalled();
-    expect(migrations.getInstance).not.toHaveBeenCalled();
-    expect(competitionRepository.backfillLegacyMappings).not.toHaveBeenCalled();
-  });
-
-  it('does not fall through after runtime schema drift', async () => {
-    jest
-      .mocked(applyMembershipRuntimeSchema)
-      .mockRejectedValueOnce(new Error('runtime drift'));
-    await expect(
-      invoke({ schema_scope: 'membership-runtime-control' })
-    ).rejects.toThrow('runtime drift');
-    expect(applyFullSchemaWithMembershipGuard).not.toHaveBeenCalled();
-    expect(migrations.getInstance).not.toHaveBeenCalled();
-  });
-
-  it('applies only the evaluator index scope without full synchronization or maintenance', async () => {
-    await expect(
-      invoke({ schema_scope: 'membership-evaluator-index' })
-    ).resolves.toEqual({
-      schema_scope: 'membership-evaluator-index',
-      added_indexes: 1,
-      verified_indexes: 1
-    });
-    expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
-      logger: expect.anything(),
-      entities: membershipEvaluatorSchemaEntities,
-      syncEntities: false,
-      skipRedis: true
-    });
-    expect(applyMembershipEvaluatorSchema).toHaveBeenCalledTimes(1);
-    expect(applyFullSchemaWithMembershipGuard).not.toHaveBeenCalled();
-    expect(migrations.getInstance).not.toHaveBeenCalled();
-    expect(competitionRepository.backfillLegacyMappings).not.toHaveBeenCalled();
-  });
-
-  it('stops full manual work before migrations if controlled schema is pending', async () => {
-    jest
-      .mocked(applyFullSchemaWithMembershipGuard)
-      .mockRejectedValueOnce(new Error('pending controlled DDL'));
-    await expect(invoke({ schema_scope: 'full' })).rejects.toThrow(
-      'pending controlled DDL'
+  it.each([
+    'membership-refresh',
+    'membership-evaluator-index',
+    'membership-runtime-control'
+  ])('rejects retired %s before opening the database', async (scope) => {
+    await expect(invoke({ schema_scope: scope })).rejects.toThrow(
+      'Unsupported database schema scope'
     );
-    expect(migrations.getInstance).not.toHaveBeenCalled();
-    expect(competitionRepository.backfillLegacyMappings).not.toHaveBeenCalled();
-  });
-
-  it('creates and verifies only membership tables without full sync or maintenance', async () => {
-    await expect(
-      invoke({ schema_scope: 'membership-refresh' })
-    ).resolves.toEqual({
-      schema_scope: 'membership-refresh',
-      created_tables: 7,
-      verified_tables: 7
-    });
-    expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
-      logger: expect.anything(),
-      entities: membershipSchemaEntities,
-      syncEntities: false,
-      skipRedis: true
-    });
-    expect(applyMembershipSchema).toHaveBeenCalledTimes(1);
-    expect(migrations.getInstance).not.toHaveBeenCalled();
-    expect(competitionRepository.backfillLegacyMappings).not.toHaveBeenCalled();
-    expect(moderationReviewDb.retain).not.toHaveBeenCalled();
-  });
-
-  it('does not acknowledge membership schema drift', async () => {
-    jest
-      .mocked(applyMembershipSchema)
-      .mockRejectedValueOnce(new Error('schema drift'));
-    await expect(
-      invoke({ schema_scope: 'membership-refresh' })
-    ).rejects.toThrow('schema drift');
-    expect(migrations.getInstance).not.toHaveBeenCalled();
+    expect(doInDbContext).not.toHaveBeenCalled();
   });
 
   it('executes only the inspected NFT retry schema and skips all unrelated work', async () => {
@@ -292,7 +174,7 @@ describe('dbMigrationsLoop explicit schema scope', () => {
         entities: Object.values(Entities),
         syncEntities: false
       });
-      expect(applyFullSchemaWithMembershipGuard).toHaveBeenCalledTimes(1);
+      expect(getDataSource().synchronize).toHaveBeenCalledTimes(1);
       expect(migrations.getInstance).toHaveBeenCalledWith(true, {
         config: './database.json',
         env: 'main'
@@ -311,24 +193,29 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     }
   );
 
-  it('preserves scheduled retention without migrations or schema synchronization', async () => {
-    await invoke(scheduledEvent);
-    expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
-      logger: expect.anything(),
-      entities: Object.values(Entities),
-      syncEntities: false
-    });
-    expect(applyFullSchemaWithMembershipGuard).not.toHaveBeenCalled();
-    expect(migrations.getInstance).not.toHaveBeenCalled();
-    expect(competitionRepository.backfillLegacyMappings).toHaveBeenCalledTimes(
-      1
-    );
-    expect(
-      contentModerationDb.deleteExpiredPrePublicationChecks
-    ).toHaveBeenCalledTimes(1);
-    expect(moderationReviewDb.retain).toHaveBeenCalledTimes(1);
-    expect(moderationRetentionSchemaDb.missingColumns).toHaveBeenCalledTimes(1);
-  });
+  it.each([scheduledEvent, { schema_scope: 'maintenance' }])(
+    'preserves maintenance without migrations or schema synchronization for %j',
+    async (event) => {
+      await invoke(event);
+      expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
+        logger: expect.anything(),
+        entities: Object.values(Entities),
+        syncEntities: false
+      });
+      expect(getDataSource().synchronize).not.toHaveBeenCalled();
+      expect(migrations.getInstance).not.toHaveBeenCalled();
+      expect(
+        competitionRepository.backfillLegacyMappings
+      ).toHaveBeenCalledTimes(1);
+      expect(
+        contentModerationDb.deleteExpiredPrePublicationChecks
+      ).toHaveBeenCalledTimes(1);
+      expect(moderationReviewDb.retain).toHaveBeenCalledTimes(1);
+      expect(moderationRetentionSchemaDb.missingColumns).toHaveBeenCalledTimes(
+        1
+      );
+    }
+  );
 
   it('keeps existing scheduled maintenance while explicitly skipping moderation retention pending its schema', async () => {
     jest
@@ -376,6 +263,7 @@ describe('dbMigrationsLoop explicit schema scope', () => {
 
   it.each([
     'full',
+    'maintenance',
     'wallet-transfer-analysis',
     'claims-media-upload',
     'nft-link-page-retry',
