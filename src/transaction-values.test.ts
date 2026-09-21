@@ -809,6 +809,38 @@ describe('ordinary RPC and trace isolation', () => {
     expect(context.ordinarySend).not.toHaveBeenCalled();
   });
 
+  it('preserves ordinary mint reads with empty trace attribution when the Alchemy key is missing', async () => {
+    const context = mintContext();
+    const { getAlchemyTraceProvider: realTraceProvider } = jest.requireActual<
+      typeof import('@/ethereum-rpc/trace-provider')
+    >('@/ethereum-rpc/trace-provider');
+    jest
+      .mocked(getAlchemyTraceProvider)
+      .mockImplementationOnce(realTraceProvider);
+    const previousKey = process.env.ALCHEMY_API_KEY;
+    delete process.env.ALCHEMY_API_KEY;
+
+    try {
+      const result = await findTransactionValues([context.row]);
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        transaction: HASH,
+        value: 0,
+        primary_proceeds: 0,
+        royalties: 0
+      });
+      expect(getAlchemyTraceProvider).toHaveBeenCalledWith(Network.ETH_MAINNET);
+      expect(get6529TraceProvider).not.toHaveBeenCalled();
+      expect(context.getTransaction).toHaveBeenCalledWith(HASH);
+      expect(context.getTransactionReceipt).toHaveBeenCalledWith(HASH);
+      expect(context.ordinarySend).not.toHaveBeenCalled();
+      expect(context.fallbackSend).not.toHaveBeenCalled();
+    } finally {
+      if (previousKey === undefined) delete process.env.ALCHEMY_API_KEY;
+      else process.env.ALCHEMY_API_KEY = previousKey;
+    }
+  });
+
   it('does not initialize trace providers for non-mint transfers', async () => {
     const context = mintContext();
     context.row.from_address = FROM;

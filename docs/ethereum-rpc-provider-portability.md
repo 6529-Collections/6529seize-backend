@@ -159,6 +159,9 @@ required for this backend PR.
 
 1. Verify mainnet URL presence and API loading mode for each target environment,
    without logging secrets. Provision testnet URLs before exercising those paths.
+   Verify retained `ALCHEMY_API_KEY` availability for `transactionsLoop` and
+   `nextgenContractLoop`: missing trace credentials preserve ordinary reads but
+   degrade trace-derived attribution to empty internal transfers.
 2. Merge and deploy only under separate explicit authorization. Start with
    staging and the ordered affected services above; no deploy is part of this
    implementation work itself.
@@ -166,6 +169,12 @@ required for this backend PR.
    NextGen validation and marketplace reads/preflight. Test ordinary block,
    receipt, log and contract reads with the configured endpoint. Missing or
    wrong-chain configuration must not silently select Alchemy or mainnet.
+   During `discoverEnsLoop` and `refreshEnsLoop` rollout, compare reverse ENS
+   results for a fixed sample of previously resolving wallets before and after
+   deployment. Watch for increased null results or lost names even if the loops
+   report no errors: removing the hidden 6529 endpoint fallback can silently
+   reduce coverage. Investigate the configured provider before promoting if
+   that sample regresses.
 4. Check worker ingestion progress and errors, NFT history/transaction receipt
    consistency, NextGen logs and subscription checkpoints. Confirm colocated
    Alchemy indexed calls still work and trace-derived attribution remains

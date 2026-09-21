@@ -447,7 +447,8 @@ async function validateAdmin(collection_id: number, address: string) {
       collection_admin: isCollectionAdmin
     });
     return isGlobalAdmin || isFunctionAdmin || isCollectionAdmin;
-  } catch (error) {
+  } catch {
+    // Fail closed without logging provider errors, which can contain RPC credentials.
     logger.error('Error calling NextGen admin validation contract');
     return false;
   }
