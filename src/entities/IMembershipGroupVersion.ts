@@ -1,7 +1,7 @@
 import { MEMBERSHIP_GROUP_VERSIONS_TABLE } from '@/constants';
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 
-/** See docs/membership-refresh-design.md for the publication protocol. */
+/** Retained schema for the retired experiment; see docs/membership-retirement.md. */
 @Entity(MEMBERSHIP_GROUP_VERSIONS_TABLE)
 @Index('idx_mgv_catalog_group', ['catalog_version', 'group_id'])
 export class MembershipGroupVersionEntity {

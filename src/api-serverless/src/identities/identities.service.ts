@@ -54,8 +54,6 @@ import {
   ContentModerationDb,
   contentModerationDb
 } from '@/content-moderation/content-moderation.db';
-import { isMembershipSourceTrackingActive } from '@/membership/membership-producer-policy';
-import { MembershipSourceNotReadyError } from '@/membership/membership-source-states.db';
 
 let pfpS3Client: S3Client | undefined;
 
@@ -330,17 +328,7 @@ export class IdentitiesService {
     throw new Error('Failed to upload image');
   }
 
-  public async updatePrimaryAddresses(
-    addresses: Set<string>,
-    sourceCoverage?: 'delegations-cycle'
-  ) {
-    if (
-      addresses.size > 0 &&
-      isMembershipSourceTrackingActive() &&
-      sourceCoverage !== 'delegations-cycle'
-    ) {
-      throw new MembershipSourceNotReadyError();
-    }
+  public async updatePrimaryAddresses(addresses: Set<string>) {
     for (const address of Array.from(addresses)) {
       const identity =
         await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
@@ -522,34 +510,17 @@ export class IdentitiesService {
     });
   }
 
-  private assertBulkIdentitySourceCoverage(
-    addresses: readonly string[],
-    sourceCoverage?: 'profile-creation' | 'xtdh-universe'
-  ) {
-    if (
-      addresses.length > 0 &&
-      isMembershipSourceTrackingActive() &&
-      sourceCoverage !== 'profile-creation' &&
-      sourceCoverage !== 'xtdh-universe'
-    ) {
-      throw new MembershipSourceNotReadyError();
-    }
-  }
-
   private async grantSignupCreditsForProfiles(
     profiles: readonly Profile[],
-    ctx: RequestContext,
-    sourceCoverage?: 'profile-creation' | 'xtdh-universe'
+    ctx: RequestContext
   ) {
     for (const profile of profiles) {
       try {
         await helpBotCreditsService.grantSignupCredits(
           { profileId: profile.external_id },
-          ctx,
-          sourceCoverage === 'xtdh-universe' ? 'xtdh-universe' : undefined
+          ctx
         );
       } catch (error) {
-        if (isMembershipSourceTrackingActive()) throw error;
         this.logger.error(
           `Failed to grant signup help bot credits for profile ${profile.external_id}`,
           error
@@ -558,12 +529,7 @@ export class IdentitiesService {
     }
   }
 
-  public async bulkCreateIdentities(
-    addresses: string[],
-    ctx: RequestContext,
-    sourceCoverage?: 'profile-creation' | 'xtdh-universe'
-  ) {
-    this.assertBulkIdentitySourceCoverage(addresses, sourceCoverage);
+  public async bulkCreateIdentities(addresses: string[], ctx: RequestContext) {
     try {
       ctx.timer?.start(`${this.constructor.name}->bulkCreateIdentities`);
       if (!addresses.length) {
@@ -687,11 +653,7 @@ export class IdentitiesService {
           newProfileEntities.map((it) => it.external_id),
           ctx
         );
-        await this.grantSignupCreditsForProfiles(
-          newProfileEntities,
-          ctx,
-          sourceCoverage
-        );
+        await this.grantSignupCreditsForProfiles(newProfileEntities, ctx);
       }
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->bulkCreateIdentities`);

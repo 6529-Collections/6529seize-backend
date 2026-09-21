@@ -18,7 +18,7 @@ import {
   applyMembershipSchema,
   membershipSchemaEntities
 } from '@/dbMigrationsLoop/membership-schema';
-import type { MembershipSourceVersion } from '@/membership/membership-schema.types';
+import type { MembershipSourceVersion } from '@/entities/membership-schema.types';
 
 const TABLES = [MEMBERS, GROUPS, PUBLICATIONS, RUNS, TARGETS, JOBS, SOURCES];
 const sourceVersion: MembershipSourceVersion = {

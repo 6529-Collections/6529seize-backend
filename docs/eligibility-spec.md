@@ -18,7 +18,7 @@ current and future:
   `getGeneralPart`, `getRepPart`, `getCicPart`, `getTypeOfNftPart`,
   `getBeneficiaryOwnersPart`, `getInclusionExclusionPart` in the same file),
   which generates a member-set query per group;
-- future implementations: the materialized membership engine and, eventually,
+- possible future implementations, including
   decentralized client nodes evaluating the same rule set as a protocol
   artifact.
 
@@ -580,13 +580,12 @@ One identity row per profile is the supported invariant. The empty-projection
 regression in #2068 was found in unmerged #1822; current-consumer coverage
 prevents its reintroduction.
 
-This milestone changes the current SQL evaluator without enabling a membership
-producer, dispatcher, worker, or materialized reader. It requires no schema or
-OpenAPI change. The seven-table refresh/publication contract remains in
-[membership-refresh-design.md](membership-refresh-design.md); SQL conformance
-is not evidence that the future runtime or cutover is ready.
+The direct and SQL evaluator conformance remains the supported contract. The
+materialisation experiment was retired after legacy coordination met current
+performance needs; see [retirement and rollout](membership-retirement.md).
+This does not change eligibility rules or the SQL fixes described here.
 
-### Deployment units
+### Historical SQL-conformance deployment units
 
 For staging, deploy `attachmentsProcessor`, `attachmentsOrchestrator`,
 `dropMediaSanitizer`, `helpBotReplyLoop`, then `api`, sequentially. The attachment processor and
@@ -604,8 +603,7 @@ but its catalogue permits production only. In production, deploy it after
 `helpBotReplyLoop` and before the final `api` deployment/publication signal.
 Other loops using only the unchanged direct evaluator or
 ungrouped notification methods do not need this SQL-only deployment.
-Rollback uses a reviewed revert and the same services; a materialization read
-switch cannot undo these SQL changes.
+Rollback uses a reviewed revert and the same services.
 
 ### Help6529 knowledge authoring facts
 
