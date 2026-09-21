@@ -1,8 +1,7 @@
 import { createHash } from 'node:crypto';
 import { ethers } from 'ethers';
-import { Network } from '@/alchemy-sdk';
-import { getRpcUrlFromNetwork } from '@/alchemy';
-import { env } from '@/env';
+import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
+import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
 import { Logger } from '@/logging';
 import { getRedisClient } from '@/redis';
 import { getWebAppSignatureDomains } from '../web-app-origins';
@@ -18,7 +17,7 @@ const EIP1271_MAGIC_VALUE = '0x1626ba7e';
 const EIP1271_ABI = [
   'function isValidSignature(bytes32 _messageHash, bytes _signature) public view returns (bytes4)'
 ];
-const ALCHEMY_NETWORK_BY_CHAIN_ID = new Map<number, Network>([
+const RPC_NETWORK_BY_CHAIN_ID = new Map<number, Network>([
   [ETHEREUM_MAINNET_CHAIN_ID, Network.ETH_MAINNET],
   [5, Network.ETH_GOERLI],
   [11155111, Network.ETH_SEPOLIA]
@@ -600,7 +599,7 @@ export async function verifyContractWalletSignatureHash({
   signature
 }: VerifyContractWalletSignatureHashParams): Promise<boolean> {
   try {
-    const provider = getAlchemyProviderForChain(chainId);
+    const provider = getProviderForChain(chainId);
     if (!provider) {
       logger.warn(`Unsupported structured signature chain id ${chainId}`);
       return false;
@@ -617,15 +616,12 @@ export async function verifyContractWalletSignatureHash({
   }
 }
 
-function getAlchemyProviderForChain(
-  chainId: number
-): ethers.JsonRpcProvider | null {
-  const network = ALCHEMY_NETWORK_BY_CHAIN_ID.get(chainId);
+function getProviderForChain(chainId: number): ethers.JsonRpcProvider | null {
+  const network = RPC_NETWORK_BY_CHAIN_ID.get(chainId);
   if (!network) {
     return null;
   }
-  env.getStringOrThrow('ALCHEMY_API_KEY');
-  return new ethers.JsonRpcProvider(getRpcUrlFromNetwork(network));
+  return getEthereumRpcProvider(chainId);
 }
 
 export async function consumeStructuredWalletSignatureNonce(

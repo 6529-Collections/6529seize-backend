@@ -17,7 +17,7 @@ import {
   XTDH_GRANT_TOKENS_TABLE
 } from '@/constants';
 import { sqlExecutor, setSqlExecutor } from '@/sql-executor';
-import { Network } from '@/alchemy-sdk';
+import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
 import { NEXTGEN_CORE_CONTRACT } from '@/nextgen/nextgen_constants';
 import * as loopDb from '@/db';
 import { describeWithSeed } from '@/tests/_setup/seed';

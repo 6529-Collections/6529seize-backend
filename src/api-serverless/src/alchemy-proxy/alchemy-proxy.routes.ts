@@ -1,4 +1,4 @@
-import { Network } from '@/alchemy-sdk';
+import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
 import { CustomApiCompliantException } from '@/exceptions';
 import { ethers } from 'ethers';
 import { Request, Response, Router } from 'express';

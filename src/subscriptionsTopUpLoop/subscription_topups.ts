@@ -1,5 +1,10 @@
+import {
+  EthereumRpcClient,
+  getEthereumRpcClient
+} from '@/ethereum-rpc/ethereum-rpc-client';
 import { sepolia } from '@wagmi/chains';
-import { Alchemy, Network } from '@/alchemy-sdk';
+import { Alchemy } from '@/alchemy-sdk';
+import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
 import { getAlchemyInstance } from '../alchemy';
 import { SubscriptionTopUp } from '../entities/ISubscription';
 import { Logger } from '../logging';
@@ -18,12 +23,12 @@ const CHECKPOINT_EVERY_BLOCKS = CHUNK_SIZE * 50;
 const CONFIRMATIONS = 5;
 
 async function persistLatestBlockCheckpoint(
-  alchemy: Alchemy,
+  rpc: EthereumRpcClient,
   blockToPersist: number
 ) {
   let blockTimestamp: number | undefined;
   try {
-    const blockDetails = await alchemy.core.getBlock(blockToPersist);
+    const blockDetails = await rpc.getBlock(blockToPersist);
     blockTimestamp = blockDetails?.timestamp;
   } catch (error) {
     logger.warn(
@@ -37,10 +42,9 @@ async function persistLatestBlockCheckpoint(
 
 export function getSubscriptionsNetwork(): Network {
   const chain = process.env.SUBSCRIPTIONS_CHAIN_ID;
-  if (chain === sepolia.id.toString()) {
-    return Network.ETH_SEPOLIA;
-  }
-  return Network.ETH_MAINNET;
+  if (!chain || chain === '1') return Network.ETH_MAINNET;
+  if (chain === sepolia.id.toString()) return Network.ETH_SEPOLIA;
+  throw new Error('Unsupported SUBSCRIPTIONS_CHAIN_ID');
 }
 
 function enforceBounds(subs: SubscriptionTopUp[], from: number, to: number) {
@@ -67,6 +71,7 @@ function enforceBounds(subs: SubscriptionTopUp[], from: number, to: number) {
 export async function discoverTopUps(reset?: boolean) {
   const network = getSubscriptionsNetwork();
   const alchemy: Alchemy = getAlchemyInstance(network);
+  const rpc = getEthereumRpcClient(network);
 
   let fromBlock = 0;
   let latestPersistedBlock: number | null = null;
@@ -91,7 +96,7 @@ export async function discoverTopUps(reset?: boolean) {
     }
   }
 
-  const head = await alchemy.core.getBlockNumber();
+  const head = await rpc.getBlockNumber();
   const toBlock = head - CONFIRMATIONS;
 
   logger.info(
@@ -140,7 +145,7 @@ export async function discoverTopUps(reset?: boolean) {
 
     // Persist progress periodically, but not on every chunk
     if (currentToBlock - lastCheckpointBlock >= CHECKPOINT_EVERY_BLOCKS) {
-      await persistLatestBlockCheckpoint(alchemy, currentToBlock);
+      await persistLatestBlockCheckpoint(rpc, currentToBlock);
       lastCheckpointBlock = currentToBlock;
     }
   }
@@ -152,5 +157,5 @@ export async function discoverTopUps(reset?: boolean) {
   const blockToPersist = Math.max(...blockCandidates);
 
   // Final checkpoint after processing all chunks (ensures we persist even if we never hit an interval boundary)
-  await persistLatestBlockCheckpoint(alchemy, blockToPersist);
+  await persistLatestBlockCheckpoint(rpc, blockToPersist);
 }

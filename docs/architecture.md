@@ -387,8 +387,8 @@ Exceeding a bound requires the user to reduce the selection explicitly.
 `POST /market/operations/{id}/preflight` is a read-only, authenticated
 `BUY_BATCH` check. Its small body binds the existing review revision and exact
 transaction digest; the server loads and independently validates stored Seaport
-orders, allocations and calldata. It sends only that transaction to the existing
-Alchemy provider, pinning both `eth_call` and raw `eth_estimateGas` to one fresh
+orders, allocations and calldata. It sends only that transaction to the configured
+Ethereum RPC provider, pinning both `eth_call` and raw `eth_estimateGas` to one fresh
 block and rechecking the block hash. Ownership, current profile membership,
 expiry, revision and recovery fences are checked again before returning. No
 operation, journal, send attempt, gas cap or expiry is changed. A 12-second
@@ -438,9 +438,9 @@ Action availability follows
 [`handleGetCollectCapabilities`](../src/api-serverless/src/collect/collect.handlers.ts):
 
 - `TdhScenario` is always enabled.
-- `Cancel` requires `ALCHEMY_API_KEY`, independently of the trading flag or
+- `Cancel` requires `ETHEREUM_RPC_URL`, independently of the trading flag or
   `OPENSEA_API_KEY`.
-- Other actions require both `ALCHEMY_API_KEY` and `OPENSEA_API_KEY`, with
+- Other actions require both `ETHEREUM_RPC_URL` and `OPENSEA_API_KEY`, with
   `MARKETPLACE_TRADING_ENABLED` either unset (defaults to `true`) or exactly `true`.
 - `RuleExecution` is always disabled; rules only prepare purchases for review.
 
@@ -656,7 +656,7 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 
 1. Client requests enter through API Gateway and land in `seizeAPI`.
 2. The API validates input, authenticates JWT or anonymous context, reads/writes MySQL, uses Redis for cache/rate limiting, and sometimes publishes SQS work.
-3. Scheduled ingestion Lambdas poll Ethereum/RPC/Alchemy/Etherscan, normalize chain state, and write canonical rows into MySQL. The proposed boundary between provider-neutral Ethereum JSON-RPC and Alchemy-specific indexed APIs is recorded in [Ethereum RPC provider portability](ethereum-rpc-provider-portability.md); until that migration is implemented, standard RPC traffic is not yet configuration-only.
+3. Scheduled ingestion Lambdas poll Ethereum/RPC/Alchemy/Etherscan, normalize chain state, and write canonical rows into MySQL. Ordinary mainnet reads use `ETHEREUM_RPC_URL`, independently of Alchemy NFT REST and indexed transfers. [Ethereum RPC provider portability](ethereum-rpc-provider-portability.md) records the explicit tracing, bulk-indexer and legacy proxy exceptions and rollout requirements.
 4. Derived-data Lambdas read canonical tables and write projections such as TDH, owner balances, aggregated activity, wave decisions, leaderboards, metrics, and reputation aggregates.
 5. SQS workers handle slow or retryable side effects through named queues: claim building, claim media Arweave uploads, S3 media mirroring, attachment orchestration/processing, NFT link resolution/previews, xTDH recalculation, Wave Score dirty refreshes, and notification delivery through Firebase plus recipient-scoped WebSocket invalidations.
 
@@ -666,13 +666,33 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
    The on-demand media resizer spools each S3 source into its own temporary file before metadata inspection and conversion. A 256 MiB source limit and conservative 512 MiB decoded-work estimate reject unsupported or oversized inputs with HTTP 422; animated GIF admission counts every frame. Resize, rotation and output contracts are preserved for accepted inputs. Multipart upload concurrency is one, and the temporary directory is removed after completion or failure. These admission limits reduce resource risk; they do not guarantee a maximum native allocation for every codec.
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
-### Ordinary Ethereum RPC foundation
+### Ordinary Ethereum RPC boundary
 
-Ordinary Ethereum RPC portability is being introduced separately. The
-[RPC foundation](../ops/workstreams/ethereum-rpc-foundation/README.md) adds an
-unused provider-neutral factory and documents the existing regional shared-secret
-configuration path. Existing callers still use their previous providers; this
-foundation does not migrate runtime traffic or remove indexed Alchemy APIs.
+The shared provider in `src/ethereum-rpc/` reads the server-only
+`ETHEREUM_RPC_URL` for mainnet after environment/secrets loading. Sepolia and
+Goerli compatibility paths require their own explicit URLs; missing configuration
+or unsupported chains never fall back to mainnet or an Alchemy key-derived URL.
+Ethers retains chain-ID verification. Standard compatibility reads keep their
+retry and response-shape contracts; CMS ENS owns a separate bounded transport
+using the same URL, and marketplace batch preflight retains its abortable raw
+transport with an explicit mainnet chain check.
+
+`src/alchemy-sdk.ts` now owns only NFT REST and `alchemy_getAssetTransfers`.
+Mixed indexing jobs use both clients without changing pagination or checkpoints.
+Non-standard `trace_block` has a separate provider policy: Alchemy normally,
+or the existing mainnet 6529 trace endpoint with Alchemy fallback where selected.
+Selecting traces does not select the transaction/receipt provider. ENS no longer
+has a hidden 6529 endpoint fallback; its Universal Resolver fallback uses the
+configured ordinary provider.
+
+`NFT_INDEXER_RPC` remains the independently configured external-indexing/NFT-link
+capacity boundary, and the legacy AWS Managed Blockchain `/rpc` proxy is
+unchanged. Those explicit exceptions are not controlled by `ETHEREUM_RPC_URL`.
+See the [implementation and rollout record](ethereum-rpc-provider-portability.md)
+and the historical [foundation record](../ops/workstreams/ethereum-rpc-foundation/README.md).
+Configuration is loaded once by warm services; redeploy/restart affected services
+when changing endpoints. No database, API schema, queue or deployment-workflow
+change is needed.
 
 ### NFT link media preview size failures
 
@@ -1217,7 +1237,7 @@ adds no Lambda or queue; deploy `dbMigrationsLoop` before `api`. See
 Profile CMS wallet gallery snapshots are read-only API projections over
 `nft_owners`, `ens`, `nfts`, `nfts_meme_lab`, and `nextgen_tokens`. ENS inputs use
 bounded onchain forward resolution through an isolated provider for the
-configured Alchemy RPC and a one-minute cache. Shared provider settings remain
+configured `ETHEREUM_RPC_URL` and a one-minute cache. Shared provider settings remain
 unchanged; indexed reverse displays are not proof of the current ENS address.
 Raw addresses retain indexed display labels. Snapshots do not create
 schema, run migrations, enqueue indexers, or fetch NFT holdings/metadata live.

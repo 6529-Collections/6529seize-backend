@@ -1,14 +1,14 @@
 import { Interface } from 'ethers';
 import { SeaportABI } from '@opensea/seaport-js/lib/abi/Seaport';
-import { getRpcUrl } from '@/alchemy';
+import { getEthereumRpcUrl } from '@/ethereum-rpc/ethereum-rpc.config';
 import { simulateStoredMarketBatch } from '@/marketplace/market-batch-preflight-rpc';
 import { marketBatchFixture } from '@/marketplace/market-batch.test-fixture';
 import { MarketBatchPrepared } from '@/marketplace/market-batch.types';
 import { MarketValidationError } from '@/marketplace/provider.types';
 import { MARKET_SEAPORT } from '@/marketplace/seaport.registry';
 
-jest.mock('@/alchemy', () => ({
-  getRpcUrl: jest.fn(() => 'https://rpc.example.invalid/ethereum')
+jest.mock('@/ethereum-rpc/ethereum-rpc.config', () => ({
+  getEthereumRpcUrl: jest.fn(() => 'https://rpc.example.invalid/ethereum')
 }));
 
 const SEAPORT = new Interface(SeaportABI);
@@ -84,14 +84,15 @@ describe('stored batch RPC simulation boundary', () => {
     jest.spyOn(Date, 'now').mockReturnValue(NOW * 1000);
     jest.replaceProperty(process, 'env', {
       ...process.env,
-      ALCHEMY_API_KEY: 'test-only'
+      ETHEREUM_RPC_URL: 'https://rpc.example.invalid/ethereum'
     });
     controller = new AbortController();
     fetchMock = jest.spyOn(globalThis, 'fetch');
     fetchMock.mockImplementation(async () => {
       throw new Error('Unexpected mocked RPC request');
     });
-    jest.mocked(getRpcUrl).mockClear();
+    fetchMock.mockResolvedValueOnce(rpcResponse('0x1'));
+    jest.mocked(getEthereumRpcUrl).mockClear();
   });
 
   afterEach(() => jest.restoreAllMocks());
@@ -123,6 +124,7 @@ describe('stored batch RPC simulation boundary', () => {
       value: '0x12c'
     };
     const requests = [
+      ['eth_chainId', []],
       ['eth_getBlockByNumber', ['latest', false]],
       ['eth_call', [transaction, '0x64']],
       ['eth_estimateGas', [transaction, '0x64']],
@@ -142,8 +144,8 @@ describe('stored batch RPC simulation boundary', () => {
         }
       );
     });
-    expect(getRpcUrl).toHaveBeenCalledTimes(4);
-    expect(getRpcUrl).toHaveBeenCalledWith(1);
+    expect(getEthereumRpcUrl).toHaveBeenCalledTimes(5);
+    expect(getEthereumRpcUrl).toHaveBeenCalledWith(1);
     expect(JSON.stringify(prepared)).toBe(before);
   });
 
@@ -167,7 +169,7 @@ describe('stored batch RPC simulation boundary', () => {
       await expect(
         simulateStoredMarketBatch(preparedBatch(), controller.signal)
       ).rejects.toMatchObject(UNAVAILABLE);
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
     }
   );
 
@@ -186,7 +188,7 @@ describe('stored batch RPC simulation boundary', () => {
     await expect(
       simulateStoredMarketBatch(prepared, controller.signal)
     ).rejects.toMatchObject(UNAVAILABLE);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   test.each([
@@ -200,7 +202,7 @@ describe('stored batch RPC simulation boundary', () => {
       await expect(
         simulateStoredMarketBatch(preparedBatch(), controller.signal)
       ).rejects.toMatchObject(UNAVAILABLE);
-      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(fetchMock).toHaveBeenCalledTimes(5);
     }
   );
 
@@ -214,7 +216,7 @@ describe('stored batch RPC simulation boundary', () => {
       await expect(
         simulateStoredMarketBatch(preparedBatch(), controller.signal)
       ).rejects.toMatchObject(UNAVAILABLE);
-      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock).toHaveBeenCalledTimes(4);
     }
   );
 
@@ -236,7 +238,7 @@ describe('stored batch RPC simulation boundary', () => {
     await expect(
       simulateStoredMarketBatch(preparedBatch(), controller.signal)
     ).rejects.toMatchObject(UNAVAILABLE);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   test.each([
@@ -249,7 +251,7 @@ describe('stored batch RPC simulation boundary', () => {
     await expect(
       simulateStoredMarketBatch(preparedBatch(), controller.signal)
     ).rejects.toMatchObject(UNAVAILABLE);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   test.each([3, -32000])(
@@ -275,7 +277,7 @@ describe('stored batch RPC simulation boundary', () => {
         message:
           'The complete batch can no longer be executed. Review the listings again.'
       });
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
     }
   );
 
@@ -309,7 +311,7 @@ describe('stored batch RPC simulation boundary', () => {
     await expect(
       simulateStoredMarketBatch(preparedBatch(), controller.signal)
     ).rejects.toMatchObject(UNAVAILABLE);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   test('caps streamed response bytes and cancels the oversized body', async () => {
@@ -325,17 +327,28 @@ describe('stored batch RPC simulation boundary', () => {
       simulateStoredMarketBatch(preparedBatch(), controller.signal)
     ).rejects.toMatchObject(UNAVAILABLE);
     expect(cancel).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   test('does not contact a provider without configured credentials', async () => {
-    delete process.env.ALCHEMY_API_KEY;
+    delete process.env.ETHEREUM_RPC_URL;
     await expect(
       simulateStoredMarketBatch(preparedBatch(), controller.signal)
     ).rejects.toMatchObject(UNAVAILABLE);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(getRpcUrl).not.toHaveBeenCalled();
+    expect(getEthereumRpcUrl).not.toHaveBeenCalled();
   });
+
+  test.each(['0xaa36a7', '0x89', null])(
+    'rejects wrong or malformed chain %s before simulation',
+    async (chainId) => {
+      fetchMock.mockReset().mockResolvedValueOnce(rpcResponse(chainId));
+      await expect(
+        simulateStoredMarketBatch(preparedBatch(), controller.signal)
+      ).rejects.toMatchObject(UNAVAILABLE);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    }
+  );
 
   test('does not start any request after cancellation', async () => {
     controller.abort();
@@ -367,6 +380,6 @@ describe('stored batch RPC simulation boundary', () => {
     await started;
     controller.abort();
     await rejected;
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
