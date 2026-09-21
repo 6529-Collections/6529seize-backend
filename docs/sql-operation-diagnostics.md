@@ -24,6 +24,8 @@ loop can delay the snapshot; its absence does not prove that a wait was short.
 Measurements use a monotonic clock and are rounded to milliseconds. The existing
 `SQL query took ... ms to execute:` prefix still reports SQL execution time;
 use `total_ms` to understand why a fast query produced a warning. Pending and
+fast-failure messages have distinct prefixes so existing slow-query filters do
+not double-count snapshots or count fast failures as slow queries. Pending and
 terminal diagnostics retain the originating logger request context even if a
 driver callback runs in another context. Private table families hide statements
 and parameters in both diagnostics, using the existing redaction policy.

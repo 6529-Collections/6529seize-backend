@@ -30,7 +30,7 @@ function connectionFixture() {
     connection,
     query,
     release,
-    succeed: () => callback(null, [{ id: 'ok' }]),
+    succeed: (rows: unknown[] = [{ id: 'ok' }]) => callback(null, rows),
     fail: (error: Error) => callback(error)
   };
 }
@@ -172,6 +172,34 @@ describe('SQL operation timing', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  it('keeps result processing in total duration and out of SQL execution time', async () => {
+    const fixture = connectionFixture();
+    const acquired = deferred<PoolConnection>();
+    const operation = execSQLWithConnection('SELECT id FROM profiles', {
+      pool: DbPoolName.READ,
+      acquire: () => acquired.promise
+    });
+    await jest.advanceTimersByTimeAsync(200);
+    acquired.resolve(fixture.connection);
+    await jest.advanceTimersByTimeAsync(500);
+    fixture.succeed([
+      {
+        toJSON: () => {
+          jest.setSystemTime(1500);
+          return { id: 'ok' };
+        }
+      }
+    ]);
+    await expect(operation).resolves.toEqual([{ id: 'ok' }]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][1]).toMatchObject({
+      outcome: 'completed',
+      acquisition_ms: 200,
+      sql_ms: 500,
+      total_ms: 1500
+    });
+  });
+
   it('logs slow acquisition with fast SQL even if the pending timer has not run', async () => {
     const fixture = connectionFixture();
     const acquired = deferred<PoolConnection>();
@@ -223,26 +251,34 @@ describe('SQL operation timing', () => {
     }
   );
 
-  it('preserves SQL errors and clears the pending timer on failure', async () => {
-    const fixture = connectionFixture();
-    const failure = new Error('query failed');
-    const operation = execSQLWithConnection('SELECT id FROM profiles', {
-      pool: DbPoolName.READ,
-      acquire: async () => fixture.connection
-    });
-    const rejected = expect(operation).rejects.toBe(failure);
-    await jest.advanceTimersByTimeAsync(10);
-    fixture.fail(failure);
-    await rejected;
-    expect(warn.mock.calls[0][1]).toMatchObject({
-      outcome: 'failed',
-      stage: 'sql',
-      sql_ms: 10
-    });
-    expect(error).toHaveBeenCalledTimes(1);
-    expect(fixture.release).toHaveBeenCalledTimes(1);
-    expect(jest.getTimerCount()).toBe(0);
-  });
+  it.each([10, 1500])(
+    'preserves SQL errors and clears the pending timer after %i ms',
+    async (delay) => {
+      const fixture = connectionFixture();
+      const failure = new Error('query failed');
+      const operation = execSQLWithConnection('SELECT id FROM profiles', {
+        pool: DbPoolName.READ,
+        acquire: async () => fixture.connection
+      });
+      const rejected = expect(operation).rejects.toBe(failure);
+      await jest.advanceTimersByTimeAsync(delay);
+      fixture.fail(failure);
+      await rejected;
+      expect(warn.mock.calls.at(-1)?.[1]).toMatchObject({
+        outcome: 'failed',
+        stage: 'sql',
+        sql_ms: delay
+      });
+      expect(warn.mock.calls.at(-1)?.[0]).toBe(
+        delay > 1000
+          ? `SQL query took ${delay} ms to execute: SELECT id FROM profiles`
+          : 'SQL operation failed: SELECT id FROM profiles'
+      );
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(fixture.release).toHaveBeenCalledTimes(1);
+      expect(jest.getTimerCount()).toBe(0);
+    }
+  );
 
   it('does not invent acquisition time or release a supplied transaction connection', async () => {
     const fixture = connectionFixture();

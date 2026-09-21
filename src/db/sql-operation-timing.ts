@@ -90,6 +90,11 @@ export class SqlOperationTiming {
       message = `SQL connection acquisition failed: ${description}`;
     } else if (sqlMs === null) {
       message = `SQL operation failed before query execution: ${description}`;
+    } else if (
+      outcome === 'failed' &&
+      now - this.started <= SLOW_OPERATION_MS
+    ) {
+      message = `SQL operation failed: ${description}`;
     } else {
       // Keep the existing slow-SQL prefix and SQL-only execution measurement.
       message = `SQL query took ${sqlMs} ms to execute: ${description}`;
