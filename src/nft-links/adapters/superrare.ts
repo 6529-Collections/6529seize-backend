@@ -213,8 +213,7 @@ class SuperRareAdapter implements PlatformAdapter {
       const resolved = normalizeMetadataUri(tokenUri);
       if (resolved) {
         meta = await fetchJsonWithTimeout<MetadataJson>(resolved, {
-          timeoutMs,
-          diagnosticPurpose: 'superrare_metadata'
+          timeoutMs
         });
       }
     }

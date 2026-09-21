@@ -3,7 +3,6 @@ import type { AbortSignal as NodeFetchAbortSignal } from 'node-fetch/externals';
 import { numbers } from '@/numbers';
 import { env } from '@/env';
 import { getNftLinkResolutionBudget } from '@/nft-links/resolution-budget';
-import { Logger } from '@/logging';
 
 export class HttpError extends Error {
   public readonly responseMatchesRequest: boolean;
@@ -32,19 +31,9 @@ export interface FetchOptions {
   timeoutMs: number;
   headers?: Record<string, string>;
   maxBytes?: number;
-  diagnosticPurpose?: 'superrare_metadata';
 }
 
 const DEFAULT_USER_AGENT = '6529-link-resolver/0.7';
-const logger = Logger.get('NFT_LINK_HTTP');
-
-function diagnosticHostname(url: string): string | null {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return null;
-  }
-}
 
 function getMaxBytes(opts: FetchOptions): number {
   const envMax = env.getIntOrNull('LINK_RESOLVER_HTTP_MAX_BYTES');
@@ -79,17 +68,9 @@ export async function fetchTextWithTimeout(
   const budget = getNftLinkResolutionBudget();
   budget?.check();
   const controller = new AbortController();
-  const startedAt = Date.now();
-  let cancellation: 'request_timeout' | 'resolution_budget' | null = null;
-  let status: number | null = null;
-  let outcome: 'success' | 'failure' = 'failure';
-  const cancel = (source: NonNullable<typeof cancellation>) => {
-    cancellation ??= source;
-    controller.abort();
-  };
-  const abort = () => cancel('resolution_budget');
+  const abort = () => controller.abort();
   budget?.signal.addEventListener('abort', abort, { once: true });
-  const t = setTimeout(() => cancel('request_timeout'), opts.timeoutMs);
+  const t = setTimeout(() => controller.abort(), opts.timeoutMs);
   try {
     const res = await fetch(url, {
       method: 'GET',
@@ -100,7 +81,6 @@ export async function fetchTextWithTimeout(
       // node-fetch v2 uses its own AbortSignal type definition.
       signal: controller.signal as unknown as NodeFetchAbortSignal
     });
-    status = res.status;
     if (!res.ok) {
       throw new HttpError(
         res.status,
@@ -110,29 +90,11 @@ export async function fetchTextWithTimeout(
       );
     }
 
-    const text = await readTextWithLimit(res, url, getMaxBytes(opts));
-    outcome = 'success';
-    return text;
+    return await readTextWithLimit(res, url, getMaxBytes(opts));
   } finally {
     clearTimeout(t);
     if (budget) controller.abort();
     budget?.signal.removeEventListener('abort', abort);
-    if (opts.diagnosticPurpose) {
-      // One line, no URL path/query/credentials or error payload. Preserve the
-      // original exception and the caller's existing operational alert policy.
-      logger.info(
-        JSON.stringify({
-          event: 'http_fetch_finished',
-          purpose: opts.diagnosticPurpose,
-          hostname: diagnosticHostname(url),
-          timeout_ms: opts.timeoutMs,
-          elapsed_ms: Date.now() - startedAt,
-          status,
-          outcome,
-          cancellation
-        })
-      );
-    }
   }
 }
 

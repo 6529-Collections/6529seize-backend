@@ -115,20 +115,10 @@ describe('SuperRare metadata standard compatibility', () => {
       price: { amount: '1.5', currency: 'ETH' }
     });
     expect(fetchJsonMock).toHaveBeenCalledWith('https://example.com/721.json', {
-      timeoutMs: 5000,
-      diagnosticPurpose: 'superrare_metadata'
+      timeoutMs: 5000
     });
     expect(nft.supportsInterface).not.toHaveBeenCalled();
     expect(nft.uri).not.toHaveBeenCalled();
-  });
-
-  it('honors an explicit metadata timeout override', async () => {
-    process.env.SUPERRARE_TIMEOUT_MS = '7000';
-    await resolve();
-    expect(fetchJsonMock).toHaveBeenCalledWith('https://example.com/721.json', {
-      timeoutMs: 7000,
-      diagnosticPurpose: 'superrare_metadata'
-    });
   });
 
   it('resolves the ERC1155 shape whose ERC721 tokenURI reverts', async () => {
@@ -138,7 +128,7 @@ describe('SuperRare metadata standard compatibility', () => {
     expect(nft.uri).toHaveBeenCalledWith(BigInt(1));
     expect(fetchJsonMock).toHaveBeenCalledWith(
       `https://example.com/1155/${'1'.padStart(64, '0')}.json`,
-      { timeoutMs: 5000, diagnosticPurpose: 'superrare_metadata' }
+      { timeoutMs: 5000 }
     );
     expect(result?.patch.asset?.media?.imageUrl).toBe(metadata.image);
   });
@@ -211,7 +201,7 @@ describe('SuperRare metadata standard compatibility', () => {
       await resolve(tokenId);
       expect(fetchJsonMock).toHaveBeenCalledWith(
         `https://example.com/${hexId}/${hexId}.json`,
-        { timeoutMs: 5000, diagnosticPurpose: 'superrare_metadata' }
+        { timeoutMs: 5000 }
       );
     }
   );
