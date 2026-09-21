@@ -14,6 +14,7 @@ import { Logger } from '../../../logging';
 import { numbers } from '../../../numbers';
 import { equalIgnoreCase } from '../../../strings';
 import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
+import { getNextgenRpcErrorCode } from '@/api/nextgen/nextgen-rpc-error';
 import {
   hashStructuredWalletSignaturePayload,
   isStructuredSignaturesRequired,
@@ -447,9 +448,11 @@ async function validateAdmin(collection_id: number, address: string) {
       collection_admin: isCollectionAdmin
     });
     return isGlobalAdmin || isFunctionAdmin || isCollectionAdmin;
-  } catch {
+  } catch (error) {
     // Fail closed without logging provider errors, which can contain RPC credentials.
-    logger.error('Error calling NextGen admin validation contract');
+    logger.error('Error calling NextGen admin validation contract', {
+      code: getNextgenRpcErrorCode(error)
+    });
     return false;
   }
 }

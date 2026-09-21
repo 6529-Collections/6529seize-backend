@@ -48,6 +48,13 @@ a docs-only PR.
   one transport attempt, disabled CCIP reads, one-minute cache and owned
   destruction. Marketplace batch preflight keeps its bounded raw HTTP transport
   and checks `eth_chainId` before sending stored transaction data.
+  The shared marketplace provider deliberately retains ethers' network checks
+  instead of its former `staticNetwork: true` shortcut. This adds `eth_chainId`
+  traffic and possible latency, including later checks, in exchange for rejecting
+  a misconfigured or changed endpoint. The marketplace singleton and provider
+  cache are reused; there is no new provider per request. Compare marketplace
+  read/simulation latency during staging; do not disable chain verification to
+  hide a slow endpoint.
 - Reverse ENS first uses ethers lookup, then the Universal Resolver on the
   **same** configured endpoint. The previous hard-coded 6529 ordinary fallback
   is removed; lookup misses/errors still yield no name. Configuration failures

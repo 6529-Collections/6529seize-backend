@@ -336,6 +336,8 @@ export function marketChain(): MarketChain {
         'PROVIDER_UNAVAILABLE',
         'The chain connection is not configured.'
       );
+    // Retain chain verification even for marketplace reads: a configurable URL
+    // must not be trusted as mainnet via staticNetwork. Reuse the shared provider.
     instance = new MarketChain(getEthereumRpcProvider());
   }
   return instance;
