@@ -1,3 +1,8 @@
+import { PushInstallationEntity } from '@/entities/IPushInstallation';
+import {
+  refreshInstallationBadge,
+  refreshProfileBadges
+} from './badge-refresh';
 import { SQSBatchResponse, SQSHandler } from 'aws-lambda';
 import {
   AttachmentEntity,
@@ -16,6 +21,21 @@ import { sendIdentityNotificationsBatch } from '@/pushNotificationsHandler/ident
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER');
 
+async function refreshInstallationRecords(
+  records: { messageId: string; deviceId: string }[]
+): Promise<{ itemIdentifier: string }[]> {
+  const failures: { itemIdentifier: string }[] = [];
+  for (const record of records) {
+    try {
+      await refreshInstallationBadge(record.deviceId);
+    } catch (error) {
+      logger.error(`Installation badge refresh failed: ${error}`);
+      failures.push({ itemIdentifier: record.messageId });
+    }
+  }
+  return failures;
+}
+
 const sqsHandler: SQSHandler = async (event): Promise<SQSBatchResponse> => {
   return doInDbContext(
     async () => {
@@ -23,12 +43,32 @@ const sqsHandler: SQSHandler = async (event): Promise<SQSBatchResponse> => {
         messageId: string;
         identityNotificationId: number;
       }[] = [];
+      const badgeRecords: { messageId: string; profileId: string }[] = [];
+      const installationRecords: { messageId: string; deviceId: string }[] = [];
       const failures: { itemIdentifier: string }[] = [];
 
       for (const record of event.Records) {
         try {
           const notification = JSON.parse(record.body);
-          if (notification.identity_notification_id) {
+          if (
+            notification.type === 'badge_refresh' &&
+            typeof notification.profile_id === 'string' &&
+            notification.profile_id.trim()
+          ) {
+            badgeRecords.push({
+              messageId: record.messageId,
+              profileId: notification.profile_id
+            });
+          } else if (
+            notification.type === 'installation_badge_refresh' &&
+            typeof notification.device_id === 'string' &&
+            notification.device_id.trim()
+          ) {
+            installationRecords.push({
+              messageId: record.messageId,
+              deviceId: notification.device_id
+            });
+          } else if (notification.identity_notification_id) {
             identityNotificationRecords.push({
               messageId: record.messageId,
               identityNotificationId: notification.identity_notification_id
@@ -62,6 +102,29 @@ const sqsHandler: SQSHandler = async (event): Promise<SQSBatchResponse> => {
         );
       }
 
+      if (badgeRecords.length) {
+        try {
+          const failedProfiles = new Set(
+            await refreshProfileBadges(
+              badgeRecords.map((record) => record.profileId)
+            )
+          );
+          failures.push(
+            ...badgeRecords
+              .filter((record) => failedProfiles.has(record.profileId))
+              .map((record) => ({ itemIdentifier: record.messageId }))
+          );
+        } catch (error) {
+          logger.error(`Badge refresh batch failed: ${error}`);
+          failures.push(
+            ...badgeRecords.map((record) => ({
+              itemIdentifier: record.messageId
+            }))
+          );
+        }
+      }
+
+      failures.push(...(await refreshInstallationRecords(installationRecords)));
       return {
         batchItemFailures: failures
       };
@@ -71,6 +134,7 @@ const sqsHandler: SQSHandler = async (event): Promise<SQSBatchResponse> => {
       entities: [
         IdentityNotificationEntity,
         PushNotificationDevice,
+        PushInstallationEntity,
         PushNotificationSettingsEntity,
         WaveEntity,
         WaveReaderMetricEntity,

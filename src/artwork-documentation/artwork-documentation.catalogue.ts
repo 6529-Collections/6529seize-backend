@@ -14,7 +14,8 @@ import {
   fail,
   matchesSchema,
   normalizeJson,
-  validateDateObject
+  validateDateObject,
+  withDocumentationValidationField
 } from './artwork-documentation.validation';
 import { museumProfiles } from './museum/museum-catalogue';
 import { museumRequired } from './museum/museum-validation';
@@ -647,6 +648,16 @@ export function applyOperations(
 }
 
 function validateAnswer(
+  moduleId: ModuleId,
+  definition: FieldDefinition,
+  raw: unknown
+): Answer {
+  return withDocumentationValidationField(moduleId, definition.id, () =>
+    parseAnswer(moduleId, definition, raw)
+  );
+}
+
+function parseAnswer(
   moduleId: ModuleId,
   definition: FieldDefinition,
   raw: unknown
