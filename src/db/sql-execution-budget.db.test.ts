@@ -12,12 +12,12 @@ import {
   sqlExecutor
 } from '@/sql-executor';
 import {
-  assertMembershipPrimaryContext,
-  membershipExecutionBudget,
-  membershipQueryOptions,
-  MembershipPrimaryContext,
-  withMembershipPrimaryTransaction
-} from '@/membership/membership-primary';
+  assertPrimaryTransactionContext,
+  primaryExecutionBudget,
+  primaryQueryOptions,
+  PrimaryTransactionContext,
+  withPrimaryTransaction
+} from '@/db/primary-transaction';
 
 const first = 'm3-budget-first';
 const second = 'm3-budget-second';
@@ -32,7 +32,7 @@ function budget(work = 1000, statement = 300): SqlExecutionBudget {
   };
 }
 async function physical(
-  ctx: MembershipPrimaryContext,
+  ctx: PrimaryTransactionContext,
   adapter: string
 ): Promise<mysql.PoolConnection> {
   return adapter === 'API'
@@ -47,11 +47,11 @@ async function waitUntilUnlocked(db: SqlExecutor): Promise<void> {
   const deadline = performance.now() + 4000;
   while (true) {
     try {
-      await withMembershipPrimaryTransaction(db, async (ctx) => {
+      await withPrimaryTransaction(db, async (ctx) => {
         await db.execute(
           `${query} FOR UPDATE NOWAIT`,
           { id: first },
-          membershipQueryOptions(ctx)
+          primaryQueryOptions(ctx)
         );
       });
       return;
@@ -93,7 +93,7 @@ describe.each(['API', 'LOOP'])(
       let original:
         | { execution_millis: string; lock_seconds: string }
         | undefined;
-      await withMembershipPrimaryTransaction(db, async (ctx) => {
+      await withPrimaryTransaction(db, async (ctx) => {
         const rows = await db.execute<{
           connection_id: number;
           execution_millis: string;
@@ -101,15 +101,15 @@ describe.each(['API', 'LOOP'])(
         }>(
           'SELECT CONNECTION_ID() connection_id, CAST(@@SESSION.max_execution_time AS CHAR) execution_millis, CAST(@@SESSION.innodb_lock_wait_timeout AS CHAR) lock_seconds',
           undefined,
-          membershipQueryOptions(ctx)
+          primaryQueryOptions(ctx)
         );
         connectionId = Number(rows[0].connection_id);
         original = rows[0];
       });
-      await withMembershipPrimaryTransaction(
+      await withPrimaryTransaction(
         db,
         async (ctx) => {
-          const caps = membershipExecutionBudget(ctx);
+          const caps = primaryExecutionBudget(ctx);
           expect(Object.isFrozen(caps)).toBe(true);
           const row = (
             await db.execute<{
@@ -119,18 +119,18 @@ describe.each(['API', 'LOOP'])(
             }>(
               'SELECT CONNECTION_ID() connection_id, CAST(@@SESSION.max_execution_time AS CHAR) execution_millis, CAST(@@SESSION.innodb_lock_wait_timeout AS CHAR) lock_seconds',
               undefined,
-              membershipQueryOptions(ctx)
+              primaryQueryOptions(ctx)
             )
           )[0];
           expect(Number(row.connection_id)).toBe(connectionId);
           expect(row.execution_millis).toBe('300');
           expect(row.lock_seconds).toBe('1');
-          await db.execute(update, { id: first }, membershipQueryOptions(ctx));
+          await db.execute(update, { id: first }, primaryQueryOptions(ctx));
         },
         {},
         budget()
       );
-      await withMembershipPrimaryTransaction(db, async (ctx) => {
+      await withPrimaryTransaction(db, async (ctx) => {
         const restored = (
           await db.execute<{
             connection_id: number;
@@ -139,7 +139,7 @@ describe.each(['API', 'LOOP'])(
           }>(
             'SELECT CONNECTION_ID() connection_id, CAST(@@SESSION.max_execution_time AS CHAR) execution_millis, CAST(@@SESSION.innodb_lock_wait_timeout AS CHAR) lock_seconds',
             undefined,
-            membershipQueryOptions(ctx)
+            primaryQueryOptions(ctx)
           )
         )[0];
         expect(Number(restored.connection_id)).toBe(connectionId);
@@ -155,36 +155,32 @@ describe.each(['API', 'LOOP'])(
       const failure = new Error('intentional rollback');
       let connection: mysql.PoolConnection | undefined;
       let original: unknown;
-      await withMembershipPrimaryTransaction(db, async (ctx) => {
+      await withPrimaryTransaction(db, async (ctx) => {
         original = await db.execute(
           'SELECT CAST(@@SESSION.max_execution_time AS CHAR) cap, CAST(@@SESSION.innodb_lock_wait_timeout AS CHAR) lock_seconds',
           undefined,
-          membershipQueryOptions(ctx)
+          primaryQueryOptions(ctx)
         );
       });
       await expect(
-        withMembershipPrimaryTransaction(
+        withPrimaryTransaction(
           db,
           async (ctx) => {
             connection = await physical(ctx, adapter);
-            await db.execute(
-              update,
-              { id: first },
-              membershipQueryOptions(ctx)
-            );
+            await db.execute(update, { id: first }, primaryQueryOptions(ctx));
             throw failure;
           },
           {},
           budget()
         )
       ).rejects.toBe(failure);
-      await withMembershipPrimaryTransaction(db, async (ctx) => {
+      await withPrimaryTransaction(db, async (ctx) => {
         expect(await physical(ctx, adapter)).toBe(connection);
         expect(
           await db.execute(
             'SELECT CAST(@@SESSION.max_execution_time AS CHAR) cap, CAST(@@SESSION.innodb_lock_wait_timeout AS CHAR) lock_seconds',
             undefined,
-            membershipQueryOptions(ctx)
+            primaryQueryOptions(ctx)
           )
         ).toEqual(original);
       });
@@ -194,16 +190,16 @@ describe.each(['API', 'LOOP'])(
     });
 
     it('aborts a SELECT, settles its promise and rolls back an earlier write even when the callback catches it', async () => {
-      let context: MembershipPrimaryContext | undefined;
+      let context: PrimaryTransactionContext | undefined;
       let destroyed: jest.SpyInstance | undefined;
       const began = performance.now();
       await expect(
-        withMembershipPrimaryTransaction(
+        withPrimaryTransaction(
           db,
           async (ctx) => {
             context = ctx;
             destroyed = jest.spyOn(await physical(ctx, adapter), 'destroy');
-            const options = membershipQueryOptions(ctx, {
+            const options = primaryQueryOptions(ctx, {
               maxStatementMillis: 80,
               deadlineMonotonicMillis: performance.now() + 600
             });
@@ -225,21 +221,21 @@ describe.each(['API', 'LOOP'])(
       expect(performance.now() - began).toBeLessThan(1500);
       // mysql Pool._purgeConnection re-enters PoolConnection.destroy once.
       expect(destroyed).toHaveBeenCalledTimes(2);
-      expect(() => assertMembershipPrimaryContext(context!)).toThrow(
+      expect(() => assertPrimaryTransactionContext(context!)).toThrow(
         'active primary'
       );
       await waitUntilUnlocked(observer);
       expect(await observer.execute(query, { id: first })).toEqual([
         { version: '1' }
       ]);
-      await withMembershipPrimaryTransaction(
+      await withPrimaryTransaction(
         db,
         async (ctx) => {
           expect(
             await db.execute(
               'SELECT CAST(1 AS CHAR) AS healthy',
               undefined,
-              membershipQueryOptions(ctx)
+              primaryQueryOptions(ctx)
             )
           ).toEqual([{ healthy: '1' }]);
         },
@@ -251,26 +247,26 @@ describe.each(['API', 'LOOP'])(
     it('establishes a repeatable-read snapshot even when the pooled session defaults to READ COMMITTED', async () => {
       let connection: mysql.PoolConnection | undefined;
       let isolation: string | undefined;
-      await withMembershipPrimaryTransaction(db, async (ctx) => {
+      await withPrimaryTransaction(db, async (ctx) => {
         connection = await physical(ctx, adapter);
         const rows = await db.execute<{ isolation: string }>(
           'SELECT @@SESSION.transaction_isolation AS isolation',
           undefined,
-          membershipQueryOptions(ctx)
+          primaryQueryOptions(ctx)
         );
         isolation = rows[0].isolation;
         await db.execute(
           'SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED',
           undefined,
-          membershipQueryOptions(ctx)
+          primaryQueryOptions(ctx)
         );
       });
       try {
-        await withMembershipPrimaryTransaction(
+        await withPrimaryTransaction(
           db,
           async (ctx) => {
             expect(await physical(ctx, adapter)).toBe(connection);
-            const options = membershipQueryOptions(ctx);
+            const options = primaryQueryOptions(ctx);
             expect(await db.execute(query, { id: first }, options)).toEqual([
               { version: '1' }
             ]);
@@ -300,7 +296,7 @@ describe.each(['API', 'LOOP'])(
           { version: '1' }
         ]);
       } finally {
-        await withMembershipPrimaryTransaction(db, async (ctx) => {
+        await withPrimaryTransaction(db, async (ctx) => {
           expect(await physical(ctx, adapter)).toBe(connection);
           const allowed = [
             'READ-UNCOMMITTED',
@@ -313,7 +309,7 @@ describe.each(['API', 'LOOP'])(
           await db.execute(
             `SET SESSION TRANSACTION ISOLATION LEVEL ${isolation.replace(/-/g, ' ')}`,
             undefined,
-            membershipQueryOptions(ctx)
+            primaryQueryOptions(ctx)
           );
         });
       }
@@ -323,10 +319,10 @@ describe.each(['API', 'LOOP'])(
       async (kind) => {
         const start = performance.now();
         await expect(
-          withMembershipPrimaryTransaction(
+          withPrimaryTransaction(
             db,
             async (ctx) => {
-              const options = membershipQueryOptions(ctx);
+              const options = primaryQueryOptions(ctx);
               expect(options.statementLimits).toBeUndefined();
               const selected =
                 kind === 'MEMBERSHIP_OPTIONS'
@@ -361,17 +357,13 @@ describe.each(['API', 'LOOP'])(
     );
 
     it('bounds an idle callback and releases its real transaction locks', async () => {
-      let context: MembershipPrimaryContext | undefined;
+      let context: PrimaryTransactionContext | undefined;
       await expect(
-        withMembershipPrimaryTransaction(
+        withPrimaryTransaction(
           db,
           async (ctx) => {
             context = ctx;
-            await db.execute(
-              update,
-              { id: first },
-              membershipQueryOptions(ctx)
-            );
+            await db.execute(update, { id: first }, primaryQueryOptions(ctx));
             return new Promise<never>(() => undefined);
           },
           {},
@@ -382,7 +374,7 @@ describe.each(['API', 'LOOP'])(
         commitOutcome: 'NOT_SENT',
         connectionDestroyed: true
       });
-      expect(() => assertMembershipPrimaryContext(context!)).toThrow(
+      expect(() => assertPrimaryTransactionContext(context!)).toThrow(
         'active primary'
       );
       await waitUntilUnlocked(observer);
@@ -403,7 +395,7 @@ describe.each(['API', 'LOOP'])(
         release = resolve;
       });
       const holders = Array.from({ length: capacity }, () =>
-        withMembershipPrimaryTransaction(db, async () => {
+        withPrimaryTransaction(db, async () => {
           count++;
           if (count === capacity) acquired();
           await hold;
@@ -413,7 +405,7 @@ describe.each(['API', 'LOOP'])(
       try {
         await ready;
         await expect(
-          withMembershipPrimaryTransaction(db, callback, {}, budget(40))
+          withPrimaryTransaction(db, callback, {}, budget(40))
         ).rejects.toMatchObject({
           phase: 'ACQUIRE',
           commitOutcome: 'NOT_SENT'
@@ -423,14 +415,14 @@ describe.each(['API', 'LOOP'])(
         release();
         await Promise.all(holders);
       }
-      await withMembershipPrimaryTransaction(
+      await withPrimaryTransaction(
         db,
         async (ctx) => {
           expect(
             await db.execute(
               'SELECT CAST(1 AS CHAR) AS healthy',
               undefined,
-              membershipQueryOptions(ctx)
+              primaryQueryOptions(ctx)
             )
           ).toEqual([{ healthy: '1' }]);
         },
@@ -451,25 +443,22 @@ describe.each(['API', 'LOOP'])(
         const hold = new Promise<void>((resolve) => {
           unblock = resolve;
         });
-        const blocker = withMembershipPrimaryTransaction(
-          observer,
-          async (ctx) => {
-            await observer.execute(
-              `${query} FOR UPDATE`,
-              { id: second },
-              membershipQueryOptions(ctx)
-            );
-            locked();
-            await hold;
-          }
-        );
+        const blocker = withPrimaryTransaction(observer, async (ctx) => {
+          await observer.execute(
+            `${query} FOR UPDATE`,
+            { id: second },
+            primaryQueryOptions(ctx)
+          );
+          locked();
+          await hold;
+        });
         await ready;
         try {
           await expect(
-            withMembershipPrimaryTransaction(
+            withPrimaryTransaction(
               db,
               async (ctx) => {
-                const options = membershipQueryOptions(ctx);
+                const options = primaryQueryOptions(ctx);
                 await db.execute(update, { id: first }, options);
                 await db.execute(
                   nowait ? `${query} FOR UPDATE NOWAIT` : update,
@@ -503,7 +492,7 @@ describe.each(['API', 'LOOP'])(
     it('reports UNKNOWN after a real COMMIT whose acknowledgment is withheld, then reconciles committed data', async () => {
       let connection: mysql.PoolConnection | undefined;
       // Intercept the original physical method before the budget installs its wrapper.
-      await withMembershipPrimaryTransaction(db, async (ctx) => {
+      await withPrimaryTransaction(db, async (ctx) => {
         connection = await physical(ctx, adapter);
       });
       const original = connection!.query;
@@ -520,14 +509,10 @@ describe.each(['API', 'LOOP'])(
       } as mysql.PoolConnection['query'];
       try {
         await expect(
-          withMembershipPrimaryTransaction(
+          withPrimaryTransaction(
             db,
             async (ctx) => {
-              await db.execute(
-                update,
-                { id: first },
-                membershipQueryOptions(ctx)
-              );
+              await db.execute(update, { id: first }, primaryQueryOptions(ctx));
             },
             {},
             budget(1000, 80)
@@ -547,7 +532,7 @@ describe.each(['API', 'LOOP'])(
 
     it('preserves real acknowledged commit when session restoration acknowledgment is withheld', async () => {
       let connection: mysql.PoolConnection | undefined;
-      await withMembershipPrimaryTransaction(db, async (ctx) => {
+      await withPrimaryTransaction(db, async (ctx) => {
         connection = await physical(ctx, adapter);
       });
       const original = connection!.query;
@@ -566,14 +551,10 @@ describe.each(['API', 'LOOP'])(
       const destroy = jest.spyOn(connection!, 'destroy');
       try {
         await expect(
-          withMembershipPrimaryTransaction(
+          withPrimaryTransaction(
             db,
             async (ctx) => {
-              await db.execute(
-                update,
-                { id: first },
-                membershipQueryOptions(ctx)
-              );
+              await db.execute(update, { id: first }, primaryQueryOptions(ctx));
               return 'committed';
             },
             {},
@@ -605,7 +586,7 @@ describe.each(['API', 'LOOP'])(
         });
         const work = jest.fn().mockResolvedValue('never');
         await expect(
-          withMembershipPrimaryTransaction(db, work, {}, budget())
+          withPrimaryTransaction(db, work, {}, budget())
         ).rejects.toMatchObject({
           code: 'SQL_TRANSACTION_CONTROL',
           phase: 'SETUP',
@@ -618,16 +599,12 @@ describe.each(['API', 'LOOP'])(
         const failure = new Error('rollback outer');
         let runner: QueryRunner | undefined;
         await expect(
-          withMembershipPrimaryTransaction(
+          withPrimaryTransaction(
             db,
             async (ctx) => {
               runner = ctx.connection.connection as QueryRunner;
               expect(runner.isTransactionActive).toBe(true);
-              await db.execute(
-                update,
-                { id: first },
-                membershipQueryOptions(ctx)
-              );
+              await db.execute(update, { id: first }, primaryQueryOptions(ctx));
               await runner.manager.save(MembershipSourceStateEntity, {
                 scope: 'PROFILE',
                 target_id: second,
@@ -658,14 +635,10 @@ describe.each(['API', 'LOOP'])(
 
       it('rejects caller outer commit before send and rolls back an earlier write', async () => {
         await expect(
-          withMembershipPrimaryTransaction(
+          withPrimaryTransaction(
             db,
             async (ctx) => {
-              await db.execute(
-                update,
-                { id: first },
-                membershipQueryOptions(ctx)
-              );
+              await db.execute(update, { id: first }, primaryQueryOptions(ctx));
               await (
                 ctx.connection.connection as QueryRunner
               ).commitTransaction();
@@ -691,14 +664,10 @@ describe.each(['API', 'LOOP'])(
           }
         });
         await expect(
-          withMembershipPrimaryTransaction(
+          withPrimaryTransaction(
             db,
             async (ctx) => {
-              await db.execute(
-                update,
-                { id: first },
-                membershipQueryOptions(ctx)
-              );
+              await db.execute(update, { id: first }, primaryQueryOptions(ctx));
               return 'uncommitted';
             },
             {},
@@ -720,14 +689,10 @@ describe.each(['API', 'LOOP'])(
         });
         const started = performance.now();
         const failWork = new Error('rollback requested');
-        const operation = withMembershipPrimaryTransaction(
+        const operation = withPrimaryTransaction(
           db,
           async (ctx) => {
-            await db.execute(
-              update,
-              { id: first },
-              membershipQueryOptions(ctx)
-            );
+            await db.execute(update, { id: first }, primaryQueryOptions(ctx));
             if (hook === 'beforeTransactionRollback') throw failWork;
             return 'never';
           },
@@ -762,14 +727,10 @@ describe.each(['API', 'LOOP'])(
           }
         });
         await expect(
-          withMembershipPrimaryTransaction(
+          withPrimaryTransaction(
             db,
             async (ctx) => {
-              await db.execute(
-                update,
-                { id: first },
-                membershipQueryOptions(ctx)
-              );
+              await db.execute(update, { id: first }, primaryQueryOptions(ctx));
               return 'committed';
             },
             {},
@@ -790,14 +751,10 @@ describe.each(['API', 'LOOP'])(
             new Promise<never>(() => undefined)
         });
         await expect(
-          withMembershipPrimaryTransaction(
+          withPrimaryTransaction(
             db,
             async (ctx) => {
-              await db.execute(
-                update,
-                { id: first },
-                membershipQueryOptions(ctx)
-              );
+              await db.execute(update, { id: first }, primaryQueryOptions(ctx));
               return 'committed';
             },
             {},

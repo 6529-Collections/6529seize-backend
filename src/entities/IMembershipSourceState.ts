@@ -3,9 +3,9 @@ import { Column, Entity, PrimaryColumn } from 'typeorm';
 import type {
   MembershipSourceScope,
   MembershipSourceDimension
-} from '@/membership/membership-schema.types';
+} from '@/entities/membership-schema.types';
 
-/** See docs/membership-refresh-design.md for the publication protocol. */
+/** Retained schema for the retired experiment; see docs/membership-retirement.md. */
 @Entity(MEMBERSHIP_SOURCE_STATES_TABLE)
 export class MembershipSourceStateEntity {
   @PrimaryColumn({ type: 'varchar', length: 20, nullable: false })
