@@ -182,10 +182,17 @@ are durably archived before acknowledgement and raise `AdmissionOverflow`.
 Normal webhook sends also share a DynamoDB rate slot (one every two seconds per
 environment), leaving vendor capacity for critical traffic. Slot contention
 defers delivery through SQS; sustained overload can exhaust retries and is archived.
-Within a five-minute fingerprint window, the first occurrence is sent promptly;
+Within the existing five-minute fingerprint window, the first occurrence is sent
+promptly;
 repeats update a durable count. The scheduled summary edits the first confirmed
 message when its receipt identifies the same group and webhook destination.
+Safe allowlisted push condition labels distinguish
+sender mismatch, provider transients, delivery failure and retry exhaustion.
 Critical/recovery events bypass grouping and continue sending immediately.
+The push queue has independent source alarms for any visible dead letter and
+oldest-message age of at least 30 minutes in three out of five minutes. These
+alarms cover handled partial failures that do not increment Lambda Errors. See
+[push recovery](../docs/operations/push-delivery-recovery.md).
 Confirmed grouping transaction conflicts get up to three
 application transaction sends sharing a three-second abort signal for requests
 and short jittered waits. Each send retains the SDK's existing retry configuration;

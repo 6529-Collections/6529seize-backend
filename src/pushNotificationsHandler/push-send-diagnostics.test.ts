@@ -3,6 +3,9 @@ import { withOperationalContext } from '@/operational-errors';
 import { transports } from 'winston';
 import {
   createPushSendDiagnostic,
+  DeviceBadgeBusyError,
+  PushRedisOperationError,
+  reportPushDeliveryFailure,
   reportPushImageRetry,
   reportPushSendDiagnostic
 } from './push-send-diagnostics';
@@ -47,6 +50,37 @@ describe('push send diagnostics', () => {
       }
     });
   }
+
+  it('distinguishes Redis state failures with a fixed privacy-safe diagnostic', () => {
+    reportPushDeliveryFailure(new PushRedisOperationError(), 'delivery');
+    expect(envelopes()).toHaveLength(1);
+    expect(envelopes()[0].condition).toBe('PUSH_DELIVERY_FAILED');
+    expect(localOutput.join(' ')).toContain('delivery/REDIS_OPERATION_FAILED');
+    expect(localOutput.join(' ')).not.toContain('delivery/UNKNOWN');
+  });
+
+  it('keeps expected lock contention out of operational error envelopes', () => {
+    reportPushDeliveryFailure(new DeviceBadgeBusyError(), 'badge_refresh');
+    expect(envelopes()).toEqual([]);
+    expect(localOutput.join(' ')).toContain('bounded lock retry');
+  });
+
+  it('separates safe provider conditions across badge stages', () => {
+    reportPushDeliveryFailure(
+      { code: 'messaging/mismatched-credential', message: privateText },
+      'badge_refresh'
+    );
+    reportPushDeliveryFailure(
+      { code: 'messaging/internal-error', message: privateText },
+      'badge_refresh'
+    );
+    expect(envelopes().map((event) => event.condition)).toEqual([
+      'PUSH_SENDER_MISMATCH',
+      'PUSH_PROVIDER_TRANSIENT'
+    ]);
+    expect(envelopes()[0].fingerprint).not.toBe(envelopes()[1].fingerprint);
+    expect(JSON.stringify(envelopes())).not.toContain(privateText);
+  });
 
   it.each([
     ['mismatched-credential', 'FCM_MISMATCHED_CREDENTIAL'],

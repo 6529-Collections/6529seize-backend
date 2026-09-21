@@ -227,25 +227,88 @@ describe('push send outcomes across reporting layers', () => {
     expect(envelopes()).toHaveLength(1);
   });
 
-  it('retains the existing no-retry decision when invalid-token cleanup itself fails', async () => {
+  it.each([
+    'messaging/invalid-registration-token',
+    'messaging/registration-token-not-registered'
+  ])('retries failed cleanup for %s until deletion succeeds', async (code) => {
+    sendEach.mockResolvedValue({
+      successCount: 0,
+      failureCount: 1,
+      responses: [{ success: false, error: providerError(code) }]
+    });
+    deleteDevice.mockRejectedValueOnce(new Error('synthetic database failure'));
+    const inputs = [input(7)];
+    const batch = messages(inputs);
+    await expect(
+      handleSendResults(batch, await sendMessages(inputs))
+    ).resolves.toEqual([7]);
+    await expect(
+      handleSendResults(batch, await sendMessages(inputs))
+    ).resolves.toEqual([]);
+    expect(deleteDevice).toHaveBeenCalledTimes(2);
+    expect(deleteDevice).toHaveBeenLastCalledWith({
+      profile_id: 'profile',
+      device_id: 'device-0',
+      token: 'token-1'
+    });
+  });
+
+  it('does not let another successful device hide failed invalid-token cleanup', async () => {
+    sendEach.mockResolvedValue({
+      successCount: 1,
+      failureCount: 1,
+      responses: [
+        {
+          success: false,
+          error: providerError('messaging/registration-token-not-registered')
+        },
+        { success: true, messageId: 'accepted' }
+      ]
+    });
+    deleteDevice.mockRejectedValueOnce(new Error('synthetic database failure'));
+    const inputs = [input(7, 1), input(7, 2)];
+    await expect(
+      handleSendResults(messages(inputs), await sendMessages(inputs))
+    ).resolves.toEqual([7]);
+  });
+
+  it('acknowledges a cleanup retry when the old token was replaced, preserving the replacement', async () => {
+    const current = {
+      profile_id: 'profile',
+      device_id: 'device-0',
+      token: 'replacement-token'
+    };
+    const rows = [current];
+    deleteDevice.mockImplementation(async (criteria) => {
+      const index = rows.findIndex(
+        (row) =>
+          row.profile_id === criteria.profile_id &&
+          row.device_id === criteria.device_id &&
+          row.token === criteria.token
+      );
+      if (index >= 0) rows.splice(index, 1);
+      return { affected: index >= 0 ? 1 : 0 };
+    });
     sendEach.mockResolvedValue({
       successCount: 0,
       failureCount: 1,
       responses: [
         {
           success: false,
-          error: providerError('messaging/registration-token-not-registered')
+          error: providerError('messaging/invalid-registration-token')
         }
       ]
     });
-    deleteDevice.mockRejectedValue(new Error('synthetic database failure'));
     const inputs = [input(7)];
-    await withOperationalContext('request-cleanup-failed', async () => {
-      await expect(
-        handleSendResults(messages(inputs), await sendMessages(inputs))
-      ).resolves.toEqual([]);
+    await expect(
+      handleSendResults(messages(inputs), await sendMessages(inputs))
+    ).resolves.toEqual([]);
+    expect(rows).toEqual([current]);
+    expect(deleteDevice).toHaveBeenCalledWith({
+      profile_id: 'profile',
+      device_id: 'device-0',
+      token: 'token-1'
     });
-    expect(deleteDevice).toHaveBeenCalledTimes(1);
   });
 
   it('recovers without image and emits no terminal alert or provider message', async () => {

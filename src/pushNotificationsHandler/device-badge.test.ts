@@ -174,3 +174,11 @@ it('counts remaining profiles when logout removed the latest-token registration'
     profileIds: new Set()
   });
 });
+
+it('waits briefly for a competing delivery and runs once the lock is available', async () => {
+  redisSet.mockResolvedValueOnce(null).mockResolvedValueOnce('OK');
+  const action = jest.fn().mockResolvedValue('sent');
+  await expect(withDeviceBadgeLock(device, action)).resolves.toBe('sent');
+  expect(redisSet).toHaveBeenCalledTimes(2);
+  expect(action).toHaveBeenCalledTimes(1);
+});

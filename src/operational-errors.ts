@@ -5,7 +5,11 @@ import { ApiCompliantException } from '@/exceptions';
 const CONDITIONS = [
   'SUBSCRIPTION_NOT_FOUND',
   'SUBSCRIPTION_BALANCE_NOT_FOUND',
-  'SUBSCRIPTION_BALANCE_INSUFFICIENT'
+  'SUBSCRIPTION_BALANCE_INSUFFICIENT',
+  'PUSH_SENDER_MISMATCH',
+  'PUSH_PROVIDER_TRANSIENT',
+  'PUSH_DELIVERY_FAILED',
+  'PUSH_RETRY_EXHAUSTED'
 ] as const;
 export type OperationalCondition = (typeof CONDITIONS)[number];
 
@@ -93,6 +97,9 @@ export function operationalError(
       severity: 'error',
       code,
       fingerprint,
+      ...(discriminator.startsWith('PUSH_')
+        ? { condition: discriminator }
+        : {}),
       ...(correlationId ? { correlationId } : {}),
       ...(release ? { release } : {})
     };

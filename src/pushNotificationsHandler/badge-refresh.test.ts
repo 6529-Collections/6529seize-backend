@@ -1,4 +1,15 @@
 import {
+  isPushTargetQuarantined,
+  quarantinePushTarget
+} from '@/pushNotificationsHandler/push-delivery-state';
+jest.mock('@/pushNotificationsHandler/push-delivery-state', () => ({
+  ...jest.requireActual('@/pushNotificationsHandler/push-delivery-state'),
+  isPushTargetQuarantined: jest.fn().mockResolvedValue(false),
+  quarantinePushTarget: jest.fn().mockResolvedValue(undefined),
+  deliveredPushIds: jest.fn().mockResolvedValue(new Set()),
+  recordDeliveredPush: jest.fn().mockResolvedValue(undefined)
+}));
+import {
   refreshProfileBadges,
   refreshInstallationBadge
 } from './badge-refresh';
@@ -31,6 +42,8 @@ jest.mock('./device-badge', () => ({
 const phone = { device_id: 'phone', token: 'token', platform: 'ios' };
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(isPushTargetQuarantined).mockReset().mockResolvedValue(false);
+  jest.mocked(quarantinePushTarget).mockReset().mockResolvedValue(undefined);
   jest
     .mocked(withDeviceBadgeLock)
     .mockImplementation(async (_device, action) => action());
@@ -228,4 +241,42 @@ it('sequences rotated tokens on one device while another device progresses', asy
   expect(await work).toEqual([]);
   expect(sendBadgeUpdate).toHaveBeenCalledWith('new', 1);
   expect(sendBadgeUpdate).toHaveBeenCalledTimes(3);
+});
+
+it.each(['profile', 'installation'])(
+  'quarantines a mismatched %s refresh and acknowledges it',
+  async (kind) => {
+    jest.mocked(sendBadgeUpdate).mockRejectedValue(
+      Object.assign(new Error('private provider details'), {
+        code: 'messaging/mismatched-credential'
+      })
+    );
+    if (kind === 'profile') {
+      expect(await refreshProfileBadges(['a'])).toEqual([]);
+    } else {
+      await expect(refreshInstallationBadge('phone')).resolves.toBeUndefined();
+    }
+    expect(quarantinePushTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ device_id: 'phone', token: 'token' })
+    );
+    expect(deleteDevice).not.toHaveBeenCalled();
+    jest.mocked(sendBadgeUpdate).mockClear();
+    jest.mocked(isPushTargetQuarantined).mockResolvedValue(true);
+    await refreshProfileBadges(['a']);
+    await refreshInstallationBadge('phone');
+    expect(sendBadgeUpdate).not.toHaveBeenCalled();
+  }
+);
+
+it('retries mismatch if quarantine persistence fails', async () => {
+  jest
+    .mocked(sendBadgeUpdate)
+    .mockRejectedValue({ code: 'messaging/mismatched-credential' });
+  jest
+    .mocked(quarantinePushTarget)
+    .mockRejectedValue(new Error('Redis unavailable'));
+  expect(await refreshProfileBadges(['a'])).toEqual(['a', 'b']);
+  await expect(refreshInstallationBadge('phone')).rejects.toThrow(
+    'Redis unavailable'
+  );
 });

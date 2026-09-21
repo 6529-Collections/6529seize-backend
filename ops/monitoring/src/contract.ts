@@ -20,6 +20,14 @@ export interface AlarmMetadata {
   periodSeconds?: number;
   threshold?: number;
 }
+const CONDITIONS = [
+  'PUSH_SENDER_MISMATCH',
+  'PUSH_PROVIDER_TRANSIENT',
+  'PUSH_DELIVERY_FAILED',
+  'PUSH_RETRY_EXHAUSTED'
+] as const;
+type Condition = (typeof CONDITIONS)[number];
+
 export interface Alert {
   _type: typeof EVENT_TYPE;
   eventId: string;
@@ -29,6 +37,7 @@ export interface Alert {
   severity: Severity;
   code: Code;
   fingerprint: string;
+  condition?: Condition;
   correlationId?: string;
   release?: string;
   alarm?: AlarmMetadata;
@@ -100,6 +109,8 @@ export function parseAlert(input: unknown): Alert {
     code: v.code as Code,
     fingerprint: v.fingerprint as string
   };
+  const condition = CONDITIONS.find((value) => value === v.condition);
+  if (condition) alert.condition = condition;
   const correlationId = token(v.correlationId);
   const release = token(v.release, 64);
   if (correlationId) alert.correlationId = correlationId;
@@ -148,6 +159,9 @@ export function renderAlert(alert: Alert, count = 1): object {
           ...alarmFields(alert.alarm),
           { name: 'Event', value: alert.eventId },
           { name: 'Fingerprint', value: alert.fingerprint },
+          ...(alert.condition
+            ? [{ name: 'Condition', value: alert.condition }]
+            : []),
           ...(alert.correlationId
             ? [{ name: 'Correlation', value: alert.correlationId }]
             : []),

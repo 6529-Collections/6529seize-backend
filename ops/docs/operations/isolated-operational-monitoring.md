@@ -46,7 +46,8 @@ successful recovery. Do not infer the cause of older generic failure logs from
 new diagnostics, or change alarm thresholds to hide unresolved failures.
 
 A monitoring-runtime change uses `Deploy operational monitoring` with the
-reviewed exact merged SHA. The shared monitoring bundle updates the configured
+environment-selected branch (`main` for `prod`, `1a-staging` for `staging`).
+The run pins its dispatch commit automatically; there is no commit-SHA input. The shared monitoring bundle updates the configured
 runtime functions, including both dispatchers; unchanged application producers,
 source relay stacks, IAM policies and subscriptions do not need a rollout. Keep
 the existing Coordinator workstream identity and follow current deployment
@@ -115,8 +116,17 @@ before enabling a new fallback destination.
 
 ## Deploy and connect sources
 
-1. Merge reviewed code and run `Deploy operational monitoring` from `main`, with
-   the exact full merged SHA and environment. The workflow verifies ancestry,
+The GitHub environment deployment-branch policies must match the workflow:
+`monitoring-staging` allows only `1a-staging`, and `monitoring-prod` allows only
+`main`. Updating these environment policies requires repository admin access;
+a workflow change alone cannot override a policy that still restricts staging
+to `main`.
+
+1. Merge reviewed code into `1a-staging` for staging or `main` for production,
+   then run `Deploy operational monitoring` from that branch with the matching
+   environment (`staging` or `prod`). The branch mapping is fixed: mismatched
+   dispatch branches fail before checkout or AWS authentication. The workflow
+   pins checkout and artifact metadata to the dispatch SHA, verifies checkout,
    installs/tests/builds only this package, obtains its dedicated OIDC session,
    verifies the monitoring account and artifact-bucket owner, and deploys through
    the separate CloudFormation role. Artifacts use `{environment}/{sha}` prefixes.
