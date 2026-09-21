@@ -288,3 +288,45 @@ it.each(['missing', 'reordered'])(
     expect(results).not.toHaveBeenCalled();
   }
 );
+
+jest.mock('@/redis', () => ({
+  getRedisClient: () => ({
+    get: async (key: string) => receiptValues.get(key) ?? null,
+    set: async (key: string, value: string) => {
+      receiptValues.set(key, value);
+      return 'OK';
+    },
+    mGet: async () => {
+      throw new Error("CROSSSLOT Keys in request don't hash to the same slot");
+    }
+  })
+}));
+const receiptValues = new Map<string, string>();
+
+it('delivers both profiles on one device with real receipt logic and skips them on redelivery', async () => {
+  const originalProject = process.env.FIREBASE_PROJECT_ID;
+  process.env.FIREBASE_PROJECT_ID = 'test-project';
+  receiptValues.clear();
+  const actual = jest.requireActual<typeof import('./push-delivery-state')>(
+    './push-delivery-state'
+  );
+  jest.mocked(deliveredPushIds).mockImplementation(actual.deliveredPushIds);
+  jest
+    .mocked(recordDeliveredPush)
+    .mockImplementation(actual.recordDeliveredPush);
+  const messages = [message(8330, 'a'), message(8331, 'b')];
+  try {
+    expect(await sendIdentityPushGroups(messages, results)).toEqual([]);
+    expect(sendMessages).toHaveBeenCalledTimes(1);
+    expect(
+      jest
+        .mocked(sendMessages)
+        .mock.calls[0][0].map((input) => input.notification_id)
+    ).toEqual([8330, 8331]);
+    expect(await sendIdentityPushGroups(messages, results)).toEqual([]);
+    expect(sendMessages).toHaveBeenCalledTimes(1);
+  } finally {
+    if (originalProject === undefined) delete process.env.FIREBASE_PROJECT_ID;
+    else process.env.FIREBASE_PROJECT_ID = originalProject;
+  }
+});

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { getRedisClient } from '@/redis';
+import { PushRedisOperationError } from '@/pushNotificationsHandler/push-send-diagnostics';
 import type { BadgeDevice } from '@/pushNotificationsHandler/device-badge';
 
 const RECEIPT_SECONDS = 8 * 86400;
@@ -9,6 +10,15 @@ function redis() {
   const client = getRedisClient();
   if (!client) throw new Error('Push delivery state requires Redis');
   return client;
+}
+
+async function redisOperation<T>(action: () => Promise<T>): Promise<T> {
+  try {
+    return await action();
+  } catch {
+    // Preserve failure/retry semantics without retaining Redis messages or keys.
+    throw new PushRedisOperationError();
+  }
 }
 
 function key(kind: string, parts: readonly (string | number)[]): string {
@@ -35,13 +45,17 @@ export function isSenderMismatch(error: unknown): boolean {
 
 /** Keep registrations intact; a rotated token/project immediately uses another key. */
 export async function quarantinePushTarget(device: BadgeDevice): Promise<void> {
-  await redis().set(quarantineKey(device), '1', { EX: QUARANTINE_SECONDS });
+  const targetKey = quarantineKey(device);
+  await redisOperation(() =>
+    redis().set(targetKey, '1', { EX: QUARANTINE_SECONDS })
+  );
 }
 
 export async function isPushTargetQuarantined(
   device: BadgeDevice
 ): Promise<boolean> {
-  return (await redis().get(quarantineKey(device))) !== null;
+  const targetKey = quarantineKey(device);
+  return (await redisOperation(() => redis().get(targetKey))) !== null;
 }
 
 function receiptKey(deviceId: string, notificationId: number): string {
@@ -55,7 +69,13 @@ export async function deliveredPushIds(
   ids: number[]
 ): Promise<Set<number>> {
   if (!ids.length) return new Set();
-  const values = await redis().mGet(ids.map((id) => receiptKey(deviceId, id)));
+  const keys = ids.map((id) => receiptKey(deviceId, id));
+  // Independent keys may occupy different Redis Cluster slots. Keep the v1
+  // keys so existing receipts still prevent duplicate sends after this upgrade.
+  const values = await redisOperation(() => {
+    const client = redis();
+    return Promise.all(keys.map((receipt) => client.get(receipt)));
+  });
   return new Set(ids.filter((_id, index) => values[index] === '1'));
 }
 
@@ -64,7 +84,8 @@ export async function recordDeliveredPush(
   deviceId: string,
   notificationId: number
 ): Promise<void> {
-  await redis().set(receiptKey(deviceId, notificationId), '1', {
-    EX: RECEIPT_SECONDS
-  });
+  const targetKey = receiptKey(deviceId, notificationId);
+  await redisOperation(() =>
+    redis().set(targetKey, '1', { EX: RECEIPT_SECONDS })
+  );
 }

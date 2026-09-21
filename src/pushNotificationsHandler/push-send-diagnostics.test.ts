@@ -4,6 +4,7 @@ import { transports } from 'winston';
 import {
   createPushSendDiagnostic,
   DeviceBadgeBusyError,
+  PushRedisOperationError,
   reportPushDeliveryFailure,
   reportPushImageRetry,
   reportPushSendDiagnostic
@@ -49,6 +50,14 @@ describe('push send diagnostics', () => {
       }
     });
   }
+
+  it('distinguishes Redis state failures with a fixed privacy-safe diagnostic', () => {
+    reportPushDeliveryFailure(new PushRedisOperationError(), 'delivery');
+    expect(envelopes()).toHaveLength(1);
+    expect(envelopes()[0].condition).toBe('PUSH_DELIVERY_FAILED');
+    expect(localOutput.join(' ')).toContain('delivery/REDIS_OPERATION_FAILED');
+    expect(localOutput.join(' ')).not.toContain('delivery/UNKNOWN');
+  });
 
   it('keeps expected lock contention out of operational error envelopes', () => {
     reportPushDeliveryFailure(new DeviceBadgeBusyError(), 'badge_refresh');
