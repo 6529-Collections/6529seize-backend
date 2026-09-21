@@ -1,7 +1,6 @@
 {
   "environment": "prod",
   "source": "src/config/deploy-services.json",
-  "retainedSource": "ops/monitoring/retained-services.json",
   "services": [
     {
       "service": "api",
@@ -240,30 +239,6 @@
       "region": "us-east-1",
       "functions": [
         "mediaResizerLoop"
-      ],
-      "coverage": [
-        "structured-error-logs",
-        "lambda-errors",
-        "lambda-throttles"
-      ]
-    },
-    {
-      "service": "membershipRefreshLoop",
-      "region": "us-east-1",
-      "functions": [
-        "membershipRefreshLoop"
-      ],
-      "coverage": [
-        "structured-error-logs",
-        "lambda-errors",
-        "lambda-throttles"
-      ]
-    },
-    {
-      "service": "membershipRefreshDispatcherLoop",
-      "region": "us-east-1",
-      "functions": [
-        "membershipRefreshDispatcherLoop"
       ],
       "coverage": [
         "structured-error-logs",

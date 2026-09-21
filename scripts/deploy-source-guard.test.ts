@@ -174,13 +174,10 @@ describe('generated deployment source guard', () => {
       default: 'full',
       options: [
         'full',
+        'maintenance',
         'wallet-transfer-analysis',
         'claims-media-upload',
-        'nft-link-page-retry',
-        'membership-refresh',
-        'membership-evaluator-index',
-        'membership-runtime-control',
-        'membership-backfill-probes'
+        'nft-link-page-retry'
       ]
     });
     expect(job.env.DB_SCHEMA_SCOPE).toBe(
@@ -265,12 +262,10 @@ describe('generated deployment source guard', () => {
 
   it.each([
     'full',
+    'maintenance',
     'wallet-transfer-analysis',
     'claims-media-upload',
-    'nft-link-page-retry',
-    'membership-refresh',
-    'membership-evaluator-index',
-    'membership-backfill-probes'
+    'nft-link-page-retry'
   ])('forwards validated %s as one JSON invocation payload', (scope) => {
     const result = invokeMigrationScope(scope);
     expect(result.error).toBeUndefined();
@@ -355,23 +350,6 @@ describe('generated deployment source guard', () => {
       expect(result.stdout).toContain('did not acknowledge');
     }
   );
-  it('restricts backfill probe schema to the migration carrier and validates its acknowledgment', () => {
-    expect(
-      validateDispatch(sourceSha, 'staging', {
-        INPUT_SERVICE: 'api',
-        DB_SCHEMA_SCOPE: 'membership-backfill-probes'
-      }).status
-    ).toBe(1);
-    expect(invokeMigrationScope('membership-backfill-probes').status).toBe(0);
-    expect(
-      invokeMigrationScope(
-        'membership-backfill-probes',
-        { StatusCode: 200 },
-        { schema_scope: 'membership-refresh' }
-      ).status
-    ).toBe(1);
-  });
-
   it('offers no retired runtime or reader controls', () => {
     const inputs = Object.keys(workflow.on.workflow_dispatch.inputs);
     expect(inputs.filter((name) => name.startsWith('membership_'))).toEqual([]);
