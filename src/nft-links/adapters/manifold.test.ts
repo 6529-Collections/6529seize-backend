@@ -43,6 +43,105 @@ describe('Manifold instance metadata through the real adapter and resolver', () 
     jest.mocked(getAdapterFor).mockReturnValue(new ManifoldAdapter());
   });
 
+  it('resolves claim asset metadata without fetching a failing page', async () => {
+    serveInstance({
+      id: 1234567,
+      publicData: {
+        asset: { ...token, animation_url: 'https://example.com/video.mp4' },
+        mintPrice: { value: '0', currency: 'ETH', decimals: 18 }
+      }
+    });
+    const card = await new NftLinkResolver().resolve(viewUrl, {});
+    expect(card.asset).toMatchObject({
+      title: token.name,
+      description: token.description,
+      media: {
+        kind: 'animation',
+        imageUrl,
+        animationUrl: 'https://example.com/video.mp4'
+      }
+    });
+    expect(card.market.saleType).toBe('CLAIM');
+    expect(card.market.price).toEqual({ amount: '0.0', currency: 'ETH' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([undefined, 7654321])(
+    'rejects unbound claim asset ID %s',
+    async (id) => {
+      await expect(
+        resolveInstance({ id, publicData: { asset: token } })
+      ).rejects.toThrow('Invalid Manifold instance response');
+    }
+  );
+
+  it('normalizes claim asset image aliases and ignores invalid animation', async () => {
+    const cid = 'QmYwAPJzv5CZsnAzt8auVTL6rQJ8K8Y1YwecqHHU1Q6iCk';
+    const result = await resolveInstance({
+      id: 1234567,
+      publicData: {
+        asset: {
+          name: token.name,
+          image_url: `ipfs://${cid}/image.png`,
+          animation: 'javascript:alert(1)'
+        }
+      }
+    });
+    expect(result?.patch.asset?.media).toEqual({
+      kind: 'image',
+      imageUrl: `https://media.6529.io/ipfs/${cid}/image.png`
+    });
+  });
+
+  it.each([undefined, '7000'])(
+    'allows a slow slug lookup and metadata fetch with timeout %s',
+    async (override) => {
+      const previous = process.env.MANIFOLD_TIMEOUT_MS;
+      if (override) process.env.MANIFOLD_TIMEOUT_MS = override;
+      else delete process.env.MANIFOLD_TIMEOUT_MS;
+      jest.useFakeTimers();
+      try {
+        const slugUrl = 'https://app.manifold.xyz/c/synthetic-claim';
+        jest.mocked(fetch).mockImplementation(
+          (url, options) =>
+            new Promise((resolve, reject) => {
+              options?.signal?.addEventListener('abort', () =>
+                reject(new Error('aborted'))
+              );
+              setTimeout(
+                () =>
+                  resolve(
+                    new Response(
+                      String(url) === slugUrl
+                        ? '<script>{"instanceId":1234567}</script>'
+                        : JSON.stringify({
+                            id: 1234567,
+                            publicData: { asset: token }
+                          }),
+                      { status: 200, url: String(url) }
+                    )
+                  ),
+                override ? 5500 : 2000
+              );
+            })
+        );
+        const pending = new ManifoldAdapter().resolveFast(
+          validateLinkUrl(slugUrl)
+        );
+        const assertion = expect(pending).resolves.toMatchObject({
+          patch: { asset: { title: token.name } }
+        });
+        await jest.advanceTimersByTimeAsync(override ? 11000 : 4000);
+        await assertion;
+        expect(fetch).toHaveBeenCalledTimes(2);
+      } finally {
+        jest.useRealTimers();
+        if (previous === undefined) delete process.env.MANIFOLD_TIMEOUT_MS;
+        else process.env.MANIFOLD_TIMEOUT_MS = previous;
+      }
+    }
+  );
+
   it('resolves selected-token title and media without fetching a failing OG page', async () => {
     serveInstance({
       id: 1234567,
