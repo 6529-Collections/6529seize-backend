@@ -15,7 +15,7 @@ module.exports = {
     '<rootDir>/src/artwork-documentation/assets/artwork-assets-c2pa.test.ts',
     '<rootDir>/src/media/media-runtime.test.ts',
     '<rootDir>/src/media/media-dependency-smoke.test.ts',
-    '<rootDir>/src/mediaResizerLoop/media-resizer-runtime.test.ts',
+    '<rootDir>/src/mediaResizerLoop/*.test.ts',
     '<rootDir>/src/nft-links/nft-link-media-preview.test.ts',
     '<rootDir>/src/artwork-documentation/assets/artwork-assets-processor.test.ts',
     '<rootDir>/src/artwork-documentation/assets/artwork-assets-av.test.ts',
