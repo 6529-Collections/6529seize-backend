@@ -10,19 +10,12 @@ import { ApiPushNotificationDevice } from '../generated/models/ApiPushNotificati
 import { ApiRegisterPushNotificationTokenRequest } from '../generated/models/ApiRegisterPushNotificationTokenRequest';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { pushNotificationSettingsDb } from './push-notification-settings.db';
-import {
-  deleteDevice,
-  getDevicesForProfile,
-  savePushNotificationDevice
-} from './push-notifications.db';
+import { deleteDevice, getDevicesForProfile } from './push-notifications.db';
 
-const registerPushNotificationTokenRequestSchema: Joi.ObjectSchema<ApiRegisterPushNotificationTokenRequest> =
-  Joi.object({
-    device_id: Joi.string().required(),
-    token: Joi.string().required(),
-    profile_id: Joi.string().optional(),
-    platform: Joi.string().optional()
-  });
+import { requestInstallationBadgeRefresh } from './push-notifications.service';
+import { registerInstallationDevice } from './push-installation.db';
+
+import { registerPushNotificationTokenRequestSchema } from './register-push-notification.schema';
 
 const router = asyncRouter();
 
@@ -67,8 +60,18 @@ router.post(
       profile_id: resolvedProfileId
     };
 
-    await savePushNotificationDevice(pushNotificationDevice);
+    await registerInstallationDevice(
+      pushNotificationDevice,
+      {
+        installation_secret: validatedRequest.installation_secret,
+        installation_revision: validatedRequest.installation_revision,
+        previous_device_id: validatedRequest.previous_device_id
+      },
+      {}
+    );
 
+    if (validatedRequest.previous_device_id)
+      await requestInstallationBadgeRefresh(device_id);
     res.status(201).send({
       success: true
     });
