@@ -1,15 +1,15 @@
 import { MEMBERSHIP_SOURCE_STATES_TABLE } from '@/constants';
 import * as loopDb from '@/db';
 import {
-  markMembershipTransactionFailed,
-  membershipQueryOptions,
-  withMembershipPrimaryTransaction
-} from '@/membership/membership-primary';
+  markPrimaryTransactionFailed,
+  primaryQueryOptions,
+  withPrimaryTransaction
+} from '@/db/primary-transaction';
 import { setSqlExecutor, sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 
 describeWithSeed(
-  'membership primary snapshots on MySQL',
+  'primary transaction primary snapshots on MySQL',
   [
     {
       table: MEMBERSHIP_SOURCE_STATES_TABLE,
@@ -31,8 +31,8 @@ describeWithSeed(
     WHERE scope = 'PROFILE' AND target_id = 'm2-primary-test' AND dimension = 'IDENTITY'`;
 
     it('holds a coherent page snapshot while locking reads see current committed changes', async () => {
-      await withMembershipPrimaryTransaction(sqlExecutor, async (ctx) => {
-        const options = membershipQueryOptions(ctx);
+      await withPrimaryTransaction(sqlExecutor, async (ctx) => {
+        const options = primaryQueryOptions(ctx);
         expect(await sqlExecutor.execute(select, undefined, options)).toEqual([
           { version: '1' }
         ]);
@@ -46,25 +46,21 @@ describeWithSeed(
           await sqlExecutor.execute(`${select} FOR UPDATE`, undefined, options)
         ).toEqual([{ version: '2' }]);
       });
-      await withMembershipPrimaryTransaction(sqlExecutor, async (ctx) => {
+      await withPrimaryTransaction(sqlExecutor, async (ctx) => {
         expect(
-          await sqlExecutor.execute(
-            select,
-            undefined,
-            membershipQueryOptions(ctx)
-          )
+          await sqlExecutor.execute(select, undefined, primaryQueryOptions(ctx))
         ).toEqual([{ version: '2' }]);
       });
     });
 
     it('rolls back writes made through the bound connection on callback failure', async () => {
       await expect(
-        withMembershipPrimaryTransaction(sqlExecutor, async (ctx) => {
+        withPrimaryTransaction(sqlExecutor, async (ctx) => {
           await sqlExecutor.execute(
             `UPDATE ${MEMBERSHIP_SOURCE_STATES_TABLE} SET version = 9
         WHERE target_id = 'm2-primary-test'`,
             undefined,
-            membershipQueryOptions(ctx)
+            primaryQueryOptions(ctx)
           );
           throw new Error('abort scoped work');
         })
@@ -75,17 +71,17 @@ describeWithSeed(
     it('rolls back a real write when the caller catches a marked mutation failure', async () => {
       const failure = new Error('source write failed after partial progress');
       await expect(
-        withMembershipPrimaryTransaction(sqlExecutor, async (ctx) => {
+        withPrimaryTransaction(sqlExecutor, async (ctx) => {
           try {
             await sqlExecutor.execute(
               `UPDATE ${MEMBERSHIP_SOURCE_STATES_TABLE} SET version = 7
               WHERE target_id = 'm2-primary-test'`,
               undefined,
-              membershipQueryOptions(ctx)
+              primaryQueryOptions(ctx)
             );
             throw failure;
           } catch (error) {
-            markMembershipTransactionFailed(ctx, error);
+            markPrimaryTransactionFailed(ctx, error);
           }
           return 'caller caught the failure';
         })
@@ -97,8 +93,8 @@ describeWithSeed(
       const concurrentWriter = sqlExecutor;
       await loopDb.connect();
       try {
-        await withMembershipPrimaryTransaction(sqlExecutor, async (ctx) => {
-          const options = membershipQueryOptions(ctx);
+        await withPrimaryTransaction(sqlExecutor, async (ctx) => {
+          const options = primaryQueryOptions(ctx);
           expect(await sqlExecutor.execute(select, undefined, options)).toEqual(
             [{ version: '1' }]
           );

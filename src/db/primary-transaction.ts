@@ -12,30 +12,30 @@ import {
   sqlExecutionBudgetTokenFor
 } from '@/db/sql-execution-budget';
 
-declare const membershipPrimaryBrand: unique symbol;
+declare const primaryTransactionBrand: unique symbol;
 
 /** A fresh request scope whose bound primary transaction is still active. */
-export interface MembershipPrimaryContext extends RequestContext {
+export interface PrimaryTransactionContext extends RequestContext {
   readonly connection: ConnectionWrapper<unknown>;
-  readonly [membershipPrimaryBrand]: true;
+  readonly [primaryTransactionBrand]: true;
 }
 
 const activeContexts = new WeakSet<object>();
 const transactionFailures = new WeakMap<object, { readonly error: unknown }>();
 const budgetedContexts = new WeakSet<object>();
 
-export function membershipExecutionBudget(ctx: MembershipPrimaryContext) {
-  assertMembershipPrimaryContext(ctx);
+export function primaryExecutionBudget(ctx: PrimaryTransactionContext) {
+  assertPrimaryTransactionContext(ctx);
   if (!budgetedContexts.has(ctx))
-    throw new Error('Membership work requires a SQL execution budget');
+    throw new Error('Primary transaction work requires a SQL execution budget');
   return sqlExecutionBudgetFor(ctx.connection.connection as object);
 }
 
-export function assertMembershipWorkBudget(
-  ctx: MembershipPrimaryContext,
+export function assertPrimaryWorkBudget(
+  ctx: PrimaryTransactionContext,
   minimumRemainingMillis = 0
 ): void {
-  membershipExecutionBudget(ctx);
+  primaryExecutionBudget(ctx);
   assertSqlWorkBudget(
     ctx.connection.connection as object,
     minimumRemainingMillis
@@ -43,7 +43,7 @@ export function assertMembershipWorkBudget(
 }
 
 /** Keep the first failure even if a caller catches it and returns successfully. */
-export function markMembershipTransactionFailed(
+export function markPrimaryTransactionFailed(
   ctx: RequestContext,
   error: unknown
 ): void {
@@ -53,21 +53,19 @@ export function markMembershipTransactionFailed(
   }
 }
 
-export function assertMembershipPrimaryContext(
+export function assertPrimaryTransactionContext(
   ctx: RequestContext
-): asserts ctx is MembershipPrimaryContext {
+): asserts ctx is PrimaryTransactionContext {
   if (!ctx || !activeContexts.has(ctx)) {
-    throw new Error(
-      'Membership operations require an active primary transaction'
-    );
+    throw new Error('Operations require an active primary transaction');
   }
 }
 
-export function membershipQueryOptions(
-  ctx: MembershipPrimaryContext,
+export function primaryQueryOptions(
+  ctx: PrimaryTransactionContext,
   statementLimits?: SqlStatementLimits
 ): DbQueryOptions {
-  assertMembershipPrimaryContext(ctx);
+  assertPrimaryTransactionContext(ctx);
   if (budgetedContexts.has(ctx)) {
     return {
       wrappedConnection: ctx.connection,
@@ -85,21 +83,19 @@ export function membershipQueryOptions(
 
 /**
  * Own a short primary transaction; the first consistent read fixes its snapshot.
- * Locking reads remain current reads for publication guards. All membership
- * queries must use membershipQueryOptions and bypass external result caches.
+ * Locking reads remain current reads for publication guards. All
+ * queries must use primaryQueryOptions and bypass external result caches.
  */
-export async function withMembershipPrimaryTransaction<T>(
+export async function withPrimaryTransaction<T>(
   db: SqlExecutor,
-  executable: (ctx: MembershipPrimaryContext) => Promise<T>,
+  executable: (ctx: PrimaryTransactionContext) => Promise<T>,
   ctx: RequestContext = {},
   executionBudget?: SqlExecutionBudget
 ): Promise<T> {
   if (ctx.connection) {
-    throw new Error(
-      'Membership primary transactions cannot nest caller transactions'
-    );
+    throw new Error('Primary transactions cannot nest caller transactions');
   }
-  let primary: MembershipPrimaryContext | undefined;
+  let primary: PrimaryTransactionContext | undefined;
   const revoke = () => {
     if (primary) {
       activeContexts.delete(primary);
@@ -117,11 +113,11 @@ export async function withMembershipPrimaryTransaction<T>(
           authenticationContext: ctx.authenticationContext,
           connection: Object.freeze({ connection: connection.connection }),
           requestScope: { promisesByKey: new Map<string, Promise<unknown>>() }
-        }) as MembershipPrimaryContext;
+        }) as PrimaryTransactionContext;
         activeContexts.add(primary);
         if (executionBudget) {
           budgetedContexts.add(primary);
-          membershipExecutionBudget(primary);
+          primaryExecutionBudget(primary);
         }
         try {
           const result = await executable(primary);
@@ -143,41 +139,5 @@ export async function withMembershipPrimaryTransaction<T>(
   } finally {
     // The adapter can abort while the user callback remains pending forever.
     revoke();
-  }
-}
-
-/**
- * Bind membership source writes to an existing caller-owned WRITE transaction.
- * The caller owns commit/rollback and must not catch the error returned here.
- * This adapter cannot turn a replica or an already committed connection into a
- * primary transaction. Use it only from the transaction owner's callback.
- */
-export async function withMembershipPrimaryMutationContext<T>(
-  connection: ConnectionWrapper<unknown>,
-  executable: (ctx: MembershipPrimaryContext) => Promise<T>,
-  ctx: RequestContext = {}
-): Promise<T> {
-  if (!connection?.connection || ctx.connection) {
-    throw new Error(
-      'Membership mutation requires a caller-owned WRITE transaction'
-    );
-  }
-  const primary = Object.freeze({
-    moderationRequestId: ctx.moderationRequestId,
-    moderationPermitGeneration: ctx.moderationPermitGeneration,
-    timer: ctx.timer,
-    authenticationContext: ctx.authenticationContext,
-    connection: Object.freeze({ connection: connection.connection }),
-    requestScope: { promisesByKey: new Map<string, Promise<unknown>>() }
-  }) as MembershipPrimaryContext;
-  activeContexts.add(primary);
-  try {
-    const result = await executable(primary);
-    const failure = transactionFailures.get(primary);
-    if (failure) throw failure.error;
-    return result;
-  } finally {
-    activeContexts.delete(primary);
-    transactionFailures.delete(primary);
   }
 }

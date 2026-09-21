@@ -1,10 +1,6 @@
 import {
   IDENTITIES_TABLE,
-  MEMBERSHIP_GENERATION_MEMBERS_TABLE,
-  MEMBERSHIP_GROUP_VERSIONS_TABLE,
-  MEMBERSHIP_PUBLICATIONS_TABLE,
   RATINGS_TABLE,
-  WAVES_TABLE,
   XTDH_GRANTS_TABLE
 } from '@/constants';
 import { AuthenticationContext } from '@/auth-context';
@@ -19,7 +15,6 @@ import {
   aUserGroup,
   withUserGroups
 } from '@/tests/fixtures/user-group.fixture';
-import { aWave } from '@/tests/fixtures/wave.fixture';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { sqlExecutor } from '@/sql-executor';
 import { ratingsService } from '@/rates/ratings.service';
@@ -31,22 +26,12 @@ import { eventScheduler } from '@/events/event.scheduler';
 import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';
 import { xTdhRepository } from '@/xtdh/xtdh.repository';
 import { reReviewRatesInXTdhGrantsUseCase } from '@/xtdh/re-review-rates-in-xtdh-grants.use-case';
-import * as producerPolicy from './membership-producer-policy';
+import { userGroupsService } from '@/api/community-members/user-groups.service';
 import {
-  membershipGlobalMutation,
-  withMembershipSourceMutation
-} from './membership-producer-writes';
-import { MembershipSourceStatesDb } from './membership-source-states.db';
-import { MembershipRefreshTargetsDb } from './membership-refresh-targets.db';
-import { MembershipRefreshWorker } from './membership-worker';
-import {
-  membershipProfileSourceKeys,
-  PrimaryMembershipProfileEvaluator
-} from './membership-profile-evaluator';
-import {
-  membershipTestOptions,
-  membershipTestTx
-} from './membership-worker-test.helpers';
+  MEMBERSHIP_SOURCE_STATES_TABLE,
+  MEMBERSHIP_SOURCE_JOBS_TABLE,
+  MEMBERSHIP_REFRESH_TARGETS_TABLE
+} from '@/constants';
 
 const raterId = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000181';
 const recipientId = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000182';
@@ -83,8 +68,6 @@ const high = aUserGroup(
   { id: 'rating-high', name: 'rating-high' }
 );
 const allGroups = [below, above, high];
-const full = { scope: 'FULL' as const, target_id: '*' };
-const target = { scope: 'PROFILE' as const, target_id: recipientId };
 const grant: XTdhGrantEntity = {
   id: 'rating-grant-original',
   tokenset_id: null,
@@ -103,36 +86,17 @@ const grant: XTdhGrantEntity = {
   error_details: null,
   is_irrevocable: false
 };
-const sources = () => new MembershipSourceStatesDb(() => sqlExecutor);
-const targets = () => new MembershipRefreshTargetsDb(() => sqlExecutor);
-const worker = () =>
-  new MembershipRefreshWorker(
-    sqlExecutor,
-    new PrimaryMembershipProfileEvaluator(() => sqlExecutor)
-  );
-
-async function finish(scope: typeof full | typeof target) {
-  for (let attempt = 0; attempt < 24; attempt++) {
-    const result = await worker().runTarget(scope, membershipTestOptions());
-    if (result.outcome === 'COMPLETED') return result;
-    expect(result.outcome).toBe('PENDING');
-  }
-  throw new Error('Real membership worker did not finish');
-}
-
-async function publishedMembers() {
-  return sqlExecutor
-    .execute<{ group_id: string }>(
-      `SELECT m.group_id FROM ${MEMBERSHIP_PUBLICATIONS_TABLE} p
-       JOIN ${MEMBERSHIP_GENERATION_MEMBERS_TABLE} m ON m.run_id=p.run_id
-       WHERE p.profile_id=:profile ORDER BY m.group_id`,
-      { profile: recipientId }
+async function eligibleGroups() {
+  return (
+    await userGroupsService.getGroupsUserIsEligibleForByIds(
+      recipientId,
+      allGroups.map(({ id }) => id)
     )
-    .then((rows) => rows.map((row) => row.group_id));
+  ).sort((a, b) => a.localeCompare(b));
 }
 
 async function repSnapshot() {
-  return membershipTestTx(async (ctx) => ({
+  return {
     rep: await sqlExecutor.oneOrNull<{ rep: number }>(
       `SELECT rep FROM ${IDENTITIES_TABLE} WHERE profile_id=:profile`,
       { profile: recipientId }
@@ -140,22 +104,11 @@ async function repSnapshot() {
     ratings: await sqlExecutor.execute<{ rating: number }>(
       `SELECT rating FROM ${RATINGS_TABLE} WHERE matter=:matter AND matter_target_id=:profile`,
       { matter: RateMatter.REP, profile: recipientId }
-    ),
-    version: (
-      await sources().read(
-        [{ scope: 'GLOBAL', target_id: '*', dimension: 'RATINGS' }],
-        false,
-        ctx
-      )
-    )[0].state?.version,
-    request: await targets().find(full, ctx)
-  }));
+    )
+  };
 }
 
 function prepareBulkCaller() {
-  jest
-    .spyOn(producerPolicy, 'isMembershipSourceTrackingActive')
-    .mockReturnValue(true);
   jest
     .spyOn(
       profilesService,
@@ -184,57 +137,38 @@ async function bulkRep(amount: number) {
 }
 
 async function reviewGrant(failAfterWrite = false) {
-  return sqlExecutor.executeNativeQueriesInTransaction((connection) =>
-    withMembershipSourceMutation(
-      connection,
-      membershipGlobalMutation(['GRANTS'], 'grant-re-review'),
-      async () => {
-        await reReviewRatesInXTdhGrantsUseCase.handle({ connection });
-        if (failAfterWrite) throw new Error('injected grant rollback');
-      }
-    )
-  );
+  return sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+    await reReviewRatesInXTdhGrantsUseCase.handle({ connection });
+    if (failAfterWrite) throw new Error('injected grant rollback');
+  });
 }
 
 describeWithSeed(
-  'tracked actual rating producer methods with MySQL evaluator and worker',
+  'ordinary producer writes and direct eligibility after materialisation retirement',
   [withIdentities([rater, recipient]), withUserGroups(allGroups)],
   () => {
-    beforeEach(async () => {
-      await membershipTestTx(async (ctx) => {
-        await sources().provision(
-          membershipProfileSourceKeys(recipientId),
-          {
-            bootstrap_id: 'actual-producer-methods',
-            coverage_revision: 'test-only'
-          },
-          ctx
-        );
-      });
-      await sqlExecutor.bulkInsert(
-        MEMBERSHIP_GROUP_VERSIONS_TABLE,
-        allGroups.map(({ id }) => ({
-          group_id: id,
-          catalog_version: '0',
-          is_deleted: false,
-          updated_at_millis: '1'
-        })),
-        ['group_id', 'catalog_version', 'is_deleted', 'updated_at_millis']
-      );
-      const waves = allGroups.map((group) => {
-        const { serial_no: _serial, ...wave } = aWave(
-          { visibility_group_id: group.id },
-          { id: `wave-${group.id}`, name: group.id }
-        );
-        return wave;
-      });
-      await sqlExecutor.bulkInsert(WAVES_TABLE, waves, Object.keys(waves[0]));
+    const originalMode = process.env.MEMBERSHIP_SOURCE_TRACKING_MODE;
+    beforeEach(() => {
+      // A mixed-version rollout may still supply the obsolete control. It must
+      // neither block authoritative writes nor create new bookkeeping.
+      process.env.MEMBERSHIP_SOURCE_TRACKING_MODE = 'tracking-v1';
       prepareBulkCaller();
     });
+    afterEach(async () => {
+      jest.restoreAllMocks();
+      if (originalMode === undefined)
+        delete process.env.MEMBERSHIP_SOURCE_TRACKING_MODE;
+      else process.env.MEMBERSHIP_SOURCE_TRACKING_MODE = originalMode;
+      for (const table of [
+        MEMBERSHIP_SOURCE_STATES_TABLE,
+        MEMBERSHIP_SOURCE_JOBS_TABLE,
+        MEMBERSHIP_REFRESH_TARGETS_TABLE
+      ]) {
+        expect(await sqlExecutor.execute(`SELECT * FROM ${table}`)).toEqual([]);
+      }
+    });
 
-    afterEach(() => jest.restoreAllMocks());
-
-    it('commits bulkUpdateReps, bulkUpsertRatings, source version and request before publishing additions and removals', async () => {
+    it('commits bulk REP writes and direct eligibility reflects additions and removals', async () => {
       const repWrite = jest.spyOn(identitiesDb, 'bulkUpdateReps');
       const ratingWrite = jest.spyOn(ratingsDb, 'bulkUpsertRatings');
       await bulkRep(5);
@@ -242,27 +176,19 @@ describeWithSeed(
       expect(ratingWrite).toHaveBeenCalledTimes(1);
       expect(await repSnapshot()).toMatchObject({
         rep: { rep: 5 },
-        ratings: [{ rating: 5 }],
-        version: '1',
-        request: { requested_version: '1' }
+        ratings: [{ rating: 5 }]
       });
-      await finish(full);
-      await finish(target);
-      expect(await publishedMembers()).toEqual([above.id]);
+      expect(await eligibleGroups()).toEqual([above.id]);
 
       await bulkRep(0);
       expect(await repSnapshot()).toMatchObject({
         rep: { rep: 0 },
-        ratings: [{ rating: 0 }],
-        version: '2',
-        request: { requested_version: '2' }
+        ratings: [{ rating: 0 }]
       });
-      await finish(full);
-      await finish(target);
-      expect(await publishedMembers()).toEqual([below.id]);
+      expect(await eligibleGroups()).toEqual([below.id]);
     });
 
-    it('rolls back both real rating writes and source/request when downstream work fails', async () => {
+    it('rolls back both real rating writes when downstream work fails', async () => {
       const actual = ratingsDb.bulkUpsertRatings.bind(ratingsDb);
       jest
         .spyOn(ratingsDb, 'bulkUpsertRatings')
@@ -273,9 +199,7 @@ describeWithSeed(
       await expect(bulkRep(5)).rejects.toThrow('injected post-write failure');
       expect(await repSnapshot()).toMatchObject({
         rep: { rep: 0 },
-        ratings: [],
-        version: '0',
-        request: null
+        ratings: []
       });
     });
 
@@ -299,17 +223,13 @@ describeWithSeed(
         })
       ).rejects.toThrow('deliberate rollback');
       expect(await repSnapshot()).toMatchObject({
-        ratings: [],
-        version: '0',
-        request: null
+        ratings: []
       });
     });
 
-    it('reduces lost-credit ratings through insertLostCreditRating and republishes the removed membership', async () => {
+    it('reduces lost-credit ratings and removes direct eligibility', async () => {
       await bulkRep(10);
-      await finish(full);
-      await finish(target);
-      expect(await publishedMembers()).toEqual([above.id, high.id]);
+      expect(await eligibleGroups()).toEqual([above.id, high.id]);
       await sqlExecutor.execute(
         `UPDATE ${IDENTITIES_TABLE} SET tdh=5 WHERE profile_id=:profile`,
         { profile: raterId }
@@ -317,16 +237,12 @@ describeWithSeed(
       await ratingsService.reduceOverRates();
       expect(await repSnapshot()).toMatchObject({
         rep: { rep: 5 },
-        ratings: [{ rating: 5 }],
-        version: '2',
-        request: { requested_version: '2' }
+        ratings: [{ rating: 5 }]
       });
-      await finish(full);
-      await finish(target);
-      expect(await publishedMembers()).toEqual([above.id]);
+      expect(await eligibleGroups()).toEqual([above.id]);
     });
 
-    it('rolls a lost-credit rating edit back with its source and request when event scheduling fails', async () => {
+    it('rolls back a lost-credit rating edit when event scheduling fails', async () => {
       await bulkRep(10);
       await sqlExecutor.execute(
         `UPDATE ${IDENTITIES_TABLE} SET tdh=5 WHERE profile_id=:profile`,
@@ -340,13 +256,11 @@ describeWithSeed(
       );
       expect(await repSnapshot()).toMatchObject({
         rep: { rep: 10 },
-        ratings: [{ rating: 10 }],
-        version: '1',
-        request: { requested_version: '1' }
+        ratings: [{ rating: 10 }]
       });
     });
 
-    it('tracks the real grant re-review caller and bulkUpdateStatus in the same commit', async () => {
+    it('commits grant replacement and bulk status updates together', async () => {
       await sqlExecutor.bulkInsert(
         XTDH_GRANTS_TABLE,
         [grant],
@@ -369,23 +283,9 @@ describeWithSeed(
         XTdhGrantStatus.DISABLED
       );
       expect(rows.some((row) => row.replaced_grant_id === grant.id)).toBe(true);
-      const state = await membershipTestTx(async (ctx) => ({
-        version: (
-          await sources().read(
-            [{ scope: 'GLOBAL', target_id: '*', dimension: 'GRANTS' }],
-            false,
-            ctx
-          )
-        )[0].state?.version,
-        request: await targets().find(full, ctx)
-      }));
-      expect(state).toMatchObject({
-        version: '1',
-        request: { requested_version: '1' }
-      });
     });
 
-    it('rolls back grant replacement, bulkUpdateStatus, source and request after a caller error', async () => {
+    it('rolls back grant replacement and status updates after a caller error', async () => {
       await sqlExecutor.bulkInsert(
         XTDH_GRANTS_TABLE,
         [grant],
@@ -402,17 +302,6 @@ describeWithSeed(
           `SELECT id,status FROM ${XTDH_GRANTS_TABLE}`
         )
       ).toEqual([{ id: grant.id, status: XTdhGrantStatus.GRANTED }]);
-      const state = await membershipTestTx(async (ctx) => ({
-        version: (
-          await sources().read(
-            [{ scope: 'GLOBAL', target_id: '*', dimension: 'GRANTS' }],
-            false,
-            ctx
-          )
-        )[0].state?.version,
-        request: await targets().find(full, ctx)
-      }));
-      expect(state).toEqual({ version: '0', request: null });
     });
   }
 );

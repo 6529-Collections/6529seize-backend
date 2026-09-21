@@ -5,9 +5,9 @@ import type {
   MembershipRefreshRunStatus,
   MembershipSourceVersion,
   MembershipRefreshCursor
-} from '@/membership/membership-schema.types';
+} from '@/entities/membership-schema.types';
 
-/** See docs/membership-refresh-design.md for the publication protocol. */
+/** Retained schema for the retired experiment; see docs/membership-retirement.md. */
 @Entity(MEMBERSHIP_REFRESH_RUNS_TABLE)
 @Index('idx_mrun_target_created', ['scope', 'target_id', 'created_at_millis'])
 @Index('idx_mrun_status_lease', ['status', 'lease_expires_at_millis'])

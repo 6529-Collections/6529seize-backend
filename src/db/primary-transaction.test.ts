@@ -10,12 +10,12 @@ import {
   SqlTransactionOptions
 } from '@/sql-executor';
 import {
-  assertMembershipPrimaryContext,
-  markMembershipTransactionFailed,
-  MembershipPrimaryContext,
-  membershipQueryOptions,
-  withMembershipPrimaryTransaction
-} from '@/membership/membership-primary';
+  assertPrimaryTransactionContext,
+  markPrimaryTransactionFailed,
+  PrimaryTransactionContext,
+  primaryQueryOptions,
+  withPrimaryTransaction
+} from '@/db/primary-transaction';
 
 class MemoryPrimaryExecutor extends SqlExecutor {
   readonly wrapped = { connection: { source: 'primary' } };
@@ -43,14 +43,14 @@ class MemoryPrimaryExecutor extends SqlExecutor {
   }
 }
 
-describe('membership primary context lifecycle', () => {
+describe('primary transaction primary context lifecycle', () => {
   it('rejects with the first marked failure even when the caller returns success', async () => {
     const db = new MemoryPrimaryExecutor();
     const failure = new Error('repository mutation failed');
     await expect(
-      withMembershipPrimaryTransaction(db, async (ctx) => {
-        markMembershipTransactionFailed(ctx, failure);
-        markMembershipTransactionFailed(ctx, new Error('later failure'));
+      withPrimaryTransaction(db, async (ctx) => {
+        markPrimaryTransactionFailed(ctx, failure);
+        markPrimaryTransactionFailed(ctx, new Error('later failure'));
         return 'caller caught the failure';
       })
     ).rejects.toBe(failure);
@@ -58,13 +58,10 @@ describe('membership primary context lifecycle', () => {
 
   it('retains rollback-only state for an undefined thrown value', async () => {
     await expect(
-      withMembershipPrimaryTransaction(
-        new MemoryPrimaryExecutor(),
-        async (ctx) => {
-          markMembershipTransactionFailed(ctx, undefined);
-          return 'caller recovered';
-        }
-      )
+      withPrimaryTransaction(new MemoryPrimaryExecutor(), async (ctx) => {
+        markPrimaryTransactionFailed(ctx, undefined);
+        return 'caller recovered';
+      })
     ).rejects.toBeUndefined();
   });
 
@@ -72,82 +69,74 @@ describe('membership primary context lifecycle', () => {
     const failure = new Error('original failure');
     for (const ctx of [{}, null, undefined]) {
       expect(() =>
-        markMembershipTransactionFailed(ctx as RequestContext, failure)
+        markPrimaryTransactionFailed(ctx as RequestContext, failure)
       ).not.toThrow();
     }
-    let expired: MembershipPrimaryContext | undefined;
-    await withMembershipPrimaryTransaction(
-      new MemoryPrimaryExecutor(),
-      async (ctx) => {
-        expired = ctx;
-        markMembershipTransactionFailed({ ...ctx }, failure);
-      }
-    );
-    expect(() =>
-      markMembershipTransactionFailed(expired!, failure)
-    ).not.toThrow();
+    let expired: PrimaryTransactionContext | undefined;
+    await withPrimaryTransaction(new MemoryPrimaryExecutor(), async (ctx) => {
+      expired = ctx;
+      markPrimaryTransactionFailed({ ...ctx }, failure);
+    });
+    expect(() => markPrimaryTransactionFailed(expired!, failure)).not.toThrow();
     await expect(
-      withMembershipPrimaryTransaction(
-        new MemoryPrimaryExecutor(),
-        async () => 'fresh'
-      )
+      withPrimaryTransaction(new MemoryPrimaryExecutor(), async () => 'fresh')
     ).resolves.toBe('fresh');
   });
 
   it('mints a bound, immutable context only for the callback lifetime', async () => {
     const db = new MemoryPrimaryExecutor();
-    let captured: MembershipPrimaryContext | undefined;
+    let captured: PrimaryTransactionContext | undefined;
     await expect(
-      withMembershipPrimaryTransaction(db, async (ctx) => {
+      withPrimaryTransaction(db, async (ctx) => {
         captured = ctx;
-        expect(() => assertMembershipPrimaryContext(ctx)).not.toThrow();
+        expect(() => assertPrimaryTransactionContext(ctx)).not.toThrow();
         expect(ctx.connection.connection).toBe(db.wrapped.connection);
         expect(Object.isFrozen(ctx)).toBe(true);
         expect(Object.isFrozen(ctx.connection)).toBe(true);
-        expect(() => assertMembershipPrimaryContext({ ...ctx })).toThrow(
+        expect(() => assertPrimaryTransactionContext({ ...ctx })).toThrow(
           'active primary'
         );
         return 'done';
       })
     ).resolves.toBe('done');
     expect(db.options).toEqual({ isolationLevel: 'REPEATABLE READ' });
-    expect(() => assertMembershipPrimaryContext(captured!)).toThrow(
+    expect(() => assertPrimaryTransactionContext(captured!)).toThrow(
       'active primary'
     );
-    expect(() => membershipQueryOptions(captured!)).toThrow('active primary');
+    expect(() => primaryQueryOptions(captured!)).toThrow('active primary');
   });
 
   it('revokes the context on callback failure and rejects forged connections', async () => {
     const db = new MemoryPrimaryExecutor();
-    let captured: MembershipPrimaryContext | undefined;
+    let captured: PrimaryTransactionContext | undefined;
     await expect(
-      withMembershipPrimaryTransaction(db, async (ctx) => {
+      withPrimaryTransaction(db, async (ctx) => {
         captured = ctx;
         throw new Error('callback failed');
       })
     ).rejects.toThrow('callback failed');
-    expect(() => assertMembershipPrimaryContext(captured!)).toThrow(
+    expect(() => assertPrimaryTransactionContext(captured!)).toThrow(
       'active primary'
     );
     expect(() =>
-      assertMembershipPrimaryContext({ connection: db.wrapped })
+      assertPrimaryTransactionContext({ connection: db.wrapped })
     ).toThrow('active primary');
     expect(() =>
-      assertMembershipPrimaryContext(null as unknown as RequestContext)
+      assertPrimaryTransactionContext(null as unknown as RequestContext)
     ).toThrow('active primary');
   });
 
   it('refuses nesting in caller transactions before opening another connection', async () => {
     const db = new MemoryPrimaryExecutor();
     await expect(
-      withMembershipPrimaryTransaction(db, async () => 'no', {
+      withPrimaryTransaction(db, async () => 'no', {
         connection: db.wrapped
       })
     ).rejects.toThrow('cannot nest');
     expect(db.options).toBeUndefined();
-    await withMembershipPrimaryTransaction(db, async (ctx) => {
+    await withPrimaryTransaction(db, async (ctx) => {
       await expect(
-        withMembershipPrimaryTransaction(db, async () => 'no', ctx)
+        withPrimaryTransaction(db, async () => 'no', ctx)
       ).rejects.toThrow('cannot nest');
     });
   });
@@ -162,7 +151,7 @@ describe('membership primary context lifecycle', () => {
       }
     };
     const load = jest.fn().mockResolvedValue('primary');
-    await withMembershipPrimaryTransaction(
+    await withPrimaryTransaction(
       db,
       async (ctx) => {
         expect(ctx.moderationRequestId).toBe('request-1');
@@ -177,7 +166,7 @@ describe('membership primary context lifecycle', () => {
       },
       caller
     );
-    await withMembershipPrimaryTransaction(
+    await withPrimaryTransaction(
       db,
       async (ctx) => {
         expect(await getRequestScopedPromise(ctx, 'identity', load)).toBe(
@@ -238,7 +227,7 @@ function routingConnection(
   return { connection, statements, begin, commit, rollback, release };
 }
 
-describe('membership queries through the real API SqlExecutor adapter', () => {
+describe('primary transaction queries through the real API SqlExecutor adapter', () => {
   let previousExecutor: SqlExecutor;
 
   beforeEach(() => {
@@ -268,24 +257,24 @@ describe('membership queries through the real API SqlExecutor adapter', () => {
     return { write, read, pools };
   }
 
-  it('routes ordinary SELECT to replica and membership SELECT to its one primary transaction', async () => {
+  it('routes ordinary SELECT to replica and primary transaction SELECT to its one primary transaction', async () => {
     const { write, read, pools } = await connectRoutingPools();
     expect(await sqlExecutor.execute('SELECT source')).toEqual([
       { source: 'stale-replica' }
     ]);
-    await withMembershipPrimaryTransaction(sqlExecutor, async (ctx) => {
+    await withPrimaryTransaction(sqlExecutor, async (ctx) => {
       expect(
         await sqlExecutor.execute(
           'SELECT source',
           undefined,
-          membershipQueryOptions(ctx)
+          primaryQueryOptions(ctx)
         )
       ).toEqual([{ source: 'primary' }]);
       expect(
         await sqlExecutor.execute(
           'SELECT source FOR UPDATE',
           undefined,
-          membershipQueryOptions(ctx)
+          primaryQueryOptions(ctx)
         )
       ).toEqual([{ source: 'primary' }]);
       expect(write.release).not.toHaveBeenCalled();
@@ -303,22 +292,22 @@ describe('membership queries through the real API SqlExecutor adapter', () => {
     expect(write.release).toHaveBeenCalledTimes(1);
   });
 
-  it('never runs membership work after asynchronous BEGIN failure', async () => {
+  it('never runs primary transaction work after asynchronous BEGIN failure', async () => {
     const { write } = await connectRoutingPools(new Error('begin failed'));
     const callback = jest.fn().mockResolvedValue('unexpected');
-    await expect(
-      withMembershipPrimaryTransaction(sqlExecutor, callback)
-    ).rejects.toThrow('begin failed');
+    await expect(withPrimaryTransaction(sqlExecutor, callback)).rejects.toThrow(
+      'begin failed'
+    );
     expect(callback).not.toHaveBeenCalled();
     expect(write.commit).not.toHaveBeenCalled();
     expect(write.rollback).toHaveBeenCalledTimes(1);
     expect(write.release).toHaveBeenCalledTimes(1);
   });
 
-  it('rolls back failed membership work before releasing its primary connection', async () => {
+  it('rolls back failed primary transaction work before releasing its primary connection', async () => {
     const { write } = await connectRoutingPools();
     await expect(
-      withMembershipPrimaryTransaction(sqlExecutor, async () => {
+      withPrimaryTransaction(sqlExecutor, async () => {
         throw new Error('work failed');
       })
     ).rejects.toThrow('work failed');

@@ -24,7 +24,6 @@ import { fetchNextgenTokens } from '../nextgen/nextgen.db';
 import { sqs } from '../sqs';
 import { equalIgnoreCase } from '../strings';
 import { XTDH_LOOP_PHASE } from '../xtdh/xtdh-loop-phase';
-import { isMembershipSourceTrackingActive } from '@/membership/membership-producer-policy';
 import {
   calculateBoosts,
   calculateRanks,
@@ -317,21 +316,18 @@ export const consolidateAndPersistTDH = async (
     persistenceScope
   );
   await persistTDHBlock(block, blockTimestamp, consolidatedTdh);
-  if (request.mode === 'PARTIAL' && !isMembershipSourceTrackingActive()) {
+  if (request.mode === 'PARTIAL') {
     await enqueuePartialTdhUniverseRecalculation();
   }
 
   return consolidatedTdh;
 };
 
-export async function enqueuePartialTdhUniverseRecalculation(
-  membershipCycleId?: string
-): Promise<void> {
+async function enqueuePartialTdhUniverseRecalculation(): Promise<void> {
   await sqs.sendToQueueName({
     queueName: XTDH_LOOP_QUEUE_NAME,
     message: {
       phase: XTDH_LOOP_PHASE.UNIVERSE,
-      ...(membershipCycleId ? { membership_cycle_id: membershipCycleId } : {}),
       queued_at_ms: Date.now()
     }
   });

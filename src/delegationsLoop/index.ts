@@ -1,9 +1,6 @@
 import { consolidateActivity } from '../aggregatedActivityLoop/aggregated_activity';
 import { identitiesService } from '../api-serverless/src/identities/identities.service';
-import {
-  NFTDELEGATION_BLOCKS_TABLE,
-  USE_CASE_PRIMARY_ADDRESS
-} from '@/constants';
+import { USE_CASE_PRIMARY_ADDRESS } from '@/constants';
 import {
   fetchAllConsolidatedTdh,
   fetchLatestNftDelegationBlock,
@@ -53,21 +50,7 @@ import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
 import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
 import { updateTDH } from '../tdhLoop/tdh';
-import {
-  consolidateAndPersistTDH,
-  enqueuePartialTdhUniverseRecalculation
-} from '../tdhLoop/tdh_consolidation';
-import { isMembershipSourceTrackingActive } from '@/membership/membership-producer-policy';
-import {
-  checkpointMembershipTdhInputs,
-  failMembershipTdhCycle,
-  findActiveMembershipTdhCycle,
-  getMembershipTdhCycleState,
-  membershipTdhCycleId,
-  startMembershipTdhCycle
-} from '@/membership/membership-tdh-cycle';
-import { membershipQueryOptions } from '@/membership/membership-primary';
-import { dbSupplier } from '@/sql-executor';
+import { consolidateAndPersistTDH } from '../tdhLoop/tdh_consolidation';
 import { Time } from '../time';
 import { getAffectedWallets } from './reconsolidation';
 
@@ -83,54 +66,11 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
           : undefined;
 
       logger.info(`[START_BLOCK ${startBlock}]`);
-      const active = isMembershipSourceTrackingActive()
-        ? await findActiveMembershipTdhCycle()
-        : null;
-      if (active && !active.cycleId.startsWith('delegation:'))
-        throw new Error('Another tracked TDH source cycle is still active');
-      if (active?.state.progress.stage === 'STARTED')
-        // Consolidation registrations/revocations are procedural writes. A
-        // crashed attempt may have removed a row from before startBlock, so
-        // replaying that suffix cannot prove the same result. Keep the source
-        // barrier until an operator rebuilds and repairs the cycle.
-        throw new Error(
-          'Incomplete delegation source inputs require operator repair'
-        );
-      const effectiveStartBlock =
-        startBlock ?? (await fetchLatestNftDelegationBlock());
-      if (!isMembershipSourceTrackingActive()) {
-        const response = await handleDelegations(effectiveStartBlock);
-        await persistNftDelegationBlock(
-          response.block,
-          response.blockTimestamp
-        );
-        return;
-      }
-      const cycleId =
-        active?.cycleId ??
-        membershipTdhCycleId('delegation', [effectiveStartBlock]);
-      const existing =
-        active?.state ?? (await getMembershipTdhCycleState(cycleId));
-      if (existing?.status === 'COMPLETED') return;
-      const state = await startMembershipTdhCycle(cycleId);
-      if (state?.progress.stage === 'STARTED') {
-        try {
-          const response = await handleDelegations(effectiveStartBlock);
-          await checkpointMembershipTdhInputs(cycleId, {}, async (primary) => {
-            await dbSupplier().execute(
-              `INSERT INTO ${NFTDELEGATION_BLOCKS_TABLE} (block, timestamp)
-               VALUES (:block, :timestamp)
-               ON DUPLICATE KEY UPDATE timestamp = VALUES(timestamp)`,
-              { block: response.block, timestamp: response.blockTimestamp },
-              membershipQueryOptions(primary)
-            );
-          });
-        } catch (error) {
-          await failMembershipTdhCycle(cycleId);
-          throw error;
-        }
-      }
-      await enqueuePartialTdhUniverseRecalculation(cycleId);
+      const delegationsResponse = await handleDelegations(startBlock);
+      await persistNftDelegationBlock(
+        delegationsResponse.block,
+        delegationsResponse.blockTimestamp
+      );
     },
     {
       logger,
@@ -270,6 +210,6 @@ async function updatePrimaryAddresses(events: DelegationEvent[]) {
     wallets.add(c.wallet1.toLowerCase());
   });
 
-  await identitiesService.updatePrimaryAddresses(wallets, 'delegations-cycle');
+  await identitiesService.updatePrimaryAddresses(wallets);
   logger.info(`[UPDATED PRIMARY ADDRESSES FOR ${wallets.size} WALLETS]`);
 }
