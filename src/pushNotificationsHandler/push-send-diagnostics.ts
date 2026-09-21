@@ -66,20 +66,24 @@ export function createPushSendDiagnostic(
   return diagnostic;
 }
 
+function pushCondition(code: PushSendCode) {
+  if (code === 'FCM_MISMATCHED_CREDENTIAL') return 'PUSH_SENDER_MISMATCH';
+  if (
+    [
+      'FCM_INTERNAL_ERROR',
+      'FCM_SERVER_UNAVAILABLE',
+      'FCM_MESSAGE_RATE_EXCEEDED',
+      'FCM_DEVICE_MESSAGE_RATE_EXCEEDED'
+    ].includes(code)
+  )
+    return 'PUSH_PROVIDER_TRANSIENT';
+  return 'PUSH_DELIVERY_FAILED';
+}
+
 /** The same Error at both reporting layers uses existing invocation deduplication. */
 export function reportPushSendDiagnostic(diagnostic: PushSendDiagnostic): void {
   try {
-    const condition =
-      diagnostic.code === 'FCM_MISMATCHED_CREDENTIAL'
-        ? 'PUSH_SENDER_MISMATCH'
-        : [
-              'FCM_INTERNAL_ERROR',
-              'FCM_SERVER_UNAVAILABLE',
-              'FCM_MESSAGE_RATE_EXCEEDED',
-              'FCM_DEVICE_MESSAGE_RATE_EXCEEDED'
-            ].includes(diagnostic.code)
-          ? 'PUSH_PROVIDER_TRANSIENT'
-          : 'PUSH_DELIVERY_FAILED';
+    const condition = pushCondition(diagnostic.code);
     logger.errorWithCode(condition, diagnostic.message, diagnostic);
   } catch {
     // Diagnostics must not change the original delivery or retry outcome.

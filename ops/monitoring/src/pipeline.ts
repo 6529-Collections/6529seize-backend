@@ -134,64 +134,30 @@ async function execute(
       if (!value) throw new Error('MISSING_GROUP');
       return value;
     });
-    // New application-error windows last an hour. SQS supports at most 15
-    // minutes of delay, so checkpoint until the final digest is due. Legacy
-    // five-minute work and protected alerts retain their previous behavior.
-    if (group.key.startsWith('group:v2:')) {
-      const due = (Number(group.key.split(':').at(-1)) + 1) * 3600 + 5;
-      const final = work.eventId === `digest:${hash(group.key)}`;
-      // An early final delivery must keep its receipt retryable, not complete
-      // the same identity it just rescheduled (for example after clock skew).
-      if (final && now < due) {
-        throw new DeliveryError(true, Math.min(900, due - now), true);
-      }
-      if (!final) {
-        await scheduleDigest(group, transport, now, due);
-        return 'grouped';
-      }
-    }
     return executeDigest(group, id, owner, store, transport);
   }
   const alert = parseAlert(work.alert);
   if (alert.severity !== 'error') return transport.deliver(renderAlert(alert));
-  const hourly = alert.code === 'APPLICATION_ERROR';
-  const windowSeconds = hourly ? 3600 : 300;
-  const bucket = Math.floor(now / windowSeconds);
-  const key = `group:${hourly ? 'v2:' : ''}${alert.environment}:${alert.fingerprint}:${bucket}`;
+  const bucket = Math.floor(now / 300);
+  const key = `group:${alert.environment}:${alert.fingerprint}:${bucket}`;
   const group = await traceDispatch('GROUP', () => store.group(key, id, alert));
   if (group.firstEventId !== id) return 'grouped';
   // Scheduling is retried before acknowledgement; deterministic digest receipts absorb duplicates.
-  const effectiveWindow = group.key.startsWith('group:v2:') ? 3600 : 300;
-  await scheduleDigest(
-    group,
-    transport,
-    now,
-    (Number(group.key.split(':').at(-1)) + 1) * effectiveWindow + 5
-  );
-  return transport.deliver(renderAlert(alert));
-}
-async function scheduleDigest(
-  group: Group,
-  transport: Transport,
-  now: number,
-  due: number
-): Promise<void> {
-  const next = Math.min(now + 900, due);
-  // All checkpoint paths converge on the same final receipt, including retries
-  // that cross a clock bucket or duplicate an already scheduled checkpoint.
-  const identity = next >= due ? group.key : `${group.key}:checkpoint:${next}`;
   await traceDispatch('SCHEDULE', () =>
     transport.schedule(
       {
         kind: 'digest',
         groupKey: group.key,
-        eventId: `digest:${hash(identity)}`
+        eventId: `digest:${hash(group.key)}`
       },
-      Math.max(0, next - now)
+      Math.max(
+        0,
+        Math.min(900, (Number(group.key.split(':').at(-1)) + 1) * 300 + 5 - now)
+      )
     )
   );
+  return transport.deliver(renderAlert(alert));
 }
-
 async function executeDigest(
   group: Group,
   id: string,

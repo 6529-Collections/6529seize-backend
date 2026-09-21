@@ -17,7 +17,7 @@ const alert: Alert = {
   environment: 'prod',
   service: 'api',
   severity: 'error',
-  code: 'SENTRY_ERROR',
+  code: 'APPLICATION_ERROR',
   fingerprint: 'fingerprint'
 };
 function harness() {
@@ -182,76 +182,35 @@ test('fresh heartbeat proves traversal, stale messages cannot keep health green'
   );
 });
 
-test('application repeats across five-minute boundaries share an hourly group and bounded checkpoints', async () => {
+test('application errors retain fresh first alerts at five-minute boundaries', async () => {
   const h = harness();
-  const application = { ...alert, code: 'APPLICATION_ERROR' as const };
   await processWork(
-    { kind: 'alert', alert: application },
-    'one',
+    { kind: 'alert', alert },
+    'first',
     h.store,
     h.transport,
     300
   );
   await processWork(
-    { kind: 'alert', alert: { ...application, eventId: 'later' } },
-    'two',
-    h.store,
-    h.transport,
-    901
-  );
-  assert.equal(h.sent.length, 1);
-  assert.equal(h.groups.size, 1);
-  await processWork(h.scheduled[0]!, 'checkpoint', h.store, h.transport, 1200);
-  assert.equal(h.sent.length, 1);
-  assert.equal(h.scheduled.length, 2);
-  await processWork(
-    h.scheduled[1]!,
-    'late-checkpoint',
-    h.store,
-    h.transport,
-    3605
-  );
-  assert.equal(h.sent.length, 1);
-  await processWork(h.scheduled[2]!, 'final', h.store, h.transport, 3605);
-  await processWork(h.scheduled[2]!, 'duplicate', h.store, h.transport, 3606);
-  assert.equal(h.sent.length, 2);
-  assert.match(JSON.stringify(h.sent[1]), /"value":"2"/);
-  await processWork(
-    { kind: 'alert', alert: { ...application, eventId: 'new-hour' } },
-    'next',
-    h.store,
-    h.transport,
-    3606
-  );
-  assert.equal(h.sent.length, 3);
-});
-
-test('an early hourly final remains retryable until its due time', async () => {
-  const h = harness();
-  await processWork(
-    { kind: 'alert', alert: { ...alert, code: 'APPLICATION_ERROR' } },
-    'first',
-    h.store,
-    h.transport,
-    3500
-  );
-  await processWork(
-    {
-      kind: 'alert',
-      alert: { ...alert, code: 'APPLICATION_ERROR', eventId: 'repeat' }
-    },
+    { kind: 'alert', alert: { ...alert, eventId: 'repeat' } },
     'repeat',
     h.store,
     h.transport,
-    3501
+    599
   );
-  await assert.rejects(
-    processWork(h.scheduled[0]!, 'early', h.store, h.transport, 3600),
-    (error: unknown) =>
-      error instanceof DeliveryError &&
-      error.deferred &&
-      error.retryAfterSeconds === 5
+  assert.equal(h.sent.length, 1);
+  await processWork(
+    { kind: 'alert', alert: { ...alert, eventId: 'next-window' } },
+    'next',
+    h.store,
+    h.transport,
+    600
   );
-  await processWork(h.scheduled[0]!, 'due', h.store, h.transport, 3605);
   assert.equal(h.sent.length, 2);
+  assert.equal(h.groups.size, 2);
+  assert.match(JSON.stringify(h.sent[1]), /"value":"1"/);
+  assert.equal(h.scheduled.length, 2);
+  await processWork(h.scheduled[0]!, 'summary', h.store, h.transport, 605);
+  assert.equal(h.sent.length, 3);
+  assert.match(JSON.stringify(h.sent[2]), /"value":"2"/);
 });

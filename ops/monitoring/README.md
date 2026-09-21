@@ -182,15 +182,11 @@ are durably archived before acknowledgement and raise `AdmissionOverflow`.
 Normal webhook sends also share a DynamoDB rate slot (one every two seconds per
 environment), leaving vendor capacity for critical traffic. Slot contention
 defers delivery through SQS; sustained overload can exhaust retries and is archived.
-Application errors use fixed hourly fingerprint windows; other grouped error
-codes retain five-minute windows. The first occurrence is sent promptly;
+Within the existing five-minute fingerprint window, the first occurrence is sent
+promptly;
 repeats update a durable count. The scheduled summary edits the first confirmed
 message when its receipt identifies the same group and webhook destination.
-Hourly windows use `group:v2` keys and queue checkpoints with a maximum
-15-minute delay. Late/duplicate checkpoints converge on one final summary receipt;
-queued legacy five-minute summaries keep their old behavior. This reduces repeated
-posts; it is not a rolling incident cooldown, so a window boundary can produce
-adjacent first-occurrence messages. Safe allowlisted push condition labels distinguish
+Safe allowlisted push condition labels distinguish
 sender mismatch, provider transients, delivery failure and retry exhaustion.
 Critical/recovery events bypass grouping and continue sending immediately.
 The push queue has independent source alarms for any visible dead letter and

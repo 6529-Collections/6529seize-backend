@@ -72,7 +72,12 @@ beforeEach(() => {
     .mocked(getDeviceBadgeState)
     .mockReset()
     .mockResolvedValue({ count: 1, profileIds: new Set(['a', 'b']) });
-  jest.mocked(sendMessages).mockReset().mockResolvedValue([]);
+  jest
+    .mocked(sendMessages)
+    .mockReset()
+    .mockImplementation(async (inputs) =>
+      inputs.map((input) => ({ input, response: { success: true } }))
+    );
 });
 
 it('uses the same device lock and a fresh aggregate for ordinary iOS alerts', async () => {
@@ -158,7 +163,10 @@ it('retries only failed targets after another device accepted the same notificat
     .mocked(deliveredPushIds)
     .mockImplementation(async (device) => delivered.get(device) ?? new Set());
   jest.mocked(recordDeliveredPush).mockImplementation(async (device, id) => {
-    delivered.set(device, new Set([id]));
+    delivered.set(
+      device,
+      new Set([...Array.from(delivered.get(device) ?? []), id])
+    );
   });
   jest.mocked(sendMessages).mockImplementation(async (inputs) =>
     inputs.map((input) => ({
@@ -264,3 +272,19 @@ it('serializes token variants belonging to the same device', async () => {
   expect(await sendIdentityPushGroups([first, second], results)).toEqual([]);
   expect(withDeviceBadgeLock).toHaveBeenCalledTimes(2);
 });
+
+it.each(['missing', 'reordered'])(
+  'retries safely for %s send results',
+  async (kind) => {
+    const items = [message(1, 'a'), message(2, 'a')];
+    jest.mocked(sendMessages).mockImplementation(async (inputs) => {
+      const reordered =
+        kind === 'missing' ? inputs.slice(1) : [...inputs].reverse();
+      return reordered.map((input) => ({ input, response: { success: true } }));
+    });
+    expect(await sendIdentityPushGroups(items, results)).toEqual([1, 2]);
+    expect(recordDeliveredPush).not.toHaveBeenCalled();
+    expect(quarantinePushTarget).not.toHaveBeenCalled();
+    expect(results).not.toHaveBeenCalled();
+  }
+);

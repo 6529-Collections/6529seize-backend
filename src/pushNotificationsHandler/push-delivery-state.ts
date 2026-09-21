@@ -12,7 +12,9 @@ function redis() {
 }
 
 function key(kind: string, parts: readonly (string | number)[]): string {
-  const scope = process.env.FIREBASE_PROJECT_ID ?? '';
+  const scope = process.env.FIREBASE_PROJECT_ID;
+  if (!scope?.trim())
+    throw new Error('Push delivery state requires FIREBASE_PROJECT_ID');
   return `push-${kind}:v1:${createHash('sha256')
     .update(JSON.stringify([scope, ...parts]))
     .digest('hex')}`;

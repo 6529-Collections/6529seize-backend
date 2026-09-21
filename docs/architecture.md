@@ -1606,13 +1606,10 @@ Operational error delivery is a separate account-owned runtime under
 metadata-only stdout, a source-account CloudWatch Logs relay, source CloudWatch
 alarm forwarding and signed Sentry ingress feed separate normal/critical queues.
 Monitoring-owned dispatchers confirm webhook delivery, deduplicate with DynamoDB
-receipts and archive exhausted/permanent failures in S3. Application errors use
-fixed hourly fingerprint windows; other grouped errors retain five-minute
-windows, and critical/recovery events bypass grouping. Hourly summaries use
-versioned group keys and SQS checkpoints of at most 15 minutes; delayed checkpoints
-converge on one final digest receipt. Existing five-minute digest work remains
-compatible. Source alarms cover sustained 30-minute age and visible dead letters
-on the push queue independently of Lambda invocation errors. Queue canaries, endpoint
+receipts and archive exhausted/permanent failures in S3. Grouped errors retain
+five-minute fingerprint windows, and critical/recovery events bypass grouping.
+Source alarms cover sustained 30-minute age and visible dead letters on the push
+queue independently of Lambda invocation errors. Queue canaries, endpoint
 probes and SNS fallback do not use application MySQL, Redis or its VPC. An
 outside-AWS uptime/dead-man provider remains a deployment requirement for
 AWS-wide failures. Moderation evidence is excluded from this operational contract.

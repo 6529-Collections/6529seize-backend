@@ -52,8 +52,7 @@ its source stacks (push backlog/DLQ alarms), then `pushNotificationsHandler`.
 There is no schema, API, queue topology or frontend change. The shared operational
 envelope extension only appears for the four new push conditions; other services
 do not require immediate redeployment. Older monitoring readers ignore the additive
-field. Existing queued summaries remain compatible after upgrade. On monitoring
-rollback, drain versioned hourly checkpoint work before reverting to a dispatcher
-that does not understand it; otherwise it can send premature duplicate summaries.
+field. Existing queued summaries remain compatible after upgrade. Alert frequency
+remains at the existing five-minute grouping interval.
 Reverting the worker restores old retry behavior and ignores the new Redis keys,
 which expire automatically. It can reintroduce visible duplicates and mismatch churn.

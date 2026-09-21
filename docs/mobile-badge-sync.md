@@ -81,7 +81,7 @@ queue alarms separately cover sustained backlog and visible dead letters.
 
 Ordinary notifications record provider acceptance per device/notification in
 Redis for eight days before returning partial failures. Retries omit recorded
-successes, including after token rotation. Redis lookup failures prevent a new
+successes, including after token rotation. A missing Firebase project ID or Redis lookup failure prevents a new
 send; receipt-write failures retain the retry. This is not exactly-once delivery:
 a crash between provider acceptance and receipt persistence, Redis data loss,
 or replay after receipt expiry can duplicate a notification. Provider acceptance

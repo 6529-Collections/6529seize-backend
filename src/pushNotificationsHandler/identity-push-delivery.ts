@@ -90,6 +90,16 @@ async function sendPending(
   );
   if (!pending.length) return [];
   const results = await sendMessages(pending.map((message) => message.input));
+  if (
+    results.length !== pending.length ||
+    results.some(
+      (result, index) =>
+        result.input.notification_id !== pending[index].input.notification_id ||
+        result.input.token !== pending[index].input.token
+    )
+  ) {
+    throw new Error('Push send results do not match pending inputs');
+  }
   await Promise.all(
     results
       .filter((result) => result.response.success)

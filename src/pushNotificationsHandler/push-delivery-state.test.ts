@@ -23,8 +23,14 @@ jest.mock('@/redis', () => ({
         }
       : null
 }));
+const originalProject = process.env.FIREBASE_PROJECT_ID;
+afterEach(() => {
+  if (originalProject === undefined) delete process.env.FIREBASE_PROJECT_ID;
+  else process.env.FIREBASE_PROJECT_ID = originalProject;
+});
 const device = { device_id: 'phone', token: 'private-token' };
 beforeEach(() => {
+  process.env.FIREBASE_PROJECT_ID = 'test-project';
   values.clear();
   set.mockClear();
   available = true;
@@ -71,4 +77,33 @@ it('classifies only the explicit provider code, never arbitrary message text', (
   expect(isSenderMismatch(new Error('SenderId mismatch'))).toBe(false);
   expect(isSenderMismatch({ code: 'messaging/internal-error' })).toBe(false);
   expect(isSenderMismatch(null)).toBe(false);
+});
+
+it.each([undefined, '', '   '])(
+  'fails closed without a project scope (%s)',
+  async (scope) => {
+    if (scope === undefined) delete process.env.FIREBASE_PROJECT_ID;
+    else process.env.FIREBASE_PROJECT_ID = scope;
+    await expect(isPushTargetQuarantined(device)).rejects.toThrow(
+      'requires FIREBASE_PROJECT_ID'
+    );
+    await expect(quarantinePushTarget(device)).rejects.toThrow(
+      'requires FIREBASE_PROJECT_ID'
+    );
+    await expect(deliveredPushIds('phone', [1])).rejects.toThrow(
+      'requires FIREBASE_PROJECT_ID'
+    );
+    await expect(recordDeliveredPush('phone', 1)).rejects.toThrow(
+      'requires FIREBASE_PROJECT_ID'
+    );
+    expect(set).not.toHaveBeenCalled();
+  }
+);
+
+it('keeps quarantine and delivery receipts isolated across Firebase projects', async () => {
+  await quarantinePushTarget(device);
+  await recordDeliveredPush('phone', 1);
+  process.env.FIREBASE_PROJECT_ID = 'other-project';
+  expect(await isPushTargetQuarantined(device)).toBe(false);
+  expect(await deliveredPushIds('phone', [1])).toEqual(new Set());
 });

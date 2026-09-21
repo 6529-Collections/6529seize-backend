@@ -1,3 +1,4 @@
+import { Logger } from '@/logging';
 import * as admin from 'firebase-admin';
 import { Message } from 'firebase-admin/lib/messaging/messaging-api';
 import {
@@ -6,9 +7,15 @@ import {
 } from '@/pushNotificationsHandler/sendPushNotifications';
 
 jest.mock('firebase-admin', () => ({ apps: [{}], messaging: jest.fn() }));
-jest.mock('@/logging', () => ({
-  Logger: { get: () => ({ info: jest.fn(), error: jest.fn() }) }
-}));
+jest.mock('@/logging', () => {
+  const logger = {
+    info: jest.fn(),
+    error: jest.fn(),
+    errorWithCode: jest.fn()
+  };
+  return { Logger: { get: () => logger } };
+});
+const mockErrorWithCode = jest.mocked(Logger.get('test').errorWithCode);
 
 function input(
   id: number,
@@ -39,6 +46,29 @@ describe('sending budgeted push messages', () => {
         messageId: `sent-${index}`
       }))
     }));
+  });
+
+  it('reports a sender mismatch once before returning it for quarantine', async () => {
+    const error = {
+      code: 'messaging/mismatched-credential',
+      message: 'private-token'
+    };
+    sendEach.mockResolvedValue({
+      successCount: 0,
+      failureCount: 1,
+      responses: [{ success: false, error }]
+    });
+    const results = await sendMessages([input(1)]);
+    expect(results[0].response.error).toBe(error);
+    expect(mockErrorWithCode).toHaveBeenCalledTimes(1);
+    expect(mockErrorWithCode).toHaveBeenCalledWith(
+      'PUSH_SENDER_MISMATCH',
+      expect.any(String),
+      results[0].diagnosticError
+    );
+    expect(JSON.stringify(mockErrorWithCode.mock.calls)).not.toContain(
+      'private-token'
+    );
   });
 
   it('isolates oversized metadata and returns results in the original input order', async () => {
