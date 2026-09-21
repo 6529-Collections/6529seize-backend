@@ -342,13 +342,14 @@ test('source catalog coverage is complete and monitoring delivery has no applica
       false
     );
   }
-  catalog.services.splice(
-    catalog.services.findIndex(
-      (service: { name: string }) => service.name === retained.insert_before
-    ),
-    0,
-    ...retained.services
+  const retainedInsertionIndex = catalog.services.findIndex(
+    (service: { name: string }) => service.name === retained.insert_before
   );
+  assert.ok(
+    retainedInsertionIndex >= 0,
+    'retained-service insertion point exists'
+  );
+  catalog.services.splice(retainedInsertionIndex, 0, ...retained.services);
   for (const env of ['prod', 'staging']) {
     const monitor = JSON.parse(
       readFileSync(
