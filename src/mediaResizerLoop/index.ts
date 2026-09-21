@@ -140,23 +140,35 @@ const liveHandler = wrapLambdaHandler(async (event: any) => {
       }
     };
   } catch (e: any) {
-    if (
-      e instanceof UnprocessableResizeInput &&
-      e.code === 'UNSUPPORTED_CODEC'
-    ) {
-      await reportUnsupportedResizeOnce(s3Client, BUCKET, key, sourceRevision);
-    }
-    if (isUnprocessableResizeInput(e)) {
-      return unprocessableInput(e);
-    }
-    logger.error(
-      `[${path}] Resizing failed (Config: Region: ${BUCKET_REGION}, Bucket ${BUCKET}) ${
-        e.message ?? e
-      }`
-    );
-    throw e;
+    return handleResizeFailure(e, path, key, sourceRevision);
   }
 });
+
+async function handleResizeFailure(
+  error: unknown,
+  path: string,
+  sourceKey: string,
+  sourceRevision: string | undefined
+) {
+  if (
+    error instanceof UnprocessableResizeInput &&
+    error.code === 'UNSUPPORTED_CODEC'
+  ) {
+    await reportUnsupportedResizeOnce(
+      s3Client,
+      BUCKET,
+      sourceKey,
+      sourceRevision
+    );
+  }
+  if (isUnprocessableResizeInput(error)) return unprocessableInput(error);
+  logger.error(
+    `[${path}] Resizing failed (Config: Region: ${BUCKET_REGION}, Bucket ${BUCKET}) ${
+      error instanceof Error ? error.message : error
+    }`
+  );
+  throw error;
+}
 
 function unprocessableInput(error: unknown) {
   const code =

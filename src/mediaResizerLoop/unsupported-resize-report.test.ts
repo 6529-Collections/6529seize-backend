@@ -89,3 +89,28 @@ it('reports missing source identity rather than deduplicating unrelated versions
     'MediaResize.RejectionReportFailed'
   );
 });
+
+it('reports once after a conditional conflict followed by a successful claim', async () => {
+  mockSend.mockRejectedValueOnce(conflict(409)).mockResolvedValueOnce({});
+  await reportUnsupportedResizeOnce(client, 'bucket', 'key', 'etag');
+  expect(mockSend).toHaveBeenCalledTimes(2);
+  expect(mockError).toHaveBeenCalledTimes(1);
+  expect(mockError.mock.calls[0][1].name).toBe('MediaResize.UnsupportedCodec');
+});
+
+it.each([403, 500, 'PRIVATE_STATUS', 900])(
+  'keeps safe status %s without retaining SDK messages or keys',
+  async (status) => {
+    mockSend.mockRejectedValue(
+      Object.assign(new Error('PRIVATE_SOURCE_KEY'), {
+        $metadata: { httpStatusCode: status }
+      })
+    );
+    await reportUnsupportedResizeOnce(client, 'bucket', 'key', 'etag');
+    const message = mockError.mock.calls[0][1].message;
+    expect(message).toContain(
+      `[HTTP ${status === 403 || status === 500 ? status : 'unknown'}]`
+    );
+    expect(message).not.toContain('PRIVATE');
+  }
+);

@@ -19,7 +19,9 @@ not include the requested thumbnail size. A successful claim emits one
 without throwing another Lambda failure. Concurrent conditional-write conflicts
 are retried at most twice; only HTTP 412 means the marker already exists.
 Missing revision metadata and marker storage failures emit a separate operational
-error. Existing monitoring grouping/frequency is unchanged: first reports for
+error with a bounded HTTP status when available, without SDK messages or source
+keys. Reporting is awaited intentionally so Lambda completion cannot freeze an
+unawaited claim or alert. Existing monitoring grouping/frequency is unchanged: first reports for
 several assets may share one Discord group and its occurrence count.
 
 Markers persist without an application TTL. A new source revision has a new

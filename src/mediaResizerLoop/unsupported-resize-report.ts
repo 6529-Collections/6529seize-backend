@@ -36,9 +36,12 @@ export async function reportUnsupportedResizeOnce(
       `Unsupported image codec; source fingerprint ${identity}`,
       error
     );
-  } catch {
+  } catch (cause) {
     // Failure to deduplicate is operational, never a reason to silently suppress.
-    const error = new Error('Unable to record unsupported image report');
+    const status = safeHttpStatus(cause);
+    const error = new Error(
+      `Unable to record unsupported image report [HTTP ${status ?? 'unknown'}]`
+    );
     error.name = 'MediaResize.RejectionReportFailed';
     logger.error(error.message, error);
   }
@@ -53,11 +56,22 @@ async function claimReport(
       await s3.send(command);
       return true;
     } catch (error) {
-      const status = (error as { $metadata?: { httpStatusCode?: number } })
-        ?.$metadata?.httpStatusCode;
+      const status = safeHttpStatus(error);
       if (status === 412) return false;
       // A concurrent conditional write can conflict before a winner is visible.
       if (status !== 409 || attempt === 2) throw error;
     }
   }
+}
+
+/** Retain bounded status diagnostics, never SDK messages, request URLs or keys. */
+function safeHttpStatus(error: unknown): number | undefined {
+  const status = (error as { $metadata?: { httpStatusCode?: unknown } } | null)
+    ?.$metadata?.httpStatusCode;
+  return typeof status === 'number' &&
+    Number.isInteger(status) &&
+    status >= 100 &&
+    status <= 599
+    ? status
+    : undefined;
 }
