@@ -196,7 +196,9 @@ describe('dbMigrationsLoop explicit schema scope', () => {
   it.each([scheduledEvent, { schema_scope: 'maintenance' }])(
     'preserves maintenance without migrations or schema synchronization for %j',
     async (event) => {
-      await invoke(event);
+      await expect(invoke(event)).resolves.toEqual(
+        'schema_scope' in event ? { schema_scope: 'maintenance' } : undefined
+      );
       expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
         logger: expect.anything(),
         entities: Object.values(Entities),

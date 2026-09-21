@@ -176,4 +176,5 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   );
 
   logger.info(`[FINISHED]`);
+  if (scope === 'maintenance') return { schema_scope: scope };
 });
