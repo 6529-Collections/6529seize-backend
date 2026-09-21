@@ -177,11 +177,12 @@ function resolveInstanceMetadata(
     metadataMediaUrl(claimAsset?.animation_url),
     metadataMediaUrl(claimAsset?.animation)
   );
-  const media: NormalizedNftCard['asset']['media'] = animationUrl
-    ? { kind: 'animation', imageUrl, animationUrl }
-    : imageUrl
-      ? { kind: 'image', imageUrl }
-      : undefined;
+  let media: NormalizedNftCard['asset']['media'];
+  if (animationUrl) {
+    media = { kind: 'animation', imageUrl, animationUrl };
+  } else if (imageUrl) {
+    media = { kind: 'image', imageUrl };
+  }
 
   if (isRecord(publicData) && 'listingType' in publicData) {
     return withUnknownSale(
