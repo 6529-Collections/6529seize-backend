@@ -1614,7 +1614,10 @@ Operational error delivery is a separate account-owned runtime under
 metadata-only stdout, a source-account CloudWatch Logs relay, source CloudWatch
 alarm forwarding and signed Sentry ingress feed separate normal/critical queues.
 Monitoring-owned dispatchers confirm webhook delivery, deduplicate with DynamoDB
-receipts and archive exhausted/permanent failures in S3. Queue canaries, endpoint
+receipts and archive exhausted/permanent failures in S3. Grouped errors retain
+five-minute fingerprint windows, and critical/recovery events bypass grouping.
+Source alarms cover sustained 30-minute age and visible dead letters on the push
+queue independently of Lambda invocation errors. Queue canaries, endpoint
 probes and SNS fallback do not use application MySQL, Redis or its VPC. An
 outside-AWS uptime/dead-man provider remains a deployment requirement for
 AWS-wide failures. Moderation evidence is excluded from this operational contract.
@@ -1689,3 +1692,16 @@ this on launch/resume after registration succeeds. Only the worker computes the
 aggregate; the endpoint does not mutate unread state, registrations or schema.
 Queue acknowledgement is separate from APNs delivery. See
 [Mobile badge synchronization](./mobile-badge-sync.md#app-launch-and-resume-refresh).
+
+### Push delivery retry state
+
+The existing device Redis mutex coordinates ordinary sends and badge refreshes.
+Bounded jitter absorbs short contention before returning a partial SQS failure.
+Redis also retains provider-accepted ordinary device/notification receipts for
+eight days and exact device/token/project sender-mismatch quarantines for 24 hours.
+Neither is authoritative notification-feed data. Receipt loss or an ambiguous
+provider acceptance can still duplicate delivery. Quarantined targets are skipped
+without deleting registrations; rotation bypasses the old quarantine. Failed
+work near the queue retry limit remains explicitly alertable. See
+[the delivery contract](mobile-badge-sync.md#delivery-retries-and-incompatible-targets)
+and [recovery runbook](../ops/docs/operations/push-delivery-recovery.md).

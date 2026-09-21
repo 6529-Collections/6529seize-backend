@@ -509,14 +509,19 @@ export async function handleSendResults(
 ): Promise<number[]> {
   const outcomesByNotificationId = new Map<
     number,
-    { hasSuccess: boolean; hasRetryableFailure: boolean }
+    {
+      hasSuccess: boolean;
+      hasRetryableFailure: boolean;
+      hasCleanupFailure: boolean;
+    }
   >();
   await Promise.all(
     results.map(async (result, index) => {
       const notificationId = result.input.notification_id;
       const outcome = outcomesByNotificationId.get(notificationId) ?? {
         hasSuccess: false,
-        hasRetryableFailure: false
+        hasRetryableFailure: false,
+        hasCleanupFailure: false
       };
       outcomesByNotificationId.set(notificationId, outcome);
       if (result.response.success) {
@@ -542,6 +547,7 @@ export async function handleSendResults(
             `[ID ${result.input.notification_id}] Deleted unregistered token row for profile ${message.identityId} device ${message.device.device_id}`
           );
         } catch (deleteError) {
+          outcome.hasCleanupFailure = true;
           logger.error(
             `[ID ${result.input.notification_id}] Failed to delete unregistered token row for profile ${message.identityId} device ${message.device.device_id}: ${deleteError}`
           );
@@ -557,7 +563,11 @@ export async function handleSendResults(
   );
 
   return Array.from(outcomesByNotificationId.entries())
-    .filter(([, outcome]) => !outcome.hasSuccess && outcome.hasRetryableFailure)
+    .filter(
+      ([, outcome]) =>
+        outcome.hasCleanupFailure ||
+        (!outcome.hasSuccess && outcome.hasRetryableFailure)
+    )
     .map(([notificationId]) => notificationId);
 }
 

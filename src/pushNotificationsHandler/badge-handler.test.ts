@@ -1,3 +1,4 @@
+import { Logger } from '@/logging';
 import type { Context, SQSEvent, SQSRecord } from 'aws-lambda';
 import { handler } from './index';
 import {
@@ -123,3 +124,29 @@ it('retries only failed installation jobs in a mixed batch', async () => {
   expect(refreshInstallationBadge).toHaveBeenCalledWith('phone-b');
   expect(sendIdentityNotificationsBatch).toHaveBeenCalledWith([12]);
 });
+
+it.each([7, 8, 10])(
+  'reports near-exhaustion only for failed work at receive %i',
+  async (count) => {
+    const error = jest
+      .spyOn(Logger.prototype, 'errorWithCode')
+      .mockImplementation(() => undefined);
+    try {
+      const input = event({ type: 'badge_refresh', profile_id: 'a' });
+      input.Records[0].attributes = {
+        ApproximateReceiveCount: String(count)
+      } as SQSRecord['attributes'];
+      jest.mocked(refreshProfileBadges).mockResolvedValue(['a']);
+      expect(await handler(input, {} as Context, jest.fn())).toEqual({
+        batchItemFailures: [{ itemIdentifier: '0' }]
+      });
+      expect(error).toHaveBeenCalledTimes(count >= 8 ? 1 : 0);
+      error.mockClear();
+      jest.mocked(refreshProfileBadges).mockResolvedValue([]);
+      await handler(input, {} as Context, jest.fn());
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
+  }
+);

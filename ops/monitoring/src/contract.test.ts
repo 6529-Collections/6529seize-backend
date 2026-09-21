@@ -38,3 +38,15 @@ test('invalid identities, dates, unknown codes and oversized events are rejected
     assert.throws(() => parseAlert({ ...fixture, ...change }), /INVALID_ALERT/);
   }
 });
+
+test('push conditions are finite safe labels; arbitrary condition text is discarded', () => {
+  const known = parseAlert({ ...fixture, condition: 'PUSH_SENDER_MISMATCH' });
+  assert.equal(known.condition, 'PUSH_SENDER_MISMATCH');
+  assert.match(JSON.stringify(renderAlert(known)), /PUSH_SENDER_MISMATCH/);
+  const unknown = parseAlert({
+    ...fixture,
+    condition: 'PRIVATE_TOKEN @everyone'
+  });
+  assert.equal(unknown.condition, undefined);
+  assert.doesNotMatch(JSON.stringify(renderAlert(unknown)), /PRIVATE_TOKEN/);
+});
