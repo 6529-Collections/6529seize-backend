@@ -5,9 +5,9 @@ import type {
   MembershipSourceDimension,
   MembershipSourceJobStatus,
   MembershipSourceJobProgress
-} from '@/membership/membership-schema.types';
+} from '@/entities/membership-schema.types';
 
-/** See docs/membership-refresh-design.md for the publication protocol. */
+/** Retained schema for the retired experiment; see docs/membership-retirement.md. */
 @Entity(MEMBERSHIP_SOURCE_JOBS_TABLE)
 @Index('idx_msj_status_updated', ['status', 'updated_at_millis'])
 export class MembershipSourceJobEntity {

@@ -17,7 +17,6 @@ type SqsRecord = Record<string, unknown>;
 interface XTdhLoopWork {
   readonly phase: XTdhLoopPhase;
   readonly messageGroupId?: string;
-  readonly membershipCycleId?: string;
 }
 
 export function resolveXTdhLoopPhase(event: unknown): XTdhLoopPhase {
@@ -29,10 +28,7 @@ export function resolveXTdhLoopWork(event: unknown): XTdhLoopWork {
   if (!records.length) {
     return {
       phase: getPhaseFromMessage(event),
-      messageGroupId: getMessageGroupIdFromMessage(event),
-      ...(getMembershipCycleIdFromMessage(event)
-        ? { membershipCycleId: getMembershipCycleIdFromMessage(event) }
-        : {})
+      messageGroupId: getMessageGroupIdFromMessage(event)
     };
   }
   // The event source is configured with batchSize: 1. If that changes and a
@@ -56,34 +52,12 @@ export function resolveXTdhLoopWork(event: unknown): XTdhLoopWork {
       phase: XTDH_LOOP_PHASE.UNIVERSE,
       messageGroupId: universeRecord
         ? getMessageGroupIdFromRecord(universeRecord)
-        : undefined,
-      ...(universeRecord &&
-      getMembershipCycleIdFromMessage(getMessageFromRecord(universeRecord))
-        ? {
-            membershipCycleId: getMembershipCycleIdFromMessage(
-              getMessageFromRecord(universeRecord)
-            )
-          }
-        : {})
+        : undefined
     };
   }
   return {
-    phase: XTDH_LOOP_PHASE.STATS,
-    ...(getMembershipCycleIdFromMessage(getMessageFromRecord(records[0]))
-      ? {
-          membershipCycleId: getMembershipCycleIdFromMessage(
-            getMessageFromRecord(records[0])
-          )
-        }
-      : {})
+    phase: XTDH_LOOP_PHASE.STATS
   };
-}
-
-function getMembershipCycleIdFromMessage(message: unknown): string | undefined {
-  const payload = getNotificationPayload(message);
-  return isRecord(payload) && typeof payload.membership_cycle_id === 'string'
-    ? payload.membership_cycle_id
-    : undefined;
 }
 
 function getNotificationPayload(message: unknown): unknown {
@@ -161,16 +135,10 @@ export const handler = sentryContext.wrapLambdaHandler(
         };
         logger.info(`Loop phase ${work.phase} started`);
         if (work.phase === XTDH_LOOP_PHASE.STATS) {
-          await recalculateXTdhUseCase.handleStatsPhase(
-            ctx,
-            work.membershipCycleId
-          );
+          await recalculateXTdhUseCase.handleStatsPhase(ctx);
         } else {
           await recalculateXTdhUseCase.handleUniversePhase(ctx, {
             messageGroupId: work.messageGroupId,
-            ...(work.membershipCycleId
-              ? { membershipCycleId: work.membershipCycleId }
-              : {}),
             ...(getRemainingTimeInMillis ? { getRemainingTimeInMillis } : {})
           });
         }

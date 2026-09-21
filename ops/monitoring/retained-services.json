@@ -1,0 +1,34 @@
+{
+  "reason": "Retain existing monitoring until separately authorized infrastructure retirement; these services cannot be deployed from the application catalog.",
+  "insert_before": "mintAnnouncementsLoop",
+  "services": [
+    {
+      "name": "membershipRefreshLoop",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "membershipRefreshLoop"
+      ]
+    },
+    {
+      "name": "membershipRefreshDispatcherLoop",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "membershipRefreshDispatcherLoop"
+      ]
+    }
+  ]
+}
