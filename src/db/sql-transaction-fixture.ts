@@ -12,6 +12,9 @@ export class SqlTransactionFixtureEntity {
 
 export async function createSqlTransactionFixture(): Promise<void> {
   await sqlExecutor.execute(
+    `DROP TABLE IF EXISTS ${SQL_TRANSACTION_FIXTURE_TABLE}`
+  );
+  await sqlExecutor.execute(
     `CREATE TABLE ${SQL_TRANSACTION_FIXTURE_TABLE} (id varchar(100) PRIMARY KEY, version bigint NOT NULL)`
   );
 }

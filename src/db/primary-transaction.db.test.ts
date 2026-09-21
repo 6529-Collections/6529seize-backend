@@ -21,7 +21,9 @@ describe('primary transaction primary snapshots on MySQL', () => {
     );
   });
   afterEach(async () => {
-    await sqlExecutor.execute(`DROP TABLE ${SQL_TRANSACTION_FIXTURE_TABLE}`);
+    await sqlExecutor.execute(
+      `DROP TABLE IF EXISTS ${SQL_TRANSACTION_FIXTURE_TABLE}`
+    );
   });
   const select = `SELECT CAST(version AS CHAR) AS version
     FROM ${SQL_TRANSACTION_FIXTURE_TABLE}

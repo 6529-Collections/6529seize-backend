@@ -68,11 +68,11 @@ async function waitUntilUnlocked(db: SqlExecutor): Promise<void> {
 describe.each(['API', 'LOOP'])(
   'SQL execution budget through actual %s adapter',
   (adapter) => {
-    beforeEach(createSqlTransactionFixture);
     let observer: SqlExecutor;
     let db: SqlExecutor;
     beforeEach(async () => {
       observer = sqlExecutor;
+      await createSqlTransactionFixture();
       await observer.execute(
         `INSERT INTO ${SQL_TRANSACTION_FIXTURE_TABLE} (id,version) VALUES (:first,1),(:second,1)`,
         { first, second }
@@ -82,15 +82,19 @@ describe.each(['API', 'LOOP'])(
       db = sqlExecutor;
     });
     afterEach(async () => {
-      if (adapter === 'API') await apiDb.disconnect();
-      else await loopDb.disconnect();
-      setSqlExecutor(observer);
-      await observer.execute(
-        `DELETE FROM ${SQL_TRANSACTION_FIXTURE_TABLE} WHERE id IN (:ids)`,
-        { ids: [first, second] }
-      );
-      await observer.execute(`DROP TABLE ${SQL_TRANSACTION_FIXTURE_TABLE}`);
-      jest.restoreAllMocks();
+      try {
+        if (adapter === 'API') await apiDb.disconnect();
+        else await loopDb.disconnect();
+      } finally {
+        setSqlExecutor(observer);
+        try {
+          await observer.execute(
+            `DROP TABLE IF EXISTS ${SQL_TRANSACTION_FIXTURE_TABLE}`
+          );
+        } finally {
+          jest.restoreAllMocks();
+        }
+      }
     });
 
     it('uses one physical session and restores string-valued settings after acknowledged commit', async () => {
