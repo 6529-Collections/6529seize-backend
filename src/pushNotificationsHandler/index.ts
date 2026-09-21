@@ -1,3 +1,4 @@
+import { reportPushDeliveryFailure } from '@/pushNotificationsHandler/push-send-diagnostics';
 import { PushInstallationEntity } from '@/entities/IPushInstallation';
 import {
   refreshInstallationBadge,
@@ -29,7 +30,7 @@ async function refreshInstallationRecords(
     try {
       await refreshInstallationBadge(record.deviceId);
     } catch (error) {
-      logger.error(`Installation badge refresh failed: ${error}`);
+      reportPushDeliveryFailure(error, 'installation_badge_refresh');
       failures.push({ itemIdentifier: record.messageId });
     }
   }
@@ -115,7 +116,7 @@ const sqsHandler: SQSHandler = async (event): Promise<SQSBatchResponse> => {
               .map((record) => ({ itemIdentifier: record.messageId }))
           );
         } catch (error) {
-          logger.error(`Badge refresh batch failed: ${error}`);
+          reportPushDeliveryFailure(error, 'badge_refresh');
           failures.push(
             ...badgeRecords.map((record) => ({
               itemIdentifier: record.messageId
@@ -125,6 +126,20 @@ const sqsHandler: SQSHandler = async (event): Promise<SQSBatchResponse> => {
       }
 
       failures.push(...(await refreshInstallationRecords(installationRecords)));
+      const failed = new Set(failures.map((item) => item.itemIdentifier));
+      if (
+        event.Records.some(
+          (record) =>
+            failed.has(record.messageId) &&
+            Number(record.attributes?.ApproximateReceiveCount) >= 8
+        )
+      ) {
+        const error = new Error(
+          'Push work is approaching its queue retry limit'
+        );
+        error.name = 'PushRetry.NEAR_EXHAUSTION';
+        logger.errorWithCode('PUSH_RETRY_EXHAUSTED', error.message, error);
+      }
       return {
         batchItemFailures: failures
       };

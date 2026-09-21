@@ -813,21 +813,23 @@ function monitoringTemplate(environment) {
   return doc;
 }
 
-function addWaveScoreQueueAlarms(r) {
+function addWorkerQueueAlarms(r) {
   // These queues have the same explicit names in both application regions.
   // Age is a backlog guard, not a business-completion or freshness SLO.
   for (const [id, queue, deadLetters] of [
     ['WaveScoreDirtyAge', 'wave-score-refresh-dirty.fifo', false],
     ['WaveScoreStartAge', 'wave-score-refresh-start.fifo', false],
-    ['WaveScoreDirtyDeadLetters', 'wave-score-refresh-dirty-dlq.fifo', true]
+    ['WaveScoreDirtyDeadLetters', 'wave-score-refresh-dirty-dlq.fifo', true],
+    ['PushNotificationsAge', 'firebase-push-notifications', false],
+    ['PushNotificationsDeadLetters', 'firebase-push-notifications-dlq', true]
   ]) {
     r[id] = {
       Type: 'AWS::CloudWatch::Alarm',
       Properties: {
         AlarmName: sub('seize-monitoring-${Environment}-' + id),
         AlarmDescription: deadLetters
-          ? 'Wave score dirty refresh has a visible dead-letter message.'
-          : 'Wave score queue age is at least 30 minutes in three of five minutes; inspect backlog and worker health.',
+          ? 'Worker queue has a visible dead-letter message; inspect before redriving.'
+          : 'Worker queue age is at least 30 minutes in three of five minutes; inspect backlog and worker health.',
         Namespace: 'AWS/SQS',
         MetricName: deadLetters
           ? 'ApproximateNumberOfMessagesVisible'
@@ -1099,7 +1101,7 @@ function sourceTemplate(environment) {
       };
     }
   }
-  addWaveScoreQueueAlarms(r);
+  addWorkerQueueAlarms(r);
   serializeLogSubscriptions(r);
   doc.Outputs = {
     LogRelayRoleArn: { Value: attr('LogRole') },

@@ -6,10 +6,6 @@ on:
         required: true
         type: choice
         options: [staging, prod]
-      commit_sha:
-        description: Full merged commit SHA to deploy
-        required: true
-        type: string
 permissions:
   contents: read
   id-token: write
@@ -18,22 +14,33 @@ concurrency:
   cancel-in-progress: false
 jobs:
   monitoring:
-    if: github.ref == 'refs/heads/main'
     environment: monitoring-${{ inputs.environment }}
     runs-on: ubuntu-latest
     steps:
+      - name: Verify environment branch
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          case "$DEPLOY_ENVIRONMENT" in
+            prod) expected_ref=refs/heads/main ;;
+            staging) expected_ref=refs/heads/1a-staging ;;
+            *) echo "Unsupported monitoring environment" >&2; exit 1 ;;
+          esac
+          if [[ "$GITHUB_REF" != "$expected_ref" ]]; then
+            echo "Monitoring $DEPLOY_ENVIRONMENT must run from $expected_ref" >&2
+            exit 1
+          fi
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          ref: ${{ inputs.commit_sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Verify the exact merged commit
+      - name: Verify the dispatch commit
         env:
-          EXPECTED_SHA: ${{ inputs.commit_sha }}
+          EXPECTED_SHA: ${{ github.sha }}
         run: |
           [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          git merge-base --is-ancestor "$EXPECTED_SHA" origin/main
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '22'
@@ -55,7 +62,7 @@ jobs:
         env:
           AWS_CLI_PATH: /usr/local/bin/aws
           MONITORING_ENVIRONMENT: ${{ inputs.environment }}
-          MONITORING_COMMIT_SHA: ${{ inputs.commit_sha }}
+          MONITORING_COMMIT_SHA: ${{ github.sha }}
           MONITORING_ACCOUNT_ID: ${{ vars.AWS_MONITORING_ACCOUNT_ID }}
           MONITORING_ARTIFACT_BUCKET: ${{ vars.AWS_MONITORING_ARTIFACT_BUCKET }}
           MONITORING_CLOUDFORMATION_ROLE_ARN: ${{ vars.AWS_MONITORING_CFN_ROLE_ARN }}
