@@ -33,7 +33,7 @@ const alert: Alert = {
   environment: 'prod',
   service: 'private-service',
   severity: 'error',
-  code: 'APPLICATION_ERROR',
+  code: 'SENTRY_ERROR',
   fingerprint: 'private-fingerprint',
   correlationId: 'private-correlation',
   release: 'private-release'

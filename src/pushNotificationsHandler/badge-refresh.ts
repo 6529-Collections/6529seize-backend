@@ -3,15 +3,18 @@ import { In } from 'typeorm';
 import { isIosPushPlatform } from './push-platform';
 import { getDataSource } from '@/db';
 import { PushNotificationDevice } from '@/entities/IPushNotification';
-import { Logger } from '@/logging';
+import { reportPushDeliveryFailure } from '@/pushNotificationsHandler/push-send-diagnostics';
+import {
+  isPushTargetQuarantined,
+  isSenderMismatch,
+  quarantinePushTarget
+} from '@/pushNotificationsHandler/push-delivery-state';
 import {
   deviceBadgeKey,
   getDeviceBadgeState,
   withDeviceBadgeLock
 } from './device-badge';
 import { sendBadgeUpdate } from './sendPushNotifications';
-
-const logger = Logger.get('PUSH_BADGE_REFRESH');
 
 /** Return profiles whose work needs SQS retry, preserving successful device updates. */
 export async function refreshProfileBadges(
@@ -57,11 +60,12 @@ async function refreshTokenGroup(
   const device = registrations[0];
   try {
     await withDeviceBadgeLock(device, async () => {
+      if (await isPushTargetQuarantined(device)) return;
       const state = await getDeviceBadgeState(device);
       // A disconnect/token rotation may have happened while this job was queued.
       if (!registrations.some((row) => state.profileIds.has(row.profile_id)))
         return;
-      await sendBadgeUpdate(device.token, state.count);
+      await sendOrQuarantine(device, state.count, 'badge_refresh');
     });
   } catch (error) {
     const code = (error as { code?: string } | null)?.code;
@@ -76,16 +80,12 @@ async function refreshTokenGroup(
           token: device.token
         });
       } catch (cleanupError) {
-        logger.error(
-          `Failed to remove invalid badge token for device ${device.device_id}: ${cleanupError}`
-        );
+        reportPushDeliveryFailure(cleanupError, 'badge_refresh');
         registrations.forEach((row) => failed.add(row.profile_id));
       }
       return;
     }
-    logger.error(
-      `Badge refresh failed for device ${device.device_id}: ${error}`
-    );
+    reportPushDeliveryFailure(error, 'badge_refresh');
     registrations.forEach((row) => failed.add(row.profile_id));
   }
 }
@@ -100,12 +100,11 @@ export async function refreshInstallationBadge(
       .findOneBy({ device_id: deviceId });
     if (!installation?.token || !isIosPushPlatform(installation.platform))
       return;
-    const state = await getDeviceBadgeState({
-      device_id: deviceId,
-      token: installation.token
-    });
+    const target = { device_id: deviceId, token: installation.token };
+    if (await isPushTargetQuarantined(target)) return;
+    const state = await getDeviceBadgeState(target);
     try {
-      await sendBadgeUpdate(installation.token, state.count);
+      await sendOrQuarantine(target, state.count, 'installation_badge_refresh');
     } catch (error) {
       const code = (error as { code?: string } | null)?.code;
       if (
@@ -123,4 +122,19 @@ export async function refreshInstallationBadge(
         .update(target, { token: null });
     }
   });
+}
+
+async function sendOrQuarantine(
+  device: { device_id: string; token: string },
+  count: number,
+  stage: 'badge_refresh' | 'installation_badge_refresh'
+): Promise<void> {
+  try {
+    await sendBadgeUpdate(device.token, count);
+  } catch (error) {
+    if (!isSenderMismatch(error)) throw error;
+    // Quarantine must persist before acknowledging permanently incompatible work.
+    await quarantinePushTarget(device);
+    reportPushDeliveryFailure(error, stage);
+  }
 }

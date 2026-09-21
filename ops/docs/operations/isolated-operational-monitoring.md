@@ -202,7 +202,8 @@ release operator and an identified test window. Test synthetic metadata only.
 - Trigger an AWS alarm without relying on successful application execution.
   Verify the protected critical queue and an explicit recovery event.
 - Replay the same sanitized event ID and confirm it does not post again; send
-  repeated fingerprints and verify first delivery plus the five-minute count.
+  repeated fingerprints and verify first delivery plus the hourly application-error
+  count (five minutes for other grouped errors). Critical/recovery alerts remain immediate.
 - Exercise 429, timeout, 5xx and revoked webhook credentials against test fixtures
   or an approved test webhook. Verify retry/DLQ/archive/fallback outcomes.
 - Break normal delivery during a controlled test and confirm critical capacity,

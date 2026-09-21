@@ -25,7 +25,7 @@ const alert: Alert = {
   service: 'fixture',
   occurredAt: '2026-09-14T06:00:00Z',
   severity: 'error',
-  code: 'APPLICATION_ERROR',
+  code: 'SENTRY_ERROR',
   fingerprint: 'fixture'
 };
 const groupKey = 'group:prod:fixture:1';
@@ -449,4 +449,25 @@ test('malformed or wrong-group persisted plans fail instead of selecting another
     { mode: 'UNKNOWN' }
   ])
     assert.throws(() => parseDigestPlan({ ...valid, ...changed }, groupKey));
+});
+
+test('hourly application checkpoints converge on one persisted edit plan', async (t) => {
+  const h = harness(t);
+  const application: Alert = { ...alert, code: 'APPLICATION_ERROR' };
+  await h.run({ kind: 'alert', alert: application }, 'first', 301);
+  await h.run(
+    { kind: 'alert', alert: { ...application, eventId: 'hourly-repeat' } },
+    'repeat',
+    901
+  );
+  await h.run(h.scheduled[0]!, 'checkpoint', 1201);
+  await h.run(h.scheduled[1]!, 'late-checkpoint', 3606);
+  const final = h.scheduled[2]!;
+  await h.run(final, 'final', 3606);
+  await h.run(final, 'duplicate', 3607);
+  assert.deepEqual(
+    h.sent.map((send) => send.method),
+    ['POST', 'PATCH']
+  );
+  assert.match(JSON.stringify(h.sent[1]?.payload), /"value":"2"/);
 });

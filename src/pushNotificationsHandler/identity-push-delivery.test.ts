@@ -1,3 +1,16 @@
+import {
+  isPushTargetQuarantined,
+  quarantinePushTarget,
+  deliveredPushIds,
+  recordDeliveredPush
+} from '@/pushNotificationsHandler/push-delivery-state';
+jest.mock('@/pushNotificationsHandler/push-delivery-state', () => ({
+  ...jest.requireActual('@/pushNotificationsHandler/push-delivery-state'),
+  isPushTargetQuarantined: jest.fn().mockResolvedValue(false),
+  quarantinePushTarget: jest.fn().mockResolvedValue(undefined),
+  deliveredPushIds: jest.fn().mockResolvedValue(new Set()),
+  recordDeliveredPush: jest.fn().mockResolvedValue(undefined)
+}));
 const mockFindRegistrations = jest.fn();
 jest.mock('@/db', () => ({
   getDataSource: () => ({
@@ -46,6 +59,11 @@ function message(
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(deliveredPushIds).mockReset().mockResolvedValue(new Set());
+  jest.mocked(recordDeliveredPush).mockReset().mockResolvedValue(undefined);
+  results.mockReset().mockResolvedValue([]);
+  jest.mocked(isPushTargetQuarantined).mockReset().mockResolvedValue(false);
+  jest.mocked(quarantinePushTarget).mockReset().mockResolvedValue(undefined);
   mockFindRegistrations.mockResolvedValue([
     { profile_id: 'a' },
     { profile_id: 'b' }
@@ -126,4 +144,123 @@ it('drops an Android recipient removed after the alert was built', async () => {
   expect(sendMessages).toHaveBeenCalledWith([
     expect.objectContaining({ notification_id: 2, omitBadge: true })
   ]);
+});
+
+it('retries only failed targets after another device accepted the same notification', async () => {
+  const first = message(50, 'a');
+  const second = {
+    ...message(50, 'a'),
+    device: { ...first.device, device_id: 'second-phone', token: 'other' },
+    input: { ...first.input, token: 'other' }
+  };
+  const delivered = new Map<string, Set<number>>();
+  jest
+    .mocked(deliveredPushIds)
+    .mockImplementation(async (device) => delivered.get(device) ?? new Set());
+  jest.mocked(recordDeliveredPush).mockImplementation(async (device, id) => {
+    delivered.set(device, new Set([id]));
+  });
+  jest.mocked(sendMessages).mockImplementation(async (inputs) =>
+    inputs.map((input) => ({
+      input,
+      response:
+        input.token === 'token'
+          ? { success: true }
+          : {
+              success: false,
+              error: Object.assign(new Error('temporary'), {
+                code: 'messaging/internal-error',
+                toJSON: () => ({})
+              })
+            }
+    }))
+  );
+  results.mockImplementation(async (_messages, sends) =>
+    sends
+      .filter((s: { response: { success: boolean } }) => !s.response.success)
+      .map(
+        (s: { input: { notification_id: number } }) => s.input.notification_id
+      )
+  );
+  expect(await sendIdentityPushGroups([first, second], results)).toEqual([50]);
+  jest.mocked(sendMessages).mockClear();
+  jest
+    .mocked(sendMessages)
+    .mockImplementation(async (inputs) =>
+      inputs.map((input) => ({ input, response: { success: true } }))
+    );
+  expect(await sendIdentityPushGroups([first, second], results)).toEqual([]);
+  expect(sendMessages).toHaveBeenCalledTimes(1);
+  expect(jest.mocked(sendMessages).mock.calls[0][0][0].token).toBe('other');
+});
+
+it('acknowledges sender mismatch only after quarantining the exact target', async () => {
+  const item = message(1, 'a');
+  jest.mocked(sendMessages).mockResolvedValue([
+    {
+      input: item.input,
+      response: {
+        success: false,
+        error: Object.assign(new Error('mismatch'), {
+          code: 'messaging/mismatched-credential',
+          toJSON: () => ({})
+        })
+      }
+    }
+  ]);
+  expect(await sendIdentityPushGroups([item], results)).toEqual([]);
+  expect(quarantinePushTarget).toHaveBeenCalledWith(item.device);
+  jest
+    .mocked(quarantinePushTarget)
+    .mockRejectedValue(new Error('state unavailable'));
+  expect(await sendIdentityPushGroups([item], results)).toEqual([1]);
+});
+
+it('fails closed before sending when receipt lookup fails', async () => {
+  jest
+    .mocked(deliveredPushIds)
+    .mockRejectedValue(new Error('Redis unavailable'));
+  expect(await sendIdentityPushGroups([message(1, 'a')], results)).toEqual([1]);
+  expect(sendMessages).not.toHaveBeenCalled();
+});
+
+it('skips quarantined targets without deleting profile registrations', async () => {
+  jest.mocked(isPushTargetQuarantined).mockResolvedValue(true);
+  expect(await sendIdentityPushGroups([message(1, 'a')], results)).toEqual([]);
+  expect(sendMessages).not.toHaveBeenCalled();
+});
+
+it('retains retry when provider acceptance cannot be recorded', async () => {
+  const item = message(1, 'a');
+  jest
+    .mocked(sendMessages)
+    .mockResolvedValue([{ input: item.input, response: { success: true } }]);
+  jest
+    .mocked(recordDeliveredPush)
+    .mockRejectedValue(new Error('Redis write unavailable'));
+  expect(await sendIdentityPushGroups([item], results)).toEqual([1]);
+  expect(results).not.toHaveBeenCalled();
+});
+
+it('serializes token variants belonging to the same device', async () => {
+  const first = message(1, 'a');
+  const second = {
+    ...message(2, 'b'),
+    device: { ...first.device, token: 'rotated' },
+    input: { ...message(2, 'b').input, token: 'rotated' }
+  };
+  let active = false;
+  jest
+    .mocked(withDeviceBadgeLock)
+    .mockImplementation(async (_device, action) => {
+      expect(active).toBe(false);
+      active = true;
+      try {
+        return await action();
+      } finally {
+        active = false;
+      }
+    });
+  expect(await sendIdentityPushGroups([first, second], results)).toEqual([]);
+  expect(withDeviceBadgeLock).toHaveBeenCalledTimes(2);
 });

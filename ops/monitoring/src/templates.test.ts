@@ -234,10 +234,12 @@ test('wave throttling is sustained while queue backlog and dead letters have ind
     for (const [id, queue] of [
       ['WaveScoreDirtyAge', 'wave-score-refresh-dirty.fifo'],
       ['WaveScoreStartAge', 'wave-score-refresh-start.fifo'],
-      ['WaveScoreDirtyDeadLetters', 'wave-score-refresh-dirty-dlq.fifo']
+      ['WaveScoreDirtyDeadLetters', 'wave-score-refresh-dirty-dlq.fifo'],
+      ['PushNotificationsAge', 'firebase-push-notifications'],
+      ['PushNotificationsDeadLetters', 'firebase-push-notifications-dlq']
     ]) {
       const alarm = resources[id!].Properties;
-      const deadLetters = id === 'WaveScoreDirtyDeadLetters';
+      const deadLetters = id!.endsWith('DeadLetters');
       assert.equal(alarm.Namespace, 'AWS/SQS');
       assert.deepEqual(alarm.Dimensions, [{ Name: 'QueueName', Value: queue }]);
       assert.equal(
