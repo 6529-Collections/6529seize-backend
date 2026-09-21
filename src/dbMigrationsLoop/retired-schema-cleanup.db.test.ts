@@ -59,9 +59,15 @@ describeWithSeed('Retired schema explicit cleanup boundary', [], () => {
         await runner.query(`INSERT INTO \`${name}\` VALUES (1, 51)`);
       }
       const before = await inspectRetiredSchema(runner);
+      await runner.query('SET SESSION lock_wait_timeout = 17');
       await db.synchronize();
       expect(await inspectRetiredSchema(runner)).toEqual(before);
       await dropRetiredSchema(runner, before);
+      expect(
+        await runner.query(
+          'SELECT CAST(@@SESSION.lock_wait_timeout AS CHAR) AS timeout'
+        )
+      ).toEqual([{ timeout: '17' }]);
       const removed = await inspectRetiredSchema(runner);
       expect(removed.tables).toEqual([]);
       await dropRetiredSchema(runner, removed);
@@ -108,19 +114,33 @@ describeWithSeed('Retired schema explicit cleanup boundary', [], () => {
     });
   });
 
-  it('rejects a dependent view before any deletion', async () => {
+  it('rejects dependencies on both ends of the table allowlist before any deletion', async () => {
     await withRunner(async (runner) => {
-      await runner.query('CREATE TABLE membership_refresh_targets (id int)');
       await runner.query(
-        'CREATE VIEW retirement_dependency_test AS SELECT id FROM membership_refresh_targets'
+        'CREATE TABLE membership_generation_members (id int PRIMARY KEY)'
+      );
+      await runner.query(
+        'CREATE TABLE user_group_members (id int PRIMARY KEY)'
+      );
+      await runner.query(
+        'CREATE TABLE retirement_fk_test (id int, FOREIGN KEY (id) REFERENCES membership_generation_members(id))'
+      );
+      await runner.query(
+        'CREATE VIEW retirement_dependency_test AS SELECT id FROM user_group_members'
       );
       try {
         await expect(inspectRetiredSchema(runner)).rejects.toThrow(
           'dependencies'
         );
-        expect(await runner.hasTable('membership_refresh_targets')).toBe(true);
-      } finally {
+        await runner.query('DROP TABLE retirement_fk_test');
+        await expect(inspectRetiredSchema(runner)).rejects.toThrow(
+          'dependencies'
+        );
         await runner.query('DROP VIEW retirement_dependency_test');
+        expect((await inspectRetiredSchema(runner)).tables).toHaveLength(2);
+      } finally {
+        await runner.query('DROP VIEW IF EXISTS retirement_dependency_test');
+        await runner.query('DROP TABLE IF EXISTS retirement_fk_test');
       }
     });
   });
@@ -132,12 +152,18 @@ describeWithSeed('Retired schema explicit cleanup boundary', [], () => {
       );
       const approved = await inspectRetiredSchema(runner);
       const blocker = db.createQueryRunner('master');
+      await runner.query('SET SESSION lock_wait_timeout = 23');
       try {
         await blocker.startTransaction();
         await blocker.query('SELECT * FROM membership_refresh_targets');
         await expect(dropRetiredSchema(runner, approved)).rejects.toMatchObject(
           { code: 'ER_LOCK_WAIT_TIMEOUT' }
         );
+        expect(
+          await runner.query(
+            'SELECT CAST(@@SESSION.lock_wait_timeout AS CHAR) AS timeout'
+          )
+        ).toEqual([{ timeout: '23' }]);
         expect(await runner.hasTable('membership_refresh_targets')).toBe(true);
       } finally {
         await blocker.rollbackTransaction();

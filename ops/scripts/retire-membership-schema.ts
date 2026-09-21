@@ -155,7 +155,15 @@ async function main() {
   }
 }
 
-main().catch(() => {
+main().catch((error: unknown) => {
+  // Print diagnostics without serializing driver objects (which can contain credentials).
+  let diagnostic =
+    error instanceof Error ? (error.stack ?? error.message) : String(error);
+  for (const key of ['HOST', 'USER', 'PASSWORD']) {
+    const value = process.env[`RETIRE_DB_${key}`];
+    if (value) diagnostic = diagnostic.split(value).join('[redacted]');
+  }
+  console.error(diagnostic);
   console.error(
     'Retirement failed; inspect the database and reconcile the plan before retrying. No automatic retry.'
   );

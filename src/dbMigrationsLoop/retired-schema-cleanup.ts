@@ -40,15 +40,21 @@ function identifier(value: string): string {
 }
 
 async function rejectDependencies(runner: QueryRunner, database: string) {
+  const placeholders = RETIRED_MEMBERSHIP_TABLES.map(() => '?').join(', ');
   const dependencies: { name: string }[] = await runner.query(
     `SELECT CONCAT(TABLE_SCHEMA, '.', TABLE_NAME) AS name
        FROM information_schema.KEY_COLUMN_USAGE
-       WHERE REFERENCED_TABLE_SCHEMA = ? AND REFERENCED_TABLE_NAME IN (?)
+       WHERE REFERENCED_TABLE_SCHEMA = ? AND REFERENCED_TABLE_NAME IN (${placeholders})
      UNION ALL
      SELECT CONCAT(VIEW_SCHEMA, '.', VIEW_NAME) AS name
        FROM information_schema.VIEW_TABLE_USAGE
-       WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN (?)`,
-    [database, RETIRED_MEMBERSHIP_TABLES, database, RETIRED_MEMBERSHIP_TABLES]
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN (${placeholders})`,
+    [
+      database,
+      ...RETIRED_MEMBERSHIP_TABLES,
+      database,
+      ...RETIRED_MEMBERSHIP_TABLES
+    ]
   );
   const programs: { definition: string | null }[] = await runner.query(
     `SELECT ROUTINE_DEFINITION AS definition FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = ?
@@ -125,13 +131,16 @@ export async function dropRetiredSchema(
   runner: QueryRunner,
   approved: RetirementInventory
 ): Promise<void> {
-  await runner.query('SET SESSION lock_wait_timeout = 1');
+  const [previous]: { timeout: number | string }[] = await runner.query(
+    'SELECT @@SESSION.lock_wait_timeout AS timeout'
+  );
   const [lock]: { acquired: number | string }[] = await runner.query(
     "SELECT GET_LOCK('retire-membership-schema-v1', 0) AS acquired"
   );
   if (Number(lock.acquired) !== 1)
     throw new Error('Another retirement operation is running');
   try {
+    await runner.query('SET SESSION lock_wait_timeout = 1');
     const actual = await inspectRetiredSchema(runner);
     if (JSON.stringify(actual) !== JSON.stringify(approved))
       throw new Error(
@@ -145,6 +154,12 @@ export async function dropRetiredSchema(
     if ((await inspectRetiredSchema(runner)).tables.length)
       throw new Error('Retired table removal did not complete');
   } finally {
-    await runner.query("SELECT RELEASE_LOCK('retire-membership-schema-v1')");
+    try {
+      await runner.query('SET SESSION lock_wait_timeout = ?', [
+        Number(previous.timeout)
+      ]);
+    } finally {
+      await runner.query("SELECT RELEASE_LOCK('retire-membership-schema-v1')");
+    }
   }
 }

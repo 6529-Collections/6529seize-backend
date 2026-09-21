@@ -81,10 +81,13 @@ run IDs to correlate E2E replies.
 The dedicated worker and dispatcher are no longer ordinary deployment choices.
 Follow the [combined retirement runbook](membership-retirement.md): verify the
 application rollout, back up and inventory resources/data, deploy the updated
-`dbMigrationsLoop`, remove monitoring subscriptions, delete dispatcher then
+`dbMigrationsLoop` with `db_schema_scope=maintenance`, remove monitoring subscriptions, delete dispatcher then
 worker, and execute explicit database cleanup last. The removed additive schema
 scopes are rejected. Full sync never invokes retirement DDL. The operator CLI
 requires an explicit environment; production retirement requires a future authorized phase.
+The workflow still defaults to `full`, which synchronizes registered entities and
+runs enabled historical migrations; it ignores the unregistered retired tables.
+Select `maintenance` explicitly for this rollout to avoid unrelated schema work.
 
 ### Operational failures
 

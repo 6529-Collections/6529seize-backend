@@ -132,6 +132,7 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   }
   await doInDbContext(
     async () => {
+      // Synchronization ignores tables outside the current entity registry; retirement is operator-only.
       if (!scheduledInvocation && scope === 'full')
         await getDataSource().synchronize();
       if (
