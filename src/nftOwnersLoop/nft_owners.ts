@@ -8,10 +8,6 @@ import {
 } from './db.nft_owners';
 import { Logger } from '../logging';
 import { ConsolidatedNFTOwner, NFTOwner } from '../entities/INFTOwner';
-import {
-  getActiveMembershipGlobalJobId,
-  runMembershipGlobalSourceJob
-} from '../membership/membership-producer-writes';
 import { Transaction } from '../entities/ITransaction';
 import {
   getNextgenNetwork,
@@ -158,36 +154,6 @@ function buildFullOwnersFromTransactions(
 
 const logger = Logger.get('NFT_OWNERS');
 
-async function resolveNftOwnerSourceRange(reset?: boolean) {
-  const lastOwnersBlock = await getMaxNftOwnersBlockReference();
-  const syncBlock = await getNftOwnersSyncBlock();
-  const activeJobId = await getActiveMembershipGlobalJobId('OWNERSHIP');
-  const activeRange = activeJobId?.match(/^nft-owners:(\d+):(\d+)$/);
-  if (activeJobId && !activeRange)
-    throw new Error('Another ownership producer is still active');
-  const originalSyncBlock = activeRange ? Number(activeRange[1]) : syncBlock;
-  const resetReasonSyncMismatch =
-    lastOwnersBlock > 0 && syncBlock !== lastOwnersBlock;
-  // A prior attempt may have committed raw owners before consolidation or the
-  // sync marker. Rebuild from the fixed range rather than applying the delta
-  // to those partially updated balances a second time.
-  const shouldReset =
-    reset || !!activeRange || lastOwnersBlock === 0 || resetReasonSyncMismatch;
-  const blockReference = activeRange
-    ? Number(activeRange[2])
-    : await fetchMaxTransactionsBlockNumber();
-  return {
-    activeRange,
-    blockReference,
-    jobId: `nft-owners:${originalSyncBlock}:${blockReference}`,
-    lastOwnersBlock,
-    originalSyncBlock,
-    resetReasonSyncMismatch,
-    shouldReset,
-    syncBlock
-  };
-}
-
 export const updateNftOwners = async (reset?: boolean) => {
   const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[getNextgenNetwork()];
 
@@ -198,27 +164,14 @@ export const updateNftOwners = async (reset?: boolean) => {
     NEXTGEN_CONTRACT
   ];
 
-  const {
-    activeRange,
-    blockReference,
-    jobId,
-    lastOwnersBlock,
-    originalSyncBlock,
-    resetReasonSyncMismatch,
-    shouldReset,
-    syncBlock
-  } = await resolveNftOwnerSourceRange(reset);
-  if (activeRange && syncBlock === blockReference) {
-    await runMembershipGlobalSourceJob(
-      jobId,
-      ['OWNERSHIP'],
-      'nft-owners-reconciled',
-      async () => undefined
-    );
-    return;
-  }
-  if (activeRange && syncBlock !== originalSyncBlock)
-    throw new Error('NFT owner sync block moved during source recovery');
+  const lastOwnersBlock = await getMaxNftOwnersBlockReference();
+  const syncBlock = await getNftOwnersSyncBlock();
+
+  const resetReasonSyncMismatch =
+    lastOwnersBlock > 0 && syncBlock !== lastOwnersBlock;
+  reset = reset || lastOwnersBlock === 0 || resetReasonSyncMismatch;
+
+  const blockReference = await fetchMaxTransactionsBlockNumber();
   if (resetReasonSyncMismatch) {
     logger.info(
       `[RESET: sync block mismatch (sync=${syncBlock} vs max_ref=${lastOwnersBlock}) - full replay]`
@@ -228,7 +181,7 @@ export const updateNftOwners = async (reset?: boolean) => {
   let addresses: Set<string>;
   let ownersDelta: NFTOwner[];
 
-  if (shouldReset) {
+  if (reset) {
     logger.info(
       `[lastOwnersBlock ${lastOwnersBlock}] : [blockReference ${blockReference}] : [RESET] : [FETCHING ALL TRANSACTIONS...]`
     );
@@ -285,19 +238,12 @@ export const updateNftOwners = async (reset?: boolean) => {
   }
 
   if (addresses.size > 0) {
-    await runMembershipGlobalSourceJob(
-      jobId,
-      ['OWNERSHIP'],
-      'nft-owners-reconciled',
-      async () => {
-        if ((await getNftOwnersSyncBlock()) !== originalSyncBlock) {
-          throw new Error('NFT owner source moved before reconciliation');
-        }
-        await persistNftOwners(addresses, ownersDelta, shouldReset);
-        await consolidateNftOwners(addresses, shouldReset);
-        await setNftOwnersSyncBlock(blockReference);
-      }
-    );
+    if ((await getNftOwnersSyncBlock()) !== syncBlock) {
+      throw new Error('NFT owner source moved before reconciliation');
+    }
+    await persistNftOwners(addresses, ownersDelta, reset);
+    await consolidateNftOwners(addresses, reset);
+    await setNftOwnersSyncBlock(blockReference);
   }
 };
 
