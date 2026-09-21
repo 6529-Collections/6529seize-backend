@@ -66,8 +66,12 @@ describe('sending budgeted push messages', () => {
       expect.any(String),
       results[0].diagnosticError
     );
+    const [, loggedMessage, loggedError] = mockErrorWithCode.mock.calls[0];
+    expect(loggedMessage).not.toContain(error.message);
+    expect(loggedError).toBeInstanceOf(Error);
+    expect((loggedError as Error).message).not.toContain(error.message);
     expect(JSON.stringify(mockErrorWithCode.mock.calls)).not.toContain(
-      'private-token'
+      error.message
     );
   });
 
