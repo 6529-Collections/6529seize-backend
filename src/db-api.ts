@@ -66,7 +66,7 @@ import {
   CustomTypeCaster,
   execBudgetedNativeTransactionally,
   execNativeTransactionally,
-  execSQLWithParams
+  execSQLWithConnection
 } from './db/my-sql.helpers';
 import { NFT } from './entities/INFT';
 import { TDHBlock } from './entities/ITDH';
@@ -201,11 +201,13 @@ export async function connect() {
           'SQL budget options require their bound transaction connection'
         );
       }
-      const connection = await getConnection(options, sql);
-      return await execSQLWithParams<T>(
+      const suppliedConnection = options?.wrappedConnection?.connection;
+      const pool = options?.forcePool ?? getPoolNameBySql(sql);
+      return await execSQLWithConnection<T>(
         sql,
-        connection,
-        !options?.wrappedConnection?.connection,
+        suppliedConnection
+          ? { connection: suppliedConnection }
+          : { pool, acquire: () => getDbConnectionByPoolName(pool) },
         params,
         options
       );
@@ -288,36 +290,12 @@ function getPoolNameBySql(sql: string): DbPoolName {
     : DbPoolName.READ;
 }
 
-function getDbConnectionForQuery(
-  sql: string,
-  forcePool?: DbPoolName
-): Promise<mysql.PoolConnection> {
-  const poolName = forcePool ?? getPoolNameBySql(sql);
-  return getDbConnectionByPoolName(poolName);
-}
-
 function getPoolByName(poolName: DbPoolName): mysql.Pool {
   const poolsMap: Record<DbPoolName, mysql.Pool> = {
     [DbPoolName.READ]: read_pool,
     [DbPoolName.WRITE]: write_pool
   };
   return poolsMap[poolName];
-}
-
-async function getConnection(
-  options:
-    | {
-        forcePool?: DbPoolName;
-        wrappedConnection?: ConnectionWrapper<mysql.PoolConnection>;
-      }
-    | undefined,
-  sql: string
-) {
-  const externallyGivenConnection = options?.wrappedConnection?.connection;
-  return (
-    externallyGivenConnection ||
-    (await getDbConnectionForQuery(sql, options?.forcePool))
-  );
 }
 
 function getDbConnectionByPoolName(
