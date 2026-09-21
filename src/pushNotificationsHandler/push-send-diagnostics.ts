@@ -2,7 +2,17 @@ import { Logger } from '@/logging';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_SEND');
 
+export class PushRedisOperationError extends Error {
+  readonly code = 'push/redis-operation-failed';
+
+  constructor() {
+    super('Push delivery state Redis operation failed');
+    this.name = 'PushRedisOperationError';
+  }
+}
+
 const CODES = {
+  'push/redis-operation-failed': 'REDIS_OPERATION_FAILED',
   'messaging/mismatched-credential': 'FCM_MISMATCHED_CREDENTIAL',
   'messaging/authentication-error': 'FCM_AUTHENTICATION_ERROR',
   'messaging/server-unavailable': 'FCM_SERVER_UNAVAILABLE',
