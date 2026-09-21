@@ -49,6 +49,11 @@ existing dead letters nor proves that suppressed targets have been repaired.
 
 Deploy the isolated monitoring runtime (condition parser and dispatcher), then
 its source stacks (push backlog/DLQ alarms), then `pushNotificationsHandler`.
+Monitoring staging deployments use `1a-staging`; production deployments use
+`main`. The environment fixes the source branch, and the workflow pins the
+dispatch commit automatically with no SHA input. Monitoring-first is the
+recommended order, not a delivery prerequisite: the handler can run with older
+monitoring while the new condition labels and alarms await rollout.
 There is no schema, API, queue topology or frontend change. The shared operational
 envelope extension only appears for the four new push conditions; other services
 do not require immediate redeployment. Older monitoring readers ignore the additive
