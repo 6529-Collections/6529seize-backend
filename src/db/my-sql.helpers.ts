@@ -3,6 +3,8 @@ import * as mysql from 'mysql';
 import { PoolConnection, TypeCast } from 'mysql';
 import { Time } from '../time';
 import { Logger } from '../logging';
+import { DbPoolName } from '@/db-query.options';
+import { SqlOperationTiming } from '@/db/sql-operation-timing';
 import {
   executeBudgetedSqlTransaction,
   withSqlBudgetQueryOptions,
@@ -218,12 +220,46 @@ async function beginIsolatedTransaction(
   });
 }
 
+/** Times the whole API operation, including a pool wait before SQL is sent. */
+export async function execSQLWithConnection<T>(
+  sql: string,
+  source:
+    | { connection: mysql.PoolConnection }
+    | { pool: DbPoolName; acquire: () => Promise<mysql.PoolConnection> },
+  params?: Record<string, unknown>,
+  options?: SqlBudgetQueryOptions
+): Promise<T[]> {
+  const supplied = 'connection' in source;
+  const timing = new SqlOperationTiming(
+    supplied ? 'supplied' : source.pool,
+    () => describeQuery(sql, params)
+  );
+  let outcome: 'completed' | 'failed' = 'failed';
+  try {
+    const connection = supplied ? source.connection : await source.acquire();
+    if (!supplied) timing.acquired();
+    const result = await execSQLWithParams<T>(
+      sql,
+      connection,
+      !supplied,
+      params,
+      options,
+      timing
+    );
+    outcome = 'completed';
+    return result;
+  } finally {
+    timing.finish(outcome);
+  }
+}
+
 export async function execSQLWithParams<T>(
   sql: string,
   connection: mysql.PoolConnection,
   closeConnection: boolean,
   params?: Record<string, any>,
-  options?: SqlBudgetQueryOptions
+  options?: SqlBudgetQueryOptions,
+  timing?: SqlOperationTiming
 ): Promise<T[]> {
   return withSqlBudgetQueryOptions(
     connection,
@@ -235,14 +271,16 @@ export async function execSQLWithParams<T>(
           return prepareStatement(query, values);
         };
         const timer = Time.now();
+        timing?.queryStarted();
         connection.query({ sql, values: params }, (err: any, result: T[]) => {
+          timing?.queryFinished(!!err);
           // Private records and membership authority tokens must stay out of
           // infrastructure logs. Bulk inserts can embed values directly in SQL,
           // so hide both statements and parameters for these table families.
           const privateFamily = privateQueryFamily(sql);
           const queryDescription = describeQuery(sql, params);
           const queryTook = timer.diffFromNow();
-          if (queryTook.gt(Time.seconds(1))) {
+          if (!timing && queryTook.gt(Time.seconds(1))) {
             logger.warn(
               `SQL query took ${queryTook.toMillis()} ms to execute: ${queryDescription}`
             );
