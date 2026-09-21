@@ -71,6 +71,54 @@ Updates depend on APNs delivery and the user's badge permission.
   it does not need to wait for a stale-token registration to disappear. Repeated
   contention remains subject to the existing dead-letter policy.
 
+## Delivery retries and incompatible targets
+
+Ordinary sends remove the exact profile/device/token registration when Firebase
+reports an invalid or unregistered token. Failed deletion returns the notification
+for SQS retry even if another device succeeded; recorded successes are skipped on
+redelivery. A successful deletion, including zero affected rows after rotation or
+prior cleanup, acknowledges the invalid target. Replacement tokens are never
+matched by old-token cleanup. Retries still recheck current read/access state;
+this does not introduce an independent cleanup queue or guarantee eventual deletion
+if the notification later becomes ineligible or the queue exhausts its retries.
+
+The device lock remains fail-closed, with four acquisition attempts and three
+jittered waits totaling 350–700 ms before returning the SQS item for retry.
+Expected contention logs a warning rather than an operational-error envelope.
+Failed work at receive count eight or above emits `PUSH_RETRY_EXHAUSTED`; source
+queue alarms separately cover sustained backlog and visible dead letters.
+
+Ordinary notifications record provider acceptance per device/notification in
+Redis for eight days before returning partial failures. Retries omit recorded
+successes, including after token rotation. Receipt reads use independent Redis
+GETs because notification keys can span cluster slots; existing keys and their
+eight-day TTL stay unchanged. Redis receipt/quarantine failures are reported as
+the fixed local diagnostic `REDIS_OPERATION_FAILED` without logging keys or
+provider messages. A missing Firebase project ID or Redis lookup failure prevents a new
+send; receipt-write failures retain the retry. This is not exactly-once delivery:
+a crash between provider acceptance and receipt persistence, Redis data loss,
+or replay after receipt expiry can duplicate a notification. Provider acceptance
+also does not establish delivery to the phone. Badge-only work recalculates current
+state on each attempt rather than retaining a stale count.
+
+An explicit FCM `messaging/mismatched-credential` response quarantines that exact
+device/token/Firebase-project tuple for 24 hours in Redis. Persisting quarantine
+is required before acknowledging that target's work. Subsequent work for the same
+tuple is acknowledged without sending; registrations and other devices remain
+intact. A new token or project has a different key and can send immediately. The
+first failed attempt still emits `PUSH_SENDER_MISMATCH`, including for ordinary
+notifications, so a widespread credential error remains observable. Quarantine
+bounds futile retries; it does not repair client/project configuration or retain
+suppressed alerts for later replay. Repair or re-register the affected installation;
+a same-token repair can take up to 24 hours to resume. Transient provider errors
+remain retryable and use `PUSH_PROVIDER_TRANSIENT`. Keys hash their identifiers and
+token; operational labels contain no provider text or device identifiers.
+
+See [push queue recovery](../ops/docs/operations/push-delivery-recovery.md) before
+inspecting or redriving existing dead letters. These reliability changes require
+monitoring deployment followed by `pushNotificationsHandler`; they add no schema,
+API, frontend or native-app dependency to the original feature rollout below.
+
 ## Platform and rollout boundaries
 
 - iOS platform matching tolerates casing and surrounding whitespace on existing
@@ -305,7 +353,6 @@ best-effort queue handoff for ordinary notification read operations.
 
 APNs references: [payload keys](https://developer.apple.com/library/archive/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/PayloadKeyReference.html)
 and [push request headers](https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns).
-
 
 ## App launch and resume refresh
 

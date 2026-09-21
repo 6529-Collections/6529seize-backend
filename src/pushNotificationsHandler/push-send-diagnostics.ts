@@ -2,7 +2,17 @@ import { Logger } from '@/logging';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_SEND');
 
+export class PushRedisOperationError extends Error {
+  readonly code = 'push/redis-operation-failed';
+
+  constructor() {
+    super('Push delivery state Redis operation failed');
+    this.name = 'PushRedisOperationError';
+  }
+}
+
 const CODES = {
+  'push/redis-operation-failed': 'REDIS_OPERATION_FAILED',
   'messaging/mismatched-credential': 'FCM_MISMATCHED_CREDENTIAL',
   'messaging/authentication-error': 'FCM_AUTHENTICATION_ERROR',
   'messaging/server-unavailable': 'FCM_SERVER_UNAVAILABLE',
@@ -16,7 +26,16 @@ const CODES = {
     'FCM_REGISTRATION_NOT_REGISTERED'
 } as const;
 
-const STAGES = ['prepare', 'sdk_batch', 'sdk_response', 'image_retry'] as const;
+const STAGES = [
+  'prepare',
+  'sdk_batch',
+  'sdk_response',
+  'image_retry',
+  'badge_refresh',
+  'installation_badge_refresh',
+  'delivery',
+  'lock_release'
+] as const;
 
 export type PushSendStage = (typeof STAGES)[number];
 type PushSendCode = (typeof CODES)[keyof typeof CODES] | 'UNKNOWN';
@@ -57,10 +76,25 @@ export function createPushSendDiagnostic(
   return diagnostic;
 }
 
+function pushCondition(code: PushSendCode) {
+  if (code === 'FCM_MISMATCHED_CREDENTIAL') return 'PUSH_SENDER_MISMATCH';
+  if (
+    [
+      'FCM_INTERNAL_ERROR',
+      'FCM_SERVER_UNAVAILABLE',
+      'FCM_MESSAGE_RATE_EXCEEDED',
+      'FCM_DEVICE_MESSAGE_RATE_EXCEEDED'
+    ].includes(code)
+  )
+    return 'PUSH_PROVIDER_TRANSIENT';
+  return 'PUSH_DELIVERY_FAILED';
+}
+
 /** The same Error at both reporting layers uses existing invocation deduplication. */
 export function reportPushSendDiagnostic(diagnostic: PushSendDiagnostic): void {
   try {
-    logger.error(diagnostic.message, diagnostic);
+    const condition = pushCondition(diagnostic.code);
+    logger.errorWithCode(condition, diagnostic.message, diagnostic);
   } catch {
     // Diagnostics must not change the original delivery or retry outcome.
   }
@@ -74,4 +108,24 @@ export function reportPushImageRetry(): void {
   } catch {
     // Keep the existing retry even when the diagnostic transport is unavailable.
   }
+}
+
+/** Contention is expected; retry exhaustion is reported separately by the SQS handler. */
+export class DeviceBadgeBusyError extends Error {
+  constructor() {
+    super('Device badge delivery is busy');
+    this.name = 'PushDeviceBusy';
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+export function reportPushDeliveryFailure(
+  error: unknown,
+  stage: PushSendStage
+): void {
+  if (error instanceof DeviceBadgeBusyError) {
+    logger.warn('Device badge delivery deferred after bounded lock retry');
+    return;
+  }
+  reportPushSendDiagnostic(createPushSendDiagnostic(error, stage));
 }

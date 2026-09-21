@@ -1,4 +1,9 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomInt, randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
+import {
+  DeviceBadgeBusyError,
+  reportPushDeliveryFailure
+} from '@/pushNotificationsHandler/push-send-diagnostics';
 import { getDataSource } from '@/db';
 import { DbPoolName } from '@/db-query.options';
 import { PushNotificationDevice } from '@/entities/IPushNotification';
@@ -9,11 +14,8 @@ import {
 import { identityNotificationsDb } from '@/notifications/identity-notifications.db';
 import { userGroupsService } from '@/api/community-members/user-groups.service';
 import { getRedisClient } from '@/redis';
-import { Logger } from '@/logging';
 import { getEnabledCauses } from './identity-push-notification-settings';
 import { sumBadgeContributions } from './badge-count';
-
-const logger = Logger.get('DEVICE_BADGE');
 
 export type BadgeDevice = Pick<PushNotificationDevice, 'device_id' | 'token'>;
 
@@ -34,8 +36,12 @@ export async function withDeviceBadgeLock<T>(
   const key = `push-badge-lock:${createHash('sha256').update(device.device_id).digest('hex')}`;
   const owner = randomUUID();
   // Longer than the push worker's 60-second Lambda timeout. Busy jobs retry via SQS.
-  const acquired = await redis.set(key, owner, { NX: true, EX: 120 });
-  if (!acquired) throw new Error('Device badge delivery is busy');
+  for (let attempt = 0; ; attempt++) {
+    if (await redis.set(key, owner, { NX: true, EX: 120 })) break;
+    if (attempt === 3) throw new DeviceBadgeBusyError();
+    const minimum = 50 * 2 ** attempt;
+    await delay(randomInt(minimum, minimum * 2));
+  }
   try {
     return await action();
   } finally {
@@ -46,7 +52,7 @@ export async function withDeviceBadgeLock<T>(
       );
     } catch (error) {
       // Expiry releases a stranded lock; never replay a delivered alert just for cleanup.
-      logger.error(`Failed to release device badge lock: ${error}`);
+      reportPushDeliveryFailure(error, 'lock_release');
     }
   }
 }

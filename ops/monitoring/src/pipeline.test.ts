@@ -181,3 +181,36 @@ test('fresh heartbeat proves traversal, stale messages cannot keep health green'
     /INVALID_WORK/
   );
 });
+
+test('application errors retain fresh first alerts at five-minute boundaries', async () => {
+  const h = harness();
+  await processWork(
+    { kind: 'alert', alert },
+    'first',
+    h.store,
+    h.transport,
+    300
+  );
+  await processWork(
+    { kind: 'alert', alert: { ...alert, eventId: 'repeat' } },
+    'repeat',
+    h.store,
+    h.transport,
+    599
+  );
+  assert.equal(h.sent.length, 1);
+  await processWork(
+    { kind: 'alert', alert: { ...alert, eventId: 'next-window' } },
+    'next',
+    h.store,
+    h.transport,
+    600
+  );
+  assert.equal(h.sent.length, 2);
+  assert.equal(h.groups.size, 2);
+  assert.match(JSON.stringify(h.sent[1]), /"value":"1"/);
+  assert.equal(h.scheduled.length, 2);
+  await processWork(h.scheduled[0]!, 'summary', h.store, h.transport, 605);
+  assert.equal(h.sent.length, 3);
+  assert.match(JSON.stringify(h.sent[2]), /"value":"2"/);
+});
