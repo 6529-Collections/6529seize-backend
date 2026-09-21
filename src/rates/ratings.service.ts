@@ -65,10 +65,6 @@ import {
 import { calculateLevel } from '../profiles/profile-level';
 import { profilesService } from '../profiles/profiles.service';
 import { RequestContext } from '../request.context';
-import {
-  membershipGlobalMutation,
-  withMembershipSourceMutation
-} from '../membership/membership-producer-writes';
 import { ConnectionWrapper } from '../sql-executor';
 import { Time, Timer } from '../time';
 import {
@@ -136,43 +132,32 @@ export class RatingsService {
     try {
       ctx.timer?.start(`${this.constructor.name}->updateRating`);
       return await this.ratingsDb.executeNativeQueriesInTransaction(
-        async (connection) =>
-          withMembershipSourceMutation(
-            connection,
-            request.matter === RateMatter.WAVE_REP
-              ? null
-              : membershipGlobalMutation(['RATINGS'], 'rating-edit'),
-            async () => {
-              const { identityUpdates } = await this.updateRatingInternal(
-                request,
-                {
-                  ...ctx,
-                  connection
-                }
-              );
+        async (connection) => {
+          const { identityUpdates } = await this.updateRatingInternal(request, {
+            ...ctx,
+            connection
+          });
 
-              if (identityUpdates.length > 0) {
-                ctx.timer?.start(
-                  `${this.constructor.name}->ratingsDb->applyBulkIdentityUpdates`
-                );
-                await this.ratingsDb.applyBulkIdentityUpdates(
-                  identityUpdates,
-                  connection
-                );
-                ctx.timer?.stop(
-                  `${this.constructor.name}->ratingsDb->applyBulkIdentityUpdates`
-                );
-              }
-              const ratorId = request.authenticationContext.getActingAsId();
-              if (ratorId) {
-                await this.metricsRecorder.recordActiveIdentity(
-                  { identityId: ratorId },
-                  { ...ctx, connection }
-                );
-              }
-            },
-            ctx
-          )
+          if (identityUpdates.length > 0) {
+            ctx.timer?.start(
+              `${this.constructor.name}->ratingsDb->applyBulkIdentityUpdates`
+            );
+            await this.ratingsDb.applyBulkIdentityUpdates(
+              identityUpdates,
+              connection
+            );
+            ctx.timer?.stop(
+              `${this.constructor.name}->ratingsDb->applyBulkIdentityUpdates`
+            );
+          }
+          const ratorId = request.authenticationContext.getActingAsId();
+          if (ratorId) {
+            await this.metricsRecorder.recordActiveIdentity(
+              { identityId: ratorId },
+              { ...ctx, connection }
+            );
+          }
+        }
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->updateRating`);
@@ -637,58 +622,45 @@ export class RatingsService {
               },
               connection
             );
-            return withMembershipSourceMutation(
-              connection,
-              overRatedMatter.matter === RateMatter.WAVE_REP
-                ? null
-                : membershipGlobalMutation(
-                    ['RATINGS'],
-                    'lost-credit-revocation'
-                  ),
-              async () => {
-                let overCredit =
-                  Math.abs(overRatedMatter.tally) -
-                  overRatedMatter.rater_credit;
-                const identityUpdates: IdentityUpdate[] = [];
+            let overCredit =
+              Math.abs(overRatedMatter.tally) - overRatedMatter.rater_credit;
+            const identityUpdates: IdentityUpdate[] = [];
 
-                for (const rating of ratings) {
-                  if (rating.rating !== 0) {
-                    const newRating =
-                      Math.floor(Math.abs(rating.rating * coefficient)) *
-                      (rating.rating / Math.abs(rating.rating));
-                    overCredit =
-                      overCredit -
-                      (Math.abs(rating.rating) - Math.abs(newRating));
-                    if (
-                      overRatedMatter.matter === RateMatter.WAVE_REP &&
-                      newRating !== rating.rating
-                    ) {
-                      changedWaveRepTargetIds.push(rating.matter_target_id);
-                    }
-                    const identityUpdate = await this.insertLostCreditRating(
-                      rating,
-                      newRating,
-                      connection
-                    );
-                    if (identityUpdate) {
-                      identityUpdates.push(identityUpdate);
-                    }
-                  }
-
-                  if (overCredit <= 0) {
-                    break;
-                  }
+            for (const rating of ratings) {
+              if (rating.rating !== 0) {
+                const newRating =
+                  Math.floor(Math.abs(rating.rating * coefficient)) *
+                  (rating.rating / Math.abs(rating.rating));
+                overCredit =
+                  overCredit - (Math.abs(rating.rating) - Math.abs(newRating));
+                if (
+                  overRatedMatter.matter === RateMatter.WAVE_REP &&
+                  newRating !== rating.rating
+                ) {
+                  changedWaveRepTargetIds.push(rating.matter_target_id);
                 }
-
-                if (identityUpdates.length > 0) {
-                  await this.ratingsDb.applyBulkIdentityUpdates(
-                    identityUpdates,
-                    connection
-                  );
+                const identityUpdate = await this.insertLostCreditRating(
+                  rating,
+                  newRating,
+                  connection
+                );
+                if (identityUpdate) {
+                  identityUpdates.push(identityUpdate);
                 }
-                return changedWaveRepTargetIds;
               }
-            );
+
+              if (overCredit <= 0) {
+                break;
+              }
+            }
+
+            if (identityUpdates.length > 0) {
+              await this.ratingsDb.applyBulkIdentityUpdates(
+                identityUpdates,
+                connection
+              );
+            }
+            return changedWaveRepTargetIds;
           }
         );
       changedWaveRepTargetIds.forEach((waveId) => {
@@ -1094,43 +1066,35 @@ export class RatingsService {
             wallets,
             connection
           );
-        const missingWallets = wallets.filter(
-          (wallet) => !allIdentitiesByAddresses[wallet]
-        );
-        await withMembershipSourceMutation(
-          connection,
-          missingWallets.length
-            ? membershipGlobalMutation(['IDENTITY'], 'bulk-rating-identity')
-            : null,
-          () =>
-            Promise.all(
-              missingWallets.map((address) =>
-                this.identitiesDb.insertIdentity(
-                  {
-                    consolidation_key: address,
-                    primary_address: address,
-                    profile_id: null,
-                    handle: null,
-                    normalised_handle: null,
-                    banner1: null,
-                    banner2: null,
-                    pfp: null,
-                    classification: null,
-                    sub_classification: null,
-                    cic: 0,
-                    rep: 0,
-                    tdh: 0,
-                    xtdh: 0,
-                    produced_xtdh: 0,
-                    granted_xtdh: 0,
-                    level_raw: 0,
-                    xtdh_rate: 0,
-                    basetdh_rate: 0
-                  },
-                  connection
-                )
+        await Promise.all(
+          wallets
+            .filter((wallet) => !allIdentitiesByAddresses[wallet])
+            .map((address) =>
+              this.identitiesDb.insertIdentity(
+                {
+                  consolidation_key: address,
+                  primary_address: address,
+                  profile_id: null,
+                  handle: null,
+                  normalised_handle: null,
+                  banner1: null,
+                  banner2: null,
+                  pfp: null,
+                  classification: null,
+                  sub_classification: null,
+                  cic: 0,
+                  rep: 0,
+                  tdh: 0,
+                  xtdh: 0,
+                  produced_xtdh: 0,
+                  granted_xtdh: 0,
+                  level_raw: 0,
+                  xtdh_rate: 0,
+                  basetdh_rate: 0
+                },
+                connection
               )
-            ).then(() => undefined)
+            )
         );
         allIdentitiesByAddresses =
           await this.identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
@@ -1224,54 +1188,45 @@ export class RatingsService {
           },
           {} as Record<string, number>
         );
-        return withMembershipSourceMutation(
-          connection,
-          matter === RateMatter.WAVE_REP ||
-            !Object.keys(newRatingsByProfileId).length
-            ? null
-            : membershipGlobalMutation(['RATINGS'], 'bulk-rating'),
-          async () => {
-            const allIdentityUpdates: IdentityUpdate[] = [];
+        const allIdentityUpdates: IdentityUpdate[] = [];
 
-            for (const [profileId, newRating] of Object.entries(
-              newRatingsByProfileId
-            )) {
-              try {
-                const { identityUpdates } = await this.updateRatingInternal(
-                  {
-                    matter,
-                    matter_category:
-                      matter === RateMatter.CIC ? 'CIC' : apiRequest.category!,
-                    matter_target_id: profileId,
-                    rater_profile_id: actingAsId,
-                    rating: newRating,
-                    authenticationContext: authContext
-                  },
-                  { connection }
-                );
-                allIdentityUpdates.push(...identityUpdates);
-              } catch (e: any) {
-                if (
-                  e.message.startsWith(
-                    `Not enough credit left to spend on this matter`
-                  )
-                ) {
-                  throw new BadRequestException(
-                    `Not enough credit to go through with this bulk rating`
-                  );
-                }
-              }
-            }
-
-            if (allIdentityUpdates.length > 0) {
-              await this.ratingsDb.applyBulkIdentityUpdates(
-                allIdentityUpdates,
-                connection
+        for (const [profileId, newRating] of Object.entries(
+          newRatingsByProfileId
+        )) {
+          try {
+            const { identityUpdates } = await this.updateRatingInternal(
+              {
+                matter,
+                matter_category:
+                  matter === RateMatter.CIC ? 'CIC' : apiRequest.category!,
+                matter_target_id: profileId,
+                rater_profile_id: actingAsId,
+                rating: newRating,
+                authenticationContext: authContext
+              },
+              { connection }
+            );
+            allIdentityUpdates.push(...identityUpdates);
+          } catch (e: any) {
+            if (
+              e.message.startsWith(
+                `Not enough credit left to spend on this matter`
+              )
+            ) {
+              throw new BadRequestException(
+                `Not enough credit to go through with this bulk rating`
               );
             }
-            return { skipped };
           }
-        );
+        }
+
+        if (allIdentityUpdates.length > 0) {
+          await this.ratingsDb.applyBulkIdentityUpdates(
+            allIdentityUpdates,
+            connection
+          );
+        }
+        return { skipped };
       }
     );
     return { skipped: result.skipped };
@@ -1518,32 +1473,18 @@ export class RatingsService {
             0
           )
         }));
-        await withMembershipSourceMutation(
-          connection,
-          ratingChanges.length
-            ? membershipGlobalMutation(['RATINGS'], 'bulk-rep')
-            : null,
-          () =>
-            Promise.all([
-              this.identitiesDb.bulkUpdateReps(
-                repBulkUpdates,
-                ctxWithConnection
-              ),
-              this.eventScheduler.scheduleBulkRepRatingChangedEvents(
-                events,
-                connection
-              ),
-              profileActivityLogsDb.bulkInsertProfileActivityLogs(
-                logs,
-                ctxWithConnection
-              ),
-              this.ratingsDb.bulkUpsertRatings(
-                newRatingEntities,
-                ctxWithConnection
-              )
-            ]).then(() => undefined),
-          ctx
-        );
+        await Promise.all([
+          this.identitiesDb.bulkUpdateReps(repBulkUpdates, ctxWithConnection),
+          this.eventScheduler.scheduleBulkRepRatingChangedEvents(
+            events,
+            connection
+          ),
+          profileActivityLogsDb.bulkInsertProfileActivityLogs(
+            logs,
+            ctxWithConnection
+          ),
+          this.ratingsDb.bulkUpsertRatings(newRatingEntities, ctxWithConnection)
+        ]);
       }
     );
   }

@@ -30,7 +30,6 @@ import { IdentityEntity } from '../entities/IIdentity';
 import { collections } from '../collections';
 import { Time } from '../time';
 import { DbPoolName } from '../db-query.options';
-import { withMembershipProfileRuleReferenceMutation } from '@/membership/membership-producer-writes';
 
 const mysql = require('mysql');
 
@@ -698,28 +697,23 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     new_profile_id: string,
     connectionHolder: ConnectionWrapper<any>
   ) {
-    await withMembershipProfileRuleReferenceMutation(
-      connectionHolder,
-      old_profile_id,
-      async () =>
-        Promise.all([
-          this.db.execute(
-            `update ${USER_GROUPS_TABLE} set created_by = :new_profile_id where created_by = :old_profile_id`,
-            { old_profile_id, new_profile_id },
-            { wrappedConnection: connectionHolder }
-          ),
-          this.db.execute(
-            `update ${USER_GROUPS_TABLE} set cic_user = :new_profile_id where cic_user = :old_profile_id`,
-            { old_profile_id, new_profile_id },
-            { wrappedConnection: connectionHolder }
-          ),
-          this.db.execute(
-            `update ${USER_GROUPS_TABLE} set rep_user = :new_profile_id where rep_user = :old_profile_id`,
-            { old_profile_id, new_profile_id },
-            { wrappedConnection: connectionHolder }
-          )
-        ]).then(() => undefined)
-    );
+    await Promise.all([
+      this.db.execute(
+        `update ${USER_GROUPS_TABLE} set created_by = :new_profile_id where created_by = :old_profile_id`,
+        { old_profile_id, new_profile_id },
+        { wrappedConnection: connectionHolder }
+      ),
+      this.db.execute(
+        `update ${USER_GROUPS_TABLE} set cic_user = :new_profile_id where cic_user = :old_profile_id`,
+        { old_profile_id, new_profile_id },
+        { wrappedConnection: connectionHolder }
+      ),
+      this.db.execute(
+        `update ${USER_GROUPS_TABLE} set rep_user = :new_profile_id where rep_user = :old_profile_id`,
+        { old_profile_id, new_profile_id },
+        { wrappedConnection: connectionHolder }
+      )
+    ]);
   }
 
   async findIdentityGroupsIdsAndIdentityCountsByGroupIds(
@@ -951,10 +945,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     return result;
   }
 
-  async getAllWaveRelatedGroups(
-    ctx: RequestContext,
-    maxIds?: number
-  ): Promise<string[]> {
+  async getAllWaveRelatedGroups(ctx: RequestContext): Promise<string[]> {
     ctx.timer?.start('userGroupsDb->getAllWaveRelatedGroups');
     const result = await this.db.execute<{
       id: string;
@@ -973,9 +964,8 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
           union all
           select wcg.community_group_id as id from ${WAVE_CURATIONS_TABLE} wcg
         ) x where id is not null
-        ${maxIds === undefined ? '' : 'limit :maxIds'}
         `,
-      maxIds === undefined ? undefined : { maxIds },
+      undefined,
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop('userGroupsDb->getAllWaveRelatedGroups');
