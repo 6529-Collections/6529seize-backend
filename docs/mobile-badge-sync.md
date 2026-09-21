@@ -73,6 +73,15 @@ Updates depend on APNs delivery and the user's badge permission.
 
 ## Delivery retries and incompatible targets
 
+Ordinary sends remove the exact profile/device/token registration when Firebase
+reports an invalid or unregistered token. Failed deletion returns the notification
+for SQS retry even if another device succeeded; recorded successes are skipped on
+redelivery. A successful deletion, including zero affected rows after rotation or
+prior cleanup, acknowledges the invalid target. Replacement tokens are never
+matched by old-token cleanup. Retries still recheck current read/access state;
+this does not introduce an independent cleanup queue or guarantee eventual deletion
+if the notification later becomes ineligible or the queue exhausts its retries.
+
 The device lock remains fail-closed, with four acquisition attempts and three
 jittered waits totaling 350–700 ms before returning the SQS item for retry.
 Expected contention logs a warning rather than an operational-error envelope.
