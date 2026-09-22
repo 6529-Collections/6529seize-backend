@@ -266,7 +266,7 @@ export class OpenSeaAdapter implements PlatformAdapter {
     if (canonical.identifiers.kind !== 'TOKEN') return null;
 
     const apiBase = env.getStringOrNull('OPENSEA_API_BASE') ?? DEFAULT_API_BASE;
-    const timeoutMs = env.getIntOrNull('OPENSEA_TIMEOUT_MS') ?? 1200;
+    const timeoutMs = env.getIntOrNull('OPENSEA_TIMEOUT_MS') ?? 5000;
     const headers = getApiKeyHeader();
 
     const chain = canonical.identifiers.chain;

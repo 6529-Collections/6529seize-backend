@@ -88,3 +88,30 @@ it('uses distinct bounded opaque leases even within the same clock tick', () => 
   for (const bad of ['', 'old error', a.replace('/v1', '/v2'), a + 'x'])
     expect(isPreviewLease(bad)).toBe(false);
 });
+
+const videoFailure = new NftPreviewOversizeError(250, 260, 'stream', {
+  imageBytes: 200,
+  videoBytes: 250
+}).toStoredMessage();
+it('shares video-aware cooldown policy and retries when either limit changes', () => {
+  const state = { ...base, message: videoFailure, videoLimitBytes: 250 };
+  expect(isPreviewSizeCooldownActive(state)).toBe(true);
+  expect(isPreviewSizeCooldownActive({ ...state, videoLimitBytes: 300 })).toBe(
+    false
+  );
+  expect(isPreviewSizeCooldownActive({ ...state, limitBytes: 150 })).toBe(
+    false
+  );
+  expect(isPreviewSizeCooldownActive({ ...state, message: base.message })).toBe(
+    false
+  );
+});
+it('retains cooldown for an image rejected under the current video-aware policy', () => {
+  const message = new NftPreviewOversizeError(200, 220, 'stream', {
+    imageBytes: 200,
+    videoBytes: 250
+  }).toStoredMessage();
+  expect(
+    isPreviewSizeCooldownActive({ ...base, message, videoLimitBytes: 250 })
+  ).toBe(true);
+});
