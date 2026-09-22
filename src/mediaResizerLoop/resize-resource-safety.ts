@@ -53,7 +53,8 @@ function jpegDecodeShrink(metadata: Metadata, target?: ResizeTarget): number {
 type InputFailureCode =
   | 'SOURCE_TOO_LARGE'
   | 'DECODED_IMAGE_TOO_LARGE'
-  | 'INVALID_IMAGE';
+  | 'INVALID_IMAGE'
+  | 'UNSUPPORTED_CODEC';
 
 export class UnprocessableResizeInput extends Error {
   constructor(readonly code: InputFailureCode) {
@@ -61,6 +62,19 @@ export class UnprocessableResizeInput extends Error {
     Object.setPrototypeOf(this, new.target.prototype);
     this.name = 'UnprocessableResizeInput';
   }
+}
+
+/** Only this known native decoder capability failure is a permanent rejection. */
+export function classifyResizeDecoderError(error: unknown): unknown {
+  if (
+    error instanceof Error &&
+    /(?:^|\n)heif: Error while loading plugin: Support for this compression format has not been built in \(11\.6003\)(?:\r?\n|$)/.test(
+      error.message
+    )
+  ) {
+    return new UnprocessableResizeInput('UNSUPPORTED_CODEC');
+  }
+  return error;
 }
 
 /** Conservative admission estimate, not a guarantee about native codec memory. */
@@ -174,7 +188,11 @@ export async function withResizeInputFile<T>(
       failOn: 'none',
       animated,
       limitInputPixels: INPUT_PIXEL_BACKSTOP
-    }).metadata();
+    })
+      .metadata()
+      .catch((error: unknown) => {
+        throw classifyResizeDecoderError(error);
+      });
     let resizeAnimated = animated;
     try {
       assertDecodedWorkBudget(metadata, animated, target);
