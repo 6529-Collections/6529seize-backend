@@ -338,12 +338,14 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
       canonicalId,
       sourceHash,
       kind,
-      maxBytes
+      maxBytes,
+      maxVideoBytes
     }: {
       canonicalId: string;
       sourceHash: string;
       kind: NftLinkMediaPreviewKind;
       maxBytes: number;
+      maxVideoBytes?: number;
     },
     ctx: RequestContext
   ): Promise<boolean> {
@@ -379,6 +381,7 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
             message: previous.media_preview_error_message,
             lastTriedAt: previous.media_preview_last_tried_at,
             limitBytes: maxBytes,
+            videoLimitBytes: maxVideoBytes,
             now: Number(previous.preview_now)
           })
         )

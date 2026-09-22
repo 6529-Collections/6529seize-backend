@@ -46,7 +46,7 @@ function metadataText(value: unknown): string | undefined {
   return typeof value === 'string' ? value.trim() || undefined : undefined;
 }
 
-function selectedTokenImage(value: unknown): string | undefined {
+function metadataMediaUrl(value: unknown): string | undefined {
   const text = metadataText(value);
   if (!text) return undefined;
   try {
@@ -68,7 +68,7 @@ function resolveSelectedToken(
   if (!isRecord(token)) {
     throw new Error('Invalid Manifold selected token');
   }
-  const imageUrl = selectedTokenImage(token.image);
+  const imageUrl = metadataMediaUrl(token.image);
   return withUnknownSale(
     {
       title: metadataText(token.name),
@@ -137,9 +137,13 @@ function resolveInstanceMetadata(
   const publicData: unknown = data?.publicData;
   const hasSelectedToken =
     isRecord(publicData) && 'selectedToken' in publicData;
+  const claimAsset =
+    isRecord(publicData) && isRecord(publicData.asset)
+      ? publicData.asset
+      : undefined;
   // New token metadata requires a positive ID binding. Legacy responses may omit
   // an ID; keep their extraction compatible, but never accept a known mismatch.
-  assertMatchingInstance(data, instanceId, hasSelectedToken);
+  assertMatchingInstance(data, instanceId, hasSelectedToken || !!claimAsset);
   if (isRecord(publicData) && 'selectedToken' in publicData) {
     return resolveSelectedToken(publicData.selectedToken, canonical);
   }
@@ -151,24 +155,41 @@ function resolveInstanceMetadata(
     data?.instance?.name,
     data?.instance?.title,
     data?.data?.name,
-    data?.data?.title
+    data?.data?.title,
+    metadataText(claimAsset?.name)
   );
 
   const imageUrl = pick<string>(
     data?.image,
     data?.imageUrl,
     data?.data?.image,
-    data?.data?.imageUrl
+    data?.data?.imageUrl,
+    metadataMediaUrl(claimAsset?.image),
+    metadataMediaUrl(claimAsset?.image_url)
   );
 
-  const description = pick<string>(data?.description, data?.data?.description);
+  const description = pick<string>(
+    data?.description,
+    data?.data?.description,
+    metadataText(claimAsset?.description)
+  );
+  const animationUrl = pick<string>(
+    metadataMediaUrl(claimAsset?.animation_url),
+    metadataMediaUrl(claimAsset?.animation)
+  );
+  let media: NormalizedNftCard['asset']['media'];
+  if (animationUrl) {
+    media = { kind: 'animation', imageUrl, animationUrl };
+  } else if (imageUrl) {
+    media = { kind: 'image', imageUrl };
+  }
 
   if (isRecord(publicData) && 'listingType' in publicData) {
     return withUnknownSale(
       {
         title,
         description,
-        media: imageUrl ? { kind: 'image', imageUrl } : undefined
+        media
       },
       canonical
     );
@@ -204,7 +225,7 @@ function resolveInstanceMetadata(
     asset: {
       title,
       description,
-      media: imageUrl ? { kind: 'image', imageUrl } : undefined
+      media
     },
     market: {
       saleType,
@@ -234,7 +255,7 @@ export class ManifoldAdapter implements PlatformAdapter {
   }
 
   async resolveFast(canonical: CanonicalLink): Promise<AdapterResult | null> {
-    const timeoutMs = env.getIntOrNull('MANIFOLD_TIMEOUT_MS') ?? 1200;
+    const timeoutMs = env.getIntOrNull('MANIFOLD_TIMEOUT_MS') ?? 5000;
     const base =
       env.getStringOrNull('MANIFOLD_INSTANCE_DATA_URL') ??
       'https://apps.api.manifoldxyz.dev/public/instance/data';

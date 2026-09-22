@@ -37,7 +37,8 @@ async function serve(handler: http.RequestListener): Promise<string> {
   jest
     .spyOn(env, 'getIntOrNull')
     .mockImplementation((key) =>
-      key === 'NFT_LINK_MEDIA_PREVIEW_MAX_BYTES'
+      key === 'NFT_LINK_MEDIA_PREVIEW_MAX_BYTES' ||
+      key === 'NFT_LINK_MEDIA_PREVIEW_VIDEO_MAX_BYTES'
         ? 8
         : key === 'NFT_LINK_MEDIA_PREVIEW_HTTP_TIMEOUT_MS'
           ? 1000
@@ -74,7 +75,7 @@ it.each(['header', 'stream'] as const)(
   }
 );
 
-it('accepts exactly the byte limit and preserves header-only timeout semantics', async () => {
+it('accepts a slow body within the separate full-download deadline', async () => {
   const url = await serve((_req, res) => {
     res.writeHead(200, { 'content-length': '8', 'content-type': 'image/png' });
     res.flushHeaders();
@@ -148,4 +149,97 @@ it('cancels the redirect response without cancelling the independently guarded n
   });
   await redirectedClosed;
   expect(service['resolveSafeRemoteUrl']).toHaveBeenCalledTimes(2);
+});
+
+function useVideoLimits(deadline = 1000) {
+  jest.spyOn(env, 'getIntOrNull').mockImplementation((key) => {
+    if (key === 'NFT_LINK_MEDIA_PREVIEW_MAX_BYTES') return 64;
+    if (key === 'NFT_LINK_MEDIA_PREVIEW_VIDEO_MAX_BYTES') return 128;
+    if (key === 'NFT_LINK_MEDIA_PREVIEW_DOWNLOAD_TIMEOUT_MS') return deadline;
+    return null;
+  });
+}
+
+const mp4 = Buffer.concat([
+  Buffer.from('000000186674797069736f6d0000000069736f6d6d703432', 'hex'),
+  Buffer.alloc(60)
+]);
+
+it('allows byte-identified video above the image limit despite an incorrect MIME type', async () => {
+  const url = await serve((_req, res) => {
+    res.writeHead(200, {
+      'content-length': String(mp4.length),
+      'content-type': 'image/png'
+    });
+    res.end(mp4);
+  });
+  useVideoLimits();
+  await expect(service['downloadRemoteImage'](url)).resolves.toMatchObject({
+    bytes: mp4
+  });
+});
+
+it('does not grant the video allowance based on MIME type alone', async () => {
+  const url = await serve((_req, res) => {
+    res.writeHead(200, { 'content-type': 'video/mp4' });
+    res.end(Buffer.alloc(80));
+  });
+  useVideoLimits();
+  await expect(service['downloadRemoteImage'](url)).rejects.toMatchObject({
+    limitBytes: 64
+  });
+});
+
+it('enforces the video cap for chunked video and records both policy limits', async () => {
+  const url = await serve((_req, res) => {
+    res.writeHead(200, { 'content-type': 'video/mp4' });
+    res.end(Buffer.concat([mp4, Buffer.alloc(80)]));
+  });
+  useVideoLimits();
+  await expect(service['downloadRemoteImage'](url)).rejects.toMatchObject({
+    limitBytes: 128,
+    policy: { imageBytes: 64, videoBytes: 128 }
+  });
+});
+
+it('aborts a stalled body after headers and closes the actual request', async () => {
+  let closed!: () => void;
+  const remoteClosed = new Promise<void>((resolve) => {
+    closed = resolve;
+  });
+  const url = await serve((_req, res) => {
+    res.on('close', closed);
+    res.writeHead(200);
+    res.write('x');
+  });
+  useVideoLimits(50);
+  await expect(service['downloadRemoteImage'](url)).rejects.toThrow(
+    'download deadline exceeded'
+  );
+  await remoteClosed;
+});
+
+it('bounds slow DNS before a request is created', async () => {
+  useVideoLimits(20);
+  jest
+    .spyOn(service as never, 'resolveSafeRemoteUrl')
+    .mockReturnValue(new Promise(() => {}) as never);
+  await expect(
+    service['downloadRemoteImage']('https://example.com/video')
+  ).rejects.toThrow('download deadline exceeded');
+});
+
+it('enforces the image stream cap when declared length falls between image and video limits', async () => {
+  const url = await serve((_req, res) => {
+    res.writeHead(200, {
+      'content-length': '100',
+      'content-type': 'image/png'
+    });
+    res.end(Buffer.alloc(100));
+  });
+  useVideoLimits();
+  await expect(service['downloadRemoteImage'](url)).rejects.toMatchObject({
+    limitBytes: 64,
+    mode: 'stream'
+  });
 });

@@ -73,11 +73,25 @@ describe('OpenSeaAdapter', () => {
     jest.resetAllMocks();
     process.env.OPENSEA_API_KEY = 'test-key';
     delete process.env.OPENSEA_API_BASE;
+    delete process.env.OPENSEA_TIMEOUT_MS;
   });
 
   afterAll(() => {
     process.env = originalEnv;
   });
+
+  it.each([undefined, '7000'])(
+    'uses the default or configured fetch timeout %s',
+    async (override) => {
+      if (override) process.env.OPENSEA_TIMEOUT_MS = override;
+      fetchJsonMock.mockResolvedValueOnce(nftResponse()).mockResolvedValue({});
+      await new OpenSeaAdapter().resolveFast(canonical);
+      expect(fetchJsonMock).toHaveBeenCalledWith(
+        expect.stringContaining('/nfts/1'),
+        expect.objectContaining({ timeoutMs: override ? 7000 : 5000 })
+      );
+    }
+  );
 
   it('prefers the NFT-specific best listing endpoint', async () => {
     fetchJsonMock.mockResolvedValueOnce(nftResponse()).mockResolvedValueOnce({
