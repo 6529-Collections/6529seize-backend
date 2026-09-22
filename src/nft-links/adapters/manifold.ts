@@ -92,15 +92,17 @@ function resolveTokenAsset(
   const animationUrl =
     metadataMediaUrl(tokenAsset.animation_url) ??
     metadataMediaUrl(tokenAsset.animation);
+  let media: NormalizedNftCard['asset']['media'];
+  if (animationUrl) {
+    media = { kind: 'animation', imageUrl, animationUrl };
+  } else if (imageUrl) {
+    media = { kind: 'image', imageUrl };
+  }
   return withUnknownSale(
     {
       title: metadataText(tokenAsset.name),
       description: metadataText(tokenAsset.description),
-      media: animationUrl
-        ? { kind: 'animation', imageUrl, animationUrl }
-        : imageUrl
-          ? { kind: 'image', imageUrl }
-          : undefined
+      media
     },
     canonical
   );
