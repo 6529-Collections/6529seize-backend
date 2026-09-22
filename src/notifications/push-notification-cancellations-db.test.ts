@@ -40,7 +40,12 @@ describeWithSeed(
   'durable push cancellation',
   { table: IDENTITY_NOTIFICATIONS_TABLE, rows },
   () => {
-    const db = new PushNotificationCancellationsDb(() => sqlExecutor);
+    let db: PushNotificationCancellationsDb;
+    beforeEach(() => {
+      // The shared test hook creates a new executor before every test. Avoid
+      // retaining an earlier executor that bypasses this test's failure spy.
+      db = new PushNotificationCancellationsDb(() => sqlExecutor);
+    });
     const remaining = async () =>
       (
         await sqlExecutor.execute<{ id: number }>(
