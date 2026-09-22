@@ -1562,3 +1562,14 @@ without deleting registrations; rotation bypasses the old quarantine. Failed
 work near the queue retry limit remains explicitly alertable. See
 [the delivery contract](mobile-badge-sync.md#delivery-retries-and-incompatible-targets)
 and [recovery runbook](../ops/docs/operations/push-delivery-recovery.md).
+
+### Queued push cancellation after deletion
+
+Drop deletion, chat-history purge and wave deletion record the affected notification
+IDs in `push_notification_cancellations` in the same SQL transaction that deletes
+the notification rows. The push worker checks missing IDs against the writer:
+confirmed cancellations are informational skips, unexplained missing IDs retain
+operational errors, and lookup failures retry the affected queue records.
+`dbMigrationsLoop` creates the entity through normal schema sync and removes
+cancellation records older than 30 days in bounded scheduled batches. See
+[Push cancellation](./push-notification-cancellation.md) for rollout and limits.
