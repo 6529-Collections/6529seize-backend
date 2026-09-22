@@ -1,3 +1,4 @@
+import { handleMissingNotifications } from './missing-notifications';
 import { In, Like } from 'typeorm';
 import { ApiIdentity } from '../api-serverless/src/generated/models/ApiIdentity';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
@@ -289,14 +290,12 @@ export async function sendIdentityNotificationsBatch(
       'Failed to apply notification visibility filters; retrying push notifications',
       error
     );
-    return notifications.map((notification) => Number(notification.id));
+    return uniqueIds;
   }
 
-  uniqueIds
-    .filter((id) => !notificationsById.has(id))
-    .forEach((id) => logger.error(`Notification not found: ${id}`));
-
-  const failedIds: number[] = [];
+  const failedIds = await handleMissingNotifications(
+    uniqueIds.filter((id) => !notificationsById.has(id))
+  );
   const waveAccessCache = new Map<string, Promise<boolean>>();
   const wavePresentationResolver = createWavePresentationResolver();
   const messagesByNotification = await Promise.all(

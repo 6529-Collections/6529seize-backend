@@ -73,6 +73,23 @@ describeWithSeed(
   'ChatHistoryPurgeDb synthetic MySQL cleanup',
   withWaves([wave]),
   () => {
+    it('records cancellation for both references when purging chat history', async () => {
+      await insertDrops(2);
+      await sqlExecutor.execute(
+        `insert into ${tables.IDENTITY_NOTIFICATIONS_TABLE}
+         (id, identity_id, cause, additional_data, created_at, related_drop_id, related_drop_2_id)
+         values (1, 'recipient', 'IDENTITY_MENTIONED', '{}', 1, 'drop-1', null),
+                (2, 'recipient', 'DROP_QUOTED', '{}', 1, 'retained', 'drop-2')`
+      );
+      await purge(2);
+      const cancelled = await sqlExecutor.execute<{ notification_id: number }>(
+        `select notification_id from ${tables.PUSH_NOTIFICATION_CANCELLATIONS_TABLE} order by notification_id`
+      );
+      expect(cancelled.map((row) => Number(row.notification_id))).toEqual([
+        1, 2
+      ]);
+    });
+
     it('protects the latest pin between batches and deletes a formerly pinned message', async () => {
       await insertDrops(305);
       await sqlExecutor.execute(
