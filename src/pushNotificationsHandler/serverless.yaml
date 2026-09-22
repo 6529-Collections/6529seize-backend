@@ -26,6 +26,7 @@ functions:
           arn:
             Fn::GetAtt: [FirebasePushNotificationsQueue, Arn]
           batchSize: 10
+          maximumConcurrency: 18
           functionResponseType: ReportBatchItemFailures
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
