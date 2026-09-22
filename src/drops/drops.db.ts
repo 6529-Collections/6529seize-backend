@@ -1,3 +1,4 @@
+import { PushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import {
   userGroupsService,
@@ -29,7 +30,6 @@ import {
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
   IDENTITIES_TABLE,
-  IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   NFT_LINKS_TABLE,
   PROFILE_WAVES_TABLE,
@@ -2013,11 +2013,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   public async deleteDropNotifications(dropId: string, ctx: RequestContext) {
     ctx.timer?.start('dropsDb->deleteDropNotifications');
-    await this.db.execute(
-      `delete from ${IDENTITY_NOTIFICATIONS_TABLE} where related_drop_id = :dropId or related_drop_2_id = :dropId`,
-      { dropId },
-      { wrappedConnection: ctx.connection }
-    );
+    const cancellations = new PushNotificationCancellationsDb(() => this.db);
+    await cancellations.cancelAndDelete('related_drop_id', [dropId], ctx);
+    await cancellations.cancelAndDelete('related_drop_2_id', [dropId], ctx);
     ctx.timer?.stop('dropsDb->deleteDropNotifications');
   }
 

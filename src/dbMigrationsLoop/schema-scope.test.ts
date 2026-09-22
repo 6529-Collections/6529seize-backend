@@ -1,3 +1,8 @@
+jest.mock('@/notifications/push-notification-cancellations.db', () => ({
+  pushNotificationCancellationsDb: {
+    deleteExpired: jest.fn().mockResolvedValue(undefined)
+  }
+}));
 import { doInDbContext } from '@/secrets';
 import { competitionRepository } from '@/competitions/competition.repository';
 import { contentModerationDb } from '@/content-moderation/content-moderation.db';

@@ -1,3 +1,4 @@
+import { PushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 import {
   ACTIVITY_EVENTS_TABLE,
   ART_CURATION_TOKEN_WATCH_DROPS_TABLE,
@@ -25,7 +26,6 @@ import {
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
   DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
-  IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   WAVE_CURATIONS_TABLE,
   WAVE_LEADERBOARD_ENTRIES_TABLE,
@@ -154,13 +154,9 @@ export class ChatHistoryPurgeDb extends LazyDbAccessCompatibleService {
           options
         );
       }
-      for (const column of ['related_drop_id', 'related_drop_2_id']) {
-        await this.db.execute(
-          `delete from ${IDENTITY_NOTIFICATIONS_TABLE} where ${column} in (:dropIds)`,
-          params,
-          options
-        );
-      }
+      const cancellations = new PushNotificationCancellationsDb(() => this.db);
+      await cancellations.cancelAndDelete('related_drop_id', dropIds, ctx);
+      await cancellations.cancelAndDelete('related_drop_2_id', dropIds, ctx);
       await this.db.execute(
         `delete from ${ACTIVITY_EVENTS_TABLE} where drop_id in (:dropIds)`,
         params,
