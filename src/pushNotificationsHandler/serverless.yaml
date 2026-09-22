@@ -26,6 +26,8 @@ functions:
           arn:
             Fn::GetAtt: [FirebasePushNotificationsQueue, Arn]
           batchSize: 10
+          # Keep polling below the Lambda limit so bursts wait in SQS instead of throttling.
+          maximumConcurrency: 18
           functionResponseType: ReportBatchItemFailures
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
