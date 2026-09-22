@@ -1,3 +1,4 @@
+import { pushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 import * as sentryContext from '../sentry.context';
 import { Logger } from '../logging';
 import * as Entities from '../entities/entities';
@@ -182,6 +183,7 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
         });
         await dbmigrate.up();
       }
+      await pushNotificationCancellationsDb.deleteExpired();
       const insertedLegacyCompetitions =
         await competitionRepository.backfillLegacyMappings({});
       logger.info(
