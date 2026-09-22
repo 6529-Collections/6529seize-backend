@@ -34,8 +34,9 @@ export class PushNotificationCancellationsDb extends LazyDbAccessCompatibleServi
         { values, afterId },
         options
       );
-      if (!candidates.length) return;
-      afterId = candidates[candidates.length - 1].id;
+      const lastCandidate = candidates.at(-1);
+      if (!lastCandidate) return;
+      afterId = lastCandidate.id;
       const rows = await this.db.execute<{ id: number }>(
         `select id from ${IDENTITY_NOTIFICATIONS_TABLE} force index (PRIMARY)
          where id in (:ids) and ${predicate} order by id for update`,
