@@ -126,6 +126,108 @@ it('preserves the exact ordinary JPEG and PNG output bytes', async () => {
   }
 });
 
+it('creates a preview of a large baseline JPEG using decoder downsampling', async () => {
+  mockInput = await sharp({
+    create: { width: 9000, height: 6000, channels: 3, background: '#567888' }
+  })
+    .jpeg()
+    .toBuffer();
+  const result = await handler(
+    { queryStringParameters: { path: 'synthetic/AUTOx1080/large.jpeg' } },
+    {} as Context,
+    () => undefined
+  );
+  expect(result.statusCode).toBe(302);
+  expect(await sharp(mockUploaded).metadata()).toMatchObject({
+    width: 1620,
+    height: 1080,
+    format: 'jpeg'
+  });
+});
+
+it('uses a bounded still preview when the entire GIF animation exceeds the budget', async () => {
+  const frames = Buffer.alloc(1024 * 1024 * 3 * 33);
+  for (let frame = 0; frame < 33; frame++) {
+    frames.fill(
+      frame * 7,
+      frame * 1024 * 1024 * 3,
+      (frame + 1) * 1024 * 1024 * 3
+    );
+  }
+  mockInput = await sharp(frames, {
+    raw: { width: 1024, height: 1024 * 33, channels: 3, pageHeight: 1024 }
+  })
+    .gif({ delay: 100 })
+    .toBuffer();
+  mockContentType = 'image/gif';
+  expect((await resize()).statusCode).toBe(302);
+  expect(
+    await sharp(mockUploaded, { animated: true }).metadata()
+  ).toMatchObject({
+    width: 6,
+    height: 6,
+    pages: 1,
+    format: 'gif'
+  });
+});
+
+it('keeps progressive JPEG, unsupported codec and near-original requests within the full budget', async () => {
+  const base = await sharp(mockInput).metadata();
+  const large = { ...base, width: 16000, height: 14000 };
+  const target = { width: null, height: 1080 };
+  expect(() => assertDecodedWorkBudget(large, false, target)).not.toThrow();
+  for (const metadata of [
+    { ...large, isProgressive: true },
+    { ...large, format: 'png' as const },
+    { ...large, depth: 'ushort' as const }
+  ]) {
+    expect(() => assertDecodedWorkBudget(metadata, false, target)).toThrow(
+      UnprocessableResizeInput
+    );
+  }
+  expect(() =>
+    assertDecodedWorkBudget(large, false, { width: null, height: 10000 })
+  ).toThrow(UnprocessableResizeInput);
+});
+
+it('accounts for JPEG shrink rounding boundaries and rotated dimensions', async () => {
+  const base = await sharp(mockInput).metadata();
+  const large = { ...base, width: 16384, height: 12288 };
+  // At an exact 2x shrink Sharp falls back to a full-size decode.
+  expect(() =>
+    assertDecodedWorkBudget(large, false, { width: 8192, height: null })
+  ).toThrow(UnprocessableResizeInput);
+  // A portrait rotation changes the axis constrained by AUTOxheight.
+  expect(() =>
+    assertDecodedWorkBudget(
+      { ...base, width: 24000, height: 2000, orientation: 6 },
+      false,
+      { width: null, height: 2000 }
+    )
+  ).not.toThrow();
+  expect(() =>
+    assertDecodedWorkBudget(
+      { ...base, width: 24000, height: 2000, orientation: 6 },
+      false,
+      { width: 2000, height: null }
+    )
+  ).toThrow(UnprocessableResizeInput);
+});
+
+it('conservatively budgets both axes when their shrink ratios differ', async () => {
+  const base = await sharp(mockInput).metadata();
+  // Ratios 10 and 2: inside could shrink by 8, but cover/outside cannot. The
+  // common estimate deliberately keeps the larger full-decode budget here.
+  const large = { ...base, width: 16000, height: 12000 };
+  expect(() =>
+    assertDecodedWorkBudget(large, false, { width: 1600, height: 6000 })
+  ).toThrow(UnprocessableResizeInput);
+  // Both axes safely support a decoder shrink even for the stricter fit.
+  expect(() =>
+    assertDecodedWorkBudget(large, false, { width: 1600, height: 2400 })
+  ).not.toThrow();
+});
+
 it('rejects malformed image bytes without attempting an upload', async () => {
   mockInput = Buffer.from('not an image');
   const result = await resize();
