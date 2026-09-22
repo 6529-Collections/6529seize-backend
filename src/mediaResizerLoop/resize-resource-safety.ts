@@ -16,6 +16,40 @@ export const MAX_SOURCE_BYTES = 256 * 1024 * 1024;
 export const MAX_DECODED_WORK_BYTES = 512 * 1024 * 1024;
 export const INPUT_PIXEL_BACKSTOP = 1_000_000_000;
 
+interface ResizeTarget {
+  readonly width: number | null;
+  readonly height: number | null;
+}
+
+function jpegDecodeShrink(metadata: Metadata, target?: ResizeTarget): number {
+  // Progressive JPEGs retain full-resolution coefficients even when shrinking.
+  // Other codecs keep the existing full decoded-input estimate.
+  if (
+    metadata.format !== 'jpeg' ||
+    metadata.isProgressive !== false ||
+    metadata.depth !== 'uchar' ||
+    !target
+  )
+    return 1;
+
+  const rotated = (metadata.orientation ?? 1) >= 5;
+  const width = rotated ? metadata.height! : metadata.width!;
+  const height = rotated ? metadata.width! : metadata.height!;
+  const ratios = [];
+  if (target.width) ratios.push(width / target.width);
+  if (target.height) ratios.push(height / target.height);
+  const shrink = Math.min(...ratios);
+  if (!Number.isFinite(shrink)) return 1;
+
+  // Sharp's fastShrinkOnLoad halves the JPEG factor at rounding boundaries.
+  // cover/outside use the smaller axis; inside uses the larger one. Taking the
+  // smaller ratio therefore never assumes more decoder shrink than either fit.
+  if (shrink >= 9) return 8;
+  if (shrink >= 5) return 4;
+  if (shrink >= 3) return 2;
+  return 1;
+}
+
 type InputFailureCode =
   | 'SOURCE_TOO_LARGE'
   | 'DECODED_IMAGE_TOO_LARGE'
@@ -44,7 +78,11 @@ export function classifyResizeDecoderError(error: unknown): unknown {
 }
 
 /** Conservative admission estimate, not a guarantee about native codec memory. */
-export function assertDecodedWorkBudget(metadata: Metadata, animated: boolean) {
+export function assertDecodedWorkBudget(
+  metadata: Metadata,
+  animated: boolean,
+  target?: ResizeTarget
+) {
   const pages = animated ? (metadata.pages ?? 1) : 1;
   // If per-frame height is absent, the reported height is a conservative bound;
   // still multiply by every page rather than risk admitting uncounted frames.
@@ -73,9 +111,10 @@ export function assertDecodedWorkBudget(metadata: Metadata, animated: boolean) {
     throw new UnprocessableResizeInput('INVALID_IMAGE');
   }
   // Include every GIF frame, conversion to at least RGBA and four working copies.
+  const shrink = jpegDecodeShrink(metadata, target);
   const estimatedBytes =
-    metadata.width! *
-    height! *
+    Math.ceil(metadata.width! / shrink) *
+    Math.ceil(height! / shrink) *
     pages *
     Math.max(4, metadata.channels!) *
     bytesPerSample *
@@ -104,7 +143,8 @@ export async function withResizeInputFile<T>(
   source: Readable,
   contentLength: number | undefined,
   animated: boolean,
-  useFile: (path: string) => Promise<T>
+  useFile: (path: string, animated: boolean) => Promise<T>,
+  target?: ResizeTarget
 ): Promise<T> {
   // S3 can fail before pipeline attaches its listeners, including while mkdtemp
   // is pending or after an early destroy. Keep the original failure until close.
@@ -153,8 +193,28 @@ export async function withResizeInputFile<T>(
       .catch((error: unknown) => {
         throw classifyResizeDecoderError(error);
       });
-    assertDecodedWorkBudget(metadata, animated);
-    result = await useFile(path);
+    let resizeAnimated = animated;
+    try {
+      assertDecodedWorkBudget(metadata, animated, target);
+    } catch (error) {
+      if (
+        !animated ||
+        metadata.format !== 'gif' ||
+        !(error instanceof UnprocessableResizeInput) ||
+        error.code !== 'DECODED_IMAGE_TOO_LARGE'
+      )
+        throw error;
+
+      // A still preview preserves access to the artwork without admitting the
+      // entire animation. Even the first frame must fit the original budget.
+      const firstFrame = await Sharp(path, {
+        failOn: 'none',
+        limitInputPixels: INPUT_PIXEL_BACKSTOP
+      }).metadata();
+      assertDecodedWorkBudget(firstFrame, false);
+      resizeAnimated = false;
+    }
+    result = await useFile(path, resizeAnimated);
   } catch (error) {
     // A secondary cleanup failure must not change input classification or hide
     // the original source/upload error. Cleanup-only failures still propagate.
