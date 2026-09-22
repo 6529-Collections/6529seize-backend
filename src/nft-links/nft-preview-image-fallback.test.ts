@@ -17,69 +17,72 @@ const makeService = () =>
   new NftLinkMediaPreviewService({} as NftLinksDb, {} as SQS);
 afterEach(() => jest.restoreAllMocks());
 
-it('stores the image fallback as READY image under the original source fence without modifying metadata', async () => {
-  const sourceHash = createHash('sha256').update(video).digest('hex');
-  const entity = {
-    canonical_id: 'synthetic',
-    media_uri: video,
-    media_preview_source_hash: sourceHash,
-    media_preview_error_message: 'lease',
-    full_data: {
-      asset: {
-        media: { kind: 'animation', animationUrl: video, imageUrl: image }
+it.each(['animation', 'video'])(
+  'stores the %s image fallback as READY image under the original source fence without modifying metadata',
+  async (kind) => {
+    const sourceHash = createHash('sha256').update(video).digest('hex');
+    const entity = {
+      canonical_id: 'synthetic',
+      media_uri: video,
+      media_preview_source_hash: sourceHash,
+      media_preview_error_message: 'lease',
+      full_data: {
+        asset: {
+          media: { kind, animationUrl: video, imageUrl: image }
+        }
       }
-    }
-  };
-  const original = JSON.stringify(entity);
-  const db = {
-    lockMediaPreviewForProcessing: jest.fn().mockResolvedValue(entity),
-    updateMediaPreviewWithSuccess: jest.fn().mockResolvedValue(true),
-    updateMediaPreviewWithFailure: jest.fn()
-  };
-  const service = new NftLinkMediaPreviewService(
-    db as unknown as NftLinksDb,
-    {} as SQS
-  );
-  const download = jest
-    .spyOn(service as never, 'downloadWithinDeadline')
-    .mockRejectedValueOnce(oversize() as never)
-    .mockResolvedValueOnce({
-      bytes,
-      finalUrl: image,
-      contentType: 'image/png'
-    } as never);
-  jest.spyOn(service as never, 'uploadPreviewVariants').mockResolvedValue({
-    cardUrl: 'card',
-    thumbUrl: 'thumb',
-    smallUrl: 'small'
-  } as never);
-  const log = jest
-    .spyOn(service['logger'], 'error')
-    .mockImplementation(() => undefined);
-  await service.processQueueMessage(
-    JSON.stringify({ canonicalId: 'synthetic', sourceHash }),
-    {}
-  );
-  expect(download).toHaveBeenNthCalledWith(
-    2,
-    image,
-    expect.any(AbortSignal),
-    true
-  );
-  expect(db.updateMediaPreviewWithSuccess).toHaveBeenCalledWith(
-    expect.objectContaining({
-      kind: 'image',
-      sourceHash,
-      mimeType: 'image/webp',
+    };
+    const original = JSON.stringify(entity);
+    const db = {
+      lockMediaPreviewForProcessing: jest.fn().mockResolvedValue(entity),
+      updateMediaPreviewWithSuccess: jest.fn().mockResolvedValue(true),
+      updateMediaPreviewWithFailure: jest.fn()
+    };
+    const service = new NftLinkMediaPreviewService(
+      db as unknown as NftLinksDb,
+      {} as SQS
+    );
+    const download = jest
+      .spyOn(service as never, 'downloadWithinDeadline')
+      .mockRejectedValueOnce(oversize() as never)
+      .mockResolvedValueOnce({
+        bytes,
+        finalUrl: image,
+        contentType: 'image/png'
+      } as never);
+    jest.spyOn(service as never, 'uploadPreviewVariants').mockResolvedValue({
       cardUrl: 'card',
-      fence: { sourceHash, lease: 'lease' }
-    }),
-    {}
-  );
-  expect(db.updateMediaPreviewWithFailure).not.toHaveBeenCalled();
-  expect(log).not.toHaveBeenCalled();
-  expect(JSON.stringify(entity)).toBe(original);
-});
+      thumbUrl: 'thumb',
+      smallUrl: 'small'
+    } as never);
+    const log = jest
+      .spyOn(service['logger'], 'error')
+      .mockImplementation(() => undefined);
+    await service.processQueueMessage(
+      JSON.stringify({ canonicalId: 'synthetic', sourceHash }),
+      {}
+    );
+    expect(download).toHaveBeenNthCalledWith(
+      2,
+      image,
+      expect.any(AbortSignal),
+      true
+    );
+    expect(db.updateMediaPreviewWithSuccess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'image',
+        sourceHash,
+        mimeType: 'image/webp',
+        cardUrl: 'card',
+        fence: { sourceHash, lease: 'lease' }
+      }),
+      {}
+    );
+    expect(db.updateMediaPreviewWithFailure).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+    expect(JSON.stringify(entity)).toBe(original);
+  }
+);
 
 it.each([undefined, video])(
   'preserves the oversize failure without a distinct image (%s)',
