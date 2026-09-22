@@ -41,7 +41,13 @@ jest.mock('@aws-sdk/lib-storage', () => ({
   Upload: jest.fn(({ params }: { params: { Body: Readable } }) => ({
     done: async () => {
       if (mockUploadError) throw mockUploadError;
-      if (mockDecoderError) params.Body.destroy(mockDecoderError);
+      if (mockDecoderError) {
+        // Native Sharp failures emit directly, without destroy(error) setting
+        // Readable.errored. Preserve that behavior in the regression fixture.
+        params.Body._read = () => {
+          params.Body.emit('error', mockDecoderError);
+        };
+      }
       const chunks: Buffer[] = [];
       for await (const chunk of params.Body) chunks.push(chunk);
       mockUploaded = Buffer.concat(chunks);
