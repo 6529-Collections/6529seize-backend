@@ -198,6 +198,20 @@ it('accounts for JPEG shrink rounding boundaries and rotated dimensions', async 
   ).toThrow(UnprocessableResizeInput);
 });
 
+it('conservatively budgets both axes when their shrink ratios differ', async () => {
+  const base = await sharp(mockInput).metadata();
+  // Ratios 10 and 2: inside could shrink by 8, but cover/outside cannot. The
+  // common estimate deliberately keeps the larger full-decode budget here.
+  const large = { ...base, width: 16000, height: 12000 };
+  expect(() =>
+    assertDecodedWorkBudget(large, false, { width: 1600, height: 6000 })
+  ).toThrow(UnprocessableResizeInput);
+  // Both axes safely support a decoder shrink even for the stricter fit.
+  expect(() =>
+    assertDecodedWorkBudget(large, false, { width: 1600, height: 2400 })
+  ).not.toThrow();
+});
+
 it('rejects malformed image bytes without attempting an upload', async () => {
   mockInput = Buffer.from('not an image');
   const result = await resize();

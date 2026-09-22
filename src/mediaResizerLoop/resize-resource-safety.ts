@@ -42,7 +42,8 @@ function jpegDecodeShrink(metadata: Metadata, target?: ResizeTarget): number {
   if (!Number.isFinite(shrink)) return 1;
 
   // Sharp's fastShrinkOnLoad halves the JPEG factor at rounding boundaries.
-  // Using the smaller axis is conservative for every supported resize fit.
+  // cover/outside use the smaller axis; inside uses the larger one. Taking the
+  // smaller ratio therefore never assumes more decoder shrink than either fit.
   if (shrink >= 9) return 8;
   if (shrink >= 5) return 4;
   if (shrink >= 3) return 2;
