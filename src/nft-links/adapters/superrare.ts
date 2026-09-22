@@ -195,7 +195,7 @@ class SuperRareAdapter implements PlatformAdapter {
       }
       if (auctionStart) {
         endsAt = Time.seconds(
-          numbers.parseNumberOrThrow(auctionStart + auctionLength)
+          numbers.parseNumberOrThrow((auctionStart + auctionLength).toString())
         ).toIsoString();
       }
     } else {

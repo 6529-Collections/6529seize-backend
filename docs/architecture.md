@@ -575,6 +575,16 @@ lookup), checks both families for private addresses, and pins the selected IP.
 The header byte limit is intentionally coarse because MIME types can mislabel
 video; byte sniffing applies the image or video cap during streaming. This
 reserves time within the 120-second preview worker for upload and persistence.
+For animation/video cards with a distinct metadata image, the worker falls back
+to that image when the preferred animation exceeds the byte limit, returns
+HTTP 404/410, or is HTML. The fallback shares the original download deadline,
+uses the image byte cap and the same URL/DNS/redirect guards, and must decode
+successfully through the existing image renderer. Other HTTP errors and timeouts
+remain failures. A successful fallback stores an image preview while preserving
+the original animation metadata and source hash for lease fencing/cache reuse;
+missing or failed fallbacks retain the existing failure/unsupported behavior.
+A READY image fallback is reused under the original source hash; recovery of
+the same animation URL does not automatically replace it with a video preview.
 Oversize records include both limits so scheduling and processing share the same
 policy; legacy records become eligible once under the new policy.
 
@@ -645,14 +655,15 @@ in the metadata URI and consumed metadata strings use the standard 64-digit
 lowercase hexadecimal token ID. Existing URI normalization and bounded HTTP
 handling apply; this does not establish token existence or media availability.
 
-The Manifold adapter requires selected-token responses to match the requested
+The Manifold adapter requires selected-token and token-asset responses to match the requested
 instance ID and rejects known ID mismatches on legacy responses too.
 When present, it reads string metadata from `publicData.selectedToken`
+or `publicData.tokenAsset` (the latter also supports animation metadata)
 and normalizes supported decentralized media to HTTP(S) without credentials;
 the existing preview download safety checks still apply. Complete title and media
 avoid an unnecessary canonical-page OG fetch. Listing metadata does not prove an
 active sale, so these cards use the unknown sale state and a view action. Legacy
-claim and edition field extraction remains available when selectedToken is absent,
+claim and edition field extraction remains available when both token shapes are absent,
 including older responses without a recognizable instance ID. A listingType-only
 response keeps those legacy assets and uses an unknown market state with a view
 action, without inferring a claim price.

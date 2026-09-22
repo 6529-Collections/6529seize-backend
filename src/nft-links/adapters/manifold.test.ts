@@ -43,6 +43,110 @@ describe('Manifold instance metadata through the real adapter and resolver', () 
     jest.mocked(getAdapterFor).mockReturnValue(new ManifoldAdapter());
   });
 
+  it('resolves the Alien tokenAsset response without a claim CTA or webpage fallback', async () => {
+    const url = 'https://manifold.xyz/@cuttle/id/3474276592';
+    const assetImage =
+      'https://arweave.net/kbDa-llHdkVtJ5CIUlNoZEVcx6JyPDRwpaurGade6Jg';
+    jest.mocked(fetch).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          id: 3474276592,
+          appName: '1 of 1 Token',
+          name: 'Wrong root title',
+          image: 'https://example.com/wrong.png',
+          publicData: {
+            tokenId: '200',
+            tokenAsset: {
+              name: 'Alien',
+              description: '八腕一墨',
+              image: assetImage
+            },
+            mintPrice: {
+              value: '1000000000000000000',
+              currency: 'ETH',
+              decimals: 18
+            }
+          }
+        }),
+        { status: 200 }
+      )
+    );
+    const card = await new NftLinkResolver().resolve(url, {});
+    expect(card.asset).toMatchObject({
+      title: 'Alien',
+      description: '八腕一墨',
+      media: {
+        kind: 'image',
+        imageUrl:
+          'https://media.6529.io/arweave/kbDa-llHdkVtJ5CIUlNoZEVcx6JyPDRwpaurGade6Jg'
+      }
+    });
+    expect(card.market).toEqual({
+      saleType: 'UNKNOWN',
+      cta: { label: 'View on Manifold', url }
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(jest.mocked(fetch).mock.calls[0][0]).toBe(
+      'https://apps.api.manifoldxyz.dev/public/instance/data?id=3474276592'
+    );
+  });
+
+  it.each([undefined, 7654321, '01234567'])(
+    'rejects unbound tokenAsset ID %s',
+    async (id) => {
+      await expect(
+        resolveInstance({ id, publicData: { tokenAsset: token } })
+      ).rejects.toThrow('Invalid Manifold instance response');
+    }
+  );
+
+  it.each([null, [], 'invalid'])(
+    'rejects malformed tokenAsset %j instead of falling back to claim metadata',
+    async (tokenAsset) => {
+      await expect(
+        resolveInstance({
+          id: 1234567,
+          image: imageUrl,
+          publicData: { tokenAsset, asset: token }
+        })
+      ).rejects.toThrow('Invalid Manifold token asset');
+    }
+  );
+
+  it('normalizes tokenAsset media aliases and retains animation metadata', async () => {
+    const result = await resolveInstance({
+      id: '1234567',
+      publicData: {
+        tokenAsset: {
+          name: 'Animated token',
+          image_url:
+            'ipfs://QmYwAPJzv5CZsnAzt8auVTL6rQJ8K8Y1YwecqHHU1Q6iCk/image.png',
+          animation: 'https://example.com/art.mp4'
+        }
+      }
+    });
+    expect(result?.patch.asset?.media).toEqual({
+      kind: 'animation',
+      imageUrl:
+        'https://media.6529.io/ipfs/QmYwAPJzv5CZsnAzt8auVTL6rQJ8K8Y1YwecqHHU1Q6iCk/image.png',
+      animationUrl: 'https://example.com/art.mp4'
+    });
+    expect(result?.patch.market?.saleType).toBe('UNKNOWN');
+  });
+
+  it('rejects unsafe tokenAsset URLs as media candidates', async () => {
+    const result = await resolveInstance({
+      id: 1234567,
+      publicData: {
+        tokenAsset: {
+          image: 'https://user:password@example.com/image.png',
+          animation_url: 'javascript:alert(1)'
+        }
+      }
+    });
+    expect(result?.patch.asset?.media).toBeUndefined();
+  });
+
   it('resolves claim asset metadata without fetching a failing page', async () => {
     serveInstance({
       id: 1234567,

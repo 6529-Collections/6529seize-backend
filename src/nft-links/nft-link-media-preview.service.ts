@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { resolvePreviewHost } from './nft-preview-dns';
+import { HttpError } from './lib/http';
 import * as http from 'node:http';
 import * as https from 'node:https';
 import { isIP } from 'node:net';
@@ -218,7 +219,15 @@ export class NftLinkMediaPreviewService {
     }
 
     try {
-      const downloaded = await this.downloadRemoteImage(prepared.sourceUrl);
+      const media = lockedEntity.full_data?.asset?.media;
+      const fallbackImage =
+        media?.kind === 'animation' || media?.kind === 'video'
+          ? media.imageUrl
+          : undefined;
+      const downloaded = await this.downloadRemoteImage(
+        prepared.sourceUrl,
+        fallbackImage
+      );
       const classified = this.classifyDownloadedMedia(downloaded);
       if (classified.kind === 'video') {
         const uploaded = await this.uploadVideoSource(prepared, downloaded);
@@ -1033,7 +1042,8 @@ export class NftLinkMediaPreviewService {
   }
 
   private async downloadRemoteImage(
-    url: string
+    url: string,
+    fallbackImage?: string
   ): Promise<DownloadedRemoteImage> {
     const controller = new AbortController();
     const deadlineMs = Math.min(
@@ -1052,7 +1062,7 @@ export class NftLinkMediaPreviewService {
     });
     try {
       return await Promise.race([
-        this.downloadWithinDeadline(url, controller.signal),
+        this.downloadWithImageFallback(url, controller.signal, fallbackImage),
         deadline
       ]);
     } finally {
@@ -1061,15 +1071,49 @@ export class NftLinkMediaPreviewService {
     }
   }
 
+  private async downloadWithImageFallback(
+    url: string,
+    signal: AbortSignal,
+    fallbackImage?: string
+  ): Promise<DownloadedRemoteImage> {
+    if (!fallbackImage || fallbackImage === url) {
+      return await this.downloadWithinDeadline(url, signal);
+    }
+    try {
+      const primary = await this.downloadWithinDeadline(url, signal);
+      if (this.classifyDownloadedMedia(primary).kind !== 'html') return primary;
+    } catch (error) {
+      const missingAnimation =
+        error instanceof HttpError && [404, 410].includes(error.status);
+      if (!(error instanceof NftPreviewOversizeError) && !missingAnimation) {
+        throw error;
+      }
+    }
+    // Both attempts share the same absolute deadline and SSRF guards. Keep
+    // the original source hash for queue fencing and successful cache reuse.
+    const image = await this.downloadWithinDeadline(
+      fallbackImage,
+      signal,
+      true
+    );
+    if (this.classifyDownloadedMedia(image).kind !== 'image') {
+      throw new Error('Animation fallback is not an image');
+    }
+    this.logger.info('Using metadata image preview for unavailable animation');
+    return image;
+  }
+
   private async downloadWithinDeadline(
     url: string,
-    signal: AbortSignal
+    signal: AbortSignal,
+    imageOnly = false
   ): Promise<DownloadedRemoteImage> {
     const timeoutMs =
       env.getIntOrNull('NFT_LINK_MEDIA_PREVIEW_HTTP_TIMEOUT_MS') ?? 15000;
     const maxBytes = this.getMaxPreviewBytes();
     const videoBytes = this.getMaxVideoPreviewBytes();
     const policy = { imageBytes: maxBytes, videoBytes };
+    const headerLimit = imageOnly ? maxBytes : Math.max(maxBytes, videoBytes);
     const maxRedirects =
       env.getIntOrNull('NFT_LINK_MEDIA_PREVIEW_MAX_REDIRECTS') ?? 3;
 
@@ -1097,19 +1141,20 @@ export class NftLinkMediaPreviewService {
           continue;
         }
         if (!response.ok) {
-          throw new Error(`HTTP ${response.status} for ${currentUrl}`);
+          throw new HttpError(
+            response.status,
+            currentUrl,
+            `HTTP ${response.status} for ${currentUrl}`
+          );
         }
         // Headers can mislabel video as image. This coarse guard only rejects
         // bodies too large for either kind; streamed bytes enforce the kind's cap.
         const contentLength = response.headers.get('content-length');
         if (contentLength) {
           const parsed = Number(contentLength);
-          if (
-            Number.isFinite(parsed) &&
-            parsed > Math.max(maxBytes, videoBytes)
-          ) {
+          if (Number.isFinite(parsed) && parsed > headerLimit) {
             throw new NftPreviewOversizeError(
-              Math.max(maxBytes, videoBytes),
+              headerLimit,
               parsed,
               'content-length',
               policy
@@ -1119,7 +1164,8 @@ export class NftLinkMediaPreviewService {
         const bytes = await this.readBodyWithLimit(
           response,
           maxBytes,
-          videoBytes
+          videoBytes,
+          imageOnly
         );
         return {
           finalUrl: currentUrl,
@@ -1187,7 +1233,8 @@ export class NftLinkMediaPreviewService {
   private async readBodyWithLimit(
     response: Response,
     maxBytes: number,
-    videoBytes?: number
+    videoBytes?: number,
+    imageOnly = false
   ): Promise<Buffer> {
     const body = response.body;
     if (!body) {
@@ -1207,6 +1254,7 @@ export class NftLinkMediaPreviewService {
           ]);
         }
         const limit =
+          !imageOnly &&
           videoBytes !== undefined &&
           this.sniffMediaKindFromBytes(prefix) === 'video'
             ? videoBytes

@@ -243,3 +243,24 @@ it('enforces the image stream cap when declared length falls between image and v
     mode: 'stream'
   });
 });
+
+it.each(['header', 'stream'] as const)(
+  'enforces the image cap on fallback bytes despite a video signature (%s)',
+  async (mode) => {
+    const url = await serve((_req, res) => {
+      res.writeHead(
+        200,
+        mode === 'header' ? { 'content-length': String(mp4.length) } : {}
+      );
+      res.end(mp4);
+    });
+    useVideoLimits();
+    await expect(
+      service['downloadWithinDeadline'](url, new AbortController().signal, true)
+    ).rejects.toMatchObject({
+      limitBytes: 64,
+      mode: mode === 'header' ? 'content-length' : 'stream',
+      policy: { imageBytes: 64, videoBytes: 128 }
+    });
+  }
+);
