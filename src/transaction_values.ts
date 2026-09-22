@@ -325,8 +325,8 @@ async function getInternalTransfersForBlock(
     return cached;
   }
 
-  // Populate the cache before invoking the factory: a synchronous factory throw
-  // must evict the stored promise, not delete an entry that is then reinserted.
+  // Defer the factory to a microtask so the cache.set below runs first. A
+  // synchronous factory throw then evicts the already-stored promise.
   const request = Promise.resolve().then(async () => {
     const blockHex = ethers.toBeHex(blockNumber);
     const returnEmptyFailure = (): RpcInternalTransfersResponse => {

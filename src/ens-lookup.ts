@@ -25,16 +25,13 @@ async function findEnsViaUniversalResolver(
       address,
       ENS_ETH_COIN_TYPE
     );
-    if (primaryName) {
-      logger.debug(
-        `[ENS LOOKUP HIT] [PROVIDER universal-resolver] [ADDRESS ${address}] [ENS ${primaryName}]`
-      );
-    }
-    return primaryName || null;
-  } catch (error: any) {
-    logger.debug(
-      `[ENS LOOKUP FAILED] [PROVIDER universal-resolver] [ADDRESS ${address}] [ERROR ${error}]`
+    logger.info(
+      `[ENS_UNIVERSAL_RESOLVER] [OUTCOME=${primaryName ? 'hit' : 'miss'}]`
     );
+    return primaryName || null;
+  } catch {
+    // Stable outcomes can be counted without logging wallets or RPC credentials.
+    logger.info('[ENS_UNIVERSAL_RESOLVER] [OUTCOME=error]');
     return null;
   }
 }

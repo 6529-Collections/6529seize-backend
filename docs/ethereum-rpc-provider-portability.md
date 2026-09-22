@@ -51,6 +51,13 @@ a docs-only PR.
   The local Alchemy class's fallback of three was not those callers' effective
   setting. Persistent transient failures can still incur the existing retry
   latency; this is not a new three-to-ten increase.
+  This wrapper applies only to former `Alchemy.core` compatibility calls:
+  delegations, NFT history, historic TDH, TDH's final block timestamp, NextGen,
+  subscriptions and forward ENS (including identity/drop resolution). Former
+  bare `JsonRpcProvider` callers remain on `getEthereumRpcProvider()` or
+  `getRpcProvider()`, not `EthereumRpcClient`, so they gain no application-level
+  retry wrapper. In particular, TDH's timestamp-search block reads still use
+  the bare provider; only its formerly retrying final timestamp uses the client.
 - Provider-neutral network identifiers and response types now live under
   `src/ethereum-rpc/`. Existing identifier strings remain unchanged for
   persisted/configuration compatibility; they do not select a vendor.
@@ -67,6 +74,11 @@ a docs-only PR.
   cache are reused; there is no new provider per request. Compare marketplace
   read/simulation latency during staging; do not disable chain verification to
   hide a slow endpoint.
+  Batch preflight's per-request `eth_chainId` check remains inside the existing
+  12-second abortable deadline. Measure end-to-end preflight latency during
+  staging and qualification of the production RPC; those live measurements
+  remain pending. Do not cache away the check or enlarge the deadline merely
+  to conceal endpoint latency.
 - Reverse ENS first uses ethers lookup, then the Universal Resolver on the
   **same** configured endpoint. The previous hard-coded 6529 ordinary fallback
   is removed; lookup misses/errors still yield no name. Configuration failures
@@ -204,6 +216,11 @@ required for this backend PR.
    report no errors: removing the hidden 6529 endpoint fallback can silently
    reduce coverage. Investigate the configured provider before promoting if
    that sample regresses.
+   Count the `ENS_LOOKUP` info-level `[ENS_UNIVERSAL_RESOLVER]` events by
+   `OUTCOME=hit`, `miss`, and `error` to track fallback use and results. Each
+   fallback attempt emits one outcome without wallet/name/endpoint/error data;
+   primary successes emit no fallback event. These logs complement the fixed
+   wallet sample, not an automatic alert or a replacement for coverage testing.
 4. Check worker ingestion progress and errors, NFT history/transaction receipt
    consistency, NextGen logs and subscription checkpoints. Confirm colocated
    Alchemy indexed calls still work and trace-derived attribution remains
