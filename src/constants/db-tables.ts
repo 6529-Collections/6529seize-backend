@@ -280,3 +280,6 @@ export const MEMBERSHIP_GENERATION_MEMBERS_TABLE =
 export const MEMBERSHIP_PUBLICATIONS_TABLE = 'membership_publications';
 export const MEMBERSHIP_RUNTIME_CHECKPOINTS_TABLE =
   'membership_runtime_checkpoints';
+
+export const PUSH_NOTIFICATION_CANCELLATIONS_TABLE =
+  'push_notification_cancellations';
