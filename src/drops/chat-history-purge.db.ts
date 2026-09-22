@@ -155,8 +155,7 @@ export class ChatHistoryPurgeDb extends LazyDbAccessCompatibleService {
         );
       }
       const cancellations = new PushNotificationCancellationsDb(() => this.db);
-      await cancellations.cancelAndDelete('related_drop_id', dropIds, ctx);
-      await cancellations.cancelAndDelete('related_drop_2_id', dropIds, ctx);
+      await cancellations.cancelAndDelete('drop', dropIds, ctx);
       await this.db.execute(
         `delete from ${ACTIVITY_EVENTS_TABLE} where drop_id in (:dropIds)`,
         params,

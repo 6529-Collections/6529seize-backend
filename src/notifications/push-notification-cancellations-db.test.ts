@@ -64,10 +64,25 @@ describeWithSeed(
       expect(await db.findCancelledIds([1, 2, 3])).toEqual(new Set([1, 2]));
     });
 
+    it('serializes concurrent deletion of crossed drop references', async () => {
+      await sqlExecutor.execute(`update ${IDENTITY_NOTIFICATIONS_TABLE}
+      set related_drop_id = if(id = 1, 'a', 'b'),
+          related_drop_2_id = if(id = 1, 'b', 'a') where id in (1, 2)`);
+      await Promise.all(
+        ['a', 'b'].map((dropId) =>
+          sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+            db.cancelAndDelete('drop', [dropId], { connection })
+          )
+        )
+      );
+      expect(await remaining()).toEqual([3]);
+      expect(await db.findCancelledIds([1, 2])).toEqual(new Set([1, 2]));
+    });
+
     it('rolls back both cancellation and deletion on transaction failure', async () => {
       await expect(
         sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
-          await db.cancelAndDelete('wave_id', ['wave'], { connection });
+          await db.cancelAndDelete('wave', ['wave'], { connection });
           throw new Error('abort deletion');
         })
       ).rejects.toThrow('abort deletion');
@@ -90,7 +105,7 @@ describeWithSeed(
       try {
         await expect(
           sqlExecutor.executeNativeQueriesInTransaction((connection) =>
-            db.cancelAndDelete('wave_id', ['wave'], { connection })
+            db.cancelAndDelete('wave', ['wave'], { connection })
           )
         ).rejects.toThrow('cancellation storage unavailable');
       } finally {
@@ -101,7 +116,7 @@ describeWithSeed(
     });
 
     it('refuses to delete without a transaction', async () => {
-      await expect(db.cancelAndDelete('wave_id', ['wave'], {})).rejects.toThrow(
+      await expect(db.cancelAndDelete('wave', ['wave'], {})).rejects.toThrow(
         'requires a transaction'
       );
       expect(await remaining()).toEqual([1, 2, 3]);
@@ -114,7 +129,7 @@ describeWithSeed(
         Object.keys(rows[0])
       );
       await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
-        db.cancelAndDelete('wave_id', ['wave'], { connection })
+        db.cancelAndDelete('wave', ['wave'], { connection })
       );
       expect(await remaining()).toEqual([3]);
       const count = await sqlExecutor.oneOrNull<{ count: number }>(

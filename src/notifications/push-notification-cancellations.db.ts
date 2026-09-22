@@ -8,11 +8,9 @@ import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { Time } from '@/time';
 export const CANCELLATION_RETENTION_DAYS = 30;
 const BATCH_SIZE = 1000;
-type NotificationReference =
-  | 'related_drop_id'
-  | 'related_drop_2_id'
-  | 'wave_id';
+type NotificationReference = 'drop' | 'wave';
 export class PushNotificationCancellationsDb extends LazyDbAccessCompatibleService {
+  /** Cancels existing rows atomically, locking both drop references in ID order. */
   async cancelAndDelete(
     reference: NotificationReference,
     values: string[],
@@ -22,15 +20,29 @@ export class PushNotificationCancellationsDb extends LazyDbAccessCompatibleServi
       throw new Error('Notification cancellation requires a transaction');
     if (!values.length) return;
     const options = { wrappedConnection: ctx.connection };
-    // Lock and delete exactly the recorded IDs. A second predicate-based DELETE
-    // could remove a newly inserted notification without recording its cancellation.
+    const predicate =
+      reference === 'drop'
+        ? '(related_drop_id in (:values) or related_drop_2_id in (:values))'
+        : 'wave_id in (:values)';
+    let afterId = 0;
+    // Discover the union without locks, then acquire only primary-key locks in
+    // ascending order. ORDER BY alone on a secondary-index scan can lock rows
+    // before sorting. Keyset pagination also advances past concurrently deleted IDs.
     while (true) {
-      const rows = await this.db.execute<{ id: number }>(
-        `select id from ${IDENTITY_NOTIFICATIONS_TABLE} where ${reference} in (:values) order by id limit ${BATCH_SIZE} for update`,
-        { values },
+      const candidates = await this.db.execute<{ id: number }>(
+        `select id from ${IDENTITY_NOTIFICATIONS_TABLE} where ${predicate} and id > :afterId order by id limit ${BATCH_SIZE}`,
+        { values, afterId },
         options
       );
-      if (!rows.length) return;
+      if (!candidates.length) return;
+      afterId = candidates[candidates.length - 1].id;
+      const rows = await this.db.execute<{ id: number }>(
+        `select id from ${IDENTITY_NOTIFICATIONS_TABLE} force index (PRIMARY)
+         where id in (:ids) and ${predicate} order by id for update`,
+        { ids: candidates.map((row) => row.id), values },
+        options
+      );
+      if (!rows.length) continue;
       const ids = rows.map((row) => row.id);
       await this.db.execute(
         `insert into ${PUSH_NOTIFICATION_CANCELLATIONS_TABLE} (notification_id, cancelled_at)
@@ -44,7 +56,7 @@ export class PushNotificationCancellationsDb extends LazyDbAccessCompatibleServi
         { ids },
         options
       );
-      if (rows.length < BATCH_SIZE) return;
+      if (candidates.length < BATCH_SIZE) return;
     }
   }
   async findCancelledIds(ids: number[]): Promise<Set<number>> {
@@ -72,7 +84,8 @@ export class PushNotificationCancellationsDb extends LazyDbAccessCompatibleServi
           cutoff:
             Time.currentMillis() -
             Time.days(CANCELLATION_RETENTION_DAYS).toMillis()
-        }
+        },
+        { forcePool: DbPoolName.WRITE }
       );
       if (this.db.getAffectedRows(result) < BATCH_SIZE) return;
     }

@@ -1,3 +1,4 @@
+import { pushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 jest.mock('@/notifications/push-notification-cancellations.db', () => ({
   pushNotificationCancellationsDb: {
     deleteExpired: jest.fn().mockResolvedValue(undefined)
@@ -323,6 +324,9 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       entities: Object.values(Entities),
       syncEntities: false
     });
+    expect(pushNotificationCancellationsDb.deleteExpired).toHaveBeenCalledTimes(
+      1
+    );
     expect(applyFullSchemaWithMembershipGuard).not.toHaveBeenCalled();
     expect(migrations.getInstance).not.toHaveBeenCalled();
     expect(competitionRepository.backfillLegacyMappings).toHaveBeenCalledTimes(

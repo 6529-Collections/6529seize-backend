@@ -2961,7 +2961,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
   ) {
     ctx.timer?.start('wavesApiDb->deleteDropNotificationsByWaveId');
     await new PushNotificationCancellationsDb(() => this.db).cancelAndDelete(
-      'wave_id',
+      'wave',
       [waveId],
       ctx
     );

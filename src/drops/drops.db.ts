@@ -2014,8 +2014,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   public async deleteDropNotifications(dropId: string, ctx: RequestContext) {
     ctx.timer?.start('dropsDb->deleteDropNotifications');
     const cancellations = new PushNotificationCancellationsDb(() => this.db);
-    await cancellations.cancelAndDelete('related_drop_id', [dropId], ctx);
-    await cancellations.cancelAndDelete('related_drop_2_id', [dropId], ctx);
+    await cancellations.cancelAndDelete('drop', [dropId], ctx);
     ctx.timer?.stop('dropsDb->deleteDropNotifications');
   }
 

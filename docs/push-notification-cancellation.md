@@ -3,6 +3,8 @@
 Deleting a drop, purging chat history, or deleting a wave can remove a notification
 before its queued push runs. Each deletion path now locks matching notification
 rows, records their IDs, then deletes exactly those rows in the same transaction.
+Both drop-reference predicates share one candidate scan; batches acquire primary-key
+locks in ascending ID order to avoid reversed locks for crossed references.
 A rollback restores both sides; failure to record cancellation fails the deletion.
 The table contains only notification IDs and cancellation timestamps.
 
@@ -42,3 +44,8 @@ Deploy in this order:
 Keep the table when rolling back application services. Old deletion services will
 not write cancellation records; the new worker will continue alerting for those
 unexplained missing IDs. These changes do not repair historical missing records.
+
+Cancellation covers rows actually removed by these deletion paths. It is not a
+producer-side fence against creating new notifications after deletion. A concurrent
+insert that survives remains an existing notification and goes through the worker's
+normal content-visibility checks; it is not classified as an unexplained missing ID.
