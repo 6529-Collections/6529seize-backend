@@ -1,9 +1,11 @@
+import { reportUnsupportedResizeOnce } from '@/mediaResizerLoop/unsupported-resize-report';
 import { withMediaDependencySmoke } from '@/media/media-dependency-smoke';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { Readable } from 'node:stream';
 import Sharp from 'sharp';
 import {
+  classifyResizeDecoderError,
   INPUT_PIXEL_BACKSTOP,
   isUnprocessableResizeInput,
   UnprocessableResizeInput,
@@ -59,6 +61,7 @@ const liveHandler = wrapLambdaHandler(async (event: any) => {
     return notFound();
   }
 
+  let sourceRevision: string | undefined;
   try {
     const params = {
       Bucket: BUCKET,
@@ -69,6 +72,11 @@ const liveHandler = wrapLambdaHandler(async (event: any) => {
       logger.info(`[${path}] S3 origin file not found`);
       return notFound();
     }
+
+    sourceRevision =
+      originImage.VersionId && originImage.VersionId !== 'null'
+        ? originImage.VersionId
+        : originImage.ETag;
 
     const width = sizes[0] === 'AUTO' ? null : parseInt(sizes[0]);
     const height = sizes[1] === 'AUTO' ? null : parseInt(sizes[1]);
@@ -110,6 +118,11 @@ const liveHandler = wrapLambdaHandler(async (event: any) => {
             }
           });
           await upload.done();
+        } catch (error) {
+          // Classify decoder failures only: an S3 upload error is not bad input.
+          throw sharp.errored === error
+            ? classifyResizeDecoderError(error)
+            : error;
         } finally {
           sharp.destroy();
         }
@@ -127,17 +140,35 @@ const liveHandler = wrapLambdaHandler(async (event: any) => {
       }
     };
   } catch (e: any) {
-    if (isUnprocessableResizeInput(e)) {
-      return unprocessableInput(e);
-    }
-    logger.error(
-      `[${path}] Resizing failed (Config: Region: ${BUCKET_REGION}, Bucket ${BUCKET}) ${
-        e.message ?? e
-      }`
-    );
-    throw e;
+    return handleResizeFailure(e, path, key, sourceRevision);
   }
 });
+
+async function handleResizeFailure(
+  error: unknown,
+  path: string,
+  sourceKey: string,
+  sourceRevision: string | undefined
+) {
+  if (
+    error instanceof UnprocessableResizeInput &&
+    error.code === 'UNSUPPORTED_CODEC'
+  ) {
+    await reportUnsupportedResizeOnce(
+      s3Client,
+      BUCKET,
+      sourceKey,
+      sourceRevision
+    );
+  }
+  if (isUnprocessableResizeInput(error)) return unprocessableInput(error);
+  logger.error(
+    `[${path}] Resizing failed (Config: Region: ${BUCKET_REGION}, Bucket ${BUCKET}) ${
+      error instanceof Error ? error.message : error
+    }`
+  );
+  throw error;
+}
 
 function unprocessableInput(error: unknown) {
   const code =

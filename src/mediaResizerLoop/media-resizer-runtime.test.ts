@@ -6,6 +6,7 @@ import type { Context } from 'aws-lambda';
 import sharp from 'sharp';
 import { Upload } from '@aws-sdk/lib-storage';
 import {
+  classifyResizeDecoderError,
   assertDecodedWorkBudget,
   MAX_SOURCE_BYTES,
   UnprocessableResizeInput
@@ -17,6 +18,12 @@ let mockUploaded: Buffer;
 let mockSource: Readable | undefined;
 let mockContentLength: number | undefined;
 let mockUploadError: Error | undefined;
+let mockDecoderError: Error | undefined;
+const mockReportUnsupported = jest.fn();
+jest.mock('@/mediaResizerLoop/unsupported-resize-report', () => ({
+  reportUnsupportedResizeOnce: (...args: unknown[]) =>
+    mockReportUnsupported(...args)
+}));
 jest.mock('@aws-sdk/client-s3', () => ({
   GetObjectCommand: jest.fn(),
   S3Client: jest.fn(() => ({
@@ -25,6 +32,7 @@ jest.mock('@aws-sdk/client-s3', () => ({
         mockSource ??
         Readable.from([mockInput.subarray(0, 8), mockInput.subarray(8)]),
       ContentType: mockContentType,
+      ETag: 'synthetic-etag',
       ContentLength: mockContentLength
     }))
   }))
@@ -33,6 +41,7 @@ jest.mock('@aws-sdk/lib-storage', () => ({
   Upload: jest.fn(({ params }: { params: { Body: Readable } }) => ({
     done: async () => {
       if (mockUploadError) throw mockUploadError;
+      if (mockDecoderError) params.Body.destroy(mockDecoderError);
       const chunks: Buffer[] = [];
       for await (const chunk of params.Body) chunks.push(chunk);
       mockUploaded = Buffer.concat(chunks);
@@ -54,6 +63,7 @@ beforeEach(() => {
   mockContentLength = undefined;
   mockSource = undefined;
   mockUploadError = undefined;
+  mockDecoderError = undefined;
 });
 afterEach(() => jest.restoreAllMocks());
 
@@ -345,4 +355,46 @@ it('uses a conservative frame-height fallback while still charging every animate
   expect(() =>
     assertDecodedWorkBudget({ ...animation, height: 4097 }, true)
   ).toThrow(UnprocessableResizeInput);
+});
+
+const unsupportedHeif =
+  'heif: Error while loading plugin: Support for this compression format has not been built in (11.6003)';
+
+it('returns 422 and reports a known unsupported decoder failure even when MIME says WebP', async () => {
+  const directories = jest.spyOn(fs, 'mkdtemp');
+  mockContentType = 'image/webp';
+  mockDecoderError = new Error(
+    `/tmp/synthetic/source: bad seek to 96405\n${unsupportedHeif}`
+  );
+  const result = await resize();
+  expect(result.statusCode).toBe(422);
+  expect(JSON.parse(result.body).code).toBe('UNSUPPORTED_CODEC');
+  expect(mockReportUnsupported).toHaveBeenCalledWith(
+    expect.anything(),
+    undefined,
+    'synthetic/fixture',
+    'synthetic-etag'
+  );
+  const directory = await directories.mock.results[0].value;
+  await expect(fs.access(directory)).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it('does not mistake an upload error with decoder-like text for an input rejection', async () => {
+  mockUploadError = new Error(unsupportedHeif);
+  await expect(resize()).rejects.toBe(mockUploadError);
+  expect(mockReportUnsupported).not.toHaveBeenCalled();
+});
+
+it('classifies the exact HEIF capability error without swallowing other plugin or decoder failures', () => {
+  expect(classifyResizeDecoderError(new Error(unsupportedHeif))).toMatchObject({
+    code: 'UNSUPPORTED_CODEC'
+  });
+  for (const message of [
+    'heif: corrupted input',
+    'heif: Error while loading plugin: Permission denied',
+    'VipsForeignLoad: unknown failure'
+  ]) {
+    const error = new Error(message);
+    expect(classifyResizeDecoderError(error)).toBe(error);
+  }
 });
