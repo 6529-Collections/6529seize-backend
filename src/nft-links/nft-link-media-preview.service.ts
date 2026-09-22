@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { promises as dns } from 'node:dns';
+import { resolvePreviewHost } from './nft-preview-dns';
 import * as http from 'node:http';
 import * as https from 'node:https';
 import { isIP } from 'node:net';
@@ -1036,7 +1036,7 @@ export class NftLinkMediaPreviewService {
     url: string
   ): Promise<DownloadedRemoteImage> {
     const controller = new AbortController();
-    const timeoutMs = Math.min(
+    const deadlineMs = Math.min(
       90_000,
       Math.max(
         1,
@@ -1048,7 +1048,7 @@ export class NftLinkMediaPreviewService {
       timer = setTimeout(() => {
         reject(new Error('NFT preview download deadline exceeded'));
         controller.abort();
-      }, timeoutMs);
+      }, deadlineMs);
     });
     try {
       return await Promise.race([
@@ -1076,7 +1076,7 @@ export class NftLinkMediaPreviewService {
     let currentUrl = url;
     for (let i = 0; i <= maxRedirects; i++) {
       signal.throwIfAborted();
-      const pinnedDns = await this.resolveSafeRemoteUrl(currentUrl);
+      const pinnedDns = await this.resolveSafeRemoteUrl(currentUrl, signal);
       signal.throwIfAborted();
       const download = await this.fetchWithTimeout(
         currentUrl,
@@ -1099,6 +1099,8 @@ export class NftLinkMediaPreviewService {
         if (!response.ok) {
           throw new Error(`HTTP ${response.status} for ${currentUrl}`);
         }
+        // Headers can mislabel video as image. This coarse guard only rejects
+        // bodies too large for either kind; streamed bytes enforce the kind's cap.
         const contentLength = response.headers.get('content-length');
         if (contentLength) {
           const parsed = Number(contentLength);
@@ -1242,8 +1244,7 @@ export class NftLinkMediaPreviewService {
 
   private createPinnedAgent(
     urlString: string,
-    pinnedDns: PinnedDnsResolution,
-    signal?: AbortSignal
+    pinnedDns: PinnedDnsResolution
   ): http.Agent | https.Agent {
     const parsed = new URL(urlString);
     const lookup = this.createPinnedLookup(pinnedDns);
@@ -1311,7 +1312,8 @@ export class NftLinkMediaPreviewService {
   }
 
   private async resolveSafeRemoteUrl(
-    urlString: string
+    urlString: string,
+    signal?: AbortSignal
   ): Promise<PinnedDnsResolution> {
     let parsed: URL;
     try {
@@ -1331,7 +1333,7 @@ export class NftLinkMediaPreviewService {
       throw new Error(`Preview source hostname is empty`);
     }
 
-    const records = await dns.lookup(hostname, { all: true, verbatim: true });
+    const records = await resolvePreviewHost(hostname, signal);
     if (!records.length) {
       throw new Error(`Failed to resolve hostname ${hostname}`);
     }

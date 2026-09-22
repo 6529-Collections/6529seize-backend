@@ -228,3 +228,18 @@ it('bounds slow DNS before a request is created', async () => {
     service['downloadRemoteImage']('https://example.com/video')
   ).rejects.toThrow('download deadline exceeded');
 });
+
+it('enforces the image stream cap when declared length falls between image and video limits', async () => {
+  const url = await serve((_req, res) => {
+    res.writeHead(200, {
+      'content-length': '100',
+      'content-type': 'image/png'
+    });
+    res.end(Buffer.alloc(100));
+  });
+  useVideoLimits();
+  await expect(service['downloadRemoteImage'](url)).rejects.toMatchObject({
+    limitBytes: 64,
+    mode: 'stream'
+  });
+});

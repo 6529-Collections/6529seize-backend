@@ -537,7 +537,11 @@ cannot impose an indefinite cooldown, and locks more than one lock TTL into the
 future are treated as invalid. The owning AbortController disposes rejected response
 bodies and requests. The existing HTTP timeout covers headers; a separate
 `NFT_LINK_MEDIA_PREVIEW_DOWNLOAD_TIMEOUT_MS` deadline covers DNS, all redirects
-and the full body, defaults to 90 seconds, and cannot exceed 90 seconds. This
+and the full body, defaults to 90 seconds, and cannot exceed 90 seconds.
+Each download owns cancellable A/AAAA DNS queries (without OS hosts-file
+lookup), checks both families for private addresses, and pins the selected IP.
+The header byte limit is intentionally coarse because MIME types can mislabel
+video; byte sniffing applies the image or video cap during streaming. This
 reserves time within the 120-second preview worker for upload and persistence.
 Oversize records include both limits so scheduling and processing share the same
 policy; legacy records become eligible once under the new policy.
