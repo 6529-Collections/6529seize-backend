@@ -79,6 +79,33 @@ function resolveSelectedToken(
   );
 }
 
+function resolveTokenAsset(
+  tokenAsset: unknown,
+  canonical: CanonicalLink
+): AdapterResult {
+  if (!isRecord(tokenAsset)) {
+    throw new Error('Invalid Manifold token asset');
+  }
+  const imageUrl =
+    metadataMediaUrl(tokenAsset.image) ??
+    metadataMediaUrl(tokenAsset.image_url);
+  const animationUrl =
+    metadataMediaUrl(tokenAsset.animation_url) ??
+    metadataMediaUrl(tokenAsset.animation);
+  return withUnknownSale(
+    {
+      title: metadataText(tokenAsset.name),
+      description: metadataText(tokenAsset.description),
+      media: animationUrl
+        ? { kind: 'animation', imageUrl, animationUrl }
+        : imageUrl
+          ? { kind: 'image', imageUrl }
+          : undefined
+    },
+    canonical
+  );
+}
+
 function withUnknownSale(
   asset: NormalizedNftCard['asset'],
   canonical: CanonicalLink
@@ -137,15 +164,23 @@ function resolveInstanceMetadata(
   const publicData: unknown = data?.publicData;
   const hasSelectedToken =
     isRecord(publicData) && 'selectedToken' in publicData;
+  const hasTokenAsset = isRecord(publicData) && 'tokenAsset' in publicData;
   const claimAsset =
     isRecord(publicData) && isRecord(publicData.asset)
       ? publicData.asset
       : undefined;
   // New token metadata requires a positive ID binding. Legacy responses may omit
   // an ID; keep their extraction compatible, but never accept a known mismatch.
-  assertMatchingInstance(data, instanceId, hasSelectedToken || !!claimAsset);
+  assertMatchingInstance(
+    data,
+    instanceId,
+    hasSelectedToken || hasTokenAsset || !!claimAsset
+  );
   if (isRecord(publicData) && 'selectedToken' in publicData) {
     return resolveSelectedToken(publicData.selectedToken, canonical);
+  }
+  if (isRecord(publicData) && 'tokenAsset' in publicData) {
+    return resolveTokenAsset(publicData.tokenAsset, canonical);
   }
 
   // Very loose extraction; exact shape varies.
