@@ -1,11 +1,12 @@
+import { getEthereumRpcClient } from '@/ethereum-rpc/ethereum-rpc-client';
 import {
   Alchemy,
   AssetTransfersCategory,
   AssetTransfersWithMetadataParams,
   AssetTransfersWithMetadataResult,
-  SortingOrder,
-  TransactionResponse
+  SortingOrder
 } from '@/alchemy-sdk';
+import type { TransactionResponse } from '@/ethereum-rpc/ethereum-rpc-types';
 import {
   ALCHEMY_SETTINGS,
   MEMELAB_CONTRACT,
@@ -85,7 +86,9 @@ const findDetailsFromTransaction = async (tx: TransactionResponse) => {
       });
       if (parsed && parsed.args.uris) {
         const tokenUri = parsed.args.uris[0];
-        const receipt = await alchemy.core.getTransactionReceipt(tx.hash);
+        const receipt = await getEthereumRpcClient().getTransactionReceipt(
+          tx.hash
+        );
         const logData = receipt?.logs[0].data;
         if (logData && tx.to) {
           const parsedReceipt = NFT_HISTORY_IFACE.parseLog({
@@ -323,7 +326,7 @@ export const getDeployerTransactions = async (
   });
 
   if (!latestBlock) {
-    latestBlock = await alchemy.core.getBlockNumber();
+    latestBlock = await getEthereumRpcClient().getBlockNumber();
     logger.info(
       `[STARTING BLOCK ${startingBlock}] [LATEST BLOCK ON CHAIN ${latestBlock}]`
     );
@@ -345,7 +348,7 @@ export const getDeployerTransactions = async (
   }[] = [];
   await Promise.all(
     assetResponse.transfers.map(async (t) => {
-      const tx = await alchemy.core.getTransaction(t.hash);
+      const tx = await getEthereumRpcClient().getTransaction(t.hash);
       if (tx) transactionsResponse.push({ t, tx });
     })
   );
@@ -412,7 +415,9 @@ export const getDeployerTransactions = async (
         const claimIndex = Number(parsed.args.claimIndex);
         const location = parsed.args.claimParameters.location;
         const contract = parsed.args.creatorContractAddress;
-        const receipt = await alchemy.core.getTransactionReceipt(tx.hash);
+        const receipt = await getEthereumRpcClient().getTransactionReceipt(
+          tx.hash
+        );
         const logData = receipt?.logs[0].data;
         if (logData && tx.to) {
           const parsedReceipt = NFT_HISTORY_IFACE.parseLog({
@@ -482,7 +487,9 @@ export const getDeployerTransactions = async (
         }
         const location = parsed.args.burnRedeemParameters.location;
         const contract = parsed.args.creatorContractAddress;
-        const receipt = await alchemy.core.getTransactionReceipt(tx.hash);
+        const receipt = await getEthereumRpcClient().getTransactionReceipt(
+          tx.hash
+        );
         const logData = receipt?.logs[1].data;
         if (logData && tx.to) {
           const parsedReceipt = NFT_HISTORY_IFACE.parseLog({
@@ -551,7 +558,9 @@ export const getDeployerTransactions = async (
           throw new Error('Failed to parse transaction');
         }
         const claimIndex = Number(parsed.args.claimIndex);
-        const receipt = await alchemy.core.getTransactionReceipt(tx.hash);
+        const receipt = await getEthereumRpcClient().getTransactionReceipt(
+          tx.hash
+        );
         const logData = receipt?.logs[0].data;
         if (logData && tx.to) {
           const parsedReceipt = NFT_HISTORY_IFACE.parseLog({

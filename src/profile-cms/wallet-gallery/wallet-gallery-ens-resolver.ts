@@ -1,20 +1,15 @@
-import { getRpcUrlFromNetwork } from '@/alchemy';
-import { Network } from '@/alchemy-sdk';
-import { FetchRequest, isAddress, JsonRpcProvider, ZeroAddress } from 'ethers';
+import { createEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
+import { isAddress, JsonRpcProvider, ZeroAddress } from 'ethers';
 import { Cache } from 'memory-cache';
 
 const resolvedAddresses = new Cache<string, string>();
 
 export function createWalletGalleryEnsProvider(): JsonRpcProvider {
-  if (!process.env.ALCHEMY_API_KEY) {
-    throw new Error('CMS ENS provider is not configured');
-  }
-  const request = new FetchRequest(getRpcUrlFromNetwork(Network.ETH_MAINNET));
-  request.timeout = 1500;
-  request.setThrottleParams({ maxAttempts: 1 });
-  const provider = new JsonRpcProvider(request, 1, { staticNetwork: true });
-  provider.disableCcipRead = true;
-  return provider;
+  return createEthereumRpcProvider(1, {
+    timeoutMs: 1500,
+    maxAttempts: 1,
+    disableCcipRead: true
+  });
 }
 
 export async function resolveWalletGalleryEns(

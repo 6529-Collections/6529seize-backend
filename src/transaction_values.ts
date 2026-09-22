@@ -19,13 +19,13 @@ import {
   NEXTGEN_CORE_CONTRACT,
   NEXTGEN_ROYALTIES_ADDRESS
 } from '@/nextgen/nextgen_constants';
+import { getRpcProvider, SupportedRpcNetwork } from '@/rpc-provider';
 import {
-  get6529RpcProvider,
-  getRpcProvider,
-  SupportedRpcNetwork
-} from '@/rpc-provider';
+  getAlchemyTraceProvider,
+  get6529TraceProvider
+} from '@/ethereum-rpc/trace-provider';
 import { equalIgnoreCase } from '@/strings';
-import { Network } from '@/alchemy-sdk';
+import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
 import { ethers } from 'ethers';
 import pLimit from 'p-limit';
 
@@ -71,7 +71,8 @@ type TxRpcContext = {
 
 type ResolveValueContext = {
   provider: RpcProvider;
-  fallbackTraceProvider: RpcProvider | null;
+  traceProvider: () => RpcProvider;
+  fallbackTraceProvider: (() => RpcProvider) | null;
   rowsByHash: Map<string, Transaction[]>;
   txRpcCache: Map<string, Promise<TxRpcContext>>;
   internalTransfersCache: Map<number, Promise<RpcInternalTransfersResponse>>;
@@ -315,8 +316,8 @@ async function getTxRpcContext(
 
 async function getInternalTransfersForBlock(
   blockNumber: number,
-  provider: RpcProvider,
-  fallbackTraceProvider: RpcProvider | null,
+  traceProvider: () => RpcProvider,
+  fallbackTraceProvider: (() => RpcProvider) | null,
   internalTransfersCache: Map<number, Promise<RpcInternalTransfersResponse>>
 ): Promise<RpcInternalTransfersResponse> {
   const cached = internalTransfersCache.get(blockNumber);
@@ -324,7 +325,9 @@ async function getInternalTransfersForBlock(
     return cached;
   }
 
-  const request = (async () => {
+  // Defer the factory to a microtask so the cache.set below runs first. A
+  // synchronous factory throw then evicts the already-stored promise.
+  const request = Promise.resolve().then(async () => {
     const blockHex = ethers.toBeHex(blockNumber);
     const returnEmptyFailure = (): RpcInternalTransfersResponse => {
       internalTransfersCache.delete(blockNumber);
@@ -333,7 +336,7 @@ async function getInternalTransfersForBlock(
     // This cache is scoped to one findTransactionValues() invocation, so a
     // transient trace_block miss here does not persist across future runs.
     try {
-      const traces = await provider.send('trace_block', [blockHex]);
+      const traces = await traceProvider().send('trace_block', [blockHex]);
       return normalizeTraceInternalTransfers(traces);
     } catch (e: any) {
       if (fallbackTraceProvider) {
@@ -341,7 +344,7 @@ async function getInternalTransfersForBlock(
           `[INTERNAL_TRANSFERS] [BLOCK=${blockNumber}] [TRACE_BLOCK_FAILED] [TRYING_FALLBACK=true] [ERROR=${e.message}]`
         );
         try {
-          const fallbackTraces = await fallbackTraceProvider.send(
+          const fallbackTraces = await fallbackTraceProvider().send(
             'trace_block',
             [blockHex]
           );
@@ -359,7 +362,7 @@ async function getInternalTransfersForBlock(
       );
       return returnEmptyFailure();
     }
-  })();
+  });
 
   internalTransfersCache.set(blockNumber, request);
   return request;
@@ -416,16 +419,6 @@ function sumErc20TransfersWei(
     .reduce((acc, transfer) => acc + transfer.amountWei, BigInt(0));
 }
 
-function getTransactionValuesProvider(
-  network: SupportedRpcNetwork = Network.ETH_MAINNET,
-  use6529Rpc = false
-): RpcProvider {
-  if (use6529Rpc) {
-    return get6529RpcProvider();
-  }
-  return getRpcProvider(network);
-}
-
 type FindTransactionValuesOptions = {
   reconcileTokenCounts?: boolean;
 };
@@ -436,8 +429,15 @@ export const findTransactionValues = async (
   use6529Rpc = false,
   options: FindTransactionValuesOptions = {}
 ) => {
-  const provider = getTransactionValuesProvider(network, use6529Rpc);
-  const fallbackTraceProvider = use6529Rpc ? getRpcProvider(network) : null;
+  const provider = getRpcProvider(network);
+  // The historical selector now affects traces only, never ordinary reads.
+  const traceProvider = () =>
+    use6529Rpc
+      ? get6529TraceProvider(network)
+      : getAlchemyTraceProvider(network);
+  const fallbackTraceProvider = use6529Rpc
+    ? () => getAlchemyTraceProvider(network)
+    : null;
 
   const concurrency = DEFAULT_TRANSACTION_VALUES_CONCURRENCY;
   logger.info(
@@ -446,6 +446,7 @@ export const findTransactionValues = async (
 
   const context: ResolveValueContext = {
     provider,
+    traceProvider,
     fallbackTraceProvider,
     rowsByHash: buildRowsByHash(transactions),
     txRpcCache: new Map<string, Promise<TxRpcContext>>(),
@@ -808,7 +809,7 @@ async function applyMintInternalValues(
   try {
     const internalTransfers = await getInternalTransfersForBlock(
       t.block,
-      context.provider,
+      context.traceProvider,
       context.fallbackTraceProvider,
       context.internalTransfersCache
     );
@@ -1079,7 +1080,8 @@ const parseBlurLog = async (log: { data: string }) => {
 
 // HELPER FUNCTION FOR DEBUGGING VALUES USING TRX HASHES FROM DB
 export const debugValues = async () => {
-  const provider = getTransactionValuesProvider();
+  const provider = getRpcProvider();
+  const traceProvider = () => getAlchemyTraceProvider(Network.ETH_MAINNET);
   const fallbackTraceProvider = null;
 
   // SAMPLE TRX HASHES
@@ -1118,6 +1120,7 @@ export const debugValues = async () => {
       ]);
       const context: ResolveValueContext = {
         provider,
+        traceProvider,
         fallbackTraceProvider,
         rowsByHash: buildRowsByHash(tr),
         txRpcCache: new Map<string, Promise<TxRpcContext>>(),
