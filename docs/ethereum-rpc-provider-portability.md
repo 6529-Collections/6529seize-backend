@@ -35,10 +35,22 @@ a docs-only PR.
   `getRpcProvider(network)` delegates to it. Providers are lazy, cached by chain
   and URL, and recreated when destroyed. Unsupported chains and absent/invalid
   URLs fail explicitly, without deriving an Alchemy URL.
+  Shared providers are process-owned: consumers must not destroy them. No
+  production caller currently destroys the shared ordinary provider, so the
+  marketplace singleton can retain its reference. CMS ENS destroys only its
+  isolated `createEthereumRpcProvider()` instance; NFT-link resolution owns a
+  separate `NFT_INDEXER_RPC` provider. Test teardown destruction does not run in
+  production. Callers needing per-request cleanup must use an isolated provider.
 - `EthereumRpcClient` contains the former ordinary compatibility methods:
   blocks, logs, transactions, receipts and forward ENS. It retains transient
   retries, missing-block errors, nullable transaction/receipt results, bigint
   values, numeric timestamps and the existing `logIndex` result shape.
+  The compatibility client retains a ceiling of ten transient retries: the
+  previous application factory, NFT-history and TDH clients supplied
+  `ALCHEMY_SETTINGS.maxRetries = 10`, and NextGen explicitly supplied ten.
+  The local Alchemy class's fallback of three was not those callers' effective
+  setting. Persistent transient failures can still incur the existing retry
+  latency; this is not a new three-to-ten increase.
 - Provider-neutral network identifiers and response types now live under
   `src/ethereum-rpc/`. Existing identifier strings remain unchanged for
   persisted/configuration compatibility; they do not select a vendor.
@@ -169,6 +181,16 @@ required for this backend PR.
    Verify retained `ALCHEMY_API_KEY` availability for `transactionsLoop` and
    `nextgenContractLoop`: missing trace credentials preserve ordinary reads but
    degrade trace-derived attribution to empty internal transfers.
+   Before deploying API/NextGen/subscription consumers, inspect the effective
+   `NEXTGEN_CHAIN_ID` and `SUBSCRIPTIONS_CHAIN_ID` in both staging and production,
+   including shared secrets and any process overrides. NextGen accepts unset
+   or empty (mainnet), `1`, `11155111`, or legacy `5`; subscriptions accept unset
+   or empty (mainnet), `1`, or `11155111`. Correct unsupported or malformed
+   values to the intended supported chain and verify its corresponding RPC URL;
+   never change an intended testnet to mainnet merely to pass this check.
+   Unknown values now fail closed instead of silently selecting mainnet.
+   Record these non-secret chain IDs during rollout. This task has not inspected
+   deployed values; configuration verification remains a rollout prerequisite.
 2. Merge and deploy only under separate explicit authorization. Start with
    staging and the ordered affected services above; no deploy is part of this
    implementation work itself.
