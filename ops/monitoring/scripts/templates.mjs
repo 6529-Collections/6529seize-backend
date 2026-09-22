@@ -5,6 +5,20 @@ const base = new URL('../', import.meta.url);
 const catalog = JSON.parse(
   await readFile(new URL('../../src/config/deploy-services.json', base), 'utf8')
 );
+// Removed deployment units still own live resources. Keep their monitoring
+// byte-for-byte until the explicit retirement described in membership-retirement.md.
+const retained = JSON.parse(
+  await readFile(new URL('retained-services.json', base), 'utf8')
+);
+const retainedInsertionIndex = catalog.services.findIndex(
+  (service) => service.name === retained.insert_before
+);
+if (retainedInsertionIndex < 0) {
+  throw new Error(
+    `Missing retained-service insertion point: ${retained.insert_before}`
+  );
+}
+catalog.services.splice(retainedInsertionIndex, 0, ...retained.services);
 const ref = (name) => ({ Ref: name });
 const supplemental = JSON.parse(
   await readFile(new URL('platform-functions.json', base), 'utf8')
@@ -1120,6 +1134,7 @@ for (const environment of ['prod', 'staging']) {
   outputs[`coverage-${environment}.json`] = {
     environment,
     source: 'src/config/deploy-services.json',
+    retainedSource: 'ops/monitoring/retained-services.json',
     services: source.coverage,
     supplementalSource: 'ops/monitoring/platform-functions.json',
     platformOnly: source.platformOnly

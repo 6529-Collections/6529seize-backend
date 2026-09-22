@@ -9,7 +9,6 @@ export type XTdhLoopPhase =
 export interface XTdhLoopMessage {
   readonly phase?: XTdhLoopPhase;
   readonly queued_at_ms?: number;
-  readonly membership_cycle_id?: string;
 }
 
 export function isXTdhLoopPhase(value: unknown): value is XTdhLoopPhase {

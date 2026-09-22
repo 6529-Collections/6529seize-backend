@@ -1,8 +1,8 @@
 import { MEMBERSHIP_REFRESH_TARGETS_TABLE } from '@/constants';
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import type { MembershipRefreshScope } from '@/membership/membership-schema.types';
+import type { MembershipRefreshScope } from '@/entities/membership-schema.types';
 
-/** See docs/membership-refresh-design.md for the publication protocol. */
+/** Retained schema for the retired experiment; see docs/membership-retirement.md. */
 @Entity(MEMBERSHIP_REFRESH_TARGETS_TABLE)
 @Index('idx_mrt_available_scope_target', [
   'available_at_millis',
