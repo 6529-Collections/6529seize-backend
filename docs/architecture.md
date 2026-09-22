@@ -543,6 +543,16 @@ lookup), checks both families for private addresses, and pins the selected IP.
 The header byte limit is intentionally coarse because MIME types can mislabel
 video; byte sniffing applies the image or video cap during streaming. This
 reserves time within the 120-second preview worker for upload and persistence.
+For animation/video cards with a distinct metadata image, the worker falls back
+to that image when the preferred animation exceeds the byte limit, returns
+HTTP 404/410, or is HTML. The fallback shares the original download deadline,
+uses the image byte cap and the same URL/DNS/redirect guards, and must decode
+successfully through the existing image renderer. Other HTTP errors and timeouts
+remain failures. A successful fallback stores an image preview while preserving
+the original animation metadata and source hash for lease fencing/cache reuse;
+missing or failed fallbacks retain the existing failure/unsupported behavior.
+A READY image fallback is reused under the original source hash; recovery of
+the same animation URL does not automatically replace it with a video preview.
 Oversize records include both limits so scheduling and processing share the same
 policy; legacy records become eligible once under the new policy.
 
