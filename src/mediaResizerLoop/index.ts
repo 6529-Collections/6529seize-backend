@@ -89,13 +89,17 @@ const liveHandler = wrapLambdaHandler(async (event: any) => {
       originImage.Body as Readable,
       originImage.ContentLength,
       animated,
-      async (inputPath) => {
+      async (inputPath, resizeAnimated) => {
         const sharp = Sharp(inputPath, {
           failOn: 'none',
-          animated,
+          animated: resizeAnimated,
           limitInputPixels: INPUT_PIXEL_BACKSTOP
         })
-          .resize(width, height, { withoutEnlargement: true, fit })
+          .resize(width, height, {
+            withoutEnlargement: true,
+            fit,
+            fastShrinkOnLoad: true
+          })
           .rotate();
         try {
           const upload = new Upload({
@@ -113,7 +117,8 @@ const liveHandler = wrapLambdaHandler(async (event: any) => {
         } finally {
           sharp.destroy();
         }
-      }
+      },
+      { width, height }
     );
     const filesFileServerUrl = `${FILE_SERVER_URL}/${path}`;
     logger.info(
