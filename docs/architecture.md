@@ -514,10 +514,12 @@ foundation does not migrate runtime traffic or remove indexed Alchemy APIs.
 
 ### NFT link media preview size failures
 
-Preview downloads retain their configured byte cap (30 MB by default; the
-production configuration currently uses 200 MB). A typed header or streamed
+Preview images and unrecognized content retain their configured byte cap (30 MB
+by default; production currently uses 200 MB). Byte-identified video has a separate
+250 MB default cap (`NFT_LINK_MEDIA_PREVIEW_VIDEO_MAX_BYTES`); MIME headers alone
+do not grant that allowance. Videos are copied, not transcoded. A typed header or streamed
 byte overrun records FAILED and preserves cached preview URLs. A repeated
-resolution of the same original source under the same observed cap waits one
+resolution of the same original source under the same observed image/video policy waits one
 hour before enqueueing another preview attempt. The first failure is still
 reported; ordinary decoder, HTTP and network failures retain their existing
 retry behavior. Expiry permits the next demand-driven attempt, not scheduled
@@ -533,8 +535,16 @@ Worker lease and completion timestamps use the database clock. Active legacy
 leases are respected; expired leases can be reacquired. Invalid timestamps
 cannot impose an indefinite cooldown, and locks more than one lock TTL into the
 future are treated as invalid. The owning AbortController disposes rejected response
-bodies and requests; the existing HTTP timeout still covers headers, not an
-entire accepted body transfer.
+bodies and requests. The existing HTTP timeout covers headers; a separate
+`NFT_LINK_MEDIA_PREVIEW_DOWNLOAD_TIMEOUT_MS` deadline covers DNS, all redirects
+and the full body, defaults to 90 seconds, and cannot exceed 90 seconds.
+Each download owns cancellable A/AAAA DNS queries (without OS hosts-file
+lookup), checks both families for private addresses, and pins the selected IP.
+The header byte limit is intentionally coarse because MIME types can mislabel
+video; byte sniffing applies the image or video cap during streaming. This
+reserves time within the 120-second preview worker for upload and persistence.
+Oversize records include both limits so scheduling and processing share the same
+policy; legacy records become eligible once under the new policy.
 
 Secrets are loaded once per warm process. A cap change resets eligibility only
 after each caller observes that configuration; deliberate changes must refresh
