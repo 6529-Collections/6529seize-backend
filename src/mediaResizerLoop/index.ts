@@ -105,6 +105,11 @@ const liveHandler = wrapLambdaHandler(async (event: any) => {
         })
           .resize(width, height, { withoutEnlargement: true, fit })
           .rotate();
+        let decoderError: unknown;
+        // Sharp can emit a native error without setting Readable.errored.
+        sharp.once('error', (error) => {
+          decoderError = error;
+        });
         try {
           const upload = new Upload({
             client: s3Client,
@@ -120,7 +125,7 @@ const liveHandler = wrapLambdaHandler(async (event: any) => {
           await upload.done();
         } catch (error) {
           // Classify decoder failures only: an S3 upload error is not bad input.
-          throw sharp.errored === error
+          throw decoderError === error
             ? classifyResizeDecoderError(error)
             : error;
         } finally {
