@@ -40,10 +40,13 @@ previews, containment and online recipients under the same eligibility spec.
 The materialisation experiment has been retired: application producers no longer
 write source bookkeeping, the API has no materialised or shadow reader, and the
 dedicated dispatcher, worker, backfill and fixture code is removed. Existing
-membership entity metadata, migrations, indexes and guarded schema scopes remain
-for database compatibility. No table or deployed resource is deleted by this
-source change. [Retirement and rollout](membership-retirement.md) records the
-required pre-release shutdown, affected services and later infrastructure cleanup.
+membership entity metadata and obsolete additive schema scopes are removed.
+Manual full sync uses only current entities and does not drop unregistered tables.
+The shared group-search index remains. Monitoring no longer inventories the two
+retired services. [The combined retirement runbook](membership-retirement.md)
+requires explicit stack deletion and an operator-only staging table cleanup after
+backups and prerequisite verification; ordinary deployment never runs that DDL.
+Historical migrations and private per-environment recovery evidence are retained.
 
 Shared SQL execution budgets remain in `src/db/`: acquisition, statements and
 transaction finalization share a deadline, expired physical connections are
