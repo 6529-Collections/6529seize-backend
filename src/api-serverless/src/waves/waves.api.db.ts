@@ -1,3 +1,4 @@
+import { PushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 import {
   ACTIVITY_EVENTS_TABLE,
   DROP_BOOSTS_TABLE,
@@ -2959,10 +2960,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ) {
     ctx.timer?.start('wavesApiDb->deleteDropNotificationsByWaveId');
-    await this.db.execute(
-      `delete from ${IDENTITY_NOTIFICATIONS_TABLE} where wave_id = :waveId`,
-      { waveId },
-      { wrappedConnection: ctx.connection }
+    await new PushNotificationCancellationsDb(() => this.db).cancelAndDelete(
+      'wave',
+      [waveId],
+      ctx
     );
     ctx.timer?.stop('wavesApiDb->deleteDropNotificationsByWaveId');
   }

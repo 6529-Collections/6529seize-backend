@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { promises as dns } from 'node:dns';
+import { resolvePreviewHost } from './nft-preview-dns';
 import * as http from 'node:http';
 import * as https from 'node:https';
 import { isIP } from 'node:net';
@@ -110,7 +110,8 @@ export class NftLinkMediaPreviewService {
         canonicalId: prepared.canonicalId,
         sourceHash: prepared.sourceHash,
         kind: prepared.previewKind,
-        maxBytes: this.getMaxPreviewBytes()
+        maxBytes: this.getMaxPreviewBytes(),
+        maxVideoBytes: this.getMaxVideoPreviewBytes()
       },
       ctx
     );
@@ -1034,19 +1035,54 @@ export class NftLinkMediaPreviewService {
   private async downloadRemoteImage(
     url: string
   ): Promise<DownloadedRemoteImage> {
+    const controller = new AbortController();
+    const deadlineMs = Math.min(
+      90_000,
+      Math.max(
+        1,
+        env.getIntOrNull('NFT_LINK_MEDIA_PREVIEW_DOWNLOAD_TIMEOUT_MS') ?? 90_000
+      )
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error('NFT preview download deadline exceeded'));
+        controller.abort();
+      }, deadlineMs);
+    });
+    try {
+      return await Promise.race([
+        this.downloadWithinDeadline(url, controller.signal),
+        deadline
+      ]);
+    } finally {
+      clearTimeout(timer);
+      controller.abort();
+    }
+  }
+
+  private async downloadWithinDeadline(
+    url: string,
+    signal: AbortSignal
+  ): Promise<DownloadedRemoteImage> {
     const timeoutMs =
       env.getIntOrNull('NFT_LINK_MEDIA_PREVIEW_HTTP_TIMEOUT_MS') ?? 15000;
     const maxBytes = this.getMaxPreviewBytes();
+    const videoBytes = this.getMaxVideoPreviewBytes();
+    const policy = { imageBytes: maxBytes, videoBytes };
     const maxRedirects =
       env.getIntOrNull('NFT_LINK_MEDIA_PREVIEW_MAX_REDIRECTS') ?? 3;
 
     let currentUrl = url;
     for (let i = 0; i <= maxRedirects; i++) {
-      const pinnedDns = await this.resolveSafeRemoteUrl(currentUrl);
+      signal.throwIfAborted();
+      const pinnedDns = await this.resolveSafeRemoteUrl(currentUrl, signal);
+      signal.throwIfAborted();
       const download = await this.fetchWithTimeout(
         currentUrl,
         timeoutMs,
-        pinnedDns
+        pinnedDns,
+        signal
       );
       const { response } = download;
       try {
@@ -1063,18 +1099,28 @@ export class NftLinkMediaPreviewService {
         if (!response.ok) {
           throw new Error(`HTTP ${response.status} for ${currentUrl}`);
         }
+        // Headers can mislabel video as image. This coarse guard only rejects
+        // bodies too large for either kind; streamed bytes enforce the kind's cap.
         const contentLength = response.headers.get('content-length');
         if (contentLength) {
           const parsed = Number(contentLength);
-          if (Number.isFinite(parsed) && parsed > maxBytes) {
+          if (
+            Number.isFinite(parsed) &&
+            parsed > Math.max(maxBytes, videoBytes)
+          ) {
             throw new NftPreviewOversizeError(
-              maxBytes,
+              Math.max(maxBytes, videoBytes),
               parsed,
-              'content-length'
+              'content-length',
+              policy
             );
           }
         }
-        const bytes = await this.readBodyWithLimit(response, maxBytes);
+        const bytes = await this.readBodyWithLimit(
+          response,
+          maxBytes,
+          videoBytes
+        );
         return {
           finalUrl: currentUrl,
           bytes,
@@ -1092,12 +1138,22 @@ export class NftLinkMediaPreviewService {
     return env.getIntOrNull('NFT_LINK_MEDIA_PREVIEW_MAX_BYTES') ?? 30_000_000;
   }
 
+  private getMaxVideoPreviewBytes(): number {
+    return (
+      env.getIntOrNull('NFT_LINK_MEDIA_PREVIEW_VIDEO_MAX_BYTES') ?? 250_000_000
+    );
+  }
+
   private async fetchWithTimeout(
     url: string,
     timeoutMs: number,
-    pinnedDns: PinnedDnsResolution
+    pinnedDns: PinnedDnsResolution,
+    signal?: AbortSignal
   ): Promise<{ response: Response; cancel: () => void }> {
     const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) controller.abort();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(url, {
@@ -1115,10 +1171,14 @@ export class NftLinkMediaPreviewService {
         cancel: () => {
           // node-fetch2 pipes through a PassThrough: destroy alone need not
           // abort the owning request. Keep its AbortController until disposal.
+          signal?.removeEventListener('abort', abort);
           controller.abort();
           (response.body as Readable | null)?.destroy();
         }
       };
+    } catch (error) {
+      signal?.removeEventListener('abort', abort);
+      throw error;
     } finally {
       clearTimeout(timeout);
     }
@@ -1126,7 +1186,8 @@ export class NftLinkMediaPreviewService {
 
   private async readBodyWithLimit(
     response: Response,
-    maxBytes: number
+    maxBytes: number,
+    videoBytes?: number
   ): Promise<Buffer> {
     const body = response.body;
     if (!body) {
@@ -1135,11 +1196,32 @@ export class NftLinkMediaPreviewService {
     return await new Promise<Buffer>((resolve, reject) => {
       const chunks: Uint8Array[] = [];
       let total = 0;
+      let prefix = Buffer.alloc(0);
       body.on('data', (chunk: Buffer | string) => {
         const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         total += buf.length;
-        if (total > maxBytes) {
-          reject(new NftPreviewOversizeError(maxBytes, total, 'stream'));
+        if (prefix.length < 4096) {
+          prefix = Buffer.concat([
+            prefix,
+            buf.subarray(0, 4096 - prefix.length)
+          ]);
+        }
+        const limit =
+          videoBytes !== undefined &&
+          this.sniffMediaKindFromBytes(prefix) === 'video'
+            ? videoBytes
+            : maxBytes;
+        if (total > limit) {
+          reject(
+            new NftPreviewOversizeError(
+              limit,
+              total,
+              'stream',
+              videoBytes === undefined
+                ? undefined
+                : { imageBytes: maxBytes, videoBytes }
+            )
+          );
           (body as Readable).destroy();
           return;
         }
@@ -1230,7 +1312,8 @@ export class NftLinkMediaPreviewService {
   }
 
   private async resolveSafeRemoteUrl(
-    urlString: string
+    urlString: string,
+    signal?: AbortSignal
   ): Promise<PinnedDnsResolution> {
     let parsed: URL;
     try {
@@ -1250,7 +1333,7 @@ export class NftLinkMediaPreviewService {
       throw new Error(`Preview source hostname is empty`);
     }
 
-    const records = await dns.lookup(hostname, { all: true, verbatim: true });
+    const records = await resolvePreviewHost(hostname, signal);
     if (!records.length) {
       throw new Error(`Failed to resolve hostname ${hostname}`);
     }

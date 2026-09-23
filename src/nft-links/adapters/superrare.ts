@@ -66,7 +66,7 @@ class SuperRareAdapter implements PlatformAdapter {
     if (canonical.identifiers.kind !== 'TOKEN') return null;
 
     const { chain, contract, tokenId } = canonical.identifiers;
-    const timeoutMs = env.getIntOrNull('SUPERRARE_TIMEOUT_MS') ?? 1800;
+    const timeoutMs = env.getIntOrNull('SUPERRARE_TIMEOUT_MS') ?? 5000;
 
     const provider = getProvider(chain);
     const bazaar = new Contract(
@@ -213,7 +213,8 @@ class SuperRareAdapter implements PlatformAdapter {
       const resolved = normalizeMetadataUri(tokenUri);
       if (resolved) {
         meta = await fetchJsonWithTimeout<MetadataJson>(resolved, {
-          timeoutMs
+          timeoutMs,
+          diagnosticPurpose: 'superrare_metadata'
         });
       }
     }

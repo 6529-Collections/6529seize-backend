@@ -269,3 +269,6 @@ export const PUSH_NOTIFICATION_DEVICE_INSTALLATIONS_TABLE =
   'push_notification_device_installations';
 export const PUSH_NOTIFICATION_DEVICE_LOGOUT_FENCES_TABLE =
   'push_notification_device_logout_fences';
+
+export const PUSH_NOTIFICATION_CANCELLATIONS_TABLE =
+  'push_notification_cancellations';
