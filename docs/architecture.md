@@ -649,6 +649,11 @@ prices.
 
 `marketStatsLoop` publishes complete OpenSea order snapshots atomically with
 current orders and a persistent queue for reconciling disappeared orders.
+Publication uses a `READ COMMITTED` transaction and locks the collection's state
+row before replacing its current orders. This preserves serialization within a
+collection without retaining delete range/gap locks across other collections'
+refreshes. Snapshot reads retain their existing transaction isolation so metadata
+and orders come from one consistent view.
 Existing price statistics run concurrently with an independent deadline; both
 tasks finish before the database context closes. Collection books are attempted
 before lifecycle maintenance, which prioritizes status reconciliation and
