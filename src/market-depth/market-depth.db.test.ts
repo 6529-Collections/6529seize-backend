@@ -1,9 +1,18 @@
 import 'reflect-metadata';
 import { gzipSync } from 'node:zlib';
-import { sqlExecutor } from '@/sql-executor';
+import {
+  ConnectionWrapper,
+  setSqlExecutor,
+  SqlExecutor,
+  sqlExecutor,
+  SqlTransactionOptions
+} from '@/sql-executor';
+import { DbQueryOptions } from '@/db-query.options';
+import * as loopDb from '@/db';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import {
   MarketDepthCursorConflictError,
+  MarketDepthDb,
   marketDepthDb,
   StaleMarketDepthSnapshotError
 } from './market-depth.db';
@@ -17,6 +26,56 @@ import {
 const CONTRACT = '0x1234567890abcdef1234567890abcdef12345678';
 const UINT256 =
   '115792089237316195423570985008687907853269984665640564039457584007913129639935';
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+class ObservedExecutor extends SqlExecutor {
+  afterQuery?: (sql: string) => Promise<void>;
+
+  constructor(private readonly delegate: SqlExecutor) {
+    super();
+  }
+
+  async execute<T>(
+    sql: string,
+    params?: Record<string, unknown>,
+    options?: DbQueryOptions
+  ): Promise<T[]> {
+    const result = await this.delegate.execute<T>(sql, params, options);
+    await this.afterQuery?.(sql.replace(/\s+/g, ' ').trim());
+    return result;
+  }
+
+  executeNativeQueriesInTransaction<T>(
+    executable: (connection: ConnectionWrapper<unknown>) => Promise<T>,
+    options?: SqlTransactionOptions
+  ): Promise<T> {
+    return this.delegate.executeNativeQueriesInTransaction(executable, options);
+  }
+}
+
+async function withObservedDb(
+  adapter: 'api' | 'loop',
+  run: (db: MarketDepthDb, observed: ObservedExecutor) => Promise<void>
+) {
+  const previous = sqlExecutor;
+  try {
+    if (adapter === 'loop') await loopDb.connect();
+    const observed = new ObservedExecutor(sqlExecutor);
+    await run(new MarketDepthDb(() => observed), observed);
+  } finally {
+    if (adapter === 'loop') {
+      await loopDb.disconnect();
+      setSqlExecutor(previous);
+    }
+  }
+}
 
 function order(
   overrides: Partial<NormalizedMarketDepthOrder> = {}
@@ -106,6 +165,133 @@ function event(overrides: Partial<MarketDepthEventInput> = {}) {
 }
 
 describeWithSeed('MarketDepthDb', [] as never[], () => {
+  it.each(['api', 'loop'] as const)(
+    'publishes different empty collections concurrently through the %s adapter',
+    async (adapter) => {
+      await withObservedDb(adapter, async (db, observed) => {
+        const bothDeleted = deferred();
+        let deletes = 0;
+        let timedOut = false;
+        const timeout = setTimeout(() => {
+          timedOut = true;
+          bothDeleted.resolve();
+        }, 5000);
+        observed.afterQuery = async (sql) => {
+          if (!sql.startsWith('DELETE FROM market_depth_current_orders'))
+            return;
+          if (++deletes === 2) bothDeleted.resolve();
+          // Both DELETEs must complete before either inserts. Under REPEATABLE
+          // READ their shared empty index gap makes the inserts deadlock.
+          await bothDeleted.promise;
+        };
+        const first = snapshot('00000000-0000-4000-8000-000000000101');
+        const second = snapshot('00000000-0000-4000-8000-000000000102', {
+          contract: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
+          collection_slug: 'project-b',
+          orders: [
+            order({
+              contract: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
+              collection_slug: 'project-b',
+              order_key: 'project-b-order',
+              order_id: 'project-b-order'
+            })
+          ]
+        });
+        try {
+          const results = await Promise.allSettled([
+            db.publishCompletedSnapshot(first),
+            db.publishCompletedSnapshot(second)
+          ]);
+          expect(timedOut).toBe(false);
+          expect(results.map((result) => result.status)).toEqual([
+            'fulfilled',
+            'fulfilled'
+          ]);
+          for (const input of [first, second]) {
+            const current = await db.getLatestCompletedSnapshot(
+              input.source,
+              input.contract,
+              input.collection_slug
+            );
+            expect(current?.snapshot.id).toBe(input.id);
+            expect(current?.orders.map((item) => item.order_key)).toEqual(
+              input.orders.map((item) => item.order_key)
+            );
+          }
+        } finally {
+          clearTimeout(timeout);
+          bothDeleted.resolve();
+        }
+      });
+    }
+  );
+
+  it.each(['api', 'loop'] as const)(
+    'serializes concurrent publication of the same collection through the %s adapter',
+    async (adapter) => {
+      await withObservedDb(adapter, async (db) => {
+        const first = snapshot('00000000-0000-4000-8000-000000000103');
+        const second = { ...first, id: '00000000-0000-4000-8000-000000000104' };
+        const results = await Promise.allSettled([
+          db.publishCompletedSnapshot(first),
+          db.publishCompletedSnapshot(second)
+        ]);
+        const committed = results.filter(
+          (result) => result.status === 'fulfilled'
+        );
+        const rejected = results.filter(
+          (result) => result.status === 'rejected'
+        );
+        expect(committed).toHaveLength(1);
+        expect(rejected).toHaveLength(1);
+        expect(rejected[0].reason).toBeInstanceOf(
+          StaleMarketDepthSnapshotError
+        );
+        const current = await db.getLatestCompletedSnapshot(
+          first.source,
+          first.contract,
+          first.collection_slug
+        );
+        expect(current?.snapshot.id).toBe(committed[0].value.id);
+        expect(current?.orders).toHaveLength(1);
+      });
+    }
+  );
+
+  it.each(['api', 'loop'] as const)(
+    'keeps metadata and orders in one read snapshot during a replacement through the %s adapter',
+    async (adapter) => {
+      await withObservedDb(adapter, async (db, observed) => {
+        const first = snapshot('00000000-0000-4000-8000-000000000105');
+        await db.publishCompletedSnapshot(first);
+        let replaced = false;
+        observed.afterQuery = async (sql) => {
+          if (replaced || !sql.startsWith('SELECT s.id,')) return;
+          replaced = true;
+          await db.publishCompletedSnapshot(
+            snapshot('00000000-0000-4000-8000-000000000106', {
+              started_at: new Date('2026-09-10T01:00:00.000Z'),
+              completed_at: new Date('2026-09-10T01:01:00.000Z'),
+              orders: [
+                order({ order_key: 'replacement', order_id: 'replacement' })
+              ]
+            })
+          );
+        };
+        const current = await db.getLatestCompletedSnapshot(
+          first.source,
+          first.contract,
+          first.collection_slug
+        );
+        expect(replaced).toBe(true);
+        expect(current?.snapshot.id).toBe(first.id);
+        expect(current?.orders.map((item) => item.order_key)).toEqual([
+          'order-key-1'
+        ]);
+      });
+    }
+  );
+
   it('rejects archives that cannot fit safely in the configured SQL packet', async () => {
     await expect(
       marketDepthDb.publishCompletedSnapshot(
