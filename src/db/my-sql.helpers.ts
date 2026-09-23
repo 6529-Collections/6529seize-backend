@@ -204,14 +204,17 @@ async function beginIsolatedTransaction(
   connection: PoolConnection,
   options: SqlTransactionOptions
 ): Promise<void> {
-  if (options.isolationLevel !== 'REPEATABLE READ') {
+  if (
+    options.isolationLevel !== 'REPEATABLE READ' &&
+    options.isolationLevel !== 'READ COMMITTED'
+  ) {
     throw new Error('Unsupported explicit transaction isolation');
   }
   // SET TRANSACTION applies to the next transaction only, avoiding pooled
   // connection session-setting leaks into unrelated legacy requests.
   await new Promise<void>((resolve, reject) => {
     connection.query(
-      'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',
+      `SET TRANSACTION ISOLATION LEVEL ${options.isolationLevel}`,
       (error) => (error ? reject(error) : resolve())
     );
   });

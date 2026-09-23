@@ -14,10 +14,16 @@ export interface ConnectionWrapper<CONNECTION_TYPE> {
 }
 
 /** Explicit isolation is opt-in; existing callers keep their server default. */
-export interface SqlTransactionOptions {
-  readonly isolationLevel?: 'REPEATABLE READ';
-  readonly executionBudget?: SqlExecutionBudget;
-}
+export type SqlTransactionOptions =
+  | {
+      readonly isolationLevel?: 'REPEATABLE READ';
+      readonly executionBudget?: SqlExecutionBudget;
+    }
+  | {
+      readonly isolationLevel: 'READ COMMITTED';
+      // Budgeted transactions retain their REPEATABLE READ contract.
+      readonly executionBudget?: never;
+    };
 
 export type BulkUpsertOpts = {
   chunkSize?: number; // default 1000
