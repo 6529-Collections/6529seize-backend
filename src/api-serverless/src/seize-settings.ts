@@ -1,6 +1,10 @@
 import { env } from '@/env';
 import type { ApiAuthSettings } from '@/api/generated/models/ApiAuthSettings';
+import { ApiPageAccessMode } from '@/api/generated/models/ApiPageAccessMode';
+import type { ApiPageAccessSettings } from '@/api/generated/models/ApiPageAccessSettings';
 import type { ApiSeizeSettings } from '@/api/generated/models/ApiSeizeSettings';
+
+const DEFAULT_STREAM_REVIEW_ACCESS_VERSION = 1;
 
 function normalizeWalletList(wallets: string[]): string[] {
   return wallets.map((wallet) => wallet.trim()).filter(Boolean);
@@ -43,6 +47,55 @@ function authSettings(): ApiAuthSettings {
   };
 }
 
+function getStreamReviewAccessMode(): ApiPageAccessMode {
+  const configuredMode = env
+    .getStringOrNull('STREAM_REVIEW_ACCESS_MODE')
+    ?.trim()
+    .toUpperCase();
+
+  if (!configuredMode) {
+    return ApiPageAccessMode.Hidden;
+  }
+
+  if (
+    Object.values(ApiPageAccessMode).includes(
+      configuredMode as ApiPageAccessMode
+    )
+  ) {
+    return configuredMode as ApiPageAccessMode;
+  }
+
+  throw new Error(
+    `STREAM_REVIEW_ACCESS_MODE must be one of ${Object.values(
+      ApiPageAccessMode
+    ).join(', ')}`
+  );
+}
+
+function getStreamReviewAccessVersion(): number {
+  const configuredVersion = env.getStringOrNull('STREAM_REVIEW_ACCESS_VERSION');
+  if (!configuredVersion?.trim()) {
+    return DEFAULT_STREAM_REVIEW_ACCESS_VERSION;
+  }
+
+  const version = env.getIntOrNull('STREAM_REVIEW_ACCESS_VERSION');
+
+  if (version === null || !Number.isSafeInteger(version) || version < 1) {
+    throw new Error('STREAM_REVIEW_ACCESS_VERSION must be a positive integer');
+  }
+
+  return version;
+}
+
+function pageAccessSettings(): ApiPageAccessSettings {
+  return {
+    stream_review: {
+      mode: getStreamReviewAccessMode(),
+      version: getStreamReviewAccessVersion()
+    }
+  };
+}
+
 export const seizeSettings = (): ApiSeizeSettings => {
   const rememes_submission_tdh_threshold =
     env.getIntOrNull('REMEMED_SUBMISSION_TDH_THRESHOLD') ?? 6942;
@@ -62,6 +115,7 @@ export const seizeSettings = (): ApiSeizeSettings => {
     claims_admin_wallets,
     announcements_wave_id,
     quorum_wave_id,
-    auth: authSettings()
+    auth: authSettings(),
+    page_access: pageAccessSettings()
   };
 };
