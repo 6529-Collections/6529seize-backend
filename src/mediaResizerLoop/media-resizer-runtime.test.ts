@@ -6,6 +6,7 @@ import type { Context } from 'aws-lambda';
 import sharp from 'sharp';
 import { Upload } from '@aws-sdk/lib-storage';
 import {
+  classifyResizeDecoderError,
   assertDecodedWorkBudget,
   MAX_SOURCE_BYTES,
   UnprocessableResizeInput
@@ -17,6 +18,12 @@ let mockUploaded: Buffer;
 let mockSource: Readable | undefined;
 let mockContentLength: number | undefined;
 let mockUploadError: Error | undefined;
+let mockDecoderError: Error | undefined;
+const mockReportUnsupported = jest.fn();
+jest.mock('@/mediaResizerLoop/unsupported-resize-report', () => ({
+  reportUnsupportedResizeOnce: (...args: unknown[]) =>
+    mockReportUnsupported(...args)
+}));
 jest.mock('@aws-sdk/client-s3', () => ({
   GetObjectCommand: jest.fn(),
   S3Client: jest.fn(() => ({
@@ -25,6 +32,7 @@ jest.mock('@aws-sdk/client-s3', () => ({
         mockSource ??
         Readable.from([mockInput.subarray(0, 8), mockInput.subarray(8)]),
       ContentType: mockContentType,
+      ETag: 'synthetic-etag',
       ContentLength: mockContentLength
     }))
   }))
@@ -33,6 +41,13 @@ jest.mock('@aws-sdk/lib-storage', () => ({
   Upload: jest.fn(({ params }: { params: { Body: Readable } }) => ({
     done: async () => {
       if (mockUploadError) throw mockUploadError;
+      if (mockDecoderError) {
+        // Native Sharp failures emit directly, without destroy(error) setting
+        // Readable.errored. Preserve that behavior in the regression fixture.
+        params.Body._read = () => {
+          params.Body.emit('error', mockDecoderError);
+        };
+      }
       const chunks: Buffer[] = [];
       for await (const chunk of params.Body) chunks.push(chunk);
       mockUploaded = Buffer.concat(chunks);
@@ -54,6 +69,7 @@ beforeEach(() => {
   mockContentLength = undefined;
   mockSource = undefined;
   mockUploadError = undefined;
+  mockDecoderError = undefined;
 });
 afterEach(() => jest.restoreAllMocks());
 
@@ -108,6 +124,108 @@ it('preserves the exact ordinary JPEG and PNG output bytes', async () => {
     await resize();
     expect(mockUploaded.equals(expected)).toBe(true);
   }
+});
+
+it('creates a preview of a large baseline JPEG using decoder downsampling', async () => {
+  mockInput = await sharp({
+    create: { width: 9000, height: 6000, channels: 3, background: '#567888' }
+  })
+    .jpeg()
+    .toBuffer();
+  const result = await handler(
+    { queryStringParameters: { path: 'synthetic/AUTOx1080/large.jpeg' } },
+    {} as Context,
+    () => undefined
+  );
+  expect(result.statusCode).toBe(302);
+  expect(await sharp(mockUploaded).metadata()).toMatchObject({
+    width: 1620,
+    height: 1080,
+    format: 'jpeg'
+  });
+});
+
+it('uses a bounded still preview when the entire GIF animation exceeds the budget', async () => {
+  const frames = Buffer.alloc(1024 * 1024 * 3 * 33);
+  for (let frame = 0; frame < 33; frame++) {
+    frames.fill(
+      frame * 7,
+      frame * 1024 * 1024 * 3,
+      (frame + 1) * 1024 * 1024 * 3
+    );
+  }
+  mockInput = await sharp(frames, {
+    raw: { width: 1024, height: 1024 * 33, channels: 3, pageHeight: 1024 }
+  })
+    .gif({ delay: 100 })
+    .toBuffer();
+  mockContentType = 'image/gif';
+  expect((await resize()).statusCode).toBe(302);
+  expect(
+    await sharp(mockUploaded, { animated: true }).metadata()
+  ).toMatchObject({
+    width: 6,
+    height: 6,
+    pages: 1,
+    format: 'gif'
+  });
+});
+
+it('keeps progressive JPEG, unsupported codec and near-original requests within the full budget', async () => {
+  const base = await sharp(mockInput).metadata();
+  const large = { ...base, width: 16000, height: 14000 };
+  const target = { width: null, height: 1080 };
+  expect(() => assertDecodedWorkBudget(large, false, target)).not.toThrow();
+  for (const metadata of [
+    { ...large, isProgressive: true },
+    { ...large, format: 'png' as const },
+    { ...large, depth: 'ushort' as const }
+  ]) {
+    expect(() => assertDecodedWorkBudget(metadata, false, target)).toThrow(
+      UnprocessableResizeInput
+    );
+  }
+  expect(() =>
+    assertDecodedWorkBudget(large, false, { width: null, height: 10000 })
+  ).toThrow(UnprocessableResizeInput);
+});
+
+it('accounts for JPEG shrink rounding boundaries and rotated dimensions', async () => {
+  const base = await sharp(mockInput).metadata();
+  const large = { ...base, width: 16384, height: 12288 };
+  // At an exact 2x shrink Sharp falls back to a full-size decode.
+  expect(() =>
+    assertDecodedWorkBudget(large, false, { width: 8192, height: null })
+  ).toThrow(UnprocessableResizeInput);
+  // A portrait rotation changes the axis constrained by AUTOxheight.
+  expect(() =>
+    assertDecodedWorkBudget(
+      { ...base, width: 24000, height: 2000, orientation: 6 },
+      false,
+      { width: null, height: 2000 }
+    )
+  ).not.toThrow();
+  expect(() =>
+    assertDecodedWorkBudget(
+      { ...base, width: 24000, height: 2000, orientation: 6 },
+      false,
+      { width: 2000, height: null }
+    )
+  ).toThrow(UnprocessableResizeInput);
+});
+
+it('conservatively budgets both axes when their shrink ratios differ', async () => {
+  const base = await sharp(mockInput).metadata();
+  // Ratios 10 and 2: inside could shrink by 8, but cover/outside cannot. The
+  // common estimate deliberately keeps the larger full-decode budget here.
+  const large = { ...base, width: 16000, height: 12000 };
+  expect(() =>
+    assertDecodedWorkBudget(large, false, { width: 1600, height: 6000 })
+  ).toThrow(UnprocessableResizeInput);
+  // Both axes safely support a decoder shrink even for the stricter fit.
+  expect(() =>
+    assertDecodedWorkBudget(large, false, { width: 1600, height: 2400 })
+  ).not.toThrow();
 });
 
 it('rejects malformed image bytes without attempting an upload', async () => {
@@ -345,4 +463,46 @@ it('uses a conservative frame-height fallback while still charging every animate
   expect(() =>
     assertDecodedWorkBudget({ ...animation, height: 4097 }, true)
   ).toThrow(UnprocessableResizeInput);
+});
+
+const unsupportedHeif =
+  'heif: Error while loading plugin: Support for this compression format has not been built in (11.6003)';
+
+it('returns 422 and reports a known unsupported decoder failure even when MIME says WebP', async () => {
+  const directories = jest.spyOn(fs, 'mkdtemp');
+  mockContentType = 'image/webp';
+  mockDecoderError = new Error(
+    `/tmp/synthetic/source: bad seek to 96405\n${unsupportedHeif}`
+  );
+  const result = await resize();
+  expect(result.statusCode).toBe(422);
+  expect(JSON.parse(result.body).code).toBe('UNSUPPORTED_CODEC');
+  expect(mockReportUnsupported).toHaveBeenCalledWith(
+    expect.anything(),
+    undefined,
+    'synthetic/fixture',
+    'synthetic-etag'
+  );
+  const directory = await directories.mock.results[0].value;
+  await expect(fs.access(directory)).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it('does not mistake an upload error with decoder-like text for an input rejection', async () => {
+  mockUploadError = new Error(unsupportedHeif);
+  await expect(resize()).rejects.toBe(mockUploadError);
+  expect(mockReportUnsupported).not.toHaveBeenCalled();
+});
+
+it('classifies the exact HEIF capability error without swallowing other plugin or decoder failures', () => {
+  expect(classifyResizeDecoderError(new Error(unsupportedHeif))).toMatchObject({
+    code: 'UNSUPPORTED_CODEC'
+  });
+  for (const message of [
+    'heif: corrupted input',
+    'heif: Error while loading plugin: Permission denied',
+    'VipsForeignLoad: unknown failure'
+  ]) {
+    const error = new Error(message);
+    expect(classifyResizeDecoderError(error)).toBe(error);
+  }
 });

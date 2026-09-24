@@ -40,10 +40,13 @@ previews, containment and online recipients under the same eligibility spec.
 The materialisation experiment has been retired: application producers no longer
 write source bookkeeping, the API has no materialised or shadow reader, and the
 dedicated dispatcher, worker, backfill and fixture code is removed. Existing
-membership entity metadata, migrations, indexes and guarded schema scopes remain
-for database compatibility. No table or deployed resource is deleted by this
-source change. [Retirement and rollout](membership-retirement.md) records the
-required pre-release shutdown, affected services and later infrastructure cleanup.
+membership entity metadata and obsolete additive schema scopes are removed.
+Manual full sync uses only current entities and does not drop unregistered tables.
+The shared group-search index remains. Monitoring no longer inventories the two
+retired services. [The combined retirement runbook](membership-retirement.md)
+requires explicit stack deletion and an operator-only staging table cleanup after
+backups and prerequisite verification; ordinary deployment never runs that DDL.
+Historical migrations and private per-environment recovery evidence are retained.
 
 Shared SQL execution budgets remain in `src/db/`: acquisition, statements and
 transaction finalization share a deadline, expired physical connections are
@@ -510,7 +513,7 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 6. S3 and CloudFront serve media. AVIF still-image drop uploads always use private ingest and the sanitizer, even when `DROP_MEDIA_SANITIZE_IMAGES=false`. The worker applies orientation, strips metadata, and publishes WebP at quality 95 for compatibility with older supported mobile viewers. Multipart completion/status responses return the published `mime_type`, and drop references validate that type. AVIF admission rejects sequences, invalid content, images over 64 million pixels, dimensions over 16,383 pixels, and file-type headers over 4 KiB before publication. These decoder and header bounds apply only to AVIF; other formats retain their existing behavior. The existing 500 MB media byte limit remains. Verify shared ingest storage, then deploy the sanitizer in each environment before enabling AVIF through the API and frontend. API deployment verifies the ingest bucket and sanitizer queue exist.
 
    Other drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception.
-   The on-demand media resizer spools each S3 source into its own temporary file before metadata inspection and conversion. A 256 MiB source limit and conservative 512 MiB decoded-work estimate reject unsupported or oversized inputs with HTTP 422; animated GIF admission counts every frame. Resize, rotation and output contracts are preserved for accepted inputs. Multipart upload concurrency is one, and the temporary directory is removed after completion or failure. These admission limits reduce resource risk; they do not guarantee a maximum native allocation for every codec.
+   The on-demand media resizer spools each S3 source into its own temporary file before metadata inspection and conversion. A 256 MiB source limit and conservative 512 MiB decoded-work estimate reject unsupported or oversized inputs with HTTP 422; animated GIF admission counts every frame. Baseline 8-bit JPEG admission accounts conservatively for the decoder shrink used by the requested resize; progressive JPEGs and other codecs retain the full-input estimate. When a GIF animation exceeds the budget, only its first frame is resized if that frame independently fits. Otherwise it remains HTTP 422. Originals are unchanged, and already-posted images can receive previews on demand without re-uploading. Resize, rotation and output contracts are preserved for ordinary accepted inputs. Multipart upload concurrency is one, and the temporary directory is removed after completion or failure. These admission limits reduce resource risk; they do not guarantee a maximum native allocation for every codec. The specific HEIF missing-compression-plugin error is returned as `422 UNSUPPORTED_CODEC`, regardless of the filename or MIME label. One operational report is claimed per original S3 key and source version (VersionId, or ETag for unversioned objects), across resize variants and Lambda instances, using an empty conditional-write marker under `_resize-rejections/v1/` in the existing source bucket. Later requests retain warning logs and the controlled response; replacing the source enables a new report. Marker failures remain operational errors. See [media-resizer-unsupported-input.md](media-resizer-unsupported-input.md) for alert and recovery limits.
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
 ### Ordinary Ethereum RPC boundary
@@ -678,6 +681,11 @@ prices.
 
 `marketStatsLoop` publishes complete OpenSea order snapshots atomically with
 current orders and a persistent queue for reconciling disappeared orders.
+Publication uses a `READ COMMITTED` transaction and locks the collection's state
+row before replacing its current orders. This preserves serialization within a
+collection without retaining delete range/gap locks across other collections'
+refreshes. Snapshot reads retain their existing transaction isolation so metadata
+and orders come from one consistent view.
 Existing price statistics run concurrently with an independent deadline; both
 tasks finish before the database context closes. Collection books are attempted
 before lifecycle maintenance, which prioritizes status reconciliation and
@@ -775,6 +783,8 @@ falls back to a standalone result. Workflows never own Seize drop IDs. See
 retention, rerun, and rollout contract.
 
 Notification read/unread mutations also enqueue a `badge_refresh` job with the affected profile ID on the existing `firebase-push-notifications` queue. `pushNotificationsHandler` combines shared-device refreshes within each batch, discovers current iOS registrations, and computes aggregate unread counts from the primary database using the existing push settings, visibility and moderation filters. The API performs only the queue handoff, not device lookup, counting or Firebase delivery. Normal iOS alerts and badge-only refreshes share a per-device Redis lock covering count calculation and submission. Android delivery and installation logout use the same lock to fence removed recipients. Failed or invalid profile contributions never become partial badge totals. See [Mobile badge synchronization](./mobile-badge-sync.md) for the payload, failure handling and rollout boundaries.
+
+The push worker's SQS event source is capped at 18 concurrent batches, below the Lambda's reserved concurrency of 20. This leaves two slots of headroom and keeps excess burst traffic queued instead of allowing the poller to exceed the function limit. The same cap applies in staging and production. Batch size remains 10; partial-batch retries, visibility timeout, dead-letter routing, and monitoring thresholds/frequency are unchanged. Queueing can increase during bursts, so queue-age and dead-letter alarms remain important. Deploy only `pushNotificationsHandler` to apply this event-source configuration.
 
 Notification invalidation is emitted only after the push worker loads durable notification rows. It intentionally remains independent from mobile push registration, mute settings, and delivery success because those controls affect Firebase delivery only; the durable row remains visible through the authenticated REST feed. Duplicate SQS deliveries may repeat this idempotent invalidation without duplicating notification data.
 
