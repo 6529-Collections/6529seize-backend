@@ -409,6 +409,20 @@ flowchart TD
 
 ### Scheduled Lambdas (EventBridge)
 
+`newsletterLoop` is production-only and runs directly from EventBridge at 00:00 UTC.
+It reads the previous UTC day of anonymous public wave activity from MySQL,
+including public reply/quote context, Main Stage winners, and indexed Meme and Meme Lab mints.
+Bedrock (`global.openai.gpt-6-astra` by default) composes a short newsletter;
+the configured wallet signs into the existing API to publish one formatted drop.
+Shared `prod/lambdas` secrets configure the destination, wallet, and signing key;
+any missing value makes the run a successful no-op. Scheduled retries recognize
+publication metadata on the primary DB, while manual `{}` invocations always
+produce a fresh rolling-24-hour edition. Reserved concurrency is one. Deploy only
+`newsletterLoop`; there is no schema, API, or frontend dependency. Code passes
+through `1a-staging` without deploying this service there. See
+[public-wave newsletter operations](public-wave-newsletter.md).
+
+
 | Lambda                                   | Purpose                                                                                                                                                             |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `nftsLoop`                               | Discover, refresh, and audit NFTs.                                                                                                                                  |
