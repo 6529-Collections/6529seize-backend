@@ -48,6 +48,9 @@ describe('RecalculateXTdhUseCase phase handling', () => {
         await callback(connection);
       }
     ),
+    prepareIdentitySnapshot: jest.fn().mockResolvedValue(undefined),
+    publishIdentitySnapshot: jest.fn().mockResolvedValue(undefined),
+    discardIdentitySnapshot: jest.fn().mockResolvedValue(undefined),
     getWalletsWithoutIdentities: jest.fn().mockResolvedValue([]),
     updateProducedXTDH: jest.fn().mockResolvedValue(undefined),
     updateAllGrantedXTdhs: jest.fn().mockResolvedValue(undefined),
@@ -112,6 +115,20 @@ describe('RecalculateXTdhUseCase phase handling', () => {
       'transaction-commit',
       'stats-enqueued'
     ]);
+  });
+
+  it('publishes only after calculations and always discards private work on failure', async () => {
+    const { repository, useCase } = makeUseCase();
+    repository.updateXtdhRate.mockRejectedValueOnce(
+      new Error('calculation failed')
+    );
+    await expect(useCase.handleUniversePhase({})).rejects.toThrow(
+      'calculation failed'
+    );
+    expect(repository.prepareIdentitySnapshot).toHaveBeenCalled();
+    expect(repository.publishIdentitySnapshot).not.toHaveBeenCalled();
+    expect(repository.discardIdentitySnapshot).toHaveBeenCalled();
+    expect(mockSqsSend).not.toHaveBeenCalled();
   });
 
   it('uses the default FIFO message group for stats when no source group resolves', async () => {
