@@ -18,6 +18,12 @@ import { RequestContext } from '../../../request.context';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { isLegacyWsQueryTokenEnabled } from '../auth/auth-session-v2';
 import { describeWebSocketSendFailure } from './ws-send-diagnostics';
+import { createHash } from 'node:crypto';
+import {
+  WebSocketSendScheduler,
+  WebSocketSendLimitError,
+  hasWebSocketSendBudget
+} from '@/api/ws/ws-send-scheduler';
 
 export class SocketNotAvailableException extends Error {
   constructor() {
@@ -102,11 +108,14 @@ class ApiGatewayClientConnections extends ClientConnections {
   private readonly logger = Logger.get(ApiGatewayManagementApiClient.name);
 
   private readonly client: ApiGatewayManagementApiClient;
+  private readonly scheduler = new WebSocketSendScheduler();
 
   constructor() {
     super();
     this.client = new ApiGatewayManagementApiClient({
-      endpoint: process.env.API_GATEWAY_WS_ENDPOINT
+      endpoint: process.env.API_GATEWAY_WS_ENDPOINT,
+      retryMode: 'standard',
+      maxAttempts: 3
     });
   }
 
@@ -118,11 +127,16 @@ class ApiGatewayClientConnections extends ClientConnections {
     message: string;
   }) {
     try {
-      await this.client.send(
-        new PostToConnectionCommand({
-          ConnectionId: connectionId,
-          Data: Buffer.from(message)
-        })
+      await this.scheduler.send(connectionId, async (abortSignal) =>
+        this.client
+          .send(
+            new PostToConnectionCommand({
+              ConnectionId: connectionId,
+              Data: Buffer.from(message)
+            }),
+            { abortSignal }
+          )
+          .then(() => undefined)
       );
     } catch (error: unknown) {
       const failure = describeWebSocketSendFailure(message, error);
@@ -132,7 +146,19 @@ class ApiGatewayClientConnections extends ClientConnections {
         try {
           // Replace the existing error event; do not report again or turn a
           // diagnostic failure into deletion of an otherwise live connection.
-          this.logger.error(failure.diagnostic);
+          this.logger.error({
+            ...failure.diagnostic,
+            delivery_failure:
+              error instanceof WebSocketSendLimitError ? error.reason : 'SDK',
+            // Random Gateway connection IDs are correlated for one UTC day only.
+            connection_hash: createHash('sha256')
+              .update(new Date().toISOString().slice(0, 10))
+              .update('\0')
+              .update(connectionId)
+              .digest('hex')
+              .slice(0, 24),
+            frame_bytes: Buffer.byteLength(message, 'utf8')
+          });
         } catch {
           // Outbound delivery remains best effort when reporting is unavailable.
         }
@@ -188,7 +214,9 @@ export class AppWebSockets {
     message: string;
     skipStaleConnectionCheck?: boolean;
   }) {
-    if (!skipStaleConnectionCheck) {
+    // An expired invocation goes directly to the sender's reported deadline
+    // failure; do not spend the remaining budget looking up unsendable work.
+    if (!skipStaleConnectionCheck && hasWebSocketSendBudget()) {
       const entity = await this.wsConnectionRepository.getByConnectionId(
         connectionId,
         {}
@@ -205,7 +233,11 @@ export class AppWebSockets {
     try {
       await ClientConnections.Get().sendMessage({ connectionId, message });
     } catch (err) {
-      await this.deregister({ connectionId });
+      if (err instanceof SocketNotAvailableException) {
+        await this.deregister({ connectionId });
+      } else {
+        throw err;
+      }
     }
   }
 
