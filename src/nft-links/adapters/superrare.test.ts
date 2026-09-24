@@ -122,6 +122,24 @@ describe('SuperRare metadata standard compatibility', () => {
     expect(nft.uri).not.toHaveBeenCalled();
   });
 
+  it('resolves metadata and auction end time from bigint contract timestamps', async () => {
+    market.getAuctionDetails.mockResolvedValue([
+      contractAddress,
+      BigInt(1790014439),
+      BigInt(1790018039),
+      BigInt(86400),
+      ZeroAddress,
+      BigInt('1000000000000000000')
+    ]);
+    market.auctionBids.mockResolvedValue([]);
+    const result = await resolve();
+    expect(result?.patch.market).toMatchObject({
+      saleType: 'AUCTION',
+      endsAt: new Date(1790104439 * 1000).toISOString()
+    });
+    expect(result?.patch.asset?.title).toBe(metadata.name);
+  });
+
   it('honors an explicit metadata timeout override', async () => {
     process.env.SUPERRARE_TIMEOUT_MS = '7000';
     await resolve();
