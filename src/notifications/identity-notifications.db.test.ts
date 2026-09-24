@@ -32,7 +32,8 @@ const connection: ConnectionWrapper<null> = { connection: null };
 jest.mock(
   '../api-serverless/src/push-notifications/push-notifications.service',
   () => ({
-    sendIdentityPushNotification: jest.fn()
+    sendIdentityPushNotification: jest.fn(),
+    isActivated: () => true
   })
 );
 
@@ -67,6 +68,9 @@ function createRepo({
 }) {
   const db = {
     execute: jest.fn().mockResolvedValue([undefined, undefined, 101]),
+    executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+      callback(connection)
+    ),
     bulkInsert: jest.fn()
   } as unknown as jest.Mocked<SqlExecutor>;
   const identityMutesDb = {
@@ -207,6 +211,31 @@ describe('IdentityNotificationsDb', () => {
     );
   });
 
+  it('owns a transaction when the caller does not provide one', async () => {
+    const row = notification();
+    const { db, repo } = createRepo({ filteredNotifications: [row] });
+    await repo.insertNotification(row);
+    expect(db.executeNativeQueriesInTransaction).toHaveBeenCalledTimes(1);
+    expect(db.execute).toHaveBeenLastCalledWith(
+      expect.stringContaining('insert into push_notification_outbox_entries'),
+      expect.objectContaining({ notificationId: 101 }),
+      { wrappedConnection: connection }
+    );
+    expect(sendIdentityPushNotification).not.toHaveBeenCalled();
+  });
+
+  it('fails the notification transaction when durable push recording fails', async () => {
+    const row = notification();
+    const { db, repo } = createRepo({ filteredNotifications: [row] });
+    db.execute
+      .mockResolvedValueOnce([undefined, undefined, 401])
+      .mockRejectedValueOnce(new Error('outbox unavailable'));
+    await expect(repo.insertNotification(row, connection)).rejects.toThrow(
+      'outbox unavailable'
+    );
+    expect(sendIdentityPushNotification).not.toHaveBeenCalled();
+  });
+
   it('fails open when mute filtering fails on the write path', async () => {
     const row = notification();
     const { db, repo } = createRepo({
@@ -226,7 +255,12 @@ describe('IdentityNotificationsDb', () => {
       }),
       { wrappedConnection: connection }
     );
-    expect(sendIdentityPushNotification).toHaveBeenCalledWith(401);
+    expect(sendIdentityPushNotification).not.toHaveBeenCalled();
+    expect(db.execute).toHaveBeenCalledWith(
+      expect.stringContaining('insert into push_notification_outbox_entries'),
+      expect.objectContaining({ notificationId: 401 }),
+      { wrappedConnection: connection }
+    );
   });
 
   it('retries the write when content moderation filtering fails', async () => {

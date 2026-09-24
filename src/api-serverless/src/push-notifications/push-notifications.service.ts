@@ -89,7 +89,7 @@ export async function requestInstallationBadgeRefresh(
   ]);
 }
 
-const sendBatchMessagesToSQS = async (
+export const sendBatchMessagesToSQS = async (
   entries: NonNullable<SendMessageBatchCommandInput['Entries']>
 ) => {
   const params: SendMessageBatchCommandInput = {

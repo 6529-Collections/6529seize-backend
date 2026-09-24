@@ -4,7 +4,8 @@ import {
   refreshInstallationBadge,
   refreshProfileBadges
 } from './badge-refresh';
-import { SQSBatchResponse, SQSHandler } from 'aws-lambda';
+import { SQSBatchResponse, SQSEvent, ScheduledEvent } from 'aws-lambda';
+import { publishPushOutbox } from '@/pushNotificationsHandler/publish-outbox';
 import {
   AttachmentEntity,
   DropAttachmentEntity
@@ -37,9 +38,15 @@ async function refreshInstallationRecords(
   return failures;
 }
 
-const sqsHandler: SQSHandler = async (event): Promise<SQSBatchResponse> => {
+const sqsHandler = async (
+  event: SQSEvent | ScheduledEvent
+): Promise<SQSBatchResponse> => {
   return doInDbContext(
     async () => {
+      if (!('Records' in event)) {
+        await publishPushOutbox();
+        return { batchItemFailures: [] };
+      }
       const identityNotificationRecords: {
         messageId: string;
         identityNotificationId: number;
