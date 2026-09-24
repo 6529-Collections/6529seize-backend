@@ -82,7 +82,8 @@ a docs-only PR.
 - Reverse ENS first uses ethers lookup, then the Universal Resolver on the
   **same** configured endpoint. The previous hard-coded 6529 ordinary fallback
   is removed; lookup misses/errors still yield no name. Configuration failures
-  remain explicit.
+  remain explicit. The Universal Resolver call explicitly enables CCIP-Read;
+  allowing it at provider level alone does not enable it for a contract call.
 - NFT history, transactions, NextGen and subscription discovery keep indexed
   calls on Alchemy while ordinary reads use the shared boundary. Pagination,
   finality gaps, checkpoints, receipt reconciliation and value conversions are
@@ -218,8 +219,11 @@ required for this backend PR.
    that sample regresses.
    Count the `ENS_LOOKUP` info-level `[ENS_UNIVERSAL_RESOLVER]` events by
    `OUTCOME=hit`, `miss`, and `error` to track fallback use and results. Each
-   fallback attempt emits one outcome without wallet/name/endpoint/error data;
-   primary successes emit no fallback event. These logs complement the fixed
+   fallback attempt emits one outcome without wallet/name/endpoint/raw-error data.
+   Error outcomes also include an allowlisted `CATEGORY` for known resolver
+   reverts, off-chain failures, transport errors, or `UNKNOWN`; contract reverts
+   such as `REVERSE_ADDRESS_MISMATCH` do not by themselves indicate an RPC outage.
+   Primary successes emit no fallback event. These logs complement the fixed
    wallet sample, not an automatic alert or a replacement for coverage testing.
 4. Check worker ingestion progress and errors, NFT history/transaction receipt
    consistency, NextGen logs and subscription checkpoints. Confirm colocated

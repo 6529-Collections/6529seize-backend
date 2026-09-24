@@ -33,6 +33,9 @@ describe('ENS uses one configured RPC endpoint', () => {
       else lookupAddress.mockRejectedValue(new Error('unavailable'));
       mockReverse.mockResolvedValue(['fallback.eth']);
       expect(await lookupPrimaryEnsName('0xaddress')).toBe('fallback.eth');
+      expect(mockReverse).toHaveBeenCalledWith('0xaddress', 60, {
+        enableCcipRead: true
+      });
       expect(Contract).toHaveBeenCalledWith(
         expect.any(String),
         expect.any(Array),
@@ -51,8 +54,53 @@ describe('ENS uses one configured RPC endpoint', () => {
     );
     expect(await lookupPrimaryEnsName('0xaddress')).toBeNull();
     expect(mockInfo.mock.calls).toEqual([
-      ['[ENS_UNIVERSAL_RESOLVER] [OUTCOME=error]']
+      ['[ENS_UNIVERSAL_RESOLVER] [OUTCOME=error] [CATEGORY=UNKNOWN]']
     ]);
+  });
+  it.each([
+    ['0x556f1830', 'OFFCHAIN_LOOKUP'],
+    ['0x77209fe8', 'RESOLVER_NOT_FOUND'],
+    ['0x1e9535f2', 'RESOLVER_NOT_CONTRACT'],
+    ['0x7b1c461b', 'UNSUPPORTED_RESOLVER_PROFILE'],
+    ['0x95c0c752', 'RESOLVER_ERROR'],
+    ['0xef9c03ce', 'REVERSE_ADDRESS_MISMATCH'],
+    ['0x01800152', 'GATEWAY_HTTP_ERROR'],
+    ['0xdeadbeef', 'CALL_EXCEPTION']
+  ])(
+    'classifies revert %s without exposing its payload',
+    async (selector, category) => {
+      lookupAddress.mockResolvedValue(null);
+      mockReverse.mockRejectedValue({
+        code: 'CALL_EXCEPTION',
+        data: `${selector}${'ab'.repeat(64)}`,
+        message: 'https://rpc.example.test/secret-key',
+        reason: 'private-name.eth'
+      });
+      expect(await lookupPrimaryEnsName('0xaddress')).toBeNull();
+      expect(mockInfo.mock.calls).toEqual([
+        [`[ENS_UNIVERSAL_RESOLVER] [OUTCOME=error] [CATEGORY=${category}]`]
+      ]);
+    }
+  );
+  it.each([
+    ['TIMEOUT', 'TIMEOUT'],
+    ['NETWORK_ERROR', 'NETWORK_ERROR'],
+    ['SERVER_ERROR', 'SERVER_ERROR'],
+    ['OFFCHAIN_FAULT', 'OFFCHAIN_FAULT'],
+    ['BAD_DATA', 'BAD_DATA'],
+    ['https://rpc.example.test/secret-key', 'UNKNOWN'],
+    ['toString', 'UNKNOWN']
+  ])('allowlists provider error code %s', async (code, category) => {
+    const error = { code, message: 'https://rpc.example.test/secret-key' };
+    lookupAddress.mockRejectedValue(error);
+    mockReverse.mockRejectedValue(error);
+    expect(await lookupPrimaryEnsName('0xaddress')).toBeNull();
+    expect(mockInfo.mock.calls).toEqual([
+      [`[ENS_UNIVERSAL_RESOLVER] [OUTCOME=error] [CATEGORY=${category}]`]
+    ]);
+    expect(Logger.get('ENS_LOOKUP').debug).toHaveBeenCalledWith(
+      `[ENS LOOKUP FAILED] [PROVIDER ethereum-rpc] [CATEGORY=${category}]`
+    );
   });
   it('records a clean fallback miss separately from a transport error', async () => {
     lookupAddress.mockResolvedValue(null);

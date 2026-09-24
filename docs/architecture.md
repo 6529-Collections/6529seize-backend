@@ -533,7 +533,10 @@ Non-standard `trace_block` has a separate provider policy: Alchemy normally,
 or the existing mainnet 6529 trace endpoint with Alchemy fallback where selected.
 Selecting traces does not select the transaction/receipt provider. ENS no longer
 has a hidden 6529 endpoint fallback; its Universal Resolver fallback uses the
-configured ordinary provider.
+configured ordinary provider and explicitly enables CCIP-Read for off-chain
+ENS records. Fallback errors retain their null result and emit only allowlisted
+categories, separating resolver reverts from transport and off-chain failures
+without logging raw errors or revert arguments.
 
 `NFT_INDEXER_RPC` remains the independently configured external-indexing/NFT-link
 capacity boundary, and the legacy AWS Managed Blockchain `/rpc` proxy is
