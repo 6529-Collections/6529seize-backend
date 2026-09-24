@@ -402,6 +402,22 @@
       "default_dependencies": []
     },
     {
+      "name": "newsletterLoop",
+      "allowed_environments": [
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "newsletterLoop"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": []
+    },
+    {
       "name": "nextgenContractLoop",
       "allowed_environments": [
         "staging",
