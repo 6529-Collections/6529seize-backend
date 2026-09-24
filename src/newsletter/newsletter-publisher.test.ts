@@ -1,4 +1,6 @@
 import { verifyMessage, Wallet } from 'ethers';
+import { NewDropSchema } from '@/api/drops/drop.validator';
+import { ApiLoginRequest } from '@/api/generated/models/ApiLoginRequest';
 import {
   NewsletterPublisher,
   newsletterMarkdown
@@ -31,9 +33,19 @@ describe('newsletter publisher', () => {
     const login = JSON.parse(request.mock.calls[1][1].body);
     expect(verifyMessage(nonce, login.client_signature)).toBe(wallet.address);
     expect(login.client_address).toBe(wallet.address.toLowerCase());
+    const expectedLogin: ApiLoginRequest = {
+      client_address: wallet.address.toLowerCase(),
+      client_signature: await wallet.signMessage(nonce),
+      server_signature: 'server-sig',
+      is_safe_wallet: false
+    };
+    expect(login).toEqual(expectedLogin);
     const options = request.mock.calls[2][1];
     expect(options.headers.Authorization).toBe('Bearer token');
     const drop = JSON.parse(options.body);
+    expect(NewDropSchema.validate(drop).error).toBeUndefined();
+    expect(drop.drop_type).toBe('CHAT');
+    expect(drop.signature).toBeNull();
     expect(drop.parts).toEqual([
       { content: 'edition', media: [], quoted_drop: null }
     ]);

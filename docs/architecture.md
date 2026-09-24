@@ -418,7 +418,9 @@ Shared `prod/lambdas` secrets configure the destination, wallet, and signing key
 any missing value makes the run a successful no-op. Scheduled retries recognize
 publication metadata on the primary DB, while manual `{}` invocations always
 produce a fresh rolling-24-hour edition. Reserved concurrency is one. Deploy only
-`newsletterLoop`; there is no schema, API, or frontend dependency. Code passes
+`newsletterLoop`, then refresh production operational monitoring to add its
+allowlist, log subscription, and platform alarms; there is no schema, API, or
+frontend dependency. Code passes
 through `1a-staging` without deploying this service there. See
 [public-wave newsletter operations](public-wave-newsletter.md).
 

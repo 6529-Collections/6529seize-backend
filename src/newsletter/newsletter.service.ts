@@ -12,23 +12,30 @@ import { NewsletterWriter } from './newsletter-writer';
 
 const logger = Logger.get('NEWSLETTER');
 
-export async function publishNewsletter(
-  config: NewsletterConfig,
-  window: NewsletterWindow,
-  ctx: RequestContext,
-  dependencies: {
-    db: Pick<NewsletterDb, 'publishedEdition'>;
-    collector: Pick<NewsletterCollector, 'collect'>;
-    writer: Pick<NewsletterWriter, 'write'>;
-    publisher: Pick<NewsletterPublisher, 'authorId' | 'publish'>;
-  } = {
+interface NewsletterDependencies {
+  db: Pick<NewsletterDb, 'publishedEdition'>;
+  collector: Pick<NewsletterCollector, 'collect'>;
+  writer: Pick<NewsletterWriter, 'write'>;
+  publisher: Pick<NewsletterPublisher, 'authorId' | 'publish'>;
+}
+
+function defaultDependencies(config: NewsletterConfig): NewsletterDependencies {
+  return {
     db: newsletterDb,
     collector: new NewsletterCollector(newsletterDb),
     writer: new NewsletterWriter(config.modelId),
     publisher: new NewsletterPublisher(config.wallet)
-  }
+  };
+}
+
+export async function publishNewsletter(
+  config: NewsletterConfig,
+  window: NewsletterWindow,
+  ctx: RequestContext,
+  dependencies?: NewsletterDependencies
 ): Promise<{ status: string; dropId?: string }> {
-  const { db, collector, writer, publisher } = dependencies;
+  const { db, collector, writer, publisher } =
+    dependencies ?? defaultDependencies(config);
   const authorId = await publisher.authorId();
   const editionId = window.scheduled
     ? `daily:${new Date(window.start).toISOString().slice(0, 10)}`

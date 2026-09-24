@@ -68,11 +68,15 @@ export function newsletterWindow(
   let end = now;
   if (scheduled) {
     if (typeof payload?.time !== 'string') {
-      throw new Error('Scheduled newsletter is missing its event timestamp');
+      throw new TypeError(
+        'Scheduled newsletter is missing its event timestamp'
+      );
     }
     const time = Date.parse(payload.time);
     if (!Number.isFinite(time)) {
-      throw new Error('Scheduled newsletter has an invalid event timestamp');
+      throw new TypeError(
+        'Scheduled newsletter has an invalid event timestamp'
+      );
     }
     // Use the original event time, so delayed delivery/retries cover the same day.
     const date = new Date(time);

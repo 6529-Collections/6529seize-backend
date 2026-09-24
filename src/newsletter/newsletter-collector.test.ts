@@ -58,3 +58,52 @@ it('stops reply cycles and unavailable context without inventing a private root 
   ).toBe(second);
   expect(discussionStart(first, new Map([[first.id, first]]))).toBe(first);
 });
+
+it('loads multi-hop public quote context once and stops at a private reference', async () => {
+  const db = new NewsletterDb(() => {
+    throw new Error('Unexpected SQL');
+  });
+  const publicContext = [drop(2), drop(3)];
+  jest.spyOn(db, 'activeWaves').mockResolvedValue(['wave']);
+  jest.spyOn(db, 'recentDrops').mockResolvedValue([drop(1)]);
+  jest.spyOn(db, 'winners').mockResolvedValue([]);
+  jest.spyOn(db, 'mints').mockResolvedValue([]);
+  jest.spyOn(db, 'media').mockResolvedValue([]);
+  const quotes: Record<string, string> = {
+    'drop-1': 'drop-2',
+    'drop-2': 'drop-3',
+    'drop-3': 'private-drop'
+  };
+  jest.spyOn(db, 'parts').mockImplementation(async (ids) =>
+    ids.map((id) => ({
+      drop_id: id,
+      content: `Public ${id}`,
+      quoted_drop_id: quotes[id]
+    }))
+  );
+  const context = jest
+    .spyOn(db, 'contextDrops')
+    .mockImplementation(async (ids) =>
+      publicContext.filter((entry) => ids.includes(entry.id))
+    );
+  const result = await new NewsletterCollector(db).collect(
+    { start: 1000, end: 2000, scheduled: false },
+    'destination',
+    'publisher',
+    {}
+  );
+  expect(result.sources).toHaveLength(3);
+  expect(result.sources[0].quoted_messages).toEqual([
+    'https://6529.io/waves/wave?serialNo=2'
+  ]);
+  expect(result.sources[1].quoted_messages).toEqual([
+    'https://6529.io/waves/wave?serialNo=3'
+  ]);
+  expect(result.sources[2].quoted_messages).toEqual([]);
+  expect(context.mock.calls.map((call) => call[0])).toEqual([
+    ['drop-2'],
+    ['drop-3'],
+    ['private-drop']
+  ]);
+  expect(JSON.stringify(result)).not.toContain('private-drop');
+});
