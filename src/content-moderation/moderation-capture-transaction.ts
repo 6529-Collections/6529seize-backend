@@ -1,4 +1,5 @@
 import { performance } from 'node:perf_hooks';
+import { randomInt } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { SqlTransactionOptions } from '@/sql-executor';
 import { SqlExecutionBudgetExceededError } from '@/db/sql-execution-budget';
@@ -80,7 +81,7 @@ export async function runModerationCapture<T>(
           : {})
       });
       if (!retry) throw error;
-      await delay(20 + Math.floor(Math.random() * 30));
+      await delay(randomInt(20, 50));
     }
   }
 }

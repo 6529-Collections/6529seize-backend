@@ -9,6 +9,9 @@ Finalization resolves the immutable item ID with a non-locking read, locks the
 item, and then applies the existing evaluation and latest-completed-result
 updates. Overrides, review state, policy versions and evidence retention keep
 their existing rules. The provider is never rerun by a database retry.
+If a concurrent purge removes the item before finalization acquires it, capture
+fails closed with the existing safe failure instead of claiming that an
+assessment was durably recorded. It is not treated as a successful no-op.
 
 Retention discovers at most 1,000 candidate rows per cleanup phase without
 holding evaluation locks. It groups candidates by item and processes one item
@@ -47,7 +50,8 @@ evidence, and provider output are never copied into these diagnostics. Unknown
 driver codes become `UNKNOWN`.
 
 Moderation review queries opt into binding the issuing async context. This
-preserves both the request ID and operational reporting state across pooled socket reuse,
+preserves both the request ID and operational reporting state across pooled
+socket reuse,
 so the existing final-5xx guard recognizes a lower-layer report. Unreported 5xx
 responses still emit their fallback alert. Recovery attempts can still produce
 SQL error envelopes; this change does not globally suppress database errors or

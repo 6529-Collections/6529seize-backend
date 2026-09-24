@@ -1,9 +1,14 @@
 import { SqlExecutionBudgetExceededError } from '@/db/sql-execution-budget';
 import { Logger } from '@/logging';
+import { performance } from 'node:perf_hooks';
 import {
   runModerationCapture,
   moderationDatabaseCode
 } from './moderation-capture-transaction';
+
+jest.mock('node:perf_hooks', () => ({
+  performance: { now: jest.fn(() => 0) }
+}));
 
 const deadlock = () =>
   new SqlExecutionBudgetExceededError(
@@ -14,9 +19,10 @@ const deadlock = () =>
   );
 
 describe('moderation capture recovery', () => {
-  beforeEach(() =>
-    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
-  );
+  beforeEach(() => {
+    jest.mocked(performance.now).mockReset().mockReturnValue(0);
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+  });
   afterEach(() => jest.restoreAllMocks());
 
   it('retries acknowledged deadlock rollback with one shared deadline', async () => {
@@ -35,6 +41,34 @@ describe('moderation capture recovery', () => {
     const run = jest.fn().mockRejectedValue(failure);
     await expect(runModerationCapture(run)).rejects.toBe(failure);
     expect(run).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry when the remaining deadline cannot cover useful work', async () => {
+    jest
+      .mocked(performance.now)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(4300);
+    const failure = deadlock();
+    const run = jest.fn().mockRejectedValue(failure);
+    await expect(runModerationCapture(run)).rejects.toBe(failure);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not acquire again when backoff consumes the work budget', async () => {
+    jest
+      .mocked(performance.now)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(4600);
+    const run = jest.fn().mockRejectedValue(deadlock());
+    await expect(runModerationCapture(run)).rejects.toMatchObject({
+      code: 'SQL_BUDGET_EXCEEDED',
+      phase: 'ACQUIRE',
+      commitOutcome: 'NOT_SENT'
+    });
+    expect(run).toHaveBeenCalledTimes(1);
   });
 
   it.each([
