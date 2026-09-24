@@ -150,10 +150,12 @@ export class NewsletterCollector {
       drops,
       parts,
       media,
-      window.end,
-      excludedWaveId,
-      excludedAuthorId,
-      budget,
+      {
+        end: window.end,
+        waveId: excludedWaveId,
+        authorId: excludedAuthorId,
+        budget
+      },
       ctx
     );
     const partsByDrop = groupByDrop(parts);
@@ -232,12 +234,15 @@ export class NewsletterCollector {
     drops: Map<string, NewsletterDrop>,
     parts: NewsletterPart[],
     media: NewsletterMedia[],
-    end: number,
-    waveId: string,
-    authorId: string,
-    budget: NewsletterCollectionBudget,
+    options: {
+      end: number;
+      waveId: string;
+      authorId: string;
+      budget: NewsletterCollectionBudget;
+    },
     ctx: RequestContext
   ): Promise<void> {
+    const { end, waveId, authorId, budget } = options;
     let pending = Array.from(drops.keys());
     const attempted = new Set(pending);
     // Follow reply and quote chains to their publicly accessible beginnings.
