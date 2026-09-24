@@ -1,5 +1,6 @@
 import { RequestContext } from '@/request.context';
 import { NewsletterWindow, TEAM_WAVE_IDS } from './newsletter.config';
+import { NewsletterCollectionBudget } from './newsletter-collection-budget';
 import {
   NewsletterDb,
   NewsletterDrop,
@@ -119,14 +120,18 @@ export class NewsletterCollector {
     excludedAuthorId: string,
     ctx: RequestContext
   ): Promise<NewsletterMaterial> {
+    const budget = new NewsletterCollectionBudget();
     const waves = await this.db.activeWaves(window, excludedWaveId, ctx);
+    budget.checkTime();
     const drops = new Map<string, NewsletterDrop>();
     // Indexed per-wave ranges include subwaves and paginate every active wave.
     for (let i = 0; i < waves.length; i += 4) {
       const batches = await Promise.all(
         waves
           .slice(i, i + 4)
-          .map((waveId) => this.readWave(waveId, window, excludedAuthorId, ctx))
+          .map((waveId) =>
+            this.readWave(waveId, window, excludedAuthorId, budget, ctx)
+          )
       );
       for (const drop of batches.flat()) drops.set(drop.id, drop);
     }
@@ -134,7 +139,11 @@ export class NewsletterCollector {
       this.db.winners(window, ctx),
       this.db.mints(window, ctx)
     ]);
-    for (const winner of winners) drops.set(winner.id, winner);
+    budget.checkTime();
+    for (const winner of winners) {
+      if (!drops.has(winner.id)) budget.addDrops(1);
+      drops.set(winner.id, winner);
+    }
     const parts: NewsletterPart[] = [];
     const media: NewsletterMedia[] = [];
     await this.addContext(
@@ -144,6 +153,7 @@ export class NewsletterCollector {
       window.end,
       excludedWaveId,
       excludedAuthorId,
+      budget,
       ctx
     );
     const partsByDrop = groupByDrop(parts);
@@ -196,11 +206,13 @@ export class NewsletterCollector {
     waveId: string,
     window: NewsletterWindow,
     authorId: string,
+    budget: NewsletterCollectionBudget,
     ctx: RequestContext
   ): Promise<NewsletterDrop[]> {
     const result: NewsletterDrop[] = [];
     let cursor = { createdAt: window.start, serialNo: 0 };
     for (;;) {
+      budget.checkTime();
       const page = await this.db.recentDrops(
         waveId,
         window,
@@ -208,6 +220,7 @@ export class NewsletterCollector {
         authorId,
         ctx
       );
+      budget.addDrops(page.length);
       result.push(...page);
       if (page.length < 500) return result;
       const last = page[page.length - 1];
@@ -222,12 +235,14 @@ export class NewsletterCollector {
     end: number,
     waveId: string,
     authorId: string,
+    budget: NewsletterCollectionBudget,
     ctx: RequestContext
   ): Promise<void> {
     let pending = Array.from(drops.keys());
     const attempted = new Set(pending);
     // Follow reply and quote chains to their publicly accessible beginnings.
     while (pending.length) {
+      budget.nextContextRound();
       const referenced = new Set<string>();
       for (let i = 0; i < pending.length; i += 500) {
         const ids = pending.slice(i, i + 500);
@@ -236,6 +251,7 @@ export class NewsletterCollector {
           drops,
           parts,
           media,
+          budget,
           ctx
         );
         references.forEach((id) => referenced.add(id));
@@ -243,6 +259,7 @@ export class NewsletterCollector {
       const unseen = Array.from(referenced).filter((id) => !attempted.has(id));
       pending = [];
       for (let i = 0; i < unseen.length; i += 500) {
+        budget.checkTime();
         const ids = unseen.slice(i, i + 500);
         ids.forEach((id) => attempted.add(id));
         const context = await this.db.contextDrops(
@@ -252,6 +269,7 @@ export class NewsletterCollector {
           authorId,
           ctx
         );
+        budget.addDrops(context.length);
         for (const drop of context) {
           drops.set(drop.id, drop);
           pending.push(drop.id);
@@ -265,11 +283,17 @@ export class NewsletterCollector {
     drops: Map<string, NewsletterDrop>,
     parts: NewsletterPart[],
     media: NewsletterMedia[],
+    budget: NewsletterCollectionBudget,
     ctx: RequestContext
   ): Promise<string[]> {
+    budget.checkTime();
     const [batchParts, batchMedia] = await Promise.all([
       this.db.parts(ids, ctx),
       this.db.media(ids, ctx)
+    ]);
+    budget.addContent([
+      ...batchParts.map((part) => part.content ?? ''),
+      ...batchMedia.map((item) => item.url)
     ]);
     parts.push(...batchParts);
     media.push(...batchMedia);

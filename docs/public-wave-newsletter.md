@@ -75,6 +75,20 @@ Oversized source sets or incomplete model responses fail instead of publishing
 truncated coverage. Editorial accuracy and exact link compliance remain model
 behavior, not a claim of guaranteed factual correctness.
 
+Collection checks a two-minute deadline between DB batches and caps the complete
+run at 25,000 drops, 10 MB of message/media URL text, and 100 context-expansion
+rounds. Crossing a limit throws `NewsletterCollectionLimitError`, reports a
+Lambda failure, and never calls the writer or publisher with a partial result.
+These checks bound public historical context as well as the current day's
+activity. The writer has a separate ten-minute total deadline (including research)
+and four-minute individual request timeouts. A slow individual DB query still
+relies on the database driver's timeout and Lambda's outer execution limit.
+
+Mint counts use the existing transaction primary key (transaction hash, sender,
+recipient, contract and token ID); re-indexing the same stored transaction does
+not insert another row. They remain indexed transfer counts, not an independently
+reconciled on-chain audit.
+
 ## Rollout and operations
 
 The service catalog permits **production only**. Code still merges through
