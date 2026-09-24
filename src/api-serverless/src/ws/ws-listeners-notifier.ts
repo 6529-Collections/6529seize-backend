@@ -43,6 +43,7 @@ import { AuthenticationContext } from '@/auth-context';
 import { NotFoundException, UnauthorisedException } from '@/exceptions';
 import { isExpectedClientError } from '@/operational-errors';
 import { typingFailureDetails } from './ws-typing-failure';
+import { forEachWebSocketRecipient } from '@/api/ws/ws-send-scheduler';
 
 const scalarForLog = (value: unknown): string =>
   typeof value === 'string' ||
@@ -300,15 +301,15 @@ export class WsListenersNotifier {
         await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
           profileIds
         );
-      await Promise.all(
-        recipients.map(({ connectionId, identityId }) =>
+      await forEachWebSocketRecipient(
+        recipients,
+        ({ connectionId, identityId }) =>
           this.appWebSockets.send({
             connectionId,
             message: JSON.stringify(
               identityNotificationsChangedMessage(identityId)
             )
           })
-        )
       );
     } catch (error) {
       this.logger.error(
@@ -338,15 +339,16 @@ export class WsListenersNotifier {
         (await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
           profileIds
         ));
-      await Promise.all(
-        recipients.flatMap(({ connectionId, identityId }) =>
-          (statesByProfileId.get(identityId) ?? []).map((state) =>
-            this.appWebSockets.send({
+      await forEachWebSocketRecipient(
+        recipients,
+        async ({ connectionId, identityId }) => {
+          for (const state of statesByProfileId.get(identityId) ?? []) {
+            await this.appWebSockets.send({
               connectionId,
               message: JSON.stringify(dmUnreadStateChangedMessage(state))
-            })
-          )
-        )
+            });
+          }
+        }
       );
     } catch (error) {
       this.logger.error(
@@ -418,8 +420,9 @@ export class WsListenersNotifier {
         },
         ctx.connection
       );
-      await Promise.all(
-        onlineProfiles.map(({ connectionId, profileId }) => {
+      await forEachWebSocketRecipient(
+        onlineProfiles,
+        ({ connectionId, profileId }) => {
           const recipientDrop = applyGlobalModerationForRecipient(
             inputDrop,
             profileId
@@ -439,7 +442,7 @@ export class WsListenersNotifier {
               reason
             )
           });
-        })
+        }
       );
     } catch (e) {
       logDropNotificationFailure(this.logger, 'DROP_UPDATE', inputDrop, e);
@@ -476,8 +479,9 @@ export class WsListenersNotifier {
         },
         ctx.connection
       );
-      await Promise.all(
-        onlineProfiles.map(({ connectionId, profileId }) => {
+      await forEachWebSocketRecipient(
+        onlineProfiles,
+        ({ connectionId, profileId }) => {
           const recipientDrop = applyGlobalModerationForRecipient(
             drop,
             profileId
@@ -496,7 +500,7 @@ export class WsListenersNotifier {
               profileId === null ? 0 : (creditLefts[profileId] ?? 0)
             )
           });
-        })
+        }
       );
     } catch (e) {
       logDropNotificationFailure(this.logger, 'DROP_RATING_UPDATE', drop, e);
@@ -533,8 +537,9 @@ export class WsListenersNotifier {
         },
         ctx.connection
       );
-      await Promise.all(
-        onlineProfiles.map(({ connectionId, profileId }) => {
+      await forEachWebSocketRecipient(
+        onlineProfiles,
+        ({ connectionId, profileId }) => {
           const recipientDrop = applyGlobalModerationForRecipient(
             drop,
             profileId
@@ -553,7 +558,7 @@ export class WsListenersNotifier {
               profileId === null ? 0 : (creditLefts[profileId] ?? 0)
             )
           });
-        })
+        }
       );
     } catch (e) {
       logDropNotificationFailure(this.logger, 'DROP_REACTION_UPDATE', drop, e);
@@ -638,19 +643,17 @@ export class WsListenersNotifier {
       };
       const now = Time.currentMillis();
       stage = 'delivery';
-      await Promise.all(
-        connectionIds.map((connectionId: string) =>
-          this.appWebSockets.send({
-            connectionId,
-            message: JSON.stringify(
-              userIsTypingMessage({
-                wave_id: waveId,
-                timestamp: now,
-                profile: profile
-              })
-            )
-          })
-        )
+      await forEachWebSocketRecipient(connectionIds, (connectionId: string) =>
+        this.appWebSockets.send({
+          connectionId,
+          message: JSON.stringify(
+            userIsTypingMessage({
+              wave_id: waveId,
+              timestamp: now,
+              profile: profile
+            })
+          )
+        })
       );
     } catch (error) {
       if (!isExpectedClientError(error)) {
@@ -808,13 +811,13 @@ export class WsListenersNotifier {
       if (!uniqueConnectionIds.length) {
         return;
       }
-      await Promise.all(
-        uniqueConnectionIds.map((connectionId: string) =>
+      await forEachWebSocketRecipient(
+        uniqueConnectionIds,
+        (connectionId: string) =>
           this.appWebSockets.send({
             connectionId,
             message
           })
-        )
       );
     } catch (e) {
       this.logger.error(
@@ -838,13 +841,11 @@ export class WsListenersNotifier {
       const connections =
         await this.wsConnectionRepository.findAllConnectionIds();
       if (connections.length) {
-        await Promise.all(
-          connections.map((connectionId: string) =>
-            this.appWebSockets.send({
-              connectionId,
-              message
-            })
-          )
+        await forEachWebSocketRecipient(connections, (connectionId: string) =>
+          this.appWebSockets.send({
+            connectionId,
+            message
+          })
         );
       }
     } catch (e) {
