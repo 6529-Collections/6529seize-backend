@@ -339,16 +339,20 @@ export class WsListenersNotifier {
         (await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
           profileIds
         ));
-      await forEachWebSocketRecipient(
-        recipients,
-        async ({ connectionId, identityId }) => {
+      // Each frame is independent: a failed conversation must not skip later
+      // states for the same recipient. Generate lazily to keep fan-out bounded.
+      function* frames() {
+        for (const { connectionId, identityId } of recipients) {
           for (const state of statesByProfileId.get(identityId) ?? []) {
-            await this.appWebSockets.send({
-              connectionId,
-              message: JSON.stringify(dmUnreadStateChangedMessage(state))
-            });
+            yield { connectionId, state };
           }
         }
+      }
+      await forEachWebSocketRecipient(frames(), ({ connectionId, state }) =>
+        this.appWebSockets.send({
+          connectionId,
+          message: JSON.stringify(dmUnreadStateChangedMessage(state))
+        })
       );
     } catch (error) {
       this.logger.error(
