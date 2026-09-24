@@ -6,6 +6,7 @@ import {
 } from '@/api/push-notifications/push-notifications.service';
 import { Logger } from '@/logging';
 jest.mock('@/notifications/push-notification-outbox.db', () => ({
+  OUTBOX_BATCH_SIZE: 10,
   pushNotificationOutboxDb: {
     oldestPendingAt: jest.fn(),
     publishBatch: jest.fn()

@@ -5,7 +5,10 @@ import {
   IdentityNotificationsDb,
   NewIdentityNotification
 } from './identity-notifications.db';
-import { sendIdentityPushNotification } from '../api-serverless/src/push-notifications/push-notifications.service';
+import {
+  isActivated,
+  sendIdentityPushNotification
+} from '../api-serverless/src/push-notifications/push-notifications.service';
 import {
   DEFAULT_PROFILE_PREFERENCES,
   ProfileNotificationLevel
@@ -33,7 +36,7 @@ jest.mock(
   '../api-serverless/src/push-notifications/push-notifications.service',
   () => ({
     sendIdentityPushNotification: jest.fn(),
-    isActivated: () => true
+    isActivated: jest.fn().mockReturnValue(true)
   })
 );
 
@@ -118,6 +121,7 @@ describe('IdentityNotificationsDb', () => {
 
   beforeEach(() => {
     process.env.USER_NOTIFIER_ACTIVATED = 'true';
+    jest.mocked(isActivated).mockReturnValue(true);
     jest.mocked(sendIdentityPushNotification).mockClear();
   });
 
@@ -209,6 +213,19 @@ describe('IdentityNotificationsDb', () => {
       }),
       { wrappedConnection: connection }
     );
+  });
+
+  it('preserves in-app notifications without recording pushes when push delivery is disabled', async () => {
+    jest.mocked(isActivated).mockReturnValue(false);
+    const { db, repo } = createRepo({
+      filteredNotifications: [notification()]
+    });
+    await repo.insertNotification(notification(), connection);
+    expect(db.execute).toHaveBeenCalledTimes(1);
+    expect(db.execute.mock.calls[0][0]).toContain(
+      'insert into identity_notifications'
+    );
+    expect(sendIdentityPushNotification).not.toHaveBeenCalled();
   });
 
   it('owns a transaction when the caller does not provide one', async () => {

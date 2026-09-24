@@ -1617,3 +1617,11 @@ commits to become visible. Confirmed cancellation markers still acknowledge work
 The existing ten-receive redrive limit bounds retries; exhausted messages reach the
 existing DLQ and alarms. Operational errors and five-minute alert frequency remain
 unchanged. Deploy schema sync (`dbMigrationsLoop`) before the worker and producers.
+
+The notification and push activation flags intentionally remain separate: disabling
+push delivery still permits in-app notifications and does not accumulate a future
+push backlog. This preserves the previous sender's early-return behavior. The
+existing push Lambda Errors/Throttles alarms cover both its scheduled and SQS
+invocations; the SQS cap of 18 leaves two of 20 reserved slots outside SQS.
+Schema sync is a required rollout step, not an automatic action of a single-service
+deployment. Do not activate the publisher or producers before schema sync succeeds.

@@ -38,15 +38,9 @@ async function refreshInstallationRecords(
   return failures;
 }
 
-const sqsHandler = async (
-  event: SQSEvent | ScheduledEvent
-): Promise<SQSBatchResponse> => {
+const sqsHandler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
   return doInDbContext(
     async () => {
-      if (!('Records' in event)) {
-        await publishPushOutbox();
-        return { batchItemFailures: [] };
-      }
       const identityNotificationRecords: {
         messageId: string;
         identityNotificationId: number;
@@ -170,4 +164,18 @@ const sqsHandler = async (
   );
 };
 
-export const handler = sentryContext.wrapLambdaHandler(sqsHandler);
+export async function dispatchPushEvent(
+  event: SQSEvent | ScheduledEvent
+): Promise<SQSBatchResponse> {
+  if ('Records' in event) return sqsHandler(event);
+  if (
+    event.source !== 'aws.events' ||
+    event['detail-type'] !== 'Scheduled Event'
+  ) {
+    throw new Error('Unsupported push handler event');
+  }
+  await doInDbContext(publishPushOutbox, { logger });
+  return { batchItemFailures: [] };
+}
+
+export const handler = sentryContext.wrapLambdaHandler(dispatchPushEvent);

@@ -4,6 +4,8 @@ import { RequestContext } from '@/request.context';
 import { Time } from '@/time';
 import { DbPoolName } from '@/db-query.options';
 
+export const OUTBOX_BATCH_SIZE = 10;
+
 export class PushNotificationOutboxDb extends LazyDbAccessCompatibleService {
   async enqueue(notificationId: number, ctx: RequestContext): Promise<void> {
     if (!ctx.connection) throw new Error('Push outbox requires a transaction');
@@ -35,7 +37,7 @@ export class PushNotificationOutboxDb extends LazyDbAccessCompatibleService {
       async (connection) => {
         const rows = await this.db.execute<{ notification_id: number }>(
           `select notification_id from ${PUSH_NOTIFICATION_OUTBOX_TABLE}
-         order by notification_id limit 10 for update skip locked`,
+         order by notification_id limit ${OUTBOX_BATCH_SIZE} for update skip locked`,
           undefined,
           { wrappedConnection: connection }
         );

@@ -19,6 +19,21 @@ describeWithSeed('Push outbox transaction visibility', [], () => {
     expect(await repo.publishBatch(send)).toBe(0);
   });
 
+  it('holds locks on one connection across send and deletes an entire multi-ID batch', async () => {
+    await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+      for (const id of [201, 202, 203]) await repo.enqueue(id, { connection });
+    });
+    const firstSend = jest.fn(async (ids: number[]) => {
+      expect(ids).toEqual([201, 202, 203]);
+      const overlappingSend = jest.fn();
+      expect(await repo.publishBatch(overlappingSend)).toBe(0);
+      expect(overlappingSend).not.toHaveBeenCalled();
+    });
+    expect(await repo.publishBatch(firstSend)).toBe(3);
+    expect(await repo.oldestPendingAt()).toBeNull();
+    expect(await repo.publishBatch(jest.fn())).toBe(0);
+  });
+
   it('rolls back work and retains committed work after failed publication', async () => {
     await expect(
       sqlExecutor.executeNativeQueriesInTransaction(

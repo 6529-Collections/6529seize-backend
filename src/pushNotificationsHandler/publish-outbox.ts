@@ -2,7 +2,10 @@ import {
   isActivated,
   sendBatchMessagesToSQS
 } from '@/api/push-notifications/push-notifications.service';
-import { pushNotificationOutboxDb } from '@/notifications/push-notification-outbox.db';
+import {
+  OUTBOX_BATCH_SIZE,
+  pushNotificationOutboxDb
+} from '@/notifications/push-notification-outbox.db';
 import { Logger } from '@/logging';
 
 const logger = Logger.get('PUSH_NOTIFICATION_OUTBOX');
@@ -29,7 +32,7 @@ export async function publishPushOutbox(): Promise<void> {
       )
     );
     published += count;
-    if (count < 10) {
+    if (count < OUTBOX_BATCH_SIZE) {
       logger.info(`Published ${published} committed push notifications`);
       return;
     }
