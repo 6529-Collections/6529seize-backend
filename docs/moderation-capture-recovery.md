@@ -79,6 +79,16 @@ responses still emit their fallback alert. Recovery attempts can still produce
 SQL error envelopes; this change does not globally suppress database errors or
 change alert fingerprint policy.
 
+The pooled-socket regression uses one real MySQL connection across two completed
+request contexts. With binding disabled, a synthetic private-query failure
+inherits the earlier callback context and marks that earlier operational store
+as reported; the current response then emits a second envelope. SQL timing still
+uses its separately captured current context. With binding enabled, the helper
+marks the current operational store and the duplicate fallback is avoided.
+An unrelated unreported 5xx still alerts. This validates attribution and
+deduplication independently of the database error that caused a production
+request to fail; changing only a printed request ID would not repair the store.
+
 ## Deployment
 
 Deploy compatible retention code in `dbMigrationsLoop`, then `api` (`seizeAPI`).
