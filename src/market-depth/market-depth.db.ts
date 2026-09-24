@@ -313,7 +313,9 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
     ).length;
     const bidCount = input.orders.length - askCount;
 
-    return this.executeNativeQueriesInTransaction(async (connection) => {
+    const publish = async (
+      connection: DbConnection
+    ): Promise<MarketDepthSnapshotMetadata> => {
       await this.query(
         `INSERT INTO ${MARKET_DEPTH_COLLECTION_STATE_TABLE}
           (source, chain_id, contract, collection_slug, collection_id, latest_snapshot_id,
@@ -469,6 +471,12 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
         skipped_count: input.skipped_count,
         event_count: input.event_count
       };
+    };
+    // The collection state lock serializes this partition. READ COMMITTED
+    // avoids DELETE range/gap locks blocking other collections' replacement
+    // inserts in the shared orders table; publication still commits atomically.
+    return this.executeNativeQueriesInTransaction(publish, {
+      isolationLevel: 'READ COMMITTED'
     });
   }
 

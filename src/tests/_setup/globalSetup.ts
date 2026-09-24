@@ -48,8 +48,7 @@ module.exports = async (globalConfig?: unknown) => {
   try {
     for (let workerId = 1; workerId <= workerCount; workerId++) {
       process.env.DB_NAME = `${databasePrefix}_${workerId}`;
-      // The application's full-sync guard must reject missing controlled schema.
-      // Only this newly created disposable container gets unrestricted creation.
+      // Initialize this disposable worker database from the current entities.
       const fixture = new DataSource({
         type: 'mysql',
         host: container.getHost(),
