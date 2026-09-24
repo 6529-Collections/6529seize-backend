@@ -341,13 +341,13 @@ export class WsListenersNotifier {
         ));
       // Each frame is independent: a failed conversation must not skip later
       // states for the same recipient. Generate lazily to keep fan-out bounded.
-      function* frames() {
+      const frames = function* () {
         for (const { connectionId, identityId } of recipients) {
           for (const state of statesByProfileId.get(identityId) ?? []) {
             yield { connectionId, state };
           }
         }
-      }
+      };
       await forEachWebSocketRecipient(frames(), ({ connectionId, state }) =>
         this.appWebSockets.send({
           connectionId,
