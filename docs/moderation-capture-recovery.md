@@ -19,6 +19,28 @@ per transaction, locking the item and rechecking the candidate's eligibility.
 Deleted items and evaluations completed since discovery are skipped. Routine
 history purge already acquires item locks before deleting child history.
 
+The four per-item phases (interrupted evaluations, expired results, old audits,
+and old evaluations) each discover at most 1,000 rows. Each phase therefore
+opens at most 1,000 item transactions, or at most 4,000 across the phases, plus
+the existing routine-purge transaction. Multiple candidates for one item share
+one transaction. All writers must keep the global item-before-child lock order;
+sorting item IDs alone is not a substitute for that rule.
+
+`dbMigrationsLoop` calls `retain()` once per invocation. Its configured schedule
+is daily, its concurrency is one, and its timeout is 900 seconds shared with the
+loop's other maintenance. It does not drain retention to quiescence in one run.
+Committed cleanup removes rows from that phase's candidate predicate, so later
+daily invocations resume discovery without a cursor. For example, 1,001 expired
+results require at least two passes; existing integration coverage checks this.
+New arrivals can outpace cleanup, so this is not a guarantee against backlog or
+starvation under sustained load.
+
+The transaction-count bound is not a wall-clock guarantee. Worst-case production
+runtime under a large, contended backlog has not been established. After rollout,
+check maintenance duration and oldest eligible retention age as well as capture
+success; persistent backlog or proximity to the loop deadline requires a
+separate retention-throughput/time-budget change, not a larger Lambda timeout.
+
 ## Recovery boundary
 
 Standalone `start` and `finish` each use the existing SQL execution-budget owner:
