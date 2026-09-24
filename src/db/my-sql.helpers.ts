@@ -1,14 +1,14 @@
+import { AsyncResource } from 'node:async_hooks';
 import { ConnectionWrapper, SqlTransactionOptions } from '../sql-executor';
 import * as mysql from 'mysql';
 import { PoolConnection, TypeCast } from 'mysql';
 import { Time } from '../time';
 import { Logger } from '../logging';
-import { DbPoolName } from '@/db-query.options';
+import { DbPoolName, DbQueryOptions } from '@/db-query.options';
 import { SqlOperationTiming } from '@/db/sql-operation-timing';
 import {
   executeBudgetedSqlTransaction,
   withSqlBudgetQueryOptions,
-  SqlBudgetQueryOptions,
   SqlExecutionBudgetExceededError
 } from '@/db/sql-execution-budget';
 
@@ -230,7 +230,7 @@ export async function execSQLWithConnection<T>(
     | { connection: mysql.PoolConnection }
     | { pool: DbPoolName; acquire: () => Promise<mysql.PoolConnection> },
   params?: Record<string, unknown>,
-  options?: SqlBudgetQueryOptions
+  options?: DbQueryOptions
 ): Promise<T[]> {
   const supplied = 'connection' in source;
   const timing = new SqlOperationTiming(
@@ -261,7 +261,7 @@ export async function execSQLWithParams<T>(
   connection: mysql.PoolConnection,
   closeConnection: boolean,
   params?: Record<string, any>,
-  options?: SqlBudgetQueryOptions,
+  options?: DbQueryOptions,
   timing?: SqlOperationTiming
 ): Promise<T[]> {
   return withSqlBudgetQueryOptions(
@@ -275,7 +275,7 @@ export async function execSQLWithParams<T>(
         };
         const timer = Time.now();
         timing?.queryStarted();
-        connection.query({ sql, values: params }, (err: any, result: T[]) => {
+        const onResult = (err: unknown, result: T[]) => {
           timing?.queryFinished(!!err);
           // Private records and membership authority tokens must stay out of
           // infrastructure logs. Bulk inserts can embed values directly in SQL,
@@ -304,7 +304,15 @@ export async function execSQLWithParams<T>(
           } else {
             resolve(Object.values(JSON.parse(JSON.stringify(result))));
           }
-        });
+        };
+        // mysql sockets can outlive a Lambda invocation. Bind both logging and
+        // operational contexts at registration, not the socket's callback context.
+        connection.query(
+          { sql, values: params },
+          options?.bindInvocationContext
+            ? AsyncResource.bind(onResult)
+            : onResult
+        );
       })
   );
 }
