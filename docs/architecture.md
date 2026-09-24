@@ -515,6 +515,25 @@ unused provider-neutral factory and documents the existing regional shared-secre
 configuration path. Existing callers still use their previous providers; this
 foundation does not migrate runtime traffic or remove indexed Alchemy APIs.
 
+### NFT link preview job recovery
+
+The resolver records `media_preview_queued_at` using database time when it claims
+an enqueue. During a normal metadata refresh, an unchanged-source `PENDING` or
+`PROCESSING` preview can be requeued only when both its enqueue timestamp and
+worker lease are older than ten minutes. This exceeds the preview worker's
+120-second runtime and the queue's 300-second visibility timeout. A row lock
+serializes concurrent producers, and the new enqueue timestamp prevents repeated
+refreshes from flooding the queue. Legacy pending rows with no enqueue timestamp
+are eligible when they have no recent worker lease. Recovery preserves cached
+preview URLs and invalidates the old completion lease; READY records and the
+existing oversized-media cooldown are unchanged. This is demand-driven recovery,
+not a scheduled sweep: the NFT must be refreshed again.
+
+The nullable column is added by the existing entity-sync deployment. Deploy
+`dbMigrationsLoop` before `nftLinkRefresherLoop`, `api` (`seizeAPI`), and
+`nftLinkMediaPreviewLoop`. Old producers remain compatible but do not recover
+stalled jobs until updated. No API schema or alert configuration changes.
+
 ### NFT link media preview size failures
 
 Preview images and unrecognized content retain their configured byte cap (30 MB
