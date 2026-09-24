@@ -1606,12 +1606,18 @@ calculations. All existing grant arithmetic remains unchanged.
 Only after calculation completes does the loop lock current identities, verify
 that consolidation keys/profile mappings still match its snapshot, and publish
 produced/granted xTDH, received xTDH, rates and levels together. Levels use current
-REP and TDH values rather than copies from the calculation snapshot. Changes to existing snapshot identities abort publication and retries the universe through the existing SQS
+REP and TDH values rather than copies from the calculation snapshot. Changes to existing snapshot identities abort publication and retry the universe through the existing SQS
 failure path. Independently created identities after the snapshot remain untouched
 until the next calculation. Failures leave the previous committed values visible; temporary
 working data is dropped before returning the connection to the pool.
 
 Live identity writes remain necessary for missing-identity creation and the final
 publication. This reduces the lock window; it does not promise zero database
-contention. No persistent schema or service wiring changes are required. Deploy
+contention. No persistent database schema changes are required. Deploy
 `xTdhLoop` to activate this behavior.
+
+xTDH universe/stats failures retain the existing 1,000-second source queue visibility
+interval and now redrive after five receives to `xtdh-dead-letter.fifo`. Dead letters
+are retained for 14 days and have a visible-message CloudWatch alarm on the existing
+alarm topic. Repeated consolidation drift therefore cannot block the FIFO group
+until source retention expires. Deploying `xTdhLoop` also provisions these resources.

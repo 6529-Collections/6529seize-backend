@@ -65,15 +65,32 @@ export class RecalculateXTdhUseCase {
       await this.xtdhRepository.executeNativeQueriesInTransaction(
         async (connection) => {
           const transactionContext = { ...ctx, connection };
+          let calculationFailed = false;
           try {
             await this.recalculateXTdh(transactionContext);
+          } catch (error) {
+            calculationFailed = true;
+            throw error;
           } finally {
-            await this.xtdhRepository.discardIdentitySnapshot(
-              transactionContext
-            );
+            await this.discardSnapshot(transactionContext, calculationFailed);
           }
         },
         { isolationLevel: 'REPEATABLE READ' }
+      );
+    }
+  }
+
+  private async discardSnapshot(
+    ctx: RequestContext,
+    calculationFailed: boolean
+  ) {
+    try {
+      await this.xtdhRepository.discardIdentitySnapshot(ctx);
+    } catch (error) {
+      if (!calculationFailed) throw error;
+      this.logger.error(
+        'Failed to discard xTDH snapshot after calculation failure',
+        error
       );
     }
   }

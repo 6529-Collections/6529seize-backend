@@ -131,6 +131,27 @@ describe('RecalculateXTdhUseCase phase handling', () => {
     expect(mockSqsSend).not.toHaveBeenCalled();
   });
 
+  it('preserves the calculation error when snapshot cleanup also fails', async () => {
+    const { repository, useCase } = makeUseCase();
+    const primary = new Error('calculation failed');
+    repository.updateXtdhRate.mockRejectedValueOnce(primary);
+    repository.discardIdentitySnapshot.mockRejectedValueOnce(
+      new Error('cleanup failed')
+    );
+    await expect(useCase.handleUniversePhase({})).rejects.toBe(primary);
+  });
+
+  it('fails the transaction when cleanup alone fails', async () => {
+    const { repository, useCase } = makeUseCase();
+    repository.discardIdentitySnapshot.mockRejectedValueOnce(
+      new Error('cleanup failed')
+    );
+    await expect(useCase.handleUniversePhase({})).rejects.toThrow(
+      'cleanup failed'
+    );
+    expect(mockSqsSend).not.toHaveBeenCalled();
+  });
+
   it('uses the default FIFO message group for stats when no source group resolves', async () => {
     const { useCase } = makeUseCase();
 
