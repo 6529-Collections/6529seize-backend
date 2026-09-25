@@ -1,11 +1,12 @@
+import { getEthereumRpcClient } from '@/ethereum-rpc/ethereum-rpc-client';
 import { ethers } from 'ethers';
 import {
   Alchemy,
   AssetTransfersCategory,
   AssetTransfersWithMetadataParams,
-  Network,
   SortingOrder
 } from '@/alchemy-sdk';
+import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
 import { NEXTGEN_CORE_IFACE } from '@/abis/nextgen';
 import { CLOUDFRONT_LINK } from '@/constants';
 import { NextGenCollection, NextGenLog } from '@/entities/INextGen';
@@ -64,7 +65,9 @@ export async function findCoreTransactions(
       );
       continue;
     }
-    const receipt = await alchemy.core.getTransaction(transfer.hash);
+    const receipt = await getEthereumRpcClient(network).getTransaction(
+      transfer.hash
+    );
     if (receipt) {
       const parsedReceipt = NEXTGEN_CORE_IFACE.parseTransaction({
         data: receipt.data,

@@ -5,6 +5,7 @@ import { MEMES_CONTRACT, MEMES_DEPLOYER } from '@/constants';
 import {
   ReceiptLike,
   findDiscoveredTransactionValues,
+  findTransactionValues,
   reconcileTransactionTokenCounts
 } from '@/transaction_values';
 import { ethers } from 'ethers';
@@ -15,9 +16,18 @@ jest.mock('@/ethPriceLoop/db.eth_price', () => ({
 }));
 
 jest.mock('@/rpc-provider', () => ({
-  get6529RpcProvider: jest.fn(),
   getRpcProvider: jest.fn()
 }));
+
+jest.mock('@/ethereum-rpc/trace-provider', () => ({
+  getAlchemyTraceProvider: jest.fn(),
+  get6529TraceProvider: jest.fn()
+}));
+import {
+  getAlchemyTraceProvider,
+  get6529TraceProvider
+} from '@/ethereum-rpc/trace-provider';
+import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
 
 const CONTRACT = '0x1111111111111111111111111111111111111111';
 const OTHER_CONTRACT = '0x4444444444444444444444444444444444444444';
@@ -93,6 +103,16 @@ function mockTransactionValueRpc(
     getTransactionReceipt,
     send
   } as unknown as ReturnType<typeof getRpcProvider>);
+  jest
+    .mocked(getAlchemyTraceProvider)
+    .mockReturnValue({ send } as unknown as ReturnType<
+      typeof getAlchemyTraceProvider
+    >);
+  jest
+    .mocked(get6529TraceProvider)
+    .mockReturnValue({ send } as unknown as ReturnType<
+      typeof get6529TraceProvider
+    >);
   jest.mocked(getClosestEthUsdPrice).mockResolvedValue(1);
 
   return { getTransaction, getTransactionReceipt, send };
@@ -724,5 +744,108 @@ describe('reconcileTransactionTokenCounts', () => {
 
     expect(result.value).toBe(0.06529);
     expect(result.primary_proceeds).toBe(0.06529);
+  });
+});
+
+describe('ordinary RPC and trace isolation', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  function mintContext() {
+    const row = makeTransaction(537, 1, MEMES_CONTRACT);
+    row.from_address = ZERO_ADDRESS;
+    const receipt = {
+      gasUsed: BigInt(0),
+      logs: [
+        makeLog(
+          'TransferSingle',
+          [FROM, ZERO_ADDRESS, TO, BigInt(537), BigInt(1)],
+          MEMES_CONTRACT
+        )
+      ]
+    };
+    const ordinary = mockTransactionValueRpc(receipt, []);
+    const ordinarySend = jest.fn();
+    jest.mocked(getRpcProvider).mockReturnValue({
+      getTransaction: ordinary.getTransaction,
+      getTransactionReceipt: ordinary.getTransactionReceipt,
+      send: ordinarySend
+    } as unknown as ReturnType<typeof getRpcProvider>);
+    const primarySend = jest.fn().mockResolvedValue([]);
+    const fallbackSend = jest.fn().mockResolvedValue([]);
+    jest
+      .mocked(get6529TraceProvider)
+      .mockReturnValue({ send: primarySend } as unknown as ReturnType<
+        typeof get6529TraceProvider
+      >);
+    jest
+      .mocked(getAlchemyTraceProvider)
+      .mockReturnValue({ send: fallbackSend } as unknown as ReturnType<
+        typeof getAlchemyTraceProvider
+      >);
+    return { row, ...ordinary, ordinarySend, primarySend, fallbackSend };
+  }
+
+  it('keeps transactions and receipts on the configured RPC when 6529 tracing is selected', async () => {
+    const context = mintContext();
+    await findTransactionValues([context.row], Network.ETH_MAINNET, true);
+    expect(getRpcProvider).toHaveBeenCalledWith(Network.ETH_MAINNET);
+    expect(context.getTransaction).toHaveBeenCalledWith(HASH);
+    expect(context.getTransactionReceipt).toHaveBeenCalledWith(HASH);
+    expect(context.ordinarySend).not.toHaveBeenCalled();
+    expect(context.primarySend).toHaveBeenCalledWith('trace_block', ['0x01']);
+    expect(getAlchemyTraceProvider).not.toHaveBeenCalled();
+  });
+
+  it('falls back only for traces and preserves ordinary reads when both trace services fail', async () => {
+    const context = mintContext();
+    context.primarySend.mockRejectedValue(new Error('trace unavailable'));
+    context.fallbackSend.mockRejectedValue(new Error('fallback unavailable'));
+    await expect(
+      findTransactionValues([context.row], Network.ETH_MAINNET, true)
+    ).resolves.toHaveLength(1);
+    expect(context.primarySend).toHaveBeenCalledWith('trace_block', ['0x01']);
+    expect(context.fallbackSend).toHaveBeenCalledWith('trace_block', ['0x01']);
+    expect(context.getTransactionReceipt).toHaveBeenCalledTimes(1);
+    expect(context.ordinarySend).not.toHaveBeenCalled();
+  });
+
+  it('preserves ordinary mint reads with empty trace attribution when the Alchemy key is missing', async () => {
+    const context = mintContext();
+    const { getAlchemyTraceProvider: realTraceProvider } = jest.requireActual<
+      typeof import('@/ethereum-rpc/trace-provider')
+    >('@/ethereum-rpc/trace-provider');
+    jest
+      .mocked(getAlchemyTraceProvider)
+      .mockImplementationOnce(realTraceProvider);
+    const previousKey = process.env.ALCHEMY_API_KEY;
+    delete process.env.ALCHEMY_API_KEY;
+
+    try {
+      const result = await findTransactionValues([context.row]);
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        transaction: HASH,
+        value: 0,
+        primary_proceeds: 0,
+        royalties: 0
+      });
+      expect(getAlchemyTraceProvider).toHaveBeenCalledWith(Network.ETH_MAINNET);
+      expect(get6529TraceProvider).not.toHaveBeenCalled();
+      expect(context.getTransaction).toHaveBeenCalledWith(HASH);
+      expect(context.getTransactionReceipt).toHaveBeenCalledWith(HASH);
+      expect(context.ordinarySend).not.toHaveBeenCalled();
+      expect(context.fallbackSend).not.toHaveBeenCalled();
+    } finally {
+      if (previousKey === undefined) delete process.env.ALCHEMY_API_KEY;
+      else process.env.ALCHEMY_API_KEY = previousKey;
+    }
+  });
+
+  it('does not initialize trace providers for non-mint transfers', async () => {
+    const context = mintContext();
+    context.row.from_address = FROM;
+    await findTransactionValues([context.row]);
+    expect(get6529TraceProvider).not.toHaveBeenCalled();
+    expect(getAlchemyTraceProvider).not.toHaveBeenCalled();
   });
 });

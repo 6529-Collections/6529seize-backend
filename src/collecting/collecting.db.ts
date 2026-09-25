@@ -39,7 +39,7 @@ import {
   NEXTGEN_TOKENS_TABLE,
   NEXTGEN_TOKEN_TRAITS_TABLE
 } from '@/nextgen/nextgen_constants';
-import { Network } from '@/alchemy-sdk';
+import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
 import { ConnectionWrapper, dbSupplier, SqlExecutor } from '@/sql-executor';
 import { MemesSeason } from '@/entities/ISeason';
 import { Transaction } from '@/entities/ITransaction';

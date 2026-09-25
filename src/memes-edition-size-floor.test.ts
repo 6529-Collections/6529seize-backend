@@ -1,3 +1,6 @@
+jest.mock('@/ethereum-rpc/ethereum-rpc-provider', () => ({
+  getEthereumRpcProvider: jest.fn(() => ({}))
+}));
 const mockGetClaimForToken = jest.fn();
 const mockContract = jest.fn(() => ({
   getClaimForToken: mockGetClaimForToken

@@ -120,7 +120,7 @@ describe('The Memes EIP-712 submission signatures', () => {
     jest.replaceProperty(process, 'env', {
       ...process.env,
       NODE_ENV: 'test',
-      ALCHEMY_API_KEY: 'test-key'
+      ETHEREUM_RPC_URL: 'https://rpc.example.test'
     });
     jest.spyOn(Date, 'now').mockReturnValue(Date.parse(issuedAt) + 60_000);
     mockRedisClient.mockReturnValue(null);
