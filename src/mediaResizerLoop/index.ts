@@ -79,10 +79,10 @@ const liveHandler = wrapLambdaHandler(async (event: any, context) => {
       return notFound();
     }
 
-    sourceRevision =
-      originImage.VersionId && originImage.VersionId !== 'null'
-        ? originImage.VersionId
-        : originImage.ETag;
+    sourceRevision = getSourceObjectRevision(
+      originImage.VersionId,
+      originImage.ETag
+    );
 
     const width = sizes[0] === 'AUTO' ? null : parseInt(sizes[0]);
     const height = sizes[1] === 'AUTO' ? null : parseInt(sizes[1]);
@@ -179,6 +179,13 @@ const liveHandler = wrapLambdaHandler(async (event: any, context) => {
     return handleResizeFailure(e, path, key, sourceRevision);
   }
 });
+
+function getSourceObjectRevision(
+  versionId: string | undefined,
+  etag: string | undefined
+) {
+  return versionId && versionId !== 'null' ? versionId : etag;
+}
 
 /** Validate the opt-in contract without changing legacy option parsing. */
 function parseResizeOption(requestedOption: string) {
