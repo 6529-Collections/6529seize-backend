@@ -49,8 +49,7 @@ export function validateGifTiming(
   const delay = metadata.delay;
   if (delay === undefined && pages === 1) return;
   if (
-    !delay ||
-    delay.length !== pages ||
+    delay?.length !== pages ||
     delay.some(
       (value) => !Number.isSafeInteger(value) || value < 0 || value > 655350
     )
