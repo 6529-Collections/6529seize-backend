@@ -181,6 +181,7 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
       | 'media_preview_height'
       | 'media_preview_mime_type'
       | 'media_preview_bytes'
+      | 'media_preview_queued_at'
       | 'media_preview_last_tried_at'
       | 'media_preview_last_success_at'
       | 'media_preview_failed_since'
@@ -398,6 +399,7 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
               media_preview_failed_since = null,
               media_preview_locked_since = null,
               media_preview_last_tried_at = null,
+              media_preview_queued_at = ${PREVIEW_DB_NOW},
               media_preview_last_success_at = case
                 when media_preview_source_hash <=> :sourceHash then media_preview_last_success_at
                 else null
@@ -435,13 +437,20 @@ export class NftLinksDb extends LazyDbAccessCompatibleService {
                 not (media_preview_source_hash <=> :sourceHash)
                 or media_preview_status is null
                 or media_preview_status in ('FAILED', 'SKIPPED')
+                or (
+                  media_preview_status in ('PENDING', 'PROCESSING')
+                  and ifnull(media_preview_queued_at, 0) < ${PREVIEW_DB_NOW} - :recoveryAfterMs
+                  and ifnull(media_preview_locked_since, 0) < ${PREVIEW_DB_NOW} - :recoveryAfterMs
+                )
               )
           `,
             {
               canonicalId,
               sourceHash,
               kind,
-              pendingStatus: 'PENDING'
+              pendingStatus: 'PENDING',
+              // Longer than both the 120s worker timeout and 300s SQS visibility.
+              recoveryAfterMs: Time.minutes(10).toMillis()
             },
             { wrappedConnection: connection }
           )
