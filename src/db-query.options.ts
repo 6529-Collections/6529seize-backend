@@ -7,6 +7,8 @@ export enum DbPoolName {
 }
 
 export interface DbQueryOptions extends SqlBudgetQueryOptions {
+  /** Preserve the issuing request across callbacks from a reused MySQL socket. */
+  bindInvocationContext?: boolean;
   forcePool?: DbPoolName;
   wrappedConnection?: ConnectionWrapper<any>;
 }

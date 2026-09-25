@@ -759,6 +759,17 @@ presentation overlay while preserving source values. Routine successes expire
 after 30 days, resolved evidence after 90 days, and compact history after one
 year; unresolved evidence and active rules retain their required provenance.
 
+Standalone moderation capture uses bounded five-second SQL units with at most
+three total attempts; it retries only after acknowledged deadlock rollback.
+Finalization and retention
+lock the moderation item before evaluation/audit rows; retention discovers
+candidates without locks and rechecks them under the item lock. Caller-owned
+transactions retain their own retry/lifecycle authority. Private moderation SQL
+callbacks bind the issuing invocation's logging and operational contexts so a
+reused socket cannot attribute an error to an earlier request. See
+[Moderation capture recovery](./moderation-capture-recovery.md) for the limits,
+privacy contract, and rollout scope.
+
 MySQL stores viewer blocks and hides, reports, global drop and profile states,
 moderator roles, pre-publication decisions, and an append-only audit history.
 Pre-publication decision records are retained for 30 days and pruned daily by
