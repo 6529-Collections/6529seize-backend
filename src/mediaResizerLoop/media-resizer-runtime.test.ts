@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import type { Context } from 'aws-lambda';
 import sharp from 'sharp';
+import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import {
   classifyResizeDecoderError,
@@ -505,4 +506,110 @@ it('classifies the exact HEIF capability error without swallowing other plugin o
     const error = new Error(message);
     expect(classifyResizeDecoderError(error)).toBe(error);
   }
+});
+
+it('serves a versioned no-op GIF unchanged, using the original S3 key and GIF content type', async () => {
+  mockInput = readFileSync(join(__dirname, '../../scripts/media-fixtures/gif'));
+  mockContentType = 'application/octet-stream';
+  const result = await handler(
+    { queryStringParameters: { path: 'synthetic/AUTOx800_gifv2/fixture.gif' } },
+    {} as Context,
+    () => undefined
+  );
+  expect(result.statusCode).toBe(302);
+  expect(GetObjectCommand).toHaveBeenCalledWith(
+    expect.objectContaining({ Key: 'synthetic/fixture.gif' })
+  );
+  expect(Upload).toHaveBeenCalledWith(
+    expect.objectContaining({
+      params: expect.objectContaining({
+        Key: 'synthetic/AUTOx800_gifv2/fixture.gif',
+        ContentType: 'image/gif'
+      })
+    })
+  );
+  expect(mockUploaded).toEqual(mockInput);
+});
+
+it('does not silently publish a still or mislabeled file under the GIF v2 contract', async () => {
+  const result = await handler(
+    { queryStringParameters: { path: 'synthetic/AUTOx800_gifv2/fixture.gif' } },
+    {} as Context,
+    () => undefined
+  );
+  expect(result.statusCode).toBe(422);
+  expect(Upload).not.toHaveBeenCalled();
+});
+
+it.each(['AUTOxAUTO_gifv2', '0x800_gifv2', 'AUTOx800oops_gifv2'])(
+  'rejects invalid animation dimensions %s before fetching',
+  async (option) => {
+    const result = await handler(
+      { queryStringParameters: { path: `synthetic/${option}/fixture.gif` } },
+      {} as Context,
+      () => undefined
+    );
+    expect(result.statusCode).toBe(404);
+    expect(GetObjectCommand).not.toHaveBeenCalled();
+  }
+);
+
+it.each([false, true])(
+  'cleans re-encoded GIF files after upload (failure=%s)',
+  async (failUpload) => {
+    const directories = jest.spyOn(fs, 'mkdtemp');
+    mockInput = readFileSync(
+      join(__dirname, '../../scripts/media-fixtures/gif')
+    );
+    mockContentType = 'image/gif';
+    if (failUpload) mockUploadError = new Error('synthetic upload failure');
+    const result = handler(
+      { queryStringParameters: { path: 'synthetic/AUTOx2_gifv2/fixture.gif' } },
+      { getRemainingTimeInMillis: () => 30000 } as Context,
+      () => undefined
+    );
+    if (failUpload) {
+      await expect(result).rejects.toBe(mockUploadError);
+    } else {
+      expect((await result).statusCode).toBe(302);
+      expect(mockUploaded).not.toEqual(mockInput);
+      expect(
+        await sharp(mockUploaded, { animated: true }).metadata()
+      ).toMatchObject({
+        pageHeight: 2,
+        pages: 2,
+        delay: [80, 160],
+        loop: 2
+      });
+    }
+    expect(Upload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({
+          Key: 'synthetic/AUTOx2_gifv2/fixture.gif',
+          ContentType: 'image/gif'
+        })
+      })
+    );
+    const directory = await directories.mock.results[0].value;
+    await expect(fs.access(directory)).rejects.toMatchObject({
+      code: 'ENOENT'
+    });
+  }
+);
+
+it('uses Lambda remaining time after source spooling before starting GIF work', async () => {
+  const directories = jest.spyOn(fs, 'mkdtemp');
+  mockInput = readFileSync(join(__dirname, '../../scripts/media-fixtures/gif'));
+  // Operational failures propagate rather than returning a cacheable 422.
+  await expect(
+    handler(
+      { queryStringParameters: { path: 'synthetic/AUTOx2_gifv2/fixture.gif' } },
+      { getRemainingTimeInMillis: () => 2500 } as Context,
+      () => undefined
+    )
+  ).rejects.toThrow('GIF_PREVIEW_DEADLINE_EXCEEDED');
+  expect(Upload).not.toHaveBeenCalled();
+  expect(mockReportUnsupported).not.toHaveBeenCalled();
+  const directory = await directories.mock.results[0].value;
+  await expect(fs.access(directory)).rejects.toMatchObject({ code: 'ENOENT' });
 });
