@@ -33,6 +33,11 @@ import {
 } from './moderation-review.types';
 import { UserGroupEntity } from '@/entities/IUserGroup';
 import { ContentModerationReportEntity } from '@/entities/IContentModeration';
+import {
+  moderationDatabaseCode,
+  runModerationCapture
+} from './moderation-capture-transaction';
+import { Logger } from '@/logging';
 
 export function moderationConflict(): never {
   throw new CustomApiCompliantException(
@@ -56,9 +61,9 @@ function jsonValue<T>(value: T | string | null): T | null {
   return typeof value === 'string' ? (JSON.parse(value) as T) : value;
 }
 export function throwModerationCaptureFailure(error: unknown): never {
-  const code =
-    error && typeof error === 'object' && 'code' in error ? error.code : null;
+  const code = moderationDatabaseCode(error);
   const transient = [
+    'SQL_BUDGET_EXCEEDED',
     'ER_LOCK_DEADLOCK',
     'ER_LOCK_WAIT_TIMEOUT',
     'ER_CON_COUNT_ERROR',
@@ -118,6 +123,8 @@ function nextPermitGeneration(item: ModerationItem, action: string): unknown {
   if (action === 'REVOKE_OVERRIDE' || action === 'BLOCK') return null;
   return item.scope.permit_generation ?? null;
 }
+type EvaluationOwner = { id: string; item_id: string };
+
 type RevisionItem = Pick<
   ModerationItem,
   'subject_type' | 'subject_id' | 'published_subject_id'
@@ -309,7 +316,11 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
     });
   }
   private options(ctx: RequestContext) {
-    return { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE };
+    return {
+      wrappedConnection: ctx.connection,
+      forcePool: DbPoolName.WRITE,
+      bindInvocationContext: true
+    };
   }
   private async timed<T>(
     name: string,
@@ -320,6 +331,17 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(key);
     try {
       return await run();
+    } catch (error) {
+      const code = moderationDatabaseCode(error);
+      if (code !== 'UNKNOWN')
+        Logger.get('MODERATION_CAPTURE').warn(
+          'Moderation database operation failed',
+          {
+            operation: name,
+            code
+          }
+        );
+      throw error;
     } finally {
       ctx.timer?.stop(key);
     }
@@ -331,8 +353,12 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
     retryOf: string | null = null
   ): Promise<{ item: ModerationItem; evaluationId: string }> {
     if (!ctx.connection)
-      return this.executeNativeQueriesInTransaction((connection) =>
-        this.start(input, trigger, { ...ctx, connection }, retryOf)
+      return runModerationCapture((options) =>
+        this.executeNativeQueriesInTransaction(
+          (connection) =>
+            this.start(input, trigger, { ...ctx, connection }, retryOf),
+          options
+        )
       ).catch(throwModerationCaptureFailure);
     return this.timed('start', ctx, async () => {
       const id = moderationItemId(input);
@@ -387,10 +413,23 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext = {}
   ): Promise<void> {
     if (!ctx.connection)
-      return this.executeNativeQueriesInTransaction((connection) =>
-        this.finish(id, result, { ...ctx, connection })
+      return runModerationCapture((options) =>
+        this.executeNativeQueriesInTransaction(
+          (connection) => this.finish(id, result, { ...ctx, connection }),
+          options
+        )
       ).catch(throwModerationCaptureFailure);
     return this.timed('finish', ctx, async () => {
+      // Resolve immutable ownership without taking an evaluation lock. All writers
+      // acquire the shared item first, including capture start and retention.
+      const evaluation = await this.db.oneOrNull<{ item_id: string }>(
+        `select item_id from ${EVALUATIONS} where id=:id`,
+        { id },
+        this.options(ctx)
+      );
+      if (!evaluation)
+        throw new NotFoundException('Moderation evaluation not found');
+      await this.get(evaluation.item_id, ctx, true);
       await this.db.execute(
         `update ${EVALUATIONS} set outcome=:outcome, result=json_merge_patch(coalesce(result,json_object()),cast(:result as json)), provider=:provider, model=:model, cache_hit=:cacheHit, fallback=:fallback, completed_at=:now where id=:id and completed_at is null`,
         {
@@ -885,6 +924,32 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
       );
     });
   }
+  private async retainItemRows(
+    candidates: EvaluationOwner[],
+    ctx: RequestContext,
+    run: (ids: string[], tx: RequestContext) => Promise<void>
+  ): Promise<void> {
+    const byItem = new Map<string, string[]>();
+    for (const candidate of candidates) {
+      const ids = byItem.get(candidate.item_id) ?? [];
+      ids.push(candidate.id);
+      byItem.set(candidate.item_id, ids);
+    }
+    for (const [itemId, ids] of Array.from(byItem.entries()).sort(([a], [b]) =>
+      a.localeCompare(b)
+    )) {
+      await this.executeNativeQueriesInTransaction(async (connection) => {
+        const tx = { ...ctx, connection };
+        const item = await this.db.oneOrNull<{ id: string }>(
+          `select id from ${ITEMS} where id=:id for update`,
+          { id: itemId },
+          this.options(tx)
+        );
+        // A concurrent routine purge may have removed the discovered item.
+        if (item) await run(ids, tx);
+      });
+    }
+  }
   async retain(ctx: RequestContext = {}) {
     return this.timed('retain', ctx, async () => {
       await this.executeNativeQueriesInTransaction(async (connection) => {
@@ -914,20 +979,27 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
           this.options(tx)
         );
       });
-      await this.executeNativeQueriesInTransaction(async (connection) => {
-        const tx = { ...ctx, connection };
+      const stale = Date.now() - 10 * 60000;
+      // Discovery is non-locking. Recheck eligibility after locking each item,
+      // otherwise retention can hold an evaluation while waiting for its item.
+      const interruptedCandidates = await this.db.execute<EvaluationOwner>(
+        `select id,item_id from ${EVALUATIONS} where completed_at is null and started_at<:stale order by started_at,id limit 1000`,
+        { stale },
+        this.options(ctx)
+      );
+      await this.retainItemRows(interruptedCandidates, ctx, async (ids, tx) => {
         const interrupted = await this.db.execute<{
           id: string;
           item_id: string;
         }>(
-          `select id,item_id from ${EVALUATIONS} where completed_at is null and started_at<:stale order by started_at,id limit 1000 for update`,
-          { stale: Date.now() - 10 * 60000 },
+          `select id,item_id from ${EVALUATIONS} where id in (:ids) and completed_at is null and started_at<:stale order by id for update`,
+          { ids, stale },
           this.options(tx)
         );
         if (!interrupted.length) return;
         await this.db.execute(
-          `update ${ITEMS} set outcome='ERROR',review_status='NEEDS_REVIEW',version=version+1,evidence_expires_at=null where id in (:ids) and override is null`,
-          { ids: Array.from(new Set(interrupted.map((row) => row.item_id))) },
+          `update ${ITEMS} set outcome='ERROR',review_status='NEEDS_REVIEW',version=version+1,evidence_expires_at=null where id=:id and override is null`,
+          { id: interrupted[0].item_id },
           this.options(tx)
         );
         await this.db.execute(
@@ -949,30 +1021,43 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
         { now: Date.now() },
         this.options(ctx)
       );
-      await this.executeNativeQueriesInTransaction(async (connection) => {
-        const tx = { ...ctx, connection };
-        const expired = await this.db.execute<{ id: string }>(
-          `select e.id from ${EVALUATIONS} e join ${ITEMS} i on i.id=e.item_id where e.result is not null and i.evidence is null and i.evidence_expires_at<:now order by e.id limit 1000 for update`,
-          { now: Date.now() },
-          this.options(tx)
-        );
-        if (!expired.length) return;
+      const expiredCandidates = await this.db.execute<EvaluationOwner>(
+        `select e.id,e.item_id from ${EVALUATIONS} e join ${ITEMS} i on i.id=e.item_id where e.result is not null and i.evidence is null and i.evidence_expires_at<:now order by e.id limit 1000`,
+        { now: Date.now() },
+        this.options(ctx)
+      );
+      await this.retainItemRows(expiredCandidates, ctx, async (ids, tx) => {
         await this.db.execute(
-          `update ${EVALUATIONS} set result=null where id in (:ids)`,
-          { ids: expired.map((row) => row.id) },
+          `update ${EVALUATIONS} e join ${ITEMS} i on i.id=e.item_id set e.result=null where e.id in (:ids) and i.evidence is null and i.evidence_expires_at<:now`,
+          { ids, now: Date.now() },
           this.options(tx)
         );
       });
-      await this.db.execute(
-        `delete from ${AUDIT} where item_id is not null and created_at<:old and item_id in (select id from ${ITEMS} where override is null and suppressed=false and updated_at<:old) limit 1000`,
-        { old: Date.now() - 365 * 86400000 },
+      const old = Date.now() - 365 * 86400000;
+      const oldAudit = await this.db.execute<EvaluationOwner>(
+        `select a.id,a.item_id from ${AUDIT} a join ${ITEMS} i on i.id=a.item_id where a.created_at<:old and i.override is null and i.suppressed=false and i.updated_at<:old order by a.id limit 1000`,
+        { old },
         this.options(ctx)
       );
-      await this.db.execute(
-        `delete from ${EVALUATIONS} where started_at<:old and item_id in (select id from ${ITEMS} where review_status='REVIEWED' and override is null and suppressed=false and updated_at<:old) limit 1000`,
-        { old: Date.now() - 365 * 86400000 },
+      await this.retainItemRows(oldAudit, ctx, async (ids, tx) => {
+        await this.db.execute(
+          `delete a from ${AUDIT} a join ${ITEMS} i on i.id=a.item_id where a.id in (:ids) and a.created_at<:old and i.override is null and i.suppressed=false and i.updated_at<:old`,
+          { ids, old },
+          this.options(tx)
+        );
+      });
+      const oldEvaluations = await this.db.execute<EvaluationOwner>(
+        `select e.id,e.item_id from ${EVALUATIONS} e join ${ITEMS} i on i.id=e.item_id where e.started_at<:old and i.review_status='REVIEWED' and i.override is null and i.suppressed=false and i.updated_at<:old order by e.id limit 1000`,
+        { old },
         this.options(ctx)
       );
+      await this.retainItemRows(oldEvaluations, ctx, async (ids, tx) => {
+        await this.db.execute(
+          `delete e from ${EVALUATIONS} e join ${ITEMS} i on i.id=e.item_id where e.id in (:ids) and e.started_at<:old and i.review_status='REVIEWED' and i.override is null and i.suppressed=false and i.updated_at<:old`,
+          { ids, old },
+          this.options(tx)
+        );
+      });
       await this.db.execute(
         `update ${CONTENT_MODERATION_REPORTS_TABLE} set content_snapshot=json_object('evidence_expired',true),notes=null,ai_rationale=null,ai_evidence=null where status<>'OPEN' and resolved_at<:old and json_extract(content_snapshot,'$.evidence_expired') is null limit 1000`,
         { old: Date.now() - 90 * 86400000 },

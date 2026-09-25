@@ -12,7 +12,8 @@ import {
   TRANSACTIONS_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE
 } from '@/constants';
-import { sqlExecutor } from '@/sql-executor';
+import { connect, disconnect, getDataSource } from '@/db';
+import { setSqlExecutor, sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
@@ -188,6 +189,64 @@ describeWithSeed(
     }
   ],
   () => {
+    it('collects epoch timestamps through the Lambda TypeORM executor', async () => {
+      const previousExecutor = sqlExecutor;
+      try {
+        await connect();
+        expect(sqlExecutor).not.toBe(previousExecutor);
+        expect(getDataSource().isInitialized).toBe(true);
+        const [raw] = await sqlExecutor.execute<{ created_at: string }>(
+          `select created_at from ${DROPS_TABLE} where id = :id`,
+          { id: 'reply' }
+        );
+        // The Lambda driver returns BIGINT strings; the default test pool casts them.
+        expect(raw.created_at).toBe(String(window.start + 1));
+        const lambdaDb = new NewsletterDb(() => sqlExecutor);
+        expect(
+          await lambdaDb.recentDrops(
+            'public',
+            window,
+            { createdAt: window.start, serialNo: 1 },
+            'publisher',
+            {}
+          )
+        ).toEqual([
+          expect.objectContaining({
+            created_at: window.start + 1,
+            serial_no: 101
+          })
+        ]);
+        const result = await new NewsletterCollector(lambdaDb).collect(
+          window,
+          'destination',
+          'publisher',
+          {}
+        );
+        expect(
+          result.sources.find((source) => source.url.endsWith('serialNo=101'))
+        ).toMatchObject({
+          time: '2026-09-23T00:00:00.001Z',
+          context_only: false,
+          discussion_start: 'https://6529.io/waves/public?serialNo=100'
+        });
+        expect(
+          result.sources.find((source) => source.url.endsWith('serialNo=100'))
+        ).toMatchObject({
+          time: '2026-09-22T23:59:59.999Z',
+          context_only: true
+        });
+        expect(result.winners).toEqual([
+          expect.objectContaining({ decision_time: '2026-09-23T00:00:00.000Z' })
+        ]);
+      } finally {
+        try {
+          if (getDataSource()?.isInitialized) await disconnect();
+        } finally {
+          setSqlExecutor(previousExecutor);
+        }
+      }
+    });
+
     it('discovers only anonymous public waves, including eligible subwaves', async () => {
       expect(await db.activeWaves(window, 'destination', {})).toEqual(
         [MAIN_STAGE_WAVE_ID, 'public', 'public-child'].sort((a, b) =>
