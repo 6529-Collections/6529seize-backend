@@ -792,7 +792,8 @@ after 30 days, resolved evidence after 90 days, and compact history after one
 year; unresolved evidence and active rules retain their required provenance.
 
 Standalone moderation capture uses bounded five-second SQL units with at most
-three attempts after acknowledged deadlock rollback. Finalization and retention
+three total attempts; it retries only after acknowledged deadlock rollback.
+Finalization and retention
 lock the moderation item before evaluation/audit rows; retention discovers
 candidates without locks and rechecks them under the item lock. Caller-owned
 transactions retain their own retry/lifecycle authority. Private moderation SQL
