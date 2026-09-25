@@ -15,6 +15,14 @@ import { HttpFile } from '../http/http';
 export class ApiDropCurationRequest {
     'curation_id': string;
     'priority_order'?: number;
+    /**
+    * Move an existing drop relative to the current curation order.
+    */
+    'placement'?: ApiDropCurationRequestPlacementEnum;
+    /**
+    * Required for BEFORE or AFTER placement; must be in the same curation.
+    */
+    'anchor_drop_id'?: string;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -32,6 +40,18 @@ export class ApiDropCurationRequest {
             "baseName": "priority_order",
             "type": "number",
             "format": "int64"
+        },
+        {
+            "name": "placement",
+            "baseName": "placement",
+            "type": "ApiDropCurationRequestPlacementEnum",
+            "format": ""
+        },
+        {
+            "name": "anchor_drop_id",
+            "baseName": "anchor_drop_id",
+            "type": "string",
+            "format": ""
         }    ];
 
     static getAttributeTypeMap() {
@@ -41,3 +61,11 @@ export class ApiDropCurationRequest {
     public constructor() {
     }
 }
+
+export enum ApiDropCurationRequestPlacementEnum {
+    Top = 'TOP',
+    Bottom = 'BOTTOM',
+    Before = 'BEFORE',
+    After = 'AFTER'
+}
+
