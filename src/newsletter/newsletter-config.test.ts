@@ -39,7 +39,8 @@ describe('newsletter configuration and time windows', () => {
       {
         source: 'aws.events',
         'detail-type': 'Scheduled Event',
-        time: '2026-10-01T00:00:00Z'
+        time: '2026-10-01T00:00:00Z',
+        date: '2026-09-24'
       },
       Date.parse('2026-10-03T12:00:00Z')
     );
@@ -59,6 +60,36 @@ describe('newsletter configuration and time windows', () => {
         end: now,
         scheduled: false
       });
+    }
+  );
+
+  it('selects a complete UTC day as a fresh manual edition when a date is supplied', () => {
+    expect(
+      newsletterWindow(
+        { date: '2026-09-24' },
+        Date.parse('2026-09-25T14:37:52Z')
+      )
+    ).toEqual({
+      start: Date.parse('2026-09-24T00:00:00Z'),
+      end: Date.parse('2026-09-25T00:00:00Z'),
+      scheduled: false
+    });
+  });
+
+  it.each([
+    '2026-02-30',
+    '2026-13-01',
+    '2026-9-24',
+    '2026-09-24T00:00:00Z',
+    '',
+    null,
+    123
+  ])(
+    'rejects an invalid manual date instead of publishing a different day: %j',
+    (date) => {
+      expect(() => newsletterWindow({ date })).toThrow(
+        'Manual newsletter date must be a valid YYYY-MM-DD'
+      );
     }
   );
 

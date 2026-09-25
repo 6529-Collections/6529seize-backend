@@ -87,8 +87,8 @@ describe('newsletter publisher', () => {
   });
 
   it('keeps formatting and refuses oversized or empty editions instead of truncating', () => {
-    expect(newsletterMarkdown('### A story\n\nText', window)).toContain(
-      '1970-01-01T00:00:00.000Z'
+    expect(newsletterMarkdown('### A story\n\nText', window)).toBe(
+      '## 6529 Daily Post — 1970-01-01\n\n*1 minute read*\n\n### A story\n\nText'
     );
     expect(() => newsletterMarkdown('x'.repeat(25_000), window)).toThrow(
       'does not fit'

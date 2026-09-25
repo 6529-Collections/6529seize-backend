@@ -1,4 +1,5 @@
 import { Wallet } from 'ethers';
+import MarkdownIt from 'markdown-it';
 import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropRequest';
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { ApiDrop } from '@/api/generated/models/ApiDrop';
@@ -9,14 +10,24 @@ import { ApiLoginRequest } from '@/api/generated/models/ApiLoginRequest';
 import { NewsletterWindow } from './newsletter.config';
 
 const API = 'https://api.6529.io/api';
+const markdown = new MarkdownIt({ html: false, linkify: false });
+const READING_WORDS_PER_MINUTE = 250;
 
 export function newsletterMarkdown(
   body: string,
   window: NewsletterWindow
 ): string {
   const day = new Date(window.start).toISOString().slice(0, 10);
-  const coverage = `${new Date(window.start).toISOString()} – ${new Date(window.end).toISOString()} (UTC)`;
-  const text = `## 6529 Mainstream Media — ${day}\n\n*${coverage}*\n\n${body.trim()}`;
+  // Count visible prose and link labels, excluding Markdown syntax and URLs.
+  const prose = markdown
+    .parse(body, {})
+    .flatMap((token) => token.children ?? [])
+    .filter((token) => token.type === 'text' || token.type === 'code_inline')
+    .map((token) => token.content)
+    .join(' ');
+  const wordCount = prose.match(/\S+/g)?.length ?? 0;
+  const minutes = Math.max(1, Math.ceil(wordCount / READING_WORDS_PER_MINUTE));
+  const text = `## 6529 Daily Post — ${day}\n\n*${minutes} minute read*\n\n${body.trim()}`;
   // One formatted drop; reject an incomplete/oversized answer rather than truncate it.
   if (
     !body.trim() ||
