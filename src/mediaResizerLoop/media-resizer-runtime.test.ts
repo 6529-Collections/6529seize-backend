@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import type { Context } from 'aws-lambda';
 import sharp from 'sharp';
+import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import {
   classifyResizeDecoderError,
@@ -506,3 +507,49 @@ it('classifies the exact HEIF capability error without swallowing other plugin o
     expect(classifyResizeDecoderError(error)).toBe(error);
   }
 });
+
+it('serves a versioned no-op GIF unchanged, using the original S3 key and GIF content type', async () => {
+  mockInput = readFileSync(join(__dirname, '../../scripts/media-fixtures/gif'));
+  mockContentType = 'application/octet-stream';
+  const result = await handler(
+    { queryStringParameters: { path: 'synthetic/AUTOx800_gifv2/fixture.gif' } },
+    {} as Context,
+    () => undefined
+  );
+  expect(result.statusCode).toBe(302);
+  expect(GetObjectCommand).toHaveBeenCalledWith(
+    expect.objectContaining({ Key: 'synthetic/fixture.gif' })
+  );
+  expect(Upload).toHaveBeenCalledWith(
+    expect.objectContaining({
+      params: expect.objectContaining({
+        Key: 'synthetic/AUTOx800_gifv2/fixture.gif',
+        ContentType: 'image/gif'
+      })
+    })
+  );
+  expect(mockUploaded).toEqual(mockInput);
+});
+
+it('does not silently publish a still or mislabeled file under the GIF v2 contract', async () => {
+  const result = await handler(
+    { queryStringParameters: { path: 'synthetic/AUTOx800_gifv2/fixture.gif' } },
+    {} as Context,
+    () => undefined
+  );
+  expect(result.statusCode).toBe(422);
+  expect(Upload).not.toHaveBeenCalled();
+});
+
+it.each(['AUTOxAUTO_gifv2', '0x800_gifv2', 'AUTOx800oops_gifv2'])(
+  'rejects invalid animation dimensions %s before fetching',
+  async (option) => {
+    const result = await handler(
+      { queryStringParameters: { path: `synthetic/${option}/fixture.gif` } },
+      {} as Context,
+      () => undefined
+    );
+    expect(result.statusCode).toBe(404);
+    expect(GetObjectCommand).not.toHaveBeenCalled();
+  }
+);

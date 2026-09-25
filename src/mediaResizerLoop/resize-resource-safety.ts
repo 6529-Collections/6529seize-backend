@@ -146,6 +146,47 @@ export async function withResizeInputFile<T>(
   useFile: (path: string, animated: boolean) => Promise<T>,
   target?: ResizeTarget
 ): Promise<T> {
+  return withResizeSourceFile(source, contentLength, async (path) => {
+    const metadata = await Sharp(path, {
+      failOn: 'none',
+      animated,
+      limitInputPixels: INPUT_PIXEL_BACKSTOP
+    })
+      .metadata()
+      .catch((error: unknown) => {
+        throw classifyResizeDecoderError(error);
+      });
+    let resizeAnimated = animated;
+    try {
+      assertDecodedWorkBudget(metadata, animated, target);
+    } catch (error) {
+      if (
+        !animated ||
+        metadata.format !== 'gif' ||
+        !(error instanceof UnprocessableResizeInput) ||
+        error.code !== 'DECODED_IMAGE_TOO_LARGE'
+      )
+        throw error;
+
+      // A still preview preserves access to the artwork without admitting the
+      // entire animation. Even the first frame must fit the original budget.
+      const firstFrame = await Sharp(path, {
+        failOn: 'none',
+        limitInputPixels: INPUT_PIXEL_BACKSTOP
+      }).metadata();
+      assertDecodedWorkBudget(firstFrame, false);
+      resizeAnimated = false;
+    }
+    return useFile(path, resizeAnimated);
+  });
+}
+
+/** Own the source and generated files for the entire resize/upload operation. */
+export async function withResizeSourceFile<T>(
+  source: Readable,
+  contentLength: number | undefined,
+  useFile: (path: string) => Promise<T>
+): Promise<T> {
   // S3 can fail before pipeline attaches its listeners, including while mkdtemp
   // is pending or after an early destroy. Keep the original failure until close.
   let sourceError = source.errored;
@@ -184,37 +225,7 @@ export async function withResizeInputFile<T>(
   try {
     if (sourceError) throw sourceError;
     await pipeline(source, limit, createWriteStream(path));
-    const metadata = await Sharp(path, {
-      failOn: 'none',
-      animated,
-      limitInputPixels: INPUT_PIXEL_BACKSTOP
-    })
-      .metadata()
-      .catch((error: unknown) => {
-        throw classifyResizeDecoderError(error);
-      });
-    let resizeAnimated = animated;
-    try {
-      assertDecodedWorkBudget(metadata, animated, target);
-    } catch (error) {
-      if (
-        !animated ||
-        metadata.format !== 'gif' ||
-        !(error instanceof UnprocessableResizeInput) ||
-        error.code !== 'DECODED_IMAGE_TOO_LARGE'
-      )
-        throw error;
-
-      // A still preview preserves access to the artwork without admitting the
-      // entire animation. Even the first frame must fit the original budget.
-      const firstFrame = await Sharp(path, {
-        failOn: 'none',
-        limitInputPixels: INPUT_PIXEL_BACKSTOP
-      }).metadata();
-      assertDecodedWorkBudget(firstFrame, false);
-      resizeAnimated = false;
-    }
-    result = await useFile(path, resizeAnimated);
+    result = await useFile(path);
   } catch (error) {
     // A secondary cleanup failure must not change input classification or hide
     // the original source/upload error. Cleanup-only failures still propagate.
