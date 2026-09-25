@@ -31,6 +31,20 @@ export interface NewsletterDrop {
   reply_to_drop_id: string | null;
 }
 
+// TypeORM's Lambda connection returns BIGINT strings; the API/test pool casts them.
+type NewsletterDropRow = Omit<NewsletterDrop, 'created_at' | 'serial_no'> & {
+  created_at: number | string;
+  serial_no: number | string;
+};
+
+function normalizeDrop(row: NewsletterDropRow): NewsletterDrop {
+  return {
+    ...row,
+    created_at: Number(row.created_at),
+    serial_no: Number(row.serial_no)
+  };
+}
+
 export interface NewsletterPart {
   drop_id: string;
   content: string | null;
@@ -113,7 +127,7 @@ export class NewsletterDb extends LazyDbAccessCompatibleService {
     excludedAuthorId: string,
     ctx: RequestContext
   ): Promise<NewsletterDrop[]> {
-    return this.query(
+    const rows = await this.query<NewsletterDropRow>(
       'recentDrops',
       `${DROP_SELECT} where ${PUBLIC_DROP} and d.wave_id = :waveId
         and d.author_id <> :excludedAuthorId
@@ -124,6 +138,7 @@ export class NewsletterDb extends LazyDbAccessCompatibleService {
       { waveId, ...window, ...after, excludedAuthorId },
       ctx
     );
+    return rows.map(normalizeDrop);
   }
 
   async contextDrops(
@@ -134,7 +149,7 @@ export class NewsletterDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<NewsletterDrop[]> {
     if (!ids.length) return [];
-    return this.query(
+    const rows = await this.query<NewsletterDropRow>(
       'contextDrops',
       `${DROP_SELECT} where ${PUBLIC_DROP} and d.id in (:ids)
         and d.created_at < :end and d.wave_id <> :excludedWaveId
@@ -142,6 +157,7 @@ export class NewsletterDb extends LazyDbAccessCompatibleService {
       { ids, end, excludedWaveId, excludedAuthorId },
       ctx
     );
+    return rows.map(normalizeDrop);
   }
 
   async parts(ids: string[], ctx: RequestContext): Promise<NewsletterPart[]> {
@@ -175,7 +191,9 @@ export class NewsletterDb extends LazyDbAccessCompatibleService {
     window: NewsletterWindow,
     ctx: RequestContext
   ): Promise<(NewsletterDrop & { decision_time: number; ranking: number })[]> {
-    return this.query(
+    const rows = await this.query<
+      NewsletterDropRow & { decision_time: number | string; ranking: number }
+    >(
       'winners',
       `${DROP_SELECT.replace('select d.id', 'select winner.decision_time, winner.ranking, d.id')}
         join ${WAVES_DECISION_WINNER_DROPS_TABLE} winner on winner.drop_id = d.id
@@ -186,6 +204,11 @@ export class NewsletterDb extends LazyDbAccessCompatibleService {
       { ...window, mainStage: MAIN_STAGE_WAVE_ID },
       ctx
     );
+    return rows.map((row) => ({
+      ...normalizeDrop(row),
+      decision_time: Number(row.decision_time),
+      ranking: row.ranking
+    }));
   }
 
   async mints(
