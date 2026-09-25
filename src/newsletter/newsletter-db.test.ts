@@ -12,7 +12,7 @@ import {
   TRANSACTIONS_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE
 } from '@/constants';
-import { connect, disconnect } from '@/db';
+import { connect, disconnect, getDataSource } from '@/db';
 import { setSqlExecutor, sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
@@ -191,8 +191,10 @@ describeWithSeed(
   () => {
     it('collects epoch timestamps through the Lambda TypeORM executor', async () => {
       const previousExecutor = sqlExecutor;
-      await connect();
       try {
+        await connect();
+        expect(sqlExecutor).not.toBe(previousExecutor);
+        expect(getDataSource().isInitialized).toBe(true);
         const [raw] = await sqlExecutor.execute<{ created_at: string }>(
           `select created_at from ${DROPS_TABLE} where id = :id`,
           { id: 'reply' }
@@ -237,8 +239,11 @@ describeWithSeed(
           expect.objectContaining({ decision_time: '2026-09-23T00:00:00.000Z' })
         ]);
       } finally {
-        await disconnect();
-        setSqlExecutor(previousExecutor);
+        try {
+          if (getDataSource()?.isInitialized) await disconnect();
+        } finally {
+          setSqlExecutor(previousExecutor);
+        }
       }
     });
 
