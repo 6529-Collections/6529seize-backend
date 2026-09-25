@@ -13,6 +13,7 @@ const MAX_FRAMES = 120;
 const MAX_SCAN_PIXELS = 2_000_000_000;
 const MAX_PASSTHROUGH_BYTES = 8 * 1024 * 1024;
 const MAX_SECONDS = 20;
+const UPLOAD_RESERVE_MS = 2000;
 
 export interface GifPreviewTarget {
   width: number | null;
@@ -38,6 +39,23 @@ function inspectGif(metadata: Metadata) {
   }
   if (width * height > MAX_FRAME_PIXELS || pages > MAX_FRAMES) rejectLarge();
   return { width, height, pages };
+}
+
+/** Reject inconsistent timing instead of silently inventing animation timing. */
+export function validateGifTiming(
+  metadata: Pick<Metadata, 'delay'>,
+  pages: number
+) {
+  const delay = metadata.delay;
+  if (delay === undefined && pages === 1) return;
+  if (
+    !delay ||
+    delay.length !== pages ||
+    delay.some(
+      (value) => !Number.isSafeInteger(value) || value < 0 || value > 655350
+    )
+  )
+    throw new UnprocessableResizeInput('INVALID_IMAGE');
 }
 
 function remainingSeconds(deadline: number) {
@@ -93,13 +111,20 @@ export function getGifPreviewDimensions(
 /** Only call within withResizeSourceFile: all output shares its cleanup scope. */
 export async function prepareGifPreview(
   inputPath: string,
-  target: GifPreviewTarget
+  target: GifPreviewTarget,
+  remainingTimeMs = MAX_SECONDS * 1000 + UPLOAD_RESERVE_MS
 ) {
-  const deadline = Date.now() + MAX_SECONDS * 1000;
+  const deadline =
+    Date.now() +
+    Math.min(MAX_SECONDS * 1000, remainingTimeMs - UPLOAD_RESERVE_MS);
+  remainingSeconds(deadline);
+  // Sharp's GIF loader exposes n-pages/delay metadata even when only one page
+  // is selected. Keep metadata inspection independent of full-animation decode.
   const metadata = await Sharp(inputPath, {
     limitInputPixels: MAX_FRAME_PIXELS
   }).metadata();
   const { width, height, pages } = inspectGif(metadata);
+  validateGifTiming(metadata, pages);
   if (canKeepOriginal(metadata, target, (await stat(inputPath)).size))
     return inputPath;
   if (width * height * ((pages * (pages + 1)) / 2) > MAX_SCAN_PIXELS)

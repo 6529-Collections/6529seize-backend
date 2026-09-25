@@ -3,7 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import Sharp from 'sharp';
-import { getGifPreviewDimensions, prepareGifPreview } from './gif-preview';
+import {
+  getGifPreviewDimensions,
+  prepareGifPreview,
+  validateGifTiming
+} from './gif-preview';
 import { withResizeSourceFile } from './resize-resource-safety';
 
 let directory: string;
@@ -163,4 +167,33 @@ it('honors the deadline without publishing a partial animation', async () => {
   } finally {
     clock.mockRestore();
   }
+});
+
+it.each([[40], [40, -1], [40, 0.5], [40, 655360]])(
+  'rejects inconsistent or invalid animation delays %j',
+  (...delay) => {
+    expect(() => validateGifTiming({ delay }, 2)).toThrow('INVALID_IMAGE');
+  }
+);
+
+it('allows zero delay and a single image without animation metadata', () => {
+  expect(() => validateGifTiming({ delay: [0, 100] }, 2)).not.toThrow();
+  expect(() => validateGifTiming({}, 1)).not.toThrow();
+  expect(() => validateGifTiming({}, 2)).toThrow('INVALID_IMAGE');
+});
+
+it('rejects processing when Lambda time is needed for upload and cleanup', async () => {
+  await fixture(20, 14, 3);
+  await expect(
+    prepareGifPreview(source, { width: null, height: 7, fit: 'cover' }, 2500)
+  ).rejects.toThrow('DECODED_IMAGE_TOO_LARGE');
+});
+
+it('reads complete GIF metadata without decoding the full animation', async () => {
+  await fixture(20, 14, 3);
+  const selected = await Sharp(source).metadata();
+  const animated = await Sharp(source, { animated: true }).metadata();
+  expect(selected.pages).toBe(animated.pages);
+  expect(selected.delay).toEqual(animated.delay);
+  expect(selected.loop).toBe(animated.loop);
 });

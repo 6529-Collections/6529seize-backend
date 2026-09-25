@@ -553,3 +553,57 @@ it.each(['AUTOxAUTO_gifv2', '0x800_gifv2', 'AUTOx800oops_gifv2'])(
     expect(GetObjectCommand).not.toHaveBeenCalled();
   }
 );
+
+it.each([false, true])(
+  'cleans re-encoded GIF files after upload (failure=%s)',
+  async (failUpload) => {
+    const directories = jest.spyOn(fs, 'mkdtemp');
+    mockInput = readFileSync(
+      join(__dirname, '../../scripts/media-fixtures/gif')
+    );
+    mockContentType = 'image/gif';
+    if (failUpload) mockUploadError = new Error('synthetic upload failure');
+    const result = handler(
+      { queryStringParameters: { path: 'synthetic/AUTOx2_gifv2/fixture.gif' } },
+      { getRemainingTimeInMillis: () => 30000 } as Context,
+      () => undefined
+    );
+    if (failUpload) {
+      await expect(result).rejects.toBe(mockUploadError);
+    } else {
+      expect((await result).statusCode).toBe(302);
+      expect(mockUploaded).not.toEqual(mockInput);
+      expect(
+        await sharp(mockUploaded, { animated: true }).metadata()
+      ).toMatchObject({
+        pageHeight: 2,
+        pages: 2,
+        delay: [80, 160],
+        loop: 2
+      });
+    }
+    expect(Upload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({
+          Key: 'synthetic/AUTOx2_gifv2/fixture.gif',
+          ContentType: 'image/gif'
+        })
+      })
+    );
+    const directory = await directories.mock.results[0].value;
+    await expect(fs.access(directory)).rejects.toMatchObject({
+      code: 'ENOENT'
+    });
+  }
+);
+
+it('uses Lambda remaining time after source spooling before starting GIF work', async () => {
+  mockInput = readFileSync(join(__dirname, '../../scripts/media-fixtures/gif'));
+  const result = await handler(
+    { queryStringParameters: { path: 'synthetic/AUTOx2_gifv2/fixture.gif' } },
+    { getRemainingTimeInMillis: () => 2500 } as Context,
+    () => undefined
+  );
+  expect(result.statusCode).toBe(422);
+  expect(Upload).not.toHaveBeenCalled();
+});

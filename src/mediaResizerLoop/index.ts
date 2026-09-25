@@ -30,7 +30,7 @@ const s3Client = new S3Client({
   region: BUCKET_REGION
 });
 
-const liveHandler = wrapLambdaHandler(async (event: any) => {
+const liveHandler = wrapLambdaHandler(async (event: any, context) => {
   let path = event.queryStringParameters?.path;
   if (!path) {
     return notFound();
@@ -46,19 +46,9 @@ const liveHandler = wrapLambdaHandler(async (event: any) => {
   }
   const dir = parts[1] || '';
   const requestedOption = parts[2];
-  const preserveGif = requestedOption.endsWith('_gifv2');
-  const resizeOption = preserveGif
-    ? requestedOption.slice(0, -'_gifv2'.length)
-    : requestedOption;
-  if (
-    preserveGif &&
-    (!/^(AUTO|[1-9]\d{0,4})x(AUTO|[1-9]\d{0,4})(_(max|min))?$/.test(
-      resizeOption
-    ) ||
-      resizeOption.startsWith('AUTOxAUTO'))
-  ) {
-    return notFound();
-  }
+  const option = parseResizeOption(requestedOption);
+  if (!option) return notFound();
+  const { preserveGif, resizeOption } = option;
   const sizeAndAction = resizeOption.split('_');
   const filename = parts[3];
 
@@ -113,11 +103,11 @@ const liveHandler = wrapLambdaHandler(async (event: any) => {
         originImage.Body as Readable,
         originImage.ContentLength,
         async (inputPath) => {
-          const outputPath = await prepareGifPreview(inputPath, {
-            width,
-            height,
-            fit
-          });
+          const outputPath = await prepareGifPreview(
+            inputPath,
+            { width, height, fit },
+            context?.getRemainingTimeInMillis?.()
+          );
           const body = createReadStream(outputPath);
           try {
             await new Upload({
@@ -189,6 +179,23 @@ const liveHandler = wrapLambdaHandler(async (event: any) => {
     return handleResizeFailure(e, path, key, sourceRevision);
   }
 });
+
+/** Validate the opt-in contract without changing legacy option parsing. */
+function parseResizeOption(requestedOption: string) {
+  const preserveGif = requestedOption.endsWith('_gifv2');
+  const resizeOption = preserveGif
+    ? requestedOption.slice(0, -'_gifv2'.length)
+    : requestedOption;
+  if (
+    preserveGif &&
+    (!/^(AUTO|[1-9]\d{0,4})x(AUTO|[1-9]\d{0,4})(_(max|min))?$/.test(
+      resizeOption
+    ) ||
+      resizeOption.startsWith('AUTOxAUTO'))
+  )
+    return null;
+  return { preserveGif, resizeOption };
+}
 
 function resizedRedirect(path: string) {
   const filesFileServerUrl = `${FILE_SERVER_URL}/${path}`;
