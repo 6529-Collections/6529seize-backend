@@ -74,7 +74,8 @@ caches; `_gifv2` versions the processing contract, not source revisions.
 
 The existing rejection marker deduplicates unsupported-codec *reports*, not
 conversion attempts. GIF admission failures use the existing cacheable 422
-response (five minutes); operational/native timeouts are not permanently cached
-as invalid input. Clients advance through the fallback list once per mount, but
+response (five minutes); exhausted processing/Lambda deadlines and native
+timeouts propagate as operational failures, without the input-rejection cache
+policy. Clients advance through the fallback list once per mount, but
 remounting or retrying can request the new path again. Resource budgets apply to
 each attempt; runtime capacity/headroom verification remains required.

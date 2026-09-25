@@ -59,7 +59,7 @@ export function validateGifTiming(
 
 function remainingSeconds(deadline: number) {
   const seconds = Math.floor((deadline - Date.now()) / 1000);
-  if (seconds < 1) rejectLarge();
+  if (seconds < 1) throw new Error('GIF_PREVIEW_DEADLINE_EXCEEDED');
   return seconds;
 }
 
@@ -120,6 +120,7 @@ export async function prepareGifPreview(
   // Sharp's GIF loader exposes n-pages/delay metadata even when only one page
   // is selected. Keep metadata inspection independent of full-animation decode.
   const metadata = await Sharp(inputPath, {
+    failOn: 'none',
     limitInputPixels: MAX_FRAME_PIXELS
   }).metadata();
   const { width, height, pages } = inspectGif(metadata);
@@ -136,6 +137,7 @@ export async function prepareGifPreview(
   let outputHeight = 0;
   for (let page = 0; page < pages; page++) {
     const frame = await Sharp(inputPath, {
+      failOn: 'none',
       page,
       pages: 1,
       limitInputPixels: MAX_FRAME_PIXELS

@@ -598,12 +598,18 @@ it.each([false, true])(
 );
 
 it('uses Lambda remaining time after source spooling before starting GIF work', async () => {
+  const directories = jest.spyOn(fs, 'mkdtemp');
   mockInput = readFileSync(join(__dirname, '../../scripts/media-fixtures/gif'));
-  const result = await handler(
-    { queryStringParameters: { path: 'synthetic/AUTOx2_gifv2/fixture.gif' } },
-    { getRemainingTimeInMillis: () => 2500 } as Context,
-    () => undefined
-  );
-  expect(result.statusCode).toBe(422);
+  // Operational failures propagate rather than returning a cacheable 422.
+  await expect(
+    handler(
+      { queryStringParameters: { path: 'synthetic/AUTOx2_gifv2/fixture.gif' } },
+      { getRemainingTimeInMillis: () => 2500 } as Context,
+      () => undefined
+    )
+  ).rejects.toThrow('GIF_PREVIEW_DEADLINE_EXCEEDED');
   expect(Upload).not.toHaveBeenCalled();
+  expect(mockReportUnsupported).not.toHaveBeenCalled();
+  const directory = await directories.mock.results[0].value;
+  await expect(fs.access(directory)).rejects.toMatchObject({ code: 'ENOENT' });
 });

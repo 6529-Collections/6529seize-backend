@@ -82,6 +82,35 @@ it('keeps an already-small original byte-for-byte instead of re-encoding it', as
   expect(await readFile(output)).toEqual(bytes);
 });
 
+it('resizes recoverable GIF data accepted by the legacy decoder', async () => {
+  const bytes = await readFile(
+    join(__dirname, '../../scripts/media-fixtures/gif')
+  );
+  // One complete frame followed by a truncated extension. Strict loading
+  // rejects the header, but the legacy tolerant decoder recovers that frame.
+  await writeFile(source, bytes.subarray(0, 73));
+  await expect(Sharp(source).metadata()).rejects.toThrow();
+  const legacy = Sharp(source, { failOn: 'none', animated: true });
+  const metadata = await legacy.metadata();
+  const expected = await legacy
+    .resize({ height: 6 })
+    .ensureAlpha()
+    .raw()
+    .toBuffer();
+  const output = await prepareGifPreview(source, {
+    width: null,
+    height: 6,
+    fit: 'cover'
+  });
+  expect(await Sharp(output, { animated: true }).metadata()).toMatchObject({
+    height: 6,
+    pages: metadata.pages,
+    delay: metadata.delay,
+    loop: metadata.loop
+  });
+  expect(await Sharp(output).ensureAlpha().raw().toBuffer()).toEqual(expected);
+});
+
 it('preserves an animation above the old full-source budget within a smaller output budget', async () => {
   await fixture(1024, 1024, 33);
   const output = await prepareGifPreview(source, {
@@ -159,11 +188,12 @@ it('honors the deadline without publishing a partial animation', async () => {
   const clock = jest
     .spyOn(Date, 'now')
     .mockReturnValueOnce(0)
+    .mockReturnValueOnce(0)
     .mockReturnValue(21_000);
   try {
     await expect(
       prepareGifPreview(source, { width: null, height: 7, fit: 'cover' })
-    ).rejects.toThrow('DECODED_IMAGE_TOO_LARGE');
+    ).rejects.toThrow('GIF_PREVIEW_DEADLINE_EXCEEDED');
   } finally {
     clock.mockRestore();
   }
@@ -182,11 +212,11 @@ it('allows zero delay and a single image without animation metadata', () => {
   expect(() => validateGifTiming({}, 2)).toThrow('INVALID_IMAGE');
 });
 
-it('rejects processing when Lambda time is needed for upload and cleanup', async () => {
+it('leaves processing retryable when Lambda time is needed for upload and cleanup', async () => {
   await fixture(20, 14, 3);
   await expect(
     prepareGifPreview(source, { width: null, height: 7, fit: 'cover' }, 2500)
-  ).rejects.toThrow('DECODED_IMAGE_TOO_LARGE');
+  ).rejects.toThrow('GIF_PREVIEW_DEADLINE_EXCEEDED');
 });
 
 it('reads complete GIF metadata without decoding the full animation', async () => {
