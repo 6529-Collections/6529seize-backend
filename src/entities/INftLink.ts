@@ -43,6 +43,8 @@ export class NftLinkEntity {
   @Column({ type: 'bigint', nullable: true })
   readonly media_preview_bytes!: number | null;
   @Column({ type: 'bigint', nullable: true })
+  readonly media_preview_queued_at!: number | null;
+  @Column({ type: 'bigint', nullable: true })
   readonly media_preview_last_tried_at!: number | null;
   @Column({ type: 'bigint', nullable: true })
   readonly media_preview_last_success_at!: number | null;
