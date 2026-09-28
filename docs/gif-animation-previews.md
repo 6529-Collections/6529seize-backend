@@ -58,8 +58,9 @@ This avoids inflating optimized GIFs without changing dimensions.
 ## Rollout and recovery
 
 1. Deploy only `mediaResizerLoop` for the backend change. Its catalog now sets
-   2048 MiB of memory to provide CPU headroom; deployment waits for the update
-   and verifies this allocation. The original source/output limits and
+   2048 MiB of memory to provide CPU headroom; its deployment waits for both
+   code and configuration updates and verifies this allocation. Other service
+   deployments do not reconcile media-resizer configuration drift. The original source/output limits and
    20-second processing deadline remain unchanged. No API, database, queue,
    new service, environment variable, or size-whitelist update is needed.
 2. Verify the large 30-frame regression GIF at 450px and the bounded 800px
@@ -105,9 +106,10 @@ removes this repeated work without dropping frames. The 117-frame preview is
 bounded to 357 x 200 for a 600px request to retain all frames within the existing
 output budget.
 
-`scripts/benchmark-gif-preview.cjs` accepts a bundled preview module, a local
+`scripts/benchmark-gif-preview.cjs` accepts a CommonJS preview bundle, a local
 original GIF, and a requested height. It verifies frame count, delay, loop and
-output-pixel bounds, reports duration/peak RSS, and cleans its own temporary
+output-pixel bounds (or byte identity for a passthrough original), reports
+duration/peak RSS, and cleans its own temporary
 files. It never downloads media or calls production. Bundle with the matching
 pinned Sharp dependencies and run in the Lambda Node 22 image pinned by
 `media-compatibility.yml`. Keep inputs outside Git.

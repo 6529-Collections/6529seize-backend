@@ -1,4 +1,4 @@
-// Run against a bundled gif-preview module with matching native dependencies.
+// Run against a CommonJS gif-preview bundle with matching native dependencies.
 // Example: 6529 exec node scripts/benchmark-gif-preview.cjs ./preview.cjs ./input.gif 800
 // Downloads and cloud mutations are deliberately outside this offline harness.
 const assert = require('node:assert/strict');
@@ -18,6 +18,11 @@ async function main() {
   const load = createRequire(resolve(modulePath));
   const sharp = load('sharp');
   const { prepareGifPreview } = load(resolve(modulePath));
+  assert.equal(
+    typeof prepareGifPreview,
+    'function',
+    'CommonJS bundle must export prepareGifPreview'
+  );
   const directory = await mkdtemp(join(tmpdir(), 'gif-benchmark-'));
   try {
     const input = join(directory, 'source.gif');
@@ -37,10 +42,18 @@ async function main() {
     assert.equal(result.pages, original.pages);
     assert.deepEqual(result.delay, original.delay);
     assert.equal(result.loop, original.loop);
-    assert.ok(
-      result.width * (result.pageHeight ?? result.height) * result.pages <=
-        8 * 1024 * 1024
-    );
+    if (output === input) {
+      assert.equal(
+        createHash('sha256')
+          .update(await readFile(output))
+          .digest('hex'),
+        sourceSha256
+      );
+    } else
+      assert.ok(
+        result.width * (result.pageHeight ?? result.height) * result.pages <=
+          8 * 1024 * 1024
+      );
     console.log(
       JSON.stringify({
         sourceSha256,

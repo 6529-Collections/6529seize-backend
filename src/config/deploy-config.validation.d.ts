@@ -2,6 +2,7 @@ export type DeployEnvironment = 'staging' | 'prod';
 
 export type DeployServiceConfig = {
   name: string;
+  /** Supported only for mediaResizerLoop; rejected on all other services. */
   memory_size?: number;
   allowed_environments: DeployEnvironment[];
   deploy_adapter:

@@ -655,3 +655,41 @@ it.each([
     });
   }
 );
+
+it('returns a cacheable 422 for the AUTO sequential work limit', async () => {
+  const pixels = Buffer.alloc(2 * 2 * 120 * 4, 255);
+  mockInput = await sharp(pixels, {
+    raw: { width: 2, height: 240, channels: 4, pageHeight: 2 }
+  })
+    .gif({ keepDuplicateFrames: true, delay: Array(120).fill(100) })
+    .toBuffer();
+  mockInput.writeUInt16LE(2048, 6);
+  mockInput.writeUInt16LE(2048, 8);
+  const result = await handler(
+    { queryStringParameters: { path: 'synthetic/AUTOx600_gifv2/fixture.gif' } },
+    {} as Context,
+    () => undefined
+  );
+  expect(result.statusCode).toBe(422);
+  expect(result.headers?.['Cache-Control']).toBe('public, max-age=300');
+  expect(JSON.parse(result.body!)).toMatchObject({
+    code: 'DECODED_IMAGE_TOO_LARGE'
+  });
+  expect(Upload).not.toHaveBeenCalled();
+});
+
+it('returns a cacheable 422 for a native GIF per-frame pixel rejection', async () => {
+  mockInput = readFileSync(join(__dirname, '../../scripts/media-fixtures/gif'));
+  mockInput.writeUInt16LE(4096, 6);
+  mockInput.writeUInt16LE(4096, 8);
+  mockInput.writeUInt16LE(4000, 83);
+  mockInput.writeUInt16LE(4000, 85);
+  const result = await handler(
+    { queryStringParameters: { path: 'synthetic/AUTOx600_gifv2/fixture.gif' } },
+    {} as Context,
+    () => undefined
+  );
+  expect(result.statusCode).toBe(422);
+  expect(result.headers?.['Cache-Control']).toBe('public, max-age=300');
+  expect(Upload).not.toHaveBeenCalled();
+});

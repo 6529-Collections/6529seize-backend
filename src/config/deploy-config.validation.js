@@ -38,6 +38,10 @@ function validateDeployServiceConfig(service, seenNames) {
   }
   seenNames.add(service.name);
 
+  if (service.name !== 'mediaResizerLoop' && 'memory_size' in service) {
+    throw new Error('memory_size is supported only for mediaResizerLoop');
+  }
+
   if (
     service.name === 'mediaResizerLoop' &&
     (!Number.isInteger(service.memory_size) ||

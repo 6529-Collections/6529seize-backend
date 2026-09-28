@@ -5,8 +5,8 @@ import {
   UnprocessableResizeInput
 } from '@/mediaResizerLoop/resize-resource-safety';
 
-// Decode one coalesced source frame at a time. Bound both retained output and
-// repeated decoder work (seeking a GIF page can scan all preceding frames).
+// Bound retained output and decoder work. AUTO sizes scan sequentially; fixed
+// boxes seek coalesced frames, which can scan all preceding frames again.
 const MAX_FRAME_PIXELS = 8 * 1024 * 1024;
 const MAX_OUTPUT_PIXELS = 8 * 1024 * 1024;
 const MAX_FRAMES = 120;
@@ -201,6 +201,9 @@ export async function prepareGifPreview(
   target: GifPreviewTarget,
   remainingTimeMs = MAX_SECONDS * 1000 + UPLOAD_RESERVE_MS
 ) {
+  if (target.width === null && target.height === null) {
+    throw new UnprocessableResizeInput('INVALID_IMAGE');
+  }
   const deadline =
     Date.now() +
     Math.min(MAX_SECONDS * 1000, remainingTimeMs - UPLOAD_RESERVE_MS);

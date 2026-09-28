@@ -20,3 +20,12 @@ it.each([undefined, null, '2048', 0, 1028, 512.5, 10752])(
     ).toThrow('mediaResizerLoop memory_size');
   }
 );
+
+it('rejects memory settings that would be silently ignored on another service', () => {
+  expect(() =>
+    validateDeployServiceConfig(
+      { ...mediaResizer, name: 'otherLoop' },
+      new Set()
+    )
+  ).toThrow('memory_size is supported only for mediaResizerLoop');
+});
