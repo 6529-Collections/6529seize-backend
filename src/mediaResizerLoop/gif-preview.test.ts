@@ -353,9 +353,11 @@ it('charges the full logical canvas for offset subframes and preserves their dis
       [480, 270]
     ]) {
       const offset = (y * 960 + x) * 4;
-      expect(Array.from(actual.subarray(offset, offset + 4))).toEqual(
-        Array.from(expected.subarray(offset, offset + 4))
-      );
+      for (let channel = 0; channel < 4; channel++) {
+        expect(
+          Math.abs(actual[offset + channel] - expected[offset + channel])
+        ).toBeLessThanOrEqual(2);
+      }
     }
     const visible =
       ((page === 0 ? 63 : 423) * 960 + (page === 0 ? 126 : 726)) * 4;

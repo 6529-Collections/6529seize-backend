@@ -679,11 +679,14 @@ it('returns a cacheable 422 for the AUTO sequential work limit', async () => {
 });
 
 it('returns a cacheable 422 for a native GIF per-frame pixel rejection', async () => {
-  mockInput = readFileSync(join(__dirname, '../../scripts/media-fixtures/gif'));
-  mockInput.writeUInt16LE(4096, 6);
-  mockInput.writeUInt16LE(4096, 8);
-  mockInput.writeUInt16LE(4000, 83);
-  mockInput.writeUInt16LE(4000, 85);
+  mockInput = await sharp({
+    create: { width: 4096, height: 2049, channels: 3, background: 'red' }
+  })
+    .gif()
+    .toBuffer();
+  await expect(
+    sharp(mockInput, { limitInputPixels: 8 * 1024 * 1024 }).metadata()
+  ).rejects.toThrow('Input image exceeds pixel limit');
   const result = await handler(
     { queryStringParameters: { path: 'synthetic/AUTOx600_gifv2/fixture.gif' } },
     {} as Context,
