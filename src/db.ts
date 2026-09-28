@@ -1,3 +1,4 @@
+import { refreshTransactionUsdAtWrite } from '@/eth-prices/transaction-usd';
 import 'reflect-metadata';
 import {
   DataSource,
@@ -917,10 +918,22 @@ export async function persistTransactions(transactions: BaseTransaction[]) {
     logger.info(
       `[TRANSACTIONS] [PERSISTING ${consolidatedTransactions.length} TRANSACTIONS]`
     );
-    await AppDataSource.getRepository(Transaction).upsert(
-      consolidatedTransactions,
-      ['transaction', 'contract', 'from_address', 'to_address', 'token_id']
-    );
+    await AppDataSource.transaction('REPEATABLE READ', async (manager) => {
+      for (const transaction of consolidatedTransactions) {
+        await refreshTransactionUsdAtWrite(transaction, (query, parameters) =>
+          manager.query(query, parameters)
+        );
+      }
+      await manager
+        .getRepository(Transaction)
+        .upsert(consolidatedTransactions, [
+          'transaction',
+          'contract',
+          'from_address',
+          'to_address',
+          'token_id'
+        ]);
+    });
 
     logger.info(
       `[TRANSACTIONS] [ALL ${consolidatedTransactions.length} TRANSACTIONS PERSISTED]`
