@@ -3,6 +3,8 @@ import axiosRetry from 'axios-retry';
 import { EthPrice } from '@/entities/IEthPrice';
 
 export const PRICE_INTERVAL_MS = 300_000;
+export const DAILY_PRICE_INTERVAL_MS = 86_400_000;
+export const FIVE_MINUTE_HISTORY_START_MS = Date.UTC(2026, 0, 1);
 export const HISTORY_START_MS = Date.UTC(2021, 9, 1);
 export const HISTORY_CHUNK_MS = 24 * 60 * 60 * 1000;
 export const PRICE_TOLERANCE_MS = 90_000;
@@ -60,21 +62,23 @@ export async function fetchLivePrice(now?: number): Promise<EthPrice> {
 export async function fetchHistoricPrices(
   firstClose: number,
   lastClose: number,
-  now = Date.now()
+  now = Date.now(),
+  intervalMs: number = PRICE_INTERVAL_MS
 ): Promise<EthPrice[]> {
   if (
-    firstClose % PRICE_INTERVAL_MS !== 0 ||
-    lastClose % PRICE_INTERVAL_MS !== 0 ||
+    ![PRICE_INTERVAL_MS, DAILY_PRICE_INTERVAL_MS].includes(intervalMs) ||
+    firstClose % intervalMs !== 0 ||
+    lastClose % intervalMs !== 0 ||
     firstClose > lastClose ||
     lastClose > now ||
-    (lastClose - firstClose) / PRICE_INTERVAL_MS >= 300
+    (lastClose - firstClose) / intervalMs >= 300
   )
     throw new Error('Invalid Coinbase candle range');
   const { data } = await client.get<unknown>('/candles', {
     params: {
-      granularity: PRICE_INTERVAL_MS / 1000,
-      start: new Date(firstClose - PRICE_INTERVAL_MS).toISOString(),
-      end: new Date(lastClose - PRICE_INTERVAL_MS).toISOString()
+      granularity: intervalMs / 1000,
+      start: new Date(firstClose - intervalMs).toISOString(),
+      end: new Date(lastClose - intervalMs).toISOString()
     }
   });
   if (!Array.isArray(data)) throw new Error('Invalid Coinbase candle response');
@@ -83,10 +87,10 @@ export async function fetchHistoricPrices(
     if (!Array.isArray(row) || row.length < 6 || typeof row[0] !== 'number') {
       throw new Error('Invalid Coinbase candle');
     }
-    const close = row[0] * 1000 + PRICE_INTERVAL_MS;
+    const close = row[0] * 1000 + intervalMs;
     // Coinbase may return buckets preceding start or beyond the requested end.
     if (close < firstClose || close > lastClose) continue;
-    if (close % PRICE_INTERVAL_MS !== 0 || prices.has(close)) {
+    if (close % intervalMs !== 0 || prices.has(close)) {
       throw new Error('Duplicate or misaligned Coinbase candle');
     }
     prices.set(close, priceSample(close, row[4]));
