@@ -639,3 +639,73 @@ it('grows the DB batch size after three fast full commits without refetching the
   expect(jest.mocked(db.repair).mock.calls[3][0]).toHaveLength(2);
   expect(fetchHistoricPrices).toHaveBeenCalledTimes(1);
 });
+
+it('rechecks the deadline after a slow inter-batch live refresh before starting another repair', async () => {
+  let time = now;
+  let remaining = 900_000;
+  jest.spyOn(Date, 'now').mockImplementation(() => time);
+  jest.mocked(getHistoryChunkMs).mockResolvedValue(PRICE_INTERVAL_MS);
+  jest
+    .mocked(db.findGaps)
+    .mockResolvedValue([
+      { start: closed - 4 * PRICE_INTERVAL_MS, end: closed }
+    ]);
+  jest.mocked(db.repair).mockImplementation(async () => {
+    time += PRICE_INTERVAL_MS;
+    remaining = 121_000;
+  });
+  jest
+    .mocked(fetchLivePrice)
+    .mockResolvedValueOnce(live)
+    .mockImplementationOnce(async () => {
+      remaining = 119_000;
+      return { ...live, timestamp_ms: time, date: new Date(time) };
+    });
+  await syncEthUsdPrice(false, () => remaining);
+  expect(db.saveLive).toHaveBeenCalledTimes(2);
+  expect(db.repair).toHaveBeenCalledTimes(1);
+  expect(deferMissingPrices).toHaveBeenCalledTimes(1);
+  expect(mockLogInfo).toHaveBeenCalledWith(
+    '[ETH PRICE RECOVERY SUMMARY]',
+    expect.objectContaining({
+      stopReason: 'time-budget',
+      deadlineReached: true,
+      attemptedChunks: 1
+    })
+  );
+});
+
+it('finishes historical batches but reports a failed inter-batch live provider request', async () => {
+  let time = now;
+  jest.spyOn(Date, 'now').mockImplementation(() => time);
+  jest.mocked(getHistoryChunkMs).mockResolvedValue(PRICE_INTERVAL_MS);
+  jest
+    .mocked(db.findGaps)
+    .mockResolvedValue([
+      { start: closed - 4 * PRICE_INTERVAL_MS, end: closed }
+    ]);
+  jest.mocked(db.repair).mockImplementationOnce(async () => {
+    time += PRICE_INTERVAL_MS;
+  });
+  jest
+    .mocked(fetchLivePrice)
+    .mockResolvedValueOnce(live)
+    .mockRejectedValueOnce(new Error('ticker unavailable'));
+  await expect(syncEthUsdPrice(false)).rejects.toThrow('incomplete work');
+  expect(db.repair).toHaveBeenCalledTimes(3);
+  expect(fetchLivePrice).toHaveBeenCalledTimes(2);
+  expect(mockLogError).toHaveBeenCalledTimes(1);
+  expect(mockLogError).toHaveBeenCalledWith(
+    expect.any(String),
+    expect.objectContaining({
+      stopReason: 'failure',
+      liveSaved: true,
+      historyStopped: false,
+      committedBatches: 3,
+      coverageScanComplete: true,
+      errorCount: 1,
+      failures: [expect.objectContaining({ operation: 'live-provider' })]
+    }),
+    expect.any(Error)
+  );
+});

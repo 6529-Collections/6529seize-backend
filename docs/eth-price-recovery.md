@@ -16,6 +16,9 @@ required.
    nonfinite prices, trades over five minutes old, or timestamps more than thirty
    seconds in the future. A failed live database insert stops historical work for
    this invocation; a provider failure still permits historical recovery.
+   Initial and periodic live-provider failures remain in the final aggregate
+   error even when history completes, preserving visibility of the failed live
+   collection. Committed historical progress is retained.
 2. Read price coverage on the primary database, including interior holes and the
    trailing interval up to the invocation's start time. The historical lower
    bound remains October 1, 2021 UTC. A gap must exceed six minutes thirty seconds,

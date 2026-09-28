@@ -73,6 +73,8 @@ async function collectLive(run: RecoveryRun): Promise<void> {
   } catch (error) {
     run.fastBatches = 0;
     if (operation === 'live-database') run.historyStopped = true;
+    // Continue repairs after provider failure, but preserve live-collection
+    // failure visibility in the final aggregate even if history succeeds.
     run.errors.push({ ...priceFailureDetails(error), operation });
   } finally {
     // Failed live requests also wait five minutes before another attempt.
@@ -84,6 +86,7 @@ async function prepareWork(run: RecoveryRun): Promise<boolean> {
   if (!hasBudget(run)) return false;
   if (Date.now() - run.lastLiveAttempt >= PRICE_INTERVAL_MS)
     await collectLive(run);
+  // Refresh latency consumes the same deadline: check again before any repair.
   return hasBudget(run);
 }
 
@@ -117,6 +120,8 @@ async function recoverBatch(
     run.processedCandles += prices.length;
     operation = `${kind}-checkpoint`;
     await deferMissingPrices(prices, range.first, range.last, run.started);
+    // Coinbase parsing guarantees unique, in-range, grid-aligned closes.
+    // Preserved DB collisions do not add samples to this provider array.
     run.missingCandles +=
       (range.last - range.first) / PRICE_INTERVAL_MS + 1 - prices.length;
     if (state) {
@@ -258,11 +263,9 @@ async function resumeReset(reset: boolean, run: RecoveryRun): Promise<void> {
 }
 
 function reportRun(run: RecoveryRun): void {
-  const stopReason = run.errors.length
-    ? 'failure'
-    : run.deadlineReached
-      ? 'time-budget'
-      : 'scan-complete';
+  let stopReason = 'scan-complete';
+  if (run.deadlineReached) stopReason = 'time-budget';
+  if (run.errors.length) stopReason = 'failure';
   const summary = {
     stopReason,
     liveSaved: run.liveSaved,
