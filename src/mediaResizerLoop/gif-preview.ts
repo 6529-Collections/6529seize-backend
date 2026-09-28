@@ -13,7 +13,7 @@ const MAX_FRAMES = 120;
 const MAX_SCAN_PIXELS = 2_000_000_000;
 const MAX_PASSTHROUGH_BYTES = 8 * 1024 * 1024;
 const MAX_SECONDS = 20;
-const UPLOAD_RESERVE_MS = 2000;
+export const UPLOAD_RESERVE_MS = 2000;
 
 export interface GifPreviewTarget {
   width: number | null;

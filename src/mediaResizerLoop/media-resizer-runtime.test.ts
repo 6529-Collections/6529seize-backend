@@ -613,3 +613,45 @@ it('uses Lambda remaining time after source spooling before starting GIF work', 
   const directory = await directories.mock.results[0].value;
   await expect(fs.access(directory)).rejects.toMatchObject({ code: 'ENOENT' });
 });
+
+it.each([
+  ['AUTOx800_gifv2', 1999],
+  ['AUTOx2_gifv2', 1999],
+  ['AUTOx800_gifv2', 2000],
+  ['AUTOx2_gifv2', 2000]
+])(
+  'checks the upload reserve after preparing %s with %i ms left',
+  async (option, remainingTimeMs) => {
+    const directories = jest.spyOn(fs, 'mkdtemp');
+    mockInput = readFileSync(
+      join(__dirname, '../../scripts/media-fixtures/gif')
+    );
+    const getRemainingTimeInMillis = jest
+      .fn()
+      .mockReturnValueOnce(30000)
+      .mockReturnValue(remainingTimeMs);
+    const result = handler(
+      { queryStringParameters: { path: `synthetic/${option}/fixture.gif` } },
+      { getRemainingTimeInMillis } as unknown as Context,
+      () => undefined
+    );
+    if (remainingTimeMs < 2000) {
+      await expect(result).rejects.toThrow('GIF_PREVIEW_DEADLINE_EXCEEDED');
+      expect(Upload).not.toHaveBeenCalled();
+    } else {
+      expect((await result).statusCode).toBe(302);
+      expect(Upload).toHaveBeenCalledTimes(1);
+      if (option === 'AUTOx800_gifv2') {
+        expect(mockUploaded).toEqual(mockInput);
+      } else {
+        expect(mockUploaded).not.toEqual(mockInput);
+      }
+    }
+    expect(getRemainingTimeInMillis).toHaveBeenCalledTimes(2);
+    expect(mockReportUnsupported).not.toHaveBeenCalled();
+    const directory = await directories.mock.results[0].value;
+    await expect(fs.access(directory)).rejects.toMatchObject({
+      code: 'ENOENT'
+    });
+  }
+);

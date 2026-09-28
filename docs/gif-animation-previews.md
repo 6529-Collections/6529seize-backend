@@ -31,7 +31,10 @@ Limits (independent of compressed upload size):
 - At most 8,388,608 total output pixels (32 MiB RGBA before encoding).
 - At most a 20-second processing deadline and native Sharp timeouts, further
   bounded by Lambda time remaining after source spooling with two seconds
-  reserved for upload/cleanup. This reserve is not a guaranteed upload duration.
+  reserved for upload/cleanup. Remaining Lambda time is checked again before
+  uploading either an unchanged original or a re-encoded preview; insufficient
+  time fails operationally without uploading. This reserve is not a guaranteed
+  upload duration.
   Native operational errors remain failures; they do not publish a successful static derivative.
 
 Frame, encoder, and working-copy allocations remain bounded independently of

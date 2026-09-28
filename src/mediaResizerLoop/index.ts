@@ -4,7 +4,10 @@ import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { Readable } from 'node:stream';
 import { createReadStream } from 'node:fs';
-import { prepareGifPreview } from '@/mediaResizerLoop/gif-preview';
+import {
+  prepareGifPreview,
+  UPLOAD_RESERVE_MS
+} from '@/mediaResizerLoop/gif-preview';
 import Sharp from 'sharp';
 import {
   classifyResizeDecoderError,
@@ -108,6 +111,13 @@ const liveHandler = wrapLambdaHandler(async (event: any, context) => {
             { width, height, fit },
             context?.getRemainingTimeInMillis?.()
           );
+          const remainingTimeMs = context?.getRemainingTimeInMillis?.();
+          if (
+            remainingTimeMs !== undefined &&
+            remainingTimeMs < UPLOAD_RESERVE_MS
+          ) {
+            throw new Error('GIF_PREVIEW_DEADLINE_EXCEEDED');
+          }
           const body = createReadStream(outputPath);
           try {
             await new Upload({
