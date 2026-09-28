@@ -1,3 +1,4 @@
+import { RequestContext } from '@/request.context';
 import {
   MANIFOLD,
   MEMES_CONTRACT,
@@ -33,17 +34,22 @@ function roundUsd(amount: number): number {
 
 export async function calculateMemesMintStats(
   tokenId: number,
-  mintDate: Date
+  mintDate: Date,
+  ctx: RequestContext = {},
+  includePaymentDetails = true
 ): Promise<MemesMintStat> {
-  const paymentDetailsPromise = fetchPaymentDetailsForMemeToken(tokenId).catch(
-    (err) => {
-      logger.warn('Failed to fetch MEMES payment details, defaulting to null', {
-        tokenId,
-        err
-      });
-      return null;
-    }
-  );
+  const paymentDetailsPromise = includePaymentDetails
+    ? fetchPaymentDetailsForMemeToken(tokenId).catch((err) => {
+        logger.warn(
+          'Failed to fetch MEMES payment details, defaulting to null',
+          {
+            tokenId,
+            err
+          }
+        );
+        return null;
+      })
+    : Promise.resolve(null);
 
   const mintTransactions = await sqlExecutor.execute<MintTransactionRow>(
     `SELECT token_count, eth_price_usd
@@ -53,7 +59,8 @@ export async function calculateMemesMintStats(
       AND from_address IN ('${NULL_ADDRESS}', '${MANIFOLD}')
       AND to_address NOT IN ('${NULL_ADDRESS}', '${MANIFOLD}')
       AND value > 0`,
-    { tokenId }
+    { tokenId },
+    { wrappedConnection: ctx.connection }
   );
   const paymentDetails = await paymentDetailsPromise;
 
@@ -87,7 +94,8 @@ export async function calculateMemesMintStats(
       tokenId,
       mintPrice: MEMES_MINT_PRICE,
       fallbackEthUsd
-    }
+    },
+    { wrappedConnection: ctx.connection }
   );
 
   const mintCount = mintTransactions.reduce(
@@ -138,18 +146,36 @@ export async function insertMemesMintStatsIfMissing(
     return null;
   }
 
-  const payload = await calculateMemesMintStats(tokenId, mintDate);
-  const insertResult = await repo
-    .createQueryBuilder()
-    .insert()
-    .into(MemesMintStat)
-    .values(payload)
-    .orIgnore()
-    .execute();
-
-  const wasInserted =
-    insertResult?.raw !== undefined &&
-    'affectedRows' in insertResult.raw &&
-    Number(insertResult.raw.affectedRows) > 0;
-  return wasInserted ? payload : null;
+  // Fetch external metadata before taking DB locks.
+  const paymentDetails = await fetchPaymentDetailsForMemeToken(tokenId).catch(
+    (err) => {
+      logger.warn('Failed to fetch MEMES payment details, defaulting to null', {
+        tokenId,
+        err
+      });
+      return null;
+    }
+  );
+  return getDataSource().transaction('REPEATABLE READ', async (manager) => {
+    await manager.query(
+      `SELECT transaction FROM ${TRANSACTIONS_TABLE} WHERE contract = ? AND token_id = ? FOR SHARE`,
+      [MEMES_CONTRACT, tokenId]
+    );
+    const payload = await calculateMemesMintStats(
+      tokenId,
+      mintDate,
+      { connection: { connection: manager.queryRunner } },
+      false
+    );
+    payload.payment_details = paymentDetails;
+    const insertResult = await manager
+      .getRepository(MemesMintStat)
+      .createQueryBuilder()
+      .insert()
+      .into(MemesMintStat)
+      .values(payload)
+      .orIgnore()
+      .execute();
+    return Number(insertResult.raw?.affectedRows) > 0 ? payload : null;
+  });
 }
