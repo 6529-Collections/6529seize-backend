@@ -26,9 +26,9 @@ function parseReset(raw: string | null, end: number): PriceReset | null {
     !Number.isSafeInteger(state.end) ||
     state.next % PRICE_INTERVAL_MS !== 0 ||
     state.end % PRICE_INTERVAL_MS !== 0 ||
-    state.next < HISTORY_START_MS + PRICE_INTERVAL_MS ||
+    state.next < HISTORY_START_MS ||
     state.next > state.end + PRICE_INTERVAL_MS ||
-    state.end < HISTORY_START_MS + PRICE_INTERVAL_MS ||
+    state.end < HISTORY_START_MS ||
     state.end > end ||
     typeof state.latched !== 'boolean'
   )
@@ -50,7 +50,7 @@ export async function getPriceReset(
   const raw = await redis.get(ethPriceStateKey('reset'));
   let state = parseReset(raw, end);
   if (requested && (!state || (!state.latched && state.next > state.end))) {
-    state = { next: HISTORY_START_MS + PRICE_INTERVAL_MS, end, latched: true };
+    state = { next: HISTORY_START_MS, end, latched: true };
     logger.info(
       `[ETH PRICE RESET ARMED] [NEXT ${state.next}] [END ${state.end}]`
     );
