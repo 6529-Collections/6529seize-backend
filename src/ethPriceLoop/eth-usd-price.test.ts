@@ -1,9 +1,10 @@
 jest.mock('@/logging', () => ({
   Logger: {
-    get: () => ({ info: jest.fn(), warn: jest.fn(), error: mockLogError })
+    get: () => ({ info: mockLogInfo, warn: jest.fn(), error: mockLogError })
   }
 }));
 const mockLogError = jest.fn();
+const mockLogInfo = jest.fn();
 import { EthPriceRepairError } from './eth-price-failure';
 jest.mock('./eth-price-unavailable', () => ({
   getUnavailablePrices: jest.fn(),
@@ -90,7 +91,10 @@ it('repairs an interior hole even after newer live samples exist', async () => {
   const end = closed - 3600_000;
   jest.mocked(db.findGaps).mockResolvedValue([{ start: end - 900_000, end }]);
   await syncEthUsdPrice(false);
-  expect(fetchHistoricPrices).toHaveBeenCalledWith(end - 600_000, end);
+  expect(fetchHistoricPrices).toHaveBeenCalledWith(
+    end - 600_000,
+    end - PRICE_INTERVAL_MS
+  );
 });
 it('still saves live and reports failure if history is unavailable', async () => {
   jest
@@ -132,8 +136,8 @@ it('uses a learned smaller window for gaps and the reset checkpoint', async () =
   await syncEthUsdPrice(true);
   expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
     1,
-    closed - PRICE_INTERVAL_MS,
-    closed
+    closed - 2 * PRICE_INTERVAL_MS,
+    closed - PRICE_INTERVAL_MS
   );
   expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
     2,
@@ -196,7 +200,7 @@ it('learns a smaller gap repair after timeout without marking it unavailable', a
   expect(shrinkHistoryChunk).toHaveBeenCalledWith(
     error,
     closed - HISTORY_CHUNK_MS + PRICE_INTERVAL_MS,
-    closed
+    closed - PRICE_INTERVAL_MS
   );
   expect(deferMissingPrices).not.toHaveBeenCalled();
   expect(db.repair).toHaveBeenCalledTimes(1);
@@ -228,7 +232,7 @@ it('stops other gaps and reset after a timed-out repair', async () => {
   expect(shrinkHistoryChunk).toHaveBeenCalledWith(
     error,
     closed - HISTORY_CHUNK_MS + PRICE_INTERVAL_MS,
-    closed
+    closed - PRICE_INTERVAL_MS
   );
   expect(mockLogError).toHaveBeenCalledTimes(1);
   expect(mockLogError).toHaveBeenCalledWith(
@@ -451,3 +455,43 @@ it.each(['provider', 'checkpoint'] as const)(
     );
   }
 );
+
+it.each([0, 1, PRICE_INTERVAL_MS - 1])(
+  'selects a missing close with a one-candle limit and endpoint offset %i',
+  async (offset) => {
+    jest.mocked(getHistoryChunkMs).mockResolvedValue(PRICE_INTERVAL_MS);
+    const end = closed - 3600_000 + offset;
+    const expected = closed - 3600_000 - (offset === 0 ? PRICE_INTERVAL_MS : 0);
+    jest
+      .mocked(db.findGaps)
+      .mockResolvedValue([{ start: end - 1200_000, end }]);
+    jest
+      .mocked(fetchHistoricPrices)
+      .mockResolvedValue([
+        { ...live, timestamp_ms: expected, date: new Date(expected) }
+      ]);
+    await syncEthUsdPrice(false);
+    expect(fetchHistoricPrices).toHaveBeenCalledTimes(1);
+    expect(fetchHistoricPrices).toHaveBeenCalledWith(expected, expected);
+    expect(mockLogInfo).toHaveBeenCalledWith(
+      `[ETH PRICE GAP REPAIR] [PROCESSED CANDLES 1] [FROM ${expected}] [THROUGH ${expected}]`
+    );
+  }
+);
+
+it('reports zero processed candles for empty history without claiming inserts', async () => {
+  jest
+    .mocked(db.findGaps)
+    .mockResolvedValue([{ start: closed - 900_000, end: closed }]);
+  jest.mocked(fetchHistoricPrices).mockResolvedValue([]);
+  await syncEthUsdPrice(false);
+  expect(mockLogInfo).toHaveBeenCalledWith(
+    `[ETH PRICE GAP REPAIR] [PROCESSED CANDLES 0] [FROM ${closed - 600_000}] [THROUGH ${closed - 300_000}]`
+  );
+  expect(deferMissingPrices).toHaveBeenCalledWith(
+    [],
+    closed - 600_000,
+    closed - 300_000,
+    now
+  );
+});

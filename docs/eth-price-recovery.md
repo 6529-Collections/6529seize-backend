@@ -22,6 +22,10 @@ required.
    allowing ordinary scheduling jitter. New live rows do not hide interior gaps.
 3. Process the eight most recent gaps first, requesting at most one **one-hour**
    chunk per gap per invocation. Backfill starts at the recent end of a long gap.
+   Requested closes lie strictly between its boundaries: an existing aligned
+   right endpoint is excluded even with a learned one-candle limit. An off-grid
+   endpoint still permits the preceding close. Cooldown boundaries retain the
+   recoverable close immediately before the unavailable range.
    Continue independent gaps if a provider range fails. A database repair failure
    stops both gap recovery and reset for this invocation, leaving failed work
    discoverable for a later run rather than adding contention. Missing Coinbase
@@ -164,8 +168,11 @@ interval reads, transaction updates, mint selection, or mint totals), with SQL
 budget phase/commit outcome when available. SQL text, parameters, and provider
 payloads are excluded. The invocation still throws once to preserve Lambda/Sentry
 failure visibility; infrastructure alarms remain enabled. Monitor the
-`BACKFILLED`, `ETH PRICE RESET`, and `CURRENT ETH PRICE SAVED` logs, Lambda errors,
-latest `eth_price` timestamp, and remaining price gaps. Repeated omitted-candle
+`ETH PRICE GAP REPAIR`, `ETH PRICE RESET`, and `CURRENT ETH PRICE SAVED` logs, Lambda errors,
+latest `eth_price` timestamp, and remaining price gaps. `PROCESSED CANDLES`
+counts provider candles successfully processed by the repair, including any
+preserved timestamp collisions; it is not a count of inserted rows. Empty
+responses report zero. Confirm restored coverage by reading the database. Repeated omitted-candle
 warnings mean Coinbase cannot currently provide that history; inspect that range
 instead of marking it covered. Large resets deliberately span many invocations.
 
