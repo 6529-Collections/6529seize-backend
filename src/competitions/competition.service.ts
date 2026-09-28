@@ -50,6 +50,8 @@ import type {
   CompetitionVoter
 } from '@/competitions/competition.types';
 import { WaveEntity } from '@/entities/IWave';
+import { legacyCompetitionBaselineRepository } from '@/competitions/legacy-competition-baseline.repository';
+import { loadLegacyParityCandidate } from '@/competitions/legacy-parity-snapshot';
 import { collectCompetitionPages } from '@/competitions/competition-page';
 
 export type CompetitionPermissions = {
@@ -212,15 +214,20 @@ export class CompetitionService {
     if (
       resolved.record.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER
     ) {
-      const legacyBaseline = new LegacyCompetitionAdapter(
-        this.repository,
-        this.wavesDb,
-        ctx
-      );
       await this.shadowComparator.compareIfSampled(
         resolved.record,
-        () => legacyBaseline.getSnapshot(resolved.record),
-        () => resolved.reader.getSnapshot(resolved.record),
+        (shadowCtx, now) =>
+          legacyCompetitionBaselineRepository.getSnapshot(
+            resolved.record,
+            now,
+            shadowCtx
+          ),
+        (shadowCtx, now) =>
+          loadLegacyParityCandidate(
+            this.createReader(resolved.record, shadowCtx),
+            resolved.record,
+            now
+          ),
         ctx
       );
     }

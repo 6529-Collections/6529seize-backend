@@ -929,7 +929,12 @@ by default. `dbMigrationsLoop` creates the additive competition/read-model
 tables and backfills stable legacy mappings before API or worker deployments.
 The independent unified-read, native-write, native-execution, native-hub, and
 sampled-shadow flags default off. Shadow observations persist only canonical
-hashes and identifiers, never vote/signature/private payloads.
+hashes and identifiers, never vote/signature/private payloads. Sampled legacy
+reads compare an independent legacy-table baseline with the unified adapter's
+paged domain reads in one repeatable-read snapshot. Samples are bounded and
+best effort; failures preserve the API response. Historical adapter
+self-comparisons are not parity evidence, and remaining-credit coverage remains
+an explicit acceptance gap.
 Operational deployment, verification, and rollback are documented in the
 [competition read boundary runbook](./competition-read-boundary-runbook.md).
 
