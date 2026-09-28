@@ -34,6 +34,7 @@ jest.mock('./eth-price-recovery.db', () => ({
   GAP_PAGE_SIZE: 8,
   ethPriceRecoveryDb: {
     findGaps: jest.fn(),
+    findDailyGaps: jest.fn(),
     repair: jest.fn(),
     saveLive: jest.fn()
   }
@@ -47,7 +48,10 @@ import {
   fetchHistoricPrices,
   fetchLivePrice,
   PRICE_INTERVAL_MS,
-  HISTORY_CHUNK_MS
+  HISTORY_CHUNK_MS,
+  DAILY_PRICE_INTERVAL_MS,
+  FIVE_MINUTE_HISTORY_START_MS,
+  HISTORY_START_MS
 } from './coinbase';
 import { ethPriceRecoveryDb as db } from './eth-price-recovery.db';
 import { getPriceReset, savePriceReset } from './eth-price-reset';
@@ -63,17 +67,21 @@ beforeEach(() => {
   jest.mocked(deferMissingPrices).mockResolvedValue(undefined);
   jest.spyOn(Date, 'now').mockReturnValue(now);
   jest.mocked(db.findGaps).mockResolvedValue([]);
+  jest.mocked(db.findDailyGaps).mockResolvedValue([]);
   jest.mocked(db.repair).mockResolvedValue(undefined);
   jest.mocked(db.saveLive).mockResolvedValue(undefined);
   jest.mocked(getPriceReset).mockResolvedValue(null);
   jest.mocked(savePriceReset).mockResolvedValue(undefined);
   jest.mocked(fetchLivePrice).mockResolvedValue(live);
-  jest.mocked(fetchHistoricPrices).mockImplementation(async (first, last) =>
-    Array.from({ length: (last - first) / PRICE_INTERVAL_MS + 1 }, (_, i) => {
-      const timestamp_ms = first + i * PRICE_INTERVAL_MS;
-      return { ...live, timestamp_ms, date: new Date(timestamp_ms) };
-    })
-  );
+  jest
+    .mocked(fetchHistoricPrices)
+    .mockImplementation(
+      async (first, last, _now, interval = PRICE_INTERVAL_MS) =>
+        Array.from({ length: (last - first) / interval + 1 }, (_, i) => {
+          const timestamp_ms = first + i * interval;
+          return { ...live, timestamp_ms, date: new Date(timestamp_ms) };
+        })
+    );
 });
 afterEach(() => jest.restoreAllMocks());
 it('only collects live when coverage is healthy', async () => {
@@ -511,7 +519,7 @@ it.each([0, 1, PRICE_INTERVAL_MS - 1])(
       now
     );
     expect(mockLogInfo).toHaveBeenCalledWith(
-      `[ETH PRICE GAP REPAIR] [PROCESSED CANDLES 1] [FROM ${expected}] [THROUGH ${expected}]`
+      `[ETH PRICE GAP REPAIR] [INTERVAL_MS 300000] [PROCESSED CANDLES 1] [FROM ${expected}] [THROUGH ${expected}]`
     );
   }
 );
@@ -523,7 +531,7 @@ it('reports zero processed candles for empty history without claiming inserts', 
   jest.mocked(fetchHistoricPrices).mockResolvedValue([]);
   await syncEthUsdPrice(false);
   expect(mockLogInfo).toHaveBeenCalledWith(
-    `[ETH PRICE GAP REPAIR] [PROCESSED CANDLES 0] [FROM ${closed - 600_000}] [THROUGH ${closed - 300_000}]`
+    `[ETH PRICE GAP REPAIR] [INTERVAL_MS 300000] [PROCESSED CANDLES 0] [FROM ${closed - 600_000}] [THROUGH ${closed - 300_000}]`
   );
   expect(deferMissingPrices).toHaveBeenCalledWith(
     [],
@@ -707,5 +715,109 @@ it('finishes historical batches but reports a failed inter-batch live provider r
       failures: [expect.objectContaining({ operation: 'live-provider' })]
     }),
     expect.any(Error)
+  );
+});
+
+it('repairs missing older days with daily candles after recent five-minute gaps', async () => {
+  const day = DAILY_PRICE_INTERVAL_MS;
+  const boundary = FIVE_MINUTE_HISTORY_START_MS;
+  jest
+    .mocked(db.findGaps)
+    .mockResolvedValue([
+      { start: boundary - 1, end: boundary + 2 * PRICE_INTERVAL_MS }
+    ]);
+  jest
+    .mocked(db.findDailyGaps)
+    .mockResolvedValue([{ start: boundary - 4 * day, end: boundary - day }]);
+  await syncEthUsdPrice(false);
+  expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
+    1,
+    boundary,
+    boundary + PRICE_INTERVAL_MS
+  );
+  expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
+    2,
+    boundary - 3 * day,
+    boundary - 2 * day,
+    now,
+    day
+  );
+  expect(db.repair).toHaveBeenCalledTimes(3);
+  expect(db.repair).toHaveBeenNthCalledWith(
+    2,
+    [expect.objectContaining({ timestamp_ms: boundary - 2 * day })],
+    false,
+    now
+  );
+  expect(db.repair).toHaveBeenNthCalledWith(
+    3,
+    [expect.objectContaining({ timestamp_ms: boundary - 3 * day })],
+    false,
+    now
+  );
+  expect(mockLogInfo).toHaveBeenCalledWith(
+    '[ETH PRICE RECOVERY SUMMARY]',
+    expect.objectContaining({ missingCandles: 0, coverageScanComplete: true })
+  );
+});
+
+it('resumes a legacy reset at daily resolution and switches at January 2026', async () => {
+  const boundary = FIVE_MINUTE_HISTORY_START_MS;
+  const day = DAILY_PRICE_INTERVAL_MS;
+  jest.mocked(getPriceReset).mockResolvedValue({
+    next: boundary - day + PRICE_INTERVAL_MS,
+    end: boundary + PRICE_INTERVAL_MS,
+    latched: false
+  });
+  await syncEthUsdPrice(false);
+  expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
+    1,
+    boundary - day,
+    boundary - day,
+    now,
+    day
+  );
+  expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
+    2,
+    boundary,
+    boundary + PRICE_INTERVAL_MS
+  );
+  expect(savePriceReset).toHaveBeenNthCalledWith(
+    1,
+    expect.objectContaining({ next: boundary })
+  );
+  expect(savePriceReset).toHaveBeenLastCalledWith(
+    expect.objectContaining({ next: boundary + 2 * PRICE_INTERVAL_MS })
+  );
+  expect(
+    jest.mocked(db.repair).mock.calls.every((call) => call[1] === true)
+  ).toBe(true);
+});
+
+it('includes the first historical day and defers absent daily candles separately', async () => {
+  jest.mocked(db.findDailyGaps).mockResolvedValue([
+    {
+      start: HISTORY_START_MS - 1,
+      end: HISTORY_START_MS + DAILY_PRICE_INTERVAL_MS
+    }
+  ]);
+  jest.mocked(fetchHistoricPrices).mockResolvedValue([]);
+  await syncEthUsdPrice(false);
+  expect(fetchHistoricPrices).toHaveBeenCalledWith(
+    HISTORY_START_MS,
+    HISTORY_START_MS,
+    now,
+    DAILY_PRICE_INTERVAL_MS
+  );
+  expect(deferMissingPrices).toHaveBeenCalledWith(
+    [],
+    HISTORY_START_MS,
+    HISTORY_START_MS,
+    now,
+    DAILY_PRICE_INTERVAL_MS
+  );
+  expect(mockLogInfo).toHaveBeenCalledWith(
+    '[ETH PRICE RECOVERY SUMMARY]',
+    expect.objectContaining({ missingCandles: 1 })
   );
 });

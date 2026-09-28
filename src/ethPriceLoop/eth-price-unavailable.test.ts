@@ -122,3 +122,25 @@ it('isolates deployment keys even when database identifiers match', () => {
     else process.env.SENTRY_ENVIRONMENT = original;
   }
 });
+
+it('keeps daily cooldowns separate from legacy five-minute omissions', async () => {
+  const first = Date.UTC(2021, 9, 1);
+  await deferMissingPrices(
+    [price(first + day)],
+    first,
+    first + 2 * day,
+    now,
+    day
+  );
+  expect(mockRedis.set).toHaveBeenLastCalledWith(
+    ethPriceStateKey('daily-unavailable'),
+    JSON.stringify([
+      { first, last: first, retryAt: now + day },
+      { first: first + 2 * day, last: first + 2 * day, retryAt: now + day }
+    ]),
+    { PX: day }
+  );
+  mockRedis.get.mockClear();
+  await getUnavailablePrices(now);
+  expect(mockRedis.get).toHaveBeenCalledWith(ethPriceStateKey('unavailable'));
+});

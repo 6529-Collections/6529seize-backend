@@ -17,6 +17,8 @@ import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { DbPoolName } from '@/db-query.options';
 import {
   HISTORY_START_MS,
+  DAILY_PRICE_INTERVAL_MS,
+  FIVE_MINUTE_HISTORY_START_MS,
   PRICE_INTERVAL_MS,
   PRICE_TOLERANCE_MS
 } from './coinbase';
@@ -32,6 +34,33 @@ export class EthPriceRecoveryDb extends LazyDbAccessCompatibleService {
     before: number = now,
     ctx: RequestContext = {}
   ): Promise<PriceGap[]> {
+    return this.findCoverageGaps(now, unavailable, before, false, ctx);
+  }
+
+  /** Any saved sample in a UTC day covers that day in the sparse historical era. */
+  async findDailyGaps(
+    now: number,
+    unavailable: UnavailablePrices[] = [],
+    before = FIVE_MINUTE_HISTORY_START_MS,
+    ctx: RequestContext = {}
+  ): Promise<PriceGap[]> {
+    return this.findCoverageGaps(now, unavailable, before, true, ctx);
+  }
+
+  private async findCoverageGaps(
+    now: number,
+    unavailable: UnavailablePrices[],
+    before: number,
+    daily: boolean,
+    ctx: RequestContext
+  ): Promise<PriceGap[]> {
+    const historyStart = daily
+      ? HISTORY_START_MS
+      : FIVE_MINUTE_HISTORY_START_MS;
+    const through = daily ? Math.min(FIVE_MINUTE_HISTORY_START_MS, now) : now;
+    const sampleTime = daily
+      ? `(timestamp_ms DIV ${DAILY_PRICE_INTERVAL_MS}) * ${DAILY_PRICE_INTERVAL_MS}`
+      : 'timestamp_ms';
     const timer = 'EthPriceRecoveryDb.findGaps';
     ctx.timer?.start(timer);
     try {
@@ -44,28 +73,43 @@ export class EthPriceRecoveryDb extends LazyDbAccessCompatibleService {
              first_close BIGINT PATH '$.first', last_close BIGINT PATH '$.last'
            )) AS ranges_to_retry
          ), points AS (
-           SELECT timestamp_ms FROM ${ETH_PRICE_TABLE} WHERE timestamp_ms >= :historyStart AND timestamp_ms <= :now
+           SELECT ${sampleTime} AS timestamp_ms FROM ${ETH_PRICE_TABLE}
+           WHERE timestamp_ms >= :historyStart AND timestamp_ms < :now
            UNION SELECT :now
-           UNION SELECT :historyStart
+           UNION SELECT :historyStart - 1
            UNION SELECT first_close - 1 FROM unavailable
            UNION SELECT last_close FROM unavailable
          ), intervals AS (
            SELECT timestamp_ms AS start_ms, LEAD(timestamp_ms) OVER (ORDER BY timestamp_ms) AS end_ms FROM points
          ) SELECT start_ms, end_ms FROM intervals
-         WHERE end_ms <= :before AND end_ms - start_ms > :threshold
+         WHERE end_ms <= :before
+           AND (end_ms - start_ms > :threshold
+             OR (start_ms = :historyStart - 1 AND end_ms > :historyStart))
            AND NOT EXISTS (SELECT 1 FROM unavailable u
              WHERE start_ms >= u.first_close - 1 AND end_ms <= u.last_close)
          ORDER BY end_ms DESC LIMIT ${GAP_PAGE_SIZE}`,
         {
-          now,
-          before,
+          now: through,
+          before: Math.min(before, through),
           unavailable: JSON.stringify(
-            unavailable.filter(
-              (range) => range.retryAt > now && range.last <= now
-            )
+            unavailable
+              .filter(
+                (range) =>
+                  range.retryAt > now &&
+                  range.last <= now &&
+                  range.first < through &&
+                  range.last >= historyStart
+              )
+              .map((range) => ({
+                ...range,
+                first: Math.max(range.first, historyStart),
+                last: Math.min(range.last, through - 1)
+              }))
           ),
-          historyStart: HISTORY_START_MS,
-          threshold: PRICE_INTERVAL_MS + PRICE_TOLERANCE_MS
+          historyStart,
+          threshold: daily
+            ? DAILY_PRICE_INTERVAL_MS
+            : PRICE_INTERVAL_MS + PRICE_TOLERANCE_MS
         },
         { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
       );

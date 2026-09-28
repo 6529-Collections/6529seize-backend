@@ -44,6 +44,8 @@ import { TransactionsDiscoveryDb } from '@/transactions/transactions.discovery.d
 import { refreshTransactionUsdAtWrite } from '@/eth-prices/transaction-usd';
 import {
   HISTORY_START_MS,
+  DAILY_PRICE_INTERVAL_MS,
+  FIVE_MINUTE_HISTORY_START_MS,
   PRICE_INTERVAL_MS,
   fetchLivePrice,
   fetchHistoricPrices
@@ -128,6 +130,9 @@ describeWithSeed('ETH price recovery database', [], () => {
       .spyOn(ethPriceRecoveryDb, 'findGaps')
       .mockImplementation(repo.findGaps.bind(repo));
     jest
+      .spyOn(ethPriceRecoveryDb, 'findDailyGaps')
+      .mockImplementation(repo.findDailyGaps.bind(repo));
+    jest
       .spyOn(ethPriceRecoveryDb, 'saveLive')
       .mockImplementation(repo.saveLive.bind(repo));
     jest
@@ -139,11 +144,23 @@ describeWithSeed('ETH price recovery database', [], () => {
     jest.mocked(deferMissingPrices).mockResolvedValue(undefined);
     jest.mocked(fetchLivePrice).mockResolvedValue(sample(now, 2700));
     const prefix = {
-      first: HISTORY_START_MS + PRICE_INTERVAL_MS,
+      first: FIVE_MINUTE_HISTORY_START_MS,
       last: prefixEnd,
       retryAt: now + 86400_000
     };
-    jest.mocked(getUnavailablePrices).mockResolvedValue([prefix]);
+    jest
+      .mocked(getUnavailablePrices)
+      .mockImplementation(async (_now, interval) =>
+        interval === DAILY_PRICE_INTERVAL_MS
+          ? [
+              {
+                first: HISTORY_START_MS,
+                last: FIVE_MINUTE_HISTORY_START_MS - DAILY_PRICE_INTERVAL_MS,
+                retryAt: now + 86400_000
+              }
+            ]
+          : [prefix]
+      );
     return prefix;
   }
 
@@ -254,14 +271,26 @@ describeWithSeed('ETH price recovery database', [], () => {
     await putPrice(base, 100);
     await putPrice(base + 25 * 60_000, 200);
     const prefix = prepareCollector(now, base - PRICE_INTERVAL_MS);
-    jest.mocked(getUnavailablePrices).mockResolvedValue([
-      prefix,
-      {
-        first: base + 15 * 60_000,
-        last: base + 20 * 60_000,
-        retryAt: now + 86400_000
-      }
-    ]);
+    jest
+      .mocked(getUnavailablePrices)
+      .mockImplementation(async (_now, interval) =>
+        interval === DAILY_PRICE_INTERVAL_MS
+          ? [
+              {
+                first: HISTORY_START_MS,
+                last: FIVE_MINUTE_HISTORY_START_MS - DAILY_PRICE_INTERVAL_MS,
+                retryAt: now + 86400_000
+              }
+            ]
+          : [
+              prefix,
+              {
+                first: base + 15 * 60_000,
+                last: base + 20 * 60_000,
+                retryAt: now + 86400_000
+              }
+            ]
+      );
     jest
       .mocked(fetchHistoricPrices)
       .mockImplementation(async (first, last) => [
@@ -305,12 +334,12 @@ describeWithSeed('ETH price recovery database', [], () => {
     const secondPage = await repo.findGaps(base, [], firstPage[7].start);
     expect(secondPage).toHaveLength(3);
     expect(secondPage[0].end).toBe(firstPage[7].start);
-    expect(secondPage[2].start).toBe(HISTORY_START_MS);
+    expect(secondPage[2].start).toBe(FIVE_MINUTE_HISTORY_START_MS - 1);
   });
   it('keeps the bootstrap prefix discoverable after recent prices are inserted', async () => {
     await putPrice(base, 100);
     expect(await repo.findGaps(base)).toEqual([
-      { start: HISTORY_START_MS, end: base }
+      { start: FIVE_MINUTE_HISTORY_START_MS - 1, end: base }
     ]);
   });
 
@@ -328,7 +357,7 @@ describeWithSeed('ETH price recovery database', [], () => {
     const now = base + 1800_000;
     const gaps = await repo.findGaps(now, unavailable);
     expect(gaps).toEqual([
-      { start: HISTORY_START_MS, end: base - 9 * 1800_000 }
+      { start: FIVE_MINUTE_HISTORY_START_MS - 1, end: base - 9 * 1800_000 }
     ]);
     const retried = await repo.findGaps(
       now,
@@ -343,8 +372,120 @@ describeWithSeed('ETH price recovery database', [], () => {
       await repo.findGaps(now, [
         { first, last: base + 1500_000, retryAt: now + 86400_000 }
       ])
-    ).toEqual([{ start: HISTORY_START_MS, end: first - 1 }]);
+    ).toEqual([{ start: FIVE_MINUTE_HISTORY_START_MS - 1, end: first - 1 }]);
   });
+  it('recognizes any row in a pre-2026 UTC day as coverage and preserves dense days', async () => {
+    const day = DAILY_PRICE_INTERVAL_MS;
+    const boundary = FIVE_MINUTE_HISTORY_START_MS;
+    // Suppress the already-covered historical prefix to isolate the last four days.
+    const unavailable = [
+      { first: HISTORY_START_MS, last: boundary - 5 * day, retryAt: base + day }
+    ];
+    await putPrice(boundary - 4 * day + 123_000, 100);
+    await putPrice(boundary - 2 * day, 200);
+    await putPrice(boundary - 2 * day + PRICE_INTERVAL_MS, 201);
+    await putPrice(boundary - day + 12 * 3600_000, 300);
+    expect(await repo.findDailyGaps(base, unavailable)).toEqual([
+      { start: boundary - 4 * day, end: boundary - 2 * day }
+    ]);
+    const fiveMinuteGaps = await repo.findGaps(
+      boundary + 3 * PRICE_INTERVAL_MS,
+      [
+        {
+          first: HISTORY_START_MS + PRICE_INTERVAL_MS,
+          last: boundary - day,
+          retryAt: base + day
+        }
+      ]
+    );
+    expect(fiveMinuteGaps).toEqual([
+      { start: boundary - 1, end: boundary + 3 * PRICE_INTERVAL_MS }
+    ]);
+  });
+
+  it('does not lose the first five-minute close to the scheduling-jitter tolerance', async () => {
+    const first = FIVE_MINUTE_HISTORY_START_MS;
+    await putPrice(first + PRICE_INTERVAL_MS, 200);
+    expect(await repo.findGaps(first + 2 * PRICE_INTERVAL_MS)).toEqual([
+      { start: first - 1, end: first + PRICE_INTERVAL_MS }
+    ]);
+  });
+
+  it('keeps the first historical day discoverable and respects daily retry boundaries', async () => {
+    const day = DAILY_PRICE_INTERVAL_MS;
+    await putPrice(HISTORY_START_MS + day + 500, 100);
+    expect(await repo.findDailyGaps(base, [], HISTORY_START_MS + day)).toEqual([
+      { start: HISTORY_START_MS - 1, end: HISTORY_START_MS + day }
+    ]);
+    const omitted = HISTORY_START_MS + 3 * day;
+    expect(
+      await repo.findDailyGaps(
+        base,
+        [{ first: omitted, last: omitted + day, retryAt: base + day }],
+        omitted - 1
+      )
+    ).toContainEqual({ start: HISTORY_START_MS + day, end: omitted - 1 });
+  });
+
+  it('restores only an absent old day, fixes its transaction, and is idle on the next invocation', async () => {
+    const day = DAILY_PRICE_INTERVAL_MS;
+    const boundary = FIVE_MINUTE_HISTORY_START_MS;
+    const missing = boundary - 2 * day;
+    const now = boundary + 2 * PRICE_INTERVAL_MS;
+    await putPrice(missing - day + 1000, 100);
+    await putPrice(missing + day, 300);
+    await putPrice(boundary, 400);
+    await putPrice(boundary + PRICE_INTERVAL_MS, 410);
+    await putTx(tx('daily-hole', missing + 3600_000));
+    await putTx(tx('covered-old-day', missing + day + 3600_000));
+    prepareCollector(now, boundary);
+    jest
+      .mocked(getUnavailablePrices)
+      .mockImplementation(async (_now, interval) =>
+        interval === day
+          ? [
+              {
+                first: HISTORY_START_MS,
+                last: missing - 2 * day,
+                retryAt: now + day
+              }
+            ]
+          : []
+      );
+    jest.mocked(fetchHistoricPrices).mockResolvedValue([sample(missing, 250)]);
+    try {
+      await syncEthUsdPrice(false);
+      expect(fetchHistoricPrices).toHaveBeenCalledTimes(1);
+      expect(fetchHistoricPrices).toHaveBeenCalledWith(
+        missing,
+        missing,
+        now,
+        day
+      );
+      expect(await readTx('daily-hole')).toMatchObject({
+        eth_price_usd: 250,
+        value_usd: 500,
+        gas_usd: 25
+      });
+      expect(await readTx('covered-old-day')).toMatchObject({
+        eth_price_usd: 100
+      });
+      const oldRows = await sqlExecutor.execute<{ timestamp_ms: number }>(
+        `SELECT timestamp_ms FROM ${ETH_PRICE_TABLE} WHERE timestamp_ms < :boundary ORDER BY timestamp_ms`,
+        { boundary }
+      );
+      expect(oldRows.map((row) => Number(row.timestamp_ms))).toEqual([
+        missing - day + 1000,
+        missing,
+        missing + day
+      ]);
+      await syncEthUsdPrice(false);
+      expect(fetchHistoricPrices).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.restoreAllMocks();
+    }
+  });
+
   it('normalizes fractional write timestamps to the unchanged DATETIME precision', async () => {
     await putPrice(base, 100);
     await putPrice(base + 300_500, 200);

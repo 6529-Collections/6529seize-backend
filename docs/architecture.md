@@ -476,7 +476,10 @@ starts with at most one-hour batches and stops for the invocation on a database
 failure. Repair updates indexed transaction date intervals using persisted prices
 and selects affected mint tokens from those intervals. Work timeouts persist a
 smaller batch window, while sustained fast successful batches gradually grow it.
-Day-sized provider pages feed continuous small database transactions until gaps
+Coverage is five-minute from January 1, 2026 onward and daily before that
+boundary back to October 1, 2021. Any existing sample covers its older UTC day;
+only absent days are filled, preserving existing rows. Reset uses the same split.
+Provider pages feed continuous small database transactions until gaps
 are drained or the Lambda's fifteen-minute deadline reserve is reached. Live
 quotes refresh between batches during extended runs; the five-minute trigger is
 not an execution deadline. Price gaps remain discoverable from `eth_price`

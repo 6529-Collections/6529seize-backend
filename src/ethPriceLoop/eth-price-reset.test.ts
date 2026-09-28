@@ -19,7 +19,7 @@ beforeEach(() => {
 it('creates a fixed historical range without a TTL', async () => {
   const state = await getPriceReset(true, end);
   expect(state).toEqual({
-    next: HISTORY_START_MS + PRICE_INTERVAL_MS,
+    next: HISTORY_START_MS,
     end,
     latched: true
   });
@@ -47,9 +47,7 @@ it('rearms only after a completed reset has seen false', async () => {
   mockRedis.get.mockResolvedValue(
     JSON.stringify({ next: end + PRICE_INTERVAL_MS, end, latched: false })
   );
-  expect((await getPriceReset(true, end))?.next).toBe(
-    HISTORY_START_MS + PRICE_INTERVAL_MS
-  );
+  expect((await getPriceReset(true, end))?.next).toBe(HISTORY_START_MS);
 });
 it('requires Redis for reset but leaves ordinary recovery usable', async () => {
   mockRedis.isReady = false;
