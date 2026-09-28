@@ -11,6 +11,9 @@ import {
   shrinkHistoryChunk
 } from './eth-price-batch-size';
 import {
+  DAILY_PRICE_INTERVAL_MS,
+  FIVE_MINUTE_HISTORY_START_MS,
+  HISTORY_START_MS,
   fetchHistoricPrices,
   fetchLivePrice,
   HISTORY_CHUNK_MS,
@@ -108,7 +111,8 @@ async function recoverBatch(
   run: RecoveryRun,
   prices: EthPrice[],
   range: Range,
-  state?: PriceReset
+  state?: PriceReset,
+  intervalMs = PRICE_INTERVAL_MS
 ): Promise<boolean> {
   const kind = state ? 'reset' : 'gap';
   let operation = `${kind}-database`;
@@ -119,23 +123,40 @@ async function recoverBatch(
     run.committedBatches += prices.length ? 1 : 0;
     run.processedCandles += prices.length;
     operation = `${kind}-checkpoint`;
-    await deferMissingPrices(prices, range.first, range.last, run.started);
+    if (intervalMs === DAILY_PRICE_INTERVAL_MS) {
+      await deferMissingPrices(
+        prices,
+        range.first,
+        range.last,
+        run.started,
+        intervalMs
+      );
+    } else {
+      await deferMissingPrices(prices, range.first, range.last, run.started);
+    }
     // Coinbase parsing guarantees unique, in-range, grid-aligned closes.
     // Preserved DB collisions do not add samples to this provider array.
+    // Count provider candles (daily or five-minute), not missing elapsed time.
     run.missingCandles +=
-      (range.last - range.first) / PRICE_INTERVAL_MS + 1 - prices.length;
+      (range.last - range.first) / intervalMs + 1 - prices.length;
     if (state) {
       // Persist the new cursor before mutating the in-memory checkpoint.
-      const next = range.last + PRICE_INTERVAL_MS;
+      // A legacy reset may end mid-day before 2026. Keep its terminal cursor
+      // within the persisted checkpoint contract (end plus one five-minute slot).
+      const next = Math.min(
+        range.last + intervalMs,
+        state.end + PRICE_INTERVAL_MS
+      );
       await savePriceReset({ ...state, next });
       state.next = next;
       logger.info(`[ETH PRICE RESET] [NEXT ${state.next}] [END ${state.end}]`);
     } else {
       logger.info(
-        `[ETH PRICE GAP REPAIR] [PROCESSED CANDLES ${prices.length}] [FROM ${range.first}] [THROUGH ${range.last}]`
+        `[ETH PRICE GAP REPAIR] [INTERVAL_MS ${intervalMs}] [PROCESSED CANDLES ${prices.length}] [FROM ${range.first}] [THROUGH ${range.last}]`
       );
     }
     const fastFullBatch =
+      intervalMs === PRICE_INTERVAL_MS &&
       prices.length * PRICE_INTERVAL_MS === run.historyChunkMs &&
       Date.now() - batchStarted < 5000;
     run.fastBatches = fastFullBatch ? run.fastBatches + 1 : 0;
@@ -154,38 +175,38 @@ async function recoverBatch(
 async function recoverPage(
   run: RecoveryRun,
   page: Range,
-  state?: PriceReset
+  state?: PriceReset,
+  intervalMs = PRICE_INTERVAL_MS
 ): Promise<boolean> {
   run.nextRange = page;
   if (!(await prepareWork(run))) return false;
   let prices: EthPrice[];
+  const kind = state ? 'reset' : 'gap';
   try {
     run.providerPages++;
-    prices = await fetchHistoricPrices(page.first, page.last);
+    prices =
+      intervalMs === DAILY_PRICE_INTERVAL_MS
+        ? await fetchHistoricPrices(
+            page.first,
+            page.last,
+            run.started,
+            intervalMs
+          )
+        : await fetchHistoricPrices(page.first, page.last);
   } catch (error) {
-    await recordFailure(
-      run,
-      error,
-      `${state ? 'reset' : 'gap'}-provider`,
-      page
-    );
+    await recordFailure(run, error, `${kind}-provider`, page);
     return false;
   }
   let cursor = state ? page.first : page.last;
   while (cursor >= page.first && cursor <= page.last) {
+    const chunkMs = Math.max(intervalMs, run.historyChunkMs);
     const range = state
       ? {
           first: cursor,
-          last: Math.min(
-            page.last,
-            cursor + run.historyChunkMs - PRICE_INTERVAL_MS
-          )
+          last: Math.min(page.last, cursor + chunkMs - intervalMs)
         }
       : {
-          first: Math.max(
-            page.first,
-            cursor - run.historyChunkMs + PRICE_INTERVAL_MS
-          ),
+          first: Math.max(page.first, cursor - chunkMs + intervalMs),
           last: cursor
         };
     run.nextRange = range;
@@ -194,48 +215,55 @@ async function recoverPage(
       (price) =>
         price.timestamp_ms >= range.first && price.timestamp_ms <= range.last
     );
-    if (!(await recoverBatch(run, batch, range, state))) return false;
-    cursor = state
-      ? range.last + PRICE_INTERVAL_MS
-      : range.first - PRICE_INTERVAL_MS;
+    if (!(await recoverBatch(run, batch, range, state, intervalMs)))
+      return false;
+    cursor = state ? range.last + intervalMs : range.first - intervalMs;
   }
   return true;
 }
 
-async function recoverGap(run: RecoveryRun, gap: PriceGap): Promise<void> {
-  // Existing aligned endpoints are excluded; off-grid endpoints permit the preceding close.
+async function recoverGap(
+  run: RecoveryRun,
+  gap: PriceGap,
+  intervalMs = PRICE_INTERVAL_MS
+): Promise<void> {
+  const daily = intervalMs === DAILY_PRICE_INTERVAL_MS;
+  // Existing endpoints are excluded; the cutoff sentinel admits the first close.
   let last = Math.min(
-    (Math.ceil(gap.end / PRICE_INTERVAL_MS) - 1) * PRICE_INTERVAL_MS,
-    run.closedThrough
+    (Math.ceil(gap.end / intervalMs) - 1) * intervalMs,
+    daily ? FIVE_MINUTE_HISTORY_START_MS - intervalMs : run.closedThrough
   );
-  const first =
-    (Math.floor(gap.start / PRICE_INTERVAL_MS) + 1) * PRICE_INTERVAL_MS;
+  const first = Math.max(
+    daily ? HISTORY_START_MS : FIVE_MINUTE_HISTORY_START_MS,
+    (Math.floor(gap.start / intervalMs) + 1) * intervalMs
+  );
+  // Thirty daily candles is an operational page size, not Coinbase's limit.
+  const pageMs = daily ? 30 * intervalMs : HISTORY_CHUNK_MS;
   while (last >= first) {
-    const page = {
-      first: Math.max(first, last - HISTORY_CHUNK_MS + PRICE_INTERVAL_MS),
-      last
-    };
-    if (!(await recoverPage(run, page))) return;
-    last = page.first - PRICE_INTERVAL_MS;
+    const page = { first: Math.max(first, last - pageMs + intervalMs), last };
+    if (!(await recoverPage(run, page, undefined, intervalMs))) return;
+    last = page.first - intervalMs;
   }
 }
 
-async function backfillGaps(run: RecoveryRun): Promise<void> {
-  const unavailable = await getUnavailablePrices(run.started);
-  run.deferredRanges = unavailable.length;
+async function backfillGaps(run: RecoveryRun, daily = false): Promise<void> {
+  const intervalMs = daily ? DAILY_PRICE_INTERVAL_MS : PRICE_INTERVAL_MS;
+  const unavailable = daily
+    ? await getUnavailablePrices(run.started, intervalMs)
+    : await getUnavailablePrices(run.started);
+  run.deferredRanges += unavailable.length;
   let before = run.started;
   while (await prepareWork(run)) {
-    const gaps = await ethPriceRecoveryDb.findGaps(
-      run.started,
-      unavailable,
-      before
-    );
+    const findGaps = daily
+      ? ethPriceRecoveryDb.findDailyGaps.bind(ethPriceRecoveryDb)
+      : ethPriceRecoveryDb.findGaps.bind(ethPriceRecoveryDb);
+    const gaps = await findGaps(run.started, unavailable, before);
     for (const gap of gaps) {
-      await recoverGap(run, gap);
+      await recoverGap(run, gap, intervalMs);
       if (!hasBudget(run)) return;
     }
     if (gaps.length < GAP_PAGE_SIZE) {
-      run.coverageScanComplete = true;
+      run.coverageScanComplete = daily;
       delete run.nextRange;
       return;
     }
@@ -249,14 +277,21 @@ async function resumeReset(reset: boolean, run: RecoveryRun): Promise<void> {
   const state = await getPriceReset(reset, run.closedThrough);
   run.resetPending = !!state && state.next <= state.end;
   while (state && state.next <= state.end) {
+    const daily = state.next < FIVE_MINUTE_HISTORY_START_MS;
+    const intervalMs = daily ? DAILY_PRICE_INTERVAL_MS : PRICE_INTERVAL_MS;
+    // Resume old five-minute checkpoints at the containing day; upserts are repeatable.
+    const first = daily
+      ? Math.floor(state.next / intervalMs) * intervalMs
+      : state.next;
     const page = {
-      first: state.next,
+      first,
       last: Math.min(
-        state.end,
-        state.next + HISTORY_CHUNK_MS - PRICE_INTERVAL_MS
+        Math.floor(state.end / intervalMs) * intervalMs,
+        daily ? FIVE_MINUTE_HISTORY_START_MS - intervalMs : state.end,
+        first + (daily ? 30 * intervalMs : HISTORY_CHUNK_MS) - intervalMs
       )
     };
-    if (!(await recoverPage(run, page, state))) return;
+    if (!(await recoverPage(run, page, state, intervalMs))) return;
     run.resetPending = state.next <= state.end;
   }
   delete run.nextRange;
@@ -327,6 +362,7 @@ export async function syncEthUsdPrice(
     try {
       run.historyChunkMs = await getHistoryChunkMs();
       await backfillGaps(run);
+      if (await prepareWork(run)) await backfillGaps(run, true);
     } catch (error) {
       run.historyStopped = true;
       run.errors.push({

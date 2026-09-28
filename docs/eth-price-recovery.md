@@ -1,6 +1,6 @@
 # ETH/USD collection and recovery
 
-`ethPriceLoop` uses the public Coinbase Exchange ETH-USD ticker and five-minute
+`ethPriceLoop` uses the public Coinbase Exchange ETH-USD ticker and historical
 candles. It needs no Coinbase key. Mobula is no longer used by this loop;
 `ETHERSCAN_API_KEY` retains its unrelated NextGen contract lookup use.
 
@@ -19,11 +19,15 @@ required.
    Initial and periodic live-provider failures remain in the final aggregate
    error even when history completes, preserving visibility of the failed live
    collection. Committed historical progress is retained.
-2. Read price coverage on the primary database, including interior holes and the
-   trailing interval up to the invocation's start time. The historical lower
-   bound remains October 1, 2021 UTC. A gap must exceed six minutes thirty seconds,
-   allowing ordinary scheduling jitter. New live rows do not hide interior gaps.
-3. Process gaps from newest to oldest, fetching up to one day of candles per
+2. Read price coverage on the primary database using two explicit resolutions.
+   From **January 1, 2026 UTC onward**, repair interior and trailing gaps at
+   five-minute resolution, allowing six minutes thirty seconds between saved
+   samples for scheduling jitter. Before that boundary, back to **October 1,
+   2021 UTC**, any saved sample in a UTC day covers that day. Only entirely absent
+   days need recovery. Existing sparse history and extra rows are preserved.
+   New live rows do not hide interior gaps.
+3. Process the 2026-and-later gaps first, newest to oldest, then missing older
+   days. Fetch up to one day of five-minute candles or thirty daily candles per
    Coinbase page. Split each page into small atomic database batches and commit
    them continuously in the same invocation. There is no one-batch-per-gap or
    eight-batch execution ceiling: the eight-gap discovery limit is only a query
@@ -49,8 +53,13 @@ one invocation if its database work fits the available time. Smaller transaction
 no longer introduce a five-minute wait between batches. Actual catch-up time
 still depends on transaction/mint repair cost and provider availability.
 
-History uses `/products/ETH-USD/candles?granularity=300` with explicit UTC start
-and end boundaries. A provider page contains at most 288 closes, below the
+History uses `/products/ETH-USD/candles` with explicit UTC start/end boundaries:
+`granularity=300` from 2026 onward and `granularity=86400` for older missing days.
+Daily requests use the previous day's closing price at the target UTC midnight,
+so they do not use that target day's future close. Daily database batches contain
+one candle; normal recovery preserves all existing rows and repairs dependent
+values through the next persisted sample. The following page/batch limits apply
+to five-minute history. A provider page contains at most 288 closes, below the
 300-candle limit. Each database transaction processes at most 12 closes (one hour),
 with smaller learned limits applied independently of the provider page size. A candle's close is stored at the **end** of its five-minute
 interval, so a transaction is never valued using a future close. The newest
@@ -108,8 +117,13 @@ interaction rules.
 ## Reset
 
 `ETH_PRICE_RESET=true` still means historical upserts, **never truncate/delete**.
-A reset requests five-minute closes from October 1, 2021 through a fixed recent
-closed interval. Exact timestamp collisions are updated; existing off-grid live
+A reset requests daily closes at UTC midnight from October 1, 2021 through
+December 31, 2025, then five-minute closes from January 1, 2026 through a fixed
+recent closed interval. An unfinished legacy five-minute reset checkpoint before
+2026 resumes at the containing day's midnight, replaying that day safely at daily
+resolution. Completed reset cursors remain within the existing checkpoint
+validation contract even when a legacy reset ends mid-day before 2026. Reset does
+not delete finer-grained rows already present. Exact timestamp collisions are updated; existing off-grid live
 samples are retained. The same transaction and mint USD correction runs after
 these upserts.
 
@@ -130,7 +144,9 @@ loses the checkpoint, setting the flag true restarts the historical upserts; if
 it was already cleared, reassert it to restart. Ordinary coverage recovery does
 not depend on the reset cursor and continues independently. Retry cooldowns use
 `eth-price:coinbase-unavailable:v1:<environment>:<DB_HOST>:<DB_NAME>` with a
-24-hour expiry. The environment is `SENTRY_ENVIRONMENT`, then `NODE_ENV` (or
+24-hour expiry. Daily omissions use the separate
+`eth-price:coinbase-daily-unavailable:v1:<environment>:<DB_HOST>:<DB_NAME>` key;
+legacy five-minute omissions cannot suppress an older missing day. The environment is `SENTRY_ENVIRONMENT`, then `NODE_ENV` (or
 `local`). During Redis outages, normal recovery/live collection continue with
 warm-process cooldowns; a cold start or lost cache can retry unavailable history
 sooner. Reset arming is logged explicitly.
@@ -154,7 +170,8 @@ If the database work deadline expires before COMMIT, subsequent chunks use
 half as many five-minute intervals, down to one. The reduced limit is saved
 without expiry in existing Redis at
 `eth-price:coinbase-batch-size:v1:<environment>:<DB_HOST>:<DB_NAME>` and applies
-to both gap recovery and reset. This lets oversized day-long repairs make
+to both five-minute gap recovery and reset. Older daily work uses one daily
+candle per transaction. This lets oversized day-long repairs make
 progress as smaller atomic transactions; reset checkpoints each completed batch.
 The failed transaction is not immediately replayed, and its error remains visible.
 Acquisition, lock conflicts, and ambiguous COMMIT failures do not reduce the size.
@@ -194,6 +211,12 @@ provider pages, committed database batches, processed/omitted candles, discovery
 completion, reset status, the next interrupted range, failures, and deadline
 status. Scan completion is not proof that deferred provider candles exist.
 Large resets can span invocations; each committed batch retains its progress.
+
+The summary's `missingCandles` counts provider omissions across both resolutions;
+one absent daily candle and one absent five-minute candle count as two, not as an
+elapsed-time measure. Per-batch `INTERVAL_MS` identifies the resolution. The
+thirty-day provider page is an intentional operational chunk, below Coinbase's
+maximum request size.
 
 ## Deployment order
 
