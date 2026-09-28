@@ -1,3 +1,4 @@
+import { refreshTransactionUsdAtWrite } from '@/eth-prices/transaction-usd';
 import {
   NextGenBlock,
   NextGenCollection,
@@ -108,6 +109,9 @@ export async function persistNextgenTransaction(
   manager: EntityManager,
   transaction: Transaction
 ) {
+  await refreshTransactionUsdAtWrite(transaction, (query, parameters) =>
+    manager.query(query, parameters)
+  );
   const repo = manager.getRepository(Transaction);
   await repo.upsert(transaction, [
     'transaction',
