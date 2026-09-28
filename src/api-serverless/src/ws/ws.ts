@@ -20,6 +20,10 @@ import { isLegacyWsQueryTokenEnabled } from '../auth/auth-session-v2';
 import { describeWebSocketSendFailure } from './ws-send-diagnostics';
 import { createHash } from 'node:crypto';
 import {
+  enqueueWebSocketFrame,
+  QueuedWebSocketFrame
+} from '@/api/ws/ws-outbound-queue';
+import {
   WebSocketSendScheduler,
   WebSocketSendLimitError,
   hasWebSocketSendBudget
@@ -160,8 +164,10 @@ class ApiGatewayClientConnections extends ClientConnections {
             frame_bytes: Buffer.byteLength(message, 'utf8')
           });
         } catch {
-          // Outbound delivery remains best effort when reporting is unavailable.
+          // Reporting must not prevent the queue from retrying delivery.
         }
+        // The SQS consumer must return this record as failed, not acknowledge it.
+        throw error;
       }
     }
   }
@@ -205,7 +211,118 @@ export class AppWebSockets {
     private readonly wsConnectionRepository: WsConnectionRepository
   ) {}
 
-  async send({
+  async send(input: {
+    connectionId: string;
+    message: string;
+    skipStaleConnectionCheck?: boolean;
+  }): Promise<void> {
+    // Authentication acknowledgements must follow the control operation inline,
+    // including credential rejection when no authenticated row exists yet.
+    if (isDevEnv() || input.skipStaleConnectionCheck)
+      return this.deliver(input);
+    const entity = await this.wsConnectionRepository.getByConnectionId(
+      input.connectionId,
+      {}
+    );
+    const expiry = getActiveJwtExpiry(entity?.jwt_expiry);
+    if (!entity || expiry === null) {
+      await this.deregister({ connectionId: input.connectionId });
+      return;
+    }
+    try {
+      await enqueueWebSocketFrame({
+        connectionId: input.connectionId,
+        message: input.message,
+        identityId: entity.identity_id,
+        jwtExpiry: expiry
+      });
+    } catch {
+      // Do not expose queue bodies/provider errors, or claim failed persistence
+      // was accepted. The caller must see the failure as well as the error log.
+      this.logger.error({ code: 'WS_OUTBOUND_ENQUEUE_FAILED' });
+      throw new Error('WebSocket queue persistence failed');
+    }
+  }
+
+  /** Worker-only transport path: it must never enqueue recursively. */
+  async deliverQueued(frame: QueuedWebSocketFrame): Promise<void> {
+    const entity = await this.wsConnectionRepository.getByConnectionId(
+      frame.connectionId,
+      {}
+    );
+    if (!entity || getActiveJwtExpiry(entity.jwt_expiry) === null) {
+      await this.deregister({ connectionId: frame.connectionId });
+      return;
+    }
+    if (
+      entity.identity_id !== frame.identityId ||
+      Number(entity.jwt_expiry) !== frame.jwtExpiry
+    ) {
+      this.logger.warn({ code: 'WS_OUTBOUND_SESSION_CHANGED' });
+      return;
+    }
+    if (!(await this.canDeliverQueuedPayload(frame))) return;
+    await this.deliver({
+      connectionId: frame.connectionId,
+      message: frame.message,
+      skipStaleConnectionCheck: true
+    });
+  }
+
+  private async canDeliverQueuedPayload(
+    frame: QueuedWebSocketFrame
+  ): Promise<boolean> {
+    const payload = JSON.parse(frame.message) as {
+      type?: string;
+      data?: {
+        profile_id?: string;
+        wave_id?: string;
+        wave?: { id?: string };
+        attachment_id?: string;
+      };
+    };
+    let accessIdentityId = frame.identityId;
+    if (
+      payload.type === 'IDENTITY_NOTIFICATIONS_CHANGED' ||
+      payload.type === 'DM_UNREAD_STATE_CHANGED'
+    ) {
+      const profileId = payload.data?.profile_id;
+      if (!profileId) throw new Error('Missing notification profile');
+      accessIdentityId = profileId;
+      const recipients =
+        await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
+          [profileId]
+        );
+      if (
+        !recipients.some(
+          (recipient) => recipient.connectionId === frame.connectionId
+        )
+      ) {
+        this.logger.warn({ code: 'WS_OUTBOUND_SUBSCRIPTION_CHANGED' });
+        return false;
+      }
+    }
+    const waveId = payload.data?.wave_id ?? payload.data?.wave?.id;
+    const attachmentId = payload.data?.attachment_id;
+    const resource = attachmentId
+      ? { attachmentId }
+      : waveId
+        ? { waveId }
+        : null;
+    if (
+      resource &&
+      !(await this.wsConnectionRepository.canIdentityReadQueuedResource(
+        accessIdentityId,
+        resource
+      ))
+    ) {
+      this.logger.warn({ code: 'WS_OUTBOUND_ACCESS_CHANGED' });
+      return false;
+    }
+    return true;
+  }
+
+  async deliver({
     connectionId,
     message,
     skipStaleConnectionCheck = false

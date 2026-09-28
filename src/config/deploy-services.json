@@ -19,7 +19,8 @@
       "validation_profile": "api-health",
       "default_dependencies": [
         "dbMigrationsLoop",
-        "artworkDocumentationProcessor"
+        "artworkDocumentationProcessor",
+        "websocketOutboundHandler"
       ]
     },
     {
@@ -54,7 +55,9 @@
         "attachmentsOrchestrator"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "attachmentsProcessor",
@@ -71,7 +74,9 @@
         "attachmentsProcessor"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "artCurationNftWatchLoop",
@@ -240,7 +245,9 @@
         "dropMediaSanitizer"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "dropVideoConversionInvokerLoop",
@@ -325,7 +332,9 @@
         "helpBotDailyActivityCreditLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "marketStatsLoop",
@@ -531,7 +540,9 @@
         "nftLinkRefresherLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "nftLinkMediaPreviewLoop",
@@ -653,7 +664,8 @@
       ],
       "validation_profile": "lambda-version",
       "default_dependencies": [
-        "dbMigrationsLoop"
+        "dbMigrationsLoop",
+        "websocketOutboundHandler"
       ]
     },
     {
@@ -687,7 +699,9 @@
         "releaseNotesGenerationLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "refreshEnsLoop",
@@ -1030,6 +1044,23 @@
         "artworkDocumentationStorage",
         "dbMigrationsLoop"
       ]
+    },
+    {
+      "name": "websocketOutboundHandler",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "websocketOutboundHandler"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": []
     }
   ]
 }
