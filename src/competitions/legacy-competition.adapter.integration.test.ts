@@ -1,5 +1,9 @@
 import { LegacyCompetitionBaselineRepository } from '@/competitions/legacy-competition-baseline.repository';
-import { loadLegacyParityCandidate } from '@/competitions/legacy-parity-snapshot';
+import {
+  LEGACY_PARITY_ROW_LIMIT,
+  loadLegacyParityCandidate
+} from '@/competitions/legacy-parity-snapshot';
+import { CompetitionRowLimitError } from '@/competitions/competition-page';
 import { CompetitionService } from '@/competitions/competition.service';
 import { CompetitionShadowComparator } from '@/competitions/competition-shadow-comparator';
 import { CompetitionCursorCodec } from '@/competitions/competition-cursor';
@@ -195,6 +199,132 @@ describeWithSeed(
       const candidate = await loadLegacyParityCandidate(reader, record, 5_000);
       expect(candidate).toEqual(expected);
     });
+
+    it('preserves the existing zero-end sentinel in the parity projection', async () => {
+      await sqlExecutor.execute(
+        'update waves set participation_period_end = 0, voting_period_end = 0 where id = :id',
+        { id: wave.id }
+      );
+      const { record, reader } = await adapter();
+      const baseline = await new LegacyCompetitionBaselineRepository(
+        () => sqlExecutor
+      ).getSnapshot(record, 5_000, {});
+      expect(baseline.configuration).toMatchObject({ ended_at: null });
+      expect(await loadLegacyParityCandidate(reader, record, 5_000)).toEqual(
+        baseline
+      );
+    });
+
+    it('rejects over-limit source rows on both sides without recording truncated parity', async () => {
+      await sqlExecutor.bulkInsert(
+        DROPS_TABLE,
+        Array.from({ length: LEGACY_PARITY_ROW_LIMIT + 1 - 4 }, (_, index) =>
+          drop(`limit-${index}`, index + 10, DropType.PARTICIPATORY)
+        ),
+        Object.keys(drop('template', 0, DropType.PARTICIPATORY)),
+        {}
+      );
+      const { record, reader } = await adapter();
+      await expect(
+        new LegacyCompetitionBaselineRepository(() => sqlExecutor).getSnapshot(
+          record,
+          5_000,
+          {}
+        )
+      ).rejects.toBeInstanceOf(CompetitionRowLimitError);
+      await expect(
+        loadLegacyParityCandidate(reader, record, 5_000)
+      ).rejects.toBeInstanceOf(CompetitionRowLimitError);
+      expect(
+        await sqlExecutor.execute(
+          `select id from ${COMPETITION_PARITY_OBSERVATIONS_TABLE}`
+        )
+      ).toEqual([]);
+    });
+
+    it('rejects duplicate voter state pairs so spending cannot be counted twice', async () => {
+      await expect(
+        sqlExecutor.execute(
+          `insert into ${DROP_VOTER_STATE_TABLE} (voter_id,drop_id,votes,wave_id) values ('profile-voter','drop-high',8,:id)`,
+          { id: wave.id }
+        )
+      ).rejects.toThrow();
+      const { record, reader } = await adapter();
+      const baseline = await new LegacyCompetitionBaselineRepository(
+        () => sqlExecutor
+      ).getSnapshot(record, 5_000, {});
+      expect(baseline.votes_and_credits).toEqual([
+        { profile_id: 'profile-voter', votes: 7, credit_spent: 7 }
+      ]);
+      expect(await loadLegacyParityCandidate(reader, record, 5_000)).toEqual(
+        baseline
+      );
+    });
+
+    it.each(['slow-query', 'stalled-reader'])(
+      'bounds a %s sample and releases capacity for the next request',
+      async (failure) => {
+        const { record } = await adapter();
+        const logger = { info: jest.fn(), warn: jest.fn() };
+        const comparator = new CompetitionShadowComparator(
+          repository,
+          {
+            isLegacyCompetitionShadowCompareEnabled: () => true,
+            getLegacyCompetitionShadowSampleRate: () => 1
+          } as never,
+          logger
+        );
+        const candidate = jest.fn(async (ctx, now) =>
+          loadLegacyParityCandidate(
+            new LegacyCompetitionAdapter(repository, wavesApiDb, ctx),
+            record,
+            now
+          )
+        );
+        const baseline = new LegacyCompetitionBaselineRepository(
+          () => sqlExecutor
+        );
+        const started = Date.now();
+        await expect(
+          comparator.compareIfSampled(
+            record,
+            async (ctx, now) => {
+              if (failure === 'slow-query')
+                await sqlExecutor.execute('select sleep(5)', undefined, {
+                  wrappedConnection: ctx.connection
+                });
+              else await new Promise<void>(() => {});
+              return baseline.getSnapshot(record, now, ctx);
+            },
+            candidate,
+            {}
+          )
+        ).resolves.toBe(false);
+        expect(Date.now() - started).toBeLessThan(4_000);
+        expect(candidate).not.toHaveBeenCalled();
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.stringContaining('reason=deadline_exceeded')
+        );
+        expect(
+          await sqlExecutor.execute(
+            `select id from ${COMPETITION_PARITY_OBSERVATIONS_TABLE}`
+          )
+        ).toEqual([]);
+        await expect(
+          comparator.compareIfSampled(
+            record,
+            (ctx, now) => baseline.getSnapshot(record, now, ctx),
+            candidate,
+            {}
+          )
+        ).resolves.toBe(true);
+        expect(
+          await sqlExecutor.execute(
+            `select id from ${COMPETITION_PARITY_OBSERVATIONS_TABLE}`
+          )
+        ).toHaveLength(12);
+      }
+    );
 
     it.each([false, true])(
       'compares time-locked leaderboards with snapshots present=%s',

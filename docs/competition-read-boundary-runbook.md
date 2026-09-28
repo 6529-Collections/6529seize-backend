@@ -58,18 +58,32 @@ legacy wave/drop/rating/spending/decision/outcome/pause rows directly through
 resources through `LegacyCompetitionAdapter` and its paged repository queries.
 No native runtime or mirrored native vote data is required. Capability expectations
 come from the configured special-wave IDs; the candidate uses the stored
-competition capability assignments, so missing mappings are detectable.
+competition capability assignments, so missing mappings are detectable. When a
+special-wave environment ID changes, update its stored capability assignment
+before sampling. An environment/mapping mismatch is configuration drift to
+investigate, not proof that the read adapter is broken.
 
-Both paths use one repeatable-read transaction and the same timestamp. This
+Both paths use one repeatable-read transaction on the primary/write pool and
+the same timestamp. The primary is intentional: the transaction also writes the
+observations and must avoid replica lag between the two projections. This
 prevents a concurrent vote or phase transition from creating a false mismatch.
 All 12 supported category observations commit together; collection, mapping,
 or persistence errors roll back the sample and leave the requested read intact.
-A skipped sample logs identifiers and `reason=sample_failed`, never the exception
-or source data. Query the committed observations for acceptance; per-category
+An attempted sample logs identifiers, `outcome`, `reason`, and `duration_ms`,
+never the exception or source data. Reasons distinguish `in_flight`, `row_limit`,
+`deadline_exceeded`, `sample_failed`, and committed `complete` samples. Count
+these log events and aggregate duration to monitor skipped-sample rates and
+latency. Query the committed observations for acceptance; per-category
 logs emitted before a failed transaction are not committed evidence.
 
 Sampling is bounded to one in-flight sample per API process and 10,000 rows per
-legacy source or candidate collection. Larger samples are skipped entirely,
+legacy source or candidate collection. It uses the existing physical SQL budget:
+a 2-second overall deadline (including acquisition/finalization), 500 ms maximum
+per statement, and a 250 ms finalization reserve. Expiry aborts work, rolls back
+or discards the connection, and releases sampling capacity. Candidate detail
+reads are sequential so they share that budgeted connection safely. The GET
+awaits this bounded work; it is not detached into work that Lambda may freeze.
+Larger samples are skipped entirely,
 never truncated and counted as matches. The percentage flag remains the rollout
 rate control; this is not a cluster-wide quota. Measure query cost, sample skips,
 and request latency before enabling sampling outside a local fixture environment.
@@ -96,6 +110,11 @@ where source_version like 'legacy-read-v2:%'
   and observed_at >= :rollout_started_at
  group by category, matched;
 ```
+
+Deployed observations use the workflow-provided `GIT_COMMIT` revision, with
+`GIT_COMMIT_SHA` also supported. For release acceptance, filter by the exact
+`legacy-read-v2:<deployed-sha>` value; `legacy-read-v2:local` is only a local
+development fallback.
 
 ## Local Foundation Follow-up (2026-09-28)
 

@@ -1,4 +1,5 @@
 import { CompetitionShadowComparator } from '@/competitions/competition-shadow-comparator';
+import { CompetitionRowLimitError } from '@/competitions/competition-page';
 import {
   CompetitionExecutionMode,
   CompetitionParityCategory,
@@ -48,7 +49,41 @@ describe('CompetitionShadowComparator', () => {
     repository.recordParityObservation.mockReset();
   });
 
+  afterEach(() => jest.restoreAllMocks());
+
+  it.each([
+    {
+      sourceSha: 'a'.repeat(40),
+      commit: 'b'.repeat(40),
+      expected: 'a'.repeat(40)
+    },
+    { sourceSha: undefined, commit: 'b'.repeat(40), expected: 'b'.repeat(40) },
+    { sourceSha: undefined, commit: undefined, expected: 'local' }
+  ])(
+    'records the deployed source version: $expected',
+    async ({ sourceSha, commit, expected }) => {
+      jest.replaceProperty(process, 'env', {
+        ...process.env,
+        GIT_COMMIT_SHA: sourceSha,
+        GIT_COMMIT: commit
+      });
+      const comparator = new CompetitionShadowComparator(
+        repository as never,
+        features as never,
+        logger
+      );
+      await comparator.compare(record, snapshot, snapshot, {});
+      expect(
+        repository.recordParityObservation.mock.calls[0][0].sourceVersion
+      ).toBe(`legacy-read-v2:${expected}`);
+    }
+  );
+
   it('uses one snapshot connection and timestamp for independent readers', async () => {
+    const clock = jest
+      .spyOn(Date, 'now')
+      .mockReturnValueOnce(1_000)
+      .mockReturnValue(2_000);
     features.isLegacyCompetitionShadowCompareEnabled.mockReturnValue(true);
     features.getLegacyCompetitionShadowSampleRate.mockReturnValue(1);
     const baseline = jest.fn().mockResolvedValue(snapshot);
@@ -63,10 +98,20 @@ describe('CompetitionShadowComparator', () => {
       comparator.compareIfSampled(record, baseline, candidate, {})
     ).resolves.toBe(true);
     expect(baseline.mock.calls[0]).toEqual(candidate.mock.calls[0]);
+    expect(baseline.mock.calls[0][1]).toBe(1_000);
+    expect(clock).toHaveBeenCalledTimes(1);
     expect(baseline.mock.calls[0][0].connection).toBe(connection);
     expect(repository.executeNativeQueriesInTransaction).toHaveBeenCalledWith(
       expect.any(Function),
-      { isolationLevel: 'REPEATABLE READ' }
+      {
+        isolationLevel: 'REPEATABLE READ',
+        executionBudget: {
+          deadlineMonotonicMillis: expect.any(Number),
+          maxStatementMillis: 500,
+          finalizationReserveMillis: 250,
+          lockWaitSeconds: 1
+        }
+      }
     );
     expect(
       repository.recordParityObservation.mock.calls.some(
@@ -78,7 +123,7 @@ describe('CompetitionShadowComparator', () => {
     ).toMatch(/^legacy-read-v2:/);
   });
 
-  it.each(['baseline', 'candidate', 'persistence'])(
+  it.each(['baseline', 'candidate', 'persistence', 'transaction'])(
     'isolates %s failures without logging private error payloads',
     async (failure) => {
       features.isLegacyCompetitionShadowCompareEnabled.mockReturnValue(true);
@@ -90,6 +135,10 @@ describe('CompetitionShadowComparator', () => {
       if (failure === 'candidate') candidate.mockRejectedValue(error);
       if (failure === 'persistence')
         repository.recordParityObservation.mockRejectedValue(error);
+      if (failure === 'transaction')
+        repository.executeNativeQueriesInTransaction.mockRejectedValueOnce(
+          error
+        );
       const comparator = new CompetitionShadowComparator(
         repository as never,
         features as never,
@@ -107,6 +156,13 @@ describe('CompetitionShadowComparator', () => {
       );
       if (failure !== 'persistence')
         expect(repository.recordParityObservation).not.toHaveBeenCalled();
+      if (failure === 'transaction') {
+        expect(baseline).not.toHaveBeenCalled();
+        expect(candidate).not.toHaveBeenCalled();
+        await expect(
+          comparator.compareIfSampled(record, baseline, candidate, {})
+        ).resolves.toBe(true);
+      }
     }
   );
 
@@ -126,6 +182,29 @@ describe('CompetitionShadowComparator', () => {
     ).resolves.toBe(false);
     expect(baseline).not.toHaveBeenCalled();
     expect(candidate).not.toHaveBeenCalled();
+  });
+
+  it('reports oversized samples without logging their source data', async () => {
+    features.isLegacyCompetitionShadowCompareEnabled.mockReturnValue(true);
+    features.getLegacyCompetitionShadowSampleRate.mockReturnValue(1);
+    const comparator = new CompetitionShadowComparator(
+      repository as never,
+      features as never,
+      logger
+    );
+    await expect(
+      comparator.compareIfSampled(
+        record,
+        async () => {
+          throw new CompetitionRowLimitError();
+        },
+        async () => snapshot,
+        {}
+      )
+    ).resolves.toBe(false);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringMatching(/outcome=skipped reason=row_limit duration_ms=\d+/)
+    );
   });
 
   it('allows only one sample at a time and releases capacity after completion', async () => {
@@ -148,6 +227,9 @@ describe('CompetitionShadowComparator', () => {
       comparator.compareIfSampled(record, baseline, candidate, {})
     ).resolves.toBe(false);
     expect(baseline).toHaveBeenCalledTimes(1);
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining('outcome=skipped reason=in_flight')
+    );
     release(snapshot);
     await expect(first).resolves.toBe(true);
     await expect(

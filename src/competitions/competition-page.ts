@@ -5,6 +5,14 @@ import {
 
 const INTERNAL_PAGE_SIZE = 500;
 
+export class CompetitionRowLimitError extends Error {
+  constructor() {
+    super('Competition sample exceeds row limit');
+    this.name = 'CompetitionRowLimitError';
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
 export async function collectCompetitionPages<T>(
   read: (request: CompetitionPageRequest) => Promise<CompetitionPage<T>>,
   direction: CompetitionPageRequest['direction'] = 'ASC',
@@ -20,7 +28,7 @@ export async function collectCompetitionPages<T>(
     });
     data.push(...page.data);
     if (data.length > maxRows || (data.length === maxRows && page.has_more)) {
-      throw new Error('Competition sample exceeds row limit');
+      throw new CompetitionRowLimitError();
     }
     if (!page.has_more) return data;
     if (!page.data.length) {

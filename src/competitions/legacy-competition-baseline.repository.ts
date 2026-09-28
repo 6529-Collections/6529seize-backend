@@ -28,6 +28,22 @@ import {
 } from '@/competitions/competition.types';
 import { computeCompetitionPhase } from '@/competitions/competition-phase';
 import { LEGACY_PARITY_ROW_LIMIT } from '@/competitions/legacy-parity-snapshot';
+import { CompetitionRowLimitError } from '@/competitions/competition-page';
+
+// Closed set of source queries: callers cannot supply SQL fragments.
+const LEGACY_SOURCE_QUERIES = {
+  drops: `select id, author_id, created_at, drop_type from ${DROPS_TABLE} where wave_id = :waveId and drop_type in ('PARTICIPATORY', 'WINNER') limit :limit`,
+  ratings: `select * from ${DROP_RANK_TABLE} where wave_id = :waveId  limit :limit`,
+  locked: `select * from ${WAVE_LEADERBOARD_ENTRIES_TABLE} where wave_id = :waveId  limit :limit`,
+  votes: `select * from ${DROP_VOTER_STATE_TABLE} where wave_id = :waveId  limit :limit`,
+  spent: `select * from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} where wave_id = :waveId  limit :limit`,
+  decisions: `select decision_time from ${WAVES_DECISIONS_TABLE} where wave_id = :waveId order by decision_time asc limit :limit`,
+  winners: `select drop_id, decision_time, ranking, final_vote from ${WAVES_DECISION_WINNER_DROPS_TABLE} where wave_id = :waveId order by decision_time asc, ranking asc, drop_id asc limit :limit`,
+  outcomes: `select * from ${WAVE_OUTCOMES_TABLE} where wave_id = :waveId order by wave_outcome_position asc limit :limit`,
+  distributions: `select * from ${WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE} where wave_id = :waveId order by wave_outcome_distribution_item_position asc limit :limit`,
+  pauses: `select start_time, end_time from ${WAVES_DECISION_PAUSES_TABLE} where wave_id = :waveId order by start_time asc, id asc limit :limit`,
+  nfts: `select contract, token_id from ${WAVE_VOTING_CREDIT_NFTS_TABLE} where wave_id = :waveId order by contract asc, token_id asc limit :limit`
+} as const;
 
 type Numeric = number | string;
 type Drop = {
@@ -140,7 +156,8 @@ function configuration(wave: WaveEntity, creditNfts: object[], now: number) {
     winners,
     created_at: Number(wave.created_at),
     updated_at: numeric(wave.updated_at) ?? Number(wave.created_at),
-    ended_at: ended ? Math.max(...ends) || null : null
+    // The existing public legacy projection treats epoch zero as no end date.
+    ended_at: ended && Math.max(...ends) !== 0 ? Math.max(...ends) : null
   };
 }
 
@@ -266,19 +283,17 @@ export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleS
   }
 
   private async rows<T>(
-    table: string,
-    columns: string,
+    source: keyof typeof LEGACY_SOURCE_QUERIES,
     waveId: string,
-    ctx: RequestContext,
-    order = ''
+    ctx: RequestContext
   ): Promise<T[]> {
     const rows = await this.db.execute<T>(
-      `select ${columns} from ${table} where wave_id = :waveId ${order} limit :limit`,
+      LEGACY_SOURCE_QUERIES[source],
       { waveId, limit: LEGACY_PARITY_ROW_LIMIT + 1 },
       { wrappedConnection: ctx.connection }
     );
     if (rows.length > LEGACY_PARITY_ROW_LIMIT)
-      throw new Error('Legacy sample exceeds row limit');
+      throw new CompetitionRowLimitError();
     return rows;
   }
 
@@ -294,56 +309,22 @@ export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleS
     );
     if (!wave || wave.type === WaveType.CHAT)
       throw new Error('Legacy baseline wave unavailable');
-    const read = <T>(table: string, columns = '*', order = '') =>
-      this.rows<T>(table, columns, record.wave_id, ctx, order);
-    const drops = (
-      await read<Drop>(
-        DROPS_TABLE,
-        'id, author_id, created_at, drop_type',
-        "and drop_type in ('PARTICIPATORY', 'WINNER')"
-      )
-    ).filter(
-      (row) =>
-        row.drop_type === DropType.PARTICIPATORY ||
-        row.drop_type === DropType.WINNER
-    );
-    const ratings = await read<Rating>(DROP_RANK_TABLE);
-    const locked = await read<LockedRating>(WAVE_LEADERBOARD_ENTRIES_TABLE);
-    const votes = await read<Vote>(DROP_VOTER_STATE_TABLE);
-    const spent = await read<Spend>(DROPS_VOTES_CREDIT_SPENDINGS_TABLE);
-    const decisions = await read<{ decision_time: Numeric }>(
-      WAVES_DECISIONS_TABLE,
-      'decision_time',
-      'order by decision_time asc'
-    );
-    const winners = await read<Winner>(
-      WAVES_DECISION_WINNER_DROPS_TABLE,
-      'drop_id, decision_time, ranking, final_vote',
-      'order by decision_time asc, ranking asc, drop_id asc'
-    );
-    const outcomes = await read<Outcome>(
-      WAVE_OUTCOMES_TABLE,
-      '*',
-      'order by wave_outcome_position asc'
-    );
-    const distributions = await read<Distribution>(
-      WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
-      '*',
-      'order by wave_outcome_distribution_item_position asc'
-    );
+    const read = <T>(source: keyof typeof LEGACY_SOURCE_QUERIES) =>
+      this.rows<T>(source, record.wave_id, ctx);
+    const drops = await read<Drop>('drops');
+    const ratings = await read<Rating>('ratings');
+    const locked = await read<LockedRating>('locked');
+    const votes = await read<Vote>('votes');
+    const spent = await read<Spend>('spent');
+    const decisions = await read<{ decision_time: Numeric }>('decisions');
+    const winners = await read<Winner>('winners');
+    const outcomes = await read<Outcome>('outcomes');
+    const distributions = await read<Distribution>('distributions');
     const pauses = await read<{
       start_time: Numeric;
       end_time: Numeric | null;
-    }>(
-      WAVES_DECISION_PAUSES_TABLE,
-      'start_time, end_time',
-      'order by start_time asc, id asc'
-    );
-    const nfts = await read<object>(
-      WAVE_VOTING_CREDIT_NFTS_TABLE,
-      'contract, token_id',
-      'order by contract asc, token_id asc'
-    );
+    }>('pauses');
+    const nfts = await read<object>('nfts');
     const activeDrops = drops.filter(
       (drop) => drop.drop_type === DropType.PARTICIPATORY
     );

@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
+import { SqlExecutionBudgetExceededError } from '@/db/sql-execution-budget';
+import { CompetitionRowLimitError } from '@/competitions/competition-page';
 import { appFeatures, AppFeatures } from '@/app-features';
 import { CompetitionParityCategory } from '@/entities/ICompetition';
 import { Logger } from '@/logging';
@@ -70,6 +73,16 @@ const COMPARISONS: ReadonlyArray<{
 
 type SafeLogger = Pick<Logger, 'info' | 'warn'>;
 
+function failureReason(error: unknown): string {
+  if (error instanceof CompetitionRowLimitError) return 'row_limit';
+  if (
+    error instanceof SqlExecutionBudgetExceededError &&
+    error.code === 'SQL_BUDGET_EXCEEDED'
+  )
+    return 'deadline_exceeded';
+  return 'sample_failed';
+}
+
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
   if (value && typeof value === 'object') {
@@ -118,8 +131,17 @@ export class CompetitionShadowComparator {
     ) => Promise<CompetitionSnapshot>,
     ctx: RequestContext
   ): Promise<boolean> {
-    if (this.sampleRunning || !this.shouldSample()) return false;
+    if (!this.shouldSample()) return false;
+    if (this.sampleRunning) {
+      this.logger.info(
+        `competition parity sample wave=${record.wave_id} competition=${record.id} outcome=skipped reason=in_flight duration_ms=0`
+      );
+      return false;
+    }
     this.sampleRunning = true;
+    const startedAt = performance.now();
+    let outcome = 'skipped';
+    let reason = 'sample_failed';
     try {
       // One connection and timestamp prevent live votes or phase boundaries from
       // manufacturing mismatches between sequential, independently read data.
@@ -133,17 +155,28 @@ export class CompetitionShadowComparator {
           // categories, so a partial sample cannot inflate the match rate.
           await this.compare(record, baseline, candidate, shadowCtx);
         },
-        { isolationLevel: 'REPEATABLE READ' }
+        {
+          isolationLevel: 'REPEATABLE READ',
+          executionBudget: {
+            deadlineMonotonicMillis: startedAt + 2_000,
+            maxStatementMillis: 500,
+            finalizationReserveMillis: 250,
+            lockWaitSeconds: 1
+          }
+        }
       );
+      outcome = 'committed';
+      reason = 'complete';
       return true;
-    } catch {
+    } catch (error) {
       // Do not log the error: SQL/driver errors can contain private row values.
-      this.logger.warn(
-        `competition parity skipped wave=${record.wave_id} competition=${record.id} reason=sample_failed`
-      );
+      reason = failureReason(error);
       return false;
     } finally {
       this.sampleRunning = false;
+      const message = `competition parity sample wave=${record.wave_id} competition=${record.id} outcome=${outcome} reason=${reason} duration_ms=${Math.ceil(performance.now() - startedAt)}`;
+      if (outcome === 'committed') this.logger.info(message);
+      else this.logger.warn(message);
     }
   }
 
@@ -153,6 +186,11 @@ export class CompetitionShadowComparator {
     candidate: CompetitionSnapshot,
     ctx: RequestContext
   ): Promise<void> {
+    const sourceVersion =
+      `legacy-read-v2:${process.env.GIT_COMMIT_SHA ?? process.env.GIT_COMMIT ?? 'local'}`.slice(
+        0,
+        64
+      );
     for (const comparison of COMPARISONS) {
       const baselineHash = hash(baseline[comparison.field]);
       const candidateHash = hash(candidate[comparison.field]);
@@ -169,11 +207,7 @@ export class CompetitionShadowComparator {
           candidateStorageMode: candidate.storage_mode,
           baselineConfigVersion: baseline.config_version,
           candidateConfigVersion: candidate.config_version,
-          sourceVersion:
-            `legacy-read-v2:${process.env.GIT_COMMIT_SHA ?? 'local'}`.slice(
-              0,
-              64
-            )
+          sourceVersion
         },
         ctx
       );
