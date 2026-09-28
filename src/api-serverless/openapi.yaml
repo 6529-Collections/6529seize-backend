@@ -4611,7 +4611,9 @@ paths:
           schema:
             type: string
             format: uuid
-      security: []
+      security:
+        - bearerAuth: []
+        - {}
       x-6529-router:
         enabled: true
         auth: optional
@@ -4726,7 +4728,9 @@ paths:
             minimum: 1
             maximum: 100
             default: 50
-      security: []
+      security:
+        - bearerAuth: []
+        - {}
       x-6529-router:
         enabled: true
         auth: optional
