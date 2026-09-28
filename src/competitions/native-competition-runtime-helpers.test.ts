@@ -4,6 +4,7 @@ import {
   nativeThresholdSince,
   nextNativeDecision,
   reducedNativeVotes,
+  flooredWeightedNativeVote,
   weightedNativeVote
 } from './native-competition-runtime.helpers';
 import { CompetitionDecisionConfig } from './competition.types';
@@ -23,6 +24,40 @@ const config: CompetitionDecisionConfig = {
 };
 
 describe('native runtime numerical rules', () => {
+  it('floors exact signed weighted ratings before converting large rationals to numbers', () => {
+    const max = Number.MAX_SAFE_INTEGER - 1;
+    const points = [
+      { timestamp: 0, vote: max, sequence: 1 },
+      { timestamp: 1, vote: max - 1, sequence: 2 }
+    ];
+    expect(flooredWeightedNativeVote(points, 2, 2)).toBe(max - 1);
+    expect(
+      flooredWeightedNativeVote(
+        points.map((point) => ({ ...point, vote: -point.vote })),
+        2,
+        2
+      )
+    ).toBe(-max);
+    expect(flooredWeightedNativeVote(points, 1_000_000, 2)).toBe(max - 1);
+    expect(
+      flooredWeightedNativeVote(
+        [{ timestamp: 0, vote: max, sequence: 1 }],
+        1_000_000,
+        2
+      )
+    ).toBe(max);
+  });
+
+  it('compares large exact threshold rationals and rounds a crossing up only after integer division', () => {
+    const max = Number.MAX_SAFE_INTEGER - 1;
+    const points = [
+      { timestamp: 0, vote: max - 1, sequence: 1 },
+      { timestamp: 1, vote: max, sequence: 2 }
+    ];
+    expect(nativeThresholdSince(points, 2, 2, max, 0)).toBeNull();
+    expect(nativeThresholdSince(points, 3, 2, max, 0)).toBe(3);
+  });
+
   it('integrates whole windows, past values, same-millisecond edits and negative values', () => {
     const points = [
       { timestamp: 0, vote: 20, sequence: 1 },
@@ -58,6 +93,9 @@ describe('native runtime numerical rules', () => {
             integral +=
               points.filter((point) => point.timestamp <= t).at(-1)?.vote ?? 0;
           expect(weightedNativeVote(points, 100, 100)).toBe(integral / 100);
+          expect(flooredWeightedNativeVote(points, 100, 100)).toBe(
+            Math.floor(integral / 100)
+          );
         }
       )
     );

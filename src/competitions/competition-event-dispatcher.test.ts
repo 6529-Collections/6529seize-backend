@@ -224,4 +224,54 @@ describe('CompetitionEventDispatcher', () => {
       {}
     );
   });
+
+  it('retries the same committed entry push IDs after queue handoff fails', async () => {
+    const deps = dependencies();
+    const queued = {
+      ...event,
+      event_type: 'COMPETITION_ENTRY_CREATED',
+      competition_entry_id: 'entry',
+      drop_id: 'drop',
+      data: { pending_push_notification_ids: [17, 18] }
+    };
+    deps.outbox.claimOutbox.mockResolvedValue([
+      { id: event.event_id, event: queued, attempts: 1, lease_token: 'lease' }
+    ]);
+    deps.push
+      .mockRejectedValueOnce(new Error('provider private payload'))
+      .mockResolvedValue(undefined);
+    await deps.dispatcher.dispatchPending({}, 100);
+    expect(deps.outbox.acknowledgeOutbox).not.toHaveBeenCalled();
+    expect(deps.outbox.retryOutbox).toHaveBeenCalledTimes(1);
+    await deps.dispatcher.dispatchPending({}, 200);
+    expect(deps.push.mock.calls).toEqual([[[17, 18]], [[17, 18]]]);
+    expect(deps.outbox.acknowledgeOutbox).toHaveBeenCalledTimes(1);
+    expect(deps.notifier.notifyOfCompetitionLifecycle).not.toHaveBeenCalled();
+    expect(deps.repository.listFollowers).not.toHaveBeenCalled();
+  });
+
+  it('reuses notification effect receipts when lifecycle push handoff is retried', async () => {
+    const deps = dependencies();
+    const receipts = new Map<string, unknown>();
+    deps.repository.applyEffect.mockImplementation(
+      async <T>(
+        _event: string,
+        key: string,
+        apply: (ctx: RequestContext) => Promise<T>,
+        ctx: RequestContext = {}
+      ): Promise<T> => {
+        if (!receipts.has(key)) receipts.set(key, await apply(ctx));
+        return receipts.get(key) as T;
+      }
+    );
+    deps.push
+      .mockRejectedValueOnce(new Error('queue unavailable'))
+      .mockResolvedValue(undefined);
+    await expect(deps.dispatcher.dispatch(event, {})).rejects.toThrow(
+      'queue unavailable'
+    );
+    await expect(deps.dispatcher.dispatch(event, {})).resolves.toBeUndefined();
+    expect(deps.notifier.notifyOfCompetitionLifecycle).toHaveBeenCalledTimes(1);
+    expect(deps.push.mock.calls).toEqual([[[7]], [[7]]]);
+  });
 });

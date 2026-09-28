@@ -33,7 +33,7 @@ import {
   nativeWinnerCount,
   nextNativeDecision,
   reducedNativeVotes,
-  weightedNativeVote
+  flooredWeightedNativeVote
 } from './native-competition-runtime.helpers';
 
 type RuntimeState = {
@@ -361,7 +361,7 @@ export class NativeCompetitionRuntimeService {
         }
         return {
           entry,
-          rating: Math.floor(weightedNativeVote(points, time, timeLock)),
+          rating: flooredWeightedNativeVote(points, time, timeLock),
           lastChangedAt: latest?.timestamp ?? entry.submitted_at,
           lastIncreasedAt,
           overThresholdSince:
@@ -586,12 +586,10 @@ export class NativeCompetitionRuntimeService {
         skipped,
         voterPoints: voterPoints(state.history),
         finalVote: (points) =>
-          Math.floor(
-            weightedNativeVote(
-              points,
-              evaluationTime,
-              competition.decisions.time_lock_ms ?? 0
-            )
+          flooredWeightedNativeVote(
+            points,
+            evaluationTime,
+            competition.decisions.time_lock_ms ?? 0
           )
       },
       ctx

@@ -19,7 +19,17 @@ export const sendIdentityPushNotification = async (id: number) => {
   await sendIdentityPushNotifications([id]);
 };
 
-export const sendIdentityPushNotifications = async (ids: number[]) => {
+export const sendIdentityPushNotifications = async (ids: number[]) =>
+  enqueueIdentityPushNotifications(ids, false);
+
+/** Durable producers must retain their receipt until every SQS batch succeeds. */
+export const sendIdentityPushNotificationsStrict = async (ids: number[]) =>
+  enqueueIdentityPushNotifications(ids, true);
+
+async function enqueueIdentityPushNotifications(
+  ids: number[],
+  throwOnFailure: boolean
+) {
   if (!isActivated()) {
     logger.info('Push notifications are not activated');
     return;
@@ -42,12 +52,13 @@ export const sendIdentityPushNotifications = async (ids: number[]) => {
         }))
       );
     } catch (error) {
+      if (throwOnFailure) throw error;
       logger.error(
         `[IDENTITY NOTIFICATION IDS ${chunk.join(',')}] Error sending push notification chunk from ${uniqueIds.join(',')}: ${error}`
       );
     }
   }
-};
+}
 
 /** Only enqueue here: device discovery, counting and Firebase run in the worker. */
 export async function requestDeviceBadgeRefresh(
@@ -100,8 +111,8 @@ const sendBatchMessagesToSQS = async (
   const command = new SendMessageBatchCommand(params);
   const response = await sqs.send(command);
   if (response.Failed?.length) {
-    throw new Error(
-      `Failed to enqueue push notifications: ${response.Failed.map((item) => item.Id).join(', ')}`
-    );
+    throw Object.assign(new Error('Failed to enqueue push notifications'), {
+      code: 'PUSH_QUEUE_PARTIAL_FAILURE'
+    });
   }
 };

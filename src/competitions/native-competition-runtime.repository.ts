@@ -16,6 +16,7 @@ import {
 } from '@/constants';
 import { CompetitionDecisionStatus } from '@/entities/ICompetition';
 import { RequestContext } from '@/request.context';
+import { BadRequestException } from '@/exceptions';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import {
   Competition,
@@ -77,6 +78,15 @@ export type NativeDecisionAward = NativeAward & {
   readonly decision_id: string;
   readonly entry_id: string;
 };
+
+function safeAggregateRating(value: number | string): number {
+  const rating = Number(value);
+  if (!Number.isSafeInteger(rating))
+    throw new BadRequestException(
+      'Entry aggregate vote must remain within the safe integer range'
+    );
+  return rating;
+}
 
 /** All state changes require the caller's competition row lock. The lock is
  * also the execution lease: it is released atomically with commit/rollback. */
@@ -162,7 +172,7 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
     return rows.map((row) => ({
       ...row,
       submitted_at: Number(row.submitted_at),
-      real_time_rating: Number(row.real_time_rating),
+      real_time_rating: safeAggregateRating(row.real_time_rating),
       last_increased_at:
         row.last_increased_at === null ? null : Number(row.last_increased_at)
     }));
@@ -184,7 +194,7 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
     return rows.map((row) => ({
       ...row,
       value: Number(row.value),
-      aggregate_value: Number(row.aggregate_value),
+      aggregate_value: safeAggregateRating(row.aggregate_value),
       occurred_at: Number(row.occurred_at),
       sequence: Number(row.sequence)
     }));
@@ -263,14 +273,16 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
       ctx
     );
     if (!entry) throw new Error('Native vote history requires an active entry');
-    const [aggregate] = await this.query<{ value: number }>(
+    const [aggregate] = await this.query<{ value: string }>(
       'recordVoteChange',
-      `select coalesce(sum(value), 0) as value from ${COMPETITION_VOTES_TABLE}
+      `select cast(coalesce(sum(value), 0) as char) as value from ${COMPETITION_VOTES_TABLE}
       where competition_id = :competitionId and entry_id = :entryId`,
       params,
       ctx
     );
-    const aggregateValue = Number(aggregate.value);
+    // Keep the exact SQL sum until its representability is checked. Throwing
+    // here rolls back the caller's vote, receipt and metrics transaction too.
+    const aggregateValue = safeAggregateRating(aggregate.value);
     const increasedAt =
       params.value > params.previousVote ? params.occurredAt : null;
     await this.query(

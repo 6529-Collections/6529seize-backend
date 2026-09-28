@@ -3,6 +3,12 @@ import { getAuthenticationContext } from '@/api/auth/auth';
 import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { ApiCompetition } from '@/api/generated/models/ApiCompetition';
+import { ApiCompetitionCapability } from '@/api/generated/models/ApiCompetitionCapability';
+import { ApiCompetitionComputedPhase } from '@/api/generated/models/ApiCompetitionComputedPhase';
+import { ApiCompetitionLifecycle } from '@/api/generated/models/ApiCompetitionLifecycle';
+import { ApiCompetitionType } from '@/api/generated/models/ApiCompetitionType';
+import { ApiCompetitionParticipationConfigRequiredMediaEnum } from '@/api/generated/models/ApiCompetitionParticipationConfig';
+import { enums } from '@/enums';
 import { ApiCompetitionConfigVersionPage } from '@/api/generated/models/ApiCompetitionConfigVersionPage';
 import { ApiCompetitionDecisionPage } from '@/api/generated/models/ApiCompetitionDecisionPage';
 import { ApiCompetitionDistributionItemPage } from '@/api/generated/models/ApiCompetitionDistributionItemPage';
@@ -217,11 +223,41 @@ function toCursorRequest(query: CursorQuery): CursorPageRequest {
   };
 }
 
-function toApiCompetition(competition: PublicCompetition): ApiCompetition {
+export function toApiCompetition(
+  competition: PublicCompetition
+): ApiCompetition {
+  const { presentation, ...details } = competition;
   return {
-    ...competition,
-    capabilities: [...competition.capabilities]
-  } as unknown as ApiCompetition;
+    ...details,
+    type: enums.resolveOrThrow(ApiCompetitionType, competition.type),
+    lifecycle: enums.resolveOrThrow(
+      ApiCompetitionLifecycle,
+      competition.lifecycle
+    ),
+    computed_phase: enums.resolveOrThrow(
+      ApiCompetitionComputedPhase,
+      competition.computed_phase
+    ),
+    participation: {
+      ...competition.participation,
+      required_metadata: [...competition.participation.required_metadata],
+      required_media: competition.participation.required_media.map((media) =>
+        enums.resolveOrThrow(
+          ApiCompetitionParticipationConfigRequiredMediaEnum,
+          media
+        )
+      )
+    },
+    voting: {
+      ...competition.voting,
+      credit_nfts: [...competition.voting.credit_nfts]
+    },
+    outcome_config: [...competition.outcome_config],
+    capabilities: competition.capabilities.map((capability) =>
+      enums.resolveOrThrow(ApiCompetitionCapability, capability)
+    ),
+    ...(presentation ? { presentation: [...presentation] } : {})
+  };
 }
 
 export async function toApiEntry(

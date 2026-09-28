@@ -53,7 +53,8 @@ import { competitionVotingService } from './competition-voting.service';
 import { competitionEntryService } from './competition-entry.service';
 import { waveHubCreationService } from './wave-hub-creation.service';
 import { competitionActor } from './competition-command-access';
-import { toApiEntry } from './competitions-v3.handlers';
+import { toApiCompetition, toApiEntry } from './competitions-v3.handlers';
+import { enums } from '@/enums';
 
 const pathFields = {
   wave_id: Joi.string().min(1).max(100).required(),
@@ -144,11 +145,13 @@ export async function handleCreateCompetitionV3(
       config: CompetitionDraftSchema.required()
     }).unknown(false)
   );
-  return (await competitionLifecycleService.create(
-    wave_id,
-    request,
-    await context(req)
-  )) as unknown as ApiCompetition;
+  return toApiCompetition(
+    await competitionLifecycleService.create(
+      wave_id,
+      request,
+      await context(req)
+    )
+  );
 }
 
 export async function handleUpdateCompetitionV3(
@@ -163,12 +166,14 @@ export async function handleUpdateCompetitionV3(
       config: CompetitionDraftSchema.required()
     }).unknown(false)
   );
-  return (await competitionLifecycleService.update(
-    wave_id,
-    competition_id,
-    request,
-    await context(req)
-  )) as unknown as ApiCompetition;
+  return toApiCompetition(
+    await competitionLifecycleService.update(
+      wave_id,
+      competition_id,
+      request,
+      await context(req)
+    )
+  );
 }
 
 export async function handleExecuteCompetitionActionV3(
@@ -181,13 +186,15 @@ export async function handleExecuteCompetitionActionV3(
       .required()
   });
   const request = getValidatedByJoiOrThrow(req.body, actionSchema);
-  return (await competitionLifecycleService.action(
-    wave_id,
-    competition_id,
-    action,
-    request,
-    await context(req)
-  )) as unknown as ApiCompetition;
+  return toApiCompetition(
+    await competitionLifecycleService.action(
+      wave_id,
+      competition_id,
+      action,
+      request,
+      await context(req)
+    )
+  );
 }
 
 export async function handleGetCompetitionConfigurationV3(
@@ -351,7 +358,10 @@ export async function handleListCompetitionMyVotesV3(
   return {
     data: rows.slice(0, query.limit).map((row) => ({
       ...row,
-      entry_status: row.entry_status as unknown as ApiCompetitionEntryStatus
+      entry_status: enums.resolveOrThrow(
+        ApiCompetitionEntryStatus,
+        row.entry_status
+      )
     })),
     has_more: rows.length > query.limit,
     next_cursor:

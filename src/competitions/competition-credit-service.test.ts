@@ -1,5 +1,8 @@
 import * as fc from 'fast-check';
-import { CompetitionCreditService } from '@/competitions/competition-credit.service';
+import {
+  CompetitionCreditService,
+  competitionVoteDelta
+} from '@/competitions/competition-credit.service';
 import {
   CompetitionEntryStatus,
   CompetitionStorageMode
@@ -76,6 +79,63 @@ describe('CompetitionCreditService', () => {
     expect(() => service.assertVoteFits(actual, 70)).not.toThrow();
     expect(() => service.assertVoteFits(actual, -70)).not.toThrow();
     expect(() => service.assertVoteFits(actual, 71)).toThrow('Vote exceeds');
+  });
+
+  it('accepts safe boundary votes and preserves an exact signed change beyond the number range', async () => {
+    const maximum = Number.MAX_SAFE_INTEGER;
+    identities.getIdentityByProfileId.mockResolvedValue(
+      anIdentity({ tdh: maximum })
+    );
+    repository.getSpending.mockResolvedValue({
+      namespace_spent: maximum,
+      entry_spent: maximum,
+      current_vote: maximum
+    });
+    const actual = await budget();
+    expect(actual.available).toBe(maximum);
+    expect(() => service.assertVoteFits(actual, 1 - maximum)).not.toThrow();
+    expect(competitionVoteDelta(maximum, 1 - maximum)).toBe(
+      '-18014398509481981'
+    );
+    expect(competitionVoteDelta(1 - maximum, maximum)).toBe(
+      '18014398509481981'
+    );
+    expect(competitionVoteDelta(maximum, maximum)).toBe('0');
+  });
+
+  it.each([
+    {
+      namespace_spent: Number.MAX_SAFE_INTEGER + 1,
+      entry_spent: 0,
+      current_vote: 0
+    },
+    { namespace_spent: -1, entry_spent: 0, current_vote: 0 },
+    {
+      namespace_spent: 0,
+      entry_spent: Number.MAX_SAFE_INTEGER + 1,
+      current_vote: 0
+    },
+    { namespace_spent: 1, entry_spent: 2, current_vote: 2 },
+    {
+      namespace_spent: 0,
+      entry_spent: 0,
+      current_vote: Number.MIN_SAFE_INTEGER - 1
+    }
+  ])('fails closed for invalid persisted spending %j', async (spending) => {
+    repository.getSpending.mockResolvedValue(spending);
+    await expect(budget()).rejects.toThrow('spending is outside');
+  });
+
+  it('does not constrain the unused cross-entry sum for independent DROP budgets', async () => {
+    repository.getSpending.mockResolvedValue({
+      namespace_spent: Number.MAX_SAFE_INTEGER * 2,
+      entry_spent: 20,
+      current_vote: 20
+    });
+    expect(await budget({ credit_scope: WaveCreditScope.DROP })).toMatchObject({
+      spent: 20,
+      remaining: 80
+    });
   });
 
   it('makes each DROP budget independent while declining to invent a shared remaining amount', async () => {

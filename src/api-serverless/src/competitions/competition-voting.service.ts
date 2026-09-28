@@ -6,6 +6,7 @@ import {
 } from '@/competitions/competition-command.repository';
 import {
   competitionCreditService,
+  competitionVoteDelta,
   CompetitionCreditBudget
 } from '@/competitions/competition-credit.service';
 import { competitionInteractionRepository } from '@/competitions/competition-interaction.repository';
@@ -158,7 +159,10 @@ export class CompetitionVotingService {
             {
               competitionId,
               voterId: actor,
-              voteChange: request.value - (budget.current_vote ?? 0)
+              voteChange: competitionVoteDelta(
+                budget.current_vote ?? 0,
+                request.value
+              )
             },
             tx
           );

@@ -28,6 +28,10 @@ import { prePublicationModerationService } from '@/content-moderation/pre-public
 import { ApiCreateCompetitionEntryRequest } from '@/api/generated/models/ApiCreateCompetitionEntryRequest';
 import { moderationFingerprint } from '@/content-moderation/moderation-review.types';
 import { dropCreationService } from '@/api/drops/drop-creation.api.service';
+import { NotFoundException } from '@/exceptions';
+import { competitionVotingService } from './competition-voting.service';
+import { createOrUpdateDrop } from '@/drops/create-or-update-drop.use-case';
+import * as pushNotifications from '@/api/push-notifications/push-notifications.service';
 
 const actor = 'entry-author';
 const wallet = Wallet.createRandom();
@@ -36,6 +40,11 @@ const wave = aWave(
   { created_by: 'admin', chat_enabled: false, chat_group_id: 'chat-only' },
   { id: 'entry-hub', name: 'Entry hub' }
 );
+const privateParent = aWave(
+  { visibility_group_id: 'private-parent-members' },
+  { id: 'entry-private-parent', name: 'Private parent' }
+);
+const otherWave = aWave({}, { id: 'entry-other-hub', name: 'Other hub' });
 const ctx = {
   authenticationContext: new AuthenticationContext({
     authenticatedWallet: wallet.address,
@@ -128,6 +137,8 @@ async function signedRequest(): Promise<ApiCreateCompetitionEntryRequest> {
   const now = Date.now();
   const message = canonicalCompetitionJson({
     domain: '6529-competition-v1',
+    audience: 'api.6529.io',
+    chain_id: 1,
     action: 'ENTRY_CREATE',
     wave_id: wave.id,
     competition_id: competitionId,
@@ -166,7 +177,7 @@ async function model(dropId: string): Promise<CreateOrUpdateDropModel> {
 describeWithSeed(
   'Native entry commands and content history',
   [
-    withWaves([wave]),
+    withWaves([wave, privateParent, otherWave]),
     withProfiles([
       aProfile({
         external_id: actor,
@@ -208,7 +219,10 @@ describeWithSeed(
     }
   ],
   () => {
+    let originalApiBaseUrl: string | undefined;
     beforeEach(() => {
+      originalApiBaseUrl = process.env.API_BASE_URL;
+      process.env.API_BASE_URL = 'https://api.6529.io/api';
       jest
         .spyOn(appFeatures, 'isUnifiedCompetitionReadsEnabled')
         .mockReturnValue(true);
@@ -222,7 +236,114 @@ describeWithSeed(
         .spyOn(userGroupsService, 'getGroupsUserIsEligibleFor')
         .mockResolvedValue([]);
     });
-    afterEach(() => jest.restoreAllMocks());
+    afterEach(() => {
+      jest.restoreAllMocks();
+      if (originalApiBaseUrl === undefined) delete process.env.API_BASE_URL;
+      else process.env.API_BASE_URL = originalApiBaseUrl;
+    });
+
+    it('masks cross-wave content routes and a private parent from anonymous readers', async () => {
+      const entry = await service.create(
+        wave.id,
+        competitionId,
+        request(),
+        ctx
+      );
+      expect(
+        await service.getContent(wave.id, competitionId, entry.id, {})
+      ).toMatchObject({
+        parts: [{ content: 'Original content' }],
+        signature: null
+      });
+      await expect(
+        service.getContent(otherWave.id, competitionId, entry.id, {})
+      ).rejects.toBeInstanceOf(NotFoundException);
+      await sqlExecutor.execute(
+        `update ${tables.WAVES_TABLE} set parent_wave_id=:parentId where id=:waveId`,
+        { parentId: privateParent.id, waveId: wave.id }
+      );
+      await expect(
+        service.getContent(wave.id, competitionId, entry.id, {})
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(await repository.getContent(entry.id, {})).not.toBeNull();
+    });
+
+    it('does not return a moderated snapshot to an anonymous reader', async () => {
+      const entry = await service.create(
+        wave.id,
+        competitionId,
+        request(),
+        ctx
+      );
+      await sqlExecutor.execute(
+        `insert into ${tables.CONTENT_MODERATION_DROP_STATES_TABLE} (drop_id,status,updated_at) values (:dropId,'MODERATOR_REMOVED',1)`,
+        { dropId: entry.drop_id }
+      );
+      await expect(
+        service.getContent(wave.id, competitionId, entry.id, {})
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(await repository.getContent(entry.id, {})).not.toBeNull();
+    });
+
+    it('keeps maximum-safe sign switches exact in votes, history and Main Stage metrics', async () => {
+      const entry = await service.create(
+        wave.id,
+        competitionId,
+        request(),
+        ctx
+      );
+      const maximum = Number.MAX_SAFE_INTEGER;
+      await sqlExecutor.execute(
+        `update ${tables.IDENTITIES_TABLE} set tdh=:maximum where profile_id=:actor`,
+        { maximum, actor }
+      );
+      await sqlExecutor.execute(
+        `insert into ${tables.COMPETITION_CAPABILITIES_TABLE} (capability,competition_id,wave_id,assigned_at) values ('MAIN_STAGE',:competitionId,:waveId,1)`,
+        { competitionId, waveId: wave.id }
+      );
+      for (const value of [maximum, 1 - maximum, maximum]) {
+        const budget = await competitionVotingService.vote(
+          wave.id,
+          competitionId,
+          entry.id,
+          {
+            idempotency_key: randomUUID(),
+            config_version: 1,
+            value
+          },
+          ctx
+        );
+        expect(budget.current_vote).toBe(value);
+        expect(budget.spent).toBe(Math.abs(value));
+        const [metric] = await sqlExecutor.execute<{ value: string }>(
+          `select cast(value_sum as char) as value from ${tables.METRIC_ROLLUP_HOUR_TABLE} where metric='MAIN_STAGE_VOTE' and scope=:actor`,
+          { actor }
+        );
+        expect(metric.value).toBe(String(value));
+      }
+      expect(
+        await sqlExecutor.execute(
+          `select cast(previous_value as char) as previous_value,cast(value as char) as value,cast(credit_delta as char) as credit_delta from ${tables.COMPETITION_VOTE_HISTORY_TABLE} where entry_id=:entryId order by sequence`,
+          { entryId: entry.id }
+        )
+      ).toEqual([
+        {
+          previous_value: '0',
+          value: String(maximum),
+          credit_delta: String(maximum)
+        },
+        {
+          previous_value: String(maximum),
+          value: String(1 - maximum),
+          credit_delta: '-1'
+        },
+        {
+          previous_value: String(1 - maximum),
+          value: String(maximum),
+          credit_delta: '1'
+        }
+      ]);
+    });
 
     it('rolls back newly created content when the entry snapshot cannot be saved', async () => {
       jest
@@ -431,6 +552,9 @@ describeWithSeed(
       await expect(
         service.getContent(wave.id, competitionId, entry.id, ctx)
       ).rejects.toThrow('unavailable');
+      await expect(
+        service.getContent(wave.id, competitionId, entry.id, {})
+      ).rejects.toThrow('unavailable');
       expect(await repository.getContent(entry.id, {})).toMatchObject({
         parts: [{ content: 'Original content' }]
       });
@@ -466,6 +590,16 @@ describeWithSeed(
     });
 
     it('atomically creates new signed CHAT content through moderation despite chat-only restrictions', async () => {
+      const execute = createOrUpdateDrop.execute.bind(createOrUpdateDrop);
+      jest
+        .spyOn(createOrUpdateDrop, 'execute')
+        .mockImplementation(async (...args) => ({
+          ...(await execute(...args)),
+          pending_push_notification_ids: [101, 102]
+        }));
+      jest
+        .spyOn(pushNotifications, 'sendIdentityPushNotifications')
+        .mockResolvedValue(undefined);
       const evaluate = jest
         .spyOn(prePublicationModerationService, 'evaluate')
         .mockResolvedValue(undefined);
@@ -494,6 +628,8 @@ describeWithSeed(
       const now = Date.now();
       const message = canonicalCompetitionJson({
         domain: '6529-competition-v1',
+        audience: 'api.6529.io',
+        chain_id: 1,
         action: 'ENTRY_CREATE',
         wave_id: wave.id,
         competition_id: competitionId,
@@ -515,6 +651,18 @@ describeWithSeed(
         signature: await wallet.signMessage(message)
       };
       const entry = await service.create(wave.id, competitionId, input, ctx);
+      const event = await sqlExecutor.oneOrNull<{ event: string }>(
+        `select event from ${tables.COMPETITION_OUTBOX_TABLE} where competition_id=:competitionId and semantic_key=:semanticKey`,
+        {
+          competitionId,
+          semanticKey: `${competitionId}:entry:${input.idempotency_key}`
+        }
+      );
+      expect(JSON.parse(event!.event)).toMatchObject({
+        event_type: 'COMPETITION_ENTRY_CREATED',
+        competition_entry_id: entry.id,
+        data: { pending_push_notification_ids: [101, 102] }
+      });
       expect(evaluate).toHaveBeenCalledTimes(1);
       expect(input.drop).toEqual(original);
       const drop = (await dropsDb.findDropById(entry.drop_id))!;

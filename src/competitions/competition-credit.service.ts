@@ -42,6 +42,31 @@ type BudgetCompetition = Pick<
 type BudgetEntry = Pick<CompetitionEntry, 'id' | 'drop_id'> &
   Partial<Pick<CompetitionEntry, 'status'>>;
 
+/** A sign change can exceed the safe-number range even when both votes fit. */
+export function competitionVoteDelta(
+  previousValue: number,
+  value: number
+): string {
+  if (!Number.isSafeInteger(previousValue) || !Number.isSafeInteger(value))
+    throw new BadRequestException('Vote must be a safe integer');
+  return (BigInt(value) - BigInt(previousValue)).toString();
+}
+
+function assertValidSpending(
+  spent: number | null,
+  spending: CompetitionCreditSpending
+): void {
+  const amounts = [spending.entry_spent, ...(spent === null ? [] : [spent])];
+  if (
+    amounts.some((amount) => !Number.isSafeInteger(amount) || amount < 0) ||
+    !Number.isSafeInteger(spending.current_vote) ||
+    (spent !== null && spent < spending.entry_spent)
+  )
+    throw new Error(
+      'Competition spending is outside the supported integer range'
+    );
+}
+
 function voteRange(
   voting: Competition['voting'],
   entry: BudgetEntry | undefined,
@@ -136,6 +161,7 @@ export class CompetitionCreditService {
         : entry
           ? spending.entry_spent
           : null;
+    assertValidSpending(spent, spending);
     const remaining = spent === null ? null : Math.max(0, available - spent);
     return {
       competition_id: competition.id,

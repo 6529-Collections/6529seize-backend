@@ -22,6 +22,9 @@ export class ApiCreateWaveHubRequest {
     */
     'idempotency_key': string;
     'name': string;
+    /**
+    * HTTPS URL for the wave picture, or null.
+    */
     'picture': string | null;
     'description_drop': ApiCreateWaveDropRequest;
     'visibility': ApiCreateNewWaveVisibilityConfig;
@@ -50,7 +53,7 @@ export class ApiCreateWaveHubRequest {
             "name": "picture",
             "baseName": "picture",
             "type": "string",
-            "format": ""
+            "format": "uri"
         },
         {
             "name": "description_drop",

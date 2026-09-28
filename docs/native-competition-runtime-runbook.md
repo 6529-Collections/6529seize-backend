@@ -74,9 +74,15 @@ description and presentation can change with a new audited version. Terminal
 competitions cannot reopen; cloning creates a separate draft. Publishing a
 clone requires valid future dates.
 
+Before enabling signed native participation, configure backend `API_BASE_URL`
+for that deployment and frontend `API_ENDPOINT` to the same API host (including
+non-default port). Signed commands fail closed when backend `API_BASE_URL` is
+missing or invalid. Use HTTPS outside local development; do not share the API
+audience across staging and production.
+
 Native signatures use canonical JSON with recursively sorted object keys and
-ordered arrays. The envelope contains `domain=6529-competition-v1`, action,
-actor profile and lowercase authenticated wallet, wave/competition/entry/drop
+ordered arrays. The envelope contains `domain=6529-competition-v1`, the API
+host `audience`, Ethereum mainnet `chain_id=1`, action, actor profile and lowercase authenticated wallet, wave/competition/entry/drop
 IDs, config version, SHA-256 payload hash, UUIDv4 nonce, issued time and expiry.
 Lifetime is at most five minutes. EOA and existing EIP-1271 verification are
 supported. Proxy scope and current eligibility are checked independently.
@@ -142,7 +148,13 @@ Main Stage claims and meme-card mapping require the designated winner entry
 and its exact claim provenance. Another competition in the same wave gains no
 privilege. Stable effect IDs include competition/decision/entry context. SQL
 receipts prevent repeated notifications and announcements; leased outbox rows
-support retry after worker interruption. Do not clear receipts to retry work.
+support retry after worker interruption. Do not clear receipts to retry work. Native
+entry events retain the committed mention/reply push IDs. Queue exceptions or
+partial batch failures keep native events pending for retry; lifecycle retries
+reuse notification IDs from effect receipts. Existing worker delivery receipts
+deduplicate repeated queue messages. Immediate chat cache/socket delivery is
+best effort, with stage and allowlisted error-code diagnostics; logs exclude
+provider payloads and signatures.
 
 Existing notification clients keep their original causes and unread counts.
 Native clients opt into `COMPETITION_LIFECYCLE` using

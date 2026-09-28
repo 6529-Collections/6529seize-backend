@@ -19,6 +19,9 @@ export class ApiSetCompetitionVoteRequest {
     */
     'idempotency_key': string;
     'config_version': number;
+    /**
+    * Whole credit units within the JavaScript safe-integer range; the competition credit budget applies an additional limit.
+    */
     'value': number;
     'signature'?: ApiCompetitionSignature;
 

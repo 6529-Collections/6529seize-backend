@@ -11,6 +11,7 @@ import {
   COMPETITION_OUTCOME_AWARDS_TABLE,
   COMPETITION_OUTBOX_TABLE,
   COMPETITION_VOTE_HISTORY_TABLE,
+  COMPETITION_ENTRY_RUNTIME_TABLE,
   COMPETITION_PAUSES_TABLE,
   COMPETITION_CAPABILITIES_TABLE,
   COMPETITION_LIFECYCLE_EVENTS_TABLE,
@@ -253,6 +254,123 @@ describeWithSeed(
         );
       });
     }
+
+    it.each([1, -1])(
+      'rolls back a cross-voter aggregate outside the safe integer range with sign %s',
+      async (sign) => {
+        const value = sign * Number.MAX_SAFE_INTEGER;
+        await vote(rankId, rankEntry, value, 100, 'first-voter');
+        await expect(
+          vote(rankId, rankEntry, sign * 2, 200, 'second-voter')
+        ).rejects.toThrow('Entry aggregate vote');
+        expect(
+          await sqlExecutor.execute(
+            `select voter_profile_id, value from ${COMPETITION_VOTES_TABLE}`
+          )
+        ).toEqual([{ voter_profile_id: 'first-voter', value }]);
+        expect(
+          await sqlExecutor.execute(
+            `select aggregate_value from ${COMPETITION_VOTE_HISTORY_TABLE}`
+          )
+        ).toEqual([{ aggregate_value: value }]);
+        expect(
+          await sqlExecutor.execute(
+            `select real_time_rating from ${COMPETITION_ENTRY_RUNTIME_TABLE}`
+          )
+        ).toEqual([{ real_time_rating: value }]);
+        expect(
+          await sqlExecutor.execute(
+            `select count(*) as n from ${COMPETITION_OUTBOX_TABLE}`
+          )
+        ).toEqual([{ n: 1 }]);
+      }
+    );
+
+    it('preserves representable boundary ratings on separate DROP entries even when their total exceeds the safe integer range', async () => {
+      const value = Number.MAX_SAFE_INTEGER;
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set voting_config = json_set(voting_config, '$.credit_scope', 'DROP') where id = :rankId`,
+        { rankId }
+      );
+      await vote(rankId, rankEntry, value, 100);
+      await vote(rankId, secondRankEntry, value, 100);
+      await repository.executeNativeQueriesInTransaction(async (connection) => {
+        const ctx = { connection };
+        await repository.lockCompetition(rankId, ctx);
+        await service.reconcileVoterCredit(
+          {
+            competitionId: rankId,
+            voterProfileId: 'voter',
+            availableCredit: value,
+            creditScope: 'DROP',
+            occurredAt: 101
+          },
+          ctx
+        );
+      });
+      expect(await repository.listActiveEntries(rankId, {})).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: rankEntry, real_time_rating: value }),
+          expect.objectContaining({
+            id: secondRankEntry,
+            real_time_rating: value
+          })
+        ])
+      );
+      // Exact cancellation across voters is valid; only the per-entry result is bounded.
+      await vote(rankId, rankEntry, -value, 200, 'other-voter');
+      expect(
+        (await repository.listActiveEntries(rankId, {})).find(
+          (entry) => entry.id === rankEntry
+        )?.real_time_rating
+      ).toBe(0);
+    });
+
+    it('keeps distinct extreme weighted scores in winner order and immutable voter snapshots', async () => {
+      const value = Number.MAX_SAFE_INTEGER - 1;
+      getBudget.mockResolvedValue({
+        competition_id: rankId,
+        profile_id: 'voter',
+        entry_id: null,
+        credit_type: 'TDH',
+        credit_scope: 'WAVE',
+        available: Number.MAX_SAFE_INTEGER,
+        spent: 0,
+        remaining: Number.MAX_SAFE_INTEGER,
+        current_vote: null,
+        min_vote: null,
+        max_vote: null
+      });
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set decision_config = json_set(decision_config, '$.time_lock_ms', 2), outcome_config = :outcomes where id = :rankId`,
+        {
+          rankId,
+          outcomes: JSON.stringify([
+            { type: 'MANUAL', description: 'Prizes', distribution: [{}, {}] }
+          ])
+        }
+      );
+      await vote(rankId, rankEntry, value, 998, 'first-voter');
+      await vote(rankId, rankEntry, value - 1, 999, 'first-voter');
+      await vote(rankId, secondRankEntry, value, 998, 'second-voter');
+      await service.processCompetition(rankId, 1001);
+      expect(
+        await sqlExecutor.execute(
+          `select entry_id, final_rating from ${COMPETITION_DECISION_WINNERS_TABLE} order by \`rank\``
+        )
+      ).toEqual([
+        { entry_id: secondRankEntry, final_rating: value },
+        { entry_id: rankEntry, final_rating: value - 1 }
+      ]);
+      expect(
+        await sqlExecutor.execute(
+          `select entry_id, value from ${COMPETITION_WINNER_VOTES_TABLE} order by entry_id`
+        )
+      ).toEqual([
+        { entry_id: rankEntry, value: value - 1 },
+        { entry_id: secondRankEntry, value }
+      ]);
+    });
 
     it('finishes parallel Rank and Approve independently, preserves chat drops and emits immutable awards once', async () => {
       await vote(rankId, rankEntry, 80, 100);

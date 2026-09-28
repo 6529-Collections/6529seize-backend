@@ -926,11 +926,18 @@ locked content hash in addition to destination and configuration version.
 
 The existing leaderboard and decision Lambdas add an explicitly routed native
 engine. Native vote history, immutable decision voter snapshots and award
-rows remain separate from legacy tables. The decision worker leases a durable
+rows remain separate from legacy tables. Per-entry aggregate votes must fit the
+safe-integer API range; an overflowing mutation rolls back its transaction.
+Time-weighted scores and threshold crossings use exact integer integrals before
+conversion to persisted ratings. The decision worker leases a durable
 competition outbox and emits scoped WebSocket updates and lifecycle/winner
 notifications. Per-effect SQL receipts and competition/decision/entry claim
-provenance protect retries. `claimsBuilder` and `pushNotificationsHandler`
-understand the additive messages before producers are enabled. Explicit
+provenance protect retries. Entry creation commits ordinary shared-CHAT push
+notification IDs into its private outbox payload. The API attempts immediate
+handoff; the decision worker retries the same IDs after transport or partial
+SQS failure, and existing device delivery receipts suppress redelivery. Public
+WebSocket invalidations omit this private payload. `claimsBuilder` and
+`pushNotificationsHandler` understand the additive messages before producers are enabled. Explicit
 capabilities gate Main Stage claims, announcements, mappings and participation
 metrics; sharing a special wave never confers them. Operations assignment has
 an operator allowlist and durable actor/reason audit. Privileged public effects

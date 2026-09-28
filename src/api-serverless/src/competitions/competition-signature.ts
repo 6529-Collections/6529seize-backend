@@ -18,6 +18,26 @@ export type CompetitionSigningAction = {
   payload: unknown;
 };
 
+function competitionSignatureAudience(): string {
+  const configuredUrl = process.env.API_BASE_URL;
+  if (!configuredUrl)
+    throw new Error(
+      'API_BASE_URL is required for native competition signatures'
+    );
+  const url = new URL(configuredUrl);
+  const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  if (
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    (url.protocol !== 'https:' && !(url.protocol === 'http:' && local))
+  ) {
+    throw new Error('Invalid API_BASE_URL for native competition signatures');
+  }
+  return url.host.toLowerCase();
+}
+
 export async function verifyCompetitionSignature(
   action: CompetitionSigningAction,
   signature: ApiCompetitionSignature | undefined,
@@ -65,6 +85,8 @@ export async function verifyCompetitionSignature(
   const { payload, ...identity } = action;
   const expected = canonicalCompetitionJson({
     domain: '6529-competition-v1',
+    audience: competitionSignatureAudience(),
+    chain_id: 1,
     ...identity,
     actor_profile_id: actor,
     actor_wallet: wallet,
@@ -78,7 +100,8 @@ export async function verifyCompetitionSignature(
     !(await verifyWalletMessageSignature({
       message: signature.message,
       signature: signature.signature,
-      expectedAddress: wallet
+      expectedAddress: wallet,
+      chainId: 1
     }))
   )
     throw new ForbiddenException('Invalid competition signature');

@@ -14,12 +14,13 @@ import {
   WsListenersNotifier
 } from '@/api/ws/ws-listeners-notifier';
 import { userNotifier, UserNotifier } from '@/notifications/user.notifier';
-import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
+import { sendIdentityPushNotificationsStrict } from '@/api/push-notifications/push-notifications.service';
 import { deployerDropper, DeployerDropper } from '@/deployer-dropper';
 import { enqueueClaimBuild } from '@/waves/claims-builder-publisher';
 import { env } from '@/env';
 import { RequestContext } from '@/request.context';
 import { Logger } from '@/logging';
+import { competitionDeliveryErrorCode } from '@/competitions/competition-delivery-diagnostics';
 
 const FOLLOWER_EVENTS = new Set([
   'COMPETITION_PUBLISHED',
@@ -60,7 +61,7 @@ export class CompetitionEventDispatcher {
       dropId: string,
       context?: NativeClaimContext
     ) => Promise<void>,
-    private readonly push: typeof sendIdentityPushNotifications,
+    private readonly push: typeof sendIdentityPushNotificationsStrict,
     private readonly announcementWaves: () => string[]
   ) {}
 
@@ -88,7 +89,7 @@ export class CompetitionEventDispatcher {
             Date.now(),
             ctx
           );
-        } catch {
+        } catch (error) {
           await this.outbox.retryOutbox(
             record.id,
             record.lease_token,
@@ -98,7 +99,8 @@ export class CompetitionEventDispatcher {
           this.logger.error('competition_event_delivery_failed', {
             event_id: record.id,
             competition_id: record.event.competition_id,
-            attempts: record.attempts
+            attempts: record.attempts,
+            error_code: competitionDeliveryErrorCode(error)
           });
         }
       }
@@ -125,6 +127,18 @@ export class CompetitionEventDispatcher {
       context.visibility_group_id,
       ctx
     );
+    if (event.event_type === 'COMPETITION_ENTRY_CREATED') {
+      const ids = event.data.pending_push_notification_ids;
+      if (Array.isArray(ids)) {
+        if (
+          !ids.every(
+            (id) => typeof id === 'number' && Number.isSafeInteger(id) && id > 0
+          )
+        )
+          throw new Error('Invalid entry push handoff identifiers');
+        await this.push(ids);
+      }
+    }
     await this.notifyFollowers(event, context, ctx);
     await this.notifyModeratedSubmitter(event, context, ctx);
     if (event.event_type === 'COMPETITION_DECISION_COMPLETED')
@@ -281,6 +295,6 @@ export const competitionEventDispatcher = new CompetitionEventDispatcher(
   userNotifier,
   deployerDropper,
   enqueueClaimBuild,
-  sendIdentityPushNotifications,
+  sendIdentityPushNotificationsStrict,
   () => env.getStringArray('DEPLOYER_ANNOUNCEMENTS_WAVE_IDS')
 );

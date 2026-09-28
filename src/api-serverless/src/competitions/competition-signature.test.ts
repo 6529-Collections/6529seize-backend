@@ -12,6 +12,7 @@ import {
   verifyCompetitionSignature
 } from './competition-signature';
 
+const originalApiBaseUrl = process.env.API_BASE_URL;
 const wallet = Wallet.createRandom();
 const actor = 'effective-profile';
 const now = 1900000000000;
@@ -37,6 +38,8 @@ async function signed(overrides: Record<string, unknown> = {}) {
   const { payload, ...identity } = action;
   const message = canonicalCompetitionJson({
     domain: '6529-competition-v1',
+    audience: 'api.6529.io',
+    chain_id: 1,
     ...identity,
     actor_profile_id: actor,
     actor_wallet: wallet.address.toLowerCase(),
@@ -50,12 +53,17 @@ async function signed(overrides: Record<string, unknown> = {}) {
 }
 
 describe('Native competition signature binding', () => {
-  beforeEach(() =>
+  beforeEach(() => {
+    process.env.API_BASE_URL = 'https://api.6529.io/api';
     jest
       .spyOn(competitionCommandRepository, 'consumeNonce')
-      .mockResolvedValue(undefined)
-  );
-  afterEach(() => jest.restoreAllMocks());
+      .mockResolvedValue(undefined);
+  });
+  afterEach(() => {
+    jest.restoreAllMocks();
+    if (originalApiBaseUrl === undefined) delete process.env.API_BASE_URL;
+    else process.env.API_BASE_URL = originalApiBaseUrl;
+  });
 
   it('accepts an EOA signature and consumes its scoped nonce', async () => {
     const signature = await signed();
@@ -73,6 +81,8 @@ describe('Native competition signature binding', () => {
 
   it.each([
     'domain',
+    'audience',
+    'chain_id',
     'action',
     'wave_id',
     'competition_id',
@@ -94,6 +104,31 @@ describe('Native competition signature binding', () => {
     ).rejects.toThrow('Invalid competition signature');
     expect(competitionCommandRepository.consumeNonce).not.toHaveBeenCalled();
   });
+
+  it('rejects a valid signature from a different API deployment', async () => {
+    const signature = await signed();
+    process.env.API_BASE_URL = 'https://api.staging.6529.io/api';
+    await expect(
+      verifyCompetitionSignature(action, signature, true, now, context)
+    ).rejects.toThrow('Invalid competition signature');
+    expect(competitionCommandRepository.consumeNonce).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    undefined,
+    'http://api.6529.io',
+    'https://user:password@api.6529.io'
+  ])(
+    'fails closed when the API deployment audience is unconfigured or invalid (%s)',
+    async (baseUrl) => {
+      if (baseUrl === undefined) delete process.env.API_BASE_URL;
+      else process.env.API_BASE_URL = baseUrl;
+      await expect(
+        verifyCompetitionSignature(action, await signed(), true, now, context)
+      ).rejects.toThrow('API_BASE_URL');
+      expect(competitionCommandRepository.consumeNonce).not.toHaveBeenCalled();
+    }
+  );
 
   it.each([
     { issued_at: now + 1 },

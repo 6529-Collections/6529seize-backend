@@ -8,7 +8,7 @@ import { NewDropSchema } from '@/api/drops/drop.validator';
 import { dropsMappers } from '@/api/drops/drops.mappers';
 import { dropsService } from '@/api/drops/drops.api.service';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
-import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
+import { sendIdentityPushNotificationsStrict } from '@/api/push-notifications/push-notifications.service';
 import { wsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
 import { invalidateWaveUnreadCacheForWave } from '@/api/waves/wave-unread-cache';
 import { competitionService } from '@/competitions/competition.service';
@@ -60,6 +60,7 @@ import { prePublicationModerationService } from '@/content-moderation/pre-public
 import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
 import { metricsRecorder } from '@/metrics/MetricsRecorder';
 import { Logger } from '@/logging';
+import { competitionDeliveryErrorCode } from '@/competitions/competition-delivery-diagnostics';
 import {
   administerCompetitionWave,
   assertCompetitionGroup,
@@ -340,7 +341,8 @@ export class CompetitionEntryService {
       request.idempotency_key,
       actor,
       null,
-      tx
+      tx,
+      pendingPushIds
     );
     return { entry, pendingPushIds, createdDropId };
   }
@@ -606,7 +608,8 @@ export class CompetitionEntryService {
     key: string,
     actor: string,
     reason: string | null,
-    ctx: RequestContext
+    ctx: RequestContext,
+    pendingPushIds?: number[]
   ): Promise<void> {
     await nativeCompetitionRuntimeRepository.enqueueEvent(
       {
@@ -621,7 +624,10 @@ export class CompetitionEntryService {
           submitter_id: entry.submitter_id,
           actor_id: actor,
           status: entry.status,
-          reason
+          reason,
+          ...(pendingPushIds?.length
+            ? { pending_push_notification_ids: pendingPushIds }
+            : {})
         }
       },
       ctx
@@ -634,19 +640,38 @@ export class CompetitionEntryService {
     pendingPushIds: number[],
     ctx: RequestContext
   ): Promise<void> {
-    try {
-      await invalidateWaveUnreadCacheForWave(waveId);
-      await sendIdentityPushNotifications(pendingPushIds);
-      await wsListenersNotifier.notifyAboutDropUpdate(
-        await dropsService.findDropByIdOrThrow({ dropId }, ctx),
-        ctx
-      );
-    } catch {
-      this.logger.warn(
-        'Native entry committed; shared chat notification delivery failed',
-        { drop_id: dropId }
-      );
-    }
+    const effects = [
+      {
+        stage: 'unread_cache',
+        run: () => invalidateWaveUnreadCacheForWave(waveId)
+      },
+      {
+        stage: 'push_handoff',
+        run: () => sendIdentityPushNotificationsStrict(pendingPushIds)
+      },
+      {
+        stage: 'chat_socket',
+        run: async () =>
+          wsListenersNotifier.notifyAboutDropUpdate(
+            await dropsService.findDropByIdOrThrow({ dropId }, ctx),
+            ctx
+          )
+      }
+    ];
+    const results = await Promise.allSettled(
+      effects.map((effect) => effect.run())
+    );
+    results.forEach((result, index) => {
+      if (result.status === 'rejected')
+        this.logger.warn(
+          'Native entry committed; shared chat notification delivery failed',
+          {
+            drop_id: dropId,
+            stage: effects[index].stage,
+            error_code: competitionDeliveryErrorCode(result.reason)
+          }
+        );
+    });
   }
 }
 

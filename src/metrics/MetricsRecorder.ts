@@ -33,11 +33,12 @@ export class MetricsRecorder {
       competitionId,
       voterId,
       voteChange
-    }: { competitionId: string; voterId: string; voteChange: number },
+    }: { competitionId: string; voterId: string; voteChange: number | string },
     ctx: RequestContext
   ) {
     if (
       voteChange === 0 ||
+      voteChange === '0' ||
       !(await this.nativeMainStage.isDesignated(competitionId, ctx))
     )
       return;

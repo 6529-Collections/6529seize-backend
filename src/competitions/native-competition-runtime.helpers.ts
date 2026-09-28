@@ -35,17 +35,18 @@ function orderedPoints(points: readonly NativeVotePoint[]): NativeVotePoint[] {
   );
 }
 
-function voteEvaluator(
+function exactVoteEvaluator(
   points: readonly NativeVotePoint[],
   timeLockMs: number
-): (time: number) => number {
+): (time: number) => bigint {
   const ordered = orderedPoints(points);
-  const areas: number[] = [];
-  let area = 0;
+  const areas: bigint[] = [];
+  let area = BigInt(0);
   for (let i = 0; i < ordered.length; i++) {
     if (i > 0)
       area +=
-        ordered[i - 1].vote * (ordered[i].timestamp - ordered[i - 1].timestamp);
+        BigInt(ordered[i - 1].vote) *
+        (BigInt(ordered[i].timestamp) - BigInt(ordered[i - 1].timestamp));
     areas.push(area);
   }
   const indexAt = (time: number): number => {
@@ -58,16 +59,18 @@ function voteEvaluator(
     }
     return low - 1;
   };
-  const integral = (time: number): number => {
+  const integral = (time: number): bigint => {
     const index = indexAt(time);
     return index < 0
-      ? 0
-      : areas[index] + ordered[index].vote * (time - ordered[index].timestamp);
+      ? BigInt(0)
+      : areas[index] +
+          BigInt(ordered[index].vote) *
+            (BigInt(time) - BigInt(ordered[index].timestamp));
   };
   return (time) =>
     timeLockMs <= 0
-      ? (ordered[indexAt(time)]?.vote ?? 0)
-      : (integral(time) - integral(time - timeLockMs)) / timeLockMs;
+      ? BigInt(ordered[indexAt(time)]?.vote ?? 0)
+      : integral(time) - integral(time - timeLockMs);
 }
 
 /** The legacy time lock is the integral of real-time vote over the full window. */
@@ -76,7 +79,29 @@ export function weightedNativeVote(
   end: number,
   timeLockMs: number
 ): number {
-  return voteEvaluator(points, timeLockMs)(end);
+  return (
+    Number(exactVoteEvaluator(points, timeLockMs)(end)) /
+    Math.max(1, timeLockMs)
+  );
+}
+
+/** Floor the exact rational before converting the safe, persisted rating. */
+export function flooredWeightedNativeVote(
+  points: readonly NativeVotePoint[],
+  end: number,
+  timeLockMs: number
+): number {
+  const numerator = exactVoteEvaluator(points, timeLockMs)(end);
+  const denominator = BigInt(Math.max(1, timeLockMs));
+  const quotient = numerator / denominator;
+  const floor =
+    numerator < BigInt(0) && numerator % denominator !== BigInt(0)
+      ? quotient - BigInt(1)
+      : quotient;
+  const rating = Number(floor);
+  if (!Number.isSafeInteger(rating))
+    throw new Error('Native weighted rating is outside the safe integer range');
+  return rating;
 }
 
 /** Finds the beginning of the CURRENT continuous passing interval, including
@@ -97,7 +122,8 @@ export function nativeThresholdSince(
     }
     return since;
   }
-  const evaluate = voteEvaluator(points, timeLockMs);
+  const evaluate = exactVoteEvaluator(points, timeLockMs);
+  const passingNumerator = BigInt(threshold) * BigInt(timeLockMs);
   const times = new Set<number>([submittedAt, end]);
   for (const point of points) {
     if (point.timestamp >= submittedAt && point.timestamp <= end)
@@ -108,17 +134,18 @@ export function nativeThresholdSince(
   const checkpoints = Array.from(times).sort((a, b) => a - b);
   let previousTime = checkpoints[0];
   let previousScore = evaluate(previousTime);
-  let since: number | null = previousScore >= threshold ? previousTime : null;
+  let since: number | null =
+    previousScore >= passingNumerator ? previousTime : null;
   for (const timestamp of checkpoints.slice(1)) {
     const score = evaluate(timestamp);
-    if (score < threshold) since = null;
-    else if (previousScore < threshold) {
-      since =
-        previousTime +
-        Math.ceil(
-          ((threshold - previousScore) / (score - previousScore)) *
-            (timestamp - previousTime)
-        );
+    if (score < passingNumerator) since = null;
+    else if (previousScore < passingNumerator) {
+      const rise = score - previousScore;
+      const distance =
+        (passingNumerator - previousScore) *
+        (BigInt(timestamp) - BigInt(previousTime));
+      const offset = (distance + rise - BigInt(1)) / rise;
+      since = Number(BigInt(previousTime) + offset);
     }
     previousTime = timestamp;
     previousScore = score;
