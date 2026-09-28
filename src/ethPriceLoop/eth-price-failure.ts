@@ -23,7 +23,10 @@ export function repairCause(error: unknown): unknown {
   return error instanceof EthPriceRepairError ? error.cause : error;
 }
 
-/** Log diagnostic codes, never SQL text, parameters, or HTTP response bodies. */
+/**
+ * Log diagnostic codes, never SQL text, parameters, or HTTP response bodies.
+ * Free-text codes remain UNKNOWN: truncation cannot make arbitrary payloads safe.
+ */
 export function priceFailureDetails(error: unknown) {
   const cause = repairCause(error);
   const code =

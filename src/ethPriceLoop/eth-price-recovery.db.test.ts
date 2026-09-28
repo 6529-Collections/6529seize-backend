@@ -490,4 +490,64 @@ describeWithSeed('ETH price recovery database', [], () => {
       )
     ).toEqual({ proceeds_usd: 999 });
   });
+  it.each([false, true])(
+    'values a freshly saved off-grid quote by timestamp during repair (reset=%s)',
+    async (overwrite) => {
+      const started = base + 720_000;
+      const freshLive = sample(base + 480_500, 900);
+      await putPrice(base, 50);
+      await putStats();
+      const expected = [
+        [300_000, 100],
+        [480_000, 100], // DATETIME second precedes the millisecond live tick.
+        [481_000, 900], // Latest saved sample is the newly committed live tick.
+        [599_000, 900],
+        [600_000, 200], // A later historical close supersedes the earlier tick.
+        [719_000, 200]
+      ];
+      for (const [offset] of expected) {
+        await putTx(tx(`fresh-live-${offset}`, base + offset));
+      }
+      // Same ordering as the collector: the quote is under five minutes old,
+      // commits first, and falls strictly inside the following repair range.
+      await repo.saveLive(freshLive);
+      await repo.repair(
+        [sample(base + 300_000, 100), sample(base + 600_000, 200)],
+        overwrite,
+        started
+      );
+      for (const [offset, price] of expected) {
+        const row = await readTx(`fresh-live-${offset}`);
+        expect(row).toMatchObject({
+          eth_price_usd: price,
+          value_usd: 2 * price,
+          gas_usd: 0.1 * price
+        });
+        // The normal transaction writer must agree with recovery for the same row.
+        const writerRow = tx(`fresh-live-${offset}`, base + offset);
+        await new TransactionsDiscoveryDb(
+          () => sqlExecutor
+        ).batchUpsertTransactions([writerRow]);
+        expect(await readTx(`fresh-live-${offset}`)).toMatchObject({
+          eth_price_usd: price,
+          value_usd: 2 * price,
+          gas_usd: 0.1 * price
+        });
+      }
+      expect(
+        await sqlExecutor.oneOrNull(
+          `SELECT usd_price FROM ${ETH_PRICE_TABLE} WHERE timestamp_ms=:timestamp`,
+          { timestamp: freshLive.timestamp_ms }
+        )
+      ).toEqual({ usd_price: 900 });
+      // The aggregate was repaired atomically and remains unchanged by the writer replays.
+      expect(
+        await sqlExecutor.oneOrNull(
+          `SELECT proceeds_usd FROM ${MEMES_MINT_STATS_TABLE} WHERE id=1`
+        )
+      ).toEqual({
+        proceeds_usd: Math.round(2400 * MEMES_MINT_PRICE * 100) / 100
+      });
+    }
+  );
 });

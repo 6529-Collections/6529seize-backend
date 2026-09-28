@@ -66,6 +66,7 @@ async function backfillGaps(run: RecoveryRun): Promise<void> {
     } catch (error) {
       if (operation === 'gap-database') {
         run.historyStopped = true;
+        // Persist for the next invocation; no further history runs in this one.
         await shrinkHistoryChunk(repairCause(error), first, last);
       }
       // Provider range failures may be independent. Database failures are not.
@@ -102,6 +103,7 @@ async function resumeReset(reset: boolean, run: RecoveryRun): Promise<void> {
     } catch (error) {
       if (operation === 'reset-database') {
         run.historyStopped = true;
+        // Persist for the next invocation; no further history runs in this one.
         await shrinkHistoryChunk(repairCause(error), first, last);
       }
       run.errors.push({
@@ -110,6 +112,8 @@ async function resumeReset(reset: boolean, run: RecoveryRun): Promise<void> {
         first,
         last
       });
+      // Reset is sequential: do not skip a failed range or run ahead of an
+      // unconfirmed checkpoint. The aggregate error still fails this invocation.
       return;
     }
   }

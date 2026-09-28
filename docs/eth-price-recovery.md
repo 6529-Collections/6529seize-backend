@@ -51,7 +51,12 @@ Normal recovery inserts missing timestamp keys and preserves existing samples.
 Coinbase reflects a single exchange and can differ from Mobula's aggregate.
 Five-minute candles reconstruct historical coverage, not the exact live quotes
 that were missed. Transactions continue to use the latest saved sample at or
-before their timestamp.
+before their timestamp. This includes a live quote committed earlier in the same
+invocation: if a live tick at 12:08:00.500 lies between closes at 12:05 and 12:10,
+whole-second transactions through 12:08:00 use the 12:05 close, those from 12:08:01
+through 12:09:59 use the live tick, and those from 12:10 use the later close.
+Historical candles do not take precedence over a newer saved live tick. This is
+the same timestamp rule used by normal transaction writers.
 
 ## Atomic correction of app values
 

@@ -412,3 +412,42 @@ it('logs and throws the same aggregate Error for handler-level deduplication', a
     thrown
   );
 });
+
+it.each(['provider', 'checkpoint'] as const)(
+  'fails visibly and stops sequential reset work after a %s failure',
+  async (stage) => {
+    const first = closed - 2 * PRICE_INTERVAL_MS;
+    jest.mocked(getHistoryChunkMs).mockResolvedValue(PRICE_INTERVAL_MS);
+    jest
+      .mocked(getPriceReset)
+      .mockResolvedValue({ next: first, end: closed, latched: true });
+    if (stage === 'provider') {
+      jest
+        .mocked(fetchHistoricPrices)
+        .mockRejectedValue(new Error('provider failure'));
+    } else {
+      jest
+        .mocked(savePriceReset)
+        .mockRejectedValue(new Error('checkpoint failure'));
+    }
+    await expect(syncEthUsdPrice(true)).rejects.toThrow('incomplete work');
+    expect(fetchHistoricPrices).toHaveBeenCalledTimes(1);
+    expect(db.repair).toHaveBeenCalledTimes(stage === 'provider' ? 0 : 1);
+    expect(savePriceReset).toHaveBeenCalledTimes(stage === 'provider' ? 0 : 1);
+    expect(mockLogError).toHaveBeenCalledTimes(1);
+    expect(mockLogError).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        liveSaved: true,
+        failures: [
+          expect.objectContaining({
+            operation: `reset-${stage}`,
+            first,
+            last: first
+          })
+        ]
+      }),
+      expect.any(Error)
+    );
+  }
+);

@@ -104,6 +104,8 @@ export class EthPriceRecoveryDb extends LazyDbAccessCompatibleService {
             { wrappedConnection: connection }
           );
           const end = Math.min(Number(next?.timestamp_ms ?? until), until);
+          // Latest saved sample at/before the transaction wins, including a live
+          // tick committed earlier in this invocation. Later closes supersede it.
           // Read persisted values: IGNORE preserves existing exact/off-grid samples.
           // Locking reads avoid an older repeatable-read snapshot and keep these
           // interval boundaries stable until all dependent values commit.
@@ -209,6 +211,9 @@ export class EthPriceRecoveryDb extends LazyDbAccessCompatibleService {
     const timer = 'EthPriceRecoveryDb.findMintTokens';
     ctx.timer?.start(timer);
     try {
+      // The preceding range UPDATEs hold transaction row/gap locks until commit.
+      // This same-connection read sees their writes; inserts cannot slip into a
+      // repaired interval between updating USD values and selecting mint tokens.
       // Start from the repaired date range, not a correlated scan of every mint.
       const affected = await this.db.execute<{ id: number }>(
         `SELECT DISTINCT t.token_id AS id FROM ${TRANSACTIONS_TABLE} t
