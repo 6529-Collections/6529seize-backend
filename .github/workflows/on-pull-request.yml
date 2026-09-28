@@ -9,6 +9,9 @@ concurrency:
   group: backend-pr-ci-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   checks:
     name: Lint, format and build
@@ -117,7 +120,7 @@ jobs:
           name: pr-ci-jest-inventory-${{ matrix.shard }}
           path: pr-ci-jest-inventory/*.txt
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
           overwrite: true
 
   build:
@@ -132,6 +135,7 @@ jobs:
           CHECKS_RESULT: ${{ needs.checks.result }}
           TEST_RESULT: ${{ needs.test.result }}
         run: |
+          set -euo pipefail
           test "$CHECKS_RESULT" = success
           test "$TEST_RESULT" = success
       - name: Download shard inventories
@@ -145,6 +149,8 @@ jobs:
           LC_ALL: C
         run: |
           set -euo pipefail
+          # All runners must agree on Jest's complete discovery inventory.
+          # Shard 1 is the comparison baseline, not an independent test catalog.
           for shard in 1 2 3 4; do
             test -s "pr-ci-jest-inventory/complete-$shard.txt"
             test -s "pr-ci-jest-inventory/shard-$shard.txt"

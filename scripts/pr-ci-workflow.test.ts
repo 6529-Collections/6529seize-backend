@@ -16,22 +16,29 @@ const workflow = parse(
     'utf8'
   )
 );
-const finalSteps = workflow.jobs.build.steps;
-const gateScript = finalSteps.find(
-  (step: { name: string }) =>
-    step.name === 'Require all checks and shards to pass'
-).run;
-const inventoryScript = finalSteps.find(
-  (step: { name: string }) =>
-    step.name === 'Verify every test belongs to exactly one shard'
-).run;
+const finalSteps: { name?: string; run?: string }[] = workflow.jobs.build.steps;
 
+/** Finds an executable gate step and reports workflow renames explicitly. */
+function getRunScript(name: string): string {
+  const step = finalSteps.find((candidate) => candidate.name === name);
+  if (typeof step?.run !== 'string') {
+    throw new Error(`Expected workflow step "${name}" to contain a run script`);
+  }
+  return step.run;
+}
+
+const gateScript = getRunScript('Require all checks and shards to pass');
+const inventoryScript = getRunScript(
+  'Verify every test belongs to exactly one shard'
+);
+
+/** Exercises the script's own fail-fast guards without implicit Bash options. */
 function runScript(
   script: string,
   cwd: string,
   env: Record<string, string> = {}
 ) {
-  return spawnSync('bash', ['-eo', 'pipefail', '-c', script], {
+  return spawnSync('bash', ['-c', script], {
     cwd,
     env: { ...process.env, LC_ALL: 'C', ...env },
     encoding: 'utf8'
@@ -72,6 +79,18 @@ describe('parallel PR workflow', () => {
       }
     }
   );
+
+  it.each(['CHECKS_RESULT', 'TEST_RESULT'])(
+    'rejects an unset prerequisite result: %s',
+    (prerequisite) => {
+      expect(
+        runScript(`unset ${prerequisite}\n${gateScript}`, __dirname, {
+          CHECKS_RESULT: 'success',
+          TEST_RESULT: 'success'
+        }).status
+      ).not.toBe(0);
+    }
+  );
 });
 
 describe('cross-runner test inventory', () => {
@@ -107,7 +126,8 @@ describe('cross-runner test inventory', () => {
     ['duplicate test', 'shard-4.txt', 'a.test.ts\n'],
     ['unexpected test', 'shard-4.txt', 'other.test.ts\n'],
     ['extra test', 'shard-4.txt', 'd.test.ts\nother.test.ts\n'],
-    ['inconsistent discovery', 'complete-4.txt', 'other.test.ts\n']
+    ['inconsistent discovery', 'complete-4.txt', 'other.test.ts\n'],
+    ['corrupt comparison baseline', 'complete-1.txt', 'a.test.ts\n']
   ])('rejects %s', (_reason, file, content) => {
     writeFileSync(path.join(inventoryDirectory, file), content);
     expect(runScript(inventoryScript, directory).status).not.toBe(0);
