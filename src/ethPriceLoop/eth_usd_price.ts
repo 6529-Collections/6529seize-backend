@@ -1,211 +1,124 @@
-import axios, { AxiosError, AxiosRequestConfig } from 'axios';
-import axiosRetry from 'axios-retry';
-import { EthPrice } from '../entities/IEthPrice';
-import { Logger } from '../logging';
-import { Time } from '../time';
-import { getEthPriceCount, persistEthPrices } from './db.eth_price';
-
-const MOBULA_HISTORIC_URL =
-  'https://api.mobula.io/api/1/market/history?asset=Ethereum&from=1633046400000';
-
-const MOBULA_CURRENT_URL =
-  'https://api.mobula.io/api/1/market/data?asset=Ethereum';
-
-const MOBULA_RETRIES = 3;
-const MAX_RETRY_AFTER_MS = Time.seconds(30).toMillis();
-
-const mobulaAxios = axios.create();
-
-axiosRetry(mobulaAxios, {
-  retries: MOBULA_RETRIES,
-  retryDelay: getRetryDelay,
-  retryCondition: isRetryableMobulaError,
-  shouldResetTimeout: true
-});
-
-interface HistoricResponse {
-  data: {
-    price_history: [number, number][];
-  };
-}
-
-interface CurrentResponse {
-  data: {
-    price: number;
-  };
-}
+import {
+  deferMissingPrices,
+  getUnavailablePrices
+} from './eth-price-unavailable';
+import { Logger } from '@/logging';
+import { getHistoryChunkMs, shrinkHistoryChunk } from './eth-price-batch-size';
+import {
+  fetchHistoricPrices,
+  fetchLivePrice,
+  PRICE_INTERVAL_MS
+} from './coinbase';
+import { ethPriceRecoveryDb } from './eth-price-recovery.db';
+import { getPriceReset, savePriceReset } from './eth-price-reset';
 
 const logger = Logger.get('ETH_PRICE');
+const MAX_CHUNKS = 8;
+const RUN_BUDGET_MS = 180_000;
+type RecoveryRun = {
+  started: number;
+  closedThrough: number;
+  chunks: number;
+  errors: unknown[];
+  historyChunkMs: number;
+};
 
-function normalizeHeaderValue(value: unknown): string | undefined {
-  if (Array.isArray(value)) {
-    return normalizeHeaderValue(value[0]);
-  }
-
-  if (typeof value === 'string') {
-    return value;
-  }
-
-  if (typeof value === 'number') {
-    return value.toString();
-  }
-
-  return undefined;
+function hasBudget(run: RecoveryRun): boolean {
+  return run.chunks < MAX_CHUNKS && Date.now() - run.started < RUN_BUDGET_MS;
 }
 
-function getRetryAfterHeader(error: AxiosError): string | undefined {
-  const headers = error.response?.headers;
-  if (!headers) {
-    return undefined;
-  }
-
-  if ('get' in headers && typeof headers.get === 'function') {
-    return normalizeHeaderValue(headers.get('retry-after'));
-  }
-
-  const headerRecord = headers as Record<string, unknown>;
-  return normalizeHeaderValue(
-    headerRecord['retry-after'] ?? headerRecord['Retry-After']
-  );
-}
-
-function getRetryAfterMs(error: AxiosError): number | undefined {
-  const retryAfterHeader = getRetryAfterHeader(error);
-  if (!retryAfterHeader) {
-    return undefined;
-  }
-
-  const retryAfterSeconds = Number(retryAfterHeader);
-  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0) {
-    return retryAfterSeconds * Time.seconds(1).toMillis();
-  }
-
-  const retryAt = Date.parse(retryAfterHeader);
-  if (!Number.isFinite(retryAt)) {
-    return undefined;
-  }
-
-  return Math.max(0, retryAt - Date.now());
-}
-
-function isShortRateLimitRetry(error: AxiosError): boolean {
-  const retryAfterMs = getRetryAfterMs(error);
-  return retryAfterMs === undefined || retryAfterMs <= MAX_RETRY_AFTER_MS;
-}
-
-function isRateLimitError(error: unknown): error is AxiosError {
-  return axios.isAxiosError(error) && error.response?.status === 429;
-}
-
-function isRetryableMobulaError(error: AxiosError): boolean {
-  const status = error.response?.status ?? 0;
-  if (status === 429) {
-    return isShortRateLimitRetry(error);
-  }
-
-  return (
-    axiosRetry.isNetworkError(error) ||
-    axiosRetry.isRetryableError(error) ||
-    status >= 500
-  );
-}
-
-function getRetryDelay(retryCount: number, error: AxiosError): number {
-  if (error.response?.status === 429) {
-    const retryAfterMs = getRetryAfterMs(error);
-    if (retryAfterMs !== undefined && retryAfterMs <= MAX_RETRY_AFTER_MS) {
-      return retryAfterMs;
-    }
-  }
-
-  return axiosRetry.exponentialDelay(retryCount, error);
-}
-
-function getRetryAfterLogValue(error: AxiosError): number {
-  return getRetryAfterMs(error) ?? -1;
-}
-
-async function fetchMobulaData<T>(
-  url: string,
-  label: 'CURRENT' | 'HISTORIC',
-  config?: AxiosRequestConfig
-): Promise<T | undefined> {
-  try {
-    const response = await mobulaAxios.get<T>(url, config);
-    return response.data;
-  } catch (error) {
-    if (isRateLimitError(error)) {
-      logger.warn(
-        `[${label} DATA SKIPPED] : [MOBULA HTTP 429] [RETRY_AFTER_MS ${getRetryAfterLogValue(
-          error
-        )}]`
+async function backfillGaps(run: RecoveryRun): Promise<void> {
+  const unavailable = await getUnavailablePrices(run.started);
+  const gaps = await ethPriceRecoveryDb.findGaps(run.started, unavailable);
+  for (const gap of gaps) {
+    if (!hasBudget(run)) break;
+    const last = Math.min(
+      Math.floor(gap.end / PRICE_INTERVAL_MS) * PRICE_INTERVAL_MS,
+      run.closedThrough
+    );
+    const first = Math.max(
+      (Math.floor(gap.start / PRICE_INTERVAL_MS) + 1) * PRICE_INTERVAL_MS,
+      last - run.historyChunkMs + PRICE_INTERVAL_MS
+    );
+    if (first > last) continue;
+    run.chunks++;
+    try {
+      const prices = await fetchHistoricPrices(first, last);
+      await ethPriceRecoveryDb.repair(prices, false, run.started);
+      await deferMissingPrices(prices, first, last, run.started);
+      logger.info(
+        `[BACKFILLED ${prices.length} ETH PRICES] [FROM ${first}] [THROUGH ${last}]`
       );
-      return undefined;
+    } catch (error) {
+      run.historyChunkMs =
+        (await shrinkHistoryChunk(error, first, last)) ?? run.historyChunkMs;
+      // An unavailable range must not starve independent holes.
+      run.errors.push(error);
     }
-
-    throw error;
   }
 }
 
-export async function syncEthUsdPrice(reset: boolean) {
-  const existingData = await getEthPriceCount();
-  const isReset = reset || existingData === 0;
-
-  if (isReset) {
-    logger.info('[RESET] : [FETCHING HISTORIC DATA]');
-    await syncHistoricEthUsdPriceData();
-  } else {
-    logger.info('[FETCHING NEW DATA]');
-    await syncLatestEthUsdPriceData();
+async function resumeReset(reset: boolean, run: RecoveryRun): Promise<void> {
+  const state = await getPriceReset(reset, run.closedThrough);
+  while (state && state.next <= state.end && hasBudget(run)) {
+    const last = Math.min(
+      state.end,
+      state.next + run.historyChunkMs - PRICE_INTERVAL_MS
+    );
+    run.chunks++;
+    const prices = await fetchHistoricPrices(state.next, last);
+    try {
+      await ethPriceRecoveryDb.repair(prices, true, run.started);
+    } catch (error) {
+      await shrinkHistoryChunk(error, state.next, last);
+      throw error;
+    }
+    await deferMissingPrices(prices, state.next, last, run.started);
+    // Advance only after prices, transaction corrections and mint stats commit.
+    state.next = last + PRICE_INTERVAL_MS;
+    await savePriceReset(state);
+    logger.info(`[ETH PRICE RESET] [NEXT ${state.next}] [END ${state.end}]`);
   }
 }
 
-async function syncHistoricEthUsdPriceData() {
-  const historicData = await fetchMobulaData<HistoricResponse>(
-    MOBULA_HISTORIC_URL,
-    'HISTORIC'
-  );
-  if (!historicData) {
-    return;
-  }
-  logger.info(
-    `[HISTORIC DATA  RESPONSE ${historicData.data.price_history.length}]`
-  );
-  const ethPrices: EthPrice[] = historicData.data.price_history.map(
-    ([timestamp, price]) => {
-      return {
-        timestamp_ms: timestamp,
-        date: Time.millis(timestamp).toDate(),
-        usd_price: price
-      };
-    }
-  );
-  await persistEthPrices(ethPrices);
-  logger.info(`[HISTORIC DATA PERSISTED] : [${ethPrices.length}]`);
-}
-
-async function syncLatestEthUsdPriceData() {
-  const apiKey = process.env.MOBULA_API_KEY;
-  const currentData = await fetchMobulaData<CurrentResponse>(
-    MOBULA_CURRENT_URL,
-    'CURRENT',
-    {
-      headers: apiKey
-        ? {
-            Authorization: `Bearer ${apiKey}`
-          }
-        : undefined
-    }
-  );
-  if (!currentData) {
-    return;
-  }
-  logger.info(`[CURRENT DATA RESPONSE]`);
-  const ethPrice: EthPrice = {
-    timestamp_ms: Time.now().toMillis(),
-    date: Time.now().toDate(),
-    usd_price: currentData.data.price
+export async function syncEthUsdPrice(reset: boolean): Promise<void> {
+  const started = Date.now();
+  const run: RecoveryRun = {
+    started,
+    // Allow the provider a minute to finalize a just-closed candle.
+    closedThrough:
+      Math.floor((started - 60_000) / PRICE_INTERVAL_MS) * PRICE_INTERVAL_MS,
+    chunks: 0,
+    errors: [],
+    historyChunkMs: await getHistoryChunkMs()
   };
-  await persistEthPrices([ethPrice]);
-  logger.info(`[CURRENT DATA PERSISTED] : [${ethPrice.usd_price}]`);
+  try {
+    await backfillGaps(run);
+  } catch (error) {
+    run.errors.push(error);
+  }
+  try {
+    await resumeReset(reset, run);
+  } catch (error) {
+    run.errors.push(error);
+  }
+  // Failed/long backfill never prevents attempting current collection.
+  try {
+    const price = await fetchLivePrice();
+    await ethPriceRecoveryDb.saveLive(price);
+    logger.info(
+      `[CURRENT ETH PRICE SAVED] [TIMESTAMP ${price.timestamp_ms}] [USD ${price.usd_price}]`
+    );
+  } catch (error) {
+    run.errors.push(error);
+  }
+  if (run.errors.length) {
+    for (const error of run.errors)
+      logger.error('ETH price recovery failed', error);
+    const failure = new Error(
+      'ETH price collection or recovery failed; incomplete work will retry next invocation'
+    );
+    Object.assign(failure, { cause: run.errors[0] });
+    throw failure;
+  }
 }

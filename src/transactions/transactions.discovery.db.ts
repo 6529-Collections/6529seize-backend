@@ -1,5 +1,6 @@
 import { dbSupplier, LazyDbAccessCompatibleService } from '../sql-executor';
 import { TRANSACTIONS_TABLE } from '@/constants';
+import { refreshTransactionUsdAtWrite } from '@/eth-prices/transaction-usd';
 import { Transaction } from '../entities/ITransaction';
 
 export class TransactionsDiscoveryDb extends LazyDbAccessCompatibleService {
@@ -15,10 +16,18 @@ export class TransactionsDiscoveryDb extends LazyDbAccessCompatibleService {
   }
 
   async batchUpsertTransactions(transactions: Transaction[]): Promise<void> {
-    await this.db.executeNativeQueriesInTransaction(async (connection) => {
-      for (const transaction of transactions) {
-        await this.db.execute(
-          `
+    await this.db.executeNativeQueriesInTransaction(
+      async (connection) => {
+        for (const transaction of transactions) {
+          await refreshTransactionUsdAtWrite(transaction, (query, parameters) =>
+            this.db.execute(
+              query.replace('?', ':timestamp'),
+              { timestamp: parameters[0] },
+              { wrappedConnection: connection }
+            )
+          );
+          await this.db.execute(
+            `
                 insert into ${TRANSACTIONS_TABLE} (
                   created_at, 
                   transaction, 
@@ -75,11 +84,13 @@ export class TransactionsDiscoveryDb extends LazyDbAccessCompatibleService {
                     value_usd = :value_usd,
                     gas_usd = :gas_usd
       `,
-          transaction,
-          { wrappedConnection: connection }
-        );
-      }
-    });
+            transaction,
+            { wrappedConnection: connection }
+          );
+        }
+      },
+      { isolationLevel: 'REPEATABLE READ' }
+    );
   }
 }
 
