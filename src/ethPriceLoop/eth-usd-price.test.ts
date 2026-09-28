@@ -1,3 +1,10 @@
+jest.mock('@/logging', () => ({
+  Logger: {
+    get: () => ({ info: jest.fn(), warn: jest.fn(), error: mockLogError })
+  }
+}));
+const mockLogError = jest.fn();
+import { EthPriceRepairError } from './eth-price-failure';
 jest.mock('./eth-price-unavailable', () => ({
   getUnavailablePrices: jest.fn(),
   deferMissingPrices: jest.fn()
@@ -65,7 +72,7 @@ it('only collects live when coverage is healthy', async () => {
   expect(db.repair).not.toHaveBeenCalled();
   expect(db.saveLive).toHaveBeenCalledWith(live);
 });
-it('recovers a bounded recent chunk of a long outage before saving live', async () => {
+it('recovers a bounded recent chunk of a long outage after saving live', async () => {
   jest
     .mocked(db.findGaps)
     .mockResolvedValue([{ start: now - 32 * 3600_000, end: now }]);
@@ -75,6 +82,9 @@ it('recovers a bounded recent chunk of a long outage before saving live', async 
     closed
   );
   expect(db.repair).toHaveBeenCalledWith(expect.any(Array), false, now);
+  expect(jest.mocked(db.saveLive).mock.invocationCallOrder[0]).toBeLessThan(
+    jest.mocked(db.findGaps).mock.invocationCallOrder[0]
+  );
 });
 it('repairs an interior hole even after newer live samples exist', async () => {
   const end = closed - 3600_000;
@@ -193,7 +203,7 @@ it('learns a smaller gap repair after timeout without marking it unavailable', a
   expect(db.saveLive).toHaveBeenCalledWith(live);
 });
 
-it('uses a reduced window for subsequent independent gaps in the same invocation', async () => {
+it('stops other gaps and reset after a timed-out repair', async () => {
   const olderEnd = closed - 2 * HISTORY_CHUNK_MS;
   jest.mocked(db.findGaps).mockResolvedValue([
     { start: closed - HISTORY_CHUNK_MS, end: closed },
@@ -206,16 +216,35 @@ it('uses a reduced window for subsequent independent gaps in the same invocation
   );
   jest
     .mocked(db.repair)
-    .mockRejectedValueOnce(error)
+    .mockRejectedValueOnce(
+      new EthPriceRepairError('update-transactions', error)
+    )
     .mockResolvedValue(undefined);
   jest.mocked(shrinkHistoryChunk).mockResolvedValue(2 * PRICE_INTERVAL_MS);
   await expect(syncEthUsdPrice(false)).rejects.toThrow('incomplete work');
-  expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
-    2,
-    olderEnd - PRICE_INTERVAL_MS,
-    olderEnd
+  expect(fetchHistoricPrices).toHaveBeenCalledTimes(1);
+  expect(db.repair).toHaveBeenCalledTimes(1);
+  expect(getPriceReset).not.toHaveBeenCalled();
+  expect(shrinkHistoryChunk).toHaveBeenCalledWith(
+    error,
+    closed - HISTORY_CHUNK_MS + PRICE_INTERVAL_MS,
+    closed
   );
-  expect(db.repair).toHaveBeenCalledTimes(2);
+  expect(mockLogError).toHaveBeenCalledTimes(1);
+  expect(mockLogError).toHaveBeenCalledWith(
+    expect.any(String),
+    expect.objectContaining({
+      liveSaved: true,
+      historyStopped: true,
+      failures: [
+        expect.objectContaining({
+          stage: 'update-transactions',
+          code: 'SQL_BUDGET_EXCEEDED'
+        })
+      ]
+    }),
+    expect.any(Error)
+  );
   expect(db.saveLive).toHaveBeenCalledWith(live);
 });
 it('resumes reset even after reset flag is cleared and checkpoints after commit', async () => {
@@ -240,7 +269,7 @@ it('bounds a multiyear reset to eight chunks per invocation', async () => {
   expect(db.repair).toHaveBeenCalledTimes(8);
   expect(db.saveLive).toHaveBeenCalledTimes(1);
 });
-it('surfaces a failed live fetch after a committed historical repair', async () => {
+it('surfaces a failed live fetch while still allowing historical repair', async () => {
   jest
     .mocked(db.findGaps)
     .mockResolvedValue([{ start: now - 3600_000, end: now }]);
@@ -303,3 +332,122 @@ it('advances a reset scan past empty history while leaving missing prices for re
   });
   expect(db.saveLive).toHaveBeenCalledWith(live);
 });
+
+it.each(['ER_LOCK_WAIT_TIMEOUT', 'ER_LOCK_DEADLOCK', 'ECONNRESET'])(
+  'stops historical work after database failure %s without cooling down the gap',
+  async (code) => {
+    jest.mocked(db.findGaps).mockResolvedValue([
+      { start: closed - 900_000, end: closed },
+      { start: closed - 1800_000, end: closed - 1200_000 }
+    ]);
+    jest
+      .mocked(db.repair)
+      .mockRejectedValue(
+        Object.assign(new Error('database failure'), { code })
+      );
+    await expect(syncEthUsdPrice(true)).rejects.toThrow('incomplete work');
+    expect(db.repair).toHaveBeenCalledTimes(1);
+    expect(getPriceReset).not.toHaveBeenCalled();
+    expect(deferMissingPrices).not.toHaveBeenCalled();
+    expect(mockLogError).toHaveBeenCalledTimes(1);
+  }
+);
+
+it('does not add historical load after a live database failure', async () => {
+  jest
+    .mocked(db.saveLive)
+    .mockRejectedValue(
+      Object.assign(new Error('locked'), { code: 'ER_LOCK_WAIT_TIMEOUT' })
+    );
+  await expect(syncEthUsdPrice(true)).rejects.toThrow('incomplete work');
+  expect(db.findGaps).not.toHaveBeenCalled();
+  expect(getPriceReset).not.toHaveBeenCalled();
+  expect(mockLogError).toHaveBeenCalledWith(
+    expect.any(String),
+    expect.objectContaining({ liveSaved: false, historyStopped: true }),
+    expect.any(Error)
+  );
+});
+
+it('logs one summary for multiple provider failures without database or HTTP payloads', async () => {
+  jest.mocked(db.findGaps).mockResolvedValue([
+    { start: closed - 900_000, end: closed },
+    { start: closed - 1800_000, end: closed - 1200_000 }
+  ]);
+  jest.mocked(fetchHistoricPrices).mockRejectedValue(
+    Object.assign(new Error('private payload'), {
+      code: 'ECONNABORTED',
+      sql: 'private SQL'
+    })
+  );
+  await expect(syncEthUsdPrice(false)).rejects.toThrow('incomplete work');
+  expect(mockLogError).toHaveBeenCalledTimes(1);
+  expect(mockLogError).toHaveBeenCalledWith(
+    expect.any(String),
+    expect.objectContaining({ errorCount: 2, liveSaved: true }),
+    expect.any(Error)
+  );
+  expect(JSON.stringify(mockLogError.mock.calls)).not.toContain('private');
+});
+
+it('stops reset when gap discovery fails', async () => {
+  jest.mocked(db.findGaps).mockRejectedValue(new Error('database unavailable'));
+  await expect(syncEthUsdPrice(true)).rejects.toThrow('incomplete work');
+  expect(getPriceReset).not.toHaveBeenCalled();
+  expect(db.saveLive).toHaveBeenCalledWith(live);
+});
+
+it('logs and throws the same aggregate Error for handler-level deduplication', async () => {
+  jest.mocked(fetchLivePrice).mockRejectedValue(new Error('unavailable'));
+  let thrown: unknown;
+  try {
+    await syncEthUsdPrice(false);
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBeInstanceOf(Error);
+  expect(mockLogError).toHaveBeenCalledWith(
+    expect.any(String),
+    expect.objectContaining({ errorCount: 1 }),
+    thrown
+  );
+});
+
+it.each(['provider', 'checkpoint'] as const)(
+  'fails visibly and stops sequential reset work after a %s failure',
+  async (stage) => {
+    const first = closed - 2 * PRICE_INTERVAL_MS;
+    jest.mocked(getHistoryChunkMs).mockResolvedValue(PRICE_INTERVAL_MS);
+    jest
+      .mocked(getPriceReset)
+      .mockResolvedValue({ next: first, end: closed, latched: true });
+    if (stage === 'provider') {
+      jest
+        .mocked(fetchHistoricPrices)
+        .mockRejectedValue(new Error('provider failure'));
+    } else {
+      jest
+        .mocked(savePriceReset)
+        .mockRejectedValue(new Error('checkpoint failure'));
+    }
+    await expect(syncEthUsdPrice(true)).rejects.toThrow('incomplete work');
+    expect(fetchHistoricPrices).toHaveBeenCalledTimes(1);
+    expect(db.repair).toHaveBeenCalledTimes(stage === 'provider' ? 0 : 1);
+    expect(savePriceReset).toHaveBeenCalledTimes(stage === 'provider' ? 0 : 1);
+    expect(mockLogError).toHaveBeenCalledTimes(1);
+    expect(mockLogError).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        liveSaved: true,
+        failures: [
+          expect.objectContaining({
+            operation: `reset-${stage}`,
+            first,
+            last: first
+          })
+        ]
+      }),
+      expect.any(Error)
+    );
+  }
+);
