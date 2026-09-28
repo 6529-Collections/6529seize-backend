@@ -821,3 +821,40 @@ it('includes the first historical day and defers absent daily candles separately
     expect.objectContaining({ missingCandles: 1 })
   );
 });
+
+it.each([
+  FIVE_MINUTE_HISTORY_START_MS -
+    DAILY_PRICE_INTERVAL_MS +
+    7 * PRICE_INTERVAL_MS,
+  FIVE_MINUTE_HISTORY_START_MS + 7 * PRICE_INTERVAL_MS
+])('finishes a multi-day legacy reset monotonically at end %s', async (end) => {
+  const boundary = FIVE_MINUTE_HISTORY_START_MS;
+  const first = boundary - 3 * DAILY_PRICE_INTERVAL_MS;
+  jest.mocked(getPriceReset).mockResolvedValue({
+    next: first + PRICE_INTERVAL_MS,
+    end,
+    latched: false
+  });
+  await syncEthUsdPrice(false);
+  const checkpoints = jest
+    .mocked(savePriceReset)
+    .mock.calls.map(([state]) => state.next);
+  expect(checkpoints).toEqual([
+    first + DAILY_PRICE_INTERVAL_MS,
+    first + 2 * DAILY_PRICE_INTERVAL_MS,
+    Math.min(boundary, end + PRICE_INTERVAL_MS),
+    ...(end >= boundary ? [end + PRICE_INTERVAL_MS] : [])
+  ]);
+  expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
+    1,
+    first,
+    boundary - DAILY_PRICE_INTERVAL_MS,
+    now,
+    DAILY_PRICE_INTERVAL_MS
+  );
+  expect(fetchHistoricPrices).toHaveBeenCalledTimes(end >= boundary ? 2 : 1);
+  expect(mockLogInfo).toHaveBeenCalledWith(
+    '[ETH PRICE RECOVERY SUMMARY]',
+    expect.objectContaining({ resetPending: false, errorCount: 0 })
+  );
+});

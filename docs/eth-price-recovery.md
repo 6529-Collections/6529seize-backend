@@ -121,7 +121,9 @@ A reset requests daily closes at UTC midnight from October 1, 2021 through
 December 31, 2025, then five-minute closes from January 1, 2026 through a fixed
 recent closed interval. An unfinished legacy five-minute reset checkpoint before
 2026 resumes at the containing day's midnight, replaying that day safely at daily
-resolution. Reset does not delete finer-grained rows already present. Exact timestamp collisions are updated; existing off-grid live
+resolution. Completed reset cursors remain within the existing checkpoint
+validation contract even when a legacy reset ends mid-day before 2026. Reset does
+not delete finer-grained rows already present. Exact timestamp collisions are updated; existing off-grid live
 samples are retained. The same transaction and mint USD correction runs after
 these upserts.
 
@@ -209,6 +211,12 @@ provider pages, committed database batches, processed/omitted candles, discovery
 completion, reset status, the next interrupted range, failures, and deadline
 status. Scan completion is not proof that deferred provider candles exist.
 Large resets can span invocations; each committed batch retains its progress.
+
+The summary's `missingCandles` counts provider omissions across both resolutions;
+one absent daily candle and one absent five-minute candle count as two, not as an
+elapsed-time measure. Per-batch `INTERVAL_MS` identifies the resolution. The
+thirty-day provider page is an intentional operational chunk, below Coinbase's
+maximum request size.
 
 ## Deployment order
 

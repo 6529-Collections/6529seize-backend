@@ -71,3 +71,14 @@ it.each(['{broken', 'null', 'false', '0', '[]', '"hello"', '{}'])(
     );
   }
 );
+
+it('reloads a completed pre-2026 reset with a mid-day end without restarting it', async () => {
+  const legacyEnd = Date.UTC(2025, 11, 31, 12, 5);
+  const state = {
+    next: legacyEnd + PRICE_INTERVAL_MS,
+    end: legacyEnd,
+    latched: true
+  };
+  mockRedis.get.mockResolvedValue(JSON.stringify(state));
+  expect(await getPriceReset(true, end)).toEqual(state);
+});

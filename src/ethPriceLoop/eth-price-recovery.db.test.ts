@@ -411,6 +411,18 @@ describeWithSeed('ETH price recovery database', [], () => {
     ]);
   });
 
+  it('does not backfill the first historical day when it already has an off-grid sample', async () => {
+    await putPrice(HISTORY_START_MS + 500, 100);
+    await putPrice(HISTORY_START_MS + DAILY_PRICE_INTERVAL_MS + 500, 200);
+    expect(
+      await repo.findDailyGaps(
+        base,
+        [],
+        HISTORY_START_MS + DAILY_PRICE_INTERVAL_MS
+      )
+    ).toEqual([]);
+  });
+
   it('keeps the first historical day discoverable and respects daily retry boundaries', async () => {
     const day = DAILY_PRICE_INTERVAL_MS;
     await putPrice(HISTORY_START_MS + day + 500, 100);

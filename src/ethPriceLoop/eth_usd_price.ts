@@ -136,11 +136,17 @@ async function recoverBatch(
     }
     // Coinbase parsing guarantees unique, in-range, grid-aligned closes.
     // Preserved DB collisions do not add samples to this provider array.
+    // Count provider candles (daily or five-minute), not missing elapsed time.
     run.missingCandles +=
       (range.last - range.first) / intervalMs + 1 - prices.length;
     if (state) {
       // Persist the new cursor before mutating the in-memory checkpoint.
-      const next = range.last + intervalMs;
+      // A legacy reset may end mid-day before 2026. Keep its terminal cursor
+      // within the persisted checkpoint contract (end plus one five-minute slot).
+      const next = Math.min(
+        range.last + intervalMs,
+        state.end + PRICE_INTERVAL_MS
+      );
       await savePriceReset({ ...state, next });
       state.next = next;
       logger.info(`[ETH PRICE RESET] [NEXT ${state.next}] [END ${state.end}]`);
@@ -175,6 +181,7 @@ async function recoverPage(
   run.nextRange = page;
   if (!(await prepareWork(run))) return false;
   let prices: EthPrice[];
+  const kind = state ? 'reset' : 'gap';
   try {
     run.providerPages++;
     prices =
@@ -187,12 +194,7 @@ async function recoverPage(
           )
         : await fetchHistoricPrices(page.first, page.last);
   } catch (error) {
-    await recordFailure(
-      run,
-      error,
-      `${state ? 'reset' : 'gap'}-provider`,
-      page
-    );
+    await recordFailure(run, error, `${kind}-provider`, page);
     return false;
   }
   let cursor = state ? page.first : page.last;
@@ -235,6 +237,7 @@ async function recoverGap(
     daily ? HISTORY_START_MS : FIVE_MINUTE_HISTORY_START_MS,
     (Math.floor(gap.start / intervalMs) + 1) * intervalMs
   );
+  // Thirty daily candles is an operational page size, not Coinbase's limit.
   const pageMs = daily ? 30 * intervalMs : HISTORY_CHUNK_MS;
   while (last >= first) {
     const page = { first: Math.max(first, last - pageMs + intervalMs), last };
