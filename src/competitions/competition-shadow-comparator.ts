@@ -31,10 +31,6 @@ const COMPARISONS: ReadonlyArray<{
     field: 'entries'
   },
   {
-    category: CompetitionParityCategory.CREDIT_AVAILABLE,
-    field: 'votes_and_credits'
-  },
-  {
     category: CompetitionParityCategory.CREDIT_SPEND,
     field: 'votes_and_credits'
   },
@@ -93,6 +89,7 @@ function hash(value: unknown): string {
 }
 
 export class CompetitionShadowComparator {
+  private sampleRunning = false;
   public constructor(
     private readonly repository: CompetitionRepository,
     private readonly features: AppFeatures,
@@ -111,17 +108,43 @@ export class CompetitionShadowComparator {
 
   public async compareIfSampled(
     record: CompetitionRoutingRecord,
-    loadBaseline: () => Promise<CompetitionSnapshot>,
-    loadCandidate: () => Promise<CompetitionSnapshot>,
+    loadBaseline: (
+      ctx: RequestContext,
+      now: number
+    ) => Promise<CompetitionSnapshot>,
+    loadCandidate: (
+      ctx: RequestContext,
+      now: number
+    ) => Promise<CompetitionSnapshot>,
     ctx: RequestContext
   ): Promise<boolean> {
-    if (!this.shouldSample()) return false;
-    const [baseline, candidate] = await Promise.all([
-      loadBaseline(),
-      loadCandidate()
-    ]);
-    await this.compare(record, baseline, candidate, ctx);
-    return true;
+    if (this.sampleRunning || !this.shouldSample()) return false;
+    this.sampleRunning = true;
+    try {
+      // One connection and timestamp prevent live votes or phase boundaries from
+      // manufacturing mismatches between sequential, independently read data.
+      await this.repository.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const shadowCtx = { ...ctx, connection };
+          const now = Date.now();
+          const baseline = await loadBaseline(shadowCtx, now);
+          const candidate = await loadCandidate(shadowCtx, now);
+          // Persist a complete sample atomically. A failed insert rolls back all
+          // categories, so a partial sample cannot inflate the match rate.
+          await this.compare(record, baseline, candidate, shadowCtx);
+        },
+        { isolationLevel: 'REPEATABLE READ' }
+      );
+      return true;
+    } catch {
+      // Do not log the error: SQL/driver errors can contain private row values.
+      this.logger.warn(
+        `competition parity skipped wave=${record.wave_id} competition=${record.id} reason=sample_failed`
+      );
+      return false;
+    } finally {
+      this.sampleRunning = false;
+    }
   }
 
   public async compare(
@@ -146,7 +169,11 @@ export class CompetitionShadowComparator {
           candidateStorageMode: candidate.storage_mode,
           baselineConfigVersion: baseline.config_version,
           candidateConfigVersion: candidate.config_version,
-          sourceVersion: (process.env.GIT_COMMIT_SHA ?? 'phase-1').slice(0, 64)
+          sourceVersion:
+            `legacy-read-v2:${process.env.GIT_COMMIT_SHA ?? 'local'}`.slice(
+              0,
+              64
+            )
         },
         ctx
       );
