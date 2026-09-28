@@ -78,9 +78,12 @@ export type Competition = {
   readonly participation: CompetitionParticipationConfig;
   readonly voting: CompetitionVotingConfig;
   readonly decisions: CompetitionDecisionConfig;
+  /** Internal pause data for overdue native decision command/permission gates. */
+  readonly decision_pauses?: readonly CompetitionPause[];
   readonly winners: CompetitionWinnerConfig;
   readonly outcome_config: readonly Record<string, unknown>[];
   readonly capabilities: readonly CompetitionCapability[];
+  readonly presentation?: readonly { data_key: string; data_value: string }[];
   readonly created_at: number;
   readonly updated_at: number;
   readonly published_at: number | null;
@@ -195,6 +198,7 @@ export type CompetitionPageRequest = {
 };
 
 export type CompetitionSnapshot = {
+  readonly credit_budgets?: unknown;
   readonly storage_mode: CompetitionStorageMode;
   readonly config_version: number;
   readonly configuration: unknown;

@@ -1,3 +1,4 @@
+import { memeCardDropMappingsDb } from '@/minting-claims/meme-card-drop-mappings.db';
 import { getAuthenticationContext } from '@/api/auth/auth';
 import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
@@ -223,7 +224,7 @@ function toApiCompetition(competition: PublicCompetition): ApiCompetition {
   } as unknown as ApiCompetition;
 }
 
-async function toApiEntry(
+export async function toApiEntry(
   entry: CompetitionEntry,
   ctx: RequestContext
 ): Promise<ApiCompetitionEntry> {
@@ -236,7 +237,16 @@ async function toApiEntry(
     throw new NotFoundException(`Entry submitter not found`);
   }
   const { submitter_id: _submitterId, ...data } = entry;
-  return { ...data, submitter } as unknown as ApiCompetitionEntry;
+  const memeCardIds = await memeCardDropMappingsDb.findMemeCardIdsByEntryIds(
+    entry.competition_id,
+    [entry.id],
+    ctx
+  );
+  return {
+    ...data,
+    submitter,
+    meme_card_id: memeCardIds[entry.id] ?? null
+  } as unknown as ApiCompetitionEntry;
 }
 
 async function toApiEntryPage(
@@ -247,13 +257,24 @@ async function toApiEntryPage(
     new Set(page.data.map((it) => it.submitter_id))
   );
   const submitters = await identityFetcher.getOverviewsByIds(profileIds, ctx);
+  const memeCardIds = page.data.length
+    ? await memeCardDropMappingsDb.findMemeCardIdsByEntryIds(
+        page.data[0].competition_id,
+        page.data.map((entry) => entry.id),
+        ctx
+      )
+    : {};
   return {
     ...page,
     data: page.data.map((entry) => {
       const submitter = submitters[entry.submitter_id];
       if (!submitter) throw new NotFoundException(`Entry submitter not found`);
       const { submitter_id: _submitterId, ...data } = entry;
-      return { ...data, submitter } as unknown as ApiCompetitionEntry;
+      return {
+        ...data,
+        submitter,
+        meme_card_id: memeCardIds[entry.id] ?? null
+      } as unknown as ApiCompetitionEntry;
     })
   };
 }

@@ -35,6 +35,34 @@ jest.mock('@/redis', () => ({
 }));
 
 const device = { device_id: 'phone', token: 'token' };
+
+it('excludes native unread rows for older registrations and includes only explicitly supported profiles', async () => {
+  findDevices.mockResolvedValue([
+    { profile_id: 'a', token: 'token', include_competitions: true },
+    { profile_id: 'b', token: 'token' }
+  ]);
+  await getDeviceBadgeState(device);
+  const causesFor = (profileId: string) =>
+    countUnread.mock.calls.find(([id]) => id === profileId)![3].enabledCauses;
+  expect(causesFor('a')).toContain(
+    IdentityNotificationCause.COMPETITION_LIFECYCLE
+  );
+  expect(causesFor('b')).not.toContain(
+    IdentityNotificationCause.COMPETITION_LIFECYCLE
+  );
+});
+
+it('does not transfer native badge capability to an older token during rotation', async () => {
+  findDevices.mockResolvedValue([
+    { profile_id: 'a', token: 'new-token', include_competitions: true },
+    { profile_id: 'b', token: 'token', include_competitions: false }
+  ]);
+  await getDeviceBadgeState(device);
+  for (const call of countUnread.mock.calls)
+    expect(call[3].enabledCauses).not.toContain(
+      IdentityNotificationCause.COMPETITION_LIFECYCLE
+    );
+});
 beforeEach(() => {
   jest.clearAllMocks();
   findDevices.mockResolvedValue([

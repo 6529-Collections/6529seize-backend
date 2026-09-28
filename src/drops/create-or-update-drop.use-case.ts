@@ -131,6 +131,15 @@ import {
   assertModerationPermitReplay
 } from '@/content-moderation/moderation-review.db';
 import { moderationFingerprint } from '@/content-moderation/moderation-review.types';
+import { Competition } from '@/competitions/competition.types';
+import {
+  isNativeEntryContentPermit,
+  NativeEntryContentPermit
+} from '@/competitions/competition-entry-content';
+import {
+  CompetitionEntryDropHooks,
+  competitionEntryDropHooks
+} from '@/competitions/competition-entry-drop-hooks';
 
 const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
 const GIPHY_CHAT_LINK_HOST_REGEX = /^media\d*\.giphy\.com$/;
@@ -329,7 +338,8 @@ export class CreateOrUpdateDropUseCase {
     private readonly moderationDb: Pick<
       ContentModerationDb,
       'filterBlockedNotificationRows'
-    > = contentModerationDb
+    > = contentModerationDb,
+    private readonly entryHooks: CompetitionEntryDropHooks = competitionEntryDropHooks
   ) {}
 
   private assertDropContentLimits(
@@ -380,6 +390,7 @@ export class CreateOrUpdateDropUseCase {
       preResolvedIdentityNomination,
       bypassChatLinkRestrictions,
       bypassChatSlowModeRestrictions,
+      nativeEntryContent,
       prePublication
     }: {
       timer?: Timer;
@@ -387,6 +398,7 @@ export class CreateOrUpdateDropUseCase {
       preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
       bypassChatLinkRestrictions?: boolean;
       bypassChatSlowModeRestrictions?: boolean;
+      nativeEntryContent?: NativeEntryContentPermit;
       prePublication: PrePublicationPreparation;
     }
   ): Promise<{
@@ -433,14 +445,100 @@ export class CreateOrUpdateDropUseCase {
       }
       resolvedModel = { ...resolvedModel, proxy_id: resolvedProxyId };
     }
-    return await this.createOrUpdateDrop(resolvedModel, isDescriptionDrop, {
+    const entryCtx: RequestContext = {
       timer,
       connection,
-      preResolvedIdentityNomination,
-      bypassChatLinkRestrictions,
-      bypassChatSlowModeRestrictions,
-      prePublication
+      authenticationContext:
+        'trustedSystem' in prePublication
+          ? undefined
+          : prePublication.authenticationContext
+    };
+    const entryEdit = resolvedModel.drop_id
+      ? await this.entryHooks.prepareUpdate(
+          resolvedModel,
+          (competition) =>
+            this.normalizeNativeEntryIdentity(
+              resolvedModel,
+              competition,
+              preResolvedIdentityNomination,
+              entryCtx
+            ),
+          entryCtx
+        )
+      : undefined;
+    const contentPermit = nativeEntryContent ?? entryEdit?.permit;
+    const isNativeEntryContent = isNativeEntryContentPermit(
+      contentPermit,
+      resolvedModel,
+      connection
+    );
+    if (contentPermit && (!isNativeEntryContent || isDescriptionDrop))
+      throw new Error('Invalid native entry content authorization');
+    const result = await this.createOrUpdateDrop(
+      resolvedModel,
+      isDescriptionDrop,
+      {
+        timer,
+        connection,
+        preResolvedIdentityNomination,
+        bypassChatLinkRestrictions:
+          bypassChatLinkRestrictions || isNativeEntryContent,
+        bypassChatSlowModeRestrictions:
+          bypassChatSlowModeRestrictions || isNativeEntryContent,
+        isNativeEntryContent,
+        prePublication
+      }
+    );
+    if (entryEdit?.entries.length) {
+      const drop = await this.dropsDb.findDropById(result.drop_id, connection);
+      if (!drop) throw new Error('Updated entry drop is missing');
+      await this.entryHooks.recordUpdate(entryEdit, drop, authorId!, entryCtx);
+    }
+    return result;
+  }
+
+  public async normalizeNativeEntryIdentity(
+    model: CreateOrUpdateDropModel,
+    competition: Competition,
+    preResolvedIdentityNomination:
+      | PreResolvedEnsIdentityNomination
+      | null
+      | undefined,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (
+      competition.participation.submission_type !== WaveSubmissionType.IDENTITY
+    )
+      return;
+    const nominations = model.metadata.filter(
+      (item) => item.data_key === 'identity'
+    );
+    if (nominations.length !== 1 || !nominations[0].data_value.trim())
+      throw new BadRequestException(
+        'Identity entries require exactly one non-empty identity metadata item'
+      );
+    const strategy = competition.participation.identity_submission_strategy;
+    if (
+      !Object.values(WaveIdentitySubmissionStrategy).includes(
+        strategy as WaveIdentitySubmissionStrategy
+      )
+    )
+      throw new BadRequestException(
+        'Competition identity submission strategy is misconfigured'
+      );
+    const profileId = await this.resolveIdentityNominationProfileId(
+      nominations[0].data_value,
+      { ...ctx, connection: ctx.connection!, preResolvedIdentityNomination }
+    );
+    this.verifyIdentitySubmissionWhoCanBeSubmitted({
+      submittingProfileId: this.getRequiredAuthorId(model),
+      nominatedProfileId: profileId,
+      strategy: strategy as WaveIdentitySubmissionStrategy
     });
+    model.metadata[model.metadata.indexOf(nominations[0])] = {
+      data_key: 'identity',
+      data_value: profileId
+    };
   }
 
   public async preparePrePublication(
@@ -500,9 +598,14 @@ export class CreateOrUpdateDropUseCase {
       `${CreateOrUpdateDropUseCase.name}->preResolveIdentityNomination`
     );
     try {
-      if (sanitizedModel.drop_type !== DropType.PARTICIPATORY) {
+      if (
+        sanitizedModel.drop_type !== DropType.PARTICIPATORY &&
+        (!sanitizedModel.drop_id ||
+          !(await this.entryHooks.hasActiveEntry(sanitizedModel.drop_id, {
+            timer
+          })))
+      )
         return null;
-      }
 
       const identityMetadatas = sanitizedModel.metadata.filter(
         (it) => it.data_key === 'identity'
@@ -556,6 +659,7 @@ export class CreateOrUpdateDropUseCase {
       preResolvedIdentityNomination,
       bypassChatLinkRestrictions,
       bypassChatSlowModeRestrictions,
+      isNativeEntryContent = false,
       prePublication
     }: {
       timer?: Timer;
@@ -563,6 +667,7 @@ export class CreateOrUpdateDropUseCase {
       preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
       bypassChatLinkRestrictions?: boolean;
       bypassChatSlowModeRestrictions?: boolean;
+      isNativeEntryContent?: boolean;
       prePublication: PrePublicationPreparation;
     }
   ): Promise<{
@@ -625,7 +730,8 @@ export class CreateOrUpdateDropUseCase {
         timer,
         connection,
         preResolvedIdentityNomination,
-        preExistingGroupMentions
+        preExistingGroupMentions,
+        isNativeEntryContent
       });
     const authorId = this.getRequiredAuthorId(validatedModel);
     const preExistingDropId = validatedModel.drop_id;
@@ -767,7 +873,8 @@ export class CreateOrUpdateDropUseCase {
           createdAt: dropBeforeUpdate.created_at,
           serialNo: dropBeforeUpdate.serial_no,
           updatedAt: Time.currentMillis(),
-          wave
+          wave,
+          isNativeEntryContent
         },
         { connection, timer }
       );
@@ -780,7 +887,8 @@ export class CreateOrUpdateDropUseCase {
           createdAt,
           serialNo: null,
           updatedAt: null,
-          wave
+          wave,
+          isNativeEntryContent
         },
         { connection, timer }
       );
@@ -969,12 +1077,14 @@ export class CreateOrUpdateDropUseCase {
       timer,
       connection,
       preResolvedIdentityNomination,
-      preExistingGroupMentions
+      preExistingGroupMentions,
+      isNativeEntryContent = false
     }: {
       timer?: Timer;
       connection: ConnectionWrapper<any>;
       preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
       preExistingGroupMentions: readonly DropGroupMention[];
+      isNativeEntryContent?: boolean;
     }
   ): Promise<{
     validatedModel: CreateOrUpdateDropModel;
@@ -992,7 +1102,8 @@ export class CreateOrUpdateDropUseCase {
           groupIdsUserIsEligibleFor,
           isDescriptionDrop,
           preResolvedIdentityNomination,
-          preExistingGroupMentions
+          preExistingGroupMentions,
+          isNativeEntryContent
         },
         { timer, connection }
       ),
@@ -1013,13 +1124,15 @@ export class CreateOrUpdateDropUseCase {
       model,
       groupIdsUserIsEligibleFor,
       preResolvedIdentityNomination,
-      preExistingGroupMentions
+      preExistingGroupMentions,
+      isNativeEntryContent = false
     }: {
       isDescriptionDrop: boolean;
       model: CreateOrUpdateDropModel;
       groupIdsUserIsEligibleFor: string[];
       preResolvedIdentityNomination?: PreResolvedEnsIdentityNomination | null;
       preExistingGroupMentions: readonly DropGroupMention[];
+      isNativeEntryContent?: boolean;
     },
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ): Promise<CreateOrUpdateDropModel> {
@@ -1035,6 +1148,7 @@ export class CreateOrUpdateDropUseCase {
         : wave.chat_group_id;
     if (
       !isDescriptionDrop &&
+      !isNativeEntryContent &&
       groupId &&
       !groupIdsUserIsEligibleFor.includes(groupId)
     ) {
@@ -1051,7 +1165,8 @@ export class CreateOrUpdateDropUseCase {
         {
           isDescriptionDrop,
           wave,
-          model
+          model,
+          isNativeEntryContent
         },
         { timer, connection }
       ),
@@ -1266,11 +1381,13 @@ export class CreateOrUpdateDropUseCase {
     {
       isDescriptionDrop,
       wave,
-      model
+      model,
+      isNativeEntryContent = false
     }: {
       isDescriptionDrop: boolean;
       wave: WaveEntity;
       model: CreateOrUpdateDropModel;
+      isNativeEntryContent?: boolean;
     },
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ) {
@@ -1318,6 +1435,7 @@ export class CreateOrUpdateDropUseCase {
     }
     if (
       !isDescriptionDrop &&
+      !isNativeEntryContent &&
       !wave.chat_enabled &&
       model.drop_type === DropType.CHAT
     ) {
@@ -1883,13 +2001,15 @@ export class CreateOrUpdateDropUseCase {
       wave,
       createdAt,
       updatedAt,
-      serialNo
+      serialNo,
+      isNativeEntryContent = false
     }: {
       model: CreateOrUpdateDropModel;
       wave: WaveEntity;
       createdAt: number;
       updatedAt: number | null;
       serialNo: number | null;
+      isNativeEntryContent?: boolean;
     },
     { connection, timer }: { connection: ConnectionWrapper<any>; timer?: Timer }
   ): Promise<number[]> {
@@ -2117,7 +2237,8 @@ export class CreateOrUpdateDropUseCase {
         directlyMentionedIdentityIds: resolvedMentionedUsers.mentionedUserIds,
         // Group mention notifications, including @all, are create-only so an
         // edit cannot resend a wave-wide or permission-derived notification.
-        groupMentionNotificationsEnabled: updatedAt === null
+        groupMentionNotificationsEnabled: updatedAt === null,
+        suppressFollowerNotifications: isNativeEntryContent
       },
       { timer, connection }
     );
@@ -2618,12 +2739,14 @@ export class CreateOrUpdateDropUseCase {
       model,
       wave,
       directlyMentionedIdentityIds,
-      groupMentionNotificationsEnabled
+      groupMentionNotificationsEnabled,
+      suppressFollowerNotifications = false
     }: {
       model: CreateOrUpdateDropModel;
       wave: WaveEntity;
       directlyMentionedIdentityIds: string[];
       groupMentionNotificationsEnabled: boolean;
+      suppressFollowerNotifications?: boolean;
     },
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ): Promise<number[]> {
@@ -2705,6 +2828,7 @@ export class CreateOrUpdateDropUseCase {
     const allDropsSubscriberIds = eligibleFollowerRecipients
       .filter(
         (recipient) =>
+          !suppressFollowerNotifications &&
           recipient.subscribed_to_all_drops &&
           !mentionedIdentityIdsSet.has(recipient.identity_id)
       )

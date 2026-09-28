@@ -296,3 +296,10 @@ export { PushInstallationEntity } from './IPushInstallation';
 export { PushDeviceLogoutFenceEntity } from './IPushDeviceLogoutFence';
 
 export { PushNotificationCancellationEntity } from './IPushNotificationCancellation';
+
+export * from './ICompetitionRuntime';
+
+export * from './ICompetitionCommand';
+export * from './ICompetitionEntryContentVersion';
+
+export * from './ICompetitionCapabilityAudit';

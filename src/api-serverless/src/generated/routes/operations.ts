@@ -72,22 +72,31 @@ import { ApiCollectTdhTargetPlan } from '@/api/generated/models/ApiCollectTdhTar
 import { ApiCollectTdhTargetRequest } from '@/api/generated/models/ApiCollectTdhTargetRequest';
 import { ApiCommunityMembersPage } from '@/api/generated/models/ApiCommunityMembersPage';
 import { ApiCompetition } from '@/api/generated/models/ApiCompetition';
+import { ApiCompetitionActionRequest } from '@/api/generated/models/ApiCompetitionActionRequest';
+import { ApiCompetitionAwardPage } from '@/api/generated/models/ApiCompetitionAwardPage';
 import { ApiCompetitionConfigVersionPage } from '@/api/generated/models/ApiCompetitionConfigVersionPage';
+import { ApiCompetitionCreditBudget } from '@/api/generated/models/ApiCompetitionCreditBudget';
 import { ApiCompetitionDecisionPage } from '@/api/generated/models/ApiCompetitionDecisionPage';
 import { ApiCompetitionDistributionItemPage } from '@/api/generated/models/ApiCompetitionDistributionItemPage';
+import { ApiCompetitionDraftInput } from '@/api/generated/models/ApiCompetitionDraftInput';
 import { ApiCompetitionEntry } from '@/api/generated/models/ApiCompetitionEntry';
 import { ApiCompetitionEntryPage } from '@/api/generated/models/ApiCompetitionEntryPage';
 import { ApiCompetitionEntryVotePage } from '@/api/generated/models/ApiCompetitionEntryVotePage';
 import { ApiCompetitionLeaderboardPage } from '@/api/generated/models/ApiCompetitionLeaderboardPage';
+import { ApiCompetitionMyVotePage } from '@/api/generated/models/ApiCompetitionMyVotePage';
 import { ApiCompetitionOutcomePage } from '@/api/generated/models/ApiCompetitionOutcomePage';
 import { ApiCompetitionPage } from '@/api/generated/models/ApiCompetitionPage';
 import { ApiCompetitionPausePage } from '@/api/generated/models/ApiCompetitionPausePage';
 import { ApiCompetitionVoterPage } from '@/api/generated/models/ApiCompetitionVoterPage';
 import { ApiContentModerationBlockActivityItem } from '@/api/generated/models/ApiContentModerationBlockActivityItem';
 import { ApiContentModerationProfileStatusResponse } from '@/api/generated/models/ApiContentModerationProfileStatusResponse';
+import { ApiCreateCompetitionEntryRequest } from '@/api/generated/models/ApiCreateCompetitionEntryRequest';
+import { ApiCreateCompetitionRequest } from '@/api/generated/models/ApiCreateCompetitionRequest';
 import { ApiCreatedProfileCmsAgentGrant } from '@/api/generated/models/ApiCreatedProfileCmsAgentGrant';
+import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropRequest';
 import { ApiCreateProfileCmsAgentGrantRequest } from '@/api/generated/models/ApiCreateProfileCmsAgentGrantRequest';
 import { ApiCreateProfileCmsWalletGallerySnapshotRequest } from '@/api/generated/models/ApiCreateProfileCmsWalletGallerySnapshotRequest';
+import { ApiCreateWaveHubRequest } from '@/api/generated/models/ApiCreateWaveHubRequest';
 import { ApiCreateWaveMetadataRequest } from '@/api/generated/models/ApiCreateWaveMetadataRequest';
 import { ApiDeleteEulaConsentRequest } from '@/api/generated/models/ApiDeleteEulaConsentRequest';
 import { ApiDeleteEulaConsentResponse } from '@/api/generated/models/ApiDeleteEulaConsentResponse';
@@ -171,10 +180,12 @@ import { ApiRollbackProfileCmsPackageRequest } from '@/api/generated/models/ApiR
 import { ApiSaveEulaConsentRequest } from '@/api/generated/models/ApiSaveEulaConsentRequest';
 import { ApiSaveEulaConsentResponse } from '@/api/generated/models/ApiSaveEulaConsentResponse';
 import { ApiSaveProfileCmsPackageDraftRequest } from '@/api/generated/models/ApiSaveProfileCmsPackageDraftRequest';
+import { ApiSetCompetitionVoteRequest } from '@/api/generated/models/ApiSetCompetitionVoteRequest';
 import { ApiSubmitProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiSubmitProfileCmsAgentProposalRequest';
 import { ApiSubscriptionCoverage } from '@/api/generated/models/ApiSubscriptionCoverage';
 import { ApiTdhRules } from '@/api/generated/models/ApiTdhRules';
 import { ApiUnpublishProfileCmsPackageRequest } from '@/api/generated/models/ApiUnpublishProfileCmsPackageRequest';
+import { ApiUpdateCompetitionRequest } from '@/api/generated/models/ApiUpdateCompetitionRequest';
 import { ApiUpdateProfilePreferences } from '@/api/generated/models/ApiUpdateProfilePreferences';
 import { ApiValidateProfileCmsAgentCandidateRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentCandidateRequest';
 import { ApiValidateProfileCmsAgentPatchRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentPatchRequest';
@@ -2713,6 +2724,7 @@ export type GetDropV2VoteEditLogsByIdRequest = Request<
 export type GetNotificationsV2PathParams = Record<string, never>;
 
 export interface GetNotificationsV2Query {
+  "include_competitions"?: boolean;
   "limit"?: number;
   "id_less_than"?: number;
   "cause"?: string;
@@ -3059,6 +3071,20 @@ export type GetProfileWaveActivityRequest = Request<
   Record<string, never>
 >;
 
+export type CreateWaveHubV3PathParams = Record<string, never>;
+
+export type CreateWaveHubV3Query = Record<string, never>;
+
+export type CreateWaveHubV3Response = ApiWaveV3;
+
+export type CreateWaveHubV3Request = Request<
+  CreateWaveHubV3PathParams,
+  ApiResponse<CreateWaveHubV3Response>,
+  ApiCreateWaveHubRequest,
+  CreateWaveHubV3Query,
+  Record<string, never>
+>;
+
 export interface GetWaveHubV3PathParams {
   "wave_id": string;
 }
@@ -3098,6 +3124,22 @@ export type ListWaveCompetitionsV3Request = Request<
   Record<string, never>
 >;
 
+export interface CreateCompetitionV3PathParams {
+  "wave_id": string;
+}
+
+export type CreateCompetitionV3Query = Record<string, never>;
+
+export type CreateCompetitionV3Response = ApiCompetition;
+
+export type CreateCompetitionV3Request = Request<
+  CreateCompetitionV3PathParams,
+  ApiResponse<CreateCompetitionV3Response>,
+  ApiCreateCompetitionRequest,
+  CreateCompetitionV3Query,
+  Record<string, never>
+>;
+
 export interface GetWaveCompetitionV3PathParams {
   "wave_id": string;
   "competition_id": string;
@@ -3112,6 +3154,97 @@ export type GetWaveCompetitionV3Request = Request<
   ApiResponse<GetWaveCompetitionV3Response>,
   never,
   GetWaveCompetitionV3Query,
+  Record<string, never>
+>;
+
+export interface UpdateCompetitionV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+}
+
+export type UpdateCompetitionV3Query = Record<string, never>;
+
+export type UpdateCompetitionV3Response = ApiCompetition;
+
+export type UpdateCompetitionV3Request = Request<
+  UpdateCompetitionV3PathParams,
+  ApiResponse<UpdateCompetitionV3Response>,
+  ApiUpdateCompetitionRequest,
+  UpdateCompetitionV3Query,
+  Record<string, never>
+>;
+
+export interface ExecuteCompetitionActionV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+  "action": "publish" | "end" | "cancel" | "archive" | "clone" | "pause" | "resume";
+}
+
+export type ExecuteCompetitionActionV3Query = Record<string, never>;
+
+export type ExecuteCompetitionActionV3Response = ApiCompetition;
+
+export type ExecuteCompetitionActionV3Request = Request<
+  ExecuteCompetitionActionV3PathParams,
+  ApiResponse<ExecuteCompetitionActionV3Response>,
+  ApiCompetitionActionRequest,
+  ExecuteCompetitionActionV3Query,
+  Record<string, never>
+>;
+
+export interface ListCompetitionAwardsV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+}
+
+export interface ListCompetitionAwardsV3Query {
+  "cursor"?: string;
+  "limit"?: number;
+}
+
+export type ListCompetitionAwardsV3Response = ApiCompetitionAwardPage;
+
+export type ListCompetitionAwardsV3Request = Request<
+  ListCompetitionAwardsV3PathParams,
+  ApiResponse<ListCompetitionAwardsV3Response>,
+  never,
+  ListCompetitionAwardsV3Query,
+  Record<string, never>
+>;
+
+export interface GetCompetitionConfigurationV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+}
+
+export type GetCompetitionConfigurationV3Query = Record<string, never>;
+
+export type GetCompetitionConfigurationV3Response = ApiCompetitionDraftInput;
+
+export type GetCompetitionConfigurationV3Request = Request<
+  GetCompetitionConfigurationV3PathParams,
+  ApiResponse<GetCompetitionConfigurationV3Response>,
+  never,
+  GetCompetitionConfigurationV3Query,
+  Record<string, never>
+>;
+
+export interface GetCompetitionCreditBudgetV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+}
+
+export interface GetCompetitionCreditBudgetV3Query {
+  "entry_id"?: string;
+}
+
+export type GetCompetitionCreditBudgetV3Response = ApiCompetitionCreditBudget;
+
+export type GetCompetitionCreditBudgetV3Request = Request<
+  GetCompetitionCreditBudgetV3PathParams,
+  ApiResponse<GetCompetitionCreditBudgetV3Response>,
+  never,
+  GetCompetitionCreditBudgetV3Query,
   Record<string, never>
 >;
 
@@ -3160,6 +3293,23 @@ export type ListCompetitionEntriesV3Request = Request<
   Record<string, never>
 >;
 
+export interface CreateCompetitionEntryV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+}
+
+export type CreateCompetitionEntryV3Query = Record<string, never>;
+
+export type CreateCompetitionEntryV3Response = ApiCompetitionEntry;
+
+export type CreateCompetitionEntryV3Request = Request<
+  CreateCompetitionEntryV3PathParams,
+  ApiResponse<CreateCompetitionEntryV3Response>,
+  ApiCreateCompetitionEntryRequest,
+  CreateCompetitionEntryV3Query,
+  Record<string, never>
+>;
+
 export interface GetCompetitionEntryV3PathParams {
   "wave_id": string;
   "competition_id": string;
@@ -3175,6 +3325,43 @@ export type GetCompetitionEntryV3Request = Request<
   ApiResponse<GetCompetitionEntryV3Response>,
   never,
   GetCompetitionEntryV3Query,
+  Record<string, never>
+>;
+
+export interface ExecuteCompetitionEntryActionV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+  "entry_id": string;
+  "action": "withdraw" | "disqualify";
+}
+
+export type ExecuteCompetitionEntryActionV3Query = Record<string, never>;
+
+export type ExecuteCompetitionEntryActionV3Response = ApiCompetitionEntry;
+
+export type ExecuteCompetitionEntryActionV3Request = Request<
+  ExecuteCompetitionEntryActionV3PathParams,
+  ApiResponse<ExecuteCompetitionEntryActionV3Response>,
+  ApiCompetitionActionRequest,
+  ExecuteCompetitionEntryActionV3Query,
+  Record<string, never>
+>;
+
+export interface GetCompetitionEntryContentV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+  "entry_id": string;
+}
+
+export type GetCompetitionEntryContentV3Query = Record<string, never>;
+
+export type GetCompetitionEntryContentV3Response = ApiCreateDropRequest;
+
+export type GetCompetitionEntryContentV3Request = Request<
+  GetCompetitionEntryContentV3PathParams,
+  ApiResponse<GetCompetitionEntryContentV3Response>,
+  never,
+  GetCompetitionEntryContentV3Query,
   Record<string, never>
 >;
 
@@ -3197,6 +3384,42 @@ export type ListCompetitionEntryVotesV3Request = Request<
   ApiResponse<ListCompetitionEntryVotesV3Response>,
   never,
   ListCompetitionEntryVotesV3Query,
+  Record<string, never>
+>;
+
+export interface SetCompetitionVoteV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+  "entry_id": string;
+}
+
+export type SetCompetitionVoteV3Query = Record<string, never>;
+
+export type SetCompetitionVoteV3Response = ApiCompetitionCreditBudget;
+
+export type SetCompetitionVoteV3Request = Request<
+  SetCompetitionVoteV3PathParams,
+  ApiResponse<SetCompetitionVoteV3Response>,
+  ApiSetCompetitionVoteRequest,
+  SetCompetitionVoteV3Query,
+  Record<string, never>
+>;
+
+export interface GetCompetitionEntryContentCandidateV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+  "drop_id": string;
+}
+
+export type GetCompetitionEntryContentCandidateV3Query = Record<string, never>;
+
+export type GetCompetitionEntryContentCandidateV3Response = ApiCreateDropRequest;
+
+export type GetCompetitionEntryContentCandidateV3Request = Request<
+  GetCompetitionEntryContentCandidateV3PathParams,
+  ApiResponse<GetCompetitionEntryContentCandidateV3Response>,
+  never,
+  GetCompetitionEntryContentCandidateV3Query,
   Record<string, never>
 >;
 
@@ -3326,6 +3549,26 @@ export type ListCompetitionVotersV3Request = Request<
   ApiResponse<ListCompetitionVotersV3Response>,
   never,
   ListCompetitionVotersV3Query,
+  Record<string, never>
+>;
+
+export interface ListCompetitionMyVotesV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+}
+
+export interface ListCompetitionMyVotesV3Query {
+  "cursor"?: string;
+  "limit"?: number;
+}
+
+export type ListCompetitionMyVotesV3Response = ApiCompetitionMyVotePage;
+
+export type ListCompetitionMyVotesV3Request = Request<
+  ListCompetitionMyVotesV3PathParams,
+  ApiResponse<ListCompetitionMyVotesV3Response>,
+  never,
+  ListCompetitionMyVotesV3Query,
   Record<string, never>
 >;
 

@@ -3,9 +3,54 @@ import { MetricRollupHourMetric } from '../entities/IMetricRollupHour';
 import { DropType } from '../entities/IDrop';
 import { env } from '../env';
 import { RequestContext } from '../request.context';
+import {
+  competitionMainStageRepository,
+  CompetitionMainStageRepository
+} from '@/competitions/competition-main-stage.repository';
 
 export class MetricsRecorder {
-  constructor(private readonly metricsDb: MetricsDb) {}
+  constructor(
+    private readonly metricsDb: MetricsDb,
+    private readonly nativeMainStage: Pick<
+      CompetitionMainStageRepository,
+      'isDesignated'
+    > = competitionMainStageRepository
+  ) {}
+
+  async recordNativeCompetitionSubmission(
+    { competitionId }: { competitionId: string },
+    ctx: RequestContext
+  ) {
+    if (!(await this.nativeMainStage.isDesignated(competitionId, ctx))) return;
+    await this.metricsDb.upsertMetricRollupHour(
+      { metric: MetricRollupHourMetric.MAIN_STAGE_SUBMISSION, event_count: 1 },
+      ctx
+    );
+  }
+
+  async recordNativeCompetitionVote(
+    {
+      competitionId,
+      voterId,
+      voteChange
+    }: { competitionId: string; voterId: string; voteChange: number },
+    ctx: RequestContext
+  ) {
+    if (
+      voteChange === 0 ||
+      !(await this.nativeMainStage.isDesignated(competitionId, ctx))
+    )
+      return;
+    await this.metricsDb.upsertMetricRollupHour(
+      {
+        metric: MetricRollupHourMetric.MAIN_STAGE_VOTE,
+        scope: voterId,
+        event_count: 1,
+        value_sum: voteChange
+      },
+      ctx
+    );
+  }
 
   async recordDrop(
     {

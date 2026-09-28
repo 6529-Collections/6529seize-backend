@@ -884,7 +884,7 @@ the chat/visibility hub and owns zero, one, or many competition resources. The
 competition service resolves each resource through either the immutable legacy
 adapter or the native competition repositories; it never infers an
 "active/current competition." Existing unversioned and v2 wave/drop GETs remain
-permanent façades over the original legacy wave configuration. A future native
+permanent façades over the original legacy wave configuration. A native
 hub therefore remains a contract-valid `CHAT` wave to those clients, and adding
 another competition cannot change a legacy Rank/Approve projection.
 
@@ -899,10 +899,38 @@ hashes and identifiers, never vote/signature/private payloads. Sampled legacy
 reads compare an independent legacy-table baseline with the unified adapter's
 paged domain reads in one repeatable-read snapshot. Samples are bounded and
 best effort; failures preserve the API response. Historical adapter
-self-comparisons are not parity evidence, and remaining-credit coverage remains
-an explicit acceptance gap.
+self-comparisons are not parity evidence. The current `legacy-read-v3` source
+also compares independently derived available/spent/remaining credit.
 Operational deployment, verification, and rollback are documented in the
 [competition read boundary runbook](./competition-read-boundary-runbook.md).
+
+Native command APIs now implement hub creation, versioned draft/publication,
+entry submission/withdrawal/disqualification, voting, credits, history and
+terminal lifecycle actions. Effective-actor idempotency receipts, signature
+nonces and domain writes commit atomically under competition locks. A shared
+CHAT drop stays CHAT when its native entry wins. Content revisions retain the
+accepted snapshot while public reads still enforce current moderation and
+visibility. Entry-aware edits/deletions and chat purge protect history; wave
+deletion rejects native history. Signed existing-drop associations bind a
+locked content hash in addition to destination and configuration version.
+
+The existing leaderboard and decision Lambdas add an explicitly routed native
+engine. Native vote history, immutable decision voter snapshots and award
+rows remain separate from legacy tables. The decision worker leases a durable
+competition outbox and emits scoped WebSocket updates and lifecycle/winner
+notifications. Per-effect SQL receipts and competition/decision/entry claim
+provenance protect retries. `claimsBuilder` and `pushNotificationsHandler`
+understand the additive messages before producers are enabled. Explicit
+capabilities gate Main Stage claims, announcements, mappings and participation
+metrics; sharing a special wave never confers them. Operations assignment has
+an operator allowlist and durable actor/reason audit. Privileged public effects
+revalidate current public wave/parent access.
+
+The [native runtime runbook](./native-competition-runtime-runbook.md) specifies
+schema → message consumers → workers → API → frontend rollout and the native
+kill switches. No new Lambda or queue is introduced; all new features remain
+disabled by default.
+
 
 Important API responsibilities:
 

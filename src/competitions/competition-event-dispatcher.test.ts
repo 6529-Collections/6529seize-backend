@@ -1,0 +1,227 @@
+import { CompetitionEventDispatcher } from './competition-event-dispatcher';
+import { CompetitionEventRepository } from './competition-event.repository';
+import { NativeCompetitionEvent } from './native-competition-runtime.repository';
+import { RequestContext } from '@/request.context';
+
+const event: NativeCompetitionEvent = {
+  event_id: 'event',
+  event_version: 1,
+  event_type: 'COMPETITION_PUBLISHED',
+  occurred_at: 100,
+  wave_id: 'wave',
+  competition_id: 'competition',
+  data: {}
+};
+
+function dependencies() {
+  const outbox = {
+    claimOutbox: jest.fn(),
+    acknowledgeOutbox: jest.fn(),
+    retryOutbox: jest.fn()
+  };
+  const repository = {
+    getContext: jest.fn().mockResolvedValue({
+      title: 'Contest',
+      lifecycle: 'PUBLISHED',
+      published_at: 10,
+      visibility_group_id: 'group'
+    }),
+    listFollowers: jest
+      .fn()
+      .mockImplementation(async (_wave: string, after: string) =>
+        after ? [] : ['follower']
+      ),
+    getEntrySubmitter: jest.fn().mockResolvedValue('artist'),
+    applyEffect: jest.fn(
+      async <T>(
+        _id: string,
+        _key: string,
+        apply: (ctx: RequestContext) => Promise<T>,
+        ctx: RequestContext
+      ) => apply(ctx)
+    ) as jest.MockedFunction<CompetitionEventRepository['applyEffect']>,
+    getPrivilegedWinners: jest.fn().mockResolvedValue([])
+  };
+  const sockets = { notifyAboutCompetitionUpdate: jest.fn() };
+  const notifier = {
+    notifyOfCompetitionLifecycle: jest.fn().mockResolvedValue([7])
+  };
+  const announcements = { drop: jest.fn().mockResolvedValue([8]) };
+  const publishClaim = jest.fn();
+  const push = jest.fn();
+  const dispatcher = new CompetitionEventDispatcher(
+    outbox,
+    repository,
+    sockets,
+    notifier,
+    announcements,
+    publishClaim,
+    push,
+    () => ['announcement-wave']
+  );
+  return {
+    dispatcher,
+    outbox,
+    repository,
+    sockets,
+    notifier,
+    announcements,
+    publishClaim,
+    push
+  };
+}
+
+describe('CompetitionEventDispatcher', () => {
+  it.each(['DRAFT', 'ARCHIVED'])(
+    'suppresses never-published %s competitions from subscriptions and notifications',
+    async (lifecycle) => {
+      const deps = dependencies();
+      deps.repository.getContext.mockResolvedValue({
+        title: 'Private',
+        lifecycle,
+        published_at: null,
+        visibility_group_id: null
+      });
+      await deps.dispatcher.dispatch(
+        { ...event, event_type: 'COMPETITION_ARCHIVED' },
+        {}
+      );
+      expect(deps.sockets.notifyAboutCompetitionUpdate).not.toHaveBeenCalled();
+      expect(deps.notifier.notifyOfCompetitionLifecycle).not.toHaveBeenCalled();
+    }
+  );
+
+  it('notifies followers with explicit competition context and current wave access', async () => {
+    const deps = dependencies();
+    await deps.dispatcher.dispatch(event, {});
+    expect(deps.sockets.notifyAboutCompetitionUpdate).toHaveBeenCalledWith(
+      event,
+      'group',
+      {}
+    );
+    expect(deps.notifier.notifyOfCompetitionLifecycle).toHaveBeenCalledWith(
+      'follower',
+      {
+        event_id: 'event',
+        event_type: 'COMPETITION_PUBLISHED',
+        wave_id: 'wave',
+        competition_id: 'competition',
+        competition_title: 'Contest'
+      },
+      'group',
+      {}
+    );
+    expect(deps.repository.applyEffect).toHaveBeenCalledWith(
+      'event',
+      'notify:follower',
+      expect.any(Function),
+      {}
+    );
+    expect(deps.push).toHaveBeenCalledWith([7]);
+  });
+
+  it('keeps entry moderation notifications scoped to their submitter', async () => {
+    const deps = dependencies();
+    await deps.dispatcher.dispatch(
+      {
+        ...event,
+        event_type: 'COMPETITION_ENTRY_DISQUALIFIED',
+        competition_entry_id: 'entry',
+        drop_id: 'drop',
+        data: { status: 'DISQUALIFIED' }
+      },
+      {}
+    );
+    expect(deps.repository.listFollowers).not.toHaveBeenCalled();
+    expect(deps.notifier.notifyOfCompetitionLifecycle).toHaveBeenCalledWith(
+      'artist',
+      expect.objectContaining({ entry_id: 'entry', drop_id: 'drop' }),
+      'group',
+      {}
+    );
+  });
+
+  it('does not grant privileged effects from a wave or event capability assertion', async () => {
+    const deps = dependencies();
+    await deps.dispatcher.dispatch(
+      {
+        ...event,
+        event_type: 'COMPETITION_DECISION_COMPLETED',
+        data: {
+          decision_id: 'decision',
+          capabilities: ['MAIN_STAGE'],
+          winners: []
+        }
+      },
+      {}
+    );
+    expect(deps.publishClaim).not.toHaveBeenCalled();
+    expect(deps.announcements.drop).not.toHaveBeenCalled();
+  });
+
+  it('publishes claims with verified native context and rechecks designation for announcements', async () => {
+    const deps = dependencies();
+    deps.repository.getPrivilegedWinners.mockResolvedValue([
+      {
+        entry_id: 'entry',
+        drop_id: 'drop',
+        submitter_id: 'artist',
+        rank: 1,
+        final_rating: 100
+      }
+    ]);
+    await deps.dispatcher.dispatch(
+      {
+        ...event,
+        event_type: 'COMPETITION_DECISION_COMPLETED',
+        data: { decision_id: 'decision', winners: ['entry'] }
+      },
+      {}
+    );
+    expect(deps.publishClaim).toHaveBeenCalledWith('drop', {
+      competition_id: 'competition',
+      competition_entry_id: 'entry',
+      decision_id: 'decision'
+    });
+    expect(deps.repository.getPrivilegedWinners).toHaveBeenCalledTimes(2);
+    expect(deps.announcements.drop).toHaveBeenCalledWith(
+      {
+        waves: ['announcement-wave'],
+        message: expect.stringContaining(
+          '/waves/wave/competitions/competition?entry=entry'
+        )
+      },
+      {}
+    );
+  });
+
+  it('retries a failed event without acknowledging it or starving the next event', async () => {
+    const deps = dependencies();
+    deps.outbox.claimOutbox.mockResolvedValue([
+      { id: 'failed', event, attempts: 1, lease_token: 'lease-1' },
+      {
+        id: 'ok',
+        event: { ...event, event_id: 'ok' },
+        attempts: 1,
+        lease_token: 'lease-2'
+      }
+    ]);
+    deps.sockets.notifyAboutCompetitionUpdate.mockRejectedValueOnce(
+      new Error('transient')
+    );
+    await deps.dispatcher.dispatchPending({}, 100);
+    expect(deps.outbox.retryOutbox).toHaveBeenCalledWith(
+      'failed',
+      'lease-1',
+      expect.any(Number),
+      {}
+    );
+    expect(deps.outbox.acknowledgeOutbox).toHaveBeenCalledTimes(1);
+    expect(deps.outbox.acknowledgeOutbox).toHaveBeenCalledWith(
+      'ok',
+      'lease-2',
+      expect.any(Number),
+      {}
+    );
+  });
+});

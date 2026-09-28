@@ -1,4 +1,5 @@
 import { DropCreationApiService } from '@/api/drops/drop-creation.api.service';
+jest.mock('@/competitions/competition-entry-drop-hooks');
 import { waveScoreService } from '@/api/waves/wave-score.service';
 import { invalidateWaveUnreadCacheForWave } from '@/api/waves/wave-unread-cache';
 import { DropType } from '@/entities/IDrop';
@@ -31,6 +32,9 @@ function makeService({
     })
   };
   const dropsDb = {
+    executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+      callback({})
+    ),
     findDropById: jest.fn().mockResolvedValue({
       id: 'drop-1',
       author_id: 'profile-1',
@@ -83,7 +87,7 @@ describe('DropCreationApiService.toggleHideLinkPreview', () => {
 
     expect(dropsDb.updateHideLinkPreview).toHaveBeenCalledWith(
       { drop_id: 'drop-1', hide_link_preview: true },
-      ctx
+      expect.objectContaining({ ...ctx, connection: expect.any(Object) })
     );
     expect(wsListenersNotifier.notifyAboutDropUpdate).toHaveBeenCalledWith(
       { id: 'drop-1', hide_link_preview: true },
@@ -104,7 +108,7 @@ describe('DropCreationApiService.toggleHideLinkPreview', () => {
 
     expect(dropsDb.updateHideLinkPreview).toHaveBeenCalledWith(
       { drop_id: 'drop-1', hide_link_preview: true },
-      ctx
+      expect.objectContaining({ ...ctx, connection: expect.any(Object) })
     );
     expect(wsListenersNotifier.notifyAboutDropUpdate).toHaveBeenCalledWith(
       { id: 'drop-1', hide_link_preview: true },
@@ -125,7 +129,7 @@ describe('DropCreationApiService.toggleHideLinkPreview', () => {
 
     expect(dropsDb.updateHideLinkPreview).toHaveBeenCalledWith(
       { drop_id: 'drop-1', hide_link_preview: false },
-      ctx
+      expect.objectContaining({ ...ctx, connection: expect.any(Object) })
     );
     expect(wsListenersNotifier.notifyAboutDropUpdate).toHaveBeenCalledWith(
       { id: 'drop-1', hide_link_preview: false },
@@ -146,7 +150,7 @@ describe('DropCreationApiService.toggleHideLinkPreview', () => {
 
     expect(dropsDb.updateHideLinkPreview).toHaveBeenCalledWith(
       { drop_id: 'drop-1', hide_link_preview: true },
-      ctx
+      expect.objectContaining({ ...ctx, connection: expect.any(Object) })
     );
     expect(wsListenersNotifier.notifyAboutDropUpdate).not.toHaveBeenCalled();
   });

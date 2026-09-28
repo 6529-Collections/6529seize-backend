@@ -92,6 +92,8 @@ function normalizeCreateDropPollRequest(
   };
 }
 
+import { competitionEntryDropHooks } from '@/competitions/competition-entry-drop-hooks';
+
 export class DropCreationApiService {
   private readonly logger = Logger.get(this.constructor.name);
 
@@ -349,7 +351,8 @@ export class DropCreationApiService {
           },
           { timer: timer!, connection }
         );
-      }
+      },
+      { isolationLevel: 'READ COMMITTED' }
     );
     if (deleteResponse) {
       await waveDropMetricsRefreshService.requestWaveDropMetricsRefreshBestEffort(
@@ -586,19 +589,39 @@ export class DropCreationApiService {
         `Proxy is not allowed to toggle hide link preview`
       );
     }
-    const drop = await this.dropsDb.findDropById(dropId);
-    if (!drop) {
-      throw new NotFoundException(`Drop ${dropId} not found`);
-    }
-    if (drop.author_id !== authenticatedProfileId) {
-      throw new ForbiddenException(
-        `Only the author can toggle hide link preview`
-      );
-    }
-    const newValue = hideLinkPreview ?? !drop.hide_link_preview;
-    const changed = await this.dropsDb.updateHideLinkPreview(
-      { drop_id: dropId, hide_link_preview: newValue },
-      ctx
+    const changed = await this.dropsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const tx = { ...ctx, connection };
+        const entries = await competitionEntryDropHooks.lockForDelete(
+          dropId,
+          tx
+        );
+        const drop = await this.dropsDb.findDropById(dropId, connection);
+        if (!drop) throw new NotFoundException(`Drop ${dropId} not found`);
+        if (drop.author_id !== authenticatedProfileId)
+          throw new ForbiddenException(
+            'Only the author can toggle hide link preview'
+          );
+        const edit = await competitionEntryDropHooks.preparePresentationUpdate(
+          drop,
+          entries,
+          tx
+        );
+        const newValue = hideLinkPreview ?? !drop.hide_link_preview;
+        const updated = await this.dropsDb.updateHideLinkPreview(
+          { drop_id: dropId, hide_link_preview: newValue },
+          tx
+        );
+        if (updated)
+          await competitionEntryDropHooks.recordUpdate(
+            edit,
+            { ...drop, hide_link_preview: newValue },
+            authenticatedProfileId,
+            tx
+          );
+        return updated;
+      },
+      { isolationLevel: 'READ COMMITTED' }
     );
     const apiDrop = await this.dropsService.findDropByIdOrThrow(
       { dropId, skipEligibilityCheck: true },
@@ -705,7 +728,8 @@ export class DropCreationApiService {
             apiDrop,
             pendingPushNotificationIds: pending_push_notification_ids
           };
-        }
+        },
+        { isolationLevel: 'READ COMMITTED' }
       );
     await waveScoreService.requestWaveScoreRefreshBestEffort(
       [model.wave_id],

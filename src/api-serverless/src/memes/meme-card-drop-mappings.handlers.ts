@@ -20,13 +20,11 @@ export async function handleGetMemeCardDropMapping(
     GetMemeCardDropMappingPathSchema
   );
   const mainStageWaveId = env.getStringOrNull('MAIN_STAGE_WAVE_ID');
-  const mapping = mainStageWaveId
-    ? await memeCardDropMappingsDb.findByMemeCardId(
-        meme_card_id,
-        mainStageWaveId,
-        { timer }
-      )
-    : null;
+  const mapping = await memeCardDropMappingsDb.findByMemeCardId(
+    meme_card_id,
+    mainStageWaveId,
+    { timer }
+  );
   if (!mapping) {
     throw new NotFoundException(
       `Main Stage drop mapping for Meme card ${meme_card_id} not found`

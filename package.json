@@ -39,7 +39,8 @@
     "format:check": "node scripts/require-6529-command.cjs && prettier --check \"src/**/*.ts\"",
     "prelint": "node scripts/require-6529-command.cjs && ./bin/6529 run generate:deploy-config",
     "lint": "node scripts/require-6529-command.cjs && NODE_OPTIONS=--max-old-space-size=8192 eslint \"src/**/*.ts\" --fix --max-warnings=0",
-    "lint:check": "node scripts/require-6529-command.cjs && NODE_OPTIONS=--max-old-space-size=8192 eslint \"src/**/*.ts\" --max-warnings=0"
+    "lint:check": "node scripts/require-6529-command.cjs && NODE_OPTIONS=--max-old-space-size=8192 eslint \"src/**/*.ts\" --max-warnings=0",
+    "competition:capability": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/competitions/competition-capability.cli.ts"
   },
   "keywords": [],
   "author": "",

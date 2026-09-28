@@ -497,6 +497,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     connection?: ConnectionWrapper<any>,
     options?: {
       enabledCauses?: IdentityNotificationCause[];
+      excludedCauses?: IdentityNotificationCause[];
       forcePool?: DbPoolName;
     }
   ): Promise<number> {
@@ -506,17 +507,26 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     const causeClause = hasEnabledCauses
       ? ` AND n.cause IN (:enabledCauses)`
       : '';
+    const excludedCauses = options?.excludedCauses;
+    const hasExcludedCauses = !!excludedCauses?.length;
+    const excludeCauseClause = hasExcludedCauses
+      ? ` AND n.cause NOT IN (:excludedCauses)`
+      : '';
 
     const queryParams: {
       identity_id: string;
       eligibleGroupIds: string[];
       enabledCauses?: IdentityNotificationCause[];
+      excludedCauses?: IdentityNotificationCause[];
     } = {
       identity_id,
       eligibleGroupIds
     };
     if (hasEnabledCauses) {
       queryParams.enabledCauses = enabledCauses;
+    }
+    if (hasExcludedCauses) {
+      queryParams.excludedCauses = excludedCauses;
     }
 
     const queryOptions = connection
@@ -569,7 +579,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
               OR rd2.author_id = n.identity_id
             )
           )
-        )${causeClause}
+        )${causeClause}${excludeCauseClause}
       `,
         queryParams,
         options?.forcePool

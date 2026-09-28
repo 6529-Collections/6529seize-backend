@@ -73,14 +73,15 @@ describe('handleGetMemeCardDropMapping', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('returns not found when Main Stage is not configured', async () => {
+  it('checks explicit native mappings when legacy Main Stage is not configured', async () => {
     mockGetStringOrNull.mockReturnValue(null);
+    mockFindByMemeCardId.mockResolvedValue(null);
 
     await expect(
       handleGetMemeCardDropMapping({
         params: { meme_card_id: '521' }
       } as any)
     ).rejects.toBeInstanceOf(NotFoundException);
-    expect(mockFindByMemeCardId).not.toHaveBeenCalled();
+    expect(mockFindByMemeCardId).toHaveBeenCalledWith(521, null, { timer });
   });
 });

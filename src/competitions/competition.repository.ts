@@ -11,6 +11,7 @@ import {
   COMPETITION_PARITY_OBSERVATIONS_TABLE,
   COMPETITION_PAUSES_TABLE,
   COMPETITION_VOTES_TABLE,
+  COMPETITION_WINNER_VOTES_TABLE,
   COMPETITIONS_TABLE,
   DROP_RANK_TABLE,
   DROP_VOTER_STATE_TABLE,
@@ -72,6 +73,7 @@ import { collectCompetitionPages } from '@/competitions/competition-page';
 type JsonValue = Record<string, unknown> | readonly unknown[];
 
 export type CompetitionRecord = CompetitionRoutingRecord & {
+  readonly presentation_config?: JsonValue | string | null;
   readonly type: CompetitionType;
   readonly lifecycle: CompetitionLifecycle;
   readonly title: string;
@@ -578,6 +580,7 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
       decision_config: parseJson(record.decision_config),
       winner_config: parseJson(record.winner_config),
       outcome_config: parseJson(record.outcome_config),
+      presentation_config: parseJson(record.presentation_config),
       participation_starts_at: toNumber(record.participation_starts_at),
       participation_ends_at: toNumber(record.participation_ends_at),
       voting_starts_at: toNumber(record.voting_starts_at),
@@ -605,17 +608,18 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
     let order: string;
     if (request.sort === 'rating') {
       order = `coalesce(leaderboard.rating, 0) ${directionSql(request.direction)},
-               coalesce(leaderboard.submitted_at, ce.submitted_at) asc,
+               leaderboard.\`rank\` is null asc, leaderboard.\`rank\` asc,
                ce.id asc`;
     } else if (request.sort === 'rank') {
-      order = `ce.rank is null asc, ce.rank ${directionSql(request.direction)},
+      order = `coalesce(ce.\`rank\`, leaderboard.\`rank\`) is null asc,
+               coalesce(ce.\`rank\`, leaderboard.\`rank\`) ${directionSql(request.direction)},
                ce.id asc`;
     } else {
       order = `ce.submitted_at ${directionSql(request.direction)},
                ce.id ${directionSql(request.direction)}`;
     }
     const rows = await this.db.execute<NativeEntryRecord>(
-      `select ce.* from ${COMPETITION_ENTRIES_TABLE} ce
+      `select ce.*, coalesce(ce.\`rank\`, leaderboard.\`rank\`) as \`rank\` from ${COMPETITION_ENTRIES_TABLE} ce
        left join ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} leaderboard
          on leaderboard.competition_id = ce.competition_id
         and leaderboard.entry_id = ce.id
@@ -644,8 +648,11 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<CompetitionEntry | null> {
     const row = await this.db.oneOrNull<NativeEntryRecord>(
-      `select * from ${COMPETITION_ENTRIES_TABLE}
-       where competition_id = :competitionId and id = :entryId`,
+      `select ce.*, coalesce(ce.\`rank\`, leaderboard.\`rank\`) as \`rank\`
+       from ${COMPETITION_ENTRIES_TABLE} ce
+       left join ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} leaderboard
+         on leaderboard.competition_id = ce.competition_id and leaderboard.entry_id = ce.id
+       where ce.competition_id = :competitionId and ce.id = :entryId`,
       { competitionId, entryId },
       dbOptions(ctx)
     );
@@ -812,7 +819,7 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
       `select * from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE}
        where competition_id = :competitionId
        order by rating ${directionSql(request.direction)},
-                submitted_at asc, entry_id asc
+                \`rank\` is null asc, \`rank\` asc, entry_id asc
        limit :offset, :rowLimit`,
       {
         competitionId,
@@ -901,18 +908,22 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
     ctx: RequestContext,
     entryId?: string
   ): Promise<CompetitionPage<CompetitionVoter>> {
-    const entryFilter = entryId ? 'and entry_id = :entryId' : '';
+    const entryFilter = entryId ? 'and v.entry_id = :entryId' : '';
     const rows = await this.db.execute<{
       voter_profile_id: string;
       votes: number | string;
       credit_spent: number | string;
     }>(
-      `select voter_profile_id, sum(value) as votes,
-              sum(credit_spent) as credit_spent
-       from ${COMPETITION_VOTES_TABLE}
-       where competition_id = :competitionId ${entryFilter}
-       group by voter_profile_id
-       order by votes ${directionSql(request.direction)}, voter_profile_id asc
+      `select v.voter_profile_id,
+              sum(${entryId ? "case when e.status = 'WINNER' then coalesce(wv.value, v.value) else v.value end" : 'v.value'}) as votes,
+              sum(v.credit_spent) as credit_spent
+       from ${COMPETITION_VOTES_TABLE} v
+       join ${COMPETITION_ENTRIES_TABLE} e on e.id = v.entry_id and e.competition_id = v.competition_id
+       left join ${COMPETITION_WINNER_VOTES_TABLE} wv on wv.decision_id = e.decision_id and wv.entry_id = e.id
+         and wv.competition_id = e.competition_id and wv.voter_profile_id = v.voter_profile_id
+       where v.competition_id = :competitionId ${entryFilter}
+       group by v.voter_profile_id
+       order by votes ${directionSql(request.direction)}, v.voter_profile_id asc
        limit :offset, :rowLimit`,
       {
         competitionId,
@@ -995,9 +1006,14 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
       created_at: number | string;
       updated_at: number | string;
     }>(
-      `select * from ${COMPETITION_VOTES_TABLE}
-       where competition_id = :competitionId and entry_id = :entryId
-       order by updated_at ${directionSql(request.direction)}, id asc
+      `select v.id, v.entry_id, v.voter_profile_id, v.credit_spent, v.created_at, v.updated_at,
+              case when e.status = 'WINNER' then coalesce(wv.value, v.value) else v.value end as value
+       from ${COMPETITION_VOTES_TABLE} v
+       join ${COMPETITION_ENTRIES_TABLE} e on e.id = v.entry_id and e.competition_id = v.competition_id
+       left join ${COMPETITION_WINNER_VOTES_TABLE} wv on wv.decision_id = e.decision_id and wv.entry_id = e.id
+         and wv.competition_id = e.competition_id and wv.voter_profile_id = v.voter_profile_id
+       where v.competition_id = :competitionId and v.entry_id = :entryId
+       order by v.updated_at ${directionSql(request.direction)}, v.id asc
        limit :offset, :rowLimit`,
       {
         competitionId,

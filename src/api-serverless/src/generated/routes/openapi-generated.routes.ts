@@ -22,6 +22,7 @@ import { handleGetCollectTdhListings } from '@/api/collect/collect-tdh-listings.
 import { handleCreateCollectTdhTargetPlan } from '@/api/collect/collect-tdh-target.handlers';
 import { handleAnalyzeCollectGoal, handleGetCollectAssets, handleGetCollectCapabilities, handleGetCollectCatalog } from '@/api/collect/collect.handlers';
 import { handlePreviewGroupMembers } from '@/api/community-members/group-members-preview.handler';
+import { handleCreateCompetitionEntryV3, handleCreateCompetitionV3, handleCreateWaveHubV3, handleExecuteCompetitionActionV3, handleExecuteCompetitionEntryActionV3, handleGetCompetitionConfigurationV3, handleGetCompetitionCreditBudgetV3, handleGetCompetitionEntryContentCandidateV3, handleGetCompetitionEntryContentV3, handleListCompetitionAwardsV3, handleListCompetitionMyVotesV3, handleSetCompetitionVoteV3, handleUpdateCompetitionV3 } from '@/api/competitions/competition-commands.handlers';
 import { handleGetCompetitionEntryV3, handleGetWaveCompetitionV3, handleGetWaveHubV3, handleListCompetitionDecisionsV3, handleListCompetitionEntriesV3, handleListCompetitionEntryVotesV3, handleListCompetitionLeaderboardV3, handleListCompetitionOutcomeDistributionV3, handleListCompetitionOutcomesV3, handleListCompetitionPausesV3, handleListCompetitionVersionsV3, handleListCompetitionVotersV3, handleListCompetitionWinnersV3, handleListWaveCompetitionsV3 } from '@/api/competitions/competitions-v3.handlers';
 import { handleGetContentModerationBlockActivity } from '@/api/content-moderation/get-block-activity.handler';
 import { handleGetPublicContentModerationProfileStatus } from '@/api/content-moderation/get-public-profile-status.handler';
@@ -54,7 +55,7 @@ import { handleGetProfileWaveActivity } from '@/api/waves/profile-wave-activity.
 import { handleValidateWaveGroups } from '@/api/waves/wave-group-validation.handler';
 import { handleSearchDraftWaveMentions, handleSearchWaveMentions } from '@/api/waves/wave-mention-search.handler';
 import { handleCreateWaveMetadata, handleDeleteWaveMetadata, handleGetDropRepliesV2, handleGetOfficialWaves, handleGetWaveCompetitionDropsV2, handleGetWaveDecisionsV2, handleGetWaveDropsV2, handleGetWaveLeaderboardV2, handleGetWaveMetadata, handleGetWavesV2, handleListWaveCurationDropsV2, handleListWaveSubwaves, handleSearchDropsInWaveV2, handleSearchWaveAuthorsV2 } from '@/api/waves/waves-v2.handlers';
-import { ArchiveProfileCmsPackageRequest, ArchiveProfileCmsPackageResponse, CreateProfileCmsAgentGrantRequest, CreateProfileCmsAgentGrantResponse, CreateProfileCmsWalletGallerySnapshotRequest, CreateProfileCmsWalletGallerySnapshotResponse, CreateProposalFrameRequest, CreateProposalFrameResponse, CreateWaveMetadataRequest, CreateWaveMetadataResponse, DeleteEulaConsentRequest, DeleteEulaConsentResponse, DeleteMyWaveChatHistoryRequest, DeleteMyWaveChatHistoryResponse, DeleteWaveMetadataRequest, DeleteWaveMetadataResponse, DownloadDropV2VotersByIdRequest, DownloadDropV2VotersByIdResponse, ExportProfileCmsPackageRequest, ExportProfileCmsPackageResponse, GetBoostedDropsV2Request, GetBoostedDropsV2Response, GetContentModerationBlockActivityRequest, GetContentModerationBlockActivityResponse, GetCuratedProfileWaveDropsV2Request, GetCuratedProfileWaveDropsV2Response, GetDmDropsUnreadRequest, GetDmDropsUnreadResponse, GetDmUnreadSnapshotRequest, GetDmUnreadSnapshotResponse, GetDropPollOptionVotersV2Request, GetDropPollOptionVotersV2Response, GetDropRepliesV2Request, GetDropRepliesV2Response, GetDropsV2Request, GetDropsV2Response, GetDropV2BoostsByIdRequest, GetDropV2BoostsByIdResponse, GetDropV2ByIdRequest, GetDropV2ByIdResponse, GetDropV2MetadataByIdRequest, GetDropV2MetadataByIdResponse, GetDropV2PartByIdRequest, GetDropV2PartByIdResponse, GetDropV2ReactionsByIdRequest, GetDropV2ReactionsByIdResponse, GetDropV2VoteEditLogsByIdRequest, GetDropV2VoteEditLogsByIdResponse, GetDropV2VotersByIdRequest, GetDropV2VotersByIdResponse, GetDropV2VoteSummaryByIdRequest, GetDropV2VoteSummaryByIdResponse, GetEulaConsentRequest, GetEulaConsentResponse, GetGlobalRepCategoryGiversRequest, GetGlobalRepCategoryGiversResponse, GetGlobalRepCategoryOverviewRequest, GetGlobalRepCategoryOverviewResponse, GetGlobalRepCategoryRatingsRequest, GetGlobalRepCategoryRatingsResponse, GetGlobalRepCategoryRecipientsRequest, GetGlobalRepCategoryRecipientsResponse, GetGlobalRepCategoryWaveContributorsRequest, GetGlobalRepCategoryWaveContributorsResponse, GetGlobalRepCategoryWaveOverviewRequest, GetGlobalRepCategoryWaveOverviewResponse, GetGlobalRepCategoryWavesRequest, GetGlobalRepCategoryWavesResponse, GetMemeCardDropMappingRequest, GetMemeCardDropMappingResponse, GetNftMarketActivityRequest, GetNftMarketActivityResponse, GetNftMarketDepthRequest, GetNftMarketDepthResponse, GetNotificationsV2Request, GetNotificationsV2Response, GetOfficialWavesRequest, GetOfficialWavesResponse, GetOgMetadataDropRequest, GetOgMetadataDropResponse, GetOgMetadataProfileRequest, GetOgMetadataProfileResponse, GetOgMetadataWaveRequest, GetOgMetadataWaveResponse, GetOwnerProfileCmsAgentProposalRequest, GetOwnerProfileCmsAgentProposalResponse, GetPrimaryProfileCmsPackageRequest, GetPrimaryProfileCmsPackageResponse, GetProfileCmsAgentDraftRequest, GetProfileCmsAgentDraftResponse, GetProfileCmsAgentProposalRequest, GetProfileCmsAgentProposalResponse, GetProfileCmsAgentSchemaBundleRequest, GetProfileCmsAgentSchemaBundleResponse, GetProfileCmsAgentSourcePacketRequest, GetProfileCmsAgentSourcePacketResponse, GetProfileCmsPackageByHashRequest, GetProfileCmsPackageByHashResponse, GetProfileCmsPackageByIdRequest, GetProfileCmsPackageByIdResponse, GetProfileCmsPackageByVersionRequest, GetProfileCmsPackageByVersionResponse, GetProfileWaveActivityRequest, GetProfileWaveActivityResponse, GetPublicContentModerationProfileStatusRequest, GetPublicContentModerationProfileStatusResponse, GetSubscriptionCoverageRequest, GetSubscriptionCoverageResponse, GetTdhRulesRequest, GetTdhRulesResponse, GetWalletDistributionAllocationsRequest, GetWalletDistributionAllocationsResponse, GetWaveCompetitionDropsV2Request, GetWaveCompetitionDropsV2Response, GetWaveDecisionsV2Request, GetWaveDecisionsV2Response, GetWaveDropsV2Request, GetWaveDropsV2Response, GetWaveLeaderboardV2Request, GetWaveLeaderboardV2Response, GetWaveMetadataRequest, GetWaveMetadataResponse, GetWavePollsV2Request, GetWavePollsV2Response, GetWavesV2Request, GetWavesV2Response, ListProfileCmsAgentGrantsRequest, ListProfileCmsAgentGrantsResponse, ListProfileCmsAgentProposalsRequest, ListProfileCmsAgentProposalsResponse, ListProfileCmsPackagesRequest, ListProfileCmsPackagesResponse, ListWaveCurationDropsV2Request, ListWaveCurationDropsV2Response, ListWaveSubwavesRequest, ListWaveSubwavesResponse, PrepareMyWaveChatHistoryPurgeRequest, PrepareMyWaveChatHistoryPurgeResponse, PreviewGroupMembersRequest, PreviewGroupMembersResponse, PublishProfileCmsPackageRequest, PublishProfileCmsPackageResponse, RefreshPushInstallationBadgeRequest, RefreshPushInstallationBadgeResponse, ResolveDecentralizedMediaRequest, ResolveDecentralizedMediaResponse, ReviewProfileCmsAgentProposalRequest, ReviewProfileCmsAgentProposalResponse, RevokeProfileCmsAgentGrantRequest, RevokeProfileCmsAgentGrantResponse, RevokePushInstallationRequest, RevokePushInstallationResponse, RollbackProfileCmsPackageRequest, RollbackProfileCmsPackageResponse, SaveEulaConsentRequest, SaveEulaConsentResponse, SaveProfileCmsPackageDraftRequest, SaveProfileCmsPackageDraftResponse, SearchDraftWaveMentionsRequest, SearchDraftWaveMentionsResponse, SearchDropsInWaveV2Request, SearchDropsInWaveV2Response, SearchWaveAuthorsV2Request, SearchWaveAuthorsV2Response, SearchWaveMentionsRequest, SearchWaveMentionsResponse, SubmitProfileCmsAgentProposalRequest, SubmitProfileCmsAgentProposalResponse, UnpublishProfileCmsPackageRequest, UnpublishProfileCmsPackageResponse, UploadProfileCmsPackageStorageRequest, UploadProfileCmsPackageStorageResponse, ValidateProfileCmsAgentCandidateRequest, ValidateProfileCmsAgentCandidateResponse, ValidateProfileCmsAgentPatchRequest, ValidateProfileCmsAgentPatchResponse, ValidateProfileCmsPackageRequest, ValidateProfileCmsPackageResponse, ValidateWaveGroupsRequest, ValidateWaveGroupsResponse, VoteDropPollV2Request, VoteDropPollV2Response } from './operations';
+import { ArchiveProfileCmsPackageRequest, ArchiveProfileCmsPackageResponse, CreateCompetitionEntryV3Request, CreateCompetitionEntryV3Response, CreateCompetitionV3Request, CreateCompetitionV3Response, CreateProfileCmsAgentGrantRequest, CreateProfileCmsAgentGrantResponse, CreateProfileCmsWalletGallerySnapshotRequest, CreateProfileCmsWalletGallerySnapshotResponse, CreateProposalFrameRequest, CreateProposalFrameResponse, CreateWaveHubV3Request, CreateWaveHubV3Response, CreateWaveMetadataRequest, CreateWaveMetadataResponse, DeleteEulaConsentRequest, DeleteEulaConsentResponse, DeleteMyWaveChatHistoryRequest, DeleteMyWaveChatHistoryResponse, DeleteWaveMetadataRequest, DeleteWaveMetadataResponse, DownloadDropV2VotersByIdRequest, DownloadDropV2VotersByIdResponse, ExecuteCompetitionActionV3Request, ExecuteCompetitionActionV3Response, ExecuteCompetitionEntryActionV3Request, ExecuteCompetitionEntryActionV3Response, ExportProfileCmsPackageRequest, ExportProfileCmsPackageResponse, GetBoostedDropsV2Request, GetBoostedDropsV2Response, GetCompetitionConfigurationV3Request, GetCompetitionConfigurationV3Response, GetCompetitionCreditBudgetV3Request, GetCompetitionCreditBudgetV3Response, GetCompetitionEntryContentCandidateV3Request, GetCompetitionEntryContentCandidateV3Response, GetCompetitionEntryContentV3Request, GetCompetitionEntryContentV3Response, GetContentModerationBlockActivityRequest, GetContentModerationBlockActivityResponse, GetCuratedProfileWaveDropsV2Request, GetCuratedProfileWaveDropsV2Response, GetDmDropsUnreadRequest, GetDmDropsUnreadResponse, GetDmUnreadSnapshotRequest, GetDmUnreadSnapshotResponse, GetDropPollOptionVotersV2Request, GetDropPollOptionVotersV2Response, GetDropRepliesV2Request, GetDropRepliesV2Response, GetDropsV2Request, GetDropsV2Response, GetDropV2BoostsByIdRequest, GetDropV2BoostsByIdResponse, GetDropV2ByIdRequest, GetDropV2ByIdResponse, GetDropV2MetadataByIdRequest, GetDropV2MetadataByIdResponse, GetDropV2PartByIdRequest, GetDropV2PartByIdResponse, GetDropV2ReactionsByIdRequest, GetDropV2ReactionsByIdResponse, GetDropV2VoteEditLogsByIdRequest, GetDropV2VoteEditLogsByIdResponse, GetDropV2VotersByIdRequest, GetDropV2VotersByIdResponse, GetDropV2VoteSummaryByIdRequest, GetDropV2VoteSummaryByIdResponse, GetEulaConsentRequest, GetEulaConsentResponse, GetGlobalRepCategoryGiversRequest, GetGlobalRepCategoryGiversResponse, GetGlobalRepCategoryOverviewRequest, GetGlobalRepCategoryOverviewResponse, GetGlobalRepCategoryRatingsRequest, GetGlobalRepCategoryRatingsResponse, GetGlobalRepCategoryRecipientsRequest, GetGlobalRepCategoryRecipientsResponse, GetGlobalRepCategoryWaveContributorsRequest, GetGlobalRepCategoryWaveContributorsResponse, GetGlobalRepCategoryWaveOverviewRequest, GetGlobalRepCategoryWaveOverviewResponse, GetGlobalRepCategoryWavesRequest, GetGlobalRepCategoryWavesResponse, GetMemeCardDropMappingRequest, GetMemeCardDropMappingResponse, GetNftMarketActivityRequest, GetNftMarketActivityResponse, GetNftMarketDepthRequest, GetNftMarketDepthResponse, GetNotificationsV2Request, GetNotificationsV2Response, GetOfficialWavesRequest, GetOfficialWavesResponse, GetOgMetadataDropRequest, GetOgMetadataDropResponse, GetOgMetadataProfileRequest, GetOgMetadataProfileResponse, GetOgMetadataWaveRequest, GetOgMetadataWaveResponse, GetOwnerProfileCmsAgentProposalRequest, GetOwnerProfileCmsAgentProposalResponse, GetPrimaryProfileCmsPackageRequest, GetPrimaryProfileCmsPackageResponse, GetProfileCmsAgentDraftRequest, GetProfileCmsAgentDraftResponse, GetProfileCmsAgentProposalRequest, GetProfileCmsAgentProposalResponse, GetProfileCmsAgentSchemaBundleRequest, GetProfileCmsAgentSchemaBundleResponse, GetProfileCmsAgentSourcePacketRequest, GetProfileCmsAgentSourcePacketResponse, GetProfileCmsPackageByHashRequest, GetProfileCmsPackageByHashResponse, GetProfileCmsPackageByIdRequest, GetProfileCmsPackageByIdResponse, GetProfileCmsPackageByVersionRequest, GetProfileCmsPackageByVersionResponse, GetProfileWaveActivityRequest, GetProfileWaveActivityResponse, GetPublicContentModerationProfileStatusRequest, GetPublicContentModerationProfileStatusResponse, GetSubscriptionCoverageRequest, GetSubscriptionCoverageResponse, GetTdhRulesRequest, GetTdhRulesResponse, GetWalletDistributionAllocationsRequest, GetWalletDistributionAllocationsResponse, GetWaveCompetitionDropsV2Request, GetWaveCompetitionDropsV2Response, GetWaveDecisionsV2Request, GetWaveDecisionsV2Response, GetWaveDropsV2Request, GetWaveDropsV2Response, GetWaveLeaderboardV2Request, GetWaveLeaderboardV2Response, GetWaveMetadataRequest, GetWaveMetadataResponse, GetWavePollsV2Request, GetWavePollsV2Response, GetWavesV2Request, GetWavesV2Response, ListCompetitionAwardsV3Request, ListCompetitionAwardsV3Response, ListCompetitionMyVotesV3Request, ListCompetitionMyVotesV3Response, ListProfileCmsAgentGrantsRequest, ListProfileCmsAgentGrantsResponse, ListProfileCmsAgentProposalsRequest, ListProfileCmsAgentProposalsResponse, ListProfileCmsPackagesRequest, ListProfileCmsPackagesResponse, ListWaveCurationDropsV2Request, ListWaveCurationDropsV2Response, ListWaveSubwavesRequest, ListWaveSubwavesResponse, PrepareMyWaveChatHistoryPurgeRequest, PrepareMyWaveChatHistoryPurgeResponse, PreviewGroupMembersRequest, PreviewGroupMembersResponse, PublishProfileCmsPackageRequest, PublishProfileCmsPackageResponse, RefreshPushInstallationBadgeRequest, RefreshPushInstallationBadgeResponse, ResolveDecentralizedMediaRequest, ResolveDecentralizedMediaResponse, ReviewProfileCmsAgentProposalRequest, ReviewProfileCmsAgentProposalResponse, RevokeProfileCmsAgentGrantRequest, RevokeProfileCmsAgentGrantResponse, RevokePushInstallationRequest, RevokePushInstallationResponse, RollbackProfileCmsPackageRequest, RollbackProfileCmsPackageResponse, SaveEulaConsentRequest, SaveEulaConsentResponse, SaveProfileCmsPackageDraftRequest, SaveProfileCmsPackageDraftResponse, SearchDraftWaveMentionsRequest, SearchDraftWaveMentionsResponse, SearchDropsInWaveV2Request, SearchDropsInWaveV2Response, SearchWaveAuthorsV2Request, SearchWaveAuthorsV2Response, SearchWaveMentionsRequest, SearchWaveMentionsResponse, SetCompetitionVoteV3Request, SetCompetitionVoteV3Response, SubmitProfileCmsAgentProposalRequest, SubmitProfileCmsAgentProposalResponse, UnpublishProfileCmsPackageRequest, UnpublishProfileCmsPackageResponse, UpdateCompetitionV3Request, UpdateCompetitionV3Response, UploadProfileCmsPackageStorageRequest, UploadProfileCmsPackageStorageResponse, ValidateProfileCmsAgentCandidateRequest, ValidateProfileCmsAgentCandidateResponse, ValidateProfileCmsAgentPatchRequest, ValidateProfileCmsAgentPatchResponse, ValidateProfileCmsPackageRequest, ValidateProfileCmsPackageResponse, ValidateWaveGroupsRequest, ValidateWaveGroupsResponse, VoteDropPollV2Request, VoteDropPollV2Response } from './operations';
 const router = asyncRouter();
 router.get(
   '/artwork-documentation/contexts/:id',
@@ -1902,6 +1903,17 @@ router.get(
   }
 );
 
+router.post(
+  '/v3/waves',
+  needsAuthenticatedUser(),
+  async (
+    req: CreateWaveHubV3Request,
+    res: Response<ApiResponse<CreateWaveHubV3Response>>
+  ) => {
+    res.send(await handleCreateWaveHubV3(req));
+  }
+);
+
 router.get(
   '/v3/waves/:wave_id',
   maybeAuthenticatedUser(),
@@ -1924,6 +1936,17 @@ router.get(
   }
 );
 
+router.post(
+  '/v3/waves/:wave_id/competitions',
+  needsAuthenticatedUser(),
+  async (
+    req: CreateCompetitionV3Request,
+    res: Response<ApiResponse<CreateCompetitionV3Response>>
+  ) => {
+    res.send(await handleCreateCompetitionV3(req));
+  }
+);
+
 router.get(
   '/v3/waves/:wave_id/competitions/:competition_id',
   maybeAuthenticatedUser(),
@@ -1932,6 +1955,61 @@ router.get(
     res: Response<ApiResponse<GetWaveCompetitionV3Response>>
   ) => {
     res.send(await handleGetWaveCompetitionV3(req));
+  }
+);
+
+router.patch(
+  '/v3/waves/:wave_id/competitions/:competition_id',
+  needsAuthenticatedUser(),
+  async (
+    req: UpdateCompetitionV3Request,
+    res: Response<ApiResponse<UpdateCompetitionV3Response>>
+  ) => {
+    res.send(await handleUpdateCompetitionV3(req));
+  }
+);
+
+router.post(
+  '/v3/waves/:wave_id/competitions/:competition_id/actions/:action',
+  needsAuthenticatedUser(),
+  async (
+    req: ExecuteCompetitionActionV3Request,
+    res: Response<ApiResponse<ExecuteCompetitionActionV3Response>>
+  ) => {
+    res.send(await handleExecuteCompetitionActionV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/awards',
+  maybeAuthenticatedUser(),
+  async (
+    req: ListCompetitionAwardsV3Request,
+    res: Response<ApiResponse<ListCompetitionAwardsV3Response>>
+  ) => {
+    res.send(await handleListCompetitionAwardsV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/configuration',
+  needsAuthenticatedUser(),
+  async (
+    req: GetCompetitionConfigurationV3Request,
+    res: Response<ApiResponse<GetCompetitionConfigurationV3Response>>
+  ) => {
+    res.send(await handleGetCompetitionConfigurationV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/credits/me',
+  needsAuthenticatedUser(),
+  async (
+    req: GetCompetitionCreditBudgetV3Request,
+    res: Response<ApiResponse<GetCompetitionCreditBudgetV3Response>>
+  ) => {
+    res.send(await handleGetCompetitionCreditBudgetV3(req));
   }
 );
 
@@ -1957,6 +2035,17 @@ router.get(
   }
 );
 
+router.post(
+  '/v3/waves/:wave_id/competitions/:competition_id/entries',
+  needsAuthenticatedUser(),
+  async (
+    req: CreateCompetitionEntryV3Request,
+    res: Response<ApiResponse<CreateCompetitionEntryV3Response>>
+  ) => {
+    res.send(await handleCreateCompetitionEntryV3(req));
+  }
+);
+
 router.get(
   '/v3/waves/:wave_id/competitions/:competition_id/entries/:entry_id',
   maybeAuthenticatedUser(),
@@ -1968,6 +2057,28 @@ router.get(
   }
 );
 
+router.post(
+  '/v3/waves/:wave_id/competitions/:competition_id/entries/:entry_id/actions/:action',
+  needsAuthenticatedUser(),
+  async (
+    req: ExecuteCompetitionEntryActionV3Request,
+    res: Response<ApiResponse<ExecuteCompetitionEntryActionV3Response>>
+  ) => {
+    res.send(await handleExecuteCompetitionEntryActionV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/entries/:entry_id/content',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetCompetitionEntryContentV3Request,
+    res: Response<ApiResponse<GetCompetitionEntryContentV3Response>>
+  ) => {
+    res.send(await handleGetCompetitionEntryContentV3(req));
+  }
+);
+
 router.get(
   '/v3/waves/:wave_id/competitions/:competition_id/entries/:entry_id/votes',
   maybeAuthenticatedUser(),
@@ -1976,6 +2087,28 @@ router.get(
     res: Response<ApiResponse<ListCompetitionEntryVotesV3Response>>
   ) => {
     res.send(await handleListCompetitionEntryVotesV3(req));
+  }
+);
+
+router.put(
+  '/v3/waves/:wave_id/competitions/:competition_id/entries/:entry_id/votes/me',
+  needsAuthenticatedUser(),
+  async (
+    req: SetCompetitionVoteV3Request,
+    res: Response<ApiResponse<SetCompetitionVoteV3Response>>
+  ) => {
+    res.send(await handleSetCompetitionVoteV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/entry-content-candidate/:drop_id',
+  needsAuthenticatedUser(),
+  async (
+    req: GetCompetitionEntryContentCandidateV3Request,
+    res: Response<ApiResponse<GetCompetitionEntryContentCandidateV3Response>>
+  ) => {
+    res.send(await handleGetCompetitionEntryContentCandidateV3(req));
   }
 );
 
@@ -2042,6 +2175,17 @@ router.get(
     res: Response<ApiResponse<ListCompetitionVotersV3Response>>
   ) => {
     res.send(await handleListCompetitionVotersV3(req));
+  }
+);
+
+router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/votes/me',
+  needsAuthenticatedUser(),
+  async (
+    req: ListCompetitionMyVotesV3Request,
+    res: Response<ApiResponse<ListCompetitionMyVotesV3Response>>
+  ) => {
+    res.send(await handleListCompetitionMyVotesV3(req));
   }
 );
 
