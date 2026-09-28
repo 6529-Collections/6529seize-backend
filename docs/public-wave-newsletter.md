@@ -1,8 +1,13 @@
 # Public-wave newsletter
 
-`newsletterLoop` publishes a short 6529 Mainstream Media edition to a configured
+`newsletterLoop` publishes a short 6529 Daily Post edition to a configured
 wave using a configured publisher wallet. EventBridge invokes it directly at
 00:00 UTC. There is no queue, new database table, API change, or frontend change.
+
+The visible heading contains the newsletter name and edition date, followed by
+an estimated reading time (for example, "3 minute read"). The application counts
+visible prose and link labels at 250 words per minute, rounding up to a minimum
+of one minute. Exact reporting-window timestamps are stored in the drop metadata.
 
 ## Configuration
 
@@ -54,6 +59,12 @@ at invocation start, uses a fresh edition ID, and bypasses the daily check. A
 manual retry is intentionally another edition. Only genuine EventBridge-shaped
 scheduled events use the daily path; do not paste such an event when requesting
 a manual edition.
+
+To publish a fresh comparison edition for a specific UTC day, manually invoke
+with `{"date":"2026-09-24"}`. This covers September 24 from 00:00 UTC to the next
+midnight and uses the manual path, so an existing daily edition does not suppress
+publication. Dates must be valid calendar dates in `YYYY-MM-DD` format. Scheduled
+events always use their original event timestamp, regardless of a `date` field.
 
 ## Reporting boundary
 
