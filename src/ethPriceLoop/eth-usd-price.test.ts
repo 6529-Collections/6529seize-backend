@@ -1,3 +1,11 @@
+jest.mock('./eth-price-unavailable', () => ({
+  getUnavailablePrices: jest.fn(),
+  deferMissingPrices: jest.fn()
+}));
+import {
+  getUnavailablePrices,
+  deferMissingPrices
+} from './eth-price-unavailable';
 jest.mock('./coinbase', () => ({
   ...jest.requireActual('./coinbase'),
   fetchLivePrice: jest.fn(),
@@ -28,6 +36,8 @@ const closed = Date.UTC(2026, 8, 28, 12);
 const live = { timestamp_ms: now, date: new Date(now), usd_price: 2600 };
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(getUnavailablePrices).mockResolvedValue([]);
+  jest.mocked(deferMissingPrices).mockResolvedValue(undefined);
   jest.spyOn(Date, 'now').mockReturnValue(now);
   jest.mocked(db.findGaps).mockResolvedValue([]);
   jest.mocked(db.repair).mockResolvedValue(undefined);
@@ -124,5 +134,45 @@ it('continues independent holes after one provider range fails', async () => {
   await expect(syncEthUsdPrice(false)).rejects.toThrow();
   expect(fetchHistoricPrices).toHaveBeenCalledTimes(2);
   expect(db.repair).toHaveBeenCalledTimes(1);
+  expect(db.saveLive).toHaveBeenCalledWith(live);
+});
+
+it('passes retry exclusions to gap discovery and continues a partial reset', async () => {
+  const range = {
+    first: closed - 900_000,
+    last: closed - 600_000,
+    retryAt: now + 3600_000
+  };
+  jest.mocked(getUnavailablePrices).mockResolvedValue([range]);
+  jest
+    .mocked(getPriceReset)
+    .mockResolvedValue({ next: closed - 300_000, end: closed, latched: true });
+  jest.mocked(fetchHistoricPrices).mockResolvedValue([live]);
+  await syncEthUsdPrice(true);
+  expect(db.findGaps).toHaveBeenCalledWith(now, [range]);
+  expect(deferMissingPrices).toHaveBeenCalledWith(
+    [live],
+    closed - 300_000,
+    closed,
+    now
+  );
+  expect(savePriceReset).toHaveBeenCalledWith({
+    next: closed + 300_000,
+    end: closed,
+    latched: true
+  });
+});
+it('advances a reset scan past empty history while leaving missing prices for retry', async () => {
+  jest
+    .mocked(getPriceReset)
+    .mockResolvedValue({ next: closed, end: closed, latched: true });
+  jest.mocked(fetchHistoricPrices).mockResolvedValue([]);
+  await syncEthUsdPrice(true);
+  expect(deferMissingPrices).toHaveBeenCalledWith([], closed, closed, now);
+  expect(savePriceReset).toHaveBeenCalledWith({
+    next: closed + 300_000,
+    end: closed,
+    latched: true
+  });
   expect(db.saveLive).toHaveBeenCalledWith(live);
 });

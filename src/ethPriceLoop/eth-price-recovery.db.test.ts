@@ -4,6 +4,7 @@ import {
   ETH_PRICE_TABLE,
   TRANSACTIONS_TABLE,
   MEMES_MINT_STATS_TABLE,
+  SUBSCRIPTIONS_REDEEMED_TABLE,
   MEMES_CONTRACT,
   NULL_ADDRESS,
   MEMES_MINT_PRICE
@@ -105,6 +106,75 @@ describeWithSeed('ETH price recovery database', [], () => {
       { start: HISTORY_START_MS, end: base }
     ]);
   });
+
+  it('skips more than eight unavailable ranges without hiding older recoverable history', async () => {
+    const unavailable = [];
+    for (let i = 0; i < 10; i++) {
+      const start = base - i * 1800_000;
+      await putPrice(start, 100);
+      unavailable.push({
+        first: start + 300_000,
+        last: start + 1500_000,
+        retryAt: base + 86400_000
+      });
+    }
+    const now = base + 1800_000;
+    const gaps = await repo.findGaps(now, unavailable);
+    expect(gaps).toEqual([
+      { start: HISTORY_START_MS, end: base - 9 * 1800_000 }
+    ]);
+    const retried = await repo.findGaps(
+      now,
+      unavailable.map((range) => ({ ...range, retryAt: now }))
+    );
+    expect(retried).toHaveLength(8);
+  });
+  it('continues the older side of a long gap when its recent day has no provider data', async () => {
+    const now = base + 1800_000;
+    const first = base - 86400_000;
+    expect(
+      await repo.findGaps(now, [
+        { first, last: base + 1500_000, retryAt: now + 86400_000 }
+      ])
+    ).toEqual([{ start: HISTORY_START_MS, end: first - 300_000 }]);
+  });
+  it('normalizes fractional write timestamps to the unchanged DATETIME precision', async () => {
+    await putPrice(base, 100);
+    await putPrice(base + 300_500, 200);
+    const row = tx('fractional-input', base + 300_900);
+    await sqlExecutor.executeNativeQueriesInTransaction(
+      async (connection) => {
+        await refreshTransactionUsdAtWrite(row, (sql, parameters) =>
+          sqlExecutor.execute(
+            sql.replace('?', ':time'),
+            { time: parameters[0] },
+            { wrappedConnection: connection }
+          )
+        );
+        await putTx(row, { connection });
+      },
+      { isolationLevel: 'REPEATABLE READ' }
+    );
+    expect(row.transaction_date.getTime()).toBe(base + 300_000);
+    expect(await readTx('fractional-input')).toMatchObject({
+      eth_price_usd: 100
+    });
+    await repo.repair([sample(base, 100)], false, base + 600_000);
+    expect(await readTx('fractional-input')).toMatchObject({
+      eth_price_usd: 100
+    });
+  });
+  it('preserves incoming USD values when no saved price is available', async () => {
+    const row = tx('unpriced', base);
+    await new TransactionsDiscoveryDb(
+      () => sqlExecutor
+    ).batchUpsertTransactions([row]);
+    expect(await readTx('unpriced')).toMatchObject({
+      eth_price_usd: 100,
+      value_usd: 200,
+      gas_usd: 10
+    });
+  });
   it('atomically corrects transaction USD and persisted mint totals through the next sample', async () => {
     await putPrice(base, 100);
     await putPrice(base + 900_000, 300);
@@ -143,6 +213,46 @@ describeWithSeed('ETH price recovery database', [], () => {
     expect(await readTx('fractional-boundary')).toMatchObject({
       eth_price_usd: 200
     });
+  });
+  it('corrects subscription redemption totals even when the transfer has no ETH value', async () => {
+    await putPrice(base, 100);
+    const row = { ...tx('redeem', base + 300_000), value: 0 };
+    await putTx(row);
+    await putStats();
+    await sqlExecutor.execute(
+      `INSERT INTO ${SUBSCRIPTIONS_REDEEMED_TABLE}
+      (contract,token_id,address,transaction,consolidation_key,value,balance_after,count)
+      VALUES (:contract,1,:address,:transaction,'test-redemption',0,0,2)`,
+      {
+        contract: MEMES_CONTRACT,
+        address: row.to_address,
+        transaction: row.transaction
+      }
+    );
+    await repo.repair([sample(base + 300_000, 200)], false, base + 600_000);
+    expect(
+      await sqlExecutor.oneOrNull(
+        `SELECT proceeds_usd, proceeds_eth FROM ${MEMES_MINT_STATS_TABLE} WHERE id=1`
+      )
+    ).toEqual({
+      proceeds_usd: Math.round(2 * 200 * MEMES_MINT_PRICE * 100) / 100,
+      proceeds_eth: 7
+    });
+  });
+  it('does not recalculate mint totals for unrelated secondary transfers', async () => {
+    await putPrice(base, 100);
+    await putStats();
+    await putTx({
+      ...tx('secondary', base + 300_000),
+      from_address: '0x2222222222222222222222222222222222222222'
+    });
+    await repo.repair([sample(base + 300_000, 200)], false, base + 600_000);
+    expect(await readTx('secondary')).toMatchObject({ eth_price_usd: 200 });
+    expect(
+      await sqlExecutor.oneOrNull(
+        `SELECT proceeds_usd FROM ${MEMES_MINT_STATS_TABLE} WHERE id=1`
+      )
+    ).toEqual({ proceeds_usd: 999 });
   });
   it('preserves exact existing samples normally and replaces them only for reset', async () => {
     await putPrice(base, 100);

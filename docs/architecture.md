@@ -470,7 +470,8 @@ for alert triage and recovery.
 `ethPriceLoop` uses public Coinbase Exchange ticker/candle endpoints and repairs
 missing price intervals together with transaction and Memes mint USD totals.
 Transaction writers and mint initialization coordinate with recovery through
-existing database transactions. Reset progress uses existing Redis; price gaps
+existing database transactions. Reset progress and expiring retries for omitted
+Coinbase candles use existing Redis; price gaps
 remain discoverable from `eth_price` without schema changes. See
 [ETH price recovery](eth-price-recovery.md) for timestamp semantics, bounded work,
 reset behavior, and the required writer-before-collector deployment order.

@@ -69,11 +69,11 @@ it('sorts candles and maps close to interval end, filtering provider overfetch',
     }
   });
 });
-it('never silently checkpoints incomplete history', async () => {
+it('returns only actual candles when Coinbase omits an interval', async () => {
   mockGet.mockResolvedValue({ data: [[now / 1000 - 300, 1, 3, 1, 2, 9]] });
-  await expect(
-    fetchHistoricPrices(now - PRICE_INTERVAL_MS, now, now)
-  ).rejects.toThrow('Incomplete');
+  expect(await fetchHistoricPrices(now - PRICE_INTERVAL_MS, now, now)).toEqual([
+    { timestamp_ms: now, date: new Date(now), usd_price: 2 }
+  ]);
 });
 it('rejects repeated candles', async () => {
   mockGet.mockResolvedValue({
@@ -97,4 +97,9 @@ it('bounds retries and retries only transient HTTP responses', () => {
   expect(config.retryCondition({ response: { status: 503 } })).toBe(true);
   expect(config.retryCondition({ response: { status: 401 } })).toBe(false);
   expect(config.retryDelay(10)).toBe(8000);
+});
+
+it('accepts an empty interval without fabricating a quote', async () => {
+  mockGet.mockResolvedValue({ data: [] });
+  expect(await fetchHistoricPrices(now, now, now)).toEqual([]);
 });

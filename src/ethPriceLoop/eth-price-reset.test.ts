@@ -63,3 +63,13 @@ it('rejects corrupt checkpoints instead of skipping history', async () => {
   mockRedis.get.mockResolvedValue('{"next":1,"end":2,"latched":true}');
   await expect(getPriceReset(true, end)).rejects.toThrow('Invalid');
 });
+
+it.each(['{broken', 'null', 'false', '0', '[]', '"hello"', '{}'])(
+  'rejects malformed checkpoint %s with the domain error',
+  async (raw) => {
+    mockRedis.get.mockResolvedValue(raw);
+    await expect(getPriceReset(true, end)).rejects.toThrow(
+      'Invalid ETH price reset checkpoint'
+    );
+  }
+);

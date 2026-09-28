@@ -1,3 +1,7 @@
+import {
+  deferMissingPrices,
+  getUnavailablePrices
+} from './eth-price-unavailable';
 import { Logger } from '@/logging';
 import {
   fetchHistoricPrices,
@@ -23,7 +27,8 @@ function hasBudget(run: RecoveryRun): boolean {
 }
 
 async function backfillGaps(run: RecoveryRun): Promise<void> {
-  const gaps = await ethPriceRecoveryDb.findGaps(run.started);
+  const unavailable = await getUnavailablePrices(run.started);
+  const gaps = await ethPriceRecoveryDb.findGaps(run.started, unavailable);
   for (const gap of gaps) {
     if (!hasBudget(run)) break;
     const last = Math.min(
@@ -39,6 +44,7 @@ async function backfillGaps(run: RecoveryRun): Promise<void> {
     try {
       const prices = await fetchHistoricPrices(first, last);
       await ethPriceRecoveryDb.repair(prices, false, run.started);
+      await deferMissingPrices(prices, first, last, run.started);
       logger.info(
         `[BACKFILLED ${prices.length} ETH PRICES] [FROM ${first}] [THROUGH ${last}]`
       );
@@ -59,6 +65,7 @@ async function resumeReset(reset: boolean, run: RecoveryRun): Promise<void> {
     run.chunks++;
     const prices = await fetchHistoricPrices(state.next, last);
     await ethPriceRecoveryDb.repair(prices, true, run.started);
+    await deferMissingPrices(prices, state.next, last, run.started);
     // Advance only after prices, transaction corrections and mint stats commit.
     state.next = last + PRICE_INTERVAL_MS;
     await savePriceReset(state);
@@ -99,8 +106,10 @@ export async function syncEthUsdPrice(reset: boolean): Promise<void> {
   if (run.errors.length) {
     for (const error of run.errors)
       logger.error('ETH price recovery failed', error);
-    throw new Error(
+    const failure = new Error(
       'ETH price collection or recovery failed; incomplete work will retry next invocation'
     );
+    Object.assign(failure, { cause: run.errors[0] });
+    throw failure;
   }
 }

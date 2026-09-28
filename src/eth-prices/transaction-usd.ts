@@ -17,12 +17,16 @@ export async function refreshTransactionUsdAtWrite(
 ): Promise<void> {
   const timestamp =
     Math.floor(new Date(transaction.transaction_date).getTime() / 1000) * 1000;
+  // DATETIME has no fractional precision. Normalize before both lookup and save.
+  transaction.transaction_date = new Date(timestamp);
   const rows = await query(
     `SELECT usd_price FROM ${ETH_PRICE_TABLE}
      WHERE timestamp_ms <= ? ORDER BY timestamp_ms DESC LIMIT 1 FOR SHARE`,
     [timestamp]
   );
-  const price = Number(rows[0]?.usd_price ?? 0);
+  // No provider calls here, and absence of history must not erase incoming USD.
+  if (!rows.length) return;
+  const price = Number(rows[0].usd_price);
   transaction.eth_price_usd = price;
   transaction.value_usd = transaction.value * price;
   transaction.gas_usd = transaction.gas * price;

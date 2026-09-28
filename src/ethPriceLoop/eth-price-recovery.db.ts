@@ -1,7 +1,12 @@
+import { performance } from 'node:perf_hooks';
+import { UnavailablePrices } from './eth-price-unavailable';
 import {
   ETH_PRICE_TABLE,
   TRANSACTIONS_TABLE,
   MEMES_CONTRACT,
+  MANIFOLD,
+  NULL_ADDRESS,
+  SUBSCRIPTIONS_REDEEMED_TABLE,
   MEMES_MINT_STATS_TABLE
 } from '@/constants';
 import { EthPrice } from '@/entities/IEthPrice';
@@ -18,22 +23,41 @@ import {
 export type PriceGap = { start: number; end: number };
 
 export class EthPriceRecoveryDb extends LazyDbAccessCompatibleService {
-  async findGaps(now: number, ctx: RequestContext = {}): Promise<PriceGap[]> {
+  async findGaps(
+    now: number,
+    unavailable: UnavailablePrices[] = [],
+    ctx: RequestContext = {}
+  ): Promise<PriceGap[]> {
     const timer = 'EthPriceRecoveryDb.findGaps';
     ctx.timer?.start(timer);
     try {
       // Price rows are the durable checkpoint: newer live prices cannot hide holes.
       const rows = await this.db.execute<{ start_ms: number; end_ms: number }>(
-        `WITH points AS (
+        `WITH unavailable AS (
+           SELECT first_close, last_close FROM JSON_TABLE(:unavailable, '$[*]' COLUMNS (
+             first_close BIGINT PATH '$.first', last_close BIGINT PATH '$.last'
+           )) AS ranges_to_retry
+         ), points AS (
            SELECT timestamp_ms FROM ${ETH_PRICE_TABLE} WHERE timestamp_ms >= :historyStart AND timestamp_ms <= :now
            UNION SELECT :now
            UNION SELECT :historyStart
+           UNION SELECT first_close - :intervalMs FROM unavailable
+           UNION SELECT last_close FROM unavailable
          ), intervals AS (
            SELECT timestamp_ms AS start_ms, LEAD(timestamp_ms) OVER (ORDER BY timestamp_ms) AS end_ms FROM points
          ) SELECT start_ms, end_ms FROM intervals
-         WHERE end_ms - start_ms > :threshold ORDER BY end_ms DESC LIMIT 8`,
+         WHERE end_ms - start_ms > :threshold
+           AND NOT EXISTS (SELECT 1 FROM unavailable u
+             WHERE start_ms >= u.first_close - :intervalMs AND end_ms <= u.last_close)
+         ORDER BY end_ms DESC LIMIT 8`,
         {
           now,
+          unavailable: JSON.stringify(
+            unavailable.filter(
+              (range) => range.retryAt > now && range.last <= now
+            )
+          ),
+          intervalMs: PRICE_INTERVAL_MS,
           historyStart: HISTORY_START_MS,
           threshold: PRICE_INTERVAL_MS + PRICE_TOLERANCE_MS
         },
@@ -110,8 +134,18 @@ export class EthPriceRecoveryDb extends LazyDbAccessCompatibleService {
         }>(
           `SELECT m.id, m.mint_date FROM ${MEMES_MINT_STATS_TABLE} m
          WHERE EXISTS (SELECT 1 FROM ${TRANSACTIONS_TABLE} t WHERE t.contract = :contract AND t.token_id = m.id
-           AND t.transaction_date >= :start AND t.transaction_date < :end) FOR UPDATE`,
-          { ...range, contract: MEMES_CONTRACT },
+           AND t.transaction_date >= :start AND t.transaction_date < :end
+           AND ((t.from_address IN (:nullAddress, :manifold)
+             AND t.to_address NOT IN (:nullAddress, :manifold) AND t.value > 0)
+             OR EXISTS (SELECT 1 FROM ${SUBSCRIPTIONS_REDEEMED_TABLE} rs
+               WHERE rs.transaction = t.transaction AND rs.contract = t.contract
+                 AND rs.token_id = t.token_id AND LOWER(rs.address) = LOWER(t.to_address)))) FOR UPDATE`,
+          {
+            ...range,
+            contract: MEMES_CONTRACT,
+            nullAddress: NULL_ADDRESS,
+            manifold: MANIFOLD
+          },
           { wrappedConnection: connection }
         );
         for (const token of tokens) {
@@ -132,7 +166,14 @@ export class EthPriceRecoveryDb extends LazyDbAccessCompatibleService {
           );
         }
       },
-      { isolationLevel: 'REPEATABLE READ' }
+      {
+        executionBudget: {
+          deadlineMonotonicMillis: performance.now() + 90_000,
+          maxStatementMillis: 30_000,
+          finalizationReserveMillis: 5_000,
+          lockWaitSeconds: 5
+        }
+      }
     );
   }
 }

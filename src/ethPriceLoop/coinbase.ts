@@ -26,7 +26,7 @@ function priceSample(timestamp: number, price: unknown): EthPrice {
   const usd =
     typeof price === 'number' || typeof price === 'string'
       ? Number(price)
-      : NaN;
+      : Number.NaN;
   if (!Number.isSafeInteger(timestamp) || !Number.isFinite(usd) || usd <= 0) {
     throw new Error('Invalid Coinbase ETH/USD price sample');
   }
@@ -43,7 +43,8 @@ export async function fetchLivePrice(now?: number): Promise<EthPrice> {
   ) {
     throw new Error('Invalid Coinbase ticker response');
   }
-  const timestamp = typeof data.time === 'string' ? Date.parse(data.time) : NaN;
+  const timestamp =
+    typeof data.time === 'string' ? Date.parse(data.time) : Number.NaN;
   const sample = priceSample(timestamp, data.price);
   const currentTime = now ?? Date.now();
   if (
@@ -55,7 +56,7 @@ export async function fetchLivePrice(now?: number): Promise<EthPrice> {
   return sample;
 }
 
-/** Inclusive candle-close boundaries. No unfinished candle is accepted. */
+/** Return actual candles at inclusive close boundaries, allowing absent ticks. */
 export async function fetchHistoricPrices(
   firstClose: number,
   lastClose: number,
@@ -90,12 +91,8 @@ export async function fetchHistoricPrices(
     }
     prices.set(close, priceSample(close, row[4]));
   }
-  const expected = (lastClose - firstClose) / PRICE_INTERVAL_MS + 1;
-  if (prices.size !== expected) {
-    throw new Error(
-      `Incomplete Coinbase history: expected ${expected}, received ${prices.size}`
-    );
-  }
+  // Coinbase omits intervals with no ticks. Keep real samples; the caller
+  // defers missing closes for later retry without inventing prices.
   return Array.from(prices.values()).sort(
     (a, b) => a.timestamp_ms - b.timestamp_ms
   );
