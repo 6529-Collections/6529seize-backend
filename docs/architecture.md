@@ -1654,9 +1654,12 @@ rows in locked batches of ten (`READ COMMITTED`, `FOR UPDATE SKIP LOCKED`). It
 removes rows only after SQS accepts the batch. Failure retains work for the next
 run; committed entries older than five minutes emit an operational backlog error
 without stopping publication. Ambiguous sends/commits can replay messages through existing device receipts.
-The publisher stops after its bounded work window. This path adds up to one
-minute before queue delivery. It uses the existing worker's reserved concurrency
-headroom above the SQS event source cap.
+The publisher stops starting new batches after its 40-second work window. The
+one-minute schedule normally adds up to one minute of polling delay before
+publication, not a hard delivery deadline. Under backlog, remaining rows wait for
+later scheduled runs; failures and queue processing can extend delivery further.
+It uses the existing worker's reserved concurrency headroom above the SQS event
+source cap.
 
 Unexplained missing notification rows now return failed SQS items, allowing later
 commits to become visible. Confirmed cancellation markers still acknowledge work.
