@@ -5,6 +5,7 @@ jest.mock('./coinbase', () => ({
 }));
 jest.mock('./eth-price-batch-size', () => ({
   getHistoryChunkMs: jest.fn(),
+  growHistoryChunk: jest.fn(),
   shrinkHistoryChunk: jest.fn()
 }));
 jest.mock('./eth-price-unavailable', () => ({
@@ -16,7 +17,7 @@ jest.mock('./eth-price-reset', () => ({
   savePriceReset: jest.fn()
 }));
 import { syncEthUsdPrice } from './eth_usd_price';
-import { getHistoryChunkMs } from './eth-price-batch-size';
+import { getHistoryChunkMs, growHistoryChunk } from './eth-price-batch-size';
 import {
   getUnavailablePrices,
   deferMissingPrices
@@ -133,6 +134,7 @@ describeWithSeed('ETH price recovery database', [], () => {
       .spyOn(ethPriceRecoveryDb, 'repair')
       .mockImplementation(repo.repair.bind(repo));
     jest.mocked(getHistoryChunkMs).mockResolvedValue(PRICE_INTERVAL_MS);
+    jest.mocked(growHistoryChunk).mockImplementation(async (size) => size);
     jest.mocked(getPriceReset).mockResolvedValue(null);
     jest.mocked(deferMissingPrices).mockResolvedValue(undefined);
     jest.mocked(fetchLivePrice).mockResolvedValue(sample(now, 2700));
@@ -145,72 +147,107 @@ describeWithSeed('ETH price recovery database', [], () => {
     return prefix;
   }
 
-  it('restores the three deleted staging closes across one-candle invocations and corrects their transactions', async () => {
-    const start = Date.UTC(2026, 8, 28, 9, 5);
-    const now = Date.UTC(2026, 8, 28, 9, 26, 24);
-    const prices = [
-      sample(1790586600000, 2636.37),
-      sample(1790586900000, 2647.17),
-      sample(1790587200000, 2650.97)
-    ];
-    await putPrice(start, 2643.48);
-    await putPrice(1790587500000, 2648.02);
-    for (const price of prices) {
-      await putPrice(price.timestamp_ms, price.usd_price);
-      await putTx(
-        tx(`deleted-${price.timestamp_ms}`, price.timestamp_ms + 120_000)
-      );
-    }
-    await sqlExecutor.execute(
-      `DELETE FROM ${ETH_PRICE_TABLE} WHERE timestamp_ms IN (:timestamps)`,
-      { timestamps: prices.map((price) => price.timestamp_ms) }
-    );
-    prepareCollector(now, start - PRICE_INTERVAL_MS);
-    jest
-      .mocked(fetchHistoricPrices)
-      .mockImplementation(async (first, last) =>
-        prices.filter(
-          (price) => price.timestamp_ms >= first && price.timestamp_ms <= last
-        )
-      );
-    try {
-      for (let run = 0; run < prices.length; run++) {
-        await syncEthUsdPrice(false);
-        const restored = prices[prices.length - 1 - run];
-        expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
-          run + 1,
-          restored.timestamp_ms,
-          restored.timestamp_ms
+  it.each([false, true])(
+    'restores three deleted closes in one invocation and resumes committed progress after a lock failure: %s',
+    async (interrupt) => {
+      const start = Date.UTC(2026, 8, 28, 9, 5);
+      const now = Date.UTC(2026, 8, 28, 9, 26, 24);
+      const prices = [
+        sample(1790586600000, 2636.37),
+        sample(1790586900000, 2647.17),
+        sample(1790587200000, 2650.97)
+      ];
+      await putPrice(start, 2643.48);
+      await putPrice(1790587500000, 2648.02);
+      for (const price of prices) {
+        await putPrice(price.timestamp_ms, price.usd_price);
+        await putTx(
+          tx(`deleted-${price.timestamp_ms}`, price.timestamp_ms + 120_000)
         );
-        expect(await readTx(`deleted-${restored.timestamp_ms}`)).toMatchObject({
-          eth_price_usd: restored.usd_price,
-          value_usd: restored.usd_price * 2,
-          gas_usd: expect.closeTo(restored.usd_price * 0.1, 6)
-        });
       }
-      const rows = await sqlExecutor.execute<{
-        timestamp_ms: number;
-        usd_price: number;
-      }>(
-        `SELECT timestamp_ms, usd_price FROM ${ETH_PRICE_TABLE} WHERE timestamp_ms > :start AND timestamp_ms <= :end ORDER BY timestamp_ms`,
-        { start, end: 1790587500000 }
+      await sqlExecutor.execute(
+        `DELETE FROM ${ETH_PRICE_TABLE} WHERE timestamp_ms IN (:timestamps)`,
+        { timestamps: prices.map((price) => price.timestamp_ms) }
       );
-      expect(
-        rows.map((row) => ({ ...row, timestamp_ms: Number(row.timestamp_ms) }))
-      ).toEqual([
-        ...prices.map(({ timestamp_ms, usd_price }) => ({
-          timestamp_ms,
-          usd_price
-        })),
-        { timestamp_ms: 1790587500000, usd_price: 2648.02 }
-      ]);
-      await syncEthUsdPrice(false);
-      expect(fetchHistoricPrices).toHaveBeenCalledTimes(3);
-      expect(ethPriceRecoveryDb.saveLive).toHaveBeenCalledTimes(4);
-    } finally {
-      jest.restoreAllMocks();
+      prepareCollector(now, start - PRICE_INTERVAL_MS);
+      jest
+        .mocked(fetchHistoricPrices)
+        .mockImplementation(async (first, last) =>
+          prices.filter(
+            (price) => price.timestamp_ms >= first && price.timestamp_ms <= last
+          )
+        );
+      try {
+        if (interrupt) {
+          jest
+            .mocked(ethPriceRecoveryDb.repair)
+            .mockImplementationOnce(repo.repair.bind(repo))
+            .mockRejectedValueOnce(
+              Object.assign(new Error('locked'), {
+                code: 'ER_LOCK_WAIT_TIMEOUT'
+              })
+            );
+          await expect(syncEthUsdPrice(false)).rejects.toThrow(
+            'incomplete work'
+          );
+          const saved = await sqlExecutor.execute<{ timestamp_ms: number }>(
+            `SELECT timestamp_ms FROM ${ETH_PRICE_TABLE} WHERE timestamp_ms IN (:timestamps)`,
+            { timestamps: prices.map((price) => price.timestamp_ms) }
+          );
+          expect(saved.map((row) => Number(row.timestamp_ms))).toEqual([
+            1790587200000
+          ]);
+        }
+        await syncEthUsdPrice(false);
+        expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
+          1,
+          1790586600000,
+          1790587200000
+        );
+        if (interrupt)
+          expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
+            2,
+            1790586600000,
+            1790586900000
+          );
+        for (const restored of prices) {
+          expect(
+            await readTx(`deleted-${restored.timestamp_ms}`)
+          ).toMatchObject({
+            eth_price_usd: restored.usd_price,
+            value_usd: restored.usd_price * 2,
+            gas_usd: expect.closeTo(restored.usd_price * 0.1, 6)
+          });
+        }
+        const rows = await sqlExecutor.execute<{
+          timestamp_ms: number;
+          usd_price: number;
+        }>(
+          `SELECT timestamp_ms, usd_price FROM ${ETH_PRICE_TABLE} WHERE timestamp_ms > :start AND timestamp_ms <= :end ORDER BY timestamp_ms`,
+          { start, end: 1790587500000 }
+        );
+        expect(
+          rows.map((row) => ({
+            ...row,
+            timestamp_ms: Number(row.timestamp_ms)
+          }))
+        ).toEqual([
+          ...prices.map(({ timestamp_ms, usd_price }) => ({
+            timestamp_ms,
+            usd_price
+          })),
+          { timestamp_ms: 1790587500000, usd_price: 2648.02 }
+        ]);
+        await syncEthUsdPrice(false);
+        expect(fetchHistoricPrices).toHaveBeenCalledTimes(interrupt ? 2 : 1);
+        expect(ethPriceRecoveryDb.saveLive).toHaveBeenCalledTimes(
+          interrupt ? 3 : 2
+        );
+      } finally {
+        jest.restoreAllMocks();
+      }
     }
-  });
+  );
 
   it('recovers the close immediately before a cooldown without fetching excluded closes', async () => {
     const now = base + 26 * 60_000;
@@ -227,22 +264,20 @@ describeWithSeed('ETH price recovery database', [], () => {
     ]);
     jest
       .mocked(fetchHistoricPrices)
-      .mockImplementation(async (first) => [sample(first, 150)]);
+      .mockImplementation(async (first, last) => [
+        sample(first, 150),
+        sample(last, 160)
+      ]);
     try {
       await syncEthUsdPrice(false);
       expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
         1,
-        base + 10 * 60_000,
+        base + 5 * 60_000,
         base + 10 * 60_000
       );
+      expect(ethPriceRecoveryDb.repair).toHaveBeenCalledTimes(2);
       await syncEthUsdPrice(false);
-      expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
-        2,
-        base + 5 * 60_000,
-        base + 5 * 60_000
-      );
-      await syncEthUsdPrice(false);
-      expect(fetchHistoricPrices).toHaveBeenCalledTimes(2);
+      expect(fetchHistoricPrices).toHaveBeenCalledTimes(1);
     } finally {
       jest.restoreAllMocks();
     }
@@ -262,6 +297,15 @@ describeWithSeed('ETH price recovery database', [], () => {
       end: base + 1200_000
     });
     expect(gaps).not.toContainEqual({ start: base, end: base + 301_000 });
+  });
+  it('pages older gaps using the prior page boundary', async () => {
+    for (let i = 0; i < 11; i++) await putPrice(base - i * 900_000, 100);
+    const firstPage = await repo.findGaps(base);
+    expect(firstPage).toHaveLength(8);
+    const secondPage = await repo.findGaps(base, [], firstPage[7].start);
+    expect(secondPage).toHaveLength(3);
+    expect(secondPage[0].end).toBe(firstPage[7].start);
+    expect(secondPage[2].start).toBe(HISTORY_START_MS);
   });
   it('keeps the bootstrap prefix discoverable after recent prices are inserted', async () => {
     await putPrice(base, 100);

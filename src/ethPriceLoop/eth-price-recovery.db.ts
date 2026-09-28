@@ -21,12 +21,15 @@ import {
   PRICE_TOLERANCE_MS
 } from './coinbase';
 
+export const GAP_PAGE_SIZE = 8;
+
 export type PriceGap = { start: number; end: number };
 
 export class EthPriceRecoveryDb extends LazyDbAccessCompatibleService {
   async findGaps(
     now: number,
     unavailable: UnavailablePrices[] = [],
+    before: number = now,
     ctx: RequestContext = {}
   ): Promise<PriceGap[]> {
     const timer = 'EthPriceRecoveryDb.findGaps';
@@ -49,12 +52,13 @@ export class EthPriceRecoveryDb extends LazyDbAccessCompatibleService {
          ), intervals AS (
            SELECT timestamp_ms AS start_ms, LEAD(timestamp_ms) OVER (ORDER BY timestamp_ms) AS end_ms FROM points
          ) SELECT start_ms, end_ms FROM intervals
-         WHERE end_ms - start_ms > :threshold
+         WHERE end_ms <= :before AND end_ms - start_ms > :threshold
            AND NOT EXISTS (SELECT 1 FROM unavailable u
              WHERE start_ms >= u.first_close - 1 AND end_ms <= u.last_close)
-         ORDER BY end_ms DESC LIMIT 8`,
+         ORDER BY end_ms DESC LIMIT ${GAP_PAGE_SIZE}`,
         {
           now,
+          before,
           unavailable: JSON.stringify(
             unavailable.filter(
               (range) => range.retryAt > now && range.last <= now

@@ -484,7 +484,12 @@ Coinbase candles use existing Redis. Live prices commit before recovery, which
 starts with at most one-hour batches and stops for the invocation on a database
 failure. Repair updates indexed transaction date intervals using persisted prices
 and selects affected mint tokens from those intervals. Work timeouts persist a
-smaller batch window for subsequent invocations; price gaps remain discoverable from `eth_price` without schema changes. See
+smaller batch window, while sustained fast successful batches gradually grow it.
+Day-sized provider pages feed continuous small database transactions until gaps
+are drained or the Lambda's fifteen-minute deadline reserve is reached. Live
+quotes refresh between batches during extended runs; the five-minute trigger is
+not an execution deadline. Price gaps remain discoverable from `eth_price`
+without schema changes. See
 [ETH price recovery](eth-price-recovery.md) for timestamp semantics, bounded work,
 reset behavior, and the required writer-before-collector deployment order.
 
