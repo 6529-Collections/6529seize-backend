@@ -454,7 +454,7 @@ through `1a-staging` without deploying this service there. See
 | `subscriptionsTopUpLoop`                 | Process subscription top-ups.                                                                                                                                       |
 | `discoverEnsLoop`                        | Discover ENS names.                                                                                                                                                 |
 | `refreshEnsLoop`                         | Refresh known ENS names.                                                                                                                                            |
-| `ethPriceLoop`                           | Snapshot ETH price every five minutes.                                                                                                                              |
+| `ethPriceLoop`                           | Collect Coinbase ETH/USD every five minutes; repair missing history and dependent USD values.                                                                       |
 | `mintAnnouncementsLoop`                  | Publish mint announcements.                                                                                                                                         |
 | `artCurationNftWatchLoop`                | Watch curated NFT state.                                                                                                                                            |
 | `rememesLoop`                            | Refresh rememes S3 files and metadata.                                                                                                                              |
@@ -466,6 +466,16 @@ through `1a-staging` without deploying this service there. See
 `transactionsLoop` receipt verification fails closed and raises per-function
 error alarms. See the [transactions ingestion runbook](transactions-loop-ingestion-runbook.md)
 for alert triage and recovery.
+
+`ethPriceLoop` uses public Coinbase Exchange ticker/candle endpoints and repairs
+missing price intervals together with transaction and Memes mint USD totals.
+Transaction writers and mint initialization coordinate with recovery through
+existing database transactions. Reset progress and expiring retries for omitted
+Coinbase candles use existing Redis. Repair work timeouts persist a smaller batch
+window there for subsequent invocations; price gaps
+remain discoverable from `eth_price` without schema changes. See
+[ETH price recovery](eth-price-recovery.md) for timestamp semantics, bounded work,
+reset behavior, and the required writer-before-collector deployment order.
 
 ### Triggered Lambdas
 
