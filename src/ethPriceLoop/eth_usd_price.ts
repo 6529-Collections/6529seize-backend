@@ -44,7 +44,9 @@ async function backfillGaps(run: RecoveryRun): Promise<void> {
   for (const gap of gaps) {
     if (!hasBudget(run)) break;
     const last = Math.min(
-      Math.floor(gap.end / PRICE_INTERVAL_MS) * PRICE_INTERVAL_MS,
+      // The right boundary is already covered. Even a one-candle batch must
+      // select a close strictly inside the gap, not reprocess its endpoint.
+      (Math.ceil(gap.end / PRICE_INTERVAL_MS) - 1) * PRICE_INTERVAL_MS,
       run.closedThrough
     );
     const first = Math.max(
@@ -61,7 +63,7 @@ async function backfillGaps(run: RecoveryRun): Promise<void> {
       operation = 'gap-checkpoint';
       await deferMissingPrices(prices, first, last, run.started);
       logger.info(
-        `[BACKFILLED ${prices.length} ETH PRICES] [FROM ${first}] [THROUGH ${last}]`
+        `[ETH PRICE GAP REPAIR] [PROCESSED CANDLES ${prices.length}] [FROM ${first}] [THROUGH ${last}]`
       );
     } catch (error) {
       if (operation === 'gap-database') {

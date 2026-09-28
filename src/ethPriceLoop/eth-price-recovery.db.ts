@@ -33,6 +33,8 @@ export class EthPriceRecoveryDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(timer);
     try {
       // Price rows are the durable checkpoint: newer live prices cannot hide holes.
+      // Cooldown starts use an exclusive boundary just before the first absent
+      // close, keeping the preceding eligible candle inside the older gap.
       const rows = await this.db.execute<{ start_ms: number; end_ms: number }>(
         `WITH unavailable AS (
            SELECT first_close, last_close FROM JSON_TABLE(:unavailable, '$[*]' COLUMNS (
@@ -42,14 +44,14 @@ export class EthPriceRecoveryDb extends LazyDbAccessCompatibleService {
            SELECT timestamp_ms FROM ${ETH_PRICE_TABLE} WHERE timestamp_ms >= :historyStart AND timestamp_ms <= :now
            UNION SELECT :now
            UNION SELECT :historyStart
-           UNION SELECT first_close - :intervalMs FROM unavailable
+           UNION SELECT first_close - 1 FROM unavailable
            UNION SELECT last_close FROM unavailable
          ), intervals AS (
            SELECT timestamp_ms AS start_ms, LEAD(timestamp_ms) OVER (ORDER BY timestamp_ms) AS end_ms FROM points
          ) SELECT start_ms, end_ms FROM intervals
          WHERE end_ms - start_ms > :threshold
            AND NOT EXISTS (SELECT 1 FROM unavailable u
-             WHERE start_ms >= u.first_close - :intervalMs AND end_ms <= u.last_close)
+             WHERE start_ms >= u.first_close - 1 AND end_ms <= u.last_close)
          ORDER BY end_ms DESC LIMIT 8`,
         {
           now,
@@ -58,7 +60,6 @@ export class EthPriceRecoveryDb extends LazyDbAccessCompatibleService {
               (range) => range.retryAt > now && range.last <= now
             )
           ),
-          intervalMs: PRICE_INTERVAL_MS,
           historyStart: HISTORY_START_MS,
           threshold: PRICE_INTERVAL_MS + PRICE_TOLERANCE_MS
         },
