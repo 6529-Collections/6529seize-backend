@@ -57,6 +57,20 @@ export interface NewsletterWindow {
   readonly scheduled: boolean;
 }
 
+function manualNewsletterWindow(date: unknown): NewsletterWindow {
+  if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new TypeError('Manual newsletter date must be a valid YYYY-MM-DD');
+  }
+  const start = Date.parse(`${date}T00:00:00.000Z`);
+  if (
+    !Number.isFinite(start) ||
+    new Date(start).toISOString().slice(0, 10) !== date
+  ) {
+    throw new TypeError('Manual newsletter date must be a valid YYYY-MM-DD');
+  }
+  return { start, end: start + 86_400_000, scheduled: false };
+}
+
 export function newsletterWindow(
   event: unknown,
   now = Date.now()
@@ -65,6 +79,9 @@ export function newsletterWindow(
   const scheduled =
     payload?.source === 'aws.events' &&
     payload['detail-type'] === 'Scheduled Event';
+  if (!scheduled && payload?.date !== undefined) {
+    return manualNewsletterWindow(payload.date);
+  }
   let end = now;
   if (scheduled) {
     if (typeof payload?.time !== 'string') {
