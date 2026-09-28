@@ -18,7 +18,7 @@ async function persistSize(key: string, size: number): Promise<void> {
       pendingPersistence.delete(key);
     }
   } catch (error) {
-    logger.warn('Could not persist smaller ETH price repair window', error);
+    logger.warn('Could not persist ETH price repair window', error);
   }
 }
 
@@ -79,5 +79,23 @@ export async function shrinkHistoryChunk(
     nextChunkMs: size
   });
   await persistSize(key, size);
+  return size;
+}
+
+/** Gradually recover a learned small limit after sustained fast, full batches. */
+export async function growHistoryChunk(current: number): Promise<number> {
+  const size = Math.min(current * 2, MAX_REPAIR_CHUNK_MS);
+  if (size === current) return current;
+  const key = ethPriceStateKey('batch-size');
+  localSizes.set(key, size);
+  pendingPersistence.add(key);
+  await persistSize(key, size);
+  logger.info(
+    'Increasing ETH price repair window after fast successful batches',
+    {
+      previousChunkMs: current,
+      nextChunkMs: size
+    }
+  );
   return size;
 }

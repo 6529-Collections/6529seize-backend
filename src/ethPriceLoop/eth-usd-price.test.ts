@@ -12,9 +12,14 @@ jest.mock('./eth-price-unavailable', () => ({
 }));
 jest.mock('./eth-price-batch-size', () => ({
   getHistoryChunkMs: jest.fn(),
+  growHistoryChunk: jest.fn(),
   shrinkHistoryChunk: jest.fn()
 }));
-import { getHistoryChunkMs, shrinkHistoryChunk } from './eth-price-batch-size';
+import {
+  getHistoryChunkMs,
+  growHistoryChunk,
+  shrinkHistoryChunk
+} from './eth-price-batch-size';
 import { SqlExecutionBudgetExceededError } from '@/db/sql-execution-budget';
 import {
   getUnavailablePrices,
@@ -26,6 +31,7 @@ jest.mock('./coinbase', () => ({
   fetchHistoricPrices: jest.fn()
 }));
 jest.mock('./eth-price-recovery.db', () => ({
+  GAP_PAGE_SIZE: 8,
   ethPriceRecoveryDb: {
     findGaps: jest.fn(),
     repair: jest.fn(),
@@ -52,6 +58,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   jest.mocked(getHistoryChunkMs).mockResolvedValue(HISTORY_CHUNK_MS);
   jest.mocked(shrinkHistoryChunk).mockResolvedValue(undefined);
+  jest.mocked(growHistoryChunk).mockImplementation(async (size) => size);
   jest.mocked(getUnavailablePrices).mockResolvedValue([]);
   jest.mocked(deferMissingPrices).mockResolvedValue(undefined);
   jest.spyOn(Date, 'now').mockReturnValue(now);
@@ -61,10 +68,12 @@ beforeEach(() => {
   jest.mocked(getPriceReset).mockResolvedValue(null);
   jest.mocked(savePriceReset).mockResolvedValue(undefined);
   jest.mocked(fetchLivePrice).mockResolvedValue(live);
-  jest.mocked(fetchHistoricPrices).mockImplementation(async (first, last) => [
-    { ...live, timestamp_ms: first, date: new Date(first) },
-    { ...live, timestamp_ms: last, date: new Date(last) }
-  ]);
+  jest.mocked(fetchHistoricPrices).mockImplementation(async (first, last) =>
+    Array.from({ length: (last - first) / PRICE_INTERVAL_MS + 1 }, (_, i) => {
+      const timestamp_ms = first + i * PRICE_INTERVAL_MS;
+      return { ...live, timestamp_ms, date: new Date(timestamp_ms) };
+    })
+  );
 });
 afterEach(() => jest.restoreAllMocks());
 it('only collects live when coverage is healthy', async () => {
@@ -73,16 +82,34 @@ it('only collects live when coverage is healthy', async () => {
   expect(db.repair).not.toHaveBeenCalled();
   expect(db.saveLive).toHaveBeenCalledWith(live);
 });
-it('recovers a bounded recent chunk of a long outage after saving live', async () => {
+it('drains a gap with small DB batches from one provider page after saving live', async () => {
+  jest.mocked(getHistoryChunkMs).mockResolvedValue(PRICE_INTERVAL_MS);
   jest
     .mocked(db.findGaps)
-    .mockResolvedValue([{ start: now - 32 * 3600_000, end: now }]);
-  await syncEthUsdPrice(false);
-  expect(fetchHistoricPrices).toHaveBeenCalledWith(
-    closed - HISTORY_CHUNK_MS + PRICE_INTERVAL_MS,
-    closed
+    .mockResolvedValue([
+      { start: closed - 4 * PRICE_INTERVAL_MS, end: closed }
+    ]);
+  jest.mocked(fetchHistoricPrices).mockResolvedValue(
+    [1, 2, 3].map((i) => ({
+      ...live,
+      timestamp_ms: closed - i * PRICE_INTERVAL_MS
+    }))
   );
-  expect(db.repair).toHaveBeenCalledWith(expect.any(Array), false, now);
+  await syncEthUsdPrice(false);
+  expect(fetchHistoricPrices).toHaveBeenCalledTimes(1);
+  expect(db.repair).toHaveBeenCalledTimes(3);
+  expect(db.repair).toHaveBeenNthCalledWith(
+    1,
+    [expect.objectContaining({ timestamp_ms: closed - PRICE_INTERVAL_MS })],
+    false,
+    now
+  );
+  expect(db.repair).toHaveBeenNthCalledWith(
+    3,
+    [expect.objectContaining({ timestamp_ms: closed - 3 * PRICE_INTERVAL_MS })],
+    false,
+    now
+  );
   expect(jest.mocked(db.saveLive).mock.invocationCallOrder[0]).toBeLessThan(
     jest.mocked(db.findGaps).mock.invocationCallOrder[0]
   );
@@ -119,11 +146,13 @@ it('does not advance a reset checkpoint on failed database correction', async ()
   expect(db.saveLive).toHaveBeenCalledWith(live);
 });
 
-it('uses a learned smaller window for gaps and the reset checkpoint', async () => {
+it('uses small database batches for gaps and checkpoints each reset batch', async () => {
   jest.mocked(getHistoryChunkMs).mockResolvedValue(2 * PRICE_INTERVAL_MS);
   jest
     .mocked(db.findGaps)
-    .mockResolvedValue([{ start: closed - HISTORY_CHUNK_MS, end: closed }]);
+    .mockResolvedValue([
+      { start: closed - 3 * PRICE_INTERVAL_MS, end: closed }
+    ]);
   jest.mocked(getPriceReset).mockResolvedValue({
     next: closed - 3 * PRICE_INTERVAL_MS,
     end: closed,
@@ -134,6 +163,7 @@ it('uses a learned smaller window for gaps and the reset checkpoint', async () =
     checkpoints.push(state.next);
   });
   await syncEthUsdPrice(true);
+  expect(fetchHistoricPrices).toHaveBeenCalledTimes(2);
   expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
     1,
     closed - 2 * PRICE_INTERVAL_MS,
@@ -142,11 +172,6 @@ it('uses a learned smaller window for gaps and the reset checkpoint', async () =
   expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
     2,
     closed - 3 * PRICE_INTERVAL_MS,
-    closed - 2 * PRICE_INTERVAL_MS
-  );
-  expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
-    3,
-    closed - PRICE_INTERVAL_MS,
     closed
   );
   expect(checkpoints).toEqual([
@@ -154,7 +179,6 @@ it('uses a learned smaller window for gaps and the reset checkpoint', async () =
     closed + PRICE_INTERVAL_MS
   ]);
   expect(db.repair).toHaveBeenCalledTimes(3);
-  expect(db.saveLive).toHaveBeenCalledWith(live);
 });
 
 it('retains completed reset progress when a later small batch times out', async () => {
@@ -263,15 +287,17 @@ it('resumes reset even after reset flag is cleared and checkpoints after commit'
     latched: false
   });
 });
-it('bounds a multiyear reset to eight chunks per invocation', async () => {
+it('continues reset beyond eight small batches in one invocation', async () => {
+  jest.mocked(getHistoryChunkMs).mockResolvedValue(PRICE_INTERVAL_MS);
   jest.mocked(getPriceReset).mockResolvedValue({
-    next: closed - 30 * HISTORY_CHUNK_MS,
+    next: closed - 11 * PRICE_INTERVAL_MS,
     end: closed,
     latched: true
   });
   await syncEthUsdPrice(true);
-  expect(db.repair).toHaveBeenCalledTimes(8);
-  expect(db.saveLive).toHaveBeenCalledTimes(1);
+  expect(fetchHistoricPrices).toHaveBeenCalledTimes(1);
+  expect(db.repair).toHaveBeenCalledTimes(12);
+  expect(savePriceReset).toHaveBeenCalledTimes(12);
 });
 it('surfaces a failed live fetch while still allowing historical repair', async () => {
   jest
@@ -307,11 +333,12 @@ it('passes retry exclusions to gap discovery and continues a partial reset', asy
   jest
     .mocked(getPriceReset)
     .mockResolvedValue({ next: closed - 300_000, end: closed, latched: true });
-  jest.mocked(fetchHistoricPrices).mockResolvedValue([live]);
+  const candle = { ...live, timestamp_ms: closed };
+  jest.mocked(fetchHistoricPrices).mockResolvedValue([candle]);
   await syncEthUsdPrice(true);
-  expect(db.findGaps).toHaveBeenCalledWith(now, [range]);
+  expect(db.findGaps).toHaveBeenCalledWith(now, [range], now);
   expect(deferMissingPrices).toHaveBeenCalledWith(
-    [live],
+    [candle],
     closed - 300_000,
     closed,
     now
@@ -447,7 +474,7 @@ it.each(['provider', 'checkpoint'] as const)(
           expect.objectContaining({
             operation: `reset-${stage}`,
             first,
-            last: first
+            last: stage === 'provider' ? closed : first
           })
         ]
       }),
@@ -472,7 +499,17 @@ it.each([0, 1, PRICE_INTERVAL_MS - 1])(
       ]);
     await syncEthUsdPrice(false);
     expect(fetchHistoricPrices).toHaveBeenCalledTimes(1);
-    expect(fetchHistoricPrices).toHaveBeenCalledWith(expected, expected);
+    expect(fetchHistoricPrices).toHaveBeenCalledWith(
+      (Math.floor((end - 1200_000) / PRICE_INTERVAL_MS) + 1) *
+        PRICE_INTERVAL_MS,
+      expected
+    );
+    expect(db.repair).toHaveBeenNthCalledWith(
+      1,
+      [expect.objectContaining({ timestamp_ms: expected })],
+      false,
+      now
+    );
     expect(mockLogInfo).toHaveBeenCalledWith(
       `[ETH PRICE GAP REPAIR] [PROCESSED CANDLES 1] [FROM ${expected}] [THROUGH ${expected}]`
     );
@@ -494,4 +531,111 @@ it('reports zero processed candles for empty history without claiming inserts', 
     closed - 300_000,
     now
   );
+});
+
+it('stops between batches before the Lambda reserve and leaves unprocessed candles for rediscovery', async () => {
+  let remaining = 121_000;
+  jest.mocked(getHistoryChunkMs).mockResolvedValue(PRICE_INTERVAL_MS);
+  jest
+    .mocked(db.findGaps)
+    .mockResolvedValue([
+      { start: closed - 4 * PRICE_INTERVAL_MS, end: closed }
+    ]);
+  jest.mocked(db.repair).mockImplementation(async () => {
+    remaining = 119_000;
+  });
+  await syncEthUsdPrice(false, () => remaining);
+  expect(db.repair).toHaveBeenCalledTimes(1);
+  expect(deferMissingPrices).toHaveBeenCalledTimes(1);
+  expect(getPriceReset).not.toHaveBeenCalled();
+  expect(mockLogInfo).toHaveBeenCalledWith(
+    '[ETH PRICE RECOVERY SUMMARY]',
+    expect.objectContaining({
+      deadlineReached: true,
+      coverageScanComplete: false,
+      attemptedChunks: 1
+    })
+  );
+});
+
+it('refreshes live prices between batches after five minutes and keeps recovering', async () => {
+  let time = now;
+  jest.spyOn(Date, 'now').mockImplementation(() => time);
+  jest.mocked(getHistoryChunkMs).mockResolvedValue(PRICE_INTERVAL_MS);
+  jest
+    .mocked(db.findGaps)
+    .mockResolvedValue([
+      { start: closed - 4 * PRICE_INTERVAL_MS, end: closed }
+    ]);
+  jest.mocked(db.repair).mockImplementation(async () => {
+    time += 160_000;
+  });
+  await syncEthUsdPrice(false, () => 900_000 - (time - now));
+  expect(db.repair).toHaveBeenCalledTimes(3);
+  expect(db.saveLive).toHaveBeenCalledTimes(2);
+  expect(jest.mocked(db.saveLive).mock.invocationCallOrder[1]).toBeGreaterThan(
+    jest.mocked(db.repair).mock.invocationCallOrder[1]
+  );
+  expect(jest.mocked(db.saveLive).mock.invocationCallOrder[1]).toBeLessThan(
+    jest.mocked(db.repair).mock.invocationCallOrder[2]
+  );
+});
+
+it('stops recovery if an inter-batch live save fails', async () => {
+  let time = now;
+  jest.spyOn(Date, 'now').mockImplementation(() => time);
+  jest.mocked(getHistoryChunkMs).mockResolvedValue(PRICE_INTERVAL_MS);
+  jest
+    .mocked(db.findGaps)
+    .mockResolvedValue([
+      { start: closed - 4 * PRICE_INTERVAL_MS, end: closed }
+    ]);
+  jest.mocked(db.repair).mockImplementation(async () => {
+    time += PRICE_INTERVAL_MS;
+  });
+  jest
+    .mocked(db.saveLive)
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(new Error('locked'));
+  await expect(syncEthUsdPrice(false)).rejects.toThrow('incomplete work');
+  expect(db.repair).toHaveBeenCalledTimes(1);
+});
+
+it('paginates past eight gaps instead of ending the invocation', async () => {
+  const gaps = Array.from({ length: 8 }, (_, i) => ({
+    start: closed - (i * 3 + 2) * PRICE_INTERVAL_MS,
+    end: closed - i * 3 * PRICE_INTERVAL_MS
+  }));
+  const older = {
+    start: closed - 30 * PRICE_INTERVAL_MS,
+    end: closed - 28 * PRICE_INTERVAL_MS
+  };
+  jest
+    .mocked(db.findGaps)
+    .mockResolvedValueOnce(gaps)
+    .mockResolvedValueOnce([older]);
+  await syncEthUsdPrice(false);
+  expect(db.findGaps).toHaveBeenNthCalledWith(2, now, [], gaps[7].start);
+  expect(fetchHistoricPrices).toHaveBeenCalledTimes(9);
+});
+
+it('grows the DB batch size after three fast full commits without refetching the page', async () => {
+  jest.mocked(getHistoryChunkMs).mockResolvedValue(PRICE_INTERVAL_MS);
+  jest.mocked(growHistoryChunk).mockResolvedValue(2 * PRICE_INTERVAL_MS);
+  jest
+    .mocked(db.findGaps)
+    .mockResolvedValue([
+      { start: closed - 6 * PRICE_INTERVAL_MS, end: closed }
+    ]);
+  jest.mocked(fetchHistoricPrices).mockResolvedValue(
+    [1, 2, 3, 4, 5].map((i) => ({
+      ...live,
+      timestamp_ms: closed - i * PRICE_INTERVAL_MS
+    }))
+  );
+  await syncEthUsdPrice(false);
+  expect(growHistoryChunk).toHaveBeenCalledWith(PRICE_INTERVAL_MS);
+  expect(db.repair).toHaveBeenCalledTimes(4);
+  expect(jest.mocked(db.repair).mock.calls[3][0]).toHaveLength(2);
+  expect(fetchHistoricPrices).toHaveBeenCalledTimes(1);
 });

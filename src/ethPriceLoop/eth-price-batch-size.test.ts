@@ -3,6 +3,7 @@ jest.mock('@/redis', () => ({ getRedisClient: () => mockRedis }));
 import { SqlExecutionBudgetExceededError } from '@/db/sql-execution-budget';
 import {
   getHistoryChunkMs,
+  growHistoryChunk,
   shrinkHistoryChunk,
   MAX_REPAIR_CHUNK_MS
 } from './eth-price-batch-size';
@@ -131,4 +132,24 @@ it.each([6 * 3600_000, 12 * 3600_000, HISTORY_CHUNK_MS])(
 it('retains a smaller persisted window', async () => {
   mockRedis.get.mockResolvedValue(String(2 * PRICE_INTERVAL_MS));
   expect(await getHistoryChunkMs()).toBe(2 * PRICE_INTERVAL_MS);
+});
+
+it('grows a learned window gradually and persists it without exceeding one hour', async () => {
+  expect(await growHistoryChunk(PRICE_INTERVAL_MS)).toBe(2 * PRICE_INTERVAL_MS);
+  expect(mockRedis.set).toHaveBeenLastCalledWith(
+    ethPriceStateKey('batch-size'),
+    String(2 * PRICE_INTERVAL_MS)
+  );
+  expect(await growHistoryChunk(40 * 60_000)).toBe(MAX_REPAIR_CHUNK_MS);
+  mockRedis.set.mockClear();
+  expect(await growHistoryChunk(MAX_REPAIR_CHUNK_MS)).toBe(MAX_REPAIR_CHUNK_MS);
+  expect(mockRedis.set).not.toHaveBeenCalled();
+});
+
+it('retains successful growth during a Redis outage and lets a later failure shrink it', async () => {
+  mockRedis.set.mockRejectedValue(new Error('disconnected'));
+  await growHistoryChunk(PRICE_INTERVAL_MS);
+  expect(await getHistoryChunkMs()).toBe(2 * PRICE_INTERVAL_MS);
+  await shrinkHistoryChunk(timeout(), first, first + PRICE_INTERVAL_MS);
+  expect(await getHistoryChunkMs()).toBe(PRICE_INTERVAL_MS);
 });
