@@ -11,30 +11,34 @@ required.
 
 ## Normal invocation
 
-1. Read price coverage on the primary database, including interior holes and the
+1. Fetch and commit the latest trade from `/products/ETH-USD/ticker`, including
+   its provider timestamp, before historical database work. Reject nonpositive or
+   nonfinite prices, trades over five minutes old, or timestamps more than thirty
+   seconds in the future. A failed live database insert stops historical work for
+   this invocation; a provider failure still permits historical recovery.
+2. Read price coverage on the primary database, including interior holes and the
    trailing interval up to the invocation's start time. The historical lower
    bound remains October 1, 2021 UTC. A gap must exceed six minutes thirty seconds,
-   allowing ordinary scheduling jitter. This also fills sparse older history and
-   bootstraps an empty table; the newest live row cannot hide an earlier hole.
-2. Process the eight most recent gaps first, requesting at most one 24-hour chunk
-   per gap per invocation. Backfill starts at the recent end of a long gap.
-   Continue independent gaps if a provider range fails. Missing Coinbase closes
-   receive a 24-hour retry cooldown in existing Redis. Gap discovery temporarily
-   excludes those exact intervals before selecting its eight candidates, so more
-   than eight unavailable ranges cannot hide older work. No price rows are
-   fabricated, and the holes become eligible again when the cooldown expires.
-3. Resume a requested reset using any remaining chunk budget.
-4. Fetch and save the latest trade from `/products/ETH-USD/ticker`, including its
-   provider timestamp. Reject nonpositive/nonfinite prices, trades over five
-   minutes old, or timestamps more than thirty seconds in the future.
+   allowing ordinary scheduling jitter. New live rows do not hide interior gaps.
+3. Process the eight most recent gaps first, requesting at most one **one-hour**
+   chunk per gap per invocation. Backfill starts at the recent end of a long gap.
+   Continue independent gaps if a provider range fails. A database repair failure
+   stops both gap recovery and reset for this invocation, leaving failed work
+   discoverable for a later run rather than adding contention. Missing Coinbase
+   closes receive a 24-hour retry cooldown in existing Redis. Gap discovery
+   temporarily excludes those exact intervals before selecting its eight
+   candidates. No price rows are fabricated.
+4. Resume a requested reset using any remaining chunk budget, unless a database
+   failure stopped recovery.
 
 When there are no gaps and no unfinished reset, the only provider request is
-for the live ticker (normally 288 requests/day). A 32-hour outage normally
-requires two invocations for its historical coverage, while live collection
-resumes on the first successful invocation. Older gaps can require further runs.
+for the live ticker (normally 288 requests/day). A single 32-hour outage now needs about 32 successful
+hour-sized recovery invocations (roughly 2 hours 40 minutes at the normal
+schedule), while live collection resumes immediately. Smaller learned batches,
+provider omissions, or database failures take longer.
 
 History uses `/products/ETH-USD/candles?granularity=300` with explicit UTC start
-and end boundaries. Each chunk expects at most 288 candles, below the provider's
+and end boundaries. Each normal repair chunk expects at most 12 candles, below the provider's
 300-candle limit. A candle's close is stored at the **end** of its five-minute
 interval, so a transaction is never valued using a future close. The newest
 eligible close is at least one minute old. Overfetched buckets are filtered;
@@ -56,7 +60,14 @@ Each chunk commits its price inserts, affected transaction `eth_price_usd`,
 `artist_split_usd` together. Mint totals are recalculated only for affected direct
 mint or subscription-redemption inputs; secondary transfers do not trigger it.
 The correction interval extends through the next
-existing sample, capped at the invocation's start. ETH amounts, mint counts,
+existing sample, capped at the invocation's start. Recovery reads the persisted
+price intervals once (including preserved exact and off-grid samples), then
+updates transaction USD values with a constant price in each indexed date range.
+It does not run three historical-price subqueries per transaction. Mint candidates
+are selected from transactions in the repaired range, then only those existing
+mint-stat rows are locked and recalculated. Per-token totals still include that
+token's complete mint history. The one-hour batch bounds requested candles, not
+the number of affected transactions or this full-token aggregation work. ETH amounts, mint counts,
 payment details, and other transaction fields remain unchanged. A failure rolls
 back the whole chunk, leaving its gap discoverable for another attempt.
 
@@ -126,21 +137,28 @@ to both gap recovery and reset. This lets oversized day-long repairs make
 progress as smaller atomic transactions; reset checkpoints each completed batch.
 The failed transaction is not immediately replayed, and its error remains visible.
 Acquisition, lock conflicts, and ambiguous COMMIT failures do not reduce the size.
-The limit stays reduced until an operator removes that Redis key after resolving
-the database bottleneck. Redis outages retain the limit in a warm process, but
+The effective limit never exceeds one hour, even when Redis contains a larger
+value from an earlier deployment. Smaller learned values remain effective until
+an operator removes the key after resolving the database bottleneck. Redis outages retain the limit in a warm process, but
 cold starts without saved state can repeat the larger attempt. A timeout even for
 one interval needs database/query investigation; recovery does not skip the
 failed data or claim it has been repaired.
 Pending batch-size writes likewise retain the smaller local limit until Redis
-acknowledges it. Remaining independent gaps in the current invocation immediately
-use the reduced window; the failed range still waits for a later invocation.
+acknowledges it. No further historical database work starts in the failed invocation. The
+reduced window applies on the next invocation.
 Every HTTP attempt has a ten-second timeout;
 network errors, timeouts, HTTP 429, and server errors get at most three retries
-with bounded backoff. Other HTTP errors fail immediately. Live collection is
-attempted after recovery regardless of caught history/reset failures.
+with bounded backoff. Other HTTP errors fail immediately. Live collection has already been attempted before recovery. This ordering protects
+a saved live row from a later repair rollback, but cannot eliminate contention
+from other writers or database cleanup still running from an earlier invocation.
 
-Errors are logged and thrown after the live attempt, preserving Lambda/Sentry
-failure visibility instead of reporting successful recovery. Monitor the
+One structured application error summarizes each failed invocation, including
+whether live data saved, whether history stopped, attempted chunks, failed ranges,
+and safe error codes. Repair failures identify the stage (price insertion,
+interval reads, transaction updates, mint selection, or mint totals), with SQL
+budget phase/commit outcome when available. SQL text, parameters, and provider
+payloads are excluded. The invocation still throws once to preserve Lambda/Sentry
+failure visibility; infrastructure alarms remain enabled. Monitor the
 `BACKFILLED`, `ETH PRICE RESET`, and `CURRENT ETH PRICE SAVED` logs, Lambda errors,
 latest `eth_price` timestamp, and remaining price gaps. Repeated omitted-candle
 warnings mean Coinbase cannot currently provide that history; inspect that range
@@ -178,3 +196,19 @@ provider and is not a data rollback.
 - [Ticker](https://docs.cdp.coinbase.com/api-reference/exchange-api/rest-api/products/get-product-ticker)
 - [Candles and request limits](https://docs.cdp.coinbase.com/api-reference/exchange-api/rest-api/products/get-product-candles)
 - [Public API rate limits](https://docs.cdp.coinbase.com/exchange/rest-api/rate-limits)
+
+## Recovery contention follow-up
+
+The contention follow-up changes only `ethPriceLoop`; it keeps the writer guards
+introduced by PR #2120. Deploy the follow-up collector only after those writer
+versions are installed and drained as described above. There are no schema or
+configuration changes and no API/frontend deployment. This is not permission to
+skip the original production release group: when completing that rollout, retain
+its writer deployments and release-note grouping alongside the follow-up PR.
+
+Before production promotion, check the reported failing range in staging. Confirm
+live saves continue, smaller historical batches commit, and no sustained writer
+lock waits appear. If failures remain, use the reported repair stage together
+with read-only MySQL lock-wait/session evidence and query plans; shrinking time
+windows cannot resolve every full-token aggregation or external blocker. Do not
+raise SQL budgets or remove atomic correction simply to suppress the errors.

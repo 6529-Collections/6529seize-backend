@@ -11,6 +11,7 @@ import {
 } from '@/constants';
 import { Transaction } from '@/entities/ITransaction';
 import { EthPriceRecoveryDb } from './eth-price-recovery.db';
+import { EthPriceRepairError } from './eth-price-failure';
 import { TransactionsDiscoveryDb } from '@/transactions/transactions.discovery.db';
 import { refreshTransactionUsdAtWrite } from '@/eth-prices/transaction-usd';
 import { HISTORY_START_MS } from './coinbase';
@@ -277,7 +278,10 @@ describeWithSeed('ETH price recovery database', [], () => {
     try {
       await expect(
         repo.repair([sample(base + 300_000, 200)], false, base + 900_000)
-      ).rejects.toThrow('injected');
+      ).rejects.toMatchObject({
+        stage: 'update-mint-totals',
+        cause: new Error('injected stat failure')
+      });
     } finally {
       spy.mockRestore();
     }
@@ -369,5 +373,121 @@ describeWithSeed('ETH price recovery database', [], () => {
       eth_price_usd: 200,
       value_usd: 400
     });
+  });
+  it('uses every persisted interval including off-grid samples and fractional boundaries', async () => {
+    await putPrice(base, 100);
+    await putPrice(base + 450_500, 175);
+    await putPrice(base + 900_000, 300);
+    for (const offset of [
+      299_000, 300_000, 450_000, 451_000, 599_000, 600_000, 899_000, 900_000
+    ]) {
+      await putTx(tx(`interval-${offset}`, base + offset));
+    }
+    await repo.repair(
+      [sample(base + 300_000, 200), sample(base + 600_000, 250)],
+      false,
+      base + 1200_000
+    );
+    for (const [offset, price] of [
+      [299_000, 100],
+      [300_000, 200],
+      [450_000, 200],
+      [451_000, 175],
+      [599_000, 175],
+      [600_000, 250],
+      [899_000, 250],
+      [900_000, 100]
+    ]) {
+      expect(await readTx(`interval-${offset}`)).toMatchObject({
+        eth_price_usd: price,
+        value_usd: 2 * price,
+        gas_usd: 0.1 * price
+      });
+    }
+  });
+
+  it('recalculates each affected token including its mints outside the repaired interval', async () => {
+    await putPrice(base, 100);
+    await putPrice(base + 900_000, 300);
+    await putStats();
+    await sqlExecutor.execute(`INSERT INTO ${MEMES_MINT_STATS_TABLE}
+      (id,mint_date,mint_count,direct_mint_count,subscriptions_count,proceeds_eth,proceeds_usd,artist_split_eth,artist_split_usd,payment_details)
+      SELECT 2,mint_date,mint_count,direct_mint_count,subscriptions_count,proceeds_eth,proceeds_usd,artist_split_eth,artist_split_usd,payment_details FROM ${MEMES_MINT_STATS_TABLE} WHERE id=1`);
+    await putTx(tx('mint-one', base + 300_000));
+    await putTx({ ...tx('mint-two', base + 600_000), token_id: 2 });
+    await putTx({
+      ...tx('mint-one-outside', base - 300_000),
+      eth_price_usd: 400
+    });
+    await repo.repair(
+      [sample(base + 300_000, 200), sample(base + 600_000, 250)],
+      false,
+      base + 1200_000
+    );
+    const totals = await sqlExecutor.execute<{
+      id: number;
+      proceeds_usd: number;
+    }>(`SELECT id,proceeds_usd FROM ${MEMES_MINT_STATS_TABLE} ORDER BY id`);
+    expect(totals).toEqual([
+      { id: 1, proceeds_usd: Math.round(600 * MEMES_MINT_PRICE * 100) / 100 },
+      { id: 2, proceeds_usd: Math.round(250 * MEMES_MINT_PRICE * 100) / 100 }
+    ]);
+  });
+
+  it('keeps the separately committed live price when historical correction rolls back', async () => {
+    await putPrice(base, 100);
+    await putTx(tx('failed-history', base + 300_000));
+    const livePrice = sample(base + 1800_000, 275);
+    await repo.saveLive(livePrice);
+    const execute = sqlExecutor.execute.bind(sqlExecutor);
+    const spy = jest
+      .spyOn(sqlExecutor, 'execute')
+      .mockImplementation((sql, params, options) => {
+        if (sql.includes(`UPDATE ${TRANSACTIONS_TABLE}`))
+          throw new Error('injected update failure');
+        return execute(sql, params, options);
+      });
+    try {
+      await expect(
+        repo.repair([sample(base + 300_000, 200)], false, base + 1800_000)
+      ).rejects.toBeInstanceOf(EthPriceRepairError);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(
+      await sqlExecutor.execute(
+        `SELECT timestamp_ms,usd_price FROM ${ETH_PRICE_TABLE} ORDER BY timestamp_ms`
+      )
+    ).toEqual([
+      { timestamp_ms: base, usd_price: 100 },
+      { timestamp_ms: livePrice.timestamp_ms, usd_price: 275 }
+    ]);
+    expect(await readTx('failed-history')).toMatchObject({
+      eth_price_usd: 100
+    });
+  });
+  it('does not wait on an unrelated locked mint-stat row', async () => {
+    await putPrice(base, 100);
+    await putPrice(base + 900_000, 300);
+    await putTx(tx('affected-mint', base + 300_000));
+    await putStats();
+    await sqlExecutor.execute(`INSERT INTO ${MEMES_MINT_STATS_TABLE}
+      (id,mint_date,mint_count,direct_mint_count,subscriptions_count,proceeds_eth,proceeds_usd,artist_split_eth,artist_split_usd,payment_details)
+      SELECT 2,mint_date,mint_count,direct_mint_count,subscriptions_count,proceeds_eth,proceeds_usd,artist_split_eth,artist_split_usd,payment_details FROM ${MEMES_MINT_STATS_TABLE} WHERE id=1`);
+    await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+      await sqlExecutor.execute(
+        `SELECT id FROM ${MEMES_MINT_STATS_TABLE} WHERE id=2 FOR UPDATE`,
+        undefined,
+        { wrappedConnection: connection }
+      );
+      // The repair runs on a separate connection while id=2 remains locked.
+      await repo.repair([sample(base + 300_000, 200)], false, base + 1200_000);
+    });
+    expect(await readTx('affected-mint')).toMatchObject({ eth_price_usd: 200 });
+    expect(
+      await sqlExecutor.oneOrNull(
+        `SELECT proceeds_usd FROM ${MEMES_MINT_STATS_TABLE} WHERE id=2`
+      )
+    ).toEqual({ proceeds_usd: 999 });
   });
 });

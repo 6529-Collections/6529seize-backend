@@ -1,7 +1,11 @@
 const mockRedis = { isReady: true, get: jest.fn(), set: jest.fn() };
 jest.mock('@/redis', () => ({ getRedisClient: () => mockRedis }));
 import { SqlExecutionBudgetExceededError } from '@/db/sql-execution-budget';
-import { getHistoryChunkMs, shrinkHistoryChunk } from './eth-price-batch-size';
+import {
+  getHistoryChunkMs,
+  shrinkHistoryChunk,
+  MAX_REPAIR_CHUNK_MS
+} from './eth-price-batch-size';
 import { HISTORY_CHUNK_MS, PRICE_INTERVAL_MS } from './coinbase';
 import { ethPriceStateKey } from './eth-price-state-key';
 
@@ -31,13 +35,13 @@ it('halves failed work and reloads the durable size on the next invocation', asy
   await shrinkHistoryChunk(
     timeout(),
     first,
-    first + HISTORY_CHUNK_MS - PRICE_INTERVAL_MS
+    first + MAX_REPAIR_CHUNK_MS - PRICE_INTERVAL_MS
   );
   expect(mockRedis.set).toHaveBeenCalledWith(
     ethPriceStateKey('batch-size'),
-    String(HISTORY_CHUNK_MS / 2)
+    String(MAX_REPAIR_CHUNK_MS / 2)
   );
-  expect(await getHistoryChunkMs()).toBe(HISTORY_CHUNK_MS / 2);
+  expect(await getHistoryChunkMs()).toBe(MAX_REPAIR_CHUNK_MS / 2);
   await shrinkHistoryChunk(timeout(), first, first + 2 * PRICE_INTERVAL_MS);
   expect(await getHistoryChunkMs()).toBe(PRICE_INTERVAL_MS);
   await shrinkHistoryChunk(timeout(), first, first);
@@ -94,7 +98,7 @@ it.each([null, String(HISTORY_CHUNK_MS)])(
     );
     // Once the pending write is acknowledged, operator deletion is authoritative.
     mockRedis.get.mockResolvedValue(null);
-    expect(await getHistoryChunkMs()).toBe(HISTORY_CHUNK_MS);
+    expect(await getHistoryChunkMs()).toBe(MAX_REPAIR_CHUNK_MS);
   }
 );
 
@@ -112,6 +116,19 @@ it.each(['NaN', '0', '-1', '300001', String(2 * HISTORY_CHUNK_MS)])(
   'ignores invalid saved size %s',
   async (raw) => {
     mockRedis.get.mockResolvedValue(raw);
-    expect(await getHistoryChunkMs()).toBe(HISTORY_CHUNK_MS);
+    expect(await getHistoryChunkMs()).toBe(MAX_REPAIR_CHUNK_MS);
   }
 );
+
+it.each([6 * 3600_000, 12 * 3600_000, HISTORY_CHUNK_MS])(
+  'caps an older persisted repair size of %s to one hour',
+  async (saved) => {
+    mockRedis.get.mockResolvedValue(String(saved));
+    expect(await getHistoryChunkMs()).toBe(MAX_REPAIR_CHUNK_MS);
+  }
+);
+
+it('retains a smaller persisted window', async () => {
+  mockRedis.get.mockResolvedValue(String(2 * PRICE_INTERVAL_MS));
+  expect(await getHistoryChunkMs()).toBe(2 * PRICE_INTERVAL_MS);
+});

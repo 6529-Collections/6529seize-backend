@@ -4,6 +4,8 @@ import { getRedisClient } from '@/redis';
 import { HISTORY_CHUNK_MS, PRICE_INTERVAL_MS } from './coinbase';
 import { ethPriceStateKey } from './eth-price-state-key';
 
+// The provider permits a day, but database repair starts conservatively.
+export const MAX_REPAIR_CHUNK_MS = 60 * 60 * 1000;
 const logger = Logger.get('ETH_PRICE');
 const localSizes = new Map<string, number>();
 const pendingPersistence = new Set<string>();
@@ -23,7 +25,7 @@ async function persistSize(key: string, size: number): Promise<void> {
 /** Remember smaller repair windows across cold starts, without changing coverage. */
 export async function getHistoryChunkMs(): Promise<number> {
   const key = ethPriceStateKey('batch-size');
-  let size = localSizes.get(key) ?? HISTORY_CHUNK_MS;
+  let size = localSizes.get(key) ?? MAX_REPAIR_CHUNK_MS;
   if (pendingPersistence.has(key)) {
     await persistSize(key, size);
     return size;
@@ -32,7 +34,7 @@ export async function getHistoryChunkMs(): Promise<number> {
     const redis = getRedisClient();
     if (redis?.isReady) {
       const raw = await redis.get(key);
-      const saved = raw === null ? HISTORY_CHUNK_MS : Number(raw);
+      const saved = raw === null ? MAX_REPAIR_CHUNK_MS : Number(raw);
       if (
         !Number.isSafeInteger(saved) ||
         saved < PRICE_INTERVAL_MS ||
@@ -40,7 +42,7 @@ export async function getHistoryChunkMs(): Promise<number> {
         saved % PRICE_INTERVAL_MS !== 0
       )
         throw new Error('Invalid ETH price repair batch size');
-      size = saved;
+      size = Math.min(saved, MAX_REPAIR_CHUNK_MS);
     }
   } catch (error) {
     logger.warn('Using local ETH price repair batch size', error);
@@ -66,7 +68,7 @@ export async function shrinkHistoryChunk(
   const key = ethPriceStateKey('batch-size');
   const intervals = (last - first) / PRICE_INTERVAL_MS + 1;
   const size = Math.min(
-    localSizes.get(key) ?? HISTORY_CHUNK_MS,
+    localSizes.get(key) ?? MAX_REPAIR_CHUNK_MS,
     Math.max(1, Math.floor(intervals / 2)) * PRICE_INTERVAL_MS
   );
   localSizes.set(key, size);

@@ -3,6 +3,7 @@ import {
   getUnavailablePrices
 } from './eth-price-unavailable';
 import { Logger } from '@/logging';
+import { priceFailureDetails, repairCause } from './eth-price-failure';
 import { getHistoryChunkMs, shrinkHistoryChunk } from './eth-price-batch-size';
 import {
   fetchHistoricPrices,
@@ -19,12 +20,22 @@ type RecoveryRun = {
   started: number;
   closedThrough: number;
   chunks: number;
-  errors: unknown[];
+  errors: (ReturnType<typeof priceFailureDetails> & {
+    operation: string;
+    first?: number;
+    last?: number;
+  })[];
+  historyStopped: boolean;
+  liveSaved: boolean;
   historyChunkMs: number;
 };
 
 function hasBudget(run: RecoveryRun): boolean {
-  return run.chunks < MAX_CHUNKS && Date.now() - run.started < RUN_BUDGET_MS;
+  return (
+    !run.historyStopped &&
+    run.chunks < MAX_CHUNKS &&
+    Date.now() - run.started < RUN_BUDGET_MS
+  );
 }
 
 async function backfillGaps(run: RecoveryRun): Promise<void> {
@@ -42,18 +53,28 @@ async function backfillGaps(run: RecoveryRun): Promise<void> {
     );
     if (first > last) continue;
     run.chunks++;
+    let operation = 'gap-provider';
     try {
       const prices = await fetchHistoricPrices(first, last);
+      operation = 'gap-database';
       await ethPriceRecoveryDb.repair(prices, false, run.started);
+      operation = 'gap-checkpoint';
       await deferMissingPrices(prices, first, last, run.started);
       logger.info(
         `[BACKFILLED ${prices.length} ETH PRICES] [FROM ${first}] [THROUGH ${last}]`
       );
     } catch (error) {
-      run.historyChunkMs =
-        (await shrinkHistoryChunk(error, first, last)) ?? run.historyChunkMs;
-      // An unavailable range must not starve independent holes.
-      run.errors.push(error);
+      if (operation === 'gap-database') {
+        run.historyStopped = true;
+        await shrinkHistoryChunk(repairCause(error), first, last);
+      }
+      // Provider range failures may be independent. Database failures are not.
+      run.errors.push({
+        ...priceFailureDetails(error),
+        operation,
+        first,
+        last
+      });
     }
   }
 }
@@ -66,18 +87,48 @@ async function resumeReset(reset: boolean, run: RecoveryRun): Promise<void> {
       state.next + run.historyChunkMs - PRICE_INTERVAL_MS
     );
     run.chunks++;
-    const prices = await fetchHistoricPrices(state.next, last);
+    const first = state.next;
+    let operation = 'reset-provider';
     try {
+      const prices = await fetchHistoricPrices(first, last);
+      operation = 'reset-database';
       await ethPriceRecoveryDb.repair(prices, true, run.started);
+      operation = 'reset-checkpoint';
+      await deferMissingPrices(prices, first, last, run.started);
+      // Advance only after prices, transaction corrections and mint stats commit.
+      state.next = last + PRICE_INTERVAL_MS;
+      await savePriceReset(state);
+      logger.info(`[ETH PRICE RESET] [NEXT ${state.next}] [END ${state.end}]`);
     } catch (error) {
-      await shrinkHistoryChunk(error, state.next, last);
-      throw error;
+      if (operation === 'reset-database') {
+        run.historyStopped = true;
+        await shrinkHistoryChunk(repairCause(error), first, last);
+      }
+      run.errors.push({
+        ...priceFailureDetails(error),
+        operation,
+        first,
+        last
+      });
+      return;
     }
-    await deferMissingPrices(prices, state.next, last, run.started);
-    // Advance only after prices, transaction corrections and mint stats commit.
-    state.next = last + PRICE_INTERVAL_MS;
-    await savePriceReset(state);
-    logger.info(`[ETH PRICE RESET] [NEXT ${state.next}] [END ${state.end}]`);
+  }
+}
+
+async function collectLive(run: RecoveryRun): Promise<void> {
+  let operation = 'live-provider';
+  try {
+    const price = await fetchLivePrice();
+    operation = 'live-database';
+    await ethPriceRecoveryDb.saveLive(price);
+    run.liveSaved = true;
+    logger.info(
+      `[CURRENT ETH PRICE SAVED] [TIMESTAMP ${price.timestamp_ms}] [USD ${price.usd_price}]`
+    );
+  } catch (error) {
+    // Do not add recovery load when even the live insert cannot complete.
+    if (operation === 'live-database') run.historyStopped = true;
+    run.errors.push({ ...priceFailureDetails(error), operation });
   }
 }
 
@@ -85,40 +136,49 @@ export async function syncEthUsdPrice(reset: boolean): Promise<void> {
   const started = Date.now();
   const run: RecoveryRun = {
     started,
-    // Allow the provider a minute to finalize a just-closed candle.
     closedThrough:
       Math.floor((started - 60_000) / PRICE_INTERVAL_MS) * PRICE_INTERVAL_MS,
     chunks: 0,
     errors: [],
-    historyChunkMs: await getHistoryChunkMs()
+    historyStopped: false,
+    liveSaved: false,
+    historyChunkMs: 0
   };
-  try {
-    await backfillGaps(run);
-  } catch (error) {
-    run.errors.push(error);
+  // Commit the current quote before taking any historical repair locks.
+  await collectLive(run);
+  if (!run.historyStopped) {
+    try {
+      run.historyChunkMs = await getHistoryChunkMs();
+      await backfillGaps(run);
+    } catch (error) {
+      run.historyStopped = true;
+      run.errors.push({
+        ...priceFailureDetails(error),
+        operation: 'gap-discovery'
+      });
+    }
   }
-  try {
-    await resumeReset(reset, run);
-  } catch (error) {
-    run.errors.push(error);
-  }
-  // Failed/long backfill never prevents attempting current collection.
-  try {
-    const price = await fetchLivePrice();
-    await ethPriceRecoveryDb.saveLive(price);
-    logger.info(
-      `[CURRENT ETH PRICE SAVED] [TIMESTAMP ${price.timestamp_ms}] [USD ${price.usd_price}]`
-    );
-  } catch (error) {
-    run.errors.push(error);
+  if (!run.historyStopped) {
+    try {
+      await resumeReset(reset, run);
+    } catch (error) {
+      run.errors.push({ ...priceFailureDetails(error), operation: 'reset' });
+    }
   }
   if (run.errors.length) {
-    for (const error of run.errors)
-      logger.error('ETH price recovery failed', error);
+    const summary = {
+      liveSaved: run.liveSaved,
+      historyStopped: run.historyStopped,
+      attemptedChunks: run.chunks,
+      errorCount: run.errors.length,
+      failures: run.errors
+    };
     const failure = new Error(
       'ETH price collection or recovery failed; incomplete work will retry next invocation'
     );
-    Object.assign(failure, { cause: run.errors[0] });
+    Object.assign(failure, { recovery: summary });
+    // Sharing this Error with the handler lets operational reporting deduplicate it.
+    logger.error('ETH price collection or recovery failed', summary, failure);
     throw failure;
   }
 }
