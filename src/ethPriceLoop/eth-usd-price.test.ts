@@ -1,196 +1,305 @@
-import type { AxiosError } from 'axios';
-
-const mockGet = jest.fn();
-const mockCreate = jest.fn(() => ({ get: mockGet }));
-const mockIsAxiosError = jest.fn(
-  (error: unknown) => !!(error as { isAxiosError?: boolean })?.isAxiosError
-);
-
-jest.mock('axios', () => ({
-  __esModule: true,
-  default: {
-    create: mockCreate,
-    isAxiosError: mockIsAxiosError
+jest.mock('./eth-price-unavailable', () => ({
+  getUnavailablePrices: jest.fn(),
+  deferMissingPrices: jest.fn()
+}));
+jest.mock('./eth-price-batch-size', () => ({
+  getHistoryChunkMs: jest.fn(),
+  shrinkHistoryChunk: jest.fn()
+}));
+import { getHistoryChunkMs, shrinkHistoryChunk } from './eth-price-batch-size';
+import { SqlExecutionBudgetExceededError } from '@/db/sql-execution-budget';
+import {
+  getUnavailablePrices,
+  deferMissingPrices
+} from './eth-price-unavailable';
+jest.mock('./coinbase', () => ({
+  ...jest.requireActual('./coinbase'),
+  fetchLivePrice: jest.fn(),
+  fetchHistoricPrices: jest.fn()
+}));
+jest.mock('./eth-price-recovery.db', () => ({
+  ethPriceRecoveryDb: {
+    findGaps: jest.fn(),
+    repair: jest.fn(),
+    saveLive: jest.fn()
   }
 }));
-
-const mockExponentialDelay = jest.fn(() => 1234);
-const mockIsNetworkError = jest.fn(() => false);
-const mockIsRetryableError = jest.fn(() => false);
-const mockAxiosRetry = jest.fn();
-
-jest.mock('axios-retry', () => ({
-  __esModule: true,
-  default: Object.assign(mockAxiosRetry, {
-    exponentialDelay: mockExponentialDelay,
-    isNetworkError: mockIsNetworkError,
-    isRetryableError: mockIsRetryableError
-  })
+jest.mock('./eth-price-reset', () => ({
+  getPriceReset: jest.fn(),
+  savePriceReset: jest.fn()
 }));
-
-jest.mock('./db.eth_price', () => ({
-  getEthPriceCount: jest.fn(),
-  persistEthPrices: jest.fn()
-}));
-
-const mockInfo = jest.fn();
-const mockWarn = jest.fn();
-
-jest.mock('../logging', () => ({
-  Logger: {
-    get: jest.fn(() => ({
-      info: mockInfo,
-      warn: mockWarn
-    }))
-  }
-}));
-
-import { getEthPriceCount, persistEthPrices } from './db.eth_price';
 import { syncEthUsdPrice } from './eth_usd_price';
+import {
+  fetchHistoricPrices,
+  fetchLivePrice,
+  PRICE_INTERVAL_MS,
+  HISTORY_CHUNK_MS
+} from './coinbase';
+import { ethPriceRecoveryDb as db } from './eth-price-recovery.db';
+import { getPriceReset, savePriceReset } from './eth-price-reset';
+const now = Date.UTC(2026, 8, 28, 12, 2);
+const closed = Date.UTC(2026, 8, 28, 12);
+const live = { timestamp_ms: now, date: new Date(now), usd_price: 2600 };
+beforeEach(() => {
+  jest.clearAllMocks();
+  jest.mocked(getHistoryChunkMs).mockResolvedValue(HISTORY_CHUNK_MS);
+  jest.mocked(shrinkHistoryChunk).mockResolvedValue(undefined);
+  jest.mocked(getUnavailablePrices).mockResolvedValue([]);
+  jest.mocked(deferMissingPrices).mockResolvedValue(undefined);
+  jest.spyOn(Date, 'now').mockReturnValue(now);
+  jest.mocked(db.findGaps).mockResolvedValue([]);
+  jest.mocked(db.repair).mockResolvedValue(undefined);
+  jest.mocked(db.saveLive).mockResolvedValue(undefined);
+  jest.mocked(getPriceReset).mockResolvedValue(null);
+  jest.mocked(savePriceReset).mockResolvedValue(undefined);
+  jest.mocked(fetchLivePrice).mockResolvedValue(live);
+  jest.mocked(fetchHistoricPrices).mockImplementation(async (first, last) => [
+    { ...live, timestamp_ms: first, date: new Date(first) },
+    { ...live, timestamp_ms: last, date: new Date(last) }
+  ]);
+});
+afterEach(() => jest.restoreAllMocks());
+it('only collects live when coverage is healthy', async () => {
+  await syncEthUsdPrice(false);
+  expect(fetchHistoricPrices).not.toHaveBeenCalled();
+  expect(db.repair).not.toHaveBeenCalled();
+  expect(db.saveLive).toHaveBeenCalledWith(live);
+});
+it('recovers a bounded recent chunk of a long outage before saving live', async () => {
+  jest
+    .mocked(db.findGaps)
+    .mockResolvedValue([{ start: now - 32 * 3600_000, end: now }]);
+  await syncEthUsdPrice(false);
+  expect(fetchHistoricPrices).toHaveBeenCalledWith(
+    closed - HISTORY_CHUNK_MS + PRICE_INTERVAL_MS,
+    closed
+  );
+  expect(db.repair).toHaveBeenCalledWith(expect.any(Array), false, now);
+});
+it('repairs an interior hole even after newer live samples exist', async () => {
+  const end = closed - 3600_000;
+  jest.mocked(db.findGaps).mockResolvedValue([{ start: end - 900_000, end }]);
+  await syncEthUsdPrice(false);
+  expect(fetchHistoricPrices).toHaveBeenCalledWith(end - 600_000, end);
+});
+it('still saves live and reports failure if history is unavailable', async () => {
+  jest
+    .mocked(db.findGaps)
+    .mockResolvedValue([{ start: now - 3600_000, end: now }]);
+  jest.mocked(fetchHistoricPrices).mockRejectedValue(new Error('429'));
+  await expect(syncEthUsdPrice(false)).rejects.toThrow('incomplete work');
+  expect(db.saveLive).toHaveBeenCalledWith(live);
+});
+it('does not advance a reset checkpoint on failed database correction', async () => {
+  jest
+    .mocked(getPriceReset)
+    .mockResolvedValue({ next: closed - 600_000, end: closed, latched: true });
+  jest.mocked(db.repair).mockRejectedValue(new Error('rollback'));
+  await expect(syncEthUsdPrice(true)).rejects.toThrow();
+  expect(savePriceReset).not.toHaveBeenCalled();
+  expect(shrinkHistoryChunk).toHaveBeenCalledWith(
+    expect.any(Error),
+    closed - 600_000,
+    closed
+  );
+  expect(db.saveLive).toHaveBeenCalledWith(live);
+});
 
-const MOBULA_CURRENT_URL =
-  'https://api.mobula.io/api/1/market/data?asset=Ethereum';
-
-type RetryConfig = {
-  retries: number;
-  retryDelay: (retryCount: number, error: AxiosError) => number;
-  retryCondition: (error: AxiosError) => boolean;
-  shouldResetTimeout: boolean;
-};
-
-function getRetryConfig(): RetryConfig {
-  return mockAxiosRetry.mock.calls[0][1] as RetryConfig;
-}
-
-function buildAxiosError(
-  status: number,
-  headers: Record<string, unknown> = {}
-): AxiosError {
-  return {
-    isAxiosError: true,
-    response: {
-      status,
-      headers
-    }
-  } as AxiosError;
-}
-
-describe('syncEthUsdPrice', () => {
-  beforeEach(() => {
-    mockGet.mockReset();
-    mockIsAxiosError.mockClear();
-    mockExponentialDelay.mockClear();
-    mockIsNetworkError.mockReturnValue(false);
-    mockIsRetryableError.mockReturnValue(false);
-    mockInfo.mockClear();
-    mockWarn.mockClear();
-    (getEthPriceCount as jest.Mock).mockReset();
-    (persistEthPrices as jest.Mock).mockReset();
-    process.env.MOBULA_API_KEY = 'mobula-key';
+it('uses a learned smaller window for gaps and the reset checkpoint', async () => {
+  jest.mocked(getHistoryChunkMs).mockResolvedValue(2 * PRICE_INTERVAL_MS);
+  jest
+    .mocked(db.findGaps)
+    .mockResolvedValue([{ start: closed - HISTORY_CHUNK_MS, end: closed }]);
+  jest.mocked(getPriceReset).mockResolvedValue({
+    next: closed - 3 * PRICE_INTERVAL_MS,
+    end: closed,
+    latched: true
   });
-
-  afterEach(() => {
-    jest.restoreAllMocks();
-    delete process.env.MOBULA_API_KEY;
+  const checkpoints: number[] = [];
+  jest.mocked(savePriceReset).mockImplementation(async (state) => {
+    checkpoints.push(state.next);
   });
+  await syncEthUsdPrice(true);
+  expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
+    1,
+    closed - PRICE_INTERVAL_MS,
+    closed
+  );
+  expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
+    2,
+    closed - 3 * PRICE_INTERVAL_MS,
+    closed - 2 * PRICE_INTERVAL_MS
+  );
+  expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
+    3,
+    closed - PRICE_INTERVAL_MS,
+    closed
+  );
+  expect(checkpoints).toEqual([
+    closed - PRICE_INTERVAL_MS,
+    closed + PRICE_INTERVAL_MS
+  ]);
+  expect(db.repair).toHaveBeenCalledTimes(3);
+  expect(db.saveLive).toHaveBeenCalledWith(live);
+});
 
-  it('persists the latest Mobula ETH price', async () => {
-    const nowMs = 1710000000000;
-    jest.spyOn(Date, 'now').mockReturnValue(nowMs);
-    (getEthPriceCount as jest.Mock).mockResolvedValue(1);
-    mockGet.mockResolvedValue({
-      data: {
-        data: {
-          price: 3133.12
-        }
-      }
-    });
+it('retains completed reset progress when a later small batch times out', async () => {
+  jest.mocked(getHistoryChunkMs).mockResolvedValue(2 * PRICE_INTERVAL_MS);
+  const state = {
+    next: closed - 3 * PRICE_INTERVAL_MS,
+    end: closed,
+    latched: true
+  };
+  jest.mocked(getPriceReset).mockResolvedValue(state);
+  const error = new SqlExecutionBudgetExceededError(
+    'SQL_BUDGET_EXCEEDED',
+    'WORK',
+    'NOT_SENT'
+  );
+  jest
+    .mocked(db.repair)
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(error);
+  await expect(syncEthUsdPrice(true)).rejects.toThrow('incomplete work');
+  expect(savePriceReset).toHaveBeenCalledTimes(1);
+  expect(state.next).toBe(closed - PRICE_INTERVAL_MS);
+  expect(shrinkHistoryChunk).toHaveBeenCalledWith(
+    error,
+    closed - PRICE_INTERVAL_MS,
+    closed
+  );
+  expect(deferMissingPrices).toHaveBeenCalledTimes(1);
+  expect(db.saveLive).toHaveBeenCalledWith(live);
+});
 
-    await syncEthUsdPrice(false);
+it('learns a smaller gap repair after timeout without marking it unavailable', async () => {
+  const error = new SqlExecutionBudgetExceededError(
+    'SQL_BUDGET_EXCEEDED',
+    'WORK',
+    'NOT_SENT'
+  );
+  jest
+    .mocked(db.findGaps)
+    .mockResolvedValue([{ start: closed - HISTORY_CHUNK_MS, end: closed }]);
+  jest.mocked(db.repair).mockRejectedValue(error);
+  await expect(syncEthUsdPrice(false)).rejects.toThrow('incomplete work');
+  expect(shrinkHistoryChunk).toHaveBeenCalledWith(
+    error,
+    closed - HISTORY_CHUNK_MS + PRICE_INTERVAL_MS,
+    closed
+  );
+  expect(deferMissingPrices).not.toHaveBeenCalled();
+  expect(db.repair).toHaveBeenCalledTimes(1);
+  expect(db.saveLive).toHaveBeenCalledWith(live);
+});
 
-    expect(mockGet).toHaveBeenCalledWith(MOBULA_CURRENT_URL, {
-      headers: {
-        Authorization: 'Bearer mobula-key'
-      }
-    });
-    expect(persistEthPrices).toHaveBeenCalledWith([
-      {
-        timestamp_ms: nowMs,
-        date: new Date(nowMs),
-        usd_price: 3133.12
-      }
-    ]);
+it('uses a reduced window for subsequent independent gaps in the same invocation', async () => {
+  const olderEnd = closed - 2 * HISTORY_CHUNK_MS;
+  jest.mocked(db.findGaps).mockResolvedValue([
+    { start: closed - HISTORY_CHUNK_MS, end: closed },
+    { start: olderEnd - HISTORY_CHUNK_MS, end: olderEnd }
+  ]);
+  const error = new SqlExecutionBudgetExceededError(
+    'SQL_BUDGET_EXCEEDED',
+    'WORK',
+    'NOT_SENT'
+  );
+  jest
+    .mocked(db.repair)
+    .mockRejectedValueOnce(error)
+    .mockResolvedValue(undefined);
+  jest.mocked(shrinkHistoryChunk).mockResolvedValue(2 * PRICE_INTERVAL_MS);
+  await expect(syncEthUsdPrice(false)).rejects.toThrow('incomplete work');
+  expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
+    2,
+    olderEnd - PRICE_INTERVAL_MS,
+    olderEnd
+  );
+  expect(db.repair).toHaveBeenCalledTimes(2);
+  expect(db.saveLive).toHaveBeenCalledWith(live);
+});
+it('resumes reset even after reset flag is cleared and checkpoints after commit', async () => {
+  jest
+    .mocked(getPriceReset)
+    .mockResolvedValue({ next: closed - 600_000, end: closed, latched: false });
+  await syncEthUsdPrice(false);
+  expect(db.repair).toHaveBeenCalledWith(expect.any(Array), true, now);
+  expect(savePriceReset).toHaveBeenCalledWith({
+    next: closed + PRICE_INTERVAL_MS,
+    end: closed,
+    latched: false
   });
-
-  it('omits authorization when Mobula API key is absent', async () => {
-    delete process.env.MOBULA_API_KEY;
-    (getEthPriceCount as jest.Mock).mockResolvedValue(1);
-    mockGet.mockResolvedValue({
-      data: {
-        data: {
-          price: 3133.12
-        }
-      }
-    });
-
-    await syncEthUsdPrice(false);
-
-    expect(mockGet).toHaveBeenCalledWith(MOBULA_CURRENT_URL, {
-      headers: undefined
-    });
+});
+it('bounds a multiyear reset to eight chunks per invocation', async () => {
+  jest.mocked(getPriceReset).mockResolvedValue({
+    next: closed - 30 * HISTORY_CHUNK_MS,
+    end: closed,
+    latched: true
   });
+  await syncEthUsdPrice(true);
+  expect(db.repair).toHaveBeenCalledTimes(8);
+  expect(db.saveLive).toHaveBeenCalledTimes(1);
+});
+it('surfaces a failed live fetch after a committed historical repair', async () => {
+  jest
+    .mocked(db.findGaps)
+    .mockResolvedValue([{ start: now - 3600_000, end: now }]);
+  jest.mocked(fetchLivePrice).mockRejectedValue(new Error('timeout'));
+  await expect(syncEthUsdPrice(false)).rejects.toThrow();
+  expect(db.repair).toHaveBeenCalled();
+  expect(db.saveLive).not.toHaveBeenCalled();
+});
 
-  it('skips the latest sample when Mobula remains rate limited', async () => {
-    (getEthPriceCount as jest.Mock).mockResolvedValue(1);
-    mockGet.mockRejectedValue(buildAxiosError(429, { 'retry-after': '120' }));
+it('continues independent holes after one provider range fails', async () => {
+  jest.mocked(db.findGaps).mockResolvedValue([
+    { start: closed - 900_000, end: closed },
+    { start: closed - 1800_000, end: closed - 1200_000 }
+  ]);
+  jest
+    .mocked(fetchHistoricPrices)
+    .mockRejectedValueOnce(new Error('missing candle'));
+  await expect(syncEthUsdPrice(false)).rejects.toThrow();
+  expect(fetchHistoricPrices).toHaveBeenCalledTimes(2);
+  expect(db.repair).toHaveBeenCalledTimes(1);
+  expect(db.saveLive).toHaveBeenCalledWith(live);
+});
 
-    await expect(syncEthUsdPrice(false)).resolves.toBeUndefined();
-
-    expect(persistEthPrices).not.toHaveBeenCalled();
-    expect(mockWarn).toHaveBeenCalledWith(
-      '[CURRENT DATA SKIPPED] : [MOBULA HTTP 429] [RETRY_AFTER_MS 120000]'
-    );
+it('passes retry exclusions to gap discovery and continues a partial reset', async () => {
+  const range = {
+    first: closed - 900_000,
+    last: closed - 600_000,
+    retryAt: now + 3600_000
+  };
+  jest.mocked(getUnavailablePrices).mockResolvedValue([range]);
+  jest
+    .mocked(getPriceReset)
+    .mockResolvedValue({ next: closed - 300_000, end: closed, latched: true });
+  jest.mocked(fetchHistoricPrices).mockResolvedValue([live]);
+  await syncEthUsdPrice(true);
+  expect(db.findGaps).toHaveBeenCalledWith(now, [range]);
+  expect(deferMissingPrices).toHaveBeenCalledWith(
+    [live],
+    closed - 300_000,
+    closed,
+    now
+  );
+  expect(savePriceReset).toHaveBeenCalledWith({
+    next: closed + 300_000,
+    end: closed,
+    latched: true
   });
-
-  it('skips the historic reset sample when Mobula remains rate limited', async () => {
-    (getEthPriceCount as jest.Mock).mockResolvedValue(0);
-    mockGet.mockRejectedValue(buildAxiosError(429));
-
-    await expect(syncEthUsdPrice(false)).resolves.toBeUndefined();
-
-    expect(persistEthPrices).not.toHaveBeenCalled();
-    expect(mockWarn).toHaveBeenCalledWith(
-      '[HISTORIC DATA SKIPPED] : [MOBULA HTTP 429] [RETRY_AFTER_MS -1]'
-    );
+});
+it('advances a reset scan past empty history while leaving missing prices for retry', async () => {
+  jest
+    .mocked(getPriceReset)
+    .mockResolvedValue({ next: closed, end: closed, latched: true });
+  jest.mocked(fetchHistoricPrices).mockResolvedValue([]);
+  await syncEthUsdPrice(true);
+  expect(deferMissingPrices).toHaveBeenCalledWith([], closed, closed, now);
+  expect(savePriceReset).toHaveBeenCalledWith({
+    next: closed + 300_000,
+    end: closed,
+    latched: true
   });
-
-  it('rethrows non-rate-limit Mobula failures', async () => {
-    const error = buildAxiosError(500);
-    (getEthPriceCount as jest.Mock).mockResolvedValue(1);
-    mockGet.mockRejectedValue(error);
-
-    await expect(syncEthUsdPrice(false)).rejects.toBe(error);
-  });
-
-  it('configures bounded retries for transient Mobula responses', () => {
-    const retryConfig = getRetryConfig();
-
-    expect(retryConfig.retries).toBe(3);
-    expect(retryConfig.shouldResetTimeout).toBe(true);
-    expect(retryConfig.retryCondition(buildAxiosError(500))).toBe(true);
-    expect(retryConfig.retryCondition(buildAxiosError(429))).toBe(true);
-    expect(
-      retryConfig.retryCondition(buildAxiosError(429, { 'retry-after': '31' }))
-    ).toBe(false);
-    expect(
-      retryConfig.retryDelay(1, buildAxiosError(429, { 'retry-after': '5' }))
-    ).toBe(5000);
-    expect(retryConfig.retryDelay(1, buildAxiosError(503))).toBe(1234);
-    expect(mockExponentialDelay).toHaveBeenCalledWith(
-      1,
-      expect.objectContaining({
-        response: expect.objectContaining({ status: 503 })
-      })
-    );
-  });
+  expect(db.saveLive).toHaveBeenCalledWith(live);
 });

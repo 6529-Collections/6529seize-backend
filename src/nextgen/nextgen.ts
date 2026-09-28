@@ -29,7 +29,7 @@ export async function findNextGenTransactions() {
   const dataSource = getDataSource();
   await withNextgenDbLockRetry(
     async () =>
-      await dataSource.transaction(async (entityManager) => {
+      await dataSource.transaction('REPEATABLE READ', async (entityManager) => {
         const startBlock = await fetchNextGenLatestBlock(entityManager);
 
         let endBlock = latestBlock;
