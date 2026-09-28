@@ -19,6 +19,8 @@ beforeEach(async () => {
   mockRedis.get.mockResolvedValue(null);
   mockRedis.set.mockResolvedValue('OK');
   await getUnavailablePrices(now);
+  await getUnavailablePrices(now);
+  jest.clearAllMocks();
 });
 it('records only contiguous missing closes and expires their retry cooldown', async () => {
   await deferMissingPrices(
@@ -57,6 +59,50 @@ it('retains cooldown locally after failed persistence', async () => {
   expect(await getUnavailablePrices(now)).toEqual([
     { first: now, last: now, retryAt: now + day }
   ]);
+});
+
+it.each([null, '[]'])(
+  'keeps unpersisted cooldowns ahead of stale Redis value %s and flushes them',
+  async (raw) => {
+    mockRedis.set.mockRejectedValue(new Error('write failed'));
+    await deferMissingPrices([], now, now, now);
+    mockRedis.get.mockClear().mockResolvedValue(raw);
+    const ranges = [{ first: now, last: now, retryAt: now + day }];
+    expect(await getUnavailablePrices(now)).toEqual(ranges);
+    expect(mockRedis.get).not.toHaveBeenCalled();
+    mockRedis.set.mockResolvedValue('OK');
+    expect(await getUnavailablePrices(now)).toEqual(ranges);
+    expect(mockRedis.set).toHaveBeenLastCalledWith(
+      ethPriceStateKey('unavailable'),
+      JSON.stringify(ranges),
+      { PX: day }
+    );
+    // Successful persistence restores normal authoritative empty reads.
+    expect(await getUnavailablePrices(now)).toEqual([]);
+  }
+);
+
+it('keeps an older saved cooldown together with a newly pending one', async () => {
+  const old = { first: now - step, last: now - step, retryAt: now + day };
+  mockRedis.get.mockResolvedValue(JSON.stringify([old]));
+  mockRedis.set.mockRejectedValue(new Error('write failed'));
+  await deferMissingPrices([], now, now, now);
+  expect(await getUnavailablePrices(now)).toEqual([
+    old,
+    { first: now, last: now, retryAt: now + day }
+  ]);
+});
+
+it('expires pending cooldowns without extending their retry times on reconnect', async () => {
+  mockRedis.isReady = false;
+  await deferMissingPrices([], now, now, now);
+  mockRedis.isReady = true;
+  expect(await getUnavailablePrices(now + day)).toEqual([]);
+  expect(mockRedis.set).toHaveBeenLastCalledWith(
+    ethPriceStateKey('unavailable'),
+    '[]',
+    { PX: day }
+  );
 });
 it('rejects invalid state without hiding database gaps', async () => {
   mockRedis.get.mockResolvedValue(

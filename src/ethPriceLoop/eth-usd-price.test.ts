@@ -192,6 +192,32 @@ it('learns a smaller gap repair after timeout without marking it unavailable', a
   expect(db.repair).toHaveBeenCalledTimes(1);
   expect(db.saveLive).toHaveBeenCalledWith(live);
 });
+
+it('uses a reduced window for subsequent independent gaps in the same invocation', async () => {
+  const olderEnd = closed - 2 * HISTORY_CHUNK_MS;
+  jest.mocked(db.findGaps).mockResolvedValue([
+    { start: closed - HISTORY_CHUNK_MS, end: closed },
+    { start: olderEnd - HISTORY_CHUNK_MS, end: olderEnd }
+  ]);
+  const error = new SqlExecutionBudgetExceededError(
+    'SQL_BUDGET_EXCEEDED',
+    'WORK',
+    'NOT_SENT'
+  );
+  jest
+    .mocked(db.repair)
+    .mockRejectedValueOnce(error)
+    .mockResolvedValue(undefined);
+  jest.mocked(shrinkHistoryChunk).mockResolvedValue(2 * PRICE_INTERVAL_MS);
+  await expect(syncEthUsdPrice(false)).rejects.toThrow('incomplete work');
+  expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
+    2,
+    olderEnd - PRICE_INTERVAL_MS,
+    olderEnd
+  );
+  expect(db.repair).toHaveBeenCalledTimes(2);
+  expect(db.saveLive).toHaveBeenCalledWith(live);
+});
 it('resumes reset even after reset flag is cleared and checkpoints after commit', async () => {
   jest
     .mocked(getPriceReset)

@@ -105,6 +105,10 @@ not depend on the reset cursor and continues independently. Retry cooldowns use
 `local`). During Redis outages, normal recovery/live collection continue with
 warm-process cooldowns; a cold start or lost cache can retry unavailable history
 sooner. Reset arming is logged explicitly.
+Within a warm process, failed/disconnected Redis writes remain pending and take
+precedence over stale or empty reads. Subsequent reads retry those writes, using
+the original cooldown expiry times. Once a write is acknowledged, normal Redis
+reads are authoritative again, including an operator clearing the saved state.
 
 ## Bounds and failures
 
@@ -114,7 +118,7 @@ chunk may finish beyond that budget. Each repair database transaction has a
 90-second total budget, 30-second statement limit, and five-second lock wait.
 Budget exhaustion or a deadlock rolls back the entire chunk for a later retry;
 do not move mint correction outside the transaction to bypass this safeguard.
-If the database work deadline expires before COMMIT, the next invocation uses
+If the database work deadline expires before COMMIT, subsequent chunks use
 half as many five-minute intervals, down to one. The reduced limit is saved
 without expiry in existing Redis at
 `eth-price:coinbase-batch-size:v1:<environment>:<DB_HOST>:<DB_NAME>` and applies
@@ -127,6 +131,9 @@ the database bottleneck. Redis outages retain the limit in a warm process, but
 cold starts without saved state can repeat the larger attempt. A timeout even for
 one interval needs database/query investigation; recovery does not skip the
 failed data or claim it has been repaired.
+Pending batch-size writes likewise retain the smaller local limit until Redis
+acknowledges it. Remaining independent gaps in the current invocation immediately
+use the reduced window; the failed range still waits for a later invocation.
 Every HTTP attempt has a ten-second timeout;
 network errors, timeouts, HTTP 429, and server errors get at most three retries
 with bounded backoff. Other HTTP errors fail immediately. Live collection is

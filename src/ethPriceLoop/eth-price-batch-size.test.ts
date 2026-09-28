@@ -18,6 +18,8 @@ beforeEach(async () => {
   mockRedis.get.mockResolvedValue(null);
   mockRedis.set.mockResolvedValue('OK');
   await getHistoryChunkMs();
+  await getHistoryChunkMs();
+  jest.clearAllMocks();
 });
 
 it('halves failed work and reloads the durable size on the next invocation', async () => {
@@ -73,6 +75,37 @@ it('keeps the reduced size locally if Redis persistence fails', async () => {
   await shrinkHistoryChunk(timeout(), first, first + PRICE_INTERVAL_MS);
   mockRedis.isReady = false;
   expect(await getHistoryChunkMs()).toBe(PRICE_INTERVAL_MS);
+});
+
+it.each([null, String(HISTORY_CHUNK_MS)])(
+  'keeps a pending reduction ahead of stale Redis value %s and retries persistence',
+  async (raw) => {
+    mockRedis.set.mockRejectedValue(new Error('write failed'));
+    await shrinkHistoryChunk(timeout(), first, first + PRICE_INTERVAL_MS);
+    mockRedis.get.mockResolvedValue(raw);
+    expect(await getHistoryChunkMs()).toBe(PRICE_INTERVAL_MS);
+    expect(mockRedis.get).not.toHaveBeenCalled();
+    expect(mockRedis.set).toHaveBeenCalledTimes(2);
+    mockRedis.set.mockResolvedValue('OK');
+    expect(await getHistoryChunkMs()).toBe(PRICE_INTERVAL_MS);
+    expect(mockRedis.set).toHaveBeenLastCalledWith(
+      ethPriceStateKey('batch-size'),
+      String(PRICE_INTERVAL_MS)
+    );
+    // Once the pending write is acknowledged, operator deletion is authoritative.
+    mockRedis.get.mockResolvedValue(null);
+    expect(await getHistoryChunkMs()).toBe(HISTORY_CHUNK_MS);
+  }
+);
+
+it('flushes a reduction learned while disconnected before accepting remote state', async () => {
+  mockRedis.isReady = false;
+  await shrinkHistoryChunk(timeout(), first, first + PRICE_INTERVAL_MS);
+  expect(mockRedis.set).not.toHaveBeenCalled();
+  mockRedis.isReady = true;
+  expect(await getHistoryChunkMs()).toBe(PRICE_INTERVAL_MS);
+  expect(mockRedis.set).toHaveBeenCalledTimes(1);
+  expect(mockRedis.get).not.toHaveBeenCalled();
 });
 
 it.each(['NaN', '0', '-1', '300001', String(2 * HISTORY_CHUNK_MS)])(

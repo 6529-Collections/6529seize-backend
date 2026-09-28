@@ -13,6 +13,25 @@ const RETRY_AFTER_MS = 24 * 60 * 60 * 1000;
 const logger = Logger.get('ETH_PRICE');
 // Best-effort cooldown survives Redis disconnects in a warm Lambda as well.
 const localRanges = new Map<string, UnavailablePrices[]>();
+const pendingPersistence = new Set<string>();
+
+async function persistRanges(
+  key: string,
+  ranges: UnavailablePrices[]
+): Promise<void> {
+  try {
+    const redis = getRedisClient();
+    if (redis?.isReady) {
+      await redis.set(key, JSON.stringify(ranges), { PX: RETRY_AFTER_MS });
+      pendingPersistence.delete(key);
+    }
+  } catch (error) {
+    logger.warn(
+      'Could not persist ETH price retry cooldown; gaps remain discoverable',
+      error
+    );
+  }
+}
 
 function isUnavailableRange(value: unknown): value is UnavailablePrices {
   if (!value || typeof value !== 'object') return false;
@@ -36,7 +55,7 @@ export async function getUnavailablePrices(
   let ranges = localRanges.get(key) ?? [];
   const redis = getRedisClient();
   try {
-    if (redis?.isReady) {
+    if (redis?.isReady && !pendingPersistence.has(key)) {
       const raw = await redis.get(key);
       const decoded: unknown = raw === null ? [] : JSON.parse(raw);
       if (!Array.isArray(decoded) || !decoded.every(isUnavailableRange))
@@ -56,6 +75,7 @@ export async function getUnavailablePrices(
       range.last <= now
   );
   localRanges.set(key, ranges);
+  if (pendingPersistence.has(key)) await persistRanges(key, ranges);
   return ranges;
 }
 
@@ -83,6 +103,7 @@ export async function deferMissingPrices(
   const key = ethPriceStateKey('unavailable');
   const ranges = [...(await getUnavailablePrices(now)), ...missing];
   localRanges.set(key, ranges);
+  pendingPersistence.add(key);
   logger.warn(
     'Coinbase omitted ETH price candles; deferring missing closes for 24 hours',
     {
@@ -95,14 +116,5 @@ export async function deferMissingPrices(
       )
     }
   );
-  const redis = getRedisClient();
-  try {
-    if (redis?.isReady)
-      await redis.set(key, JSON.stringify(ranges), { PX: RETRY_AFTER_MS });
-  } catch (error) {
-    logger.warn(
-      'Could not persist ETH price retry cooldown; gaps remain discoverable',
-      error
-    );
-  }
+  await persistRanges(key, ranges);
 }

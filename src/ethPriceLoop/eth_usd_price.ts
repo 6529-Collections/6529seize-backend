@@ -50,7 +50,8 @@ async function backfillGaps(run: RecoveryRun): Promise<void> {
         `[BACKFILLED ${prices.length} ETH PRICES] [FROM ${first}] [THROUGH ${last}]`
       );
     } catch (error) {
-      await shrinkHistoryChunk(error, first, last);
+      run.historyChunkMs =
+        (await shrinkHistoryChunk(error, first, last)) ?? run.historyChunkMs;
       // An unavailable range must not starve independent holes.
       run.errors.push(error);
     }
