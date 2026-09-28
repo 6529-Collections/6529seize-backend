@@ -114,6 +114,19 @@ chunk may finish beyond that budget. Each repair database transaction has a
 90-second total budget, 30-second statement limit, and five-second lock wait.
 Budget exhaustion or a deadlock rolls back the entire chunk for a later retry;
 do not move mint correction outside the transaction to bypass this safeguard.
+If the database work deadline expires before COMMIT, the next invocation uses
+half as many five-minute intervals, down to one. The reduced limit is saved
+without expiry in existing Redis at
+`eth-price:coinbase-batch-size:v1:<environment>:<DB_HOST>:<DB_NAME>` and applies
+to both gap recovery and reset. This lets oversized day-long repairs make
+progress as smaller atomic transactions; reset checkpoints each completed batch.
+The failed transaction is not immediately replayed, and its error remains visible.
+Acquisition, lock conflicts, and ambiguous COMMIT failures do not reduce the size.
+The limit stays reduced until an operator removes that Redis key after resolving
+the database bottleneck. Redis outages retain the limit in a warm process, but
+cold starts without saved state can repeat the larger attempt. A timeout even for
+one interval needs database/query investigation; recovery does not skip the
+failed data or claim it has been repaired.
 Every HTTP attempt has a ten-second timeout;
 network errors, timeouts, HTTP 429, and server errors get at most three retries
 with bounded backoff. Other HTTP errors fail immediately. Live collection is

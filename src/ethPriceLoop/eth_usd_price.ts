@@ -3,10 +3,10 @@ import {
   getUnavailablePrices
 } from './eth-price-unavailable';
 import { Logger } from '@/logging';
+import { getHistoryChunkMs, shrinkHistoryChunk } from './eth-price-batch-size';
 import {
   fetchHistoricPrices,
   fetchLivePrice,
-  HISTORY_CHUNK_MS,
   PRICE_INTERVAL_MS
 } from './coinbase';
 import { ethPriceRecoveryDb } from './eth-price-recovery.db';
@@ -20,6 +20,7 @@ type RecoveryRun = {
   closedThrough: number;
   chunks: number;
   errors: unknown[];
+  historyChunkMs: number;
 };
 
 function hasBudget(run: RecoveryRun): boolean {
@@ -37,7 +38,7 @@ async function backfillGaps(run: RecoveryRun): Promise<void> {
     );
     const first = Math.max(
       (Math.floor(gap.start / PRICE_INTERVAL_MS) + 1) * PRICE_INTERVAL_MS,
-      last - HISTORY_CHUNK_MS + PRICE_INTERVAL_MS
+      last - run.historyChunkMs + PRICE_INTERVAL_MS
     );
     if (first > last) continue;
     run.chunks++;
@@ -49,6 +50,7 @@ async function backfillGaps(run: RecoveryRun): Promise<void> {
         `[BACKFILLED ${prices.length} ETH PRICES] [FROM ${first}] [THROUGH ${last}]`
       );
     } catch (error) {
+      await shrinkHistoryChunk(error, first, last);
       // An unavailable range must not starve independent holes.
       run.errors.push(error);
     }
@@ -60,11 +62,16 @@ async function resumeReset(reset: boolean, run: RecoveryRun): Promise<void> {
   while (state && state.next <= state.end && hasBudget(run)) {
     const last = Math.min(
       state.end,
-      state.next + HISTORY_CHUNK_MS - PRICE_INTERVAL_MS
+      state.next + run.historyChunkMs - PRICE_INTERVAL_MS
     );
     run.chunks++;
     const prices = await fetchHistoricPrices(state.next, last);
-    await ethPriceRecoveryDb.repair(prices, true, run.started);
+    try {
+      await ethPriceRecoveryDb.repair(prices, true, run.started);
+    } catch (error) {
+      await shrinkHistoryChunk(error, state.next, last);
+      throw error;
+    }
     await deferMissingPrices(prices, state.next, last, run.started);
     // Advance only after prices, transaction corrections and mint stats commit.
     state.next = last + PRICE_INTERVAL_MS;
@@ -81,7 +88,8 @@ export async function syncEthUsdPrice(reset: boolean): Promise<void> {
     closedThrough:
       Math.floor((started - 60_000) / PRICE_INTERVAL_MS) * PRICE_INTERVAL_MS,
     chunks: 0,
-    errors: []
+    errors: [],
+    historyChunkMs: await getHistoryChunkMs()
   };
   try {
     await backfillGaps(run);

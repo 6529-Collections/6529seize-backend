@@ -2,6 +2,12 @@ jest.mock('./eth-price-unavailable', () => ({
   getUnavailablePrices: jest.fn(),
   deferMissingPrices: jest.fn()
 }));
+jest.mock('./eth-price-batch-size', () => ({
+  getHistoryChunkMs: jest.fn(),
+  shrinkHistoryChunk: jest.fn()
+}));
+import { getHistoryChunkMs, shrinkHistoryChunk } from './eth-price-batch-size';
+import { SqlExecutionBudgetExceededError } from '@/db/sql-execution-budget';
 import {
   getUnavailablePrices,
   deferMissingPrices
@@ -36,6 +42,8 @@ const closed = Date.UTC(2026, 8, 28, 12);
 const live = { timestamp_ms: now, date: new Date(now), usd_price: 2600 };
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(getHistoryChunkMs).mockResolvedValue(HISTORY_CHUNK_MS);
+  jest.mocked(shrinkHistoryChunk).mockResolvedValue(undefined);
   jest.mocked(getUnavailablePrices).mockResolvedValue([]);
   jest.mocked(deferMissingPrices).mockResolvedValue(undefined);
   jest.spyOn(Date, 'now').mockReturnValue(now);
@@ -89,6 +97,99 @@ it('does not advance a reset checkpoint on failed database correction', async ()
   jest.mocked(db.repair).mockRejectedValue(new Error('rollback'));
   await expect(syncEthUsdPrice(true)).rejects.toThrow();
   expect(savePriceReset).not.toHaveBeenCalled();
+  expect(shrinkHistoryChunk).toHaveBeenCalledWith(
+    expect.any(Error),
+    closed - 600_000,
+    closed
+  );
+  expect(db.saveLive).toHaveBeenCalledWith(live);
+});
+
+it('uses a learned smaller window for gaps and the reset checkpoint', async () => {
+  jest.mocked(getHistoryChunkMs).mockResolvedValue(2 * PRICE_INTERVAL_MS);
+  jest
+    .mocked(db.findGaps)
+    .mockResolvedValue([{ start: closed - HISTORY_CHUNK_MS, end: closed }]);
+  jest.mocked(getPriceReset).mockResolvedValue({
+    next: closed - 3 * PRICE_INTERVAL_MS,
+    end: closed,
+    latched: true
+  });
+  const checkpoints: number[] = [];
+  jest.mocked(savePriceReset).mockImplementation(async (state) => {
+    checkpoints.push(state.next);
+  });
+  await syncEthUsdPrice(true);
+  expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
+    1,
+    closed - PRICE_INTERVAL_MS,
+    closed
+  );
+  expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
+    2,
+    closed - 3 * PRICE_INTERVAL_MS,
+    closed - 2 * PRICE_INTERVAL_MS
+  );
+  expect(fetchHistoricPrices).toHaveBeenNthCalledWith(
+    3,
+    closed - PRICE_INTERVAL_MS,
+    closed
+  );
+  expect(checkpoints).toEqual([
+    closed - PRICE_INTERVAL_MS,
+    closed + PRICE_INTERVAL_MS
+  ]);
+  expect(db.repair).toHaveBeenCalledTimes(3);
+  expect(db.saveLive).toHaveBeenCalledWith(live);
+});
+
+it('retains completed reset progress when a later small batch times out', async () => {
+  jest.mocked(getHistoryChunkMs).mockResolvedValue(2 * PRICE_INTERVAL_MS);
+  const state = {
+    next: closed - 3 * PRICE_INTERVAL_MS,
+    end: closed,
+    latched: true
+  };
+  jest.mocked(getPriceReset).mockResolvedValue(state);
+  const error = new SqlExecutionBudgetExceededError(
+    'SQL_BUDGET_EXCEEDED',
+    'WORK',
+    'NOT_SENT'
+  );
+  jest
+    .mocked(db.repair)
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(error);
+  await expect(syncEthUsdPrice(true)).rejects.toThrow('incomplete work');
+  expect(savePriceReset).toHaveBeenCalledTimes(1);
+  expect(state.next).toBe(closed - PRICE_INTERVAL_MS);
+  expect(shrinkHistoryChunk).toHaveBeenCalledWith(
+    error,
+    closed - PRICE_INTERVAL_MS,
+    closed
+  );
+  expect(deferMissingPrices).toHaveBeenCalledTimes(1);
+  expect(db.saveLive).toHaveBeenCalledWith(live);
+});
+
+it('learns a smaller gap repair after timeout without marking it unavailable', async () => {
+  const error = new SqlExecutionBudgetExceededError(
+    'SQL_BUDGET_EXCEEDED',
+    'WORK',
+    'NOT_SENT'
+  );
+  jest
+    .mocked(db.findGaps)
+    .mockResolvedValue([{ start: closed - HISTORY_CHUNK_MS, end: closed }]);
+  jest.mocked(db.repair).mockRejectedValue(error);
+  await expect(syncEthUsdPrice(false)).rejects.toThrow('incomplete work');
+  expect(shrinkHistoryChunk).toHaveBeenCalledWith(
+    error,
+    closed - HISTORY_CHUNK_MS + PRICE_INTERVAL_MS,
+    closed
+  );
+  expect(deferMissingPrices).not.toHaveBeenCalled();
+  expect(db.repair).toHaveBeenCalledTimes(1);
   expect(db.saveLive).toHaveBeenCalledWith(live);
 });
 it('resumes reset even after reset flag is cleared and checkpoints after commit', async () => {
