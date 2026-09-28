@@ -1,3 +1,8 @@
+jest.mock('node:crypto', () => ({
+  ...jest.requireActual('node:crypto'),
+  randomInt: jest.fn()
+}));
+import { randomInt } from 'node:crypto';
 import type { SQSEvent } from 'aws-lambda';
 import { processWebSocketBatch } from './processor';
 import { retryDelaySeconds } from './retry';
@@ -71,12 +76,19 @@ describe('durable outbound consumer', () => {
   });
 
   it('caps randomized retry backoff and never retries immediately', () => {
-    const random = jest.spyOn(Math, 'random');
-    random.mockReturnValue(1);
+    const random = randomInt as unknown as jest.MockedFunction<
+      (min: number, max: number) => number
+    >;
+    random.mockReturnValueOnce(2).mockReturnValueOnce(60);
     expect(retryDelaySeconds('1')).toBe(2);
     expect(retryDelaySeconds('100')).toBe(60);
-    random.mockReturnValue(0);
+    random.mockReturnValue(1);
     expect(retryDelaySeconds('100')).toBe(1);
-    random.mockRestore();
+    expect(random.mock.calls).toEqual([
+      [1, 3],
+      [1, 61],
+      [1, 61]
+    ]);
+    random.mockReset();
   });
 });

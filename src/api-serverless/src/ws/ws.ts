@@ -304,11 +304,9 @@ export class AppWebSockets {
     }
     const waveId = payload.data?.wave_id ?? payload.data?.wave?.id;
     const attachmentId = payload.data?.attachment_id;
-    const resource = attachmentId
-      ? { attachmentId }
-      : waveId
-        ? { waveId }
-        : null;
+    let resource: { attachmentId: string } | { waveId: string } | null = null;
+    if (attachmentId) resource = { attachmentId };
+    else if (waveId) resource = { waveId };
     if (
       resource &&
       !(await this.wsConnectionRepository.canIdentityReadQueuedResource(

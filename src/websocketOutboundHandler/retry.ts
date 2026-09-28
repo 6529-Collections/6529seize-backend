@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto';
 import { ChangeMessageVisibilityCommand, SQSClient } from '@aws-sdk/client-sqs';
 import type { SQSRecord } from 'aws-lambda';
 
@@ -5,7 +6,7 @@ export function retryDelaySeconds(receiveCount: string): number {
   const count = Number(receiveCount);
   const attempt = Number.isSafeInteger(count) && count > 0 ? count : 1;
   const ceiling = Math.min(60, 2 ** Math.min(attempt, 6));
-  return Math.max(1, Math.ceil(Math.random() * ceiling));
+  return randomInt(1, ceiling + 1);
 }
 
 let client: SQSClient | undefined;

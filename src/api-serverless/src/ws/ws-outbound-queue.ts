@@ -18,6 +18,7 @@ export async function enqueueWebSocketFrame(
   // suppressed by FIFO content deduplication. SDK retries reuse this envelope.
   await sqs.sendToQueueName({
     queueName: WS_OUTBOUND_QUEUE,
+    // Unlike diagnostic hashes, this must remain stable across UTC days.
     messageGroupId: createHash('sha256')
       .update(frame.connectionId)
       .digest('hex'),
@@ -28,8 +29,7 @@ export async function enqueueWebSocketFrame(
 export function parseQueuedWebSocketFrame(body: string): QueuedWebSocketFrame {
   const frame = JSON.parse(body) as Partial<QueuedWebSocketFrame> | null;
   if (
-    !frame ||
-    frame.version !== 1 ||
+    frame?.version !== 1 ||
     typeof frame.id !== 'string' ||
     !frame.id ||
     typeof frame.connectionId !== 'string' ||

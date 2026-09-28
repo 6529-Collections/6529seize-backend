@@ -16,11 +16,16 @@ business transactions.
 concurrency 16 and Lambda reserved concurrency 20. Transport still uses three
 standard SDK attempts with jitter. Exhausted SDK attempts, local sender limits,
 and five-second send deadlines throw. Partial batch failure retains the frame;
-the consumer changes its visibility to full-jitter exponential backoff, starting
+the consumer changes its visibility to randomized exponential backoff, starting
 at 1–2 seconds and capped at 60 seconds. If changing visibility fails, the
 180-second default remains. The consumer stops at the first failure if batching
 is ever increased, retaining all unprocessed records to preserve FIFO ordering.
 No retry reinserts a new message or resets its receive count.
+
+The deployed worker uses the API Gateway adapter; local development bypasses
+the queue. Malformed envelopes or payloads are deliberately retained through the
+same retry/DLQ policy rather than silently acknowledged. The retry error and
+backlog alarms make these failures visible while preserving evidence.
 
 The source retains work for four days. After 100 receives, SQS moves a failing
 frame to a 14-day FIFO dead-letter queue. Dead letters and queue age above 60
@@ -70,7 +75,12 @@ not proof of correct delivery.
 ## Rollout and validation
 
 Deploy `websocketOutboundHandler` first, including queue policies, FIFO source,
-DLQ and alarms. Verify queue access, endpoint secret loading and a synthetic
+DLQ and alarms. Apply the regenerated operational-monitoring/source templates as part of the
+authorized rollout so structured errors and Lambda failures/throttles include
+the new worker. The queue resource policy explicitly grants the existing Lambda
+role `sqs:ChangeMessageVisibility`; effective access (including any denies or
+permission boundaries) must be verified in staging. Verify queue access, endpoint
+secret loading and a synthetic
 staging frame before deploying producers. Then deploy `api` (`seizeAPI`),
 `pushNotificationsHandler`, `releaseNotesGenerationLoop`, `helpBotReplyLoop`,
 `nftLinkRefresherLoop`, `dropMediaSanitizer`, `attachmentsOrchestrator`, and
