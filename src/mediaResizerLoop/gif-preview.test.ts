@@ -227,3 +227,59 @@ it('reads complete GIF metadata without decoding the full animation', async () =
   expect(selected.delay).toEqual(animated.delay);
   expect(selected.loop).toBe(animated.loop);
 });
+
+it('resizes a 117-frame submission with one sequential decode', async () => {
+  const bytes = await fixture(2, 2, 117);
+  // A large logical canvas with tiny subframes exercises disposal/coalescing
+  // and the reported submission's decode dimensions without a 1 GB fixture.
+  bytes.writeUInt16LE(1920, 6);
+  bytes.writeUInt16LE(1080, 8);
+  await writeFile(source, bytes);
+  const before = await Sharp(source).metadata();
+  const output = await prepareGifPreview(source, {
+    width: null,
+    height: 600,
+    fit: 'cover'
+  });
+  expect(await Sharp(output, { animated: true }).metadata()).toMatchObject({
+    width: 357,
+    pageHeight: 200,
+    pages: 117,
+    delay: before.delay,
+    loop: before.loop
+  });
+}, 30000);
+
+it('rejects excessive sequential input work before decoding', async () => {
+  const bytes = await fixture(2, 2, 117);
+  bytes.writeUInt16LE(2048, 6);
+  bytes.writeUInt16LE(2048, 8);
+  await writeFile(source, bytes);
+  await expect(
+    prepareGifPreview(source, { width: null, height: 600, fit: 'cover' })
+  ).rejects.toThrow('DECODED_IMAGE_TOO_LARGE');
+});
+
+it.each([
+  { width: 7, height: null, fit: 'cover' as const },
+  { width: 7, height: 7, fit: 'cover' as const },
+  { width: 7, height: 7, fit: 'inside' as const },
+  { width: 7, height: 7, fit: 'outside' as const }
+])('retains the resize geometry for %j', async (target) => {
+  await fixture(20, 14, 3);
+  const expected = await Sharp(source)
+    .resize(target.width, target.height, {
+      fit: target.fit,
+      withoutEnlargement: true
+    })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const output = await prepareGifPreview(source, target);
+  expect(await Sharp(output, { animated: true }).metadata()).toMatchObject({
+    width: expected.info.width,
+    pageHeight: expected.info.height,
+    pages: 3,
+    delay: [40, 50, 60],
+    loop: 3
+  });
+});

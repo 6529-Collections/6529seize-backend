@@ -21,6 +21,9 @@ function yamlList(values) {
 }
 
 function buildWorkflowYaml(config) {
+  const mediaResizerMemorySize = config.services.find(
+    (service) => service.name === 'mediaResizerLoop'
+  )?.memory_size;
   const serviceNames = config.services.map((service) => service.name);
   const serviceCasePattern = serviceNames.join('|');
   const verificationTargetsByService = Object.fromEntries(
@@ -402,7 +405,10 @@ jobs:
           VERSION_DESCRIPTION="$(git rev-parse --short HEAD) - $(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
           aws lambda update-function-code --function-name  mediaResizerLoop --zip-file fileb://src/mediaResizerLoop/dist/index.zip
           sleep 10
-          aws lambda update-function-configuration --function-name mediaResizerLoop --runtime nodejs22.x --description "$VERSION_DESCRIPTION"
+          aws lambda update-function-configuration --function-name mediaResizerLoop --runtime nodejs22.x --memory-size ${mediaResizerMemorySize} --description "$VERSION_DESCRIPTION"
+          aws lambda wait function-updated-v2 --function-name mediaResizerLoop
+          ACTUAL_MEMORY_SIZE="$(aws lambda get-function-configuration --function-name mediaResizerLoop --query MemorySize --output text)"
+          test "$ACTUAL_MEMORY_SIZE" = "${mediaResizerMemorySize}"
       - name: Deploy nextgenMediaProxyInterceptor
         if: github.event.inputs.service == 'nextgenMediaProxyInterceptor'
         run: |

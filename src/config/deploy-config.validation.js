@@ -39,6 +39,18 @@ function validateDeployServiceConfig(service, seenNames) {
   seenNames.add(service.name);
 
   if (
+    service.name === 'mediaResizerLoop' &&
+    (!Number.isInteger(service.memory_size) ||
+      service.memory_size < 512 ||
+      service.memory_size > 10240 ||
+      service.memory_size % 512 !== 0)
+  ) {
+    throw new Error(
+      'mediaResizerLoop memory_size must be a multiple of 512 MiB between 512 and 10240'
+    );
+  }
+
+  if (
     !Array.isArray(service.allowed_environments) ||
     service.allowed_environments.length === 0
   ) {

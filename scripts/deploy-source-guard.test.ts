@@ -22,6 +22,38 @@ const steps: WorkflowStep[] = job.steps;
 const guard = steps[0];
 const sourceSha = 'a'.repeat(40);
 
+it.each([2048, 1028])(
+  'verifies GIF-worker memory after deployment (%s MiB)',
+  (actualMemory) => {
+    const deploy = steps.find(
+      (step) => step.name === 'Deploy mediaResizerLoop'
+    )!;
+    const result = spawnSync(
+      'bash',
+      [
+        '-e',
+        '-c',
+        `
+    git() { printf 'fixture'; }
+    sleep() { :; }
+    aws() {
+      if [ "$2" = "update-function-configuration" ]; then
+        case " $* " in *" --memory-size 2048 "*) ;; *) return 99 ;; esac
+      fi
+      if [ "$2" = "get-function-configuration" ]; then printf '%s' "$MOCK_MEMORY"; fi
+    }
+    ${deploy.run}
+  `
+      ],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, MOCK_MEMORY: String(actualMemory) }
+      }
+    );
+    expect(result.status).toBe(actualMemory === 2048 ? 0 : 1);
+  }
+);
+
 function validateDispatch(
   expectedSha: string,
   environment: 'staging' | 'prod' = 'staging',

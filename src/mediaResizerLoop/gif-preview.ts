@@ -11,6 +11,9 @@ const MAX_FRAME_PIXELS = 8 * 1024 * 1024;
 const MAX_OUTPUT_PIXELS = 8 * 1024 * 1024;
 const MAX_FRAMES = 120;
 const MAX_SCAN_PIXELS = 2_000_000_000;
+// AUTO resizing uses the native sequential GIF loader, not page-by-page seeks.
+// Bound total decode work as well as the independently bounded frame and output.
+const MAX_SEQUENTIAL_PIXELS = 256 * 1024 * 1024;
 const MAX_PASSTHROUGH_BYTES = 8 * 1024 * 1024;
 const MAX_SECONDS = 20;
 export const UPLOAD_RESERVE_MS = 2000;
@@ -107,31 +110,52 @@ export function getGifPreviewDimensions(
   return { width: outputWidth, height: outputHeight };
 }
 
-/** Only call within withResizeSourceFile: all output shares its cleanup scope. */
-export async function prepareGifPreview(
+async function prepareAutoFrames(
   inputPath: string,
+  rawPath: string,
+  source: { width: number; height: number; pages: number },
   target: GifPreviewTarget,
-  remainingTimeMs = MAX_SECONDS * 1000 + UPLOAD_RESERVE_MS
+  deadline: number
 ) {
-  const deadline =
-    Date.now() +
-    Math.min(MAX_SECONDS * 1000, remainingTimeMs - UPLOAD_RESERVE_MS);
-  remainingSeconds(deadline);
-  // Sharp's GIF loader exposes n-pages/delay metadata even when only one page
-  // is selected. Keep metadata inspection independent of full-animation decode.
-  const metadata = await Sharp(inputPath, {
-    failOn: 'none',
-    limitInputPixels: MAX_FRAME_PIXELS
-  }).metadata();
-  const { width, height, pages } = inspectGif(metadata);
-  validateGifTiming(metadata, pages);
-  if (canKeepOriginal(metadata, target, (await stat(inputPath)).size))
-    return inputPath;
-  if (width * height * ((pages * (pages + 1)) / 2) > MAX_SCAN_PIXELS)
+  if (source.width * source.height * source.pages > MAX_SEQUENTIAL_PIXELS)
     rejectLarge();
+  const ratio = Math.min(
+    1,
+    target.width === null
+      ? target.height! / source.height
+      : target.width / source.width
+  );
+  const dimensions = getGifPreviewDimensions(
+    Math.max(1, Math.round(source.width * ratio)),
+    Math.max(1, Math.round(source.height * ratio)),
+    source.pages
+  );
+  // No crop/rotate/composite operations: keep libvips' GIF scan sequential.
+  // Resize straight to the bounded dimensions and spool only the small RGBA
+  // strip. Never materialize the full-resolution source animation in JS.
+  const pixels = await Sharp(inputPath, {
+    failOn: 'none',
+    pages: source.pages,
+    sequentialRead: true,
+    limitInputPixels: MAX_SEQUENTIAL_PIXELS
+  })
+    .resize(dimensions.width, dimensions.height, { fit: 'fill' })
+    .toColourspace('srgb')
+    .ensureAlpha()
+    .raw()
+    .timeout({ seconds: remainingSeconds(deadline) })
+    .toBuffer();
+  await writeFile(rawPath, pixels);
+  return dimensions;
+}
 
-  const rawPath = `${inputPath}.rgba`;
-  const outputPath = `${inputPath}.gif`;
+async function prepareCroppedFrames(
+  inputPath: string,
+  rawPath: string,
+  pages: number,
+  target: GifPreviewTarget,
+  deadline: number
+) {
   await writeFile(rawPath, Buffer.alloc(0));
   let outputWidth = 0;
   let outputHeight = 0;
@@ -168,6 +192,44 @@ export async function prepareGifPreview(
             .toBuffer();
     await appendFile(rawPath, pixels);
   }
+  return { width: outputWidth, height: outputHeight };
+}
+
+/** Only call within withResizeSourceFile: all output shares its cleanup scope. */
+export async function prepareGifPreview(
+  inputPath: string,
+  target: GifPreviewTarget,
+  remainingTimeMs = MAX_SECONDS * 1000 + UPLOAD_RESERVE_MS
+) {
+  const deadline =
+    Date.now() +
+    Math.min(MAX_SECONDS * 1000, remainingTimeMs - UPLOAD_RESERVE_MS);
+  remainingSeconds(deadline);
+  // Sharp's GIF loader exposes n-pages/delay metadata even when only one page
+  // is selected. Keep metadata inspection independent of full-animation decode.
+  const metadata = await Sharp(inputPath, {
+    failOn: 'none',
+    limitInputPixels: MAX_FRAME_PIXELS
+  }).metadata();
+  const { width, height, pages } = inspectGif(metadata);
+  validateGifTiming(metadata, pages);
+  if (canKeepOriginal(metadata, target, (await stat(inputPath)).size))
+    return inputPath;
+  const isAuto = target.width === null || target.height === null;
+  if (!isAuto && width * height * ((pages * (pages + 1)) / 2) > MAX_SCAN_PIXELS)
+    rejectLarge();
+
+  const rawPath = `${inputPath}.rgba`;
+  const outputPath = `${inputPath}.gif`;
+  const { width: outputWidth, height: outputHeight } = isAuto
+    ? await prepareAutoFrames(
+        inputPath,
+        rawPath,
+        { width, height, pages },
+        target,
+        deadline
+      )
+    : await prepareCroppedFrames(inputPath, rawPath, pages, target, deadline);
   // Raw input is bounded to 32 MiB before Sharp reads it into memory.
   await Sharp(await readFile(rawPath), {
     raw: {

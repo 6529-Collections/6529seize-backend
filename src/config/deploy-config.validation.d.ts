@@ -2,6 +2,7 @@ export type DeployEnvironment = 'staging' | 'prod';
 
 export type DeployServiceConfig = {
   name: string;
+  memory_size?: number;
   allowed_environments: DeployEnvironment[];
   deploy_adapter:
     | 'serverless'
