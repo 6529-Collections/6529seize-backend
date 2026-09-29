@@ -39,20 +39,27 @@ export async function publishWebSocketOutbox(
           );
           if (!row) return false;
           await db.execute('SAVEPOINT ws_outbox_publish', {}, options);
+          let phase = 'decode';
           try {
             const event: WebSocketOutboxEvent =
               typeof row.event === 'string' ? JSON.parse(row.event) : row.event;
             if (event.type === 'delivery') {
+              phase = 'enqueue';
               await publish(event, String(row.id));
             } else {
+              phase = 'resolve';
+              const recipients = await resolveWebSocketEvent(event, {
+                connection
+              });
+              phase = 'materialize';
               await recordWebSocketEvents(
-                await resolveWebSocketEvent(event, { connection }),
+                recipients,
                 { connection },
                 db,
                 Number(row.created_at)
               );
             }
-          } catch {
+          } catch (error) {
             await db.execute(
               'ROLLBACK TO SAVEPOINT ws_outbox_publish',
               {},
@@ -69,6 +76,8 @@ export async function publishWebSocketOutbox(
             );
             logger.error({
               code: 'WS_OUTBOX_PUBLISH_FAILED',
+              phase,
+              error_class: safeErrorClass(error),
               event_id: String(row.id),
               attempt: Number(row.attempts) + 1,
               age_ms: Date.now() - Number(row.created_at)
@@ -92,4 +101,17 @@ export async function publishWebSocketOutbox(
   const failure = results.find((result) => result.status === 'rejected');
   if (failure?.status === 'rejected') throw failure.reason;
   return published;
+}
+
+/** Fixed diagnostic labels only: exception messages/stacks can contain SQL, tokens or payloads. */
+function safeErrorClass(error: unknown): string {
+  try {
+    if (error instanceof TypeError) return 'TypeError';
+    if (error instanceof ReferenceError) return 'ReferenceError';
+    if (error instanceof SyntaxError) return 'SyntaxError';
+    if (error instanceof RangeError) return 'RangeError';
+    return error instanceof Error ? 'Error' : 'Unknown';
+  } catch {
+    return 'Unknown';
+  }
 }

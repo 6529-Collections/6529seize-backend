@@ -1,3 +1,8 @@
+jest.mock('@/logging', () => {
+  const logger = { error: jest.fn() };
+  return { Logger: { get: () => logger } };
+});
+import { Logger } from '@/logging';
 jest.mock('./resolve', () => ({ resolveWebSocketEvent: jest.fn() }));
 import { publishWebSocketOutbox } from './publisher';
 import { resolveWebSocketEvent } from './resolve';
@@ -42,6 +47,40 @@ describe('WebSocket outbox publication', () => {
       expect.objectContaining({ id: 1 }),
       expect.anything()
     );
+  });
+  it.each([
+    [new TypeError('private payload'), 'TypeError'],
+    [new ReferenceError('private payload'), 'ReferenceError'],
+    [new SyntaxError('private payload'), 'SyntaxError'],
+    [new RangeError('private payload'), 'RangeError'],
+    [new Error('private payload'), 'Error'],
+    ['private payload', 'Unknown'],
+    [
+      new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            throw new Error('private payload');
+          }
+        }
+      ),
+      'Unknown'
+    ]
+  ])('logs safe failure diagnostics for %s', async (error, errorClass) => {
+    const db = database([pending()]);
+    await publishWebSocketOutbox(
+      jest.fn().mockRejectedValue(error),
+      db as unknown as SqlExecutor
+    );
+    const log = jest.mocked(Logger.get('WEBSOCKET_OUTBOX').error);
+    expect(log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'WS_OUTBOX_PUBLISH_FAILED',
+        phase: 'enqueue',
+        error_class: errorClass
+      })
+    );
+    expect(JSON.stringify(log.mock.calls)).not.toContain('private payload');
   });
   it('deletes only after SQS accepts the recipient job', async () => {
     const db = database([pending()]);

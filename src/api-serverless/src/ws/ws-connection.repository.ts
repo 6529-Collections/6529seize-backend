@@ -25,7 +25,7 @@ import {
   userGroupsService,
   UserGroupsService
 } from '../community-members/user-groups.service';
-import { ANON_USER_ID, SocketNotAvailableException } from './ws';
+import { ANON_USER_ID, SocketNotAvailableException } from './ws-shared';
 import { randomInt } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
