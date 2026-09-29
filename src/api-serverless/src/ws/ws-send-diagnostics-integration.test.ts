@@ -188,6 +188,125 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
     expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['missing session', null],
+    ['expired session', { identity_id: 'profile', jwt_expiry: 1 }],
+    ['renewed credentials', { identity_id: 'profile', jwt_expiry: 2000000001 }]
+  ])('does not POST queued data after %s', async (_label, session) => {
+    repository.getByConnectionId.mockResolvedValueOnce(session as never);
+    mockHandle.mockResolvedValue(response(204));
+    const batch = {
+      Records: [
+        {
+          messageId: 'revoked',
+          body: JSON.stringify({
+            version: 1,
+            id: 'revoked',
+            connectionId: 'synthetic',
+            message: '{}',
+            identityId: 'profile',
+            jwtExpiry: 2000000000
+          })
+        }
+      ]
+    } as SQSEvent;
+    expect(
+      await processWebSocketBatch(
+        batch,
+        (frame) => sockets.deliverQueued(frame),
+        jest.fn()
+      )
+    ).toEqual({ batchItemFailures: [] });
+    expect(
+      mockHandle.mock.calls.filter(([request]) => request.method === 'POST')
+    ).toHaveLength(0);
+  });
+
+  it.each([
+    [
+      'DROP_UPDATE',
+      { wave: { id: 'private-wave' } },
+      { waveId: 'private-wave' }
+    ],
+    [
+      'DROP_UPDATE_REF',
+      { wave_id: 'private-wave' },
+      { waveId: 'private-wave' }
+    ],
+    ['DROP_DELETE', { wave_id: 'private-wave' }, { waveId: 'private-wave' }],
+    [
+      'ATTACHMENT_STATUS_UPDATE',
+      { attachment_id: 'attachment' },
+      { attachmentId: 'attachment' }
+    ]
+  ])(
+    'cancels delayed %s after resource access is revoked',
+    async (type, data, resource) => {
+      repository.canIdentityReadQueuedResource.mockResolvedValue(false);
+      const batch = {
+        Records: [
+          {
+            messageId: 'private',
+            body: JSON.stringify({
+              version: 1,
+              id: 'private',
+              connectionId: 'synthetic',
+              message: JSON.stringify({ type, data }),
+              identityId: 'profile',
+              jwtExpiry: 2000000000
+            })
+          }
+        ]
+      } as SQSEvent;
+      expect(
+        await processWebSocketBatch(
+          batch,
+          (frame) => sockets.deliverQueued(frame),
+          jest.fn()
+        )
+      ).toEqual({ batchItemFailures: [] });
+      expect(repository.canIdentityReadQueuedResource).toHaveBeenCalledWith(
+        'profile',
+        resource
+      );
+      expect(mockHandle).not.toHaveBeenCalled();
+      expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+    }
+  );
+
+  it('retains the frame when authorization lookup fails instead of treating failure as revocation', async () => {
+    repository.canIdentityReadQueuedResource.mockRejectedValue(
+      new Error('database unavailable')
+    );
+    const batch = {
+      Records: [
+        {
+          messageId: 'retry-access',
+          body: JSON.stringify({
+            version: 1,
+            id: 'retry-access',
+            connectionId: 'synthetic',
+            message: JSON.stringify({
+              type: 'DROP_UPDATE_REF',
+              data: { wave_id: 'private-wave' }
+            }),
+            identityId: 'profile',
+            jwtExpiry: 2000000000
+          })
+        }
+      ]
+    } as SQSEvent;
+    expect(
+      await processWebSocketBatch(
+        batch,
+        (frame) => sockets.deliverQueued(frame),
+        jest.fn()
+      )
+    ).toEqual({ batchItemFailures: [{ itemIdentifier: 'retry-access' }] });
+    expect(mockHandle).not.toHaveBeenCalled();
+    expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+  });
+
   it('does not replay a frame after the connection has switched identity', async () => {
     await sockets.deliverQueued({
       version: 1,
