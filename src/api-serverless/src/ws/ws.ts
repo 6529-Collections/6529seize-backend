@@ -215,7 +215,9 @@ export class AppWebSockets {
     connectionId: string;
     message: string;
     skipStaleConnectionCheck?: boolean;
+    abortSignal?: AbortSignal;
   }): Promise<void> {
+    input.abortSignal?.throwIfAborted();
     // Authentication acknowledgements must follow the control operation inline,
     // including credential rejection when no authenticated row exists yet.
     if (isDevEnv() || input.skipStaleConnectionCheck)
@@ -224,18 +226,22 @@ export class AppWebSockets {
       input.connectionId,
       {}
     );
+    input.abortSignal?.throwIfAborted();
     const expiry = getActiveJwtExpiry(entity?.jwt_expiry);
     if (!entity || expiry === null) {
       await this.deregister({ connectionId: input.connectionId });
       return;
     }
     try {
-      await enqueueWebSocketFrame({
-        connectionId: input.connectionId,
-        message: input.message,
-        identityId: entity.identity_id,
-        jwtExpiry: expiry
-      });
+      await enqueueWebSocketFrame(
+        {
+          connectionId: input.connectionId,
+          message: input.message,
+          identityId: entity.identity_id,
+          jwtExpiry: expiry
+        },
+        input.abortSignal
+      );
     } catch {
       // Do not expose queue bodies/provider errors, or claim failed persistence
       // was accepted. The caller must see the failure as well as the error log.

@@ -48,7 +48,9 @@ jest.mock('@aws-sdk/client-apigatewaymanagementapi', () => {
 
 import { enqueueWebSocketFrame } from './ws-outbound-queue';
 import { HttpResponse } from '@smithy/protocol-http';
-import { AppWebSockets } from '@/api/ws/ws';
+import { NftLinkRefreshNotifier } from '@/nftLinkRefresherLoop/nft-link-refresh-notifier';
+import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
+import { AppWebSockets, appWebSockets } from '@/api/ws/ws';
 import { WsConnectionRepository } from '@/api/ws/ws-connection.repository';
 import { withLambdaRemainingTime } from '@/lambda-deadline';
 import {
@@ -106,12 +108,63 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
       () => 900,
       () => sockets.send({ connectionId: 'synthetic', message: '{}' })
     );
-    expect(enqueueWebSocketFrame).toHaveBeenCalledWith({
+    expect(enqueueWebSocketFrame).toHaveBeenCalledWith(
+      {
+        connectionId: 'synthetic',
+        message: '{}',
+        identityId: 'profile',
+        jwtExpiry: 2000000000
+      },
+      undefined
+    );
+    expect(mockHandle).not.toHaveBeenCalled();
+  });
+
+  it('queues the NFT refresher default producer and delivers its public media payload through the worker', async () => {
+    jest
+      .spyOn(appWebSockets, 'send')
+      .mockImplementation((input) => sockets.send(input));
+    const data = { canonical_id: 'synthetic-link' } as ApiNftLinkData;
+    const notifier = new NftLinkRefreshNotifier(async () => [
+      {
+        connection_id: 'synthetic',
+        jwt_expiry: 2000000000
+      }
+    ]);
+    await notifier.notifyAboutNftLinkUpdate(data);
+    const [frame, signal] = (enqueueWebSocketFrame as jest.Mock).mock.calls[0];
+    expect(frame).toMatchObject({
       connectionId: 'synthetic',
-      message: '{}',
       identityId: 'profile',
       jwtExpiry: 2000000000
     });
+    expect(JSON.parse(frame.message)).toMatchObject({
+      type: 'MEDIA_LINK_UPDATED',
+      data
+    });
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(mockHandle).not.toHaveBeenCalled();
+    mockHandle.mockResolvedValueOnce(response(200));
+    await sockets.deliverQueued({ ...frame, version: 1, id: 'nft-frame' });
+    expect(mockHandle).toHaveBeenCalledTimes(1);
+    expect(repository.canIdentityReadQueuedResource).not.toHaveBeenCalled();
+  });
+
+  it('does not enqueue or delete a connection when cancellation occurs during the session read', async () => {
+    const controller = new AbortController();
+    repository.getByConnectionId.mockImplementationOnce(async () => {
+      controller.abort();
+      return { identity_id: 'profile', jwt_expiry: 2000000000 };
+    });
+    await expect(
+      sockets.send({
+        connectionId: 'synthetic',
+        message: '{}',
+        abortSignal: controller.signal
+      })
+    ).rejects.toThrow();
+    expect(enqueueWebSocketFrame).not.toHaveBeenCalled();
+    expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
     expect(mockHandle).not.toHaveBeenCalled();
   });
 

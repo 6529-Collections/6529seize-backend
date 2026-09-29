@@ -12,6 +12,15 @@ suppresses retries of that same envelope, not repeated intentional updates.
 Ordering is queue acceptance order, not an ordering guarantee between concurrent
 business transactions.
 
+All application-update producers use the shared queued sender, including the
+NFT-link refresher's `MEDIA_LINK_UPDATED` broadcast. The refresher retains ten
+concurrent enqueue operations and a 15-second producer deadline; cancellation
+is checked after session and queue-URL reads and forwarded to SQS writes.
+Frames not accepted before the producer deadline are not durably retained.
+The only direct application-side Gateway sends are the API's authentication
+success/failure and notification-identity synchronization acknowledgements.
+The worker's Gateway transport is the sole application-update delivery path.
+
 `websocketOutboundHandler` processes one record per invocation with maximum SQS
 concurrency 16 and Lambda reserved concurrency 20. Transport still uses three
 standard SDK attempts with jitter. Exhausted SDK attempts, local sender limits,

@@ -12,12 +12,14 @@ export interface QueuedWebSocketFrame {
 }
 
 export async function enqueueWebSocketFrame(
-  frame: Omit<QueuedWebSocketFrame, 'version' | 'id'>
+  frame: Omit<QueuedWebSocketFrame, 'version' | 'id'>,
+  abortSignal?: AbortSignal
 ): Promise<void> {
   // The unique envelope ID prevents identical, intentional updates from being
   // suppressed by FIFO content deduplication. SDK retries reuse this envelope.
   await sqs.sendToQueueName({
     queueName: WS_OUTBOUND_QUEUE,
+    abortSignal,
     // Unlike diagnostic hashes, this must remain stable across UTC days.
     messageGroupId: createHash('sha256')
       .update(frame.connectionId)

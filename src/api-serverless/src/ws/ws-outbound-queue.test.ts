@@ -32,3 +32,9 @@ it('propagates failed persistence instead of reporting success', async () => {
     'queue unavailable'
   );
 });
+
+it('preserves the producer cancellation signal through queue persistence', async () => {
+  const abortSignal = new AbortController().signal;
+  await enqueueWebSocketFrame(frame, abortSignal);
+  expect(send).toHaveBeenCalledWith(expect.objectContaining({ abortSignal }));
+});

@@ -696,19 +696,19 @@ including older responses without a recognizable instance ID. A listingType-only
 response keeps those legacy assets and uses an unknown market state with a view
 action, without inferring a claim price.
 
-After persistence, a worker-specific notifier reads active WebSocket recipients
-once and sends the existing `MEDIA_LINK_UPDATED` payload with concurrency 10,
-five-second request limits, and a 15-second broadcast deadline. Notification
-failure cannot change a successful metadata refresh. The notification metadata
-read is bounded to five seconds; both notification queries also use a three-second
-database execution limit. Late read results cannot trigger delivery.
-Cancelled preview-queue sends leave their source retryable, without overwriting
-newer previews or active consumers. Expired or disconnected
-clients are skipped; normal WebSocket lifecycle handling retains ownership of
-stale-connection deletion. The API and other resolver callers retain their
-existing policy. Request IDs, message IDs, and stage durations connect these
-operations to CloudWatch invocation reports. Sentry's existing warning timer is
-unchanged. No API, schema, queue, or frontend deployment dependency is added.
+After persistence, the NFT-link notifier reads active WebSocket recipients once
+and enqueues the existing `MEDIA_LINK_UPDATED` payload through the shared
+`AppWebSockets.send` path, with concurrency 10 and a 15-second producer deadline.
+The shared path captures the current session for `websocket-outbound.fifo`;
+`websocketOutboundHandler` owns Gateway sends and durable retries. Cancellation
+prevents enqueueing after late recipient, session, or queue-URL reads and is
+forwarded to active SQS sends. Notification failure cannot change a successful
+metadata refresh, but failed persistence remains an error and is outside the
+post-acceptance delivery guarantee. The worker rechecks session validity before
+sending; public NFT-link metadata requires no wave/attachment access check.
+The API and other resolver callers also use the shared queued path. Deploy the
+outbound worker and queue before `nftLinkRefresherLoop`. No API schema or frontend
+change is required.
 
 ### NFT market depth and activity
 
