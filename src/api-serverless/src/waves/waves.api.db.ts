@@ -1,3 +1,7 @@
+import {
+  recordWebSocketEvent,
+  withWebSocketMutation
+} from '@/websocket-outbox/outbox.db';
 import { PushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 import {
   ACTIVITY_EVENTS_TABLE,
@@ -3855,36 +3859,38 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<void> {
-    const timerLabel = `${this.constructor.name}->markDirectMessageReadThroughSerial`;
-    ctx.timer?.start(timerLabel);
-    try {
-      const serialLimit = Math.max(
-        0,
-        Math.floor(param.readThroughSerialNo ?? Number.MAX_SAFE_INTEGER)
-      );
-      const targetDrop = await this.db.oneOrNull<{
-        serial_no: number | string;
-        created_at: number | string;
-      }>(
-        `select serial_no, created_at
+    return withWebSocketMutation(this.db, ctx, async (ctx) => {
+      const mutationResult = await (async () => {
+        const timerLabel = `${this.constructor.name}->markDirectMessageReadThroughSerial`;
+        ctx.timer?.start(timerLabel);
+        try {
+          const serialLimit = Math.max(
+            0,
+            Math.floor(param.readThroughSerialNo ?? Number.MAX_SAFE_INTEGER)
+          );
+          const targetDrop = await this.db.oneOrNull<{
+            serial_no: number | string;
+            created_at: number | string;
+          }>(
+            `select serial_no, created_at
          from ${DROPS_TABLE}
          where wave_id = :waveId
            and serial_no <= :serialLimit
          order by serial_no desc
          limit 1`,
-        { waveId: param.waveId, serialLimit },
-        {
-          wrappedConnection: ctx.connection,
-          forcePool: DbPoolName.WRITE
-        }
-      );
-      if (!targetDrop) {
-        return;
-      }
-      const latestReadSerialNo = Number(targetDrop.serial_no);
-      const latestReadTimestamp = Number(targetDrop.created_at);
-      await this.db.execute(
-        `insert into ${WAVE_READER_METRICS_TABLE}
+            { waveId: param.waveId, serialLimit },
+            {
+              wrappedConnection: ctx.connection,
+              forcePool: DbPoolName.WRITE
+            }
+          );
+          if (!targetDrop) {
+            return;
+          }
+          const latestReadSerialNo = Number(targetDrop.serial_no);
+          const latestReadTimestamp = Number(targetDrop.created_at);
+          await this.db.execute(
+            `insert into ${WAVE_READER_METRICS_TABLE}
            (wave_id, reader_id, latest_read_timestamp, latest_read_serial_no, unread_state_version)
          values
            (:waveId, :readerId, :latestReadTimestamp, :latestReadSerialNo, 1)
@@ -3918,20 +3924,28 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
              :latestReadSerialNo
            ),
            latest_read_timestamp = greatest(latest_read_timestamp, :latestReadTimestamp)`,
-        {
-          waveId: param.waveId,
-          readerId: param.readerId,
-          latestReadTimestamp,
-          latestReadSerialNo
-        },
-        {
-          wrappedConnection: ctx.connection,
-          forcePool: DbPoolName.WRITE
+            {
+              waveId: param.waveId,
+              readerId: param.readerId,
+              latestReadTimestamp,
+              latestReadSerialNo
+            },
+            {
+              wrappedConnection: ctx.connection,
+              forcePool: DbPoolName.WRITE
+            }
+          );
+        } finally {
+          ctx.timer?.stop(timerLabel);
         }
+      })();
+      await recordWebSocketEvent(
+        { type: 'dm', profileIds: [param.readerId], waveId: param.waveId },
+        ctx,
+        this.db
       );
-    } finally {
-      ctx.timer?.stop(timerLabel);
-    }
+      return mutationResult;
+    });
   }
 
   async recordDirectMessageUnreadDrop(
@@ -3943,36 +3957,47 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<void> {
-    const recipientIds = Array.from(new Set(param.recipientIds));
-    if (!recipientIds.length) {
-      return;
-    }
-    const timerLabel = `${this.constructor.name}->recordDirectMessageUnreadDrop`;
-    ctx.timer?.start(timerLabel);
-    try {
-      const params: Record<string, string | number> = {
-        waveId: param.waveId,
-        // Preserve the legacy contract: a reader without metrics starts with
-        // the event that creates their row, not the wave's full history.
-        latestReadTimestamp: Math.max(0, param.dropCreatedAt - 1),
-        latestReadSerialNo: Math.max(0, param.dropSerialNo - 1)
-      };
-      const values = recipientIds.map((recipientId, index) => {
-        params[`recipientId${index}`] = recipientId;
-        return `(:waveId, :recipientId${index}, :latestReadTimestamp, :latestReadSerialNo, 1)`;
-      });
-      await this.db.execute(
-        `insert into ${WAVE_READER_METRICS_TABLE}
+    return withWebSocketMutation(this.db, ctx, async (ctx) => {
+      const mutationResult = await (async () => {
+        const recipientIds = Array.from(new Set(param.recipientIds));
+        if (!recipientIds.length) {
+          return;
+        }
+        const timerLabel = `${this.constructor.name}->recordDirectMessageUnreadDrop`;
+        ctx.timer?.start(timerLabel);
+        try {
+          const params: Record<string, string | number> = {
+            waveId: param.waveId,
+            // Preserve the legacy contract: a reader without metrics starts with
+            // the event that creates their row, not the wave's full history.
+            latestReadTimestamp: Math.max(0, param.dropCreatedAt - 1),
+            latestReadSerialNo: Math.max(0, param.dropSerialNo - 1)
+          };
+          const values = recipientIds.map((recipientId, index) => {
+            params[`recipientId${index}`] = recipientId;
+            return `(:waveId, :recipientId${index}, :latestReadTimestamp, :latestReadSerialNo, 1)`;
+          });
+          await this.db.execute(
+            `insert into ${WAVE_READER_METRICS_TABLE}
            (wave_id, reader_id, latest_read_timestamp, latest_read_serial_no, unread_state_version)
          values ${values.join(', ')}
          on duplicate key update
            unread_state_version = unread_state_version + 1`,
-        params,
-        { wrappedConnection: ctx.connection }
-      );
-    } finally {
-      ctx.timer?.stop(timerLabel);
-    }
+            params,
+            { wrappedConnection: ctx.connection }
+          );
+        } finally {
+          ctx.timer?.stop(timerLabel);
+        }
+      })();
+      if (param.recipientIds.length)
+        await recordWebSocketEvent(
+          { type: 'dm', profileIds: param.recipientIds, waveId: param.waveId },
+          ctx,
+          this.db
+        );
+      return mutationResult;
+    });
   }
 
   async setWaveReaderMetricLatestReadTimestamp(
@@ -4005,15 +4030,17 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<void> {
-    const timerLabel = `${this.constructor.name}->setDirectMessageUnreadFromSerial`;
-    ctx.timer?.start(timerLabel);
-    try {
-      const latestReadSerialNo = Math.max(
-        0,
-        Math.floor(param.firstUnreadSerialNo) - 1
-      );
-      await this.db.execute(
-        `insert into ${WAVE_READER_METRICS_TABLE}
+    return withWebSocketMutation(this.db, ctx, async (ctx) => {
+      const mutationResult = await (async () => {
+        const timerLabel = `${this.constructor.name}->setDirectMessageUnreadFromSerial`;
+        ctx.timer?.start(timerLabel);
+        try {
+          const latestReadSerialNo = Math.max(
+            0,
+            Math.floor(param.firstUnreadSerialNo) - 1
+          );
+          await this.db.execute(
+            `insert into ${WAVE_READER_METRICS_TABLE}
            (wave_id, reader_id, latest_read_timestamp, latest_read_serial_no, unread_state_version)
          values
            (:waveId, :readerId, :latestReadTimestamp, :latestReadSerialNo, 1)
@@ -4021,65 +4048,84 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
            latest_read_timestamp = :latestReadTimestamp,
            latest_read_serial_no = :latestReadSerialNo,
            unread_state_version = unread_state_version + 1`,
-        {
-          waveId: param.waveId,
-          readerId: param.readerId,
-          latestReadTimestamp: param.latestReadTimestamp,
-          latestReadSerialNo
-        },
-        {
-          wrappedConnection: ctx.connection,
-          forcePool: DbPoolName.WRITE
+            {
+              waveId: param.waveId,
+              readerId: param.readerId,
+              latestReadTimestamp: param.latestReadTimestamp,
+              latestReadSerialNo
+            },
+            {
+              wrappedConnection: ctx.connection,
+              forcePool: DbPoolName.WRITE
+            }
+          );
+        } finally {
+          ctx.timer?.stop(timerLabel);
         }
+      })();
+      await recordWebSocketEvent(
+        { type: 'dm', profileIds: [param.readerId], waveId: param.waveId },
+        ctx,
+        this.db
       );
-    } finally {
-      ctx.timer?.stop(timerLabel);
-    }
+      return mutationResult;
+    });
   }
 
   async incrementDmUnreadStateVersionsForWaveReaders(
     param: { waveId: string; readerIds: string[] },
     ctx: RequestContext
   ): Promise<string[]> {
-    const readerIds = Array.from(new Set(param.readerIds));
-    if (!readerIds.length) {
-      return [];
-    }
-    const timerLabel = `${this.constructor.name}->incrementDmUnreadStateVersionsForWaveReaders`;
-    ctx.timer?.start(timerLabel);
-    try {
-      const readers = await this.db.execute<{ reader_id: string }>(
-        `select r.reader_id
+    return withWebSocketMutation(this.db, ctx, async (ctx) => {
+      const mutationResult = await (async () => {
+        const readerIds = Array.from(new Set(param.readerIds));
+        if (!readerIds.length) {
+          return [];
+        }
+        const timerLabel = `${this.constructor.name}->incrementDmUnreadStateVersionsForWaveReaders`;
+        ctx.timer?.start(timerLabel);
+        try {
+          const readers = await this.db.execute<{ reader_id: string }>(
+            `select r.reader_id
          from ${WAVE_READER_METRICS_TABLE} r
          join ${WAVES_TABLE} w
            on w.id = r.wave_id
           and w.is_direct_message = true
          where r.wave_id = :waveId
            and r.reader_id in (:readerIds)`,
-        { waveId: param.waveId, readerIds },
-        {
-          wrappedConnection: ctx.connection,
-          forcePool: DbPoolName.WRITE
-        }
-      );
-      if (!readers.length) {
-        return [];
-      }
-      await this.db.execute(
-        `update ${WAVE_READER_METRICS_TABLE}
+            { waveId: param.waveId, readerIds },
+            {
+              wrappedConnection: ctx.connection,
+              forcePool: DbPoolName.WRITE
+            }
+          );
+          if (!readers.length) {
+            return [];
+          }
+          await this.db.execute(
+            `update ${WAVE_READER_METRICS_TABLE}
          set unread_state_version = unread_state_version + 1
          where wave_id = :waveId
            and reader_id in (:readerIds)`,
-        { waveId: param.waveId, readerIds },
-        {
-          wrappedConnection: ctx.connection,
-          forcePool: DbPoolName.WRITE
+            { waveId: param.waveId, readerIds },
+            {
+              wrappedConnection: ctx.connection,
+              forcePool: DbPoolName.WRITE
+            }
+          );
+          return readers.map((reader) => reader.reader_id);
+        } finally {
+          ctx.timer?.stop(timerLabel);
         }
-      );
-      return readers.map((reader) => reader.reader_id);
-    } finally {
-      ctx.timer?.stop(timerLabel);
-    }
+      })();
+      if (mutationResult.length)
+        await recordWebSocketEvent(
+          { type: 'dm', profileIds: mutationResult, waveId: param.waveId },
+          ctx,
+          this.db
+        );
+      return mutationResult;
+    });
   }
 
   async findDmWaveIdsForReaderWithDropsByAuthor(
@@ -4129,21 +4175,32 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     param: { readerId: string; waveIds: string[] },
     ctx: RequestContext
   ): Promise<void> {
-    const waveIds = Array.from(new Set(param.waveIds));
-    if (!waveIds.length) {
-      return;
-    }
-    await this.db.execute(
-      `update ${WAVE_READER_METRICS_TABLE}
+    return withWebSocketMutation(this.db, ctx, async (ctx) => {
+      const mutationResult = await (async () => {
+        const waveIds = Array.from(new Set(param.waveIds));
+        if (!waveIds.length) {
+          return;
+        }
+        await this.db.execute(
+          `update ${WAVE_READER_METRICS_TABLE}
        set unread_state_version = unread_state_version + 1
        where reader_id = :readerId
          and wave_id in (:waveIds)`,
-      { readerId: param.readerId, waveIds },
-      {
-        wrappedConnection: ctx.connection,
-        forcePool: DbPoolName.WRITE
-      }
-    );
+          { readerId: param.readerId, waveIds },
+          {
+            wrappedConnection: ctx.connection,
+            forcePool: DbPoolName.WRITE
+          }
+        );
+      })();
+      for (const waveId of param.waveIds)
+        await recordWebSocketEvent(
+          { type: 'dm', profileIds: [param.readerId], waveId },
+          ctx,
+          this.db
+        );
+      return mutationResult;
+    });
   }
 
   async insertMissingWaveReaderMetrics(
@@ -4213,19 +4270,29 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     param: { waveId: string; readerId: string; muted: boolean },
     ctx: RequestContext
   ) {
-    ctx.timer?.start(`${this.constructor.name}->setWaveMuted`);
-    await this.db.execute(
-      `insert into ${WAVE_READER_METRICS_TABLE}
+    return withWebSocketMutation(this.db, ctx, async (ctx) => {
+      const mutationResult = await (async () => {
+        ctx.timer?.start(`${this.constructor.name}->setWaveMuted`);
+        await this.db.execute(
+          `insert into ${WAVE_READER_METRICS_TABLE}
          (wave_id, reader_id, muted, latest_read_timestamp, unread_state_version)
        values
          (:waveId, :readerId, :muted, ROUND(UNIX_TIMESTAMP(NOW(3)) * 1000), 1)
        on duplicate key update
          unread_state_version = unread_state_version + if(muted != :muted, 1, 0),
          muted = :muted`,
-      param,
-      { wrappedConnection: ctx.connection }
-    );
-    ctx.timer?.stop(`${this.constructor.name}->setWaveMuted`);
+          param,
+          { wrappedConnection: ctx.connection }
+        );
+        ctx.timer?.stop(`${this.constructor.name}->setWaveMuted`);
+      })();
+      await recordWebSocketEvent(
+        { type: 'dm', profileIds: [param.readerId], waveId: param.waveId },
+        ctx,
+        this.db
+      );
+      return mutationResult;
+    });
   }
 
   async findIdentityUnreadDropsSummaryByWaveId(

@@ -110,7 +110,9 @@
         "claimsBuilder"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "claimsMediaArweaveUploader",
@@ -127,7 +129,9 @@
         "claimsMediaArweaveUploader"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "customReplayLoop",
@@ -594,7 +598,9 @@
         "nftsLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "overRatesRevocationLoop",
@@ -611,7 +617,9 @@
         "overRatesRevocationLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "ownersBalancesLoop",
@@ -772,7 +780,9 @@
         "s3Uploader"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "subscriptionsDaily",
@@ -796,7 +806,8 @@
         "ownersBalancesLoop",
         "pushNotificationsHandler",
         "subscriptionsTopUpLoop",
-        "transactionsProcessingLoop"
+        "transactionsProcessingLoop",
+        "websocketOutboundHandler"
       ]
     },
     {
@@ -815,7 +826,8 @@
       ],
       "validation_profile": "lambda-version",
       "default_dependencies": [
-        "dbMigrationsLoop"
+        "dbMigrationsLoop",
+        "websocketOutboundHandler"
       ]
     },
     {
@@ -850,7 +862,9 @@
         "tdhHistoryLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "tdhLoop",
@@ -868,7 +882,8 @@
       ],
       "validation_profile": "lambda-version",
       "default_dependencies": [
-        "xTdhLoop"
+        "xTdhLoop",
+        "websocketOutboundHandler"
       ]
     },
     {
@@ -941,7 +956,9 @@
         "waveDecisionExecutionLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "waveLeaderboardSnapshotterLoop",
@@ -1061,7 +1078,9 @@
         "websocketOutboundHandler"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "dbMigrationsLoop"
+      ]
     }
   ]
 }

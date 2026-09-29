@@ -1,3 +1,4 @@
+import { recordWebSocketEvent } from '@/websocket-outbox/outbox.db';
 import { getPublishedDropMediaMimeType } from '@/drops/drop-media-upload.config';
 import {
   CreateOrUpdateDropModel,
@@ -847,6 +848,10 @@ export class CreateOrUpdateDropUseCase {
         { timer, connection }
       );
     }
+    await recordWebSocketEvent(
+      { type: 'drop', dropId, updateType: 'DROP_UPDATE' },
+      { connection, timer }
+    );
     return {
       drop_id: dropId,
       pending_push_notification_ids: pendingPushNotificationIds,

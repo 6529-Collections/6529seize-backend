@@ -14,7 +14,8 @@ export interface QueuedWebSocketFrame {
 /** Persist a session-bound frame in its connection FIFO group; reject failed acceptance. */
 export async function enqueueWebSocketFrame(
   frame: Omit<QueuedWebSocketFrame, 'version' | 'id'>,
-  abortSignal?: AbortSignal
+  abortSignal?: AbortSignal,
+  id: string = randomUUID()
 ): Promise<void> {
   // The unique envelope ID prevents identical, intentional updates from being
   // suppressed by FIFO content deduplication. SDK retries reuse this envelope.
@@ -25,7 +26,7 @@ export async function enqueueWebSocketFrame(
     messageGroupId: createHash('sha256')
       .update(frame.connectionId)
       .digest('hex'),
-    message: { ...frame, version: 1, id: randomUUID() }
+    message: { ...frame, version: 1, id }
   });
 }
 

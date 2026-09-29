@@ -1,3 +1,4 @@
+import { retainQueuedNotificationInvalidations } from '@/websocket-outbox/notification-handoff';
 import { handleMissingNotifications } from './missing-notifications';
 import { In, Like } from 'typeorm';
 import { ApiIdentity } from '../api-serverless/src/generated/models/ApiIdentity';
@@ -279,6 +280,12 @@ export async function sendIdentityNotificationsBatch(
   // These rows are already durable and visible in the authenticated REST feed.
   // Mobile push mute/device/delivery rules do not suppress feed notifications,
   // so realtime invalidation intentionally remains independent and idempotent.
+  // The push queue may contain records created by a producer from before the
+  // outbox rollout. Persist its invalidation before acknowledging that record.
+  // Duplicate invalidations from upgraded producers are safe cache refresh hints.
+  await retainQueuedNotificationInvalidations(
+    notifications.map((n) => n.identity_id)
+  );
   await wsListenersNotifier.notifyAboutIdentityNotificationsChanged(
     notifications.map((notification) => notification.identity_id)
   );

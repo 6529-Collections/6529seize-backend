@@ -680,18 +680,26 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   }
 
   async findWaveVisibilityGroupId(
-    waveId: string
+    waveId: string,
+    ctx: RequestContext = {}
   ): Promise<string | null | undefined> {
     return this.db
       .oneOrNull<{
         visibility_group_id: string | null;
-      }>(`select visibility_group_id from ${WAVES_TABLE} where id = :waveId`, {
-        waveId
-      })
+      }>(
+        `select visibility_group_id from ${WAVES_TABLE} where id = :waveId`,
+        {
+          waveId
+        },
+        { wrappedConnection: ctx.connection }
+      )
       .then((row) => row?.visibility_group_id);
   }
 
-  async findConnectionIdsByIdentityId(identityId: string): Promise<string[]> {
+  async findConnectionIdsByIdentityId(
+    identityId: string,
+    ctx: RequestContext = {}
+  ): Promise<string[]> {
     if (!identityId || identityId === ANON_USER_ID) {
       return [];
     }
@@ -700,13 +708,15 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
         connection_id: string;
       }>(
         `select connection_id from ${WS_CONNECTIONS_TABLE} where identity_id = :identityId`,
-        { identityId }
+        { identityId },
+        { wrappedConnection: ctx.connection }
       )
       .then((res) => res.map((it) => it.connection_id));
   }
 
   async findNotificationConnectionIdsByIdentityIds(
-    identityIds: string[]
+    identityIds: string[],
+    ctx: RequestContext = {}
   ): Promise<{ connectionId: string; identityId: string }[]> {
     const uniqueIdentityIds = Array.from(
       new Set(identityIds.filter((identityId) => !!identityId))
@@ -731,7 +741,8 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
              and subscriptions.jwt_expiry > unix_timestamp()
              and connections.jwt_expiry > unix_timestamp()
          ) recipients`,
-        { identityIds: uniqueIdentityIds }
+        { identityIds: uniqueIdentityIds },
+        { wrappedConnection: ctx.connection }
       )
       .then((rows) =>
         rows.map((row) => ({
@@ -773,12 +784,14 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     return row !== null;
   }
 
-  async findAllConnectionIds(): Promise<string[]> {
+  async findAllConnectionIds(ctx: RequestContext = {}): Promise<string[]> {
     return this.db
       .execute<{ connection_id: string }>(
         `
     select distinct connection_id from ${WS_CONNECTIONS_TABLE}
-    `
+    `,
+        {},
+        { wrappedConnection: ctx.connection }
       )
       .then((res) => res.map((it) => it.connection_id));
   }

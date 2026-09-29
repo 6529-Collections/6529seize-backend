@@ -1,131 +1,136 @@
 # WebSocket outbound delivery
 
-## Acceptance and retry
+## Business commit to delivery
 
-Production notification senders await SQS acceptance before returning. There is
-no direct-send fallback that can overtake a queued update. Authentication and
-identity-sync acknowledgements remain synchronous control responses (including
-credential rejection before a connection row exists); a failed control send
-propagates to its caller. Local development retains its local WebSocket adapter. The FIFO group is a hash of the Gateway connection ID. Each
-new frame has a unique envelope UUID, so content-based deduplication only
-suppresses retries of that same envelope, not repeated intentional updates.
-Ordering is queue acceptance order, not an ordering guarantee between concurrent
-business transactions.
+Persistent changes now write a resource event to `websocket_outbox` in the same
+MySQL transaction as the change. An outbox insertion failure fails that
+transaction. Shared mutation methods reuse the caller's transaction or open one
+when previously called in autocommit mode. There is no database/SQS dual write
+that can report a committed change while silently losing its delivery intent.
 
-All application-update producers use the shared queued sender, including the
-NFT-link refresher's `MEDIA_LINK_UPDATED` broadcast. The refresher retains ten
-concurrent enqueue operations and a 15-second producer deadline; cancellation
-is checked after session and queue-URL reads and forwarded to SQS writes.
-Frames not accepted before the producer deadline are not durably retained.
-The only direct application-side Gateway sends are the API's authentication
-success/failure and notification-identity synchronization acknowledgements.
-The worker's Gateway transport is the sole application-update delivery path.
+The capture points cover drop creation/editing and permanent/bulk deletion,
+reactions, voting, poll responses, boosts, preview visibility, moderation,
+notification insertion/read state, DM unread versions and identity muting,
+attachment transitions, NFT resolution/preview changes, and drop media status.
+Editing a drop internally deletes and reinserts it; that internal deletion must
+not create a permanent-deletion event. Typing is ephemeral and does not require a
+business outbox. Authentication and identity-sync acknowledgements remain inline.
+Local development retains direct WebSocket delivery rather than accumulating an
+undrained outbox.
 
-`websocketOutboundHandler` processes one record per invocation with maximum SQS
-concurrency 16 and Lambda reserved concurrency 20. Transport still uses three
-standard SDK attempts with jitter. Exhausted SDK attempts, local sender limits,
-and five-second send deadlines throw. Partial batch failure retains the frame;
-the consumer changes its visibility to randomized exponential backoff, starting
-at 1–2 seconds and capped at 60 seconds. If changing visibility fails, the
-180-second default remains. The consumer stops at the first failure if batching
-is ever increased, retaining all unprocessed records to preserve FIFO ordering.
-No retry reinserts a new message or resets its receive count.
+Existing post-commit notifiers enqueue a wakeup on `websocket-outbound.fifo`.
+Failure emits `WS_OUTBOX_WAKEUP_FAILED`; the durable event remains. A one-minute
+EventBridge schedule invokes the same `websocketOutboundHandler` to recover
+missed wakeups and deferred retries. No additional Lambda service is introduced.
 
-The deployed worker uses the API Gateway adapter; local development bypasses
-the queue. Malformed envelopes or payloads are deliberately retained through the
-same retry/DLQ policy rather than silently acknowledged. The retry error and
-backlog alarms make these failures visible while preserving evidence.
+The worker first resolves the resource's current state and permitted audience
+using the writer database, then atomically replaces its resource event with
+recipient jobs in the outbox. Thus a large fan-out has durable progress: failure
+for one recipient does not require republishing the entire audience. Drop
+updates use `DROP_UPDATE_REF`, causing the client to fetch canonical content;
+deletions preserve their routing metadata after the drop row disappears.
 
-The source retains work for four days. After 100 receives, SQS moves a failing
-frame to a 14-day FIFO dead-letter queue. Dead letters and queue age above 60
-seconds have CloudWatch alarms routed to the existing alarm topic. Dead-letter
-handling is an operational recovery boundary, not successful delivery. Inspect
-the root cause before redrive; old frames must not be replayed into new sessions.
-Redrive can reorder old frames relative to newer acknowledged frames, so prefer
-client state reconciliation where a replay is no longer valid.
+A recipient job is deleted only after SQS accepts its session-bound frame.
+Unknown acceptance/commit outcomes may retry the same job. Its stable envelope ID
+supports FIFO deduplication within SQS's deduplication interval; consumers must
+still tolerate duplicates beyond that interval. Each connection has one hashed
+outbox partition and one hashed FIFO group. A deferred or locked earlier job
+blocks later jobs for that connection, while independent connections can proceed.
+Resource events for the same resource also resolve in outbox order. This is not
+a total ordering of concurrent business transaction commits.
 
-## Session and payload safety
+The drain processes at most 100 jobs with four database/publication workers per
+invocation, stops starting jobs near the Lambda deadline, awaits in-flight work,
+and schedules another wakeup after making progress. Failed jobs remain in MySQL
+with an exponential retry delay capped at one minute. Partial recipient-job
+inserts roll back to a savepoint. Outbox rows have no automatic expiry; failures
+must be investigated rather than discarded. Original event age is retained when
+materializing recipient jobs.
 
-The envelope captures the connection's authenticated identity and JWT expiry.
-Before sending, the worker rechecks the current connection and expiry. Missing
-or expired connections are cleaned up. A changed identity or JWT generation is
-reported with `WS_OUTBOUND_SESSION_CHANGED` and acknowledged without sending to
-the replacement session. Notification and DM unread frames also recheck the
-current profile subscription, reporting `WS_OUTBOUND_SUBSCRIPTION_CHANGED` when
-it has been revoked. Wave-bearing frames recheck current child/parent read
-access, and attachment frames recheck owner or current wave access. DM access
-uses the subscribed profile, not a different active identity on a shared
-connection. These are intentional authorization cancellations, not
-transient delivery failures. A genuine Gateway 410 also permits cleanup.
+The push worker also durably captures invalidations from its existing SQS input,
+covering records made by producers predating this rollout. Duplicate identity
+invalidations are safe canonical-cache refresh hints. This does not change
+Firebase delivery or the push worker's event-source concurrency.
 
-Queue bodies contain recipient-specific serialized frames and connection IDs;
-SQS managed encryption is enabled. Queue access is restricted to the existing
-Lambda role. Failure diagnostics do not contain bodies, connection IDs or raw
-provider exceptions. Queued payloads represent state at production time, not a
-fresh query when delivered; no event coalescing is performed.
+## Gateway retries and authorization
 
-## Limits of the guarantee
+`websocketOutboundHandler` consumes one FIFO record per invocation, with maximum
+SQS concurrency 16 and Lambda reserved concurrency 20. The Gateway transport uses
+three standard SDK attempts with jitter, bounded concurrency and a five-second
+send deadline. Exhaustion, queue overflow, and deadlines remain errors and cause
+partial batch failure. Visibility backoff starts at 1–2 seconds and caps at 60
+seconds; failed visibility changes retain the 180-second default. Retries do not
+reset the receive count.
 
-SQS acceptance is the durability boundary. A database/queue outage or a producer
-being killed before enqueue completes can still prevent acceptance. Enqueue
-failure emits `WS_OUTBOUND_ENQUEUE_FAILED` and rejects; existing best-effort
-notification callers may log that rejection after committing the business
-operation. This change is not a transactional database outbox and must not be
-represented as end-to-end guaranteed delivery.
+SQS retains frames for four days and moves failures after 100 receives to a
+14-day FIFO DLQ. DLQ handling requires investigation; it is not successful
+delivery. Redrive can reorder old frames relative to newer acknowledged frames,
+so reconcile client state when old snapshots are no longer appropriate.
 
-Successful `PostToConnection` is not a browser acknowledgement. A lost transport
-acknowledgement can cause duplicate frames on retry. Disconnected/re-authenticated
-clients need REST reconciliation; this queue does not transfer their old frames
-to a new connection. Long backlogs add latency, and authorization changes may
-make old work undeliverable. Watch queue age, dead letters, enqueue failures and
-Gateway failure categories together; a lower count of terminal errors alone is
-not proof of correct delivery.
+At delivery, the worker verifies the captured identity/JWT generation, current
+notification subscriptions, wave/parent permissions, and attachment access.
+Revoked access or replaced/expired sessions intentionally cancel obsolete work.
+Only genuine disconnection/expiry permits stale-connection cleanup; throttling
+never does. Typing older than ten seconds is intentionally expired.
 
-## Rollout and validation
+SQS uses managed encryption. Outbox recipient rows and queue bodies contain
+routing IDs and serialized frames; normal database access controls apply.
+Failure logs omit message bodies, raw connection IDs and provider exception text.
+Gateway acceptance is not a browser acknowledgement, and no exactly-once claim
+is made. Disconnected clients recover current state through REST rather than
+receiving another session's queued frames.
 
-Deploy `websocketOutboundHandler` first, including queue policies, FIFO source,
-DLQ and alarms. Apply the regenerated operational-monitoring/source templates as part of the
-authorized rollout so structured errors and Lambda failures/throttles include
-the new worker. The queue resource policy explicitly grants the existing Lambda
-role `sqs:ChangeMessageVisibility`; effective access (including any denies or
-permission boundaries) must be verified in staging. Verify queue access, endpoint
-secret loading and a synthetic
-staging frame before deploying producers. Then deploy `api` (`seizeAPI`),
-`pushNotificationsHandler`, `releaseNotesGenerationLoop`, `helpBotReplyLoop`,
-`nftLinkRefresherLoop`, `dropMediaSanitizer`, `attachmentsOrchestrator`, and
-`attachmentsProcessor`. The service catalog records the worker dependency.
-Do not deploy producers before the queue exists. No schema or frontend change
-is included. Firebase delivery and the push worker's event-source limits are
-unchanged.
+## Client compatibility
 
-Validate normal frames, synthetic 429-to-success, expired transport budgets,
-queue-enqueue rejection, FIFO progress after failure, session/subscription
-revocation, backlog drain and DLQ alarms in staging. Use controlled traffic;
-this PR does not establish production load capacity. In a rollback, stop or
-roll back producers first and decide whether to drain or retain the queued work
-before disabling the consumer. Never delete a queue containing pending work.
+[Frontend PR #4128](https://github.com/6529-Collections/6529seize-frontend/pull/4128) rejects older full-drop revisions in both live
+state and query caches, remembers observed deletions for the provider lifetime,
+and rechecks asynchronous fetch results before applying them. Older NFT snapshots
+cannot overwrite a newer successful refresh. Equal drop revisions remain allowed
+because reactions and votes can change without editing the drop. Notification
+invalidations already refetch canonical state; DM unread state already rejects
+older/equal versions; finalized attachments already resist pending-state replay.
+Compact drop references use the existing bounded canonical-fetch retry/coalescing
+path. These protections cover stale delivery, not offline event replay or browser
+acknowledgements.
 
-## Client compatibility findings before merge
+## Health, rollout and rollback
 
-Local adversarial validation against frontend main `2c5c9db623` reproduced
-three delayed-snapshot hazards: a full `DROP_UPDATE` can overwrite a newer edit,
-a full update arriving after an observed deletion can reinsert the deleted drop,
-and an older `MEDIA_LINK_UPDATED` can replace a newer preview title/price and
-successful-refresh timestamp. These are existing client behaviors whose impact
-is amplified by durable delayed delivery. FIFO acceptance order does not solve
-concurrent producer ordering or races against REST state. Do not treat the
-normal staging smoke tests or passing sender tests as clearance of these cases.
+The scheduled drain emits outbox pending count and oldest-event age using
+CloudWatch Embedded Metric Format. An age above 180 seconds for two periods, or
+missing scheduled health metrics, alarms to the existing topic. Source queue age
+and DLQ alarms remain. Investigate `WS_OUTBOX_PUBLISH_FAILED`, wakeup failures,
+Gateway failure diagnostics and backlog together; fewer error logs alone do not
+prove delivery.
 
-Before merge readiness, add client-side stale/drop-deletion protection or
-reconcile delayed payloads against authoritative state, including asynchronous
-fetch completion after deletion. Retain regression tests for all three cases.
-Notification invalidation already refetches canonical state; DM unread state
-rejects older/equal versions. Attachment reconciliation prevents finalized to
-pending regression, but that alone does not establish arbitrary snapshot ordering.
+Required service order:
 
-Producer acceptance also remains best effort: ordinary drop, notification,
-attachment and NFT notification callers can log failed enqueues and return after
-the business operation has committed. Bulk deletion attempts later recipients
-then propagates failure; its post-commit caller may catch it. This is a confirmed
-limit, not a worker retry bug. A transactional producer outbox is a separate
-architecture change if durable delivery from business commit is required.
+1. `dbMigrationsLoop` creates the new entity/table and indexes via normal schema
+   synchronization. No handwritten migration is required.
+2. `websocketOutboundHandler` provisions the FIFO queue/DLQ, schedule, alarms and
+   publication consumer. Verify database and queue access before producer rollout.
+3. Deploy the companion frontend protection before enabling new producers or
+   redriving old snapshots. It is compatible with the existing wire protocol.
+4. Redeploy `api` (`seizeAPI`), `releaseNotesGenerationLoop`, `helpBotReplyLoop`,
+   `nftLinkRefresherLoop`, `dropMediaSanitizer`, `attachmentsOrchestrator`,
+   `attachmentsProcessor`, and `pushNotificationsHandler`.
+
+For full transactional capture across background notification producers, also
+redeploy `overRatesRevocationLoop`, `waveDecisionExecutionLoop`, `tdhHistoryLoop`,
+`tdhLoop`, `subscriptionsTopUpLoop`, `subscriptionsDaily` (including its
+`subscriptionCoverageReconciliationLoop` Lambda), `nftsLoop`, `claimsBuilder`,
+`claimsMediaArweaveUploader`, and `s3Uploader` after the worker. These include
+subscription and vote-revocation notifications and configured priority alerts.
+The service catalog records the worker prerequisite. The push-input handoff
+preserves existing queued invalidations during mixed-version rollout; an old
+producer binary does not have the new business-transaction guarantee.
+
+For rollback, stop or roll back producers first. Retain the outbox table and
+both queues, and explicitly drain or retain pending work before disabling the
+worker. Never drop pending work as a rollback shortcut.
+
+Validation must exercise real MySQL rollback, failed SQS acceptance, partial
+fan-out rollback, deferred-head ordering, missed-wakeup scheduled recovery,
+SDK 429-to-success, cancellation, authorization revocation, stale/deleted client
+updates, and bounded burst drain. Local synthetic failures do not establish
+production load capacity. A controlled staging rollout still needs to verify the
+new table, scheduled recovery and alarms; no deployment is implied by this PR.

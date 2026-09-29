@@ -119,6 +119,7 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
         identityId: 'profile',
         jwtExpiry: 2000000000
       },
+      undefined,
       undefined
     );
     expect(mockHandle).not.toHaveBeenCalled();
