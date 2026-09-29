@@ -1,6 +1,8 @@
 import { competitionDropVotesDb } from '@/competitions/competition-drop-votes.db';
-import { CompetitionEntry } from '@/competitions/competition.types';
-import { PublicCompetition } from '@/competitions/competition.service';
+import {
+  Competition,
+  CompetitionEntry
+} from '@/competitions/competition.types';
 import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { ApiCompetitionDropVoteSummary } from '@/api/generated/models/ApiCompetitionDropVoteSummary';
 import { ApiDropVotersPage } from '@/api/generated/models/ApiDropVotersPage';
@@ -11,7 +13,7 @@ import { DropEntity } from '@/entities/IDrop';
 import { NotFoundException } from '@/exceptions';
 
 export async function competitionDropVoteSummary(
-  competition: PublicCompetition,
+  competition: Pick<Competition, 'decisions'>,
   entry: CompetitionEntry,
   ctx: RequestContext
 ): Promise<ApiCompetitionDropVoteSummary> {
