@@ -11,7 +11,8 @@ jest.mock('axios-retry', () => ({
 import {
   fetchHistoricPrices,
   fetchLivePrice,
-  PRICE_INTERVAL_MS
+  PRICE_INTERVAL_MS,
+  DAILY_PRICE_INTERVAL_MS
 } from './coinbase';
 const now = Date.UTC(2026, 8, 28, 12);
 beforeEach(() => mockGet.mockReset());
@@ -102,4 +103,30 @@ it('bounds retries and retries only transient HTTP responses', () => {
 it('accepts an empty interval without fabricating a quote', async () => {
   mockGet.mockResolvedValue({ data: [] });
   expect(await fetchHistoricPrices(now, now, now)).toEqual([]);
+});
+
+it('uses a daily close at UTC midnight without assigning future-day data', async () => {
+  const close = Date.UTC(2025, 11, 31);
+  mockGet.mockResolvedValue({
+    data: [[(close - DAILY_PRICE_INTERVAL_MS) / 1000, 1, 3, 1, 2, 9]]
+  });
+  expect(
+    await fetchHistoricPrices(close, close, now, DAILY_PRICE_INTERVAL_MS)
+  ).toEqual([{ timestamp_ms: close, date: new Date(close), usd_price: 2 }]);
+  expect(mockGet).toHaveBeenCalledWith('/candles', {
+    params: {
+      granularity: 86400,
+      start: new Date(close - DAILY_PRICE_INTERVAL_MS).toISOString(),
+      end: new Date(close - DAILY_PRICE_INTERVAL_MS).toISOString()
+    }
+  });
+});
+it('rejects unsupported or misaligned daily requests', async () => {
+  await expect(fetchHistoricPrices(now, now, now, 123)).rejects.toThrow(
+    'Invalid'
+  );
+  await expect(
+    fetchHistoricPrices(now, now, now, DAILY_PRICE_INTERVAL_MS)
+  ).rejects.toThrow('Invalid');
+  expect(mockGet).not.toHaveBeenCalled();
 });

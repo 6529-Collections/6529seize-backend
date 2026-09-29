@@ -10,8 +10,8 @@ import Sharp, { Metadata } from 'sharp';
 // open temporary files between requests consumes its fixed resource budget.
 Sharp.cache(false);
 
-// The production function has 1028 MiB RAM and at least 512 MiB temporary disk.
-// Keep half of each for the runtime, codec/encoder overhead and multipart upload.
+// Retain the original 1028 MiB function's conservative budgets even when its
+// memory/CPU allocation is raised. Reserve space for codecs and multipart upload.
 export const MAX_SOURCE_BYTES = 256 * 1024 * 1024;
 export const MAX_DECODED_WORK_BYTES = 512 * 1024 * 1024;
 export const INPUT_PIXEL_BACKSTOP = 1_000_000_000;

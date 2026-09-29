@@ -13,7 +13,6 @@ import {
 import { DEFAULT_MESSAGE_GROUP_ID, sqs } from '../sqs';
 import { env } from '../env';
 import { appFeatures } from '../app-features';
-import { identityConsolidationEffects } from '../identity';
 import {
   XTDH_LOOP_PHASE,
   XTdhLoopMessage,
@@ -65,8 +64,33 @@ export class RecalculateXTdhUseCase {
     } else {
       await this.xtdhRepository.executeNativeQueriesInTransaction(
         async (connection) => {
-          await this.recalculateXTdh({ ...ctx, connection });
-        }
+          const transactionContext = { ...ctx, connection };
+          let calculationFailed = false;
+          try {
+            await this.recalculateXTdh(transactionContext);
+          } catch (error) {
+            calculationFailed = true;
+            throw error;
+          } finally {
+            await this.discardSnapshot(transactionContext, calculationFailed);
+          }
+        },
+        { isolationLevel: 'REPEATABLE READ' }
+      );
+    }
+  }
+
+  private async discardSnapshot(
+    ctx: RequestContext,
+    calculationFailed: boolean
+  ) {
+    try {
+      await this.xtdhRepository.discardIdentitySnapshot(ctx);
+    } catch (error) {
+      if (!calculationFailed) throw error;
+      this.logger.error(
+        'Failed to discard xTDH snapshot after calculation failure',
+        error
       );
     }
   }
@@ -100,6 +124,7 @@ export class RecalculateXTdhUseCase {
         this.logger.info(`Missing identities created`);
       }
 
+      await this.xtdhRepository.prepareIdentitySnapshot(ctx);
       this.logger.info(`Updating all produced xTDHs`);
       await this.xtdhRepository.updateProducedXTDH(ctx);
       this.logger.info(`Updated all produced xTDHs`);
@@ -121,9 +146,7 @@ export class RecalculateXTdhUseCase {
       await this.xtdhRepository.updateXtdhRate(ctx);
       this.logger.info(`Updated xTDH rates`);
       this.logger.info(`Updating identity levels`);
-      await identityConsolidationEffects.updateAllIdentitiesLevels(
-        ctx.connection
-      );
+      await this.xtdhRepository.publishIdentitySnapshot(ctx);
       this.logger.info(`Updated identity levels`);
       this.logger.info(`xTDH universe has been recalculated`);
     } finally {

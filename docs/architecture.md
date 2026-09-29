@@ -480,9 +480,19 @@ for alert triage and recovery.
 missing price intervals together with transaction and Memes mint USD totals.
 Transaction writers and mint initialization coordinate with recovery through
 existing database transactions. Reset progress and expiring retries for omitted
-Coinbase candles use existing Redis. Repair work timeouts persist a smaller batch
-window there for subsequent invocations; price gaps
-remain discoverable from `eth_price` without schema changes. See
+Coinbase candles use existing Redis. Live prices commit before recovery, which
+starts with at most one-hour batches and stops for the invocation on a database
+failure. Repair updates indexed transaction date intervals using persisted prices
+and selects affected mint tokens from those intervals. Work timeouts persist a
+smaller batch window, while sustained fast successful batches gradually grow it.
+Coverage is five-minute from January 1, 2026 onward and daily before that
+boundary back to October 1, 2021. Any existing sample covers its older UTC day;
+only absent days are filled, preserving existing rows. Reset uses the same split.
+Provider pages feed continuous small database transactions until gaps
+are drained or the Lambda's fifteen-minute deadline reserve is reached. Live
+quotes refresh between batches during extended runs; the five-minute trigger is
+not an execution deadline. Price gaps remain discoverable from `eth_price`
+without schema changes. See
 [ETH price recovery](eth-price-recovery.md) for timestamp semantics, bounded work,
 reset behavior, and the required writer-before-collector deployment order.
 
@@ -540,7 +550,7 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 
    Other drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception.
    The on-demand media resizer spools each S3 source into its own temporary file before metadata inspection and conversion. A 256 MiB source limit and conservative 512 MiB decoded-work estimate reject unsupported or oversized inputs with HTTP 422; animated GIF admission counts every frame. Baseline 8-bit JPEG admission accounts conservatively for the decoder shrink used by the requested resize; progressive JPEGs and other codecs retain the full-input estimate. When a GIF animation exceeds the budget, only its first frame is resized if that frame independently fits. Otherwise it remains HTTP 422. Originals are unchanged, and already-posted images can receive previews on demand without re-uploading. Resize, rotation and output contracts are preserved for ordinary accepted inputs. Multipart upload concurrency is one, and the temporary directory is removed after completion or failure. These admission limits reduce resource risk; they do not guarantee a maximum native allocation for every codec. The specific HEIF missing-compression-plugin error is returned as `422 UNSUPPORTED_CODEC`, regardless of the filename or MIME label. One operational report is claimed per original S3 key and source version (VersionId, or ETag for unversioned objects), across resize variants and Lambda instances, using an empty conditional-write marker under `_resize-rejections/v1/` in the existing source bucket. Later requests retain warning logs and the controlled response; replacing the source enables a new report. Marker failures remain operational errors. See [media-resizer-unsupported-input.md](media-resizer-unsupported-input.md) for alert and recovery limits.
-   The animation-preview implementation (requires `mediaResizerLoop` deployment) handles versioned GIF requests (`AUTOx450_gifv2`, and the other existing sizes with `_gifv2` appended) with animation-preserving processing instead of the legacy first-frame fallback. The suffix is removed before checking the existing size whitelist and resolving the original key, but retained in the S3 derivative key. Frames are decoded/coalesced individually, resized, and spooled; output resolution can shrink further to bound the complete animation. Frame timing, loop count, and transparency are retained. Admission limits cover source bytes, per-frame pixels, frame count, repeated decoder work, retained output, and processing time. An eligible original that already fits an AUTO dimension is copied unchanged. See [GIF animation previews](gif-animation-previews.md) for limits, rollout, and compatibility. Originals and legacy derivative keys are not overwritten.
+   The animation-preview implementation (requires `mediaResizerLoop` deployment) handles versioned GIF requests (`AUTOx450_gifv2`, and the other existing sizes with `_gifv2` appended) with animation-preserving processing instead of the legacy first-frame fallback. The suffix is removed before checking the existing size whitelist and resolving the original key, but retained in the S3 derivative key. AUTO sizes use a sequential native decode and one resize directly to bounded output dimensions; fixed crop sizes retain individually coalesced frames and a repeated-scan guard. The bounded RGBA strip is spooled before encoding; output resolution can shrink further to bound the complete animation. The deployment catalog sets this worker to 2048 MiB for CPU headroom while retaining its processing deadline and source/output safety limits. Frame timing, loop count, and transparency are retained. Admission limits cover source bytes, per-frame pixels, frame count, repeated decoder work, retained output, and processing time. An eligible original that already fits an AUTO dimension is copied unchanged. See [GIF animation previews](gif-animation-previews.md) for limits, rollout, and compatibility. Originals and legacy derivative keys are not overwritten.
 
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
@@ -927,7 +937,12 @@ by default. `dbMigrationsLoop` creates the additive competition/read-model
 tables and backfills stable legacy mappings before API or worker deployments.
 The independent unified-read, native-write, native-execution, native-hub, and
 sampled-shadow flags default off. Shadow observations persist only canonical
-hashes and identifiers, never vote/signature/private payloads.
+hashes and identifiers, never vote/signature/private payloads. Sampled legacy
+reads compare an independent legacy-table baseline with the unified adapter's
+paged domain reads in one repeatable-read snapshot. Samples are bounded and
+best effort; failures preserve the API response. Historical adapter
+self-comparisons are not parity evidence, and remaining-credit coverage remains
+an explicit acceptance gap.
 Operational deployment, verification, and rollback are documented in the
 [competition read boundary runbook](./competition-read-boundary-runbook.md).
 
@@ -1684,3 +1699,30 @@ operational errors, and lookup failures retry the affected queue records.
 `dbMigrationsLoop` creates the entity through normal schema sync and removes
 cancellation records older than 30 days in bounded scheduled batches. See
 [Push cancellation](./push-notification-cancellation.md) for rollout and limits.
+
+### xTDH identity publication
+
+`xTdhLoop` retains one explicit `REPEATABLE READ` transaction for universe
+calculation. Expensive xTDH aggregate queries are plain consistent SELECTs, and
+their results are accumulated in a connection-local temporary working table.
+This avoids UPDATE/INSERT SELECT source locks on live identities during those
+calculations. All existing grant arithmetic remains unchanged.
+
+Only after calculation completes does the loop lock current identities, verify
+that consolidation keys/profile mappings still match its snapshot, and publish
+produced/granted xTDH, received xTDH, rates and levels together. Levels use current
+REP and TDH values rather than copies from the calculation snapshot. Changes to existing snapshot identities abort publication and retry the universe through the existing SQS
+failure path. Independently created identities after the snapshot remain untouched
+until the next calculation. Failures leave the previous committed values visible; temporary
+working data is dropped before returning the connection to the pool.
+
+Live identity writes remain necessary for missing-identity creation and the final
+publication. This reduces the lock window; it does not promise zero database
+contention. No persistent database schema changes are required. Deploy
+`xTdhLoop` to activate this behavior.
+
+xTDH universe/stats failures retain the existing 1,000-second source queue visibility
+interval and now redrive after five receives to `xtdh-dead-letter.fifo`. Dead letters
+are retained for 14 days and have a visible-message CloudWatch alarm on the existing
+alarm topic. Repeated consolidation drift therefore cannot block the FIFO group
+until source retention expires. Deploying `xTdhLoop` also provisions these resources.
