@@ -6,6 +6,7 @@ import type { Context } from 'aws-lambda';
 import sharp from 'sharp';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
+import { Logger } from '@/logging';
 import {
   classifyResizeDecoderError,
   assertDecodedWorkBudget,
@@ -20,6 +21,7 @@ let mockSource: Readable | undefined;
 let mockContentLength: number | undefined;
 let mockUploadError: Error | undefined;
 let mockDecoderError: Error | undefined;
+let mockGetObjectError: Error | undefined;
 const mockReportUnsupported = jest.fn();
 jest.mock('@/mediaResizerLoop/unsupported-resize-report', () => ({
   reportUnsupportedResizeOnce: (...args: unknown[]) =>
@@ -28,14 +30,17 @@ jest.mock('@/mediaResizerLoop/unsupported-resize-report', () => ({
 jest.mock('@aws-sdk/client-s3', () => ({
   GetObjectCommand: jest.fn(),
   S3Client: jest.fn(() => ({
-    send: jest.fn(async () => ({
-      Body:
-        mockSource ??
-        Readable.from([mockInput.subarray(0, 8), mockInput.subarray(8)]),
-      ContentType: mockContentType,
-      ETag: 'synthetic-etag',
-      ContentLength: mockContentLength
-    }))
+    send: jest.fn(async () => {
+      if (mockGetObjectError) throw mockGetObjectError;
+      return {
+        Body:
+          mockSource ??
+          Readable.from([mockInput.subarray(0, 8), mockInput.subarray(8)]),
+        ContentType: mockContentType,
+        ETag: 'synthetic-etag',
+        ContentLength: mockContentLength
+      };
+    })
   }))
 }));
 jest.mock('@aws-sdk/lib-storage', () => ({
@@ -71,6 +76,7 @@ beforeEach(() => {
   mockSource = undefined;
   mockUploadError = undefined;
   mockDecoderError = undefined;
+  mockGetObjectError = undefined;
 });
 afterEach(() => jest.restoreAllMocks());
 
@@ -81,6 +87,51 @@ function resize() {
     () => undefined
   );
 }
+
+it('returns 404 without an operational error for a missing source object', async () => {
+  mockGetObjectError = Object.assign(
+    new Error('The specified key does not exist.'),
+    {
+      name: 'NoSuchKey',
+      $metadata: { httpStatusCode: 404 }
+    }
+  );
+  const errorLog = jest.spyOn(Logger.get('MEDIA_RESIZER_LOOP'), 'error');
+
+  expect((await resize()).statusCode).toBe(404);
+  expect(errorLog).not.toHaveBeenCalled();
+  expect(Upload).not.toHaveBeenCalled();
+});
+
+it.each([
+  ['AccessDenied', 403],
+  ['ServiceUnavailable', 503],
+  ['NoSuchKey', 403]
+])(
+  'propagates %s source retrieval errors with HTTP %i',
+  async (name, status) => {
+    mockGetObjectError = Object.assign(new Error(name), {
+      name,
+      $metadata: { httpStatusCode: status }
+    });
+    const errorLog = jest.spyOn(Logger.get('MEDIA_RESIZER_LOOP'), 'error');
+
+    await expect(resize()).rejects.toBe(mockGetObjectError);
+    expect(errorLog).toHaveBeenCalledTimes(1);
+    expect(Upload).not.toHaveBeenCalled();
+  }
+);
+
+it('does not treat an upload NoSuchKey as a missing source', async () => {
+  mockUploadError = Object.assign(new Error('upload failed'), {
+    name: 'NoSuchKey',
+    $metadata: { httpStatusCode: 404 }
+  });
+  const errorLog = jest.spyOn(Logger.get('MEDIA_RESIZER_LOOP'), 'error');
+
+  await expect(resize()).rejects.toBe(mockUploadError);
+  expect(errorLog).toHaveBeenCalledTimes(1);
+});
 
 it.each(['jpeg', 'png', 'gif'])(
   'finishes the %s streaming upload before returning the redirect',

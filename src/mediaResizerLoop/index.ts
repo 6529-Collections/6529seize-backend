@@ -76,7 +76,13 @@ const liveHandler = wrapLambdaHandler(async (event: any, context) => {
       Bucket: BUCKET,
       Key: key
     };
-    const originImage = await s3Client.send(new GetObjectCommand(params));
+    let originImage;
+    try {
+      originImage = await s3Client.send(new GetObjectCommand(params));
+    } catch (error) {
+      if (isMissingSourceObject(error)) return notFound();
+      throw error;
+    }
     if (!originImage?.Body) {
       logger.info(`[${path}] S3 origin file not found`);
       return notFound();
@@ -195,6 +201,17 @@ function getSourceObjectRevision(
   etag: string | undefined
 ) {
   return versionId && versionId !== 'null' ? versionId : etag;
+}
+
+function isMissingSourceObject(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const s3Error = error as {
+    name?: string;
+    $metadata?: { httpStatusCode?: number };
+  };
+  return (
+    s3Error.name === 'NoSuchKey' && s3Error.$metadata?.httpStatusCode === 404
+  );
 }
 
 /** Validate the opt-in contract without changing legacy option parsing. */
