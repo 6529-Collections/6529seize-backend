@@ -26,7 +26,7 @@ describe('NFT link refresh notifications', () => {
     jest.restoreAllMocks();
   });
 
-  it('aborts stalled sends and stops dequeuing recipients after 15 seconds', async () => {
+  it('aborts stalled enqueues and stops dequeuing recipients after 15 seconds', async () => {
     const signals: AbortSignal[] = [];
     const send = jest.fn(
       (_id: string, _message: string, signal: AbortSignal) => {
@@ -75,10 +75,10 @@ describe('NFT link refresh notifications', () => {
     expect(jest.getTimerCount()).toBe(0);
   });
 
-  it('continues past disconnected clients, respects JWT expiry, and clears timers on success', async () => {
+  it('continues past failed enqueues, respects JWT expiry, and clears timers', async () => {
     const send = jest
       .fn()
-      .mockRejectedValueOnce(new Error('GoneException'))
+      .mockRejectedValueOnce(new Error('SQS unavailable'))
       .mockResolvedValue(undefined);
     const expired = {
       ...recipient(3),

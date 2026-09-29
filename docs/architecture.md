@@ -728,19 +728,19 @@ including older responses without a recognizable instance ID. A listingType-only
 response keeps those legacy assets and uses an unknown market state with a view
 action, without inferring a claim price.
 
-After persistence, a worker-specific notifier reads active WebSocket recipients
-once and sends the existing `MEDIA_LINK_UPDATED` payload with concurrency 10,
-five-second request limits, and a 15-second broadcast deadline. Notification
-failure cannot change a successful metadata refresh. The notification metadata
-read is bounded to five seconds; both notification queries also use a three-second
-database execution limit. Late read results cannot trigger delivery.
-Cancelled preview-queue sends leave their source retryable, without overwriting
-newer previews or active consumers. Expired or disconnected
-clients are skipped; normal WebSocket lifecycle handling retains ownership of
-stale-connection deletion. The API and other resolver callers retain their
-existing policy. Request IDs, message IDs, and stage durations connect these
-operations to CloudWatch invocation reports. Sentry's existing warning timer is
-unchanged. No API, schema, queue, or frontend deployment dependency is added.
+After persistence, the NFT-link notifier reads active WebSocket recipients once
+and enqueues the existing `MEDIA_LINK_UPDATED` payload through the shared
+`AppWebSockets.send` path, with concurrency 10 and a 15-second producer deadline.
+The shared path captures the current session for `websocket-outbound.fifo`;
+`websocketOutboundHandler` owns Gateway sends and durable retries. Cancellation
+prevents enqueueing after late recipient, session, or queue-URL reads and is
+forwarded to active SQS sends. Notification failure cannot change a successful
+metadata refresh, but failed persistence remains an error and is outside the
+post-acceptance delivery guarantee. The worker rechecks session validity before
+sending; public NFT-link metadata requires no wave/attachment access check.
+The API and other resolver callers also use the shared queued path. Deploy the
+outbound worker and queue before `nftLinkRefresherLoop`. No API schema or frontend
+change is required.
 
 ### NFT market depth and activity
 
@@ -878,7 +878,7 @@ Typing updates use the server-authenticated connection profile when resolving pr
 
 Terminal WebSocket send failures retain the existing operational error event with an allowlisted frame type, error category, final HTTP status and SDK attempt/retry-delay metadata. Diagnostics also include frame byte count, a UTC-day-scoped hash of the random connection ID, and a fixed SDK/queue-full/deadline failure label; they never include raw connection IDs, payloads or exception text. These describe failed sends, not confirmed client delivery.
 
-The shared API Gateway sender permits 16 in-flight operations per warm process, one per connection, and at most 256 queued sends. A send has a five-second queue-plus-transport budget, shortened to reserve one second before the Lambda deadline. The Lambda wrapper supplies the remaining-time getter through async-local context. Queued expiry is reported without starting transport; active expiry aborts the SDK and retains the permit until it settles. Fan-out creates at most 16 recipient tasks at a time (bulk deletes retain their existing bounded batches). Standard SDK retries remain three total attempts with jitter. Terminal failures remain reported best effort; only typed unavailable connections trigger cleanup. This is process-local pressure control, not fleet-wide pacing, durable replay, or client reconciliation, and it does not change audiences or coalesce events. An exhausted invocation skips the per-send stale lookup and does not send. Connection cleanup then relies on disconnect handling or a later send with budget; the sampled subscription cleanup described above does not reap connection rows. Sustained deadline pressure can therefore delay connection-row cleanup. DM unread frames are independent lazy work items, so an unexpected failure for one conversation does not skip the recipient's remaining states.
+Outbound WebSocket producers persist frames to the encrypted `websocket-outbound.fifo` SQS queue before reporting acceptance. Each connection has its own FIFO message group. The `websocketOutboundHandler` consumer allows 16 concurrent invocations (reserved concurrency 20), processes one record at a time, and acknowledges only successful Gateway sends or obsolete sessions. SDK failures, local queue overflow and send deadlines propagate to partial-batch failure responses; the frame stays in SQS and is retried with randomized visibility backoff. SDK calls still have three standard attempts, a five-second transport budget, and a one-second Lambda reserve. Neither pressure nor throttling deletes a live connection. An accepted frame can be delivered more than once if transport acknowledgement is lost. After 100 receives an undeliverable frame moves to a monitored 14-day dead-letter queue. A backlog-age alarm exposes slow delivery. Deploy the worker/queue before the existing producers. See [WebSocket outbound delivery](./websocket-outbound-delivery.md) for acceptance boundaries, session checks, rollout and recovery.
 
 ## API Boundary
 

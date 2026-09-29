@@ -1,3 +1,4 @@
+import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import {
   dbSupplier,
   LazyDbAccessCompatibleService,
@@ -5,6 +6,8 @@ import {
 } from '../../../sql-executor';
 import { WSConnectionEntity } from '../../../entities/IWSConnection';
 import {
+  ATTACHMENTS_TABLE,
+  DROP_ATTACHMENTS_TABLE,
   DROP_VOTER_STATE_TABLE,
   IDENTITIES_TABLE,
   RATINGS_TABLE,
@@ -736,6 +739,37 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
           identityId: row.identity_id
         }))
       );
+  }
+
+  async canIdentityReadQueuedResource(
+    identityId: string | null,
+    resource: { waveId: string } | { attachmentId: string }
+  ): Promise<boolean> {
+    const eligibleGroupIds =
+      identityId && identityId !== ANON_USER_ID
+        ? await this.userGroupsService.getGroupsUserIsEligibleFor(identityId)
+        : [];
+    const access = waveReadAccessSql('w', eligibleGroupIds.length > 0);
+    const row =
+      'waveId' in resource
+        ? await this.db.oneOrNull<{ id: string }>(
+            `select w.id from ${WAVES_TABLE} w where w.id = :waveId and ${access}`,
+            { waveId: resource.waveId, eligibleGroupIds }
+          )
+        : await this.db.oneOrNull<{ id: string }>(
+            `select a.id from ${ATTACHMENTS_TABLE} a where a.id = :attachmentId
+           and (a.owner_profile_id = :identityId or exists (
+             select 1 from ${DROP_ATTACHMENTS_TABLE} da
+             inner join ${WAVES_TABLE} w on w.id = da.wave_id
+             where da.attachment_id = a.id and ${access}
+           ))`,
+            {
+              attachmentId: resource.attachmentId,
+              identityId,
+              eligibleGroupIds
+            }
+          );
+    return row !== null;
   }
 
   async findAllConnectionIds(): Promise<string[]> {
