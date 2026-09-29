@@ -4,7 +4,13 @@ import {
   refreshInstallationBadge,
   refreshProfileBadges
 } from './badge-refresh';
-import { SQSBatchResponse, SQSEvent, ScheduledEvent } from 'aws-lambda';
+import {
+  Context,
+  SQSBatchResponse,
+  SQSEvent,
+  ScheduledEvent
+} from 'aws-lambda';
+import { withBadgeLockDeadline } from './device-badge';
 import { publishPushOutbox } from '@/pushNotificationsHandler/publish-outbox';
 import {
   AttachmentEntity,
@@ -165,9 +171,15 @@ const sqsHandler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
 };
 
 export async function dispatchPushEvent(
-  event: SQSEvent | ScheduledEvent
+  event: SQSEvent | ScheduledEvent,
+  context?: Pick<Context, 'getRemainingTimeInMillis'>
 ): Promise<SQSBatchResponse> {
-  if ('Records' in event) return sqsHandler(event);
+  if ('Records' in event) {
+    return withBadgeLockDeadline(
+      context?.getRemainingTimeInMillis() ?? 60_000,
+      () => sqsHandler(event)
+    );
+  }
   if (
     event.source !== 'aws.events' ||
     event['detail-type'] !== 'Scheduled Event'

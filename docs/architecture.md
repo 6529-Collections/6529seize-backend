@@ -1702,6 +1702,55 @@ operational errors, and lookup failures retry the affected queue records.
 cancellation records older than 30 days in bounded scheduled batches. See
 [Push cancellation](./push-notification-cancellation.md) for rollout and limits.
 
+### Committed single-notification push publication
+
+Single notifications created through `IdentityNotificationsDb.insertNotification`
+write a `push_notification_outbox_entries` entry in the notification's own transaction
+when push delivery is enabled. A caller without a transaction receives an owned
+transaction covering both writes. Rollbacks therefore cannot publish push work.
+Existing explicit batch producers and badge refresh paths are unchanged.
+
+`pushNotificationsHandler` also runs every minute to publish committed outbox
+rows in locked batches of ten (`READ COMMITTED`, `FOR UPDATE SKIP LOCKED`). It
+removes rows only after SQS accepts the batch. Failure retains work for the next
+run; committed entries older than five minutes emit an operational backlog error
+without stopping publication. Ambiguous sends/commits can replay messages through existing device receipts.
+The publisher stops starting new batches after its 40-second work window. The
+one-minute schedule normally adds up to one minute of polling delay before
+publication, not a hard delivery deadline. Under backlog, remaining rows wait for
+later scheduled runs; failures and queue processing can extend delivery further.
+It uses the existing worker's reserved concurrency headroom above the SQS event
+source cap.
+
+Unexplained missing notification rows now return failed SQS items, allowing later
+commits to become visible. Confirmed cancellation markers still acknowledge work.
+The existing ten-receive redrive limit bounds retries; exhausted messages reach the
+existing DLQ and alarms. The five-minute outbox value is a backlog-age threshold: once
+exceeded, each one-minute publisher run can log the backlog error. Discord delivery
+is handled separately by the existing monitoring pipeline and its unchanged
+five-minute grouping windows. Deploy schema sync (`dbMigrationsLoop`) before the worker and producers.
+
+The notification and push activation flags intentionally remain separate: disabling
+push delivery still permits in-app notifications and does not accumulate a future
+push backlog. This preserves the previous sender's early-return behavior. The
+existing push Lambda Errors/Throttles alarms cover both its scheduled and SQS
+invocations; the SQS cap of 18 leaves two of 20 reserved slots outside SQS.
+Schema sync is a required rollout step, not an automatic action of a single-service
+deployment. Do not activate the publisher or producers before schema sync succeeds.
+
+Push delivery and badge refreshes wait up to five seconds for a busy device lock,
+using capped randomized backoff. All lock acquisitions in an SQS invocation share
+an absolute deadline that stops lock acquisition ten seconds before the Lambda
+deadline, preserving time for in-flight work and the partial-batch response.
+This deliberately defers later devices once that deadline is reached, even if
+their locks might be free: starting another send could consume the response
+reserve. For a fresh 60-second invocation the cutoff is after 50 seconds of
+work, not after five seconds shared across the batch. Deferred records are
+returned as partial-batch failures so SQS retains them for retry.
+Persistent contention remains retryable through the unchanged 300-second SQS
+visibility timeout. Device lock ownership, expiry and successful-delivery receipts
+remain unchanged.
+
 ### xTDH identity publication
 
 `xTdhLoop` retains one explicit `REPEATABLE READ` transaction for universe
@@ -1728,34 +1777,3 @@ interval and now redrive after five receives to `xtdh-dead-letter.fifo`. Dead le
 are retained for 14 days and have a visible-message CloudWatch alarm on the existing
 alarm topic. Repeated consolidation drift therefore cannot block the FIFO group
 until source retention expires. Deploying `xTdhLoop` also provisions these resources.
-
-### Committed single-notification push publication
-
-Single notifications created through `IdentityNotificationsDb.insertNotification`
-write a `push_notification_outbox_entries` entry in the notification's own transaction
-when push delivery is enabled. A caller without a transaction receives an owned
-transaction covering both writes. Rollbacks therefore cannot publish push work.
-Existing explicit batch producers and badge refresh paths are unchanged.
-
-`pushNotificationsHandler` also runs every minute to publish committed outbox
-rows in locked batches of ten (`READ COMMITTED`, `FOR UPDATE SKIP LOCKED`). It
-removes rows only after SQS accepts the batch. Failure retains work for the next
-run; committed entries older than five minutes emit an operational backlog error
-without stopping publication. Ambiguous sends/commits can replay messages through existing device receipts.
-The publisher stops after its bounded work window. This path adds up to one
-minute before queue delivery. It uses the existing worker's reserved concurrency
-headroom above the SQS event source cap.
-
-Unexplained missing notification rows now return failed SQS items, allowing later
-commits to become visible. Confirmed cancellation markers still acknowledge work.
-The existing ten-receive redrive limit bounds retries; exhausted messages reach the
-existing DLQ and alarms. Operational errors and five-minute alert frequency remain
-unchanged. Deploy schema sync (`dbMigrationsLoop`) before the worker and producers.
-
-The notification and push activation flags intentionally remain separate: disabling
-push delivery still permits in-app notifications and does not accumulate a future
-push backlog. This preserves the previous sender's early-return behavior. The
-existing push Lambda Errors/Throttles alarms cover both its scheduled and SQS
-invocations; the SQS cap of 18 leaves two of 20 reserved slots outside SQS.
-Schema sync is a required rollout step, not an automatic action of a single-service
-deployment. Do not activate the publisher or producers before schema sync succeeds.
