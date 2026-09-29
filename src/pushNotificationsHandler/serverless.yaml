@@ -22,6 +22,7 @@ functions:
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     reservedConcurrency: 20
     events:
+      - schedule: rate(1 minute)
       - sqs:
           arn:
             Fn::GetAtt: [FirebasePushNotificationsQueue, Arn]

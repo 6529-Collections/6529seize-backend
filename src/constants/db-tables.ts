@@ -272,3 +272,6 @@ export const PUSH_NOTIFICATION_DEVICE_LOGOUT_FENCES_TABLE =
 
 export const PUSH_NOTIFICATION_CANCELLATIONS_TABLE =
   'push_notification_cancellations';
+
+export const PUSH_NOTIFICATION_OUTBOX_TABLE =
+  'push_notification_outbox_entries';
