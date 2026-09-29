@@ -22,6 +22,7 @@ describeWithSeed('WebSocket outbox MySQL transaction boundary', [], () => {
   });
   afterEach(() => {
     process.env.NODE_ENV = 'local';
+    jest.restoreAllMocks();
   });
   it('rolls back the real reaction and its event together', async () => {
     await expect(
@@ -64,6 +65,58 @@ describeWithSeed('WebSocket outbox MySQL transaction boundary', [], () => {
       await sqlExecutor.execute(`select * from ${DROP_REACTIONS_TABLE}`)
     ).toHaveLength(1);
   });
+  it.each(['resolver', 'partial-insert'])(
+    'releases the parent for replay after %s failure',
+    async (failure) => {
+      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+        recordWebSocketEvent(
+          { type: 'identity', profileId: 'p' },
+          { connection },
+          sqlExecutor
+        )
+      );
+      jest.mocked(resolveWebSocketEvent).mockResolvedValue([frame]);
+      if (failure === 'resolver') {
+        jest
+          .mocked(resolveWebSocketEvent)
+          .mockRejectedValueOnce(new Error('resolver unavailable'));
+      } else {
+        jest
+          .spyOn(sqlExecutor, 'bulkInsert')
+          .mockImplementationOnce(async (_table, _rows, _columns, ctx) => {
+            if (!ctx) throw new Error('Expected transaction context');
+            // A successful first chunk must disappear if the next chunk fails.
+            await recordWebSocketEvent(frame, ctx, sqlExecutor);
+            throw new Error('later chunk failed');
+          });
+      }
+      const send = jest.fn().mockResolvedValue(undefined);
+      await publishWebSocketOutbox(send, sqlExecutor);
+      const retained = await rows();
+      expect(retained).toHaveLength(1);
+      expect(retained[0].attempts).toBe(1);
+      expect(send).not.toHaveBeenCalled();
+      // An independent transaction can acquire the row immediately: no leaked lock.
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          await sqlExecutor.execute(
+            `select id from ${WEBSOCKET_OUTBOX_TABLE} for update nowait`,
+            {},
+            { wrappedConnection: connection }
+          );
+          await sqlExecutor.execute(
+            `update ${WEBSOCKET_OUTBOX_TABLE} set available_at = 0`,
+            {},
+            { wrappedConnection: connection }
+          );
+        }
+      );
+      await publishWebSocketOutbox(send, sqlExecutor);
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(await rows()).toEqual([]);
+    }
+  );
+
   it('holds later frames behind a deferred head without blocking other connections', async () => {
     await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
       await recordWebSocketEvent(frame, { connection }, sqlExecutor);
