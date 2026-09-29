@@ -21,6 +21,22 @@ jest.mock('./identityPushNotifications', () => ({
   sendIdentityNotificationsBatch: jest.fn()
 }));
 
+const getRemainingTimeInMillis = jest.fn();
+const context: Context = {
+  getRemainingTimeInMillis,
+  callbackWaitsForEmptyEventLoop: false,
+  functionName: 'pushNotificationsHandler',
+  functionVersion: '$LATEST',
+  invokedFunctionArn: 'test-function',
+  memoryLimitInMB: '1024',
+  awsRequestId: 'test-request',
+  logGroupName: 'test-group',
+  logStreamName: 'test-stream',
+  done: jest.fn(),
+  fail: jest.fn(),
+  succeed: jest.fn()
+};
+
 function event(...bodies: unknown[]): SQSEvent {
   return {
     Records: bodies.map(
@@ -31,6 +47,7 @@ function event(...bodies: unknown[]): SQSEvent {
 }
 
 beforeEach(() => {
+  getRemainingTimeInMillis.mockReset().mockReturnValue(60_000);
   jest
     .mocked(refreshInstallationBadge)
     .mockReset()
@@ -49,7 +66,7 @@ it('processes mixed normal pushes and refreshes with independent retry results',
       { type: 'badge_refresh', profile_id: 'b' },
       { type: 'badge_refresh', profile_id: 'a' }
     ),
-    {} as Context,
+    context,
     jest.fn()
   );
   expect(result).toEqual({
@@ -59,6 +76,7 @@ it('processes mixed normal pushes and refreshes with independent retry results',
       { itemIdentifier: '3' }
     ]
   });
+  expect(getRemainingTimeInMillis).toHaveBeenCalledTimes(1);
   expect(sendIdentityNotificationsBatch).toHaveBeenCalledWith([12]);
   expect(refreshProfileBadges).toHaveBeenCalledWith(['a', 'b', 'a']);
 });
@@ -73,18 +91,14 @@ it('retries all refresh records if device lookup fails without retrying delivere
         { identity_notification_id: 12 },
         { type: 'badge_refresh', profile_id: 'a' }
       ),
-      {} as Context,
+      context,
       jest.fn()
     )
   ).toEqual({ batchItemFailures: [{ itemIdentifier: '1' }] });
 });
 
 it('keeps existing notification-only messages compatible', async () => {
-  await handler(
-    event({ identity_notification_id: 12 }),
-    {} as Context,
-    jest.fn()
-  );
+  await handler(event({ identity_notification_id: 12 }), context, jest.fn());
   expect(refreshProfileBadges).not.toHaveBeenCalled();
   expect(sendIdentityNotificationsBatch).toHaveBeenCalledWith([12]);
 });
@@ -98,7 +112,7 @@ it('routes a message with both fields exclusively to badge refresh', async () =>
         profile_id: 'a',
         identity_notification_id: 12
       }),
-      {} as Context,
+      context,
       jest.fn()
     )
   ).toEqual({ batchItemFailures: [{ itemIdentifier: '0' }] });
@@ -117,7 +131,7 @@ it('retries only failed installation jobs in a mixed batch', async () => {
         { type: 'installation_badge_refresh', device_id: 'phone-b' },
         { identity_notification_id: 12 }
       ),
-      {} as Context,
+      context,
       jest.fn()
     )
   ).toEqual({ batchItemFailures: [{ itemIdentifier: '0' }] });
@@ -137,13 +151,13 @@ it.each([7, 8, 10])(
         ApproximateReceiveCount: String(count)
       } as SQSRecord['attributes'];
       jest.mocked(refreshProfileBadges).mockResolvedValue(['a']);
-      expect(await handler(input, {} as Context, jest.fn())).toEqual({
+      expect(await handler(input, context, jest.fn())).toEqual({
         batchItemFailures: [{ itemIdentifier: '0' }]
       });
       expect(error).toHaveBeenCalledTimes(count >= 8 ? 1 : 0);
       error.mockClear();
       jest.mocked(refreshProfileBadges).mockResolvedValue([]);
-      await handler(input, {} as Context, jest.fn());
+      await handler(input, context, jest.fn());
       expect(error).not.toHaveBeenCalled();
     } finally {
       error.mockRestore();
