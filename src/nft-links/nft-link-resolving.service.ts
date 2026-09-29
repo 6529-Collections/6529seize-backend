@@ -38,42 +38,56 @@ import {
 import { HttpError } from './lib/http';
 import type { OperationalDiagnostic } from '@/operational-errors';
 
+function nftResource(canonical: CanonicalLink): string | undefined {
+  const identifiers = canonical.identifiers;
+  if (identifiers.kind !== 'TOKEN') return undefined;
+  if (!/^[A-Za-z0-9_.-]+$/.test(identifiers.chain)) return undefined;
+  if (!/^0x[a-fA-F0-9]{40}$/.test(identifiers.contract)) return undefined;
+  if (!/^\d{1,78}$/.test(identifiers.tokenId)) return undefined;
+  return `${identifiers.chain}:${identifiers.contract}:${identifiers.tokenId}`;
+}
+function refreshStatus(error: unknown): number | undefined {
+  if (error instanceof RequiredNftPageNotFoundError) return 404;
+  if (error instanceof HttpError) return error.status;
+  return undefined;
+}
+function refreshCategory(
+  status: number | undefined,
+  error: unknown
+): OperationalDiagnostic['category'] {
+  if (status === 429) return 'THROTTLED';
+  if (status === 401 || status === 403) return 'ACCESS_DENIED';
+  if (status) return 'HTTP_ERROR';
+  if (error instanceof NftLinkResolutionDeadlineError) return 'TIMEOUT';
+  return 'UNKNOWN';
+}
 function refreshDiagnostic(
   canonical: CanonicalLink,
   error: unknown
 ): OperationalDiagnostic {
-  const identifiers = canonical.identifiers;
-  const resource =
-    identifiers.kind === 'TOKEN' &&
-    /^[A-Za-z0-9_.-]+$/.test(identifiers.chain) &&
-    /^0x[a-fA-F0-9]{40}$/.test(identifiers.contract) &&
-    /^\d{1,78}$/.test(identifiers.tokenId)
-      ? `${identifiers.chain}:${identifiers.contract}:${identifiers.tokenId}`
-      : undefined;
-  const httpStatus =
-    error instanceof RequiredNftPageNotFoundError
-      ? 404
-      : error instanceof HttpError
-        ? error.status
-        : undefined;
-  return {
-    category:
-      httpStatus === 429
-        ? 'THROTTLED'
-        : httpStatus === 401 || httpStatus === 403
-          ? 'ACCESS_DENIED'
-          : httpStatus
-            ? 'HTTP_ERROR'
-            : error instanceof NftLinkResolutionDeadlineError
-              ? 'TIMEOUT'
-              : 'UNKNOWN',
-    operation: 'NFT_REFRESH',
-    ...(resource ? { resource } : {}),
-    ...(['TRANSIENT', 'MANIFOLD'].includes(canonical.platform)
-      ? { provider: canonical.platform as 'TRANSIENT' | 'MANIFOLD' }
-      : {}),
-    ...(httpStatus ? { httpStatus } : {})
+  const httpStatus = refreshStatus(error);
+  const diagnostic: OperationalDiagnostic = {
+    category: refreshCategory(httpStatus, error),
+    operation: 'NFT_REFRESH'
   };
+  diagnostic.resource = nftResource(canonical);
+  if (canonical.platform === 'TRANSIENT' || canonical.platform === 'MANIFOLD')
+    diagnostic.provider = canonical.platform;
+  if (httpStatus) diagnostic.httpStatus = httpStatus;
+  return diagnostic;
+}
+function stopsImmediateRetry(
+  error: unknown,
+  canonical: CanonicalLink,
+  attempt: number,
+  maxAttempts: number
+): boolean {
+  if (error instanceof NftLinkResolutionDeadlineError) return true;
+  if (attempt === maxAttempts) return true;
+  return (
+    error instanceof RequiredNftPageNotFoundError &&
+    error.scopeHash === nftPageRetryScope(canonical)
+  );
 }
 
 export class NftLinkResolvingService {
@@ -269,13 +283,7 @@ export class NftLinkResolvingService {
         if (error instanceof NftLinkResolutionLockLostError) throw error;
         lastError = error;
         lastAttempt = attempt;
-        if (
-          error instanceof NftLinkResolutionDeadlineError ||
-          (error instanceof RequiredNftPageNotFoundError &&
-            error.scopeHash === nftPageRetryScope(canonical)) ||
-          attempt === maxAttempts
-        )
-          break;
+        if (stopsImmediateRetry(error, canonical, attempt, maxAttempts)) break;
       }
       try {
         await nftLinkResolutionStage('retry_wait', () =>

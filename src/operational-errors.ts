@@ -92,20 +92,61 @@ function inferredDiagnostic(
     code === 'ETIMEDOUT'
   )
     category = 'TIMEOUT';
-  else if (['ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN'].includes(String(code)))
+  else if (
+    typeof code === 'string' &&
+    ['ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN'].includes(code)
+  )
     category = 'NETWORK';
   else if (name === 'ValidationError') category = 'VALIDATION';
+  const sdkAttempts = boundedInt(property(ws, 'sdk_attempts'), 1, 1000);
   return {
     category,
     operation: ws ? 'WS_OUTBOUND_SEND' : safeToken(component),
     ...(status ? { httpStatus: status } : {}),
-    ...(typeof property(ws, 'sdk_attempts') === 'number' &&
-    Number.isSafeInteger(property(ws, 'sdk_attempts')) &&
-    (property(ws, 'sdk_attempts') as number) > 0 &&
-    (property(ws, 'sdk_attempts') as number) <= 1000
-      ? { sdkAttempts: property(ws, 'sdk_attempts') as number }
-      : {})
+    ...(sdkAttempts ? { sdkAttempts } : {})
   };
+}
+function boundedInt(
+  value: unknown,
+  min: number,
+  max: number
+): number | undefined {
+  return typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value >= min &&
+    value <= max
+    ? value
+    : undefined;
+}
+function safeDate(value: unknown): string | undefined {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value))
+    ? new Date(value).toISOString()
+    : undefined;
+}
+function safeRecovery(
+  input: OperationalDiagnostic['recovery']
+): OperationalDiagnostic['recovery'] {
+  if (!input) return undefined;
+  const states = ['pending', 'exhausted', 'terminal', 'unknown'] as const;
+  if (!states.some((state) => state === input.state)) return undefined;
+  const attempt = boundedInt(input.attempt, 1, 1000);
+  const maxAttempts = boundedInt(input.maxAttempts, 1, 1000);
+  let state = input.state;
+  if (
+    state === 'pending' &&
+    (!attempt || !maxAttempts || attempt >= maxAttempts)
+  )
+    state = 'unknown';
+  const result: NonNullable<OperationalDiagnostic['recovery']> = { state };
+  if (attempt) result.attempt = attempt;
+  if (maxAttempts) result.maxAttempts = maxAttempts;
+  const nextAttemptAt =
+    state === 'pending' ? safeDate(input.nextAttemptAt) : undefined;
+  const nextEligibleAt =
+    state === 'unknown' ? safeDate(input.nextEligibleAt) : undefined;
+  if (nextAttemptAt) result.nextAttemptAt = nextAttemptAt;
+  if (nextEligibleAt) result.nextEligibleAt = nextEligibleAt;
+  return result;
 }
 function safeDiagnostic(value: OperationalDiagnostic): OperationalDiagnostic {
   const categories: FailureCategory[] = [
@@ -120,70 +161,18 @@ function safeDiagnostic(value: OperationalDiagnostic): OperationalDiagnostic {
   const category = categories.includes(value.category)
     ? value.category
     : 'UNKNOWN';
-  const operation = safeToken(value.operation);
-  const resource = safeToken(value.resource, 160);
-  const provider = ['TRANSIENT', 'MANIFOLD', 'ALCHEMY', 'AWS'].includes(
-    String(value.provider)
+  const result: OperationalDiagnostic = { category };
+  result.operation = safeToken(value.operation);
+  result.resource = safeToken(value.resource, 160);
+  if (
+    value.provider &&
+    ['TRANSIENT', 'MANIFOLD', 'ALCHEMY', 'AWS'].includes(value.provider)
   )
-    ? value.provider
-    : undefined;
-  const status = value.httpStatus;
-  const httpStatus =
-    typeof status === 'number' &&
-    Number.isInteger(status) &&
-    status >= 100 &&
-    status <= 599
-      ? status
-      : undefined;
-  const sdkAttempts =
-    typeof value.sdkAttempts === 'number' &&
-    Number.isSafeInteger(value.sdkAttempts) &&
-    value.sdkAttempts > 0 &&
-    value.sdkAttempts <= 1000
-      ? value.sdkAttempts
-      : undefined;
-  const retry = value.recovery;
-  const attempt = retry?.attempt;
-  const maxAttempts = retry?.maxAttempts;
-  const countsValid =
-    Number.isSafeInteger(attempt) &&
-    Number.isSafeInteger(maxAttempts) &&
-    attempt! > 0 &&
-    maxAttempts! > attempt! &&
-    maxAttempts! <= 1000;
-  const state =
-    retry?.state === 'pending' && !countsValid ? 'unknown' : retry?.state;
-  const recovery =
-    state && ['pending', 'exhausted', 'terminal', 'unknown'].includes(state)
-      ? {
-          state,
-          ...(Number.isSafeInteger(attempt) && attempt! > 0 ? { attempt } : {}),
-          ...(Number.isSafeInteger(maxAttempts) && maxAttempts! > 0
-            ? { maxAttempts }
-            : {}),
-          ...(state === 'pending' &&
-          retry?.nextAttemptAt &&
-          Number.isFinite(Date.parse(retry.nextAttemptAt))
-            ? { nextAttemptAt: new Date(retry.nextAttemptAt).toISOString() }
-            : {}),
-          ...(state === 'unknown' &&
-          retry?.nextEligibleAt &&
-          Number.isFinite(Date.parse(retry.nextEligibleAt))
-            ? { nextEligibleAt: new Date(retry.nextEligibleAt).toISOString() }
-            : {})
-        }
-      : undefined;
-  return {
-    category,
-    ...(operation ? { operation } : {}),
-    ...(resource ? { resource } : {}),
-    ...(provider ? { provider } : {}),
-    ...(httpStatus ? { httpStatus } : {}),
-    ...(sdkAttempts ? { sdkAttempts } : {}),
-    ...(recovery
-      ? { recovery: recovery as OperationalDiagnostic['recovery'] }
-      : {})
-  };
+    result.provider = value.provider;
+  result.httpStatus = boundedInt(value.httpStatus, 100, 599);
+  result.sdkAttempts = boundedInt(value.sdkAttempts, 1, 1000);
+  result.recovery = safeRecovery(value.recovery);
+  return result;
 }
 
 export function isExpectedClientError(value: unknown): boolean {
