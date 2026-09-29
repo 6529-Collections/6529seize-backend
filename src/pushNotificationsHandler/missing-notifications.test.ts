@@ -22,11 +22,11 @@ it('acknowledges confirmed cancellations with only an informational log', async 
   );
   expect(logger.error).not.toHaveBeenCalled();
 });
-it('still reports unexplained missing IDs in a mixed batch', async () => {
+it('retries and reports unexplained missing IDs in a mixed batch', async () => {
   jest
     .mocked(pushNotificationCancellationsDb.findCancelledIds)
     .mockResolvedValue(new Set([1]));
-  expect(await handleMissingNotifications([1, 2])).toEqual([]);
+  expect(await handleMissingNotifications([1, 2])).toEqual([2]);
   expect(logger.error).toHaveBeenCalledTimes(1);
   expect(logger.error).toHaveBeenCalledWith('Notification not found: 2');
 });
