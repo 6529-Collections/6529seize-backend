@@ -46,6 +46,10 @@ jest.mock('@aws-sdk/client-apigatewaymanagementapi', () => {
   };
 });
 
+import type { SQSEvent } from 'aws-lambda';
+import { processWebSocketBatch } from '@/websocketOutboundHandler/processor';
+import { deferWebSocketRetry } from '@/websocketOutboundHandler/retry';
+import { SQSClient, ChangeMessageVisibilityCommand } from '@aws-sdk/client-sqs';
 import { enqueueWebSocketFrame } from './ws-outbound-queue';
 import { HttpResponse } from '@smithy/protocol-http';
 import { NftLinkRefreshNotifier } from '@/nftLinkRefresherLoop/nft-link-refresh-notifier';
@@ -216,6 +220,129 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
     await expect(sockets.deliverQueued(frame)).resolves.toBeUndefined();
     expect(mockHandle).toHaveBeenCalledTimes(4);
     expect(enqueueWebSocketFrame).not.toHaveBeenCalled();
+  });
+
+  it('retains an SDK-exhausted 429 at the SQS boundary, defers it, and acknowledges redelivery', async () => {
+    const batch = {
+      Records: [
+        {
+          messageId: 'durable-frame',
+          receiptHandle: 'test-receipt',
+          attributes: { ApproximateReceiveCount: '1' },
+          body: JSON.stringify({
+            version: 1,
+            id: 'durable-frame',
+            connectionId: 'synthetic',
+            message: '{}',
+            identityId: 'profile',
+            jwtExpiry: 2000000000
+          })
+        }
+      ]
+    } as SQSEvent;
+    const originalQueueUrl = process.env.WS_OUTBOUND_QUEUE_URL;
+    process.env.WS_OUTBOUND_QUEUE_URL =
+      'https://sqs.synthetic.invalid/test.fifo';
+    const visibility = jest
+      .spyOn(SQSClient.prototype, 'send')
+      .mockResolvedValue({} as never);
+    const report = jest.fn();
+    const consume = () =>
+      processWebSocketBatch(
+        batch,
+        (frame) => sockets.deliverQueued(frame),
+        report,
+        deferWebSocketRetry
+      );
+    try {
+      mockHandle.mockResolvedValue(response(429, 'LimitExceededException'));
+      expect(await consume()).toEqual({
+        batchItemFailures: [{ itemIdentifier: 'durable-frame' }]
+      });
+      expect(mockHandle).toHaveBeenCalledTimes(3);
+      expect(report).toHaveBeenCalledTimes(1);
+      expect(visibility).toHaveBeenCalledTimes(1);
+      const command = visibility.mock
+        .calls[0][0] as ChangeMessageVisibilityCommand;
+      expect(command.input).toMatchObject({
+        QueueUrl: process.env.WS_OUTBOUND_QUEUE_URL,
+        ReceiptHandle: 'test-receipt'
+      });
+      expect(command.input.VisibilityTimeout).toBeGreaterThanOrEqual(1);
+      expect(command.input.VisibilityTimeout).toBeLessThanOrEqual(2);
+      mockHandle.mockResolvedValue(response(204));
+      batch.Records[0]!.attributes.ApproximateReceiveCount = '2';
+      expect(await consume()).toEqual({ batchItemFailures: [] });
+      expect(mockHandle).toHaveBeenCalledTimes(4);
+      expect(visibility).toHaveBeenCalledTimes(1);
+      expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+    } finally {
+      if (originalQueueUrl === undefined)
+        delete process.env.WS_OUTBOUND_QUEUE_URL;
+      else process.env.WS_OUTBOUND_QUEUE_URL = originalQueueUrl;
+    }
+  });
+
+  it('retains a worker deadline failure and delivers the same record on the next invocation', async () => {
+    const batch = {
+      Records: [
+        {
+          messageId: 'deadline-frame',
+          body: JSON.stringify({
+            version: 1,
+            id: 'deadline-frame',
+            connectionId: 'synthetic',
+            message: '{}',
+            identityId: 'profile',
+            jwtExpiry: 2000000000
+          })
+        }
+      ]
+    } as SQSEvent;
+    const consume = () =>
+      processWebSocketBatch(
+        batch,
+        (frame) => sockets.deliverQueued(frame),
+        jest.fn()
+      );
+    expect(await withLambdaRemainingTime(() => 900, consume)).toEqual({
+      batchItemFailures: [{ itemIdentifier: 'deadline-frame' }]
+    });
+    expect(mockHandle).not.toHaveBeenCalled();
+    mockHandle.mockResolvedValue(response(204));
+    expect(await consume()).toEqual({ batchItemFailures: [] });
+    expect(mockHandle).toHaveBeenCalledTimes(1);
+    expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+  });
+
+  it('permits duplicate delivery when an acknowledgement is lost; it does not promise exactly once', async () => {
+    const batch = {
+      Records: [
+        {
+          messageId: 'replayed-frame',
+          body: JSON.stringify({
+            version: 1,
+            id: 'replayed-frame',
+            connectionId: 'synthetic',
+            message: '{}',
+            identityId: 'profile',
+            jwtExpiry: 2000000000
+          })
+        }
+      ]
+    } as SQSEvent;
+    mockHandle.mockResolvedValue(response(204));
+    for (let delivery = 0; delivery < 2; delivery++) {
+      expect(
+        await processWebSocketBatch(
+          batch,
+          (frame) => sockets.deliverQueued(frame),
+          jest.fn()
+        )
+      ).toEqual({ batchItemFailures: [] });
+    }
+    expect(mockHandle).toHaveBeenCalledTimes(2);
+    expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
   });
 
   it('does not deliver queued notification data after its subscription is removed', async () => {
