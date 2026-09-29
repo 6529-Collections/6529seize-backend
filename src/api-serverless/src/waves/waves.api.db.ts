@@ -1601,6 +1601,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       const count = Number(counts[0]?.count ?? 0);
       // Avoid a deep-offset sort when the requested page is already past the end.
       if (params.offset >= count) return { waves: [], count };
+      // Match findWavesByIds: w.* is the complete projection, and parseWaveEntity
+      // below performs the same JSON normalization; no enrichment is lost.
       const waves = await this.db.execute<RawWaveEntity>(
         `select w.* ${fromAndWhere} order by (${deadline}) is null asc, ${deadline} asc, w.id asc limit :limit offset :offset`,
         params,
