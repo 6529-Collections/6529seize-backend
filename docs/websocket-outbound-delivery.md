@@ -104,3 +104,28 @@ revocation, backlog drain and DLQ alarms in staging. Use controlled traffic;
 this PR does not establish production load capacity. In a rollback, stop or
 roll back producers first and decide whether to drain or retain the queued work
 before disabling the consumer. Never delete a queue containing pending work.
+
+## Client compatibility findings before merge
+
+Local adversarial validation against frontend main `2c5c9db623` reproduced
+three delayed-snapshot hazards: a full `DROP_UPDATE` can overwrite a newer edit,
+a full update arriving after an observed deletion can reinsert the deleted drop,
+and an older `MEDIA_LINK_UPDATED` can replace a newer preview title/price and
+successful-refresh timestamp. These are existing client behaviors whose impact
+is amplified by durable delayed delivery. FIFO acceptance order does not solve
+concurrent producer ordering or races against REST state. Do not treat the
+normal staging smoke tests or passing sender tests as clearance of these cases.
+
+Before merge readiness, add client-side stale/drop-deletion protection or
+reconcile delayed payloads against authoritative state, including asynchronous
+fetch completion after deletion. Retain regression tests for all three cases.
+Notification invalidation already refetches canonical state; DM unread state
+rejects older/equal versions. Attachment reconciliation prevents finalized to
+pending regression, but that alone does not establish arbitrary snapshot ordering.
+
+Producer acceptance also remains best effort: ordinary drop, notification,
+attachment and NFT notification callers can log failed enqueues and return after
+the business operation has committed. Bulk deletion attempts later recipients
+then propagates failure; its post-commit caller may catch it. This is a confirmed
+limit, not a worker retry bug. A transactional producer outbox is a separate
+architecture change if durable delivery from business commit is required.

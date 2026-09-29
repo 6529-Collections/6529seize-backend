@@ -211,6 +211,7 @@ export class AppWebSockets {
     private readonly wsConnectionRepository: WsConnectionRepository
   ) {}
 
+  /** Queue application frames; keep local delivery and authentication control replies inline. */
   async send(input: {
     connectionId: string;
     message: string;
@@ -275,6 +276,7 @@ export class AppWebSockets {
     });
   }
 
+  /** Recheck notification subscriptions and resource access before delayed delivery. */
   private async canDeliverQueuedPayload(
     frame: QueuedWebSocketFrame
   ): Promise<boolean> {
@@ -326,6 +328,7 @@ export class AppWebSockets {
     return true;
   }
 
+  /** Send through bounded transport; propagate non-stale failures for the caller to retry. */
   async deliver({
     connectionId,
     message,

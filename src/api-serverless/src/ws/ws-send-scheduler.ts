@@ -5,6 +5,7 @@ const MAX_PENDING_SENDS = 256;
 const SEND_TIMEOUT_MS = 5_000;
 const INVOCATION_RESERVE_MS = 1_000;
 
+/** Require enough invocation time to preserve the shutdown reserve before starting I/O. */
 export function hasWebSocketSendBudget(): boolean {
   return getLambdaRemainingTime() > INVOCATION_RESERVE_MS;
 }
@@ -31,6 +32,7 @@ export class WebSocketSendScheduler {
     private readonly maxPending = MAX_PENDING_SENDS
   ) {}
 
+  /** Bound pending and active work, serialize each connection, and reject expired sends. */
   async send(
     connectionId: string,
     operation: (signal: AbortSignal) => Promise<void>,
@@ -87,6 +89,7 @@ export class WebSocketSendScheduler {
     });
   }
 
+  /** Await transport settlement even after cancellation before allowing permit release. */
   private async execute(
     operation: (signal: AbortSignal) => Promise<void>,
     controller: AbortController,
@@ -106,11 +109,13 @@ export class WebSocketSendScheduler {
     }
   }
 
+  /** Remove expired queued work so it cannot send later or occupy pending capacity. */
   private removePending(entry: PendingSend): void {
     const index = this.pending.indexOf(entry);
     if (index >= 0) this.pending.splice(index, 1);
   }
 
+  /** Start eligible queued work without overtaking earlier work on the same connection. */
   private drain(): void {
     while (this.activeConnections.size < this.concurrency) {
       // Skip busy connections; preserve FIFO ordering within each connection.

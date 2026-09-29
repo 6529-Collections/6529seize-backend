@@ -45,6 +45,53 @@ describe('bounded WebSocket sends', () => {
     expect(jest.getTimerCount()).toBe(0);
   });
 
+  it('accounts for a 1000-send burst, retries overflow, preserves order and clears timers', async () => {
+    const scheduler = new WebSocketSendScheduler();
+    const ids = Array.from({ length: 1000 }, (_, id) => id);
+    const completed: number[] = [];
+    const active = new Set<number>();
+    let peak = 0;
+    const submit = (id: number) =>
+      scheduler.send(String(id % 32), async () => {
+        const connection = id % 32;
+        expect(active.has(connection)).toBe(false);
+        active.add(connection);
+        peak = Math.max(peak, active.size);
+        await new Promise<void>((resolve) => setTimeout(resolve, 1));
+        completed.push(id);
+        active.delete(connection);
+      });
+    const burst = Promise.allSettled(ids.map(submit));
+    await jest.runAllTimersAsync();
+    const results = await burst;
+    const retry: number[] = [];
+    results.forEach((result, id) => {
+      if (result.status === 'rejected') {
+        expect(result.reason).toMatchObject({ reason: 'QUEUE_FULL' });
+        retry.push(id);
+      }
+    });
+    expect(completed).toHaveLength(272);
+    expect(retry).toHaveLength(728);
+    // Model later delivery of retained work, not an unbounded immediate retry loop.
+    for (let offset = 0; offset < retry.length; offset += 128) {
+      const redelivery = Promise.all(
+        retry.slice(offset, offset + 128).map(submit)
+      );
+      await jest.runAllTimersAsync();
+      await redelivery;
+    }
+    expect(peak).toBe(WS_SEND_CONCURRENCY);
+    expect(active.size).toBe(0);
+    expect(new Set(completed).size).toBe(1000);
+    for (let connection = 0; connection < 32; connection++) {
+      expect(completed.filter((id) => id % 32 === connection)).toEqual(
+        ids.filter((id) => id % 32 === connection)
+      );
+    }
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
   it('rejects overflow without starting another operation', async () => {
     const scheduler = new WebSocketSendScheduler(1, 1);
     const gate = deferred();
