@@ -13,6 +13,10 @@
 import { HttpFile } from '../http/http';
 
 export class ApiRegisterPushNotificationTokenRequest {
+    /**
+    * This installation supports native competition notifications and badge counts. Omission clears that support for older clients.
+    */
+    'include_competitions'?: boolean;
     'device_id': string;
     'token': string;
     /**
@@ -41,6 +45,12 @@ export class ApiRegisterPushNotificationTokenRequest {
     static readonly mapping: {[index: string]: string} | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
+        {
+            "name": "include_competitions",
+            "baseName": "include_competitions",
+            "type": "boolean",
+            "format": ""
+        },
         {
             "name": "device_id",
             "baseName": "device_id",

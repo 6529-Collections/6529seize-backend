@@ -24,6 +24,9 @@ export class PushNotificationDevice {
   @Column({ type: 'text', nullable: true })
   platform?: string;
 
+  @Column({ type: 'boolean', nullable: false, default: false })
+  include_competitions?: boolean;
+
   @CreateDateColumn()
   created_at?: Time;
 

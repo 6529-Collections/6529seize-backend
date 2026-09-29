@@ -1,4 +1,5 @@
 import { LegacyCompetitionBaselineRepository } from '@/competitions/legacy-competition-baseline.repository';
+import { competitionCreditService } from '@/competitions/competition-credit.service';
 import {
   LEGACY_PARITY_ROW_LIMIT,
   loadLegacyParityCandidate
@@ -10,6 +11,10 @@ import { CompetitionCursorCodec } from '@/competitions/competition-cursor';
 import {
   COMPETITION_PARITY_OBSERVATIONS_TABLE,
   COMPETITION_CAPABILITIES_TABLE,
+  IDENTITIES_TABLE,
+  RATINGS_TABLE,
+  TDH_NFT_TABLE,
+  WAVE_VOTING_CREDIT_NFTS_TABLE,
   WAVE_LEADERBOARD_ENTRIES_TABLE
 } from '@/constants';
 import {
@@ -28,7 +33,13 @@ import { legacyCompetitionEntryId } from '@/competitions/competition-id';
 import { CompetitionRepository } from '@/competitions/competition.repository';
 import { CompetitionEntryStatus } from '@/entities/ICompetition';
 import { DropType } from '@/entities/IDrop';
-import { WaveOutcomeCredit, WaveOutcomeType, WaveType } from '@/entities/IWave';
+import {
+  WaveCreditScope,
+  WaveCreditType,
+  WaveOutcomeCredit,
+  WaveOutcomeType,
+  WaveType
+} from '@/entities/IWave';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed, Seed } from '@/tests/_setup/seed';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
@@ -196,7 +207,12 @@ describeWithSeed(
         () => sqlExecutor
       );
       const expected = await baseline.getSnapshot(record, 5_000, {});
-      const candidate = await loadLegacyParityCandidate(reader, record, 5_000);
+      const candidate = await loadLegacyParityCandidate(
+        reader,
+        record,
+        5_000,
+        {}
+      );
       expect(candidate).toEqual(expected);
     });
 
@@ -210,10 +226,138 @@ describeWithSeed(
         () => sqlExecutor
       ).getSnapshot(record, 5_000, {});
       expect(baseline.configuration).toMatchObject({ ended_at: null });
-      expect(await loadLegacyParityCandidate(reader, record, 5_000)).toEqual(
-        baseline
-      );
+      expect(
+        await loadLegacyParityCandidate(reader, record, 5_000, {})
+      ).toEqual(baseline);
     });
+
+    it.each([WaveCreditScope.WAVE, WaveCreditScope.DROP])(
+      'independently verifies available and remaining credit with %s scope',
+      async (scope) => {
+        await sqlExecutor.execute(
+          `insert into ${IDENTITIES_TABLE} (consolidation_key, profile_id, primary_address, tdh, rep, cic, level_raw) values ('parity-budget', 'profile-voter', 'parity-wallet', 100, 0, 0, 0)`
+        );
+        await sqlExecutor.execute(
+          'update waves set voting_credit_scope = :scope where id = :id',
+          { scope, id: wave.id }
+        );
+        await sqlExecutor.execute(
+          `insert into ${DROP_VOTER_STATE_TABLE} (voter_id, drop_id, wave_id, votes) values ('profile-voter', 'drop-tie-older', :waveId, -13), ('profile-voter', 'drop-winner', :waveId, 90)`,
+          { waveId: wave.id }
+        );
+        const { record, reader } = await adapter();
+        const baseline = await new LegacyCompetitionBaselineRepository(
+          () => sqlExecutor
+        ).getSnapshot(record, 5_000, {});
+        const candidate = await loadLegacyParityCandidate(
+          reader,
+          record,
+          5_000,
+          {}
+        );
+        expect(candidate.credit_budgets).toEqual(baseline.credit_budgets);
+        expect(baseline.credit_budgets).toEqual(
+          scope === WaveCreditScope.WAVE
+            ? [
+                {
+                  profile_id: 'profile-voter',
+                  drop_id: null,
+                  available: 100,
+                  spent: 20,
+                  remaining: 80
+                }
+              ]
+            : [
+                {
+                  profile_id: 'profile-voter',
+                  drop_id: 'drop-high',
+                  available: 100,
+                  spent: 7,
+                  remaining: 93
+                },
+                {
+                  profile_id: 'profile-voter',
+                  drop_id: 'drop-tie-older',
+                  available: 100,
+                  spent: 13,
+                  remaining: 87
+                }
+              ]
+        );
+        const original = competitionCreditService.getBudget.bind(
+          competitionCreditService
+        );
+        jest
+          .spyOn(competitionCreditService, 'getBudget')
+          .mockImplementation(async (...args) => ({
+            ...(await original(...args)),
+            remaining: 999
+          }));
+        const corrupted = await loadLegacyParityCandidate(
+          reader,
+          record,
+          5_000,
+          {}
+        );
+        expect(corrupted.votes_and_credits).toEqual(baseline.votes_and_credits);
+        expect(corrupted.credit_budgets).not.toEqual(baseline.credit_budgets);
+        const independent = await new LegacyCompetitionBaselineRepository(
+          () => sqlExecutor
+        ).getSnapshot(record, 5_000, {});
+        expect(independent.credit_budgets).toEqual(baseline.credit_budgets);
+      }
+    );
+
+    it.each([
+      [WaveCreditType.TDH, 100],
+      [WaveCreditType.XTDH, 12],
+      [WaveCreditType.TDH_PLUS_XTDH, 112],
+      [WaveCreditType.REP, 81],
+      [WaveCreditType.CARD_SET_TDH, 91]
+    ])(
+      'independently derives %s budget availability',
+      async (creditType, expectedAvailable) => {
+        await sqlExecutor.execute(
+          `insert into ${IDENTITIES_TABLE} (consolidation_key, profile_id, primary_address, tdh, xtdh, rep, cic, level_raw) values ('parity-budget', 'profile-voter', 'parity-wallet', 100, 12.75, 0, 0, 0)`
+        );
+        await sqlExecutor.execute(
+          'update waves set voting_credit_type = :creditType, voting_credit_category = :category, voting_credit_creditor = :creditor where id = :id',
+          { creditType, category: 'art', creditor: 'curator', id: wave.id }
+        );
+        await sqlExecutor.execute(
+          `insert into ${RATINGS_TABLE} (rater_profile_id, matter_target_id, matter, matter_category, rating, last_modified) values ('curator', 'profile-voter', 'REP', 'art', 81, now()), ('someone-else', 'profile-voter', 'REP', 'art', 800, now()), ('curator', 'profile-voter', 'CIC', 'art', 999, now())`
+        );
+        const contract = `0x${'c'.repeat(40)}`;
+        await sqlExecutor.execute(
+          `insert into ${WAVE_VOTING_CREDIT_NFTS_TABLE} (wave_id, contract, token_id) values (:waveId, :contract, 1)`,
+          { waveId: wave.id, contract }
+        );
+        await sqlExecutor.execute(
+          `insert into ${TDH_NFT_TABLE} (id, contract, consolidation_key, balance, tdh, boost, boosted_tdh, tdh__raw, tdh_rank) values (1, :contract, 'parity-budget', 1, 91, 1, 91, 91, 1), (2, :contract, 'parity-budget', 1, 999, 1, 999, 999, 1)`,
+          { contract }
+        );
+        const { record, reader } = await adapter();
+        const baseline = await new LegacyCompetitionBaselineRepository(
+          () => sqlExecutor
+        ).getSnapshot(record, 5_000, {});
+        const candidate = await loadLegacyParityCandidate(
+          reader,
+          record,
+          5_000,
+          {}
+        );
+        expect(candidate.credit_budgets).toEqual(baseline.credit_budgets);
+        expect(baseline.credit_budgets).toEqual([
+          {
+            profile_id: 'profile-voter',
+            drop_id: null,
+            available: expectedAvailable,
+            spent: 7,
+            remaining: Number(expectedAvailable) - 7
+          }
+        ]);
+      }
+    );
 
     it('rejects over-limit source rows on both sides without recording truncated parity', async () => {
       await sqlExecutor.bulkInsert(
@@ -233,7 +377,7 @@ describeWithSeed(
         )
       ).rejects.toBeInstanceOf(CompetitionRowLimitError);
       await expect(
-        loadLegacyParityCandidate(reader, record, 5_000)
+        loadLegacyParityCandidate(reader, record, 5_000, {})
       ).rejects.toBeInstanceOf(CompetitionRowLimitError);
       expect(
         await sqlExecutor.execute(
@@ -256,9 +400,9 @@ describeWithSeed(
       expect(baseline.votes_and_credits).toEqual([
         { profile_id: 'profile-voter', votes: 7, credit_spent: 7 }
       ]);
-      expect(await loadLegacyParityCandidate(reader, record, 5_000)).toEqual(
-        baseline
-      );
+      expect(
+        await loadLegacyParityCandidate(reader, record, 5_000, {})
+      ).toEqual(baseline);
     });
 
     it.each(['slow-query', 'stalled-reader'])(
@@ -278,7 +422,8 @@ describeWithSeed(
           loadLegacyParityCandidate(
             new LegacyCompetitionAdapter(repository, wavesApiDb, ctx),
             record,
-            now
+            now,
+            ctx
           )
         );
         const baseline = new LegacyCompetitionBaselineRepository(
@@ -322,7 +467,7 @@ describeWithSeed(
           await sqlExecutor.execute(
             `select id from ${COMPETITION_PARITY_OBSERVATIONS_TABLE}`
           )
-        ).toHaveLength(12);
+        ).toHaveLength(13);
       }
     );
 
@@ -342,9 +487,9 @@ describeWithSeed(
         const expected = await new LegacyCompetitionBaselineRepository(
           () => sqlExecutor
         ).getSnapshot(record, 5_000, {});
-        expect(await loadLegacyParityCandidate(reader, record, 5_000)).toEqual(
-          expected
-        );
+        expect(
+          await loadLegacyParityCandidate(reader, record, 5_000, {})
+        ).toEqual(expected);
       }
     );
 
@@ -391,7 +536,7 @@ describeWithSeed(
       }>(
         `select category, matched from ${COMPETITION_PARITY_OBSERVATIONS_TABLE}`
       );
-      expect(observations).toHaveLength(12);
+      expect(observations).toHaveLength(13);
       expect(
         observations
           .filter((row) => !row.matched)
@@ -410,7 +555,12 @@ describeWithSeed(
       const expected = await new LegacyCompetitionBaselineRepository(
         () => sqlExecutor
       ).getSnapshot(record, 5_000, {});
-      const candidate = await loadLegacyParityCandidate(reader, record, 5_000);
+      const candidate = await loadLegacyParityCandidate(
+        reader,
+        record,
+        5_000,
+        {}
+      );
       expect(expected.capabilities).toEqual(['MAIN_STAGE']);
       expect(candidate.capabilities).toEqual([]);
     });
@@ -437,7 +587,12 @@ describeWithSeed(
       const baseline = await new LegacyCompetitionBaselineRepository(
         () => sqlExecutor
       ).getSnapshot(record, 5_000, {});
-      const candidate = await loadLegacyParityCandidate(reader, record, 5_000);
+      const candidate = await loadLegacyParityCandidate(
+        reader,
+        record,
+        5_000,
+        {}
+      );
       expect(candidate.entries).toHaveLength(505);
       expect(candidate).toEqual(baseline);
     });
@@ -457,7 +612,8 @@ describeWithSeed(
           const candidate = await loadLegacyParityCandidate(
             new LegacyCompetitionAdapter(repository, wavesApiDb, ctx),
             record,
-            5_000
+            5_000,
+            ctx
           );
           expect(candidate).toEqual(baseline);
         },
@@ -490,7 +646,13 @@ describeWithSeed(
             new LegacyCompetitionBaselineRepository(
               () => sqlExecutor
             ).getSnapshot(record, now, ctx),
-          (_ctx, now) => loadLegacyParityCandidate(reader, record, now),
+          (ctx, now) =>
+            loadLegacyParityCandidate(
+              new LegacyCompetitionAdapter(repository, wavesApiDb, ctx),
+              record,
+              now,
+              ctx
+            ),
           {}
         )
       ).resolves.toBe(false);

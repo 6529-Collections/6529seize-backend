@@ -15,21 +15,31 @@ const CAUSE_TO_SETTING_KEY: Partial<
   [IdentityNotificationCause.DROP_REACTED]: 'drop_reacted',
   [IdentityNotificationCause.DROP_BOOSTED]: 'drop_boosted',
   [IdentityNotificationCause.WAVE_CREATED]: 'wave_created',
+  [IdentityNotificationCause.COMPETITION_LIFECYCLE]: 'wave_created',
   [IdentityNotificationCause.SUBSCRIPTION_COVERAGE]: 'subscription_coverage'
 };
 
 export function isNotificationEnabledForDevice(
   cause: IdentityNotificationCause,
-  settings: PushNotificationSettingsData
+  settings: PushNotificationSettingsData,
+  includeCompetitions = false
 ): boolean {
+  if (
+    cause === IdentityNotificationCause.COMPETITION_LIFECYCLE &&
+    !includeCompetitions
+  )
+    return false;
   const settingKey = CAUSE_TO_SETTING_KEY[cause];
   return settingKey ? settings[settingKey] : true;
 }
 
 export function getEnabledCauses(
-  settings: PushNotificationSettingsData
+  settings: PushNotificationSettingsData,
+  includeCompetitions = false
 ): IdentityNotificationCause[] {
   return (
     Object.values(IdentityNotificationCause) as IdentityNotificationCause[]
-  ).filter((cause) => isNotificationEnabledForDevice(cause, settings));
+  ).filter((cause) =>
+    isNotificationEnabledForDevice(cause, settings, includeCompetitions)
+  );
 }

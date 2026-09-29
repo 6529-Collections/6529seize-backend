@@ -1,4 +1,5 @@
 const mockResolveName = jest.fn();
+jest.mock('@/competitions/competition-entry-drop-hooks');
 
 jest.mock('@/ethereum-rpc/ethereum-rpc-client', () => ({
   getEthereumRpcClient: jest.fn(() => ({ resolveName: mockResolveName }))

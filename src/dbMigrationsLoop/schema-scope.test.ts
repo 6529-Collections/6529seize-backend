@@ -211,9 +211,9 @@ describe('dbMigrationsLoop explicit schema scope', () => {
         syncEntities: false
       });
       expect(getDataSource().synchronize).not.toHaveBeenCalled();
-      expect(pushNotificationCancellationsDb.deleteExpired).toHaveBeenCalledTimes(
-        1
-      );
+      expect(
+        pushNotificationCancellationsDb.deleteExpired
+      ).toHaveBeenCalledTimes(1);
       expect(migrations.getInstance).not.toHaveBeenCalled();
       expect(
         competitionRepository.backfillLegacyMappings

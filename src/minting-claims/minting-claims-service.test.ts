@@ -159,7 +159,11 @@ describe('MintingClaimsService Main Stage mapping', () => {
     const ctx = { connection: {} } as RequestContext;
 
     await service.saveMemeCardMappingIfMainStageWinner('drop-1', 521, ctx);
-    expect(mappingsDb.isMainStageWinnerDrop).not.toHaveBeenCalled();
+    expect(mappingsDb.isMainStageWinnerDrop).toHaveBeenCalledWith(
+      'drop-1',
+      null,
+      ctx
+    );
 
     mainStageWaveId = 'main-stage-wave';
     await service.saveMemeCardMappingIfMainStageWinner('drop-1', 521, ctx);

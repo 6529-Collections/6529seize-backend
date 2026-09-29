@@ -36,8 +36,10 @@ describe('MemeCardDropMappingsDb', () => {
     expect(result).toEqual({ 'drop-1': 520, 'drop-2': 521 });
     const [sql, params] = execute.mock.calls[0];
     expect(sql).toContain(`from ${MEME_CARD_DROP_MAPPINGS_TABLE} mapping`);
-    expect(sql).toContain(`join ${WAVES_DECISION_WINNER_DROPS_TABLE} winner`);
-    expect(sql).toContain('winner.wave_id = :mainStageWaveId');
+    expect(sql).toContain(
+      `from ${WAVES_DECISION_WINNER_DROPS_TABLE} where wave_id = :mainStageWaveId`
+    );
+    expect(sql).toContain('wave_id = :mainStageWaveId');
     expect(params).toEqual({
       dropIds: ['drop-1', 'drop-2'],
       mainStageWaveId: 'main-stage-wave'
@@ -141,9 +143,9 @@ describe('MemeCardDropMappingsDb', () => {
     const [insertSql, insertParams] = execute.mock.calls[0];
     expect(insertSql).toContain(`insert into ${MEME_CARD_DROP_MAPPINGS_TABLE}`);
     expect(insertSql).toContain(
-      `from ${WAVES_DECISION_WINNER_DROPS_TABLE} winner`
+      `from ${WAVES_DECISION_WINNER_DROPS_TABLE} where wave_id = :mainStageWaveId`
     );
-    expect(insertSql).toContain('winner.wave_id = :mainStageWaveId');
+    expect(insertSql).toContain('wave_id = :mainStageWaveId');
     expect(insertParams).toEqual({
       dropId: 'drop-1',
       memeCardId: 521,

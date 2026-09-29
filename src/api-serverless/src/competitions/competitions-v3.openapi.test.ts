@@ -7,7 +7,7 @@ const yaml = require('js-yaml') as {
 
 type OpenApiOperation = Record<string, any>;
 type OpenApiDocument = {
-  readonly paths: Record<string, { readonly get: OpenApiOperation }>;
+  readonly paths: Record<string, { readonly get?: OpenApiOperation }>;
 };
 
 const openapi = yaml.load(
@@ -16,11 +16,16 @@ const openapi = yaml.load(
 
 describe('competition v3 OpenAPI contract', () => {
   const operations = Object.entries(openapi.paths)
-    .filter(([route]) => route.startsWith('/v3/waves'))
-    .map(([route, pathItem]) => ({ route, operation: pathItem.get }));
+    .filter(
+      ([route, pathItem]) => route.startsWith('/v3/waves') && pathItem.get
+    )
+    .map(([route, pathItem]) => ({ route, operation: pathItem.get! }));
 
   it('documents validation and masking responses for every read', () => {
-    expect(operations).toHaveLength(14);
+    // Native delivery adds six reads alongside the fourteen foundation reads.
+    // Write-only paths are deliberately excluded, while every GET retains the
+    // validation and masked-not-found response guarantees.
+    expect(operations).toHaveLength(20);
     for (const { route, operation } of operations) {
       expect({ route, responses: operation.responses }).toMatchObject({
         route,

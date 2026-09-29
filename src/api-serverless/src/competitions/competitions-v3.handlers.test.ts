@@ -1,10 +1,25 @@
 import {
   handleGetWaveCompetitionV3,
+  handleListCompetitionLeaderboardV3,
   handleListCompetitionVotersV3,
   handleListWaveCompetitionsV3
 } from '@/api/competitions/competitions-v3.handlers';
 import { getAuthenticationContext } from '@/api/auth/auth';
-import { competitionService } from '@/competitions/competition.service';
+import {
+  competitionService,
+  PublicCompetition
+} from '@/competitions/competition.service';
+import { CompetitionComputedPhase } from '@/competitions/competition.types';
+import {
+  CompetitionCapability,
+  CompetitionLifecycle,
+  CompetitionType
+} from '@/entities/ICompetition';
+import { ApiCompetitionType } from '@/api/generated/models/ApiCompetitionType';
+import { ApiCompetitionLifecycle } from '@/api/generated/models/ApiCompetitionLifecycle';
+import { ApiCompetitionComputedPhase } from '@/api/generated/models/ApiCompetitionComputedPhase';
+import { ApiCompetitionCapability } from '@/api/generated/models/ApiCompetitionCapability';
+import { ApiCompetitionParticipationConfigRequiredMediaEnum } from '@/api/generated/models/ApiCompetitionParticipationConfig';
 import { BadRequestException } from '@/exceptions';
 
 jest.mock('@/api/auth/auth', () => ({
@@ -14,7 +29,8 @@ jest.mock('@/competitions/competition.service', () => ({
   competitionService: {
     getCompetition: jest.fn(),
     listCompetitions: jest.fn(),
-    listVoters: jest.fn()
+    listVoters: jest.fn(),
+    listLeaderboard: jest.fn()
   }
 }));
 jest.mock('@/time', () => ({
@@ -23,21 +39,68 @@ jest.mock('@/time', () => ({
 }));
 
 const competitionId = '10000000-0000-4000-8000-000000000001';
-const publicCompetition = {
+const publicCompetition: PublicCompetition = {
   id: competitionId,
   wave_id: 'wave-a',
-  type: 'RANK',
+  type: CompetitionType.RANK,
   title: 'Competition',
   description: null,
-  lifecycle: 'PUBLISHED',
-  computed_phase: 'PARTICIPATION_OPEN',
+  lifecycle: CompetitionLifecycle.PUBLISHED,
+  computed_phase: CompetitionComputedPhase.PARTICIPATION_OPEN,
   config_version: 1,
-  participation: {},
-  voting: {},
-  decisions: {},
-  winners: {},
-  outcome_config: [],
-  capabilities: [],
+  participation: {
+    group_id: null,
+    signature_required: false,
+    max_entries_per_participant: 1,
+    required_metadata: [{ name: 'Artist', type: 'STRING' }],
+    required_media: ['IMAGE'],
+    submission_type: null,
+    identity_submission_strategy: null,
+    identity_submission_duplicates: null,
+    starts_at: 1,
+    ends_at: 1000,
+    terms: 'Submit original artwork.'
+  },
+  voting: {
+    group_id: null,
+    credit_type: 'CARD_SET_TDH',
+    credit_scope: 'WAVE',
+    credit_category: null,
+    credit_creditor: null,
+    credit_nfts: [{ contract: `0x${'a'.repeat(40)}`, token_id: 1 }],
+    signature_required: false,
+    starts_at: 1000,
+    ends_at: 2000,
+    max_votes_per_identity_to_entry: null,
+    forbid_negative_votes: false
+  },
+  decisions: {
+    strategy: {
+      first_decision_time: 2000,
+      subsequent_decisions: [],
+      is_rolling: false
+    },
+    next_decision_time: 2000,
+    winning_min_threshold: null,
+    winning_max_threshold: null,
+    winning_threshold_min_duration_ms: 0,
+    max_winners: null,
+    time_lock_ms: null
+  },
+  winners: {
+    max_winners: null,
+    winning_min_threshold: null,
+    winning_max_threshold: null,
+    winning_threshold_min_duration_ms: 0
+  },
+  outcome_config: [{ type: 'MANUAL', description: 'Curator selection' }],
+  capabilities: [CompetitionCapability.CURATION],
+  presentation: [
+    {
+      data_key: 'wave_display.submission.button_label',
+      data_value: 'Submit art'
+    }
+  ],
   permissions: {
     view: true,
     submit: false,
@@ -102,6 +165,35 @@ describe('competition v3 handlers', () => {
     expect(competitionService.getCompetition).not.toHaveBeenCalled();
   });
 
+  it('maps configured collections and enums into the public detail response', async () => {
+    const response = await handleGetWaveCompetitionV3({
+      params: { wave_id: 'wave-a', competition_id: competitionId },
+      query: {}
+    } as never);
+    expect(response).toMatchObject({
+      type: ApiCompetitionType.Rank,
+      lifecycle: ApiCompetitionLifecycle.Published,
+      computed_phase: ApiCompetitionComputedPhase.ParticipationOpen,
+      participation: {
+        required_metadata: [{ name: 'Artist', type: 'STRING' }],
+        required_media: [
+          ApiCompetitionParticipationConfigRequiredMediaEnum.Image
+        ]
+      },
+      voting: {
+        credit_nfts: [{ contract: `0x${'a'.repeat(40)}`, token_id: 1 }]
+      },
+      capabilities: [ApiCompetitionCapability.Curation],
+      outcome_config: [{ type: 'MANUAL', description: 'Curator selection' }],
+      presentation: [
+        {
+          data_key: 'wave_display.submission.button_label',
+          data_value: 'Submit art'
+        }
+      ]
+    });
+  });
+
   it('rejects malformed voter entry filters before reading data', async () => {
     await expect(
       handleListCompetitionVotersV3({
@@ -112,3 +204,19 @@ describe('competition v3 handlers', () => {
     expect(competitionService.listVoters).not.toHaveBeenCalled();
   });
 });
+
+it.each(['rating', 'real_time_rating', 'submitted_at', 'trend'])(
+  'forwards leaderboard sort %s in the competition scope',
+  async (sort) => {
+    await handleListCompetitionLeaderboardV3({
+      params: { wave_id: 'wave-a', competition_id: competitionId },
+      query: { sort }
+    } as never);
+    expect(competitionService.listLeaderboard).toHaveBeenLastCalledWith(
+      'wave-a',
+      competitionId,
+      expect.objectContaining({ sort, direction: 'DESC' }),
+      expect.anything()
+    );
+  }
+);

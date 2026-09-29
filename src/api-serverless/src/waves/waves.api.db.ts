@@ -15,6 +15,7 @@ import {
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
   CONTENT_MODERATION_PROFILE_BLOCKS_TABLE,
+  COMPETITIONS_TABLE,
   IDENTITY_MUTES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
@@ -1774,6 +1775,28 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         },
         {} as Record<string, WaveEntity>
       );
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  async findWaveIdsWithCompetitions(
+    waveIds: string[],
+    ctx: RequestContext
+  ): Promise<Set<string>> {
+    if (!waveIds.length) {
+      return new Set<string>();
+    }
+    const timerKey = `${this.constructor.name}->findWaveIdsWithCompetitions`;
+    ctx.timer?.start(timerKey);
+    try {
+      const rows = await this.db.execute<{ wave_id: string }>(
+        `select distinct wave_id from ${COMPETITIONS_TABLE}
+         where wave_id in (:waveIds)`,
+        { waveIds },
+        { wrappedConnection: ctx.connection }
+      );
+      return new Set(rows.map((row) => row.wave_id));
     } finally {
       ctx.timer?.stop(timerKey);
     }

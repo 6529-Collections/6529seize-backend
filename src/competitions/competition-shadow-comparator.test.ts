@@ -75,7 +75,7 @@ describe('CompetitionShadowComparator', () => {
       await comparator.compare(record, snapshot, snapshot, {});
       expect(
         repository.recordParityObservation.mock.calls[0][0].sourceVersion
-      ).toBe(`legacy-read-v2:${expected}`);
+      ).toBe(`legacy-read-v3:${expected}`);
     }
   );
 
@@ -120,7 +120,7 @@ describe('CompetitionShadowComparator', () => {
     ).toBe(false);
     expect(
       repository.recordParityObservation.mock.calls[0][0].sourceVersion
-    ).toMatch(/^legacy-read-v2:/);
+    ).toMatch(/^legacy-read-v3:/);
   });
 
   it.each(['baseline', 'candidate', 'persistence', 'transaction'])(
@@ -183,6 +183,103 @@ describe('CompetitionShadowComparator', () => {
     expect(baseline).not.toHaveBeenCalled();
     expect(candidate).not.toHaveBeenCalled();
   });
+
+  it('detects remaining-credit drift even when the voter spending arrays match', async () => {
+    const comparator = new CompetitionShadowComparator(
+      repository as never,
+      features as never,
+      logger
+    );
+    const baseline = {
+      ...snapshot,
+      credit_budgets: [
+        {
+          profile_id: 'profile-a',
+          drop_id: null,
+          available: 10,
+          spent: 3,
+          remaining: 7
+        }
+      ]
+    };
+    await comparator.compare(
+      record,
+      baseline,
+      {
+        ...baseline,
+        credit_budgets: [
+          {
+            profile_id: 'profile-a',
+            drop_id: null,
+            available: 10,
+            spent: 3,
+            remaining: 9
+          }
+        ]
+      },
+      {}
+    );
+    const rows = repository.recordParityObservation.mock.calls.map(
+      ([row]) => row
+    );
+    expect(
+      rows.find(
+        (row) => row.category === CompetitionParityCategory.CREDIT_AVAILABLE
+      )?.matched
+    ).toBe(false);
+    expect(
+      rows.find(
+        (row) => row.category === CompetitionParityCategory.CREDIT_SPEND
+      )?.matched
+    ).toBe(true);
+  });
+
+  it.each([undefined, []])(
+    'does not claim budget parity from absent or empty data: %s',
+    async (credit_budgets) => {
+      const comparator = new CompetitionShadowComparator(
+        repository as never,
+        features as never,
+        logger
+      );
+      await comparator.compare(
+        record,
+        { ...snapshot, credit_budgets },
+        { ...snapshot, credit_budgets },
+        {}
+      );
+      expect(
+        repository.recordParityObservation.mock.calls.some(
+          ([row]) => row.category === CompetitionParityCategory.CREDIT_AVAILABLE
+        )
+      ).toBe(false);
+    }
+  );
+
+  it.each([undefined, []])(
+    'detects a candidate that omits populated budget rows: %s',
+    async (credit_budgets) => {
+      const comparator = new CompetitionShadowComparator(
+        repository as never,
+        features as never,
+        logger
+      );
+      await comparator.compare(
+        record,
+        {
+          ...snapshot,
+          credit_budgets: [{ available: 1, spent: 0, remaining: 1 }]
+        },
+        { ...snapshot, credit_budgets },
+        {}
+      );
+      expect(
+        repository.recordParityObservation.mock.calls.find(
+          ([row]) => row.category === CompetitionParityCategory.CREDIT_AVAILABLE
+        )?.[0].matched
+      ).toBe(false);
+    }
+  );
 
   it('reports oversized samples without logging their source data', async () => {
     features.isLegacyCompetitionShadowCompareEnabled.mockReturnValue(true);

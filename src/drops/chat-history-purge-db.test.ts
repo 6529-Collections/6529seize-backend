@@ -73,6 +73,29 @@ describeWithSeed(
   'ChatHistoryPurgeDb synthetic MySQL cleanup',
   withWaves([wave]),
   () => {
+    it('retains content referenced by native entries and refuses a direct purge bypass', async () => {
+      await insertDrops(2);
+      await insert(tables.COMPETITION_ENTRIES_TABLE, {
+        id: 'retained-entry',
+        competition_id: 'competition',
+        wave_id: 'wave',
+        drop_id: 'drop-1',
+        submitter_id: 'author',
+        status: 'WITHDRAWN',
+        config_version: 1,
+        submitted_at: 1
+      });
+      await expect(purge(2)).resolves.toMatchObject({ ids: ['drop-2'] });
+      await expect(
+        sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+          repo.deleteBatch(scope, ['drop-1'], { connection })
+        )
+      ).rejects.toThrow('cannot be purged');
+      expect(
+        await sqlExecutor.execute(`select id from ${tables.DROPS_TABLE}`)
+      ).toEqual([{ id: 'drop-1' }]);
+    });
+
     it('records cancellation for both references when purging chat history', async () => {
       await insertDrops(2);
       await sqlExecutor.execute(
