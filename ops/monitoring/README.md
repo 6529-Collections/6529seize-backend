@@ -174,6 +174,12 @@ Discord mentions are disabled. A fingerprint identifies a group without copying
 its raw error message. The Sentry signer secret and Discord URL are plain-string
 secrets stored only in monitoring-owned Secrets Manager.
 
+Roll out the monitoring-account collector and dispatchers before the source-account
+LogRelay (`seize-monitoring-{env}-logs`), then redeploy application producers.
+The old source relay parses and reconstructs envelopes, so deploying producers
+before that relay would discard the new diagnostic. The new parser accepts old
+producer and queued event shapes during a phased rollout.
+
 Normal and critical lanes have separate collectors, queues, dead-letter queues,
 reserved Lambda capacity and dispatchers. An application envelope is forced into
 the normal lane; it cannot select critical severity. The source account's exact
