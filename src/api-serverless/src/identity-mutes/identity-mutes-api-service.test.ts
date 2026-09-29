@@ -94,7 +94,7 @@ describe('IdentityMutesApiService DM unread synchronization', () => {
       );
       expect(
         wavesApiDb.incrementDmUnreadStateVersionsForReaderWaves
-      ).toHaveBeenCalledWith({ readerId: 'muter-1', waveIds: ['wave-1'] }, ctx);
+      ).not.toHaveBeenCalled();
       expect(wavesApiDb.findDmUnreadConversationStates).toHaveBeenCalledWith(
         {
           identityId: 'muter-1',
@@ -140,13 +140,13 @@ describe('IdentityMutesApiService DM unread synchronization', () => {
     );
     expect(
       wavesApiDb.incrementDmUnreadStateVersionsForReaderWaves
-    ).toHaveBeenCalledTimes(2);
+    ).not.toHaveBeenCalled();
     expect(
       wsListenersNotifier.notifyAboutDmUnreadStateChanged
     ).toHaveBeenCalledTimes(2);
   });
 
-  it('versions affected conversations without aggregating unread state when the reader is offline', async () => {
+  it('leaves transactional versioning to the mutation repository when the reader is offline', async () => {
     const { ctx, service, wavesApiDb, wsListenersNotifier } = createService();
     wsListenersNotifier.findConnectedNotificationRecipients.mockResolvedValue(
       []
@@ -156,7 +156,7 @@ describe('IdentityMutesApiService DM unread synchronization', () => {
 
     expect(
       wavesApiDb.incrementDmUnreadStateVersionsForReaderWaves
-    ).toHaveBeenCalledWith({ readerId: 'muter-1', waveIds: ['wave-1'] }, ctx);
+    ).not.toHaveBeenCalled();
     expect(wavesApiDb.findDmUnreadConversationStates).not.toHaveBeenCalled();
     expect(
       wsListenersNotifier.notifyAboutDmUnreadStateChanged

@@ -9,9 +9,18 @@ it('keeps queued failures retryable with headroom, retention and operational ala
   );
   const config = document.toJS();
   const consumer = config.functions.websocketOutboundHandler;
-  const event = consumer.events[0].sqs;
+  const event = consumer.events.find((item: { sqs?: unknown }) => item.sqs).sqs;
   const resources = config.resources.Resources;
   const source = resources.WebSocketOutboundQueue.Properties;
+  expect(consumer.events).toContainEqual({ schedule: 'rate(1 minute)' });
+  expect(resources.WebSocketOutboxAgeAlarm.Properties.TreatMissingData).toBe(
+    'breaching'
+  );
+  expect(
+    catalog.services.find(
+      (service) => service.name === 'websocketOutboundHandler'
+    )?.default_dependencies
+  ).toContain('dbMigrationsLoop');
   expect(event.batchSize).toBe(1);
   expect(event.functionResponseType).toBe('ReportBatchItemFailures');
   expect(event.maximumConcurrency).toBeLessThan(consumer.reservedConcurrency);

@@ -118,6 +118,7 @@ function createRepo({
 
 describe('IdentityNotificationsDb', () => {
   const originalNotifierActivated = process.env.USER_NOTIFIER_ACTIVATED;
+  const originalNodeEnvironment = process.env.NODE_ENV;
 
   beforeEach(() => {
     process.env.USER_NOTIFIER_ACTIVATED = 'true';
@@ -127,6 +128,7 @@ describe('IdentityNotificationsDb', () => {
 
   afterEach(() => {
     process.env.USER_NOTIFIER_ACTIVATED = originalNotifierActivated;
+    process.env.NODE_ENV = originalNodeEnvironment;
     jest.restoreAllMocks();
   });
 
@@ -216,15 +218,27 @@ describe('IdentityNotificationsDb', () => {
   });
 
   it('preserves in-app notifications without recording pushes when push delivery is disabled', async () => {
+    process.env.NODE_ENV = 'test';
     jest.mocked(isActivated).mockReturnValue(false);
     const { db, repo } = createRepo({
       filteredNotifications: [notification()]
     });
     await repo.insertNotification(notification(), connection);
-    expect(db.execute).toHaveBeenCalledTimes(1);
     expect(db.execute.mock.calls[0][0]).toContain(
       'insert into identity_notifications'
     );
+    expect(db.execute).toHaveBeenCalledWith(
+      expect.stringContaining('insert into websocket_outbox'),
+      expect.objectContaining({
+        event: JSON.stringify({ type: 'identity', profileId: 'recipient-1' })
+      }),
+      { wrappedConnection: connection }
+    );
+    expect(
+      db.execute.mock.calls.some(([sql]) =>
+        sql.includes('insert into push_notification_outbox_entries')
+      )
+    ).toBe(false);
     expect(sendIdentityPushNotification).not.toHaveBeenCalled();
   });
 

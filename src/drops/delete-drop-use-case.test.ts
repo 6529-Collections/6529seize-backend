@@ -1,3 +1,4 @@
+import * as websocketOutbox from '@/websocket-outbox/outbox.db';
 import { identityFetcher } from '@/api-serverless/src/identities/identity.fetcher';
 import { userGroupsService } from '@/api-serverless/src/community-members/user-groups.service';
 import { waveScoreService } from '@/api/waves/wave-score.service';
@@ -81,6 +82,32 @@ describe('DeleteDropUseCase', () => {
       wavesApiDb
     };
   }
+
+  it('does not record a permanent deletion during edit delete-and-reinsert', async () => {
+    const capture = jest
+      .spyOn(websocketOutbox, 'recordWebSocketEvent')
+      .mockResolvedValue(undefined);
+    const { useCase, dropsDb } = createUseCase({
+      drop: {
+        id: 'edit-drop',
+        wave_id: 'wave-1',
+        author_id: 'author',
+        serial_no: 7
+      },
+      wave: { description_drop_id: 'edit-drop' }
+    });
+    await useCase.execute(
+      {
+        drop_id: 'edit-drop',
+        deleter_id: 'author',
+        deletion_purpose: 'UPDATE'
+      },
+      { connection: {} as any }
+    );
+    expect(dropsDb.deleteDropEntity).toHaveBeenCalled();
+    expect(dropsDb.insertDeletedDrop).not.toHaveBeenCalled();
+    expect(capture).not.toHaveBeenCalled();
+  });
 
   it('allows backend deletes without a user deleter and records the original drop author', async () => {
     const connection = {} as any;

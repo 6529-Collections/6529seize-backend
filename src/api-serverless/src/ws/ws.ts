@@ -217,6 +217,7 @@ export class AppWebSockets {
     message: string;
     skipStaleConnectionCheck?: boolean;
     abortSignal?: AbortSignal;
+    outboxId?: string;
   }): Promise<void> {
     input.abortSignal?.throwIfAborted();
     // Authentication acknowledgements must follow the control operation inline,
@@ -241,7 +242,8 @@ export class AppWebSockets {
           identityId: entity.identity_id,
           jwtExpiry: expiry
         },
-        input.abortSignal
+        input.abortSignal,
+        input.outboxId
       );
     } catch {
       // Do not expose queue bodies/provider errors, or claim failed persistence
@@ -287,8 +289,15 @@ export class AppWebSockets {
         wave_id?: string;
         wave?: { id?: string };
         attachment_id?: string;
+        timestamp?: number;
       };
     };
+    if (
+      payload.type === 'USER_IS_TYPING' &&
+      (typeof payload.data?.timestamp !== 'number' ||
+        Date.now() - payload.data.timestamp > 10_000)
+    )
+      return false;
     let accessIdentityId = frame.identityId;
     if (
       payload.type === 'IDENTITY_NOTIFICATIONS_CHANGED' ||

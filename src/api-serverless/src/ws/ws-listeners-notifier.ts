@@ -1,3 +1,4 @@
+import { wakeWebSocketOutbox } from '@/websocket-outbox/wakeup';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import { ANON_USER_ID, appWebSockets, AppWebSockets } from './ws';
 import {
@@ -284,12 +285,16 @@ export class WsListenersNotifier {
     private readonly moderationDb: Pick<
       ContentModerationDb,
       'getViewerContextsForDrop'
-    > = contentModerationDb
+    > = contentModerationDb,
+    private readonly wakeOutbox?: () => Promise<void>
   ) {}
 
   async notifyAboutIdentityNotificationsChanged(
     inputProfileIds: string[]
   ): Promise<void> {
+    if (this.wakeOutbox && process.env.NODE_ENV !== 'local')
+      return this.wakeOutbox();
+
     const profileIds = Array.from(
       new Set(inputProfileIds.filter((profileId) => !!profileId))
     );
@@ -323,6 +328,9 @@ export class WsListenersNotifier {
     states: ApiDmUnreadConversationState[],
     resolvedRecipients?: readonly NotificationConnectionRecipient[]
   ): Promise<void> {
+    if (this.wakeOutbox && process.env.NODE_ENV !== 'local')
+      return this.wakeOutbox();
+
     const statesByProfileId = states.reduce((acc, state) => {
       const profileStates = acc.get(state.profile_id) ?? [];
       profileStates.push(state);
@@ -392,6 +400,9 @@ export class WsListenersNotifier {
       useSystemBroadcastAudience = false
     }: { reason?: string; useSystemBroadcastAudience?: boolean } = {}
   ): Promise<void> {
+    if (this.wakeOutbox && process.env.NODE_ENV !== 'local')
+      return this.wakeOutbox();
+
     ctx.timer?.start(`${this.constructor.name}->notifyAboutDrop`);
     try {
       const onlineProfiles = useSystemBroadcastAudience
@@ -459,6 +470,9 @@ export class WsListenersNotifier {
     drop: ApiDrop,
     ctx: RequestContext
   ): Promise<void> {
+    if (this.wakeOutbox && process.env.NODE_ENV !== 'local')
+      return this.wakeOutbox();
+
     ctx.timer?.start(`${this.constructor.name}->notifyAboutDropRatingUpdate`);
     try {
       const onlineProfiles =
@@ -517,6 +531,9 @@ export class WsListenersNotifier {
     drop: ApiDrop,
     ctx: RequestContext
   ): Promise<void> {
+    if (this.wakeOutbox && process.env.NODE_ENV !== 'local')
+      return this.wakeOutbox();
+
     ctx.timer?.start(`${this.constructor.name}->notifyAboutDropReactionUpdate`);
     try {
       const onlineProfiles =
@@ -708,6 +725,9 @@ export class WsListenersNotifier {
     visibility_group_id: string | null,
     ctx: RequestContext
   ): Promise<void> {
+    if (this.wakeOutbox && process.env.NODE_ENV !== 'local')
+      return this.wakeOutbox();
+
     ctx.timer?.start(`${this.constructor.name}->notifyAboutDropDelete`);
     await this.notifyAboutDropDeletes([dropInfo], visibility_group_id, ctx);
     ctx.timer?.stop(`${this.constructor.name}->notifyAboutDropDelete`);
@@ -722,6 +742,9 @@ export class WsListenersNotifier {
     visibility_group_id: string | null,
     ctx: RequestContext
   ): Promise<void> {
+    if (this.wakeOutbox && process.env.NODE_ENV !== 'local')
+      return this.wakeOutbox();
+
     if (!dropInfos.length) {
       return;
     }
@@ -778,6 +801,9 @@ export class WsListenersNotifier {
     },
     ctx: RequestContext
   ): Promise<void> {
+    if (this.wakeOutbox && process.env.NODE_ENV !== 'local')
+      return this.wakeOutbox();
+
     ctx.timer?.start(
       `${this.constructor.name}->notifyAboutAttachmentStatusUpdate`
     );
@@ -839,6 +865,9 @@ export class WsListenersNotifier {
     nftLinkData: ApiNftLinkData,
     ctx: RequestContext
   ) {
+    if (this.wakeOutbox && process.env.NODE_ENV !== 'local')
+      return this.wakeOutbox();
+
     ctx.timer?.start(`${this.constructor.name}->notifyAboutNftLinkUpdate`);
     const message = JSON.stringify(nftLinkUpdatedMessage(nftLinkData));
     try {
@@ -865,5 +894,7 @@ export class WsListenersNotifier {
 
 export const wsListenersNotifier = new WsListenersNotifier(
   appWebSockets,
-  wsConnectionRepository
+  wsConnectionRepository,
+  contentModerationDb,
+  wakeWebSocketOutbox
 );

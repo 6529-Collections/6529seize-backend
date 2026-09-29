@@ -15,6 +15,9 @@ import { WavesApiDb } from './waves.api.db';
 
 function createRepo() {
   const db = {
+    executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+      callback({ connection: {} })
+    ),
     oneOrNull: jest.fn(),
     execute: jest.fn()
   };

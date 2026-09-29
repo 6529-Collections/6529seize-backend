@@ -745,19 +745,12 @@ including older responses without a recognizable instance ID. A listingType-only
 response keeps those legacy assets and uses an unknown market state with a view
 action, without inferring a claim price.
 
-After persistence, the NFT-link notifier reads active WebSocket recipients once
-and enqueues the existing `MEDIA_LINK_UPDATED` payload through the shared
-`AppWebSockets.send` path, with concurrency 10 and a 15-second producer deadline.
-The shared path captures the current session for `websocket-outbound.fifo`;
-`websocketOutboundHandler` owns Gateway sends and durable retries. Cancellation
-prevents enqueueing after late recipient, session, or queue-URL reads and is
-forwarded to active SQS sends. Notification failure cannot change a successful
-metadata refresh, but failed persistence remains an error and is outside the
-post-acceptance delivery guarantee. The worker rechecks session validity before
-sending; public NFT-link metadata requires no wave/attachment access check.
-The API and other resolver callers also use the shared queued path. Deploy the
-outbound worker and queue before `nftLinkRefresherLoop`. No API schema or frontend
-change is required.
+NFT resolution and preview transitions capture a WebSocket outbox event in the
+same database transaction. The post-commit notifier wakes `websocketOutboundHandler`;
+its scheduled fallback recovers a lost wakeup. The worker resolves current NFT
+state, materializes durable recipient jobs, and queues `MEDIA_LINK_UPDATED`
+frames for delivery. A producer deadline no longer discards committed delivery
+intent. See [WebSocket outbound delivery](./websocket-outbound-delivery.md).
 
 ### NFT market depth and activity
 
@@ -895,7 +888,20 @@ Typing updates use the server-authenticated connection profile when resolving pr
 
 Terminal WebSocket send failures retain the existing operational error event with an allowlisted frame type, error category, final HTTP status and SDK attempt/retry-delay metadata. Diagnostics also include frame byte count, a UTC-day-scoped hash of the random connection ID, and a fixed SDK/queue-full/deadline failure label; they never include raw connection IDs, payloads or exception text. These describe failed sends, not confirmed client delivery.
 
-Outbound WebSocket producers persist frames to the encrypted `websocket-outbound.fifo` SQS queue before reporting acceptance. Each connection has its own FIFO message group. The `websocketOutboundHandler` consumer allows 16 concurrent invocations (reserved concurrency 20), processes one record at a time, and acknowledges only successful Gateway sends or obsolete sessions. SDK failures, local queue overflow and send deadlines propagate to partial-batch failure responses; the frame stays in SQS and is retried with randomized visibility backoff. SDK calls still have three standard attempts, a five-second transport budget, and a one-second Lambda reserve. Neither pressure nor throttling deletes a live connection. An accepted frame can be delivered more than once if transport acknowledgement is lost. After 100 receives an undeliverable frame moves to a monitored 14-day dead-letter queue. A backlog-age alarm exposes slow delivery. Deploy the worker/queue before the existing producers. See [WebSocket outbound delivery](./websocket-outbound-delivery.md) for acceptance boundaries, session checks, rollout and recovery.
+Persistent WebSocket-producing mutations write `websocket_outbox` in their business
+transaction. Post-commit SQS wakeups and a one-minute EventBridge schedule drive
+the existing `websocketOutboundHandler`. Resource events resolve current state
+and audience on the writer and atomically materialize recipient jobs; only SQS
+acceptance deletes a recipient job. Hashed per-resource/per-connection partitions
+prevent later jobs from overtaking a deferred head. Stable envelope IDs aid FIFO
+deduplication, while client-side canonical reconciliation and stale/deletion
+guards handle at-least-once delivery. Drop events carry compact canonical-fetch
+references. The encrypted FIFO consumer retains failed Gateway sends with
+randomized backoff and a monitored DLQ. Throttling never deletes a live connection.
+Outbox-age/missing-health alarms cover the database-to-queue boundary. Deploy
+`dbMigrationsLoop` before the worker, then client protection and producers. See
+[WebSocket outbound delivery](./websocket-outbound-delivery.md) for capture
+coverage, mixed-version rollout, limits and rollback.
 
 ## API Boundary
 

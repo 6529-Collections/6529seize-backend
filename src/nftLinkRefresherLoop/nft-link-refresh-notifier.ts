@@ -24,11 +24,14 @@ export class NftLinkRefreshNotifier {
     private readonly listRecipients = () =>
       nftLinkRefreshNotifierDb.findActiveRecipients({}),
     private readonly send: Send = (connectionId, message, signal) =>
-      appWebSockets.send({ connectionId, message, abortSignal: signal })
+      appWebSockets.send({ connectionId, message, abortSignal: signal }),
+    private readonly wakeOutbox?: () => Promise<void>
   ) {}
 
   /** Attempt post-persistence fan-out within its budget and always release cancellation resources. */
   async notifyAboutNftLinkUpdate(data: ApiNftLinkData): Promise<void> {
+    if (this.wakeOutbox && process.env.NODE_ENV !== 'local')
+      return this.wakeOutbox();
     const budget = getNftLinkResolutionBudget();
     const controller = new AbortController();
     // Each bounded SQS enqueue can attach transport cancellation listeners.

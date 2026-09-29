@@ -98,3 +98,34 @@ describe('IdentityMutesDb', () => {
     expect(db.execute).toHaveBeenCalledTimes(1);
   });
 });
+
+it('captures mute, unread version and delivery intent on the same transaction', async () => {
+  const { db, repo } = createRepo();
+  const connection = { connection: {} };
+  db.execute.mockImplementation(async (sql: string) =>
+    sql.includes('select r.wave_id') ? [{ wave_id: 'wave-1' }] : []
+  );
+  await repo.muteIdentity(
+    { muter_id: 'muter-1', muted_identity_id: 'author-1' },
+    { connection }
+  );
+  for (const fragment of [
+    'insert into identity_mutes',
+    'set unread_state_version = unread_state_version + 1',
+    'insert into websocket_outbox'
+  ]) {
+    expect(db.execute).toHaveBeenCalledWith(
+      expect.stringContaining(fragment),
+      expect.anything(),
+      { wrappedConnection: connection }
+    );
+  }
+});
+
+const originalNodeEnvironment = process.env.NODE_ENV;
+beforeEach(() => {
+  process.env.NODE_ENV = 'test';
+});
+afterEach(() => {
+  process.env.NODE_ENV = originalNodeEnvironment;
+});

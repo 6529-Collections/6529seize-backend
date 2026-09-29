@@ -1,3 +1,4 @@
+import { wakeWebSocketOutbox } from '@/websocket-outbox/wakeup';
 import { Context, SQSHandler, SQSRecord } from 'aws-lambda';
 import { Logger } from '@/logging';
 import { doInDbContext } from '@/secrets';
@@ -20,7 +21,7 @@ const logger = Logger.get('NFT_LINK_REFRESHER');
 const nftLinkResolvingService = new NftLinkResolvingService(
   nftLinkResolver,
   nftLinksDb,
-  new NftLinkRefreshNotifier(),
+  new NftLinkRefreshNotifier(undefined, undefined, wakeWebSocketOutbox),
   sqs
 );
 

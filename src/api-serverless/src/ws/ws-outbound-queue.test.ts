@@ -38,3 +38,9 @@ it('preserves the producer cancellation signal through queue persistence', async
   await enqueueWebSocketFrame(frame, abortSignal);
   expect(send).toHaveBeenCalledWith(expect.objectContaining({ abortSignal }));
 });
+
+it('reuses the durable outbox envelope after an ambiguous acceptance or commit', async () => {
+  await enqueueWebSocketFrame(frame, undefined, 'outbox:99');
+  await enqueueWebSocketFrame(frame, undefined, 'outbox:99');
+  expect(send.mock.calls[0][0]).toEqual(send.mock.calls[1][0]);
+});

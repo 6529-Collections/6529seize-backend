@@ -18,6 +18,7 @@ functions:
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     reservedConcurrency: 20
     events:
+      - schedule: rate(1 minute)
       - sqs:
           arn: !GetAtt WebSocketOutboundQueue.Arn
           batchSize: 1
@@ -105,5 +106,21 @@ resources:
         Threshold: 60
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    WebSocketOutboxAgeAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-outbox-age'
+        AlarmDescription: 'Committed WebSocket events remain unpublished. Inspect outbox failures and database/queue access.'
+        Namespace: 6529/WebSocketOutbox
+        MetricName: AgeSeconds
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 2
+        Threshold: 180
+        ComparisonOperator: GreaterThanThreshold
+        TreatMissingData: breaching
         AlarmActions:
           - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

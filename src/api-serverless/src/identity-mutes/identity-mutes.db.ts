@@ -1,5 +1,10 @@
 import {
+  recordWebSocketEvent,
+  withWebSocketMutation
+} from '@/websocket-outbox/outbox.db';
+import {
   IDENTITY_MUTES_TABLE,
+  WAVES_TABLE,
   DROPS_TABLE,
   WAVE_READER_METRICS_TABLE
 } from '@/constants';
@@ -25,11 +30,13 @@ export class IdentityMutesDb extends LazyDbAccessCompatibleService {
   private readonly logger = Logger.get(IdentityMutesDb.name);
 
   async muteIdentity(pair: IdentityMutePair, ctx: RequestContext) {
-    this.assertNotSelfMute(pair);
-    ctx.timer?.start(`${this.constructor.name}->muteIdentity`);
-    try {
-      await this.db.execute(
-        `
+    return withWebSocketMutation(this.db, ctx, async (ctx) => {
+      const mutationResult = await (async () => {
+        this.assertNotSelfMute(pair);
+        ctx.timer?.start(`${this.constructor.name}->muteIdentity`);
+        try {
+          await this.db.execute(
+            `
           insert into ${IDENTITY_MUTES_TABLE} (
             muter_id,
             muted_identity_id,
@@ -41,30 +48,65 @@ export class IdentityMutesDb extends LazyDbAccessCompatibleService {
           )
           on duplicate key update created_at = values(created_at)
         `,
-        { ...pair, created_at: Time.currentMillis() },
-        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
-      );
-      this.invalidateUnreadSummariesForPairBestEffort(pair);
-    } finally {
-      ctx.timer?.stop(`${this.constructor.name}->muteIdentity`);
-    }
+            { ...pair, created_at: Time.currentMillis() },
+            ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+          );
+          this.invalidateUnreadSummariesForPairBestEffort(pair);
+        } finally {
+          ctx.timer?.stop(`${this.constructor.name}->muteIdentity`);
+        }
+      })();
+
+      await this.captureDmUnreadChanges(pair, ctx);
+      return mutationResult;
+    });
   }
 
   async unmuteIdentity(pair: IdentityMutePair, ctx: RequestContext) {
-    ctx.timer?.start(`${this.constructor.name}->unmuteIdentity`);
-    try {
-      await this.db.execute(
-        `
+    return withWebSocketMutation(this.db, ctx, async (ctx) => {
+      const mutationResult = await (async () => {
+        ctx.timer?.start(`${this.constructor.name}->unmuteIdentity`);
+        try {
+          await this.db.execute(
+            `
           delete from ${IDENTITY_MUTES_TABLE}
           where muter_id = :muter_id
             and muted_identity_id = :muted_identity_id
         `,
-        pair,
-        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+            pair,
+            ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+          );
+          this.invalidateUnreadSummariesForPairBestEffort(pair);
+        } finally {
+          ctx.timer?.stop(`${this.constructor.name}->unmuteIdentity`);
+        }
+      })();
+
+      await this.captureDmUnreadChanges(pair, ctx);
+      return mutationResult;
+    });
+  }
+
+  private async captureDmUnreadChanges(
+    pair: IdentityMutePair,
+    ctx: RequestContext
+  ): Promise<void> {
+    const affectedWaves = await this.db.execute<{ wave_id: string }>(
+      `select r.wave_id from ${WAVE_READER_METRICS_TABLE} r join ${WAVES_TABLE} w on w.id = r.wave_id and w.is_direct_message = true where r.reader_id = :readerId and exists (select 1 from ${DROPS_TABLE} d where d.wave_id = r.wave_id and d.author_id = :authorId)`,
+      { readerId: pair.muter_id, authorId: pair.muted_identity_id },
+      { wrappedConnection: ctx.connection }
+    );
+    for (const { wave_id } of affectedWaves) {
+      await this.db.execute(
+        `update ${WAVE_READER_METRICS_TABLE} set unread_state_version = unread_state_version + 1 where reader_id = :readerId and wave_id = :waveId`,
+        { readerId: pair.muter_id, waveId: wave_id },
+        { wrappedConnection: ctx.connection }
       );
-      this.invalidateUnreadSummariesForPairBestEffort(pair);
-    } finally {
-      ctx.timer?.stop(`${this.constructor.name}->unmuteIdentity`);
+      await recordWebSocketEvent(
+        { type: 'dm', profileIds: [pair.muter_id], waveId: wave_id },
+        ctx,
+        this.db
+      );
     }
   }
 

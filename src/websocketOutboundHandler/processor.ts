@@ -1,3 +1,4 @@
+import { OUTBOX_WAKEUP } from '@/websocket-outbox/wakeup';
 import type { SQSBatchResponse, SQSEvent, SQSRecord } from 'aws-lambda';
 import {
   parseQueuedWebSocketFrame,
@@ -9,11 +10,15 @@ export async function processWebSocketBatch(
   event: SQSEvent,
   deliver: (frame: QueuedWebSocketFrame) => Promise<void>,
   reportFailure: () => void,
-  deferRetry: (record: SQSRecord) => Promise<void> = async () => undefined
+  deferRetry: (record: SQSRecord) => Promise<void> = async () => undefined,
+  drainOutbox?: () => Promise<void>
 ): Promise<SQSBatchResponse> {
   for (let index = 0; index < event.Records.length; index++) {
     try {
-      await deliver(parseQueuedWebSocketFrame(event.Records[index]!.body));
+      const body = event.Records[index]!.body;
+      if (JSON.parse(body)?.type === OUTBOX_WAKEUP && drainOutbox)
+        await drainOutbox();
+      else await deliver(parseQueuedWebSocketFrame(body));
     } catch {
       try {
         reportFailure();
