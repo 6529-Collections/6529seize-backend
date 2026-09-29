@@ -84,7 +84,9 @@ export class WaveHubCreationService {
           effects,
           prepared
         );
-        return competitionService.getHub(wave.id, tx);
+        // A newly referenced private group is absent from the all-wave
+        // eligibility cache until the wave commits and its effects run.
+        return { id: wave.id };
       },
       ctx
     );
@@ -97,7 +99,10 @@ export class WaveHubCreationService {
         });
       }
     }
-    return result;
+    return competitionService.getHub(result.id, {
+      ...ctx,
+      connection: undefined
+    });
   }
 }
 
