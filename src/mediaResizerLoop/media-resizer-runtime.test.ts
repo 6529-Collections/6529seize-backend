@@ -97,16 +97,21 @@ it('returns 404 without an operational error for a missing source object', async
     }
   );
   const errorLog = jest.spyOn(Logger.get('MEDIA_RESIZER_LOOP'), 'error');
+  const infoLog = jest.spyOn(Logger.get('MEDIA_RESIZER_LOOP'), 'info');
 
   expect((await resize()).statusCode).toBe(404);
   expect(errorLog).not.toHaveBeenCalled();
+  expect(infoLog).toHaveBeenCalledWith(
+    '[synthetic/6x6_max/fixture] S3 origin file not found'
+  );
   expect(Upload).not.toHaveBeenCalled();
 });
 
 it.each([
   ['AccessDenied', 403],
   ['ServiceUnavailable', 503],
-  ['NoSuchKey', 403]
+  ['NoSuchKey', 403],
+  ['NoSuchKey', 200]
 ])(
   'propagates %s source retrieval errors with HTTP %i',
   async (name, status) => {
@@ -121,6 +126,16 @@ it.each([
     expect(Upload).not.toHaveBeenCalled();
   }
 );
+
+it('does not suppress a missing-key error without an HTTP status', async () => {
+  mockGetObjectError = Object.assign(new Error('missing status'), {
+    name: 'NoSuchKey'
+  });
+  const errorLog = jest.spyOn(Logger.get('MEDIA_RESIZER_LOOP'), 'error');
+
+  await expect(resize()).rejects.toBe(mockGetObjectError);
+  expect(errorLog).toHaveBeenCalledTimes(1);
+});
 
 it('does not treat an upload NoSuchKey as a missing source', async () => {
   mockUploadError = Object.assign(new Error('upload failed'), {

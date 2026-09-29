@@ -72,17 +72,7 @@ const liveHandler = wrapLambdaHandler(async (event: any, context) => {
 
   let sourceRevision: string | undefined;
   try {
-    const params = {
-      Bucket: BUCKET,
-      Key: key
-    };
-    let originImage;
-    try {
-      originImage = await s3Client.send(new GetObjectCommand(params));
-    } catch (error) {
-      if (isMissingSourceObject(error)) return notFound();
-      throw error;
-    }
+    const originImage = await getSourceObject(key);
     if (!originImage?.Body) {
       logger.info(`[${path}] S3 origin file not found`);
       return notFound();
@@ -201,6 +191,17 @@ function getSourceObjectRevision(
   etag: string | undefined
 ) {
   return versionId && versionId !== 'null' ? versionId : etag;
+}
+
+async function getSourceObject(key: string) {
+  try {
+    return await s3Client.send(
+      new GetObjectCommand({ Bucket: BUCKET, Key: key })
+    );
+  } catch (error) {
+    if (isMissingSourceObject(error)) return undefined;
+    throw error;
+  }
 }
 
 function isMissingSourceObject(error: unknown): boolean {
