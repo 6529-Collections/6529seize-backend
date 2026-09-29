@@ -1708,6 +1708,11 @@ Push delivery and badge refreshes wait up to five seconds for a busy device lock
 using capped randomized backoff. All lock acquisitions in an SQS invocation share
 an absolute deadline that stops lock acquisition ten seconds before the Lambda
 deadline, preserving time for in-flight work and the partial-batch response.
+This deliberately defers later devices once that deadline is reached, even if
+their locks might be free: starting another send could consume the response
+reserve. For a fresh 60-second invocation the cutoff is after 50 seconds of
+work, not after five seconds shared across the batch. Deferred records are
+returned as partial-batch failures so SQS retains them for retry.
 Persistent contention remains retryable through the unchanged 300-second SQS
 visibility timeout. Device lock ownership, expiry and successful-delivery receipts
 remain unchanged.
