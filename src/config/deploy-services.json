@@ -379,6 +379,7 @@
     },
     {
       "name": "mediaResizerLoop",
+      "memory_size": 2048,
       "allowed_environments": [
         "prod"
       ],
