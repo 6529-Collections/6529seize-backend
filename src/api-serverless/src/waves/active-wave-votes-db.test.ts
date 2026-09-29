@@ -36,6 +36,12 @@ const waves = [
   vote('rep', { voting_credit_type: WaveCreditType.REP }),
   vote('xtdh', { voting_credit_type: WaveCreditType.XTDH }),
   vote('dm', { is_direct_message: true }),
+  vote('dm-child', { parent_wave_id: 'dm' }),
+  vote('restricted-dm', {
+    is_direct_message: true,
+    visibility_group_id: 'members'
+  }),
+  vote('restricted-dm-child', { parent_wave_id: 'restricted-dm' }),
   vote('orphan', { parent_wave_id: 'missing' })
 ];
 
@@ -74,7 +80,7 @@ describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
   });
 
   it.each([{ eligibleGroups: [] }, { eligibleGroups: ['members'] }])(
-    'returns every counted wave for visibility groups %j',
+    'returns every counted non-DM wave for visibility groups %j',
     async ({ eligibleGroups }) => {
       const result = await repo.findActiveTdhVotingWaves(
         { eligibleGroups, now, limit: 50, offset: 0 },
@@ -82,6 +88,14 @@ describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
       );
       expect(result.waves).toHaveLength(result.count);
       expect(result.waves.map((wave) => wave.id)).not.toContain('orphan');
+      for (const id of [
+        'dm',
+        'dm-child',
+        'restricted-dm',
+        'restricted-dm-child'
+      ]) {
+        expect(result.waves.map((wave) => wave.id)).not.toContain(id);
+      }
       if (eligibleGroups.length) {
         expect(result.waves.map((wave) => wave.id)).toEqual(
           expect.arrayContaining(['private', 'child'])

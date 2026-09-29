@@ -1581,6 +1581,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       const fromAndWhere = `from ${WAVES_TABLE} w
         left join ${WAVES_TABLE} parent on parent.id = w.parent_wave_id
         where coalesce(w.is_direct_message, false) = false
+          and coalesce(parent.is_direct_message, false) = false
           and w.type in ('RANK', 'APPROVE')
           and w.voting_credit_type in ('TDH', 'TDH_PLUS_XTDH', 'CARD_SET_TDH')
           and (w.voting_period_start is null or w.voting_period_start <= :now)

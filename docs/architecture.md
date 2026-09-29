@@ -34,7 +34,8 @@ top-level operator payload.
 `GET /v2/waves/active-votes` is an optional-auth read in the existing API Lambda.
 It lists RANK/APPROVE waves using TDH, TDH_PLUS_XTDH or CARD_SET_TDH. Shared
 read-context group eligibility and wave/parent visibility apply before count and
-pagination; DMs are excluded. Legacy voting windows, next decision state and
+pagination; DMs and children of DM parents are excluded, even when readable.
+Legacy voting windows, next decision state and
 APPROVE winner limits determine whether voting is active. Results sort by the
 nearest voting end or next decision, with open-ended votes last. This endpoint
 does not assert that the current viewer can vote, and does not filter by joined,
