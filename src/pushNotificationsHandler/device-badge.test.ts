@@ -1,8 +1,16 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
-import { getDeviceBadgeState, withDeviceBadgeLock } from './device-badge';
+import {
+  getDeviceBadgeState,
+  withDeviceBadgeLock,
+  withBadgeLockDeadline
+} from './device-badge';
 import { DbPoolName } from '@/db-query.options';
 import { PushNotificationDevice } from '@/entities/IPushNotification';
 import { DEFAULT_PUSH_NOTIFICATION_SETTINGS } from '@/entities/IPushNotificationSettings';
+
+jest.mock('node:timers/promises', () => ({ setTimeout: jest.fn() }));
+let now = 0;
 
 const findDevices = jest.fn();
 const findSettings = jest.fn();
@@ -65,6 +73,11 @@ it('does not transfer native badge capability to an older token during rotation'
 });
 beforeEach(() => {
   jest.clearAllMocks();
+  now = 0;
+  jest.spyOn(Date, 'now').mockImplementation(() => now);
+  jest.mocked(delay).mockImplementation(async (ms) => {
+    now += Number(ms);
+  });
   findDevices.mockResolvedValue([
     { profile_id: 'a', token: 'token' },
     { profile_id: 'b', token: 'token' }
@@ -208,5 +221,43 @@ it('waits briefly for a competing delivery and runs once the lock is available',
   const action = jest.fn().mockResolvedValue('sent');
   await expect(withDeviceBadgeLock(device, action)).resolves.toBe('sent');
   expect(redisSet).toHaveBeenCalledTimes(2);
+  expect(action).toHaveBeenCalledTimes(1);
+});
+
+afterEach(() => jest.restoreAllMocks());
+
+it('waits beyond the old sub-second budget for another delivery to finish', async () => {
+  redisSet.mockImplementation(async () => (now >= 2_000 ? 'OK' : null));
+  const action = jest.fn().mockResolvedValue('sent');
+  await expect(withDeviceBadgeLock(device, action)).resolves.toBe('sent');
+  expect(now).toBeGreaterThanOrEqual(2_000);
+  expect(now).toBeLessThan(5_000);
+  expect(action).toHaveBeenCalledTimes(1);
+});
+
+it('stops a persistent collision after five seconds without sending or releasing another owner', async () => {
+  redisSet.mockResolvedValue(null);
+  const action = jest.fn();
+  await expect(withDeviceBadgeLock(device, action)).rejects.toThrow();
+  expect(now).toBe(5_000);
+  expect(action).not.toHaveBeenCalled();
+  expect(redisEval).not.toHaveBeenCalled();
+});
+
+it('shares the invocation deadline across sequential devices and preserves the reserve', async () => {
+  redisSet.mockResolvedValue(null);
+  const action = jest.fn();
+  await withBadgeLockDeadline(11_000, async () => {
+    await expect(withDeviceBadgeLock(device, action)).rejects.toThrow();
+    expect(now).toBe(1_000);
+    const attempts = redisSet.mock.calls.length;
+    await expect(
+      withDeviceBadgeLock({ device_id: 'second' }, action)
+    ).rejects.toThrow();
+    expect(redisSet).toHaveBeenCalledTimes(attempts);
+  });
+  expect(action).not.toHaveBeenCalled();
+  redisSet.mockResolvedValue('OK');
+  await withDeviceBadgeLock(device, action);
   expect(action).toHaveBeenCalledTimes(1);
 });

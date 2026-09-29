@@ -3,6 +3,8 @@ export * from '../models/AddActionToProxyRequest';
 export * from '../models/AirdropAddressResponse';
 export * from '../models/AirdropAddressResponseTdhWallet';
 export * from '../models/AllowlistNormalizedEntry';
+export * from '../models/ApiActiveWaveVote';
+export * from '../models/ApiActiveWaveVotesPage';
 export * from '../models/ApiAddReactionToDropRequest';
 export * from '../models/ApiAggregatedActivity';
 export * from '../models/ApiAggregatedActivityMemes';
@@ -893,6 +895,8 @@ import { AddActionToProxyRequest    } from '../models/AddActionToProxyRequest';
 import { AirdropAddressResponse } from '../models/AirdropAddressResponse';
 import { AirdropAddressResponseTdhWallet } from '../models/AirdropAddressResponseTdhWallet';
 import { AllowlistNormalizedEntry } from '../models/AllowlistNormalizedEntry';
+import { ApiActiveWaveVote } from '../models/ApiActiveWaveVote';
+import { ApiActiveWaveVotesPage } from '../models/ApiActiveWaveVotesPage';
 import { ApiAddReactionToDropRequest } from '../models/ApiAddReactionToDropRequest';
 import { ApiAggregatedActivity } from '../models/ApiAggregatedActivity';
 import { ApiAggregatedActivityMemes } from '../models/ApiAggregatedActivityMemes';
@@ -2069,6 +2073,8 @@ let typeMap: {[index: string]: any} = {
     "AirdropAddressResponse": AirdropAddressResponse,
     "AirdropAddressResponseTdhWallet": AirdropAddressResponseTdhWallet,
     "AllowlistNormalizedEntry": AllowlistNormalizedEntry,
+    "ApiActiveWaveVote": ApiActiveWaveVote,
+    "ApiActiveWaveVotesPage": ApiActiveWaveVotesPage,
     "ApiAddReactionToDropRequest": ApiAddReactionToDropRequest,
     "ApiAggregatedActivity": ApiAggregatedActivity,
     "ApiAggregatedActivityMemes": ApiAggregatedActivityMemes,

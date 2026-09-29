@@ -4,7 +4,14 @@ import {
   refreshInstallationBadge,
   refreshProfileBadges
 } from './badge-refresh';
-import { SQSBatchResponse, SQSHandler } from 'aws-lambda';
+import {
+  Context,
+  SQSBatchResponse,
+  SQSEvent,
+  ScheduledEvent
+} from 'aws-lambda';
+import { withBadgeLockDeadline } from './device-badge';
+import { publishPushOutbox } from '@/pushNotificationsHandler/publish-outbox';
 import {
   AttachmentEntity,
   DropAttachmentEntity
@@ -37,7 +44,7 @@ async function refreshInstallationRecords(
   return failures;
 }
 
-const sqsHandler: SQSHandler = async (event): Promise<SQSBatchResponse> => {
+const sqsHandler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
   return doInDbContext(
     async () => {
       const identityNotificationRecords: {
@@ -163,4 +170,24 @@ const sqsHandler: SQSHandler = async (event): Promise<SQSBatchResponse> => {
   );
 };
 
-export const handler = sentryContext.wrapLambdaHandler(sqsHandler);
+export async function dispatchPushEvent(
+  event: SQSEvent | ScheduledEvent,
+  context?: Pick<Context, 'getRemainingTimeInMillis'>
+): Promise<SQSBatchResponse> {
+  if ('Records' in event) {
+    return withBadgeLockDeadline(
+      context?.getRemainingTimeInMillis() ?? 60_000,
+      () => sqsHandler(event)
+    );
+  }
+  if (
+    event.source !== 'aws.events' ||
+    event['detail-type'] !== 'Scheduled Event'
+  ) {
+    throw new Error('Unsupported push handler event');
+  }
+  await doInDbContext(publishPushOutbox, { logger });
+  return { batchItemFailures: [] };
+}
+
+export const handler = sentryContext.wrapLambdaHandler(dispatchPushEvent);

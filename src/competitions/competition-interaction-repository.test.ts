@@ -3,7 +3,8 @@ import {
   DROPS_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WINNER_DROP_VOTER_VOTES_TABLE,
-  COMPETITION_OUTCOME_AWARDS_TABLE
+  COMPETITION_OUTCOME_AWARDS_TABLE,
+  COMPETITION_ENTRIES_TABLE
 } from '@/constants';
 import {
   CompetitionExecutionMode,
@@ -106,6 +107,21 @@ describeWithSeed(
           drop_id: 'first',
           voter_id: 'voter',
           votes: 40
+        }
+      ]
+    },
+    {
+      table: COMPETITION_ENTRIES_TABLE,
+      rows: [
+        {
+          id: 'ddd00000-0000-4000-8000-000000000001',
+          competition_id: record.id,
+          wave_id: record.wave_id,
+          drop_id: 'first',
+          submitter_id: 'artist',
+          status: 'WINNER',
+          config_version: 1,
+          submitted_at: 1
         }
       ]
     },

@@ -289,3 +289,5 @@ export const COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE =
 
 export const COMPETITION_CAPABILITY_AUDITS_TABLE =
   'competition_capability_audits';
+export const PUSH_NOTIFICATION_OUTBOX_TABLE =
+  'push_notification_outbox_entries';

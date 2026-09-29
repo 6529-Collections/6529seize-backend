@@ -1567,6 +1567,55 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  public async findActiveTdhVotingWaves(
+    params: {
+      readonly eligibleGroups: string[];
+      readonly now: number;
+      readonly limit: number;
+      readonly offset: number;
+    },
+    ctx: RequestContext
+  ): Promise<{ waves: WaveEntity[]; count: number }> {
+    const timerName = `${this.constructor.name}->findActiveTdhVotingWaves`;
+    ctx.timer?.start(timerName);
+    try {
+      const fromAndWhere = `from ${WAVES_TABLE} w
+        left join ${WAVES_TABLE} parent on parent.id = w.parent_wave_id
+        where coalesce(w.is_direct_message, false) = false
+          and coalesce(parent.is_direct_message, false) = false
+          and w.type in ('RANK', 'APPROVE')
+          and w.voting_credit_type in ('TDH', 'TDH_PLUS_XTDH', 'CARD_SET_TDH')
+          and (w.voting_period_start is null or w.voting_period_start <= :now)
+          and (w.voting_period_end is null or w.voting_period_end > :now)
+          and (w.next_decision_time is null or w.next_decision_time > :now)
+          and (w.type <> 'RANK' or w.decisions_strategy is null or w.next_decision_time is not null)
+          and (w.type <> 'APPROVE' or w.max_winners is null or
+            (select count(*) from ${WAVES_DECISIONS_TABLE} d where d.wave_id = w.id) < w.max_winners)
+          and ${this.getWaveAndParentVisibilityFilter('w', 'parent', params.eligibleGroups, 'eligibleGroups')}`;
+      const options = { wrappedConnection: ctx.connection };
+      // Preserve null for open-ended votes instead of using a numeric sentinel.
+      const deadline = `coalesce(least(w.voting_period_end, w.next_decision_time), w.voting_period_end, w.next_decision_time)`;
+      const counts = await this.db.execute<{ count: number }>(
+        `select count(*) as count ${fromAndWhere}`,
+        params,
+        options
+      );
+      const count = Number(counts[0]?.count ?? 0);
+      // Avoid a deep-offset sort when the requested page is already past the end.
+      if (params.offset >= count) return { waves: [], count };
+      // Match findWavesByIds: w.* is the complete projection, and parseWaveEntity
+      // below performs the same JSON normalization; no enrichment is lost.
+      const waves = await this.db.execute<RawWaveEntity>(
+        `select w.* ${fromAndWhere} order by (${deadline}) is null asc, ${deadline} asc, w.id asc limit :limit offset :offset`,
+        params,
+        options
+      );
+      return { waves: waves.map((wave) => this.parseWaveEntity(wave)), count };
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   async searchWaves(
     searchParams: SearchWavesParams,
     groupsUserIsEligibleFor: string[],

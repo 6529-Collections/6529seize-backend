@@ -303,3 +303,4 @@ export * from './ICompetitionCommand';
 export * from './ICompetitionEntryContentVersion';
 
 export * from './ICompetitionCapabilityAudit';
+export { PushNotificationOutboxEntity } from './IPushNotificationOutbox';
