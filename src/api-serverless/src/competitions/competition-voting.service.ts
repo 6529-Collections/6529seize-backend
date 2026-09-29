@@ -80,10 +80,9 @@ export class CompetitionVotingService {
           request.config_version,
           tx
         );
-        const { groups } = await visibleCompetitionWave(waveId, tx);
-        assertCompetitionGroup(
+        await visibleCompetitionWave(waveId, tx);
+        await assertCompetitionGroup(
           competition.voting.group_id,
-          groups,
           ProfileProxyActionType.RATE_WAVE_DROP,
           tx
         );

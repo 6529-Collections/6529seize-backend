@@ -17,6 +17,12 @@ import { describeWithSeed } from '@/tests/_setup/seed';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
 import { aProfile, withProfiles } from '@/tests/fixtures/profile.fixture';
+import {
+  aUserGroup,
+  withUserGroups
+} from '@/tests/fixtures/user-group.fixture';
+import { withProfileGroups } from '@/tests/fixtures/profile-group.fixture';
+import { competitionService } from '@/competitions/competition.service';
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { sqlExecutor } from '@/sql-executor';
 import * as tables from '@/constants';
@@ -33,6 +39,15 @@ import { createOrUpdateDrop } from '@/drops/create-or-update-drop.use-case';
 import * as pushNotifications from '@/api/push-notifications/push-notifications.service';
 
 const actor = 'entry-author';
+const nativeMembersId = randomUUID();
+const nativeMembers = aUserGroup(
+  { profile_group_id: nativeMembersId, is_direct_message: false },
+  { id: 'native-only-members', name: 'Native-only members' }
+);
+const nativeExcluded = aUserGroup(
+  { tdh_min: 101, is_direct_message: false },
+  { id: 'native-only-tdh', name: 'Native-only TDH' }
+);
 const wallet = Wallet.createRandom();
 const competitionId = '10000000-0000-4000-8000-000000000001';
 const wave = aWave(
@@ -179,6 +194,10 @@ describeWithSeed(
   'Native entry commands and content history',
   [
     withWaves([wave, privateParent, otherWave]),
+    withUserGroups([nativeMembers, nativeExcluded]),
+    withProfileGroups([
+      { profile_group_id: nativeMembersId, profile_id: actor }
+    ]),
     withProfiles([
       aProfile({
         external_id: actor,
@@ -706,6 +725,68 @@ describeWithSeed(
           `select id from ${tables.COMPETITION_ENTRIES_TABLE}`
         )
       ).toHaveLength(1);
+    });
+
+    it('allows native-only group members and applies changed scopes to reads, entries and votes', async () => {
+      await updateParticipation({ group_id: nativeMembers.id });
+      const setVotingGroup = async (groupId: string) =>
+        sqlExecutor.execute(
+          `update ${tables.COMPETITIONS_TABLE} set voting_config=:config where id=:id`,
+          {
+            id: competitionId,
+            config: JSON.stringify({
+              ...record.voting_config,
+              group_id: groupId
+            })
+          }
+        );
+      await setVotingGroup(nativeMembers.id);
+      expect(
+        (await competitionService.getCompetition(wave.id, competitionId, ctx))
+          .permissions
+      ).toMatchObject({ submit: true, vote: true });
+      const entry = await service.create(
+        wave.id,
+        competitionId,
+        request(),
+        ctx
+      );
+      await expect(
+        competitionVotingService.vote(
+          wave.id,
+          competitionId,
+          entry.id,
+          {
+            idempotency_key: randomUUID(),
+            config_version: 1,
+            value: 1
+          },
+          ctx
+        )
+      ).resolves.toMatchObject({ current_vote: 1 });
+
+      await updateParticipation({ group_id: nativeExcluded.id });
+      await setVotingGroup(nativeExcluded.id);
+      expect(
+        (await competitionService.getCompetition(wave.id, competitionId, ctx))
+          .permissions
+      ).toMatchObject({ submit: false, vote: false });
+      await expect(
+        service.create(wave.id, competitionId, request(), ctx)
+      ).rejects.toThrow('not eligible');
+      await expect(
+        competitionVotingService.vote(
+          wave.id,
+          competitionId,
+          entry.id,
+          {
+            idempotency_key: randomUUID(),
+            config_version: 1,
+            value: 2
+          },
+          ctx
+        )
+      ).rejects.toThrow('not eligible');
     });
 
     it('enforces current participation eligibility, posting suspension and required content', async () => {

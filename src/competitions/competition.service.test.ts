@@ -107,7 +107,10 @@ describe('CompetitionService', () => {
     listNativePauses: jest.fn()
   };
   const wavesDb = { findWaveById: jest.fn() };
-  const groupsService = { getGroupsUserIsEligibleFor: jest.fn() };
+  const groupsService = {
+    getGroupsUserIsEligibleFor: jest.fn(),
+    getGroupsUserIsEligibleForByIds: jest.fn()
+  };
   const features = {
     isUnifiedCompetitionReadsEnabled: jest.fn(),
     isNativeCompetitionWritesEnabled: jest.fn(),
@@ -133,6 +136,7 @@ describe('CompetitionService', () => {
     });
     wavesDb.findWaveById.mockResolvedValue(wave);
     groupsService.getGroupsUserIsEligibleFor.mockResolvedValue([]);
+    groupsService.getGroupsUserIsEligibleForByIds.mockResolvedValue([]);
     repository.listCompetitionRecordsForWave.mockResolvedValue([first, second]);
     repository.findCompetitionRecordById.mockImplementation(async (id) =>
       [first, second].find((record) => record.id === id)
@@ -207,6 +211,61 @@ describe('CompetitionService', () => {
       submit: false,
       vote: false
     });
+  });
+
+  it('resolves native-only access groups for detail and list permissions', async () => {
+    const scoped = {
+      ...first,
+      execution_mode: CompetitionExecutionMode.ACTIVE,
+      participation_config: {
+        ...first.participation_config,
+        group_id: 'entry-group'
+      },
+      voting_config: { ...first.voting_config, group_id: 'vote-group' }
+    };
+    repository.findCompetitionRecordById.mockResolvedValue(scoped);
+    repository.listCompetitionRecordsForWave.mockResolvedValue([scoped]);
+    features.isNativeCompetitionWritesEnabled.mockReturnValue(true);
+    groupsService.getGroupsUserIsEligibleForByIds.mockResolvedValue([
+      'entry-group'
+    ]);
+    const authenticationContext = {
+      isUserFullyAuthenticated: () => true,
+      isAuthenticatedAsProxy: () => false,
+      getActingAsId: () => 'profile-viewer',
+      hasRightsTo: () => true
+    };
+    const readContext = { authenticationContext } as never;
+    const detail = await service.getCompetition(wave.id, first.id, readContext);
+    const list = await service.listCompetitions(
+      wave.id,
+      { limit: 10, direction: 'ASC', sort: 'created_at' },
+      readContext
+    );
+    for (const competition of [detail, list.data[0]]) {
+      expect(competition.permissions).toMatchObject({
+        submit: true,
+        vote: false
+      });
+    }
+    expect(groupsService.getGroupsUserIsEligibleForByIds).toHaveBeenCalledWith(
+      'profile-viewer',
+      ['entry-group', 'vote-group'],
+      undefined
+    );
+    // A stale wave cache must not grant access after the native scope changes.
+    groupsService.getGroupsUserIsEligibleFor.mockResolvedValue([
+      'entry-group',
+      'vote-group'
+    ]);
+    groupsService.getGroupsUserIsEligibleForByIds.mockResolvedValue([]);
+    expect(
+      (
+        await service.getCompetition(wave.id, first.id, {
+          authenticationContext
+        } as never)
+      ).permissions
+    ).toMatchObject({ submit: false, vote: false });
   });
 
   it.each([

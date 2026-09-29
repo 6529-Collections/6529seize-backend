@@ -196,10 +196,9 @@ export class CompetitionEntryService {
       request.config_version,
       tx
     );
-    const { groups } = await visibleCompetitionWave(waveId, tx);
-    assertCompetitionGroup(
+    await visibleCompetitionWave(waveId, tx);
+    await assertCompetitionGroup(
       competition.participation.group_id,
-      groups,
       ProfileProxyActionType.CREATE_DROP_TO_WAVE,
       tx
     );

@@ -127,15 +127,21 @@ export function assertCompetitionOpen(
   }
 }
 
-export function assertCompetitionGroup(
+export async function assertCompetitionGroup(
   groupId: string | null,
-  groups: readonly string[],
   action: ProfileProxyActionType,
   ctx: RequestContext
-): void {
+): Promise<void> {
   if (
     !ctx.authenticationContext?.hasRightsTo(action) ||
-    (groupId !== null && !groups.includes(groupId))
+    (groupId !== null &&
+      !(
+        await userGroupsService.getGroupsUserIsEligibleForByIds(
+          competitionActor(ctx),
+          [groupId],
+          ctx.timer
+        )
+      ).includes(groupId))
   ) {
     throw new ForbiddenException(
       'You are not eligible for this competition action'

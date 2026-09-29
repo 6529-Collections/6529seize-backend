@@ -206,11 +206,15 @@ export class CompetitionService {
       const order = leftValue - rightValue || left.id.localeCompare(right.id);
       return request.direction === 'ASC' ? order : -order;
     });
-    const data = ordered
-      .slice(offset, offset + request.limit)
-      .map((competition) =>
-        this.toPublicCompetition(competition, wave, eligibleGroups, ctx)
-      );
+    const page = ordered.slice(offset, offset + request.limit);
+    const competitionGroups = await this.resolveNativeGroups(
+      page,
+      eligibleGroups,
+      ctx
+    );
+    const data = page.map((competition) =>
+      this.toPublicCompetition(competition, wave, competitionGroups, ctx)
+    );
     const hasMore = offset + data.length < ordered.length;
     return {
       data,
@@ -259,7 +263,11 @@ export class CompetitionService {
     return this.toPublicCompetition(
       competition,
       resolved.wave,
-      resolved.eligibleGroups,
+      await this.resolveNativeGroups(
+        [competition],
+        resolved.eligibleGroups,
+        ctx
+      ),
       ctx
     );
   }
@@ -563,6 +571,35 @@ export class CompetitionService {
       ctx
     });
     return { wave, eligibleGroups };
+  }
+
+  private async resolveNativeGroups(
+    competitions: readonly Competition[],
+    waveGroups: string[],
+    ctx: RequestContext
+  ): Promise<string[]> {
+    const groupIds = new Set(
+      competitions
+        .filter(
+          (competition) =>
+            competition.storage_mode === CompetitionStorageMode.NATIVE
+        )
+        .flatMap((competition) => [
+          competition.participation.group_id,
+          competition.voting.group_id
+        ])
+        .filter((id): id is string => id !== null)
+    );
+    if (!groupIds.size) return waveGroups;
+    // Native scopes may never be referenced by a wave. Resolve the exact groups
+    // rather than relying on the cached catalogue of wave-related groups.
+    const nativeGroups =
+      await this.groupsService.getGroupsUserIsEligibleForByIds(
+        getWaveReadContextProfileId(ctx.authenticationContext),
+        Array.from(groupIds),
+        ctx.timer
+      );
+    return [...waveGroups.filter((id) => !groupIds.has(id)), ...nativeGroups];
   }
 
   private toPublicCompetition(
