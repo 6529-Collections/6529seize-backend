@@ -1591,32 +1591,22 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             (select count(*) from ${WAVES_DECISIONS_TABLE} d where d.wave_id = w.id) < w.max_winners)
           and ${this.getWaveAndParentVisibilityFilter('w', 'parent', params.eligibleGroups, 'eligibleGroups')}`;
       const options = { wrappedConnection: ctx.connection };
-      const deadline = `least(coalesce(w.voting_period_end, 9007199254740991), coalesce(w.next_decision_time, 9007199254740991))`;
-      const [ids, counts] = await Promise.all([
-        this.db.execute<{ id: string }>(
-          `select w.id ${fromAndWhere} order by ${deadline} asc, w.id asc limit :limit offset :offset`,
-          params,
-          options
-        ),
-        this.db.execute<{ count: number }>(
-          `select count(*) as count ${fromAndWhere}`,
-          params,
-          options
-        )
-      ]);
-      const waves = await this.findWavesByIds(
-        ids.map((row) => row.id),
-        params.eligibleGroups,
-        ctx.connection
+      // Preserve null for open-ended votes instead of using a numeric sentinel.
+      const deadline = `coalesce(least(w.voting_period_end, w.next_decision_time), w.voting_period_end, w.next_decision_time)`;
+      const counts = await this.db.execute<{ count: number }>(
+        `select count(*) as count ${fromAndWhere}`,
+        params,
+        options
       );
-      const wavesById = new Map(waves.map((wave) => [wave.id, wave]));
-      return {
-        waves: ids.flatMap(({ id }) => {
-          const wave = wavesById.get(id);
-          return wave ? [wave] : [];
-        }),
-        count: Number(counts[0]?.count ?? 0)
-      };
+      const count = Number(counts[0]?.count ?? 0);
+      // Avoid a deep-offset sort when the requested page is already past the end.
+      if (params.offset >= count) return { waves: [], count };
+      const waves = await this.db.execute<RawWaveEntity>(
+        `select w.* ${fromAndWhere} order by (${deadline}) is null asc, ${deadline} asc, w.id asc limit :limit offset :offset`,
+        params,
+        options
+      );
+      return { waves: waves.map((wave) => this.parseWaveEntity(wave)), count };
     } finally {
       ctx.timer?.stop(timerName);
     }

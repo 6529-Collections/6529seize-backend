@@ -73,6 +73,41 @@ describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
     expect(empty.count).toBe(5);
   });
 
+  it.each([{ eligibleGroups: [] }, { eligibleGroups: ['members'] }])(
+    'returns every counted wave for visibility groups %j',
+    async ({ eligibleGroups }) => {
+      const result = await repo.findActiveTdhVotingWaves(
+        { eligibleGroups, now, limit: 50, offset: 0 },
+        {}
+      );
+      expect(result.waves).toHaveLength(result.count);
+      expect(result.waves.map((wave) => wave.id)).not.toContain('orphan');
+      if (eligibleGroups.length) {
+        expect(result.waves.map((wave) => wave.id)).toEqual(
+          expect.arrayContaining(['private', 'child'])
+        );
+      }
+    }
+  );
+
+  it('breaks equal deadlines by id and places open-ended votes last', async () => {
+    await sqlExecutor.execute(
+      `update ${WAVES_TABLE} set voting_period_end = :deadline where id in (:ids)`,
+      { deadline: 11000, ids: ['b-combined', 'c-card'] }
+    );
+    const result = await repo.findActiveTdhVotingWaves(
+      { eligibleGroups: [], now, limit: 50, offset: 0 },
+      {}
+    );
+    expect(result.waves.map((wave) => wave.id)).toEqual([
+      'b-combined',
+      'c-card',
+      'closing',
+      'recurring',
+      'a-open'
+    ]);
+  });
+
   it('removes approval voting when its final winner is recorded', async () => {
     await sqlExecutor.execute(
       `update ${WAVES_TABLE} set max_winners = 1 where id = :id`,
