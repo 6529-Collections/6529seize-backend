@@ -158,11 +158,18 @@ own confirmed provider integration.
 
 The canonical `6529.ops.error.v1` envelope contains bounded service/environment,
 event ID, timestamp, severity, fixed error code, fingerprint and optional release
-and correlation ID. CloudWatch platform events can also include the bounded
-infrastructure diagnostic metadata described above. No exception message, stack,
-URL, request body, wallet,
-username, model response or moderation evidence is sent to the webhook. The
-original diagnostic remains subject to source CloudWatch/Sentry access controls.
+and correlation ID. Application producers can add an allowlisted diagnostic:
+fixed failure category, operation, provider, HTTP status, safe resource token,
+completed SDK attempts and explicit recovery state from the retry owner. The
+collector reconstructs that allowlist; older queued envelopes remain valid and
+render red with unknown recovery. Amber requires a validated pending attempt with
+attempts remaining. Access denial and validation failures stay red even if another
+attempt is pending. The NFT required-page 404 backoff is demand driven and does
+not promise a scheduled refresh. CloudWatch platform events can also include the
+bounded infrastructure diagnostic metadata described above. No exception message,
+stack, URL, request body, wallet, username, model response or moderation evidence
+is sent to the webhook. The original diagnostic remains subject to source
+CloudWatch/Sentry access controls.
 Discord mentions are disabled. A fingerprint identifies a group without copying
 its raw error message. The Sentry signer secret and Discord URL are plain-string
 secrets stored only in monitoring-owned Secrets Manager.

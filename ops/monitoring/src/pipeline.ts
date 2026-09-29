@@ -139,7 +139,13 @@ async function execute(
   const alert = parseAlert(work.alert);
   if (alert.severity !== 'error') return transport.deliver(renderAlert(alert));
   const bucket = Math.floor(now / 300);
-  const key = `group:${alert.environment}:${alert.fingerprint}:${bucket}`;
+  // Older producers can reuse a generic fingerprint for unrelated causes.
+  // Include the validated presentation context so a digest never attributes
+  // the first item's cause or retry state to another item.
+  const presentation = alert.diagnostic
+    ? `:${hash(JSON.stringify(alert.diagnostic))}`
+    : '';
+  const key = `group:${alert.environment}:${alert.fingerprint}${presentation}:${bucket}`;
   const group = await traceDispatch('GROUP', () => store.group(key, id, alert));
   if (group.firstEventId !== id) return 'grouped';
   // Scheduling is retried before acknowledgement; deterministic digest receipts absorb duplicates.

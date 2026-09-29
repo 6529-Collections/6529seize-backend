@@ -115,6 +115,17 @@ test('duplicate SQS receipts send once; repeated fingerprints yield a durable su
   assert.equal(h.sent.length, 2);
   assert.match(JSON.stringify(h.sent[1]), /"value":"2"/);
 });
+test('same generic fingerprint with different causes or retry states forms separate groups', async () => {
+  const h = harness();
+  const first = { ...alert, diagnostic: { category: 'HTTP_ERROR' as const,
+    httpStatus: 404, recovery: { state: 'unknown' as const } } };
+  const second = { ...alert, eventId: 'other', diagnostic: { category: 'ACCESS_DENIED' as const,
+    httpStatus: 403, recovery: { state: 'terminal' as const } } };
+  await processWork({ kind: 'alert', alert: first }, 'one', h.store, h.transport, 300);
+  await processWork({ kind: 'alert', alert: second }, 'two', h.store, h.transport, 301);
+  assert.equal(h.groups.size, 2);
+  assert.equal(h.sent.length, 2);
+});
 test('a failed send retries in its original bucket without double-counting', async () => {
   const h = harness();
   const original = h.transport.deliver;
