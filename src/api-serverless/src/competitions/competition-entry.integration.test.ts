@@ -405,7 +405,7 @@ describeWithSeed(
             `select version from ${tables.COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE} where entry_id=:id`,
             { id: entry.id }
           )
-        ).toEqual([]);
+        ).toEqual([{ version: 1 }]);
       }
     });
 
@@ -646,7 +646,7 @@ describeWithSeed(
         await sqlExecutor.execute(
           `select version from ${tables.COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE}`
         )
-      ).toEqual([]);
+      ).toEqual([{ version: 1 }]);
       const content = await service.getContent(
         wave.id,
         competitionId,
