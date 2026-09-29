@@ -21,7 +21,15 @@ const causes = [
   IdentityNotificationCause.IDENTITY_SUBSCRIBED,
   IdentityNotificationCause.WAVE_CREATED,
   IdentityNotificationCause.COMPETITION_LIFECYCLE,
+  IdentityNotificationCause.COMPETITION_LIFECYCLE,
+  IdentityNotificationCause.COMPETITION_LIFECYCLE,
   IdentityNotificationCause.COMPETITION_LIFECYCLE
+];
+const competitionEventTypes = [
+  'COMPETITION_DECISION_COMPLETED',
+  'COMPETITION_DECISION_COMPLETED',
+  'COMPETITION_PUBLISHED',
+  'COMPETITION_PAUSED'
 ];
 const request = {
   identity_id: viewer.profile_id!,
@@ -48,7 +56,7 @@ describeWithSeed(
         read_at: index === 3 ? 10 : null,
         additional_data: {
           event_id: 'event',
-          event_type: 'COMPETITION_PUBLISHED',
+          event_type: competitionEventTypes[index - 2],
           competition_id: 'competition',
           competition_title: 'Contest'
         }
@@ -105,6 +113,19 @@ describeWithSeed(
         unread.notifications.map((notification) => notification.id)
       ).toEqual([3, 2, 1]);
       expect(unread.total_unread).toBe(3);
+    });
+
+    it('hides status-change notices before pagination and unread counting even with opt-in', async () => {
+      const response = await reader.getNotificationsForIdentity({
+        ...request,
+        include_competitions: true,
+        cause: IdentityNotificationCause.COMPETITION_LIFECYCLE,
+        limit: 1
+      });
+      expect(
+        response.notifications.map((notification) => notification.id)
+      ).toEqual([4]);
+      expect(response.total_unread).toBe(3);
     });
 
     it.each([false, true])(
