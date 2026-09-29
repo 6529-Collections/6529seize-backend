@@ -74,13 +74,19 @@ export class LegacyCompetitionAdapter implements CompetitionReader {
     if (!wave || wave.type === WaveType.CHAT) {
       throw new Error(`Legacy competition wave ${record.wave_id} not found`);
     }
-    const [creditNfts, capabilities, outcomes] = await Promise.all([
-      this.repository.getLegacyCreditNfts(record.wave_id, this.ctx),
-      this.repository.findCapabilities(record.id, this.ctx),
-      collectCompetitionPages((page) =>
-        this.repository.listLegacyOutcomes(record, page, this.ctx)
-      )
-    ]);
+    // A shadow sample owns one budgeted transaction connection, which must not
+    // have concurrent statements. Keep these domain reads sequential.
+    const creditNfts = await this.repository.getLegacyCreditNfts(
+      record.wave_id,
+      this.ctx
+    );
+    const capabilities = await this.repository.findCapabilities(
+      record.id,
+      this.ctx
+    );
+    const outcomes = await collectCompetitionPages((page) =>
+      this.repository.listLegacyOutcomes(record, page, this.ctx)
+    );
     const competition = this.mapWave(
       record,
       wave,

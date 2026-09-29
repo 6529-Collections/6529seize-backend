@@ -1,7 +1,11 @@
 import { getRedisClient } from '@/redis';
 import { Logger } from '@/logging';
 import { EthPrice } from '@/entities/IEthPrice';
-import { HISTORY_START_MS, PRICE_INTERVAL_MS } from './coinbase';
+import {
+  HISTORY_START_MS,
+  PRICE_INTERVAL_MS,
+  DAILY_PRICE_INTERVAL_MS
+} from './coinbase';
 import { ethPriceStateKey } from './eth-price-state-key';
 
 export interface UnavailablePrices {
@@ -40,7 +44,7 @@ function isUnavailableRange(value: unknown): value is UnavailablePrices {
     Number.isSafeInteger(row.first) &&
     Number.isSafeInteger(row.last) &&
     Number.isSafeInteger(row.retryAt) &&
-    row.first! >= HISTORY_START_MS + PRICE_INTERVAL_MS &&
+    row.first! >= HISTORY_START_MS &&
     row.last! >= row.first! &&
     row.first! % PRICE_INTERVAL_MS === 0 &&
     row.last! % PRICE_INTERVAL_MS === 0
@@ -49,9 +53,12 @@ function isUnavailableRange(value: unknown): value is UnavailablePrices {
 
 /** Read temporary retry exclusions, never treating them as persisted coverage. */
 export async function getUnavailablePrices(
-  now: number
+  now: number,
+  intervalMs = PRICE_INTERVAL_MS
 ): Promise<UnavailablePrices[]> {
-  const key = ethPriceStateKey('unavailable');
+  const key = ethPriceStateKey(
+    intervalMs === DAILY_PRICE_INTERVAL_MS ? 'daily-unavailable' : 'unavailable'
+  );
   let ranges = localRanges.get(key) ?? [];
   const redis = getRedisClient();
   try {
@@ -84,14 +91,15 @@ export async function deferMissingPrices(
   prices: EthPrice[],
   first: number,
   last: number,
-  now: number
+  now: number,
+  intervalMs = PRICE_INTERVAL_MS
 ): Promise<void> {
   const found = new Set(prices.map((price) => price.timestamp_ms));
   const missing: UnavailablePrices[] = [];
-  for (let close = first; close <= last; close += PRICE_INTERVAL_MS) {
+  for (let close = first; close <= last; close += intervalMs) {
     if (found.has(close)) continue;
     const previous = missing[missing.length - 1];
-    if (previous?.last === close - PRICE_INTERVAL_MS) previous.last = close;
+    if (previous?.last === close - intervalMs) previous.last = close;
     else
       missing.push({
         first: close,
@@ -100,8 +108,10 @@ export async function deferMissingPrices(
       });
   }
   if (!missing.length) return;
-  const key = ethPriceStateKey('unavailable');
-  const ranges = [...(await getUnavailablePrices(now)), ...missing];
+  const key = ethPriceStateKey(
+    intervalMs === DAILY_PRICE_INTERVAL_MS ? 'daily-unavailable' : 'unavailable'
+  );
+  const ranges = [...(await getUnavailablePrices(now, intervalMs)), ...missing];
   localRanges.set(key, ranges);
   pendingPersistence.add(key);
   logger.warn(
@@ -110,8 +120,7 @@ export async function deferMissingPrices(
       first,
       last,
       missingCount: missing.reduce(
-        (count, range) =>
-          count + (range.last - range.first) / PRICE_INTERVAL_MS + 1,
+        (count, range) => count + (range.last - range.first) / intervalMs + 1,
         0
       )
     }

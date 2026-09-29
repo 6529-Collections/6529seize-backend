@@ -6,12 +6,14 @@ import { doInDbContext } from '../secrets';
 
 const logger = Logger.get('ETH_PRICE_LOOP');
 
-export const handler = sentryContext.wrapLambdaHandler(async () => {
-  await doInDbContext(
-    async () => {
-      const reset = process.env.ETH_PRICE_RESET == 'true';
-      await syncEthUsdPrice(reset);
-    },
-    { entities: [EthPrice], logger }
-  );
-});
+export const handler = sentryContext.wrapLambdaHandler(
+  async (_event, context) => {
+    await doInDbContext(
+      async () => {
+        const reset = process.env.ETH_PRICE_RESET == 'true';
+        await syncEthUsdPrice(reset, () => context.getRemainingTimeInMillis());
+      },
+      { entities: [EthPrice], logger }
+    );
+  }
+);
