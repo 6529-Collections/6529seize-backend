@@ -1691,8 +1691,10 @@ source cap.
 Unexplained missing notification rows now return failed SQS items, allowing later
 commits to become visible. Confirmed cancellation markers still acknowledge work.
 The existing ten-receive redrive limit bounds retries; exhausted messages reach the
-existing DLQ and alarms. Operational errors and five-minute alert frequency remain
-unchanged. Deploy schema sync (`dbMigrationsLoop`) before the worker and producers.
+existing DLQ and alarms. The five-minute outbox value is a backlog-age threshold: once
+exceeded, each one-minute publisher run can log the backlog error. Discord delivery
+is handled separately by the existing monitoring pipeline and its unchanged
+five-minute grouping windows. Deploy schema sync (`dbMigrationsLoop`) before the worker and producers.
 
 The notification and push activation flags intentionally remain separate: disabling
 push delivery still permits in-app notifications and does not accumulate a future
