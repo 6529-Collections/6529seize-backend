@@ -11,6 +11,7 @@ export interface QueuedWebSocketFrame {
   jwtExpiry: number;
 }
 
+/** Persist a session-bound frame in its connection FIFO group; reject failed acceptance. */
 export async function enqueueWebSocketFrame(
   frame: Omit<QueuedWebSocketFrame, 'version' | 'id'>,
   abortSignal?: AbortSignal
@@ -28,6 +29,7 @@ export async function enqueueWebSocketFrame(
   });
 }
 
+/** Reject malformed envelopes so the consumer retains them for retry and DLQ inspection. */
 export function parseQueuedWebSocketFrame(body: string): QueuedWebSocketFrame {
   const frame = JSON.parse(body) as Partial<QueuedWebSocketFrame> | null;
   if (

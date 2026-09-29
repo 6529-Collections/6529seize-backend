@@ -7,6 +7,7 @@ import { processWebSocketBatch } from './processor';
 import { deferWebSocketRetry } from './retry';
 
 const logger = Logger.get('WEBSOCKET_OUTBOUND');
+/** Consume queued frames in DB context and retain failures with randomized retry visibility. */
 const consume: SQSHandler = async (event) =>
   doInDbContext(
     () =>

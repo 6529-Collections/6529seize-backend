@@ -741,6 +741,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       );
   }
 
+  /** Evaluate current wave eligibility or attachment ownership/access for a queued frame. */
   async canIdentityReadQueuedResource(
     identityId: string | null,
     resource: { waveId: string } | { attachmentId: string }

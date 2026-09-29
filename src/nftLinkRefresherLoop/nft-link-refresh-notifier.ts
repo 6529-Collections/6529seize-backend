@@ -27,6 +27,7 @@ export class NftLinkRefreshNotifier {
       appWebSockets.send({ connectionId, message, abortSignal: signal })
   ) {}
 
+  /** Attempt post-persistence fan-out within its budget and always release cancellation resources. */
   async notifyAboutNftLinkUpdate(data: ApiNftLinkData): Promise<void> {
     const budget = getNftLinkResolutionBudget();
     const controller = new AbortController();
@@ -70,6 +71,7 @@ export class NftLinkRefreshNotifier {
     }
   }
 
+  /** Bound recipient enqueue concurrency and report failures while allowing other recipients to proceed. */
   private async broadcast(
     data: ApiNftLinkData,
     signal: AbortSignal

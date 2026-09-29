@@ -10,6 +10,7 @@ export function withLambdaRemainingTime<T>(
   return remainingTime.run(getRemainingTime, run);
 }
 
+/** Read the current invocation budget, or leave non-Lambda callers unconstrained. */
 export function getLambdaRemainingTime(): number {
   return remainingTime.getStore()?.() ?? Infinity;
 }
