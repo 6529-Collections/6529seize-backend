@@ -1,5 +1,13 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parse } from 'yaml';
@@ -21,6 +29,117 @@ const job = workflow.jobs['build-and-deploy'];
 const steps: WorkflowStep[] = job.steps;
 const guard = steps[0];
 const sourceSha = 'a'.repeat(40);
+
+function deployMediaResizer(overrides: Record<string, string> = {}) {
+  const deploy = steps.find((step) => step.name === 'Deploy mediaResizerLoop')!;
+  return spawnSync(
+    'bash',
+    [
+      '-c',
+      `
+    git() { printf 'fixture'; }
+    aws() {
+      printf '%s\\n' "$*" >&2
+      if [ "$2" = "$MOCK_FAILURE" ] || [ "$*" = "$MOCK_FAILURE" ]; then return 42; fi
+      if [ "$2" = "get-function-configuration" ]; then printf '%s' "$MOCK_MEMORY"; fi
+    }
+    ${deploy.run}
+  `
+    ],
+    {
+      encoding: 'utf8',
+      timeout: 10000,
+      env: {
+        ...process.env,
+        MOCK_MEMORY: '2048',
+        MOCK_FAILURE: '',
+        ...overrides
+      }
+    }
+  );
+}
+
+it('waits for both code and configuration updates and verifies GIF-worker memory', () => {
+  const result = deployMediaResizer();
+  expect(result.status).toBe(0);
+  const calls = result.stderr.trim().split('\n');
+  expect(calls).toHaveLength(5);
+  expect(calls[0]).toContain(
+    'update-function-code --function-name mediaResizerLoop --zip-file fileb://src/mediaResizerLoop/dist/index.zip'
+  );
+  expect(calls[1]).toBe(
+    'lambda wait function-updated-v2 --function-name mediaResizerLoop'
+  );
+  expect(calls[2]).toContain(
+    'update-function-configuration --function-name mediaResizerLoop --runtime nodejs22.x --memory-size 2048'
+  );
+  expect(calls[3]).toBe(calls[1]);
+  expect(calls[4]).toContain(
+    'get-function-configuration --function-name mediaResizerLoop --query MemorySize --output text'
+  );
+});
+
+it('reports the actual and expected memory when verification fails', () => {
+  const result = deployMediaResizer({ MOCK_MEMORY: '1028' });
+  expect(result.status).toBe(1);
+  expect(result.stdout).toContain(
+    '::error::mediaResizerLoop memory 1028 != 2048'
+  );
+});
+
+it.each([
+  ['update-function-code', 1],
+  ['lambda wait function-updated-v2 --function-name mediaResizerLoop', 2],
+  ['update-function-configuration', 3],
+  ['get-function-configuration', 5]
+])('stops immediately on failed AWS command %s', (command, calls) => {
+  const result = deployMediaResizer({ MOCK_FAILURE: String(command) });
+  expect(result.status).toBe(42);
+  expect(result.stderr.trim().split('\n')).toHaveLength(calls as number);
+});
+
+it('rejects a missing media resizer before generating a deployment workflow', () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'gif-deploy-config-'));
+  try {
+    for (const subdirectory of ['scripts', 'src/config', '.github/workflows']) {
+      mkdirSync(path.join(directory, subdirectory), { recursive: true });
+    }
+    for (const file of [
+      'scripts/generate-deploy-config.mjs',
+      'src/config/deploy-config.validation.js'
+    ]) {
+      copyFileSync(
+        path.resolve(__dirname, '..', file),
+        path.join(directory, file)
+      );
+    }
+    const config = JSON.parse(
+      readFileSync(
+        path.resolve(__dirname, '../src/config/deploy-services.json'),
+        'utf8'
+      )
+    );
+    config.services = config.services.filter(
+      (service: { name: string }) => service.name !== 'mediaResizerLoop'
+    );
+    writeFileSync(
+      path.join(directory, 'src/config/deploy-services.json'),
+      JSON.stringify(config)
+    );
+    const result = spawnSync(
+      process.execPath,
+      [path.join(directory, 'scripts/generate-deploy-config.mjs')],
+      { encoding: 'utf8', timeout: 10000 }
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('mediaResizerLoop memory_size is required');
+    expect(
+      existsSync(path.join(directory, '.github/workflows/deploy.yml'))
+    ).toBe(false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 function validateDispatch(
   expectedSha: string,

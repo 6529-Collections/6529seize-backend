@@ -227,3 +227,140 @@ it('reads complete GIF metadata without decoding the full animation', async () =
   expect(selected.delay).toEqual(animated.delay);
   expect(selected.loop).toBe(animated.loop);
 });
+
+it('resizes a 117-frame submission with one sequential decode', async () => {
+  const bytes = await fixture(2, 2, 117);
+  // A large logical canvas with tiny subframes exercises disposal/coalescing
+  // and the reported submission's decode dimensions without a 1 GB fixture.
+  bytes.writeUInt16LE(1920, 6);
+  bytes.writeUInt16LE(1080, 8);
+  await writeFile(source, bytes);
+  const before = await Sharp(source).metadata();
+  const output = await prepareGifPreview(source, {
+    width: null,
+    height: 600,
+    fit: 'cover'
+  });
+  expect(await Sharp(output, { animated: true }).metadata()).toMatchObject({
+    width: 357,
+    pageHeight: 200,
+    pages: 117,
+    delay: before.delay,
+    loop: before.loop
+  });
+}, 30000);
+
+it('rejects excessive sequential input work before decoding', async () => {
+  const bytes = await fixture(2, 2, 117);
+  bytes.writeUInt16LE(2048, 6);
+  bytes.writeUInt16LE(2048, 8);
+  await writeFile(source, bytes);
+  await expect(
+    prepareGifPreview(source, { width: null, height: 600, fit: 'cover' })
+  ).rejects.toThrow('DECODED_IMAGE_TOO_LARGE');
+});
+
+it.each([
+  { width: 7, height: null, fit: 'cover' as const },
+  { width: 7, height: 7, fit: 'cover' as const },
+  { width: 7, height: 7, fit: 'inside' as const },
+  { width: 7, height: 7, fit: 'outside' as const }
+])('retains the resize geometry for %j', async (target) => {
+  await fixture(20, 14, 3);
+  const expected = await Sharp(source)
+    .resize(target.width, target.height, {
+      fit: target.fit,
+      withoutEnlargement: true
+    })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const output = await prepareGifPreview(source, target);
+  expect(await Sharp(output, { animated: true }).metadata()).toMatchObject({
+    width: expected.info.width,
+    pageHeight: expected.info.height,
+    pages: 3,
+    delay: [40, 50, 60],
+    loop: 3
+  });
+});
+
+it('rejects a target with no dimensions', async () => {
+  await fixture(20, 14, 3);
+  await expect(
+    prepareGifPreview(source, { width: null, height: null, fit: 'cover' })
+  ).rejects.toThrow('INVALID_IMAGE');
+});
+
+it('charges the full logical canvas for offset subframes and preserves their disposal', async () => {
+  // The checked-in fixture has two 24x12 image descriptors at byte 46/82.
+  // Place those actual frame rectangles far apart on a 1920x1080 canvas.
+  const bytes = await readFile(
+    join(__dirname, '../../scripts/media-fixtures/gif')
+  );
+  bytes.writeUInt16LE(1920, 6);
+  bytes.writeUInt16LE(1080, 8);
+  for (const [descriptor, left, top] of [
+    [46, 240, 120],
+    [82, 1440, 840]
+  ]) {
+    expect(bytes[descriptor]).toBe(0x2c);
+    bytes.writeUInt16LE(left, descriptor + 1);
+    bytes.writeUInt16LE(top, descriptor + 3);
+  }
+  bytes[41] = 9; // transparent frame, restore background after display
+  bytes[77] = 13; // transparent frame, restore previous after display
+  await writeFile(source, bytes);
+  const pixels = 1920 * 1080 * 2;
+  expect(await Sharp(source).metadata()).toMatchObject({
+    width: 1920,
+    height: 1080,
+    pages: 2
+  });
+  expect(
+    await Sharp(source, { animated: true, limitInputPixels: pixels }).metadata()
+  ).toMatchObject({ width: 1920, height: 2160, pageHeight: 1080, pages: 2 });
+  await expect(
+    Sharp(source, { animated: true, limitInputPixels: pixels - 1 }).metadata()
+  ).rejects.toThrow('Input image exceeds pixel limit');
+  const output = await prepareGifPreview(source, {
+    width: null,
+    height: 540,
+    fit: 'cover'
+  });
+  expect(await Sharp(output, { animated: true }).metadata()).toMatchObject({
+    width: 960,
+    pageHeight: 540,
+    pages: 2,
+    delay: [80, 160],
+    loop: 2
+  });
+  for (const page of [0, 1]) {
+    const expected = await Sharp(source, { page, pages: 1 })
+      .resize({ height: 540 })
+      .ensureAlpha()
+      .raw()
+      .toBuffer();
+    const actual = await Sharp(output, { page, pages: 1 })
+      .ensureAlpha()
+      .raw()
+      .toBuffer();
+    expect(actual.length).toBe(expected.length);
+    // Compare solid frame interiors, not antialiased alpha edges: GIF encoding
+    // quantizes partial alpha to binary transparency.
+    for (const [x, y] of [
+      [126, 63],
+      [726, 423],
+      [480, 270]
+    ]) {
+      const offset = (y * 960 + x) * 4;
+      for (let channel = 0; channel < 4; channel++) {
+        expect(
+          Math.abs(actual[offset + channel] - expected[offset + channel])
+        ).toBeLessThanOrEqual(2);
+      }
+    }
+    const visible =
+      ((page === 0 ? 63 : 423) * 960 + (page === 0 ? 126 : 726)) * 4;
+    expect(actual[visible + 3]).toBe(255);
+  }
+});
