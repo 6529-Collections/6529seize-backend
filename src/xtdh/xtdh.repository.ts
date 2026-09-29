@@ -1,3 +1,4 @@
+import { XTdhIdentitySnapshotDb } from '@/xtdh/xtdh-identity-snapshot.db';
 import {
   ConnectionWrapper,
   dbSupplier,
@@ -235,6 +236,36 @@ export class XTdhRepository extends LazyDbAccessCompatibleService {
     super(sqlExecutorGetter);
   }
 
+  private get identitySnapshot() {
+    return new XTdhIdentitySnapshotDb(() => this.db);
+  }
+
+  async prepareIdentitySnapshot(ctx: RequestContext) {
+    await this.identitySnapshot.prepare(ctx);
+  }
+
+  async publishIdentitySnapshot(ctx: RequestContext) {
+    await this.identitySnapshot.publish(ctx);
+  }
+
+  async discardIdentitySnapshot(ctx: RequestContext) {
+    await this.identitySnapshot.discard(ctx);
+  }
+
+  private async calculateIdentityValues(
+    sql: string,
+    params: Record<string, number>,
+    column: 'produced_xtdh' | 'granted_xtdh' | 'xtdh' | 'xtdh_rate',
+    ctx: RequestContext
+  ) {
+    // A plain SELECT is a consistent, nonlocking read. INSERT/UPDATE ... SELECT
+    // could take source-row locks even when the destination is private.
+    const rows = await this.db.execute<
+      { consolidation_key: string } & Record<string, unknown>
+    >(sql, params, { wrappedConnection: ctx.connection });
+    await this.identitySnapshot.writeValues(rows, column, ctx);
+  }
+
   async getWalletsWithoutIdentities(ctx: RequestContext): Promise<string[]> {
     try {
       ctx.timer?.start(`${this.constructor.name}->getWalletsWithoutIdentities`);
@@ -322,7 +353,7 @@ export class XTdhRepository extends LazyDbAccessCompatibleService {
     try {
       ctx.timer?.start(`${this.constructor.name}->deleteXTdhState`);
       await this.db.execute(
-        `UPDATE ${IDENTITIES_TABLE} SET xtdh = 0, xtdh_rate = 0`,
+        `UPDATE xtdh_identity_work SET xtdh = 0, xtdh_rate = 0`,
         undefined,
         {
           wrappedConnection: ctx.connection
@@ -354,19 +385,9 @@ export class XTdhRepository extends LazyDbAccessCompatibleService {
   async updateProducedXTDH(ctx: RequestContext) {
     try {
       ctx.timer?.start(`${this.constructor.name}->updateProducedXTDH`);
-      this.logger.info(`Clearing produced xTDH in ${IDENTITIES_TABLE}`);
-      await this.db.execute(
-        `
-        UPDATE ${IDENTITIES_TABLE}
-        SET produced_xtdh = 0
-        WHERE produced_xtdh <> 0
-      `,
-        undefined,
-        { wrappedConnection: ctx.connection }
-      );
-      this.logger.info(`Setting produced xTDH in ${IDENTITIES_TABLE}`);
       const sql = `
-        UPDATE ${IDENTITIES_TABLE} c
+        SELECT c.consolidation_key, COALESCE(x.produced_xtdh, 0) AS produced_xtdh
+        FROM ${IDENTITIES_TABLE} c
           LEFT JOIN (
             SELECT
               c.consolidation_key,
@@ -379,12 +400,10 @@ export class XTdhRepository extends LazyDbAccessCompatibleService {
             GROUP BY c.consolidation_key
           ) x
           ON x.consolidation_key = c.consolidation_key
-        SET c.produced_xtdh = COALESCE(x.produced_xtdh, 0);
+        ;
   `;
       const params = { days_since_epoch: this.getDaysSinceXTdhEpoch() };
-      await this.db.execute(sql, params, {
-        wrappedConnection: ctx.connection
-      });
+      await this.calculateIdentityValues(sql, params, 'produced_xtdh', ctx);
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->updateProducedXTDH`);
     }
@@ -395,18 +414,6 @@ export class XTdhRepository extends LazyDbAccessCompatibleService {
       ctx.timer?.start(
         `${this.constructor.name}->updateAllGrantedXTdhsOnConsolidated`
       );
-      this.logger.info(`Zeroing out granted_xtdh`);
-      await this.db.execute(
-        `
-        UPDATE ${IDENTITIES_TABLE}
-        SET granted_xtdh = 0
-        WHERE granted_xtdh <> 0
-      `,
-        undefined,
-        { wrappedConnection: ctx.connection }
-      );
-      this.logger.info(`Zeroed out granted_xtdh`);
-
       const sql = withSql(
         [
           CTE_EPOCH,
@@ -495,19 +502,19 @@ ck_xtdh AS (
 )`
         ],
         `
-          UPDATE ${IDENTITIES_TABLE} cw
+          SELECT cw.consolidation_key, COALESCE(gx.total_granted_xtdh, 0) AS granted_xtdh
+          FROM ${IDENTITIES_TABLE} cw
             LEFT JOIN ck_xtdh gx
             ON gx.consolidation_key = cw.consolidation_key
-          SET cw.granted_xtdh = COALESCE(gx.total_granted_xtdh, 0)
+
         `
       );
 
-      await this.db.execute(
+      await this.calculateIdentityValues(
         sql,
         { x_tdh_epoch_ms: this.getXTdhEpochMillis() },
-        {
-          wrappedConnection: ctx.connection
-        }
+        'granted_xtdh',
+        ctx
       );
     } finally {
       ctx.timer?.stop(
@@ -615,18 +622,18 @@ ck_xtdh AS (
         `
         ],
         `
-        UPDATE ${IDENTITIES_TABLE} cw
+        SELECT cw.consolidation_key, COALESCE(cx.total_xtdh, 0) AS xtdh
+        FROM ${IDENTITIES_TABLE} cw
         LEFT JOIN consolidated_xtdh cx
           ON cx.consolidation_key = cw.consolidation_key
-        SET cw.xtdh = COALESCE(cx.total_xtdh, 0)
+
         `
       );
-      await this.db.execute(
+      await this.calculateIdentityValues(
         sql,
         { x_tdh_epoch_ms: this.getXTdhEpochMillis() },
-        {
-          wrappedConnection: ctx.connection
-        }
+        'xtdh',
+        ctx
       );
     } finally {
       ctx.timer?.stop(
@@ -639,7 +646,7 @@ ck_xtdh AS (
     try {
       ctx.timer?.start(`${this.constructor.name}->giveOutUngrantedXTdh`);
       await this.db.execute(
-        `UPDATE ${IDENTITIES_TABLE} SET xtdh = xtdh + (produced_xtdh - granted_xtdh)`,
+        `UPDATE xtdh_identity_work SET xtdh = xtdh + (produced_xtdh - granted_xtdh)`,
         undefined,
         { wrappedConnection: ctx.connection }
       );
@@ -774,21 +781,24 @@ received_day AS (
 )`
         ],
         `
-UPDATE ${IDENTITIES_TABLE} cw
+SELECT cw.consolidation_key,
+  COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COALESCE(rd.received, 0) AS xtdh_rate
+FROM ${IDENTITIES_TABLE} cw
 LEFT JOIN produced_day pd
   ON pd.consolidation_key = cw.consolidation_key
 LEFT JOIN grant_out_day go
   ON go.consolidation_key = cw.consolidation_key
 LEFT JOIN received_day rd
   ON rd.consolidation_key = cw.consolidation_key
-SET cw.xtdh_rate = COALESCE(pd.produced, 0) - COALESCE(go.granted_out, 0) + COALESCE(rd.received, 0)
+
 `
       );
 
-      await this.db.execute(
+      await this.calculateIdentityValues(
         sql,
         { x_tdh_epoch_ms: this.getXTdhEpochMillis() },
-        { wrappedConnection: ctx.connection }
+        'xtdh_rate',
+        ctx
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->updateXtdhRate`);
