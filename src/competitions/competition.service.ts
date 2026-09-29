@@ -88,7 +88,12 @@ export type WaveHub = {
 };
 
 export type CursorPageRequest<
-  TSort extends string = 'submitted_at' | 'rating' | 'rank'
+  TSort extends string =
+    | 'submitted_at'
+    | 'rating'
+    | 'rank'
+    | 'real_time_rating'
+    | 'trend'
 > = {
   readonly cursor?: string;
   readonly limit: number;

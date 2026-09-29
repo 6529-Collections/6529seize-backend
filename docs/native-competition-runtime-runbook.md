@@ -18,9 +18,9 @@ before proceeding to its dependents:
    capability. Rerunning the existing legacy backfill
    must not change primary IDs.
 2. `claimsBuilder`, then `pushNotificationsHandler`: consume optional native
-   claim context and `COMPETITION_LIFECYCLE` notifications while retaining old
+   claim context and competition winner notifications while retaining old
    messages. Old producers continue to work.
-3. `waveLeaderboardSnapshotterLoop`, then `tdhLoop`, then `newsletterLoop`,
+3. `waveLeaderboardSnapshotterLoop`, then `tdhLoop`, then `newsletterLoop` (production only),
    then `waveDecisionExecutionLoop`: reconcile native credits, refresh native
    standings, process decisions and dispatch durable events. Legacy routing
    stays active regardless of native flags.
@@ -68,9 +68,10 @@ events commit together. Moderation preparation runs before the entry/hub
 transaction; publication authorization and constraints are checked inside it.
 
 Every update/action supplies `config_version`. Stale versions return 409.
-Published types cannot change. After the first accepted entry, eligibility,
-credits, signing, timing, decisions and outcomes are immutable. Title,
-description and presentation can change with a new audited version. Terminal
+Published types cannot change. After the first accepted entry, credits,
+signing, timing, decisions and outcomes are immutable. Participation and voting
+access, title, description, guidelines and presentation can change with a new
+audited version. Terminal
 competitions cannot reopen; cloning creates a separate draft. Publishing a
 clone requires valid future dates.
 
@@ -87,9 +88,8 @@ IDs, config version, SHA-256 payload hash, UUIDv4 nonce, issued time and expiry.
 Lifetime is at most five minutes. EOA and existing EIP-1271 verification are
 supported. Proxy scope and current eligibility are checked independently.
 
-Entry payloads bind `{drop, drop_id}`. Signed existing-drop attachments also
-bind `drop_content_hash`, calculated from the exact author-only candidate
-content response and rechecked under the drop lock. Vote payloads bind the
+Entry payloads bind their newly submitted drop content. Existing chat drops
+cannot be attached as entries. Vote payloads bind the
 signed value, including zero/removal and negatives. Signing is separate from
 the legacy drop signature. Raw signatures and original signed payloads stay in
 restricted content-version/command tables; public content is an allowlisted
@@ -104,21 +104,22 @@ observations.
 - Budgets are independent per competition and derive from current TDH, REP,
   xTDH, combined TDH/xTDH or configured NFT TDH. WAVE scope locks the sum of
   absolute active votes. DROP scope requires an entry for meaningful spend and
-  remaining values. Winner/withdrawal/disqualification releases spend while
+  remaining values. Winning or deleting an entry releases spend while
   preserving vote history. Native negative credit reductions truncate toward
   zero, avoiding legacy negative-floor overspend.
 - Pause decisions leaves otherwise eligible entries/votes available. Rank
   occurrences inside an inclusive pause are skipped without shifting future
   occurrences. Approve evaluates accepted votes on resume, including a hold
   that finishes after voting closes. Voting-end equality remains accepted.
+  Pausing requires a nonblank reason; the Configuration view exposes the
+  competition's historic pauses, reasons and start/end times.
 - Rank and Approve store immutable winner/voter snapshots and award
-  descriptors; winning changes an entry, never its shared CHAT drop. Existing
+  descriptors; winning changes an entry, never its dedicated COMPETITION drop. Existing
   automatic REP/CIC outcome behavior creates descriptors, not new rating grants.
-- Cancel stops future work and preserves history without introducing refunds.
-  Archive hides normal discovery history; filters retain access. End and cancel
-  cannot invent a final winner or reopen a terminal competition.
-- Unsigned active content edits revalidate the competition rules and append a
-  content version. Signed entries and winners are frozen. Public historical
+- Administrators may archive competitions; filters retain access to history.
+  Manual end/cancel and entry withdrawal/disqualification are not exposed.
+- All submitted competition content is immutable, including unsigned entries.
+  Deletion uses existing drop permissions and preserves competition history. Public historical
   content observes current moderation/deletion access, so snapshots cannot
   resurrect removed content. Ordinary chat-history purge excludes competition
   content. A wave containing any native history cannot be deleted.
@@ -156,6 +157,8 @@ deduplicate repeated queue messages. Immediate chat cache/socket delivery is
 best effort, with stage and allowlisted error-code diagnostics; logs exclude
 provider payloads and signatures.
 
+Only winner notifications are emitted for native competition lifecycle events;
+entry, vote, publication and other lifecycle events do not create these alerts.
 Existing notification clients keep their original causes and unread counts.
 Native clients opt into `COMPETITION_LIFECYCLE` using
 `include_competitions=true` on `GET /v2/notifications`. V1 and default V2

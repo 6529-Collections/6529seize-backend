@@ -1,4 +1,6 @@
+import { competitionDropVoteSummary } from './competition-drop-votes.service';
 import * as Joi from 'joi';
+import { ApiDropCompetitionContext } from '@/api/generated/models/ApiDropCompetitionContext';
 import { getAuthenticationContext } from '@/api/auth/auth';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { NewDropSchema, NewWaveDropSchema } from '@/api/drops/drop.validator';
@@ -28,19 +30,18 @@ import { ApiWaveCreditType } from '@/api/generated/models/ApiWaveCreditType';
 import { ApiWaveCreditScope } from '@/api/generated/models/ApiWaveCreditScope';
 import { ApiWaveV3 } from '@/api/generated/models/ApiWaveV3';
 import {
+  GetDropCompetitionContextV3Request,
   CreateWaveHubV3Request,
   CreateCompetitionV3Request,
   UpdateCompetitionV3Request,
   ExecuteCompetitionActionV3Request,
   CreateCompetitionEntryV3Request,
-  ExecuteCompetitionEntryActionV3Request,
   SetCompetitionVoteV3Request,
   GetCompetitionCreditBudgetV3Request,
   ListCompetitionMyVotesV3Request,
   ListCompetitionAwardsV3Request,
   GetCompetitionConfigurationV3Request,
-  GetCompetitionEntryContentV3Request,
-  GetCompetitionEntryContentCandidateV3Request
+  GetCompetitionEntryContentV3Request
 } from '@/api/generated/routes/operations';
 import { CompetitionCreditBudget } from '@/competitions/competition-credit.service';
 import { competitionService } from '@/competitions/competition.service';
@@ -182,7 +183,7 @@ export async function handleExecuteCompetitionActionV3(
   noQuery(req.query);
   const { wave_id, competition_id, action } = path(req.params, {
     action: Joi.string()
-      .valid('publish', 'end', 'cancel', 'archive', 'clone', 'pause', 'resume')
+      .valid('publish', 'archive', 'clone', 'pause', 'resume')
       .required()
   });
   const request = getValidatedByJoiOrThrow(req.body, actionSchema);
@@ -216,55 +217,14 @@ export async function handleCreateCompetitionEntryV3(
   const { wave_id, competition_id } = path(req.params);
   const schema = Joi.object<ApiCreateCompetitionEntryRequest>({
     ...commandFields,
-    drop: NewDropSchema.prefs({ noDefaults: true, convert: false }),
-    drop_id: Joi.string().min(1).max(100),
-    drop_content_hash: Joi.string().pattern(/^[0-9a-f]{64}$/),
+    drop: NewDropSchema.prefs({ noDefaults: true, convert: false }).required(),
     signature: signatureSchema
-  })
-    .xor('drop', 'drop_id')
-    .unknown(false);
+  }).unknown(false);
   const request = getValidatedByJoiOrThrow(req.body, schema);
   const ctx = await context(req);
   return toApiEntry(
     await competitionEntryService.create(wave_id, competition_id, request, ctx),
     ctx
-  );
-}
-
-export async function handleExecuteCompetitionEntryActionV3(
-  req: ExecuteCompetitionEntryActionV3Request
-): Promise<ApiCompetitionEntry> {
-  noQuery(req.query);
-  const { wave_id, competition_id, entry_id, action } = path(req.params, {
-    entry_id: Joi.string().uuid().required(),
-    action: Joi.string().valid('withdraw', 'disqualify').required()
-  });
-  const ctx = await context(req);
-  return toApiEntry(
-    await competitionEntryService.action(
-      wave_id,
-      competition_id,
-      entry_id,
-      action,
-      getValidatedByJoiOrThrow(req.body, actionSchema),
-      ctx
-    ),
-    ctx
-  );
-}
-
-export async function handleGetCompetitionEntryContentCandidateV3(
-  req: GetCompetitionEntryContentCandidateV3Request
-): Promise<ApiCreateDropRequest> {
-  noQuery(req.query);
-  const { wave_id, competition_id, drop_id } = path(req.params, {
-    drop_id: Joi.string().min(1).max(100).required()
-  });
-  return competitionEntryService.getCandidateContent(
-    wave_id,
-    competition_id,
-    drop_id,
-    await context(req)
   );
 }
 
@@ -397,6 +357,39 @@ export async function handleListCompetitionAwardsV3(
     next_cursor:
       rows.length > query.limit
         ? competitionCursorCodec.encode(scope, {}, offset + query.limit)
+        : null
+  };
+}
+
+export async function handleGetDropCompetitionContextV3(
+  req: GetDropCompetitionContextV3Request
+): Promise<ApiDropCompetitionContext> {
+  noQuery(req.query);
+  const { wave_id, drop_id } = getValidatedByJoiOrThrow(
+    req.params,
+    Joi.object({
+      wave_id: pathFields.wave_id,
+      drop_id: Joi.string().min(1).max(100).required()
+    }).unknown(false)
+  );
+  const ctx = await context(req);
+  const result = await competitionEntryService.getDropContext(
+    wave_id,
+    drop_id,
+    ctx
+  );
+  return {
+    competition: result.competition
+      ? toApiCompetition(result.competition)
+      : null,
+    entry: result.entry ? await toApiEntry(result.entry, ctx) : null,
+    vote_summary:
+      result.competition && result.entry
+        ? await competitionDropVoteSummary(
+            result.competition,
+            result.entry,
+            ctx
+          )
         : null
   };
 }

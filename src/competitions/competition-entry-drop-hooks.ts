@@ -1,30 +1,15 @@
-import {
-  assertCompetitionGroup,
-  assertCompetitionOpen,
-  visibleCompetitionWave
-} from '@/api/competitions/competition-command-access';
-import { competitionRepository } from '@/competitions/competition.repository';
-import { competitionCommandRepository } from '@/competitions/competition-command.repository';
-import { NativeCompetitionReader } from '@/competitions/native-competition.reader';
 import { Competition } from '@/competitions/competition.types';
 import {
   competitionEntryRepository,
   NativeDropEntry
 } from '@/competitions/competition-entry.repository';
 import {
-  assertCompetitionEntryContent,
-  assertCompetitionEntryMedia,
   assertCompetitionNominationDuplicates,
-  nativeEntryContentPermit,
   NativeEntryContentPermit
 } from '@/competitions/competition-entry-content';
-import {
-  CompetitionEntryStatus,
-  CompetitionLifecycle
-} from '@/entities/ICompetition';
-import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
+import { CompetitionEntryStatus } from '@/entities/ICompetition';
 import { CreateOrUpdateDropModel } from '@/drops/create-or-update-drop.model';
-import { DropEntity, DropType } from '@/entities/IDrop';
+import { DropEntity } from '@/entities/IDrop';
 import { ForbiddenException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
 import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
@@ -47,7 +32,7 @@ export class CompetitionEntryDropHooks {
   }
   public async prepareUpdate(
     model: CreateOrUpdateDropModel,
-    normalizeIdentity: (competition: Competition) => Promise<void>,
+    _normalizeIdentity: (competition: Competition) => Promise<void>,
     ctx: RequestContext
   ): Promise<NativeEntryEdit> {
     if (!model.drop_id || !ctx.connection)
@@ -56,86 +41,19 @@ export class CompetitionEntryDropHooks {
       model.drop_id,
       ctx
     );
-    if (
-      entries.some(
-        (entry) =>
-          entry.signed || entry.status === CompetitionEntryStatus.WINNER
-      )
-    )
-      throw new ForbiddenException(
-        'Signed competition entries and winner content cannot be edited'
-      );
-    const editable: NativeDropEntry[] = [];
-    for (const entry of entries) {
-      if (entry.status !== CompetitionEntryStatus.ACTIVE) continue;
-      const record = await competitionCommandRepository.lockCompetition(
-        entry.wave_id,
-        entry.competition_id,
-        ctx
-      );
-      if (!record)
-        throw new Error('Competition entry configuration is missing');
-      const competition = await new NativeCompetitionReader(
-        competitionRepository,
-        ctx
-      ).getCompetition(record, Date.now());
-      if (competition.lifecycle !== CompetitionLifecycle.PUBLISHED) continue;
-      const { groups } = await visibleCompetitionWave(competition.wave_id, ctx);
-      assertCompetitionGroup(
-        competition.participation.group_id,
-        groups,
-        ProfileProxyActionType.CREATE_DROP_TO_WAVE,
-        ctx
-      );
-      assertCompetitionOpen(competition, Date.now(), 'submit');
-      assertCompetitionEntryContent(competition, model);
-      await assertCompetitionEntryMedia(competition, model);
-      await normalizeIdentity(competition);
-      await assertNativeEntryNomination(competition, model, entry.id, ctx);
-      editable.push(entry);
-    }
-    const first = editable[0];
-    return {
-      entries: editable,
-      metadata: model.metadata,
-      permit: first
-        ? nativeEntryContentPermit({
-            competitionId: first.competition_id,
-            waveId: model.wave_id,
-            authorId: model.author_id!,
-            dropId: model.drop_id,
-            connection: ctx.connection
-          })
-        : undefined
-    };
+    if (entries.length)
+      throw new ForbiddenException('Competition submissions cannot be edited');
+    return { entries: [] };
   }
 
   public async preparePresentationUpdate(
-    drop: DropEntity,
+    _drop: DropEntity,
     entries: readonly NativeDropEntry[],
-    ctx: RequestContext
+    _ctx: RequestContext
   ): Promise<NativeEntryEdit> {
-    if (!entries.length) return { entries: [] };
-    const content = await competitionEntryRepository.loadDropContent(drop, ctx);
-    const active = entries.find(
-      (entry) => entry.status === CompetitionEntryStatus.ACTIVE
-    );
-    const snapshot = active
-      ? await competitionEntryRepository.getContent(active.id, ctx)
-      : null;
-    // Presentation changes retain the already-resolved nomination. Resolving an
-    // old handle/ENS again could silently nominate a different person.
-    const model: CreateOrUpdateDropModel = {
-      ...content,
-      metadata: snapshot?.metadata ?? content.metadata,
-      drop_id: drop.id,
-      author_id: drop.author_id,
-      author_identity: drop.author_id,
-      drop_type: DropType.CHAT,
-      signature: null,
-      is_additional_action_promised: null
-    };
-    return this.prepareUpdate(model, async () => {}, ctx);
+    if (entries.length)
+      throw new ForbiddenException('Competition submissions cannot be edited');
+    return { entries: [] };
   }
 
   public async recordUpdate(
@@ -178,28 +96,13 @@ export class CompetitionEntryDropHooks {
   }
 
   public async beforeDelete(
-    drop: DropEntity,
+    _drop: DropEntity,
     entries: readonly NativeDropEntry[],
     actorId: string | null,
     ctx: RequestContext
   ): Promise<void> {
     for (const entry of entries) {
-      if (!(await competitionEntryRepository.getContent(entry.id, ctx))) {
-        await competitionEntryRepository.saveContent(
-          entry,
-          await competitionEntryRepository.loadDropContent(drop, ctx),
-          actorId ?? drop.author_id,
-          undefined,
-          ctx
-        );
-      }
-      if (entry.status !== CompetitionEntryStatus.ACTIVE) continue;
-      await competitionEntryRepository.setStatus(
-        entry.id,
-        CompetitionEntryStatus.DISQUALIFIED,
-        Date.now(),
-        ctx
-      );
+      await competitionEntryRepository.deleteEntry(entry.id, ctx);
       await nativeCompetitionRuntimeService.refreshCompetition(
         entry.competition_id,
         Date.now(),
@@ -208,7 +111,7 @@ export class CompetitionEntryDropHooks {
       await nativeCompetitionRuntimeRepository.enqueueEvent(
         {
           key: `entry-deleted:${entry.id}`,
-          event_type: 'COMPETITION_ENTRY_DISQUALIFIED',
+          event_type: 'COMPETITION_ENTRY_DELETED',
           occurred_at: Date.now(),
           wave_id: entry.wave_id,
           competition_id: entry.competition_id,

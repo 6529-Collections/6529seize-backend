@@ -179,13 +179,17 @@ const EntryListQuerySchema = Joi.object<{
   .unknown(false)
   .required();
 
-type LeaderboardQuery = CursorQuery & { readonly sort: 'rating' };
+type LeaderboardQuery = CursorQuery & {
+  readonly sort: 'rating' | 'real_time_rating' | 'submitted_at' | 'trend';
+};
 const LeaderboardQuerySchema: Joi.ObjectSchema<LeaderboardQuery> =
   Joi.object<LeaderboardQuery>({
     direction: Joi.string().valid('ASC', 'DESC').default('DESC'),
     cursor: Joi.string().min(1).max(1000).optional(),
     limit: Joi.number().integer().min(1).max(100).default(50),
-    sort: Joi.string().valid('rating').default('rating')
+    sort: Joi.string()
+      .valid('rating', 'real_time_rating', 'submitted_at', 'trend')
+      .default('rating')
   })
     .unknown(false)
     .required();
@@ -444,7 +448,7 @@ export async function handleListCompetitionLeaderboardV3(
   return (await competitionService.listLeaderboard(
     wave_id,
     competition_id,
-    toCursorRequest(query),
+    { ...toCursorRequest(query), sort: query.sort },
     await getContext(req)
   )) as unknown as ApiCompetitionLeaderboardPage;
 }

@@ -23,7 +23,6 @@ import * as tables from '@/constants';
 import { dropsDb } from '@/drops/drops.db';
 import { CreateOrUpdateDropModel } from '@/drops/create-or-update-drop.model';
 import { DropType } from '@/entities/IDrop';
-import { CompetitionEntryStatus } from '@/entities/ICompetition';
 import { prePublicationModerationService } from '@/content-moderation/pre-publication-moderation.service';
 import { ApiCreateCompetitionEntryRequest } from '@/api/generated/models/ApiCreateCompetitionEntryRequest';
 import { moderationFingerprint } from '@/content-moderation/moderation-review.types';
@@ -110,10 +109,21 @@ const record = {
   created_at: 1,
   updated_at: 1
 };
-const request = (dropId = 'content-a'): ApiCreateCompetitionEntryRequest => ({
+let requestMetadata: { data_key: string; data_value: string }[] = [];
+const request = (_label = 'content-a'): ApiCreateCompetitionEntryRequest => ({
   idempotency_key: randomUUID(),
   config_version: 1,
-  drop_id: dropId
+  drop: {
+    wave_id: wave.id,
+    drop_type: ApiDropType.Participatory,
+    title: null,
+    parts: [{ content: 'Original content', quoted_drop: null, media: [] }],
+    metadata: requestMetadata,
+    referenced_nfts: [],
+    mentioned_users: [],
+    mentioned_waves: [],
+    signature: null
+  }
 });
 async function updateParticipation(patch: Record<string, unknown>) {
   await sqlExecutor.execute(
@@ -126,14 +136,6 @@ async function updateParticipation(patch: Record<string, unknown>) {
 }
 async function signedRequest(): Promise<ApiCreateCompetitionEntryRequest> {
   const input = request();
-  input.drop_content_hash = competitionPayloadHash(
-    await service.getCandidateContent(
-      wave.id,
-      competitionId,
-      input.drop_id!,
-      ctx
-    )
-  );
   const now = Date.now();
   const message = canonicalCompetitionJson({
     domain: '6529-competition-v1',
@@ -143,14 +145,13 @@ async function signedRequest(): Promise<ApiCreateCompetitionEntryRequest> {
     wave_id: wave.id,
     competition_id: competitionId,
     competition_entry_id: null,
-    drop_id: input.drop_id,
+    drop_id: null,
     config_version: 1,
     actor_profile_id: actor,
     actor_wallet: wallet.address.toLowerCase(),
     payload_hash: competitionPayloadHash({
-      drop: null,
-      drop_id: input.drop_id,
-      drop_content_hash: input.drop_content_hash
+      drop: input.drop,
+      drop_id: null
     }),
     nonce: randomUUID(),
     issued_at: now,
@@ -221,6 +222,7 @@ describeWithSeed(
   () => {
     let originalApiBaseUrl: string | undefined;
     beforeEach(() => {
+      requestMetadata = [];
       originalApiBaseUrl = process.env.API_BASE_URL;
       process.env.API_BASE_URL = 'https://api.6529.io/api';
       jest
@@ -389,145 +391,84 @@ describeWithSeed(
       ).toEqual([]);
     });
 
-    it('applies signed entry guards and unsigned revisions to link-preview changes', async () => {
-      const signed = await service.create(
-        wave.id,
-        competitionId,
-        await signedRequest(),
-        ctx
-      );
-      await expect(
-        dropCreationService.toggleHideLinkPreview(
-          { dropId: signed.drop_id, hideLinkPreview: true },
-          ctx
-        )
-      ).rejects.toThrow('cannot be edited');
-      const unsigned = await service.create(
-        wave.id,
-        competitionId,
-        request('content-b'),
-        ctx
-      );
-      await dropCreationService.toggleHideLinkPreview(
-        { dropId: unsigned.drop_id, hideLinkPreview: true },
-        ctx
-      );
-      expect(await repository.getContent(unsigned.id, {})).toMatchObject({
-        hide_link_preview: true
-      });
-      expect(
-        await sqlExecutor.execute(
-          `select version from ${tables.COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE} where entry_id=:id order by version`,
-          { id: unsigned.id }
-        )
-      ).toEqual([{ version: 1 }, { version: 2 }]);
-    });
-
-    it('detects a newly attached membership after a repeatable-read edit snapshot', async () => {
-      let observed!: () => void;
-      let release!: () => void;
-      const started = new Promise<void>((resolve) => {
-        observed = resolve;
-      });
-      const gate = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      const original = repository.findDropEntries.bind(repository);
-      jest
-        .spyOn(repository, 'findDropEntries')
-        .mockImplementationOnce(async (dropId, tx) => {
-          const entries = await original(dropId, tx);
-          observed();
-          await gate;
-          return entries;
-        });
-      const mutation = sqlExecutor.executeNativeQueriesInTransaction(
-        (connection) =>
-          repository.lockDropMemberships('content-a', { ...ctx, connection })
-      );
-      const rejected = expect(mutation).rejects.toThrow('membership changed');
-      await started;
-      try {
-        await service.create(wave.id, competitionId, request(), ctx);
-      } finally {
-        release();
+    it('rejects presentation changes for both signed and unsigned competition drops', async () => {
+      for (const input of [await signedRequest(), request()]) {
+        const entry = await service.create(wave.id, competitionId, input, ctx);
+        await expect(
+          dropCreationService.toggleHideLinkPreview(
+            { dropId: entry.drop_id, hideLinkPreview: true },
+            ctx
+          )
+        ).rejects.toThrow('cannot be edited');
+        expect(
+          await sqlExecutor.execute(
+            `select version from ${tables.COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE} where entry_id=:id`,
+            { id: entry.id }
+          )
+        ).toEqual([]);
       }
-      await rejected;
-      expect(
-        await sqlExecutor.execute(
-          `select id from ${tables.COMPETITION_ENTRIES_TABLE}`
-        )
-      ).toHaveLength(1);
     });
 
-    it('serializes active associations and preserves a native winner when reused in a new destination', async () => {
-      const other = '10000000-0000-4000-8000-000000000002';
-      await sqlExecutor.execute(
-        `insert into ${tables.COMPETITIONS_TABLE} (id,wave_id,storage_mode,execution_mode,type,lifecycle,title,participation_config,voting_config,decision_config,winner_config,outcome_config,config_version,created_at,updated_at,published_at)
-        select :other,wave_id,storage_mode,execution_mode,type,lifecycle,title,participation_config,voting_config,decision_config,winner_config,outcome_config,config_version,created_at,updated_at,published_at from ${tables.COMPETITIONS_TABLE} where id=:competitionId`,
-        { other, competitionId }
+    it('keeps chat editable while rejecting conversion of an existing chat drop', async () => {
+      const editable = await model('content-a');
+      const edit = await sqlExecutor.executeNativeQueriesInTransaction(
+        (connection) =>
+          hooks.prepareUpdate(editable, async () => {}, { ...ctx, connection })
       );
-      const attempts = await Promise.allSettled([
-        service.create(wave.id, competitionId, request(), ctx),
-        service.create(wave.id, other, request(), ctx)
-      ]);
-      expect(
-        attempts.filter((result) => result.status === 'fulfilled')
-      ).toHaveLength(1);
-      expect(
-        await sqlExecutor.execute(
-          `select id from ${tables.COMPETITION_ENTRIES_TABLE}`
-        )
-      ).toHaveLength(1);
-      const [first] = await sqlExecutor.execute<{
-        id: string;
-        competition_id: string;
-      }>(`select id,competition_id from ${tables.COMPETITION_ENTRIES_TABLE}`);
-      const original = await repository.getContent(first.id, {});
-      await sqlExecutor.execute(
-        `update ${tables.COMPETITION_ENTRIES_TABLE} set status='WINNER', \`rank\`=1, won_at=123 where id=:id`,
-        { id: first.id }
-      );
-      const destination =
-        first.competition_id === competitionId ? other : competitionId;
-      const second = await service.create(wave.id, destination, request(), ctx);
-      expect(second.id).not.toBe(first.id);
-      expect(second.status).toBe('ACTIVE');
-      expect(
-        await competitionRepository.findNativeEntry(
-          first.competition_id,
-          first.id,
-          {}
-        )
-      ).toMatchObject({ status: 'WINNER', rank: 1, won_at: 123 });
-      expect(await repository.getContent(first.id, {})).toEqual(original);
+      expect(edit.entries).toEqual([]);
       await expect(
-        dropCreationService.toggleHideLinkPreview(
-          { dropId: second.drop_id, hideLinkPreview: true },
+        service.create(
+          wave.id,
+          competitionId,
+          {
+            ...request(),
+            drop_id: 'content-a'
+          } as ApiCreateCompetitionEntryRequest,
           ctx
         )
-      ).rejects.toThrow('winner content');
-      await sqlExecutor.execute(
-        `update ${tables.DROPS_TABLE} set drop_type='WINNER' where id='content-b'`
-      );
-      await expect(
-        service.create(wave.id, destination, request('content-b'), ctx)
-      ).rejects.toThrow('Only your own chat drop');
+      ).rejects.toThrow('existing drops cannot be entered');
+      expect((await dropsDb.findDropById('content-a'))?.drop_type).toBe('CHAT');
     });
 
-    it('keeps historical moderation suppression after a withdrawn drop is edited', async () => {
+    it('never reuses a competition drop, including withdrawn entries and winners', async () => {
       const entry = await service.create(
         wave.id,
         competitionId,
         request(),
         ctx
       );
-      await service.action(
+      for (const status of ['ACTIVE', 'WITHDRAWN', 'WINNER']) {
+        await sqlExecutor.execute(
+          `update ${tables.COMPETITION_ENTRIES_TABLE} set status=:status where id=:id`,
+          { status, id: entry.id }
+        );
+        await expect(
+          service.create(
+            wave.id,
+            competitionId,
+            {
+              ...request(),
+              drop_id: entry.drop_id
+            } as ApiCreateCompetitionEntryRequest,
+            ctx
+          )
+        ).rejects.toThrow('existing drops cannot be entered');
+        await expect(
+          repository.assertDropAvailable(entry.drop_id, randomUUID(), {})
+        ).rejects.toThrow('exactly one competition');
+      }
+      expect(
+        await sqlExecutor.execute(
+          `select id from ${tables.COMPETITION_ENTRIES_TABLE}`
+        )
+      ).toHaveLength(1);
+    });
+
+    it('keeps historical moderation suppression if stored content changes outside the application', async () => {
+      const entry = await service.create(
         wave.id,
         competitionId,
-        entry.id,
-        'withdraw',
-        { idempotency_key: randomUUID(), config_version: 1 },
+        request(),
         ctx
       );
       const content = (await repository.getContent(entry.id, {}))!;
@@ -569,6 +510,7 @@ describeWithSeed(
       await sqlExecutor.execute(
         `insert into ${tables.DROP_METADATA_TABLE} (drop_id,data_key,data_value) values ('content-a','identity','entrant'),('content-b','identity','entrant')`
       );
+      requestMetadata = [{ data_key: 'identity', data_value: 'entrant' }];
       const attempts = await Promise.allSettled([
         service.create(wave.id, competitionId, request(), ctx),
         service.create(wave.id, competitionId, request('content-b'), ctx)
@@ -584,12 +526,12 @@ describeWithSeed(
       });
       expect(
         await sqlExecutor.execute(
-          `select data_value from ${tables.DROP_METADATA_TABLE}`
+          `select data_value from ${tables.DROP_METADATA_TABLE} where drop_id in ('content-a','content-b')`
         )
       ).toEqual([{ data_value: 'entrant' }, { data_value: 'entrant' }]);
     });
 
-    it('atomically creates new signed CHAT content through moderation despite chat-only restrictions', async () => {
+    it('atomically creates new signed competition content through moderation despite chat-only restrictions', async () => {
       const execute = createOrUpdateDrop.execute.bind(createOrUpdateDrop);
       jest
         .spyOn(createOrUpdateDrop, 'execute')
@@ -608,7 +550,7 @@ describeWithSeed(
         config_version: 1,
         drop: {
           wave_id: wave.id,
-          drop_type: ApiDropType.Chat,
+          drop_type: ApiDropType.Participatory,
           title: '  Entry title  ',
           parts: [
             {
@@ -667,7 +609,7 @@ describeWithSeed(
       expect(input.drop).toEqual(original);
       const drop = (await dropsDb.findDropById(entry.drop_id))!;
       expect(drop).toMatchObject({
-        drop_type: 'CHAT',
+        drop_type: 'COMPETITION',
         title: 'Entry title',
         signature: null
       });
@@ -688,7 +630,7 @@ describeWithSeed(
       expect(JSON.parse(stored!.signed_content)).toEqual(original);
     });
 
-    it('serializes duplicate retries, retains CHAT content and exposes no signature fields', async () => {
+    it('serializes duplicate retries, retains competition content and exposes no signature fields', async () => {
       const input = await signedRequest();
       const [first, retry] = await Promise.all([
         service.create(wave.id, competitionId, input, ctx),
@@ -704,7 +646,7 @@ describeWithSeed(
         await sqlExecutor.execute(
           `select version from ${tables.COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE}`
         )
-      ).toEqual([{ version: 1 }]);
+      ).toEqual([]);
       const content = await service.getContent(
         wave.id,
         competitionId,
@@ -714,9 +656,12 @@ describeWithSeed(
       expect(content.signature).toBeNull();
       expect(content).not.toHaveProperty('signer_address');
       expect(content).not.toHaveProperty('signed_payload');
-      expect(competitionPayloadHash(content)).toBe(input.drop_content_hash);
+      expect(content).toMatchObject({
+        drop_type: ApiDropType.Participatory,
+        parts: input.drop.parts
+      });
       expect((await dropsDb.findDropById(first.drop_id))!.drop_type).toBe(
-        'CHAT'
+        'COMPETITION'
       );
       const editable = await model(first.drop_id);
       await expect(
@@ -726,14 +671,12 @@ describeWithSeed(
       ).rejects.toThrow('cannot be edited');
     });
 
-    it('checks the signed existing content hash under lock and rolls back the command and nonce', async () => {
+    it('rejects tampered signed submission content without consuming the command or nonce', async () => {
       const input = await signedRequest();
-      await sqlExecutor.execute(
-        `update ${tables.DROPS_PARTS_TABLE} set content='Changed' where drop_id='content-a'`
-      );
+      input.drop.parts[0].content = 'Changed after signing';
       await expect(
         service.create(wave.id, competitionId, input, ctx)
-      ).rejects.toThrow('Drop content changed');
+      ).rejects.toThrow();
       expect(
         await sqlExecutor.execute(
           `select id from ${tables.COMPETITION_COMMANDS_TABLE}`
@@ -788,7 +731,7 @@ describeWithSeed(
       ).toEqual([]);
     });
 
-    it('preserves vote history while withdrawal releases the budget and keeps the last content revision', async () => {
+    it('deletes an entry and its votes while releasing the budget', async () => {
       const entry = await service.create(
         wave.id,
         competitionId,
@@ -815,27 +758,24 @@ describeWithSeed(
           {}
         )
       ).toMatchObject({ spent: 70, remaining: 30 });
-      const action = { idempotency_key: randomUUID(), config_version: 1 };
-      expect(
-        await service.action(
-          wave.id,
-          competitionId,
-          entry.id,
-          'withdraw',
-          action,
-          ctx
-        )
-      ).toMatchObject({ status: 'WITHDRAWN' });
-      expect(
-        await service.action(
-          wave.id,
-          competitionId,
-          entry.id,
-          'withdraw',
-          action,
-          ctx
-        )
-      ).toMatchObject({ status: 'WITHDRAWN' });
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const tx = { ...ctx, connection };
+          const entries = await hooks.lockForDelete(entry.drop_id, tx);
+          await hooks.beforeDelete(
+            (await dropsDb.findDropById(entry.drop_id, connection))!,
+            entries,
+            actor,
+            tx
+          );
+          await sqlExecutor.execute(
+            `delete from ${tables.DROPS_TABLE} where id=:id`,
+            { id: entry.drop_id },
+            { wrappedConnection: connection }
+          );
+        },
+        { isolationLevel: 'READ COMMITTED' }
+      );
       expect(
         await competitionCreditService.getBudget(
           competition,
@@ -848,20 +788,14 @@ describeWithSeed(
         await sqlExecutor.execute(
           `select value from ${tables.COMPETITION_VOTES_TABLE}`
         )
-      ).toEqual([{ value: 70 }]);
-      const editable = await model(entry.drop_id);
-      const edit = await sqlExecutor.executeNativeQueriesInTransaction(
-        (connection) =>
-          hooks.prepareUpdate(editable, async () => {}, { ...ctx, connection }),
-        { isolationLevel: 'READ COMMITTED' }
-      );
-      expect(edit.entries).toEqual([]);
-      expect(await repository.getContent(entry.id, {})).toMatchObject({
-        parts: [{ content: 'Original content' }]
-      });
+      ).toEqual([]);
+      expect(await repository.getContent(entry.id, {})).toBeNull();
+      expect(
+        await competitionRepository.findNativeEntry(competitionId, entry.id, {})
+      ).toBeNull();
     });
 
-    it('snapshots unsigned edits and deletion without exposing deleted content or erasing votes', async () => {
+    it('rejects unsigned edits and removes the entry and snapshot on deletion', async () => {
       const entry = await service.create(
         wave.id,
         competitionId,
@@ -869,26 +803,18 @@ describeWithSeed(
         ctx
       );
       const editable = await model(entry.drop_id);
-      await sqlExecutor.executeNativeQueriesInTransaction(
-        async (connection) => {
-          const tx = { ...ctx, connection };
-          const edit = await hooks.prepareUpdate(editable, async () => {}, tx);
-          await sqlExecutor.execute(
-            `update ${tables.DROPS_PARTS_TABLE} set content='Revision two' where drop_id=:id`,
-            { id: entry.drop_id },
-            { wrappedConnection: connection }
-          );
-          await hooks.recordUpdate(
-            edit,
-            (await dropsDb.findDropById(entry.drop_id, connection))!,
-            actor,
-            tx
-          );
-        },
-        { isolationLevel: 'READ COMMITTED' }
-      );
+      await expect(
+        sqlExecutor.executeNativeQueriesInTransaction(
+          (connection) =>
+            hooks.prepareUpdate(editable, async () => {}, {
+              ...ctx,
+              connection
+            }),
+          { isolationLevel: 'READ COMMITTED' }
+        )
+      ).rejects.toThrow('cannot be edited');
       expect(await repository.getContent(entry.id, {})).toMatchObject({
-        parts: [{ content: 'Revision two' }]
+        parts: [{ content: 'Original content' }]
       });
       await sqlExecutor.executeNativeQueriesInTransaction(
         async (connection) => {
@@ -910,15 +836,15 @@ describeWithSeed(
       );
       expect(
         await competitionRepository.findNativeEntry(competitionId, entry.id, {})
-      ).toMatchObject({ status: CompetitionEntryStatus.DISQUALIFIED });
+      ).toBeNull();
       expect(
         await sqlExecutor.execute(
           `select version from ${tables.COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE} order by version`
         )
-      ).toEqual([{ version: 1 }, { version: 2 }]);
+      ).toEqual([]);
       await expect(
         service.getContent(wave.id, competitionId, entry.id, ctx)
-      ).rejects.toThrow('deleted');
+      ).rejects.toThrow('not found');
     });
   }
 );

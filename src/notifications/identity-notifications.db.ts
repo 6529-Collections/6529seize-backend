@@ -42,6 +42,14 @@ import { DEFAULT_PROFILE_PREFERENCES } from '@/entities/IProfilePreferences';
 
 type SerializableNotificationInsertRow = Record<string, string | number | null>;
 
+// Keep existing status-change notices out of both the feed and its unread count.
+const COMPETITION_NOTIFICATION_VISIBILITY_SQL = `(
+  n.cause <> '${IdentityNotificationCause.COMPETITION_LIFECYCLE}'
+  OR JSON_UNQUOTE(JSON_EXTRACT(n.additional_data, '$.event_type')) IN (
+    'COMPETITION_DECISION_COMPLETED'
+  )
+)`;
+
 const IDENTITY_NOTIFICATION_INSERT_COLUMNS = [
   'identity_id',
   'additional_identity_id',
@@ -456,6 +464,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         ${causes ? ` AND n.cause IN (:causes)` : ``}
         ${causesExclude ? ` AND n.cause NOT IN (:causesExclude)` : ``}
         ${param.unread_only ? ` AND n.read_at IS NULL` : ``}
+        AND ${COMPETITION_NOTIFICATION_VISIBILITY_SQL}
         AND COALESCE(r.muted, FALSE) = FALSE
         AND m.id IS NULL
         AND b.id IS NULL
@@ -580,6 +589,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
             )
           )
         )${causeClause}${excludeCauseClause}
+        AND ${COMPETITION_NOTIFICATION_VISIBILITY_SQL}
       `,
         queryParams,
         options?.forcePool

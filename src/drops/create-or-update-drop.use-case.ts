@@ -743,6 +743,7 @@ export class CreateOrUpdateDropUseCase {
       throw new BadRequestException(`Wave ${validatedModel.wave_id} not found`);
     }
     if (
+      !isNativeEntryContent &&
       wave.type === WaveType.CHAT &&
       validatedModel.drop_type !== DropType.CHAT
     ) {
@@ -1173,19 +1174,22 @@ export class CreateOrUpdateDropUseCase {
       this.verifyMedia(
         {
           wave,
-          model
+          model,
+          isNativeEntryContent
         },
         { timer, connection }
       )
     ]);
-    const validatedModel = await this.verifyMetadata(
-      {
-        wave,
-        model,
-        preResolvedIdentityNomination
-      },
-      { timer, connection }
-    );
+    const validatedModel = isNativeEntryContent
+      ? model
+      : await this.verifyMetadata(
+          {
+            wave,
+            model,
+            preResolvedIdentityNomination
+          },
+          { timer, connection }
+        );
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyWaveLimitations`);
     return validatedModel;
   }
@@ -1391,6 +1395,7 @@ export class CreateOrUpdateDropUseCase {
     },
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ) {
+    if (isNativeEntryContent) return;
     timer?.start(
       `${CreateOrUpdateDropUseCase.name}->verifyParticipatoryLimitations`
     );
@@ -1483,16 +1488,19 @@ export class CreateOrUpdateDropUseCase {
   private async verifyMedia(
     {
       wave,
-      model
+      model,
+      isNativeEntryContent = false
     }: {
       wave: WaveEntity;
       model: CreateOrUpdateDropModel;
+      isNativeEntryContent?: boolean;
     },
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ) {
     timer?.start(`${CreateOrUpdateDropUseCase.name}->verifyMedia`);
     const authorId = this.getRequiredAuthorId(model);
     const enforceMainStageLimit =
+      !isNativeEntryContent &&
       model.drop_type === DropType.PARTICIPATORY &&
       wave.id === env.getStringOrNull('MAIN_STAGE_WAVE_ID');
     for (const part of model.parts) {
@@ -1507,7 +1515,11 @@ export class CreateOrUpdateDropUseCase {
     }
     await this.verifyAttachments({ model }, { timer, connection });
     const requiredMedias = wave.participation_required_media;
-    if (model.drop_type === DropType.PARTICIPATORY && requiredMedias.length) {
+    if (
+      !isNativeEntryContent &&
+      model.drop_type === DropType.PARTICIPATORY &&
+      requiredMedias.length
+    ) {
       const mimeTypes = model.parts
         .map((it) => it.media.map((media) => media.mime_type))
         .flat()
@@ -2026,7 +2038,7 @@ export class CreateOrUpdateDropUseCase {
       model,
       connection
     );
-    if (model.drop_type === DropType.PARTICIPATORY) {
+    if (!isNativeEntryContent && model.drop_type === DropType.PARTICIPATORY) {
       if (
         wave &&
         wave.next_decision_time !== null &&
@@ -2055,7 +2067,9 @@ export class CreateOrUpdateDropUseCase {
           created_at: createdAt,
           updated_at: updatedAt,
           serial_no: serialNo,
-          drop_type: model.drop_type,
+          drop_type: isNativeEntryContent
+            ? DropType.COMPETITION
+            : model.drop_type,
           signature: model.signature,
           hide_link_preview: model.hide_link_preview,
           is_additional_action_promised: model.is_additional_action_promised

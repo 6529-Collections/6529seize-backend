@@ -195,3 +195,28 @@ and ordinary wave writes still depend on immutable legacy-primary mappings
 with v3 disabled. Disabling the two read controls
 stops v3/shadow work without moving ownership or creating duplicate side effects;
 it does not remove the foundation from ordinary wave writes or legacy workers.
+
+### Dedicated native submission drops
+
+Native entry creation now requires new drop content. Existing-drop association
+and edits to competition submissions are rejected. Native submissions are stored
+as `COMPETITION` in the existing `drops.drop_type` varchar column; this requires
+no schema migration. Public APIs project the type as a submission while legacy
+wave voting and decision workers continue selecting only their own drop types.
+
+Deploy the API readers before enabling the new native writers, then deploy the
+frontend. Existing prototype native submissions stored as `CHAT` can be converted
+with the following idempotent data update after all API readers support the type.
+This preserves entries, votes, signatures, snapshots, and results:
+
+```sql
+UPDATE drops d
+JOIN competition_entries e ON e.drop_id = d.id
+JOIN competitions c ON c.id = e.competition_id AND c.storage_mode = 'NATIVE'
+SET d.drop_type = 'COMPETITION'
+WHERE d.drop_type = 'CHAT';
+```
+
+An API rollback must retain the reader support for `COMPETITION` while these rows
+exist. Native execution behavior is unchanged; only `api-serverless` and the
+frontend need deployment for this change.

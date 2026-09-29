@@ -105,6 +105,7 @@ import { ApiDmDropsUnreadCount } from '@/api/generated/models/ApiDmDropsUnreadCo
 import { ApiDmUnreadSnapshot } from '@/api/generated/models/ApiDmUnreadSnapshot';
 import { ApiDropAndWave } from '@/api/generated/models/ApiDropAndWave';
 import { ApiDropBoostV2 } from '@/api/generated/models/ApiDropBoostV2';
+import { ApiDropCompetitionContext } from '@/api/generated/models/ApiDropCompetitionContext';
 import { ApiDropMetadataV2 } from '@/api/generated/models/ApiDropMetadataV2';
 import { ApiDropPartV2 } from '@/api/generated/models/ApiDropPartV2';
 import { ApiDropPollsPage } from '@/api/generated/models/ApiDropPollsPage';
@@ -3177,7 +3178,7 @@ export type UpdateCompetitionV3Request = Request<
 export interface ExecuteCompetitionActionV3PathParams {
   "wave_id": string;
   "competition_id": string;
-  "action": "publish" | "end" | "cancel" | "archive" | "clone" | "pause" | "resume";
+  "action": "publish" | "archive" | "clone" | "pause" | "resume";
 }
 
 export type ExecuteCompetitionActionV3Query = Record<string, never>;
@@ -3328,25 +3329,6 @@ export type GetCompetitionEntryV3Request = Request<
   Record<string, never>
 >;
 
-export interface ExecuteCompetitionEntryActionV3PathParams {
-  "wave_id": string;
-  "competition_id": string;
-  "entry_id": string;
-  "action": "withdraw" | "disqualify";
-}
-
-export type ExecuteCompetitionEntryActionV3Query = Record<string, never>;
-
-export type ExecuteCompetitionEntryActionV3Response = ApiCompetitionEntry;
-
-export type ExecuteCompetitionEntryActionV3Request = Request<
-  ExecuteCompetitionEntryActionV3PathParams,
-  ApiResponse<ExecuteCompetitionEntryActionV3Response>,
-  ApiCompetitionActionRequest,
-  ExecuteCompetitionEntryActionV3Query,
-  Record<string, never>
->;
-
 export interface GetCompetitionEntryContentV3PathParams {
   "wave_id": string;
   "competition_id": string;
@@ -3405,31 +3387,13 @@ export type SetCompetitionVoteV3Request = Request<
   Record<string, never>
 >;
 
-export interface GetCompetitionEntryContentCandidateV3PathParams {
-  "wave_id": string;
-  "competition_id": string;
-  "drop_id": string;
-}
-
-export type GetCompetitionEntryContentCandidateV3Query = Record<string, never>;
-
-export type GetCompetitionEntryContentCandidateV3Response = ApiCreateDropRequest;
-
-export type GetCompetitionEntryContentCandidateV3Request = Request<
-  GetCompetitionEntryContentCandidateV3PathParams,
-  ApiResponse<GetCompetitionEntryContentCandidateV3Response>,
-  never,
-  GetCompetitionEntryContentCandidateV3Query,
-  Record<string, never>
->;
-
 export interface ListCompetitionLeaderboardV3PathParams {
   "wave_id": string;
   "competition_id": string;
 }
 
 export interface ListCompetitionLeaderboardV3Query {
-  "sort"?: "rating";
+  "sort"?: "rating" | "real_time_rating" | "submitted_at" | "trend";
   "direction"?: string;
   "cursor"?: string;
   "limit"?: number;
@@ -3590,6 +3554,23 @@ export type ListCompetitionWinnersV3Request = Request<
   ApiResponse<ListCompetitionWinnersV3Response>,
   never,
   ListCompetitionWinnersV3Query,
+  Record<string, never>
+>;
+
+export interface GetDropCompetitionContextV3PathParams {
+  "wave_id": string;
+  "drop_id": string;
+}
+
+export type GetDropCompetitionContextV3Query = Record<string, never>;
+
+export type GetDropCompetitionContextV3Response = ApiDropCompetitionContext;
+
+export type GetDropCompetitionContextV3Request = Request<
+  GetDropCompetitionContextV3PathParams,
+  ApiResponse<GetDropCompetitionContextV3Response>,
+  never,
+  GetDropCompetitionContextV3Query,
   Record<string, never>
 >;
 

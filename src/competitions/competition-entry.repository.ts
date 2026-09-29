@@ -1,6 +1,9 @@
 import {
   COMPETITION_ENTRIES_TABLE,
   COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE,
+  COMPETITION_VOTES_TABLE,
+  COMPETITION_VOTE_HISTORY_TABLE,
+  COMPETITION_ENTRY_RUNTIME_TABLE,
   CONTENT_MODERATION_ITEMS_TABLE,
   COMPETITION_LEADERBOARD_ENTRIES_TABLE,
   COMPETITIONS_TABLE,
@@ -125,13 +128,13 @@ export class CompetitionEntryRepository extends LazyDbAccessCompatibleService {
     const occupied = await this.rows<{ id: string }>(
       'assertDropAvailable',
       `select e.id from ${COMPETITION_ENTRIES_TABLE} e join ${COMPETITIONS_TABLE} c on c.id=e.competition_id
-       where e.drop_id=:dropId and (e.competition_id=:competitionId or (e.status='ACTIVE' and c.lifecycle='PUBLISHED')) limit 1`,
+       where e.drop_id=:dropId limit 1`,
       { dropId, competitionId },
       ctx
     );
     if (occupied.length)
       competitionConflict(
-        'Drop already has an entry in this competition or another active competition'
+        'A competition drop belongs to exactly one competition'
       );
   }
 
@@ -183,27 +186,29 @@ export class CompetitionEntryRepository extends LazyDbAccessCompatibleService {
     );
   }
 
-  public async setStatus(
+  public async deleteEntry(
     entryId: string,
-    status:
-      | CompetitionEntryStatus.WITHDRAWN
-      | CompetitionEntryStatus.DISQUALIFIED,
-    now: number,
     ctx: RequestContext
   ): Promise<void> {
-    const column =
-      status === CompetitionEntryStatus.WITHDRAWN
-        ? 'withdrawn_at'
-        : 'disqualified_at';
+    if (!ctx.connection)
+      throw new Error('Entry deletion requires a transaction');
+    for (const table of [
+      COMPETITION_LEADERBOARD_ENTRIES_TABLE,
+      COMPETITION_VOTES_TABLE,
+      COMPETITION_VOTE_HISTORY_TABLE,
+      COMPETITION_ENTRY_RUNTIME_TABLE,
+      COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE
+    ]) {
+      await this.rows(
+        'deleteEntryData',
+        `delete from ${table} where entry_id=:entryId`,
+        { entryId },
+        ctx
+      );
+    }
     await this.rows(
-      'setStatus',
-      `update ${COMPETITION_ENTRIES_TABLE} set status=:status, ${column}=:now where id=:entryId and status='ACTIVE'`,
-      { entryId, status, now },
-      ctx
-    );
-    await this.rows(
-      'removeLeaderboardEntry',
-      `delete from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} where entry_id=:entryId`,
+      'deleteEntry',
+      `delete from ${COMPETITION_ENTRIES_TABLE} where id=:entryId`,
       { entryId },
       ctx
     );

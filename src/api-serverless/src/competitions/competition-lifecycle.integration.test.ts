@@ -22,6 +22,7 @@ import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { userGroupsService } from '@/api/community-members/user-groups.service';
 import { competitionService } from '@/competitions/competition.service';
 import { competitionHistoryRepository } from '@/competitions/competition-history.repository';
+import { nativeCompetitionRuntimeRepository } from '@/competitions/native-competition-runtime.repository';
 import { competitionCapabilityService } from '@/competitions/competition-capability.service';
 import { CompetitionDraftSchema } from './competition-configuration';
 import { competitionLifecycleService as service } from './competition-lifecycle.service';
@@ -98,6 +99,17 @@ async function activity(competitionId: string) {
     { id, dropId: `drop-${id}`, competitionId, waveId: wave.id }
   );
   return id;
+}
+async function completeSchedule(competitionId: string) {
+  await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+    nativeCompetitionRuntimeRepository.updateSchedule(
+      competitionId,
+      null,
+      Date.now(),
+      true,
+      { ...ctx, connection }
+    )
+  );
 }
 
 describeWithSeed(
@@ -318,7 +330,7 @@ describeWithSeed(
       expect(renamed.config_version).toBe(3);
     });
 
-    it('retains history on cancel/archive and only clones into a distinct draft', async () => {
+    it('retains history when archiving a completed competition and only clones into a distinct draft', async () => {
       const first = await draft();
       await service.action(
         wave.id,
@@ -328,30 +340,17 @@ describeWithSeed(
         ctx
       );
       await activity(first.id);
-      const cancelled = await service.action(
-        wave.id,
-        first.id,
-        'cancel',
-        {
-          idempotency_key: randomUUID(),
-          config_version: 2,
-          reason: 'Schedule changed'
-        },
-        ctx
-      );
-      expect(cancelled.lifecycle).toBe('CANCELLED');
+      await completeSchedule(first.id);
       expect(
-        await sqlExecutor.oneOrNull(
-          `SELECT execution_mode FROM ${COMPETITIONS_TABLE} WHERE id=:id`,
-          { id: first.id }
-        )
-      ).toEqual({ execution_mode: 'DISABLED' });
+        (await competitionService.getCompetition(wave.id, first.id, ctx))
+          .lifecycle
+      ).toBe('ENDED');
       await expect(
         service.action(
           wave.id,
           first.id,
           'publish',
-          { idempotency_key: randomUUID(), config_version: 3 },
+          { idempotency_key: randomUUID(), config_version: 2 },
           ctx
         )
       ).rejects.toThrow('Only drafts');
@@ -359,7 +358,7 @@ describeWithSeed(
         wave.id,
         first.id,
         'archive',
-        { idempotency_key: randomUUID(), config_version: 3 },
+        { idempotency_key: randomUUID(), config_version: 2 },
         ctx
       );
       const clone = await service.action(
@@ -402,8 +401,12 @@ describeWithSeed(
         service.action(
           wave.id,
           first.id,
-          'cancel',
-          { idempotency_key: randomUUID(), config_version: 1 },
+          'pause',
+          {
+            idempotency_key: randomUUID(),
+            config_version: 1,
+            reason: 'Reviewing submissions'
+          },
           ctx
         )
       ).rejects.toThrow('rules changed');
@@ -411,7 +414,11 @@ describeWithSeed(
         wave.id,
         first.id,
         'pause',
-        { idempotency_key: randomUUID(), config_version: 2 },
+        {
+          idempotency_key: randomUUID(),
+          config_version: 2,
+          reason: 'Reviewing submissions'
+        },
         ctx
       );
       expect(paused.lifecycle).toBe('PUBLISHED');
@@ -531,19 +538,13 @@ describeWithSeed(
       expect((await vote(first.id, votedEntry, -40)).remaining).toBe(60);
       expect((await vote(first.id, votedEntry, 0)).remaining).toBe(100);
       await expect(vote(first.id, secondEntry, 1)).rejects.toThrow('not found');
-      await service.action(
-        wave.id,
-        first.id,
-        'cancel',
-        { idempotency_key: randomUUID(), config_version: 2 },
-        ctx
-      );
+      await completeSchedule(first.id);
       await expect(
         competitionVotingService.vote(
           wave.id,
           first.id,
           entry,
-          { idempotency_key: randomUUID(), config_version: 3, value: 1 },
+          { idempotency_key: randomUUID(), config_version: 2, value: 1 },
           ctx
         )
       ).rejects.toThrow('not accepting');

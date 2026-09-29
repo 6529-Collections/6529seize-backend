@@ -20,7 +20,7 @@ const model: CreateOrUpdateDropModel = {
   wave_id: 'hub',
   author_id: 'author',
   author_identity: 'author',
-  drop_type: DropType.CHAT,
+  drop_type: DropType.PARTICIPATORY,
   signature: null,
   title: null,
   reply_to: null,
@@ -80,7 +80,7 @@ describe('Native entry content invariants', () => {
       { author_id: 'other' },
       { drop_id: 'existing' },
       { signature: 'legacy' },
-      { drop_type: DropType.PARTICIPATORY }
+      { drop_type: DropType.CHAT }
     ]) {
       expect(
         isNativeEntryContentPermit(permit, { ...model, ...changed }, connection)
@@ -98,7 +98,7 @@ describe('Native entry content invariants', () => {
     );
   });
 
-  it('enforces required metadata and media on stable CHAT content', () => {
+  it('enforces required metadata and media on dedicated submission content', () => {
     const required = {
       ...competition,
       participation: {

@@ -194,7 +194,12 @@ export type CompetitionPageRequest = {
   readonly offset: number;
   readonly limit: number;
   readonly direction: 'ASC' | 'DESC';
-  readonly sort?: 'submitted_at' | 'rating' | 'rank';
+  readonly sort?:
+    | 'submitted_at'
+    | 'rating'
+    | 'rank'
+    | 'real_time_rating'
+    | 'trend';
 };
 
 export type CompetitionSnapshot = {

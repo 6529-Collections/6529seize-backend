@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { ApiCreateCompetitionEntryRequest } from '@/api/generated/models/ApiCreateCompetitionEntryRequest';
-import { ApiCompetitionActionRequest } from '@/api/generated/models/ApiCompetitionActionRequest';
 import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropRequest';
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { ApiDropGroupMention } from '@/api/generated/models/ApiDropGroupMention';
@@ -12,12 +11,8 @@ import { sendIdentityPushNotificationsStrict } from '@/api/push-notifications/pu
 import { wsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
 import { invalidateWaveUnreadCacheForWave } from '@/api/waves/wave-unread-cache';
 import { competitionService } from '@/competitions/competition.service';
-import {
-  competitionCommandRepository,
-  competitionConflict
-} from '@/competitions/competition-command.repository';
+import { competitionCommandRepository } from '@/competitions/competition-command.repository';
 import { competitionRepository } from '@/competitions/competition.repository';
-import { competitionPayloadHash } from '@/competitions/competition-command-identity';
 import {
   Competition,
   CompetitionEntry
@@ -44,10 +39,7 @@ import {
 import { CreateOrUpdateDropModel } from '@/drops/create-or-update-drop.model';
 import { dropsDb } from '@/drops/drops.db';
 import { DropEntity, DropType } from '@/entities/IDrop';
-import {
-  CompetitionEntryStatus,
-  CompetitionLifecycle
-} from '@/entities/ICompetition';
+import { CompetitionEntryStatus } from '@/entities/ICompetition';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { RequestContext } from '@/request.context';
 import {
@@ -62,7 +54,6 @@ import { metricsRecorder } from '@/metrics/MetricsRecorder';
 import { Logger } from '@/logging';
 import { competitionDeliveryErrorCode } from '@/competitions/competition-delivery-diagnostics';
 import {
-  administerCompetitionWave,
   assertCompetitionGroup,
   assertCompetitionOpen,
   competitionActor,
@@ -75,19 +66,19 @@ import { verifyCompetitionSignature } from './competition-signature';
 type EntryRequest = ApiCreateCompetitionEntryRequest;
 type PreparedEntry = {
   model: CreateOrUpdateDropModel;
-  preparation?: PrePublicationPreparation;
+  preparation: PrePublicationPreparation;
   identity: Awaited<
     ReturnType<CreateOrUpdateDropUseCase['preResolveIdentityNomination']>
   >;
 };
 
-/** This exact wire object is also the signed existing-drop content hash input. */
+/** Read-only content of a dedicated competition submission. */
 export function competitionEntryContentForApi(
   content: CompetitionEntryContent
 ): ApiCreateDropRequest {
   return {
     wave_id: content.wave_id,
-    drop_type: ApiDropType.Chat,
+    drop_type: ApiDropType.Participatory,
     title: content.title,
     reply_to: content.reply_to ?? undefined,
     hide_link_preview: content.hide_link_preview ?? false,
@@ -126,16 +117,6 @@ export function competitionEntryContentForApi(
   };
 }
 
-function signingPayload(request: EntryRequest) {
-  return {
-    drop: request.drop ?? null,
-    drop_id: request.drop_id ?? null,
-    ...(request.drop_content_hash
-      ? { drop_content_hash: request.drop_content_hash }
-      : {})
-  };
-}
-
 export class CompetitionEntryService {
   private readonly logger = Logger.get(this.constructor.name);
   public constructor(
@@ -152,9 +133,9 @@ export class CompetitionEntryService {
     requireNativeWrites();
     const actor = competitionActor(ctx);
     await visibleCompetitionWave(waveId, ctx);
-    if (Boolean(request.drop) === Boolean(request.drop_id))
+    if (!request.drop || 'drop_id' in request || 'drop_content_hash' in request)
       throw new BadRequestException(
-        'Provide either new drop content or an existing drop_id'
+        'Competition entries require a new dedicated submission; existing drops cannot be entered'
       );
     const command = { action: 'ENTRY_CREATE', waveId, competitionId, request };
     const saved =
@@ -229,9 +210,7 @@ export class CompetitionEntryService {
       (await this.entries.countActive(competitionId, actor, tx)) >= limit
     )
       throw new ForbiddenException('Competition entry limit reached');
-    const model = request.drop_id
-      ? await this.existingModel(waveId, request.drop_id, actor, tx)
-      : prepared.model;
+    const model = prepared.model;
     await moderationReviewDb.lockProfile(actor, tx);
     await prePublicationModerationService.assertPostingAllowed(actor, tx);
     assertCompetitionEntryContent(competition, model);
@@ -243,45 +222,38 @@ export class CompetitionEntryService {
       tx
     );
     await assertNativeEntryNomination(competition, model, null, tx);
-    if (request.drop_id)
-      await this.assertSignedContent(request, competition, tx);
     await verifyCompetitionSignature(
       {
         action: 'ENTRY_CREATE',
         wave_id: waveId,
         competition_id: competitionId,
         competition_entry_id: null,
-        drop_id: request.drop_id ?? null,
+        drop_id: null,
         config_version: request.config_version,
-        payload: signingPayload(request)
+        payload: { drop: request.drop, drop_id: null }
       },
       request.signature,
       competition.participation.signature_required,
       Date.now(),
       tx
     );
-    let dropId = request.drop_id;
-    if (!dropId) {
-      if (!prepared.preparation)
-        throw new Error('Entry moderation preparation is missing');
-      const created = await this.dropWriter.execute(model, false, {
-        ...tx,
-        connection: tx.connection!,
-        prePublication: prepared.preparation,
-        preResolvedIdentityNomination: prepared.identity,
-        nativeEntryContent: nativeEntryContentPermit({
-          competitionId,
-          waveId,
-          authorId: actor,
-          dropId: null,
-          connection: tx.connection!
-        })
-      });
-      dropId = created.drop_id;
-      if (!created.replayed) {
-        pendingPushIds = created.pending_push_notification_ids;
-        createdDropId = dropId;
-      }
+    const created = await this.dropWriter.execute(model, false, {
+      ...tx,
+      connection: tx.connection!,
+      prePublication: prepared.preparation,
+      preResolvedIdentityNomination: prepared.identity,
+      nativeEntryContent: nativeEntryContentPermit({
+        competitionId,
+        waveId,
+        authorId: actor,
+        dropId: null,
+        connection: tx.connection!
+      })
+    });
+    const dropId = created.drop_id;
+    if (!created.replayed) {
+      pendingPushIds = created.pending_push_notification_ids;
+      createdDropId = dropId;
     }
     await competitionCommandRepository.lockDrop(dropId, tx);
     await this.entries.assertDropAvailable(dropId, competitionId, tx);
@@ -290,10 +262,10 @@ export class CompetitionEntryService {
       !drop ||
       drop.wave_id !== waveId ||
       drop.author_id !== actor ||
-      drop.drop_type !== DropType.CHAT
+      drop.drop_type !== DropType.COMPETITION
     )
       throw new BadRequestException(
-        'Entry content must be your chat drop in this wave'
+        'Entry content must be your dedicated competition drop in this wave'
       );
     const entry: CompetitionEntry = {
       id: randomUUID(),
@@ -314,8 +286,6 @@ export class CompetitionEntryService {
       tx
     );
     const content = await this.entries.loadDropContent(drop, tx);
-    // Existing identity nominations are normalized in the entry snapshot only;
-    // attaching content must not silently rewrite its shared chat metadata.
     const snapshot = { ...content, metadata: model.metadata };
     await this.entries.saveContent(
       entry,
@@ -324,8 +294,8 @@ export class CompetitionEntryService {
       request.signature
         ? {
             ...request.signature,
-            payload: signingPayload(request),
-            content: request.drop ?? competitionEntryContentForApi(content)
+            payload: { drop: request.drop, drop_id: null },
+            content: request.drop
           }
         : undefined,
       tx
@@ -353,16 +323,11 @@ export class CompetitionEntryService {
     actor: string,
     ctx: RequestContext
   ): Promise<PreparedEntry> {
-    const model = request.drop
-      ? this.newModel(waveId, request.drop, actor, ctx)
-      : await this.existingModel(waveId, request.drop_id!, actor, ctx, false);
-    const identity = await this.dropWriter.preResolveIdentityNomination(
-      { ...model, drop_type: DropType.PARTICIPATORY },
-      { timer: ctx.timer }
-    );
-    const preparation = request.drop
-      ? await this.dropWriter.preparePrePublication(model, ctx)
-      : undefined;
+    const model = this.newModel(waveId, request.drop, actor, ctx);
+    const identity = await this.dropWriter.preResolveIdentityNomination(model, {
+      timer: ctx.timer
+    });
+    const preparation = await this.dropWriter.preparePrePublication(model, ctx);
     return { model, identity, preparation };
   }
 
@@ -374,10 +339,13 @@ export class CompetitionEntryService {
   ): CreateOrUpdateDropModel {
     if (
       input.wave_id !== waveId ||
-      (input.drop_type !== undefined && input.drop_type !== ApiDropType.Chat)
+      (input.drop_type !== undefined &&
+        ![ApiDropType.Chat, ApiDropType.Participatory].includes(
+          input.drop_type
+        ))
     )
       throw new BadRequestException(
-        'Native entry content must be a chat drop in this wave'
+        'Entry content must be a new competition submission in this wave'
       );
     if (
       input.signature ||
@@ -402,7 +370,11 @@ export class CompetitionEntryService {
         'Each drop part must contain content, media or attachments'
       );
     const model = dropsMappers.createDropApiToUseCaseModel({
-      request: { ...drop, signature: null },
+      request: {
+        ...drop,
+        drop_type: ApiDropType.Participatory,
+        signature: null
+      },
       authorId: actor,
       proxyId: ctx.authenticationContext?.isAuthenticatedAsProxy()
         ? ctx.authenticationContext.authenticatedProfileId!
@@ -421,126 +393,34 @@ export class CompetitionEntryService {
     });
   }
 
-  private async existingModel(
+  public async getDropContext(
     waveId: string,
     dropId: string,
-    actor: string,
-    ctx: RequestContext,
-    lock = true
-  ): Promise<CreateOrUpdateDropModel> {
-    if (lock) await competitionCommandRepository.lockDrop(dropId, ctx);
+    ctx: RequestContext
+  ) {
+    await competitionService.getHub(waveId, ctx);
     const drop = await dropsDb.findDropById(dropId, ctx.connection);
     if (!drop || drop.wave_id !== waveId)
       throw new NotFoundException('Drop not found');
-    if (drop.author_id !== actor || drop.drop_type !== DropType.CHAT)
-      throw new ForbiddenException(
-        'Only your own chat drop can become a native entry'
-      );
     await this.assertContentVisible(drop, ctx);
-    const content = await this.entries.loadDropContent(drop, ctx);
-    return sanitizeDropStructuredFields({
-      ...content,
-      drop_id: dropId,
-      author_identity: actor,
-      author_id: actor,
-      signature: null,
-      drop_type: DropType.CHAT,
-      is_additional_action_promised: null
-    });
-  }
-
-  private async assertSignedContent(
-    request: EntryRequest,
-    competition: Competition,
-    ctx: RequestContext
-  ): Promise<void> {
-    if (!request.signature && !competition.participation.signature_required)
-      return;
-    if (!request.drop_content_hash)
-      throw new BadRequestException(
-        'Signed existing entries require drop_content_hash'
-      );
-    const drop = await dropsDb.findDropById(request.drop_id!, ctx.connection);
-    if (!drop) throw new NotFoundException('Drop not found');
-    const content = competitionEntryContentForApi(
-      await this.entries.loadDropContent(drop, ctx)
-    );
-    if (competitionPayloadHash(content) !== request.drop_content_hash)
-      competitionConflict(
-        'Drop content changed. Reload and sign its current content'
-      );
-  }
-
-  public async action(
-    waveId: string,
-    competitionId: string,
-    entryId: string,
-    action: 'withdraw' | 'disqualify',
-    request: ApiCompetitionActionRequest,
-    ctx: RequestContext
-  ): Promise<CompetitionEntry> {
-    requireNativeWrites();
-    const actor = competitionActor(ctx);
-    await visibleCompetitionWave(waveId, ctx);
-    return competitionCommandRepository.command(
-      actor,
-      request.idempotency_key,
-      { action, waveId, competitionId, entryId, request },
-      async (tx) => {
-        const { competition } = await lockNativeCompetition(
-          waveId,
-          competitionId,
-          request.config_version,
-          tx
-        );
-        const entry = await competitionRepository.findNativeEntry(
-          competitionId,
-          entryId,
-          tx
-        );
-        if (!entry) throw new NotFoundException('Entry not found');
-        if (
-          competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
-          entry.status !== CompetitionEntryStatus.ACTIVE
-        )
-          competitionConflict('Entry is read-only');
-        if (action === 'disqualify')
-          await administerCompetitionWave(waveId, tx);
-        else if (
-          entry.submitter_id !== actor ||
-          !ctx.authenticationContext?.hasRightsTo(
-            ProfileProxyActionType.CREATE_DROP_TO_WAVE
-          )
-        )
-          throw new ForbiddenException(
-            'Only the submitter can withdraw an entry'
-          );
-        await competitionCommandRepository.lockDrop(entry.drop_id, tx);
-        const status =
-          action === 'withdraw'
-            ? CompetitionEntryStatus.WITHDRAWN
-            : CompetitionEntryStatus.DISQUALIFIED;
-        await this.entries.setStatus(entryId, status, Date.now(), tx);
-        await nativeCompetitionRuntimeService.refreshCompetition(
-          competitionId,
-          Date.now(),
-          tx
-        );
-        const updated = { ...entry, status };
-        await this.event(
-          updated,
-          action === 'withdraw'
-            ? 'COMPETITION_ENTRY_WITHDRAWN'
-            : 'COMPETITION_ENTRY_DISQUALIFIED',
-          request.idempotency_key,
-          actor,
-          request.reason ?? null,
-          tx
-        );
-        return updated;
-      },
+    const memberships = await this.entries.findDropEntries(dropId, ctx);
+    if (!memberships.length && drop.drop_type !== DropType.COMPETITION)
+      return { competition: null, entry: null };
+    if (memberships.length !== 1 || memberships[0].wave_id !== waveId)
+      throw new NotFoundException('Competition entry not found');
+    const membership = memberships[0];
+    const entry = await competitionService.getEntry(
+      waveId,
+      membership.competition_id,
+      membership.id,
       ctx
     );
+    const competition = await competitionService.getCompetition(
+      waveId,
+      membership.competition_id,
+      ctx
+    );
+    return { competition, entry };
   }
 
   public async getContent(
@@ -564,22 +444,6 @@ export class CompetitionEntryService {
     if (await this.entries.isContentSuppressed(drop.id, content, ctx))
       throw new NotFoundException('Entry content is unavailable');
     return competitionEntryContentForApi(content);
-  }
-
-  public async getCandidateContent(
-    waveId: string,
-    competitionId: string,
-    dropId: string,
-    ctx: RequestContext
-  ): Promise<ApiCreateDropRequest> {
-    const actor = competitionActor(ctx);
-    await competitionService.getCompetition(waveId, competitionId, ctx);
-    await this.existingModel(waveId, dropId, actor, ctx, false);
-    const drop = await dropsDb.findDropById(dropId, ctx.connection);
-    if (!drop) throw new NotFoundException('Drop not found');
-    return competitionEntryContentForApi(
-      await this.entries.loadDropContent(drop, ctx)
-    );
   }
 
   private async assertContentVisible(

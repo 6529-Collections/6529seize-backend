@@ -41,7 +41,8 @@ export function isNativeEntryContentPermit(
     permit.waveId === model.wave_id &&
     permit.authorId === model.author_id &&
     permit.dropId === model.drop_id &&
-    model.drop_type === DropType.CHAT &&
+    model.drop_type === DropType.PARTICIPATORY &&
+    model.drop_id === null &&
     model.signature === null
   );
 }

@@ -6,11 +6,11 @@ import { RequestContext } from '@/request.context';
 const event: NativeCompetitionEvent = {
   event_id: 'event',
   event_version: 1,
-  event_type: 'COMPETITION_PUBLISHED',
+  event_type: 'COMPETITION_DECISION_COMPLETED',
   occurred_at: 100,
   wave_id: 'wave',
   competition_id: 'competition',
-  data: {}
+  data: { decision_id: 'decision', winners: ['entry'] }
 };
 
 function dependencies() {
@@ -91,7 +91,38 @@ describe('CompetitionEventDispatcher', () => {
     }
   );
 
-  it('notifies followers with explicit competition context and current wave access', async () => {
+  it.each([
+    'COMPETITION_PUBLISHED',
+    'COMPETITION_UPDATED',
+    'COMPETITION_SCHEDULE_CHANGED',
+    'COMPETITION_PAUSED',
+    'COMPETITION_RESUMED',
+    'COMPETITION_STARTED',
+    'COMPETITION_ENDED',
+    'COMPETITION_CANCELLED',
+    'COMPETITION_ARCHIVED'
+  ])(
+    'updates live views without notifying followers for %s',
+    async (eventType) => {
+      const deps = dependencies();
+      const statusEvent = {
+        ...event,
+        event_type: eventType,
+        data: { changed_fields: ['schedule', 'participation', 'voting'] }
+      };
+      await deps.dispatcher.dispatch(statusEvent, {});
+      expect(deps.sockets.notifyAboutCompetitionUpdate).toHaveBeenCalledWith(
+        statusEvent,
+        'group',
+        {}
+      );
+      expect(deps.repository.listFollowers).not.toHaveBeenCalled();
+      expect(deps.notifier.notifyOfCompetitionLifecycle).not.toHaveBeenCalled();
+      expect(deps.push).not.toHaveBeenCalled();
+    }
+  );
+
+  it('notifies followers of winners with explicit competition context and current wave access', async () => {
     const deps = dependencies();
     await deps.dispatcher.dispatch(event, {});
     expect(deps.sockets.notifyAboutCompetitionUpdate).toHaveBeenCalledWith(
@@ -103,7 +134,7 @@ describe('CompetitionEventDispatcher', () => {
       'follower',
       {
         event_id: 'event',
-        event_type: 'COMPETITION_PUBLISHED',
+        event_type: 'COMPETITION_DECISION_COMPLETED',
         wave_id: 'wave',
         competition_id: 'competition',
         competition_title: 'Contest'
@@ -120,26 +151,29 @@ describe('CompetitionEventDispatcher', () => {
     expect(deps.push).toHaveBeenCalledWith([7]);
   });
 
-  it('keeps entry moderation notifications scoped to their submitter', async () => {
-    const deps = dependencies();
-    await deps.dispatcher.dispatch(
-      {
-        ...event,
-        event_type: 'COMPETITION_ENTRY_DISQUALIFIED',
-        competition_entry_id: 'entry',
-        drop_id: 'drop',
-        data: { status: 'DISQUALIFIED' }
-      },
-      {}
-    );
-    expect(deps.repository.listFollowers).not.toHaveBeenCalled();
-    expect(deps.notifier.notifyOfCompetitionLifecycle).toHaveBeenCalledWith(
-      'artist',
-      expect.objectContaining({ entry_id: 'entry', drop_id: 'drop' }),
-      'group',
-      {}
-    );
-  });
+  it.each([
+    'COMPETITION_ENTRY_DELETED',
+    'COMPETITION_ENTRY_DISQUALIFIED',
+    'COMPETITION_ENTRY_WITHDRAWN'
+  ])(
+    'does not send an entry removal notification for %s',
+    async (eventType) => {
+      const deps = dependencies();
+      await deps.dispatcher.dispatch(
+        {
+          ...event,
+          event_type: eventType,
+          competition_entry_id: 'entry',
+          drop_id: 'drop',
+          data: {}
+        },
+        {}
+      );
+      expect(deps.repository.listFollowers).not.toHaveBeenCalled();
+      expect(deps.notifier.notifyOfCompetitionLifecycle).not.toHaveBeenCalled();
+      expect(deps.push).not.toHaveBeenCalled();
+    }
+  );
 
   it('does not grant privileged effects from a wave or event capability assertion', async () => {
     const deps = dependencies();
@@ -250,7 +284,7 @@ describe('CompetitionEventDispatcher', () => {
     expect(deps.repository.listFollowers).not.toHaveBeenCalled();
   });
 
-  it('reuses notification effect receipts when lifecycle push handoff is retried', async () => {
+  it('reuses notification effect receipts when winner push handoff is retried', async () => {
     const deps = dependencies();
     const receipts = new Map<string, unknown>();
     deps.repository.applyEffect.mockImplementation(

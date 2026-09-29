@@ -39,8 +39,6 @@ import {
 
 export type CompetitionLifecycleAction =
   | 'publish'
-  | 'end'
-  | 'cancel'
   | 'archive'
   | 'clone'
   | 'pause'
@@ -52,14 +50,26 @@ function entity(record: CompetitionRecord): CompetitionEntity {
   ) as unknown as CompetitionEntity;
 }
 
-function signableRules(config: ApiCompetitionDraftInput): unknown {
+function immutableRules(config: ApiCompetitionDraftInput): unknown {
   const {
     title: _title,
     description: _description,
     presentation: _presentation,
     ...rules
   } = config;
-  return rules;
+  // Access remains administrable after entries exist, just like wave access.
+  // Keep the scoring, submission and outcome rules locked independently.
+  return {
+    ...rules,
+    participation: {
+      ...rules.participation,
+      scope: { ...rules.participation.scope, group_id: null }
+    },
+    voting: {
+      ...rules.voting,
+      scope: { ...rules.voting.scope, group_id: null }
+    }
+  };
 }
 
 function newRecord(
@@ -199,8 +209,8 @@ export class CompetitionLifecycleService {
             tx
           );
         const rulesChanged =
-          competitionPayloadHash(signableRules(previous)) !==
-          competitionPayloadHash(signableRules(config));
+          competitionPayloadHash(immutableRules(previous)) !==
+          competitionPayloadHash(immutableRules(config));
         if (
           record.lifecycle === CompetitionLifecycle.PUBLISHED &&
           config.rules.type !== previous.rules.type
@@ -263,6 +273,9 @@ export class CompetitionLifecycleService {
   ) {
     requireNativeWrites();
     await administerCompetitionWave(waveId, ctx);
+    const reason = request.reason?.trim() || null;
+    if (action === 'pause' && !reason)
+      throw new BadRequestException('A reason is required to pause decisions');
     const actor = competitionActor(ctx);
     return competitionCommandRepository.command(
       actor,
@@ -319,7 +332,7 @@ export class CompetitionLifecycleService {
             competitionId,
             startsAt,
             endsAt,
-            request.reason ?? null,
+            reason,
             tx
           );
         }
@@ -340,7 +353,7 @@ export class CompetitionLifecycleService {
           next,
           record.lifecycle,
           actor,
-          request.reason ?? null,
+          reason,
           tx
         );
         const eventTypes: Record<
@@ -348,8 +361,6 @@ export class CompetitionLifecycleService {
           string
         > = {
           publish: 'COMPETITION_PUBLISHED',
-          end: 'COMPETITION_ENDED',
-          cancel: 'COMPETITION_CANCELLED',
           archive: 'COMPETITION_ARCHIVED',
           pause: 'COMPETITION_PAUSED',
           resume: 'COMPETITION_RESUMED'
@@ -381,7 +392,9 @@ export class CompetitionLifecycleService {
         record.lifecycle === CompetitionLifecycle.PUBLISHED ||
         record.lifecycle === CompetitionLifecycle.ARCHIVED
       )
-        competitionConflict('End or cancel a competition before archiving');
+        competitionConflict(
+          'Only drafts or completed competitions can be archived'
+        );
       return {
         ...record,
         lifecycle: CompetitionLifecycle.ARCHIVED,
@@ -389,33 +402,8 @@ export class CompetitionLifecycleService {
         archived_at: now
       };
     }
-    if (
-      action === 'cancel' &&
-      record.lifecycle === CompetitionLifecycle.DRAFT
-    ) {
-      return {
-        ...record,
-        lifecycle: CompetitionLifecycle.CANCELLED,
-        execution_mode: CompetitionExecutionMode.DISABLED,
-        cancelled_at: now
-      };
-    }
     if (record.lifecycle !== CompetitionLifecycle.PUBLISHED)
       competitionConflict('This action requires a published competition');
-    if (action === 'end')
-      return {
-        ...record,
-        lifecycle: CompetitionLifecycle.ENDED,
-        execution_mode: CompetitionExecutionMode.DISABLED,
-        ended_at: now
-      };
-    if (action === 'cancel')
-      return {
-        ...record,
-        lifecycle: CompetitionLifecycle.CANCELLED,
-        execution_mode: CompetitionExecutionMode.DISABLED,
-        cancelled_at: now
-      };
     return record;
   }
 

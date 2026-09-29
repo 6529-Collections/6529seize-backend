@@ -22,17 +22,6 @@ import { RequestContext } from '@/request.context';
 import { Logger } from '@/logging';
 import { competitionDeliveryErrorCode } from '@/competitions/competition-delivery-diagnostics';
 
-const FOLLOWER_EVENTS = new Set([
-  'COMPETITION_PUBLISHED',
-  'COMPETITION_CANCELLED',
-  'COMPETITION_ENDED',
-  'COMPETITION_SCHEDULE_CHANGED',
-  'COMPETITION_PAUSED',
-  'COMPETITION_RESUMED',
-  'COMPETITION_STARTED',
-  'COMPETITION_DECISION_COMPLETED'
-]);
-
 export class CompetitionEventDispatcher {
   private readonly logger = Logger.get(this.constructor.name);
   public constructor(
@@ -140,7 +129,6 @@ export class CompetitionEventDispatcher {
       }
     }
     await this.notifyFollowers(event, context, ctx);
-    await this.notifyModeratedSubmitter(event, context, ctx);
     if (event.event_type === 'COMPETITION_DECISION_COMPLETED')
       await this.deliverPrivilegedWinnerEffects(event, ctx);
   }
@@ -150,28 +138,10 @@ export class CompetitionEventDispatcher {
     context: CompetitionEventContext,
     ctx: RequestContext
   ): Promise<void> {
-    const changedFields = event.data.changed_fields;
-    const scheduleChanged =
-      event.event_type === 'COMPETITION_UPDATED' &&
-      Array.isArray(changedFields) &&
-      changedFields.some(
-        (field) =>
-          typeof field === 'string' &&
-          [
-            'participation',
-            'voting',
-            'decisions',
-            'schedule',
-            'participation_starts_at',
-            'participation_ends_at',
-            'voting_starts_at',
-            'voting_ends_at'
-          ].includes(field)
-      );
-    if (!FOLLOWER_EVENTS.has(event.event_type) && !scheduleChanged) return;
     if (
-      event.event_type === 'COMPETITION_DECISION_COMPLETED' &&
-      (!Array.isArray(event.data.winners) || event.data.winners.length === 0)
+      event.event_type !== 'COMPETITION_DECISION_COMPLETED' ||
+      !Array.isArray(event.data.winners) ||
+      event.data.winners.length === 0
     )
       return;
     let afterId = '';
@@ -186,28 +156,6 @@ export class CompetitionEventDispatcher {
         await this.notifyRecipient(event, context, recipientId, ctx);
       afterId = followers[followers.length - 1];
     }
-  }
-
-  private async notifyModeratedSubmitter(
-    event: NativeCompetitionEvent,
-    context: CompetitionEventContext,
-    ctx: RequestContext
-  ): Promise<void> {
-    if (
-      !(
-        event.event_type === 'COMPETITION_ENTRY_DISQUALIFIED' ||
-        (event.event_type === 'COMPETITION_ENTRY_STATUS_CHANGED' &&
-          event.data.status === 'DISQUALIFIED')
-      ) ||
-      !event.competition_entry_id
-    )
-      return;
-    const recipient = await this.repository.getEntrySubmitter(
-      event.competition_id,
-      event.competition_entry_id,
-      ctx
-    );
-    if (recipient) await this.notifyRecipient(event, context, recipient, ctx);
   }
 
   private async notifyRecipient(

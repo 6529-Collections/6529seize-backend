@@ -167,7 +167,7 @@ describeWithSeed(
         author_id: entry.submitter_id,
         created_at: entry.submitted_at,
         parts_count: 1,
-        drop_type: 'CHAT'
+        drop_type: 'COMPETITION'
       }))
     }
   ],
@@ -406,9 +406,9 @@ describeWithSeed(
       expect(
         await sqlExecutor.execute(`select drop_type from ${DROPS_TABLE}`)
       ).toEqual([
-        { drop_type: 'CHAT' },
-        { drop_type: 'CHAT' },
-        { drop_type: 'CHAT' }
+        { drop_type: 'COMPETITION' },
+        { drop_type: 'COMPETITION' },
+        { drop_type: 'COMPETITION' }
       ]);
       expect(
         await sqlExecutor.execute(

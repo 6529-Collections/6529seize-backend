@@ -10,18 +10,15 @@
  * Do not edit the class manually.
  */
 
-import { ApiCompetitionSignature } from '../models/ApiCompetitionSignature';
-import { ApiCreateDropRequest } from '../models/ApiCreateDropRequest';
+import { ApiCompetition } from '../models/ApiCompetition';
+import { ApiCompetitionDropVoteSummary } from '../models/ApiCompetitionDropVoteSummary';
+import { ApiCompetitionEntry } from '../models/ApiCompetitionEntry';
 import { HttpFile } from '../http/http';
 
-export class ApiCreateCompetitionEntryRequest {
-    /**
-    * Stable client-generated command identity. Reuse for identical retries only.
-    */
-    'idempotency_key': string;
-    'config_version': number;
-    'drop': ApiCreateDropRequest;
-    'signature'?: ApiCompetitionSignature;
+export class ApiDropCompetitionContext {
+    'vote_summary'?: ApiCompetitionDropVoteSummary | null;
+    'competition': ApiCompetition | null;
+    'entry': ApiCompetitionEntry | null;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -29,32 +26,26 @@ export class ApiCreateCompetitionEntryRequest {
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "idempotency_key",
-            "baseName": "idempotency_key",
-            "type": "string",
-            "format": "uuid"
-        },
-        {
-            "name": "config_version",
-            "baseName": "config_version",
-            "type": "number",
-            "format": "int64"
-        },
-        {
-            "name": "drop",
-            "baseName": "drop",
-            "type": "ApiCreateDropRequest",
+            "name": "vote_summary",
+            "baseName": "vote_summary",
+            "type": "ApiCompetitionDropVoteSummary",
             "format": ""
         },
         {
-            "name": "signature",
-            "baseName": "signature",
-            "type": "ApiCompetitionSignature",
+            "name": "competition",
+            "baseName": "competition",
+            "type": "ApiCompetition",
+            "format": ""
+        },
+        {
+            "name": "entry",
+            "baseName": "entry",
+            "type": "ApiCompetitionEntry",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiCreateCompetitionEntryRequest.attributeTypeMap;
+        return ApiDropCompetitionContext.attributeTypeMap;
     }
 
     public constructor() {

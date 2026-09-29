@@ -1,5 +1,6 @@
 import {
   handleGetWaveCompetitionV3,
+  handleListCompetitionLeaderboardV3,
   handleListCompetitionVotersV3,
   handleListWaveCompetitionsV3
 } from '@/api/competitions/competitions-v3.handlers';
@@ -28,7 +29,8 @@ jest.mock('@/competitions/competition.service', () => ({
   competitionService: {
     getCompetition: jest.fn(),
     listCompetitions: jest.fn(),
-    listVoters: jest.fn()
+    listVoters: jest.fn(),
+    listLeaderboard: jest.fn()
   }
 }));
 jest.mock('@/time', () => ({
@@ -202,3 +204,19 @@ describe('competition v3 handlers', () => {
     expect(competitionService.listVoters).not.toHaveBeenCalled();
   });
 });
+
+it.each(['rating', 'real_time_rating', 'submitted_at', 'trend'])(
+  'forwards leaderboard sort %s in the competition scope',
+  async (sort) => {
+    await handleListCompetitionLeaderboardV3({
+      params: { wave_id: 'wave-a', competition_id: competitionId },
+      query: { sort }
+    } as never);
+    expect(competitionService.listLeaderboard).toHaveBeenLastCalledWith(
+      'wave-a',
+      competitionId,
+      expect.objectContaining({ sort, direction: 'DESC' }),
+      expect.anything()
+    );
+  }
+);

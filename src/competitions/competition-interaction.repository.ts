@@ -1,3 +1,4 @@
+import { competitionEntryVisibleSql } from '@/competitions/competition-entry-visibility';
 import { randomUUID } from 'node:crypto';
 import {
   COMPETITION_ENTRIES_TABLE,
@@ -105,6 +106,7 @@ export class CompetitionInteractionRepository extends LazyDbAccessCompatibleServ
       `SELECT v.entry_id,e.drop_id,v.value,v.credit_spent,e.status AS entry_status FROM ${COMPETITION_VOTES_TABLE} v
        JOIN ${COMPETITION_ENTRIES_TABLE} e ON e.id=v.entry_id AND e.competition_id=v.competition_id
        WHERE v.competition_id=:competitionId AND v.voter_profile_id=:profileId AND v.value<>0
+         AND ${competitionEntryVisibleSql('e')}
        ORDER BY e.submitted_at DESC,e.id DESC LIMIT :offset,:limit`,
       { competitionId: record.id, profileId, offset, limit },
       ctx
@@ -133,7 +135,10 @@ export class CompetitionInteractionRepository extends LazyDbAccessCompatibleServ
       award: string | Record<string, unknown>;
     }>(
       'awards',
-      `SELECT * FROM ${COMPETITION_OUTCOME_AWARDS_TABLE} WHERE competition_id=:competitionId ORDER BY decision_id,id LIMIT :offset,:limit`,
+      `SELECT award.* FROM ${COMPETITION_OUTCOME_AWARDS_TABLE} award
+       JOIN ${COMPETITION_ENTRIES_TABLE} e ON e.id=award.entry_id AND e.competition_id=award.competition_id
+       WHERE award.competition_id=:competitionId AND ${competitionEntryVisibleSql('e')}
+       ORDER BY award.decision_id,award.id LIMIT :offset,:limit`,
       { competitionId: record.id, offset, limit },
       ctx
     );
