@@ -105,6 +105,18 @@ and DLQ alarms remain. Investigate `WS_OUTBOX_PUBLISH_FAILED`, wakeup failures,
 Gateway failure diagnostics and backlog together; fewer error logs alone do not
 prove delivery.
 
+Publication failures include a fixed `phase` (`decode`, `resolve`, `materialize`,
+or `enqueue`) and safe `error_class`, alongside the row ID, attempt and age.
+Exception messages, stacks, SQL and payloads are not logged. Shared WebSocket
+constants and exceptions live in a dependency-free module so repository-first
+worker initialization cannot construct a sender with an undefined repository.
+A bundled worker import test covers initialization through recipient enqueue.
+For this initialization repair on an already provisioned outbox rollout, deploy
+`websocketOutboundHandler` and verify retained backlog drains plus fresh delivery.
+The API can pick up the shared-module refactor on its next deployment; producers,
+frontend, schema and queue configuration do not require a coordinated redeploy
+for this repair. The full initial architecture rollout below still applies.
+
 Required service order:
 
 1. `dbMigrationsLoop` creates the new entity/table and indexes via normal schema

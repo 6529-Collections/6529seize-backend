@@ -29,12 +29,8 @@ import {
   hasWebSocketSendBudget
 } from '@/api/ws/ws-send-scheduler';
 
-export class SocketNotAvailableException extends Error {
-  constructor() {
-    super(`Socket is not available`);
-    Object.setPrototypeOf(this, new.target.prototype);
-  }
-}
+import { ANON_USER_ID, SocketNotAvailableException } from './ws-shared';
+export { ANON_USER_ID, SocketNotAvailableException } from './ws-shared';
 
 abstract class ClientConnections {
   private static instance: ClientConnections | null = null;
@@ -483,7 +479,6 @@ export class AppWebSockets {
   }
 }
 
-export const ANON_USER_ID = '$ANONONYMOUS_USER$';
 export const MAX_NOTIFICATION_IDENTITY_SUBSCRIPTIONS = 5;
 
 export interface AuthenticatedWebSocketIdentity {
