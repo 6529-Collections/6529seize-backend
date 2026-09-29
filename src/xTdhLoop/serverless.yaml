@@ -51,6 +51,35 @@ resources:
         FifoQueue: true
         VisibilityTimeout: 1000
         ContentBasedDeduplication: true
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt XTdhDeadLetterQueue.Arn
+          maxReceiveCount: 5
+    XTdhDeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: xtdh-dead-letter.fifo
+        FifoQueue: true
+        MessageRetentionPeriod: 1209600
+    XTdhDeadLetterAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-xTdhLoop-DeadLetters"
+        AlarmDescription: xTDH work exhausted five processing attempts
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: !GetAtt XTdhDeadLetterQueue.QueueName
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
     XTdhSubscription:
       Type: AWS::SNS::Subscription
       Properties:
