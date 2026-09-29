@@ -112,3 +112,23 @@ it('routes each DM state only to its current profile subscribers', async () => {
     connections.findNotificationConnectionIdsByIdentityIds
   ).toHaveBeenCalledWith(['p'], ctx);
 });
+
+it('keeps the notification profile from durable intent without rereading a deleted identity', async () => {
+  mockDb.oneOrNull.mockResolvedValue(null);
+  jest
+    .mocked(connections.findNotificationConnectionIdsByIdentityIds)
+    .mockResolvedValue([{ connectionId: 'c', identityId: 'p' }]);
+  expect(
+    await resolveWebSocketEvent({ type: 'identity', profileId: 'p' }, ctx)
+  ).toEqual([
+    {
+      type: 'delivery',
+      connectionId: 'c',
+      message: JSON.stringify({
+        type: 'IDENTITY_NOTIFICATIONS_CHANGED',
+        data: { profile_id: 'p' }
+      })
+    }
+  ]);
+  expect(mockDb.oneOrNull).not.toHaveBeenCalled();
+});

@@ -6,6 +6,13 @@ import { waveDropMetricsRefreshService } from '@/drops/wave-drop-metrics-refresh
 import { DropType } from '@/entities/IDrop';
 import { DeleteDropUseCase } from './delete-drop.use-case';
 
+// Unit tests isolate persistence; transactional outbox inserts are covered by outbox.db.test.ts.
+beforeEach(() => {
+  jest
+    .spyOn(websocketOutbox, 'recordWebSocketEvent')
+    .mockResolvedValue(undefined);
+});
+
 afterEach(() => {
   jest.restoreAllMocks();
 });

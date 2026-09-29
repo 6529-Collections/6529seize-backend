@@ -141,6 +141,66 @@ describe('WebSocket outbox publication', () => {
     );
     expect(db.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
   });
+  it.each([
+    [0, 1000],
+    [5, 32000],
+    [6, 60000],
+    [100, 60000]
+  ])('backs off attempt %i by %i milliseconds', async (attempts, delay) => {
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(100000);
+    try {
+      const db = database([{ ...pending(), attempts }]);
+      await publishWebSocketOutbox(
+        jest.fn().mockRejectedValue(new Error('unavailable')),
+        db as unknown as SqlExecutor
+      );
+      expect(db.execute).toHaveBeenCalledWith(
+        expect.stringContaining('available_at = :next'),
+        { id: 1, next: 100000 + delay },
+        expect.anything()
+      );
+    } finally {
+      clock.mockRestore();
+    }
+  });
+  it('stops new jobs at the deadline but awaits accepted in-flight jobs', async () => {
+    const db = database(
+      Array.from({ length: 8 }, (_, id) => ({ ...pending(), id }))
+    );
+    let budget = true;
+    let release!: () => void;
+    let started!: () => void;
+    const allStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const send = jest.fn(async () => {
+      if (++calls === 4) {
+        budget = false;
+        started();
+      }
+      await held;
+    });
+    let settled = false;
+    const run = publishWebSocketOutbox(
+      send,
+      db as unknown as SqlExecutor,
+      () => budget
+    ).then((result) => {
+      settled = true;
+      return result;
+    });
+    await allStarted;
+    expect(settled).toBe(false);
+    expect(db.executeNativeQueriesInTransaction).toHaveBeenCalledTimes(4);
+    release();
+    expect(await run).toBe(4);
+    expect(send).toHaveBeenCalledTimes(4);
+    expect(db.executeNativeQueriesInTransaction).toHaveBeenCalledTimes(4);
+  });
   it('waits for other in-flight workers when a transaction fails', async () => {
     const db = database([pending(), { ...pending(), id: 2 }]);
     let release!: () => void;
