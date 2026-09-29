@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
@@ -17,6 +18,20 @@ import { getRedisClient } from '@/redis';
 import { getEnabledCauses } from './identity-push-notification-settings';
 import { sumBadgeContributions } from './badge-count';
 
+const lockWaitDeadline = new AsyncLocalStorage<number>();
+const LOCK_WAIT_MS = 5_000;
+const INVOCATION_RESERVE_MS = 10_000;
+
+export function withBadgeLockDeadline<T>(
+  remainingTimeMs: number,
+  action: () => T
+): T {
+  return lockWaitDeadline.run(
+    Date.now() + Math.max(0, remainingTimeMs - INVOCATION_RESERVE_MS),
+    action
+  );
+}
+
 export type BadgeDevice = Pick<PushNotificationDevice, 'device_id' | 'token'>;
 
 /** Group delivery targets by device/token; the coordination lock spans the entire device. */
@@ -35,12 +50,18 @@ export async function withDeviceBadgeLock<T>(
   if (!redis) throw new Error('Badge delivery requires Redis coordination');
   const key = `push-badge-lock:${createHash('sha256').update(device.device_id).digest('hex')}`;
   const owner = randomUUID();
-  // Longer than the push worker's 60-second Lambda timeout. Busy jobs retry via SQS.
+  const deadline = Math.min(
+    Date.now() + LOCK_WAIT_MS,
+    lockWaitDeadline.getStore() ?? Number.POSITIVE_INFINITY
+  );
+  // Keep time for badge calculation, delivery and the partial-batch response.
   for (let attempt = 0; ; attempt++) {
+    if (Date.now() >= deadline) throw new DeviceBadgeBusyError();
     if (await redis.set(key, owner, { NX: true, EX: 120 })) break;
-    if (attempt === 3) throw new DeviceBadgeBusyError();
-    const minimum = 50 * 2 ** attempt;
-    await delay(randomInt(minimum, minimum * 2));
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new DeviceBadgeBusyError();
+    const minimum = Math.min(50 * 2 ** Math.min(attempt, 4), 500);
+    await delay(Math.min(randomInt(minimum, minimum * 2), remaining));
   }
   try {
     return await action();

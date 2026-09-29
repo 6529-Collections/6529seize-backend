@@ -4,7 +4,8 @@ import {
 } from '@/websocket-outbox/outbox.db';
 import { DbPoolName } from '@/db-query.options';
 import { optionalWaveReadAccessSql } from '@/waves/wave-read-access-sql';
-import { sendIdentityPushNotification } from '../api-serverless/src/push-notifications/push-notifications.service';
+import { isActivated } from '@/api/push-notifications/push-notifications.service';
+import { PushNotificationOutboxDb } from '@/notifications/push-notification-outbox.db';
 import {
   IDENTITIES_TABLE,
   CONTENT_MODERATION_DROP_STATES_TABLE,
@@ -88,7 +89,12 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
   async insertNotification(
     notification: NewIdentityNotification,
     connection?: ConnectionWrapper<any>
-  ) {
+  ): Promise<void> {
+    if (!connection && this.isNotifierActivated()) {
+      return this.db.executeNativeQueriesInTransaction((transaction) =>
+        this.insertNotification(notification, transaction)
+      );
+    }
     if (this.isNotifierActivated()) {
       const [filteredNotification] = await this.filterNotificationRowsForWrite(
         [notification],
@@ -107,7 +113,12 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       );
 
       if (notificationId) {
-        await sendIdentityPushNotification(notificationId);
+        if (isActivated()) {
+          await new PushNotificationOutboxDb(() => this.db).enqueue(
+            notificationId,
+            { connection }
+          );
+        }
       } else {
         this.logger.error('No notification id returned from insert');
       }

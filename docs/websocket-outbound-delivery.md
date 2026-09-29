@@ -50,7 +50,10 @@ materializing recipient jobs.
 The push worker also durably captures invalidations from its existing SQS input,
 covering records made by producers predating this rollout. Duplicate identity
 invalidations are safe canonical-cache refresh hints. This does not change
-Firebase delivery or the push worker's event-source concurrency.
+Firebase delivery or the push worker's event-source concurrency. The separate
+`push_notification_outbox_entries` introduced by the push-delivery work remains
+intact: notification inserts can record both push and WebSocket intent in the
+same business transaction, while each outbox has its own publisher and recovery.
 
 ## Gateway retries and authorization
 
