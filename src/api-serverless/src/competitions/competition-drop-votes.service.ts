@@ -1,8 +1,6 @@
 import { competitionDropVotesDb } from '@/competitions/competition-drop-votes.db';
-import {
-  PublicCompetition,
-  CompetitionEntry
-} from '@/competitions/competition.types';
+import { CompetitionEntry } from '@/competitions/competition.types';
+import { PublicCompetition } from '@/competitions/competition.service';
 import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { ApiCompetitionDropVoteSummary } from '@/api/generated/models/ApiCompetitionDropVoteSummary';
 import { ApiDropVotersPage } from '@/api/generated/models/ApiDropVotersPage';
