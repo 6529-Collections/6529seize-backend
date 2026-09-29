@@ -1566,6 +1566,62 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  public async findActiveTdhVotingWaves(
+    params: {
+      readonly eligibleGroups: string[];
+      readonly now: number;
+      readonly limit: number;
+      readonly offset: number;
+    },
+    ctx: RequestContext
+  ): Promise<{ waves: WaveEntity[]; count: number }> {
+    const timerName = `${this.constructor.name}->findActiveTdhVotingWaves`;
+    ctx.timer?.start(timerName);
+    try {
+      const fromAndWhere = `from ${WAVES_TABLE} w
+        left join ${WAVES_TABLE} parent on parent.id = w.parent_wave_id
+        where coalesce(w.is_direct_message, false) = false
+          and w.type in ('RANK', 'APPROVE')
+          and w.voting_credit_type in ('TDH', 'TDH_PLUS_XTDH', 'CARD_SET_TDH')
+          and (w.voting_period_start is null or w.voting_period_start <= :now)
+          and (w.voting_period_end is null or w.voting_period_end > :now)
+          and (w.next_decision_time is null or w.next_decision_time > :now)
+          and (w.type <> 'RANK' or w.decisions_strategy is null or w.next_decision_time is not null)
+          and (w.type <> 'APPROVE' or w.max_winners is null or
+            (select count(*) from ${WAVES_DECISIONS_TABLE} d where d.wave_id = w.id) < w.max_winners)
+          and ${this.getWaveAndParentVisibilityFilter('w', 'parent', params.eligibleGroups, 'eligibleGroups')}`;
+      const options = { wrappedConnection: ctx.connection };
+      const deadline = `least(coalesce(w.voting_period_end, 9007199254740991), coalesce(w.next_decision_time, 9007199254740991))`;
+      const [ids, counts] = await Promise.all([
+        this.db.execute<{ id: string }>(
+          `select w.id ${fromAndWhere} order by ${deadline} asc, w.id asc limit :limit offset :offset`,
+          params,
+          options
+        ),
+        this.db.execute<{ count: number }>(
+          `select count(*) as count ${fromAndWhere}`,
+          params,
+          options
+        )
+      ]);
+      const waves = await this.findWavesByIds(
+        ids.map((row) => row.id),
+        params.eligibleGroups,
+        ctx.connection
+      );
+      const wavesById = new Map(waves.map((wave) => [wave.id, wave]));
+      return {
+        waves: ids.flatMap(({ id }) => {
+          const wave = wavesById.get(id);
+          return wave ? [wave] : [];
+        }),
+        count: Number(counts[0]?.count ?? 0)
+      };
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   async searchWaves(
     searchParams: SearchWavesParams,
     groupsUserIsEligibleFor: string[],
