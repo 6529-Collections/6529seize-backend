@@ -1,7 +1,7 @@
 import { Logger } from '@/logging';
 import { pushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_IDENTITY');
-/** Returns only IDs whose cancellation lookup failed and must be retried. */
+/** Unexplained missing rows retry up to the queue redrive limit. */
 export async function handleMissingNotifications(
   ids: number[]
 ): Promise<number[]> {
@@ -23,5 +23,5 @@ export async function handleMissingNotifications(
       logger.error(`Notification not found: ${id}`);
     }
   }
-  return [];
+  return ids.filter((id) => !cancelled.has(id));
 }
