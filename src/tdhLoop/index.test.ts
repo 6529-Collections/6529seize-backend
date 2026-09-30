@@ -1,3 +1,11 @@
+jest.mock('@/competitions/competition-main-stage.repository', () => ({
+  competitionMainStageRepository: {
+    totalActiveVotes: jest.fn().mockResolvedValue(0)
+  }
+}));
+jest.mock('../metrics/MetricsRecorder', () => ({
+  metricsRecorder: { recordTdhOnMainStageSubmissions: jest.fn() }
+}));
 const mockFetchLatestTdhDate = jest.fn();
 const mockUpdateTdh = jest.fn();
 const mockConsolidateAndPersistTdh = jest.fn();

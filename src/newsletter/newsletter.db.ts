@@ -11,6 +11,8 @@ import {
   NFTS_TABLE,
   TRANSACTIONS_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE,
+  COMPETITION_DECISIONS_TABLE,
+  COMPETITION_DECISION_WINNERS_TABLE,
   WAVES_TABLE
 } from '@/constants';
 import { DbPoolName } from '@/db-query.options';
@@ -18,6 +20,7 @@ import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import { MAIN_STAGE_WAVE_ID, NewsletterWindow } from './newsletter.config';
+import { nativeMainStageEntriesSource } from '@/competitions/competition-main-stage.repository';
 
 export interface NewsletterDrop {
   id: string;
@@ -30,6 +33,13 @@ export interface NewsletterDrop {
   title: string | null;
   reply_to_drop_id: string | null;
 }
+
+export type NewsletterWinner = NewsletterDrop & {
+  decision_time: number;
+  ranking: number;
+  competition_id?: string | null;
+  entry_id?: string | null;
+};
 
 // TypeORM's Lambda connection returns BIGINT strings; the API/test pool casts them.
 type NewsletterDropRow = Omit<NewsletterDrop, 'created_at' | 'serial_no'> & {
@@ -190,15 +200,31 @@ export class NewsletterDb extends LazyDbAccessCompatibleService {
   async winners(
     window: NewsletterWindow,
     ctx: RequestContext
-  ): Promise<(NewsletterDrop & { decision_time: number; ranking: number })[]> {
+  ): Promise<NewsletterWinner[]> {
     const rows = await this.query<
-      NewsletterDropRow & { decision_time: number | string; ranking: number }
+      NewsletterDropRow & {
+        decision_time: number | string;
+        ranking: number;
+        competition_id: string | null;
+        entry_id: string | null;
+      }
     >(
       'winners',
-      `${DROP_SELECT.replace('select d.id', 'select winner.decision_time, winner.ranking, d.id')}
-        join ${WAVES_DECISION_WINNER_DROPS_TABLE} winner on winner.drop_id = d.id
+      `${DROP_SELECT.replace('select d.id', 'select winner.decision_time, winner.ranking, winner.competition_id, winner.entry_id, d.id')}
+        join (
+          select drop_id, wave_id, decision_time, ranking, null as competition_id, null as entry_id
+            from ${WAVES_DECISION_WINNER_DROPS_TABLE} where wave_id = :mainStage
+          union all
+          select entry.drop_id, entry.wave_id, decision.scheduled_at as decision_time, native_winner.\`rank\` as ranking,
+            entry.competition_id, entry.id as entry_id
+            from (${nativeMainStageEntriesSource('WINNER')}) entry
+            join ${COMPETITION_DECISION_WINNERS_TABLE} native_winner on native_winner.entry_id = entry.id
+              and native_winner.competition_id = entry.competition_id and native_winner.decision_id = entry.decision_id
+            join ${COMPETITION_DECISIONS_TABLE} decision on decision.id = native_winner.decision_id
+              and decision.competition_id = entry.competition_id
+        ) winner on winner.drop_id = d.id
           and winner.wave_id = d.wave_id
-        where ${PUBLIC_DROP} and winner.wave_id = :mainStage
+        where ${PUBLIC_DROP}
           and winner.decision_time >= :start and winner.decision_time < :end
         order by winner.decision_time, winner.ranking`,
       { ...window, mainStage: MAIN_STAGE_WAVE_ID },

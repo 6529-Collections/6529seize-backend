@@ -1,4 +1,6 @@
 import { collectCompetitionPages } from '@/competitions/competition-page';
+import { loadCompetitionCreditParity } from '@/competitions/competition-credit-parity';
+import { RequestContext } from '@/request.context';
 import {
   Competition,
   CompetitionReader,
@@ -29,7 +31,8 @@ export function parityConfiguration(competition: Competition) {
 export async function loadLegacyParityCandidate(
   reader: CompetitionReader,
   record: CompetitionRoutingRecord,
-  now: number
+  now: number,
+  ctx: RequestContext
 ): Promise<CompetitionSnapshot> {
   const collect: typeof collectCompetitionPages = (read, direction) =>
     collectCompetitionPages(read, direction, LEGACY_PARITY_ROW_LIMIT);
@@ -79,6 +82,15 @@ export async function loadLegacyParityCandidate(
       .sort((a, b) => a.drop_id.localeCompare(b.drop_id)),
     votes_and_credits: [...voters].sort((a, b) =>
       a.profile_id.localeCompare(b.profile_id)
+    ),
+    credit_budgets: await loadCompetitionCreditParity(
+      reader,
+      record,
+      competition,
+      entries,
+      voters,
+      LEGACY_PARITY_ROW_LIMIT,
+      ctx
     ),
     leaderboard: leaderboard.map((entry) => ({
       drop_id: entry.drop_id,

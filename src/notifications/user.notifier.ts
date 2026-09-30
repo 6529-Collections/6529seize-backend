@@ -18,13 +18,43 @@ import {
   IdentityNicNotificationData,
   IdentityRepNotificationData,
   IdentitySubscriptionNotificationData,
-  SubscriptionCoverageNotificationData
+  SubscriptionCoverageNotificationData,
+  CompetitionLifecycleNotificationData
 } from './user-notification.types';
 
 export class UserNotifier {
   constructor(
     private readonly identityNotificationsDb: IdentityNotificationsDb
   ) {}
+
+  public async notifyOfCompetitionLifecycle(
+    recipientId: string,
+    data: CompetitionLifecycleNotificationData,
+    visibilityGroupId: string | null,
+    ctx: RequestContext
+  ): Promise<number[]> {
+    if (!ctx.connection)
+      throw new Error(
+        'Competition notifications require their event effect transaction'
+      );
+    return this.identityNotificationsDb.insertManyNotifications(
+      [
+        {
+          identity_id: recipientId,
+          additional_identity_id: null,
+          related_drop_id: null,
+          related_drop_part_no: null,
+          related_drop_2_id: null,
+          related_drop_2_part_no: null,
+          cause: IdentityNotificationCause.COMPETITION_LIFECYCLE,
+          additional_data: { ...data },
+          wave_id: data.wave_id,
+          visibility_group_id: visibilityGroupId
+        }
+      ],
+      ctx.connection
+    );
+  }
 
   public async notifyOfIdentitySubscription(
     { subscriber_id, subscribed_to }: IdentitySubscriptionNotificationData,

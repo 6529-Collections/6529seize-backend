@@ -27,6 +27,7 @@ const CAUSE_CLASSIFICATION: Record<
   // The public category is labelled "Direct messages and wave activity".
   // These causes are the wave-activity portion of that combined preference.
   [IdentityNotificationCause.WAVE_CREATED]: 'direct_messages',
+  [IdentityNotificationCause.COMPETITION_LIFECYCLE]: 'direct_messages',
   [IdentityNotificationCause.ALL_DROPS]: 'direct_messages',
   [IdentityNotificationCause.PRIORITY_ALERT]: 'direct_messages',
   [IdentityNotificationCause.SUBSCRIPTION_COVERAGE]: 'subscription_coverage'

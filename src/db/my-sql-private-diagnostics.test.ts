@@ -29,6 +29,15 @@ describe('private SQL diagnostics', () => {
     error.mockClear();
   });
   it.each([
+    ...[
+      'competition_entry_content_versions',
+      'competition_signature_nonces',
+      'competition_commands'
+    ].map((table) => ({
+      table,
+      inline: 'private-signature-envelope',
+      bound: 'private-signed-content'
+    })),
     {
       table: 'content_moderation_items',
       inline: 'rejected-about-text',

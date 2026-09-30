@@ -104,6 +104,29 @@ describe('handleGetNotificationsV2', () => {
     expect(mockGetNotificationsV2).not.toHaveBeenCalled();
   });
 
+  it.each(['true', 'false'])(
+    'accepts explicit competition opt-in %s',
+    async (value) => {
+      await handleGetNotificationsV2({
+        query: { include_competitions: value }
+      } as unknown as Parameters<typeof handleGetNotificationsV2>[0]);
+      expect(mockGetNotificationsV2).toHaveBeenCalledWith(
+        expect.objectContaining({ include_competitions: value === 'true' }),
+        authenticationContext,
+        { timer, authenticationContext }
+      );
+    }
+  );
+
+  it('rejects malformed competition opt-in', async () => {
+    await expect(
+      handleGetNotificationsV2({
+        query: { include_competitions: 'yes' }
+      } as unknown as Parameters<typeof handleGetNotificationsV2>[0])
+    ).rejects.toThrow('"include_competitions" must be a boolean');
+    expect(mockGetNotificationsV2).not.toHaveBeenCalled();
+  });
+
   it('rejects users without a profile', async () => {
     authenticationContext.getActingAsId.mockReturnValue(null);
     const req = { query: {} } as any;

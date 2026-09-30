@@ -154,7 +154,8 @@ export class ApiWaveOverviewMapper {
         unreadSummariesByWaveId,
         chatDropCooldownsByWaveId,
         waveIdsWithVisibleSubwaves,
-        followedSubwaveContextsByParentWaveId
+        followedSubwaveContextsByParentWaveId,
+        waveIdsWithCompetitions
       ] = await Promise.all([
         this.wavesApiDb.findWavesMetricsByWaveIds(waveIds, ctx),
         this.findStaticOverviewContextsByWaveId(relatedEntities, ctx),
@@ -229,7 +230,8 @@ export class ApiWaveOverviewMapper {
             )
           : Promise.resolve(
               {} as Record<string, FollowedSubwaveOverviewContext>
-            )
+            ),
+        this.wavesApiDb.findWaveIdsWithCompetitions(waveIds, ctx)
       ]);
       const {
         descriptionDropPartOnesByDropId,
@@ -263,6 +265,7 @@ export class ApiWaveOverviewMapper {
             nextDropTimestamp:
               chatDropCooldownsByWaveId[wave.id]?.next_drop_timestamp,
             hasSubwaves: waveIdsWithVisibleSubwaves.has(wave.id),
+            hasCompetitions: waveIdsWithCompetitions.has(wave.id),
             profilesById
           });
           return acc;
@@ -426,6 +429,7 @@ export class ApiWaveOverviewMapper {
     followedSubwaveContext,
     nextDropTimestamp,
     hasSubwaves,
+    hasCompetitions,
     profilesById
   }: {
     wave: WaveEntity;
@@ -443,6 +447,7 @@ export class ApiWaveOverviewMapper {
     followedSubwaveContext?: FollowedSubwaveOverviewContext;
     nextDropTimestamp?: number;
     hasSubwaves: boolean;
+    hasCompetitions: boolean;
     profilesById: Record<string, ApiProfileMin>;
   }): ApiWaveOverview {
     const pfp = resolveWavePictureOverride(wave.picture, display);
@@ -453,7 +458,10 @@ export class ApiWaveOverviewMapper {
       last_drop_time: metrics?.latest_drop_timestamp ?? 0,
       created_at: wave.created_at,
       subscribers_count: metrics?.subscribers_count ?? 0,
-      has_competition: wave.type !== WaveType.CHAT,
+      has_competition:
+        wave.type === WaveType.RANK ||
+        wave.type === WaveType.APPROVE ||
+        hasCompetitions,
       is_dm_wave: wave.is_direct_message === true,
       links_disabled: wave.chat_links_disabled,
       description_drop: this.mapDescriptionDrop({

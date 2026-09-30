@@ -178,7 +178,10 @@ export class NewsletterCollector {
           ? `https://6529.io/${encodeURIComponent(winner.author_handle)}`
           : null,
         title: winner.title,
-        url: discussionUrl(winner),
+        url:
+          winner.competition_id && winner.entry_id
+            ? `https://6529.io/waves/${encodeURIComponent(winner.wave_id)}/competitions/${encodeURIComponent(winner.competition_id)}?entry=${encodeURIComponent(winner.entry_id)}`
+            : discussionUrl(winner),
         decision_time: new Date(winner.decision_time).toISOString(),
         ranking: winner.ranking
       })),

@@ -1,6 +1,7 @@
 import {
   CompetitionEntryStatus,
-  CompetitionStorageMode
+  CompetitionStorageMode,
+  CompetitionType
 } from '@/entities/ICompetition';
 import { RequestContext } from '@/request.context';
 import {
@@ -49,8 +50,19 @@ export class NativeCompetitionReader implements CompetitionReader {
       this.ctx
     );
     const competition = this.toCompetition(record, capabilities);
+    const needsDecisionPauses =
+      competition.type === CompetitionType.RANK &&
+      competition.decisions.next_decision_time !== null &&
+      competition.decisions.next_decision_time < now;
     return {
       ...competition,
+      ...(needsDecisionPauses
+        ? {
+            decision_pauses: await collectCompetitionPages((page) =>
+              this.listPauses(record, page)
+            )
+          }
+        : {}),
       computed_phase: computeCompetitionPhase(competition, now)
     };
   }
@@ -211,6 +223,10 @@ export class NativeCompetitionReader implements CompetitionReader {
       type: parsed.type,
       lifecycle: parsed.lifecycle,
       title: parsed.title,
+      presentation:
+        (typeof parsed.presentation_config === 'string'
+          ? JSON.parse(parsed.presentation_config)
+          : parsed.presentation_config) ?? [],
       description: parsed.description,
       config_version: Number(parsed.config_version),
       participation:

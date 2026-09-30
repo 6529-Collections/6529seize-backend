@@ -102,7 +102,14 @@ export async function getDeviceBadgeState(device: BadgeDevice): Promise<{
         .getRepository(PushNotificationSettingsEntity)
         .findOneBy({ profile_id: profileId, device_id: device.device_id });
       const enabledCauses = getEnabledCauses(
-        settings ?? DEFAULT_PUSH_NOTIFICATION_SETTINGS
+        settings ?? DEFAULT_PUSH_NOTIFICATION_SETTINGS,
+        // A rotated token must not lend native support to an older token.
+        registrations.some(
+          (row) =>
+            row.profile_id === profileId &&
+            row.token === device.token &&
+            row.include_competitions === true
+        )
       );
       if (!enabledCauses.length) return 0;
       const groups =

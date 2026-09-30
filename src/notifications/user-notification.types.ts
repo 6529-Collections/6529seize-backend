@@ -74,6 +74,21 @@ export interface WaveCreatedNotificationData {
   created_by: string;
 }
 
+export interface CompetitionLifecycleNotificationData {
+  event_id: string;
+  event_type: string;
+  wave_id: string;
+  competition_id: string;
+  competition_title: string;
+  entry_id?: string;
+  drop_id?: string;
+}
+
+export interface CompetitionLifecycleNotification extends UserNotificationBase {
+  cause: IdentityNotificationCause.COMPETITION_LIFECYCLE;
+  data: CompetitionLifecycleNotificationData;
+}
+
 export interface AllDropsNotificationData {
   additional_identity_id: string;
   drop_id: string;
@@ -213,6 +228,7 @@ export interface SubscriptionCoverageNotification extends UserNotificationBase {
 }
 
 export type UserNotification =
+  | CompetitionLifecycleNotification
   | IdentitySubscriptionNotification
   | IdentityMentionNotification
   | IdentityRepNotification

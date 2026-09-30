@@ -21,6 +21,9 @@ import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
 
 export enum DropType {
   CHAT = 'CHAT',
+  // Dedicated native submission. Kept distinct from legacy wave submissions so
+  // legacy winner selection and voting cannot act on a native competition.
+  COMPETITION = 'COMPETITION',
   PARTICIPATORY = 'PARTICIPATORY',
   WINNER = 'WINNER'
 }
