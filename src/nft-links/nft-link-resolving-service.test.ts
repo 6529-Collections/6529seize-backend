@@ -125,6 +125,30 @@ describe('NFT link refresh retries and persistence', () => {
     expect(jest.getTimerCount()).toBe(0);
   });
 
+  it('preserves the provider failure when the retry budget ends before the wait', async () => {
+    const { resolver, db, service } = setup();
+    const providerFailure = new HttpError(429, url, 'rate limited', url);
+    resolver.resolve.mockRejectedValue(providerFailure);
+
+    await withNftLinkResolutionBudget(12_000, () =>
+      service.attemptResolve(url, {})
+    );
+
+    expect(resolver.resolve).toHaveBeenCalledTimes(1);
+    expect(db.updateWithFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'rate limited' }),
+      {}
+    );
+    expect((service as any).logger.errorWithDiagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        httpStatus: 429,
+        recovery: expect.objectContaining({ state: 'exhausted', attempt: 1 })
+      }),
+      expect.any(String),
+      providerFailure
+    );
+  });
+
   it.each([
     new Error('provider unavailable'),
     new Error('execution reverted'),

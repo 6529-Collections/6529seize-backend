@@ -310,7 +310,7 @@ export class NftLinkResolvingService {
           lastError
         );
       } catch (error) {
-        lastError = error;
+        lastError ??= error;
         break;
       }
     }
