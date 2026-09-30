@@ -1,3 +1,4 @@
+import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import {
   dbSupplier,
   LazyDbAccessCompatibleService,
@@ -5,6 +6,8 @@ import {
 } from '../../../sql-executor';
 import { WSConnectionEntity } from '../../../entities/IWSConnection';
 import {
+  ATTACHMENTS_TABLE,
+  DROP_ATTACHMENTS_TABLE,
   DROP_VOTER_STATE_TABLE,
   IDENTITIES_TABLE,
   RATINGS_TABLE,
@@ -22,7 +25,7 @@ import {
   userGroupsService,
   UserGroupsService
 } from '../community-members/user-groups.service';
-import { ANON_USER_ID, SocketNotAvailableException } from './ws';
+import { ANON_USER_ID, SocketNotAvailableException } from './ws-shared';
 import { randomInt } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -677,18 +680,26 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   }
 
   async findWaveVisibilityGroupId(
-    waveId: string
+    waveId: string,
+    ctx: RequestContext = {}
   ): Promise<string | null | undefined> {
     return this.db
       .oneOrNull<{
         visibility_group_id: string | null;
-      }>(`select visibility_group_id from ${WAVES_TABLE} where id = :waveId`, {
-        waveId
-      })
+      }>(
+        `select visibility_group_id from ${WAVES_TABLE} where id = :waveId`,
+        {
+          waveId
+        },
+        { wrappedConnection: ctx.connection }
+      )
       .then((row) => row?.visibility_group_id);
   }
 
-  async findConnectionIdsByIdentityId(identityId: string): Promise<string[]> {
+  async findConnectionIdsByIdentityId(
+    identityId: string,
+    ctx: RequestContext = {}
+  ): Promise<string[]> {
     if (!identityId || identityId === ANON_USER_ID) {
       return [];
     }
@@ -697,13 +708,15 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
         connection_id: string;
       }>(
         `select connection_id from ${WS_CONNECTIONS_TABLE} where identity_id = :identityId`,
-        { identityId }
+        { identityId },
+        { wrappedConnection: ctx.connection }
       )
       .then((res) => res.map((it) => it.connection_id));
   }
 
   async findNotificationConnectionIdsByIdentityIds(
-    identityIds: string[]
+    identityIds: string[],
+    ctx: RequestContext = {}
   ): Promise<{ connectionId: string; identityId: string }[]> {
     const uniqueIdentityIds = Array.from(
       new Set(identityIds.filter((identityId) => !!identityId))
@@ -728,7 +741,8 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
              and subscriptions.jwt_expiry > unix_timestamp()
              and connections.jwt_expiry > unix_timestamp()
          ) recipients`,
-        { identityIds: uniqueIdentityIds }
+        { identityIds: uniqueIdentityIds },
+        { wrappedConnection: ctx.connection }
       )
       .then((rows) =>
         rows.map((row) => ({
@@ -738,12 +752,46 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       );
   }
 
-  async findAllConnectionIds(): Promise<string[]> {
+  /** Evaluate current wave eligibility or attachment ownership/access for a queued frame. */
+  async canIdentityReadQueuedResource(
+    identityId: string | null,
+    resource: { waveId: string } | { attachmentId: string }
+  ): Promise<boolean> {
+    const eligibleGroupIds =
+      identityId && identityId !== ANON_USER_ID
+        ? await this.userGroupsService.getGroupsUserIsEligibleFor(identityId)
+        : [];
+    const access = waveReadAccessSql('w', eligibleGroupIds.length > 0);
+    const row =
+      'waveId' in resource
+        ? await this.db.oneOrNull<{ id: string }>(
+            `select w.id from ${WAVES_TABLE} w where w.id = :waveId and ${access}`,
+            { waveId: resource.waveId, eligibleGroupIds }
+          )
+        : await this.db.oneOrNull<{ id: string }>(
+            `select a.id from ${ATTACHMENTS_TABLE} a where a.id = :attachmentId
+           and (a.owner_profile_id = :identityId or exists (
+             select 1 from ${DROP_ATTACHMENTS_TABLE} da
+             inner join ${WAVES_TABLE} w on w.id = da.wave_id
+             where da.attachment_id = a.id and ${access}
+           ))`,
+            {
+              attachmentId: resource.attachmentId,
+              identityId,
+              eligibleGroupIds
+            }
+          );
+    return row !== null;
+  }
+
+  async findAllConnectionIds(ctx: RequestContext = {}): Promise<string[]> {
     return this.db
       .execute<{ connection_id: string }>(
         `
     select distinct connection_id from ${WS_CONNECTIONS_TABLE}
-    `
+    `,
+        {},
+        { wrappedConnection: ctx.connection }
       )
       .then((res) => res.map((it) => it.connection_id));
   }

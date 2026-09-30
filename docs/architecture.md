@@ -713,19 +713,12 @@ including older responses without a recognizable instance ID. A listingType-only
 response keeps those legacy assets and uses an unknown market state with a view
 action, without inferring a claim price.
 
-After persistence, a worker-specific notifier reads active WebSocket recipients
-once and sends the existing `MEDIA_LINK_UPDATED` payload with concurrency 10,
-five-second request limits, and a 15-second broadcast deadline. Notification
-failure cannot change a successful metadata refresh. The notification metadata
-read is bounded to five seconds; both notification queries also use a three-second
-database execution limit. Late read results cannot trigger delivery.
-Cancelled preview-queue sends leave their source retryable, without overwriting
-newer previews or active consumers. Expired or disconnected
-clients are skipped; normal WebSocket lifecycle handling retains ownership of
-stale-connection deletion. The API and other resolver callers retain their
-existing policy. Request IDs, message IDs, and stage durations connect these
-operations to CloudWatch invocation reports. Sentry's existing warning timer is
-unchanged. No API, schema, queue, or frontend deployment dependency is added.
+NFT resolution and preview transitions capture a WebSocket outbox event in the
+same database transaction. The post-commit notifier wakes `websocketOutboundHandler`;
+its scheduled fallback recovers a lost wakeup. The worker resolves current NFT
+state, materializes durable recipient jobs, and queues `MEDIA_LINK_UPDATED`
+frames for delivery. A producer deadline no longer discards committed delivery
+intent. See [WebSocket outbound delivery](./websocket-outbound-delivery.md).
 
 ### NFT market depth and activity
 
@@ -861,7 +854,22 @@ If authentication or notification identity sync finds that the stored connection
 
 Typing updates use the server-authenticated connection profile when resolving private visibility groups. The sender must appear in the current child/parent membership intersection for the active wave before a typing message is sent; recipients retain the same intersection. Successful typing is acknowledged with 200, expected access failures keep client-error status, and unexpected failures emit only bounded operation-stage and error labels.
 
-Terminal WebSocket send failures replace the existing error message with an allowlisted outbound frame type, fixed error category, final HTTP status and numeric SDK attempt/retry-delay metadata. Frame content, connection IDs and exception text are not copied into this diagnostic; missing or malformed metadata remains unknown. The existing operational error fingerprint and single error-event path are retained. SDK retry policy and best-effort send behavior remain unchanged, Gone connections still take the cleanup path, and a diagnostic failure cannot turn a live connection into a cleanup candidate. This metadata describes a failed send, not confirmed client delivery or a rate-limit repair.
+Terminal WebSocket send failures retain the existing operational error event with an allowlisted frame type, error category, final HTTP status and SDK attempt/retry-delay metadata. Diagnostics also include frame byte count, a UTC-day-scoped hash of the random connection ID, and a fixed SDK/queue-full/deadline failure label; they never include raw connection IDs, payloads or exception text. These describe failed sends, not confirmed client delivery.
+
+Persistent WebSocket-producing mutations write `websocket_outbox` in their business
+transaction. Post-commit SQS wakeups and a one-minute EventBridge schedule drive
+the existing `websocketOutboundHandler`. Resource events resolve current state
+and audience on the writer and atomically materialize recipient jobs; only SQS
+acceptance deletes a recipient job. Hashed per-resource/per-connection partitions
+prevent later jobs from overtaking a deferred head. Stable envelope IDs aid FIFO
+deduplication, while client-side canonical reconciliation and stale/deletion
+guards handle at-least-once delivery. Drop events carry compact canonical-fetch
+references. The encrypted FIFO consumer retains failed Gateway sends with
+randomized backoff and a monitored DLQ. Throttling never deletes a live connection.
+Outbox-age/missing-health alarms cover the database-to-queue boundary. Deploy
+`dbMigrationsLoop` before the worker, then client protection and producers. See
+[WebSocket outbound delivery](./websocket-outbound-delivery.md) for capture
+coverage, mixed-version rollout, limits and rollback.
 
 ## API Boundary
 

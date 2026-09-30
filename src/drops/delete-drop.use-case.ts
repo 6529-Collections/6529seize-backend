@@ -1,3 +1,4 @@
+import { recordWebSocketEvent } from '@/websocket-outbox/outbox.db';
 import { dropsDb, DropsDb } from './drops.db';
 import { Time, Timer } from '../time';
 import { ConnectionWrapper } from '../sql-executor';
@@ -171,6 +172,16 @@ export class DeleteDropUseCase {
       WaveScoreDirtyRefreshReason.DROP_DELETED,
       ctx
     );
+    for (const drop of drops)
+      await recordWebSocketEvent(
+        {
+          type: 'drop-delete',
+          dropId: drop.id,
+          waveId: drop.wave_id,
+          serialNo: drop.serial_no
+        },
+        ctx
+      );
     if (!wave.is_direct_message) return [];
     const readerIds = await this.findCurrentDmReaderIds(wave, ctx);
     return this.wavesApiDb.incrementDmUnreadStateVersionsForWaveReaders(
@@ -296,6 +307,16 @@ export class DeleteDropUseCase {
             { timer, connection }
           );
       }
+      if (isPermanentDelete)
+        await recordWebSocketEvent(
+          {
+            type: 'drop-delete',
+            dropId,
+            waveId: drop.wave_id,
+            serialNo: drop.serial_no
+          },
+          { connection, timer }
+        );
       return {
         id: dropId,
         serial_no: drop.serial_no,

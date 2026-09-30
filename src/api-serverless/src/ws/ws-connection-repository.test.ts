@@ -16,6 +16,37 @@ describe('WsConnectionRepository', () => {
     jest.restoreAllMocks();
   });
 
+  it('rechecks queued resource access with parent-wave visibility and parameterized current groups', async () => {
+    const oneOrNull = jest
+      .fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'attachment' });
+    const eligible = jest.fn().mockResolvedValue(['current-group']);
+    const repo = new WsConnectionRepository(() => ({ oneOrNull }) as never, {
+      getGroupsUserIsEligibleFor: eligible
+    } as never);
+    await expect(
+      repo.canIdentityReadQueuedResource('profile', { waveId: 'wave' })
+    ).resolves.toBe(false);
+    expect(oneOrNull.mock.calls[0][0]).toContain(
+      'access_parent.parent_wave_id is null'
+    );
+    expect(oneOrNull.mock.calls[0][1]).toEqual({
+      waveId: 'wave',
+      eligibleGroupIds: ['current-group']
+    });
+    await expect(
+      repo.canIdentityReadQueuedResource('profile', {
+        attachmentId: 'attachment'
+      })
+    ).resolves.toBe(true);
+    expect(oneOrNull.mock.calls[1][0]).toContain(
+      'a.owner_profile_id = :identityId'
+    );
+    expect(oneOrNull.mock.calls[1][0]).toContain('da.attachment_id = a.id');
+    expect(eligible).toHaveBeenCalledWith('profile');
+  });
+
   it.each([false, true])(
     'intersects live parent and child websocket recipients (system=%s)',
     async (system) => {

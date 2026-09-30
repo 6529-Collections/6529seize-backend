@@ -59,6 +59,37 @@ describe('SQS', () => {
     expect(sendMock).toHaveBeenCalledWith(expect.anything(), { abortSignal });
   });
 
+  it('forwards named-queue cancellation to the send transport', async () => {
+    sendMock.mockResolvedValueOnce({
+      QueueUrl: 'https://sqs.example/outbound.fifo'
+    });
+    const abortSignal = new AbortController().signal;
+    await new SQS().sendToQueueName({
+      queueName: 'outbound.fifo',
+      message: {},
+      abortSignal
+    });
+    expect(sendMock).toHaveBeenLastCalledWith(expect.anything(), {
+      abortSignal
+    });
+  });
+
+  it('does not enqueue after cancellation during shared queue URL discovery', async () => {
+    const controller = new AbortController();
+    sendMock.mockImplementationOnce(async () => {
+      controller.abort();
+      return { QueueUrl: 'https://sqs.example/outbound.fifo' };
+    });
+    await expect(
+      new SQS().sendToQueueName({
+        queueName: 'outbound.fifo',
+        message: {},
+        abortSignal: controller.signal
+      })
+    ).rejects.toThrow();
+    expect(SendMessageCommand).not.toHaveBeenCalled();
+  });
+
   it('uses provided message group id when supplied', async () => {
     const sqs = new SQS();
 

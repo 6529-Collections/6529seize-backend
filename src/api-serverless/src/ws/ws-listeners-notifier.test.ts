@@ -272,6 +272,38 @@ describe('WsListenersNotifier', () => {
     ]);
   });
 
+  it('attempts later DM unread states and recipients after a send rejects', async () => {
+    const appWebSockets = {
+      send: jest
+        .fn()
+        .mockRejectedValueOnce(new Error('send failed'))
+        .mockResolvedValue(undefined)
+    };
+    const notifier = new WsListenersNotifier(appWebSockets as any, {} as any);
+    const states = Array.from({ length: 20 }, (_, index) => ({
+      profile_id: 'profile-1',
+      wave_id: `wave-${index}`,
+      unread_count: 2,
+      first_unread_drop_serial_no: 10,
+      latest_drop_serial_no: 11,
+      latest_read_serial_no: 9,
+      version: 3
+    }));
+
+    await notifier.notifyAboutDmUnreadStateChanged(states, [
+      { connectionId: 'connection-1', identityId: 'profile-1' },
+      { connectionId: 'connection-2', identityId: 'profile-1' }
+    ]);
+
+    expect(appWebSockets.send).toHaveBeenCalledTimes(40);
+    for (const connectionId of ['connection-1', 'connection-2']) {
+      const deliveredStates = appWebSockets.send.mock.calls
+        .filter(([call]) => call.connectionId === connectionId)
+        .map(([call]) => JSON.parse(call.message).data);
+      expect(deliveredStates).toEqual(states);
+    }
+  });
+
   it('uses pre-resolved direct-message recipients without repeating the connection lookup', async () => {
     const appWebSockets = {
       send: jest.fn().mockResolvedValue(undefined)

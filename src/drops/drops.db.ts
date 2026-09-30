@@ -1,3 +1,7 @@
+import {
+  recordWebSocketEvent,
+  withWebSocketMutation
+} from '@/websocket-outbox/outbox.db';
 import { PushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import {
@@ -3883,27 +3887,47 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     }: { drop_id: string; booster_id: string; wave_id: string },
     ctx: RequestContext
   ) {
-    await this.db.execute(
-      `insert into ${DROP_BOOSTS_TABLE} (drop_id, booster_id, wave_id, boosted_at) values (:drop_id, :booster_id, :wave_id, :boosted_at) on duplicate key update booster_id = values(booster_id)`,
-      {
-        drop_id,
-        booster_id,
-        boosted_at: Time.currentMillis(),
-        wave_id
-      },
-      { wrappedConnection: ctx.connection }
-    );
+    return withWebSocketMutation(this.db, ctx, async (ctx) => {
+      const mutationResult = await (async () => {
+        await this.db.execute(
+          `insert into ${DROP_BOOSTS_TABLE} (drop_id, booster_id, wave_id, boosted_at) values (:drop_id, :booster_id, :wave_id, :boosted_at) on duplicate key update booster_id = values(booster_id)`,
+          {
+            drop_id,
+            booster_id,
+            boosted_at: Time.currentMillis(),
+            wave_id
+          },
+          { wrappedConnection: ctx.connection }
+        );
+      })();
+      await recordWebSocketEvent(
+        { type: 'drop', dropId: drop_id, updateType: 'DROP_UPDATE' },
+        ctx,
+        this.db
+      );
+      return mutationResult;
+    });
   }
 
   async deleteDropBoost(
     { drop_id, booster_id }: { drop_id: string; booster_id: string },
     ctx: RequestContext
   ) {
-    await this.db.execute(
-      `delete from ${DROP_BOOSTS_TABLE} where drop_id = :drop_id and booster_id = :booster_id`,
-      { drop_id, booster_id },
-      { wrappedConnection: ctx.connection }
-    );
+    return withWebSocketMutation(this.db, ctx, async (ctx) => {
+      const mutationResult = await (async () => {
+        await this.db.execute(
+          `delete from ${DROP_BOOSTS_TABLE} where drop_id = :drop_id and booster_id = :booster_id`,
+          { drop_id, booster_id },
+          { wrappedConnection: ctx.connection }
+        );
+      })();
+      await recordWebSocketEvent(
+        { type: 'drop', dropId: drop_id, updateType: 'DROP_UPDATE' },
+        ctx,
+        this.db
+      );
+      return mutationResult;
+    });
   }
 
   async getDropBoosts(
@@ -3995,17 +4019,28 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<boolean> {
-    ctx.timer?.start(`${this.constructor.name}->updateHideLinkPreview`);
-    const result = await this.db.execute(
-      `update ${DROPS_TABLE}
+    return withWebSocketMutation(this.db, ctx, async (ctx) => {
+      const mutationResult = await (async () => {
+        ctx.timer?.start(`${this.constructor.name}->updateHideLinkPreview`);
+        const result = await this.db.execute(
+          `update ${DROPS_TABLE}
        set hide_link_preview = :hide_link_preview
        where id = :drop_id
          and not (hide_link_preview <=> :hide_link_preview)`,
-      { drop_id, hide_link_preview },
-      { wrappedConnection: ctx.connection }
-    );
-    ctx.timer?.stop(`${this.constructor.name}->updateHideLinkPreview`);
-    return this.db.getAffectedRows(result) > 0;
+          { drop_id, hide_link_preview },
+          { wrappedConnection: ctx.connection }
+        );
+        ctx.timer?.stop(`${this.constructor.name}->updateHideLinkPreview`);
+        return this.db.getAffectedRows(result) > 0;
+      })();
+      if (mutationResult)
+        await recordWebSocketEvent(
+          { type: 'drop', dropId: drop_id, updateType: 'DROP_UPDATE' },
+          ctx,
+          this.db
+        );
+      return mutationResult;
+    });
   }
 
   async getDropAuthorHandle(

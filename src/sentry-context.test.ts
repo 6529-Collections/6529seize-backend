@@ -7,11 +7,34 @@ jest.mock('@sentry/serverless', () => ({
 import * as Sentry from '@sentry/serverless';
 import { captureException, wrapLambdaHandler } from './sentry.context';
 import type { Context } from 'aws-lambda';
+import { getLambdaRemainingTime } from './lambda-deadline';
 import { BadRequestException, CustomApiCompliantException } from './exceptions';
 
 describe('Sentry context', () => {
   const originalDsn = process.env.SENTRY_DSN;
   const originalFunction = process.env.AWS_LAMBDA_FUNCTION_NAME;
+
+  it('keeps live remaining-time budgets isolated between asynchronous invocations', async () => {
+    delete process.env.SENTRY_DSN;
+    const wrapped = wrapLambdaHandler(async () => {
+      await Promise.resolve();
+      return getLambdaRemainingTime();
+    });
+    const results = await Promise.all([
+      wrapped(
+        {},
+        { getRemainingTimeInMillis: () => 2_000 } as Context,
+        jest.fn()
+      ),
+      wrapped(
+        {},
+        { getRemainingTimeInMillis: () => 4_000 } as Context,
+        jest.fn()
+      )
+    ]);
+    expect(results).toEqual([2_000, 4_000]);
+    expect(getLambdaRemainingTime()).toBe(Infinity);
+  });
 
   afterEach(() => {
     jest.clearAllMocks();

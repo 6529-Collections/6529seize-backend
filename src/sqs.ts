@@ -63,15 +63,27 @@ export class SQS {
     message,
     queueName,
     messageGroupId,
-    delaySeconds
+    delaySeconds,
+    abortSignal
   }: {
     message: any;
     queueName: string;
     messageGroupId?: string;
     delaySeconds?: number;
+    abortSignal?: AbortSignal;
   }) {
+    abortSignal?.throwIfAborted();
     const queueUrl = await this.getQueueUrl(queueName);
-    await this.send({ message, queue: queueUrl, messageGroupId, delaySeconds });
+    // Queue URL lookup is shared with other callers; do not cancel it, but never
+    // start a write after this caller's budget expired during the lookup.
+    abortSignal?.throwIfAborted();
+    await this.send({
+      message,
+      queue: queueUrl,
+      messageGroupId,
+      delaySeconds,
+      abortSignal
+    });
   }
 
   private async getQueueUrl(queueName: string): Promise<string> {

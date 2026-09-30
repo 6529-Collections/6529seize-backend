@@ -638,6 +638,18 @@
         "lambda-errors",
         "lambda-throttles"
       ]
+    },
+    {
+      "service": "websocketOutboundHandler",
+      "region": "eu-west-1",
+      "functions": [
+        "websocketOutboundHandler"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
     }
   ],
   "supplementalSource": "ops/monitoring/platform-functions.json",
