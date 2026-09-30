@@ -117,14 +117,88 @@ test('duplicate SQS receipts send once; repeated fingerprints yield a durable su
 });
 test('same generic fingerprint with different causes or retry states forms separate groups', async () => {
   const h = harness();
-  const first = { ...alert, diagnostic: { category: 'HTTP_ERROR' as const,
-    httpStatus: 404, recovery: { state: 'unknown' as const } } };
-  const second = { ...alert, eventId: 'other', diagnostic: { category: 'ACCESS_DENIED' as const,
-    httpStatus: 403, recovery: { state: 'terminal' as const } } };
-  await processWork({ kind: 'alert', alert: first }, 'one', h.store, h.transport, 300);
-  await processWork({ kind: 'alert', alert: second }, 'two', h.store, h.transport, 301);
+  const first = {
+    ...alert,
+    diagnostic: {
+      category: 'HTTP_ERROR' as const,
+      httpStatus: 404,
+      recovery: { state: 'unknown' as const }
+    }
+  };
+  const second = {
+    ...alert,
+    eventId: 'other',
+    diagnostic: {
+      category: 'ACCESS_DENIED' as const,
+      httpStatus: 403,
+      recovery: { state: 'terminal' as const }
+    }
+  };
+  await processWork(
+    { kind: 'alert', alert: first },
+    'one',
+    h.store,
+    h.transport,
+    300
+  );
+  await processWork(
+    { kind: 'alert', alert: second },
+    'two',
+    h.store,
+    h.transport,
+    301
+  );
   assert.equal(h.groups.size, 2);
   assert.equal(h.sent.length, 2);
+});
+test('retry attempts with the same cause and state group without copying first-attempt details into the digest', async () => {
+  const h = harness();
+  const diagnostic = {
+    category: 'THROTTLED' as const,
+    operation: 'NFT_REFRESH',
+    resource: 'ethereum:0x1111111111111111111111111111111111111111:1',
+    httpStatus: 429,
+    recovery: {
+      state: 'pending' as const,
+      attempt: 1,
+      maxAttempts: 5,
+      nextAttemptAt: '2026-09-12T00:06:00Z'
+    }
+  };
+  await processWork(
+    { kind: 'alert', alert: { ...alert, diagnostic } },
+    'one',
+    h.store,
+    h.transport,
+    300
+  );
+  await processWork(
+    {
+      kind: 'alert',
+      alert: {
+        ...alert,
+        eventId: 'second',
+        diagnostic: {
+          ...diagnostic,
+          recovery: {
+            ...diagnostic.recovery,
+            attempt: 2,
+            nextAttemptAt: '2026-09-12T00:07:00Z'
+          }
+        }
+      }
+    },
+    'two',
+    h.store,
+    h.transport,
+    301
+  );
+  assert.equal(h.groups.size, 1);
+  assert.equal(h.sent.length, 1);
+  await processWork(h.scheduled[0]!, 'digest', h.store, h.transport, 605);
+  const digest = JSON.stringify(h.sent[1]);
+  assert.match(digest, /"value":"2"/);
+  assert.doesNotMatch(digest, /1 of 5|Pending at/);
 });
 test('a failed send retries in its original bucket without double-counting', async () => {
   const h = harness();

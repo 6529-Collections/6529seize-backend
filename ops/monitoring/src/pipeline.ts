@@ -142,8 +142,18 @@ async function execute(
   // Older producers can reuse a generic fingerprint for unrelated causes.
   // Include the validated presentation context so a digest never attributes
   // the first item's cause or retry state to another item.
-  const presentation = alert.diagnostic
-    ? `:${hash(JSON.stringify(alert.diagnostic))}`
+  const d = alert.diagnostic;
+  const presentation = d
+    ? `:${hash(
+        JSON.stringify([
+          d.category,
+          d.operation ?? '',
+          d.provider ?? '',
+          d.httpStatus ?? '',
+          d.resource ?? '',
+          d.recovery?.state ?? ''
+        ])
+      )}`
     : '';
   const key = `group:${alert.environment}:${alert.fingerprint}${presentation}:${bucket}`;
   const group = await traceDispatch('GROUP', () => store.group(key, id, alert));

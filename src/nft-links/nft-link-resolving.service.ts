@@ -89,6 +89,16 @@ function stopsImmediateRetry(
     error.scopeHash === nftPageRetryScope(canonical)
   );
 }
+function persistedPageRetry(
+  entity: NftLinkEntity,
+  canonical: CanonicalLink,
+  error: unknown,
+  attemptedAt: number
+): ReturnType<typeof nextNftPageRetryState> | null {
+  if (!(error instanceof RequiredNftPageNotFoundError)) return null;
+  if (error.scopeHash !== nftPageRetryScope(canonical)) return null;
+  return nextNftPageRetryState(entity, error.scopeHash, attemptedAt);
+}
 
 export class NftLinkResolvingService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -307,11 +317,12 @@ export class NftLinkResolvingService {
     // Preserve cached data and release the processing lock, just as for an
     // exhausted retry count. A later refresh can try again.
     const attemptedAt = Time.currentMillis();
-    const retryState =
-      lastError instanceof RequiredNftPageNotFoundError &&
-      lastError.scopeHash === nftPageRetryScope(canonical)
-        ? nextNftPageRetryState(entity, lastError.scopeHash, attemptedAt)
-        : null;
+    const retryState = persistedPageRetry(
+      entity,
+      canonical,
+      lastError,
+      attemptedAt
+    );
     await nftLinkResolutionStage('persist_failure', () =>
       this.nftLinksDb.updateWithFailure(
         {

@@ -81,7 +81,8 @@ function validDate(value: unknown): string | undefined {
 function parseRecovery(input: unknown): Diagnostic['recovery'] {
   const value = record(input);
   const states = ['pending', 'exhausted', 'terminal', 'unknown'] as const;
-  if (!states.some((state) => state === value.state)) return undefined;
+  if (!states.includes(value.state as (typeof states)[number]))
+    return undefined;
   const attempt = positiveInt(value.attempt);
   const maxAttempts = positiveInt(value.maxAttempts);
   const pending =
@@ -310,7 +311,10 @@ interface AlertField {
   value: string;
   inline?: boolean;
 }
-function diagnosticFields(d: Diagnostic | undefined): AlertField[] {
+function diagnosticFields(
+  d: Diagnostic | undefined,
+  count: number
+): AlertField[] {
   if (!d) return [];
   const fields: AlertField[] = [];
   if (d.resource)
@@ -319,23 +323,23 @@ function diagnosticFields(d: Diagnostic | undefined): AlertField[] {
         d.operation === 'NFT_REFRESH' ? 'Affected NFT' : 'Affected resource',
       value: d.resource
     });
-  if (d.sdkAttempts)
+  if (count === 1 && d.sdkAttempts)
     fields.push({
       name: 'SDK attempts completed',
       value: String(d.sdkAttempts)
     });
   const recovery = d.recovery;
-  if (recovery?.attempt) {
+  if (count === 1 && recovery?.attempt) {
     let value = String(recovery.attempt);
     if (recovery.maxAttempts) value += ` of ${recovery.maxAttempts}`;
     fields.push({ name: 'Attempt', value });
   }
-  if (recovery?.nextAttemptAt)
+  if (count === 1 && recovery?.nextAttemptAt)
     fields.push({
       name: 'Retry',
       value: `Pending at ${recovery.nextAttemptAt}`
     });
-  if (recovery?.nextEligibleAt)
+  if (count === 1 && recovery?.nextEligibleAt)
     fields.push({
       name: 'Retry',
       value: `Eligible after ${recovery.nextEligibleAt} when requested; no attempt scheduled`
@@ -345,13 +349,15 @@ function diagnosticFields(d: Diagnostic | undefined): AlertField[] {
 function alertFields(alert: Alert, count: number): AlertField[] {
   const fields: AlertField[] = [
     { name: 'Occurrences', value: String(count), inline: true },
-    ...diagnosticFields(alert.diagnostic),
+    ...diagnosticFields(alert.diagnostic, count),
     ...alarmFields(alert.alarm)
   ];
   if (alert.condition)
     fields.push({ name: 'Condition', value: alert.condition });
-  fields.push({ name: 'Event', value: alert.eventId });
-  fields.push({ name: 'Fingerprint', value: alert.fingerprint });
+  fields.push(
+    { name: 'Event', value: alert.eventId },
+    { name: 'Fingerprint', value: alert.fingerprint }
+  );
   if (alert.correlationId)
     fields.push({ name: 'Correlation', value: alert.correlationId });
   if (alert.release) fields.push({ name: 'Release', value: alert.release });

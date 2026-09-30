@@ -62,6 +62,23 @@ function httpStatus(value: unknown): number | undefined {
     ? status
     : undefined;
 }
+function websocketCategory(value: unknown): FailureCategory | undefined {
+  switch (value) {
+    case 'THROTTLED':
+      return 'THROTTLED';
+    case 'FORBIDDEN':
+      return 'ACCESS_DENIED';
+    case 'SERVICE_ERROR':
+      return 'HTTP_ERROR';
+    case 'TRANSPORT_ERROR':
+      return 'NETWORK';
+    case 'INVALID_REQUEST':
+    case 'PAYLOAD_TOO_LARGE':
+      return 'VALIDATION';
+    default:
+      return undefined;
+  }
+}
 /** Fixed categories only: raw exception messages and logger arguments are never copied. */
 function inferredDiagnostic(
   component: string,
@@ -72,6 +89,7 @@ function inferredDiagnostic(
     (value) => property(value, 'code') === 'WS_OUTBOUND_SEND_FAILED'
   );
   const wsStatus = property(ws, 'http_status');
+  const wsCategory = websocketCategory(property(ws, 'error_category'));
   const status =
     httpStatus(error) ??
     (typeof wsStatus === 'number' &&
@@ -86,6 +104,7 @@ function inferredDiagnostic(
   if (status === 429) category = 'THROTTLED';
   else if (status === 401 || status === 403) category = 'ACCESS_DENIED';
   else if (status) category = 'HTTP_ERROR';
+  else if (wsCategory) category = wsCategory;
   else if (
     name === 'TimeoutError' ||
     name === 'RequestTimeout' ||
@@ -128,7 +147,7 @@ function safeRecovery(
 ): OperationalDiagnostic['recovery'] {
   if (!input) return undefined;
   const states = ['pending', 'exhausted', 'terminal', 'unknown'] as const;
-  if (!states.some((state) => state === input.state)) return undefined;
+  if (!states.includes(input.state)) return undefined;
   const attempt = boundedInt(input.attempt, 1, 1000);
   const maxAttempts = boundedInt(input.maxAttempts, 1, 1000);
   let state = input.state;
