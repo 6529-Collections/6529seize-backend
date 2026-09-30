@@ -21,6 +21,10 @@ export class ApiOgMetadataDrop {
     'id': string;
     'serial_no': number;
     'drop_type': ApiDropMainType;
+    /**
+    * Original drop publication time in Unix milliseconds, for CHAT and SUBMISSION drops.
+    */
+    'created_at': number;
     'submission_status'?: ApiSubmissionDropStatus;
     'submitted_at'?: number | null;
     'won_at'?: number | null;
@@ -54,6 +58,12 @@ export class ApiOgMetadataDrop {
             "baseName": "drop_type",
             "type": "ApiDropMainType",
             "format": ""
+        },
+        {
+            "name": "created_at",
+            "baseName": "created_at",
+            "type": "number",
+            "format": "int64"
         },
         {
             "name": "submission_status",

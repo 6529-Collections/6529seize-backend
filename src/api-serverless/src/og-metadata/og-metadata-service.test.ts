@@ -525,6 +525,7 @@ describe('OgMetadataService', () => {
         serial_no: 42,
         drop_type: ApiDropMainType.Submission,
         submission_status: ApiSubmissionDropStatus.Active,
+        created_at: 1,
         submitted_at: 1,
         won_at: null,
         is_additional_action_promised: true,
@@ -598,6 +599,52 @@ describe('OgMetadataService', () => {
     );
   });
 
+  it.each([ApiDropMainType.Chat, ApiDropMainType.Submission])(
+    'returns the original publication timestamp for %s drops',
+    async (dropType) => {
+      const { service, identityFetcher, dropV2Service } = makeService();
+      const createdAt = 1790634155501;
+      const dropWithWave = makeDropWithWave(UUID_DROP_ID, 42);
+      dropWithWave.drop.created_at = createdAt;
+      dropWithWave.drop.drop_type = dropType;
+      if (dropType === ApiDropMainType.Chat) {
+        dropWithWave.drop.submission_context = undefined;
+      }
+      dropV2Service.findWithWaveByIdOrThrow.mockResolvedValue(dropWithWave);
+      mockAuthorProfile(identityFetcher);
+
+      await expect(
+        service.getDropMetadata(UUID_DROP_ID, {})
+      ).resolves.toMatchObject({
+        drop: {
+          created_at: createdAt,
+          submitted_at:
+            dropType === ApiDropMainType.Submission ? createdAt : null
+        }
+      });
+    }
+  );
+
+  it.each(['private', 'moderated', 'deleted'])(
+    'does not expose metadata when the drop service denies a %s drop',
+    async () => {
+      const { service, identityFetcher, dropV2Service } = makeService();
+      const ctx = { timer: undefined };
+      dropV2Service.findWithWaveByIdOrThrow.mockRejectedValue(
+        new NotFoundException('Drop not found')
+      );
+
+      await expect(service.getDropMetadata(UUID_DROP_ID, ctx)).rejects.toThrow(
+        NotFoundException
+      );
+      expect(dropV2Service.findWithWaveByIdOrThrow).toHaveBeenCalledWith(
+        UUID_DROP_ID,
+        ctx
+      );
+      expect(identityFetcher.getOverviewsByIds).not.toHaveBeenCalled();
+    }
+  );
+
   it('adds winner decision time for winner submission drops', async () => {
     const {
       service,
@@ -628,6 +675,7 @@ describe('OgMetadataService', () => {
         id: 'winner-drop',
         serial_no: 44,
         submission_status: ApiSubmissionDropStatus.Winner,
+        created_at: 1,
         submitted_at: 1,
         won_at: 1234567890,
         is_additional_action_promised: true
