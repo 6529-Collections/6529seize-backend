@@ -1,3 +1,5 @@
+import { IdentityMutesDb } from './identity-mutes.db';
+import { SqlExecutor } from '@/sql-executor';
 import { DbPoolName } from '@/db-query.options';
 import { IdentityMutesApiService } from './identity-mutes.api.service';
 
@@ -190,3 +192,46 @@ describe('IdentityMutesApiService DM unread synchronization', () => {
     ).not.toHaveBeenCalled();
   });
 });
+
+it.each(['muteIdentity', 'unmuteIdentity'] as const)(
+  '%s versions all affected offline reader waves through the real mutation repository',
+  async (method) => {
+    const { service, identityMutesDb, wsListenersNotifier, wavesApiDb, ctx } =
+      createService();
+    const connection = { connection: {} };
+    const execute = jest.fn(async (sql: string) =>
+      sql.includes('select r.wave_id')
+        ? [{ wave_id: 'wave-1' }, { wave_id: 'wave-2' }]
+        : []
+    );
+    const repository = new IdentityMutesDb(
+      () => ({ execute }) as unknown as SqlExecutor
+    );
+    identityMutesDb[method].mockImplementation((pair, context) =>
+      repository[method](pair, context)
+    );
+    wsListenersNotifier.findConnectedNotificationRecipients.mockResolvedValue(
+      []
+    );
+    await service[method]('muted-handle', { ...ctx, connection } as never);
+    const increments = execute.mock.calls.filter(([sql]) =>
+      sql.includes('set unread_state_version = unread_state_version + 1')
+    );
+    expect(increments).toHaveLength(2);
+    for (const waveId of ['wave-1', 'wave-2']) {
+      expect(execute).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'set unread_state_version = unread_state_version + 1'
+        ),
+        { readerId: 'muter-1', waveId },
+        { wrappedConnection: connection }
+      );
+    }
+    expect(
+      wavesApiDb.incrementDmUnreadStateVersionsForReaderWaves
+    ).not.toHaveBeenCalled();
+    expect(
+      wsListenersNotifier.notifyAboutDmUnreadStateChanged
+    ).not.toHaveBeenCalled();
+  }
+);
