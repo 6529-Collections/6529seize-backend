@@ -15,12 +15,13 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
       const timer = new Timer('WAVE_LEADERBOARD_SNAPSHOTTER_KOOP');
       try {
         await runCompetitionWorkerTasks([
-          () =>
-            nativeCompetitionRuntimeService.refreshNativeLeaderboards(timer),
+          // Preserve timely legacy leaderboard updates even when the native
+          // competition scan consumes the rest of the invocation.
           () =>
             waveLeaderboardCalculationService.refreshLeaderboardEntriesForDropsInNeed(
               timer
-            )
+            ),
+          () => nativeCompetitionRuntimeService.refreshNativeLeaderboards(timer)
         ]);
       } finally {
         logger.info(`Finished executing ${timer.getReport()}`);
