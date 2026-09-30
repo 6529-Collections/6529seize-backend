@@ -625,25 +625,22 @@ describe('OgMetadataService', () => {
     }
   );
 
-  it.each(['private', 'moderated', 'deleted'])(
-    'does not expose metadata when the drop service denies a %s drop',
-    async () => {
-      const { service, identityFetcher, dropV2Service } = makeService();
-      const ctx = { timer: undefined };
-      dropV2Service.findWithWaveByIdOrThrow.mockRejectedValue(
-        new NotFoundException('Drop not found')
-      );
+  it('does not expose metadata when the existing visibility lookup denies a drop', async () => {
+    const { service, identityFetcher, dropV2Service } = makeService();
+    const ctx = { timer: undefined };
+    dropV2Service.findWithWaveByIdOrThrow.mockRejectedValue(
+      new NotFoundException('Drop not found')
+    );
 
-      await expect(service.getDropMetadata(UUID_DROP_ID, ctx)).rejects.toThrow(
-        NotFoundException
-      );
-      expect(dropV2Service.findWithWaveByIdOrThrow).toHaveBeenCalledWith(
-        UUID_DROP_ID,
-        ctx
-      );
-      expect(identityFetcher.getOverviewsByIds).not.toHaveBeenCalled();
-    }
-  );
+    await expect(service.getDropMetadata(UUID_DROP_ID, ctx)).rejects.toThrow(
+      NotFoundException
+    );
+    expect(dropV2Service.findWithWaveByIdOrThrow).toHaveBeenCalledWith(
+      UUID_DROP_ID,
+      ctx
+    );
+    expect(identityFetcher.getOverviewsByIds).not.toHaveBeenCalled();
+  });
 
   it('adds winner decision time for winner submission drops', async () => {
     const {
