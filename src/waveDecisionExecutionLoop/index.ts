@@ -16,9 +16,11 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
       const timer = new Timer('WAVE_DECISION_EXECUTION_LOOP');
       try {
         await runCompetitionWorkerTasks([
+          // Main Stage and other existing waves must not wait behind the
+          // potentially unbounded native competition scan.
+          () => waveDecisionsService.createMissingDecisionsForAllWaves(timer),
           () =>
             nativeCompetitionRuntimeService.processDueCompetitions({ timer }),
-          () => waveDecisionsService.createMissingDecisionsForAllWaves(timer),
           () => competitionEventDispatcher.dispatchPending({ timer })
         ]);
       } finally {

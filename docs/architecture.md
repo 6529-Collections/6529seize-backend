@@ -1000,7 +1000,11 @@ and historical deletion tombstones. Frozen decision records remain internal.
 Chat purge preserves competition submissions; wave deletion rejects native history.
 
 The existing leaderboard and decision Lambdas add an explicitly routed native
-engine. Native vote history, immutable decision voter snapshots and award
+engine. Both workers finish legacy wave processing before starting the native
+scan, so Main Stage decisions and leaderboard refreshes cannot be delayed by a
+large native backlog consuming the invocation. A failure in either engine is
+reported only after the other independent tasks have been attempted.
+Native vote history, immutable decision voter snapshots and award
 rows remain separate from legacy tables. Per-entry aggregate votes must fit the
 safe-integer API range; an overflowing mutation rolls back its transaction.
 Time-weighted scores and threshold crossings use exact integer integrals before
