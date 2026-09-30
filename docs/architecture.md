@@ -29,6 +29,23 @@ The resizer's HTTP API uses AWS_PROXY payload 1.0 without request templates;
 request bodies remain inside the HTTP event envelope and cannot become this
 top-level operator payload.
 
+## Active TDH voting discovery
+
+`GET /v2/waves/active-votes` is an optional-auth read in the existing API Lambda.
+It lists RANK/APPROVE waves using TDH, TDH_PLUS_XTDH or CARD_SET_TDH. Shared
+read-context group eligibility and wave/parent visibility apply before count and
+pagination; DMs and children of DM parents are excluded, even when readable.
+Legacy voting windows, next decision state and
+APPROVE winner limits determine whether voting is active. Results sort by the
+nearest voting end or next decision, with open-ended votes last. This endpoint
+does not assert that the current viewer can vote, and does not filter by joined,
+pinned or recommendation status.
+
+The endpoint reads existing wave/decision tables without a new cache, worker or
+migration. Deploy the API before frontend clients that use active-vote discovery.
+The additive competition foundation does not change this endpoint's legacy
+voting source of truth.
+
 ## Wave eligibility
 
 The maintained direct eligibility implementation serves profile-to-groups reads;
