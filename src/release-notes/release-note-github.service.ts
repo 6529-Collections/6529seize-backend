@@ -531,7 +531,12 @@ export class ReleaseNoteGitHubService {
       run_id: request.run_id,
       previous_sha: resolvedPreviousSha,
       current_sha: request.sha,
-      compared_commit_count: comparedCommits.length,
+      ...(desktopHistory
+        ? {
+            first_parent_commit_count: desktopHistory.commits.length,
+            history_truncated: desktopHistory.truncated
+          }
+        : { compared_commit_count: comparedCommits.length }),
       discovery_commit_count: commits.length,
       mainline_discovery: mainlineRelease
     });
@@ -832,7 +837,7 @@ export class ReleaseNoteGitHubService {
         );
       }
       const parents = commit.parents ?? [];
-      // Exclude the merge that brought the previous release back into main.
+      // Both exit paths are base-exclusive: omit the baseline itself and its merge-back boundary.
       if (parents.slice(1).some((parent) => parent.sha === previousSha)) {
         return { commits: commits.reverse(), truncated: false };
       }
