@@ -175,10 +175,10 @@ export class CompetitionService {
       ctx
     );
     const now = Time.currentMillis();
-    const legacy = records.find(
+    const hasLegacy = records.some(
       (record) => record.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER
     );
-    const legacySummary = legacy
+    const legacySummary = hasLegacy
       ? await this.repository.getLegacyDecisionSummary(waveId, ctx)
       : null;
     const inputs = records.flatMap((record) => {

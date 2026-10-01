@@ -184,15 +184,20 @@ export function normalizeDefaultCompetition(
     phase: start !== null && now < start ? 'upcoming' : 'active',
     boundaries: [
       ...periods.starts,
-      ...periods.ends.map((end) =>
-        end === null ? null : end + (periods.inclusiveEnd ? 1 : 0)
-      )
+      ...periods.ends.map((end) => {
+        if (end === null) return null;
+        return end + (periods.inclusiveEnd ? 1 : 0);
+      })
     ].filter((value): value is number => value !== null && value > now)
   };
 }
 
-const compareIds = (left: string, right: string) =>
-  left < right ? -1 : left > right ? 1 : 0;
+type SortValue = string | number;
+const compareValues = (left: SortValue, right: SortValue) => {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+};
 
 export function selectDefaultCompetition(
   inputs: readonly SelectionInput[],
@@ -211,8 +216,7 @@ export function selectDefaultCompetition(
         ? -(right.end ?? -Infinity)
         : (right.start ?? -Infinity);
     return (
-      (leftTime < rightTime ? -1 : leftTime > rightTime ? 1 : 0) ||
-      compareIds(left.id, right.id)
+      compareValues(leftTime, rightTime) || compareValues(left.id, right.id)
     );
   });
   const boundaries = inputs

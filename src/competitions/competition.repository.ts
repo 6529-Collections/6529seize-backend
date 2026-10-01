@@ -344,7 +344,7 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<{ last_decision_time: number | null; decisions_done: number }> {
     const row = await this.db.oneOrNull<{
-      last_decision_time: number | string | null;
+      last_decision_time: CompetitionRecord['ended_at'];
       decisions_done: number | string;
     }>(
       `select max(decision_time) as last_decision_time, count(*) as decisions_done from ${WAVES_DECISIONS_TABLE} where wave_id = :waveId`,
