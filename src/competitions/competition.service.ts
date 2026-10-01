@@ -54,6 +54,11 @@ import { legacyCompetitionBaselineRepository } from '@/competitions/legacy-compe
 import { loadLegacyParityCandidate } from '@/competitions/legacy-parity-snapshot';
 import { collectCompetitionPages } from '@/competitions/competition-page';
 import { isCompetitionDecisionPending } from '@/competitions/competition-decision-gate';
+import {
+  normalizeDefaultCompetition,
+  selectDefaultCompetition
+} from '@/competitions/default-competition';
+import { ApiDefaultCompetition } from '@/api/generated/models/ApiDefaultCompetition';
 
 export type CompetitionPermissions = {
   readonly view: true;
@@ -155,6 +160,38 @@ export class CompetitionService {
           administer && this.features.isNativeCompetitionWritesEnabled()
       }
     };
+  }
+
+  public async getDefaultCompetition(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<ApiDefaultCompetition> {
+    this.assertUnifiedReadsEnabled();
+    // Visibility (including parent visibility) is checked before inspecting any records.
+    // Competitions inherit wave visibility; action groups never filter this selection.
+    const { wave } = await this.getVisibleWave(waveId, ctx);
+    const records = await this.repository.listDefaultCompetitionRecords(
+      waveId,
+      ctx
+    );
+    const now = Time.currentMillis();
+    const legacy = records.find(
+      (record) => record.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER
+    );
+    const legacySummary = legacy
+      ? await this.repository.getLegacyDecisionSummary(waveId, ctx)
+      : null;
+    const inputs = records.flatMap((record) => {
+      const input = normalizeDefaultCompetition(
+        record,
+        wave,
+        now,
+        legacySummary?.last_decision_time ?? null,
+        legacySummary?.decisions_done ?? 0
+      );
+      return input ? [input] : [];
+    });
+    return selectDefaultCompetition(inputs, now);
   }
 
   public async listCompetitions(

@@ -11,6 +11,7 @@ import { NotFoundException } from '@/exceptions';
 import { aWave } from '@/tests/fixtures/wave.fixture';
 import { appFeatures } from '@/app-features';
 import { assertCompetitionOpen } from '@/api/competitions/competition-command-access';
+import type { DefaultCompetitionRecord } from '@/competitions/default-competition';
 import { NativeCompetitionReader } from '@/competitions/native-competition.reader';
 
 function nativeRecord(id: string, waveId: string, createdAt: number) {
@@ -97,6 +98,10 @@ describe('CompetitionService', () => {
   );
   const repository = {
     listCompetitionRecordsForWave: jest.fn(),
+    listDefaultCompetitionRecords: jest.fn(),
+    getLegacyDecisionSummary: jest
+      .fn()
+      .mockResolvedValue({ last_decision_time: null, decisions_done: 0 }),
     findCompetitionRecordById: jest.fn(),
     parseCompetitionRecord: jest.fn((record) => record),
     findCapabilities: jest.fn().mockResolvedValue([]),
@@ -138,6 +143,7 @@ describe('CompetitionService', () => {
     groupsService.getGroupsUserIsEligibleFor.mockResolvedValue([]);
     groupsService.getGroupsUserIsEligibleForByIds.mockResolvedValue([]);
     repository.listCompetitionRecordsForWave.mockResolvedValue([first, second]);
+    repository.listDefaultCompetitionRecords.mockResolvedValue([first, second]);
     repository.findCompetitionRecordById.mockImplementation(async (id) =>
       [first, second].find((record) => record.id === id)
     );
@@ -157,6 +163,55 @@ describe('CompetitionService', () => {
       has_more: false,
       next_cursor: null
     });
+  });
+
+  it('resolves the default over every record without hydrating competitions or resolving action groups', async () => {
+    const records: DefaultCompetitionRecord[] = Array.from(
+      { length: 150 },
+      (_, index) => ({
+        ...nativeRecord(String(index), wave.id, index),
+        participation_starts_at: Date.now() + 100000,
+        voting_starts_at: Date.now() + 100000,
+        participation_ends_at: Date.now() + 200000,
+        voting_ends_at: Date.now() + 200000
+      })
+    );
+    records.push({
+      ...first,
+      participation_starts_at: null,
+      voting_starts_at: null,
+      participation_ends_at: null,
+      voting_ends_at: null
+    });
+    repository.listDefaultCompetitionRecords.mockResolvedValue(records);
+    await expect(
+      service.getDefaultCompetition(wave.id, {})
+    ).resolves.toMatchObject({ competition_id: first.id });
+    expect(repository.findCompetitionRecordById).not.toHaveBeenCalled();
+    expect(repository.findCapabilities).not.toHaveBeenCalled();
+    expect(
+      groupsService.getGroupsUserIsEligibleForByIds
+    ).not.toHaveBeenCalled();
+  });
+
+  it('masks unreadable default selection before inspecting records', async () => {
+    wavesDb.findWaveById.mockResolvedValue({
+      ...wave,
+      visibility_group_id: 'hidden'
+    });
+    await expect(
+      service.getDefaultCompetition(wave.id, {})
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(repository.listDefaultCompetitionRecords).not.toHaveBeenCalled();
+  });
+
+  it('excludes drafts even when the viewer administers the wave', async () => {
+    repository.listDefaultCompetitionRecords.mockResolvedValue([
+      { ...first, lifecycle: CompetitionLifecycle.DRAFT }
+    ]);
+    await expect(
+      service.getDefaultCompetition(wave.id, {})
+    ).resolves.toMatchObject({ competition_id: null });
   });
 
   it('returns zero/one/many resources without a current competition projection', async () => {

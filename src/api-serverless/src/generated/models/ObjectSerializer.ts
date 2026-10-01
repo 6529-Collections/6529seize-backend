@@ -341,6 +341,7 @@ export * from '../models/ApiCurationDrop';
 export * from '../models/ApiCurationDropsPage';
 export * from '../models/ApiDecentralizedMediaProtocol';
 export * from '../models/ApiDecentralizedMediaResolution';
+export * from '../models/ApiDefaultCompetition';
 export * from '../models/ApiDeleteEulaConsentRequest';
 export * from '../models/ApiDeleteEulaConsentResponse';
 export * from '../models/ApiDeleteMyWaveChatHistoryResponse';
@@ -1233,6 +1234,7 @@ import { ApiCurationDrop                                   } from '../models/Api
 import { ApiCurationDropsPage } from '../models/ApiCurationDropsPage';
 import { ApiDecentralizedMediaProtocol } from '../models/ApiDecentralizedMediaProtocol';
 import { ApiDecentralizedMediaResolution          } from '../models/ApiDecentralizedMediaResolution';
+import { ApiDefaultCompetition } from '../models/ApiDefaultCompetition';
 import { ApiDeleteEulaConsentRequest } from '../models/ApiDeleteEulaConsentRequest';
 import { ApiDeleteEulaConsentResponse } from '../models/ApiDeleteEulaConsentResponse';
 import { ApiDeleteMyWaveChatHistoryResponse } from '../models/ApiDeleteMyWaveChatHistoryResponse';
@@ -2385,6 +2387,7 @@ let typeMap: {[index: string]: any} = {
     "ApiCurationDrop": ApiCurationDrop,
     "ApiCurationDropsPage": ApiCurationDropsPage,
     "ApiDecentralizedMediaResolution": ApiDecentralizedMediaResolution,
+    "ApiDefaultCompetition": ApiDefaultCompetition,
     "ApiDeleteEulaConsentRequest": ApiDeleteEulaConsentRequest,
     "ApiDeleteEulaConsentResponse": ApiDeleteEulaConsentResponse,
     "ApiDeleteMyWaveChatHistoryResponse": ApiDeleteMyWaveChatHistoryResponse,
