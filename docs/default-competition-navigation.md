@@ -69,3 +69,21 @@ No execution worker, consumer or data cutover changes are required. Existing
 clients tolerate the index and endpoint. Roll back frontend navigation first;
 the old API remains compatible and the index can stay. API rollback must not
 precede frontend rollback while the dependent UI is enabled.
+
+## Review clarifications
+
+All published competitions inherit wave visibility; upcoming dates are already
+part of their readable detail/list contracts. Refresh boundaries include only
+eligible records after that visibility check, never admin-only drafts. Action
+restrictions do not hide published dates or redefine navigation eligibility.
+Native rows with malformed/missing decision configuration are excluded from
+selection rather than guessed complete; other valid records and shared chat stay
+usable. This is data-corruption recovery, not a change to normal lifecycle rules.
+
+Legacy decision summaries deliberately use the same `wave_decisions` count and
+latest timestamp as `wave-decisions.db.ts`'s `wave_decision_counts` CTE and
+`WaveDecisionsService`'s remaining-slots calculation. The table has only wave/time
+columns, with no status/kind field. Approve formalization records one decision
+per accepted winner. Rank records completed schedule executions (including
+zero-winner decisions), which still establish actual completion time. Filtering
+these rows would diverge from the authoritative legacy worker.

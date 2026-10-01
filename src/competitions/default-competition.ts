@@ -33,6 +33,22 @@ type SelectionInput = {
 const date = (value: number | string | null): number | null =>
   value === null ? null : Number(value);
 
+function nativeDecisionPending(
+  config: DefaultCompetitionRecord['decision_config']
+): boolean | null {
+  try {
+    const value: unknown =
+      typeof config === 'string' ? JSON.parse(config) : config;
+    if (value === null || typeof value !== 'object') return null;
+    const next = (value as Record<string, unknown>).next_decision_time;
+    if (next === null) return false;
+    if (typeof next !== 'number' || !Number.isFinite(next)) return null;
+    return true;
+  } catch {
+    return null;
+  }
+}
+
 function timing(
   record: DefaultCompetitionRecord,
   wave: WaveEntity,
@@ -53,19 +69,15 @@ function timing(
           legacyDecisionsDone < Number(wave.max_winners))
     };
   }
-  const decisions =
-    typeof record.decision_config === 'string'
-      ? (JSON.parse(record.decision_config) as {
-          next_decision_time: number | null;
-        })
-      : (record.decision_config as { next_decision_time: number | null });
+  const pending = nativeDecisionPending(record.decision_config);
+  if (pending === null) return null;
   return {
     starts: [
       date(record.participation_starts_at),
       date(record.voting_starts_at)
     ],
     ends: [date(record.participation_ends_at), date(record.voting_ends_at)],
-    pending: decisions.next_decision_time !== null,
+    pending,
     inclusiveEnd: true,
     approveDeciding: record.type === CompetitionType.APPROVE
   };
@@ -102,7 +114,7 @@ function isCompleted(
   legacy: boolean,
   approveQuotaReached: boolean,
   closed: boolean,
-  periods: ReturnType<typeof timing>
+  periods: NonNullable<ReturnType<typeof timing>>
 ): boolean {
   if (!legacy && record.lifecycle === CompetitionLifecycle.ENDED) return true;
   if (!legacy && record.ended_at !== null) return true;
@@ -121,6 +133,8 @@ export function normalizeDefaultCompetition(
   if (!isEligible(record)) return null;
   const legacy = record.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER;
   const periods = timing(record, wave, legacyDecisionsDone);
+  // Unknown decision state cannot safely be ranked as active or completed.
+  if (!periods) return null;
   // A null start means no lower bound, not creation/publication time.
   const start = periods.starts.includes(null)
     ? null

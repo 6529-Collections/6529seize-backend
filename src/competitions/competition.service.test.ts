@@ -189,6 +189,7 @@ describe('CompetitionService', () => {
     ).resolves.toMatchObject({ competition_id: first.id });
     expect(repository.findCompetitionRecordById).not.toHaveBeenCalled();
     expect(repository.findCapabilities).not.toHaveBeenCalled();
+    expect(repository.getLegacyDecisionSummary).not.toHaveBeenCalled();
     expect(
       groupsService.getGroupsUserIsEligibleForByIds
     ).not.toHaveBeenCalled();
@@ -202,6 +203,28 @@ describe('CompetitionService', () => {
     await expect(
       service.getDefaultCompetition(wave.id, {})
     ).rejects.toBeInstanceOf(NotFoundException);
+    expect(repository.listDefaultCompetitionRecords).not.toHaveBeenCalled();
+  });
+
+  it('masks anonymous restricted and missing waves with identical 404 errors', async () => {
+    const getError = async () => {
+      try {
+        await service.getDefaultCompetition(wave.id, {});
+        throw new Error('Expected a masked response');
+      } catch (error) {
+        expect(error).toBeInstanceOf(NotFoundException);
+        const masked = error as NotFoundException;
+        return { status: masked.getStatusCode(), message: masked.message };
+      }
+    };
+    wavesDb.findWaveById.mockResolvedValue({
+      ...wave,
+      visibility_group_id: 'restricted'
+    });
+    const restricted = await getError();
+    wavesDb.findWaveById.mockResolvedValue(null);
+    expect(await getError()).toEqual(restricted);
+    expect(restricted.status).toBe(404);
     expect(repository.listDefaultCompetitionRecords).not.toHaveBeenCalled();
   });
 

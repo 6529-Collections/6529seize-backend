@@ -53,6 +53,15 @@ describeWithSeed(
       expect(plan[0]?.key).toBe('idx_wave_decisions_wave_time');
       expect(plan[0]?.Extra).toContain('Using index');
       await migration.down();
+      const rollbackPlan = await sqlExecutor.execute<{
+        key: string;
+        Extra: string;
+      }>(
+        `explain select max(decision_time), count(*) from ${WAVES_DECISIONS_TABLE} where wave_id = :waveId`,
+        { waveId: 'selected' }
+      );
+      expect(rollbackPlan[0]?.key).toBe('idx_wave_decisions_wave_time');
+      expect(rollbackPlan[0]?.Extra).toContain('Using index');
       await expect(
         repository.getLegacyDecisionSummary('selected', {})
       ).resolves.toMatchObject({ decisions_done: 2 });

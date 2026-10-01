@@ -170,6 +170,18 @@ describe('default competition policy', () => {
 });
 
 describe('default timing normalization', () => {
+  it.each(['{broken', 'null', 'false', '{}', '{"next_decision_time":"bad"}'])(
+    'excludes an invalid native decision config without breaking other candidates (%s)',
+    (decision_config) => {
+      expect(
+        select([record('bad', { decision_config }), record('valid')])
+          .competition_id
+      ).toBe('valid');
+      expect(
+        select([record('bad', { decision_config })]).competition_id
+      ).toBeNull();
+    }
+  );
   it('ignores an archived lifecycle copied onto a still-running legacy mapping', () => {
     expect(
       normalizeDefaultCompetition(
