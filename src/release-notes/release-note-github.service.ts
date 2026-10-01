@@ -516,9 +516,8 @@ export class ReleaseNoteGitHubService {
         request.sha
       ));
     const mainlineRelease = desktopRelease || repoName === FRONTEND_REPO;
-    const commits = desktopHistory
-      ? desktopHistory.commits
-      : repoName === FRONTEND_REPO
+    const commits =
+      repoName === FRONTEND_REPO
         ? getFirstParentReleaseCommits(
             comparedCommits,
             resolvedPreviousSha,
@@ -823,7 +822,8 @@ export class ReleaseNoteGitHubService {
             commit_count: commits.length
           }
         );
-        return { commits: commits.reverse(), truncated: true };
+        commits.reverse();
+        return { commits, truncated: true };
       }
       visited.add(cursor);
       const commit = await this.api<{
@@ -839,7 +839,8 @@ export class ReleaseNoteGitHubService {
       const parents = commit.parents ?? [];
       // Both exit paths are base-exclusive: omit the baseline itself and its merge-back boundary.
       if (parents.slice(1).some((parent) => parent.sha === previousSha)) {
-        return { commits: commits.reverse(), truncated: false };
+        commits.reverse();
+        return { commits, truncated: false };
       }
       commits.push({
         sha: commit.sha,
@@ -854,7 +855,8 @@ export class ReleaseNoteGitHubService {
       }
       cursor = firstParent;
     }
-    return { commits: commits.reverse(), truncated: false };
+    commits.reverse();
+    return { commits, truncated: false };
   }
 
   private async getPullRequests(
