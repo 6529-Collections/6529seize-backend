@@ -758,6 +758,13 @@ export class ReleaseNoteGitHubService {
           totalCommits > MAX_RELEASE_COMMITS) ||
         commits.length + pageCommits.length > MAX_RELEASE_COMMITS
       ) {
+        if (getRepoName(repository) === CORE_REPO) {
+          return this.getDesktopFirstParentHistory(
+            repository,
+            previousSha,
+            currentSha
+          );
+        }
         throw new NonRetryableReleaseNoteError(
           `Release-note commit range exceeds ${MAX_RELEASE_COMMITS} commits`
         );
@@ -776,6 +783,52 @@ export class ReleaseNoteGitHubService {
     throw new NonRetryableReleaseNoteError(
       `Release comparison did not complete within ${MAX_COMPARE_PAGES * PAGE_SIZE} commits`
     );
+  }
+
+  private async getDesktopFirstParentHistory(
+    repository: string,
+    previousSha: string,
+    currentSha: string
+  ): Promise<GitHubCommit[]> {
+    const commits: GitHubCommit[] = [];
+    const visited = new Set<string>();
+    let cursor = currentSha;
+    while (cursor !== previousSha) {
+      if (visited.has(cursor) || commits.length >= MAX_RELEASE_COMMITS) {
+        throw new NonRetryableReleaseNoteError(
+          `Desktop release first-parent history contains a cycle or exceeds ${MAX_RELEASE_COMMITS} commits`
+        );
+      }
+      visited.add(cursor);
+      const commit = await this.api<{
+        readonly sha: string;
+        readonly parents: Array<{ readonly sha: string }>;
+        readonly message: string;
+      }>(`/repos/${repository}/git/commits/${encodeURIComponent(cursor)}`);
+      if (commit.sha !== cursor) {
+        throw new NonRetryableReleaseNoteError(
+          `Desktop release commit response did not match ${cursor}`
+        );
+      }
+      commits.push({
+        sha: commit.sha,
+        parents: commit.parents,
+        commit: { message: commit.message }
+      });
+      const parents = commit.parents ?? [];
+      // A release branch may have been merged back into main as a second parent.
+      if (parents.some((parent) => parent.sha === previousSha)) {
+        return commits.reverse();
+      }
+      const firstParent = parents[0]?.sha;
+      if (!firstParent) {
+        throw new NonRetryableReleaseNoteError(
+          `Release history for ${repository} did not reach previous production commit ${previousSha}`
+        );
+      }
+      cursor = firstParent;
+    }
+    return commits.reverse();
   }
 
   private async getPullRequests(
