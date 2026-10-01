@@ -675,6 +675,7 @@ export class ReleaseNoteGenerationService {
       version,
       bullets,
       frontendRelease,
+      historyTruncated: context.desktop_history_truncated === true,
       publisher,
       publicationId,
       waveId
@@ -762,6 +763,7 @@ export class ReleaseNoteGenerationService {
     version,
     bullets,
     frontendRelease,
+    historyTruncated,
     publisher,
     publicationId,
     waveId
@@ -770,6 +772,7 @@ export class ReleaseNoteGenerationService {
     readonly version: string;
     readonly bullets: string[];
     readonly frontendRelease: FrontendReleaseNoteReference;
+    readonly historyTruncated: boolean;
     readonly publisher: ContributorResolution;
     readonly publicationId: string;
     readonly waveId: string;
@@ -790,6 +793,12 @@ export class ReleaseNoteGenerationService {
       `## 🖥️ 6529 Desktop Release v${version}`,
       '',
       ...releaseBullets,
+      ...(historyTruncated
+        ? [
+            '',
+            'Core summary covers the latest 1,200 first-parent commits; earlier changes are omitted.'
+          ]
+        : []),
       '',
       'In-app update available, direct download links:',
       '',
