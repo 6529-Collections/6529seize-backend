@@ -32,6 +32,11 @@ import {
 import * as priorityAlertsContext from '../priority-alerts.context';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 import {
+  recordLegacyExecutionEffects,
+  deliverLegacyExecutionEffects,
+  retryLegacyExecutionEffects
+} from '@/competitions/legacy-competition-execution-effects';
+import {
   waveScoreService,
   WaveScoreDirtyRefreshReason
 } from '@/api/waves/wave-score.service';
@@ -80,6 +85,11 @@ export class WaveDecisionsService {
   ) {}
 
   public async createMissingDecisionsForAllWaves(timer: Timer): Promise<void> {
+    try {
+      await retryLegacyExecutionEffects();
+    } catch {
+      this.logger.warn('legacy_execution_publication_pending');
+    }
     this.logger.info(`Looking for wave decisions to execute`);
     timer.start(`${this.constructor.name}->createMissingDecisionsForAllWaves`);
     const currentMillis = Time.currentMillis();
@@ -158,11 +168,21 @@ export class WaveDecisionsService {
     let decisionsExecuted = 0;
     while (decisionTime !== null && decisionTime < currentMillis) {
       if (latestDecisionTime < decisionTime) {
+        let legacyEffectsId: string | null = null;
         let claimBuildDropId: string | null = null;
         let pendingPushNotificationIds: number[] = [];
         let dirtyWaveIds: string[] = [];
         await this.waveDecisionsDb.executeNativeQueriesInTransaction(
           async (connection) => {
+            if (
+              !(await this.executionRouter.shouldUseLegacyWaveExecution(
+                waveId,
+                { timer, connection }
+              ))
+            ) {
+              decisionTime = null;
+              return;
+            }
             this.logger.info(
               `Execution decision ${decisionTime} for wave ${waveId}`
             );
@@ -179,6 +199,16 @@ export class WaveDecisionsService {
                 pendingPushNotificationIds =
                   decisionResult.pendingPushNotificationIds;
                 dirtyWaveIds = decisionResult.dirtyWaveIds ?? [];
+                legacyEffectsId = await recordLegacyExecutionEffects(
+                  waveId,
+                  decisionTime,
+                  {
+                    claimDropId: claimBuildDropId,
+                    pushIds: pendingPushNotificationIds,
+                    dirtyWaveIds
+                  },
+                  { timer, connection }
+                );
                 decisionsExecuted++;
               } else {
                 this.logger.info(
@@ -206,6 +236,10 @@ export class WaveDecisionsService {
             );
           }
         );
+        if (legacyEffectsId) {
+          await deliverLegacyExecutionEffects(legacyEffectsId);
+          continue;
+        }
         if (dirtyWaveIds.length) {
           await waveScoreService.requestWaveScoreRefreshBestEffort(
             dirtyWaveIds,
@@ -332,8 +366,16 @@ export class WaveDecisionsService {
         let claimBuildDropId: string | null = null;
         let pendingPushNotificationIds: number[] = [];
         let dirtyWaveIds: string[] = [];
+        let ownsExecution = false;
+        let legacyEffectsId: string | null = null;
         await this.waveDecisionsDb.executeNativeQueriesInTransaction(
           async (connection) => {
+            ownsExecution =
+              await this.executionRouter.shouldUseLegacyWaveExecution(waveId, {
+                timer,
+                connection
+              });
+            if (!ownsExecution) return;
             this.logger.info(
               `Formalizing APPROVE winner ${candidate.drop_id} for wave ${waveId} at ${nextDecisionTime}`
             );
@@ -357,8 +399,25 @@ export class WaveDecisionsService {
             pendingPushNotificationIds =
               decisionResult.pendingPushNotificationIds;
             dirtyWaveIds = decisionResult.dirtyWaveIds ?? [];
+            legacyEffectsId = await recordLegacyExecutionEffects(
+              waveId,
+              nextDecisionTime,
+              {
+                claimDropId: claimBuildDropId,
+                pushIds: pendingPushNotificationIds,
+                dirtyWaveIds
+              },
+              { timer, connection }
+            );
           }
         );
+        if (!ownsExecution) break;
+        if (legacyEffectsId) {
+          await deliverLegacyExecutionEffects(legacyEffectsId);
+          winnersProcessed++;
+          nextDecisionTime++;
+          continue;
+        }
         if (dirtyWaveIds.length) {
           await waveScoreService.requestWaveScoreRefreshBestEffort(
             dirtyWaveIds,

@@ -14,6 +14,7 @@ or a new lease, with a 12-second request budget. Owner-checked Lua publication
 and a per-profile invalidation marker prevent stale owners from publishing
 after lease replacement or explicit invalidation. See
 [eligible-groups-coordination.md](eligible-groups-coordination.md).
+
 - SQS and EventBridge as the async execution fabric.
 - S3, CloudFront, Arweave, Ethereum/RPC providers, Firebase, Sentry, CloudWatch, Discord, and SNS around the core.
 
@@ -441,7 +442,6 @@ frontend dependency. Code passes
 through `1a-staging` without deploying this service there. See
 [public-wave newsletter operations](public-wave-newsletter.md).
 
-
 | Lambda                                   | Purpose                                                                                                                                                             |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `nftsLoop`                               | Discover, refresh, and audit NFTs.                                                                                                                                  |
@@ -458,8 +458,8 @@ through `1a-staging` without deploying this service there. See
 | `tdhHistoryLoop`                         | Write historical TDH snapshots.                                                                                                                                     |
 | `ownersBalancesLoop`                     | Project owner balance aggregates.                                                                                                                                   |
 | `aggregatedActivityLoop`                 | Calculate activity aggregates.                                                                                                                                      |
-| `marketStatsLoop`                        | Aggregate market stats and archive full OpenSea order books for MEMES, Lab, Gradients, and each NextGen project.                                                   |
-| `marketDepthStreamLoop`                  | Capture OpenSea order lifecycle events with overlapping scheduled subscriptions and idempotent persistence.                                                       |
+| `marketStatsLoop`                        | Aggregate market stats and archive full OpenSea order books for MEMES, Lab, Gradients, and each NextGen project.                                                    |
+| `marketDepthStreamLoop`                  | Capture OpenSea order lifecycle events with overlapping scheduled subscriptions and idempotent persistence.                                                         |
 | `rateEventProcessingLoop`                | Process DB-backed rating events.                                                                                                                                    |
 | `waveDecisionExecutionLoop`              | Execute wave decisions and enqueue claim builds.                                                                                                                    |
 | `waveLeaderboardSnapshotterLoop`         | Snapshot wave leaderboards.                                                                                                                                         |
@@ -506,28 +506,28 @@ reset behavior, and the required writer-before-collector deployment order.
 
 ### Triggered Lambdas
 
-| Lambda                           | Trigger                                                                                                                            | Purpose                                                                                                                     |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `api` / `seizeAPI`               | API Gateway HTTP/WebSocket                                                                                                         | Public REST API and WebSocket boundary.                                                                                     |
-| `claimsBuilder`                  | SQS `claims-builder`                                                                                                               | Build minting claims from winning drops.                                                                                    |
-| `claimsMediaArweaveUploader`     | SQS `claims-media-arweave-upload`                                                                                                  | Upload claim media and metadata to Arweave.                                                                                 |
-| `s3Uploader`                     | SQS `s3-uploader-jobs`                                                                                                             | Mirror, compress, and upload NFT media.                                                                                     |
-| `attachmentsOrchestrator`        | SQS `attachments-orchestration` and S3 object-created event                                                                        | Find uploaded attachment objects, retry, and enqueue processing.                                                            |
-| `attachmentsProcessor`           | SQS `attachments-processing`                                                                                                       | Scan/process attachments.                                                                                                   |
-| `dropMediaSanitizer`             | SQS `drop-media-sanitizer`                                                                                                         | Strip metadata from private-ingest drop/wave image uploads and publish sanitized originals.                                 |
-| `nftLinkRefresherLoop`           | SQS `nft-link-refreshes`                                                                                                           | Resolve external NFT links.                                                                                                 |
-| `nftLinkMediaPreviewLoop`        | SQS `nft-link-media-previews`                                                                                                      | Generate media previews for NFT links.                                                                                      |
-| `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                  | Deliver Firebase pushes and recipient-scoped WebSocket notification invalidations after notification rows are durable.      |
-| `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                             | Answer `@help6529` interactions and direct follow-ups to bot replies.                                                       |
-| `helpBotDailyActivityCreditLoop` | SQS `help-bot-daily-activity-credits.fifo` with EventBridge wakeup fallback                                                        | Grant idempotent once-per-UTC-day activity credits from durable post-drop requests.                                        |
-| `releaseNotesGenerationLoop`     | SQS `release-note-generation`                                                                                                      | Publish production Backend, Frontend, and Desktop release notes as `ci6529`.                                                |
-| `waveDropMetricsRefreshLoop`     | SQS `wave-drop-metrics-refresh-dirty.fifo`; EventBridge fallback                                                                   | Repair materialized wave/dropper drop counts and latest-drop timestamps after drop deletes.                                 |
+| Lambda                           | Trigger                                                                                                                             | Purpose                                                                                                                     |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `api` / `seizeAPI`               | API Gateway HTTP/WebSocket                                                                                                          | Public REST API and WebSocket boundary.                                                                                     |
+| `claimsBuilder`                  | SQS `claims-builder`                                                                                                                | Build minting claims from winning drops.                                                                                    |
+| `claimsMediaArweaveUploader`     | SQS `claims-media-arweave-upload`                                                                                                   | Upload claim media and metadata to Arweave.                                                                                 |
+| `s3Uploader`                     | SQS `s3-uploader-jobs`                                                                                                              | Mirror, compress, and upload NFT media.                                                                                     |
+| `attachmentsOrchestrator`        | SQS `attachments-orchestration` and S3 object-created event                                                                         | Find uploaded attachment objects, retry, and enqueue processing.                                                            |
+| `attachmentsProcessor`           | SQS `attachments-processing`                                                                                                        | Scan/process attachments.                                                                                                   |
+| `dropMediaSanitizer`             | SQS `drop-media-sanitizer`                                                                                                          | Strip metadata from private-ingest drop/wave image uploads and publish sanitized originals.                                 |
+| `nftLinkRefresherLoop`           | SQS `nft-link-refreshes`                                                                                                            | Resolve external NFT links.                                                                                                 |
+| `nftLinkMediaPreviewLoop`        | SQS `nft-link-media-previews`                                                                                                       | Generate media previews for NFT links.                                                                                      |
+| `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                   | Deliver Firebase pushes and recipient-scoped WebSocket notification invalidations after notification rows are durable.      |
+| `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                              | Answer `@help6529` interactions and direct follow-ups to bot replies.                                                       |
+| `helpBotDailyActivityCreditLoop` | SQS `help-bot-daily-activity-credits.fifo` with EventBridge wakeup fallback                                                         | Grant idempotent once-per-UTC-day activity credits from durable post-drop requests.                                         |
+| `releaseNotesGenerationLoop`     | SQS `release-note-generation`                                                                                                       | Publish production Backend, Frontend, and Desktop release notes as `ci6529`.                                                |
+| `waveDropMetricsRefreshLoop`     | SQS `wave-drop-metrics-refresh-dirty.fifo`; EventBridge fallback                                                                    | Repair materialized wave/dropper drop counts and latest-drop timestamps after drop deletes.                                 |
 | `xTdhLoop`                       | SNS `tdh-calculation-done.fifo` or a direct post-persistence partial-TDH enqueue via SQS `xtdh-start.fifo`; self-queued stats phase | Recalculate the xTDH universe after TDH finishes, then rebuild and publish xTDH stats in a follow-up queue message.         |
-| `overRatesRevocationLoop`        | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo`                                                         | Revoke over-rates after TDH changes.                                                                                        |
-| `waveScoreRefreshLoop`           | SNS `tdh-calculation-done.fifo` via SQS `wave-score-refresh-start.fifo`; SQS `wave-score-refresh-dirty.fifo`; EventBridge fallback | Refresh materialized wave REP and Wave Score discovery fields after TDH changes or wave/drop/rating/subscription mutations. |
-| `mediaResizerLoop`               | CloudFront/request path                                                                                                            | Resize images on demand.                                                                                                    |
-| `nextgenMediaProxyInterceptor`   | Lambda@Edge / CloudFront request                                                                                                   | Provide NextGen metadata fallback.                                                                                          |
-| `dropVideoConversionInvokerLoop` | S3 object-created event for `drops/`                                                                                               | Invoke MediaConvert for uploaded drop videos.                                                                               |
+| `overRatesRevocationLoop`        | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo`                                                          | Revoke over-rates after TDH changes.                                                                                        |
+| `waveScoreRefreshLoop`           | SNS `tdh-calculation-done.fifo` via SQS `wave-score-refresh-start.fifo`; SQS `wave-score-refresh-dirty.fifo`; EventBridge fallback  | Refresh materialized wave REP and Wave Score discovery fields after TDH changes or wave/drop/rating/subscription mutations. |
+| `mediaResizerLoop`               | CloudFront/request path                                                                                                             | Resize images on demand.                                                                                                    |
+| `nextgenMediaProxyInterceptor`   | Lambda@Edge / CloudFront request                                                                                                    | Provide NextGen metadata fallback.                                                                                          |
+| `dropVideoConversionInvokerLoop` | S3 object-created event for `drops/`                                                                                                | Invoke MediaConvert for uploaded drop videos.                                                                               |
 
 ### Manual Or One-Off Lambdas
 
@@ -911,7 +911,9 @@ the chat/visibility hub and owns zero, one, or many competition resources. The
 competition service resolves each resource through either the immutable legacy
 adapter or the native competition repositories; it never infers an
 "active/current competition." Existing unversioned and v2 wave/drop GETs remain
-permanent façades over the original legacy wave configuration. A native
+permanent façades over the immutable original primary. After a guarded migration,
+12 SQL views derive its frozen competition fields from native records and retained
+history; the request-scoped SQL read boundary excludes native v3 APIs and writes. A native
 hub therefore remains a contract-valid `CHAT` wave to those clients, and adding
 another competition cannot change a legacy Rank/Approve projection.
 
@@ -951,8 +953,9 @@ Each native
 entry creates one dedicated, immutable drop; existing chat messages or competition
 drops cannot be attached or reused. Native submissions use the internal
 `COMPETITION` drop type in the existing varchar column, keeping them outside legacy
-wave voting and winner-selection queries. Public drop reads expose them as
-participatory/submission drops, and competition APIs own their votes and results.
+wave voting and winner-selection queries. Frozen unversioned/v2 GETs expose native-only submissions as CHAT; scoped native
+competition context supplies their submission/winner rendering and voting. Only
+the original migrated primary may project legacy participatory/winner semantics.
 Shared-chat voting resolves `/v3/waves/{wave_id}/drops/{drop_id}/competition-context`
 through wave, drop, moderation and competition visibility checks before selecting
 native entry credit/vote APIs. The context includes native current/projected
@@ -960,7 +963,9 @@ totals, viewer vote, rank and top voters for the existing chat-card presentation
 Drop voter and vote-log reads dispatch native submissions to competition vote and
 history tables after the same visibility checks. Only a successful null context selects legacy
 voting; unavailable or orphaned native entries never fall back to wave voting.
-Both content edits and presentation edits are rejected in every entry state.
+Dedicated native content and presentation edits are rejected in every entry state.
+Original legacy submissions retain their approved pre-winner edit behavior after
+migration, with native content revisions and vote resets in the same transaction.
 Accepted snapshots still enforce current moderation and visibility. Entry deletion
 uses the existing drop deletion flow and transactionally removes
 the entry, its content snapshots, current votes and leaderboard state, releasing
@@ -998,6 +1003,28 @@ schema → message consumers → workers → API → frontend rollout and the na
 kill switches. No new Lambda or queue is introduced; all new features remain
 disabled by default.
 
+Legacy migration is separately operated one immutable UUID at a time. Additive
+migration entities hold stage/keyset checkpoints, source/applied watermarks,
+owned exceptions, acceptance records and full-window parity state. Transactional
+triggers journal accepted competition/content changes under the owner lock;
+there is no asynchronous best-effort capture. Raw source writes after transfer
+refuse the old engine; scoped transactional permits allow native compatibility
+materialization only. APIs, maintenance/identity merges and actual worker decision
+transactions share that ownership row. Legacy decisions commit retryable stable
+claim/push publication receipts before releasing ownership, so a queue handoff
+gap blocks cutover. Native workers retain independent aggregate/voter histories
+and skip already emitted pre-transfer lifecycle boundaries.
+
+Independent source SQL, native records/content and frozen facade relations must
+pass seven full consecutive approved windows. Final drain/comparison and owner
+transfer are atomic. Reverse reconciliation materializes native state in bounded
+transactions before a final comparison and atomic rollback; new native decisions
+or effects instead require an owned native repair review. Production lifecycle,
+performance and alert evidence remains a required separate operator attestation.
+Complex, signed-vote, oversized and privileged cohorts receive owned stops; Main
+Stage remains last. See the [migration runbook](./legacy-competition-migration-runbook.md)
+for deployment dependencies, commands, pending gates and rollback boundaries.
+No new Lambda, queue, automatic migration or default-selection policy is added.
 
 Important API responsibilities:
 
@@ -1719,7 +1746,6 @@ Registration atomically adopts only its own secret's fence and removes that row.
 ### Push installation recovery
 
 Native push UUIDs are bound by the frontend to the native device identifier so restored backups use a separate installation. Old logout jobs retain their credentials/revisions but cannot block the new namespace. The existing revoke endpoint supports independently fenced token-scoped cleanup, removing only exact old-device/token targets without claiming or advancing that installation. It retires a matching retained token when no matching registrations remain. Registration can copy the authenticated profile's previous device preferences without overwriting destination settings and queues a replacement-device badge refresh. Credentialed token rotation updates all profiles on that installation. No extra queue, table, migration or service is introduced.
-
 
 ### Foreground iOS badge refresh
 

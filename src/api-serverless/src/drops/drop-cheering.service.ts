@@ -1,3 +1,4 @@
+import { withLegacyPrimaryMutation } from '@/competitions/legacy-competition-mutation';
 import { ForbiddenException } from '@/exceptions';
 import { dropsDb, DropsDb } from '../../../drops/drops.db';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
@@ -41,86 +42,102 @@ export class DropCheeringService {
   ) {
     const drop = await this.dropsDb.executeNativeQueriesInTransaction(
       async (connection) => {
-        const dropId = param.drop_id;
-        const dropEntity = await this.dropsDb.findDropByIdWithEligibilityCheck(
-          dropId,
-          param.groupIdsUserIsEligibleFor,
+        const initial = await this.dropsDb.findDropById(
+          param.drop_id,
           connection
         );
-        const ctxWithConnection = { ...ctx, connection };
-        if (!dropEntity) {
-          throw new NotFoundException(`Drop ${dropId} not found`);
-        }
-        const dropType = dropEntity.drop_type;
-        switch (dropType) {
-          case DropType.CHAT: {
-            const reaction = param.newCheers > 0 ? ':+1:' : ':-1:';
-            await this.reactionsService.addReaction(
-              dropId,
-              param.rater_profile_id,
-              reaction,
-              ctxWithConnection
-            );
-            break;
-          }
-          case DropType.PARTICIPATORY: {
-            if (param.newCheers === 0) {
-              await this.waveQuickVoteDb.insertSkip(
-                {
-                  identity_id: param.rater_profile_id,
-                  wave_id: dropEntity.wave_id,
-                  drop_id: dropId
-                },
-                ctxWithConnection
+        if (!initial)
+          throw new NotFoundException(`Drop ${param.drop_id} not found`);
+        return withLegacyPrimaryMutation(
+          initial.wave_id,
+          { ...ctx, connection },
+          async () => {
+            const dropId = param.drop_id;
+            const dropEntity =
+              await this.dropsDb.findDropByIdWithEligibilityCheck(
+                dropId,
+                param.groupIdsUserIsEligibleFor,
+                connection
               );
-              await this.clearSkipsIfRoundCompleted(
-                {
-                  identity_id: param.rater_profile_id,
-                  wave_id: dropEntity.wave_id
-                },
-                ctxWithConnection
-              );
+            const ctxWithConnection = { ...ctx, connection };
+            if (!dropEntity) {
+              throw new NotFoundException(`Drop ${dropId} not found`);
             }
-            const voteChanged = await this.voteForDrop.execute(
+            const dropType = dropEntity.drop_type;
+            switch (dropType) {
+              case DropType.CHAT: {
+                const reaction = param.newCheers > 0 ? ':+1:' : ':-1:';
+                await this.reactionsService.addReaction(
+                  dropId,
+                  param.rater_profile_id,
+                  reaction,
+                  ctxWithConnection
+                );
+                break;
+              }
+              case DropType.PARTICIPATORY: {
+                if (param.newCheers === 0) {
+                  await this.waveQuickVoteDb.insertSkip(
+                    {
+                      identity_id: param.rater_profile_id,
+                      wave_id: dropEntity.wave_id,
+                      drop_id: dropId
+                    },
+                    ctxWithConnection
+                  );
+                  await this.clearSkipsIfRoundCompleted(
+                    {
+                      identity_id: param.rater_profile_id,
+                      wave_id: dropEntity.wave_id
+                    },
+                    ctxWithConnection
+                  );
+                }
+                const voteChanged = await this.voteForDrop.execute(
+                  {
+                    drop_id: dropId,
+                    voter_id: param.rater_profile_id,
+                    votes: param.newCheers,
+                    wave_id: dropEntity.wave_id,
+                    proxy_id: null
+                  },
+                  ctxWithConnection
+                );
+                if (!voteChanged) {
+                  return null;
+                }
+                await this.clearSkipsIfRoundCompleted(
+                  {
+                    identity_id: param.rater_profile_id,
+                    wave_id: dropEntity.wave_id
+                  },
+                  ctxWithConnection
+                );
+                break;
+              }
+              case DropType.COMPETITION:
+                throw new ForbiddenException(
+                  'Vote through the competition entry'
+                );
+              case DropType.WINNER: {
+                throw new BadRequestException(
+                  `This drop has already been declared as winner and doesn't accept new votes`
+                );
+              }
+              default:
+                assertUnreachable(dropType);
+            }
+            return await this.dropsService.findDropByIdOrThrow(
               {
-                drop_id: dropId,
-                voter_id: param.rater_profile_id,
-                votes: param.newCheers,
-                wave_id: dropEntity.wave_id,
-                proxy_id: null
+                dropId,
+                skipEligibilityCheck: true
               },
               ctxWithConnection
             );
-            if (!voteChanged) {
-              return null;
-            }
-            await this.clearSkipsIfRoundCompleted(
-              {
-                identity_id: param.rater_profile_id,
-                wave_id: dropEntity.wave_id
-              },
-              ctxWithConnection
-            );
-            break;
           }
-          case DropType.COMPETITION:
-            throw new ForbiddenException('Vote through the competition entry');
-          case DropType.WINNER: {
-            throw new BadRequestException(
-              `This drop has already been declared as winner and doesn't accept new votes`
-            );
-          }
-          default:
-            assertUnreachable(dropType);
-        }
-        return await this.dropsService.findDropByIdOrThrow(
-          {
-            dropId,
-            skipEligibilityCheck: true
-          },
-          ctxWithConnection
         );
-      }
+      },
+      { isolationLevel: 'READ COMMITTED' }
     );
     if (!drop) {
       return;

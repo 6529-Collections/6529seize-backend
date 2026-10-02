@@ -1,3 +1,4 @@
+import { CompetitionRepository } from '@/competitions/competition.repository';
 import {
   dbSupplier,
   LazyDbAccessCompatibleService
@@ -1791,27 +1792,45 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
   }
 
   async deleteStaleLeaderboardEntries(ctx: RequestContext) {
-    ctx.timer?.start(`${this.constructor.name}->deleteStaleLeaderboardEntries`);
-    const staleLeaderboardEntriesDropIds = await this.db
-      .execute<{
-        drop_id: string;
-      }>(
-        `select d.id as drop_id from ${DROPS_TABLE} d
-      join waves w on d.wave_id = w.id
-      join ${WAVE_LEADERBOARD_ENTRIES_TABLE} lb on lb.drop_id = d.id
-      where d.drop_type <> '${DropType.PARTICIPATORY}' or w.time_lock_ms is null or w.time_lock_ms = 0`,
-        undefined,
+    const timerName = `${this.constructor.name}->deleteStaleLeaderboardEntries`;
+    ctx.timer?.start(timerName);
+    try {
+      const waves = await this.db.execute<{ wave_id: string }>(
+        `select distinct lb.wave_id from ${WAVE_LEADERBOARD_ENTRIES_TABLE} lb
+         join ${DROPS_TABLE} d on d.id=lb.drop_id join ${WAVES_TABLE} w on w.id=lb.wave_id
+         where d.drop_type <> '${DropType.PARTICIPATORY}' or coalesce(w.time_lock_ms,0)=0`,
+        {},
         { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
-      )
-      .then((res) => res.map((it) => it.drop_id));
-    if (staleLeaderboardEntriesDropIds.length) {
-      await this.db.execute(
-        `delete from ${WAVE_LEADERBOARD_ENTRIES_TABLE} where drop_id in (:dropIds)`,
-        { dropIds: staleLeaderboardEntriesDropIds },
-        { wrappedConnection: ctx.connection }
       );
+      for (const { wave_id: waveId } of waves) {
+        const remove = async (
+          connection: NonNullable<RequestContext['connection']>
+        ) => {
+          const owner = await new CompetitionRepository(
+            () => this.db
+          ).lockLegacyExecutionOwner(waveId, { ...ctx, connection });
+          if (
+            owner &&
+            (owner.storage_mode !== 'LEGACY_ADAPTER' ||
+              owner.execution_mode !== 'ACTIVE')
+          )
+            return;
+          await this.db.execute(
+            `delete lb from ${WAVE_LEADERBOARD_ENTRIES_TABLE} lb join ${DROPS_TABLE} d on d.id=lb.drop_id join ${WAVES_TABLE} w on w.id=lb.wave_id
+             where lb.wave_id=:waveId and (d.drop_type <> '${DropType.PARTICIPATORY}' or coalesce(w.time_lock_ms,0)=0)`,
+            { waveId },
+            { wrappedConnection: connection }
+          );
+        };
+        if (ctx.connection) await remove(ctx.connection);
+        else
+          await this.db.executeNativeQueriesInTransaction(remove, {
+            isolationLevel: 'READ COMMITTED'
+          });
+      }
+    } finally {
+      ctx.timer?.stop(timerName);
     }
-    ctx.timer?.stop(`${this.constructor.name}->deleteStaleLeaderboardEntries`);
   }
 
   async deleteDropsLeaderboardEntry(dropId: string, ctx: RequestContext) {

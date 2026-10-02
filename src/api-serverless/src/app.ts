@@ -63,6 +63,7 @@ import xtdhRoutes from './xtdh/xtdh.routes';
 import nftLinksRoutes from './nft-links/nft-links.routes';
 import ciPipelineAlertRoutes from '@/api/ci-pipeline-alerts/ci-pipeline-alert.routes';
 import { shouldCaptureRawBody } from './raw-body-paths';
+import { withLegacyCompetitionGetFacade } from '@/competitions/legacy-competition-get-facade';
 
 import * as Sentry from '@sentry/serverless';
 import { NextFunction, Request, Response } from 'express';
@@ -1721,6 +1722,11 @@ async function initializeApp() {
 
   // Apply rate limiting after cache check (cached responses bypass rate limiting)
   app.use(rateLimitingMiddleware());
+  app.use((req: Request, _res: Response, next: NextFunction) => {
+    if (req.method === 'GET' && !/^\/(?:api\/)?v3(?:\/|$)/.test(req.path)) {
+      withLegacyCompetitionGetFacade(next);
+    } else next();
+  });
   app.use(rootRouter);
 
   const swaggerDocument = YAML.load('openapi.yaml');
