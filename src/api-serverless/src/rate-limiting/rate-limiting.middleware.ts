@@ -87,9 +87,20 @@ export function rateLimitingMiddleware() {
     }
 
     // Select appropriate config based on authentication status
-    const rateLimitConfig = isAuthenticated
+    const isSessionRefresh =
+      req.method === 'POST' &&
+      /^\/api\/auth\/session-refresh\/?$/i.test(req.path);
+    // Refreshes must not compete with the API requests started on app resume.
+    // Keep this bucket tied to the verified network identity, never a body field.
+    if (isSessionRefresh) {
+      identifier = `session-refresh:${identifier}`;
+    }
+    const ordinaryConfig = isAuthenticated
       ? config.authenticated
       : config.unauthenticated;
+    const rateLimitConfig = isSessionRefresh
+      ? config.sessionRefresh
+      : ordinaryConfig;
 
     try {
       const result = await rateLimitingService.checkRateLimit(
@@ -112,7 +123,6 @@ export function rateLimitingMiddleware() {
       if (!result.allowed) {
         const retryAfter = calculateRetryAfter(resetTime);
         res.setHeader('Retry-After', retryAfter.toString());
-        res.setHeader('Access-Control-Allow-Origin', '*');
         res.status(429).json({
           error: 'Rate limit exceeded',
           message: 'Too many requests, please try again later',
