@@ -23,6 +23,7 @@ import {
 } from '@/entities/IWave';
 import { Time } from '@/time';
 import { DbPoolName } from '@/db-query.options';
+import { ForbiddenException } from '@/exceptions';
 
 jest.mock('@/profiles/profile-waves.db', () => ({
   profileWavesDb: {
@@ -1442,63 +1443,70 @@ describe('WaveApiService authenticated wave actions', () => {
 });
 
 describe('WaveApiService wave pause authorization', () => {
-  it('allows admin group members to create wave pauses when they are not the wave creator', async () => {
-    const replicaCatchupDelay = process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE;
-    process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE = '0';
-    const nextDecisionTime = Time.currentMillis() + 60_000;
-    const wave = aWave(
-      {
-        type: WaveType.RANK,
-        created_by: 'creator-profile',
-        admin_group_id: 'admin-group',
-        decisions_strategy: {
-          first_decision_time: nextDecisionTime,
-          subsequent_decisions: [],
-          is_rolling: false
+  it.each([false, true])(
+    'rechecks pause authority under the owner lock (revoked=%s)',
+    async (revoked) => {
+      const replicaCatchupDelay = process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE;
+      process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE = '0';
+      const nextDecisionTime = Time.currentMillis() + 60_000;
+      const wave = aWave(
+        {
+          type: WaveType.RANK,
+          created_by: 'creator-profile',
+          admin_group_id: 'admin-group',
+          decisions_strategy: {
+            first_decision_time: nextDecisionTime,
+            subsequent_decisions: [],
+            is_rolling: false
+          },
+          next_decision_time: nextDecisionTime
         },
-        next_decision_time: nextDecisionTime
-      },
-      {
-        id: 'wave-1',
-        name: 'wave-1',
-        serial_no: 1
-      }
-    );
-    const connection = {} as any;
-    const wavesApiDb = {
-      findById: jest.fn().mockResolvedValue(wave),
-      getWavePauses: jest.fn().mockResolvedValue([]),
-      executeNativeQueriesInTransaction: jest.fn(async (fn) => fn(connection)),
-      insertPause: jest.fn().mockResolvedValue(undefined),
-      deletePause: jest.fn().mockResolvedValue(undefined)
-    };
-    const userGroupsService = {
-      getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(['admin-group'])
-    };
-    const service = new WaveApiService(
-      wavesApiDb as any,
-      userGroupsService as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any
-    );
-    jest
-      .spyOn(service, 'findWaveByIdOrThrow')
-      .mockResolvedValue({ id: 'wave-1' } as any);
+        {
+          id: 'wave-1',
+          name: 'wave-1',
+          serial_no: 1
+        }
+      );
+      const connection = {} as any;
+      const wavesApiDb = {
+        findById: jest.fn().mockResolvedValue(wave),
+        findWaveById: jest.fn().mockResolvedValue(wave),
+        getWavePauses: jest.fn().mockResolvedValue([]),
+        executeNativeQueriesInTransaction: jest.fn(async (fn) =>
+          fn(connection)
+        ),
+        insertPause: jest.fn().mockResolvedValue(undefined),
+        deletePause: jest.fn().mockResolvedValue(undefined)
+      };
+      const userGroupsService = {
+        getGroupsUserIsEligibleFor: jest
+          .fn()
+          .mockResolvedValueOnce(['admin-group'])
+          .mockResolvedValue(revoked ? [] : ['admin-group'])
+      };
+      const service = new WaveApiService(
+        wavesApiDb as any,
+        userGroupsService as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any
+      );
+      jest
+        .spyOn(service, 'findWaveByIdOrThrow')
+        .mockResolvedValue({ id: 'wave-1' } as any);
 
-    try {
-      await expect(
-        service.createOrUpdateWavePause(
+      try {
+        const command = service.createOrUpdateWavePause(
           'wave-1',
           {
             id: null,
@@ -1509,25 +1517,38 @@ describe('WaveApiService wave pause authorization', () => {
             authenticationContext:
               AuthenticationContext.fromProfileId('admin-profile')
           } as any
-        )
-      ).resolves.toEqual({ id: 'wave-1' });
+        );
+        if (revoked) {
+          await expect(command).rejects.toThrow(
+            'Wave modification not allowed for authenticated user'
+          );
+          const failure = await command.catch((error: unknown) => error);
+          expect(failure).toBeInstanceOf(ForbiddenException);
+          if (!(failure instanceof ForbiddenException)) throw failure;
+          expect(failure.getStatusCode()).toBe(403);
+          expect(wavesApiDb.insertPause).not.toHaveBeenCalled();
+          return;
+        }
+        await expect(command).resolves.toEqual({ id: 'wave-1' });
 
-      expect(wavesApiDb.insertPause).toHaveBeenCalledWith(
-        {
-          startTime: nextDecisionTime + 1_000,
-          endTime: nextDecisionTime + 2_000,
-          waveId: 'wave-1'
-        },
-        connection
-      );
-    } finally {
-      if (replicaCatchupDelay === undefined) {
-        delete process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE;
-      } else {
-        process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE = replicaCatchupDelay;
+        expect(wavesApiDb.findById).toHaveBeenCalledWith('wave-1', connection);
+        expect(wavesApiDb.insertPause).toHaveBeenCalledWith(
+          {
+            startTime: nextDecisionTime + 1_000,
+            endTime: nextDecisionTime + 2_000,
+            waveId: 'wave-1'
+          },
+          connection
+        );
+      } finally {
+        if (replicaCatchupDelay === undefined) {
+          delete process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE;
+        } else {
+          process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE = replicaCatchupDelay;
+        }
       }
     }
-  });
+  );
 });
 
 describe('WaveApiService wave subscription group defaults', () => {

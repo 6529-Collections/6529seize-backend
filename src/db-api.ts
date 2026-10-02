@@ -76,6 +76,7 @@ import { Logger } from './logging';
 import { NEXTGEN_TOKENS_TABLE } from './nextgen/nextgen_constants';
 import { equalIgnoreCase } from './strings';
 import { Time } from './time';
+import { legacyCompetitionGetSql } from '@/competitions/legacy-competition-get-facade';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -204,7 +205,7 @@ export async function connect() {
       const suppliedConnection = options?.wrappedConnection?.connection;
       const pool = options?.forcePool ?? getPoolNameBySql(sql);
       return await execSQLWithConnection<T>(
-        sql,
+        legacyCompetitionGetSql(sql),
         suppliedConnection
           ? { connection: suppliedConnection }
           : { pool, acquire: () => getDbConnectionByPoolName(pool) },
