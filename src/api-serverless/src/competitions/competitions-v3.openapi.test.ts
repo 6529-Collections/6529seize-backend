@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { ObjectSerializer } from '@/api/generated/models/ObjectSerializer';
 
 const yaml = require('js-yaml') as {
   load(value: string): unknown;
@@ -22,16 +23,33 @@ describe('competition v3 OpenAPI contract', () => {
     .map(([route, pathItem]) => ({ route, operation: pathItem.get! }));
 
   it('documents validation and masking responses for every read', () => {
-    // Native delivery adds six reads alongside the fourteen foundation reads.
+    // Default navigation adds one read to the twenty native/foundation reads.
     // Write-only paths are deliberately excluded, while every GET retains the
     // validation and masked-not-found response guarantees.
-    expect(operations).toHaveLength(20);
+    expect(operations).toHaveLength(21);
     for (const { route, operation } of operations) {
       expect({ route, responses: operation.responses }).toMatchObject({
         route,
         responses: { '400': expect.any(Object), '404': expect.any(Object) }
       });
     }
+  });
+
+  it('keeps default selection optional-auth and uncached, including nullable serialization', () => {
+    const operation =
+      openapi.paths['/v3/waves/{wave_id}/default-competition'].get!;
+    expect(operation['x-6529-router']).toMatchObject({
+      auth: 'optional',
+      cache: false
+    });
+    const result = {
+      competition_id: null,
+      evaluated_at: 100,
+      next_refresh_at: null
+    };
+    expect(
+      ObjectSerializer.serialize(result, 'ApiDefaultCompetition', '')
+    ).toEqual(result);
   });
 
   it('uses one direction type with operation-specific defaults', () => {

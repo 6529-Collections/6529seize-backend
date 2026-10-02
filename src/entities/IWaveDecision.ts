@@ -1,4 +1,4 @@
-import { Column, Entity, PrimaryColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import {
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_DECISIONS_TABLE
@@ -10,6 +10,9 @@ import {
 } from './IWave';
 
 @Entity(WAVES_DECISIONS_TABLE)
+@Index('idx_wave_decisions_wave_time', ['wave_id', 'decision_time'], {
+  synchronize: false
+})
 export class WaveDecisionEntity {
   @PrimaryColumn({ type: 'bigint', nullable: false })
   readonly decision_time!: number;

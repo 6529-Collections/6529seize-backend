@@ -1,5 +1,6 @@
 import {
   handleGetWaveCompetitionV3,
+  handleGetDefaultWaveCompetitionV3,
   handleListCompetitionLeaderboardV3,
   handleListCompetitionVotersV3,
   handleListWaveCompetitionsV3
@@ -28,6 +29,7 @@ jest.mock('@/api/auth/auth', () => ({
 jest.mock('@/competitions/competition.service', () => ({
   competitionService: {
     getCompetition: jest.fn(),
+    getDefaultCompetition: jest.fn(),
     listCompetitions: jest.fn(),
     listVoters: jest.fn(),
     listLeaderboard: jest.fn()
@@ -131,6 +133,33 @@ describe('competition v3 handlers', () => {
       next_cursor: null,
       has_more: false
     });
+  });
+
+  it('returns the authoritative default with optional viewer context and rejects query overrides', async () => {
+    const selection = {
+      competition_id: competitionId,
+      evaluated_at: 100,
+      next_refresh_at: 200
+    };
+    (competitionService.getDefaultCompetition as jest.Mock).mockResolvedValue(
+      selection
+    );
+    await expect(
+      handleGetDefaultWaveCompetitionV3({
+        params: { wave_id: 'wave-a' },
+        query: {}
+      } as never)
+    ).resolves.toEqual(selection);
+    expect(competitionService.getDefaultCompetition).toHaveBeenCalledWith(
+      'wave-a',
+      { timer: undefined, authenticationContext }
+    );
+    await expect(
+      handleGetDefaultWaveCompetitionV3({
+        params: { wave_id: 'wave-a' },
+        query: { competition_id: competitionId }
+      } as never)
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('passes optional authentication and validated stable paging defaults', async () => {

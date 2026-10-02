@@ -3,6 +3,7 @@ import { getAuthenticationContext } from '@/api/auth/auth';
 import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { ApiCompetition } from '@/api/generated/models/ApiCompetition';
+import { ApiDefaultCompetition } from '@/api/generated/models/ApiDefaultCompetition';
 import { ApiCompetitionCapability } from '@/api/generated/models/ApiCompetitionCapability';
 import { ApiCompetitionComputedPhase } from '@/api/generated/models/ApiCompetitionComputedPhase';
 import { ApiCompetitionLifecycle } from '@/api/generated/models/ApiCompetitionLifecycle';
@@ -23,6 +24,7 @@ import { ApiCompetitionVoterPage } from '@/api/generated/models/ApiCompetitionVo
 import { ApiWaveV3 } from '@/api/generated/models/ApiWaveV3';
 import {
   GetCompetitionEntryV3Request,
+  GetDefaultWaveCompetitionV3Request,
   GetWaveCompetitionV3Request,
   GetWaveHubV3Request,
   ListCompetitionDecisionsV3Request,
@@ -328,6 +330,17 @@ export async function handleGetWaveHubV3(
     wave_id,
     await getContext(req)
   )) as ApiWaveV3;
+}
+
+export async function handleGetDefaultWaveCompetitionV3(
+  req: GetDefaultWaveCompetitionV3Request
+): Promise<ApiDefaultCompetition> {
+  getValidatedByJoiOrThrow(req.query, EmptyQuerySchema);
+  const { wave_id } = getValidatedByJoiOrThrow(req.params, WavePathSchema);
+  return competitionService.getDefaultCompetition(
+    wave_id,
+    await getContext(req)
+  );
 }
 
 export async function handleListWaveCompetitionsV3(
