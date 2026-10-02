@@ -135,14 +135,30 @@ it('limits legacy recovery to the existing short race window', async () => {
   expect(
     (await refreshNativeSession(legacy))?.response.native_refresh_token
   ).toBe(first?.response.native_refresh_token);
-  jest.setSystemTime(Date.now() + 31000);
+  jest.setSystemTime(Date.now() + 30000);
+  expect(await refreshNativeSession(legacy)).not.toBeNull();
+  jest.setSystemTime(Date.now() + 1);
   expect(await refreshNativeSession(legacy)).toBeNull();
 });
 
 it('rejects a successor replaced between the atomic update and its readback', async () => {
   db.rotateNativeSessionRefreshToken.mockImplementationOnce(async (params) => {
-    session = { ...session, refresh_token_hash: hashSecret(params.nextRefreshTokenHash) };
-    return session;
+    // The CAS writes our successor, then another refresh rotates it before
+    // auth.db's getWalletAuthSessionByIdOrThrow readback completes.
+    session = { ...session, refresh_token_hash: params.nextRefreshTokenHash };
+    session = { ...session, refresh_token_hash: hashSecret('c'.repeat(128)) };
+    return { ...session };
   });
+  expect(await refreshNativeSession(request)).toBeNull();
+  expect(db.rotateNativeSessionRefreshToken).toHaveBeenCalledTimes(1);
+  expect(db.getActiveNativeSessionByRefreshHash).toHaveBeenCalledTimes(1);
+});
+
+it('allows recovery until the rotated session expiry but never at or beyond it', async () => {
+  await refreshNativeSession(request);
+  const expiresAt = session.expires_at.getTime();
+  jest.setSystemTime(expiresAt - 1);
+  expect(await refreshNativeSession(request)).not.toBeNull();
+  jest.setSystemTime(expiresAt);
   expect(await refreshNativeSession(request)).toBeNull();
 });

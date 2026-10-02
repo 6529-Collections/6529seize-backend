@@ -569,6 +569,12 @@ window. No raw token or request ID is stored server-side and no schema changes
 are needed. Deploy `api` before the frontend, whose native request body adds
 this optional field. Existing frontend clients remain compatible with the new
 API. Once new clients are deployed, retain this API contract during rollback.
+Keep `AUTH_SESSION_HASH_SECRET` (or its existing JWT-secret fallback) stable
+through rollout and rollback: both stored session hashes and recovery derivation
+depend on it. Rotating that secret invalidates existing session proofs; it is
+not part of this release. Recovery deliberately stops at the rotated session's
+expiry and never extends it. The legacy 30-second allowance starts at the
+successful rotation's `last_used_at`; repeated recovery does not reset it.
 
 ## Main Data Flows
 

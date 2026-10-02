@@ -713,12 +713,13 @@ export async function refreshNativeSession({
       clientType
     ));
   if (
-    !current ||
-    current.refresh_token_hash !== nextRefreshTokenHash ||
+    current?.refresh_token_hash !== nextRefreshTokenHash ||
     current.revoked_at !== null ||
     toDate(current.expires_at).getTime() <= now.getTime() ||
     (!rotated &&
       !refreshRequestId &&
+      // Legacy retries share the existing 30s bound, measured from the CAS
+      // rotation's last_used_at. Recovery itself never updates that timestamp.
       !wasWebSessionRecentlyUsed(current.last_used_at, now))
   ) {
     return null;
