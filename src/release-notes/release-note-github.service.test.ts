@@ -493,157 +493,356 @@ describe('ReleaseNoteGitHubService', () => {
     expect(fetch).toHaveBeenCalledTimes(13);
   });
 
-  it('uses the previous production release across Publish and Build All flows and excludes imported renderer history', async () => {
-    const previousSha = '1111111111111111111111111111111111111111';
-    const currentSha = '4444444444444444444444444444444444444444';
-    const outerMergeSha = '3333333333333333333333333333333333333333';
-    const boundaryMergeSha = '2222222222222222222222222222222222222222';
+  it.each([
+    { parents: [], error: 'did not reach previous production commit' },
+    { parents: [{ sha: coreSha }], error: 'contains a cycle' }
+  ])(
+    'rejects invalid Core first-parent history: $error',
+    async ({ parents, error }) => {
+      (fetch as unknown as jest.Mock).mockImplementation((url: string) => {
+        return Promise.resolve(
+          response({ sha: coreSha, parents, message: 'Core change' })
+        );
+      });
+      const service = new ReleaseNoteGitHubService() as unknown as {
+        getDesktopFirstParentHistory(
+          repository: string,
+          previousSha: string,
+          currentSha: string
+        ): Promise<unknown>;
+      };
+      await expect(
+        service.getDesktopFirstParentHistory(
+          '6529-Collections/6529-core',
+          'previous-sha',
+          coreSha
+        )
+      ).rejects.toThrow(error);
+    }
+  );
+
+  it.each([false, true])(
+    'excludes the baseline when it is reached through a merge-back boundary=%s',
+    async (mergeBack) => {
+      (fetch as unknown as jest.Mock).mockImplementation((url: string) => {
+        if (url.endsWith(`/git/commits/${coreSha}`))
+          return Promise.resolve(
+            response({
+              sha: coreSha,
+              parents: [{ sha: mergeBack ? 'boundary' : 'previous-sha' }],
+              message: 'Core change'
+            })
+          );
+        if (url.endsWith('/git/commits/boundary'))
+          return Promise.resolve(
+            response({
+              sha: 'boundary',
+              parents: [{ sha: 'older-main' }, { sha: 'previous-sha' }],
+              message: 'Merge previous release'
+            })
+          );
+        throw new Error(`Unexpected GitHub URL ${url}`);
+      });
+      const service = new ReleaseNoteGitHubService() as unknown as {
+        getDesktopFirstParentHistory(
+          repository: string,
+          previousSha: string,
+          currentSha: string
+        ): Promise<{ commits: Array<{ sha: string }>; truncated: boolean }>;
+      };
+      const history = await service.getDesktopFirstParentHistory(
+        '6529-Collections/6529-core',
+        'previous-sha',
+        coreSha
+      );
+      expect(history.truncated).toBe(false);
+      expect(history.commits.map((commit) => commit.sha)).toEqual([coreSha]);
+    }
+  );
+
+  it('bounds Core discovery by first-parent commits', async () => {
+    let commitIndex = 0;
     (fetch as unknown as jest.Mock).mockImplementation((url: string) => {
-      if (url.endsWith('/actions/runs/900')) {
-        return Promise.resolve(
-          response({
-            id: 900,
-            display_title: 'FLOW: Build All / ENV: Production - v0.3.13',
-            path: '.github/workflows/build-all-platforms.yml',
-            head_branch: 'v0.3.13',
-            head_sha: currentSha,
-            run_number: 328,
-            workflow_id: 99,
-            status: 'completed',
-            conclusion: 'success'
-          })
-        );
-      }
-      if (url.includes('/actions/workflows/99/runs?')) {
-        return Promise.resolve(
-          response({
-            workflow_runs: [
-              {
-                id: 899,
-                display_title: 'FLOW: Publish / ENV: Production - v0.3.12',
-                path: '.github/workflows/build-all-platforms.yml',
-                head_branch: 'v0.3.12',
-                head_sha: previousSha,
-                run_number: 327,
-                workflow_id: 99,
-                status: 'completed',
-                conclusion: 'success'
-              }
-            ]
-          })
-        );
-      }
-      if (url.includes(`/compare/${previousSha}...${currentSha}`)) {
-        return Promise.resolve(
-          response({
-            commits: [
-              {
-                sha: 'imported-frontend-commit',
-                parents: [{ sha: 'imported-parent' }],
-                commit: { message: 'Imported web-only change' }
-              },
-              {
-                sha: boundaryMergeSha,
-                parents: [{ sha: 'older-main' }, { sha: previousSha }],
-                commit: { message: 'Merge previous Desktop release' }
-              },
-              {
-                sha: outerMergeSha,
-                parents: [
-                  { sha: boundaryMergeSha },
-                  { sha: 'pull-web-branch' }
-                ],
-                commit: { message: 'Merge pull request #225 from pull-web' }
-              },
-              {
-                sha: currentSha,
-                parents: [{ sha: outerMergeSha }],
-                commit: { message: 'Improve desktop update prompts' }
-              }
-            ],
-            total_commits: 4
-          })
-        );
-      }
-      if (url.includes(`/commits/${outerMergeSha}/pulls`)) {
-        return Promise.resolve(
-          response([
-            {
-              number: 225,
-              html_url:
-                'https://github.com/6529-Collections/6529-core/pull/225',
-              title: 'Update desktop renderer',
-              body: 'Preserves Desktop wallet behavior while updating web.',
-              merged_at: '2026-08-10T10:00:00Z',
-              user: { login: 'prxt6529', type: 'User' },
-              base: { ref: 'main' }
-            }
-          ])
-        );
-      }
-      if (url.includes(`/commits/${currentSha}/pulls`)) {
-        return Promise.resolve(response([]));
-      }
-      if (url.includes('/pulls/225/files?')) {
-        return Promise.resolve(
-          response([
-            {
-              filename: 'renderer/components/update-prompt.tsx',
-              additions: 4,
-              deletions: 1,
-              changes: 5
-            }
-          ])
-        );
-      }
-      if (url.includes('/pulls/225/commits?')) {
-        return Promise.resolve(response([]));
-      }
-      throw new Error(`Unexpected GitHub URL ${url}`);
-    });
-
-    const context = await new ReleaseNoteGitHubService().getReleaseContext({
-      ...request,
-      repo: '6529-core',
-      workflow: 'Build All',
-      run_id: '900',
-      run_number: '328',
-      run_url: 'https://github.com/6529-Collections/6529-core/actions/runs/900',
-      sha: currentSha,
-      branch: 'v0.3.13',
-      service: 'desktop',
-      prompt_path: 'ops/release-notes/desktop-release-notes.prompt.md',
-      release_group_id: 'desktop-v0.3.13',
-      release_group_services: ['desktop'],
-      release_version: '0.3.13',
-      frontend_sha: '63630a3e27c37296bbe39d9813b014a824265a56'
-    });
-
-    expect(context).toEqual({
-      previous_sha: previousSha,
-      current_sha: currentSha,
-      commit_messages: [
-        'Merge pull request #225 from pull-web',
-        'Improve desktop update prompts'
-      ],
-      pull_requests: [
-        expect.objectContaining({
-          number: 225,
-          title: 'Update desktop renderer'
+      return Promise.resolve(
+        response({
+          sha: `commit-${commitIndex}`,
+          parents: [{ sha: `commit-${++commitIndex}` }],
+          message: 'Core change'
         })
-      ]
+      );
     });
-    expect(fetch).toHaveBeenNthCalledWith(
-      2,
-      'https://api.github.com/repos/6529-Collections/6529-core/actions/workflows/99/runs?per_page=100&page=1',
-      expect.any(Object)
+    const service = new ReleaseNoteGitHubService() as unknown as {
+      getDesktopFirstParentHistory(
+        repository: string,
+        previousSha: string,
+        currentSha: string
+      ): Promise<{ commits: Array<{ sha: string }>; truncated: boolean }>;
+    };
+    const history = await service.getDesktopFirstParentHistory(
+      '6529-Collections/6529-core',
+      'previous-sha',
+      'commit-0'
     );
-    expect(
-      context?.commit_messages?.some((message) =>
-        message.includes('Imported web-only change')
-      )
-    ).toBe(false);
+    expect(history.truncated).toBe(true);
+    expect(history.commits).toHaveLength(1200);
+    expect(history.commits[0].sha).toBe('commit-1199');
+    expect(history.commits[1199].sha).toBe('commit-0');
+    expect(commitIndex).toBe(1200);
   });
+
+  it('follows the actual v0.3.14 Core graph and excludes the v0.3.13 merge-back boundary', async () => {
+    const graph = [
+      {
+        sha: '53bb015b4b21eeb04619dc6507738709a7ea5936',
+        parents: [
+          { sha: '0e9f0351e5ee6830911df757d990145f0edb9ed9' },
+          { sha: '8204180f539899326a9805748cf9db4336fc17aa' }
+        ],
+        message: "Merge branch 'main' into v0.3.14"
+      },
+      {
+        sha: '0e9f0351e5ee6830911df757d990145f0edb9ed9',
+        parents: [{ sha: '415cee7a468d5f891ddb332048d20062507af85a' }],
+        message: 'Fix secure renderer install handoff'
+      },
+      {
+        sha: '415cee7a468d5f891ddb332048d20062507af85a',
+        parents: [{ sha: '91efea172a136e52feb97f36e2d1e40d56832b27' }],
+        message: 'v0.3.14'
+      },
+      {
+        sha: '91efea172a136e52feb97f36e2d1e40d56832b27',
+        parents: [
+          { sha: '09fac1226109ad3eebdc61619076fdc2c83a9515' },
+          { sha: '93a8be9f9ead3f7033d0b63770ac0461b85f923a' }
+        ],
+        message: 'Merge pull request #233 from 6529-Collections/pull-web'
+      },
+      {
+        sha: '09fac1226109ad3eebdc61619076fdc2c83a9515',
+        parents: [
+          { sha: '5d8a06e5ea66835f09ec89db40d4db714759462b' },
+          { sha: 'b13d8b68d9ee3651dea1050f5d664c05b64dc371' }
+        ],
+        message:
+          'Merge pull request #237 from 6529-Collections/agent-prxt/readable-notification-previews'
+      },
+      {
+        sha: '5d8a06e5ea66835f09ec89db40d4db714759462b',
+        parents: [
+          { sha: 'd3053270bbe780addc14b563b5b57f64effdcc67' },
+          { sha: 'a6dc756c6026f880d50e212e468979ae36494b71' }
+        ],
+        message:
+          'Merge pull request #236 from 6529-Collections/agent-prxt/clarify-wallet-account-labels'
+      },
+      {
+        sha: 'd3053270bbe780addc14b563b5b57f64effdcc67',
+        parents: [
+          { sha: '83dd9bd4a4beeee85ad573f3c6a9f5afe9489103' },
+          { sha: '3709bee8676fb8f53ad9ba1c46a125172614978a' }
+        ],
+        message:
+          'Merge pull request #234 from 6529-Collections/agent-prxt/fix-profile-drop-titlebar-offset'
+      },
+      {
+        sha: '83dd9bd4a4beeee85ad573f3c6a9f5afe9489103',
+        parents: [
+          { sha: 'f6c0e636673bf7704393b43bbd974d0653302473' },
+          { sha: 'ac261db5dbf4f0006e8d793441e3da44955b063a' }
+        ],
+        message: 'Merge pull request #232 from 6529-Collections/v0.3.13'
+      }
+    ];
+    (fetch as unknown as jest.Mock).mockImplementation((url: string) => {
+      const commit = graph.find((entry) =>
+        url.endsWith(`/git/commits/${entry.sha}`)
+      );
+      if (!commit) throw new Error(`Unexpected GitHub URL ${url}`);
+      return Promise.resolve(response(commit));
+    });
+    const service = new ReleaseNoteGitHubService() as unknown as {
+      getDesktopFirstParentHistory(
+        repository: string,
+        previousSha: string,
+        currentSha: string
+      ): Promise<{ commits: Array<{ sha: string }>; truncated: boolean }>;
+    };
+    const result = await service.getDesktopFirstParentHistory(
+      '6529-Collections/6529-core',
+      'ac261db5dbf4f0006e8d793441e3da44955b063a',
+      '53bb015b4b21eeb04619dc6507738709a7ea5936'
+    );
+    expect(result.truncated).toBe(false);
+    expect(result.commits.map((commit) => commit.sha)).toEqual(
+      graph
+        .slice(0, -1)
+        .reverse()
+        .map((commit) => commit.sha)
+    );
+    expect(fetch).toHaveBeenCalledTimes(8);
+  });
+
+  it.each(['Publish', 'Build All'])(
+    'uses first-parent history directly for Core %s and excludes imported renderer history',
+    async (flow) => {
+      const previousSha = '1111111111111111111111111111111111111111';
+      const currentSha = '4444444444444444444444444444444444444444';
+      const outerMergeSha = '3333333333333333333333333333333333333333';
+      const boundaryMergeSha = '2222222222222222222222222222222222222222';
+      (fetch as unknown as jest.Mock).mockImplementation((url: string) => {
+        if (url.endsWith('/actions/runs/900')) {
+          return Promise.resolve(
+            response({
+              id: 900,
+              display_title: `FLOW: ${flow} / ENV: Production - v0.3.13`,
+              path: '.github/workflows/build-all-platforms.yml',
+              head_branch: 'v0.3.13',
+              head_sha: currentSha,
+              run_number: 328,
+              workflow_id: 99,
+              status: 'completed',
+              conclusion: 'success'
+            })
+          );
+        }
+        if (url.includes('/actions/workflows/99/runs?')) {
+          return Promise.resolve(
+            response({
+              workflow_runs: [
+                {
+                  id: 899,
+                  display_title: 'FLOW: Publish / ENV: Production - v0.3.12',
+                  path: '.github/workflows/build-all-platforms.yml',
+                  head_branch: 'v0.3.12',
+                  head_sha: previousSha,
+                  run_number: 327,
+                  workflow_id: 99,
+                  status: 'completed',
+                  conclusion: 'success'
+                }
+              ]
+            })
+          );
+        }
+        if (url.endsWith(`/git/commits/${currentSha}`)) {
+          return Promise.resolve(
+            response({
+              sha: currentSha,
+              parents: [{ sha: outerMergeSha }],
+              message: 'Improve desktop update prompts'
+            })
+          );
+        }
+        if (url.endsWith(`/git/commits/${outerMergeSha}`)) {
+          return Promise.resolve(
+            response({
+              sha: outerMergeSha,
+              parents: [{ sha: boundaryMergeSha }, { sha: 'pull-web-branch' }],
+              message: 'Merge pull request #225 from pull-web'
+            })
+          );
+        }
+        if (url.endsWith(`/git/commits/${boundaryMergeSha}`)) {
+          return Promise.resolve(
+            response({
+              sha: boundaryMergeSha,
+              parents: [{ sha: 'older-main' }, { sha: previousSha }],
+              message: 'Merge previous Desktop release'
+            })
+          );
+        }
+        if (url.includes(`/commits/${outerMergeSha}/pulls`)) {
+          return Promise.resolve(
+            response([
+              {
+                number: 225,
+                html_url:
+                  'https://github.com/6529-Collections/6529-core/pull/225',
+                title: 'Update desktop renderer',
+                body: 'Preserves Desktop wallet behavior while updating web.',
+                merged_at: '2026-08-10T10:00:00Z',
+                user: { login: 'prxt6529', type: 'User' },
+                base: { ref: 'main' }
+              }
+            ])
+          );
+        }
+        if (url.includes(`/commits/${currentSha}/pulls`)) {
+          return Promise.resolve(response([]));
+        }
+        if (url.includes('/pulls/225/files?')) {
+          return Promise.resolve(
+            response([
+              {
+                filename: 'renderer/components/update-prompt.tsx',
+                additions: 4,
+                deletions: 1,
+                changes: 5
+              }
+            ])
+          );
+        }
+        if (url.includes('/pulls/225/commits?')) {
+          return Promise.resolve(response([]));
+        }
+        throw new Error(`Unexpected GitHub URL ${url}`);
+      });
+
+      const context = await new ReleaseNoteGitHubService().getReleaseContext({
+        ...request,
+        repo: '6529-core',
+        workflow: flow,
+        run_id: '900',
+        run_number: '328',
+        run_url:
+          'https://github.com/6529-Collections/6529-core/actions/runs/900',
+        sha: currentSha,
+        branch: 'v0.3.13',
+        service: 'desktop',
+        prompt_path: 'ops/release-notes/desktop-release-notes.prompt.md',
+        release_group_id: 'desktop-v0.3.13',
+        release_group_services: ['desktop'],
+        release_version: '0.3.13',
+        frontend_sha: '63630a3e27c37296bbe39d9813b014a824265a56'
+      });
+
+      expect(context).toEqual({
+        previous_sha: previousSha,
+        current_sha: currentSha,
+        commit_messages: [
+          'Merge pull request #225 from pull-web',
+          'Improve desktop update prompts'
+        ],
+        pull_requests: [
+          expect.objectContaining({
+            number: 225,
+            title: 'Update desktop renderer'
+          })
+        ]
+      });
+      expect(fetch).toHaveBeenNthCalledWith(
+        2,
+        'https://api.github.com/repos/6529-Collections/6529-core/actions/workflows/99/runs?per_page=100&page=1',
+        expect.any(Object)
+      );
+      expect(
+        (fetch as unknown as jest.Mock).mock.calls.some(([url]) =>
+          String(url).includes('/compare/')
+        )
+      ).toBe(false);
+      expect(
+        (fetch as unknown as jest.Mock).mock.calls.some(([url]) =>
+          String(url).includes('/git/commits/pull-web-branch')
+        )
+      ).toBe(false);
+      expect(
+        context?.commit_messages?.some((message) =>
+          message.includes('Imported web-only change')
+        )
+      ).toBe(false);
+    }
+  );
 
   it('rejects Desktop release metadata when the queued flow does not match the current run', async () => {
     const currentSha = '4444444444444444444444444444444444444444';

@@ -99,6 +99,7 @@ import { ApiCreateProfileCmsAgentGrantRequest } from '@/api/generated/models/Api
 import { ApiCreateProfileCmsWalletGallerySnapshotRequest } from '@/api/generated/models/ApiCreateProfileCmsWalletGallerySnapshotRequest';
 import { ApiCreateWaveHubRequest } from '@/api/generated/models/ApiCreateWaveHubRequest';
 import { ApiCreateWaveMetadataRequest } from '@/api/generated/models/ApiCreateWaveMetadataRequest';
+import { ApiDefaultCompetition } from '@/api/generated/models/ApiDefaultCompetition';
 import { ApiDeleteEulaConsentRequest } from '@/api/generated/models/ApiDeleteEulaConsentRequest';
 import { ApiDeleteEulaConsentResponse } from '@/api/generated/models/ApiDeleteEulaConsentResponse';
 import { ApiDeleteMyWaveChatHistoryResponse } from '@/api/generated/models/ApiDeleteMyWaveChatHistoryResponse';
@@ -3572,6 +3573,22 @@ export type ListCompetitionWinnersV3Request = Request<
   ApiResponse<ListCompetitionWinnersV3Response>,
   never,
   ListCompetitionWinnersV3Query,
+  Record<string, never>
+>;
+
+export interface GetDefaultWaveCompetitionV3PathParams {
+  "wave_id": string;
+}
+
+export type GetDefaultWaveCompetitionV3Query = Record<string, never>;
+
+export type GetDefaultWaveCompetitionV3Response = ApiDefaultCompetition;
+
+export type GetDefaultWaveCompetitionV3Request = Request<
+  GetDefaultWaveCompetitionV3PathParams,
+  ApiResponse<GetDefaultWaveCompetitionV3Response>,
+  never,
+  GetDefaultWaveCompetitionV3Query,
   Record<string, never>
 >;
 

@@ -70,6 +70,7 @@ import type {
   CompetitionVoter
 } from '@/competitions/competition.types';
 import { collectCompetitionPages } from '@/competitions/competition-page';
+import type { DefaultCompetitionRecord } from '@/competitions/default-competition';
 
 type JsonValue = Record<string, unknown> | readonly unknown[];
 
@@ -321,6 +322,39 @@ const LEGACY_CAPABILITY_ENV: ReadonlyArray<{
 export class CompetitionRepository extends LazyDbAccessCompatibleService {
   public constructor(db: () => SqlExecutor = dbSupplier) {
     super(db);
+  }
+
+  public async listDefaultCompetitionRecords(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<DefaultCompetitionRecord[]> {
+    return this.timed(ctx, 'listDefaultCompetitionRecords', () =>
+      this.db.execute<DefaultCompetitionRecord>(
+        `select id, storage_mode, type, lifecycle, published_at, ended_at, cancelled_at,
+         participation_starts_at, participation_ends_at, voting_starts_at, voting_ends_at, decision_config
+         from ${COMPETITIONS_TABLE} where wave_id = :waveId`,
+        { waveId },
+        dbOptions(ctx)
+      )
+    );
+  }
+
+  public async getLegacyDecisionSummary(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<{ last_decision_time: number | null; decisions_done: number }> {
+    const row = await this.db.oneOrNull<{
+      last_decision_time: CompetitionRecord['ended_at'];
+      decisions_done: number | string;
+    }>(
+      `select max(decision_time) as last_decision_time, count(*) as decisions_done from ${WAVES_DECISIONS_TABLE} where wave_id = :waveId`,
+      { waveId },
+      dbOptions(ctx)
+    );
+    return {
+      last_decision_time: row ? toNumber(row.last_decision_time) : null,
+      decisions_done: Number(row?.decisions_done ?? 0)
+    };
   }
 
   public async findCompetitionRecordById(

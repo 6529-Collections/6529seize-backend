@@ -971,6 +971,15 @@ also compares independently derived available/spent/remaining credit.
 Operational deployment, verification, and rollback are documented in the
 [competition read boundary runbook](./competition-read-boundary-runbook.md).
 
+Implicit wave navigation has an additive unified-read boundary,
+`GET /v3/waves/{wave_id}/default-competition`. It selects across all visible
+competitions using active/upcoming/completed priority, authoritative legacy/native
+timing and deterministic ID ties, returning server evaluation and refresh times.
+The UI default is separate from the immutable legacy primary and execution
+ownership. A wave-leading legacy decision index supports bounded per-wave
+aggregation. Schema/index rollout precedes API and dependent frontend rollout;
+no execution worker changes. See [normalization and deployment order](./default-competition-navigation.md).
+
 Native command APIs now implement hub creation, versioned draft/publication,
 entry submission, voting, credits, history and
 terminal lifecycle actions. Effective-actor idempotency receipts, signature
