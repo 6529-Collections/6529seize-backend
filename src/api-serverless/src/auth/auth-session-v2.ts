@@ -663,45 +663,77 @@ function getWebSessionClearCookieHeader({
 export async function refreshNativeSession({
   address,
   nativeRefreshToken,
-  clientType = 'native'
+  clientType = 'native',
+  refreshRequestId
 }: {
   readonly address: string;
   readonly nativeRefreshToken: string;
   readonly clientType?: RefreshTokenSessionClientType;
+  readonly refreshRequestId?: string;
 }): Promise<CreatedNativeSession | null> {
   const now = new Date();
+  const normalizedAddress = address.toLowerCase();
+  // A persisted request ID makes a lost response recoverable after suspension.
+  // Only the immediate successor can be recovered; retries never extend expiry.
+  const nextRefreshToken = createHmac('sha512', getSessionHashSecret())
+    .update(
+      JSON.stringify([
+        'wallet-auth-native-refresh-v1',
+        clientType,
+        normalizedAddress,
+        refreshRequestId ?? '',
+        nativeRefreshToken
+      ])
+    )
+    .digest('hex');
+  const previousRefreshTokenHash = hashSecret(nativeRefreshToken);
+  const nextRefreshTokenHash = hashSecret(nextRefreshToken);
   const existing = await authDb.getActiveNativeSessionByRefreshHash(
-    address.toLowerCase(),
-    hashSecret(nativeRefreshToken),
+    normalizedAddress,
+    previousRefreshTokenHash,
     now,
     clientType
   );
-  if (!existing) {
+  const rotated = existing
+    ? await authDb.rotateNativeSessionRefreshToken({
+        sessionId: existing.id,
+        previousRefreshTokenHash,
+        nextRefreshTokenHash,
+        expiresAt: getSessionRefreshExpiresAt(),
+        now,
+        clientType
+      })
+    : null;
+  const current =
+    rotated ??
+    (await authDb.getActiveNativeSessionByRefreshHash(
+      normalizedAddress,
+      nextRefreshTokenHash,
+      now,
+      clientType
+    ));
+  if (
+    current?.refresh_token_hash !== nextRefreshTokenHash ||
+    current.revoked_at !== null ||
+    toDate(current.expires_at).getTime() <= now.getTime() ||
+    (!rotated &&
+      !refreshRequestId &&
+      // Legacy retries share the existing 30s bound, measured from the CAS
+      // rotation's last_used_at. Recovery itself never updates that timestamp.
+      !wasWebSessionRecentlyUsed(current.last_used_at, now))
+  ) {
     return null;
   }
-  const nextRefreshToken = createOpaqueSecret(64);
-  const expiresAt = getSessionRefreshExpiresAt();
-  const rotated = await authDb.rotateNativeSessionRefreshToken({
-    sessionId: existing.id,
-    previousRefreshTokenHash: hashSecret(nativeRefreshToken),
-    nextRefreshTokenHash: hashSecret(nextRefreshToken),
-    expiresAt,
-    now,
-    clientType
-  });
-  if (!rotated) {
-    return null;
-  }
-  const accessToken = issueAccessToken(rotated.address, rotated.role);
+  const accessToken = issueAccessToken(current.address, current.role);
   return {
     response: {
-      address: rotated.address,
-      role: rotated.role,
+      address: current.address,
+      role: current.role,
       access_token: accessToken.token,
       access_token_expires_at: accessToken.expiresAt,
       client_type: toNativeSessionResponseClientType(clientType),
       native_refresh_token: nextRefreshToken,
-      refresh_token_expires_at: expiresAt
+      refresh_token_expires_at: toDate(current.expires_at)
     }
   };
 }

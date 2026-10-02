@@ -546,6 +546,36 @@ Background Lambdas that read or write application state use a shared `doInDbCont
 
 MySQL is the integration contract between nearly all modules. API routes, scheduled pollers, queue workers, and derived-data loops all read and write shared tables. Redis is secondary and mostly disposable: API request cache, rate limiting, webhook dedupe, locks, and selected feature caches can fail open or be repopulated from MySQL.
 
+### Session refresh recovery
+
+`POST /api/auth/session-refresh` uses a separate Redis rate-limit namespace.
+Its defaults are 90 requests per second for bursts and 30 requests per second
+across a 10-second window, configured by `API_RATE_LIMIT_REFRESH_BURST`,
+`API_RATE_LIMIT_REFRESH_SUSTAINED_RPS`, and
+`API_RATE_LIMIT_REFRESH_SUSTAINED_WINDOW_SECONDS`. The network identity remains
+the rate-limit key; client-supplied addresses do not create new allowances.
+Credentialed auth responses preserve their allowed origin on 429 and expose
+`Retry-After` for browser recovery.
+
+Native/desktop refresh accepts an optional UUID `refresh_request_id`. Clients
+persist it with the old credential before sending a refresh, then reuse the
+pair after an interrupted response. The API derives the successor with a
+server-keyed HMAC and atomically rotates the existing stored hash. A duplicate
+can recover only that immediate successor while the session remains active;
+it does not rotate again or extend expiry. A different request ID, another
+client type/address, revocation, expiry, or a later rotation prevents recovery.
+Legacy clients without the request ID retain only a 30-second race-recovery
+window. No raw token or request ID is stored server-side and no schema changes
+are needed. Deploy `api` before the frontend, whose native request body adds
+this optional field. Existing frontend clients remain compatible with the new
+API. Once new clients are deployed, retain this API contract during rollback.
+Keep `AUTH_SESSION_HASH_SECRET` (or its existing JWT-secret fallback) stable
+through rollout and rollback: both stored session hashes and recovery derivation
+depend on it. Rotating that secret invalidates existing session proofs; it is
+not part of this release. Recovery deliberately stops at the rotated session's
+expiry and never extends it. The legacy 30-second allowance starts at the
+successful rotation's `last_used_at`; repeated recovery does not reset it.
+
 ## Main Data Flows
 
 1. Client requests enter through API Gateway and land in `seizeAPI`.

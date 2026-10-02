@@ -56,6 +56,11 @@ describe('rateLimitingMiddleware', () => {
         sustainedRps: 5,
         sustainedWindowSeconds: 60
       },
+      sessionRefresh: {
+        burst: 90,
+        sustainedRps: 30,
+        sustainedWindowSeconds: 10
+      },
       internal: {
         enabled: true,
         clientId: 'test-id',
@@ -74,6 +79,11 @@ describe('rateLimitingMiddleware', () => {
       enabled: false,
       authenticated: {},
       unauthenticated: {},
+      sessionRefresh: {
+        burst: 90,
+        sustainedRps: 30,
+        sustainedWindowSeconds: 10
+      },
       internal: {
         enabled: false,
         clientId: null,
@@ -368,6 +378,64 @@ describe('rateLimitingMiddleware', () => {
     expect(rateLimitingService.checkRateLimit).toHaveBeenCalledWith(
       'ip:192.168.1.1',
       expect.any(Object)
+    );
+  });
+  it.each([
+    '/api/auth/session-refresh',
+    '/api/auth/session-refresh/',
+    '/API/AUTH/SESSION-REFRESH'
+  ])(
+    'isolates refresh POST %s from exhausted ordinary traffic',
+    async (path) => {
+      const { rateLimitingMiddleware } = require('./rate-limiting.middleware');
+      (getAuthenticatedWalletOrNull as jest.Mock).mockReturnValue(null);
+      (getIp as jest.Mock).mockReturnValue('192.168.1.1');
+      (verifyInternalRequest as jest.Mock).mockReturnValue(false);
+      (rateLimitingService.checkRateLimit as jest.Mock).mockImplementation(
+        async (key: string) => ({
+          allowed: key.startsWith('session-refresh:'),
+          remaining: 0,
+          limit: 30,
+          resetTime: Date.now() + 1000
+        })
+      );
+      req = { method: 'GET', path: '/api/notifications' };
+      await rateLimitingMiddleware()(req as Request, res as Response, next);
+      expect(mockStatus).toHaveBeenCalledWith(429);
+      req = { method: 'POST', path };
+      await rateLimitingMiddleware()(req as Request, res as Response, next);
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(rateLimitingService.checkRateLimit).toHaveBeenLastCalledWith(
+        'session-refresh:ip:192.168.1.1',
+        { burst: 90, sustainedRps: 30, sustainedWindowSeconds: 10 }
+      );
+      expect(mockSetHeader).not.toHaveBeenCalledWith(
+        'Access-Control-Allow-Origin',
+        '*'
+      );
+    }
+  );
+
+  it.each([
+    ['GET', '/api/auth/session-refresh'],
+    ['POST', '/api/auth/session-login'],
+    ['POST', '/api/auth/session-refresh/other']
+  ])('does not give %s %s the refresh allowance', async (method, path) => {
+    const { rateLimitingMiddleware } = require('./rate-limiting.middleware');
+    (getAuthenticatedWalletOrNull as jest.Mock).mockReturnValue(null);
+    (getIp as jest.Mock).mockReturnValue('192.168.1.1');
+    (verifyInternalRequest as jest.Mock).mockReturnValue(false);
+    (rateLimitingService.checkRateLimit as jest.Mock).mockResolvedValue({
+      allowed: true,
+      remaining: 1,
+      limit: 20,
+      resetTime: Date.now() + 1000
+    });
+    req = { method, path };
+    await rateLimitingMiddleware()(req as Request, res as Response, next);
+    expect(rateLimitingService.checkRateLimit).toHaveBeenCalledWith(
+      'ip:192.168.1.1',
+      expect.objectContaining({ burst: 20 })
     );
   });
 });
