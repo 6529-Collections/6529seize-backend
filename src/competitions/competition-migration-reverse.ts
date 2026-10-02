@@ -1,6 +1,10 @@
 import { SqlExecutor } from '@/sql-executor';
 import { RequestContext } from '@/request.context';
-import { DROPS_TABLE, WAVES_TABLE } from '@/constants';
+import {
+  COMPETITION_ENTRIES_TABLE,
+  DROPS_TABLE,
+  WAVES_TABLE
+} from '@/constants';
 import {
   LEGACY_GET_SOURCE_TABLES,
   legacyGetView
@@ -11,6 +15,36 @@ function verifiedColumn(value: string): string {
   if (!/^[a-zA-Z0-9_]+$/.test(value))
     throw new Error('OWNED_EXCEPTION: unsafe reverse reconciliation column');
   return value;
+}
+
+function reverseCopyFilter(table: string): string {
+  if (table === WAVES_TABLE) return 'id=:waveId';
+  if (table === DROPS_TABLE)
+    return `wave_id=:waveId and id in (select drop_id from ${COMPETITION_ENTRIES_TABLE} where competition_id=:id)`;
+  return 'wave_id=:waveId';
+}
+async function assertReversePrimaryDropTypes(
+  db: SqlExecutor,
+  id: string,
+  waveId: string,
+  ctx: RequestContext
+): Promise<void> {
+  const timerName = 'assertReversePrimaryDropTypes';
+  ctx.timer?.start(timerName);
+  try {
+    const nativeCreated = await db.oneOrNull<{ id: string }>(
+      `select d.id from ${DROPS_TABLE} d join ${COMPETITION_ENTRIES_TABLE} e on e.drop_id=d.id
+       where e.competition_id=:id and d.wave_id=:waveId and d.drop_type='COMPETITION' limit 1`,
+      { id, waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    if (nativeCreated)
+      throw new Error(
+        'OWNED_EXCEPTION: reverse reconciliation cannot change native-created primary drop types; retain native ownership for reviewed repair'
+      );
+  } finally {
+    ctx.timer?.stop(timerName);
+  }
 }
 
 export type ReverseCheckpoint = {
@@ -71,6 +105,11 @@ export async function reconcileLegacyBatch(
         ? checkpoint
         : { ...checkpoint, phase: 'COPY', cursor: null };
     }
+    // Only materialize this primary's entry projection. Shared chat and sibling
+    // native COMPETITION drops are immutable source content, not rollback data.
+    if (table === DROPS_TABLE)
+      await assertReversePrimaryDropTypes(db, id, waveId, ctx);
+    const copyFilter = reverseCopyFilter(table);
     const cursor =
       checkpoint.cursor === null
         ? null
@@ -80,9 +119,10 @@ export async function reconcileLegacyBatch(
         ? ''
         : `and (${keys.map((key) => `\`${key}\``).join(',')}) > (${keys.map((_, index) => `:key${index}`).join(',')})`;
     const rows = await db.execute<Record<string, unknown>>(
-      `select * from \`${view}\` where ${filter} ${keyFilter}
+      `select * from \`${view}\` where ${copyFilter} ${keyFilter}
        order by ${keys.map((key) => `\`${key}\``).join(',')} limit :limit`,
       {
+        id,
         waveId,
         limit,
         ...Object.fromEntries(

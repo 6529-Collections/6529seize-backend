@@ -662,14 +662,20 @@ export class CompetitionMigrationService {
       throw new Error('Use a stable uppercase exception code');
     return this.transaction(id, async (repository, ctx) => {
       const status = await repository.status(id, ctx);
-      if (!status.migration || status.storageMode !== 'LEGACY_ADAPTER')
-        throw new Error('Exceptions require an enrolled legacy owner');
+      if (!status.migration)
+        throw new Error('Exceptions require an enrolled competition');
       const exceptions = Array.from(
         new Set([...status.migration.exceptions, `${code}:${operator.actor}`])
       );
       await repository.update(
         id,
-        { exceptions, consecutive_full_windows: 0 },
+        {
+          exceptions,
+          consecutive_full_windows: 0,
+          ...(status.storageMode === 'NATIVE'
+            ? { state: 'ROLLBACK_REQUIRED' as const }
+            : {})
+        },
         ctx
       );
       await repository.audit(
@@ -677,7 +683,7 @@ export class CompetitionMigrationService {
         operator.actor,
         'OWNED_EXCEPTION',
         operator.reason,
-        { code, owner: operator.actor },
+        { code, owner: operator.actor, ownershipRetained: status.storageMode },
         ctx
       );
       return repository.status(id, ctx);

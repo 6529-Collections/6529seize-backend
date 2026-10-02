@@ -209,14 +209,16 @@ export async function executeMigrationCommand(
       error.message.startsWith('OWNED_EXCEPTION:')
     ) {
       const status = await service.status(options.competition);
-      if (status.migration && status.storageMode === 'LEGACY_ADAPTER') {
+      if (status.migration) {
         await service.recordException(
           options.competition,
           {
             actor: options.operator!,
             reason: options.reason!
           },
-          'MIGRATION_DATA_SHAPE'
+          status.storageMode === 'NATIVE'
+            ? 'NATIVE_MIGRATION_DATA_SHAPE'
+            : 'MIGRATION_DATA_SHAPE'
         );
       }
     }

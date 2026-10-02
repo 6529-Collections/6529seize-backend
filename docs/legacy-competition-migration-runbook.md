@@ -233,7 +233,12 @@ Repeat bounded batches until `reverse_ready=true`. Native ownership remains
 active throughout preparation. Dry-run rollback then performs full independent
 comparison against the reconciled legacy state; intervening writes can require
 another pass. Add `--live` for an authorized atomic rollback. Do not flip storage
-with SQL. Re-enrollment resets native shadow data in bounded batches, clears old
+with SQL. Reverse drop copying includes only the migrated primary's entries;
+shared chat and sibling native competition submissions remain untouched. If the
+primary now contains a native-created `COMPETITION` drop, reverse reconciliation
+stops with an owned exception because its immutable source type cannot be
+converted into legacy participation. Retain native ownership and review a reverse
+adapter or owned repair before proceeding. Re-enrollment resets native shadow data in bounded batches, clears old
 acceptance and requires seven fresh windows.
 
 After a native decision, pending publication or completed external effect, live
@@ -246,7 +251,9 @@ Ownership stays native and blind rollback remains guarded.
 
 For a new discovered source limitation, `record-exception --exception <CODE>
 --live` records a stable uppercase code with the operator and resets parity.
-The CLI also records `MIGRATION_DATA_SHAPE` after an owned shape failure. Preserve
+The CLI records `MIGRATION_DATA_SHAPE` after an owned legacy shape failure. A
+native shape failure records `NATIVE_MIGRATION_DATA_SHAPE`, retains native
+ownership and enters `ROLLBACK_REQUIRED` for reviewed repair. Preserve
 history, receipts and journal checkpoints; resolve through reviewed code and
 rehearsal, never by deleting the guard or fabricating acceptance.
 

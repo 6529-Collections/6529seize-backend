@@ -2,7 +2,10 @@ import { withLegacyCompetitionProfileMerge } from './legacy-competition-profile-
 import { DropVotingDb } from '@/api/drops/drop-voting.db';
 import { migrationCommandConfiguration } from './legacy-competition-configuration';
 import { NativeCompetitionReader } from './native-competition.reader';
-import { withLegacyCompetitionGetFacade } from './legacy-competition-get-facade';
+import {
+  LEGACY_GET_SOURCE_TABLES,
+  withLegacyCompetitionGetFacade
+} from './legacy-competition-get-facade';
 import {
   COMPETITION_ENTRIES_TABLE,
   COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE,
@@ -10,6 +13,7 @@ import {
   DROPS_PARTS_TABLE,
   WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
   COMPETITION_MIGRATION_CHANGES_TABLE,
+  COMPETITION_MIGRATIONS_TABLE,
   COMPETITIONS_TABLE,
   DROP_RANK_TABLE,
   DROP_REAL_VOTE_IN_TIME_TABLE,
@@ -353,6 +357,29 @@ describeWithSeed(
             id,
             {}
           ))!;
+        const siblingId = '10000000-0000-4000-8000-000000000099';
+        await sqlExecutor.execute(
+          `insert into ${COMPETITIONS_TABLE} (id,wave_id,legacy_wave_id,storage_mode,execution_mode,type,lifecycle,title,
+           participation_config,voting_config,decision_config,winner_config,outcome_config,config_version,created_at,updated_at,published_at)
+           select :siblingId,wave_id,null,'NATIVE','ACTIVE',type,'PUBLISHED','Sibling native competition',
+           participation_config,voting_config,decision_config,winner_config,outcome_config,1,:clock,:clock,:clock
+           from ${COMPETITIONS_TABLE} where id=:id`,
+          { id, siblingId, clock }
+        );
+        await sqlExecutor.execute(
+          `insert into ${DROPS_TABLE} (id,wave_id,author_id,created_at,title,parts_count,drop_type,hide_link_preview)
+           values ('sibling-native-drop',:waveId,'fixture-author',10,'Sibling content',1,'COMPETITION',0),
+           ('shared-chat-drop',:waveId,'fixture-author',10,'Shared chat',1,'CHAT',0)`,
+          { waveId: wave.id }
+        );
+        await sqlExecutor.execute(
+          `insert into ${COMPETITION_ENTRIES_TABLE} (id,competition_id,wave_id,drop_id,submitter_id,status,config_version,submitted_at)
+           values ('20000000-0000-4000-8000-000000000099',:siblingId,:waveId,'sibling-native-drop','fixture-author','ACTIVE',1,10)`,
+          { siblingId, waveId: wave.id }
+        );
+        const sharedSource = await sqlExecutor.execute(
+          `select * from ${DROPS_TABLE} where id in ('sibling-native-drop','shared-chat-drop') order by id`
+        );
         const configuration = await new NativeCompetitionReader(
           new CompetitionRepository(),
           {},
@@ -481,6 +508,18 @@ describeWithSeed(
         });
         expect((await service.status(id)).storageMode).toBe('LEGACY_ADAPTER');
         expect(
+          await sqlExecutor.execute(
+            `select * from ${DROPS_TABLE} where id in ('sibling-native-drop','shared-chat-drop') order by id`
+          )
+        ).toEqual(sharedSource);
+        expect(
+          await withLegacyCompetitionGetFacade(() =>
+            sqlExecutor.oneOrNull(
+              `select drop_type from ${DROPS_TABLE} where id='sibling-native-drop'`
+            )
+          )
+        ).toEqual({ drop_type: 'CHAT' });
+        expect(
           (
             await sqlExecutor.oneOrNull<{ name: string }>(
               `select name from waves where id=:waveId`,
@@ -498,6 +537,77 @@ describeWithSeed(
           else process.env[flags[i]] = saved[i];
         }
       }
+    });
+    it('retains native ownership and immutable drop types when reverse materialization encounters a native-created primary entry', async () => {
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await finishBackfill(service);
+      await sqlExecutor.execute(
+        `insert into ${DROPS_TABLE} (id,wave_id,author_id,created_at,parts_count,drop_type,hide_link_preview)
+         values ('native-created-primary',:waveId,'fixture-author',10,1,'COMPETITION',0)`,
+        { waveId: wave.id }
+      );
+      await sqlExecutor.execute(
+        `insert into ${COMPETITION_ENTRIES_TABLE} (id,competition_id,wave_id,drop_id,submitter_id,status,config_version,submitted_at)
+         values ('20000000-0000-4000-8000-000000000098',:id,:waveId,'native-created-primary','fixture-author','ACTIVE',1,10)`,
+        { id, waveId: wave.id }
+      );
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set storage_mode='NATIVE' where id=:id`,
+        { id }
+      );
+      // Isolate reverse refusal; the full cutover gate is exercised above.
+      await sqlExecutor.execute(
+        `update ${COMPETITION_MIGRATIONS_TABLE} set state='NATIVE',reverse_checkpoint=:checkpoint where competition_id=:id`,
+        {
+          id,
+          checkpoint: JSON.stringify({
+            index: LEGACY_GET_SOURCE_TABLES.indexOf(DROPS_TABLE),
+            phase: 'COPY',
+            cursor: null
+          })
+        }
+      );
+      await expect(
+        executeMigrationCommand(
+          parseMigrationOptions([
+            '--environment',
+            'local',
+            '--competition',
+            id,
+            '--action',
+            'reverse-reconcile',
+            '--operator',
+            operator.actor,
+            '--reason',
+            operator.reason,
+            '--live'
+          ]),
+          service
+        )
+      ).rejects.toThrow(
+        'OWNED_EXCEPTION: reverse reconciliation cannot change native-created primary drop types'
+      );
+      const guarded = await service.status(id);
+      expect(guarded.storageMode).toBe('NATIVE');
+      expect(guarded.migration?.state).toBe('ROLLBACK_REQUIRED');
+      expect(guarded.migration?.reverse_ready).toBe(false);
+      expect(guarded.migration?.exceptions).toContain(
+        `NATIVE_MIGRATION_DATA_SHAPE:${operator.actor}`
+      );
+      expect(
+        await sqlExecutor.oneOrNull(
+          `select drop_type from ${DROPS_TABLE} where id='native-created-primary'`
+        )
+      ).toEqual({ drop_type: 'COMPETITION' });
+      expect(
+        (await new CompetitionRepository().findCompetitionRecordById(id, {}))
+          ?.storage_mode
+      ).toBe('NATIVE');
     });
     it('durably records an owned stop when an oversized distribution appears after enrollment', async () => {
       const service = new CompetitionMigrationService(
