@@ -70,20 +70,24 @@ export function legacyGetView(table: string): string {
   return `legacy_get_${table}`;
 }
 
-/** Rewrite only table identifiers after FROM/JOIN in repository-owned SELECTs.
- * Strings, quoted values, comments and mutations are never interpreted as SQL.
- * The explicit request scope keeps baseline SQL and native commands independent. */
-export function legacyCompetitionGetSql(sql: string): string {
-  if (!scope.getStore()) return sql;
-  const tokens =
-    sql.match(
-      /'(?:\\.|''|[^'\\])*'|"(?:\\.|""|[^"\\])*"|`[^`]+`|--[^\n]*|\/\*[\s\S]*?\*\/|[A-Za-z_][A-Za-z_0-9]*|\s+|./g
-    ) ?? [];
-  const meaningful = tokens
-    .map((value, index) => ({ value, index }))
-    .filter(({ value }) => !/^\s|^--|^\/\*/.test(value));
+type SqlToken = { readonly value: string; readonly index: number };
+const SQL_TOKEN_PATTERN = new RegExp(
+  [
+    /'(?:\\.|''|[^'\\])*'/.source,
+    /"(?:\\.|""|[^"\\])*"/.source,
+    /`[^`]+`/.source,
+    /--[^\n]*/.source,
+    /\/\*[\s\S]*?\*\//.source,
+    /[A-Za-z_][A-Za-z_0-9]*/.source,
+    /\s+/.source,
+    /./.source
+  ].join('|'),
+  'g'
+);
+
+function isSelectQuery(tokens: readonly SqlToken[]): boolean {
   let depth = 0;
-  const command = meaningful.find(({ value }) => {
+  const command = tokens.find(({ value }) => {
     if (value === '(') {
       depth++;
       return false;
@@ -96,53 +100,93 @@ export function legacyCompetitionGetSql(sql: string): string {
       depth === 0 && /^(select|insert|update|delete|replace)$/i.test(value)
     );
   });
-  if (command?.value.toLowerCase() !== 'select') return sql;
+  return command?.value.toLowerCase() === 'select';
+}
+function fromNesting(
+  previous: string,
+  nesting: number,
+  inFrom: Set<number>
+): number {
+  if (previous === '(') nesting++;
+  if (previous === ')') {
+    inFrom.delete(nesting);
+    nesting--;
+  }
+  if (/^from$/i.test(previous)) inFrom.add(nesting);
+  if (/^(where|group|order|having|limit|union)$/i.test(previous))
+    inFrom.delete(nesting);
+  return nesting;
+}
+function hasTableAlias(next: string): boolean {
+  return (
+    /^as$/i.test(next) ||
+    (/^[a-z_][a-z_0-9]*$/i.test(next) &&
+      !/^(where|left|right|inner|outer|cross|join|on|group|order|limit|union|having|for|use|force|ignore)$/i.test(
+        next
+      ))
+  );
+}
+function removeViewIndexHints(
+  tokens: string[],
+  meaningful: readonly SqlToken[],
+  firstHint: number
+): void {
+  // Views have no named indexes. Source predicates can still use base-table indexes.
+  let hint = firstHint;
+  while (/^(force|use|ignore)$/i.test(meaningful[hint]?.value ?? '')) {
+    let end = hint + 1;
+    while (end < meaningful.length && meaningful[end].value !== ')') end++;
+    if (end >= meaningful.length)
+      throw new Error('Malformed legacy query index hint');
+    for (
+      let index = meaningful[hint].index;
+      index <= meaningful[end].index;
+      index++
+    )
+      tokens[index] = '';
+    hint = end + 1;
+  }
+}
+function rewriteLegacyGetTable(
+  tokens: string[],
+  meaningful: readonly SqlToken[],
+  index: number
+): void {
+  const token = meaningful[index];
+  const table = token.value.replace(/^`|`$/g, '');
+  if (!LEGACY_GET_SOURCE_TABLES.some((source) => source === table)) return;
+  const next = (meaningful[index + 1]?.value ?? '').replace(/^`|`$/g, '');
+  const hasAlias = hasTableAlias(next);
+  // Preserve implicit table-qualified column names as well as explicit aliases.
+  let replacement = `\`${legacyGetView(table)}\``;
+  let hint = index + 1;
+  if (hasAlias) hint += /^as$/i.test(next) ? 2 : 1;
+  else replacement += ` as \`${table}\``;
+  tokens[token.index] = replacement;
+  removeViewIndexHints(tokens, meaningful, hint);
+}
+
+/** Rewrite only table identifiers after FROM/JOIN in repository-owned SELECTs.
+ * Strings, quoted values, comments and mutations are never interpreted as SQL.
+ * The explicit request scope keeps baseline SQL and native commands independent. */
+export function legacyCompetitionGetSql(sql: string): string {
+  if (!scope.getStore()) return sql;
+  const tokens = sql.match(SQL_TOKEN_PATTERN) ?? [];
+  const meaningful = tokens
+    .map((value, index) => ({ value, index }))
+    .filter(({ value }) => !/^\s|^--|^\/\*/.test(value));
+  if (!isSelectQuery(meaningful)) return sql;
   let nesting = 0;
   const inFrom = new Set<number>();
-  for (let i = 1; i < meaningful.length; i++) {
-    const previous = meaningful[i - 1].value;
-    if (previous === '(') nesting++;
-    if (previous === ')') {
-      inFrom.delete(nesting);
-      nesting--;
-    }
-    if (/^from$/i.test(previous)) inFrom.add(nesting);
-    if (/^(where|group|order|having|limit|union)$/i.test(previous))
-      inFrom.delete(nesting);
+  for (let index = 1; index < meaningful.length; index++) {
+    const previous = meaningful[index - 1].value;
+    nesting = fromNesting(previous, nesting, inFrom);
     if (
       !/^(from|join)$/i.test(previous) &&
       !(previous === ',' && inFrom.has(nesting))
     )
       continue;
-    const token = meaningful[i];
-    const table = token.value.replace(/^`|`$/g, '');
-    if (!LEGACY_GET_SOURCE_TABLES.some((source) => source === table)) continue;
-    const next = (meaningful[i + 1]?.value ?? '').replace(/^`|`$/g, '');
-    // Preserve implicit table-qualified column names as well as explicit aliases.
-    const hasAlias =
-      /^(as)$/i.test(next) ||
-      (/^[a-z_][a-z_0-9]*$/i.test(next) &&
-        !/^(where|left|right|inner|outer|cross|join|on|group|order|limit|union|having|for|use|force|ignore)$/i.test(
-          next
-        ));
-    tokens[token.index] =
-      `\`${legacyGetView(table)}\`${hasAlias ? '' : ` as \`${table}\``}`;
-    // Views have no named indexes. The optimizer can push predicates to the
-    // original indexed tables; source hints cannot be applied to a view.
-    let hint = i + 1 + (hasAlias ? (/^as$/i.test(next) ? 2 : 1) : 0);
-    while (/^(force|use|ignore)$/i.test(meaningful[hint]?.value ?? '')) {
-      let end = hint + 1;
-      while (end < meaningful.length && meaningful[end].value !== ')') end++;
-      if (end >= meaningful.length)
-        throw new Error('Malformed legacy query index hint');
-      for (
-        let index = meaningful[hint].index;
-        index <= meaningful[end].index;
-        index++
-      )
-        tokens[index] = '';
-      hint = end + 1;
-    }
+    rewriteLegacyGetTable(tokens, meaningful, index);
   }
   return tokens.join('');
 }

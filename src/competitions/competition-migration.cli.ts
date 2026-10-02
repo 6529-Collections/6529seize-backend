@@ -37,9 +37,9 @@ export type MigrationCliOptions = {
   readonly window: number;
   readonly live: boolean;
 };
-export function parseMigrationOptions(
+function parseMigrationArguments(
   args: readonly string[]
-): MigrationCliOptions {
+): Record<string, string | boolean> {
   const parsed: Record<string, string | boolean> = {};
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
@@ -56,6 +56,13 @@ export function parseMigrationOptions(
       parsed[key] = args[++index];
     } else throw new Error('Invalid arguments; use --help');
   }
+  return parsed;
+}
+
+export function parseMigrationOptions(
+  args: readonly string[]
+): MigrationCliOptions {
+  const parsed = parseMigrationArguments(args);
   const result = Joi.object<MigrationCliOptions>({
     environment: Joi.string()
       .valid('local', 'staging', 'production')
@@ -255,16 +262,17 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
+function migrationStopCode(message: string): string {
+  if (message.startsWith('OWNED_EXCEPTION:')) return 'OWNED_EXCEPTION';
+  if (message.includes('journal gap')) return 'CAPTURE_JOURNAL_GAP';
+  if (message.includes('allowlisted')) return 'OPERATOR_NOT_ALLOWLISTED';
+  return 'COMMAND_FAILED';
+}
+
 if (require.main === module)
   void main().catch((error: unknown) => {
     const message = error instanceof Error ? error.message : '';
-    const stop = message.startsWith('OWNED_EXCEPTION:')
-      ? 'OWNED_EXCEPTION'
-      : message.includes('journal gap')
-        ? 'CAPTURE_JOURNAL_GAP'
-        : message.includes('allowlisted')
-          ? 'OPERATOR_NOT_ALLOWLISTED'
-          : 'COMMAND_FAILED';
+    const stop = migrationStopCode(message);
     process.stderr.write(
       `${stop}: migration command stopped. Run status/readiness for the same explicit UUID; no ownership change should be assumed.\n`
     );

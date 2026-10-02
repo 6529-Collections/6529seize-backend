@@ -1,3 +1,4 @@
+import type { CompetitionRoutingRecord } from '@/competitions/competition.types';
 import {
   COMPETITION_VOTES_TABLE,
   COMPETITION_VOTE_HISTORY_TABLE,
@@ -395,6 +396,23 @@ export class CreateOrUpdateDropUseCase {
     };
   }
 
+  private assertLegacySubmissionAvailable(
+    model: CreateOrUpdateDropModel,
+    nativeOwner: CompetitionRoutingRecord | null,
+    nativeEntryContent: NativeEntryContentPermit | undefined
+  ): void {
+    if (
+      nativeOwner &&
+      !nativeEntryContent &&
+      model.drop_type === DropType.PARTICIPATORY &&
+      (!appFeatures.isNativeCompetitionWritesEnabled() ||
+        !appFeatures.isNativeCompetitionExecutionEnabled())
+    )
+      throw new ForbiddenException(
+        'Competition submissions are temporarily unavailable'
+      );
+  }
+
   public async execute(
     model: CreateOrUpdateDropModel,
     isDescriptionDrop: boolean,
@@ -435,16 +453,11 @@ export class CreateOrUpdateDropUseCase {
       model.wave_id,
       { timer, connection },
       async (nativeOwner) => {
-        if (
-          nativeOwner &&
-          !nativeEntryContent &&
-          model.drop_type === DropType.PARTICIPATORY &&
-          (!appFeatures.isNativeCompetitionWritesEnabled() ||
-            !appFeatures.isNativeCompetitionExecutionEnabled())
-        )
-          throw new ForbiddenException(
-            'Competition submissions are temporarily unavailable'
-          );
+        this.assertLegacySubmissionAvailable(
+          model,
+          nativeOwner,
+          nativeEntryContent
+        );
         let resolvedModel = sanitizeDropStructuredFields(model);
         this.assertDropContentLimits(resolvedModel.parts);
         timer?.start(`${CreateOrUpdateDropUseCase.name}->execute`);

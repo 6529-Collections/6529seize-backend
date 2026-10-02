@@ -81,161 +81,288 @@ export class CompetitionMigrationBackfill {
       const row = after ?? before;
       if (!row)
         throw new Error('OWNED_EXCEPTION: captured change has no source key');
-      const options = { wrappedConnection: ctx.connection };
-      const params = { id: record.id, waveId: record.wave_id };
       const table = change.source_table;
       if (isMigrationContentTable(table)) {
         await this.entry(record, String(row.drop_id), ctx);
         return;
       }
-      if (table === DROPS_TABLE) {
-        const dropId = String(row.id),
-          entryId = legacyCompetitionEntryId(record.id, dropId);
-        const exists = await this.db.oneOrNull<{ id: string }>(
-          `select id from ${DROPS_TABLE} where id=:dropId and wave_id=:waveId and drop_type in ('PARTICIPATORY','WINNER')`,
-          { ...params, dropId },
+      const options = { wrappedConnection: ctx.connection };
+      const params = { id: record.id, waveId: record.wave_id };
+      switch (table) {
+        case DROPS_TABLE:
+          await this.replayDrop(record, String(row.id), ctx);
+          break;
+        case DROP_VOTER_STATE_TABLE:
+        case DROPS_VOTES_CREDIT_SPENDINGS_TABLE:
+          await this.vote(
+            record,
+            String(row.drop_id),
+            String(row.voter_id),
+            ctx
+          );
+          break;
+        case DROP_RANK_TABLE:
+        case WAVE_LEADERBOARD_ENTRIES_TABLE:
+          await this.runtime(record, String(row.drop_id), ctx);
+          break;
+        case WAVES_TABLE:
+        case WAVE_OUTCOMES_TABLE:
+        case WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE:
+        case WAVE_VOTING_CREDIT_NFTS_TABLE:
+          await this.replayConfiguration(record, change, ctx);
+          break;
+        case WAVES_DECISION_PAUSES_TABLE:
+          await this.db.execute(
+            `delete from ${COMPETITION_PAUSES_TABLE} where competition_id=:id and id=:pauseId`,
+            {
+              ...params,
+              pauseId: legacyCompetitionPauseId(record.id, String(row.id))
+            },
+            options
+          );
+          break; // The keyset pause stage copies the current row, if it survives.
+        case WAVES_DECISIONS_TABLE:
+        case WAVES_DECISION_WINNER_DROPS_TABLE:
+          await this.replayDecision(record, Number(row.decision_time), ctx);
+          break; // Decisions, awards and archives are recopied by keyset stages.
+        case WINNER_DROP_VOTER_VOTES_TABLE:
+          await this.db.execute(
+            `delete from ${COMPETITION_WINNER_VOTES_TABLE} where competition_id=:id and entry_id=:entryId and voter_profile_id=:voter`,
+            {
+              ...params,
+              entryId: legacyCompetitionEntryId(record.id, String(row.drop_id)),
+              voter: String(row.voter_id)
+            },
+            options
+          );
+          break;
+      }
+      // Separate aggregate/voter time histories remain retained, immutable input
+      // identities. Their captured before/after images remain in the durable journal.
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
+  private async replayDrop(
+    record: CompetitionRoutingRecord,
+    dropId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    const timerName = `${this.constructor.name}->replayDrop`;
+    ctx.timer?.start(timerName);
+    try {
+      const options = { wrappedConnection: ctx.connection };
+      const params = { id: record.id, waveId: record.wave_id };
+      const entryId = legacyCompetitionEntryId(record.id, dropId);
+      const exists = await this.db.oneOrNull<{ id: string }>(
+        `select id from ${DROPS_TABLE} where id=:dropId and wave_id=:waveId and drop_type in ('PARTICIPATORY','WINNER')`,
+        { ...params, dropId },
+        options
+      );
+      if (exists) {
+        await this.entry(record, dropId, ctx);
+        return;
+      }
+      for (const target of [
+        COMPETITION_VOTES_TABLE,
+        COMPETITION_LEADERBOARD_ENTRIES_TABLE,
+        COMPETITION_ENTRY_RUNTIME_TABLE,
+        COMPETITION_ENTRIES_TABLE
+      ]) {
+        const key = target === COMPETITION_ENTRIES_TABLE ? 'id' : 'entry_id';
+        await this.db.execute(
+          `delete from ${target} where competition_id=:id and ${key}=:entryId`,
+          { ...params, entryId },
           options
         );
-        if (exists) await this.entry(record, dropId, ctx);
-        else {
-          for (const target of [
-            COMPETITION_VOTES_TABLE,
-            COMPETITION_LEADERBOARD_ENTRIES_TABLE,
-            COMPETITION_ENTRY_RUNTIME_TABLE,
-            COMPETITION_ENTRIES_TABLE
-          ])
-            await this.db.execute(
-              `delete from ${target} where competition_id=:id and ${target === COMPETITION_ENTRIES_TABLE ? 'id' : 'entry_id'}=:entryId`,
-              { ...params, entryId },
-              options
+      }
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
+  private async replayConfiguration(
+    record: CompetitionRoutingRecord,
+    change: CompetitionMigrationChangeEntity,
+    ctx: RequestContext
+  ): Promise<void> {
+    const timerName = `${this.constructor.name}->replayConfiguration`;
+    ctx.timer?.start(timerName);
+    try {
+      const options = { wrappedConnection: ctx.connection };
+      const params = { id: record.id, waveId: record.wave_id };
+      const table = change.source_table;
+      await this.batch(
+        record,
+        'CONFIGURATION',
+        0,
+        100,
+        Number(change.occurred_at),
+        null,
+        ctx
+      );
+      if (
+        table === WAVE_OUTCOMES_TABLE ||
+        table === WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE
+      ) {
+        for (const target of [
+          COMPETITION_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
+          COMPETITION_OUTCOMES_TABLE
+        ]) {
+          const count = await this.db.oneOrNull<{ count: number }>(
+            `select count(*) as count from ${target} where competition_id=:id`,
+            params,
+            options
+          );
+          if (Number(count?.count ?? 0) > 1000)
+            throw new Error(
+              'OWNED_EXCEPTION: outcome replay exceeds bounded cohort'
             );
+          await this.db.execute(
+            `delete from ${target} where competition_id=:id`,
+            params,
+            options
+          );
         }
-        return;
-      }
-      if (
-        table === DROP_VOTER_STATE_TABLE ||
-        table === DROPS_VOTES_CREDIT_SPENDINGS_TABLE
-      ) {
-        await this.vote(record, String(row.drop_id), String(row.voter_id), ctx);
-        return;
-      }
-      if (
-        table === DROP_RANK_TABLE ||
-        table === WAVE_LEADERBOARD_ENTRIES_TABLE
-      ) {
-        await this.runtime(record, String(row.drop_id), ctx);
-        return;
-      }
-      if (
-        [
-          WAVES_TABLE,
-          WAVE_OUTCOMES_TABLE,
-          WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
-          WAVE_VOTING_CREDIT_NFTS_TABLE
-        ].includes(table)
-      ) {
         await this.batch(
           record,
-          'CONFIGURATION',
+          'OUTCOMES',
           0,
           100,
           Number(change.occurred_at),
           null,
           ctx
         );
-        if (
-          table === WAVE_OUTCOMES_TABLE ||
-          table === WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE
-        ) {
-          for (const target of [
-            COMPETITION_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
-            COMPETITION_OUTCOMES_TABLE
-          ]) {
-            const count = await this.db.oneOrNull<{ count: number }>(
-              `select count(*) as count from ${target} where competition_id=:id`,
-              params,
-              options
-            );
-            if (Number(count?.count ?? 0) > 1000)
-              throw new Error(
-                'OWNED_EXCEPTION: outcome replay exceeds bounded cohort'
-              );
-            await this.db.execute(
-              `delete from ${target} where competition_id=:id`,
-              params,
-              options
-            );
-          }
-          await this.batch(
-            record,
-            'OUTCOMES',
-            0,
-            100,
-            Number(change.occurred_at),
-            null,
-            ctx
-          );
-        }
-        return;
       }
-      if (table === WAVES_DECISION_PAUSES_TABLE) {
-        await this.db.execute(
-          `delete from ${COMPETITION_PAUSES_TABLE} where competition_id=:id and id=:pauseId`,
-          {
-            ...params,
-            pauseId: legacyCompetitionPauseId(record.id, String(row.id))
-          },
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
+  private async replayDecision(
+    record: CompetitionRoutingRecord,
+    decisionTime: number,
+    ctx: RequestContext
+  ): Promise<void> {
+    const timerName = `${this.constructor.name}->replayDecision`;
+    ctx.timer?.start(timerName);
+    try {
+      const options = { wrappedConnection: ctx.connection };
+      const params = { id: record.id, waveId: record.wave_id };
+      const decisionId = legacyCompetitionDecisionId(record.id, decisionTime);
+      // Winner/archive copies are read-only; replay never publishes execution effects.
+      for (const target of [
+        COMPETITION_DECISION_WINNERS_TABLE,
+        COMPETITION_OUTCOME_AWARDS_TABLE,
+        COMPETITION_WINNER_VOTES_TABLE,
+        COMPETITION_DECISIONS_TABLE
+      ]) {
+        const key =
+          target === COMPETITION_DECISIONS_TABLE ? 'id' : 'decision_id';
+        const count = await this.db.oneOrNull<{ count: number }>(
+          `select count(*) as count from ${target} where competition_id=:id and ${key}=:decisionId`,
+          { ...params, decisionId },
           options
         );
-        return; // The keyset pause stage copies the current row, if it survives.
-      }
-      if (
-        table === WAVES_DECISIONS_TABLE ||
-        table === WAVES_DECISION_WINNER_DROPS_TABLE
-      ) {
-        const decisionId = legacyCompetitionDecisionId(
-          record.id,
-          Number(row.decision_time)
-        );
-        // Winner/archive copies are read-only; replay never publishes execution effects.
-        for (const target of [
-          COMPETITION_DECISION_WINNERS_TABLE,
-          COMPETITION_OUTCOME_AWARDS_TABLE,
-          COMPETITION_WINNER_VOTES_TABLE,
-          COMPETITION_DECISIONS_TABLE
-        ]) {
-          const key =
-            target === COMPETITION_DECISIONS_TABLE ? 'id' : 'decision_id';
-          const count = await this.db.oneOrNull<{ count: number }>(
-            `select count(*) as count from ${target} where competition_id=:id and ${key}=:decisionId`,
-            { ...params, decisionId },
-            options
+        if (Number(count?.count ?? 0) > 1000)
+          throw new Error(
+            'OWNED_EXCEPTION: decision replay exceeds bounded cohort'
           );
-          if (Number(count?.count ?? 0) > 1000)
-            throw new Error(
-              'OWNED_EXCEPTION: decision replay exceeds bounded cohort'
-            );
-          await this.db.execute(
-            `delete from ${target} where competition_id=:id and ${key}=:decisionId`,
-            { ...params, decisionId },
-            options
-          );
-        }
-        return; // Decisions, awards and archives are recopied by keyset stages.
-      }
-      if (table === WINNER_DROP_VOTER_VOTES_TABLE) {
         await this.db.execute(
-          `delete from ${COMPETITION_WINNER_VOTES_TABLE} where competition_id=:id and entry_id=:entryId and voter_profile_id=:voter`,
-          {
-            ...params,
-            entryId: legacyCompetitionEntryId(record.id, String(row.drop_id)),
-            voter: String(row.voter_id)
-          },
+          `delete from ${target} where competition_id=:id and ${key}=:decisionId`,
+          { ...params, decisionId },
           options
         );
       }
-      // Separate aggregate/voter time histories remain retained, immutable input
-      // identities. Their captured before/after images remain in the durable journal.
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
+  private async outcomes(
+    record: CompetitionRoutingRecord,
+    reader: LegacyCompetitionAdapter,
+    offset: number,
+    now: number,
+    ctx: RequestContext
+  ): Promise<number> {
+    const timerName = `${this.constructor.name}->outcomes`;
+    ctx.timer?.start(timerName);
+    try {
+      const legacy = {
+        ...record,
+        storage_mode: CompetitionStorageMode.LEGACY_ADAPTER
+      };
+      const page = { offset, limit: 100, direction: 'ASC' as const };
+      const outcomes = await reader.listOutcomes(legacy, {
+        ...page,
+        limit: 100
+      });
+      const totalDistribution = await this.db.oneOrNull<{ count: number }>(
+        `select count(*) as count from ${WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE} where wave_id=:waveId`,
+        { waveId: record.wave_id },
+        { wrappedConnection: ctx.connection }
+      );
+      if (Number(totalDistribution?.count ?? 0) > 100)
+        throw new Error(
+          'OWNED_EXCEPTION: outcome distribution exceeds bounded ordinary cohort'
+        );
+      const definitions: object[] = [];
+      for (const outcome of outcomes.data) {
+        await this.upsert(
+          COMPETITION_OUTCOMES_TABLE,
+          [
+            {
+              ...outcome,
+              created_at: Number(
+                (await reader.getCompetition(legacy, now)).created_at
+              )
+            }
+          ],
+          ctx
+        );
+        const distribution = await reader.listDistribution(legacy, outcome.id, {
+          offset: 0,
+          limit: 100,
+          direction: 'ASC'
+        });
+        if (distribution.has_more)
+          throw new Error(
+            'OWNED_EXCEPTION: outcome distribution exceeds 100; preserve legacy ownership'
+          );
+        await this.upsert(
+          COMPETITION_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
+          distribution.data.map((item) => ({
+            ...item,
+            competition_id: record.id
+          })),
+          ctx
+        );
+        definitions.push({
+          type: outcome.type,
+          subtype: outcome.subtype,
+          description: outcome.description,
+          credit: outcome.credit,
+          rep_category: outcome.rep_category,
+          amount: outcome.amount,
+          distribution: distribution.data.map((item) => ({
+            amount: item.amount,
+            description: item.description
+          }))
+        });
+      }
+      if (offset === 0 && !outcomes.has_more)
+        await this.db.execute(
+          `update ${COMPETITIONS_TABLE} set outcome_config=:definitions where id=:id`,
+          { id: record.id, definitions: JSON.stringify(definitions) },
+          { wrappedConnection: ctx.connection }
+        );
+      if (outcomes.has_more || offset !== 0)
+        throw new Error(
+          'OWNED_EXCEPTION: outcome configuration exceeds one bounded page'
+        );
+      return 0;
     } finally {
       ctx.timer?.stop(timerName);
     }
@@ -325,76 +452,8 @@ export class CompetitionMigrationBackfill {
           );
           return 0;
         }
-        case 'OUTCOMES': {
-          const outcomes = await reader.listOutcomes(legacy, {
-            ...page,
-            limit: 100
-          });
-          const totalDistribution = await this.db.oneOrNull<{ count: number }>(
-            `select count(*) as count from ${WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE} where wave_id=:waveId`,
-            { waveId: record.wave_id },
-            { wrappedConnection: ctx.connection }
-          );
-          if (Number(totalDistribution?.count ?? 0) > 100)
-            throw new Error(
-              'OWNED_EXCEPTION: outcome distribution exceeds bounded ordinary cohort'
-            );
-          const definitions: object[] = [];
-          for (const outcome of outcomes.data) {
-            await this.upsert(
-              COMPETITION_OUTCOMES_TABLE,
-              [
-                {
-                  ...outcome,
-                  created_at: Number(
-                    (await reader.getCompetition(legacy, now)).created_at
-                  )
-                }
-              ],
-              ctx
-            );
-            const distribution = await reader.listDistribution(
-              legacy,
-              outcome.id,
-              { offset: 0, limit: 100, direction: 'ASC' }
-            );
-            if (distribution.has_more)
-              throw new Error(
-                'OWNED_EXCEPTION: outcome distribution exceeds 100; preserve legacy ownership'
-              );
-            await this.upsert(
-              COMPETITION_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
-              distribution.data.map((item) => ({
-                ...item,
-                competition_id: record.id
-              })),
-              ctx
-            );
-            definitions.push({
-              type: outcome.type,
-              subtype: outcome.subtype,
-              description: outcome.description,
-              credit: outcome.credit,
-              rep_category: outcome.rep_category,
-              amount: outcome.amount,
-              distribution: distribution.data.map((item) => ({
-                amount: item.amount,
-                description: item.description
-              }))
-            });
-          }
-          if (offset === 0 && !outcomes.has_more)
-            await this.db.execute(
-              `update ${COMPETITIONS_TABLE} set outcome_config=:definitions where id=:id`,
-              { id: record.id, definitions: JSON.stringify(definitions) },
-              { wrappedConnection: ctx.connection }
-            );
-          if (outcomes.has_more || offset !== 0)
-            throw new Error(
-              'OWNED_EXCEPTION: outcome configuration exceeds one bounded page'
-            );
-          return 0;
-        }
+        case 'OUTCOMES':
+          return await this.outcomes(record, reader, offset, now, ctx);
         case 'ENTRIES': {
           const source = await this.entryKeys(record, offset, limit, ctx);
           for (const row of source) await this.entry(record, row.id, ctx);

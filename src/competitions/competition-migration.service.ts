@@ -83,6 +83,72 @@ function sourceCreditOverspent(snapshot: CompetitionSnapshot): boolean {
       budget.spent > budget.available
   );
 }
+type MigrationRecord = NonNullable<MigrationStatus['migration']>;
+function comparisonWindowSamples(
+  migration: MigrationRecord,
+  reset: boolean,
+  finished: boolean,
+  complete: boolean,
+  mismatches: number
+): number {
+  if (reset) return complete && mismatches === 0 ? 1 : 0;
+  if (finished) return 1;
+  return migration.window_samples + 1;
+}
+function comparisonWindowEnd(
+  migration: MigrationRecord,
+  now: number,
+  reset: boolean,
+  finished: boolean
+): number | null {
+  if (finished) return now;
+  if (reset) return null;
+  return migration.last_window_end;
+}
+function comparisonWindowProgress(
+  migration: MigrationRecord,
+  now: number,
+  windowMs: number,
+  complete: boolean,
+  mismatches: number
+) {
+  const changedDuration = migration.window_duration_ms !== windowMs;
+  const missedSample =
+    migration.last_comparison_at !== null &&
+    now - migration.last_comparison_at > windowMs;
+  const reset = mismatches > 0 || !complete || changedDuration || missedSample;
+  const startedAt =
+    reset || migration.window_started_at === null
+      ? now
+      : migration.window_started_at;
+  const finished =
+    !reset && now - startedAt >= windowMs && migration.window_samples >= 1;
+  let streak = Number(migration.consecutive_full_windows);
+  if (reset) streak = 0;
+  else if (finished)
+    streak = nextMigrationWindowStreak({
+      previousStreak: streak,
+      previousWindowEnd: migration.last_window_end,
+      windowStart: startedAt,
+      windowEnd: now,
+      complete,
+      independent: true,
+      mismatches
+    });
+  return {
+    consecutive_full_windows: streak,
+    window_started_at: finished ? now : startedAt,
+    window_duration_ms: windowMs,
+    window_samples: comparisonWindowSamples(
+      migration,
+      reset,
+      finished,
+      complete,
+      mismatches
+    ),
+    last_window_end: comparisonWindowEnd(migration, now, reset, finished)
+  };
+}
 export type MigrationOperator = {
   readonly actor: string;
   readonly reason: string;
@@ -222,6 +288,45 @@ export class CompetitionMigrationService {
       return repository.status(id, ctx);
     });
   }
+  private async resetShadowBatch(
+    id: string,
+    operator: MigrationOperator,
+    repository: CompetitionMigrationRepository,
+    tableIndex: number,
+    limit: number,
+    ctx: RequestContext
+  ) {
+    const timerName = `${this.constructor.name}->resetShadowBatch`;
+    ctx.timer?.start(timerName);
+    try {
+      const table = SHADOW_TABLES[tableIndex];
+      if (!table) throw new Error('Invalid shadow reset checkpoint');
+      const deleted = await this.supplier().execute(
+        `delete from ${table} where competition_id=:id limit :limit`,
+        { id, limit },
+        { wrappedConnection: ctx.connection }
+      );
+      const complete = this.supplier().getAffectedRows(deleted) < limit;
+      const next = complete ? tableIndex + 1 : tableIndex;
+      await repository.update(
+        id,
+        { reset_table_index: next >= SHADOW_TABLES.length ? null : next },
+        ctx
+      );
+      await repository.audit(
+        id,
+        operator.actor,
+        'RESET_SHADOW_BATCH',
+        operator.reason,
+        { table, limit, nextTable: next },
+        ctx
+      );
+      return repository.status(id, ctx);
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   /** One bounded transaction per invocation. Reissue until SHADOWING. */
   public async backfill(id: string, operator: MigrationOperator, limit = 100) {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
@@ -234,33 +339,15 @@ export class CompetitionMigrationService {
         throw new Error('Competition is not BACKFILLING');
       const limited = await this.rateLimit(repository, id, ctx);
       if (limited) return limited;
-      if (migration.reset_table_index !== null) {
-        const table = SHADOW_TABLES[migration.reset_table_index];
-        if (!table) throw new Error('Invalid shadow reset checkpoint');
-        const deleted = await this.supplier().execute(
-          `delete from ${table} where competition_id=:id limit :limit`,
-          { id, limit },
-          { wrappedConnection: ctx.connection }
-        );
-        const complete = this.supplier().getAffectedRows(deleted) < limit;
-        const next = complete
-          ? migration.reset_table_index + 1
-          : migration.reset_table_index;
-        await repository.update(
+      if (migration.reset_table_index !== null)
+        return this.resetShadowBatch(
           id,
-          { reset_table_index: next >= SHADOW_TABLES.length ? null : next },
+          operator,
+          repository,
+          migration.reset_table_index,
+          limit,
           ctx
         );
-        await repository.audit(
-          id,
-          operator.actor,
-          'RESET_SHADOW_BATCH',
-          operator.reason,
-          { table, limit, nextTable: next },
-          ctx
-        );
-        return repository.status(id, ctx);
-      }
       const record = await repository.lock(id, ctx);
       const started = performance.now();
       const nextOffset = await new CompetitionMigrationBackfill(
@@ -437,52 +524,18 @@ export class CompetitionMigrationService {
           migration.completed_stages.length === MIGRATION_STAGES.length &&
           migration.source_watermark === migration.applied_watermark &&
           !sourceCreditOverspent(baseline);
-        const changedDuration = migration.window_duration_ms !== windowMs;
-        const missedSample =
-          migration.last_comparison_at !== null &&
-          now - migration.last_comparison_at > windowMs;
-        const reset =
-          mismatches > 0 || !complete || changedDuration || missedSample;
-        const startedAt =
-          reset || migration.window_started_at === null
-            ? now
-            : migration.window_started_at;
-        const finished =
-          !reset &&
-          now - startedAt >= windowMs &&
-          migration.window_samples >= 1;
-        const streak = reset
-          ? 0
-          : finished
-            ? nextMigrationWindowStreak({
-                previousStreak: Number(migration.consecutive_full_windows),
-                previousWindowEnd: migration.last_window_end,
-                windowStart: startedAt,
-                windowEnd: now,
-                complete,
-                independent: true,
-                mismatches
-              })
-            : Number(migration.consecutive_full_windows);
+        const progress = comparisonWindowProgress(
+          migration,
+          now,
+          windowMs,
+          complete,
+          mismatches
+        );
         await repository.update(
           id,
           {
             state: 'SHADOWING',
-            consecutive_full_windows: streak,
-            window_started_at: finished ? now : startedAt,
-            window_duration_ms: windowMs,
-            window_samples: reset
-              ? complete && mismatches === 0
-                ? 1
-                : 0
-              : finished
-                ? 1
-                : migration.window_samples + 1,
-            last_window_end: finished
-              ? now
-              : reset
-                ? null
-                : migration.last_window_end,
+            ...progress,
             last_comparison_at: now,
             last_comparison_watermark: migration.source_watermark
           },
@@ -497,7 +550,7 @@ export class CompetitionMigrationService {
             : [],
           watermark: migration.source_watermark,
           mismatches,
-          consecutiveFullWindows: streak,
+          consecutiveFullWindows: progress.consecutive_full_windows,
           categories
         };
         await repository.audit(

@@ -225,123 +225,118 @@ export class DeleteDropUseCase {
           ? await this.entryHooks.lockForDelete(dropId, { timer, connection })
           : [];
         const drop = await this.dropsDb.findDropById(dropId, connection);
-        if (drop !== null) {
-          const waveId = drop.wave_id;
-          const wave = await this.dropsDb.findWaveByIdOrNull(
-            waveId,
-            connection
-          );
-          if (!isBackendDelete) {
-            if (!resolvedDeleterId) {
-              throw new Error('Expected deleter_id to be resolved');
-            }
-            await this.assertDeleterIsAllowedToDeleteDrop({
-              drop,
-              deleterId: resolvedDeleterId,
-              wave,
-              model,
-              timer
-            });
+        if (drop === null) return null;
+        const waveId = drop.wave_id;
+        const wave = await this.dropsDb.findWaveByIdOrNull(waveId, connection);
+        if (!isBackendDelete) {
+          if (!resolvedDeleterId) {
+            throw new Error('Expected deleter_id to be resolved');
           }
-          if (wave?.description_drop_id === dropId && isPermanentDelete) {
-            throw new BadRequestException('Cannot delete the description drop');
-          }
-          if (isPermanentDelete)
-            await this.entryHooks.beforeDelete(
-              drop,
-              nativeEntries,
-              resolvedDeleterId,
-              { timer, connection }
-            );
-          await Promise.all([
-            this.dropsDb.deleteDropParts(dropId, { timer, connection }),
-            this.dropsDb.deleteDropMentions(dropId, { timer, connection }),
-            this.dropsDb.deleteDropMentionedWaves(dropId, {
-              timer,
-              connection
-            }),
-            this.dropsDb.deleteDropGroupMentions(dropId, { timer, connection }),
-            this.dropsDb.deleteDropMedia(dropId, { timer, connection }),
-            this.attachmentsDb.deleteDropAttachments(dropId, {
-              timer,
-              connection
-            }),
-            this.dropsDb.deleteDropReferencedNfts(dropId, {
-              timer,
-              connection
-            }),
-            this.dropsDb.deleteDropMetadata(dropId, { timer, connection }),
-            this.dropsDb.deleteDropEntity(dropId, { timer, connection }),
-            this.reactionsService.deleteReactionsByDrop(dropId, {
-              timer,
-              connection
-            }),
-            this.dropPollsDb.deleteByDropId(dropId, { timer, connection }),
-            this.dropVotingService.deleteVotes(dropId, { timer, connection }),
-            this.curationsDb.deleteDropCurationsByDropId(dropId, {
-              timer,
-              connection
-            }),
-            ...(isPermanentDelete
-              ? [
-                  this.artCurationTokenWatchService.unregisterDrop(dropId, {
-                    timer,
-                    connection
-                  })
-                ]
-              : []),
-            this.dropsDb.deleteDropFeedItems(dropId, { timer, connection }),
-            this.dropsDb.deleteDropNotifications(dropId, { timer, connection }),
-            this.dropsDb.deleteDropSubscriptions(dropId, { timer, connection }),
-            this.dropBookmarksDb.deleteBookmarksByDropId(dropId, connection)
-          ]);
-          if (isPermanentDelete) {
-            await this.dropsDb.applyDeletedDropMetricsDelta(drop, {
-              timer,
-              connection
-            });
-            await waveDropMetricsRefreshService.markWaveDropMetricsDirtyBestEffort(
-              [drop.wave_id],
-              WaveDropMetricsDirtyRefreshReason.DROP_DELETED,
-              { timer, connection }
-            );
-            await waveScoreService.markWaveScoresDirtyBestEffort(
-              [drop.wave_id],
-              WaveScoreDirtyRefreshReason.DROP_DELETED,
-              { timer, connection }
-            );
-            await this.dropsDb.insertDeletedDrop(
-              {
-                id: dropId,
-                wave_id: waveId,
-                author_id: drop.author_id,
-                created_at: drop.created_at,
-                deleted_at: Time.currentMillis()
-              },
-              { timer, connection }
-            );
-          }
-          let dmUnreadRecipientIds: string[] = [];
-          if (isPermanentDelete && wave?.is_direct_message === true) {
-            const currentReaderIds = await this.findCurrentDmReaderIds(wave, {
-              timer,
-              connection
-            });
-            dmUnreadRecipientIds =
-              await this.wavesApiDb.incrementDmUnreadStateVersionsForWaveReaders(
-                { waveId, readerIds: currentReaderIds },
-                { timer, connection }
-              );
-          }
-          return {
-            id: dropId,
-            serial_no: drop.serial_no,
-            visibility_group_id: wave?.visibility_group_id ?? null,
-            wave_id: drop.wave_id,
-            dm_unread_recipient_ids: dmUnreadRecipientIds
-          };
+          await this.assertDeleterIsAllowedToDeleteDrop({
+            drop,
+            deleterId: resolvedDeleterId,
+            wave,
+            model,
+            timer
+          });
         }
-        return null;
+        if (wave?.description_drop_id === dropId && isPermanentDelete) {
+          throw new BadRequestException('Cannot delete the description drop');
+        }
+        if (isPermanentDelete)
+          await this.entryHooks.beforeDelete(
+            drop,
+            nativeEntries,
+            resolvedDeleterId,
+            { timer, connection }
+          );
+        await Promise.all([
+          this.dropsDb.deleteDropParts(dropId, { timer, connection }),
+          this.dropsDb.deleteDropMentions(dropId, { timer, connection }),
+          this.dropsDb.deleteDropMentionedWaves(dropId, {
+            timer,
+            connection
+          }),
+          this.dropsDb.deleteDropGroupMentions(dropId, { timer, connection }),
+          this.dropsDb.deleteDropMedia(dropId, { timer, connection }),
+          this.attachmentsDb.deleteDropAttachments(dropId, {
+            timer,
+            connection
+          }),
+          this.dropsDb.deleteDropReferencedNfts(dropId, {
+            timer,
+            connection
+          }),
+          this.dropsDb.deleteDropMetadata(dropId, { timer, connection }),
+          this.dropsDb.deleteDropEntity(dropId, { timer, connection }),
+          this.reactionsService.deleteReactionsByDrop(dropId, {
+            timer,
+            connection
+          }),
+          this.dropPollsDb.deleteByDropId(dropId, { timer, connection }),
+          this.dropVotingService.deleteVotes(dropId, { timer, connection }),
+          this.curationsDb.deleteDropCurationsByDropId(dropId, {
+            timer,
+            connection
+          }),
+          ...(isPermanentDelete
+            ? [
+                this.artCurationTokenWatchService.unregisterDrop(dropId, {
+                  timer,
+                  connection
+                })
+              ]
+            : []),
+          this.dropsDb.deleteDropFeedItems(dropId, { timer, connection }),
+          this.dropsDb.deleteDropNotifications(dropId, { timer, connection }),
+          this.dropsDb.deleteDropSubscriptions(dropId, { timer, connection }),
+          this.dropBookmarksDb.deleteBookmarksByDropId(dropId, connection)
+        ]);
+        if (isPermanentDelete) {
+          await this.dropsDb.applyDeletedDropMetricsDelta(drop, {
+            timer,
+            connection
+          });
+          await waveDropMetricsRefreshService.markWaveDropMetricsDirtyBestEffort(
+            [drop.wave_id],
+            WaveDropMetricsDirtyRefreshReason.DROP_DELETED,
+            { timer, connection }
+          );
+          await waveScoreService.markWaveScoresDirtyBestEffort(
+            [drop.wave_id],
+            WaveScoreDirtyRefreshReason.DROP_DELETED,
+            { timer, connection }
+          );
+          await this.dropsDb.insertDeletedDrop(
+            {
+              id: dropId,
+              wave_id: waveId,
+              author_id: drop.author_id,
+              created_at: drop.created_at,
+              deleted_at: Time.currentMillis()
+            },
+            { timer, connection }
+          );
+        }
+        let dmUnreadRecipientIds: string[] = [];
+        if (isPermanentDelete && wave?.is_direct_message === true) {
+          const currentReaderIds = await this.findCurrentDmReaderIds(wave, {
+            timer,
+            connection
+          });
+          dmUnreadRecipientIds =
+            await this.wavesApiDb.incrementDmUnreadStateVersionsForWaveReaders(
+              { waveId, readerIds: currentReaderIds },
+              { timer, connection }
+            );
+        }
+        return {
+          id: dropId,
+          serial_no: drop.serial_no,
+          visibility_group_id: wave?.visibility_group_id ?? null,
+          wave_id: drop.wave_id,
+          dm_unread_recipient_ids: dmUnreadRecipientIds
+        };
       }
     );
   }
