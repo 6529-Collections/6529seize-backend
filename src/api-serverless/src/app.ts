@@ -1722,6 +1722,9 @@ async function initializeApp() {
 
   // Apply rate limiting after cache check (cached responses bypass rate limiting)
   app.use(rateLimitingMiddleware());
+  // The frozen GET manifest includes profile/feed/activity embedded drops too.
+  // SQL rewriting is closed to twelve competition tables; unrelated tables are
+  // unchanged, and views pass through every unmigrated wave's source rows.
   app.use((req: Request, _res: Response, next: NextFunction) => {
     if (req.method === 'GET' && !/^\/(?:api\/)?v3(?:\/|$)/.test(req.path)) {
       withLegacyCompetitionGetFacade(next);

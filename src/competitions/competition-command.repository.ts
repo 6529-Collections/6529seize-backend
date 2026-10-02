@@ -410,6 +410,8 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
       let id: string = randomUUID(),
         legacyId: number | null = null;
       if (primary?.legacy_wave_id) {
+        if (!ctx.connection)
+          throw new Error('Migrated pause requires a pinned transaction');
         endsAt = endsAt ?? Number.MAX_SAFE_INTEGER;
         await withNativeLegacyMirror(this.db, competitionId, ctx, async () => {
           await this.db.execute(
@@ -427,7 +429,9 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
             )?.id
           );
         });
-        id = legacyCompetitionPauseId(competitionId, legacyId!);
+        if (!legacyId || !Number.isSafeInteger(legacyId))
+          throw new Error('Invalid mirrored pause source ID');
+        id = legacyCompetitionPauseId(competitionId, legacyId);
       }
       await this.db.execute(
         `INSERT INTO ${COMPETITION_PAUSES_TABLE} (id,competition_id,start_time,end_time,reason,legacy_source_id) VALUES (:id,:competitionId,:startsAt,:endsAt,:reason,:legacyId)`,

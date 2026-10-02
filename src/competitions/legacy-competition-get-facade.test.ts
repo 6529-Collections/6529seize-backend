@@ -75,4 +75,11 @@ describe('frozen GET query routing', () => {
       'select * from drops'
     ]);
   });
+  it('leaves unrelated GET repository tables untouched', () => {
+    const query =
+      'select n.id,p.handle from nfts n join profiles p on p.id=n.id';
+    expect(
+      withLegacyCompetitionGetFacade(() => legacyCompetitionGetSql(query))
+    ).toBe(query);
+  });
 });

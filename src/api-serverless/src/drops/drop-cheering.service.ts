@@ -63,6 +63,8 @@ export class DropCheeringService {
             if (!dropEntity) {
               throw new NotFoundException(`Drop ${dropId} not found`);
             }
+            if (dropEntity.wave_id !== initial.wave_id)
+              throw new Error('Drop ownership changed; retry the request');
             const dropType = dropEntity.drop_type;
             switch (dropType) {
               case DropType.CHAT: {

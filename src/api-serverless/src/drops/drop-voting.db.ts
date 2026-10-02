@@ -1814,6 +1814,8 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
             (owner.storage_mode !== 'LEGACY_ADAPTER' ||
               owner.execution_mode !== 'ACTIVE')
           )
+            // Native saveLeaderboard owns active-entry/orphan cleanup. Frozen
+            // GETs read that table; retained legacy rows are not native inputs.
             return;
           await this.db.execute(
             `delete lb from ${WAVE_LEADERBOARD_ENTRIES_TABLE} lb join ${DROPS_TABLE} d on d.id=lb.drop_id join ${WAVES_TABLE} w on w.id=lb.wave_id

@@ -44,6 +44,7 @@ import {
 } from '@/competitions/competition-id';
 import { CompetitionStorageMode } from '@/entities/ICompetition';
 import { CompetitionMigrationChangeEntity } from '@/entities/ICompetitionMigration';
+import { parseMigrationChangeImage } from './competition-migration-journal';
 
 /** Bounded batches; the checkpoint is committed with the copied records. */
 export class CompetitionMigrationBackfill {
@@ -61,12 +62,8 @@ export class CompetitionMigrationBackfill {
     const timerName = `${this.constructor.name}->applyChange`;
     ctx.timer?.start(timerName);
     try {
-      const parse = (
-        value: Record<string, unknown> | null
-      ): Record<string, unknown> | null =>
-        typeof value === 'string' ? JSON.parse(value) : value;
-      const after = parse(change.after_row),
-        before = parse(change.before_row);
+      const after = parseMigrationChangeImage(change.after_row),
+        before = parseMigrationChangeImage(change.before_row);
       if (
         change.operation === 'UPDATE' &&
         before &&
@@ -82,7 +79,8 @@ export class CompetitionMigrationBackfill {
         );
       }
       const row = after ?? before;
-      if (!row) throw new Error('Captured change has no source key');
+      if (!row)
+        throw new Error('OWNED_EXCEPTION: captured change has no source key');
       const options = { wrappedConnection: ctx.connection };
       const params = { id: record.id, waveId: record.wave_id };
       const table = change.source_table;
