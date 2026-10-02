@@ -1727,7 +1727,13 @@ async function initializeApp() {
   // unchanged, and views pass through every unmigrated wave's source rows.
   app.use((req: Request, _res: Response, next: NextFunction) => {
     if (req.method === 'GET' && !/^\/(?:api\/)?v3(?:\/|$)/.test(req.path)) {
-      withLegacyCompetitionGetFacade(next);
+      // AsyncLocalStorage.run is synchronous and returns next()'s void result.
+      // Route promise/error handling remains owned by asyncRouter/Express.
+      try {
+        withLegacyCompetitionGetFacade(() => next());
+      } catch (error) {
+        next(error);
+      }
     } else next();
   });
   app.use(rootRouter);

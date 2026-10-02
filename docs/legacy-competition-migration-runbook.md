@@ -42,7 +42,7 @@ while old writer/worker versions remain in service.
    a five-second metadata-lock timeout and fails for safe retry under contention;
    each additive statement commits independently. Verify entity synchronization
    on the target schema before the maintenance window.
-2. Deploy `waveLeaderboardSnapshotterLoop`, `tdhLoop`,
+2. Deploy `waveLeaderboardSnapshotterLoop`, `artCurationNftWatchLoop`, `tdhLoop`,
    `overRatesRevocationLoop`, `rateEventProcessingLoop`, `delegationsLoop` and
    `helpBotReplyLoop` (also packages `helpBotDailyActivityCreditLoop`) and
    `newsletterLoop` (production only) for shared owner-aware voting, maintenance,
@@ -119,7 +119,7 @@ without rehearsing a mutation. Cutover/rollback dry runs evaluate their gates.
 
    Cohort order is completed internal, completed ordinary, active low volume,
    complex, then privileged/Main Stage. An active transfer requires an earlier
-   completed native migration. Privileged, complex, active negative-vote, active negative-credit, signed-vote, unsupported
+   completed native migration. Privileged, complex, active negative-vote, signed-vote, unsupported
    rule and high-volume sources receive owned stops. Main Stage also has an
    explicit final release-review stop. These stops require reviewed adapter
    development and renewed full evidence; no exception-clearing CLI is provided.

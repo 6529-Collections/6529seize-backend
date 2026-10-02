@@ -7,6 +7,12 @@ import {
 } from '@/competitions/legacy-competition-get-facade';
 import { withNativeLegacyMirror } from '@/competitions/legacy-competition-mirror';
 
+function verifiedColumn(value: string): string {
+  if (!/^[a-zA-Z0-9_]+$/.test(value))
+    throw new Error('OWNED_EXCEPTION: unsafe reverse reconciliation column');
+  return value;
+}
+
 export type ReverseCheckpoint = {
   index: number;
   phase: 'PRUNE' | 'COPY';
@@ -37,7 +43,7 @@ export async function reconcileLegacyBatch(
   );
   if (!primary.length)
     throw new Error('Reverse reconciliation requires a stable source key');
-  const keys = primary.map((row) => row.COLUMN_NAME);
+  const keys = primary.map((row) => verifiedColumn(row.COLUMN_NAME));
   const filter = table === WAVES_TABLE ? 'id=:waveId' : 'wave_id=:waveId';
   const equal = keys
     .map((key) => `v.\`${key}\` <=> s.\`${key}\``)
@@ -86,7 +92,7 @@ export async function reconcileLegacyBatch(
       options
     );
     for (const row of rows) {
-      const columns = Object.keys(row);
+      const columns = Object.keys(row).map(verifiedColumn);
       const values = Object.fromEntries(
         Object.entries(row).map(([key, value]) => [
           key,

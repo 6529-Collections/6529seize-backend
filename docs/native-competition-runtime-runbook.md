@@ -118,6 +118,8 @@ observations.
 - Rank and Approve store immutable winner/voter snapshots and award
   descriptors; winning changes an entry, never its dedicated COMPETITION drop. Existing
   automatic REP/CIC outcome behavior creates descriptors, not new rating grants.
+  For a migrated original primary, a fenced transaction may mirror its legacy
+  PARTI/WINNER state for retained compatibility data; native records remain authoritative.
 - Administrators may archive competitions; filters retain access to history.
   Manual end/cancel and entry withdrawal/disqualification are not exposed.
 - Dedicated native submission content is immutable, including unsigned entries.

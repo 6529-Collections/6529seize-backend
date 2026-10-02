@@ -693,7 +693,7 @@ export class WaveDecisionsService {
         : null;
     await this.waveDecisionsDb.deleteDropsRanks(winnerDropIds, ctx);
     await this.dropsDb.resyncParticipatoryDropCountsForWaves([waveId], ctx);
-    await this.dropVotingDb.deleteStaleLeaderboardEntries(ctx);
+    await this.dropVotingDb.deleteStaleLeaderboardEntriesForWave(waveId, ctx);
     const announcementDropResult = await this.createAnnouncementDrop(
       waveId,
       winnerDropIds,

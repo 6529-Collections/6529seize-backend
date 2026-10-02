@@ -6,6 +6,7 @@ import {
 import { RequestContext } from '../../../request.context';
 import {
   DROP_RANK_TABLE,
+  COMPETITIONS_TABLE,
   DROP_REAL_VOTE_IN_TIME_TABLE,
   DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
   DROP_VOTER_STATE_TABLE,
@@ -1792,23 +1793,45 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
   }
 
   async deleteStaleLeaderboardEntries(ctx: RequestContext) {
+    return this.deleteStaleLeaderboardEntriesInScope(null, ctx);
+  }
+
+  async deleteStaleLeaderboardEntriesForWave(
+    waveId: string,
+    ctx: RequestContext
+  ) {
+    return this.deleteStaleLeaderboardEntriesInScope(waveId, ctx);
+  }
+
+  private async deleteStaleLeaderboardEntriesInScope(
+    waveId: string | null,
+    ctx: RequestContext
+  ) {
     const timerName = `${this.constructor.name}->deleteStaleLeaderboardEntries`;
     ctx.timer?.start(timerName);
     try {
+      const repository = new CompetitionRepository(() => this.db);
+      // Global maintenance drains at most 100 eligible waves per invocation.
+      // A decision already holding an owner lock cleans only its own wave.
       const waves = await this.db.execute<{ wave_id: string }>(
         `select distinct lb.wave_id from ${WAVE_LEADERBOARD_ENTRIES_TABLE} lb
          join ${DROPS_TABLE} d on d.id=lb.drop_id join ${WAVES_TABLE} w on w.id=lb.wave_id
-         where d.drop_type <> '${DropType.PARTICIPATORY}' or coalesce(w.time_lock_ms,0)=0`,
-        {},
+         left join ${COMPETITIONS_TABLE} c on c.legacy_wave_id=lb.wave_id
+         where (:waveId is null or lb.wave_id=:waveId)
+           and (d.drop_type <> '${DropType.PARTICIPATORY}' or coalesce(w.time_lock_ms,0)=0)
+           and (c.id is null or (c.storage_mode='LEGACY_ADAPTER' and c.execution_mode='ACTIVE'))
+         order by lb.wave_id limit 100`,
+        { waveId },
         { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
       );
       for (const { wave_id: waveId } of waves) {
         const remove = async (
           connection: NonNullable<RequestContext['connection']>
         ) => {
-          const owner = await new CompetitionRepository(
-            () => this.db
-          ).lockLegacyExecutionOwner(waveId, { ...ctx, connection });
+          const owner = await repository.lockLegacyExecutionOwner(waveId, {
+            ...ctx,
+            connection
+          });
           if (
             owner &&
             (owner.storage_mode !== 'LEGACY_ADAPTER' ||

@@ -23,6 +23,7 @@ import {
 } from '@/entities/IWave';
 import { Time } from '@/time';
 import { DbPoolName } from '@/db-query.options';
+import { ForbiddenException } from '@/exceptions';
 
 jest.mock('@/profiles/profile-waves.db', () => ({
   profileWavesDb: {
@@ -1521,6 +1522,10 @@ describe('WaveApiService wave pause authorization', () => {
           await expect(command).rejects.toThrow(
             'Wave modification not allowed for authenticated user'
           );
+          const failure = await command.catch((error: unknown) => error);
+          expect(failure).toBeInstanceOf(ForbiddenException);
+          if (!(failure instanceof ForbiddenException)) throw failure;
+          expect(failure.getStatusCode()).toBe(403);
           expect(wavesApiDb.insertPause).not.toHaveBeenCalled();
           return;
         }

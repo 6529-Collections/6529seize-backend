@@ -542,6 +542,19 @@ export class CompetitionMigrationBackfill {
     const timerName = `${this.constructor.name}->entry`;
     ctx.timer?.start(timerName);
     try {
+      if (record.storage_mode === CompetitionStorageMode.NATIVE) {
+        const current = await this.db.oneOrNull<{ status: string }>(
+          `select status from ${COMPETITION_ENTRIES_TABLE} where competition_id=:id and drop_id=:dropId for update`,
+          { id: record.id, dropId },
+          { wrappedConnection: ctx.connection }
+        );
+        // After transfer this adapter is used only for an accepted original
+        // legacy create/edit. It cannot resurrect a terminal native entry.
+        if (current && current.status !== 'ACTIVE')
+          throw new Error(
+            'OWNED_EXCEPTION: native entry state cannot be reset'
+          );
+      }
       const entry = await new CompetitionRepository(
         () => this.db
       ).findLegacyEntry(

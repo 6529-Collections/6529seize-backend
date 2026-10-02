@@ -82,4 +82,13 @@ describe('frozen GET query routing', () => {
       withLegacyCompetitionGetFacade(() => legacyCompetitionGetSql(query))
     ).toBe(query);
   });
+  it('returns the callback result synchronously and preserves thrown errors', () => {
+    expect(withLegacyCompetitionGetFacade(() => 42)).toBe(42);
+    const error = new Error('route failure');
+    expect(() =>
+      withLegacyCompetitionGetFacade(() => {
+        throw error;
+      })
+    ).toThrow(error);
+  });
 });

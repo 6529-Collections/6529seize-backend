@@ -39,6 +39,8 @@ export function isLegacyCompetitionGetFacadeScope(): boolean {
   return scope.getStore() === true;
 }
 export function withLegacyCompetitionGetFacade<T>(action: () => T): T {
+  // Synchronous scope setup: this returns exactly the callback's result. It
+  // neither creates a Promise nor intercepts downstream router errors.
   return scope.run(true, action);
 }
 export function withoutLegacyCompetitionGetFacade<T>(action: () => T): T {

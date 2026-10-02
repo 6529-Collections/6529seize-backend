@@ -48,6 +48,7 @@ import {
 import { withLegacyCompetitionGetFacade } from './legacy-competition-get-facade';
 import { withLegacyPrimaryMutation } from './legacy-competition-mutation';
 import { voteForMigratedLegacyEntry } from './legacy-competition-vote.service';
+import { CompetitionMigrationBackfill } from './competition-migration-backfill';
 
 const active = aWave(
   {
@@ -352,6 +353,20 @@ describeWithSeed(
           repairRequired: true
         });
         expect((await service.status(id)).storageMode).toBe('NATIVE');
+        await expect(
+          sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+            const record =
+              await new CompetitionRepository().findCompetitionRecordById(id, {
+                connection
+              });
+            if (!record) throw new Error('Expected transferred primary');
+            await new CompetitionMigrationBackfill(sqlExecutor).entry(
+              record,
+              dropId,
+              { connection }
+            );
+          })
+        ).rejects.toThrow('native entry state cannot be reset');
       },
       60000
     );
