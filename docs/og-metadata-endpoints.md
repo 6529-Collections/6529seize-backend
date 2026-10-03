@@ -94,6 +94,7 @@ Recommended schema name: `ApiOgMetadata`.
     "id": "3f4267fe-83d0-4d1f-934e-46ab57f95efa",
     "serial_no": 12345,
     "drop_type": "SUBMISSION",
+    "created_at": 1770000000000,
     "submission_status": "ACTIVE",
     "title": "Submission title",
     "description": "Submission description.",
@@ -243,6 +244,8 @@ Drop detail includes:
 - `id`
 - `serial_no`
 - `drop_type`
+- `created_at`: original publication time in Unix milliseconds for every drop
+- `submitted_at`: the same creation time for submissions, null for chats
 - `submission_status` for submission drops
 - `title`
 - `description`

@@ -400,6 +400,7 @@ export class OgMetadataService {
       id: drop.id,
       serial_no: drop.serial_no,
       drop_type: drop.drop_type,
+      created_at: drop.created_at,
       submission_status: drop.submission_context?.status,
       submitted_at: isSubmission ? drop.created_at : null,
       won_at: drop.submission_context?.won_at ?? null,
