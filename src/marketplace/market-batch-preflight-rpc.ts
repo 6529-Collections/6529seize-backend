@@ -1,7 +1,7 @@
 import { Interface } from 'ethers';
 import { SeaportABI } from '@opensea/seaport-js/lib/abi/Seaport';
 import { MARKET_BATCH_MAX_TRANSACTION_GAS } from '@/marketplace/market-batch-simulation';
-import { getRpcUrl } from '@/alchemy';
+import { getEthereumRpcUrl } from '@/ethereum-rpc/ethereum-rpc.config';
 import { MarketBatchPrepared } from '@/marketplace/market-batch.types';
 import { MarketValidationError } from '@/marketplace/provider.types';
 import { z } from 'zod';
@@ -56,13 +56,17 @@ async function readJson(
 
 /** No caller-supplied method, transport, block or transaction overrides. */
 async function rpc(
-  method: 'eth_getBlockByNumber' | 'eth_call' | 'eth_estimateGas',
+  method:
+    | 'eth_chainId'
+    | 'eth_getBlockByNumber'
+    | 'eth_call'
+    | 'eth_estimateGas',
   params: unknown[],
   signal: AbortSignal
 ): Promise<unknown> {
   signal.throwIfAborted();
-  if (!process.env.ALCHEMY_API_KEY) unavailable();
-  const response = await fetch(getRpcUrl(1), {
+  if (!process.env.ETHEREUM_RPC_URL) unavailable();
+  const response = await fetch(getEthereumRpcUrl(1), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
@@ -119,6 +123,12 @@ export async function simulateStoredMarketBatch(
   signal: AbortSignal
 ) {
   try {
+    // This bounded raw transport does not use ethers' automatic network check.
+    if (
+      BigInt(quantity.parse(await rpc('eth_chainId', [], signal))) !== BigInt(1)
+    ) {
+      unavailable();
+    }
     const block = snapshot(
       await rpc('eth_getBlockByNumber', ['latest', false], signal)
     );

@@ -1,5 +1,13 @@
 # Ethereum RPC foundation
 
+Historical scope: [PR #1985](https://github.com/6529-Collections/6529seize-backend/pull/1985)
+merged on 2026-09-21. The unused-factory statements below describe that PR only.
+The remaining caller migration is now implemented together in existing
+[PR #1979](https://github.com/6529-Collections/6529seize-backend/pull/1979),
+superseding the former separate PR 2/PR 3 delivery plan. Consult the
+[current portability and rollout record](../../../docs/ethereum-rpc-provider-portability.md)
+for active callers, configuration prerequisites and service deployment order.
+
 First implementation slice of the
 [backend portability plan, PR #1979](https://github.com/6529-Collections/6529seize-backend/pull/1979).
 This slice adds configuration and an unused shared provider. It does not migrate

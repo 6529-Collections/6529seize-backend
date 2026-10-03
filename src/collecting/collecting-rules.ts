@@ -1,6 +1,6 @@
 import { isAddress } from 'ethers';
 import { MEMES_CONTRACT, GRADIENT_CONTRACT, NULL_ADDRESS } from '@/constants';
-import { Network } from '@/alchemy-sdk';
+import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
 import { NEXTGEN_CORE_CONTRACT } from '@/nextgen/nextgen_constants';
 import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
 import { collectingAssetKey } from '@/collecting/collecting-analysis';

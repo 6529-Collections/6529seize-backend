@@ -1,4 +1,4 @@
-import { getAlchemyInstance } from '../alchemy';
+import { getEthereumRpcClient } from '@/ethereum-rpc/ethereum-rpc-client';
 import { WALLETS_TDH_TABLE } from '@/constants';
 import {
   getDataSource,
@@ -41,7 +41,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 });
 
 async function populate() {
-  const alchemy = getAlchemyInstance();
+  const rpc = getEthereumRpcClient();
 
   const iterations = Number.parseInt(
     process.env.HISTORIC_CONSOLIDATED_TDH_ITERATIONS ?? '1'
@@ -62,7 +62,7 @@ async function populate() {
     logger.info(`[PROCESSING BLOCK ${i + 1}/${tdhBlocks.length}]`);
     const tdhBlock = tdhBlocks[i].block;
     const blockTimestamp = new Date(
-      (await alchemy.core.getBlock(tdhBlock)).timestamp * 1000
+      (await rpc.getBlock(tdhBlock)).timestamp * 1000
     );
     logger.info(
       `[BLOCK ${tdhBlock}] [TIMESTAMP ${blockTimestamp.toUTCString()}]`

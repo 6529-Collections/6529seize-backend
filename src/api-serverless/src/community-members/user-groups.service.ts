@@ -59,7 +59,7 @@ import { RequestContext } from '@/request.context';
 import { readWaveCatalogueWithDiagnostics } from './wave-catalogue-read-diagnostics';
 
 import { NEXTGEN_CORE_CONTRACT } from '@/nextgen/nextgen_constants';
-import { Network } from '@/alchemy-sdk';
+import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
 import {
   hasGroupGotAnyNonIdentityConditions,
   isAnyGroupByOwningsCriteria,
