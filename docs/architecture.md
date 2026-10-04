@@ -1544,6 +1544,17 @@ flowchart TD
 
 Important details:
 
+- Minting-claim action tracking accepts authenticated `CLAIMS_ADMIN_WALLETS`
+  or the mainnet Memes creator's owner/on-chain admins. Each non-configured
+  caller is checked with `isAdmin(wallet)` on the fixed Memes creator contract
+  using the existing mainnet RPC provider. Approval results are not cached
+  across requests. False results return 403; failed, malformed, wrong-network,
+  or timed-out reads return 503 without reading or mutating action state.
+  Configured claims admins do not depend on RPC availability. Unsupported
+  contracts remain rejected; Sepolia action tracking is not added. This changes
+  only the `api` authorization boundary, not craft permissions, stored action
+  shapes, contract authority, or any queue/worker. Deploy `api` before the
+  matching frontend; no other Lambda or migration is needed for this change.
 - `claims-builder` messages are produced by `waveDecisionExecutionLoop` after the wave decision has been committed. If enqueueing fails, the decision remains committed and a priority alert is sent.
 - `claimsBuilder` consumes `{ drop_id }`, then calls the minting-claim service to create the missing claim from the winning drop.
 - `claims-media-arweave-upload` messages are produced by the API only after the claim row is locked with `media_uploading=true`.
