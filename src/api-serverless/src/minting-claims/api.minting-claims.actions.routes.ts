@@ -22,15 +22,10 @@ import {
   type ContractClaimParams,
   type ContractOnlyParams
 } from '@/api/minting-claims/minting-claims.validation';
-import { getClaimsAdminWallets } from '@/api/seize-settings';
+import { assertMintingClaimActionAccess } from '@/api/minting-claims/minting-claim-actions.authorization';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
-import {
-  BadRequestException,
-  CustomApiCompliantException,
-  ForbiddenException
-} from '@/exceptions';
+import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
 import { numbers } from '@/numbers';
-import { equalIgnoreCase } from '@/strings';
 import { Timer } from '@/time';
 import { Request, Response } from 'express';
 import * as Joi from 'joi';
@@ -42,16 +37,6 @@ const MintingClaimActionUpdateRequestSchema: Joi.ObjectSchema<ApiMintingClaimAct
     action: Joi.string().trim().required(),
     completed: Joi.boolean().required()
   });
-
-function isClaimsAdmin(req: Request): boolean {
-  const wallet = getAuthenticatedWalletOrNull(req);
-  return !!(
-    wallet &&
-    getClaimsAdminWallets().some((adminWallet) =>
-      equalIgnoreCase(adminWallet, wallet)
-    )
-  );
-}
 
 function parseClaimIdOrThrow(claimIdRaw: string): number {
   const claimId = numbers.parseIntOrNull(claimIdRaw);
@@ -78,15 +63,13 @@ router.get(
     req: Request<ContractOnlyParams, any, any, any, any>,
     res: Response<ApiResponse<ApiMintingClaimActionTypesResponse>>
   ) {
-    if (!isClaimsAdmin(req)) {
-      throw new ForbiddenException(
-        'Only claims admins can access minting claim action types'
-      );
-    }
-
     const params = getValidatedByJoiOrThrow(
       req.params,
       ContractOnlyParamsSchema
+    );
+    await assertMintingClaimActionAccess(
+      getAuthenticatedWalletOrNull(req),
+      params.contract
     );
 
     return res.json(getMintingClaimActionTypesResponse(params.contract));
@@ -106,15 +89,13 @@ router.post(
     >,
     res: Response<ApiResponse<ApiMintingClaimActionsResponse>>
   ) {
-    if (!isClaimsAdmin(req)) {
-      throw new ForbiddenException(
-        'Only claims admins can update minting claim actions'
-      );
-    }
-
     const params = getValidatedByJoiOrThrow(
       req.params,
       ContractClaimParamsSchema
+    );
+    await assertMintingClaimActionAccess(
+      getAuthenticatedWalletOrNull(req),
+      params.contract
     );
     getSupportedMintingClaimActionTypesOrThrow(params.contract);
 
@@ -146,15 +127,13 @@ router.get(
     req: Request<ContractClaimParams, any, any, any, any>,
     res: Response<ApiResponse<ApiMintingClaimActionsResponse>>
   ) {
-    if (!isClaimsAdmin(req)) {
-      throw new ForbiddenException(
-        'Only claims admins can access minting claim actions'
-      );
-    }
-
     const params = getValidatedByJoiOrThrow(
       req.params,
       ContractClaimParamsSchema
+    );
+    await assertMintingClaimActionAccess(
+      getAuthenticatedWalletOrNull(req),
+      params.contract
     );
     getSupportedMintingClaimActionTypesOrThrow(params.contract);
 
