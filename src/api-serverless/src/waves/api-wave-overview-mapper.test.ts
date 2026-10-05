@@ -120,6 +120,7 @@ function createMapper() {
     findWaveIdsWithVisibleSubwaves: jest
       .fn()
       .mockResolvedValue(new Set<string>()),
+    findWaveIdsWithCompetitions: jest.fn().mockResolvedValue(new Set<string>()),
     findFollowedSubwaveOverviewContextsByParentWaveId: jest
       .fn()
       .mockResolvedValue({})
@@ -168,6 +169,38 @@ function createMapper() {
 }
 
 describe('ApiWaveOverviewMapper', () => {
+  it('marks old competitive waves and chat waves with competitions in a mixed list', async () => {
+    const { mapper, deps } = createMapper();
+    const waves = [
+      makeWave({ id: 'rank', type: WaveType.RANK }),
+      makeWave({ id: 'approve', type: WaveType.APPROVE }),
+      makeWave({ id: 'chat-with-competition' }),
+      makeWave({ id: 'chat-without-competition' })
+    ];
+    deps.wavesApiDb.findWaveIdsWithCompetitions.mockResolvedValue(
+      new Set(['chat-with-competition'])
+    );
+    const ctx = {
+      authenticationContext: AuthenticationContext.notAuthenticated()
+    };
+
+    const result = await mapper.mapWaves(waves, ctx);
+
+    expect(waves.map((wave) => result[wave.id].has_competition)).toEqual([
+      true,
+      true,
+      true,
+      false
+    ]);
+    expect(deps.wavesApiDb.findWaveIdsWithCompetitions).toHaveBeenCalledTimes(
+      1
+    );
+    expect(deps.wavesApiDb.findWaveIdsWithCompetitions).toHaveBeenCalledWith(
+      waves.map((wave) => wave.id),
+      ctx
+    );
+  });
+
   it('maps minimal overview and omits missing optional fields', async () => {
     const { mapper, deps } = createMapper();
     const ctx = {

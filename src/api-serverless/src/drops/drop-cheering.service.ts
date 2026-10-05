@@ -1,3 +1,4 @@
+import { ForbiddenException } from '@/exceptions';
 import { dropsDb, DropsDb } from '../../../drops/drops.db';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
@@ -102,6 +103,8 @@ export class DropCheeringService {
             );
             break;
           }
+          case DropType.COMPETITION:
+            throw new ForbiddenException('Vote through the competition entry');
           case DropType.WINNER: {
             throw new BadRequestException(
               `This drop has already been declared as winner and doesn't accept new votes`

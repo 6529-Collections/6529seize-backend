@@ -286,6 +286,51 @@ export class WsListenersNotifier {
     > = contentModerationDb
   ) {}
 
+  async notifyAboutCompetitionUpdate(
+    event: {
+      event_id: string;
+      event_version: number;
+      event_type: string;
+      occurred_at: number;
+      wave_id: string;
+      competition_id: string;
+      competition_entry_id?: string;
+      drop_id?: string;
+    },
+    visibilityGroupId: string | null,
+    ctx: RequestContext
+  ): Promise<void> {
+    const recipients =
+      await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast(
+        { waveId: event.wave_id, groupId: visibilityGroupId },
+        ctx
+      );
+    // Send invalidation identity only; signed commands and private draft rules
+    // must never become websocket payloads. Draft suppression is producer-owned.
+    const message = JSON.stringify({
+      type: WsMessageType.COMPETITION_UPDATE,
+      data: {
+        event_id: event.event_id,
+        event_version: event.event_version,
+        event_type: event.event_type,
+        occurred_at: event.occurred_at,
+        wave_id: event.wave_id,
+        competition_id: event.competition_id,
+        competition_entry_id: event.competition_entry_id,
+        drop_id: event.drop_id
+      }
+    });
+    for (let offset = 0; offset < recipients.length; offset += 100) {
+      await Promise.all(
+        recipients
+          .slice(offset, offset + 100)
+          .map(({ connectionId }) =>
+            this.appWebSockets.send({ connectionId, message })
+          )
+      );
+    }
+  }
+
   async notifyAboutIdentityNotificationsChanged(
     inputProfileIds: string[]
   ): Promise<void> {

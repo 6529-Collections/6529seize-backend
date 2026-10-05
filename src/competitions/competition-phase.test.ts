@@ -1,6 +1,10 @@
 import { computeCompetitionPhase } from '@/competitions/competition-phase';
 import { CompetitionComputedPhase } from '@/competitions/competition.types';
-import { CompetitionLifecycle } from '@/entities/ICompetition';
+import {
+  CompetitionLifecycle,
+  CompetitionStorageMode,
+  CompetitionType
+} from '@/entities/ICompetition';
 
 function input(overrides: Record<string, unknown> = {}) {
   return {
@@ -13,6 +17,26 @@ function input(overrides: Record<string, unknown> = {}) {
 }
 
 describe('computeCompetitionPhase', () => {
+  it('keeps native Approve deciding after voting closes until explicitly ended', () => {
+    const native = input({
+      storage_mode: CompetitionStorageMode.NATIVE,
+      type: CompetitionType.APPROVE,
+      decisions: { next_decision_time: null }
+    });
+    expect(computeCompetitionPhase(native, 300)).toBe(
+      CompetitionComputedPhase.VOTING_OPEN
+    );
+    expect(computeCompetitionPhase(native, 301)).toBe(
+      CompetitionComputedPhase.DECIDING
+    );
+    expect(
+      computeCompetitionPhase(
+        { ...native, lifecycle: CompetitionLifecycle.ENDED },
+        301
+      )
+    ).toBe(CompetitionComputedPhase.COMPLETED);
+  });
+
   it.each([
     [CompetitionLifecycle.DRAFT, CompetitionComputedPhase.DRAFT],
     [CompetitionLifecycle.CANCELLED, CompetitionComputedPhase.CANCELLED],

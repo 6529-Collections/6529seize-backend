@@ -1,6 +1,7 @@
 # Competition Read Boundary Runbook
 
-The Phase 1 competition foundation is additive. Existing unversioned and v2
+The competition foundation is additive. Native commands and execution are
+covered by the [native runtime runbook](native-competition-runtime-runbook.md). Existing unversioned and v2
 wave/drop GET routes remain the authoritative public behavior, and legacy wave,
 drop, vote, decision, and outcome writes remain authoritative.
 
@@ -19,8 +20,9 @@ them:
 finite value from `0` through `1`. Enabling the shadow flag without setting a
 positive valid rate therefore performs no comparisons.
 
-Native writes, native execution, and native hub creation are not Phase 1
-rollout controls: they must stay disabled. Storage and execution ownership are
+A foundation-only rollout leaves native writes, execution and hub creation
+disabled. Native activation requires the separate runtime deployment and
+verification gates. Storage and execution ownership are
 read from the competition routing record by both APIs and workers. A native
 competition is never worker-owned unless its record is `ACTIVE` and the native
 execution feature is also enabled.
@@ -48,9 +50,12 @@ parity logs.
 
 ## Independent Legacy Read Samples
 
-The current sample source is `legacy-read-v2:<revision>`. Earlier observations
-used two instances of `LegacyCompetitionAdapter`; those observations do **not**
-establish independent parity and must be excluded from acceptance statistics.
+The current sample source is `legacy-read-v3:<revision>`. The preceding v2
+sampler independently verified legacy read fields but did not measure available
+or remaining credit. Observations before v2 used two instances of
+`LegacyCompetitionAdapter`; those observations do **not** establish independent
+parity and must be excluded from acceptance statistics. Use the exact deployed
+revision when evaluating the new budget category.
 
 For an authorized, sampled legacy competition detail GET, the baseline reads
 legacy wave/drop/rating/spending/decision/outcome/pause rows directly through
@@ -67,7 +72,8 @@ Both paths use one repeatable-read transaction on the primary/write pool and
 the same timestamp. The primary is intentional: the transaction also writes the
 observations and must avoid replica lag between the two projections. This
 prevents a concurrent vote or phase transition from creating a false mismatch.
-All 12 supported category observations commit together; collection, mapping,
+The 12 existing categories and, when there are budget subjects, a thirteenth
+`CREDIT_AVAILABLE` category commit together; collection, mapping,
 or persistence errors roll back the sample and leave the requested read intact.
 An attempted sample logs identifiers, `outcome`, `reason`, and `duration_ms`,
 never the exception or source data. Reasons distinguish `in_flight`, `row_limit`,
@@ -95,26 +101,70 @@ distributions, pauses, configuration/lifecycle, and capability assignments are
 covered. Stable UUIDs, configuration-version binding, future phase calculations,
 and public wire contracts retain their separate regression tests.
 
-`CREDIT_AVAILABLE` is deliberately not emitted. The v3 voter snapshot exposes
-`votes` and `credit_spent`, not a derived remaining-credit budget. The original
-comparator incorrectly labeled a voter-array equality check as remaining-credit
-coverage. Independent remaining-credit validation is still an explicit roadmap
-acceptance gap; a green spending sample cannot satisfy it.
+`CREDIT_AVAILABLE` compares independently derived `available`, `spent`, and
+`remaining` amounts, keyed by voter and, for DROP scope, drop. The baseline reads
+identity TDH/xTDH, restricted REP ratings, configured NFT TDH, and active legacy
+votes directly. The candidate calls the competition credit service using the
+same transaction. WAVE scope samples each recorded voter; DROP scope samples
+each active entry/voter pair with a recorded vote. Winner/withdrawn/disqualified
+entries do not encumber current credit. Samples with no budget subjects omit
+this category rather than manufacture a passing observation. Missing candidate
+budgets when the baseline has subjects produce a mismatch. The original voter
+array comparison remains a separate spending-history and vote-total check; it
+does not substitute for available/remaining-credit parity.
+
+These live samples cover recorded voters. Local contract/repository tests also
+cover absent identities and voters without a vote, all supported credit sources,
+negative votes, per-entry caps, per-entry scopes, legacy/native coexistence,
+transaction rollback, and concurrent budget enforcement. Local success does not
+establish staging/production parity rates or latency acceptance.
 
 Example observation query (read-only):
 
 ```sql
 select category, matched, count(*) as observations
 from competition_parity_observations
-where source_version like 'legacy-read-v2:%'
+where source_version like 'legacy-read-v3:%'
   and observed_at >= :rollout_started_at
  group by category, matched;
 ```
 
 Deployed observations use the workflow-provided `GIT_COMMIT` revision, with
 `GIT_COMMIT_SHA` also supported. For release acceptance, filter by the exact
-`legacy-read-v2:<deployed-sha>` value; `legacy-read-v2:local` is only a local
+`legacy-read-v3:<deployed-sha>` value; `legacy-read-v3:local` is only a local
 development fallback.
+
+## Competition Credit Contract
+
+The competition credit endpoint returns the effective represented profile's
+current budget after its caller authorizes wave visibility and proxy rights.
+An amount is not permission to vote: competition lifecycle, execution mode, entry status,
+voting group, and signature checks still apply.
+
+- `available` is the total derived whole, nonnegative voting credit before
+  current spending. Sources are TDH, xTDH, TDH+xTDH, REP restricted by category
+  and creditor, or the configured card-set TDH. CIC remains an outcome/rating
+  type and is not an existing voting credit type.
+- WAVE scope means the selected competition's namespace. `spent` sums absolute
+  current votes on ACTIVE entries, and `remaining` is
+  `max(0, available - spent)`. Native namespaces only read native entry/vote
+  tables; the legacy primary only reads legacy drop/voter state.
+- DROP scope gives each entry its own budget. With `entry_id`, `spent` is that
+  active entry's absolute vote and `remaining` is its unspent budget. Without
+  `entry_id`, both amounts are null because no shared remaining amount exists.
+- With an entry, `current_vote`, `min_vote`, and `max_vote` describe replacement
+  votes including reclaiming the entry's current encumbrance, per-entry caps,
+  and negative-vote policy. Without an entry those fields are null. Terminal
+  entries retain a fixed historical current value. Falling live credit cannot
+  expand the offered replacement range.
+
+Mutation callers lock the competition before reading the budget and keep the
+read and vote update in the same transaction. Cancellation preserves historical
+votes and does not create refund/compensating-credit activity. No table or data
+migration is required by the credit service itself. It is consumed by `api` and
+native runtime workers; the complete feature's deployment plan must include
+their additive schema prerequisites and keep native feature gates disabled
+until validation and explicit enablement.
 
 ## Local Foundation Follow-up (2026-09-28)
 
@@ -125,9 +175,12 @@ the original additive tables/mappings already exist. Do not redeploy migration
 or decision/leaderboard workers solely for this follow-up. A later frontend
 migration must still follow successful backend deployment.
 
-Local tests and merges do not prove staging delivery, production sampling,
-latency thresholds, or the remaining-credit acceptance criterion. Those remain
-separate gates. No shared-environment rollout was performed for this follow-up.
+At this foundation checkpoint, local tests and merges did not prove staging
+delivery, production sampling, latency thresholds, or the remaining-credit
+acceptance criterion. The subsequent native implementation adds the local
+budget contract and independent measurements described above; shared-environment
+sampling remains a separate gate. No shared-environment rollout was performed
+by this local follow-up.
 
 ## Rollback
 
@@ -142,3 +195,28 @@ and ordinary wave writes still depend on immutable legacy-primary mappings
 with v3 disabled. Disabling the two read controls
 stops v3/shadow work without moving ownership or creating duplicate side effects;
 it does not remove the foundation from ordinary wave writes or legacy workers.
+
+### Dedicated native submission drops
+
+Native entry creation now requires new drop content. Existing-drop association
+and edits to competition submissions are rejected. Native submissions are stored
+as `COMPETITION` in the existing `drops.drop_type` varchar column; this requires
+no schema migration. Public APIs project the type as a submission while legacy
+wave voting and decision workers continue selecting only their own drop types.
+
+Deploy the API readers before enabling the new native writers, then deploy the
+frontend. Existing prototype native submissions stored as `CHAT` can be converted
+with the following idempotent data update after all API readers support the type.
+This preserves entries, votes, signatures, snapshots, and results:
+
+```sql
+UPDATE drops d
+JOIN competition_entries e ON e.drop_id = d.id
+JOIN competitions c ON c.id = e.competition_id AND c.storage_mode = 'NATIVE'
+SET d.drop_type = 'COMPETITION'
+WHERE d.drop_type = 'CHAT';
+```
+
+An API rollback must retain the reader support for `COMPETITION` while these rows
+exist. Native execution behavior is unchanged; only `api-serverless` and the
+frontend need deployment for this change.

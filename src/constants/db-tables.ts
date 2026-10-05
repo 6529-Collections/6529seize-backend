@@ -273,5 +273,21 @@ export const PUSH_NOTIFICATION_DEVICE_LOGOUT_FENCES_TABLE =
 export const PUSH_NOTIFICATION_CANCELLATIONS_TABLE =
   'push_notification_cancellations';
 
+export const COMPETITION_VOTE_HISTORY_TABLE = 'competition_vote_history';
+export const COMPETITION_ENTRY_RUNTIME_TABLE = 'competition_entry_runtime';
+export const COMPETITION_WINNER_VOTES_TABLE = 'competition_winner_votes';
+export const COMPETITION_OUTCOME_AWARDS_TABLE = 'competition_outcome_awards';
+export const COMPETITION_OUTBOX_TABLE = 'competition_outbox';
+export const COMPETITION_EVENT_EFFECTS_TABLE = 'competition_event_effects';
+export const COMPETITION_CLAIMS_TABLE = 'competition_claims';
+
+export const COMPETITION_COMMANDS_TABLE = 'competition_commands';
+export const COMPETITION_SIGNATURE_NONCES_TABLE =
+  'competition_signature_nonces';
+export const COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE =
+  'competition_entry_content_versions';
+
+export const COMPETITION_CAPABILITY_AUDITS_TABLE =
+  'competition_capability_audits';
 export const PUSH_NOTIFICATION_OUTBOX_TABLE =
   'push_notification_outbox_entries';
