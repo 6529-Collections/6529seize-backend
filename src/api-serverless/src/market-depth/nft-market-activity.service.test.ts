@@ -6,6 +6,9 @@ import {
 import { SqlExecutor } from '@/sql-executor';
 import { MANIFOLD, MEMES_CONTRACT, NULL_ADDRESS } from '@/constants';
 import { resolveEns } from '@/db-api';
+import { DbPoolName } from '@/db-query.options';
+import { MarketDepthApiDb, marketDepthApiDb } from './market-depth-api.db';
+import { Timer } from '@/time';
 
 jest.mock('@/db-api', () => ({ resolveEns: jest.fn() }));
 
@@ -73,6 +76,50 @@ function event(
 }
 
 describe('NFT market activity', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('routes every activity query to the reader and records query timings', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const oneOrNull = jest.fn().mockResolvedValue(null);
+    const executor = { execute, oneOrNull } as unknown as SqlExecutor;
+    jest.spyOn(marketDepthApiDb, 'getToken').mockResolvedValue({
+      contract: MEMES_CONTRACT,
+      token_id: '1',
+      collection_id: null
+    });
+    const partitionDb = new MarketDepthApiDb(() => executor);
+    const partitions = jest
+      .spyOn(marketDepthApiDb, 'getActivityPartitions')
+      .mockImplementation((token, ctx) =>
+        partitionDb.getActivityPartitions(token, ctx)
+      );
+    const criticalPartitions = jest.spyOn(marketDepthApiDb, 'getPartitions');
+    const timer = new Timer('activity');
+    await new NftMarketActivityService(() => executor).getActivity(
+      {
+        contract: MEMES_CONTRACT,
+        token_id: '1'
+      },
+      { timer }
+    );
+    expect(partitions).toHaveBeenCalled();
+    expect(criticalPartitions).not.toHaveBeenCalled();
+    expect(execute).toHaveBeenCalledTimes(3);
+    expect(oneOrNull).toHaveBeenCalledTimes(1);
+    for (const call of [...execute.mock.calls, ...oneOrNull.mock.calls])
+      expect(call[2].forcePool).toBe(DbPoolName.READ);
+    const report = JSON.parse(timer.getReport());
+    expect(report.times).toHaveLength(4);
+    expect(report.times.map((entry: { key: string }) => entry.key)).toEqual(
+      expect.arrayContaining([
+        'MarketDepthApiDb->getActivityPartitions',
+        'NftMarketActivityService->transactionEvents',
+        'NftMarketActivityService->marketEvents',
+        'NftMarketActivityService->historyStartedAt'
+      ])
+    );
+    expect(report.ongoingTimers).toEqual([]);
+  });
   it('preserves explicit cancellation and exact token ID without requiring a transaction', () => {
     const value = marketEventToActivity(event());
     expect(value.action).toBe('cancellation');

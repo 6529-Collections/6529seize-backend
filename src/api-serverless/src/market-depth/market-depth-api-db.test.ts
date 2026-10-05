@@ -7,6 +7,8 @@ import {
   MAX_MARKET_DEPTH_COLLECTION_ASKS
 } from '@/market-depth/market-depth.types';
 import { MEMES_CONTRACT } from '@/constants';
+import { DbPoolName } from '@/db-query.options';
+import { Timer } from '@/time';
 
 jest.mock('@/market-depth/market-depth.db', () => ({
   marketDepthDb: { getLatestCompletedSnapshot: jest.fn() }
@@ -43,6 +45,47 @@ const emptyBook: CurrentMarketDepthSnapshot = {
 
 describe('bounded collection index reads', () => {
   afterEach(() => jest.restoreAllMocks());
+
+  it('uses the reader for activity partitions and the writer for critical partitions', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const db = new MarketDepthApiDb(
+      () => ({ execute }) as unknown as SqlExecutor
+    );
+    const timer = new Timer('activity');
+    await db.getActivityPartitions(token, { timer });
+    await db.getPartitions(token);
+    expect(execute.mock.calls[0][2].forcePool).toBe(DbPoolName.READ);
+    expect(execute.mock.calls[1][2].forcePool).toBe(DbPoolName.WRITE);
+    expect(execute.mock.calls[0][0]).toBe(execute.mock.calls[1][0]);
+    expect(timer.hasStoppedTimers()).toBe(true);
+  });
+
+  it('keeps order status observations on the writer', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const db = new MarketDepthApiDb(
+      () => ({ execute }) as unknown as SqlExecutor
+    );
+    jest
+      .spyOn(db, 'getPartitions')
+      .mockResolvedValue([
+        { source: 'opensea', collection_slug: 'collection' }
+      ]);
+    jest.mocked(marketDepthDb.getLatestCompletedSnapshot).mockResolvedValue({
+      ...emptyBook,
+      orders: [
+        {
+          order_id: 'order-1',
+          observed_at: new Date()
+        } as CurrentMarketDepthOrder
+      ]
+    });
+    await db.getBooks(token);
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('status_events'),
+      expect.objectContaining({ orderIds: ['order-1'] }),
+      { forcePool: DbPoolName.WRITE }
+    );
+  });
 
   function fixture() {
     const db = new MarketDepthApiDb(

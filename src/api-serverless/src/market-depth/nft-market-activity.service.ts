@@ -18,6 +18,7 @@ import { resolveEns } from '@/db-api';
 import { DbPoolName } from '@/db-query.options';
 import { BadRequestException } from '@/exceptions';
 import { MarketDepthEventInput } from '@/market-depth/market-depth.types';
+import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { MARKET_CONTRACTS, marketDepthApiDb } from './market-depth-api.db';
 import {
@@ -219,7 +220,8 @@ function transactionTypePredicate(filter: string): string | null {
 
 export class NftMarketActivityService extends LazyDbAccessCompatibleService {
   private async transactionEvents(
-    selection: ActivitySelection
+    selection: ActivitySelection,
+    ctx: RequestContext
   ): Promise<ApiNftActivityEvent[]> {
     const type = transactionTypePredicate(selection.filter);
     if (!type) return [];
@@ -241,21 +243,27 @@ export class NftMarketActivityService extends LazyDbAccessCompatibleService {
       conditions.push(
         `(t.transaction_date < :beforeAt OR (t.transaction_date=:beforeAt AND CONCAT('t:',${eventKey}) < :beforeId))`
       );
-    const rows = await this.db.execute<TransactionRow>(
-      `SELECT t.*, CAST(t.token_id AS CHAR) AS exact_token_id, ${eventKey} AS event_key,
+    const timer = 'NftMarketActivityService->transactionEvents';
+    ctx.timer?.start(timer);
+    const rows = await this.db
+      .execute<TransactionRow>(
+        `SELECT t.*, CAST(t.token_id AS CHAR) AS exact_token_id, ${eventKey} AS event_key,
           t.transaction_date AS occurred_at, from_ens.display AS from_display, to_ens.display AS to_display
        FROM ${TRANSACTIONS_TABLE} t
        LEFT JOIN ${ENS_TABLE} from_ens ON from_ens.wallet=t.from_address
        LEFT JOIN ${ENS_TABLE} to_ens ON to_ens.wallet=t.to_address
        WHERE ${conditions.join(' AND ')}
        ORDER BY t.transaction_date DESC, event_key DESC LIMIT :rowLimit`,
-      this.queryParams(selection)
-    );
+        this.queryParams(selection),
+        { forcePool: DbPoolName.READ, wrappedConnection: ctx.connection }
+      )
+      .finally(() => ctx.timer?.stop(timer));
     return rows.map(transactionToActivity);
   }
 
   private async marketEvents(
-    selection: ActivitySelection
+    selection: ActivitySelection,
+    ctx: RequestContext
   ): Promise<ApiNftActivityEvent[]> {
     const kinds = selectedMarketKinds(selection.filter);
     if (kinds?.length === 0) return [];
@@ -265,12 +273,6 @@ export class NftMarketActivityService extends LazyDbAccessCompatibleService {
       'e.contract IN (:contracts)',
       'LOWER(e.kind) NOT IN (:chainKinds)'
     ];
-    if (selection.tokenId) {
-      const collectionMatch = selection.slugs?.length
-        ? 'OR (e.token_id IS NULL AND e.collection_slug IN (:slugs))'
-        : '';
-      conditions.push(`(e.token_id=:tokenId ${collectionMatch})`);
-    }
     if (selection.walletRequested)
       conditions.push('(e.maker IN (:wallets) OR e.taker IN (:wallets))');
     if (kinds) conditions.push('LOWER(e.kind) IN (:kinds)');
@@ -278,17 +280,45 @@ export class NftMarketActivityService extends LazyDbAccessCompatibleService {
       conditions.push(
         `(${date} < :beforeAt OR (${date}=:beforeAt AND CONCAT('m:',e.event_id) < :beforeId))`
       );
-    const rows = await this.db.execute<MarketEventRow>(
-      `SELECT e.event_id, e.kind, e.source, e.source_evidence, e.contract,
+    const columns = `e.event_id, e.kind, e.source, e.source_evidence, e.contract,
           e.token_id, e.collection_slug, e.quantity, e.maker, e.taker,
           e.price_decimal, e.currency_contract, e.currency_symbol, e.currency_decimals,
-          e.order_id, e.transaction_hash, e.provider_at, e.observed_at, e.occurred_at
-       FROM ${MARKET_DEPTH_EVENTS_TABLE} e
-       WHERE ${conditions.join(' AND ')}
-       ORDER BY occurred_at DESC, e.event_id DESC LIMIT :rowLimit`,
-      { ...this.queryParams(selection), kinds, chainKinds: CHAIN_MARKET_KINDS },
-      { forcePool: DbPoolName.WRITE }
-    );
+          e.order_id, e.transaction_hash, e.provider_at, e.observed_at, e.occurred_at`;
+    const candidateQuery = (scope: string) =>
+      `SELECT e.event_id, e.occurred_at FROM ${MARKET_DEPTH_EVENTS_TABLE} e
+       WHERE ${conditions.join(' AND ')} AND ${scope}
+       ORDER BY e.occurred_at DESC, e.event_id DESC LIMIT :rowLimit`;
+    // Each disjoint scope can walk the token/time index and stop at one page.
+    // Apply every filter before each LIMIT; merge only the bounded candidates
+    // and fetch public columns after choosing the final marketplace page.
+    const collectionEvents = Boolean(selection.slugs?.length);
+    const sql = selection.tokenId
+      ? `WITH token_events AS (${candidateQuery('e.token_id=:tokenId')})
+         ${collectionEvents ? `, collection_events AS (${candidateQuery('e.token_id IS NULL AND e.collection_slug IN (:slugs)')})` : ''},
+         selected_events AS (
+           SELECT event_id, occurred_at FROM token_events
+           ${collectionEvents ? 'UNION ALL SELECT event_id, occurred_at FROM collection_events' : ''}
+           ORDER BY occurred_at DESC, event_id DESC LIMIT :rowLimit
+         )
+         SELECT ${columns} FROM selected_events selected
+         INNER JOIN ${MARKET_DEPTH_EVENTS_TABLE} e ON e.event_id=selected.event_id
+         ORDER BY selected.occurred_at DESC, selected.event_id DESC`
+      : `SELECT ${columns} FROM ${MARKET_DEPTH_EVENTS_TABLE} e
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY e.occurred_at DESC, e.event_id DESC LIMIT :rowLimit`;
+    const timer = 'NftMarketActivityService->marketEvents';
+    ctx.timer?.start(timer);
+    const rows = await this.db
+      .execute<MarketEventRow>(
+        sql,
+        {
+          ...this.queryParams(selection),
+          kinds,
+          chainKinds: CHAIN_MARKET_KINDS
+        },
+        { forcePool: DbPoolName.READ, wrappedConnection: ctx.connection }
+      )
+      .finally(() => ctx.timer?.stop(timer));
     return rows.map(marketEventToActivity);
   }
 
@@ -308,10 +338,13 @@ export class NftMarketActivityService extends LazyDbAccessCompatibleService {
   }
 
   private async historyStartedAt(
-    contracts: readonly string[]
+    contracts: readonly string[],
+    ctx: RequestContext
   ): Promise<Date | null> {
     // Match the (chain_id, contract, observed_at) index. MIN over several
     // partitions can scan the entire retained history on every feed request.
+    const timer = 'NftMarketActivityService->historyStartedAt';
+    ctx.timer?.start(timer);
     const firstEvents = await Promise.all(
       contracts.map((contract) =>
         this.db.oneOrNull<{ started_at: Date }>(
@@ -319,10 +352,10 @@ export class NftMarketActivityService extends LazyDbAccessCompatibleService {
          WHERE chain_id='1' AND contract=:contract
          ORDER BY observed_at ASC LIMIT 1`,
           { contract },
-          { forcePool: DbPoolName.WRITE }
+          { forcePool: DbPoolName.READ, wrappedConnection: ctx.connection }
         )
       )
-    );
+    ).finally(() => ctx.timer?.stop(timer));
     return firstEvents.reduce<Date | null>((earliest, event) => {
       if (!event) return earliest;
       const at = new Date(event.started_at);
@@ -331,7 +364,8 @@ export class NftMarketActivityService extends LazyDbAccessCompatibleService {
   }
 
   async getActivity(
-    query: GetNftMarketActivityQuery
+    query: GetNftMarketActivityQuery,
+    ctx: RequestContext = {}
   ): Promise<ApiNftActivityPage> {
     const contracts = query.contract
       ? Array.from(
@@ -384,7 +418,7 @@ export class NftMarketActivityService extends LazyDbAccessCompatibleService {
         contracts[0],
         query.token_id
       );
-      slugs = (await marketDepthApiDb.getPartitions(token)).map(
+      slugs = (await marketDepthApiDb.getActivityPartitions(token, ctx)).map(
         (partition) => partition.collection_slug
       );
     }
@@ -406,9 +440,9 @@ export class NftMarketActivityService extends LazyDbAccessCompatibleService {
         notes: ACTIVITY_NOTES
       };
     const [transactions, market, history] = await Promise.all([
-      this.transactionEvents(selection),
-      this.marketEvents(selection),
-      this.historyStartedAt(contracts)
+      this.transactionEvents(selection, ctx),
+      this.marketEvents(selection, ctx),
+      this.historyStartedAt(contracts, ctx)
     ]);
     const merged = [...transactions, ...market].sort(compareActivity);
     const data = merged.slice(0, selection.limit);
