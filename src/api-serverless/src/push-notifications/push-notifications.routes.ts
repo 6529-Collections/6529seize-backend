@@ -57,6 +57,7 @@ router.post(
       device_id,
       token,
       platform,
+      include_competitions: validatedRequest.include_competitions === true,
       profile_id: resolvedProfileId
     };
 

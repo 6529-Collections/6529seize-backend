@@ -107,3 +107,31 @@ it('loads multi-hop public quote context once and stops at a private reference',
   ]);
   expect(JSON.stringify(result)).not.toContain('private-drop');
 });
+
+it('links a native designated winner to the exact competition entry', async () => {
+  const db = new NewsletterDb(() => {
+    throw new Error('Unexpected SQL');
+  });
+  jest.spyOn(db, 'activeWaves').mockResolvedValue([]);
+  jest.spyOn(db, 'parts').mockResolvedValue([]);
+  jest.spyOn(db, 'media').mockResolvedValue([]);
+  jest.spyOn(db, 'mints').mockResolvedValue([]);
+  jest.spyOn(db, 'winners').mockResolvedValue([
+    {
+      ...drop(1),
+      decision_time: 1000,
+      ranking: 1,
+      competition_id: 'contest',
+      entry_id: 'entry'
+    }
+  ]);
+  const material = await new NewsletterCollector(db).collect(
+    { start: 1000, end: 2000, scheduled: false },
+    'destination',
+    'publisher',
+    {}
+  );
+  expect(material.winners[0].url).toBe(
+    'https://6529.io/waves/wave/competitions/contest?entry=entry'
+  );
+});

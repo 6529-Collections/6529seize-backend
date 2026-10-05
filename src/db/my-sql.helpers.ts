@@ -52,9 +52,17 @@ type PrivateQueryFamily =
   | 'market depth'
   | 'content moderation'
   | 'CMS agent'
+  | 'competition authorization'
   | 'membership runtime';
 
 function privateQueryFamily(sql: string): PrivateQueryFamily | null {
+  if (
+    /\bcompetition_(?:entry_content_versions|signature_nonces|commands)\b/i.test(
+      sql
+    )
+  ) {
+    return 'competition authorization';
+  }
   if (
     /\b(?:content_moderation_[a-z_]+|abusiveness_detection_results)\b/i.test(
       sql
@@ -83,6 +91,8 @@ function privateQueryFamily(sql: string): PrivateQueryFamily | null {
 
 function describeQuery(sql: string, params?: Record<string, unknown>): string {
   const family = privateQueryFamily(sql);
+  if (family === 'competition authorization')
+    return '[private competition authorization query]';
   if (family === 'artwork documentation') {
     return '[private artwork documentation query]';
   }

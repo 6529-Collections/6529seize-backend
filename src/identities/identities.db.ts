@@ -33,6 +33,7 @@ import { collections } from '../collections';
 import { env } from '../env';
 import { DropType } from '../entities/IDrop';
 import { appFeatures } from '../app-features';
+import { nativeMainStageEntriesSource } from '@/competitions/competition-main-stage.repository';
 import {
   groupWaveVotingCreditNftsByContract,
   normalizeWaveVotingCreditNfts,
@@ -1331,7 +1332,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<Record<string, string[]>> {
     const mainStageWaveId = env.getStringOrNull(`MAIN_STAGE_WAVE_ID`);
-    if (!profileIds.length || !mainStageWaveId) {
+    if (!profileIds.length) {
       return {};
     }
     const results = await this.db.execute<{
@@ -1341,6 +1342,8 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       `
       select author_id as profile_id, id as drop_id from ${DROPS_TABLE} where author_id in (:profileIds) and wave_id = :mainStageWaveId
       and drop_type = '${DropType.PARTICIPATORY}'
+      union select submitter_id as profile_id, drop_id from (${nativeMainStageEntriesSource('ACTIVE')}) native_entry
+      where submitter_id in (:profileIds)
       `,
       {
         profileIds,
@@ -1365,7 +1368,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<Record<string, string[]>> {
     const mainStageWaveId = env.getStringOrNull(`MAIN_STAGE_WAVE_ID`);
-    if (!profileIds.length || !mainStageWaveId) {
+    if (!profileIds.length) {
       return {};
     }
     const results = await this.db.execute<{
@@ -1375,6 +1378,8 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       `
       select author_id as profile_id, id as drop_id from ${DROPS_TABLE} where author_id in (:profileIds) and wave_id = :mainStageWaveId
       and drop_type = '${DropType.WINNER}'
+      union select submitter_id as profile_id, drop_id from (${nativeMainStageEntriesSource('WINNER')}) native_entry
+      where submitter_id in (:profileIds)
       `,
       {
         profileIds,

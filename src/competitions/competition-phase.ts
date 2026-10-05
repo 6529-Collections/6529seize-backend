@@ -1,4 +1,8 @@
-import { CompetitionLifecycle } from '@/entities/ICompetition';
+import {
+  CompetitionLifecycle,
+  CompetitionStorageMode,
+  CompetitionType
+} from '@/entities/ICompetition';
 import {
   Competition,
   CompetitionComputedPhase
@@ -7,7 +11,8 @@ import {
 type PhaseInput = Pick<
   Competition,
   'lifecycle' | 'participation' | 'voting' | 'decisions'
->;
+> &
+  Partial<Pick<Competition, 'storage_mode' | 'type'>>;
 
 export function computeCompetitionPhase(
   competition: PhaseInput,
@@ -28,6 +33,9 @@ export function computeCompetitionPhase(
 
   const participationStart = competition.participation.starts_at;
   const votingStart = competition.voting.starts_at;
+  const native = competition.storage_mode === CompetitionStorageMode.NATIVE;
+  const withinEnd = (end: number | null) =>
+    end === null || (native ? now <= end : now < end);
   const firstStart = [participationStart, votingStart]
     .filter((value): value is number => value !== null)
     .sort((a, b) => a - b)
@@ -37,18 +45,20 @@ export function computeCompetitionPhase(
   }
   if (
     (participationStart === null || now >= participationStart) &&
-    (competition.participation.ends_at === null ||
-      now < competition.participation.ends_at)
+    withinEnd(competition.participation.ends_at)
   ) {
     return CompetitionComputedPhase.PARTICIPATION_OPEN;
   }
   if (
     (votingStart === null || now >= votingStart) &&
-    (competition.voting.ends_at === null || now < competition.voting.ends_at)
+    withinEnd(competition.voting.ends_at)
   ) {
     return CompetitionComputedPhase.VOTING_OPEN;
   }
-  if (competition.decisions.next_decision_time !== null) {
+  if (
+    competition.decisions.next_decision_time !== null ||
+    (native && competition.type === CompetitionType.APPROVE)
+  ) {
     return CompetitionComputedPhase.DECIDING;
   }
   return CompetitionComputedPhase.COMPLETED;

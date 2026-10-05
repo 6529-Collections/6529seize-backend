@@ -555,6 +555,36 @@ Background Lambdas that read or write application state use a shared `doInDbCont
 
 MySQL is the integration contract between nearly all modules. API routes, scheduled pollers, queue workers, and derived-data loops all read and write shared tables. Redis is secondary and mostly disposable: API request cache, rate limiting, webhook dedupe, locks, and selected feature caches can fail open or be repopulated from MySQL.
 
+### Session refresh recovery
+
+`POST /api/auth/session-refresh` uses a separate Redis rate-limit namespace.
+Its defaults are 90 requests per second for bursts and 30 requests per second
+across a 10-second window, configured by `API_RATE_LIMIT_REFRESH_BURST`,
+`API_RATE_LIMIT_REFRESH_SUSTAINED_RPS`, and
+`API_RATE_LIMIT_REFRESH_SUSTAINED_WINDOW_SECONDS`. The network identity remains
+the rate-limit key; client-supplied addresses do not create new allowances.
+Credentialed auth responses preserve their allowed origin on 429 and expose
+`Retry-After` for browser recovery.
+
+Native/desktop refresh accepts an optional UUID `refresh_request_id`. Clients
+persist it with the old credential before sending a refresh, then reuse the
+pair after an interrupted response. The API derives the successor with a
+server-keyed HMAC and atomically rotates the existing stored hash. A duplicate
+can recover only that immediate successor while the session remains active;
+it does not rotate again or extend expiry. A different request ID, another
+client type/address, revocation, expiry, or a later rotation prevents recovery.
+Legacy clients without the request ID retain only a 30-second race-recovery
+window. No raw token or request ID is stored server-side and no schema changes
+are needed. Deploy `api` before the frontend, whose native request body adds
+this optional field. Existing frontend clients remain compatible with the new
+API. Once new clients are deployed, retain this API contract during rollback.
+Keep `AUTH_SESSION_HASH_SECRET` (or its existing JWT-secret fallback) stable
+through rollout and rollback: both stored session hashes and recovery derivation
+depend on it. Rotating that secret invalidates existing session proofs; it is
+not part of this release. Recovery deliberately stops at the rotated session's
+expiry and never extends it. The legacy 30-second allowance starts at the
+successful rotation's `last_used_at`; repeated recovery does not reset it.
+
 ## Main Data Flows
 
 1. Client requests enter through API Gateway and land in `seizeAPI`.
@@ -943,7 +973,7 @@ the chat/visibility hub and owns zero, one, or many competition resources. The
 competition service resolves each resource through either the immutable legacy
 adapter or the native competition repositories; it never infers an
 "active/current competition." Existing unversioned and v2 wave/drop GETs remain
-permanent façades over the original legacy wave configuration. A future native
+permanent façades over the original legacy wave configuration. A native
 hub therefore remains a contract-valid `CHAT` wave to those clients, and adding
 another competition cannot change a legacy Rank/Approve projection.
 
@@ -958,10 +988,78 @@ hashes and identifiers, never vote/signature/private payloads. Sampled legacy
 reads compare an independent legacy-table baseline with the unified adapter's
 paged domain reads in one repeatable-read snapshot. Samples are bounded and
 best effort; failures preserve the API response. Historical adapter
-self-comparisons are not parity evidence, and remaining-credit coverage remains
-an explicit acceptance gap.
+self-comparisons are not parity evidence. The current `legacy-read-v3` source
+also compares independently derived available/spent/remaining credit.
 Operational deployment, verification, and rollback are documented in the
 [competition read boundary runbook](./competition-read-boundary-runbook.md).
+
+Implicit wave navigation has an additive unified-read boundary,
+`GET /v3/waves/{wave_id}/default-competition`. It selects across all visible
+competitions using active/upcoming/completed priority, authoritative legacy/native
+timing and deterministic ID ties, returning server evaluation and refresh times.
+The UI default is separate from the immutable legacy primary and execution
+ownership. A wave-leading legacy decision index supports bounded per-wave
+aggregation. Schema/index rollout precedes API and dependent frontend rollout;
+no execution worker changes. See [normalization and deployment order](./default-competition-navigation.md).
+
+Native command APIs now implement hub creation, versioned draft/publication,
+entry submission, voting, credits, history and
+terminal lifecycle actions. Effective-actor idempotency receipts, signature
+nonces and domain writes commit atomically under competition locks. Each native
+competition keeps participation and voting access groups editable by wave
+administrators after entries exist. Access-only updates retain decision progress,
+outcome definitions and existing votes; the remaining execution rules stay locked.
+Each native
+entry creates one dedicated, immutable drop; existing chat messages or competition
+drops cannot be attached or reused. Native submissions use the internal
+`COMPETITION` drop type in the existing varchar column, keeping them outside legacy
+wave voting and winner-selection queries. Public drop reads expose them as
+participatory/submission drops, and competition APIs own their votes and results.
+Shared-chat voting resolves `/v3/waves/{wave_id}/drops/{drop_id}/competition-context`
+through wave, drop, moderation and competition visibility checks before selecting
+native entry credit/vote APIs. The context includes native current/projected
+totals, viewer vote, rank and top voters for the existing chat-card presentation.
+Drop voter and vote-log reads dispatch native submissions to competition vote and
+history tables after the same visibility checks. Only a successful null context selects legacy
+voting; unavailable or orphaned native entries never fall back to wave voting.
+Both content edits and presentation edits are rejected in every entry state.
+Accepted snapshots still enforce current moderation and visibility. Entry deletion
+uses the existing drop deletion flow and transactionally removes
+the entry, its content snapshots, current votes and leaderboard state, releasing
+active credit. Public entry, vote, winner and award reads exclude removed entries
+and historical deletion tombstones. Frozen decision records remain internal.
+Chat purge preserves competition submissions; wave deletion rejects native history.
+
+The existing leaderboard and decision Lambdas add an explicitly routed native
+engine. Both workers finish legacy wave processing before starting the native
+scan, so Main Stage decisions and leaderboard refreshes cannot be delayed by a
+large native backlog consuming the invocation. A failure in either engine is
+reported only after the other independent tasks have been attempted.
+Native vote history, immutable decision voter snapshots and award
+rows remain separate from legacy tables. Per-entry aggregate votes must fit the
+safe-integer API range; an overflowing mutation rolls back its transaction.
+Time-weighted scores and threshold crossings use exact integer integrals before
+conversion to persisted ratings. The decision worker leases a durable
+competition outbox and emits scoped WebSocket updates and winner notifications.
+Entry removal and competition status changes do not
+generate notifications; feed reads and unread counts exclude historical status
+notices. Per-effect SQL receipts and competition/decision/entry claim
+provenance protect retries. Entry creation commits ordinary shared-CHAT push
+notification IDs into its private outbox payload. The API attempts immediate
+handoff; the decision worker retries the same IDs after transport or partial
+SQS failure, and existing device delivery receipts suppress redelivery. Public
+WebSocket invalidations omit this private payload. `claimsBuilder` and
+`pushNotificationsHandler` understand the additive messages before producers are enabled. Explicit
+capabilities gate Main Stage claims, announcements, mappings and participation
+metrics; sharing a special wave never confers them. Operations assignment has
+an operator allowlist and durable actor/reason audit. Privileged public effects
+revalidate current public wave/parent access.
+
+The [native runtime runbook](./native-competition-runtime-runbook.md) specifies
+schema → message consumers → workers → API → frontend rollout and the native
+kill switches. No new Lambda or queue is introduced; all new features remain
+disabled by default.
+
 
 Important API responsibilities:
 
@@ -1035,6 +1133,8 @@ Important API responsibilities:
 - Operational endpoints such as health, docs, RPC/proxy routes, webhooks, and deploy-related routes.
 
 Wave rows can be top-level waves or subwaves through the nullable `parent_wave_id` column. Top-level wave discovery endpoints exclude subwaves, while `/waves/{id}/subwaves` lists child wave overviews. Subwave read access also requires the parent wave to be visible, and deleting a parent wave cascades through the API service to delete its subwaves.
+
+Wave overview `has_competition` is true for Rank or Approve wave types, or when the wave has any competition record, including drafts and completed competitions. Competition existence is fetched in one batch for the overview page and its visible parent waves.
 
 Wave writes enforce that every active Drop, Vote, Chat, and Admin membership is
 contained by the Wave View membership. The generated

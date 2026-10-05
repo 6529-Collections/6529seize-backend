@@ -1,6 +1,7 @@
 import { PushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 import {
   ACTIVITY_EVENTS_TABLE,
+  COMPETITION_ENTRIES_TABLE,
   ART_CURATION_TOKEN_WATCH_DROPS_TABLE,
   ART_CURATION_TOKEN_WATCHES_TABLE,
   DELETED_DROPS_TABLE,
@@ -84,6 +85,7 @@ export class ChatHistoryPurgeDb extends LazyDbAccessCompatibleService {
       const row = await this.db.oneOrNull<{ serial_no: number }>(
         `select serial_no from ${DROPS_TABLE} force index (idx_drop_wave_type_author)
          where wave_id = :waveId and author_id = :authorId and drop_type = 'CHAT'
+           and not exists (select 1 from ${COMPETITION_ENTRIES_TABLE} e where e.drop_id = ${DROPS_TABLE}.id)
          order by serial_no desc limit 1`,
         scope,
         { wrappedConnection: ctx.connection }
@@ -108,6 +110,7 @@ export class ChatHistoryPurgeDb extends LazyDbAccessCompatibleService {
       return await this.db.execute<DropEntity>(
         `select * from ${DROPS_TABLE} force index (idx_drop_wave_type_author)
          where wave_id = :waveId and drop_type = 'CHAT' and author_id = :authorId
+           and not exists (select 1 from ${COMPETITION_ENTRIES_TABLE} e where e.drop_id = ${DROPS_TABLE}.id)
            and serial_no <= :cutoffSerialNo
            and (:pinnedDropId is null or id <> :pinnedDropId)
          order by serial_no asc limit :limit for update`,
@@ -131,6 +134,13 @@ export class ChatHistoryPurgeDb extends LazyDbAccessCompatibleService {
     const timerName = `${this.constructor.name}->deleteBatch`;
     ctx.timer?.start(timerName);
     try {
+      const entries = await this.db.execute<{ id: string }>(
+        `select id from ${COMPETITION_ENTRIES_TABLE} where drop_id in (:dropIds) limit 1 for update`,
+        { dropIds },
+        { wrappedConnection: ctx.connection }
+      );
+      if (entries.length)
+        throw new Error('Competition entry content cannot be purged');
       await this.deleteCurations(dropIds, ctx);
       await this.detachTokenWatches(dropIds, ctx);
       const params = {
