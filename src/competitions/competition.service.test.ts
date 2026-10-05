@@ -9,6 +9,10 @@ import {
 import { WaveType } from '@/entities/IWave';
 import { NotFoundException } from '@/exceptions';
 import { aWave } from '@/tests/fixtures/wave.fixture';
+import { appFeatures } from '@/app-features';
+import { assertCompetitionOpen } from '@/api/competitions/competition-command-access';
+import type { DefaultCompetitionRecord } from '@/competitions/default-competition';
+import { NativeCompetitionReader } from '@/competitions/native-competition.reader';
 
 function nativeRecord(id: string, waveId: string, createdAt: number) {
   return {
@@ -94,19 +98,28 @@ describe('CompetitionService', () => {
   );
   const repository = {
     listCompetitionRecordsForWave: jest.fn(),
+    listDefaultCompetitionRecords: jest.fn(),
+    getLegacyDecisionSummary: jest
+      .fn()
+      .mockResolvedValue({ last_decision_time: null, decisions_done: 0 }),
     findCompetitionRecordById: jest.fn(),
     parseCompetitionRecord: jest.fn((record) => record),
     findCapabilities: jest.fn().mockResolvedValue([]),
     findNativeEntry: jest.fn(),
     listNativeVoters: jest.fn(),
     listNativeOutcomes: jest.fn(),
-    listNativeDistribution: jest.fn()
+    listNativeDistribution: jest.fn(),
+    listNativePauses: jest.fn()
   };
   const wavesDb = { findWaveById: jest.fn() };
-  const groupsService = { getGroupsUserIsEligibleFor: jest.fn() };
+  const groupsService = {
+    getGroupsUserIsEligibleFor: jest.fn(),
+    getGroupsUserIsEligibleForByIds: jest.fn()
+  };
   const features = {
     isUnifiedCompetitionReadsEnabled: jest.fn(),
-    isNativeCompetitionWritesEnabled: jest.fn()
+    isNativeCompetitionWritesEnabled: jest.fn(),
+    isNativeCompetitionExecutionEnabled: jest.fn()
   };
   const service = new CompetitionService(
     repository as never,
@@ -120,9 +133,17 @@ describe('CompetitionService', () => {
     jest.clearAllMocks();
     features.isUnifiedCompetitionReadsEnabled.mockReturnValue(true);
     features.isNativeCompetitionWritesEnabled.mockReturnValue(false);
+    features.isNativeCompetitionExecutionEnabled.mockReturnValue(true);
+    repository.listNativePauses.mockResolvedValue({
+      data: [],
+      has_more: false,
+      next_cursor: null
+    });
     wavesDb.findWaveById.mockResolvedValue(wave);
     groupsService.getGroupsUserIsEligibleFor.mockResolvedValue([]);
+    groupsService.getGroupsUserIsEligibleForByIds.mockResolvedValue([]);
     repository.listCompetitionRecordsForWave.mockResolvedValue([first, second]);
+    repository.listDefaultCompetitionRecords.mockResolvedValue([first, second]);
     repository.findCompetitionRecordById.mockImplementation(async (id) =>
       [first, second].find((record) => record.id === id)
     );
@@ -142,6 +163,78 @@ describe('CompetitionService', () => {
       has_more: false,
       next_cursor: null
     });
+  });
+
+  it('resolves the default over every record without hydrating competitions or resolving action groups', async () => {
+    const records: DefaultCompetitionRecord[] = Array.from(
+      { length: 150 },
+      (_, index) => ({
+        ...nativeRecord(String(index), wave.id, index),
+        participation_starts_at: Date.now() + 100000,
+        voting_starts_at: Date.now() + 100000,
+        participation_ends_at: Date.now() + 200000,
+        voting_ends_at: Date.now() + 200000
+      })
+    );
+    records.push({
+      ...first,
+      participation_starts_at: null,
+      voting_starts_at: null,
+      participation_ends_at: null,
+      voting_ends_at: null
+    });
+    repository.listDefaultCompetitionRecords.mockResolvedValue(records);
+    await expect(
+      service.getDefaultCompetition(wave.id, {})
+    ).resolves.toMatchObject({ competition_id: first.id });
+    expect(repository.findCompetitionRecordById).not.toHaveBeenCalled();
+    expect(repository.findCapabilities).not.toHaveBeenCalled();
+    expect(repository.getLegacyDecisionSummary).not.toHaveBeenCalled();
+    expect(
+      groupsService.getGroupsUserIsEligibleForByIds
+    ).not.toHaveBeenCalled();
+  });
+
+  it('masks unreadable default selection before inspecting records', async () => {
+    wavesDb.findWaveById.mockResolvedValue({
+      ...wave,
+      visibility_group_id: 'hidden'
+    });
+    await expect(
+      service.getDefaultCompetition(wave.id, {})
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(repository.listDefaultCompetitionRecords).not.toHaveBeenCalled();
+  });
+
+  it('masks anonymous restricted and missing waves with identical 404 errors', async () => {
+    const getError = async () => {
+      try {
+        await service.getDefaultCompetition(wave.id, {});
+        throw new Error('Expected a masked response');
+      } catch (error) {
+        expect(error).toBeInstanceOf(NotFoundException);
+        const masked = error as NotFoundException;
+        return { status: masked.getStatusCode(), message: masked.message };
+      }
+    };
+    wavesDb.findWaveById.mockResolvedValue({
+      ...wave,
+      visibility_group_id: 'restricted'
+    });
+    const restricted = await getError();
+    wavesDb.findWaveById.mockResolvedValue(null);
+    expect(await getError()).toEqual(restricted);
+    expect(restricted.status).toBe(404);
+    expect(repository.listDefaultCompetitionRecords).not.toHaveBeenCalled();
+  });
+
+  it('excludes drafts even when the viewer administers the wave', async () => {
+    repository.listDefaultCompetitionRecords.mockResolvedValue([
+      { ...first, lifecycle: CompetitionLifecycle.DRAFT }
+    ]);
+    await expect(
+      service.getDefaultCompetition(wave.id, {})
+    ).resolves.toMatchObject({ competition_id: null });
   });
 
   it('returns zero/one/many resources without a current competition projection', async () => {
@@ -185,7 +278,8 @@ describe('CompetitionService', () => {
     const authenticationContext = {
       isUserFullyAuthenticated: () => true,
       isAuthenticatedAsProxy: () => false,
-      getActingAsId: () => 'profile-viewer'
+      getActingAsId: () => 'profile-viewer',
+      hasRightsTo: () => true
     };
     const competition = await service.getCompetition(wave.id, first.id, {
       authenticationContext
@@ -196,6 +290,149 @@ describe('CompetitionService', () => {
       vote: false
     });
   });
+
+  it('resolves native-only access groups for detail and list permissions', async () => {
+    const scoped = {
+      ...first,
+      execution_mode: CompetitionExecutionMode.ACTIVE,
+      participation_config: {
+        ...first.participation_config,
+        group_id: 'entry-group'
+      },
+      voting_config: { ...first.voting_config, group_id: 'vote-group' }
+    };
+    repository.findCompetitionRecordById.mockResolvedValue(scoped);
+    repository.listCompetitionRecordsForWave.mockResolvedValue([scoped]);
+    features.isNativeCompetitionWritesEnabled.mockReturnValue(true);
+    groupsService.getGroupsUserIsEligibleForByIds.mockResolvedValue([
+      'entry-group'
+    ]);
+    const authenticationContext = {
+      isUserFullyAuthenticated: () => true,
+      isAuthenticatedAsProxy: () => false,
+      getActingAsId: () => 'profile-viewer',
+      hasRightsTo: () => true
+    };
+    const readContext = { authenticationContext } as never;
+    const detail = await service.getCompetition(wave.id, first.id, readContext);
+    const list = await service.listCompetitions(
+      wave.id,
+      { limit: 10, direction: 'ASC', sort: 'created_at' },
+      readContext
+    );
+    for (const competition of [detail, list.data[0]]) {
+      expect(competition.permissions).toMatchObject({
+        submit: true,
+        vote: false
+      });
+    }
+    expect(groupsService.getGroupsUserIsEligibleForByIds).toHaveBeenCalledWith(
+      'profile-viewer',
+      ['entry-group', 'vote-group'],
+      undefined
+    );
+    // A stale wave cache must not grant access after the native scope changes.
+    groupsService.getGroupsUserIsEligibleFor.mockResolvedValue([
+      'entry-group',
+      'vote-group'
+    ]);
+    groupsService.getGroupsUserIsEligibleForByIds.mockResolvedValue([]);
+    expect(
+      (
+        await service.getCompetition(wave.id, first.id, {
+          authenticationContext
+        } as never)
+      ).permissions
+    ).toMatchObject({ submit: false, vote: false });
+  });
+
+  it.each([
+    { name: 'paused backlog', pauseEnd: 120, now: 121, accepted: true },
+    { name: 'exact next decision', pauseEnd: 120, now: 140, accepted: true },
+    {
+      name: 'later unpaused overdue decision',
+      pauseEnd: 120,
+      now: 141,
+      accepted: false
+    },
+    {
+      name: 'final skipped decision',
+      pauseEnd: null,
+      now: 141,
+      accepted: false
+    }
+  ])(
+    'keeps commands and permissions aligned for $name',
+    async ({ pauseEnd, now, accepted }) => {
+      const clock = jest.spyOn(Date, 'now').mockReturnValue(now);
+      const execution = jest
+        .spyOn(appFeatures, 'isNativeCompetitionExecutionEnabled')
+        .mockReturnValue(true);
+      const record = {
+        ...first,
+        execution_mode: CompetitionExecutionMode.ACTIVE,
+        decision_config: {
+          ...first.decision_config,
+          strategy: {
+            first_decision_time: 100,
+            subsequent_decisions: [20, 20],
+            is_rolling: false
+          },
+          next_decision_time: 100
+        }
+      };
+      repository.findCompetitionRecordById.mockResolvedValue(record);
+      repository.listNativePauses.mockResolvedValue({
+        data: [
+          {
+            id: 'pause',
+            competition_id: first.id,
+            start_time: 100,
+            end_time: pauseEnd,
+            reason: null
+          }
+        ],
+        has_more: false,
+        next_cursor: null
+      });
+      features.isNativeCompetitionWritesEnabled.mockReturnValue(true);
+      const authenticationContext = {
+        isUserFullyAuthenticated: () => true,
+        isAuthenticatedAsProxy: () => false,
+        getActingAsId: () => 'profile-viewer',
+        hasRightsTo: () => true
+      };
+      try {
+        const publicCompetition = await service.getCompetition(
+          wave.id,
+          first.id,
+          { authenticationContext } as never
+        );
+        expect(publicCompetition.permissions).toMatchObject({
+          submit: accepted,
+          vote: accepted
+        });
+        expect(publicCompetition).not.toHaveProperty('decision_pauses');
+        const domain = await new NativeCompetitionReader(
+          repository as never,
+          {}
+        ).getCompetition(record, now);
+        for (const action of ['submit', 'vote'] as const) {
+          if (accepted)
+            expect(() =>
+              assertCompetitionOpen(domain, now, action)
+            ).not.toThrow();
+          else
+            expect(() => assertCompetitionOpen(domain, now, action)).toThrow(
+              'being finalized'
+            );
+        }
+      } finally {
+        clock.mockRestore();
+        execution.mockRestore();
+      }
+    }
+  );
 
   it('masks private waves before looking up a competition', async () => {
     wavesDb.findWaveById.mockResolvedValue({

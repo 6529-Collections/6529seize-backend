@@ -15,6 +15,10 @@ import { ApiProfileMin } from '../models/ApiProfileMin';
 import { HttpFile } from '../http/http';
 
 export class ApiCompetitionEntry {
+    /**
+    * Minted card associated with this designated competition entry, independently of shared drop type.
+    */
+    'meme_card_id'?: number | null;
     'id': string;
     'wave_id': string;
     'competition_id': string;
@@ -32,6 +36,12 @@ export class ApiCompetitionEntry {
     static readonly mapping: {[index: string]: string} | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
+        {
+            "name": "meme_card_id",
+            "baseName": "meme_card_id",
+            "type": "number",
+            "format": "int64"
+        },
         {
             "name": "id",
             "baseName": "id",

@@ -1,4 +1,5 @@
 import { identityFetcher } from '@/api-serverless/src/identities/identity.fetcher';
+jest.mock('@/competitions/competition-entry-drop-hooks');
 import { userGroupsService } from '@/api-serverless/src/community-members/user-groups.service';
 import { waveScoreService } from '@/api/waves/wave-score.service';
 import { waveDropMetricsRefreshService } from '@/drops/wave-drop-metrics-refresh.service';

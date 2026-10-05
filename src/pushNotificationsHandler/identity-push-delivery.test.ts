@@ -93,6 +93,29 @@ it('uses the same device lock and a fresh aggregate for ordinary iOS alerts', as
   );
 });
 
+it.each(['ios', 'android'])(
+  'rechecks native capability before %s delivery after registration downgrade',
+  async (platform) => {
+    const native = {
+      ...message(1, 'a', platform),
+      requiresCompetitionSupport: true
+    };
+    native.device.include_competitions = true;
+    mockFindRegistrations.mockResolvedValue([
+      { profile_id: 'a', include_competitions: false }
+    ]);
+    await sendIdentityPushGroups([native], results);
+    expect(sendMessages).not.toHaveBeenCalled();
+    mockFindRegistrations.mockResolvedValue([
+      { profile_id: 'a', include_competitions: true }
+    ]);
+    await sendIdentityPushGroups([native], results);
+    expect(sendMessages).toHaveBeenCalledWith([
+      expect.objectContaining({ notification_id: 1 })
+    ]);
+  }
+);
+
 it('retries ordinary pushes if the aggregate is unavailable rather than sending badge 1 or zero', async () => {
   jest
     .mocked(getDeviceBadgeState)

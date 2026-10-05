@@ -1,4 +1,6 @@
 import { handleMissingNotifications } from './missing-notifications';
+import { buildCompetitionLifecyclePushNotification } from './competition-lifecycle-push-notification';
+import type { CompetitionLifecycleNotificationData } from '@/notifications/user-notification.types';
 import { In, Like } from 'typeorm';
 import { ApiIdentity } from '../api-serverless/src/generated/models/ApiIdentity';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
@@ -464,7 +466,8 @@ async function buildIdentityNotificationMessages(
           if (
             !isNotificationEnabledForDevice(
               notification.cause,
-              recipientSettings
+              recipientSettings,
+              device.include_competitions === true
             )
           ) {
             logger.info(
@@ -494,6 +497,9 @@ async function buildIdentityNotificationMessages(
               imageUrl: imageUrl ?? undefined
             },
             identityId: notification.identity_id,
+            requiresCompetitionSupport:
+              notification.cause ===
+              IdentityNotificationCause.COMPETITION_LIFECYCLE,
             device
           };
         }
@@ -639,6 +645,12 @@ async function generateNotificationData(
         await getAdditionalEntity(),
         targetProfile,
         wavePresentationResolver
+      );
+    case IdentityNotificationCause.COMPETITION_LIFECYCLE:
+      return buildCompetitionLifecyclePushNotification(
+        extractAdditionalData<CompetitionLifecycleNotificationData>(
+          notification
+        )
       );
     case IdentityNotificationCause.ALL_DROPS:
       return handleAllDrops(

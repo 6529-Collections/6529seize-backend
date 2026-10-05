@@ -1,3 +1,7 @@
+import {
+  competitionDropVoters,
+  competitionDropVoteLogs
+} from '@/api/competitions/competition-drop-votes.service';
 import { NotFoundException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
 import { dropsDb, DropsDb } from '@/drops/drops.db';
@@ -636,6 +640,8 @@ export class ApiDropV2Service {
     ctx.timer?.start(timerKey);
     try {
       const dropEntity = await this.findVisibleDropByIdOrThrow(id, ctx);
+      if (dropEntity.drop_type === DropType.COMPETITION)
+        return await competitionDropVoteLogs(dropEntity, params, ctx);
 
       const logs = await this.dropsDb.findDropVoteEditLogEntities(
         {
@@ -677,6 +683,8 @@ export class ApiDropV2Service {
     ctx.timer?.start(timerKey);
     try {
       const dropEntity = await this.findVisibleDropByIdOrThrow(id, ctx);
+      if (dropEntity.drop_type === DropType.COMPETITION)
+        return await competitionDropVoters(dropEntity, params, ctx);
 
       const [rows, totalCount] =
         dropEntity.drop_type === DropType.WINNER

@@ -1,3 +1,4 @@
+import { competitionHistoryRepository } from '@/competitions/competition-history.repository';
 import { waveGroupIds } from '@/waves/wave-group-ids';
 import { randomUUID } from 'crypto';
 import { GRADIENT_CONTRACT, MEMES_CONTRACT } from '@/constants';
@@ -600,22 +601,13 @@ export class WaveApiService {
     );
   }
 
-  public async createWave(
+  public async prepareWaveCreation(
     createWaveRequest: ApiCreateNewWave,
-    isDirectMessage: boolean,
     ctx: RequestContext
-  ): Promise<ApiWave> {
-    const timer = this.getRequiredTimer(ctx);
-    const authenticationContext = this.getRequiredAuthenticationContext(ctx);
-    const actingAsId = this.getRequiredActingAsId(authenticationContext);
-    timer.start(`${this.constructor.name}->createWave`);
-    await this.validateWaveRelations(createWaveRequest, ctx);
-    this.validateOutcomes(createWaveRequest);
-    await this.validateSubwaveCreationParent({
-      request: createWaveRequest,
-      actingAsId,
-      ctx: { ...ctx, connection: undefined }
-    });
+  ) {
+    const actingAsId = this.getRequiredActingAsId(
+      this.getRequiredAuthenticationContext(ctx)
+    );
     const id = randomUUID();
     const descriptionDropModel = this.dropsMappers.createDropApiToUseCaseModel({
       request: {
@@ -630,8 +622,31 @@ export class WaveApiService {
         descriptionDropModel,
         ctx
       );
+    return { id, descriptionDropModel, descriptionPrePublication };
+  }
+
+  public async createWave(
+    createWaveRequest: ApiCreateNewWave,
+    isDirectMessage: boolean,
+    ctx: RequestContext,
+    deferredEffects?: Array<() => Promise<void>>,
+    prepared?: Awaited<ReturnType<WaveApiService['prepareWaveCreation']>>
+  ): Promise<ApiWave> {
+    const timer = this.getRequiredTimer(ctx);
+    const authenticationContext = this.getRequiredAuthenticationContext(ctx);
+    const actingAsId = this.getRequiredActingAsId(authenticationContext);
+    timer.start(`${this.constructor.name}->createWave`);
+    await this.validateWaveRelations(createWaveRequest, ctx);
+    this.validateOutcomes(createWaveRequest);
+    await this.validateSubwaveCreationParent({
+      request: createWaveRequest,
+      actingAsId,
+      ctx: { ...ctx, connection: undefined }
+    });
+    const { id, descriptionDropModel, descriptionPrePublication } =
+      prepared ?? (await this.prepareWaveCreation(createWaveRequest, ctx));
     const { createdWave, pendingPushNotificationIds, dmUnreadRecipientIds } =
-      await this.wavesApiDb.executeNativeQueriesInTransaction(
+      await this.withWaveCreationTransaction(
         async (connection) => {
           const ctxWithConnection = { ...ctx, connection };
           await this.validateSubwaveCreationParent({
@@ -780,33 +795,51 @@ export class WaveApiService {
             pendingPushNotificationIds: pending_push_notification_ids,
             dmUnreadRecipientIds: dm_unread_recipient_ids ?? []
           };
-        }
+        },
+        ctx,
+        deferredEffects
       );
-    await waveScoreService.requestWaveScoreRefreshBestEffort(
-      [createdWave.id],
-      WaveScoreDirtyRefreshReason.DROP_CHANGED,
-      ctx
-    );
-    await invalidateWaveUnreadCacheForWave(createdWave.id);
-    await this.broadcastDmUnreadStates(
-      dmUnreadRecipientIds,
-      createdWave.id,
-      ctx
-    );
-    await giveReadReplicaTimeToCatchUp();
-    await this.userGroupsService.onWaveRelatedGroupsChanged(
-      [
-        createWaveRequest.visibility.scope.group_id,
-        createWaveRequest.participation.scope.group_id,
-        createWaveRequest.chat.scope.group_id,
-        createWaveRequest.voting.scope.group_id,
-        createWaveRequest.wave.admin_group?.group_id
-      ],
-      ctx
-    );
-    await sendIdentityPushNotifications(pendingPushNotificationIds);
+    const postCommitCtx = { ...ctx, connection: undefined };
+    const afterCommit = async () => {
+      await waveScoreService.requestWaveScoreRefreshBestEffort(
+        [createdWave.id],
+        WaveScoreDirtyRefreshReason.DROP_CHANGED,
+        postCommitCtx
+      );
+      await invalidateWaveUnreadCacheForWave(createdWave.id);
+      await this.broadcastDmUnreadStates(
+        dmUnreadRecipientIds,
+        createdWave.id,
+        postCommitCtx
+      );
+      await giveReadReplicaTimeToCatchUp();
+      await this.userGroupsService.onWaveRelatedGroupsChanged(
+        [
+          createWaveRequest.visibility.scope.group_id,
+          createWaveRequest.participation.scope.group_id,
+          createWaveRequest.chat.scope.group_id,
+          createWaveRequest.voting.scope.group_id,
+          createWaveRequest.wave.admin_group?.group_id
+        ],
+        postCommitCtx
+      );
+      await sendIdentityPushNotifications(pendingPushNotificationIds);
+    };
+    if (deferredEffects) deferredEffects.push(afterCommit);
+    else await afterCommit();
     timer.stop(`${this.constructor.name}->createWave`);
     return createdWave;
+  }
+
+  private async withWaveCreationTransaction<T>(
+    callback: (
+      connection: NonNullable<RequestContext['connection']>
+    ) => Promise<T>,
+    ctx: RequestContext,
+    deferredEffects?: Array<() => Promise<void>>
+  ): Promise<T> {
+    if (ctx.connection && deferredEffects) return callback(ctx.connection);
+    return this.wavesApiDb.executeNativeQueriesInTransaction(callback);
   }
 
   public async createOrUpdateWavePause(
@@ -1274,17 +1307,26 @@ export class WaveApiService {
     }
   }
 
+  public async validateNativeCompetitionConfiguration(
+    request: ApiCreateNewWave,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.validateWaveRelations(request, ctx, undefined, true);
+    this.validateOutcomes(request);
+  }
+
   private async validateWaveRelations(
     request: ApiCreateNewWave | ApiUpdateWaveRequest,
     ctx: RequestContext,
-    waveBeforeUpdate?: WaveEntity | undefined
+    waveBeforeUpdate?: WaveEntity | undefined,
+    nativeCompetition = false
   ) {
     const timer = ctx.timer;
     timer?.start(`${this.constructor.name}->validateWaveRelations`);
     if (request.wave.type === ApiWaveType.Chat && !request.chat.enabled) {
       throw new BadRequestException(`Chat waves need to have chat enabled`);
     }
-    if (request.voting.signature_required) {
+    if (request.voting.signature_required && !nativeCompetition) {
       throw new BadRequestException(
         `Creating a wave with signed votes requirement is not yet supported`
       );
@@ -2082,6 +2124,7 @@ export class WaveApiService {
     waveId: string,
     ctx: RequestContextWithConnection
   ) {
+    await competitionHistoryRepository.assertWaveCanBeDeleted(waveId, ctx);
     await Promise.all([
       this.wavesApiDb.deleteDropPartsByWaveId(waveId, ctx),
       this.wavesApiDb.deleteDropMentionsByWaveId(waveId, ctx),

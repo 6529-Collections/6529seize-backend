@@ -216,10 +216,10 @@ export class DropsApiService {
             author: it.author,
             created_at: it.created_at,
             serial_no: it.serial_no,
-            drop_type: enums.resolveOrThrow(
-              ApiDropType,
-              it.drop_type.toString()
-            ),
+            drop_type:
+              it.drop_type === DropType.COMPETITION
+                ? ApiDropType.Participatory
+                : enums.resolveOrThrow(ApiDropType, it.drop_type.toString()),
             title: canView ? it.title : null,
             is_reply_drop: !!it.reply_to_drop_id,
             part_1_medias: canView

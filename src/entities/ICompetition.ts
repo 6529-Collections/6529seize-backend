@@ -119,6 +119,11 @@ export class CompetitionEntity {
   @Column({ type: 'text', nullable: true, default: null })
   readonly description!: string | null;
 
+  @Column({ type: 'json', nullable: true })
+  readonly presentation_config!:
+    | { data_key: string; data_value: string }[]
+    | null;
+
   @Column({ type: 'json', nullable: false })
   readonly participation_config!: Record<string, unknown>;
 

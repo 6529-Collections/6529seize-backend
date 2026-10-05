@@ -1,9 +1,4 @@
-import {
-  CONSOLIDATED_WALLETS_TDH_TABLE,
-  DROP_VOTER_STATE_TABLE,
-  IDENTITIES_TABLE,
-  WAVES_DECISION_WINNER_DROPS_TABLE
-} from '@/constants';
+import { CONSOLIDATED_WALLETS_TDH_TABLE, IDENTITIES_TABLE } from '@/constants';
 import { fetchLatestTDHBDate } from '../db';
 import { NextGenTokenTDH } from '../entities/INextGen';
 import { NFT } from '../entities/INFT';
@@ -34,6 +29,7 @@ import * as priorityAlertsContext from '../priority-alerts.context';
 import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
 import { dbSupplier } from '../sql-executor';
+import { competitionMainStageRepository } from '@/competitions/competition-main-stage.repository';
 import { Time } from '../time';
 import { findNftTDH } from './nft_tdh';
 import { updateTDH } from './tdh';
@@ -82,30 +78,15 @@ export async function tdhLoop(force?: boolean) {
 
 async function recordMetrics() {
   const mainStageWaveId = env.getStringOrNull(`MAIN_STAGE_WAVE_ID`);
+  const tdhOnMainStageSubmissions =
+    await competitionMainStageRepository.totalActiveVotes(mainStageWaveId, {});
+  await metricsRecorder.recordTdhOnMainStageSubmissions(
+    { tdhOnMainStageSubmissions },
+    {}
+  );
   if (mainStageWaveId) {
     const db = dbSupplier();
     await Promise.all([
-      db
-        .oneOrNull<{
-          total_votes: number;
-        }>(
-          `
-            select sum(abs(votes)) as total_votes
-            from ${DROP_VOTER_STATE_TABLE} v
-            left join ${WAVES_DECISION_WINNER_DROPS_TABLE} w on w.drop_id = v.drop_id
-            where v.wave_id = :wave_id and w.drop_id is null
-          `,
-          { wave_id: mainStageWaveId }
-        )
-        .then(async (totalVotes) => {
-          const tdhOnMainStageSubmissions = numbers.parseNumberOrThrow(
-            totalVotes?.total_votes ?? 0
-          );
-          await metricsRecorder.recordTdhOnMainStageSubmissions(
-            { tdhOnMainStageSubmissions },
-            {}
-          );
-        }),
       db
         .oneOrNull<{
           cnt: number;

@@ -8,7 +8,12 @@ const yaml = require('js-yaml') as {
 type JsonObject = Record<string, any>;
 
 const ACCEPTED_ADDITIVE_ENUM_EXTENSIONS: Readonly<Record<string, string[]>> = {
-  'schema ApiNotificationCause.enum': ['SUBSCRIPTION_COVERAGE'],
+  // Native lifecycle causes are returned only when v2 clients explicitly set
+  // include_competitions=true; default v1/v2 pages and unread counts stay legacy.
+  'schema ApiNotificationCause.enum': [
+    'SUBSCRIPTION_COVERAGE',
+    'COMPETITION_LIFECYCLE'
+  ],
   'schema ApiProfileCmsPointerEvent.properties.event_type.enum': ['unpublish'],
   'schema ApiPushNotificationSettings.required': ['subscription_coverage']
 };

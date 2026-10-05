@@ -24,6 +24,7 @@ export interface IdentityPushNotificationMessage {
   input: PushNotificationMessageInput;
   identityId: string;
   device: PushNotificationDevice;
+  requiresCompetitionSupport?: boolean;
 }
 
 type ResultHandler = (
@@ -65,8 +66,27 @@ async function currentMessages(group: IdentityPushNotificationMessage[]) {
           ).map((row) => row.profile_id)
         )
       };
+  const competitionProfiles = group.some(
+    (message) => message.requiresCompetitionSupport
+  )
+    ? new Set(
+        (
+          await getDataSource().getRepository(PushNotificationDevice).findBy({
+            device_id: device.device_id,
+            token: device.token
+          })
+        )
+          .filter((row) => row.include_competitions === true)
+          .map((row) => row.profile_id)
+      )
+    : new Set<string>();
   return group
     .filter((message) => state.profileIds.has(message.identityId))
+    .filter(
+      (message) =>
+        !message.requiresCompetitionSupport ||
+        competitionProfiles.has(message.identityId)
+    )
     .map((message) => ({
       ...message,
       input: ios

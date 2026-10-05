@@ -78,9 +78,12 @@ export type Competition = {
   readonly participation: CompetitionParticipationConfig;
   readonly voting: CompetitionVotingConfig;
   readonly decisions: CompetitionDecisionConfig;
+  /** Internal pause data for overdue native decision command/permission gates. */
+  readonly decision_pauses?: readonly CompetitionPause[];
   readonly winners: CompetitionWinnerConfig;
   readonly outcome_config: readonly Record<string, unknown>[];
   readonly capabilities: readonly CompetitionCapability[];
+  readonly presentation?: readonly { data_key: string; data_value: string }[];
   readonly created_at: number;
   readonly updated_at: number;
   readonly published_at: number | null;
@@ -191,10 +194,16 @@ export type CompetitionPageRequest = {
   readonly offset: number;
   readonly limit: number;
   readonly direction: 'ASC' | 'DESC';
-  readonly sort?: 'submitted_at' | 'rating' | 'rank';
+  readonly sort?:
+    | 'submitted_at'
+    | 'rating'
+    | 'rank'
+    | 'real_time_rating'
+    | 'trend';
 };
 
 export type CompetitionSnapshot = {
+  readonly credit_budgets?: unknown;
   readonly storage_mode: CompetitionStorageMode;
   readonly config_version: number;
   readonly configuration: unknown;

@@ -24,7 +24,7 @@ export type MetricRollupHourUpsertParams = {
   key1?: string;
   key2?: string;
   event_count: number;
-  value_sum?: number;
+  value_sum?: number | string;
   overwrite?: boolean;
 };
 

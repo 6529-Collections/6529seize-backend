@@ -1,5 +1,10 @@
 import { upsertAutomaticAirdropsForPhase } from '@/api/distributions/api.distributions.service';
 import {
+  competitionEventRepository,
+  CompetitionEventRepository,
+  NativeClaimContext
+} from '@/competitions/competition-event.repository';
+import {
   DISTRIBUTION_PHASE_AIRDROP_TEAM,
   DISTRIBUTION_PHASE_AIRDROP_ARTIST
 } from '@/airdrop-phases';
@@ -137,12 +142,27 @@ export class MintingClaimsService {
     private readonly dropsDb: DropsDb,
     private readonly mintingClaimsDb: MintingClaimsDb,
     private readonly memeCardDropMappingsDb: MemeCardDropMappingsDb,
-    private readonly getMainStageWaveId: () => string | null
+    private readonly getMainStageWaveId: () => string | null,
+    private readonly competitionEvents: Pick<
+      CompetitionEventRepository,
+      'assertNativeClaim' | 'recordNativeClaim'
+    > = competitionEventRepository
   ) {}
 
-  async createClaimForDropIfMissing(dropId: string): Promise<void> {
+  async createClaimForDropIfMissing(
+    dropId: string,
+    competition?: NativeClaimContext
+  ): Promise<void> {
     await this.mintingClaimsDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        if (competition) {
+          await this.competitionEvents.assertNativeClaim(competition, dropId, {
+            connection
+          });
+          await this.competitionEvents.recordNativeClaim(competition, dropId, {
+            connection
+          });
+        }
         await this.assertDropExistsOrThrow(dropId, connection);
         const exists = await this.mintingClaimsDb.existsByDropId(
           MEMES_CONTRACT,
@@ -292,7 +312,6 @@ export class MintingClaimsService {
   ): Promise<void> {
     const mainStageWaveId = this.getMainStageWaveId();
     if (
-      !mainStageWaveId ||
       !(await this.memeCardDropMappingsDb.isMainStageWinnerDrop(
         dropId,
         mainStageWaveId,

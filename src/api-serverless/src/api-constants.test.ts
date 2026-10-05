@@ -206,3 +206,18 @@ describe('api CORS constants', () => {
     process.env[envName] = originalValue;
   }
 });
+
+describe('session refresh retry headers', () => {
+  it.each(['/api/auth/session-refresh', '/API/AUTH/SESSION-REFRESH/'])(
+    'exposes Retry-After while preserving credentialed origin at %s',
+    (path) => {
+      expect(
+        getCorsOptionsForRequest(path, 'https://6529.io', 'api.6529.io')
+      ).toMatchObject({
+        origin: 'https://6529.io',
+        credentials: true,
+        exposedHeaders: ['Retry-After', 'X-RateLimit-Reset']
+      });
+    }
+  );
+});

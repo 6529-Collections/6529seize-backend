@@ -253,6 +253,7 @@ export class NotificationsApiService {
     const notifications =
       await this.notificationsReader.getNotificationsForIdentity({
         ...param,
+        include_competitions: false,
         identity_id: authenticationContext.getActingAsId()!,
         eligible_group_ids
       });
@@ -273,6 +274,7 @@ export class NotificationsApiService {
       cause: string | null;
       cause_exclude: string | null;
       unread_only: boolean;
+      include_competitions?: boolean;
     },
     authenticationContext: AuthenticationContext,
     ctx: RequestContext
@@ -494,6 +496,7 @@ export class NotificationsApiService {
           dropIds.push(data.drop_id);
           break;
         }
+        case IdentityNotificationCause.COMPETITION_LIFECYCLE:
         case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
           break;
         }
@@ -542,6 +545,7 @@ export class NotificationsApiService {
       case IdentityNotificationCause.DROP_BOOSTED:
       case IdentityNotificationCause.DROP_QUOTED:
       case IdentityNotificationCause.DROP_REPLIED:
+      case IdentityNotificationCause.COMPETITION_LIFECYCLE:
       case IdentityNotificationCause.WAVE_CREATED:
       case IdentityNotificationCause.ALL_DROPS:
       case IdentityNotificationCause.PRIORITY_ALERT: {
@@ -559,6 +563,7 @@ export class NotificationsApiService {
       case IdentityNotificationCause.IDENTITY_SUBSCRIBED:
       case IdentityNotificationCause.IDENTITY_REP:
       case IdentityNotificationCause.IDENTITY_NIC:
+      case IdentityNotificationCause.COMPETITION_LIFECYCLE:
       case IdentityNotificationCause.WAVE_CREATED:
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
         return [];
@@ -807,6 +812,17 @@ export class NotificationsApiService {
           related_identity: profiles[data.additional_identity_id],
           related_drops: [drops[data.drop_id]],
           additional_context: {}
+        };
+      }
+      case IdentityNotificationCause.COMPETITION_LIFECYCLE: {
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: null,
+          related_drops: [],
+          additional_context: { ...notification.data }
         };
       }
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
@@ -1095,6 +1111,17 @@ export class NotificationsApiService {
           related_identity: profiles[data.additional_identity_id],
           related_drops: [drops[data.drop_id]],
           additional_context: {}
+        };
+      }
+      case IdentityNotificationCause.COMPETITION_LIFECYCLE: {
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: null,
+          related_drops: [],
+          additional_context: { ...notification.data }
         };
       }
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {

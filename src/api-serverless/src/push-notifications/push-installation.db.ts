@@ -181,17 +181,26 @@ export async function registerInstallationDevice(
       if (installation.secret_hash) {
         // A verified installation has one current native token. Refresh every
         // connected profile, including those that are not currently active.
+        // Omitted capabilities clear support when an older client registers.
         await sqlExecutor.execute(
-          `UPDATE ${PUSH_NOTIFICATION_DEVICES_TABLE} SET token = :token, platform = :platform WHERE device_id = :device_id`,
-          { ...device, platform: device.platform ?? null },
+          `UPDATE ${PUSH_NOTIFICATION_DEVICES_TABLE} SET token = :token, platform = :platform, include_competitions = :include_competitions WHERE device_id = :device_id`,
+          {
+            ...device,
+            platform: device.platform ?? null,
+            include_competitions: device.include_competitions === true
+          },
           options
         );
       }
       await sqlExecutor.execute(
-        `INSERT INTO ${PUSH_NOTIFICATION_DEVICES_TABLE} (device_id, token, profile_id, platform)
-         VALUES (:device_id, :token, :profile_id, :platform)
-         ON DUPLICATE KEY UPDATE token = VALUES(token), platform = VALUES(platform)`,
-        { ...device, platform: device.platform ?? null },
+        `INSERT INTO ${PUSH_NOTIFICATION_DEVICES_TABLE} (device_id, token, profile_id, platform, include_competitions)
+         VALUES (:device_id, :token, :profile_id, :platform, :include_competitions)
+         ON DUPLICATE KEY UPDATE token = VALUES(token), platform = VALUES(platform), include_competitions = VALUES(include_competitions)`,
+        {
+          ...device,
+          platform: device.platform ?? null,
+          include_competitions: device.include_competitions === true
+        },
         options
       );
       await sqlExecutor.execute(
