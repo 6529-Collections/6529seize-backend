@@ -350,7 +350,7 @@ The API (`src/api-serverless/src/`) is an Express application with:
 ### External Integrations
 
 - **Alchemy SDK** - Primary Ethereum node provider
-- **Etherscan API** - Transaction and contract verification
+- **Sourcify API** - Optional NextGen randomizer contract-name enrichment
 - **AWS S3** - Media storage and CDN via CloudFront
 - **AWS MediaConvert** - Video transcoding
 - **AWS SQS/SNS** - Message queuing
