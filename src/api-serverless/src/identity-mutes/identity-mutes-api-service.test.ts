@@ -262,3 +262,12 @@ it.each([
     ).toHaveBeenCalledTimes(online ? 2 : 0);
   }
 );
+
+const originalNodeEnvironment = process.env.NODE_ENV;
+beforeEach(() => {
+  process.env.NODE_ENV = 'test';
+});
+afterEach(() => {
+  if (originalNodeEnvironment === undefined) delete process.env.NODE_ENV;
+  else process.env.NODE_ENV = originalNodeEnvironment;
+});

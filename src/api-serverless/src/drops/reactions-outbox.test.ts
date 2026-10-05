@@ -93,3 +93,60 @@ it.each([
     }
   }
 );
+
+it.each([false, true])(
+  'does not capture a no-op reaction delete (existing=%s)',
+  async (existing) => {
+    const connection = { connection: {} };
+    const execute = jest.fn().mockResolvedValue({ affectedRows: 0 });
+    const transaction = jest.fn(async (work) => work(connection));
+    const db = {
+      execute,
+      executeNativeQueriesInTransaction: transaction,
+      getAffectedRows: () => 0
+    } as unknown as SqlExecutor;
+    const repository = new ReactionsDb(() => db);
+    await expect(
+      repository.removeReaction(
+        'profile',
+        'drop',
+        'wave',
+        existing ? { connection } : {}
+      )
+    ).resolves.toBe(false);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0][0]).toContain('DELETE FROM drop_reactions');
+    expect(transaction).toHaveBeenCalledTimes(existing ? 0 : 1);
+  }
+);
+
+it.each([false, true])(
+  'propagates outbox failure on the same mutation connection (existing=%s)',
+  async (existing) => {
+    const connection = { connection: {} };
+    const execute = jest
+      .fn()
+      .mockResolvedValueOnce({ insertId: 1, affectedRows: 1 })
+      .mockRejectedValueOnce(new Error('outbox unavailable'));
+    const transaction = jest.fn(async (work) => work(connection));
+    const db = {
+      execute,
+      executeNativeQueriesInTransaction: transaction,
+      getAffectedRows: () => 1
+    } as unknown as SqlExecutor;
+    const repository = new ReactionsDb(() => db);
+    await expect(
+      repository.addReaction(
+        'profile',
+        'drop',
+        'wave',
+        'like',
+        existing ? { connection } : {}
+      )
+    ).rejects.toThrow('outbox unavailable');
+    expect(transaction).toHaveBeenCalledTimes(existing ? 0 : 1);
+    expect(execute).toHaveBeenCalledTimes(2);
+    for (const call of execute.mock.calls)
+      expect(call[2]).toEqual({ wrappedConnection: connection });
+  }
+);

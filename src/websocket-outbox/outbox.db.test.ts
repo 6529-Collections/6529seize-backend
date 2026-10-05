@@ -19,6 +19,7 @@ describeWithSeed('WebSocket outbox MySQL transaction boundary', [], () => {
   const reactions = new ReactionsDb(() => sqlExecutor);
   beforeEach(() => {
     process.env.NODE_ENV = 'test';
+    jest.mocked(resolveWebSocketEvent).mockReset();
   });
   afterEach(() => {
     process.env.NODE_ENV = 'local';
@@ -43,6 +44,35 @@ describeWithSeed('WebSocket outbox MySQL transaction boundary', [], () => {
       await sqlExecutor.execute(`select * from ${DROP_REACTIONS_TABLE}`)
     ).toEqual([]);
   });
+  it.each([false, true])(
+    'rolls back the real business write on capture failure (existing=%s)',
+    async (existing) => {
+      const execute = sqlExecutor.execute.bind(sqlExecutor);
+      const transaction = jest.spyOn(
+        sqlExecutor,
+        'executeNativeQueriesInTransaction'
+      );
+      jest
+        .spyOn(sqlExecutor, 'execute')
+        .mockImplementation((sql, params, options) => {
+          if (sql.includes(`insert into ${WEBSOCKET_OUTBOX_TABLE}`))
+            return Promise.reject(new Error('forced outbox insert failure'));
+          return execute(sql, params, options);
+        });
+      const mutation = existing
+        ? sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+            reactions.addReaction('p', 'd', 'w', 'like', { connection })
+          )
+        : reactions.addReaction('p', 'd', 'w', 'like', {});
+      await expect(mutation).rejects.toThrow('forced outbox insert failure');
+      expect(transaction).toHaveBeenCalledTimes(1);
+      expect(await rows()).toEqual([]);
+      expect(
+        await sqlExecutor.execute(`select * from ${DROP_REACTIONS_TABLE}`)
+      ).toEqual([]);
+    }
+  );
+
   it('survives a missed wakeup and retries SQS after committing the business mutation', async () => {
     await reactions.addReaction('p', 'd', 'w', ':+1:', {});
     expect(await rows()).toHaveLength(1);
@@ -174,6 +204,52 @@ describeWithSeed('WebSocket outbox MySQL transaction boundary', [], () => {
       reactions.addReaction('p', 'd', 'w', 'love', {})
     ).resolves.toBe(false);
     expect(await rows()).toHaveLength(1);
+  });
+
+  it('holds two same-resource updates behind the deferred recipient head', async () => {
+    await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+      await recordWebSocketEvent(
+        { type: 'drop', dropId: 'd', updateType: 'DROP_REACTION_UPDATE' },
+        { connection },
+        sqlExecutor
+      );
+      await recordWebSocketEvent(
+        { type: 'drop', dropId: 'd', updateType: 'DROP_REACTION_UPDATE' },
+        { connection },
+        sqlExecutor
+      );
+    });
+    let claims = 0;
+    jest
+      .mocked(resolveWebSocketEvent)
+      .mockResolvedValueOnce([{ ...frame, message: 'first' }])
+      .mockResolvedValueOnce([{ ...frame, message: 'second' }]);
+    const send = jest.fn().mockResolvedValue(undefined);
+    // Allow one initial claim so the first recipient can be deferred before another drain.
+    await publishWebSocketOutbox(send, sqlExecutor, () => claims++ === 0);
+    const firstRecipient = (await rows()).find((row) => {
+      const event =
+        typeof row.event === 'string' ? JSON.parse(row.event) : row.event;
+      return event.type === 'delivery';
+    });
+    expect(firstRecipient).toBeDefined();
+    await sqlExecutor.execute(
+      `update ${WEBSOCKET_OUTBOX_TABLE} set available_at = :later where id = :id`,
+      { later: Date.now() + 60_000, id: firstRecipient.id }
+    );
+    await publishWebSocketOutbox(send, sqlExecutor);
+    expect(send).not.toHaveBeenCalled();
+    expect(resolveWebSocketEvent).toHaveBeenCalledTimes(2);
+    expect(await rows()).toHaveLength(2);
+    await sqlExecutor.execute(
+      `update ${WEBSOCKET_OUTBOX_TABLE} set available_at = 0`
+    );
+    await publishWebSocketOutbox(send, sqlExecutor);
+    expect(send.mock.calls.map(([event]) => event.message)).toEqual([
+      'first',
+      'second'
+    ]);
+    expect(await rows()).toEqual([]);
   });
 
   it('holds later frames behind a deferred head without blocking other connections', async () => {

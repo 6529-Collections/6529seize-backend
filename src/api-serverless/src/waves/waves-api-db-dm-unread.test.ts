@@ -135,6 +135,14 @@ describe('WavesApiDb effective direct-message mute state', () => {
 });
 
 describe('WavesApiDb DM unread state versions', () => {
+  const originalNodeEnvironment = process.env.NODE_ENV;
+  beforeEach(() => {
+    process.env.NODE_ENV = 'test';
+  });
+  afterEach(() => {
+    if (originalNodeEnvironment === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnvironment;
+  });
   it('increments only currently eligible reader versions for a deleted DM drop', async () => {
     const { db, repo } = createRepo();
     const connection = {} as any;
