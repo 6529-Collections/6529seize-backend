@@ -7,7 +7,7 @@ import { SqlExecutor } from '@/sql-executor';
 import { MANIFOLD, MEMES_CONTRACT, NULL_ADDRESS } from '@/constants';
 import { resolveEns } from '@/db-api';
 import { DbPoolName } from '@/db-query.options';
-import { marketDepthApiDb } from './market-depth-api.db';
+import { MarketDepthApiDb, marketDepthApiDb } from './market-depth-api.db';
 import { Timer } from '@/time';
 
 jest.mock('@/db-api', () => ({ resolveEns: jest.fn() }));
@@ -87,9 +87,12 @@ describe('NFT market activity', () => {
       token_id: '1',
       collection_id: null
     });
+    const partitionDb = new MarketDepthApiDb(() => executor);
     const partitions = jest
       .spyOn(marketDepthApiDb, 'getActivityPartitions')
-      .mockResolvedValue([]);
+      .mockImplementation((token, ctx) =>
+        partitionDb.getActivityPartitions(token, ctx)
+      );
     const criticalPartitions = jest.spyOn(marketDepthApiDb, 'getPartitions');
     const timer = new Timer('activity');
     await new NftMarketActivityService(() => executor).getActivity(
@@ -101,12 +104,20 @@ describe('NFT market activity', () => {
     );
     expect(partitions).toHaveBeenCalled();
     expect(criticalPartitions).not.toHaveBeenCalled();
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(3);
     expect(oneOrNull).toHaveBeenCalledTimes(1);
     for (const call of [...execute.mock.calls, ...oneOrNull.mock.calls])
       expect(call[2].forcePool).toBe(DbPoolName.READ);
     const report = JSON.parse(timer.getReport());
-    expect(report.times).toHaveLength(3);
+    expect(report.times).toHaveLength(4);
+    expect(report.times.map((entry: { key: string }) => entry.key)).toEqual(
+      expect.arrayContaining([
+        'MarketDepthApiDb->getActivityPartitions',
+        'NftMarketActivityService->transactionEvents',
+        'NftMarketActivityService->marketEvents',
+        'NftMarketActivityService->historyStartedAt'
+      ])
+    );
     expect(report.ongoingTimers).toEqual([]);
   });
   it('preserves explicit cancellation and exact token ID without requiring a transaction', () => {

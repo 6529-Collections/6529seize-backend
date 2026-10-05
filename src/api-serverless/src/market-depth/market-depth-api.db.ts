@@ -165,6 +165,7 @@ export class MarketDepthApiDb extends LazyDbAccessCompatibleService {
   async getPartitions(
     token: MarketTokenContext
   ): Promise<{ source: string; collection_slug: string }[]> {
+    // Preserve the existing writer-only entry point for critical order reads.
     return this.readPartitions(token, DbPoolName.WRITE, {});
   }
 
