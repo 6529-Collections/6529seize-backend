@@ -11,7 +11,7 @@ import { NEXTGEN_CORE_IFACE } from '@/abis/nextgen';
 import { CLOUDFRONT_LINK } from '@/constants';
 import { NextGenCollection, NextGenLog } from '@/entities/INextGen';
 import { findEnsForAddress } from '@/ens-lookup';
-import { getSourceCodeForContract } from '@/etherscan';
+import { getSourcifyContractName } from '@/sourcify';
 import { Logger } from '@/logging';
 import {
   fetchNextGenCollection,
@@ -434,8 +434,12 @@ async function addRandomizer(args: ethers.Result): Promise<
 > {
   const collectionId = parseInt(args[0]);
   const randomizer = args[1];
-  const randomizerSource: any = await getSourceCodeForContract(randomizer);
-  const randomizerName = randomizerSource?.result[0]?.ContractName;
+  const chainId = {
+    [Network.ETH_MAINNET]: 1,
+    [Network.ETH_SEPOLIA]: 11155111,
+    [Network.ETH_GOERLI]: 5
+  }[getNextgenNetwork()];
+  const randomizerName = await getSourcifyContractName(chainId, randomizer);
   return [
     {
       id: collectionId,

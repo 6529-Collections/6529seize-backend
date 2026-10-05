@@ -1,8 +1,8 @@
 # ETH/USD collection and recovery
 
 `ethPriceLoop` uses the public Coinbase Exchange ETH-USD ticker and historical
-candles. It needs no Coinbase key. Mobula is no longer used by this loop;
-`ETHERSCAN_API_KEY` retains its unrelated NextGen contract lookup use.
+candles. It needs no Coinbase key. Mobula is no longer used by this loop.
+NextGen contract-name enrichment uses the public Sourcify V2 API without a key.
 
 The existing five-minute EventBridge schedule, concurrency of one, and
 `eth_price(timestamp_ms, date, usd_price)` schema are unchanged. No entities,
