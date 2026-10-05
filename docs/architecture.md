@@ -1730,8 +1730,15 @@ The strongest part of the architecture is its operational decomposition. Expensi
 
 Operational error delivery is a separate account-owned runtime under
 `ops/monitoring`, with its own dependency graph and OIDC deployment. Backend
-metadata-only stdout, a source-account CloudWatch Logs relay, source CloudWatch
+allowlisted diagnostic stdout, a source-account CloudWatch Logs relay, source CloudWatch
 alarm forwarding and signed Sentry ingress feed separate normal/critical queues.
+The optional application diagnostic carries a fixed failure category, operation,
+safe resource and provider/status fields, and retry state only when the retry
+owner explicitly supplies it. The monitoring parser revalidates those fields;
+legacy events stay red with unknown recovery. Five-minute grouping separates
+different validated causes and retry states even when producers share a generic
+fingerprint. NFT required-page 404 backoff records future eligibility but has no
+guaranteed scheduler, so it remains red without a pending-retry claim.
 Monitoring-owned dispatchers confirm webhook delivery, deduplicate with DynamoDB
 receipts and archive exhausted/permanent failures in S3. Grouped errors retain
 five-minute fingerprint windows, and critical/recovery events bypass grouping.
