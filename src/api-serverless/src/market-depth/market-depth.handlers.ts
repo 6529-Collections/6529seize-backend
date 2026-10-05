@@ -12,6 +12,7 @@ import {
   validateDepthQuery
 } from './market-depth.validation';
 import { nftMarketActivityService } from './nft-market-activity.service';
+import { Timer } from '@/time';
 
 export async function handleGetNftMarketDepth(
   req: GetNftMarketDepthRequest
@@ -32,5 +33,10 @@ export async function handleGetNftMarketDepth(
 export async function handleGetNftMarketActivity(
   req: GetNftMarketActivityRequest
 ): Promise<ApiNftActivityPage> {
-  return nftMarketActivityService.getActivity(validateActivityQuery(req.query));
+  return nftMarketActivityService.getActivity(
+    validateActivityQuery(req.query),
+    {
+      timer: Timer.getFromRequest(req)
+    }
+  );
 }

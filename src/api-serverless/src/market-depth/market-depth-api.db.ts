@@ -21,6 +21,7 @@ import {
   MarketDepthOrderStatus
 } from '@/market-depth/market-depth.types';
 import { DbPoolName } from '@/db-query.options';
+import { RequestContext } from '@/request.context';
 
 export const MARKET_CONTRACTS = [
   MEMES_CONTRACT,
@@ -164,6 +165,27 @@ export class MarketDepthApiDb extends LazyDbAccessCompatibleService {
   async getPartitions(
     token: MarketTokenContext
   ): Promise<{ source: string; collection_slug: string }[]> {
+    return this.readPartitions(token, DbPoolName.WRITE, {});
+  }
+
+  async getActivityPartitions(
+    token: MarketTokenContext,
+    ctx: RequestContext
+  ): Promise<{ source: string; collection_slug: string }[]> {
+    const timer = 'MarketDepthApiDb->getActivityPartitions';
+    ctx.timer?.start(timer);
+    try {
+      return await this.readPartitions(token, DbPoolName.READ, ctx);
+    } finally {
+      ctx.timer?.stop(timer);
+    }
+  }
+
+  private async readPartitions(
+    token: MarketTokenContext,
+    pool: DbPoolName,
+    ctx: RequestContext
+  ): Promise<{ source: string; collection_slug: string }[]> {
     return this.db.execute<{ source: string; collection_slug: string }>(
       `SELECT state.source, state.collection_slug FROM ${MARKET_DEPTH_COLLECTION_STATE_TABLE} state
        INNER JOIN ${MARKET_DEPTH_SNAPSHOTS_TABLE} s ON s.id=state.latest_snapshot_id
@@ -171,7 +193,7 @@ export class MarketDepthApiDb extends LazyDbAccessCompatibleService {
          AND ${token.collection_id === null ? 's.collection_id IS NULL' : 's.collection_id=:collectionId'}
        ORDER BY state.source, state.collection_slug`,
       { contract: token.contract, collectionId: token.collection_id },
-      { forcePool: DbPoolName.WRITE }
+      { forcePool: pool, wrappedConnection: ctx.connection }
     );
   }
 
