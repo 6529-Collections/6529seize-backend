@@ -66,10 +66,9 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<boolean> {
     return withWebSocketMutation(this.db, ctx, async (ctx) => {
-      const mutationResult = await (async () => {
-        ctx.timer?.start(`${this.constructor.name}->addReaction`);
-        const result = await this.db.execute(
-          `
+      ctx.timer?.start(`${this.constructor.name}->addReaction`);
+      const result = await this.db.execute(
+        `
           INSERT INTO ${DROP_REACTIONS_TABLE}
             (profile_id, drop_id, wave_id, reaction)
           VALUES
@@ -86,20 +85,20 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
               reaction
             )
         `,
-          {
-            profileId,
-            dropId,
-            waveId,
-            reaction
-          },
-          { wrappedConnection: ctx.connection }
-        );
-        ctx.timer?.stop(`${this.constructor.name}->addReaction`);
-        const affectedRows = this.db.getAffectedRows(result);
-        const changedRows = getChangedRowsFromWriteResult(result);
-        const insertId = getInsertIdFromWriteResult(result);
-        return insertId > 0 || affectedRows > 1 || changedRows > 0;
-      })();
+        {
+          profileId,
+          dropId,
+          waveId,
+          reaction
+        },
+        { wrappedConnection: ctx.connection }
+      );
+      ctx.timer?.stop(`${this.constructor.name}->addReaction`);
+      const affectedRows = this.db.getAffectedRows(result);
+      const changedRows = getChangedRowsFromWriteResult(result);
+      const insertId = getInsertIdFromWriteResult(result);
+      const mutationResult =
+        insertId > 0 || affectedRows > 1 || changedRows > 0;
       if (mutationResult)
         await recordWebSocketEvent(
           { type: 'drop', dropId, updateType: 'DROP_REACTION_UPDATE' },
@@ -117,20 +116,18 @@ export class ReactionsDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<boolean> {
     return withWebSocketMutation(this.db, ctx, async (ctx) => {
-      const mutationResult = await (async () => {
-        ctx.timer?.start(`${this.constructor.name}->removeReaction`);
-        const result = await this.db.execute(
-          `DELETE FROM ${DROP_REACTIONS_TABLE}
+      ctx.timer?.start(`${this.constructor.name}->removeReaction`);
+      const result = await this.db.execute(
+        `DELETE FROM ${DROP_REACTIONS_TABLE}
       WHERE profile_id = :profileId 
         AND drop_id = :dropId 
         AND wave_id = :waveId
       `,
-          { profileId, dropId, waveId },
-          { wrappedConnection: ctx.connection }
-        );
-        ctx.timer?.stop(`${this.constructor.name}->removeReaction`);
-        return this.db.getAffectedRows(result) > 0;
-      })();
+        { profileId, dropId, waveId },
+        { wrappedConnection: ctx.connection }
+      );
+      ctx.timer?.stop(`${this.constructor.name}->removeReaction`);
+      const mutationResult = this.db.getAffectedRows(result) > 0;
       if (mutationResult)
         await recordWebSocketEvent(
           { type: 'drop', dropId, updateType: 'DROP_REACTION_UPDATE' },

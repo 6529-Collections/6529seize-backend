@@ -127,7 +127,7 @@ class ApiGatewayClientConnections extends ClientConnections {
     message: string;
   }) {
     try {
-      await this.scheduler.send(connectionId, async (abortSignal) =>
+      await this.scheduler.send(connectionId, (abortSignal) =>
         this.client
           .send(
             new PostToConnectionCommand({

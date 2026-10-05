@@ -1,5 +1,5 @@
 import {
-  recordWebSocketEvent,
+  recordWebSocketEvents,
   withWebSocketMutation
 } from '@/websocket-outbox/outbox.db';
 import {
@@ -31,12 +31,11 @@ export class IdentityMutesDb extends LazyDbAccessCompatibleService {
 
   async muteIdentity(pair: IdentityMutePair, ctx: RequestContext) {
     return withWebSocketMutation(this.db, ctx, async (ctx) => {
-      const mutationResult = await (async () => {
-        this.assertNotSelfMute(pair);
-        ctx.timer?.start(`${this.constructor.name}->muteIdentity`);
-        try {
-          await this.db.execute(
-            `
+      this.assertNotSelfMute(pair);
+      ctx.timer?.start(`${this.constructor.name}->muteIdentity`);
+      try {
+        await this.db.execute(
+          `
           insert into ${IDENTITY_MUTES_TABLE} (
             muter_id,
             muted_identity_id,
@@ -48,42 +47,37 @@ export class IdentityMutesDb extends LazyDbAccessCompatibleService {
           )
           on duplicate key update created_at = values(created_at)
         `,
-            { ...pair, created_at: Time.currentMillis() },
-            ctx.connection ? { wrappedConnection: ctx.connection } : undefined
-          );
-          this.invalidateUnreadSummariesForPairBestEffort(pair);
-        } finally {
-          ctx.timer?.stop(`${this.constructor.name}->muteIdentity`);
-        }
-      })();
+          { ...pair, created_at: Time.currentMillis() },
+          ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+        );
+        this.invalidateUnreadSummariesForPairBestEffort(pair);
+      } finally {
+        ctx.timer?.stop(`${this.constructor.name}->muteIdentity`);
+      }
 
       await this.captureDmUnreadChanges(pair, ctx);
-      return mutationResult;
     });
   }
 
   async unmuteIdentity(pair: IdentityMutePair, ctx: RequestContext) {
     return withWebSocketMutation(this.db, ctx, async (ctx) => {
-      const mutationResult = await (async () => {
-        ctx.timer?.start(`${this.constructor.name}->unmuteIdentity`);
-        try {
-          await this.db.execute(
-            `
+      ctx.timer?.start(`${this.constructor.name}->unmuteIdentity`);
+      try {
+        await this.db.execute(
+          `
           delete from ${IDENTITY_MUTES_TABLE}
           where muter_id = :muter_id
             and muted_identity_id = :muted_identity_id
         `,
-            pair,
-            ctx.connection ? { wrappedConnection: ctx.connection } : undefined
-          );
-          this.invalidateUnreadSummariesForPairBestEffort(pair);
-        } finally {
-          ctx.timer?.stop(`${this.constructor.name}->unmuteIdentity`);
-        }
-      })();
+          pair,
+          ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+        );
+        this.invalidateUnreadSummariesForPairBestEffort(pair);
+      } finally {
+        ctx.timer?.stop(`${this.constructor.name}->unmuteIdentity`);
+      }
 
       await this.captureDmUnreadChanges(pair, ctx);
-      return mutationResult;
     });
   }
 
@@ -96,18 +90,22 @@ export class IdentityMutesDb extends LazyDbAccessCompatibleService {
       { readerId: pair.muter_id, authorId: pair.muted_identity_id },
       { wrappedConnection: ctx.connection }
     );
-    for (const { wave_id } of affectedWaves) {
-      await this.db.execute(
-        `update ${WAVE_READER_METRICS_TABLE} set unread_state_version = unread_state_version + 1 where reader_id = :readerId and wave_id = :waveId`,
-        { readerId: pair.muter_id, waveId: wave_id },
-        { wrappedConnection: ctx.connection }
-      );
-      await recordWebSocketEvent(
-        { type: 'dm', profileIds: [pair.muter_id], waveId: wave_id },
-        ctx,
-        this.db
-      );
-    }
+    const waveIds = affectedWaves.map(({ wave_id }) => wave_id);
+    if (!waveIds.length) return;
+    await this.db.execute(
+      `update ${WAVE_READER_METRICS_TABLE} set unread_state_version = unread_state_version + 1 where reader_id = :readerId and wave_id in (:waveIds)`,
+      { readerId: pair.muter_id, waveIds },
+      { wrappedConnection: ctx.connection }
+    );
+    await recordWebSocketEvents(
+      waveIds.map((waveId) => ({
+        type: 'dm',
+        profileIds: [pair.muter_id],
+        waveId
+      })),
+      ctx,
+      this.db
+    );
   }
 
   async isIdentityMuted(

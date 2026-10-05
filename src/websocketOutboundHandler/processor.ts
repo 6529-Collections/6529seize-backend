@@ -10,7 +10,7 @@ export async function processWebSocketBatch(
   event: SQSEvent,
   deliver: (frame: QueuedWebSocketFrame) => Promise<void>,
   reportFailure: () => void,
-  deferRetry: (record: SQSRecord) => Promise<void> = async () => undefined,
+  deferRetry: (record: SQSRecord) => Promise<void> = () => Promise.resolve(),
   drainOutbox?: () => Promise<void>
 ): Promise<SQSBatchResponse> {
   for (let index = 0; index < event.Records.length; index++) {

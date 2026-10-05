@@ -31,8 +31,16 @@ const pending = (event = frame) => ({
   created_at: 1,
   attempts: 0
 });
+const originalNodeEnvironment = process.env.NODE_ENV;
 describe('WebSocket outbox publication', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    process.env.NODE_ENV = 'test';
+    jest.clearAllMocks();
+  });
+  afterEach(() => {
+    if (originalNodeEnvironment === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnvironment;
+  });
   it('keeps rejected SQS publication and schedules a retry', async () => {
     const db = database([pending()]);
     const send = jest.fn().mockRejectedValue(new Error('SQS unavailable'));

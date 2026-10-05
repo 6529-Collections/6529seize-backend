@@ -92,7 +92,7 @@ export class NftLinkRefreshNotifier {
         const recipient = recipients[next++];
         if (Number(recipient.jwt_expiry) <= Date.now() / 1000) continue;
         try {
-          await this.send(recipient.connection_id, message, signal);
+          await this.send(recipient.connection_id, message, signal); // NOSONAR: each of 10 workers must settle its send before taking another recipient.
         } catch {
           // Failed persistence must not prevent enqueueing for other recipients.
           failed++;

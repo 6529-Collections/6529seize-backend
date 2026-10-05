@@ -1,4 +1,8 @@
-import { recordWebSocketEvent, withWebSocketMutation } from './outbox.db';
+import {
+  recordWebSocketEvent,
+  recordWebSocketEvents,
+  withWebSocketMutation
+} from './outbox.db';
 import { ConnectionWrapper, SqlExecutor } from '@/sql-executor';
 import { webSocketOutboxPartition } from './partition';
 
@@ -53,6 +57,39 @@ describe('transactional WebSocket capture', () => {
         recordWebSocketEvent({ type: 'identity', profileId: 'p' }, ctx, db)
       )
     ).rejects.toThrow('outbox unavailable');
+  });
+  it('chunks bulk capture on the mutation connection and propagates a later chunk failure', async () => {
+    const executor = Object.assign(Object.create(SqlExecutor.prototype), {
+      execute,
+      executeNativeQueriesInTransaction: transaction
+    }) as SqlExecutor;
+    const events = Array.from({ length: 1001 }, (_, index) => ({
+      type: 'identity' as const,
+      profileId: `p-${index}`
+    }));
+    execute
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error('second chunk unavailable'));
+    await expect(
+      withWebSocketMutation(executor, {}, (ctx) =>
+        recordWebSocketEvents(events, ctx, executor, 123)
+      )
+    ).rejects.toThrow('second chunk unavailable');
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(2);
+    for (const [sql, , options] of execute.mock.calls) {
+      expect(sql).toContain('websocket_outbox');
+      expect(options.wrappedConnection).toBe(connection);
+    }
+    expect(execute.mock.calls[0][0]).toContain('p-999');
+    expect(execute.mock.calls[0][0]).not.toContain('p-1000');
+    expect(execute.mock.calls[1][0]).toContain('p-1000');
+  });
+  it('skips empty and local-only bulk capture consistently with single capture', async () => {
+    await recordWebSocketEvents([], {}, db);
+    process.env.NODE_ENV = 'local';
+    await recordWebSocketEvents([{ type: 'identity', profileId: 'p' }], {}, db);
+    expect(execute).not.toHaveBeenCalled();
   });
   it('keeps all frame types for one connection in one partition', () => {
     expect(

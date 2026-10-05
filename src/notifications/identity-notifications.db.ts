@@ -1,5 +1,6 @@
 import {
   recordWebSocketEvent,
+  recordWebSocketEvents,
   withWebSocketMutation
 } from '@/websocket-outbox/outbox.db';
 import { DbPoolName } from '@/db-query.options';
@@ -193,15 +194,14 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       insertedIds.push(...chunkIds);
     }
 
-    for (const profileId of Array.from(
+    const profileIds = Array.from(
       new Set(unmutedNotifications.map((n) => n.identity_id))
-    )) {
-      await recordWebSocketEvent(
-        { type: 'identity', profileId },
-        { connection },
-        this.db
-      );
-    }
+    );
+    await recordWebSocketEvents(
+      profileIds.map((profileId) => ({ type: 'identity', profileId })),
+      { connection },
+      this.db
+    );
     return insertedIds;
   }
 

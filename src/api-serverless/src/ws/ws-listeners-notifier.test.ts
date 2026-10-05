@@ -74,6 +74,37 @@ describe('WsListenersNotifier', () => {
   });
 
   afterEach(() => jest.restoreAllMocks());
+
+  it('only wakes the outbox for a post-commit production poll update', async () => {
+    const originalNodeEnvironment = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'staging';
+    const send = jest.fn();
+    const wakeOutbox = jest.fn().mockResolvedValue(undefined);
+    const notifier = new WsListenersNotifier(
+      { send } as never,
+      {} as never,
+      contentModerationDb,
+      wakeOutbox
+    );
+    try {
+      await notifier.notifyAboutDropUpdate(
+        createDrop('poll'),
+        {},
+        {
+          reason: 'POLL_RESPONSE'
+        }
+      );
+      expect(wakeOutbox).toHaveBeenCalledTimes(1);
+      expect(send).not.toHaveBeenCalled();
+      expect(
+        contentModerationDb.getViewerContextsForDrop
+      ).not.toHaveBeenCalled();
+    } finally {
+      if (originalNodeEnvironment === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = originalNodeEnvironment;
+    }
+  });
+
   it('resolves wave listeners once and sends every bulk drop deletion in order', async () => {
     const appWebSockets = {
       send: jest.fn().mockResolvedValue(undefined)
