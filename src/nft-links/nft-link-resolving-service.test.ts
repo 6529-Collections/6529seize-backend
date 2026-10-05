@@ -26,6 +26,7 @@ jest.mock('@/logging', () => ({
       info: jest.fn(),
       warn: jest.fn(),
       error: jest.fn(),
+      errorWithDiagnostic: jest.fn(),
       debug: jest.fn()
     })
   }
@@ -124,6 +125,30 @@ describe('NFT link refresh retries and persistence', () => {
     expect(jest.getTimerCount()).toBe(0);
   });
 
+  it('preserves the provider failure when the retry budget ends before the wait', async () => {
+    const { resolver, db, service } = setup();
+    const providerFailure = new HttpError(429, url, 'rate limited', url);
+    resolver.resolve.mockRejectedValue(providerFailure);
+
+    await withNftLinkResolutionBudget(12_000, () =>
+      service.attemptResolve(url, {})
+    );
+
+    expect(resolver.resolve).toHaveBeenCalledTimes(1);
+    expect(db.updateWithFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'rate limited' }),
+      {}
+    );
+    expect((service as any).logger.errorWithDiagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        httpStatus: 429,
+        recovery: expect.objectContaining({ state: 'exhausted', attempt: 1 })
+      }),
+      expect.any(String),
+      providerFailure
+    );
+  });
+
   it.each([
     new Error('provider unavailable'),
     new Error('execution reverted'),
@@ -149,6 +174,18 @@ describe('NFT link refresh retries and persistence', () => {
         expect.objectContaining({ retryState: null }),
         {}
       );
+      const alerts = (service as any).logger.errorWithDiagnostic.mock.calls;
+      expect(alerts).toHaveLength(5);
+      expect(alerts[0][0].recovery).toEqual({
+        state: 'pending',
+        attempt: 1,
+        maxAttempts: 5
+      });
+      expect(alerts[4][0].recovery).toEqual({
+        state: 'exhausted',
+        attempt: 5,
+        maxAttempts: 5
+      });
       expect(jest.getTimerCount()).toBe(0);
     }
   );
@@ -178,6 +215,14 @@ describe('NFT link refresh retries and persistence', () => {
     expect(db.updateWithSuccess).not.toHaveBeenCalled();
     expect(notifier.notifyAboutNftLinkUpdate).not.toHaveBeenCalled();
     expect(jest.getTimerCount()).toBe(0);
+    expect((service as any).logger.errorWithDiagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        httpStatus: 404,
+        recovery: expect.objectContaining({ state: 'unknown', attempt: 1 })
+      }),
+      expect.any(String),
+      expect.anything()
+    );
   });
 
   it('propagates a failed failure-write for queue retry, and never acknowledges lost ownership as success', async () => {

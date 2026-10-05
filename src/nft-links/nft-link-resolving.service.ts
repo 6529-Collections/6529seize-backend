@@ -35,6 +35,70 @@ import {
   nftPageRetryScope,
   RequiredNftPageNotFoundError
 } from './nft-link-page-retry';
+import { HttpError } from './lib/http';
+import type { OperationalDiagnostic } from '@/operational-errors';
+
+function nftResource(canonical: CanonicalLink): string | undefined {
+  const identifiers = canonical.identifiers;
+  if (identifiers.kind !== 'TOKEN') return undefined;
+  if (!/^[A-Za-z0-9_.-]+$/.test(identifiers.chain)) return undefined;
+  if (!/^0x[a-fA-F0-9]{40}$/.test(identifiers.contract)) return undefined;
+  if (!/^\d{1,78}$/.test(identifiers.tokenId)) return undefined;
+  return `${identifiers.chain}:${identifiers.contract}:${identifiers.tokenId}`;
+}
+function refreshStatus(error: unknown): number | undefined {
+  if (error instanceof RequiredNftPageNotFoundError) return 404;
+  if (error instanceof HttpError) return error.status;
+  return undefined;
+}
+function refreshCategory(
+  status: number | undefined,
+  error: unknown
+): OperationalDiagnostic['category'] {
+  if (status === 429) return 'THROTTLED';
+  if (status === 401 || status === 403) return 'ACCESS_DENIED';
+  if (status) return 'HTTP_ERROR';
+  if (error instanceof NftLinkResolutionDeadlineError) return 'TIMEOUT';
+  return 'UNKNOWN';
+}
+function refreshDiagnostic(
+  canonical: CanonicalLink,
+  error: unknown
+): OperationalDiagnostic {
+  const httpStatus = refreshStatus(error);
+  const diagnostic: OperationalDiagnostic = {
+    category: refreshCategory(httpStatus, error),
+    operation: 'NFT_REFRESH'
+  };
+  diagnostic.resource = nftResource(canonical);
+  if (canonical.platform === 'TRANSIENT' || canonical.platform === 'MANIFOLD')
+    diagnostic.provider = canonical.platform;
+  if (httpStatus) diagnostic.httpStatus = httpStatus;
+  return diagnostic;
+}
+function stopsImmediateRetry(
+  error: unknown,
+  canonical: CanonicalLink,
+  attempt: number,
+  maxAttempts: number
+): boolean {
+  if (error instanceof NftLinkResolutionDeadlineError) return true;
+  if (attempt === maxAttempts) return true;
+  return (
+    error instanceof RequiredNftPageNotFoundError &&
+    error.scopeHash === nftPageRetryScope(canonical)
+  );
+}
+function persistedPageRetry(
+  entity: NftLinkEntity,
+  canonical: CanonicalLink,
+  error: unknown,
+  attemptedAt: number
+): ReturnType<typeof nextNftPageRetryState> | null {
+  if (!(error instanceof RequiredNftPageNotFoundError)) return null;
+  if (error.scopeHash !== nftPageRetryScope(canonical)) return null;
+  return nextNftPageRetryState(entity, error.scopeHash, attemptedAt);
+}
 
 export class NftLinkResolvingService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -210,6 +274,7 @@ export class NftLinkResolvingService {
     const lockStamp = entity.is_locked_since;
     if (lockStamp == null) throw new NftLinkResolutionLockLostError();
     let lastError: unknown;
+    let lastAttempt = 0;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         budget?.check();
@@ -227,17 +292,8 @@ export class NftLinkResolvingService {
       } catch (error) {
         if (error instanceof NftLinkResolutionLockLostError) throw error;
         lastError = error;
-        this.logger.error(
-          `Attempt #${attempt} of ${maxAttempts}. Failed to update url ${url}`,
-          error
-        );
-        if (
-          error instanceof NftLinkResolutionDeadlineError ||
-          (error instanceof RequiredNftPageNotFoundError &&
-            error.scopeHash === nftPageRetryScope(canonical)) ||
-          attempt === maxAttempts
-        )
-          break;
+        lastAttempt = attempt;
+        if (stopsImmediateRetry(error, canonical, attempt, maxAttempts)) break;
       }
       try {
         await nftLinkResolutionStage('retry_wait', () =>
@@ -245,19 +301,28 @@ export class NftLinkResolvingService {
             ? budget.waitToRetry(retryDelay.toMillis())
             : retryDelay.sleep()
         );
+        this.logger.errorWithDiagnostic(
+          {
+            ...refreshDiagnostic(canonical, lastError),
+            recovery: { state: 'pending', attempt, maxAttempts }
+          },
+          `Attempt #${attempt} of ${maxAttempts}. Failed to update url ${url}`,
+          lastError
+        );
       } catch (error) {
-        lastError = error;
+        lastError ??= error;
         break;
       }
     }
     // Preserve cached data and release the processing lock, just as for an
     // exhausted retry count. A later refresh can try again.
     const attemptedAt = Time.currentMillis();
-    const retryState =
-      lastError instanceof RequiredNftPageNotFoundError &&
-      lastError.scopeHash === nftPageRetryScope(canonical)
-        ? nextNftPageRetryState(entity, lastError.scopeHash, attemptedAt)
-        : null;
+    const retryState = persistedPageRetry(
+      entity,
+      canonical,
+      lastError,
+      attemptedAt
+    );
     await nftLinkResolutionStage('persist_failure', () =>
       this.nftLinksDb.updateWithFailure(
         {
@@ -272,6 +337,22 @@ export class NftLinkResolvingService {
         },
         ctx
       )
+    );
+    // A required-page 404 records a demand-driven eligibility time, not a
+    // scheduled retry. Other failures have exhausted this worker's attempts.
+    this.logger.errorWithDiagnostic(
+      {
+        ...refreshDiagnostic(canonical, lastError),
+        recovery: {
+          state: retryState ? 'unknown' : 'exhausted',
+          attempt: lastAttempt,
+          ...(retryState
+            ? { nextEligibleAt: new Date(retryState.notBefore).toISOString() }
+            : { maxAttempts })
+        }
+      },
+      `NFT refresh failed for ${url}`,
+      lastError
     );
     return null;
   }

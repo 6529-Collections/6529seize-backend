@@ -178,7 +178,7 @@ describe('bounded WebSocket send diagnostics', () => {
     expect(result.diagnostic.error_category).toBe(category);
   });
 
-  it('preserves the operational error fingerprint and exports neither old nor new message content', () => {
+  it('separates classified failures from generic fingerprints without exporting message content', () => {
     const original = process.env.AWS_LAMBDA_FUNCTION_NAME;
     const output = jest.spyOn(process.stdout, 'write').mockReturnValue(true);
     process.env.AWS_LAMBDA_FUNCTION_NAME = 'seizeAPI';
@@ -196,8 +196,12 @@ describe('bounded WebSocket send diagnostics', () => {
       const records = output.mock.calls.map(([value]) =>
         JSON.parse(String(value))
       );
-      expect(records[0].fingerprint).toBe(records[1].fingerprint);
+      expect(records[0].fingerprint).not.toBe(records[1].fingerprint);
       expect(records[0].code).toBe(records[1].code);
+      expect(records[1].diagnostic).toMatchObject({
+        operation: 'WS_OUTBOUND_SEND',
+        category: 'THROTTLED'
+      });
       expect(JSON.stringify(records)).not.toMatch(
         /private|frame_type|USER_IS_TYPING/
       );

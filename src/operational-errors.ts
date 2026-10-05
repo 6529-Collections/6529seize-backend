@@ -13,6 +13,187 @@ const CONDITIONS = [
 ] as const;
 export type OperationalCondition = (typeof CONDITIONS)[number];
 
+export type FailureCategory =
+  | 'HTTP_ERROR'
+  | 'THROTTLED'
+  | 'ACCESS_DENIED'
+  | 'TIMEOUT'
+  | 'NETWORK'
+  | 'VALIDATION'
+  | 'UNKNOWN';
+export interface OperationalDiagnostic {
+  category: FailureCategory;
+  operation?: string;
+  resource?: string;
+  provider?: 'TRANSIENT' | 'MANIFOLD' | 'ALCHEMY' | 'AWS';
+  httpStatus?: number;
+  sdkAttempts?: number;
+  recovery?: {
+    state: 'pending' | 'exhausted' | 'terminal' | 'unknown';
+    attempt?: number;
+    maxAttempts?: number;
+    nextAttemptAt?: string;
+    nextEligibleAt?: string;
+  };
+}
+
+const safeToken = (value: unknown, limit = 100): string | undefined =>
+  typeof value === 'string' &&
+  value.length <= limit &&
+  /^[A-Za-z0-9_.:-]+$/.test(value)
+    ? value
+    : undefined;
+function property(value: unknown, key: string): unknown {
+  if (!value || typeof value !== 'object') return undefined;
+  try {
+    return Reflect.get(value, key);
+  } catch {
+    return undefined;
+  }
+}
+function httpStatus(value: unknown): number | undefined {
+  const status =
+    property(value, 'status') ??
+    property(property(value, '$metadata'), 'httpStatusCode');
+  return typeof status === 'number' &&
+    Number.isInteger(status) &&
+    status >= 100 &&
+    status <= 599
+    ? status
+    : undefined;
+}
+function websocketCategory(value: unknown): FailureCategory | undefined {
+  switch (value) {
+    case 'THROTTLED':
+      return 'THROTTLED';
+    case 'FORBIDDEN':
+      return 'ACCESS_DENIED';
+    case 'SERVICE_ERROR':
+      return 'HTTP_ERROR';
+    case 'TRANSPORT_ERROR':
+      return 'NETWORK';
+    case 'INVALID_REQUEST':
+    case 'PAYLOAD_TOO_LARGE':
+      return 'VALIDATION';
+    default:
+      return undefined;
+  }
+}
+/** Fixed categories only: raw exception messages and logger arguments are never copied. */
+function inferredDiagnostic(
+  component: string,
+  error: Error | undefined,
+  values: readonly unknown[]
+): OperationalDiagnostic {
+  const ws = values.find(
+    (value) => property(value, 'code') === 'WS_OUTBOUND_SEND_FAILED'
+  );
+  const wsStatus = property(ws, 'http_status');
+  const wsCategory = websocketCategory(property(ws, 'error_category'));
+  const status =
+    httpStatus(error) ??
+    (typeof wsStatus === 'number' &&
+    Number.isInteger(wsStatus) &&
+    wsStatus >= 100 &&
+    wsStatus <= 599
+      ? wsStatus
+      : undefined);
+  const code = property(error, 'code');
+  const name = error?.name;
+  let category: FailureCategory = 'UNKNOWN';
+  if (status === 429) category = 'THROTTLED';
+  else if (status === 401 || status === 403) category = 'ACCESS_DENIED';
+  else if (status) category = 'HTTP_ERROR';
+  else if (wsCategory) category = wsCategory;
+  else if (
+    name === 'TimeoutError' ||
+    name === 'RequestTimeout' ||
+    code === 'ETIMEDOUT'
+  )
+    category = 'TIMEOUT';
+  else if (
+    typeof code === 'string' &&
+    ['ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN'].includes(code)
+  )
+    category = 'NETWORK';
+  else if (name === 'ValidationError') category = 'VALIDATION';
+  const sdkAttempts = boundedInt(property(ws, 'sdk_attempts'), 1, 1000);
+  return {
+    category,
+    operation: ws ? 'WS_OUTBOUND_SEND' : safeToken(component),
+    ...(status ? { httpStatus: status } : {}),
+    ...(sdkAttempts ? { sdkAttempts } : {})
+  };
+}
+function boundedInt(
+  value: unknown,
+  min: number,
+  max: number
+): number | undefined {
+  return typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value >= min &&
+    value <= max
+    ? value
+    : undefined;
+}
+function safeDate(value: unknown): string | undefined {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value))
+    ? new Date(value).toISOString()
+    : undefined;
+}
+function safeRecovery(
+  input: OperationalDiagnostic['recovery']
+): OperationalDiagnostic['recovery'] {
+  if (!input) return undefined;
+  const states = ['pending', 'exhausted', 'terminal', 'unknown'] as const;
+  if (!states.includes(input.state)) return undefined;
+  const attempt = boundedInt(input.attempt, 1, 1000);
+  const maxAttempts = boundedInt(input.maxAttempts, 1, 1000);
+  let state = input.state;
+  if (
+    state === 'pending' &&
+    (!attempt || !maxAttempts || attempt >= maxAttempts)
+  )
+    state = 'unknown';
+  const result: NonNullable<OperationalDiagnostic['recovery']> = { state };
+  if (attempt) result.attempt = attempt;
+  if (maxAttempts) result.maxAttempts = maxAttempts;
+  const nextAttemptAt =
+    state === 'pending' ? safeDate(input.nextAttemptAt) : undefined;
+  const nextEligibleAt =
+    state === 'unknown' ? safeDate(input.nextEligibleAt) : undefined;
+  if (nextAttemptAt) result.nextAttemptAt = nextAttemptAt;
+  if (nextEligibleAt) result.nextEligibleAt = nextEligibleAt;
+  return result;
+}
+function safeDiagnostic(value: OperationalDiagnostic): OperationalDiagnostic {
+  const categories: FailureCategory[] = [
+    'HTTP_ERROR',
+    'THROTTLED',
+    'ACCESS_DENIED',
+    'TIMEOUT',
+    'NETWORK',
+    'VALIDATION',
+    'UNKNOWN'
+  ];
+  const category = categories.includes(value.category)
+    ? value.category
+    : 'UNKNOWN';
+  const result: OperationalDiagnostic = { category };
+  result.operation = safeToken(value.operation);
+  result.resource = safeToken(value.resource, 160);
+  if (
+    value.provider &&
+    ['TRANSIENT', 'MANIFOLD', 'ALCHEMY', 'AWS'].includes(value.provider)
+  )
+    result.provider = value.provider;
+  result.httpStatus = boundedInt(value.httpStatus, 100, 599);
+  result.sdkAttempts = boundedInt(value.sdkAttempts, 1, 1000);
+  result.recovery = safeRecovery(value.recovery);
+  return result;
+}
+
 export function isExpectedClientError(value: unknown): boolean {
   if (!(value instanceof ApiCompliantException)) return false;
   const status = value.getStatusCode();
@@ -55,7 +236,8 @@ export function operationalError(
   values: readonly unknown[],
   requestId?: string,
   code: 'APPLICATION_ERROR' | 'LAMBDA_FAILURE' = 'APPLICATION_ERROR',
-  condition?: OperationalCondition
+  condition?: OperationalCondition,
+  diagnostic?: OperationalDiagnostic
 ): void {
   if (!process.env.AWS_LAMBDA_FUNCTION_NAME) return;
   try {
@@ -75,9 +257,13 @@ export function operationalError(
         ? 'staging'
         : 'prod';
     const discriminator = CONDITIONS.find((value) => value === condition) ?? '';
+    const inferred = inferredDiagnostic(component, error, values);
+    const detail = safeDiagnostic(
+      diagnostic ? { ...inferred, ...diagnostic } : inferred
+    );
     const fingerprint = createHash('sha256')
       .update(
-        `${service}:${component}:${token(error?.name, 80) ?? 'Error'}:${code}:${discriminator}`
+        `${service}:${component}:${token(error?.name, 80) ?? 'Error'}:${code}:${discriminator}:${detail.category}:${detail.operation ?? ''}:${detail.provider ?? ''}:${detail.httpStatus ?? ''}:${detail.resource ?? ''}:${detail.recovery?.state ?? 'unknown'}`
       )
       .digest('hex');
     const correlationId = token(
@@ -97,6 +283,7 @@ export function operationalError(
       severity: 'error',
       code,
       fingerprint,
+      diagnostic: detail,
       ...(discriminator.startsWith('PUSH_')
         ? { condition: discriminator }
         : {}),

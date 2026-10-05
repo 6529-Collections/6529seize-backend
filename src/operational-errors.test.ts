@@ -31,13 +31,53 @@ describe('operational error envelopes', () => {
       ])
     );
     const raw = output.mock.calls[0][0] as string;
-    expect(raw).not.toMatch(/secret|biography|jwt|private|MODERATION/);
+    expect(raw).not.toMatch(/secret|biography|jwt|private/);
     expect(JSON.parse(raw)).toMatchObject({
       service: 'seizeAPI',
       environment: 'staging',
       correlationId: 'request-123',
       code: 'APPLICATION_ERROR'
     });
+  });
+  it('sanitizes explicit diagnostics before even the CloudWatch envelope', () => {
+    operationalError(
+      'NFT_REFRESH',
+      [new Error('Authorization secret')],
+      undefined,
+      'APPLICATION_ERROR',
+      undefined,
+      {
+        category: 'HTTP_ERROR',
+        operation: 'NFT_REFRESH',
+        resource: 'https://signed.example/private?Authorization=secret',
+        httpStatus: 404,
+        recovery: { state: 'pending', attempt: 5, maxAttempts: 5 }
+      }
+    );
+    const raw = String(output.mock.calls[0][0]);
+    expect(raw).not.toMatch(/signed.example|Authorization|secret|private/);
+    expect(JSON.parse(raw).diagnostic.recovery.state).toBe('unknown');
+    expect(JSON.parse(raw).diagnostic.httpStatus).toBe(404);
+  });
+  it('keeps SDK attempt exhaustion separate from an unproven delivery retry', () => {
+    operationalError('ApiGatewayManagementApiClient', [
+      {
+        code: 'WS_OUTBOUND_SEND_FAILED',
+        http_status: 429,
+        sdk_attempts: 3,
+        frame_type: 'DROP_UPDATE',
+        message: 'Authorization: Bearer private'
+      }
+    ]);
+    const envelope = JSON.parse(String(output.mock.calls[0][0]));
+    expect(envelope.diagnostic).toMatchObject({
+      operation: 'WS_OUTBOUND_SEND',
+      category: 'THROTTLED',
+      httpStatus: 429,
+      sdkAttempts: 3
+    });
+    expect(envelope.diagnostic.recovery).toBeUndefined();
+    expect(JSON.stringify(envelope)).not.toMatch(/private|Bearer|DROP_UPDATE/);
   });
   it('deduplicates the same error when the logger and handler both observe it', () => {
     const error = new Error('failure');
@@ -104,7 +144,7 @@ describe('operational error envelopes', () => {
     expect(values[0].fingerprint).toBe(values[1].fingerprint);
     expect(values[0].fingerprint).not.toBe(values[2].fingerprint);
     expect(JSON.stringify(values)).not.toMatch(
-      /private|SUBSCRIPTION_NOT_FOUND|SUBSCRIPTIONS/
+      /private|SUBSCRIPTION_NOT_FOUND/
     );
   });
 
