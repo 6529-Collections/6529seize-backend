@@ -365,21 +365,18 @@ function alertFields(alert: Alert, count: number): AlertField[] {
 }
 export function renderAlert(alert: Alert, count = 1): object {
   const amber = isAmber(alert);
-  let status = 'RED';
   let color = 0xef4444;
   if (amber) {
-    status = 'AMBER';
     color = 0xf59e0b;
   }
   if (alert.severity === 'recovery') {
-    status = 'GREEN';
     color = 0x22c55e;
   }
   return {
     allowed_mentions: { parse: [] },
     embeds: [
       {
-        title: `${status} · ${alert.environment} · ${alert.service} · ${alert.code}`,
+        title: `${alert.environment} · ${alert.service} · ${alert.code}`,
         description: alertDescription(alert, amber),
         color,
         fields: alertFields(alert, count),
