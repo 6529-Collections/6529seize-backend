@@ -274,6 +274,7 @@ export const PUSH_NOTIFICATION_CANCELLATIONS_TABLE =
   'push_notification_cancellations';
 
 export const WEBSOCKET_OUTBOX_TABLE = 'websocket_outbox';
+
 export const COMPETITION_VOTE_HISTORY_TABLE = 'competition_vote_history';
 export const COMPETITION_ENTRY_RUNTIME_TABLE = 'competition_entry_runtime';
 export const COMPETITION_WINNER_VOTES_TABLE = 'competition_winner_votes';

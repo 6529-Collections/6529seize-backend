@@ -19,46 +19,50 @@ import { wavesApiDb } from '@/api/waves/waves.api.db';
 const mockDb = { oneOrNull: jest.fn(), execute: jest.fn() };
 const ctx = { connection: { connection: {} } };
 beforeEach(() => jest.clearAllMocks());
-it('turns current drop state into compact canonical-fetch hints, never stale embedded content', async () => {
-  mockDb.oneOrNull.mockResolvedValue({
-    id: 'd',
-    wave_id: 'w',
-    author_id: 'a',
-    serial_no: 9,
-    title: 'private full content'
-  });
-  jest.mocked(connections.findWaveVisibilityGroupId).mockResolvedValue(null);
-  jest
-    .mocked(
-      connections.getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast
-    )
-    .mockResolvedValue([{ connectionId: 'c', profileId: 'p', wave_id: 'w' }]);
-  const result = await resolveWebSocketEvent(
-    { type: 'drop', dropId: 'd', updateType: 'DROP_UPDATE' },
-    ctx
-  );
-  expect(result).toEqual([
-    {
-      type: 'delivery',
-      connectionId: 'c',
-      message: JSON.stringify({
-        type: 'DROP_UPDATE_REF',
-        data: {
-          drop_id: 'd',
-          wave_id: 'w',
-          author_id: 'a',
-          serial_no: 9,
-          update_type: 'DROP_UPDATE'
-        }
-      })
-    }
-  ]);
-  expect(mockDb.oneOrNull).toHaveBeenCalledWith(
-    expect.any(String),
-    { id: 'd' },
-    { wrappedConnection: ctx.connection }
-  );
-});
+it.each([undefined, 'POLL_RESPONSE', 'FUTURE_REASON'])(
+  'turns current drop state into a canonical-fetch hint for reason %s',
+  async (reason) => {
+    mockDb.oneOrNull.mockResolvedValue({
+      id: 'd',
+      wave_id: 'w',
+      author_id: 'a',
+      serial_no: 9,
+      title: 'private full content'
+    });
+    jest.mocked(connections.findWaveVisibilityGroupId).mockResolvedValue(null);
+    jest
+      .mocked(
+        connections.getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast
+      )
+      .mockResolvedValue([{ connectionId: 'c', profileId: 'p', wave_id: 'w' }]);
+    const result = await resolveWebSocketEvent(
+      { type: 'drop', dropId: 'd', updateType: 'DROP_UPDATE', reason },
+      ctx
+    );
+    expect(result).toEqual([
+      {
+        type: 'delivery',
+        connectionId: 'c',
+        message: JSON.stringify({
+          type: 'DROP_UPDATE_REF',
+          data: {
+            drop_id: 'd',
+            wave_id: 'w',
+            author_id: 'a',
+            serial_no: 9,
+            update_type: 'DROP_UPDATE',
+            reason
+          }
+        })
+      }
+    ]);
+    expect(mockDb.oneOrNull).toHaveBeenCalledWith(
+      expect.any(String),
+      { id: 'd' },
+      { wrappedConnection: ctx.connection }
+    );
+  }
+);
 it('does not recreate a deleted resource from an old update intent', async () => {
   mockDb.oneOrNull.mockResolvedValue(null);
   expect(
