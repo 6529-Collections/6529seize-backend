@@ -10,6 +10,9 @@ import { DeleteDropUseCase } from './delete-drop.use-case';
 // Unit tests isolate persistence; transactional outbox inserts are covered by outbox.db.test.ts.
 beforeEach(() => {
   jest
+    .spyOn(websocketOutbox, 'recordWebSocketEvents')
+    .mockResolvedValue(undefined);
+  jest
     .spyOn(websocketOutbox, 'recordWebSocketEvent')
     .mockResolvedValue(undefined);
 });
@@ -509,6 +512,15 @@ describe('DeleteDropUseCase chat history batch', () => {
         ctx as never
       )
     ).resolves.toEqual(['reader']);
+    expect(websocketOutbox.recordWebSocketEvents).toHaveBeenCalledWith(
+      drops.map((drop) => ({
+        type: 'drop-delete',
+        dropId: drop.id,
+        waveId: drop.wave_id,
+        serialNo: drop.serial_no
+      })),
+      ctx
+    );
     expect(purgeDb.deleteBatch).toHaveBeenCalledTimes(1);
     expect(metrics).toHaveBeenCalledTimes(1);
     expect(scores).toHaveBeenCalledTimes(1);

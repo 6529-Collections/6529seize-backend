@@ -46,9 +46,10 @@ export async function withWebSocketMutation<T>(
 export async function recordWebSocketEvents(
   events: WebSocketOutboxEvent[],
   ctx: RequestContext,
-  db: SqlExecutor,
-  createdAt: number
+  db: SqlExecutor = dbSupplier(),
+  createdAt = Date.now()
 ): Promise<void> {
+  if (process.env.NODE_ENV === 'local' || !events.length) return;
   if (!ctx.connection)
     throw new Error('WebSocket outbox requires a transaction');
   const now = Date.now();

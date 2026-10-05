@@ -44,3 +44,52 @@ it.each([
       expect(call[2]).toEqual({ wrappedConnection: connection });
   }
 );
+
+it.each([
+  ['new reaction', { insertId: 11, affectedRows: 1, changedRows: 0 }, true],
+  ['overwrite', { insertId: 0, affectedRows: 2, changedRows: 0 }, true],
+  [
+    'changed-row result',
+    { insertId: 0, affectedRows: 1, changedRows: 1 },
+    true
+  ],
+  [
+    'unchanged reaction',
+    { insertId: 0, affectedRows: 0, changedRows: 0 },
+    false
+  ],
+  [
+    'unchanged reaction with found rows',
+    { insertId: 0, affectedRows: 1, changedRows: 0 },
+    false
+  ]
+])(
+  'records exactly one event only for a changed %s',
+  async (_label, result, changed) => {
+    const connection = { connection: {} };
+    const execute = jest
+      .fn()
+      .mockResolvedValueOnce(result)
+      .mockResolvedValue(undefined);
+    const db = {
+      execute,
+      getAffectedRows: (write: { affectedRows: number }) => write.affectedRows
+    } as unknown as SqlExecutor;
+    const repository = new ReactionsDb(() => db);
+    await expect(
+      repository.addReaction('profile', 'drop', 'wave', 'like', { connection })
+    ).resolves.toBe(changed);
+    const events = execute.mock.calls.filter(([sql]) =>
+      sql.includes('websocket_outbox')
+    );
+    expect(events).toHaveLength(changed ? 1 : 0);
+    if (changed) {
+      expect(JSON.parse(events[0][1].event)).toEqual({
+        type: 'drop',
+        dropId: 'drop',
+        updateType: 'DROP_REACTION_UPDATE'
+      });
+      expect(events[0][2]).toEqual({ wrappedConnection: connection });
+    }
+  }
+);

@@ -3,7 +3,8 @@ import { IdentityMutesDb } from './identity-mutes.db';
 function createRepo() {
   const db = {
     execute: jest.fn(),
-    oneOrNull: jest.fn()
+    oneOrNull: jest.fn(),
+    bulkInsert: jest.fn().mockResolvedValue(undefined)
   };
   return {
     db,
@@ -115,8 +116,7 @@ it.each(['muteIdentity', 'unmuteIdentity'] as const)(
       method === 'muteIdentity'
         ? 'insert into identity_mutes'
         : 'delete from identity_mutes',
-      'set unread_state_version = unread_state_version + 1',
-      'insert into websocket_outbox'
+      'set unread_state_version = unread_state_version + 1'
     ]) {
       expect(db.execute).toHaveBeenCalledWith(
         expect.stringContaining(fragment),
@@ -124,6 +124,21 @@ it.each(['muteIdentity', 'unmuteIdentity'] as const)(
         { wrappedConnection: connection }
       );
     }
+    expect(db.bulkInsert).toHaveBeenCalledWith(
+      'websocket_outbox',
+      [
+        expect.objectContaining({
+          event: JSON.stringify({
+            type: 'dm',
+            profileIds: ['muter-1'],
+            waveId: 'wave-1'
+          })
+        })
+      ],
+      expect.any(Array),
+      { connection },
+      { connection }
+    );
   }
 );
 

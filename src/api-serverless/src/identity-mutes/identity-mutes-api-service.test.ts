@@ -193,45 +193,72 @@ describe('IdentityMutesApiService DM unread synchronization', () => {
   });
 });
 
-it.each(['muteIdentity', 'unmuteIdentity'] as const)(
-  '%s versions all affected offline reader waves through the real mutation repository',
-  async (method) => {
+it.each([
+  ['muteIdentity', false],
+  ['unmuteIdentity', false],
+  ['muteIdentity', true],
+  ['unmuteIdentity', true]
+] as const)(
+  '%s versions and captures all 501 reader waves through the real repository (online=%s)',
+  async (method, online) => {
     const { service, identityMutesDb, wsListenersNotifier, wavesApiDb, ctx } =
       createService();
     const connection = { connection: {} };
+    const waveIds = Array.from(
+      { length: 501 },
+      (_, index) => `wave-${String(index).padStart(3, '0')}`
+    );
     const execute = jest.fn(async (sql: string) =>
       sql.includes('select r.wave_id')
-        ? [{ wave_id: 'wave-1' }, { wave_id: 'wave-2' }]
+        ? waveIds.map((wave_id) => ({ wave_id }))
         : []
     );
+    const bulkInsert = jest.fn().mockResolvedValue(undefined);
     const repository = new IdentityMutesDb(
-      () => ({ execute }) as unknown as SqlExecutor
+      () => ({ execute, bulkInsert }) as unknown as SqlExecutor
     );
     identityMutesDb[method].mockImplementation((pair, context) =>
       repository[method](pair, context)
     );
-    wsListenersNotifier.findConnectedNotificationRecipients.mockResolvedValue(
-      []
-    );
+    if (!online)
+      wsListenersNotifier.findConnectedNotificationRecipients.mockResolvedValue(
+        []
+      );
+    wavesApiDb.findDmWaveIdsForReaderWithDropsByAuthor
+      .mockResolvedValueOnce(waveIds.slice(0, 500))
+      .mockResolvedValueOnce(waveIds.slice(500));
     await service[method]('muted-handle', { ...ctx, connection } as never);
     const increments = execute.mock.calls.filter(([sql]) =>
       sql.includes('set unread_state_version = unread_state_version + 1')
     );
-    expect(increments).toHaveLength(2);
-    for (const waveId of ['wave-1', 'wave-2']) {
-      expect(execute).toHaveBeenCalledWith(
-        expect.stringContaining(
-          'set unread_state_version = unread_state_version + 1'
-        ),
-        { readerId: 'muter-1', waveId },
-        { wrappedConnection: connection }
-      );
-    }
+    expect(increments).toHaveLength(1);
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('wave_id in (:waveIds)'),
+      { readerId: 'muter-1', waveIds },
+      { wrappedConnection: connection }
+    );
+    const captureQuery = execute.mock.calls.find(([sql]) =>
+      sql.includes('select r.wave_id')
+    )![0];
+    expect(captureQuery.toLowerCase()).not.toContain('limit');
+    expect(bulkInsert).toHaveBeenCalledTimes(1);
+    const [table, events, , context, options] = bulkInsert.mock.calls[0];
+    expect(table).toBe('websocket_outbox');
+    expect(context.connection).toBe(connection);
+    expect(options.connection).toBe(connection);
+    expect(
+      events.map((row: { event: string }) => JSON.parse(row.event))
+    ).toEqual(
+      waveIds.map((waveId) => ({ type: 'dm', profileIds: ['muter-1'], waveId }))
+    );
     expect(
       wavesApiDb.incrementDmUnreadStateVersionsForReaderWaves
     ).not.toHaveBeenCalled();
     expect(
+      wavesApiDb.findDmWaveIdsForReaderWithDropsByAuthor
+    ).toHaveBeenCalledTimes(2);
+    expect(
       wsListenersNotifier.notifyAboutDmUnreadStateChanged
-    ).not.toHaveBeenCalled();
+    ).toHaveBeenCalledTimes(online ? 2 : 0);
   }
 );

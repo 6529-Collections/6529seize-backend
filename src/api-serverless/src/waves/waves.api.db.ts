@@ -1,5 +1,6 @@
 import {
   recordWebSocketEvent,
+  recordWebSocketEvents,
   withWebSocketMutation
 } from '@/websocket-outbox/outbox.db';
 import { PushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
@@ -4248,30 +4249,28 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<void> {
     return withWebSocketMutation(this.db, ctx, async (ctx) => {
-      const mutationResult = await (async () => {
-        const waveIds = Array.from(new Set(param.waveIds));
-        if (!waveIds.length) {
-          return;
-        }
-        await this.db.execute(
-          `update ${WAVE_READER_METRICS_TABLE}
+      const waveIds = Array.from(new Set(param.waveIds));
+      if (!waveIds.length) return;
+      await this.db.execute(
+        `update ${WAVE_READER_METRICS_TABLE}
        set unread_state_version = unread_state_version + 1
        where reader_id = :readerId
          and wave_id in (:waveIds)`,
-          { readerId: param.readerId, waveIds },
-          {
-            wrappedConnection: ctx.connection,
-            forcePool: DbPoolName.WRITE
-          }
-        );
-      })();
-      for (const waveId of param.waveIds)
-        await recordWebSocketEvent(
-          { type: 'dm', profileIds: [param.readerId], waveId },
-          ctx,
-          this.db
-        );
-      return mutationResult;
+        { readerId: param.readerId, waveIds },
+        {
+          wrappedConnection: ctx.connection,
+          forcePool: DbPoolName.WRITE
+        }
+      );
+      await recordWebSocketEvents(
+        waveIds.map((waveId) => ({
+          type: 'dm',
+          profileIds: [param.readerId],
+          waveId
+        })),
+        ctx,
+        this.db
+      );
     });
   }
 

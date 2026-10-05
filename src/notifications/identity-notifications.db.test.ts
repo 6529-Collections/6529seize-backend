@@ -217,6 +217,37 @@ describe('IdentityNotificationsDb', () => {
     );
   });
 
+  it('captures one bulk invalidation per unmuted profile and propagates capture failure', async () => {
+    process.env.NODE_ENV = 'test';
+    const notifications = [
+      notification(),
+      notification(),
+      notification({ identity_id: 'recipient-2' })
+    ];
+    const { db, repo } = createRepo({ filteredNotifications: notifications });
+    db.execute
+      .mockResolvedValueOnce([{ id: 301 }])
+      .mockResolvedValueOnce([{ id: 301 }, { id: 302 }, { id: 303 }]);
+    db.bulkInsert.mockImplementation(async (table) => {
+      if (table === 'websocket_outbox') throw new Error('capture unavailable');
+    });
+    await expect(
+      repo.insertManyNotifications(notifications, connection)
+    ).rejects.toThrow('capture unavailable');
+    expect(db.bulkInsert).toHaveBeenCalledWith(
+      'websocket_outbox',
+      ['recipient-1', 'recipient-2'].map((profileId) =>
+        expect.objectContaining({
+          event: JSON.stringify({ type: 'identity', profileId })
+        })
+      ),
+      expect.any(Array),
+      { connection },
+      { connection }
+    );
+    expect(db.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
+  });
+
   it('preserves in-app notifications without recording pushes when push delivery is disabled', async () => {
     process.env.NODE_ENV = 'test';
     jest.mocked(isActivated).mockReturnValue(false);

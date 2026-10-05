@@ -137,7 +137,13 @@ redeploy `overRatesRevocationLoop`, `waveDecisionExecutionLoop`, `tdhHistoryLoop
 subscription and vote-revocation notifications and configured priority alerts.
 The service catalog records the worker prerequisite. The push-input handoff
 preserves existing queued invalidations during mixed-version rollout; an old
-producer binary does not have the new business-transaction guarantee.
+producer binary continues its existing best-effort delivery path, but does not
+have the new business-transaction guarantee. Old producers that publish through
+the push input are retained by that handoff; other old producers still call API
+Gateway directly. Partial fleet rollout therefore retains the old failure risk
+until those producers are upgraded; it does not intentionally disable their
+sends. Do not add a direct-send fallback to upgraded transactional producers,
+which would duplicate delivery and bypass the retry path.
 
 For rollback, stop or roll back producers first. Retain the outbox table and
 both queues, and explicitly drain or retain pending work before disabling the

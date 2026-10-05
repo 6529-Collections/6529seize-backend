@@ -138,7 +138,7 @@ export async function forEachWebSocketRecipient<T>(
   const worker = async () => {
     for (let next = iterator.next(); !next.done; next = iterator.next()) {
       try {
-        await send(next.value);
+        await send(next.value); // NOSONAR: each of 16 workers must settle its send before taking another recipient.
       } catch (error) {
         if (!failures.length) failures.push({ error });
       }

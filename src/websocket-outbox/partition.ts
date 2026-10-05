@@ -28,5 +28,6 @@ export function webSocketOutboxPartition(event: WebSocketOutboxEvent): string {
       key = `media:${event.uploadId}`;
       break;
   }
+  // Ordering keys must remain stable across days and deployments; never use diagnostic hash rotation here.
   return createHash('sha256').update(key).digest('hex');
 }

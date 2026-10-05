@@ -19,7 +19,8 @@ function createRepo() {
       callback({ connection: {} })
     ),
     oneOrNull: jest.fn(),
-    execute: jest.fn()
+    execute: jest.fn(),
+    bulkInsert: jest.fn().mockResolvedValue(undefined)
   };
   return {
     db,
@@ -181,6 +182,21 @@ describe('WavesApiDb DM unread state versions', () => {
       {}
     );
 
+    expect(db.bulkInsert).toHaveBeenCalledWith(
+      'websocket_outbox',
+      ['wave-1', 'wave-2'].map((waveId) =>
+        expect.objectContaining({
+          event: JSON.stringify({
+            type: 'dm',
+            profileIds: ['reader-1'],
+            waveId
+          })
+        })
+      ),
+      expect.any(Array),
+      expect.objectContaining({ connection: expect.anything() }),
+      expect.objectContaining({ connection: expect.anything() })
+    );
     expect(waveIds).toEqual(['wave-1', 'wave-2']);
     expect(db.execute).toHaveBeenNthCalledWith(
       1,

@@ -117,6 +117,65 @@ describeWithSeed('WebSocket outbox MySQL transaction boundary', [], () => {
     }
   );
 
+  it('materializes a resource only once while another drain races its locked row', async () => {
+    await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+      recordWebSocketEvent(
+        { type: 'identity', profileId: 'p' },
+        { connection },
+        sqlExecutor
+      )
+    );
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const resolving = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    jest.mocked(resolveWebSocketEvent).mockClear();
+    jest.mocked(resolveWebSocketEvent).mockImplementationOnce(async () => {
+      entered();
+      await held;
+      return [frame];
+    });
+    const send = jest.fn().mockResolvedValue(undefined);
+    const first = publishWebSocketOutbox(send, sqlExecutor);
+    try {
+      await resolving;
+      // This separate drain must skip the resource held by the first transaction.
+      await expect(publishWebSocketOutbox(send, sqlExecutor)).resolves.toBe(0);
+      expect(resolveWebSocketEvent).toHaveBeenCalledTimes(1);
+      expect(send).not.toHaveBeenCalled();
+    } finally {
+      release();
+      await first;
+    }
+    expect(resolveWebSocketEvent).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await rows()).toEqual([]);
+  });
+
+  it('captures exactly one real MySQL reaction overwrite and no same-value repost', async () => {
+    await reactions.addReaction('p', 'd', 'w', 'like', {});
+    await sqlExecutor.execute(`delete from ${WEBSOCKET_OUTBOX_TABLE}`);
+    await expect(
+      reactions.addReaction('p', 'd', 'w', 'love', {})
+    ).resolves.toBe(true);
+    const overwritten = await rows();
+    expect(overwritten).toHaveLength(1);
+    const event = overwritten[0].event;
+    expect(typeof event === 'string' ? JSON.parse(event) : event).toEqual({
+      type: 'drop',
+      dropId: 'd',
+      updateType: 'DROP_REACTION_UPDATE'
+    });
+    await expect(
+      reactions.addReaction('p', 'd', 'w', 'love', {})
+    ).resolves.toBe(false);
+    expect(await rows()).toHaveLength(1);
+  });
+
   it('holds later frames behind a deferred head without blocking other connections', async () => {
     await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
       await recordWebSocketEvent(frame, { connection }, sqlExecutor);
