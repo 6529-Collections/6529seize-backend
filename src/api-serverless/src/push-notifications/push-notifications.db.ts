@@ -11,15 +11,16 @@ export async function savePushNotificationDevice(
 ) {
   await sqlExecutor.execute(
     `
-      INSERT INTO ${PUSH_NOTIFICATION_DEVICES_TABLE} (device_id, token, profile_id, platform)
-      VALUES (:device_id, :token, :profile_id, :platform)
-      ON DUPLICATE KEY UPDATE token = VALUES(token), platform = VALUES(platform)
+      INSERT INTO ${PUSH_NOTIFICATION_DEVICES_TABLE} (device_id, token, profile_id, platform, include_competitions)
+      VALUES (:device_id, :token, :profile_id, :platform, :include_competitions)
+      ON DUPLICATE KEY UPDATE token = VALUES(token), platform = VALUES(platform), include_competitions = VALUES(include_competitions)
     `,
     {
       device_id: device.device_id,
       token: device.token,
       profile_id: device.profile_id,
-      platform: device.platform
+      platform: device.platform,
+      include_competitions: device.include_competitions === true
     }
   );
 }

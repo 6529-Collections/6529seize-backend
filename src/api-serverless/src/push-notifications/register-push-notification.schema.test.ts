@@ -3,6 +3,19 @@ import { registerPushNotificationTokenRequestSchema as schema } from './register
 const legacy = { device_id: 'phone', token: 'fcm-token' };
 const secret = 'a'.repeat(64);
 
+it('accepts explicit competition support without inferring it for old registrations', () => {
+  expect(schema.validate(legacy).value.include_competitions).toBeUndefined();
+  for (const include_competitions of [false, true]) {
+    expect(
+      schema.validate({ ...legacy, include_competitions }).value
+        .include_competitions
+    ).toBe(include_competitions);
+  }
+  expect(
+    schema.validate({ ...legacy, include_competitions: 'yes' }).error
+  ).toBeDefined();
+});
+
 it('keeps legacy registration valid and accepts paired installation credentials', () => {
   expect(schema.validate(legacy).error).toBeUndefined();
   expect(

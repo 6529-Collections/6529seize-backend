@@ -15,6 +15,7 @@ interface GetNotificationsV2Query {
   cause: string | null;
   cause_exclude: string | null;
   unread_only: boolean;
+  include_competitions?: boolean;
 }
 
 const causesValidator = (value: unknown, helpers: Joi.CustomHelpers) => {
@@ -48,7 +49,8 @@ const GetNotificationsV2QuerySchema = Joi.object<GetNotificationsV2Query>({
       'Comma-separated IdentityNotificationCause validation'
     )
     .default(null),
-  unread_only: Joi.boolean().optional().default(false)
+  unread_only: Joi.boolean().optional().default(false),
+  include_competitions: Joi.boolean().optional()
 });
 
 export async function handleGetNotificationsV2(

@@ -38,6 +38,10 @@ const COMPARISONS: ReadonlyArray<{
     field: 'votes_and_credits'
   },
   {
+    category: CompetitionParityCategory.CREDIT_AVAILABLE,
+    field: 'credit_budgets'
+  },
+  {
     category: CompetitionParityCategory.VOTE_TOTAL,
     field: 'votes_and_credits'
   },
@@ -187,13 +191,25 @@ export class CompetitionShadowComparator {
     ctx: RequestContext
   ): Promise<void> {
     const sourceVersion =
-      `legacy-read-v2:${process.env.GIT_COMMIT_SHA ?? process.env.GIT_COMMIT ?? 'local'}`.slice(
+      `legacy-read-v3:${process.env.GIT_COMMIT_SHA ?? process.env.GIT_COMMIT ?? 'local'}`.slice(
         0,
         64
       );
     for (const comparison of COMPARISONS) {
-      const baselineHash = hash(baseline[comparison.field]);
-      const candidateHash = hash(candidate[comparison.field]);
+      // A spending-only voter array or an empty competition cannot establish
+      // budget parity. Missing/empty inputs must never manufacture a match.
+      if (
+        comparison.field === 'credit_budgets' &&
+        ((!Array.isArray(baseline.credit_budgets) &&
+          !Array.isArray(candidate.credit_budgets)) ||
+          (Array.isArray(baseline.credit_budgets) &&
+            Array.isArray(candidate.credit_budgets) &&
+            baseline.credit_budgets.length === 0 &&
+            candidate.credit_budgets.length === 0))
+      )
+        continue;
+      const baselineHash = hash(baseline[comparison.field] ?? null);
+      const candidateHash = hash(candidate[comparison.field] ?? null);
       const matched = baselineHash === candidateHash;
       await this.repository.recordParityObservation(
         {

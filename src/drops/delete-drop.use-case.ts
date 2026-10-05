@@ -51,6 +51,10 @@ import {
 } from '@/api-serverless/src/waves/waves.api.db';
 import { RequestContext } from '@/request.context';
 import {
+  CompetitionEntryDropHooks,
+  competitionEntryDropHooks
+} from '@/competitions/competition-entry-drop-hooks';
+import {
   chatHistoryPurgeDb,
   ChatHistoryPurgeDb,
   ChatHistoryPurgeScope
@@ -67,7 +71,8 @@ export class DeleteDropUseCase {
     private readonly attachmentsDb: AttachmentsDb,
     private readonly dropPollsDb: DropPollsDb,
     private readonly wavesApiDb: WavesApiDb,
-    private readonly purgeDb: ChatHistoryPurgeDb = chatHistoryPurgeDb
+    private readonly purgeDb: ChatHistoryPurgeDb = chatHistoryPurgeDb,
+    private readonly entryHooks: CompetitionEntryDropHooks = competitionEntryDropHooks
   ) {}
 
   private async resolveDeleterId(
@@ -217,6 +222,9 @@ export class DeleteDropUseCase {
     }
     const resolvedDeleterId = deleterId ?? null;
     const dropId = model.drop_id;
+    const nativeEntries = isPermanentDelete
+      ? await this.entryHooks.lockForDelete(dropId, { timer, connection })
+      : [];
     const drop = await this.dropsDb.findDropById(dropId, connection);
     if (drop !== null) {
       const waveId = drop.wave_id;
@@ -236,6 +244,13 @@ export class DeleteDropUseCase {
       if (wave?.description_drop_id === dropId && isPermanentDelete) {
         throw new BadRequestException('Cannot delete the description drop');
       }
+      if (isPermanentDelete)
+        await this.entryHooks.beforeDelete(
+          drop,
+          nativeEntries,
+          resolvedDeleterId,
+          { timer, connection }
+        );
       await Promise.all([
         this.dropsDb.deleteDropParts(dropId, { timer, connection }),
         this.dropsDb.deleteDropMentions(dropId, { timer, connection }),

@@ -1,7 +1,15 @@
+import { memeCardDropMappingsDb } from '@/minting-claims/meme-card-drop-mappings.db';
 import { getAuthenticationContext } from '@/api/auth/auth';
 import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { ApiCompetition } from '@/api/generated/models/ApiCompetition';
+import { ApiDefaultCompetition } from '@/api/generated/models/ApiDefaultCompetition';
+import { ApiCompetitionCapability } from '@/api/generated/models/ApiCompetitionCapability';
+import { ApiCompetitionComputedPhase } from '@/api/generated/models/ApiCompetitionComputedPhase';
+import { ApiCompetitionLifecycle } from '@/api/generated/models/ApiCompetitionLifecycle';
+import { ApiCompetitionType } from '@/api/generated/models/ApiCompetitionType';
+import { ApiCompetitionParticipationConfigRequiredMediaEnum } from '@/api/generated/models/ApiCompetitionParticipationConfig';
+import { enums } from '@/enums';
 import { ApiCompetitionConfigVersionPage } from '@/api/generated/models/ApiCompetitionConfigVersionPage';
 import { ApiCompetitionDecisionPage } from '@/api/generated/models/ApiCompetitionDecisionPage';
 import { ApiCompetitionDistributionItemPage } from '@/api/generated/models/ApiCompetitionDistributionItemPage';
@@ -16,6 +24,7 @@ import { ApiCompetitionVoterPage } from '@/api/generated/models/ApiCompetitionVo
 import { ApiWaveV3 } from '@/api/generated/models/ApiWaveV3';
 import {
   GetCompetitionEntryV3Request,
+  GetDefaultWaveCompetitionV3Request,
   GetWaveCompetitionV3Request,
   GetWaveHubV3Request,
   ListCompetitionDecisionsV3Request,
@@ -172,13 +181,17 @@ const EntryListQuerySchema = Joi.object<{
   .unknown(false)
   .required();
 
-type LeaderboardQuery = CursorQuery & { readonly sort: 'rating' };
+type LeaderboardQuery = CursorQuery & {
+  readonly sort: 'rating' | 'real_time_rating' | 'submitted_at' | 'trend';
+};
 const LeaderboardQuerySchema: Joi.ObjectSchema<LeaderboardQuery> =
   Joi.object<LeaderboardQuery>({
     direction: Joi.string().valid('ASC', 'DESC').default('DESC'),
     cursor: Joi.string().min(1).max(1000).optional(),
     limit: Joi.number().integer().min(1).max(100).default(50),
-    sort: Joi.string().valid('rating').default('rating')
+    sort: Joi.string()
+      .valid('rating', 'real_time_rating', 'submitted_at', 'trend')
+      .default('rating')
   })
     .unknown(false)
     .required();
@@ -216,14 +229,44 @@ function toCursorRequest(query: CursorQuery): CursorPageRequest {
   };
 }
 
-function toApiCompetition(competition: PublicCompetition): ApiCompetition {
+export function toApiCompetition(
+  competition: PublicCompetition
+): ApiCompetition {
+  const { presentation, ...details } = competition;
   return {
-    ...competition,
-    capabilities: [...competition.capabilities]
-  } as unknown as ApiCompetition;
+    ...details,
+    type: enums.resolveOrThrow(ApiCompetitionType, competition.type),
+    lifecycle: enums.resolveOrThrow(
+      ApiCompetitionLifecycle,
+      competition.lifecycle
+    ),
+    computed_phase: enums.resolveOrThrow(
+      ApiCompetitionComputedPhase,
+      competition.computed_phase
+    ),
+    participation: {
+      ...competition.participation,
+      required_metadata: [...competition.participation.required_metadata],
+      required_media: competition.participation.required_media.map((media) =>
+        enums.resolveOrThrow(
+          ApiCompetitionParticipationConfigRequiredMediaEnum,
+          media
+        )
+      )
+    },
+    voting: {
+      ...competition.voting,
+      credit_nfts: [...competition.voting.credit_nfts]
+    },
+    outcome_config: [...competition.outcome_config],
+    capabilities: competition.capabilities.map((capability) =>
+      enums.resolveOrThrow(ApiCompetitionCapability, capability)
+    ),
+    ...(presentation ? { presentation: [...presentation] } : {})
+  };
 }
 
-async function toApiEntry(
+export async function toApiEntry(
   entry: CompetitionEntry,
   ctx: RequestContext
 ): Promise<ApiCompetitionEntry> {
@@ -236,7 +279,16 @@ async function toApiEntry(
     throw new NotFoundException(`Entry submitter not found`);
   }
   const { submitter_id: _submitterId, ...data } = entry;
-  return { ...data, submitter } as unknown as ApiCompetitionEntry;
+  const memeCardIds = await memeCardDropMappingsDb.findMemeCardIdsByEntryIds(
+    entry.competition_id,
+    [entry.id],
+    ctx
+  );
+  return {
+    ...data,
+    submitter,
+    meme_card_id: memeCardIds[entry.id] ?? null
+  } as unknown as ApiCompetitionEntry;
 }
 
 async function toApiEntryPage(
@@ -247,13 +299,24 @@ async function toApiEntryPage(
     new Set(page.data.map((it) => it.submitter_id))
   );
   const submitters = await identityFetcher.getOverviewsByIds(profileIds, ctx);
+  const memeCardIds = page.data.length
+    ? await memeCardDropMappingsDb.findMemeCardIdsByEntryIds(
+        page.data[0].competition_id,
+        page.data.map((entry) => entry.id),
+        ctx
+      )
+    : {};
   return {
     ...page,
     data: page.data.map((entry) => {
       const submitter = submitters[entry.submitter_id];
       if (!submitter) throw new NotFoundException(`Entry submitter not found`);
       const { submitter_id: _submitterId, ...data } = entry;
-      return { ...data, submitter } as unknown as ApiCompetitionEntry;
+      return {
+        ...data,
+        submitter,
+        meme_card_id: memeCardIds[entry.id] ?? null
+      } as unknown as ApiCompetitionEntry;
     })
   };
 }
@@ -267,6 +330,17 @@ export async function handleGetWaveHubV3(
     wave_id,
     await getContext(req)
   )) as ApiWaveV3;
+}
+
+export async function handleGetDefaultWaveCompetitionV3(
+  req: GetDefaultWaveCompetitionV3Request
+): Promise<ApiDefaultCompetition> {
+  getValidatedByJoiOrThrow(req.query, EmptyQuerySchema);
+  const { wave_id } = getValidatedByJoiOrThrow(req.params, WavePathSchema);
+  return competitionService.getDefaultCompetition(
+    wave_id,
+    await getContext(req)
+  );
 }
 
 export async function handleListWaveCompetitionsV3(
@@ -387,7 +461,7 @@ export async function handleListCompetitionLeaderboardV3(
   return (await competitionService.listLeaderboard(
     wave_id,
     competition_id,
-    toCursorRequest(query),
+    { ...toCursorRequest(query), sort: query.sort },
     await getContext(req)
   )) as unknown as ApiCompetitionLeaderboardPage;
 }

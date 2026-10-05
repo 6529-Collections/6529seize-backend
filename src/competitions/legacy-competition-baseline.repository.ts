@@ -13,12 +13,19 @@ import {
   WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
   WAVES_DECISION_PAUSES_TABLE
 } from '@/constants';
+import { IDENTITIES_TABLE, RATINGS_TABLE, TDH_NFT_TABLE } from '@/constants';
 import {
   CompetitionCapability,
   CompetitionLifecycle,
   CompetitionStorageMode
 } from '@/entities/ICompetition';
-import { WaveEntity, WaveType } from '@/entities/IWave';
+import {
+  WaveCreditScope,
+  WaveCreditType,
+  WaveEntity,
+  WaveType
+} from '@/entities/IWave';
+import { CompetitionCreditParity } from '@/competitions/competition-credit-parity';
 import { DropType } from '@/entities/IDrop';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
@@ -62,6 +69,7 @@ type Winner = {
 };
 type Vote = { drop_id: string; voter_id: string; votes: Numeric };
 type Spend = { drop_id: string; voter_id: string; credit_spent: Numeric };
+type CreditNft = { contract: string; token_id: Numeric };
 type Outcome = {
   wave_outcome_position: Numeric;
   type: string;
@@ -268,6 +276,114 @@ function capabilities(waveId: string) {
 
 /** Independent oracle over authoritative legacy tables; never reads native rows. */
 export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleService {
+  private async availableCredit(
+    wave: WaveEntity,
+    nfts: CreditNft[],
+    profileId: string,
+    ctx: RequestContext
+  ): Promise<number> {
+    const options = { wrappedConnection: ctx.connection };
+    let amount: number;
+    if (wave.voting_credit_type === WaveCreditType.REP) {
+      const result = await this.db.oneOrNull<{ amount: Numeric | null }>(
+        `select sum(rating) as amount from ${RATINGS_TABLE}
+         where matter = 'REP' and matter_target_id = :profileId
+           and (:creditor is null or rater_profile_id = :creditor)
+           and (:category is null or matter_category = :category)`,
+        {
+          profileId,
+          creditor: wave.voting_credit_creditor || null,
+          category: wave.voting_credit_category || null
+        },
+        options
+      );
+      amount = Number(result?.amount ?? 0);
+    } else if (wave.voting_credit_type === WaveCreditType.CARD_SET_TDH) {
+      if (!nfts.length)
+        throw new Error('Legacy CARD_SET_TDH budget lacks NFT configuration');
+      const credits: number[] = [];
+      for (const nft of nfts) {
+        const result = await this.db.oneOrNull<{ amount: Numeric | null }>(
+          `select max(t.boosted_tdh) as amount from ${TDH_NFT_TABLE} t
+           where t.contract = :contract and t.id = :tokenId
+             and exists (select 1 from ${IDENTITIES_TABLE} i where i.profile_id = :profileId and i.consolidation_key = t.consolidation_key)`,
+          { profileId, contract: nft.contract, tokenId: Number(nft.token_id) },
+          options
+        );
+        credits.push(Number(result?.amount ?? 0));
+      }
+      amount = credits.reduce((sum, credit) => sum + credit, 0);
+    } else {
+      const identity = await this.db.oneOrNull<{ tdh: Numeric; xtdh: Numeric }>(
+        `select tdh, xtdh from ${IDENTITIES_TABLE} where profile_id = :profileId`,
+        { profileId },
+        options
+      );
+      if (wave.voting_credit_type === WaveCreditType.TDH)
+        amount = Number(identity?.tdh ?? 0);
+      else if (wave.voting_credit_type === WaveCreditType.XTDH)
+        amount = Number(identity?.xtdh ?? 0);
+      else if (wave.voting_credit_type === WaveCreditType.TDH_PLUS_XTDH)
+        amount = Number(identity?.tdh ?? 0) + Number(identity?.xtdh ?? 0);
+      else throw new Error('Unsupported legacy voting credit type');
+    }
+    const available = Math.max(0, Math.floor(amount));
+    if (!Number.isSafeInteger(available))
+      throw new Error('Unsupported legacy voting credit amount');
+    return available;
+  }
+
+  private async creditBudgets(
+    wave: WaveEntity,
+    nfts: CreditNft[],
+    drops: Drop[],
+    votes: Vote[],
+    ctx: RequestContext
+  ): Promise<CompetitionCreditParity[]> {
+    const activeDropIds = new Set(
+      drops
+        .filter((drop) => drop.drop_type === DropType.PARTICIPATORY)
+        .map((drop) => drop.id)
+    );
+    const profileIds = Array.from(
+      new Set(votes.map((vote) => vote.voter_id))
+    ).sort((a, b) => a.localeCompare(b));
+    const results: CompetitionCreditParity[] = [];
+    for (const profileId of profileIds) {
+      const available = await this.availableCredit(wave, nfts, profileId, ctx);
+      const activeVotes = votes.filter(
+        (vote) => vote.voter_id === profileId && activeDropIds.has(vote.drop_id)
+      );
+      const scoped =
+        wave.voting_credit_scope === WaveCreditScope.WAVE
+          ? [
+              {
+                drop_id: null,
+                spent: activeVotes.reduce(
+                  (sum, vote) => sum + Math.abs(Number(vote.votes)),
+                  0
+                )
+              }
+            ]
+          : activeVotes.map((vote) => ({
+              drop_id: vote.drop_id,
+              spent: Math.abs(Number(vote.votes))
+            }));
+      for (const row of scoped)
+        results.push({
+          profile_id: profileId,
+          ...row,
+          available,
+          remaining: Math.max(0, available - row.spent)
+        });
+    }
+    return results.sort(
+      (a, b) =>
+        a.profile_id.localeCompare(b.profile_id) ||
+        (a.drop_id ?? '').localeCompare(b.drop_id ?? '')
+    );
+  }
+
   public async getSnapshot(
     record: CompetitionRoutingRecord,
     now: number,
@@ -324,7 +440,7 @@ export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleS
       start_time: Numeric;
       end_time: Numeric | null;
     }>('pauses');
-    const nfts = await read<object>('nfts');
+    const nfts = await read<CreditNft>('nfts');
     const activeDrops = drops.filter(
       (drop) => drop.drop_type === DropType.PARTICIPATORY
     );
@@ -338,6 +454,7 @@ export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleS
       configuration: configuration(wave, nfts, now),
       entries: entries(drops, ratings, winners),
       votes_and_credits: voters(votes, spent),
+      credit_budgets: await this.creditBudgets(wave, nfts, drops, votes, ctx),
       leaderboard: ranks(rated),
       decisions_and_winners: decisions.map((decision) => ({
         scheduled_at: Number(decision.decision_time),

@@ -6,6 +6,7 @@ import { ApiDmUnreadConversationState } from '@/api/generated/models/ApiDmUnread
 
 export enum WsMessageType {
   DROP_UPDATE = 'DROP_UPDATE',
+  COMPETITION_UPDATE = 'COMPETITION_UPDATE',
   DROP_UPDATE_REF = 'DROP_UPDATE_REF',
   DROP_DELETE = 'DROP_DELETE',
   DROP_RATING_UPDATE = 'DROP_RATING_UPDATE',

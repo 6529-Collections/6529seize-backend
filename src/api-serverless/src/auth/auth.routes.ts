@@ -501,6 +501,7 @@ router.post(
       const refreshed = await refreshNativeSession({
         address: refreshRequest.client_address,
         nativeRefreshToken: refreshRequest.native_refresh_token,
+        refreshRequestId: refreshRequest.refresh_request_id,
         clientType
       });
       if (!refreshed) {
@@ -1212,7 +1213,8 @@ const SessionRefreshNativeRequestSchema: Joi.ObjectSchema<ApiSessionRefreshNativ
   Joi.object<ApiSessionRefreshNativeRequest>({
     client_type: Joi.string().valid('native', 'desktop').required(),
     client_address: Joi.string().required(),
-    native_refresh_token: Joi.string().hex().length(128).required()
+    native_refresh_token: Joi.string().hex().length(128).required(),
+    refresh_request_id: Joi.string().guid({ version: 'uuidv4' }).optional()
   }).unknown(false);
 
 const SessionLogoutWebRequestSchema: Joi.ObjectSchema<ApiSessionLogoutWebRequest> =

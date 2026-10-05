@@ -95,6 +95,7 @@ export interface GitHubReleaseContext {
   readonly current_sha: string;
   readonly pull_requests: ReleasePullRequestContext[];
   readonly commit_messages?: string[];
+  readonly desktop_history_truncated?: boolean;
 }
 
 export interface GitHubReleaseRun {
@@ -498,28 +499,43 @@ export class ReleaseNoteGitHubService {
       return null;
     }
 
-    const comparedCommits = await this.getComparedCommits(
-      repository,
-      resolvedPreviousSha,
-      request.sha
-    );
     const repoName = getRepoName(request.repo);
     const desktopRelease = repoName === CORE_REPO;
-    const mainlineRelease = desktopRelease || repoName === FRONTEND_REPO;
-    const commits = mainlineRelease
-      ? getFirstParentReleaseCommits(
-          comparedCommits,
+    const desktopHistory = desktopRelease
+      ? await this.getDesktopFirstParentHistory(
+          repository,
           resolvedPreviousSha,
-          request.sha,
-          repository
+          request.sha
         )
-      : comparedCommits;
+      : null;
+    const comparedCommits =
+      desktopHistory?.commits ??
+      (await this.getComparedCommits(
+        repository,
+        resolvedPreviousSha,
+        request.sha
+      ));
+    const mainlineRelease = desktopRelease || repoName === FRONTEND_REPO;
+    const commits =
+      repoName === FRONTEND_REPO
+        ? getFirstParentReleaseCommits(
+            comparedCommits,
+            resolvedPreviousSha,
+            request.sha,
+            repository
+          )
+        : comparedCommits;
     this.logger.info('Resolved GitHub release-note commit range', {
       repository,
       run_id: request.run_id,
       previous_sha: resolvedPreviousSha,
       current_sha: request.sha,
-      compared_commit_count: comparedCommits.length,
+      ...(desktopHistory
+        ? {
+            first_parent_commit_count: desktopHistory.commits.length,
+            history_truncated: desktopHistory.truncated
+          }
+        : { compared_commit_count: comparedCommits.length }),
       discovery_commit_count: commits.length,
       mainline_discovery: mainlineRelease
     });
@@ -546,6 +562,9 @@ export class ReleaseNoteGitHubService {
       pull_requests: pullRequests,
       ...(desktopRelease
         ? {
+            ...(desktopHistory?.truncated
+              ? { desktop_history_truncated: true }
+              : {}),
             commit_messages: commits
               .map((commit) => commit.commit?.message?.trim())
               .filter((message): message is string => Boolean(message))
@@ -776,6 +795,68 @@ export class ReleaseNoteGitHubService {
     throw new NonRetryableReleaseNoteError(
       `Release comparison did not complete within ${MAX_COMPARE_PAGES * PAGE_SIZE} commits`
     );
+  }
+
+  private async getDesktopFirstParentHistory(
+    repository: string,
+    previousSha: string,
+    currentSha: string
+  ): Promise<{ commits: GitHubCommit[]; truncated: boolean }> {
+    const commits: GitHubCommit[] = [];
+    const visited = new Set<string>();
+    let cursor = currentSha;
+    // Parent SHAs are discovered sequentially; the Git endpoint omits file patches.
+    while (cursor !== previousSha) {
+      if (visited.has(cursor)) {
+        throw new NonRetryableReleaseNoteError(
+          'Desktop release first-parent history contains a cycle'
+        );
+      }
+      if (commits.length >= MAX_RELEASE_COMMITS) {
+        this.logger.warn(
+          'Desktop release history truncated to the latest first-parent commits',
+          {
+            repository,
+            previous_sha: previousSha,
+            current_sha: currentSha,
+            commit_count: commits.length
+          }
+        );
+        commits.reverse();
+        return { commits, truncated: true };
+      }
+      visited.add(cursor);
+      const commit = await this.api<{
+        readonly sha: string;
+        readonly parents: Array<{ readonly sha: string }>;
+        readonly message: string;
+      }>(`/repos/${repository}/git/commits/${encodeURIComponent(cursor)}`);
+      if (commit.sha !== cursor) {
+        throw new NonRetryableReleaseNoteError(
+          `Desktop release commit response did not match ${cursor}`
+        );
+      }
+      const parents = commit.parents ?? [];
+      // Both exit paths are base-exclusive: omit the baseline itself and its merge-back boundary.
+      if (parents.slice(1).some((parent) => parent.sha === previousSha)) {
+        commits.reverse();
+        return { commits, truncated: false };
+      }
+      commits.push({
+        sha: commit.sha,
+        parents,
+        commit: { message: commit.message }
+      });
+      const firstParent = parents[0]?.sha;
+      if (!firstParent) {
+        throw new NonRetryableReleaseNoteError(
+          `Release history for ${repository} did not reach previous production commit ${previousSha}`
+        );
+      }
+      cursor = firstParent;
+    }
+    commits.reverse();
+    return { commits, truncated: false };
   }
 
   private async getPullRequests(

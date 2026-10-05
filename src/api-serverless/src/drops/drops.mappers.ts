@@ -1130,7 +1130,10 @@ export class DropsMappers {
       }
     }
     top_raters.sort((a, b) => b.rating - a.rating);
-    const dropType = enums.resolveOrThrow(ApiDropType, dropEntity.drop_type);
+    const dropType =
+      dropEntity.drop_type === DropType.COMPETITION
+        ? ApiDropType.Participatory
+        : enums.resolveOrThrow(ApiDropType, dropEntity.drop_type);
     const rank: number | null =
       weightedDropsRanks[dropEntity.id] ?? dropsRanks[dropEntity.id] ?? null;
     const mentionedWavesOfDrop = mentionedWaves

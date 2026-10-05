@@ -298,4 +298,10 @@ export { PushDeviceLogoutFenceEntity } from './IPushDeviceLogoutFence';
 export { PushNotificationCancellationEntity } from './IPushNotificationCancellation';
 export { WebSocketOutboxEntity } from './IWebSocketOutbox';
 
+export * from './ICompetitionRuntime';
+
+export * from './ICompetitionCommand';
+export * from './ICompetitionEntryContentVersion';
+
+export * from './ICompetitionCapabilityAudit';
 export { PushNotificationOutboxEntity } from './IPushNotificationOutbox';

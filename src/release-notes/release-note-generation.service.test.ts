@@ -1028,116 +1028,127 @@ describe('ReleaseNoteGenerationService', () => {
     expect(onPlan).toHaveBeenCalledWith(0);
   });
 
-  it('publishes deterministic compact Desktop notes linked to the exact Frontend release', async () => {
-    const frontendSha = '63630a3e27c37296bbe39d9813b014a824265a56';
-    const coreSha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-    const desktopRequest: ReleaseNoteGenerationRequest = {
-      ...request,
-      repo: '6529-Collections/6529-core',
-      workflow: 'Publish',
-      run_url: 'https://github.com/6529-Collections/6529-core/actions/runs/123',
-      sha: coreSha,
-      branch: 'v0.3.13',
-      service: 'desktop',
-      prompt_path: 'ops/release-notes/desktop-release-notes.prompt.md',
-      release_group_id: 'desktop-v0.3.13',
-      release_group_services: ['desktop'],
-      pull_request_number: null,
-      release_group_runs: undefined,
-      release_version: '0.3.13',
-      frontend_sha: frontendSha,
-      triggered_by_github_login: 'prxt6529'
-    };
-    const findReleaseNoteDropBySourceSha = jest.fn().mockResolvedValue({
-      id: 'frontend-drop',
-      serial_no: 1292112,
-      content:
-        '### Frontend Deploy [#1636](https://github.com/6529-Collections/6529seize-frontend/actions/runs/1) · commit [63630a3e](https://github.com/6529-Collections/6529seize-frontend/commit/63630a3e27c37296bbe39d9813b014a824265a56) — Aug 12, 11:02 AM UTC',
-      run_number: null,
-      deployed_at: null
-    });
-    const promptAndGetReply = jest.fn().mockResolvedValue(
-      JSON.stringify({
-        bullets: [
-          'Fixed wallet reconnection and profile switching issues.',
-          'Improved update prompts and application shutdown behavior.'
-        ]
-      })
-    );
-    const createDrop = jest.fn().mockResolvedValue({ id: 'created-drop' });
-    const service = new ReleaseNoteGenerationService(
-      {
-        getReleaseContext: jest.fn().mockResolvedValue({
-          previous_sha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-          current_sha: coreSha,
-          commit_messages: ['Improve desktop wallet behavior'],
-          pull_requests: []
+  it.each([false, true])(
+    'publishes compact Desktop notes with partial-history marker=%s',
+    async (historyTruncated) => {
+      const frontendSha = '63630a3e27c37296bbe39d9813b014a824265a56';
+      const coreSha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      const desktopRequest: ReleaseNoteGenerationRequest = {
+        ...request,
+        repo: '6529-Collections/6529-core',
+        workflow: 'Publish',
+        run_url:
+          'https://github.com/6529-Collections/6529-core/actions/runs/123',
+        sha: coreSha,
+        branch: 'v0.3.13',
+        service: 'desktop',
+        prompt_path: 'ops/release-notes/desktop-release-notes.prompt.md',
+        release_group_id: 'desktop-v0.3.13',
+        release_group_services: ['desktop'],
+        pull_request_number: null,
+        release_group_runs: undefined,
+        release_version: '0.3.13',
+        frontend_sha: frontendSha,
+        triggered_by_github_login: 'prxt6529'
+      };
+      const findReleaseNoteDropBySourceSha = jest.fn().mockResolvedValue({
+        id: 'frontend-drop',
+        serial_no: 1292112,
+        content:
+          '### Frontend Deploy [#1636](https://github.com/6529-Collections/6529seize-frontend/actions/runs/1) · commit [63630a3e](https://github.com/6529-Collections/6529seize-frontend/commit/63630a3e27c37296bbe39d9813b014a824265a56) — Aug 12, 11:02 AM UTC',
+        run_number: null,
+        deployed_at: null
+      });
+      const promptAndGetReply = jest.fn().mockResolvedValue(
+        JSON.stringify({
+          bullets: [
+            'Fixed wallet reconnection and profile switching issues.',
+            'Improved update prompts and application shutdown behavior.'
+          ]
+        })
+      );
+      const createDrop = jest.fn().mockResolvedValue({ id: 'created-drop' });
+      const service = new ReleaseNoteGenerationService(
+        {
+          getReleaseContext: jest.fn().mockResolvedValue({
+            previous_sha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            current_sha: coreSha,
+            desktop_history_truncated: historyTruncated,
+            commit_messages: ['Improve desktop wallet behavior'],
+            pull_requests: []
+          }),
+          getReleasePrompt: jest.fn().mockResolvedValue('Desktop prompt.')
+        } as unknown as ReleaseNoteGitHubService,
+        { promptAndGetReply } as AiPrompter,
+        { createDrop } as unknown as DropCreationApiService,
+        {
+          getIdsByHandles: jest
+            .fn()
+            .mockResolvedValue({ prxt0: 'publisher-profile' })
+        } as unknown as IdentitiesDb,
+        { prxt6529: 'prxt0' },
+        {
+          findDropIdByMetadata: jest.fn().mockResolvedValue(null),
+          findReleaseNoteDropBySourceSha
+        } as unknown as DropsDb
+      );
+
+      await expect(service.generateAndPost(desktopRequest, {})).resolves.toBe(
+        'published'
+      );
+
+      expect(findReleaseNoteDropBySourceSha).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repository: '6529-Collections/6529seize-frontend',
+          sha: frontendSha
         }),
-        getReleasePrompt: jest.fn().mockResolvedValue('Desktop prompt.')
-      } as unknown as ReleaseNoteGitHubService,
-      { promptAndGetReply } as AiPrompter,
-      { createDrop } as unknown as DropCreationApiService,
-      {
-        getIdsByHandles: jest
-          .fn()
-          .mockResolvedValue({ prxt0: 'publisher-profile' })
-      } as unknown as IdentitiesDb,
-      { prxt6529: 'prxt0' },
-      {
-        findDropIdByMetadata: jest.fn().mockResolvedValue(null),
-        findReleaseNoteDropBySourceSha
-      } as unknown as DropsDb
-    );
-
-    await expect(service.generateAndPost(desktopRequest, {})).resolves.toBe(
-      'published'
-    );
-
-    expect(findReleaseNoteDropBySourceSha).toHaveBeenCalledWith(
-      expect.objectContaining({
-        repository: '6529-Collections/6529seize-frontend',
-        sha: frontendSha
-      }),
-      {}
-    );
-    const createDropRequest = createDrop.mock.calls[0][0].createDropRequest;
-    expect(createDropRequest.parts[0].content).toBe(
-      [
-        '## 🖥️ 6529 Desktop Release v0.3.13',
-        '',
-        '- Web Updates through [Frontend Deploy #1636 · commit 63630a3e — Aug 12, 11:02 AM UTC](https://6529.io/waves/releases-wave?serialNo=1292112)',
-        '- Fixed wallet reconnection and profile switching issues.',
-        '- Improved update prompts and application shutdown behavior.',
-        '',
-        'In-app update available, direct download links:',
-        '',
-        '[Windows v0.3.13](https://d3lqz0a4bldqgf.cloudfront.net/6529-core-app/win/links/0.3.13.html)',
-        '[MacOS v0.3.13](https://d3lqz0a4bldqgf.cloudfront.net/6529-core-app/mac/links/0.3.13.html)',
-        '[Linux v0.3.13](https://d3lqz0a4bldqgf.cloudfront.net/6529-core-app/linux/links/0.3.13.html)',
-        '',
-        'Published by @[prxt0]'
-      ].join('\n')
-    );
-    expect(createDropRequest.parts[0].content).not.toContain('PR #');
-    expect(createDropRequest.mentioned_users).toEqual([
-      {
-        mentioned_profile_id: 'publisher-profile',
-        handle_in_content: 'prxt0'
-      }
-    ]);
-    expect(createDropRequest.metadata).toEqual(
-      expect.arrayContaining([
+        {}
+      );
+      const createDropRequest = createDrop.mock.calls[0][0].createDropRequest;
+      expect(createDropRequest.parts[0].content).toBe(
+        [
+          '## 🖥️ 6529 Desktop Release v0.3.13',
+          '',
+          '- Web Updates through [Frontend Deploy #1636 · commit 63630a3e — Aug 12, 11:02 AM UTC](https://6529.io/waves/releases-wave?serialNo=1292112)',
+          '- Fixed wallet reconnection and profile switching issues.',
+          '- Improved update prompts and application shutdown behavior.',
+          ...(historyTruncated
+            ? [
+                '',
+                'Core summary covers the latest 1,200 first-parent commits; earlier changes are omitted.'
+              ]
+            : []),
+          '',
+          'In-app update available, direct download links:',
+          '',
+          '[Windows v0.3.13](https://d3lqz0a4bldqgf.cloudfront.net/6529-core-app/win/links/0.3.13.html)',
+          '[MacOS v0.3.13](https://d3lqz0a4bldqgf.cloudfront.net/6529-core-app/mac/links/0.3.13.html)',
+          '[Linux v0.3.13](https://d3lqz0a4bldqgf.cloudfront.net/6529-core-app/linux/links/0.3.13.html)',
+          '',
+          'Published by @[prxt0]'
+        ].join('\n')
+      );
+      expect(createDropRequest.parts[0].content).not.toContain('PR #');
+      expect(createDropRequest.mentioned_users).toEqual([
         {
-          data_key: 'release_note_version',
-          data_value: '0.3.13'
-        },
-        {
-          data_key: 'release_note_frontend_sha',
-          data_value: frontendSha
+          mentioned_profile_id: 'publisher-profile',
+          handle_in_content: 'prxt0'
         }
-      ])
-    );
-  });
+      ]);
+      expect(createDropRequest.metadata).toEqual(
+        expect.arrayContaining([
+          {
+            data_key: 'release_note_version',
+            data_value: '0.3.13'
+          },
+          {
+            data_key: 'release_note_frontend_sha',
+            data_value: frontendSha
+          }
+        ])
+      );
+    }
+  );
 
   it('rejects overly detailed Desktop bullets instead of publishing fallback copy', async () => {
     const frontendSha = '63630a3e27c37296bbe39d9813b014a824265a56';

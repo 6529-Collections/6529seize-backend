@@ -1,3 +1,4 @@
+import { competitionEntryVisibleSql } from '@/competitions/competition-entry-visibility';
 import { randomUUID } from 'node:crypto';
 import {
   COMPETITION_CAPABILITIES_TABLE,
@@ -11,6 +12,7 @@ import {
   COMPETITION_PARITY_OBSERVATIONS_TABLE,
   COMPETITION_PAUSES_TABLE,
   COMPETITION_VOTES_TABLE,
+  COMPETITION_WINNER_VOTES_TABLE,
   COMPETITIONS_TABLE,
   DROP_RANK_TABLE,
   DROP_VOTER_STATE_TABLE,
@@ -68,10 +70,12 @@ import type {
   CompetitionVoter
 } from '@/competitions/competition.types';
 import { collectCompetitionPages } from '@/competitions/competition-page';
+import type { DefaultCompetitionRecord } from '@/competitions/default-competition';
 
 type JsonValue = Record<string, unknown> | readonly unknown[];
 
 export type CompetitionRecord = CompetitionRoutingRecord & {
+  readonly presentation_config?: JsonValue | string | null;
   readonly type: CompetitionType;
   readonly lifecycle: CompetitionLifecycle;
   readonly title: string;
@@ -318,6 +322,39 @@ const LEGACY_CAPABILITY_ENV: ReadonlyArray<{
 export class CompetitionRepository extends LazyDbAccessCompatibleService {
   public constructor(db: () => SqlExecutor = dbSupplier) {
     super(db);
+  }
+
+  public async listDefaultCompetitionRecords(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<DefaultCompetitionRecord[]> {
+    return this.timed(ctx, 'listDefaultCompetitionRecords', () =>
+      this.db.execute<DefaultCompetitionRecord>(
+        `select id, storage_mode, type, lifecycle, published_at, ended_at, cancelled_at,
+         participation_starts_at, participation_ends_at, voting_starts_at, voting_ends_at, decision_config
+         from ${COMPETITIONS_TABLE} where wave_id = :waveId`,
+        { waveId },
+        dbOptions(ctx)
+      )
+    );
+  }
+
+  public async getLegacyDecisionSummary(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<{ last_decision_time: number | null; decisions_done: number }> {
+    const row = await this.db.oneOrNull<{
+      last_decision_time: CompetitionRecord['ended_at'];
+      decisions_done: number | string;
+    }>(
+      `select max(decision_time) as last_decision_time, count(*) as decisions_done from ${WAVES_DECISIONS_TABLE} where wave_id = :waveId`,
+      { waveId },
+      dbOptions(ctx)
+    );
+    return {
+      last_decision_time: row ? toNumber(row.last_decision_time) : null,
+      decisions_done: Number(row?.decisions_done ?? 0)
+    };
   }
 
   public async findCompetitionRecordById(
@@ -578,6 +615,7 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
       decision_config: parseJson(record.decision_config),
       winner_config: parseJson(record.winner_config),
       outcome_config: parseJson(record.outcome_config),
+      presentation_config: parseJson(record.presentation_config),
       participation_starts_at: toNumber(record.participation_starts_at),
       participation_ends_at: toNumber(record.participation_ends_at),
       voting_starts_at: toNumber(record.voting_starts_at),
@@ -605,21 +643,22 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
     let order: string;
     if (request.sort === 'rating') {
       order = `coalesce(leaderboard.rating, 0) ${directionSql(request.direction)},
-               coalesce(leaderboard.submitted_at, ce.submitted_at) asc,
+               leaderboard.\`rank\` is null asc, leaderboard.\`rank\` asc,
                ce.id asc`;
     } else if (request.sort === 'rank') {
-      order = `ce.rank is null asc, ce.rank ${directionSql(request.direction)},
+      order = `coalesce(ce.\`rank\`, leaderboard.\`rank\`) is null asc,
+               coalesce(ce.\`rank\`, leaderboard.\`rank\`) ${directionSql(request.direction)},
                ce.id asc`;
     } else {
       order = `ce.submitted_at ${directionSql(request.direction)},
                ce.id ${directionSql(request.direction)}`;
     }
     const rows = await this.db.execute<NativeEntryRecord>(
-      `select ce.* from ${COMPETITION_ENTRIES_TABLE} ce
+      `select ce.*, coalesce(ce.\`rank\`, leaderboard.\`rank\`) as \`rank\` from ${COMPETITION_ENTRIES_TABLE} ce
        left join ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} leaderboard
          on leaderboard.competition_id = ce.competition_id
         and leaderboard.entry_id = ce.id
-       where ce.competition_id = :competitionId
+       where ce.competition_id = :competitionId and ${competitionEntryVisibleSql('ce')}
          ${statusFilter} ${submitterFilter}
        order by ${order}
        limit :offset, :rowLimit`,
@@ -644,8 +683,12 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<CompetitionEntry | null> {
     const row = await this.db.oneOrNull<NativeEntryRecord>(
-      `select * from ${COMPETITION_ENTRIES_TABLE}
-       where competition_id = :competitionId and id = :entryId`,
+      `select ce.*, coalesce(ce.\`rank\`, leaderboard.\`rank\`) as \`rank\`
+       from ${COMPETITION_ENTRIES_TABLE} ce
+       left join ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} leaderboard
+         on leaderboard.competition_id = ce.competition_id and leaderboard.entry_id = ce.id
+       where ce.competition_id = :competitionId and ce.id = :entryId
+         and ${competitionEntryVisibleSql('ce')}`,
       { competitionId, entryId },
       dbOptions(ctx)
     );
@@ -808,11 +851,20 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
     request: CompetitionPageRequest,
     ctx: RequestContext
   ): Promise<CompetitionPage<CompetitionLeaderboardEntry>> {
+    const orderColumn =
+      request.sort === 'submitted_at'
+        ? 'lb.submitted_at'
+        : request.sort === 'real_time_rating'
+          ? 'lb.real_time_rating'
+          : request.sort === 'trend'
+            ? '(lb.real_time_rating - lb.rating)'
+            : 'lb.rating';
     const rows = await this.db.execute<NativeLeaderboardRecord>(
-      `select * from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE}
-       where competition_id = :competitionId
-       order by rating ${directionSql(request.direction)},
-                submitted_at asc, entry_id asc
+      `select lb.* from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} lb
+       join ${COMPETITION_ENTRIES_TABLE} e on e.id=lb.entry_id and e.competition_id=lb.competition_id
+       where lb.competition_id = :competitionId and ${competitionEntryVisibleSql('e')}
+       order by ${orderColumn} ${directionSql(request.direction)},
+                lb.\`rank\` is null asc, lb.\`rank\` asc, lb.entry_id asc
        limit :offset, :rowLimit`,
       {
         competitionId,
@@ -840,6 +892,14 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
     request: CompetitionPageRequest,
     ctx: RequestContext
   ): Promise<CompetitionPage<CompetitionLeaderboardEntry>> {
+    const orderColumn =
+      request.sort === 'submitted_at'
+        ? 'submitted_at'
+        : request.sort === 'real_time_rating'
+          ? 'real_time_rating'
+          : request.sort === 'trend'
+            ? '(real_time_rating - rating)'
+            : 'rating';
     const rows = await this.db.execute<{
       drop_id: string;
       submitted_at: number | string;
@@ -870,7 +930,7 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
        )
        select drop_id, submitted_at, rating, real_time_rating, competition_rank
        from ranked
-       order by rating ${directionSql(request.direction)},
+       order by ${orderColumn} ${directionSql(request.direction)},
                 tie_time asc, drop_id asc
        limit :offset, :rowLimit`,
       {
@@ -901,18 +961,22 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
     ctx: RequestContext,
     entryId?: string
   ): Promise<CompetitionPage<CompetitionVoter>> {
-    const entryFilter = entryId ? 'and entry_id = :entryId' : '';
+    const entryFilter = entryId ? 'and v.entry_id = :entryId' : '';
     const rows = await this.db.execute<{
       voter_profile_id: string;
       votes: number | string;
       credit_spent: number | string;
     }>(
-      `select voter_profile_id, sum(value) as votes,
-              sum(credit_spent) as credit_spent
-       from ${COMPETITION_VOTES_TABLE}
-       where competition_id = :competitionId ${entryFilter}
-       group by voter_profile_id
-       order by votes ${directionSql(request.direction)}, voter_profile_id asc
+      `select v.voter_profile_id,
+              sum(${entryId ? "case when e.status = 'WINNER' then coalesce(wv.value, v.value) else v.value end" : 'v.value'}) as votes,
+              sum(v.credit_spent) as credit_spent
+       from ${COMPETITION_VOTES_TABLE} v
+       join ${COMPETITION_ENTRIES_TABLE} e on e.id = v.entry_id and e.competition_id = v.competition_id
+       left join ${COMPETITION_WINNER_VOTES_TABLE} wv on wv.decision_id = e.decision_id and wv.entry_id = e.id
+         and wv.competition_id = e.competition_id and wv.voter_profile_id = v.voter_profile_id
+       where v.competition_id = :competitionId and ${competitionEntryVisibleSql('e')} ${entryFilter}
+       group by v.voter_profile_id
+       order by votes ${directionSql(request.direction)}, v.voter_profile_id asc
        limit :offset, :rowLimit`,
       {
         competitionId,
@@ -995,9 +1059,15 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
       created_at: number | string;
       updated_at: number | string;
     }>(
-      `select * from ${COMPETITION_VOTES_TABLE}
-       where competition_id = :competitionId and entry_id = :entryId
-       order by updated_at ${directionSql(request.direction)}, id asc
+      `select v.id, v.entry_id, v.voter_profile_id, v.credit_spent, v.created_at, v.updated_at,
+              case when e.status = 'WINNER' then coalesce(wv.value, v.value) else v.value end as value
+       from ${COMPETITION_VOTES_TABLE} v
+       join ${COMPETITION_ENTRIES_TABLE} e on e.id = v.entry_id and e.competition_id = v.competition_id
+       left join ${COMPETITION_WINNER_VOTES_TABLE} wv on wv.decision_id = e.decision_id and wv.entry_id = e.id
+         and wv.competition_id = e.competition_id and wv.voter_profile_id = v.voter_profile_id
+       where v.competition_id = :competitionId and v.entry_id = :entryId
+         and ${competitionEntryVisibleSql('e')}
+       order by v.updated_at ${directionSql(request.direction)}, v.id asc
        limit :offset, :rowLimit`,
       {
         competitionId,
@@ -1604,8 +1674,10 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
   ): Promise<NativeDecisionWinnerRecord[]> {
     if (!decisionIds.length) return [];
     return this.db.execute<NativeDecisionWinnerRecord>(
-      `select * from ${COMPETITION_DECISION_WINNERS_TABLE}
-       where decision_id in (:decisionIds) order by \`rank\` asc, entry_id asc`,
+      `select winner.* from ${COMPETITION_DECISION_WINNERS_TABLE} winner
+       join ${COMPETITION_ENTRIES_TABLE} e on e.id=winner.entry_id and e.competition_id=winner.competition_id
+       where winner.decision_id in (:decisionIds) and ${competitionEntryVisibleSql('e')}
+       order by winner.\`rank\` asc, winner.entry_id asc`,
       { decisionIds },
       dbOptions(ctx)
     );

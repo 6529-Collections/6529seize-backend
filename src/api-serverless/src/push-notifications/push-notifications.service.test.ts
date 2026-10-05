@@ -121,3 +121,43 @@ describe('requestDeviceBadgeRefresh', () => {
     }
   );
 });
+
+describe('sendIdentityPushNotificationsStrict', () => {
+  beforeEach(() => {
+    process.env.PUSH_NOTIFICATIONS_ACTIVATED = 'true';
+    sendMock.mockReset().mockResolvedValue({});
+  });
+  afterEach(() => delete process.env.PUSH_NOTIFICATIONS_ACTIVATED);
+
+  it.each(['transport', 'partial batch'])(
+    'rejects %s failure so a durable receipt cannot be acknowledged',
+    async (failure) => {
+      if (failure === 'transport')
+        sendMock.mockRejectedValue(new Error('provider failure'));
+      else
+        sendMock.mockResolvedValue({
+          Failed: [{ Id: 'identity-notification-1' }]
+        });
+      const { sendIdentityPushNotificationsStrict } =
+        await import('./push-notifications.service');
+      await expect(sendIdentityPushNotificationsStrict([1])).rejects.toThrow();
+    }
+  );
+
+  it('keeps the original IDs across a retry after an earlier chunk succeeded', async () => {
+    const { sendIdentityPushNotificationsStrict } =
+      await import('./push-notifications.service');
+    const ids = Array.from({ length: 12 }, (_, index) => index + 1);
+    sendMock
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ Failed: [{ Id: 'identity-notification-11' }] });
+    await expect(
+      sendIdentityPushNotificationsStrict(ids)
+    ).rejects.toMatchObject({ code: 'PUSH_QUEUE_PARTIAL_FAILURE' });
+    await expect(
+      sendIdentityPushNotificationsStrict(ids)
+    ).resolves.toBeUndefined();
+    expect(sendMock.mock.calls[2][0]).toEqual(sendMock.mock.calls[0][0]);
+    expect(sendMock.mock.calls[3][0]).toEqual(sendMock.mock.calls[1][0]);
+  });
+});
