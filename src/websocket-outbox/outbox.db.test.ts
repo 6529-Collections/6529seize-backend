@@ -16,8 +16,10 @@ const rows = () =>
   sqlExecutor.execute(`select * from ${WEBSOCKET_OUTBOX_TABLE} order by id`);
 
 describeWithSeed('WebSocket outbox MySQL transaction boundary', [], () => {
-  const reactions = new ReactionsDb(() => sqlExecutor);
+  let reactions: ReactionsDb;
   beforeEach(() => {
+    // The shared test hook replaces the executor for each test; repositories cache it.
+    reactions = new ReactionsDb(() => sqlExecutor);
     process.env.NODE_ENV = 'test';
     jest.mocked(resolveWebSocketEvent).mockReset();
   });
@@ -52,11 +54,14 @@ describeWithSeed('WebSocket outbox MySQL transaction boundary', [], () => {
         sqlExecutor,
         'executeNativeQueriesInTransaction'
       );
+      const captureFailure = jest.fn(() =>
+        Promise.reject(new Error('forced outbox insert failure'))
+      );
       jest
         .spyOn(sqlExecutor, 'execute')
         .mockImplementation((sql, params, options) => {
           if (sql.includes(`insert into ${WEBSOCKET_OUTBOX_TABLE}`))
-            return Promise.reject(new Error('forced outbox insert failure'));
+            return captureFailure();
           return execute(sql, params, options);
         });
       const mutation = existing
@@ -65,6 +70,7 @@ describeWithSeed('WebSocket outbox MySQL transaction boundary', [], () => {
           )
         : reactions.addReaction('p', 'd', 'w', 'like', {});
       await expect(mutation).rejects.toThrow('forced outbox insert failure');
+      expect(captureFailure).toHaveBeenCalledTimes(1);
       expect(transaction).toHaveBeenCalledTimes(1);
       expect(await rows()).toEqual([]);
       expect(

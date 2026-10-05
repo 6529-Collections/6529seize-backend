@@ -263,6 +263,79 @@ it.each([
   }
 );
 
+it.each(['muteIdentity', 'unmuteIdentity'] as const)(
+  '%s waits for commit before reading and notifying online unread versions',
+  async (method) => {
+    const { service, identityMutesDb, wsListenersNotifier, wavesApiDb, ctx } =
+      createService();
+    const connection = { connection: {} };
+    let pendingVersion = 4;
+    let committedVersion = 4;
+    let releaseCommit!: () => void;
+    let reachedCommit!: () => void;
+    const commitGate = new Promise<void>((resolve) => {
+      releaseCommit = resolve;
+    });
+    const committing = new Promise<void>((resolve) => {
+      reachedCommit = resolve;
+    });
+    const execute = jest.fn(async (sql: string) => {
+      if (sql.includes('select r.wave_id')) return [{ wave_id: 'wave-1' }];
+      if (sql.includes('set unread_state_version = unread_state_version + 1'))
+        pendingVersion++;
+      return [];
+    });
+    const transaction = jest.fn(async (work) => {
+      const result = await work(connection);
+      reachedCommit();
+      await commitGate;
+      committedVersion = pendingVersion;
+      return result;
+    });
+    const repository = new IdentityMutesDb(
+      () =>
+        ({
+          execute,
+          bulkInsert: jest.fn().mockResolvedValue(undefined),
+          executeNativeQueriesInTransaction: transaction
+        }) as unknown as SqlExecutor
+    );
+    identityMutesDb[method].mockImplementation((pair, context) =>
+      repository[method](pair, context)
+    );
+    wavesApiDb.findDmUnreadConversationStates.mockImplementation(async () => [
+      { ...dmUnreadState, version: committedVersion }
+    ]);
+    const update = service[method]('muted-handle', ctx as never);
+    try {
+      await committing;
+      expect(wavesApiDb.findDmUnreadConversationStates).not.toHaveBeenCalled();
+      expect(
+        wsListenersNotifier.notifyAboutDmUnreadStateChanged
+      ).not.toHaveBeenCalled();
+    } finally {
+      releaseCommit();
+    }
+    await update;
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(wavesApiDb.findDmUnreadConversationStates).toHaveBeenCalledWith(
+      {
+        identityId: 'muter-1',
+        eligibleGroups: ['visible-dm-group'],
+        waveIds: ['wave-1']
+      },
+      ctx,
+      DbPoolName.WRITE
+    );
+    expect(
+      wsListenersNotifier.notifyAboutDmUnreadStateChanged
+    ).toHaveBeenCalledWith(
+      [{ ...dmUnreadState, version: 5 }],
+      [{ connectionId: 'connection-1', identityId: 'muter-1' }]
+    );
+  }
+);
+
 const originalNodeEnvironment = process.env.NODE_ENV;
 beforeEach(() => {
   process.env.NODE_ENV = 'test';
