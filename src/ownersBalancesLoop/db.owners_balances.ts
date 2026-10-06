@@ -155,6 +155,19 @@ export async function persistOwnerBalances(
   }
 }
 
+async function fetchPersistedConsolidationKeys(
+  repository: Repository<
+    ConsolidatedOwnerBalances | ConsolidatedOwnerBalancesMemes
+  >
+): Promise<string[]> {
+  const rows = await repository
+    .createQueryBuilder('balances')
+    .select('balances.consolidation_key', 'consolidation_key')
+    .distinct(true)
+    .getRawMany<{ consolidation_key: string }>();
+  return rows.map((row) => row.consolidation_key);
+}
+
 export async function persistConsolidatedOwnerBalances(
   consolidatedOwnerBalances: ConsolidatedOwnerBalances[],
   consolidatedOwnerBalancesMemes: ConsolidatedOwnerBalancesMemes[],
@@ -170,13 +183,18 @@ export async function persistConsolidatedOwnerBalances(
       ...Array.from(deleteDelta)
     ])
   );
-  const changedSubscriptionKeys = await getDataSource().transaction(
+  const subscriptionKeysToInvalidate = await getDataSource().transaction(
     async (manager) => {
       const balancesRepo = manager.getRepository(ConsolidatedOwnerBalances);
       const balancesMemesRepo = manager.getRepository(
         ConsolidatedOwnerBalancesMemes
       );
+      let previousConsolidationKeys: string[] = [];
       if (reset) {
+        previousConsolidationKeys = [
+          ...(await fetchPersistedConsolidationKeys(balancesRepo)),
+          ...(await fetchPersistedConsolidationKeys(balancesMemesRepo))
+        ];
         logger.info(`[RESETTING CONSOLIDATED OWNER BALANCES...]`);
         await deleteAll(balancesRepo);
         await deleteAll(balancesMemesRepo);
@@ -197,7 +215,7 @@ export async function persistConsolidatedOwnerBalances(
       );
       logger.info({ message: '[CONSOLIDATED OWNER BALANCES PERSISTED]' });
 
-      if (reset) return [];
+      if (reset) return previousConsolidationKeys;
       return synchronizeAutomaticSubscriptionQuantities(
         affectedSubscriptionKeys,
         { connection: { connection: manager }, timer: undefined }
@@ -208,7 +226,7 @@ export async function persistConsolidatedOwnerBalances(
   // balances after commit even when no automatic quantity needed a write.
   await invalidateUpcomingSubscriptionCaches(
     Array.from(
-      new Set([...affectedSubscriptionKeys, ...changedSubscriptionKeys])
+      new Set([...affectedSubscriptionKeys, ...subscriptionKeysToInvalidate])
     )
   );
   if (reset) {

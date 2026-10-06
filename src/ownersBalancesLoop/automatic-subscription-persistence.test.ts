@@ -32,11 +32,35 @@ jest.mock('@/subscription-coverage/subscription-coverage-dirty', () => ({
 
 const synchronize = jest.mocked(synchronizeAutomaticSubscriptionQuantities);
 const invalidate = jest.mocked(invalidateUpcomingSubscriptionCaches);
-const manager = { getRepository: jest.fn(() => ({})) };
+function mockKeyQuery() {
+  return {
+    select: jest.fn().mockReturnThis(),
+    distinct: jest.fn().mockReturnThis(),
+    getRawMany: jest.fn<Promise<{ consolidation_key: string }[]>, []>()
+  };
+}
+const balancesKeyQuery = mockKeyQuery();
+const memesKeyQuery = mockKeyQuery();
+const manager = {
+  getRepository: jest.fn(
+    (
+      entity:
+        | typeof ConsolidatedOwnerBalances
+        | typeof ConsolidatedOwnerBalancesMemes
+    ) => ({
+      createQueryBuilder: jest.fn(() =>
+        entity === ConsolidatedOwnerBalances ? balancesKeyQuery : memesKeyQuery
+      )
+    })
+  )
+};
 let events: string[];
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(deleteAll).mockReset();
+  balancesKeyQuery.getRawMany.mockReset().mockResolvedValue([]);
+  memesKeyQuery.getRawMany.mockReset().mockResolvedValue([]);
   jest.mocked(synchronizeAutomaticSubscriptionQuantitiesAfterReset).mockReset();
   events = [];
   (getDataSource as jest.Mock).mockReturnValue({
@@ -111,12 +135,74 @@ it('commits the balance reset before starting the separately paged quantity reco
 });
 
 it('evicts committed reset eligibility even when a later quantity page fails', async () => {
+  balancesKeyQuery.getRawMany.mockResolvedValueOnce([
+    { consolidation_key: 'removed' }
+  ]);
   jest
     .mocked(synchronizeAutomaticSubscriptionQuantitiesAfterReset)
     .mockRejectedValueOnce(new Error('page failed'));
   await expect(
     persistConsolidatedOwnerBalances([], [], new Set(['manual']), true)
   ).rejects.toThrow('page failed');
-  expect(invalidate).toHaveBeenCalledWith(['manual']);
+  expect(invalidate).toHaveBeenCalledWith(['manual', 'removed']);
   expect(events).toEqual(['commit', 'evict']);
+});
+
+it('captures removed reset keys from both tables before deletion and evicts them after commit', async () => {
+  balancesKeyQuery.getRawMany.mockImplementationOnce(async () => {
+    events.push('read-balances');
+    return [
+      { consolidation_key: 'removed' },
+      { consolidation_key: 'retained' }
+    ];
+  });
+  memesKeyQuery.getRawMany.mockImplementationOnce(async () => {
+    events.push('read-memes');
+    return [
+      { consolidation_key: 'meme-only-removed' },
+      { consolidation_key: 'removed' }
+    ];
+  });
+  jest.mocked(deleteAll).mockImplementation(async () => {
+    events.push('delete');
+  });
+  const balance = new ConsolidatedOwnerBalances();
+  balance.consolidation_key = 'retained';
+  await persistConsolidatedOwnerBalances([balance], [], new Set(), true);
+  for (const query of [balancesKeyQuery, memesKeyQuery]) {
+    expect(query.select).toHaveBeenCalledWith(
+      'balances.consolidation_key',
+      'consolidation_key'
+    );
+    expect(query.distinct).toHaveBeenCalledWith(true);
+  }
+  expect(invalidate).toHaveBeenCalledWith([
+    'retained',
+    'removed',
+    'meme-only-removed'
+  ]);
+  expect(events).toEqual([
+    'read-balances',
+    'read-memes',
+    'delete',
+    'delete',
+    'commit',
+    'evict'
+  ]);
+  expect(synchronize).not.toHaveBeenCalled();
+});
+
+it('does not evict previously persisted keys when the reset transaction fails', async () => {
+  balancesKeyQuery.getRawMany.mockResolvedValueOnce([
+    { consolidation_key: 'removed' }
+  ]);
+  jest.mocked(deleteAll).mockRejectedValueOnce(new Error('reset failed'));
+  await expect(
+    persistConsolidatedOwnerBalances([], [], new Set(), true)
+  ).rejects.toThrow('reset failed');
+  expect(invalidate).not.toHaveBeenCalled();
+  expect(
+    synchronizeAutomaticSubscriptionQuantitiesAfterReset
+  ).not.toHaveBeenCalled();
+  expect(events).toEqual([]);
 });
