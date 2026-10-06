@@ -1353,6 +1353,16 @@ Help6529 daily activity credits use the same durable handoff shape. Drop creatio
 
 The zero-downtime rollout order is mandatory: deploy `dbMigrationsLoop` first to create the request table and indexes, deploy `helpBotReplyLoop` second to create the queue and worker, and deploy `api` last to begin inserting requests and publishing wakeups. Follow the same `dbMigrationsLoop -> helpBotReplyLoop -> api` dependency chain when dispatching the services.
 
+Upcoming automatic subscription quantities are synchronized in the same primary
+DB transaction as consolidated owner balances (including resets). Only subscribed
+Meme rows marked `automatic_subscription`, with both Automatic and All eligible
+mode enabled, receive the normalized current-season eligibility count. Guarded
+updates recheck those flags at write time and preserve subscription-priority
+timestamps; manual quantities and finalized allocation tables are untouched.
+Mode and edition-preference changes invoke the same sync within their API/top-up
+transaction. The owner-balance and top-up writers invalidate upcoming subscription
+caches after commit; API settings writes retain their existing cache invalidation.
+
 Subscription coverage uses a DB-backed scheduled reconciliation pattern without
 a cross-service dirty-event queue. Top-up, redemption, subscription
 preference/selection, daily finalization, and consolidated eligibility writes

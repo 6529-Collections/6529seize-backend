@@ -16,6 +16,8 @@ import {
   resetRepository
 } from '../orm_helpers';
 import { markSubscriptionCoverageDirtyForDemonstratedIntent } from '../subscription-coverage/subscription-coverage-dirty';
+import { synchronizeAutomaticSubscriptionQuantities } from '@/subscriptionsDaily/subscription-quantity-sync.db';
+import { invalidateUpcomingSubscriptionCaches } from '@/subscriptionsDaily/subscription-cache';
 
 const logger = Logger.get('DB_OWNER_BALANCES');
 
@@ -156,50 +158,47 @@ export async function persistConsolidatedOwnerBalances(
   deleteDelta: Set<string>,
   reset: boolean
 ) {
-  if (reset) {
-    logger.info(`[RESETTING CONSOLIDATED OWNER BALANCES...]`);
-    const balancesRepo = getDataSource().getRepository(
-      ConsolidatedOwnerBalances
-    );
-    const balancesMemesRepo = getDataSource().getRepository(
-      ConsolidatedOwnerBalancesMemes
-    );
-    await deleteAll(balancesRepo);
-    await insertWithoutUpdate(balancesRepo, consolidatedOwnerBalances);
-    await deleteAll(balancesMemesRepo);
-    await insertWithoutUpdate(
-      balancesMemesRepo,
-      consolidatedOwnerBalancesMemes
-    );
-    logger.info(
-      `[INSERTED ${consolidatedOwnerBalances.length} CONSOLIDATED OWNER BALANCES]`
-    );
-  } else {
-    await getDataSource().transaction(async (manager) => {
+  const changedSubscriptionKeys = await getDataSource().transaction(
+    async (manager) => {
       const balancesRepo = manager.getRepository(ConsolidatedOwnerBalances);
       const balancesMemesRepo = manager.getRepository(
         ConsolidatedOwnerBalancesMemes
       );
-
-      const deleted = await deleteConsolidations(balancesRepo, deleteDelta);
-      const deletedMemes = await deleteConsolidations(
-        balancesMemesRepo,
-        deleteDelta
-      );
-      logger.info(
-        `[DELETED ${deleted} CONSOLIDATED NFT BALANCES] : [DELETED ${deletedMemes} CONSOLIDATED NFT BALANCES MEMES]`
-      );
+      if (reset) {
+        logger.info(`[RESETTING CONSOLIDATED OWNER BALANCES...]`);
+        await deleteAll(balancesRepo);
+        await deleteAll(balancesMemesRepo);
+      } else {
+        const deleted = await deleteConsolidations(balancesRepo, deleteDelta);
+        const deletedMemes = await deleteConsolidations(
+          balancesMemesRepo,
+          deleteDelta
+        );
+        logger.info(
+          `[DELETED ${deleted} CONSOLIDATED NFT BALANCES] : [DELETED ${deletedMemes} CONSOLIDATED NFT BALANCES MEMES]`
+        );
+      }
       await insertWithoutUpdate(balancesRepo, consolidatedOwnerBalances);
       await insertWithoutUpdate(
         balancesMemesRepo,
         consolidatedOwnerBalancesMemes
       );
+      logger.info({ message: '[CONSOLIDATED OWNER BALANCES PERSISTED]' });
 
-      logger.info({
-        message: '[CONSOLIDATED OWNER BALANCES PERSISTED]'
-      });
-    });
-  }
+      return synchronizeAutomaticSubscriptionQuantities(
+        reset
+          ? undefined
+          : [
+              ...consolidatedOwnerBalances.map(
+                (balance) => balance.consolidation_key
+              ),
+              ...Array.from(deleteDelta)
+            ],
+        { connection: { connection: manager }, timer: undefined }
+      );
+    }
+  );
+  await invalidateUpcomingSubscriptionCaches(changedSubscriptionKeys);
   await markSubscriptionCoverageDirtyForDemonstratedIntent(
     [
       ...consolidatedOwnerBalances.map((balance) => balance.consolidation_key),
