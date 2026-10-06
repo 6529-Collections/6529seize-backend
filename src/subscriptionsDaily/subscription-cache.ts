@@ -34,7 +34,10 @@ export async function invalidateUpcomingSubscriptionCaches(
 }
 
 async function evictPath(path: string): Promise<void> {
-  const result = await evictRedisCacheForPathWithTimeout({ path });
+  const result = await evictRedisCacheForPathWithTimeout({
+    path,
+    singleKeyDeletes: true
+  });
   if (!result.success) {
     logger.warn('Failed to invalidate subscription cache', {
       path,

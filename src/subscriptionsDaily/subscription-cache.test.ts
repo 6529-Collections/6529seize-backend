@@ -25,6 +25,7 @@ it('invalidates quantities, eligibility, status and aggregates for changed profi
     '/api/subscriptions/consolidation/upcoming-memes/*/other'
   ]);
   expect(Time.prototype.sleep).toHaveBeenCalledTimes(1);
+  expect(evict.mock.calls.every(([args]) => args.singleKeyDeletes)).toBe(true);
   expect(
     jest.mocked(Time.prototype.sleep).mock.invocationCallOrder[0]
   ).toBeLessThan(evict.mock.invocationCallOrder[0]);

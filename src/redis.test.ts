@@ -122,6 +122,40 @@ describe('redis cache eviction helpers', () => {
     ]);
   });
 
+  it('evicts subscription query variants across hash slots with single-key deletes', async () => {
+    const keys = [
+      '__SEIZE_CACHE_test__/api/subscriptions/consolidation/upcoming-memes/wallet',
+      '__SEIZE_CACHE_test__/api/subscriptions/consolidation/upcoming-memes/wallet?card_count=37'
+    ];
+    const del = jest.fn().mockImplementation(async (key) => {
+      if (Array.isArray(key)) {
+        throw new Error(
+          "CROSSSLOT Keys in request don't hash to the same slot"
+        );
+      }
+      return 1;
+    });
+    const { scan } = mockRedisClient({
+      scan: jest.fn().mockResolvedValue({ cursor: '0', keys }),
+      del
+    });
+    const redisModule = await import('./redis');
+    await redisModule.initRedis();
+
+    const result = await redisModule.evictRedisCacheForPathWithTimeout({
+      path: '/api/subscriptions/consolidation/upcoming-memes/wallet',
+      singleKeyDeletes: true
+    });
+
+    expect(result.success).toBe(true);
+    expect(scan).toHaveBeenCalledWith(0, {
+      MATCH:
+        '__SEIZE_CACHE_test__/api/subscriptions/consolidation/upcoming-memes/wallet*',
+      COUNT: 1000
+    });
+    expect(del.mock.calls.map(([key]) => key)).toEqual(keys);
+  });
+
   it('evictRedisCacheForPathWithTimeout returns scan errors', async () => {
     const scanError = new Error('scan failed');
     const { connect } = mockRedisClient({

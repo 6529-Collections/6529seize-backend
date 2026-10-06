@@ -81,6 +81,7 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
           logger.warn(
             `Error setting subscription mode to auto-subscribe for ${consolidationKey}: ${e}`
           );
+          throw e;
         }
       }
       dirtyConsolidationKeys.add(consolidationKey);
