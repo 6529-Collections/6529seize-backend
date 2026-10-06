@@ -546,11 +546,41 @@ Background Lambdas that read or write application state use a shared `doInDbCont
 
 MySQL is the integration contract between nearly all modules. API routes, scheduled pollers, queue workers, and derived-data loops all read and write shared tables. Redis is secondary and mostly disposable: API request cache, rate limiting, webhook dedupe, locks, and selected feature caches can fail open or be repopulated from MySQL.
 
+### Session refresh recovery
+
+`POST /api/auth/session-refresh` uses a separate Redis rate-limit namespace.
+Its defaults are 90 requests per second for bursts and 30 requests per second
+across a 10-second window, configured by `API_RATE_LIMIT_REFRESH_BURST`,
+`API_RATE_LIMIT_REFRESH_SUSTAINED_RPS`, and
+`API_RATE_LIMIT_REFRESH_SUSTAINED_WINDOW_SECONDS`. The network identity remains
+the rate-limit key; client-supplied addresses do not create new allowances.
+Credentialed auth responses preserve their allowed origin on 429 and expose
+`Retry-After` for browser recovery.
+
+Native/desktop refresh accepts an optional UUID `refresh_request_id`. Clients
+persist it with the old credential before sending a refresh, then reuse the
+pair after an interrupted response. The API derives the successor with a
+server-keyed HMAC and atomically rotates the existing stored hash. A duplicate
+can recover only that immediate successor while the session remains active;
+it does not rotate again or extend expiry. A different request ID, another
+client type/address, revocation, expiry, or a later rotation prevents recovery.
+Legacy clients without the request ID retain only a 30-second race-recovery
+window. No raw token or request ID is stored server-side and no schema changes
+are needed. Deploy `api` before the frontend, whose native request body adds
+this optional field. Existing frontend clients remain compatible with the new
+API. Once new clients are deployed, retain this API contract during rollback.
+Keep `AUTH_SESSION_HASH_SECRET` (or its existing JWT-secret fallback) stable
+through rollout and rollback: both stored session hashes and recovery derivation
+depend on it. Rotating that secret invalidates existing session proofs; it is
+not part of this release. Recovery deliberately stops at the rotated session's
+expiry and never extends it. The legacy 30-second allowance starts at the
+successful rotation's `last_used_at`; repeated recovery does not reset it.
+
 ## Main Data Flows
 
 1. Client requests enter through API Gateway and land in `seizeAPI`.
 2. The API validates input, authenticates JWT or anonymous context, reads/writes MySQL, uses Redis for cache/rate limiting, and sometimes publishes SQS work.
-3. Scheduled ingestion Lambdas poll Ethereum/RPC/Alchemy/Etherscan, normalize chain state, and write canonical rows into MySQL.
+3. Scheduled ingestion Lambdas poll Ethereum/RPC/Alchemy, normalize chain state, and write canonical rows into MySQL. NextGen's `addRandomizer` history entries optionally enrich the contract address with a name from the public Sourcify V2 API on the configured NextGen chain. The lookup needs no API key, has a five-second timeout, and falls back to the address on unavailable or malformed responses; enrichment failures do not stop indexing.
 4. Derived-data Lambdas read canonical tables and write projections such as TDH, owner balances, aggregated activity, wave decisions, leaderboards, metrics, and reputation aggregates.
 5. SQS workers handle slow or retryable side effects through named queues: claim building, claim media Arweave uploads, S3 media mirroring, attachment orchestration/processing, NFT link resolution/previews, xTDH recalculation, Wave Score dirty refreshes, and notification delivery through Firebase plus recipient-scoped WebSocket invalidations.
 
@@ -755,6 +785,11 @@ needed for normalization preserve exact integer strings.
 The API exposes currency-specific quoted depth for an individual token and a
 merged feed of canonical transactions and market actions. Quoted quantities can
 share inventory or funding and are not a verified executable security budget.
+The activity feed uses the read replica, including partition discovery and
+history metadata. Token activity selects bounded token and collection-event
+pages separately using the existing token/time index, then merges their IDs
+before fetching public event fields. Order-book snapshots, critical partition
+discovery and order-status validation continue to use the writer.
 See the [market depth runbook](../ops/runbooks/market-depth.md) for interpretation,
 provider limitations, deployment order and verification.
 
@@ -1501,6 +1536,17 @@ flowchart TD
 
 Important details:
 
+- Minting-claim action tracking accepts authenticated `CLAIMS_ADMIN_WALLETS`
+  or the mainnet Memes creator's owner/on-chain admins. Each non-configured
+  caller is checked with `isAdmin(wallet)` on the fixed Memes creator contract
+  using the existing mainnet RPC provider. Approval results are not cached
+  across requests. False results return 403; failed, malformed, wrong-network,
+  or timed-out reads return 503 without reading or mutating action state.
+  Configured claims admins do not depend on RPC availability. Unsupported
+  contracts remain rejected; Sepolia action tracking is not added. This changes
+  only the `api` authorization boundary, not craft permissions, stored action
+  shapes, contract authority, or any queue/worker. Deploy `api` before the
+  matching frontend; no other Lambda or migration is needed for this change.
 - `claims-builder` messages are produced by `waveDecisionExecutionLoop` after the wave decision has been committed. If enqueueing fails, the decision remains committed and a priority alert is sent.
 - `claimsBuilder` consumes `{ drop_id }`, then calls the minting-claim service to create the missing claim from the winning drop.
 - `claims-media-arweave-upload` messages are produced by the API only after the claim row is locked with `media_uploading=true`.
@@ -1676,8 +1722,15 @@ The strongest part of the architecture is its operational decomposition. Expensi
 
 Operational error delivery is a separate account-owned runtime under
 `ops/monitoring`, with its own dependency graph and OIDC deployment. Backend
-metadata-only stdout, a source-account CloudWatch Logs relay, source CloudWatch
+allowlisted diagnostic stdout, a source-account CloudWatch Logs relay, source CloudWatch
 alarm forwarding and signed Sentry ingress feed separate normal/critical queues.
+The optional application diagnostic carries a fixed failure category, operation,
+safe resource and provider/status fields, and retry state only when the retry
+owner explicitly supplies it. The monitoring parser revalidates those fields;
+legacy events stay red with unknown recovery. Five-minute grouping separates
+different validated causes and retry states even when producers share a generic
+fingerprint. NFT required-page 404 backoff records future eligibility but has no
+guaranteed scheduler, so it remains red without a pending-retry claim.
 Monitoring-owned dispatchers confirm webhook delivery, deduplicate with DynamoDB
 receipts and archive exhausted/permanent failures in S3. Grouped errors retain
 five-minute fingerprint windows, and critical/recovery events bypass grouping.

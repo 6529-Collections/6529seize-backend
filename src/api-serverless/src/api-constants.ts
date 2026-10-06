@@ -77,7 +77,9 @@ export function getCorsOptionsForRequest(
       allowedHeaders: [...corsOptions.allowedHeaders, 'Idempotency-Key']
     };
   }
-  if (!WEB_AUTH_CREDENTIAL_ROUTE_PATHS.has(path)) {
+  if (
+    !WEB_AUTH_CREDENTIAL_ROUTE_PATHS.has(path.replace(/\/$/, '').toLowerCase())
+  ) {
     return corsOptions;
   }
 
@@ -89,7 +91,8 @@ export function getCorsOptionsForRequest(
   return {
     ...corsOptions,
     origin,
-    credentials: true
+    credentials: true,
+    exposedHeaders: ['Retry-After', 'X-RateLimit-Reset']
   };
 }
 

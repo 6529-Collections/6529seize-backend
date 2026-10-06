@@ -3,6 +3,7 @@ const mockRouterPost = jest.fn();
 const createWebSessionMock = jest.fn();
 const createNativeSessionMock = jest.fn();
 const refreshWebSessionForAddressMock = jest.fn();
+const refreshNativeSessionMock = jest.fn();
 const getProfileIdByIdentityKeyMock = jest.fn();
 
 jest.mock('../async.router', () => ({
@@ -35,7 +36,7 @@ jest.mock('./auth-session-v2', () => ({
   logoutNativeSession: jest.fn(),
   logoutWebSession: jest.fn(),
   redeemConnectionShare: jest.fn(),
-  refreshNativeSession: jest.fn(),
+  refreshNativeSession: refreshNativeSessionMock,
   refreshWebSessionForAddress: refreshWebSessionForAddressMock
 }));
 
@@ -324,6 +325,50 @@ describe('wallet auth SIWE routes', () => {
       token_expiry: 123
     });
   });
+
+  it.each(['', 'not-a-uuid', 'c2301a36-a25d-12a1-8117-3ab72e670cc6'])(
+    'rejects invalid native refresh request ID %j before token lookup',
+    async (refreshRequestId) => {
+      await expect(
+        sessionRefreshHandler(
+          makeRequest({
+            body: {
+              client_type: 'native',
+              client_address: wallet.address,
+              native_refresh_token: 'a'.repeat(128),
+              refresh_request_id: refreshRequestId
+            }
+          }),
+          makeResponse()
+        )
+      ).rejects.toThrow();
+      expect(refreshNativeSessionMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([undefined, 'c2301a36-a25d-42a1-8117-3ab72e670cc6'])(
+    'accepts native refresh with optional request ID %j',
+    async (refreshRequestId) => {
+      refreshNativeSessionMock.mockResolvedValueOnce({ response: {} });
+      await sessionRefreshHandler(
+        makeRequest({
+          body: {
+            client_type: 'native',
+            client_address: wallet.address,
+            native_refresh_token: 'a'.repeat(128),
+            refresh_request_id: refreshRequestId
+          }
+        }),
+        makeResponse()
+      );
+      expect(refreshNativeSessionMock).toHaveBeenCalledWith({
+        address: wallet.address,
+        nativeRefreshToken: 'a'.repeat(128),
+        clientType: 'native',
+        refreshRequestId
+      });
+    }
+  );
 
   it('does not clear browser cookies when a web session refresh is invalid', async () => {
     refreshWebSessionForAddressMock.mockResolvedValueOnce(null);

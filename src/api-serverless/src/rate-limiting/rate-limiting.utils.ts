@@ -16,6 +16,7 @@ export function getRateLimitConfig(): {
   enabled: boolean;
   authenticated: RateLimitConfig;
   unauthenticated: RateLimitConfig;
+  sessionRefresh: RateLimitConfig;
   internal: {
     enabled: boolean;
     clientId: string | null;
@@ -52,6 +53,14 @@ export function getRateLimitConfig(): {
         env.getIntOrNull('API_RATE_LIMIT_UNAUTH_SUSTAINED_RPS') ?? 10,
       sustainedWindowSeconds:
         env.getIntOrNull('API_RATE_LIMIT_UNAUTH_SUSTAINED_WINDOW_SECONDS') ?? 60
+    },
+    sessionRefresh: {
+      burst: env.getIntOrNull('API_RATE_LIMIT_REFRESH_BURST') ?? 90,
+      sustainedRps:
+        env.getIntOrNull('API_RATE_LIMIT_REFRESH_SUSTAINED_RPS') ?? 30,
+      sustainedWindowSeconds:
+        env.getIntOrNull('API_RATE_LIMIT_REFRESH_SUSTAINED_WINDOW_SECONDS') ??
+        10
     },
     internal: {
       enabled: internalEnabled,

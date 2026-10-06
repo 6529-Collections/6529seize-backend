@@ -6,7 +6,11 @@ import {
 } from 'winston';
 
 import { loggerContext } from './logger-context';
-import { OperationalCondition, operationalError } from './operational-errors';
+import {
+  OperationalCondition,
+  OperationalDiagnostic,
+  operationalError
+} from './operational-errors';
 
 const { combine, timestamp, printf, errors, splat } = format;
 
@@ -129,6 +133,24 @@ export class Logger {
     if (this.isLevelEnabled('ERROR')) {
       getWinstonInstance(this.name).error(arg1, ...rest);
     }
+  }
+
+  /** Explicit retry state is supplied by the code that owns the retry. */
+  errorWithDiagnostic(
+    diagnostic: OperationalDiagnostic,
+    arg1: string,
+    ...rest: unknown[]
+  ) {
+    operationalError(
+      this.name,
+      [arg1, ...rest],
+      loggerContext.get()?.requestId,
+      'APPLICATION_ERROR',
+      undefined,
+      diagnostic
+    );
+    if (this.isLevelEnabled('ERROR'))
+      getWinstonInstance(this.name).error(arg1, ...rest);
   }
 
   private isLevelEnabled(level: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR'): boolean {
