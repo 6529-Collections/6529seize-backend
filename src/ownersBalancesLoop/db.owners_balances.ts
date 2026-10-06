@@ -16,7 +16,10 @@ import {
   resetRepository
 } from '../orm_helpers';
 import { markSubscriptionCoverageDirtyForDemonstratedIntent } from '../subscription-coverage/subscription-coverage-dirty';
-import { synchronizeAutomaticSubscriptionQuantities } from '@/subscriptionsDaily/subscription-quantity-sync.db';
+import {
+  synchronizeAutomaticSubscriptionQuantities,
+  synchronizeAutomaticSubscriptionQuantitiesAfterReset
+} from '@/subscriptionsDaily/subscription-quantity-sync.db';
 import { invalidateUpcomingSubscriptionCaches } from '@/subscriptionsDaily/subscription-cache';
 
 const logger = Logger.get('DB_OWNER_BALANCES');
@@ -185,20 +188,23 @@ export async function persistConsolidatedOwnerBalances(
       );
       logger.info({ message: '[CONSOLIDATED OWNER BALANCES PERSISTED]' });
 
+      if (reset) return [];
       return synchronizeAutomaticSubscriptionQuantities(
-        reset
-          ? undefined
-          : [
-              ...consolidatedOwnerBalances.map(
-                (balance) => balance.consolidation_key
-              ),
-              ...Array.from(deleteDelta)
-            ],
+        [
+          ...consolidatedOwnerBalances.map(
+            (balance) => balance.consolidation_key
+          ),
+          ...Array.from(deleteDelta)
+        ],
         { connection: { connection: manager }, timer: undefined }
       );
     }
   );
-  await invalidateUpcomingSubscriptionCaches(changedSubscriptionKeys);
+  if (reset) {
+    await synchronizeAutomaticSubscriptionQuantitiesAfterReset();
+  } else {
+    await invalidateUpcomingSubscriptionCaches(changedSubscriptionKeys);
+  }
   await markSubscriptionCoverageDirtyForDemonstratedIntent(
     [
       ...consolidatedOwnerBalances.map((balance) => balance.consolidation_key),

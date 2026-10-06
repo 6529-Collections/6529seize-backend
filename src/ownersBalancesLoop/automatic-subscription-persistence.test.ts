@@ -1,5 +1,8 @@
 import { getDataSource } from '@/db';
-import { synchronizeAutomaticSubscriptionQuantities } from '@/subscriptionsDaily/subscription-quantity-sync.db';
+import {
+  synchronizeAutomaticSubscriptionQuantities,
+  synchronizeAutomaticSubscriptionQuantitiesAfterReset
+} from '@/subscriptionsDaily/subscription-quantity-sync.db';
 import { invalidateUpcomingSubscriptionCaches } from '@/subscriptionsDaily/subscription-cache';
 import { deleteAll } from '@/orm_helpers';
 import { persistConsolidatedOwnerBalances } from './db.owners_balances';
@@ -13,7 +16,8 @@ jest.mock('@/orm_helpers', () => ({
   resetRepository: jest.fn()
 }));
 jest.mock('@/subscriptionsDaily/subscription-quantity-sync.db', () => ({
-  synchronizeAutomaticSubscriptionQuantities: jest.fn()
+  synchronizeAutomaticSubscriptionQuantities: jest.fn(),
+  synchronizeAutomaticSubscriptionQuantitiesAfterReset: jest.fn()
 }));
 jest.mock('@/subscriptionsDaily/subscription-cache', () => ({
   invalidateUpcomingSubscriptionCaches: jest.fn()
@@ -65,12 +69,18 @@ it('does not evict or publish successful persistence after a failed synchronizat
   expect(invalidate).not.toHaveBeenCalled();
 });
 
-it('reconciles all automatic quantities after a full balance reset in the same transaction', async () => {
+it('commits the balance reset before starting the separately paged quantity reconciliation', async () => {
+  jest
+    .mocked(synchronizeAutomaticSubscriptionQuantitiesAfterReset)
+    .mockImplementation(async () => {
+      events.push('reset-sync');
+    });
   await persistConsolidatedOwnerBalances([], [], new Set(), true);
   expect(deleteAll).toHaveBeenCalledTimes(2);
-  expect(synchronize).toHaveBeenCalledWith(undefined, {
-    connection: { connection: manager },
-    timer: undefined
-  });
-  expect(events).toEqual(['sync', 'commit', 'evict']);
+  expect(synchronize).not.toHaveBeenCalled();
+  expect(
+    synchronizeAutomaticSubscriptionQuantitiesAfterReset
+  ).toHaveBeenCalledTimes(1);
+  expect(invalidate).not.toHaveBeenCalled();
+  expect(events).toEqual(['commit', 'reset-sync']);
 });

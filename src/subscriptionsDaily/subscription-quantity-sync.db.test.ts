@@ -16,7 +16,11 @@ import {
   updateSubscribeAllEditions,
   fetchUpcomingMemeSubscriptions
 } from '@/api/subscriptions/api.subscriptions.db';
-import { synchronizeAutomaticSubscriptionQuantities } from './subscription-quantity-sync.db';
+import {
+  synchronizeAutomaticSubscriptionQuantities,
+  synchronizeAutomaticSubscriptionQuantitiesAfterReset
+} from './subscription-quantity-sync.db';
+import { invalidateUpcomingSubscriptionCaches } from './subscription-cache';
 import { resolveRequestedSubscriptionCount } from './subscriptions';
 
 jest.mock('@/nftsLoop/db.nfts', () => ({
@@ -24,6 +28,9 @@ jest.mock('@/nftsLoop/db.nfts', () => ({
 }));
 jest.mock('@/subscription-coverage/subscription-coverage-dirty', () => ({
   markSubscriptionCoverageDirty: jest.fn()
+}));
+jest.mock('./subscription-cache', () => ({
+  invalidateUpcomingSubscriptionCaches: jest.fn()
 }));
 
 const timestamp = '2026-09-01 12:00:00';
@@ -77,6 +84,17 @@ async function setEligibility(sets: number) {
       timer: undefined
     });
   });
+}
+
+async function addSubscriptionPages() {
+  const rows = Array.from({ length: 501 }, (_, index) =>
+    automaticRow(1000 + index)
+  );
+  await sqlExecutor.bulkInsert(
+    SUBSCRIPTIONS_NFTS_TABLE,
+    rows,
+    Object.keys(rows[0])
+  );
 }
 
 describeWithSeed(
@@ -166,6 +184,73 @@ describeWithSeed(
   ],
   () => {
     afterEach(() => jest.restoreAllMocks());
+    beforeEach(() =>
+      jest.mocked(invalidateUpcomingSubscriptionCaches).mockReset()
+    );
+
+    it('bounds subscription and eligibility reads even when one consolidation has more than 500 future cards', async () => {
+      await addSubscriptionPages();
+      const execute = sqlExecutor.execute.bind(sqlExecutor);
+      const pageSizes: number[] = [];
+      jest
+        .spyOn(sqlExecutor, 'execute')
+        .mockImplementation(async (sql, params, options) => {
+          const rows = await execute(sql, params, options);
+          if (sql.startsWith('SELECT subscription.id'))
+            pageSizes.push(rows.length);
+          return rows;
+        });
+      expect(await sync(['auto'])).toEqual(['auto']);
+      expect(pageSizes).toEqual([500, 2]);
+      expect((await saved(1500))?.subscribed_count).toBe(24);
+      expect((await saved(600))?.subscribed_count).toBe(11);
+    });
+
+    it('reconciles reset pages in separate transactions and evicts each only after commit', async () => {
+      await addSubscriptionPages();
+      const transaction = jest.spyOn(
+        sqlExecutor,
+        'executeNativeQueriesInTransaction'
+      );
+      jest
+        .mocked(invalidateUpcomingSubscriptionCaches)
+        .mockImplementation(async () => {
+          // This read uses another connection, so it cannot see an uncommitted write.
+          expect((await saved(557))?.subscribed_count).toBe(24);
+        });
+      await synchronizeAutomaticSubscriptionQuantitiesAfterReset();
+      expect(transaction).toHaveBeenCalledTimes(2);
+      expect(invalidateUpcomingSubscriptionCaches).toHaveBeenCalledTimes(2);
+      expect((await saved(1500))?.subscribed_count).toBe(24);
+      expect((await saved(600))?.subscribed_count).toBe(11);
+    });
+
+    it('rolls back a failed reset page, retains eviction of committed pages, and safely retries the sweep', async () => {
+      await addSubscriptionPages();
+      const execute = sqlExecutor.execute.bind(sqlExecutor);
+      let updates = 0;
+      const spy = jest
+        .spyOn(sqlExecutor, 'execute')
+        .mockImplementation(async (sql, params, options) => {
+          if (
+            sql.startsWith(`UPDATE ${SUBSCRIPTIONS_NFTS_TABLE} subscription`) &&
+            ++updates === 2
+          ) {
+            throw new Error('page failed');
+          }
+          return execute(sql, params, options);
+        });
+      await expect(
+        synchronizeAutomaticSubscriptionQuantitiesAfterReset()
+      ).rejects.toThrow('page failed');
+      expect(invalidateUpcomingSubscriptionCaches).toHaveBeenCalledTimes(1);
+      expect((await saved(557))?.subscribed_count).toBe(24);
+      expect((await saved(1500))?.subscribed_count).toBe(11);
+      spy.mockRestore();
+      await synchronizeAutomaticSubscriptionQuantitiesAfterReset();
+      expect((await saved(1500))?.subscribed_count).toBe(24);
+      expect((await saved(600))?.subscribed_count).toBe(11);
+    });
 
     it('updates 11 to 24 in the upcoming API while preserving manual future cards and final allocations', async () => {
       const before = await saved(557);
