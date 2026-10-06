@@ -21,12 +21,12 @@ interface AutomaticSubscriptionQuantity {
 
 /** Reconcile a committed reset in bounded transactions, evicting each committed page. */
 export async function synchronizeAutomaticSubscriptionQuantitiesAfterReset(
-  ctx: RequestContext = { timer: undefined }
+  ctx?: RequestContext
 ): Promise<void> {
-  if (ctx.connection)
+  if (ctx?.connection)
     throw new Error('Reset reconciliation must run after commit');
   const timerName = 'synchronizeAutomaticSubscriptionQuantitiesAfterReset';
-  ctx.timer?.start(timerName);
+  ctx?.timer?.start(timerName);
   try {
     const maxMemeId = await getMaxMemeId(true, { forcePool: DbPoolName.WRITE });
     let afterId = 0;
@@ -46,10 +46,10 @@ export async function synchronizeAutomaticSubscriptionQuantitiesAfterReset(
       );
       await invalidateUpcomingSubscriptionCaches(page.changedKeys);
       if (page.subscriptions.length < BATCH_SIZE) return;
-      afterId = page.subscriptions[page.subscriptions.length - 1].id;
+      afterId = page.subscriptions.at(-1)!.id;
     }
   } finally {
-    ctx.timer?.stop(timerName);
+    ctx?.timer?.stop(timerName);
   }
 }
 
@@ -90,7 +90,7 @@ export async function synchronizeAutomaticSubscriptionQuantities(
           changedKeys.add(key);
         }
         if (subscriptions.length < BATCH_SIZE) break;
-        afterId = subscriptions[subscriptions.length - 1].id;
+        afterId = subscriptions.at(-1)!.id;
       }
     }
     return Array.from(changedKeys);
