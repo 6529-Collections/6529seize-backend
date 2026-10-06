@@ -161,6 +161,15 @@ export async function persistConsolidatedOwnerBalances(
   deleteDelta: Set<string>,
   reset: boolean
 ) {
+  const affectedSubscriptionKeys = Array.from(
+    new Set([
+      ...consolidatedOwnerBalances.map((balance) => balance.consolidation_key),
+      ...consolidatedOwnerBalancesMemes.map(
+        (balance) => balance.consolidation_key
+      ),
+      ...Array.from(deleteDelta)
+    ])
+  );
   const changedSubscriptionKeys = await getDataSource().transaction(
     async (manager) => {
       const balancesRepo = manager.getRepository(ConsolidatedOwnerBalances);
@@ -190,26 +199,23 @@ export async function persistConsolidatedOwnerBalances(
 
       if (reset) return [];
       return synchronizeAutomaticSubscriptionQuantities(
-        [
-          ...consolidatedOwnerBalances.map(
-            (balance) => balance.consolidation_key
-          ),
-          ...Array.from(deleteDelta)
-        ],
+        affectedSubscriptionKeys,
         { connection: { connection: manager }, timer: undefined }
       );
     }
   );
+  // Eligibility is also returned for manual subscriptions. Evict affected
+  // balances after commit even when no automatic quantity needed a write.
+  await invalidateUpcomingSubscriptionCaches(
+    Array.from(
+      new Set([...affectedSubscriptionKeys, ...changedSubscriptionKeys])
+    )
+  );
   if (reset) {
     await synchronizeAutomaticSubscriptionQuantitiesAfterReset();
-  } else {
-    await invalidateUpcomingSubscriptionCaches(changedSubscriptionKeys);
   }
   await markSubscriptionCoverageDirtyForDemonstratedIntent(
-    [
-      ...consolidatedOwnerBalances.map((balance) => balance.consolidation_key),
-      ...Array.from(deleteDelta)
-    ],
+    affectedSubscriptionKeys,
     'ELIGIBILITY_CHANGED'
   );
 }

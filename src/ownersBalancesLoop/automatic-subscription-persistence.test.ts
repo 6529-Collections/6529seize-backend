@@ -5,6 +5,10 @@ import {
 } from '@/subscriptionsDaily/subscription-quantity-sync.db';
 import { invalidateUpcomingSubscriptionCaches } from '@/subscriptionsDaily/subscription-cache';
 import { deleteAll } from '@/orm_helpers';
+import {
+  ConsolidatedOwnerBalances,
+  ConsolidatedOwnerBalancesMemes
+} from '@/entities/IOwnerBalances';
 import { persistConsolidatedOwnerBalances } from './db.owners_balances';
 
 jest.mock('@/db', () => ({ getDataSource: jest.fn() }));
@@ -33,6 +37,7 @@ let events: string[];
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(synchronizeAutomaticSubscriptionQuantitiesAfterReset).mockReset();
   events = [];
   (getDataSource as jest.Mock).mockReturnValue({
     transaction: async (fn: (tx: typeof manager) => Promise<string[]>) => {
@@ -69,18 +74,49 @@ it('does not evict or publish successful persistence after a failed synchronizat
   expect(invalidate).not.toHaveBeenCalled();
 });
 
+it('evicts manual eligibility responses even when no automatic quantity changes', async () => {
+  synchronize.mockResolvedValueOnce([]);
+  const balance = new ConsolidatedOwnerBalances();
+  balance.consolidation_key = 'manual';
+  const memeBalance = new ConsolidatedOwnerBalancesMemes();
+  memeBalance.consolidation_key = 'meme-only';
+  await persistConsolidatedOwnerBalances(
+    [balance],
+    [memeBalance],
+    new Set(['manual', 'deleted']),
+    false
+  );
+  expect(synchronize).toHaveBeenCalledWith(['manual', 'meme-only', 'deleted'], {
+    connection: { connection: manager },
+    timer: undefined
+  });
+  expect(invalidate).toHaveBeenCalledWith(['manual', 'meme-only', 'deleted']);
+  expect(events).toEqual(['commit', 'evict']);
+});
+
 it('commits the balance reset before starting the separately paged quantity reconciliation', async () => {
   jest
     .mocked(synchronizeAutomaticSubscriptionQuantitiesAfterReset)
     .mockImplementation(async () => {
       events.push('reset-sync');
     });
-  await persistConsolidatedOwnerBalances([], [], new Set(), true);
+  await persistConsolidatedOwnerBalances([], [], new Set(['manual']), true);
   expect(deleteAll).toHaveBeenCalledTimes(2);
   expect(synchronize).not.toHaveBeenCalled();
   expect(
     synchronizeAutomaticSubscriptionQuantitiesAfterReset
   ).toHaveBeenCalledTimes(1);
-  expect(invalidate).not.toHaveBeenCalled();
-  expect(events).toEqual(['commit', 'reset-sync']);
+  expect(invalidate).toHaveBeenCalledWith(['manual']);
+  expect(events).toEqual(['commit', 'evict', 'reset-sync']);
+});
+
+it('evicts committed reset eligibility even when a later quantity page fails', async () => {
+  jest
+    .mocked(synchronizeAutomaticSubscriptionQuantitiesAfterReset)
+    .mockRejectedValueOnce(new Error('page failed'));
+  await expect(
+    persistConsolidatedOwnerBalances([], [], new Set(['manual']), true)
+  ).rejects.toThrow('page failed');
+  expect(invalidate).toHaveBeenCalledWith(['manual']);
+  expect(events).toEqual(['commit', 'evict']);
 });

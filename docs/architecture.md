@@ -1368,6 +1368,10 @@ timestamps; manual quantities and finalized allocation tables are untouched.
 Mode and edition-preference changes invoke the same sync within their API/top-up
 transaction. The owner-balance and top-up writers invalidate upcoming subscription
 caches after commit; API settings writes retain their existing cache invalidation.
+Balance persistence also evicts eligibility responses for all affected keys,
+including manual subscriptions whose saved quantities do not change. Full resets
+evict these responses after balance commit and before paged reconciliation, so
+a failed later quantity page cannot prevent eviction of committed eligibility.
 
 Subscription coverage uses a DB-backed scheduled reconciliation pattern without
 a cross-service dirty-event queue. Top-up, redemption, subscription
