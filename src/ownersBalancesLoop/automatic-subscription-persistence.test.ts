@@ -5,6 +5,7 @@ import {
 } from '@/subscriptionsDaily/subscription-quantity-sync.db';
 import { invalidateUpcomingSubscriptionCaches } from '@/subscriptionsDaily/subscription-cache';
 import { deleteAll } from '@/orm_helpers';
+import { markSubscriptionCoverageDirtyForDemonstratedIntent } from '@/subscription-coverage/subscription-coverage-dirty';
 import {
   ConsolidatedOwnerBalances,
   ConsolidatedOwnerBalancesMemes
@@ -32,6 +33,9 @@ jest.mock('@/subscription-coverage/subscription-coverage-dirty', () => ({
 
 const synchronize = jest.mocked(synchronizeAutomaticSubscriptionQuantities);
 const invalidate = jest.mocked(invalidateUpcomingSubscriptionCaches);
+const markCoverage = jest.mocked(
+  markSubscriptionCoverageDirtyForDemonstratedIntent
+);
 function mockKeyQuery() {
   return {
     select: jest.fn().mockReturnThis(),
@@ -87,6 +91,7 @@ it('synchronizes inside the balance transaction and evicts only after commit', a
   });
   expect(events).toEqual(['sync', 'commit', 'evict']);
   expect(invalidate).toHaveBeenCalledWith(['auto']);
+  expect(markCoverage).toHaveBeenCalledWith(['auto'], 'ELIGIBILITY_CHANGED');
 });
 
 it('does not evict or publish successful persistence after a failed synchronization', async () => {
@@ -96,6 +101,7 @@ it('does not evict or publish successful persistence after a failed synchronizat
   ).rejects.toThrow('DB unavailable');
   expect(events).toEqual([]);
   expect(invalidate).not.toHaveBeenCalled();
+  expect(markCoverage).not.toHaveBeenCalled();
 });
 
 it('evicts manual eligibility responses even when no automatic quantity changes', async () => {
@@ -181,6 +187,11 @@ it('captures removed reset keys from both tables before deletion and evicts them
     'removed',
     'meme-only-removed'
   ]);
+  expect(markCoverage).toHaveBeenCalledTimes(1);
+  expect(markCoverage).toHaveBeenCalledWith(
+    ['retained', 'removed', 'meme-only-removed'],
+    'ELIGIBILITY_CHANGED'
+  );
   expect(events).toEqual([
     'read-balances',
     'read-memes',
@@ -205,4 +216,12 @@ it('does not evict previously persisted keys when the reset transaction fails', 
     synchronizeAutomaticSubscriptionQuantitiesAfterReset
   ).not.toHaveBeenCalled();
   expect(events).toEqual([]);
+  expect(markCoverage).not.toHaveBeenCalled();
+});
+
+it('keeps incremental coverage refresh scoped to affected balance keys', async () => {
+  synchronize.mockResolvedValueOnce(['auto']);
+  await persistConsolidatedOwnerBalances([], [], new Set(['manual']), false);
+  expect(invalidate).toHaveBeenCalledWith(['manual', 'auto']);
+  expect(markCoverage).toHaveBeenCalledWith(['manual'], 'ELIGIBILITY_CHANGED');
 });

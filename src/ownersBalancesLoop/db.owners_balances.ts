@@ -224,16 +224,15 @@ export async function persistConsolidatedOwnerBalances(
   );
   // Eligibility is also returned for manual subscriptions. Evict affected
   // balances after commit even when no automatic quantity needed a write.
-  await invalidateUpcomingSubscriptionCaches(
-    Array.from(
-      new Set([...affectedSubscriptionKeys, ...subscriptionKeysToInvalidate])
-    )
+  const cacheKeys = Array.from(
+    new Set([...affectedSubscriptionKeys, ...subscriptionKeysToInvalidate])
   );
+  await invalidateUpcomingSubscriptionCaches(cacheKeys);
   if (reset) {
     await synchronizeAutomaticSubscriptionQuantitiesAfterReset();
   }
   await markSubscriptionCoverageDirtyForDemonstratedIntent(
-    affectedSubscriptionKeys,
+    reset ? cacheKeys : affectedSubscriptionKeys,
     'ELIGIBILITY_CHANGED'
   );
 }

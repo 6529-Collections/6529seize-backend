@@ -1374,6 +1374,8 @@ also capture previously persisted keys before deleting balances, covering keys
 absent from both replacement rows and the deletion delta. They evict these
 responses after balance commit and before paged reconciliation, so
 a failed later quantity page cannot prevent eviction of committed eligibility.
+After successful reset reconciliation, the demonstrated-intent coverage refresh
+also includes removed keys so their projected eligibility is recomputed.
 
 Subscription coverage uses a DB-backed scheduled reconciliation pattern without
 a cross-service dirty-event queue. Top-up, redemption, subscription
