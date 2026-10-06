@@ -270,6 +270,9 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
         'profile',
         resource
       );
+      expect(mockWarn).toHaveBeenCalledWith({
+        code: 'WS_OUTBOUND_ACCESS_CHANGED'
+      });
       expect(mockHandle).not.toHaveBeenCalled();
       expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
     }
