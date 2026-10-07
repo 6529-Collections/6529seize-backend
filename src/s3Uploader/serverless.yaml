@@ -1,5 +1,8 @@
 service: s3Uploader
 
+custom:
+  maxReceiveCount: 10
+
 package:
   artifact: dist/index.zip
 
@@ -30,6 +33,7 @@ functions:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
+      S3_UPLOADER_MAX_RECEIVE_COUNT: ${self:custom.maxReceiveCount}
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 's3Uploader_${opt:stage, self:provider.stage}'
 
@@ -43,7 +47,7 @@ resources:
         RedrivePolicy:
           deadLetterTargetArn:
             Fn::GetAtt: [S3UploaderDLQ, Arn]
-          maxReceiveCount: 10
+          maxReceiveCount: ${self:custom.maxReceiveCount}
 
     S3UploaderDLQ:
       Type: AWS::SQS::Queue

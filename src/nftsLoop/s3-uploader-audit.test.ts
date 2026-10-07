@@ -49,6 +49,9 @@ describe('s3 uploader audit precheck', () => {
     expect(result.totalJobs).toBe(1);
     expect(result.jobsToEnqueue).toEqual([]);
     expect(s3ObjectExistsFn).toHaveBeenCalledTimes(4);
+    expect(
+      s3ObjectExistsFn.mock.calls.every((call) => call[3]?.requireNonEmpty)
+    ).toBe(true);
   });
 
   it('enqueues image job when one image variant is missing', async () => {
