@@ -210,6 +210,13 @@ and publishes the generated `/help-index.json` after the corresponding backend
 SQL consumers deploy. The runtime continues to read its environment-matching
 frontend artifact; these facts do not introduce a second live knowledge source.
 
+Backend subscription quantity behavior is mirrored in the frontend corpus record
+`profiles.subscriptions-tab`: untouched automatic all-eligible quantities track
+normalized current eligibility, per-card manual requests survive eligibility
+changes, and displayed/final quantities are capped without rewriting manual
+requests or historical finalized allocations. These facts continue to be served
+through the frontend's generated `/help-index.json`.
+
 ### 4.5 Backend-owned public data query mode
 
 Some questions should be answered from public indexed data, not from the
