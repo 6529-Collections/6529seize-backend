@@ -23,6 +23,12 @@ Failure emits `WS_OUTBOX_WAKEUP_FAILED`; the durable event remains. A one-minute
 EventBridge schedule invokes the same `websocketOutboundHandler` to recover
 missed wakeups and deferred retries. No additional Lambda service is introduced.
 
+The production NFT refresher injects this wakeup into its notifier and returns
+before the notifier's legacy audience lookup or broadcast. The retained
+ten-send concurrency limit and 15-second deadline apply to the local or
+explicitly constructed broadcast path, not to production outbox resolution or
+retry. They cannot discard the NFT delivery intent committed in MySQL.
+
 The worker first resolves the resource's current state and permitted audience
 using the writer database, then atomically replaces its resource event with
 recipient jobs in the outbox. Thus a large fan-out has durable progress: failure
