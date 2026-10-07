@@ -16,6 +16,11 @@ import {
   resetRepository
 } from '../orm_helpers';
 import { markSubscriptionCoverageDirtyForDemonstratedIntent } from '../subscription-coverage/subscription-coverage-dirty';
+import {
+  synchronizeAutomaticSubscriptionQuantities,
+  synchronizeAutomaticSubscriptionQuantitiesAfterReset
+} from '@/subscriptionsDaily/subscription-quantity-sync.db';
+import { invalidateUpcomingSubscriptionCaches } from '@/subscriptionsDaily/subscription-cache';
 
 const logger = Logger.get('DB_OWNER_BALANCES');
 
@@ -150,61 +155,84 @@ export async function persistOwnerBalances(
   }
 }
 
+async function fetchPersistedConsolidationKeys(
+  repository: Repository<
+    ConsolidatedOwnerBalances | ConsolidatedOwnerBalancesMemes
+  >
+): Promise<string[]> {
+  const rows = await repository
+    .createQueryBuilder('balances')
+    .select('balances.consolidation_key', 'consolidation_key')
+    .distinct(true)
+    .getRawMany<{ consolidation_key: string }>();
+  return rows.map((row) => row.consolidation_key);
+}
+
 export async function persistConsolidatedOwnerBalances(
   consolidatedOwnerBalances: ConsolidatedOwnerBalances[],
   consolidatedOwnerBalancesMemes: ConsolidatedOwnerBalancesMemes[],
   deleteDelta: Set<string>,
   reset: boolean
 ) {
-  if (reset) {
-    logger.info(`[RESETTING CONSOLIDATED OWNER BALANCES...]`);
-    const balancesRepo = getDataSource().getRepository(
-      ConsolidatedOwnerBalances
-    );
-    const balancesMemesRepo = getDataSource().getRepository(
-      ConsolidatedOwnerBalancesMemes
-    );
-    await deleteAll(balancesRepo);
-    await insertWithoutUpdate(balancesRepo, consolidatedOwnerBalances);
-    await deleteAll(balancesMemesRepo);
-    await insertWithoutUpdate(
-      balancesMemesRepo,
-      consolidatedOwnerBalancesMemes
-    );
-    logger.info(
-      `[INSERTED ${consolidatedOwnerBalances.length} CONSOLIDATED OWNER BALANCES]`
-    );
-  } else {
-    await getDataSource().transaction(async (manager) => {
+  const affectedSubscriptionKeys = Array.from(
+    new Set([
+      ...consolidatedOwnerBalances.map((balance) => balance.consolidation_key),
+      ...consolidatedOwnerBalancesMemes.map(
+        (balance) => balance.consolidation_key
+      ),
+      ...Array.from(deleteDelta)
+    ])
+  );
+  const subscriptionKeysToInvalidate = await getDataSource().transaction(
+    async (manager) => {
       const balancesRepo = manager.getRepository(ConsolidatedOwnerBalances);
       const balancesMemesRepo = manager.getRepository(
         ConsolidatedOwnerBalancesMemes
       );
-
-      const deleted = await deleteConsolidations(balancesRepo, deleteDelta);
-      const deletedMemes = await deleteConsolidations(
-        balancesMemesRepo,
-        deleteDelta
-      );
-      logger.info(
-        `[DELETED ${deleted} CONSOLIDATED NFT BALANCES] : [DELETED ${deletedMemes} CONSOLIDATED NFT BALANCES MEMES]`
-      );
+      let previousConsolidationKeys: string[] = [];
+      if (reset) {
+        previousConsolidationKeys = [
+          ...(await fetchPersistedConsolidationKeys(balancesRepo)),
+          ...(await fetchPersistedConsolidationKeys(balancesMemesRepo))
+        ];
+        logger.info(`[RESETTING CONSOLIDATED OWNER BALANCES...]`);
+        await deleteAll(balancesRepo);
+        await deleteAll(balancesMemesRepo);
+      } else {
+        const deleted = await deleteConsolidations(balancesRepo, deleteDelta);
+        const deletedMemes = await deleteConsolidations(
+          balancesMemesRepo,
+          deleteDelta
+        );
+        logger.info(
+          `[DELETED ${deleted} CONSOLIDATED NFT BALANCES] : [DELETED ${deletedMemes} CONSOLIDATED NFT BALANCES MEMES]`
+        );
+      }
       await insertWithoutUpdate(balancesRepo, consolidatedOwnerBalances);
       await insertWithoutUpdate(
         balancesMemesRepo,
         consolidatedOwnerBalancesMemes
       );
+      logger.info({ message: '[CONSOLIDATED OWNER BALANCES PERSISTED]' });
 
-      logger.info({
-        message: '[CONSOLIDATED OWNER BALANCES PERSISTED]'
-      });
-    });
+      if (reset) return previousConsolidationKeys;
+      return synchronizeAutomaticSubscriptionQuantities(
+        affectedSubscriptionKeys,
+        { connection: { connection: manager }, timer: undefined }
+      );
+    }
+  );
+  // Eligibility is also returned for manual subscriptions. Evict affected
+  // balances after commit even when no automatic quantity needed a write.
+  const cacheKeys = Array.from(
+    new Set([...affectedSubscriptionKeys, ...subscriptionKeysToInvalidate])
+  );
+  await invalidateUpcomingSubscriptionCaches(cacheKeys);
+  if (reset) {
+    await synchronizeAutomaticSubscriptionQuantitiesAfterReset();
   }
   await markSubscriptionCoverageDirtyForDemonstratedIntent(
-    [
-      ...consolidatedOwnerBalances.map((balance) => balance.consolidation_key),
-      ...Array.from(deleteDelta)
-    ],
+    reset ? cacheKeys : affectedSubscriptionKeys,
     'ELIGIBILITY_CHANGED'
   );
 }
