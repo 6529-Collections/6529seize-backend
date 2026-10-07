@@ -122,20 +122,18 @@ export class EthereumRpcClient {
     return getEthereumRpcProvider(getRpcChainId(this.network));
   }
   private async withProviderRetries<T>(
-    operation: () => Promise<T>
+    operation: () => Promise<T>,
+    retryCount = 0
   ): Promise<T> {
-    let retryCount = 0;
-
-    while (true) {
-      try {
-        return await operation();
-      } catch (error) {
-        if (retryCount >= this.maxRetries || !isRetryableProviderError(error)) {
-          throw error;
-        }
-        retryCount += 1;
-        await sleep(getProviderRetryDelay(retryCount));
+    try {
+      return await operation();
+    } catch (error) {
+      if (retryCount >= this.maxRetries || !isRetryableProviderError(error)) {
+        throw error;
       }
+      const nextRetryCount = retryCount + 1;
+      await sleep(getProviderRetryDelay(nextRetryCount));
+      return this.withProviderRetries(operation, nextRetryCount);
     }
   }
 
