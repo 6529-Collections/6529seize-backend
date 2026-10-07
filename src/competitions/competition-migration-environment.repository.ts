@@ -23,11 +23,10 @@ export class CompetitionMigrationEnvironmentRepository extends LazyDbAccessCompa
         { environment },
         { wrappedConnection: ctx.connection }
       );
-      return row
-        ? typeof row.acceptance === 'string'
-          ? JSON.parse(row.acceptance)
-          : row.acceptance
-        : null;
+      if (!row) return null;
+      return typeof row.acceptance === 'string'
+        ? JSON.parse(row.acceptance)
+        : row.acceptance;
     } finally {
       ctx.timer?.stop(timer);
     }

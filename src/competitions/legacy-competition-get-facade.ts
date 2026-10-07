@@ -426,7 +426,19 @@ export async function installLegacyCompetitionGetFacade(
         const native = nativeSelects(table);
         if (columns.some((column) => !native.fields[column]))
           throw new Error(`Compatibility schema drift: ${table}`);
-        select = `select ${columns.map((column) => `s.\`${column}\``).join(',')} from ${table} s where not exists (select 1 from ${owners} where c.legacy_wave_id=s.wave_id and ${nativePrimary} ${nativeSourceOwnership(table)}) union all select ${rows.map((row) => `${row.CHARACTER_SET_NAME ? `convert(${native.fields[row.COLUMN_NAME]} using ${row.CHARACTER_SET_NAME}) collate ${row.COLLATION_NAME}` : native.fields[row.COLUMN_NAME]} as \`${row.COLUMN_NAME}\``).join(',')} from ${native.from}`;
+        const legacyColumns = columns
+          .map((column) => `s.\`${column}\``)
+          .join(',');
+        const nativeColumns = rows
+          .map((row) => {
+            const field = native.fields[row.COLUMN_NAME];
+            const value = row.CHARACTER_SET_NAME
+              ? `convert(${field} using ${row.CHARACTER_SET_NAME}) collate ${row.COLLATION_NAME}`
+              : field;
+            return `${value} as \`${row.COLUMN_NAME}\``;
+          })
+          .join(',');
+        select = `select ${legacyColumns} from ${table} s where not exists (select 1 from ${owners} where c.legacy_wave_id=s.wave_id and ${nativePrimary} ${nativeSourceOwnership(table)}) union all select ${nativeColumns} from ${native.from}`;
       }
       await db.execute(
         `create or replace sql security invoker view \`${legacyGetView(table)}\` as ${select}`,

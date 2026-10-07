@@ -120,6 +120,17 @@ export function parseMigrationOptions(
   return result.value;
 }
 
+async function readReviewedAcceptance(
+  path: string | undefined
+): Promise<unknown> {
+  if (!path) throw new Error('Use --acceptance with a reviewed JSON file');
+  const { readFile } = await import('node:fs/promises');
+  const raw = await readFile(path, 'utf8');
+  if (raw.length > 32000)
+    throw new Error('Acceptance file exceeds operator record limit');
+  return JSON.parse(raw);
+}
+
 async function dispatchMigrationCommand(
   options: MigrationCliOptions,
   service = new CompetitionMigrationService(
@@ -140,13 +151,10 @@ async function dispatchMigrationCommand(
         environment: options.environment,
         action: options.action
       };
-    if (!options.acceptance)
-      throw new Error('Use --acceptance with a reviewed JSON file');
-    const { readFile } = await import('node:fs/promises');
-    const raw = await readFile(options.acceptance, 'utf8');
-    if (raw.length > 32000)
-      throw new Error('Acceptance file exceeds operator record limit');
-    return service.recordEnvironmentAcceptance(operator, JSON.parse(raw));
+    return service.recordEnvironmentAcceptance(
+      operator,
+      await readReviewedAcceptance(options.acceptance)
+    );
   }
   const id = options.competition;
   if (!id) throw new Error('Use --competition with the stable legacy UUID');
@@ -165,6 +173,15 @@ async function dispatchMigrationCommand(
       competitionId: id,
       status: await service.status(id)
     };
+  return executeLiveMigrationCommand(options, service, id, operator);
+}
+
+async function executeLiveMigrationCommand(
+  options: MigrationCliOptions,
+  service: CompetitionMigrationService,
+  id: string,
+  operator: MigrationOperator
+): Promise<unknown> {
   switch (options.action) {
     case 'enroll':
       return service.enroll(id, operator, options.cohort!);
@@ -184,13 +201,11 @@ async function dispatchMigrationCommand(
       return service.recordException(id, operator, options.exception);
     }
     case 'record-acceptance': {
-      if (!options.acceptance)
-        throw new Error('Use --acceptance with a reviewed JSON file');
-      const { readFile } = await import('node:fs/promises');
-      const raw = await readFile(options.acceptance, 'utf8');
-      if (raw.length > 32000)
-        throw new Error('Acceptance file exceeds operator record limit');
-      return service.recordAcceptance(id, operator, JSON.parse(raw));
+      return service.recordAcceptance(
+        id,
+        operator,
+        await readReviewedAcceptance(options.acceptance)
+      );
     }
     case 'reverse-reconcile':
       return service.reverseReconcile(id, operator, options.batch);

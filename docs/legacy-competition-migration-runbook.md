@@ -261,6 +261,13 @@ while old writer/worker versions remain in service.
    This creates the manual function, scoped self-invocation policy and alarms;
    it neither runs the function nor creates a migration schedule. Configure the
    regional operator allowlist before any live invocation.
+   Refresh the independent operational monitoring stack and then its source
+   relay/alarms from the generated templates so the new function is allowlisted
+   and its structured errors, failures and throttles are covered. Create the
+   function/log group before installing its source log subscription. Follow
+   [the monitoring rollout runbook](../ops/docs/operations/isolated-operational-monitoring.md)
+   and verify delivery before enrollment; these stacks are separate from the
+   application service deployment workflow.
 7. Collect and review the pending evidence above. Then authorize a separate
    one-competition rehearsal/pilot. Main Stage stays legacy until its dedicated
    privileged release review and adapter work are complete.

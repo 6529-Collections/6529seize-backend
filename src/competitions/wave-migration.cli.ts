@@ -47,14 +47,13 @@ export function parseWaveMigrationOptions(
   if (value.live && value['dry-run'])
     throw new Error('Choose --live or --dry-run');
   const environment: MigrationEnvironment = value.environment;
+  const defaultActor = environment === 'local' ? 'local-operator' : undefined;
+  const inspectionActor = value.live ? undefined : 'dry-run';
   const actor =
     value.operator ??
     config.COMPETITION_MIGRATION_OPERATOR ??
-    (environment === 'local'
-      ? 'local-operator'
-      : value.live
-        ? undefined
-        : 'dry-run');
+    defaultActor ??
+    inspectionActor;
   if (!actor)
     throw new Error(
       'Configure COMPETITION_MIGRATION_OPERATOR for this environment'

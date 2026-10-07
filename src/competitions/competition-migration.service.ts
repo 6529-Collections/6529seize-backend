@@ -1,7 +1,5 @@
 import { compareMigrationContent } from '@/competitions/competition-migration-content-parity';
 import { MigrationAcceptanceSchema } from './competition-migration-acceptance';
-import { MigrationAcceptance } from './competition-migration-policy';
-import { MigrationEnvironment } from './competition-migration-policy';
 import { CompetitionMigrationEnvironmentRepository } from './competition-migration-environment.repository';
 import { legacyCompetitionId } from './competition-id';
 import { appFeatures } from '@/app-features';
@@ -40,6 +38,8 @@ import {
 import { CompetitionMigrationBackfill } from '@/competitions/competition-migration-backfill';
 import {
   MIGRATION_STAGES,
+  MigrationAcceptance,
+  MigrationEnvironment,
   MigrationCohort,
   migrationAcceptanceFailures,
   migrationReadinessFailures,
@@ -92,6 +92,12 @@ function sourceCreditOverspent(snapshot: CompetitionSnapshot): boolean {
   );
 }
 type MigrationRecord = NonNullable<MigrationStatus['migration']>;
+function sourceMigrationCohort(competition: Competition): MigrationCohort {
+  if (competition.capabilities.length) return 'PRIVILEGED';
+  return competition.lifecycle === 'ENDED'
+    ? 'COMPLETED_ORDINARY'
+    : 'ACTIVE_LOW_VOLUME';
+}
 function comparisonWindowSamples(
   migration: MigrationRecord,
   reset: boolean,
@@ -239,11 +245,7 @@ export class CompetitionMigrationService {
     const repository = new CompetitionRepository(this.supplier);
     const id = legacyCompetitionId(waveId);
     const record = await repository.findCompetitionRecordById(id, {});
-    if (
-      !record ||
-      record.legacy_wave_id !== waveId ||
-      record.wave_id !== waveId
-    )
+    if (record?.legacy_wave_id !== waveId || record.wave_id !== waveId)
       throw new Error(
         'The wave has no registered legacy primary competition; prepare the migration environment first'
       );
@@ -260,11 +262,7 @@ export class CompetitionMigrationService {
       new WavesApiDb(this.supplier),
       {}
     ).getCompetition(record, this.now());
-    const cohort: MigrationCohort = competition.capabilities.length
-      ? 'PRIVILEGED'
-      : competition.lifecycle === 'ENDED'
-        ? 'COMPLETED_ORDINARY'
-        : 'ACTIVE_LOW_VOLUME';
+    const cohort = sourceMigrationCohort(competition);
     const failures = await this.sourceReadiness(competition, waveId);
     const environment = await this.environmentReadiness(cohort);
     return {

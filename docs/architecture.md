@@ -1092,6 +1092,10 @@ checkpoint fences protects redelivery. Gate failures never queue continuation;
 function-error retries are disabled and failed/dropped handoffs require manual
 inspection and resumption. A narrow inline role policy grants self-invocation,
 and regional Lambda-error/dropped-event alarms surface stopped continuations.
+The generated independent monitoring inventory also includes this function's
+structured error subscription and Lambda Errors/Throttles alarms. Refresh the
+monitoring stack and then the source relay after the function/log group exists,
+and verify the new producer before live enrollment.
 Deploy this service after the compatible schema/workers/API; deployment performs
 no invocation, enrollment or cutover. No queue, scheduled migration or
 default-selection policy is added.
