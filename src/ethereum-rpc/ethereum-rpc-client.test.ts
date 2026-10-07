@@ -99,6 +99,21 @@ describe('provider-neutral standard RPC client', () => {
     expect(read).toHaveBeenCalledTimes(3);
   });
 
+  it.each([0, 1, 2])(
+    'preserves the retry limit of %i for synchronous provider failures',
+    async (maxRetries) => {
+      const error = Object.assign(new Error('rate limit'), { status: 429 });
+      const read = jest
+        .spyOn(provider, 'getBlockNumber')
+        .mockImplementation(() => {
+          throw error;
+        });
+      const client = new EthereumRpcClient(Network.ETH_MAINNET, maxRetries);
+      await expect(client.getBlockNumber()).rejects.toBe(error);
+      expect(read).toHaveBeenCalledTimes(maxRetries + 1);
+    }
+  );
+
   it('does not retry permanent failures or hide missing configuration behind Alchemy', async () => {
     const error = Object.assign(new Error('execution reverted'), {
       code: 'CALL_EXCEPTION'
