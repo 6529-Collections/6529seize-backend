@@ -66,9 +66,22 @@ it('marks known remaining SQS retries pending and avoids an urgent priority aler
   );
 });
 
-it('reports exhausted retries as red and preserves the urgent priority alert', () => {
-  expect(reportS3UploaderFailure(failure, record('10'), null)).toBe(true);
-  expect(diagnosticMock.mock.calls[0][0].recovery.state).toBe('exhausted');
+it.each(['10', '11'])(
+  'reports exhausted retries as red at receive count %s and preserves the urgent priority alert',
+  (attempt) => {
+    expect(reportS3UploaderFailure(failure, record(attempt), null)).toBe(true);
+    expect(diagnosticMock.mock.calls[0][0].recovery.state).toBe('exhausted');
+  }
+);
+
+it('keeps the penultimate delivery pending because one source-queue attempt remains', () => {
+  expect(reportS3UploaderFailure(failure, record('9'), null)).toBe(false);
+  expect(diagnosticMock.mock.calls[0][0].recovery).toEqual({
+    state: 'pending',
+    attempt: 9,
+    maxAttempts: 10
+  });
+  expect(diagnosticMock.mock.calls[0][1]).toContain('status=200 bytes=0');
 });
 
 it('keeps unknown retry configuration red rather than promising another attempt', () => {

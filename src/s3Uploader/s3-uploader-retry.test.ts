@@ -79,14 +79,17 @@ async function invoke(receiveCount: string) {
   return handler(event, {} as Context, jest.fn());
 }
 
-it('returns failed message IDs to SQS while issuing one pending diagnostic', async () => {
-  await expect(invoke('1')).resolves.toEqual({
-    batchItemFailures: [{ itemIdentifier: 'failed-image' }]
-  });
-  expect(diagnosticMock).toHaveBeenCalledTimes(1);
-  expect(diagnosticMock.mock.calls[0][0].recovery.state).toBe('pending');
-  expect(priorityMock).not.toHaveBeenCalled();
-});
+it.each(['1', '9'])(
+  'returns failed message IDs to SQS while issuing one pending diagnostic at receive %s',
+  async (attempt) => {
+    await expect(invoke(attempt)).resolves.toEqual({
+      batchItemFailures: [{ itemIdentifier: 'failed-image' }]
+    });
+    expect(diagnosticMock).toHaveBeenCalledTimes(1);
+    expect(diagnosticMock.mock.calls[0][0].recovery.state).toBe('pending');
+    expect(priorityMock).not.toHaveBeenCalled();
+  }
+);
 
 it('keeps the last failed attempt eligible for DLQ redrive and sends the priority alert', async () => {
   await expect(invoke('10')).resolves.toEqual({

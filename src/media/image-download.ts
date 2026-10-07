@@ -31,7 +31,8 @@ export class ImageSourceUnavailableError extends Error {
   ) {
     super(
       `No gateway returned a valid image after ${attempts} attempts; ` +
-        `last gateway=${failure.gateway} reason=${failure.reason}`
+        `last gateway=${failure.gateway} reason=${failure.reason} ` +
+        `status=${failure.httpStatus ?? 'none'} bytes=${failure.bytes ?? 'unknown'}`
     );
     this.name = 'ImageSourceUnavailableError';
     Object.setPrototypeOf(this, new.target.prototype);
@@ -49,12 +50,12 @@ function gatewayHost(url: string): string {
 function requestFailure(error: unknown, gateway: string): DownloadFailure {
   if (axios.isAxiosError(error)) {
     const httpStatus = error.response?.status;
+    let category: FailureCategory = 'NETWORK';
+    if (httpStatus) category = 'HTTP_ERROR';
+    else if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT')
+      category = 'TIMEOUT';
     return {
-      category: httpStatus
-        ? 'HTTP_ERROR'
-        : error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT'
-          ? 'TIMEOUT'
-          : 'NETWORK',
+      category,
       reason: httpStatus ? 'HTTP_ERROR' : 'REQUEST_FAILED',
       gateway,
       httpStatus
@@ -97,6 +98,8 @@ export async function downloadImageBuffer(url: string): Promise<Buffer> {
         if (!buffer.length) throw new Error('EMPTY_BODY');
         // Decode the first frame before uploading. Header-only inspection can
         // accept truncated images that will subsequently fail during resizing.
+        // Corruption in later animation frames can still fail during resizing;
+        // that failure rejects the job and retains the normal SQS retry path.
         await sharp(buffer)
           .resize({ width: 1, height: 1, fit: 'inside' })
           .raw()

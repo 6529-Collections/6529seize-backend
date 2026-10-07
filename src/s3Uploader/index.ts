@@ -75,8 +75,9 @@ const sqsHandler: SQSHandler = async (event) => {
             `[JOB PROCESSED] [messageId=${messageId}] [contract=${job.contract}] [tokenId=${job.tokenId}] [jobType=${job.jobType}]`
           );
         } catch (error: unknown) {
-          if (reportS3UploaderFailure(error, record, job))
-            priorityAlertFailures++;
+          priorityAlertFailures += Number(
+            reportS3UploaderFailure(error, record, job)
+          );
           failedRecords++;
           if (record.messageId) {
             batchItemFailures.push({ itemIdentifier: record.messageId });

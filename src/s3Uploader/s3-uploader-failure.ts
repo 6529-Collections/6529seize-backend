@@ -14,6 +14,16 @@ function positiveInt(value: string | undefined): number | undefined {
     : undefined;
 }
 
+function recoveryState(
+  attempt: number | undefined,
+  maxAttempts: number | undefined
+): 'pending' | 'exhausted' | 'unknown' {
+  if (!attempt || !maxAttempts) return 'unknown';
+  // maxReceiveCount is the source queue's delivery budget. At the limit,
+  // a failed delivery must escalate before SQS moves the message to its DLQ.
+  return attempt < maxAttempts ? 'pending' : 'exhausted';
+}
+
 /** Returns whether the failure also needs the existing urgent priority alert. */
 export function reportS3UploaderFailure(
   error: unknown,
@@ -29,12 +39,7 @@ export function reportS3UploaderFailure(
   }
   const attempt = positiveInt(record.attributes?.ApproximateReceiveCount);
   const maxAttempts = positiveInt(process.env.S3_UPLOADER_MAX_RECEIVE_COUNT);
-  const state =
-    attempt && maxAttempts
-      ? attempt < maxAttempts
-        ? 'pending'
-        : 'exhausted'
-      : 'unknown';
+  const state = recoveryState(attempt, maxAttempts);
   const diagnostic: OperationalDiagnostic = {
     category: error.failure.category,
     operation: `S3_IMAGE_DOWNLOAD_${error.failure.reason}`,
