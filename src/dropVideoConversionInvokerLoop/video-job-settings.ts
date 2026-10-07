@@ -41,13 +41,18 @@ export function buildDropVideoJobSettings(
   key: string
 ): JobSettings {
   const groups = template.OutputGroups ?? [];
-  const hasHls = groups.some(
+  const hlsGroups = groups.filter(
     (group) => group.OutputGroupSettings?.Type === 'HLS_GROUP_SETTINGS'
   );
-  const hasMp4 = groups.some(
+  const mp4Groups = groups.filter(
     (group) => group.OutputGroupSettings?.Type === 'FILE_GROUP_SETTINGS'
   );
-  if (!hasHls || !hasMp4 || groups.some((group) => !group.Outputs?.length)) {
+  if (groups.length !== 2 || hlsGroups.length !== 1 || mp4Groups.length !== 1) {
+    throw new Error(
+      'Drop video template must contain only HLS and MP4 output groups, exactly one of each'
+    );
+  }
+  if (!hlsGroups[0].Outputs?.length || !mp4Groups[0].Outputs?.length) {
     throw new Error('Drop video template must define HLS and MP4 outputs');
   }
   const base = key.replace(/\.[^.]+$/i, '');

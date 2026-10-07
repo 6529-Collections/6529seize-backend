@@ -21,7 +21,8 @@ jest.mock('@aws-sdk/client-mediaconvert', () => ({
 
 jest.mock('../env', () => ({
   env: {
-    getStringOrThrow: mockGetStringOrThrow
+    getStringOrThrow: mockGetStringOrThrow,
+    getStringOrNull: (name: string) => mockGetStringOrThrow(name)
   },
   prepEnvironment: mockPrepEnvironment
 }));
@@ -62,8 +63,9 @@ import { handler } from './index';
 describe('dropVideoConversionInvokerLoop', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockSend.mockReset();
     mockPrepEnvironment.mockResolvedValue(undefined);
-    mockSend.mockResolvedValue({
+    mockSend.mockResolvedValue(undefined).mockResolvedValueOnce({
       JobTemplate: {
         Settings: {
           OutputGroups: [
@@ -127,7 +129,7 @@ describe('dropVideoConversionInvokerLoop', () => {
   });
 
   it('does not submit a partially configured job when the template is unavailable', async () => {
-    mockSend.mockResolvedValueOnce({});
+    mockSend.mockReset().mockResolvedValueOnce({});
     await expect(
       handler(
         { detail: { object: { key: 'drops/video.mp4' } } },
@@ -139,7 +141,9 @@ describe('dropVideoConversionInvokerLoop', () => {
   });
 
   it('propagates template lookup failures for the existing Lambda retry path', async () => {
-    mockSend.mockRejectedValueOnce(new Error('template lookup failed'));
+    mockSend
+      .mockReset()
+      .mockRejectedValueOnce(new Error('template lookup failed'));
     await expect(
       handler(
         { detail: { object: { key: 'drops/video.mp4' } } },
@@ -174,6 +178,96 @@ describe('dropVideoConversionInvokerLoop', () => {
     expect(mockDoInDbContext).not.toHaveBeenCalled();
     expect(MediaConvertClient).not.toHaveBeenCalled();
     expect(CreateJobCommand).not.toHaveBeenCalled();
+    expect(GetJobTemplateCommand).not.toHaveBeenCalled();
     expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it('preserves deployed config through secret loading and warm invocations', async () => {
+    const originalGetString = mockGetStringOrThrow.getMockImplementation()!;
+    mockPrepEnvironment.mockImplementation(async () => {
+      mockGetStringOrThrow.mockImplementation((name) => `overridden-${name}`);
+    });
+    try {
+      await handler(
+        { detail: { object: { key: 'drops/video.mp4' } } },
+        {} as any,
+        jest.fn()
+      );
+      expect(GetJobTemplateCommand).toHaveBeenCalledWith({
+        Name: 'drop-video-template'
+      });
+      expect(MediaConvertClient).toHaveBeenCalledWith(
+        expect.objectContaining({ region: 'eu-west-1' })
+      );
+      expect(
+        jest.mocked(CreateJobCommand).mock.calls[0][0].Settings?.Inputs?.[0]
+          .FileInput
+      ).toBe('s3://6529-test-bucket/drops/video.mp4');
+      mockSend.mockResolvedValueOnce({
+        JobTemplate: {
+          Settings: {
+            OutputGroups: [
+              {
+                OutputGroupSettings: { Type: 'HLS_GROUP_SETTINGS' },
+                Outputs: [{}]
+              },
+              {
+                OutputGroupSettings: { Type: 'FILE_GROUP_SETTINGS' },
+                Outputs: [{ ContainerSettings: { Container: 'MP4' } }]
+              }
+            ]
+          }
+        }
+      });
+      await handler(
+        { detail: { object: { key: 'drops/another.mp4' } } },
+        {} as any,
+        jest.fn()
+      );
+      expect(jest.mocked(GetJobTemplateCommand).mock.calls[1][0]).toEqual({
+        Name: 'drop-video-template'
+      });
+      expect(
+        jest.mocked(CreateJobCommand).mock.calls[1][0].Settings?.Inputs?.[0]
+          .FileInput
+      ).toBe('s3://6529-test-bucket/drops/another.mp4');
+    } finally {
+      mockGetStringOrThrow.mockImplementation(originalGetString);
+    }
+  });
+
+  it('reuses the submission token for redelivery and changes it for a new event', async () => {
+    const event = {
+      id: 'event-1',
+      detail: { object: { key: 'drops/video.mp4' } }
+    };
+    // Each invocation still loads settings; job submission resolves independently.
+    const response = {
+      JobTemplate: {
+        Settings: {
+          OutputGroups: [
+            {
+              OutputGroupSettings: { Type: 'HLS_GROUP_SETTINGS' },
+              Outputs: [{}]
+            },
+            {
+              OutputGroupSettings: { Type: 'FILE_GROUP_SETTINGS' },
+              Outputs: [{ ContainerSettings: { Container: 'MP4' } }]
+            }
+          ]
+        }
+      }
+    };
+    mockSend.mockReset();
+    for (const id of ['event-1', 'event-1', 'event-2']) {
+      mockSend.mockResolvedValueOnce(response).mockResolvedValueOnce(undefined);
+      await handler({ ...event, id }, {} as any, jest.fn());
+    }
+    const tokens = jest
+      .mocked(CreateJobCommand)
+      .mock.calls.map(([input]) => input.ClientRequestToken);
+    expect(tokens[0]).toMatch(/^[a-f0-9]{64}$/);
+    expect(tokens[1]).toBe(tokens[0]);
+    expect(tokens[2]).not.toBe(tokens[0]);
   });
 });

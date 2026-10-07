@@ -115,3 +115,50 @@ it('rejects unknown output groups rather than writing to their old destination',
     buildDropVideoJobSettings(source, 'bucket', 'drops/video.mp4')
   ).toThrow('only HLS and MP4');
 });
+
+it.each([0, 1])(
+  'rejects duplicate output group %s before destinations can collide',
+  (index) => {
+    const source = template();
+    source.OutputGroups?.push(source.OutputGroups[index]);
+    expect(() =>
+      buildDropVideoJobSettings(source, 'bucket', 'drops/video.mp4')
+    ).toThrow('exactly one of each');
+  }
+);
+
+it.each([0, 1])('rejects an empty required output group %s', (index) => {
+  const source = template();
+  source.OutputGroups![index].Outputs = [];
+  expect(() =>
+    buildDropVideoJobSettings(source, 'bucket', 'drops/video.mp4')
+  ).toThrow('HLS and MP4 outputs');
+});
+
+it.each([undefined, []])(
+  'handles missing input settings without inventing selectors (%s)',
+  (inputs) => {
+    const source = template();
+    source.Inputs = inputs;
+    expect(
+      buildDropVideoJobSettings(source, 'bucket', 'drops/video.mp4').Inputs
+    ).toEqual([
+      {
+        FileInput: 's3://bucket/drops/video.mp4',
+        VideoSelector: { Rotate: 'AUTO' }
+      }
+    ]);
+  }
+);
+
+it('preserves video selectors while applying automatic rotation', () => {
+  const source = template();
+  source.Inputs![0].VideoSelector = {
+    Rotate: 'DEGREES_90',
+    ColorSpace: 'REC_709'
+  };
+  expect(
+    buildDropVideoJobSettings(source, 'bucket', 'drops/video.mp4').Inputs?.[0]
+      .VideoSelector
+  ).toEqual({ Rotate: 'AUTO', ColorSpace: 'REC_709' });
+});
