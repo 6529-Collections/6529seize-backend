@@ -5,6 +5,7 @@ jest.mock('@/logging', () => ({
 }));
 
 import { s3ObjectExists } from './s3_helpers';
+import { HeadObjectCommand } from '@aws-sdk/client-s3';
 
 beforeEach(() => jest.clearAllMocks());
 
@@ -15,7 +16,31 @@ it('marks a zero-byte object for replacement even when its transaction ID matche
       requireNonEmpty: true
     })
   ).resolves.toEqual({ exists: false, invalidate: true });
+  expect(sendMock.mock.calls[0][0]).toBeInstanceOf(HeadObjectCommand);
+  expect(sendMock.mock.calls[0][0].input).toEqual({
+    Bucket: 'bucket',
+    Key: 'images/original/558.JPG'
+  });
 });
+
+it.each([
+  Object.assign(new Error('Missing'), { name: 'NoSuchKey' }),
+  new Error('Transient connection failure'),
+  Object.assign(new Error('Forbidden'), {
+    name: 'AccessDenied',
+    $metadata: { httpStatusCode: 403 }
+  })
+])(
+  'does not classify a failed HEAD request as a confirmed empty object: %s',
+  async (error) => {
+    sendMock.mockRejectedValueOnce(error);
+    await expect(
+      s3ObjectExists('bucket', 'images/original/558.JPG', 'tx', {
+        requireNonEmpty: true
+      })
+    ).resolves.toEqual({ exists: false });
+  }
+);
 
 it('preserves a nonempty object with matching transaction metadata', async () => {
   sendMock.mockResolvedValue({
