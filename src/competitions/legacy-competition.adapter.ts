@@ -1,3 +1,4 @@
+import { waveMetadataDb } from '@/api/waves/wave-metadata.db';
 import {
   CompetitionEntryStatus,
   CompetitionLifecycle,
@@ -95,8 +96,16 @@ export class LegacyCompetitionAdapter implements CompetitionReader {
       outcomes,
       now
     );
+    const metadata = await waveMetadataDb.listByWaveId(
+      record.wave_id,
+      this.ctx
+    );
     return {
       ...competition,
+      presentation: metadata.map(({ data_key, data_value }) => ({
+        data_key,
+        data_value
+      })),
       computed_phase: computeCompetitionPhase(competition, now)
     };
   }

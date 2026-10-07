@@ -3627,15 +3627,20 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
   }
 
   async insertPause(
-    param: { startTime: number; endTime: number; waveId: string },
+    param: {
+      startTime: number;
+      endTime: number;
+      waveId: string;
+      reason?: string;
+    },
     connection: ConnectionWrapper<any>
   ) {
     await this.db.execute(
       `
-      insert into ${WAVES_DECISION_PAUSES_TABLE} (start_time, end_time, wave_id)
-      values (:startTime, :endTime, :waveId)
+      insert into ${WAVES_DECISION_PAUSES_TABLE} (start_time, end_time, wave_id, reason)
+      values (:startTime, :endTime, :waveId, :reason)
         `,
-      param,
+      { ...param, reason: param.reason ?? null },
       { wrappedConnection: connection }
     );
   }

@@ -975,6 +975,35 @@ ownership. A wave-leading legacy decision index supports bounded per-wave
 aggregation. Schema/index rollout precedes API and dependent frontend rollout;
 no execution worker changes. See [normalization and deployment order](./default-competition-navigation.md).
 
+Legacy Settings commands use the same versioned competition update and pause/resume
+API as native competitions. The legacy adapter joins the existing wave update
+transaction and retains wave permissions, validation and storage. It preserves
+chat, visibility, administration, the pinned description and unrelated metadata.
+Legacy title and presentation changes update the shared wave properties. Public
+legacy configuration versions include the wave update timestamp, detecting edits
+through the original wave API without widening the stored competition version.
+Idempotent commands lock the competition and wave and advance both versions.
+The timestamp is an optimistic-concurrency token, while the stored integer
+version remains an internal revision counter. A fresh edit uses the last returned
+token; any intervening shared wave edit requires a reload because Settings
+preserves and rewrites those shared fields. Legacy voting credit rules cannot
+change after the first recorded legacy vote; original wave validation continues
+to govern access, scheduling and Approve threshold updates.
+
+Pause reasons add a nullable `reason` column to `wave_decision_pauses`. Indefinite
+legacy pauses use a finite year-9999 end timestamp understood by existing decision
+workers; v3 reads normalize it to null. Resume shortens the active interval and
+retains the reason and history. No legacy execution worker deployment is required.
+The competition vote-activity endpoint checks wave/competition visibility before
+reading legacy wave logs or native history scoped by competition and visible entry.
+There is exactly one immutable legacy primary per wave. Legacy vote commands
+write wave logs, while every native competition writes its separate history, so
+additional native competitions in the same wave do not mix into legacy activity.
+An additive native-history index supports ordered activity pagination.
+For zero-downtime rollout, deploy and run `dbMigrationsLoop` entity synchronization
+first, then `api`, then the dependent frontend. Existing clients and workers can
+continue reading and writing the additive schema during rollout.
+
 Native command APIs now implement hub creation, versioned draft/publication,
 entry submission, voting, credits, history and
 terminal lifecycle actions. Effective-actor idempotency receipts, signature
