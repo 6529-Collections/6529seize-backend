@@ -235,7 +235,9 @@ async function shouldEnqueueAuditJob(
   }
 
   for (const check of checks) {
-    const exists = await s3ObjectExistsFn(bucket, check.key, check.txId);
+    const exists = await s3ObjectExistsFn(bucket, check.key, check.txId, {
+      requireNonEmpty: job.jobType === S3UploaderJobType.IMAGE
+    });
     if (!exists.exists) {
       return true;
     }
