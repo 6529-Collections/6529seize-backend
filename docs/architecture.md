@@ -1074,7 +1074,27 @@ performance and alert evidence remains a required separate operator attestation.
 Complex, signed-vote, oversized and privileged cohorts receive owned stops; Main
 Stage remains last. See the [migration runbook](./legacy-competition-migration-runbook.md)
 for deployment dependencies, commands, pending gates and rollback boundaries.
-No new Lambda, queue, scheduled migration or default-selection policy is added.
+`competitionMigrationLoop` exposes the same migration engine to IAM-authorized
+AWS Console/SDK invocations in staging (`eu-west-1`) and production (`us-east-1`).
+Strict inputs pin the environment to the deployed stage/region and default to
+inspection. Live actions require an allowlisted operator/reason and reuse all
+remote acceptance, completed-pilot and independent-parity gates. The function
+loads the regional backend secret without schema synchronization or Redis.
+Inline acceptance recording and guarded status/verification/rollback/repair
+actions remove the need for operator shell/database access. Ordinary frontend
+permissions do not expose migration controls; no public API contract changes.
+
+The Lambda has no EventBridge schedule. Only an explicit live `migrate` request
+starts a run; clean time-budget pauses queue the same function and qualifier
+asynchronously, preserving a bounded overall deadline and existing durable
+per-wave checkpoints. One reserved execution plus transactional ownership and
+checkpoint fences protects redelivery. Gate failures never queue continuation;
+function-error retries are disabled and failed/dropped handoffs require manual
+inspection and resumption. A narrow inline role policy grants self-invocation,
+and regional Lambda-error/dropped-event alarms surface stopped continuations.
+Deploy this service after the compatible schema/workers/API; deployment performs
+no invocation, enrollment or cutover. No queue, scheduled migration or
+default-selection policy is added.
 
 Important API responsibilities:
 

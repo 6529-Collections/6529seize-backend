@@ -33,6 +33,17 @@ export type WaveMigrationRuntime = {
   aborted?: () => boolean;
 };
 
+/** A clean checkpoint boundary, distinct from a failed migration gate. */
+export class WaveMigrationPausedError extends Error {
+  constructor() {
+    super(
+      'Migration paused; rerun the same command to resume its saved checkpoint'
+    );
+    this.name = 'WaveMigrationPausedError';
+    Object.setPrototypeOf(this, WaveMigrationPausedError.prototype);
+  }
+}
+
 function assertHealthyStatus(status: MigrationStatus): void {
   if (status.migration?.state === 'ROLLBACK_REQUIRED')
     throw new Error('Native repair is required; ownership is retained');
@@ -87,10 +98,7 @@ export async function migrateWave(
     ...runtime,
     aborted: () => runtime.now() >= deadline || !!runtime.aborted?.()
   };
-  if (budget.aborted())
-    throw new Error(
-      'Migration paused; rerun the same command to resume its saved checkpoint'
-    );
+  if (budget.aborted()) throw new WaveMigrationPausedError();
   const resumed = inspection.status.migration?.exceptions.some((exception) =>
     exception.startsWith('NEGATIVE_CREDIT_REVOCATION_ADAPTER:')
   )
@@ -114,9 +122,7 @@ export async function migrateWave(
     );
     if (result) return result;
   }
-  throw new Error(
-    'Migration paused; rerun the same command to resume its saved checkpoint'
-  );
+  throw new WaveMigrationPausedError();
 }
 
 async function advanceMigration(

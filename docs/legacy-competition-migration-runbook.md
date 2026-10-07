@@ -6,7 +6,128 @@ Use this runbook only after the appropriate environment release is authorized.
 The original primary UUID remains immutable. UI default selection never changes
 ownership, migration targets, capability assignment or an already selected vote.
 
-## Migrate one wave
+## Run from AWS Console in staging or production
+
+Deploy the backend service **`competitionMigrationLoop`** through `Deploy a service`
+after the schema and compatible workers/API below are ready. Its deployment has
+no invocation step, EventBridge schedule or enrollment side effect. It uses the
+same regional `prod/lambdas` secret and VPC access as existing backend workers;
+no operator laptop database credentials, tunnel or shell access are needed.
+There is no public HTTP endpoint or frontend change.
+
+Open **AWS Console → Lambda → competitionMigrationLoop → Test** in
+**eu-west-1 for staging** or **us-east-1 for production**. The explicit payload
+environment must match both the deployed stage and region; `local` is refused.
+Use the default unqualified function (`$LATEST`) for this operating path.
+Begin with this read-only test event:
+
+```json
+{
+  "environment": "staging",
+  "action": "inspect",
+  "wave_id": "c3018ba0-14e7-4145-8b9e-9e292c09ac4e"
+}
+```
+
+Use the UUID of the wave you actually intend to migrate. Inspection returns the
+current owner, automatically selected cohort, checkpoint and unmet prerequisites;
+it creates no mappings, schema, enrollment or migration jobs. `{}`, scheduled
+events, wildcard targets and unknown fields are rejected before connecting.
+
+Configure `COMPETITION_MIGRATION_OPERATORS` with the named operator profile IDs
+in that region's secret, or explicitly on this Lambda. A Lambda environment
+override takes precedence over the shared secret. IAM permission to invoke the
+function is the access boundary; the allowlisted `operator` is the recorded audit
+identity, not proof of a wallet login. Keep invoke permission restricted to the
+approved operations principals. Payloads cannot configure database hosts,
+runtime flags, stage or weaker migration policies.
+
+Before live migration, record the reviewed acceptance through the same Lambda:
+set `action` to `record-environment-acceptance`, supply `environment`, `live: true`,
+`operator`, `reason`, and the full reviewed JSON object in `acceptance`. Omit
+`wave_id` for this environment action. Use the exact fields in
+[the acceptance template](./legacy-competition-migration-acceptance.pending.json),
+replacing pending/null values with real reviewed evidence for the target region.
+The object is submitted inline, so no file path or second CLI is necessary.
+Staging acceptance never satisfies production. Approval validity and the incident
+window remain enforced, and changes to approval reset per-wave parity windows.
+
+Then run or resume a single wave with:
+
+```json
+{
+  "environment": "staging",
+  "action": "migrate",
+  "wave_id": "c3018ba0-14e7-4145-8b9e-9e292c09ac4e",
+  "live": true,
+  "operator": "<allowlisted-profile-id>",
+  "reason": "<reviewed-rollout-reference>",
+  "batch": 25,
+  "auto_continue": true,
+  "max_duration_minutes": 60
+}
+```
+
+For production, invoke the production-region function with
+`"environment": "production"`. The same completed-pilot ordering, seven full
+approved parity windows, capture health, effect drainage and ownership fences
+apply in both remote environments. Negative votes are supported; unsupported
+signed-vote, privileged, oversized and historical shapes retain their stops.
+Nothing in this Lambda fabricates acceptance or waives an exception.
+
+The default invocation slice is 120 seconds (`invocation_seconds` accepts
+30–720), with a 60-second Lambda cleanup reserve. `batch` accepts 1–100.
+`max_duration_minutes` accepts 1–1440 and bounds the entire continuation chain;
+each continuation preserves the initial absolute deadline and the same named
+operator and reason. This deadline starts when the first invocation runs.
+At a clean checkpoint pause the function queues itself asynchronously and
+returns `outcome: "CONTINUING"`, the run ID/deadline and durable wave status.
+`COMPLETE` includes native ownership verification. `PAUSED` means the configured
+overall time limit was reached, the invocation had no usable budget, or automatic
+continuation was disabled. Set `auto_continue: false` to run a bounded slice and
+resume by manually submitting the same migration payload again.
+
+Run one automatic wave migration at a time in each region. The worker has one
+reserved execution; use CloudWatch logs for progress while that execution is
+occupied, since another synchronous status invocation can be throttled.
+
+Only a clean time-budget pause creates another invocation. Gate failures,
+comparison mismatches, unsupported shapes and transport failures stop the run
+with a Lambda function error. AWS function-error retries are disabled for the
+default `$LATEST` invocation. If an operator uses a separately published version
+or alias, configure the same asynchronous retry/age settings for that qualifier
+first; AWS settings are [scoped to the selected function/version/alias](https://docs.aws.amazon.com/lambda/latest/dg/invocation-async-configuring.html).
+A dropped
+or failed continuation does not erase its DB checkpoint: inspect status and
+resubmit the original migration event after resolving the cause. At-least-once
+delivery is protected by the existing transaction/checkpoint fences and one
+reserved Lambda execution. Continuations invoke the same function and qualifier
+as the originating context. There is no broad invocation permission: the added
+execution-role policy covers this migration function and its qualifiers only.
+
+CloudWatch logs at `/aws/lambda/competitionMigrationLoop` report copying stages,
+journal lag, clean-window count and transfer/verification. Lambda error and
+dropped-async-event alarms use the region's existing operations alarm topic.
+For the current durable status, submit:
+
+```json
+{
+  "environment": "staging",
+  "action": "status",
+  "wave_id": "c3018ba0-14e7-4145-8b9e-9e292c09ac4e"
+}
+```
+
+Additional explicit actions are `readiness` and `verify` (read-only),
+`reverse-reconcile`, `rollback`, `record-exception` and `review-repair`.
+All mutations require `live: true`, an allowlisted `operator` and a `reason`.
+Without `live`, `rollback` evaluates rollback gates while other recovery actions
+only inspect status. `reverse-reconcile` processes one bounded batch per manual
+invocation before a separately requested guarded rollback. `record-exception`
+requires a stable uppercase `exception` code; `review-repair` requires an HTTPS
+`evidence` URL and retains native ownership. There is no clear-exceptions action.
+
+## Migrate one wave from a local operator CLI
 
 From the backend checkout, pass the **wave UUID** to the operator command:
 
@@ -81,7 +202,8 @@ On resume, the command audits retirement of the old
 and resets parity. Every other owned exception remains intact.
 
 The commands in the later sections are the low-level recovery/debugging interface.
-Routine migration uses `migrate-wave`.
+Routine remote migration uses the AWS Lambda above. The local operator command
+remains `migrate-wave`.
 
 ## Current acceptance ledger
 
@@ -135,7 +257,11 @@ while old writer/worker versions remain in service.
    disabling those flags is a deliberate activity stop, not a storage rollback.
 5. Only after backend success merge/deploy the frontend compatibility change.
    Require the related desktop/mobile E2E before further promotion.
-6. Collect and review the pending evidence above. Then authorize a separate
+6. Deploy `competitionMigrationLoop` after the compatible backend is verified.
+   This creates the manual function, scoped self-invocation policy and alarms;
+   it neither runs the function nor creates a migration schedule. Configure the
+   regional operator allowlist before any live invocation.
+7. Collect and review the pending evidence above. Then authorize a separate
    one-competition rehearsal/pilot. Main Stage stays legacy until its dedicated
    privileged release review and adapter work are complete.
 
