@@ -856,7 +856,8 @@ export class WaveApiService {
   public async createOrUpdateWavePause(
     waveId: string,
     model: ApiUpdateWaveDecisionPause,
-    ctx: RequestContext
+    ctx: RequestContext,
+    reason?: string
   ): Promise<ApiWave> {
     const wave = await this.assertUserAllowedToModifyPauses(ctx, waveId);
     await this.assertProposedPauseValidForAddOrUpdate(wave, model, ctx);
@@ -865,7 +866,12 @@ export class WaveApiService {
         await this.wavesApiDb.deletePause(model.id, connection);
       }
       await this.wavesApiDb.insertPause(
-        { startTime: model.start_time, endTime: model.end_time, waveId },
+        {
+          startTime: model.start_time,
+          endTime: model.end_time,
+          waveId,
+          ...(reason === undefined ? {} : { reason })
+        },
         connection
       );
     }, ctx);

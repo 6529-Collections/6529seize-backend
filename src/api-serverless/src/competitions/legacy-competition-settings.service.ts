@@ -28,6 +28,25 @@ import {
 } from './competition-command-access';
 import { competitionPresentationKeys } from './competition-configuration';
 
+function votingCreditRules(config: ApiCompetitionDraftInput) {
+  const {
+    credit_type,
+    credit_scope,
+    credit_category,
+    creditor_id,
+    credit_nfts,
+    forbid_negative_votes
+  } = config.voting;
+  return {
+    credit_type,
+    credit_scope,
+    credit_category,
+    creditor_id,
+    credit_nfts,
+    forbid_negative_votes
+  };
+}
+
 export function legacyWaveUpdate(wave: ApiWave): ApiUpdateWaveRequest {
   return {
     name: wave.name,
@@ -166,6 +185,14 @@ export class LegacyCompetitionSettingsService {
             'Legacy competition type cannot change'
           );
         if (
+          competitionPayloadHash(votingCreditRules(request.config)) !==
+            competitionPayloadHash(votingCreditRules(previous)) &&
+          (await legacyCompetitionSettingsRepository.hasVotes(waveId, tx))
+        )
+          competitionConflict(
+            'Voting credit rules are immutable after the first vote'
+          );
+        if (
           request.config.description !== null ||
           competitionPayloadHash(request.config.outcomes) !==
             competitionPayloadHash(previous.outcomes)
@@ -258,14 +285,8 @@ export class LegacyCompetitionSettingsService {
           await waveApiService.createOrUpdateWavePause(
             waveId,
             { id: null, start_time: start, end_time: end },
-            tx
-          );
-          await legacyCompetitionSettingsRepository.pause(
-            waveId,
-            start,
-            end,
-            reason,
-            tx
+            tx,
+            reason
           );
         } else {
           // Apply the same unresolved-decision guard used by the wave pause API.
@@ -274,7 +295,10 @@ export class LegacyCompetitionSettingsService {
             competitionConflict(
               'A competition decision is being finalized. Retry shortly'
             );
-          await legacyCompetitionSettingsRepository.resume(waveId, now, tx);
+          if (
+            !(await legacyCompetitionSettingsRepository.resume(waveId, now, tx))
+          )
+            competitionConflict('Competition is not paused');
         }
         const version = Math.max(now, request.config_version + 1);
         await legacyCompetitionSettingsRepository.advanceVersion(

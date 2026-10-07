@@ -23,10 +23,10 @@ describe('competition v3 OpenAPI contract', () => {
     .map(([route, pathItem]) => ({ route, operation: pathItem.get! }));
 
   it('documents validation and masking responses for every read', () => {
-    // Default navigation adds one read to the twenty native/foundation reads.
+    // Default navigation and vote activity add two foundation reads.
     // Write-only paths are deliberately excluded, while every GET retains the
     // validation and masked-not-found response guarantees.
-    expect(operations).toHaveLength(21);
+    expect(operations).toHaveLength(22);
     for (const { route, operation } of operations) {
       expect({ route, responses: operation.responses }).toMatchObject({
         route,

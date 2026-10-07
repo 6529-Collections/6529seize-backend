@@ -1,3 +1,4 @@
+import { competitionRepository } from '@/competitions/competition.repository';
 import { competitionLifecycleService } from './competition-lifecycle.service';
 import { ApiCompetitionDraftInput } from '@/api/generated/models/ApiCompetitionDraftInput';
 import { competitionCommandRepository } from '@/competitions/competition-command.repository';
@@ -15,7 +16,10 @@ jest.mock('@/competitions/competition.service', () => ({
   competitionService: { getCompetition: jest.fn() }
 }));
 jest.mock('@/competitions/competition.repository', () => ({
-  competitionRepository: { parseCompetitionRecord: (record: unknown) => record }
+  competitionRepository: {
+    parseCompetitionRecord: (record: unknown) => record,
+    findCompetitionRecordById: jest.fn()
+  }
 }));
 jest.mock('@/competitions/native-competition-runtime.repository', () => ({
   nativeCompetitionRuntimeRepository: { enqueueEvent: jest.fn() }
@@ -62,6 +66,13 @@ const action = (command: 'pause' | 'resume', reason?: string | null) =>
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest
+    .mocked(competitionRepository.findCompetitionRecordById)
+    .mockResolvedValue({
+      id: 'competition',
+      wave_id: 'wave',
+      storage_mode: 'NATIVE'
+    } as never);
   jest
     .mocked(administerCompetitionWave)
     .mockResolvedValue({ wave: { id: 'wave' } } as never);

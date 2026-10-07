@@ -670,6 +670,8 @@ export class CompetitionService {
         !isCompetitionDecisionPending(competition, now));
     return {
       ...publicData,
+      // Legacy Settings mutate shared wave fields. Any intervening wave edit
+      // must invalidate a form that would otherwise overwrite those fields.
       config_version:
         competition.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER
           ? Math.max(

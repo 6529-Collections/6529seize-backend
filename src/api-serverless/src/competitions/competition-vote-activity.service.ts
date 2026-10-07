@@ -25,6 +25,8 @@ export async function listCompetitionVoteActivity(
   if (!record || record.wave_id !== waveId)
     throw new NotFoundException('Competition not found');
   if (record.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER) {
+    // Exactly one legacy adapter exists per wave. Native competition commands
+    // write their own history, never DROP_VOTE_EDIT wave logs.
     return dropsService.findWaveLogs(
       {
         wave_id: waveId,
@@ -50,7 +52,7 @@ export async function listCompetitionVoteActivity(
     ctx
   );
   return rows.map((row) => ({
-    id: `${competitionId}:${row.sequence}`,
+    id: `${competitionId}:${Number(row.sequence)}`,
     action: 'DROP_VOTE_EDIT',
     wave_id: waveId,
     drop_id: row.drop_id,
