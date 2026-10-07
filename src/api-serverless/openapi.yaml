@@ -6419,8 +6419,16 @@ paths:
                   $ref: "#/components/schemas/ApiWaveLog"
         "400":
           description: Invalid pagination
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiCompetitionError"
         "404":
           description: Masked parent or competition mismatch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiCompetitionError"
   /v3/waves/{wave_id}/competitions/{competition_id}/pauses:
     get:
       tags:

@@ -52,6 +52,19 @@ describe('competition v3 OpenAPI contract', () => {
     ).toEqual(result);
   });
 
+  it('documents the activity read and structured pagination/masking errors', () => {
+    const operation =
+      openapi.paths[
+        '/v3/waves/{wave_id}/competitions/{competition_id}/activity'
+      ].get!;
+    expect(operation['x-6529-router'].auth).toBe('optional');
+    for (const status of ['400', '404']) {
+      expect(
+        operation.responses[status].content['application/json'].schema
+      ).toEqual({ $ref: '#/components/schemas/ApiCompetitionError' });
+    }
+  });
+
   it('uses one direction type with operation-specific defaults', () => {
     const descOperations = new Set([
       'listCompetitionLeaderboardV3',

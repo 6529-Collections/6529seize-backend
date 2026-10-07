@@ -371,6 +371,30 @@ describeWithSeed(
           contents: { oldVote: 0, newVote: 5 }
         })
       ]);
+      // Existing wave vote logs are readable by public-wave viewers, including
+      // guests. Private waves mask the same route for guests and outsiders.
+      expect(
+        await listCompetitionVoteActivity(wave.id, legacy.id, 0, 50, {})
+      ).toEqual([
+        expect.objectContaining({
+          id: 'legacy-vote-log',
+          contents: { oldVote: 0, newVote: 3 }
+        })
+      ]);
+      await sqlExecutor.execute(
+        `UPDATE ${WAVES_TABLE} SET visibility_group_id = 'private-group' WHERE id = :id`,
+        { id: wave.id }
+      );
+      for (const viewer of [
+        {},
+        {
+          authenticationContext: AuthenticationContext.fromProfileId('visitor')
+        }
+      ]) {
+        await expect(
+          listCompetitionVoteActivity(wave.id, legacy.id, 0, 50, viewer)
+        ).rejects.toThrow('not found');
+      }
     });
 
     it('pauses old workers indefinitely and resumes while preserving reason and history', async () => {
