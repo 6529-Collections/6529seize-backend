@@ -179,7 +179,7 @@ merely to align SHAs.
 | 10 | `subscriptionsTopUpLoop` | Head and checkpoint timestamps alongside indexed top-ups |
 | 11 | `mintAnnouncementsLoop` | Manifold contract reads |
 | 12 | `artCurationNftWatchLoop` | Contract reads |
-| 13 | `populateHistoricConsolidatedTdh` | Historical block timestamps; update before its next authorized manual use, **do not invoke as a smoke test** |
+| 13 | `populateHistoricConsolidatedTdh` | Historical block timestamps |
 
 External collection indexing, NFT-link resolver/refresher and the legacy proxy
 retain their own endpoints. `rememesLoop` remains indexed-only. These do not
