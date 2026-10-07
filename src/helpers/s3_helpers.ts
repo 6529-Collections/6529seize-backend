@@ -10,7 +10,8 @@ const METADATA_KEY = 'tx-id';
 export async function s3ObjectExists(
   myBucket: any,
   key: any,
-  txId: string
+  txId: string,
+  options: { requireNonEmpty?: boolean } = {}
 ): Promise<{
   exists: boolean;
   invalidate?: boolean;
@@ -21,6 +22,13 @@ export async function s3ObjectExists(
       const result = await s3.send(
         new HeadObjectCommand({ Bucket: myBucket, Key: objectKey })
       );
+
+      // A previous successful HTTP response can still have uploaded no bytes.
+      // Existence alone must not prevent a later retry/audit from repairing it.
+      if (options.requireNonEmpty && result.ContentLength === 0) {
+        logger.warn(`[EMPTY S3 OBJECT] [KEY ${objectKey}] [action=replace]`);
+        return { exists: false, invalidate: true };
+      }
 
       const metadataTxId = result.Metadata?.[METADATA_KEY];
       if (!txId || metadataTxId === txId) {
