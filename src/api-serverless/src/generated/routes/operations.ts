@@ -199,6 +199,7 @@ import { ApiWaveDecisionsPageV2 } from '@/api/generated/models/ApiWaveDecisionsP
 import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
 import { ApiWaveGroupValidationRequest } from '@/api/generated/models/ApiWaveGroupValidationRequest';
 import { ApiWaveGroupValidationResponse } from '@/api/generated/models/ApiWaveGroupValidationResponse';
+import { ApiWaveLog } from '@/api/generated/models/ApiWaveLog';
 import { ApiWaveMentionSearchResult } from '@/api/generated/models/ApiWaveMentionSearchResult';
 import { ApiWaveMetadata } from '@/api/generated/models/ApiWaveMetadata';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
@@ -3209,6 +3210,26 @@ export type ExecuteCompetitionActionV3Request = Request<
   ApiResponse<ExecuteCompetitionActionV3Response>,
   ApiCompetitionActionRequest,
   ExecuteCompetitionActionV3Query,
+  Record<string, never>
+>;
+
+export interface ListCompetitionVoteActivityV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+}
+
+export interface ListCompetitionVoteActivityV3Query {
+  "offset"?: number;
+  "limit"?: number;
+}
+
+export type ListCompetitionVoteActivityV3Response = ApiWaveLog[];
+
+export type ListCompetitionVoteActivityV3Request = Request<
+  ListCompetitionVoteActivityV3PathParams,
+  ApiResponse<ListCompetitionVoteActivityV3Response>,
+  never,
+  ListCompetitionVoteActivityV3Query,
   Record<string, never>
 >;
 

@@ -1,3 +1,5 @@
+import { listCompetitionVoteActivity } from './competition-vote-activity.service';
+import { ApiWaveLog } from '@/api/generated/models/ApiWaveLog';
 import { memeCardDropMappingsDb } from '@/minting-claims/meme-card-drop-mappings.db';
 import { getAuthenticationContext } from '@/api/auth/auth';
 import { identityFetcher } from '@/api/identities/identity.fetcher';
@@ -34,6 +36,7 @@ import {
   ListCompetitionOutcomesV3Request,
   ListCompetitionOutcomeDistributionV3Request,
   ListCompetitionPausesV3Request,
+  ListCompetitionVoteActivityV3Request,
   ListCompetitionVersionsV3Request,
   ListCompetitionVotersV3Request,
   ListCompetitionWinnersV3Request,
@@ -566,4 +569,29 @@ export async function handleListCompetitionPausesV3(
     toCursorRequest(query),
     await getContext(req)
   )) as unknown as ApiCompetitionPausePage;
+}
+
+export async function handleListCompetitionVoteActivityV3(
+  req: ListCompetitionVoteActivityV3Request
+): Promise<ApiWaveLog[]> {
+  const { wave_id, competition_id } = getValidatedByJoiOrThrow(
+    req.params,
+    CompetitionPathSchema
+  );
+  const query = getValidatedByJoiOrThrow(
+    req.query,
+    Joi.object<{ offset: number; limit: number }>({
+      offset: Joi.number().integer().min(0).max(100000).default(0),
+      limit: Joi.number().integer().min(1).max(100).default(50)
+    })
+      .unknown(false)
+      .required()
+  );
+  return listCompetitionVoteActivity(
+    wave_id,
+    competition_id,
+    query.offset,
+    query.limit,
+    await getContext(req)
+  );
 }
