@@ -670,6 +670,13 @@ export class CompetitionService {
         !isCompetitionDecisionPending(competition, now));
     return {
       ...publicData,
+      config_version:
+        competition.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER
+          ? Math.max(
+              competition.config_version,
+              Number(wave.updated_at ?? wave.created_at)
+            )
+          : competition.config_version,
       permissions: {
         view: true,
         submit:
@@ -697,7 +704,13 @@ export class CompetitionService {
               ProfileProxyActionType.RATE_WAVE_DROP
             )
           ),
-        administer: this.canAdminister(wave, eligibleGroups, ctx)
+        administer:
+          this.canAdminister(wave, eligibleGroups, ctx) &&
+          !(
+            competition.storage_mode ===
+              CompetitionStorageMode.LEGACY_ADAPTER &&
+            authenticationContext?.isAuthenticatedAsProxy()
+          )
       }
     };
   }

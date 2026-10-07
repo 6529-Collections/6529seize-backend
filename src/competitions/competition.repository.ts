@@ -1,3 +1,4 @@
+import { LEGACY_INDEFINITE_PAUSE_END } from './legacy-competition-settings.repository';
 import { competitionEntryVisibleSql } from '@/competitions/competition-entry-visibility';
 import { randomUUID } from 'node:crypto';
 import {
@@ -1454,6 +1455,7 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
       id: number | string;
       start_time: number | string;
       end_time: number | string | null;
+      reason?: string | null;
     }>(
       `select * from ${WAVES_DECISION_PAUSES_TABLE}
        where wave_id = :waveId
@@ -1471,8 +1473,11 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
         id: legacyCompetitionPauseId(record.id, row.id),
         competition_id: record.id,
         start_time: toNumber(row.start_time),
-        end_time: toNumber(row.end_time),
-        reason: null
+        end_time:
+          Number(row.end_time) === LEGACY_INDEFINITE_PAUSE_END
+            ? null
+            : toNumber(row.end_time),
+        reason: row.reason ?? null
       })),
       request.limit
     );

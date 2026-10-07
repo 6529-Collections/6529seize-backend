@@ -233,6 +233,9 @@ export class WaveDecisionPauseEntity {
 
   @Column({ type: 'bigint', nullable: false })
   readonly end_time!: number;
+
+  @Column({ type: 'varchar', length: 2000, nullable: true })
+  readonly reason?: string | null;
 }
 
 @Entity(WAVES_ARCHIVE_TABLE)
