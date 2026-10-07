@@ -6,6 +6,83 @@ Use this runbook only after the appropriate environment release is authorized.
 The original primary UUID remains immutable. UI default selection never changes
 ownership, migration targets, capability assignment or an already selected vote.
 
+## Migrate one wave
+
+From the backend checkout, pass the **wave UUID** to the operator command:
+
+```sh
+./bin/6529 run migrate-wave -- <wave-uuid>
+```
+
+This loads `.env.local` and runs a local migration. It resolves the immutable
+legacy primary UUID, prepares additive migration tables/views/capture, selects
+the source cohort, resumes bounded copying and concurrent-write catch-up, compares
+the source independently with native storage, atomically transfers ownership and
+verifies native invariants. Wave/drop URLs and shared chat remain unchanged.
+Frozen reads preserve nullable legacy metadata, every historical winner, retained
+chat/retired leaderboard snapshots and outcome children without a current parent.
+Those retained rows remain shared history; active competition state is native.
+Local read/write DB hosts must both be loopback addresses. Enable
+`FEATURE_UNIFIED_COMPETITION_READS`, `FEATURE_NATIVE_COMPETITION_WRITES` and
+`FEATURE_NATIVE_COMPETITION_EXECUTION` in the local API/worker configuration once,
+then restart those processes. The command checks writer/execution flags; it never
+silently enables a remote runtime or assumes another process shares its flags.
+Local parity uses complete independent snapshots and a final locked comparison;
+it requires neither production attestations nor a prior completed pilot.
+
+Use `--dry-run` for read-only inspection. No tables, capture triggers, mapping,
+enrollment or ownership are changed by inspection. If interrupted, stopped by a
+deadline or disconnected between batches, rerun the same command to resume its
+durable checkpoint. `--batch 25` and `--timeout-minutes 60` are defaults. The
+command reports stages, journal catch-up and comparison progress. Mismatches,
+unsupported shapes and owned exceptions stop it with a reason. Pending effects
+are polled until drained or the deadline expires; no external effect is fabricated
+or automatically undone. Already migrated waves receive verification only.
+
+Staging/production require the one-time release below and a named allowlisted
+operator. Set the explicit target environment and approved DB configuration;
+`NODE_ENV=local` prevents cloud secret loading even through a remote tunnel.
+Set `COMPETITION_MIGRATION_OPERATOR` once for the operator session. Before starting
+the approved rollout window, record one reviewed environment acceptance:
+
+```sh
+./bin/6529 run competition:migrate -- --environment production \
+  --action record-environment-acceptance --acceptance <reviewed-json-path> \
+  --operator <allowlisted-profile-id> --reason <rollout-reference> --live
+```
+
+The acceptance is append-only and scoped to the target database and environment.
+It is reused by each wave within its approved incident window and 24-hour validity;
+new reviews replace the current approval without deleting prior evidence. Staging
+approval cannot satisfy production. Comparisons snapshot that approval for each
+wave; changed evidence starts fresh parity windows before a live transfer.
+Existing per-competition acceptance records
+remain readable for audit; live gates use the explicit environment approval.
+The old `record-acceptance` action also records an environment review so recovery
+scripts retain their interface without letting staging records satisfy production.
+
+```sh
+./bin/6529 run migrate-wave -- <wave-uuid> --environment production --dry-run
+./bin/6529 run migrate-wave -- <wave-uuid> --environment production --live
+```
+
+Remote targets default to read-only inspection unless `--live` is supplied.
+Live production/staging commands require `COMPETITION_MIGRATION_OPERATORS` to
+include the operator. They retain the completed-pilot rollout order, all reviewed
+operational acceptance gates, and seven consecutive full approved parity windows.
+The command samples and waits automatically; operators do not run each batch or
+comparison manually. Active ordinary competitions permitting negative votes are
+supported: signed current/history values transfer unchanged, replacement/sign
+edits charge absolute voting credit, and native credit reduction preserves signs
+without overspending. Signed-vote, complex, privileged/Main Stage and oversized
+sources still require their specific adapters and reviewed release evidence.
+On resume, the command audits retirement of the old
+`NEGATIVE_CREDIT_REVOCATION_ADAPTER` stop for an ordinary unsigned legacy source
+and resets parity. Every other owned exception remains intact.
+
+The commands in the later sections are the low-level recovery/debugging interface.
+Routine migration uses `migrate-wave`.
+
 ## Current acceptance ledger
 
 | Gate                                                                       | Current evidence                                                                                   | Execution owner                                              |
@@ -30,7 +107,7 @@ No schema, queue, mapping or history is removed. Do not enroll a competition
 while old writer/worker versions remain in service.
 
 1. Deploy `dbMigrationsLoop`. Perform its authorized manual full invocation to
-   synchronize additive migration journal/audit/checkpoint, transactional mirror
+   synchronize additive migration journal/audit/checkpoint/environment-review, transactional mirror
    permit and legacy publication-receipt entities, nullable pause source ID and
    leaderboard ordering fields. The same invocation installs the 12 permanent
    GET views. Set `COMPETITION_MIGRATION_CAPTURE_ENABLED=true` for the reviewed
@@ -119,7 +196,7 @@ without rehearsing a mutation. Cutover/rollback dry runs evaluate their gates.
 
    Cohort order is completed internal, completed ordinary, active low volume,
    complex, then privileged/Main Stage. An active transfer requires an earlier
-   completed native migration. Privileged, complex, active negative-vote, signed-vote, unsupported
+   completed native migration. Privileged, complex, signed-vote, unsupported
    rule and high-volume sources receive owned stops. Main Stage also has an
    explicit final release-review stop. These stops require reviewed adapter
    development and renewed full evidence; no exception-clearing CLI is provided.

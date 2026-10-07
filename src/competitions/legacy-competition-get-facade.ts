@@ -208,7 +208,9 @@ function json(
 
 const waveFields: Readonly<Record<string, string>> = {
   name: 'c.title',
-  updated_at: 'c.updated_at',
+  // The native config normalizes an untouched legacy null to created_at.
+  updated_at:
+    'case when w.updated_at is null and c.updated_at=c.created_at then null else c.updated_at end',
   type: 'c.type',
   participation_group_id: json('participation_config.group_id'),
   participation_signature_required: json(
@@ -335,12 +337,13 @@ function nativeSelects(table: string): {
       };
     case WAVES_DECISION_WINNER_DROPS_TABLE:
       return {
-        from: `${entries} join ${COMPETITION_DECISIONS_TABLE} d on d.competition_id=c.id and d.id=e.decision_id join ${COMPETITION_DECISION_WINNERS_TABLE} win on win.entry_id=e.id and win.decision_id=d.id`,
+        from: `${entries} join ${COMPETITION_DECISION_WINNERS_TABLE} win on win.entry_id=e.id and win.competition_id=c.id join ${COMPETITION_DECISIONS_TABLE} d on d.competition_id=c.id and d.id=win.decision_id`,
         fields: {
           wave_id: 'c.wave_id',
           decision_time: 'd.scheduled_at',
           drop_id: 'e.drop_id',
-          ranking: 'win.rank',
+          // Frozen ranking is INT; the driver's native BIGINT is a string.
+          ranking: 'cast(win.rank as double)',
           final_vote: 'win.final_rating',
           prizes: `coalesce((select json_arrayagg(a.award) over(order by a.outcome_position,a.id rows between unbounded preceding and unbounded following) from ${COMPETITION_OUTCOME_AWARDS_TABLE} a where a.competition_id=c.id and a.decision_id=d.id and a.entry_id=e.id limit 1),json_array())`
         }
@@ -385,6 +388,16 @@ function nativeSelects(table: string): {
   }
 }
 
+function nativeSourceOwnership(table: string): string {
+  // Chat/retired leaderboard rows and orphaned outcome children are retained
+  // history, outside the current native leaderboard and outcome definitions.
+  if (table === WAVE_LEADERBOARD_ENTRIES_TABLE)
+    return `and exists(select 1 from ${COMPETITION_ENTRIES_TABLE} e where e.competition_id=c.id and e.drop_id=s.drop_id and e.status='ACTIVE')`;
+  if (table === WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE)
+    return `and exists(select 1 from ${COMPETITION_OUTCOMES_TABLE} o where o.competition_id=c.id and o.position=s.wave_outcome_position)`;
+  return '';
+}
+
 /** Additive schema, installed before any reader deployment or enrollment. */
 export async function installLegacyCompetitionGetFacade(
   db: SqlExecutor
@@ -413,7 +426,7 @@ export async function installLegacyCompetitionGetFacade(
         const native = nativeSelects(table);
         if (columns.some((column) => !native.fields[column]))
           throw new Error(`Compatibility schema drift: ${table}`);
-        select = `select ${columns.map((column) => `s.\`${column}\``).join(',')} from ${table} s where not exists (select 1 from ${owners} where c.legacy_wave_id=s.wave_id and ${nativePrimary}) union all select ${rows.map((row) => `${row.CHARACTER_SET_NAME ? `convert(${native.fields[row.COLUMN_NAME]} using ${row.CHARACTER_SET_NAME}) collate ${row.COLLATION_NAME}` : native.fields[row.COLUMN_NAME]} as \`${row.COLUMN_NAME}\``).join(',')} from ${native.from}`;
+        select = `select ${columns.map((column) => `s.\`${column}\``).join(',')} from ${table} s where not exists (select 1 from ${owners} where c.legacy_wave_id=s.wave_id and ${nativePrimary} ${nativeSourceOwnership(table)}) union all select ${rows.map((row) => `${row.CHARACTER_SET_NAME ? `convert(${native.fields[row.COLUMN_NAME]} using ${row.CHARACTER_SET_NAME}) collate ${row.COLLATION_NAME}` : native.fields[row.COLUMN_NAME]} as \`${row.COLUMN_NAME}\``).join(',')} from ${native.from}`;
       }
       await db.execute(
         `create or replace sql security invoker view \`${legacyGetView(table)}\` as ${select}`,

@@ -1,6 +1,10 @@
 import { compareMigrationContent } from '@/competitions/competition-migration-content-parity';
 import { MigrationAcceptanceSchema } from './competition-migration-acceptance';
 import { MigrationAcceptance } from './competition-migration-policy';
+import { MigrationEnvironment } from './competition-migration-policy';
+import { CompetitionMigrationEnvironmentRepository } from './competition-migration-environment.repository';
+import { legacyCompetitionId } from './competition-id';
+import { appFeatures } from '@/app-features';
 import { migrationCommandConfiguration } from './legacy-competition-configuration';
 import { LegacyCompetitionAdapter } from './legacy-competition.adapter';
 import { WavesApiDb } from '@/api/waves/waves.api.db';
@@ -37,6 +41,7 @@ import { CompetitionMigrationBackfill } from '@/competitions/competition-migrati
 import {
   MIGRATION_STAGES,
   MigrationCohort,
+  migrationAcceptanceFailures,
   migrationReadinessFailures,
   nextMigrationWindowStreak,
   assertMigrationRollbackSafe
@@ -47,7 +52,10 @@ import { NativeCompetitionReader } from '@/competitions/native-competition.reade
 import { loadLegacyParityCandidate } from '@/competitions/legacy-parity-snapshot';
 import { competitionPayloadHash } from '@/competitions/competition-command-identity';
 import { migrationCaptureHealthy } from '@/competitions/competition-migration-capture';
-import { CompetitionSnapshot } from '@/competitions/competition.types';
+import {
+  Competition,
+  CompetitionSnapshot
+} from '@/competitions/competition.types';
 import { compareLegacyFacade } from '@/competitions/legacy-competition-facade-parity';
 
 const SHADOW_TABLES = [
@@ -110,13 +118,19 @@ function comparisonWindowProgress(
   now: number,
   windowMs: number,
   complete: boolean,
-  mismatches: number
+  mismatches: number,
+  approvalChanged = false
 ) {
   const changedDuration = migration.window_duration_ms !== windowMs;
   const missedSample =
     migration.last_comparison_at !== null &&
     now - migration.last_comparison_at > windowMs;
-  const reset = mismatches > 0 || !complete || changedDuration || missedSample;
+  const reset =
+    mismatches > 0 ||
+    !complete ||
+    changedDuration ||
+    missedSample ||
+    approvalChanged;
   const startedAt =
     reset || migration.window_started_at === null
       ? now
@@ -158,8 +172,23 @@ export class CompetitionMigrationService {
   constructor(
     private readonly supplier: () => SqlExecutor = dbSupplier,
     private readonly now: () => number = Date.now,
-    private readonly batchIntervalMs: number = 250
-  ) {}
+    private readonly batchIntervalMs: number = 250,
+    private readonly environment: MigrationEnvironment = 'production'
+  ) {
+    if (
+      environment === 'local' &&
+      (process.env.NODE_ENV !== 'local' ||
+        !['localhost', '127.0.0.1', '::1'].includes(
+          process.env.DB_HOST ?? ''
+        ) ||
+        !['localhost', '127.0.0.1', '::1'].includes(
+          process.env.DB_HOST_READ ?? ''
+        ))
+    )
+      throw new Error(
+        'Local migration policy requires explicitly configured loopback read/write databases'
+      );
+  }
   private async transaction<T>(
     id: string,
     action: (
@@ -171,7 +200,10 @@ export class CompetitionMigrationService {
     return db.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctx = { connection };
-        const repository = new CompetitionMigrationRepository(() => db);
+        const repository = new CompetitionMigrationRepository(
+          () => db,
+          this.environment
+        );
         await repository.lock(id, ctx);
         return action(repository, ctx);
       },
@@ -197,7 +229,167 @@ export class CompetitionMigrationService {
     return null;
   }
   public status(id: string) {
-    return new CompetitionMigrationRepository(this.supplier).status(id, {});
+    return new CompetitionMigrationRepository(
+      this.supplier,
+      this.environment
+    ).status(id, {});
+  }
+
+  public async inspectWave(waveId: string) {
+    const repository = new CompetitionRepository(this.supplier);
+    const id = legacyCompetitionId(waveId);
+    const record = await repository.findCompetitionRecordById(id, {});
+    if (
+      !record ||
+      record.legacy_wave_id !== waveId ||
+      record.wave_id !== waveId
+    )
+      throw new Error(
+        'The wave has no registered legacy primary competition; prepare the migration environment first'
+      );
+    const status = await this.status(id);
+    if (record.storage_mode === 'NATIVE')
+      return {
+        status,
+        cohort: 'ACTIVE_LOW_VOLUME' as const,
+        failures: [],
+        windowMs: 1
+      };
+    const competition = await new LegacyCompetitionAdapter(
+      repository,
+      new WavesApiDb(this.supplier),
+      {}
+    ).getCompetition(record, this.now());
+    const cohort: MigrationCohort = competition.capabilities.length
+      ? 'PRIVILEGED'
+      : competition.lifecycle === 'ENDED'
+        ? 'COMPLETED_ORDINARY'
+        : 'ACTIVE_LOW_VOLUME';
+    const failures = await this.sourceReadiness(competition, waveId);
+    const environment = await this.environmentReadiness(cohort);
+    return {
+      status,
+      cohort,
+      failures: [...failures, ...environment.failures],
+      windowMs: environment.windowMs
+    };
+  }
+
+  private async sourceReadiness(
+    competition: Competition,
+    waveId: string
+  ): Promise<string[]> {
+    const failures: string[] = [];
+    if (competition.capabilities.length)
+      failures.push('PRIVILEGED_PARITY_AND_EFFECTS');
+    if (competition.voting.signature_required)
+      failures.push('LEGACY_SIGNED_VOTE_ADAPTER');
+    migrationCommandConfiguration(competition);
+    if (
+      (await new CompetitionMigrationRepository(
+        this.supplier,
+        this.environment
+      ).sourceEntryCount(waveId, {})) > 1000
+    )
+      failures.push('HIGH_VOLUME_FULL_COMPARISON');
+    return failures;
+  }
+
+  private async environmentReadiness(cohort: MigrationCohort) {
+    const failures: string[] = [];
+    if (!(await migrationCaptureHealthy(this.supplier(), {})))
+      failures.push('DURABLE_CAPTURE');
+    if (
+      !appFeatures.isNativeCompetitionExecutionEnabled() ||
+      !appFeatures.isNativeCompetitionWritesEnabled()
+    )
+      failures.push('COMPATIBLE_RUNTIME_FLAGS');
+    if (this.environment === 'local') return { failures, windowMs: 60000 };
+    const acceptance = await new CompetitionMigrationEnvironmentRepository(
+      this.supplier
+    ).latest(this.environment, {});
+    if (acceptance)
+      failures.push(...migrationAcceptanceFailures(acceptance, this.now()));
+    else failures.push('ENVIRONMENT_ACCEPTANCE_REQUIRED');
+    if (
+      cohort === 'ACTIVE_LOW_VOLUME' &&
+      !(await new CompetitionMigrationRepository(
+        this.supplier,
+        this.environment
+      ).hasCompletedPilot({}))
+    )
+      failures.push('COMPLETED_COHORT_FIRST');
+    return { failures, windowMs: acceptance?.comparisonWindowMs ?? 60000 };
+  }
+
+  public async recordEnvironmentAcceptance(
+    operator: MigrationOperator,
+    value: unknown
+  ) {
+    const acceptance = this.validateAcceptance(operator, value);
+    await new CompetitionMigrationEnvironmentRepository(this.supplier).record(
+      this.environment,
+      operator,
+      acceptance,
+      this.now(),
+      {}
+    );
+    return { environment: this.environment, acceptance };
+  }
+
+  /** Retire only the adapter guard made obsolete by signed credit support.
+   * Keep every other owned stop and require fresh parity after this upgrade. */
+  public async resumeNegativeVoteMigration(
+    id: string,
+    operator: MigrationOperator
+  ) {
+    return this.transaction(id, async (repository, ctx) => {
+      const status = await repository.status(id, ctx);
+      if (status.storageMode !== 'LEGACY_ADAPTER' || !status.migration)
+        return status;
+      const retired = status.migration.exceptions.filter((exception) =>
+        exception.startsWith('NEGATIVE_CREDIT_REVOCATION_ADAPTER:')
+      );
+      if (!retired.length) return status;
+      const record = await repository.lock(id, ctx);
+      const competition = await new LegacyCompetitionAdapter(
+        new CompetitionRepository(this.supplier),
+        new WavesApiDb(this.supplier),
+        ctx
+      ).getCompetition(record, this.now());
+      migrationCommandConfiguration(competition);
+      if (
+        competition.capabilities.length ||
+        competition.voting.signature_required
+      )
+        throw new Error(
+          'Retiring the negative-vote adapter guard requires an ordinary unsigned source'
+        );
+      await repository.update(
+        id,
+        {
+          exceptions: status.migration.exceptions.filter(
+            (exception) => !retired.includes(exception)
+          ),
+          consecutive_full_windows: 0,
+          window_started_at: null,
+          window_samples: 0,
+          last_comparison_at: null,
+          last_comparison_watermark: null,
+          last_window_end: null
+        },
+        ctx
+      );
+      await repository.audit(
+        id,
+        operator.actor,
+        'SUPPORTED_ADAPTER_RESUME',
+        operator.reason,
+        { adapter: 'SIGNED_CREDIT_REVOCATION', retiredExceptions: retired },
+        ctx
+      );
+      return repository.status(id, ctx);
+    });
   }
   public async enroll(
     id: string,
@@ -224,8 +416,6 @@ export class CompetitionMigrationService {
           'Special capabilities require the privileged guarded cohort'
         );
       const guards = [...exceptions];
-      if (!completed && !c.voting.forbid_negative_votes)
-        guards.push(`NEGATIVE_CREDIT_REVOCATION_ADAPTER:${operator.actor}`);
       if (c.voting.signature_required)
         guards.push(`LEGACY_SIGNED_VOTE_ADAPTER:${operator.actor}`);
       if (cohort === 'PRIVILEGED')
@@ -484,7 +674,10 @@ export class CompetitionMigrationService {
     return db.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctx = { connection };
-        const repository = new CompetitionMigrationRepository(() => db);
+        const repository = new CompetitionMigrationRepository(
+          () => db,
+          this.environment
+        );
         const record = await repository.lock(id, ctx);
         const before = await repository.status(id, ctx);
         const migration = before.migration;
@@ -529,12 +722,18 @@ export class CompetitionMigrationService {
           now,
           windowMs,
           complete,
-          mismatches
+          mismatches,
+          this.environment !== 'local' &&
+            !before.readiness?.currentAcceptanceMatches
         );
         await repository.update(
           id,
           {
             state: 'SHADOWING',
+            acceptance:
+              this.environment === 'local'
+                ? migration.acceptance
+                : before.readiness!.acceptance,
             ...progress,
             last_comparison_at: now,
             last_comparison_watermark: migration.source_watermark
@@ -694,17 +893,7 @@ export class CompetitionMigrationService {
     operator: MigrationOperator,
     value: unknown
   ) {
-    const result = MigrationAcceptanceSchema.validate(value);
-    if (result.error)
-      throw new Error('Acceptance record is invalid; preserve pending gates');
-    const acceptance = result.value as MigrationAcceptance;
-    if (
-      acceptance.productionEvidenceVerifiedBy !== operator.actor ||
-      acceptance.productionEvidenceVerifiedAt! > this.now()
-    )
-      throw new Error(
-        'The recording operator must attest the reviewed production evidence'
-      );
+    const acceptance = this.validateAcceptance(operator, value);
     return this.transaction(id, async (repository, ctx) => {
       const status = await repository.status(id, ctx);
       if (
@@ -712,6 +901,13 @@ export class CompetitionMigrationService {
         !['BACKFILLING', 'SHADOWING', 'READY'].includes(status.migration.state)
       )
         throw new Error('Acceptance requires an enrolled legacy owner');
+      await new CompetitionMigrationEnvironmentRepository(this.supplier).record(
+        this.environment,
+        operator,
+        acceptance,
+        this.now(),
+        ctx
+      );
       await repository.update(
         id,
         {
@@ -739,21 +935,48 @@ export class CompetitionMigrationService {
       return repository.status(id, ctx);
     });
   }
+
+  private validateAcceptance(
+    operator: MigrationOperator,
+    value: unknown
+  ): MigrationAcceptance {
+    const result = MigrationAcceptanceSchema.validate(value);
+    if (result.error)
+      throw new Error('Acceptance record is invalid; preserve pending gates');
+    const acceptance = result.value as MigrationAcceptance;
+    if (
+      acceptance.productionEvidenceVerifiedBy !== operator.actor ||
+      acceptance.productionEvidenceVerifiedAt! > this.now()
+    )
+      throw new Error(
+        'The recording operator must attest the reviewed production evidence'
+      );
+    return acceptance;
+  }
   private async readinessFailures(
     status: MigrationStatus,
     ctx: RequestContext
   ): Promise<string[]> {
     const id = status.competitionId;
     const failures = status.readiness
-      ? migrationReadinessFailures(status.readiness, this.now())
+      ? migrationReadinessFailures(
+          status.readiness,
+          this.now(),
+          this.environment
+        )
       : ['NOT_ENROLLED'];
-    if (status.migration && !status.migration.cohort.startsWith('COMPLETED')) {
-      const prior = await this.supplier().oneOrNull<{ count: number }>(
-        `select count(*) as count from ${COMPETITION_MIGRATIONS_TABLE} where cohort in ('COMPLETED_INTERNAL','COMPLETED_ORDINARY') and state='NATIVE'`,
-        {},
-        { wrappedConnection: ctx.connection }
-      );
-      if (!Number(prior?.count ?? 0)) failures.push('COMPLETED_COHORT_FIRST');
+    if (
+      this.environment !== 'local' &&
+      status.migration &&
+      !status.migration.cohort.startsWith('COMPLETED')
+    ) {
+      if (
+        !(await new CompetitionMigrationRepository(
+          this.supplier,
+          this.environment
+        ).hasCompletedPilot(ctx))
+      )
+        failures.push('COMPLETED_COHORT_FIRST');
     }
     const main = await this.supplier().oneOrNull<{ count: number }>(
       `select count(*) as count from ${COMPETITION_CAPABILITIES_TABLE} where competition_id=:id and capability='MAIN_STAGE'`,

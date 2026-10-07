@@ -5,6 +5,7 @@ import * as claims from '@/waves/claims-builder-publisher';
 import * as pushes from '@/api/push-notifications/push-notifications.service';
 import {
   COMPETITION_DECISIONS_TABLE,
+  COMPETITION_MIGRATIONS_TABLE,
   COMPETITION_VOTES_TABLE,
   IDENTITIES_TABLE,
   COMPETITION_DECISION_WINNERS_TABLE,
@@ -20,6 +21,8 @@ import {
   WAVE_LEADERBOARD_ENTRIES_TABLE,
   WAVE_OUTCOMES_TABLE,
   WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
+  WAVES_DECISIONS_TABLE,
+  WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_DECISION_PAUSES_TABLE,
   WAVES_TABLE
 } from '@/constants';
@@ -30,6 +33,7 @@ import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import {
   approveMigrationFixture,
+  migrationFixtureAcceptance,
   finishMigrationFixture,
   migrationFixtureOperator as operator
 } from '@/tests/fixtures/competition-migration.fixture';
@@ -49,6 +53,7 @@ import { withLegacyCompetitionGetFacade } from './legacy-competition-get-facade'
 import { withLegacyPrimaryMutation } from './legacy-competition-mutation';
 import { voteForMigratedLegacyEntry } from './legacy-competition-vote.service';
 import { CompetitionMigrationBackfill } from './competition-migration-backfill';
+import { migrateWave } from './wave-migration';
 
 const active = aWave(
   {
@@ -88,11 +93,17 @@ const completed = aWave(
 const id = legacyCompetitionId(active.id),
   prior = legacyCompetitionId(completed.id),
   dropId = 'migration-active-drop';
+const secondCompleted = {
+  ...completed,
+  id: 'migration-second-completed',
+  name: 'Second completed pilot',
+  serial_no: 3
+};
 
 describeWithSeed(
   'transferred legacy execution and publication fences',
   [
-    withWaves([active, completed]),
+    withWaves([active, completed, secondCompleted]),
     withIdentities([
       anIdentity(
         { tdh: 100 },
@@ -222,9 +233,377 @@ describeWithSeed(
       const repository = new CompetitionRepository();
       await repository.ensureLegacyMappingForWave(active, {});
       await repository.ensureLegacyMappingForWave(completed, {});
+      await repository.ensureLegacyMappingForWave(secondCompleted, {});
       await installMigrationCapture(sqlExecutor);
     });
     afterEach(() => jest.restoreAllMocks());
+
+    it('preserves nullable wave metadata, retained chat snapshots, orphaned outcomes and historical winners', async () => {
+      const clock = { value: 10000 };
+      await sqlExecutor.execute(
+        `update ${WAVES_TABLE} set updated_at=null where id=:waveId`,
+        { waveId: active.id }
+      );
+      for (const [suffix, type] of [
+        ['retained-chat', 'CHAT'],
+        ['historical-winner-1000', 'WINNER'],
+        ['historical-winner-2000', 'WINNER']
+      ])
+        await sqlExecutor.execute(
+          `insert into ${DROPS_TABLE} (id,wave_id,author_id,created_at,parts_count,drop_type,hide_link_preview) values(:dropId,:waveId,'migration-author',10,1,:type,false)`,
+          { dropId: suffix, waveId: active.id, type }
+        );
+      await sqlExecutor.execute(
+        `insert into ${WAVE_LEADERBOARD_ENTRIES_TABLE} (drop_id,wave_id,timestamp,vote,vote_on_decision_time,over_threshold_since_ms) values('retained-chat',:waveId,10,0,0,null)`,
+        { waveId: active.id }
+      );
+      await sqlExecutor.execute(
+        `insert into ${WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE} (wave_id,wave_outcome_position,wave_outcome_distribution_item_position,description,amount) values(:waveId,99,1,'Retained item',1)`,
+        { waveId: active.id }
+      );
+      for (const time of [1000, 2000]) {
+        await sqlExecutor.execute(
+          `insert into ${WAVES_DECISIONS_TABLE} (wave_id,decision_time) values(:waveId,:time)`,
+          { waveId: active.id, time }
+        );
+        await sqlExecutor.execute(
+          `insert into ${WAVES_DECISION_WINNER_DROPS_TABLE} (wave_id,decision_time,drop_id,ranking,final_vote,prizes) values(:waveId,:time,:dropId,1,7,'[]')`,
+          { waveId: active.id, time, dropId: `historical-winner-${time}` }
+        );
+      }
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        () => clock.value,
+        0,
+        'local'
+      );
+      const result = await migrateWave(
+        {
+          waveId: active.id,
+          environment: 'local',
+          operator,
+          dryRun: false,
+          batch: 1,
+          timeoutMs: 60000
+        },
+        service,
+        {
+          now: () => clock.value,
+          wait: async (ms) => {
+            clock.value += ms;
+          },
+          progress: () => undefined
+        }
+      );
+      expect(result.status.storageMode).toBe('NATIVE');
+      expect((await service.verifyNative(id)).failures).toEqual([]);
+      const query = (sql: string) =>
+        withLegacyCompetitionGetFacade(() =>
+          sqlExecutor.execute(sql, { waveId: active.id })
+        );
+      expect(
+        await query(`select updated_at from ${WAVES_TABLE} where id=:waveId`)
+      ).toEqual([{ updated_at: null }]);
+      expect(
+        await query(
+          `select ranking,decision_time from ${WAVES_DECISION_WINNER_DROPS_TABLE} where wave_id=:waveId order by decision_time`
+        )
+      ).toEqual([
+        { ranking: 1, decision_time: 1000 },
+        { ranking: 1, decision_time: 2000 }
+      ]);
+      expect(
+        await query(
+          `select drop_id from ${WAVE_LEADERBOARD_ENTRIES_TABLE} where wave_id=:waveId and drop_id='retained-chat'`
+        )
+      ).toEqual([{ drop_id: 'retained-chat' }]);
+      expect(
+        await query(
+          `select amount from ${WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE} where wave_id=:waveId and wave_outcome_position=99`
+        )
+      ).toEqual([{ amount: 1 }]);
+    });
+
+    it.each(['WAVE', 'DROP'])(
+      'automates an active negative-vote %s migration locally, preserves sign edits and safely reduces credit',
+      async (scope) => {
+        const clock = { value: 10000 };
+        await sqlExecutor.execute(
+          `update ${WAVES_TABLE} set forbid_negative_votes=false,voting_credit_scope=:scope where id=:waveId`,
+          { scope, waveId: active.id }
+        );
+        for (const [table, field] of [
+          [DROP_VOTER_STATE_TABLE, 'votes'],
+          [DROP_RANK_TABLE, 'vote'],
+          [DROP_REAL_VOTE_IN_TIME_TABLE, 'vote'],
+          [DROP_REAL_VOTER_VOTE_IN_TIME_TABLE, 'vote'],
+          [WAVE_LEADERBOARD_ENTRIES_TABLE, 'vote']
+        ])
+          await sqlExecutor.execute(
+            `update ${table} set ${field}=-7 where wave_id=:waveId`,
+            { waveId: active.id }
+          );
+        await sqlExecutor.execute(
+          `update ${WAVE_LEADERBOARD_ENTRIES_TABLE} set vote_on_decision_time=-7 where wave_id=:waveId`,
+          { waveId: active.id }
+        );
+        const service = new CompetitionMigrationService(
+          () => sqlExecutor,
+          () => clock.value,
+          0,
+          'local'
+        );
+        if (scope === 'WAVE') {
+          await service.enroll(id, operator, 'ACTIVE_LOW_VOLUME');
+          await sqlExecutor.execute(
+            `update ${COMPETITION_MIGRATIONS_TABLE} set exceptions=:exceptions where competition_id=:id`,
+            {
+              id,
+              exceptions: JSON.stringify([
+                'NEGATIVE_CREDIT_REVOCATION_ADAPTER:old-operator'
+              ])
+            }
+          );
+        }
+        expect((await service.inspectWave(active.id)).failures).toEqual([]);
+        const result = await migrateWave(
+          {
+            waveId: active.id,
+            environment: 'local',
+            operator,
+            dryRun: false,
+            batch: 1,
+            timeoutMs: 60000
+          },
+          service,
+          {
+            now: () => clock.value,
+            wait: async (ms) => {
+              clock.value += ms;
+            },
+            progress: () => undefined
+          }
+        );
+        expect(result.status.storageMode).toBe('NATIVE');
+        expect(result.status.migration?.acceptance).toBeNull();
+        expect((await service.status(prior)).storageMode).toBe(
+          'LEGACY_ADAPTER'
+        );
+        jest
+          .spyOn(userNotifier, 'notifyOfDropVote')
+          .mockResolvedValue(undefined);
+        jest.spyOn(Date, 'now').mockImplementation(() => clock.value);
+        const replace = (votes: number) =>
+          sqlExecutor.executeNativeQueriesInTransaction(
+            (connection) =>
+              withLegacyPrimaryMutation(active.id, { connection }, (owner) => {
+                if (!owner) throw new Error('Expected native primary');
+                return voteForMigratedLegacyEntry(
+                  owner,
+                  {
+                    wave_id: active.id,
+                    drop_id: dropId,
+                    voter_id: 'migration-voter',
+                    votes,
+                    proxy_id: null
+                  },
+                  { connection }
+                );
+              }),
+            { isolationLevel: 'READ COMMITTED' }
+          );
+        expect(await replace(-9)).toBe(true);
+        expect(await replace(-9)).toBe(false);
+        expect(await replace(9)).toBe(true);
+        expect(await replace(-7)).toBe(true);
+        await sqlExecutor.execute(
+          `update ${IDENTITIES_TABLE} set tdh=3 where profile_id='migration-voter'`
+        );
+        await sqlExecutor.executeNativeQueriesInTransaction(
+          (connection) => revokeTdhBasedDropWavesOverVotes(connection),
+          { isolationLevel: 'READ COMMITTED' }
+        );
+        expect(
+          await sqlExecutor.execute(
+            `select value,credit_spent from ${COMPETITION_VOTES_TABLE} where competition_id=:id`,
+            { id }
+          )
+        ).toEqual([{ value: -3, credit_spent: 3 }]);
+        expect(
+          await sqlExecutor.execute(
+            `select votes from ${DROP_VOTER_STATE_TABLE} where wave_id=:waveId`,
+            { waveId: active.id }
+          )
+        ).toEqual([{ votes: -3 }]);
+        expect((await service.verifyNative(id)).failures).toEqual([]);
+        const repeated = await migrateWave(
+          {
+            waveId: active.id,
+            environment: 'local',
+            operator,
+            dryRun: false,
+            batch: 1,
+            timeoutMs: 60000
+          },
+          service,
+          {
+            now: () => clock.value,
+            wait: async () => undefined,
+            progress: () => undefined
+          }
+        );
+        expect(repeated.status.storageMode).toBe('NATIVE');
+        expect(
+          await sqlExecutor.execute(
+            `select value from ${COMPETITION_VOTES_TABLE} where competition_id=:id`,
+            { id }
+          )
+        ).toEqual([{ value: -3 }]);
+      },
+      60000
+    );
+
+    it('reuses one production rollout acceptance for multiple waves and isolates staging reviews', async () => {
+      const clock = { value: 10000 };
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        () => clock.value,
+        0,
+        'production'
+      );
+      const acceptance = migrationFixtureAcceptance(clock.value);
+      await service.recordEnvironmentAcceptance(operator, acceptance);
+      const staging = new CompetitionMigrationService(
+        () => sqlExecutor,
+        () => clock.value,
+        0,
+        'staging'
+      );
+      await staging.recordEnvironmentAcceptance(operator, {
+        ...acceptance,
+        nativeRankCompletion: 'https://example.test/staging/rank'
+      });
+      for (const wave of [completed, secondCompleted]) {
+        const competition = legacyCompetitionId(wave.id);
+        const migrated = await migrateWave(
+          {
+            waveId: wave.id,
+            environment: 'production',
+            operator,
+            dryRun: false,
+            batch: 25,
+            timeoutMs: 1800000
+          },
+          service,
+          {
+            now: () => clock.value,
+            wait: async (ms) => {
+              clock.value += ms;
+            },
+            progress: () => undefined
+          }
+        );
+        expect(migrated.status.storageMode).toBe('NATIVE');
+        expect(migrated.status.migration?.consecutive_full_windows).toBe(7);
+        expect(
+          (await service.status(competition)).readiness?.acceptance
+            .nativeRankCompletion
+        ).toBe(acceptance.nativeRankCompletion);
+        expect(
+          (await service.status(competition)).migration?.acceptance
+        ).toEqual(acceptance);
+      }
+      await expect(
+        service.recordEnvironmentAcceptance(
+          { actor: 'other', reason: 'mismatch' },
+          acceptance
+        )
+      ).rejects.toThrow('recording operator');
+    }, 60000);
+
+    it('never treats a staging per-wave attestation as production approval and refuses an expired current review', async () => {
+      const clock = { value: 1000000000 };
+      const staging = new CompetitionMigrationService(
+        () => sqlExecutor,
+        () => clock.value,
+        0,
+        'staging'
+      );
+      const production = new CompetitionMigrationService(
+        () => sqlExecutor,
+        () => clock.value,
+        0,
+        'production'
+      );
+      await staging.enroll(prior, operator, 'COMPLETED_ORDINARY');
+      await staging.recordAcceptance(
+        prior,
+        operator,
+        migrationFixtureAcceptance(clock.value)
+      );
+      expect(
+        (await production.status(prior)).migration?.acceptance
+      ).not.toBeNull();
+      expect(
+        (await production.status(prior)).readiness?.acceptance
+          .nativeRankCompletion
+      ).toBeNull();
+      expect((await production.inspectWave(completed.id)).failures).toContain(
+        'ENVIRONMENT_ACCEPTANCE_REQUIRED'
+      );
+      const valid = migrationFixtureAcceptance(clock.value);
+      await production.recordEnvironmentAcceptance(operator, valid);
+      clock.value += 1;
+      await production.recordEnvironmentAcceptance(operator, {
+        ...valid,
+        productionEvidenceVerifiedAt: clock.value - 86400001
+      });
+      expect((await production.inspectWave(completed.id)).failures).toContain(
+        'VERIFIED_PRODUCTION_EVIDENCE'
+      );
+      expect(await production.cutover(prior, operator, false)).toMatchObject({
+        changed: false
+      });
+      expect((await production.status(prior)).storageMode).toBe(
+        'LEGACY_ADAPTER'
+      );
+    });
+
+    it('starts fresh production parity windows when the shared rollout review changes', async () => {
+      const clock = { value: 10000 };
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        () => clock.value,
+        0,
+        'production'
+      );
+      await service.enroll(prior, operator, 'COMPLETED_ORDINARY');
+      await finishMigrationFixture(service, prior);
+      await approveMigrationFixture(service, prior, clock);
+      expect((await service.readiness(prior)).failures).toEqual([]);
+      clock.value += 1;
+      const replacement = {
+        ...migrationFixtureAcceptance(clock.value),
+        nativeRankCompletion: 'https://example.test/reviewed/new-rank'
+      };
+      await service.recordEnvironmentAcceptance(operator, replacement);
+      expect((await service.readiness(prior)).failures).toContain(
+        'CURRENT_ENVIRONMENT_ACCEPTANCE'
+      );
+      expect(await service.cutover(prior, operator, false)).toMatchObject({
+        changed: false,
+        failures: expect.arrayContaining(['CURRENT_ENVIRONMENT_ACCEPTANCE'])
+      });
+      expect(
+        (await service.compare(prior, operator, 60000)).consecutiveFullWindows
+      ).toBe(0);
+      expect((await service.status(prior)).migration?.acceptance).toEqual(
+        replacement
+      );
+      expect((await service.readiness(prior)).failures).toContain(
+        'SEVEN_FULL_INDEPENDENT_WINDOWS'
+      );
+    });
 
     it.each(['RANK', 'APPROVE'] as const)(
       'preserves weighted %s history, pauses, single-engine ownership and permanent winner reads',

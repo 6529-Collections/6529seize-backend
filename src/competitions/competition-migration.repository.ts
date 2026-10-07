@@ -8,7 +8,8 @@ import {
   COMPETITION_OUTBOX_TABLE,
   COMPETITION_DECISIONS_TABLE,
   COMPETITION_EVENT_EFFECTS_TABLE,
-  COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE
+  COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE,
+  DROPS_TABLE
 } from '@/constants';
 import { CompetitionMigrationEntity } from '@/entities/ICompetitionMigration';
 import {
@@ -25,9 +26,12 @@ import { legacyCompetitionId } from '@/competitions/competition-id';
 import {
   MigrationAcceptance,
   MigrationCohort,
+  MigrationEnvironment,
   MigrationReadiness
 } from '@/competitions/competition-migration-policy';
 import { migrationCaptureHealthy } from '@/competitions/competition-migration-capture';
+import { CompetitionMigrationEnvironmentRepository } from './competition-migration-environment.repository';
+import { competitionPayloadHash } from './competition-command-identity';
 
 function safeCounter(value: number | string): number {
   const number = Number(value);
@@ -62,8 +66,43 @@ export type MigrationStatus = {
 };
 
 export class CompetitionMigrationRepository extends LazyDbAccessCompatibleService {
-  constructor(db: () => SqlExecutor = dbSupplier) {
+  constructor(
+    db: () => SqlExecutor = dbSupplier,
+    private readonly environment: MigrationEnvironment = 'production'
+  ) {
     super(db);
+  }
+  public async sourceEntryCount(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<number> {
+    const timer = `${this.constructor.name}->sourceEntryCount`;
+    ctx.timer?.start(timer);
+    try {
+      const row = await this.db.oneOrNull<{ count: number }>(
+        `select count(*) as count from ${DROPS_TABLE} where wave_id=:waveId and drop_type in ('PARTICIPATORY','WINNER')`,
+        { waveId },
+        { wrappedConnection: ctx.connection }
+      );
+      return Number(row?.count ?? 0);
+    } finally {
+      ctx.timer?.stop(timer);
+    }
+  }
+
+  public async hasCompletedPilot(ctx: RequestContext): Promise<boolean> {
+    const timer = `${this.constructor.name}->hasCompletedPilot`;
+    ctx.timer?.start(timer);
+    try {
+      const row = await this.db.oneOrNull<{ count: number }>(
+        `select count(*) as count from ${COMPETITION_MIGRATIONS_TABLE} where cohort in ('COMPLETED_INTERNAL','COMPLETED_ORDINARY') and state='NATIVE'`,
+        {},
+        { wrappedConnection: ctx.connection }
+      );
+      return Number(row?.count ?? 0) > 0;
+    } finally {
+      ctx.timer?.stop(timer);
+    }
   }
   public async lock(
     id: string,
@@ -180,29 +219,32 @@ export class CompetitionMigrationRepository extends LazyDbAccessCompatibleServic
                 )
               )?.count ?? 0
             );
-      const acceptance: MigrationAcceptance = migration.acceptance ?? {
-        productionEvidenceVerifiedBy: null,
-        productionEvidenceVerifiedAt: null,
-        comparisonWindowMs: null,
-        nativeRankCompletion: null,
-        nativeApproveCompletion: null,
-        operationalAcceptance: null,
-        compatibilityAcceptance: null,
-        rollbackRehearsal: null,
-        alertsVerified: null,
-        serviceRevisions: {},
-        apiBaselineP95: null,
-        apiP95: null,
-        apiBudgetP95: null,
-        apiBaselineErrorRate: null,
-        apiErrorRate: null,
-        decisionBudgetP95: null,
-        decisionBudgetP99: null,
-        decisionP95: null,
-        decisionP99: null,
-        incidentWindowStartsAt: null,
-        incidentWindowEndsAt: null
-      };
+      const acceptance: MigrationAcceptance =
+        (await new CompetitionMigrationEnvironmentRepository(
+          () => this.db
+        ).latest(this.environment, ctx)) ?? {
+          productionEvidenceVerifiedBy: null,
+          productionEvidenceVerifiedAt: null,
+          comparisonWindowMs: null,
+          nativeRankCompletion: null,
+          nativeApproveCompletion: null,
+          operationalAcceptance: null,
+          compatibilityAcceptance: null,
+          rollbackRehearsal: null,
+          alertsVerified: null,
+          serviceRevisions: {},
+          apiBaselineP95: null,
+          apiP95: null,
+          apiBudgetP95: null,
+          apiBaselineErrorRate: null,
+          apiErrorRate: null,
+          decisionBudgetP95: null,
+          decisionBudgetP99: null,
+          decisionP95: null,
+          decisionP99: null,
+          incidentWindowStartsAt: null,
+          incidentWindowEndsAt: null
+        };
       return {
         competitionId: id,
         waveId: record.wave_id,
@@ -220,6 +262,10 @@ export class CompetitionMigrationRepository extends LazyDbAccessCompatibleServic
           consecutiveFullWindows: Number(migration.consecutive_full_windows),
           lastComparisonAt: migration.last_comparison_at,
           lastComparisonWatermark: migration.last_comparison_watermark,
+          lastComparisonMatches: migration.window_samples > 0,
+          currentAcceptanceMatches:
+            competitionPayloadHash(migration.acceptance) ===
+            competitionPayloadHash(acceptance),
           captureHealthy: await migrationCaptureHealthy(this.db, ctx),
           windowDurationMs: migration.window_duration_ms,
           compatibilityEnabled:

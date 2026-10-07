@@ -1040,7 +1040,11 @@ disabled by default.
 
 Legacy migration is separately operated one immutable UUID at a time. Additive
 migration entities hold stage/keyset checkpoints, source/applied watermarks,
-owned exceptions, acceptance records and full-window parity state. Transactional
+owned exceptions and full-window parity state. Append-only environment acceptance
+records share the approved rollout evidence across waves in that database and
+environment; their reviewed validity and incident window still apply. Per-wave
+comparisons snapshot the current review and reset parity when its evidence changes.
+Transactional
 triggers journal accepted competition/content changes under the owner lock;
 there is no asynchronous best-effort capture. Raw source writes after transfer
 refuse the old engine; scoped transactional permits allow native compatibility
@@ -1050,16 +1054,27 @@ claim/push publication receipts before releasing ownership, so a queue handoff
 gap blocks cutover. Native workers retain independent aggregate/voter histories
 and skip already emitted pre-transfer lifecycle boundaries.
 
-Independent source SQL, native records/content and frozen facade relations must
-pass seven full consecutive approved windows. Final drain/comparison and owner
-transfer are atomic. Reverse reconciliation materializes native state in bounded
+The `migrate-wave` operator CLI resolves a wave UUID to its immutable primary,
+resumes bounded copying and catch-up, samples independent comparisons, performs
+the guarded ownership transfer and verifies it. Local setup creates only missing
+migration tables/nullable fields/views/capture and never performs broad schema
+synchronization. Local rehearsals require complete independent parity and final
+locked comparison without production attestations or a completed pilot. Active
+ordinary negative-vote sources are supported by signed history transfer,
+absolute-credit replacement accounting and sign-preserving credit reconciliation.
+Frozen projections preserve nullable legacy metadata and all historical wins.
+Chat/retired leaderboard snapshots and orphaned outcome children remain shared
+retained history, outside the active native leaderboard and outcome definitions.
+For staging/production, independent source SQL, native records/content and frozen
+facade relations must pass seven full consecutive approved windows. Final
+drain/comparison and owner transfer are atomic. Reverse reconciliation materializes native state in bounded
 transactions before a final comparison and atomic rollback; new native decisions
 or effects instead require an owned native repair review. Production lifecycle,
 performance and alert evidence remains a required separate operator attestation.
 Complex, signed-vote, oversized and privileged cohorts receive owned stops; Main
 Stage remains last. See the [migration runbook](./legacy-competition-migration-runbook.md)
 for deployment dependencies, commands, pending gates and rollback boundaries.
-No new Lambda, queue, automatic migration or default-selection policy is added.
+No new Lambda, queue, scheduled migration or default-selection policy is added.
 
 Important API responsibilities:
 

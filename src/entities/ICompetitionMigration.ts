@@ -9,15 +9,34 @@ import {
   COMPETITION_MIGRATIONS_TABLE,
   COMPETITION_MIGRATION_CHANGES_TABLE,
   COMPETITION_MIGRATION_AUDIT_TABLE,
+  COMPETITION_MIGRATION_ENVIRONMENTS_TABLE,
   COMPETITION_LEGACY_MIRROR_PERMITS_TABLE,
   COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE
 } from '@/constants';
 import type {
   MigrationAcceptance,
+  MigrationEnvironment,
   MigrationCohort,
   MigrationStage,
   MigrationState
 } from '@/competitions/competition-migration-policy';
+
+/** Reviewed rollout evidence is shared by waves in the same environment.
+ * Append reviews so replacing/expiring an approval never erases its history. */
+@Entity(COMPETITION_MIGRATION_ENVIRONMENTS_TABLE)
+@Index('idx_competition_migration_environment_review', [
+  'environment',
+  'created_at'
+])
+export class CompetitionMigrationEnvironmentEntity {
+  @PrimaryColumn({ type: 'varchar', length: 36 }) readonly id!: string;
+  @Column({ type: 'varchar', length: 16 })
+  readonly environment!: MigrationEnvironment;
+  @Column({ type: 'varchar', length: 100 }) readonly operator!: string;
+  @Column({ type: 'text' }) readonly reason!: string;
+  @Column({ type: 'json' }) readonly acceptance!: MigrationAcceptance;
+  @Column({ type: 'bigint' }) readonly created_at!: number;
+}
 
 @Entity(COMPETITION_MIGRATIONS_TABLE)
 export class CompetitionMigrationEntity {

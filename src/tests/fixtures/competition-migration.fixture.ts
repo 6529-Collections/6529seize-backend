@@ -23,7 +23,24 @@ export async function approveMigrationFixture(
   id: string,
   clock: { value: number }
 ) {
-  await service.recordAcceptance(id, migrationFixtureOperator, {
+  await service.recordAcceptance(
+    id,
+    migrationFixtureOperator,
+    migrationFixtureAcceptance(clock.value)
+  );
+  expect(
+    (await service.compare(id, migrationFixtureOperator, 60000)).mismatches
+  ).toBe(0);
+  for (let window = 0; window < 7; window++) {
+    clock.value += 60000;
+    expect(
+      (await service.compare(id, migrationFixtureOperator, 60000)).mismatches
+    ).toBe(0);
+  }
+}
+
+export function migrationFixtureAcceptance(now: number) {
+  return {
     nativeRankCompletion: 'https://example.test/disposable/rank',
     nativeApproveCompletion: 'https://example.test/disposable/approve',
     operationalAcceptance: 'https://example.test/disposable/ops',
@@ -31,7 +48,7 @@ export async function approveMigrationFixture(
     rollbackRehearsal: 'https://example.test/disposable/rollback',
     alertsVerified: 'https://example.test/disposable/alerts',
     productionEvidenceVerifiedBy: migrationFixtureOperator.actor,
-    productionEvidenceVerifiedAt: clock.value,
+    productionEvidenceVerifiedAt: now,
     comparisonWindowMs: 60000,
     serviceRevisions: Object.fromEntries(
       [
@@ -50,16 +67,7 @@ export async function approveMigrationFixture(
     decisionBudgetP99: 120,
     decisionP95: 10,
     decisionP99: 20,
-    incidentWindowStartsAt: clock.value - 1,
-    incidentWindowEndsAt: clock.value + 3600000
-  });
-  expect(
-    (await service.compare(id, migrationFixtureOperator, 60000)).mismatches
-  ).toBe(0);
-  for (let window = 0; window < 7; window++) {
-    clock.value += 60000;
-    expect(
-      (await service.compare(id, migrationFixtureOperator, 60000)).mismatches
-    ).toBe(0);
-  }
+    incidentWindowStartsAt: now - 1,
+    incidentWindowEndsAt: now + 3600000
+  };
 }

@@ -29,6 +29,8 @@ export type MigrationCohort =
   | 'COMPLEX'
   | 'PRIVILEGED';
 
+export type MigrationEnvironment = 'local' | 'staging' | 'production';
+
 export type MigrationAcceptance = {
   readonly productionEvidenceVerifiedBy: string | null;
   readonly productionEvidenceVerifiedAt: number | null;
@@ -62,6 +64,8 @@ export type MigrationReadiness = {
   readonly consecutiveFullWindows: number;
   readonly lastComparisonAt: number | null;
   readonly lastComparisonWatermark: number | null;
+  readonly lastComparisonMatches?: boolean;
+  readonly currentAcceptanceMatches?: boolean;
   readonly captureHealthy: boolean;
   readonly compatibilityEnabled: boolean;
   readonly windowDurationMs: number | null;
@@ -80,7 +84,8 @@ function nonnegative(value: number | null): value is number {
 
 export function migrationReadinessFailures(
   status: MigrationReadiness,
-  now: number
+  now: number,
+  environment: MigrationEnvironment = 'production'
 ): string[] {
   const failures: string[] = [];
   const add = (condition: boolean, name: string) => {
@@ -90,25 +95,19 @@ export function migrationReadinessFailures(
   add(status.owner.trim().length > 0, 'OWNER');
   add(status.captureHealthy, 'DURABLE_CAPTURE');
   add(status.compatibilityEnabled, 'COMPATIBLE_RUNTIME_FLAGS');
-  add(
-    status.acceptance.comparisonWindowMs !== null &&
-      status.acceptance.comparisonWindowMs >= 60000 &&
-      status.windowDurationMs === status.acceptance.comparisonWindowMs,
-    'APPROVED_FULL_WINDOW'
-  );
-  add(
-    Boolean(status.acceptance.productionEvidenceVerifiedBy) &&
-      status.acceptance.productionEvidenceVerifiedAt !== null &&
-      status.acceptance.productionEvidenceVerifiedAt <= now &&
-      now - status.acceptance.productionEvidenceVerifiedAt <= 86400000,
-    'VERIFIED_PRODUCTION_EVIDENCE'
-  );
   add(status.sourceWatermark === status.appliedWatermark, 'CATCH_UP_LAG');
   add(
     MIGRATION_STAGES.every((stage) => status.completedStages.includes(stage)),
     'BACKFILL_INCOMPLETE'
   );
-  add(status.consecutiveFullWindows >= 7, 'SEVEN_FULL_INDEPENDENT_WINDOWS');
+  add(
+    environment === 'local'
+      ? status.lastComparisonMatches === true
+      : status.consecutiveFullWindows >= 7,
+    environment === 'local'
+      ? 'FULL_INDEPENDENT_COMPARISON'
+      : 'SEVEN_FULL_INDEPENDENT_WINDOWS'
+  );
   add(
     status.lastComparisonAt !== null &&
       status.lastComparisonAt <= now &&
@@ -121,7 +120,46 @@ export function migrationReadinessFailures(
   );
   add(status.pendingEffects === 0, 'OUTBOX_BACKLOG');
   add(status.unresolvedExceptions.length === 0, 'OWNED_EXCEPTIONS');
-  const evidence = status.acceptance;
+  if (environment === 'local') {
+    return failures;
+  }
+  add(
+    status.currentAcceptanceMatches === true,
+    'CURRENT_ENVIRONMENT_ACCEPTANCE'
+  );
+  return [
+    ...failures,
+    ...migrationAcceptanceFailures(
+      status.acceptance,
+      now,
+      status.windowDurationMs
+    )
+  ];
+}
+
+export function migrationAcceptanceFailures(
+  acceptance: MigrationAcceptance,
+  now: number,
+  windowDurationMs: number | null = acceptance.comparisonWindowMs
+): string[] {
+  const failures: string[] = [];
+  const add = (condition: boolean, name: string) => {
+    if (!condition) failures.push(name);
+  };
+  add(
+    acceptance.comparisonWindowMs !== null &&
+      acceptance.comparisonWindowMs >= 60000 &&
+      windowDurationMs === acceptance.comparisonWindowMs,
+    'APPROVED_FULL_WINDOW'
+  );
+  add(
+    Boolean(acceptance.productionEvidenceVerifiedBy) &&
+      acceptance.productionEvidenceVerifiedAt !== null &&
+      acceptance.productionEvidenceVerifiedAt <= now &&
+      now - acceptance.productionEvidenceVerifiedAt <= 86400000,
+    'VERIFIED_PRODUCTION_EVIDENCE'
+  );
+  const evidence = acceptance;
   for (const key of [
     'nativeRankCompletion',
     'nativeApproveCompletion',

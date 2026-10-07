@@ -530,7 +530,11 @@ describeWithSeed(
         await service.enroll(id, operator, 'COMPLETED_INTERNAL');
         await finishBackfill(service);
         expect((await service.compare(id, operator, 60000)).mismatches).toBe(0);
-        expect((await service.status(id)).migration?.acceptance).toBeNull();
+        const reenrolled = await service.status(id);
+        expect(reenrolled.migration?.acceptance).toEqual(
+          reenrolled.readiness?.acceptance
+        );
+        expect(reenrolled.migration?.consecutive_full_windows).toBe(0);
       } finally {
         for (let i = 0; i < flags.length; i++) {
           if (saved[i] === undefined) delete process.env[flags[i]];

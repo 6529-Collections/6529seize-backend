@@ -6,7 +6,7 @@ import {
 
 export type MigrationCliOptions = {
   readonly environment: 'local' | 'staging' | 'production';
-  readonly competition: string;
+  readonly competition?: string;
   readonly action:
     | 'status'
     | 'enroll'
@@ -19,6 +19,7 @@ export type MigrationCliOptions = {
     | 'reverse-reconcile'
     | 'retry-effects'
     | 'record-acceptance'
+    | 'record-environment-acceptance'
     | 'record-exception'
     | 'verify'
     | 'review-repair';
@@ -67,7 +68,11 @@ export function parseMigrationOptions(
     environment: Joi.string()
       .valid('local', 'staging', 'production')
       .required(),
-    competition: Joi.string().uuid().required(),
+    competition: Joi.string().uuid().when('action', {
+      is: 'record-environment-acceptance',
+      then: Joi.optional(),
+      otherwise: Joi.required()
+    }),
     action: Joi.string()
       .valid(
         'status',
@@ -81,6 +86,7 @@ export function parseMigrationOptions(
         'reverse-reconcile',
         'retry-effects',
         'record-acceptance',
+        'record-environment-acceptance',
         'record-exception',
         'verify',
         'review-repair'
@@ -116,54 +122,66 @@ export function parseMigrationOptions(
 
 async function dispatchMigrationCommand(
   options: MigrationCliOptions,
-  service = new CompetitionMigrationService()
+  service = new CompetitionMigrationService(
+    undefined,
+    undefined,
+    undefined,
+    options.environment
+  )
 ): Promise<unknown> {
   const operator: MigrationOperator = {
     actor: options.operator ?? 'dry-run',
     reason: options.reason ?? 'read-only inspection'
   };
-  if (options.action === 'verify')
-    return service.verifyNative(options.competition);
-  if (options.action === 'status') return service.status(options.competition);
-  if (options.action === 'readiness')
-    return service.readiness(options.competition);
+  if (options.action === 'record-environment-acceptance') {
+    if (!options.live)
+      return {
+        dryRun: true,
+        environment: options.environment,
+        action: options.action
+      };
+    if (!options.acceptance)
+      throw new Error('Use --acceptance with a reviewed JSON file');
+    const { readFile } = await import('node:fs/promises');
+    const raw = await readFile(options.acceptance, 'utf8');
+    if (raw.length > 32000)
+      throw new Error('Acceptance file exceeds operator record limit');
+    return service.recordEnvironmentAcceptance(operator, JSON.parse(raw));
+  }
+  const id = options.competition;
+  if (!id) throw new Error('Use --competition with the stable legacy UUID');
+  if (options.action === 'verify') return service.verifyNative(id);
+  if (options.action === 'status') return service.status(id);
+  if (options.action === 'readiness') return service.readiness(id);
   if (options.action === 'cutover')
-    return service.cutover(options.competition, operator, !options.live);
+    return service.cutover(id, operator, !options.live);
   if (options.action === 'rollback')
-    return service.rollback(options.competition, operator, !options.live);
+    return service.rollback(id, operator, !options.live);
   if (!options.live)
     return {
       dryRun: true,
       action: options.action,
       environment: options.environment,
-      competitionId: options.competition,
-      status: await service.status(options.competition)
+      competitionId: id,
+      status: await service.status(id)
     };
   switch (options.action) {
     case 'enroll':
-      return service.enroll(options.competition, operator, options.cohort!);
+      return service.enroll(id, operator, options.cohort!);
     case 'backfill':
-      return service.backfill(options.competition, operator, options.batch);
+      return service.backfill(id, operator, options.batch);
     case 'catch-up':
-      return service.catchUp(options.competition, operator, options.batch);
+      return service.catchUp(id, operator, options.batch);
     case 'review-repair': {
       if (!options.evidence)
         throw new Error(
           'Use --evidence with the reviewed native repair record'
         );
-      return service.reviewRepair(
-        options.competition,
-        operator,
-        options.evidence
-      );
+      return service.reviewRepair(id, operator, options.evidence);
     }
     case 'record-exception': {
       if (!options.exception) throw new Error('Use --exception <stable-code>');
-      return service.recordException(
-        options.competition,
-        operator,
-        options.exception
-      );
+      return service.recordException(id, operator, options.exception);
     }
     case 'record-acceptance': {
       if (!options.acceptance)
@@ -172,39 +190,37 @@ async function dispatchMigrationCommand(
       const raw = await readFile(options.acceptance, 'utf8');
       if (raw.length > 32000)
         throw new Error('Acceptance file exceeds operator record limit');
-      return service.recordAcceptance(
-        options.competition,
-        operator,
-        JSON.parse(raw)
-      );
+      return service.recordAcceptance(id, operator, JSON.parse(raw));
     }
     case 'reverse-reconcile':
-      return service.reverseReconcile(
-        options.competition,
-        operator,
-        options.batch
-      );
+      return service.reverseReconcile(id, operator, options.batch);
     case 'retry-effects': {
-      await service.status(options.competition);
+      await service.status(id);
       const { retryLegacyExecutionEffects } =
         await import('./legacy-competition-execution-effects');
-      await retryLegacyExecutionEffects(options.competition);
-      return service.status(options.competition);
+      await retryLegacyExecutionEffects(id);
+      return service.status(id);
     }
     case 'compare':
-      return service.compare(options.competition, operator, options.window);
+      return service.compare(id, operator, options.window);
   }
 }
 
 export async function executeMigrationCommand(
   options: MigrationCliOptions,
-  service = new CompetitionMigrationService()
+  service = new CompetitionMigrationService(
+    undefined,
+    undefined,
+    undefined,
+    options.environment
+  )
 ): Promise<unknown> {
   try {
     return await dispatchMigrationCommand(options, service);
   } catch (error) {
     if (
       options.live &&
+      options.competition &&
       error instanceof Error &&
       error.message.startsWith('OWNED_EXCEPTION:')
     ) {
@@ -229,7 +245,7 @@ export async function executeMigrationCommand(
 export async function main(args = process.argv.slice(2)): Promise<void> {
   if (args.includes('--help')) {
     process.stdout.write(
-      'competition:migrate --environment local|staging|production --competition <stable-legacy-uuid> --action status|enroll|backfill|catch-up|compare|readiness|cutover|reverse-reconcile|rollback|retry-effects|record-acceptance|record-exception|verify|review-repair [--acceptance <reviewed-json>] [--exception <stable-code>] [--evidence <https-url>] [--cohort <cohort>] [--batch 1..100] [--window <milliseconds>] [--operator <profile-id> --reason <text> --live]\nOne competition only. Default is read-only. Requires explicitly configured DB environment and an allowlisted operator for live commands.\n'
+      'competition:migrate --environment local|staging|production --competition <stable-legacy-uuid> --action status|enroll|backfill|catch-up|compare|readiness|cutover|reverse-reconcile|rollback|retry-effects|record-acceptance|record-environment-acceptance|record-exception|verify|review-repair [--acceptance <reviewed-json>] [--exception <stable-code>] [--evidence <https-url>] [--cohort <cohort>] [--batch 1..100] [--window <milliseconds>] [--operator <profile-id> --reason <text> --live]\nOne competition only. Default is read-only. Requires explicitly configured DB environment and an allowlisted operator for live commands.\n'
     );
     return;
   }
