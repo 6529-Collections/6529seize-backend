@@ -23,7 +23,8 @@ while visible and active.
 ## Conversion and deployment
 
 The worker reads `MC_DROPS_VIDEO_TEMPLATE_NAME`, preserves its codec, audio,
-input selector, and group settings, replaces the existing HLS/MP4 destinations,
+and group settings, preserves input-selector settings except for forcing
+`VideoSelector.Rotate` to `AUTO`, replaces the existing HLS/MP4 destinations,
 and appends a fully specified JPEG group. The existing regular video outputs
 remain in the same job because MediaConvert requires them for frame capture.
 The shared AWS template is not modified. An incompatible/missing template
@@ -33,7 +34,10 @@ FILE group for MP4 renditions. Additional or duplicate groups are rejected
 before submission rather than sharing output destinations.
 
 The deployed template, bucket, and bucket region are captured before shared
-secret loading and retained for warm invocations. `MC_ENDPOINT` and
+secret loading and retained for warm invocations.
+`S3_BUCKET`, `BUCKET_REGION`, and `MC_DROPS_VIDEO_TEMPLATE_NAME` must be
+provided by the function's Serverless environment configuration at cold start;
+they must not be moved solely into the shared secret. `MC_ENDPOINT` and
 `MC_ROLE_ARN` continue to come from the existing `prepEnvironment` secret-loading
 path. The template-scoped policy intentionally attaches to the existing shared
 `lambda-vpc-role`; other users of that role also gain read access to this one
