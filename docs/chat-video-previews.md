@@ -65,10 +65,20 @@ The current service catalog permits this shared-media converter only in
 isolated staging media store. This PR does not change that topology. Check IAM
 propagation and template lookup during release verification.
 
-Before release, submit an authorized test upload and verify the job completes,
-the existing video outputs still play, and the documented JPEG key is served
-by CloudFront. Include a portrait/rotated source. Mocked unit tests do not prove
-the account's live template, IAM permissions, or MediaConvert service acceptance.
+Before release, use separately authorized uploads to verify the live storage
+contract with the accompanying frontend:
+
+- For a clip longer than one second, confirm job completion, playable HLS/MP4
+  renditions, CloudFront delivery of sequences 0 and 1, and preference for sequence
+  1 in chat. Include a portrait/rotated source and check preview/playback geometry.
+- For a sub-second clip, confirm job completion and playable video renditions.
+  Verify the emitted sequence-0 JPEG is displayed without refresh when sequence 1
+  is absent, and that video is not fetched before Play. Observe that preferred-key
+  retries stop within the configured four additional checks after fallback loads.
+
+Unit tests guard submitted capture settings; they do not prove frame numbering,
+timestamps, the account's live template, IAM permissions, or service acceptance.
+Live verification of the long and sub-second cases remains required during rollout.
 
 ## Existing videos
 
