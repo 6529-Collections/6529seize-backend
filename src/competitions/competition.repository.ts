@@ -1728,8 +1728,9 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
     if (!decisionIds.length) return [];
     return this.db.execute<NativeDecisionWinnerRecord>(
       `select winner.* from ${COMPETITION_DECISION_WINNERS_TABLE} winner
-       join ${COMPETITION_ENTRIES_TABLE} e on e.id=winner.entry_id and e.competition_id=winner.competition_id
-       where winner.decision_id in (:decisionIds) and ${competitionEntryVisibleSql('e')}
+       left join ${COMPETITION_ENTRIES_TABLE} e on e.id=winner.entry_id and e.competition_id=winner.competition_id
+       where winner.decision_id in (:decisionIds)
+         and (winner.legacy_drop_id is not null or ${competitionEntryVisibleSql('e')})
        order by winner.\`rank\` asc, winner.entry_id asc`,
       { decisionIds },
       dbOptions(ctx)

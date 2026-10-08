@@ -14,6 +14,7 @@ import {
   COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE,
   COMPETITION_VOTES_TABLE,
   COMPETITION_DECISIONS_TABLE,
+  COMPETITION_DECISION_WINNERS_TABLE,
   WAVES_DECISIONS_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE,
   DROPS_PARTS_TABLE,
@@ -920,6 +921,95 @@ describeWithSeed(
       expect(report.mismatches).toBeGreaterThan(0);
       expect(report.consecutiveFullWindows).toBe(0);
     });
+    it('preserves deleted source winners and prizes without restoring their submissions', async () => {
+      const prizes = [
+        { type: 'MANUAL', description: 'historical award', amount: null }
+      ];
+      await sqlExecutor.execute(
+        `insert into ${WAVES_DECISIONS_TABLE} (wave_id,decision_time) values (:waveId,100)`,
+        { waveId: wave.id }
+      );
+      await sqlExecutor.execute(
+        `insert into ${WAVES_DECISION_WINNER_DROPS_TABLE} (wave_id,decision_time,drop_id,ranking,final_vote,prizes) values (:waveId,100,:dropId,1,-4,:prizes)`,
+        { waveId: wave.id, dropId: drop.id, prizes: JSON.stringify(prizes) }
+      );
+      await sqlExecutor.execute(`delete from ${DROPS_TABLE} where id=:dropId`, {
+        dropId: drop.id
+      });
+      // Normal drop deletion clears mutable ranks/votes while retaining winners.
+      for (const table of [
+        DROP_RANK_TABLE,
+        WAVE_LEADERBOARD_ENTRIES_TABLE,
+        DROP_VOTER_STATE_TABLE,
+        DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
+        DROP_REAL_VOTE_IN_TIME_TABLE,
+        DROP_REAL_VOTER_VOTE_IN_TIME_TABLE
+      ]) {
+        await sqlExecutor.execute(
+          `delete from ${table} where drop_id=:dropId`,
+          {
+            dropId: drop.id
+          }
+        );
+      }
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await finishBackfill(service);
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
+      expect(await service.cutover(id, operator, false)).toMatchObject({
+        changed: true,
+        failures: []
+      });
+      const repository = new CompetitionRepository();
+      expect(
+        (
+          await repository.listNativeEntries(
+            id,
+            { offset: 0, limit: 10, direction: 'ASC' },
+            {}
+          )
+        ).data
+      ).toEqual([]);
+      expect(
+        (
+          await repository.listNativeDecisions(
+            id,
+            { offset: 0, limit: 10, direction: 'ASC' },
+            {}
+          )
+        ).data[0].winners
+      ).toEqual([
+        {
+          entry_id: legacyCompetitionEntryId(id, drop.id),
+          rank: 1,
+          final_rating: -4
+        }
+      ]);
+      expect(
+        await sqlExecutor.oneOrNull(
+          `select legacy_drop_id from ${COMPETITION_DECISION_WINNERS_TABLE} where competition_id=:id`,
+          { id }
+        )
+      ).toEqual({ legacy_drop_id: drop.id });
+      const projected = await withLegacyCompetitionGetFacade(() =>
+        sqlExecutor.execute<{ drop_id: string; prizes: string }>(
+          `select drop_id,prizes from ${WAVES_DECISION_WINNER_DROPS_TABLE} where wave_id=:waveId`,
+          { waveId: wave.id }
+        )
+      );
+      expect(
+        projected.map((row) => ({
+          drop_id: row.drop_id,
+          prizes: JSON.parse(row.prizes)
+        }))
+      ).toEqual([{ drop_id: drop.id, prizes }]);
+      expect((await service.verifyNative(id)).failures).toEqual([]);
+    });
+
     it('copies empty decisions in bounded pages instead of one decision per checkpoint', async () => {
       await sqlExecutor.execute(
         `insert into ${WAVES_DECISIONS_TABLE} (wave_id,decision_time) values ${Array.from({ length: 30 }, (_, index) => `(:waveId,${100 + index})`).join(',')}`,

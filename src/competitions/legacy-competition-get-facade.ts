@@ -341,15 +341,15 @@ function nativeSelects(table: string): {
       };
     case WAVES_DECISION_WINNER_DROPS_TABLE:
       return {
-        from: `${entries} join ${COMPETITION_DECISION_WINNERS_TABLE} win on win.entry_id=e.id and win.competition_id=c.id join ${COMPETITION_DECISIONS_TABLE} d on d.competition_id=c.id and d.id=win.decision_id`,
+        from: `${owners} join ${COMPETITION_DECISION_WINNERS_TABLE} win on win.competition_id=c.id join ${COMPETITION_DECISIONS_TABLE} d on d.competition_id=c.id and d.id=win.decision_id left join ${COMPETITION_ENTRIES_TABLE} e on e.id=win.entry_id and e.competition_id=c.id where ${nativePrimary} and coalesce(win.legacy_drop_id,e.drop_id) is not null`,
         fields: {
           wave_id: 'c.wave_id',
           decision_time: 'd.scheduled_at',
-          drop_id: 'e.drop_id',
+          drop_id: 'coalesce(win.legacy_drop_id,e.drop_id)',
           // Frozen ranking is INT; the driver's native BIGINT is a string.
           ranking: 'cast(win.rank as double)',
           final_vote: 'win.final_rating',
-          prizes: `coalesce((select json_arrayagg(a.award) over(order by a.outcome_position,a.id rows between unbounded preceding and unbounded following) from ${COMPETITION_OUTCOME_AWARDS_TABLE} a where a.competition_id=c.id and a.decision_id=d.id and a.entry_id=e.id limit 1),json_array())`
+          prizes: `coalesce((select json_arrayagg(a.award) over(order by a.outcome_position,a.id rows between unbounded preceding and unbounded following) from ${COMPETITION_OUTCOME_AWARDS_TABLE} a where a.competition_id=c.id and a.decision_id=d.id and a.entry_id=win.entry_id limit 1),json_array())`
         }
       };
     case WAVE_OUTCOMES_TABLE:

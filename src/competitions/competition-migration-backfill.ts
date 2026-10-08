@@ -530,6 +530,19 @@ export class CompetitionMigrationBackfill {
 
       for (const decision of decisions.data) {
         const { winners, ...fields } = decision;
+        const sourceWinners = winners.length
+          ? await this.db.execute<{ drop_id: string }>(
+              `select drop_id from ${WAVES_DECISION_WINNER_DROPS_TABLE} where wave_id=:waveId and decision_time=:time`,
+              { waveId: record.wave_id, time: decision.scheduled_at },
+              { wrappedConnection: ctx.connection }
+            )
+          : [];
+        const dropIds = new Map(
+          sourceWinners.map((winner) => [
+            legacyCompetitionEntryId(record.id, winner.drop_id),
+            winner.drop_id
+          ])
+        );
         await this.upsert(
           COMPETITION_DECISIONS_TABLE,
           [
@@ -545,6 +558,7 @@ export class CompetitionMigrationBackfill {
           COMPETITION_DECISION_WINNERS_TABLE,
           winners.map((winner) => ({
             ...winner,
+            legacy_drop_id: dropIds.get(winner.entry_id),
             decision_id: decision.id,
             competition_id: record.id,
             created_at: decision.decided_at ?? time

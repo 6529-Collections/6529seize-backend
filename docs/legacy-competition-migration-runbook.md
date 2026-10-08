@@ -105,6 +105,12 @@ comparison still runs before transfer. This prevents recurring decisions from
 continually restarting a large active wave's history. Deploy only
 `competitionMigrationLoop` for this correction; existing checkpoints remain valid.
 
+Deleted source drops may still have immutable decision winners and prizes.
+Imported winners retain their original drop ID in `legacy_drop_id`; their history
+survives without recreating the drop or a submission. Deploy `dbMigrationsLoop`
+with full schema scope (additive column and compatibility view), then `api`, then
+`competitionMigrationLoop` before retrying a comparison that found this case.
+
 Existing positive time locks shorter than the current five-minute creation
 minimum are retained during migration. The native weighted voting runtime already
 supports these durations; the migration snapshot validator accepts them without
