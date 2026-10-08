@@ -134,6 +134,29 @@
       ]
     },
     {
+      "name": "competitionMigrationLoop",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "competitionMigrationLoop"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": [
+        "dbMigrationsLoop",
+        "waveLeaderboardSnapshotterLoop",
+        "tdhLoop",
+        "waveDecisionExecutionLoop",
+        "api"
+      ]
+    },
+    {
       "name": "customReplayLoop",
       "allowed_environments": [
         "staging",

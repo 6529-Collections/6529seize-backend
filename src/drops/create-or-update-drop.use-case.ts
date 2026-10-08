@@ -1,4 +1,19 @@
 import { recordWebSocketEvent } from '@/websocket-outbox/outbox.db';
+import type { CompetitionRoutingRecord } from '@/competitions/competition.types';
+import {
+  COMPETITION_VOTES_TABLE,
+  COMPETITION_VOTE_HISTORY_TABLE,
+  COMPETITION_ENTRY_RUNTIME_TABLE
+} from '@/constants';
+import { legacyCompetitionEntryId } from '@/competitions/competition-id';
+import {
+  withLegacyPrimaryMutation,
+  readLegacyMutationSource
+} from '@/competitions/legacy-competition-mutation';
+import { CompetitionMigrationBackfill } from '@/competitions/competition-migration-backfill';
+import { dbSupplier } from '@/sql-executor';
+import { appFeatures } from '@/app-features';
+import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
 import { getPublishedDropMediaMimeType } from '@/drops/drop-media-upload.config';
 import {
   CreateOrUpdateDropModel,
@@ -382,6 +397,23 @@ export class CreateOrUpdateDropUseCase {
     };
   }
 
+  private assertLegacySubmissionAvailable(
+    model: CreateOrUpdateDropModel,
+    nativeOwner: CompetitionRoutingRecord | null,
+    nativeEntryContent: NativeEntryContentPermit | undefined
+  ): void {
+    if (
+      nativeOwner &&
+      !nativeEntryContent &&
+      model.drop_type === DropType.PARTICIPATORY &&
+      (!appFeatures.isNativeCompetitionWritesEnabled() ||
+        !appFeatures.isNativeCompetitionExecutionEnabled())
+    )
+      throw new ForbiddenException(
+        'Competition submissions are temporarily unavailable'
+      );
+  }
+
   public async execute(
     model: CreateOrUpdateDropModel,
     isDescriptionDrop: boolean,
@@ -408,94 +440,156 @@ export class CreateOrUpdateDropUseCase {
     pending_push_notification_ids: number[];
     dm_unread_recipient_ids: string[];
   }> {
-    let resolvedModel = sanitizeDropStructuredFields(model);
-    this.assertDropContentLimits(resolvedModel.parts);
-    timer?.start(`${CreateOrUpdateDropUseCase.name}->execute`);
-    let authorId = resolvedModel.author_id;
-    if (!authorId) {
-      const authorIdentity = resolvedModel.author_identity;
-      const resolvedAuthorId =
-        await identityFetcher.getProfileIdByIdentityKeyOrThrow(
-          {
-            identityKey: authorIdentity
-          },
-          {}
+    if (
+      nativeEntryContent &&
+      !isNativeEntryContentPermit(nativeEntryContent, model, connection)
+    )
+      throw new ForbiddenException('Invalid native entry content permission');
+    // Native entry commands already hold their own competition lock. Their
+    // dedicated COMPETITION drops never mutate the legacy primary's source.
+    const withOwner: typeof withLegacyPrimaryMutation = nativeEntryContent
+      ? async (_waveId, _ctx, action) => action(null)
+      : withLegacyPrimaryMutation;
+    return withOwner(
+      model.wave_id,
+      { timer, connection },
+      async (nativeOwner) => {
+        this.assertLegacySubmissionAvailable(
+          model,
+          nativeOwner,
+          nativeEntryContent
         );
-      resolvedModel = { ...resolvedModel, author_id: resolvedAuthorId };
-      authorId = resolvedAuthorId;
-    }
-    if (!!resolvedModel.proxy_identity && !resolvedModel.proxy_id) {
-      const proxyIdentity = resolvedModel.proxy_identity;
-      const resolvedProxyId =
-        await identityFetcher.getProfileIdByIdentityKeyOrThrow(
-          {
-            identityKey: proxyIdentity
-          },
-          {}
-        );
-      const hasRequiredProxyAction =
-        await this.proxyService.hasActiveProxyAction({
-          granted_by_profile_id: authorId,
-          granted_to_profile_id: resolvedProxyId,
-          action: ProfileProxyActionType.CREATE_DROP_TO_WAVE
-        });
-      if (!hasRequiredProxyAction) {
-        throw new BadRequestException(
-          `Identity ${resolvedModel.author_identity} hasn't allowed identity ${resolvedModel.proxy_identity} to create drops on it's behalf`
-        );
-      }
-      resolvedModel = { ...resolvedModel, proxy_id: resolvedProxyId };
-    }
-    const entryCtx: RequestContext = {
-      timer,
-      connection,
-      authenticationContext:
-        'trustedSystem' in prePublication
-          ? undefined
-          : prePublication.authenticationContext
-    };
-    const entryEdit = resolvedModel.drop_id
-      ? await this.entryHooks.prepareUpdate(
-          resolvedModel,
-          (competition) =>
-            this.normalizeNativeEntryIdentity(
+        let resolvedModel = sanitizeDropStructuredFields(model);
+        this.assertDropContentLimits(resolvedModel.parts);
+        timer?.start(`${CreateOrUpdateDropUseCase.name}->execute`);
+        let authorId = resolvedModel.author_id;
+        if (!authorId) {
+          const authorIdentity = resolvedModel.author_identity;
+          const resolvedAuthorId =
+            await identityFetcher.getProfileIdByIdentityKeyOrThrow(
+              {
+                identityKey: authorIdentity
+              },
+              {}
+            );
+          resolvedModel = { ...resolvedModel, author_id: resolvedAuthorId };
+          authorId = resolvedAuthorId;
+        }
+        if (!!resolvedModel.proxy_identity && !resolvedModel.proxy_id) {
+          const proxyIdentity = resolvedModel.proxy_identity;
+          const resolvedProxyId =
+            await identityFetcher.getProfileIdByIdentityKeyOrThrow(
+              {
+                identityKey: proxyIdentity
+              },
+              {}
+            );
+          const hasRequiredProxyAction =
+            await this.proxyService.hasActiveProxyAction({
+              granted_by_profile_id: authorId,
+              granted_to_profile_id: resolvedProxyId,
+              action: ProfileProxyActionType.CREATE_DROP_TO_WAVE
+            });
+          if (!hasRequiredProxyAction) {
+            throw new BadRequestException(
+              `Identity ${resolvedModel.author_identity} hasn't allowed identity ${resolvedModel.proxy_identity} to create drops on it's behalf`
+            );
+          }
+          resolvedModel = { ...resolvedModel, proxy_id: resolvedProxyId };
+        }
+        const entryCtx: RequestContext = {
+          timer,
+          connection,
+          authenticationContext:
+            'trustedSystem' in prePublication
+              ? undefined
+              : prePublication.authenticationContext
+        };
+        const entryEdit = resolvedModel.drop_id
+          ? await this.entryHooks.prepareUpdate(
               resolvedModel,
-              competition,
-              preResolvedIdentityNomination,
+              (competition) =>
+                this.normalizeNativeEntryIdentity(
+                  resolvedModel,
+                  competition,
+                  preResolvedIdentityNomination,
+                  entryCtx
+                ),
               entryCtx
-            ),
-          entryCtx
-        )
-      : undefined;
-    const contentPermit = nativeEntryContent ?? entryEdit?.permit;
-    const isNativeEntryContent = isNativeEntryContentPermit(
-      contentPermit,
-      resolvedModel,
-      connection
-    );
-    if (contentPermit && (!isNativeEntryContent || isDescriptionDrop))
-      throw new Error('Invalid native entry content authorization');
-    const result = await this.createOrUpdateDrop(
-      resolvedModel,
-      isDescriptionDrop,
-      {
-        timer,
-        connection,
-        preResolvedIdentityNomination,
-        bypassChatLinkRestrictions:
-          bypassChatLinkRestrictions || isNativeEntryContent,
-        bypassChatSlowModeRestrictions:
-          bypassChatSlowModeRestrictions || isNativeEntryContent,
-        isNativeEntryContent,
-        prePublication
+            )
+          : undefined;
+        const contentPermit = nativeEntryContent ?? entryEdit?.permit;
+        const isNativeEntryContent = isNativeEntryContentPermit(
+          contentPermit,
+          resolvedModel,
+          connection
+        );
+        if (contentPermit && (!isNativeEntryContent || isDescriptionDrop))
+          throw new Error('Invalid native entry content authorization');
+        const result = await this.createOrUpdateDrop(
+          resolvedModel,
+          isDescriptionDrop,
+          {
+            timer,
+            connection,
+            preResolvedIdentityNomination,
+            bypassChatLinkRestrictions:
+              bypassChatLinkRestrictions || isNativeEntryContent,
+            bypassChatSlowModeRestrictions:
+              bypassChatSlowModeRestrictions || isNativeEntryContent,
+            isNativeEntryContent,
+            prePublication
+          }
+        );
+        if (entryEdit?.entries.length) {
+          const drop = await this.dropsDb.findDropById(
+            result.drop_id,
+            connection
+          );
+          if (!drop) throw new Error('Updated entry drop is missing');
+          await this.entryHooks.recordUpdate(
+            entryEdit,
+            drop,
+            authorId!,
+            entryCtx
+          );
+        }
+        if (
+          nativeOwner &&
+          !nativeEntryContent &&
+          model.drop_type === DropType.PARTICIPATORY
+        ) {
+          await readLegacyMutationSource(async () => {
+            const db = dbSupplier(),
+              entryId = legacyCompetitionEntryId(
+                nativeOwner.id,
+                result.drop_id
+              );
+            if (model.drop_id) {
+              for (const table of [
+                COMPETITION_VOTES_TABLE,
+                COMPETITION_VOTE_HISTORY_TABLE,
+                COMPETITION_ENTRY_RUNTIME_TABLE
+              ])
+                await db.execute(
+                  `delete from ${table} where competition_id=:id and entry_id=:entryId`,
+                  { id: nativeOwner.id, entryId },
+                  { wrappedConnection: entryCtx.connection }
+                );
+            }
+            const backfill = new CompetitionMigrationBackfill(db);
+            await backfill.entry(nativeOwner, result.drop_id, entryCtx);
+            await backfill.runtime(nativeOwner, result.drop_id, entryCtx);
+          });
+          await nativeCompetitionRuntimeService.refreshCompetition(
+            nativeOwner.id,
+            Date.now(),
+            entryCtx
+          );
+        }
+        return result;
       }
     );
-    if (entryEdit?.entries.length) {
-      const drop = await this.dropsDb.findDropById(result.drop_id, connection);
-      if (!drop) throw new Error('Updated entry drop is missing');
-      await this.entryHooks.recordUpdate(entryEdit, drop, authorId!, entryCtx);
-    }
-    return result;
   }
 
   public async normalizeNativeEntryIdentity(

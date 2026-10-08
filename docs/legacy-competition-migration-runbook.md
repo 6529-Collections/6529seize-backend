@@ -1,0 +1,489 @@
+# One-at-a-time legacy competition migration
+
+Roadmap Phase 5 adds migration tooling; delivery Phase 2 ends at reviewed PRs
+and passing checks. It does not authorize deployment or a production migration.
+Use this runbook only after the appropriate environment release is authorized.
+The original primary UUID remains immutable. UI default selection never changes
+ownership, migration targets, capability assignment or an already selected vote.
+
+## Run from AWS Console in staging or production
+
+Deploy the backend service **`competitionMigrationLoop`** through `Deploy a service`
+after the schema and compatible workers/API below are ready. Its deployment has
+no invocation step, EventBridge schedule or enrollment side effect. It uses the
+same regional `prod/lambdas` secret and VPC access as existing backend workers;
+no operator laptop database credentials, tunnel or shell access are needed.
+There is no public HTTP endpoint or frontend change.
+
+Open **AWS Console → Lambda → competitionMigrationLoop → Test** in
+**eu-west-1 for staging** or **us-east-1 for production**. The explicit payload
+environment must match both the deployed stage and region; `local` is refused.
+Use the default unqualified function (`$LATEST`) for this operating path.
+Begin with this read-only test event:
+
+```json
+{
+  "environment": "staging",
+  "action": "inspect",
+  "wave_id": "c3018ba0-14e7-4145-8b9e-9e292c09ac4e"
+}
+```
+
+Use the UUID of the wave you actually intend to migrate. Inspection returns the
+current owner, automatically selected cohort, checkpoint and unmet prerequisites;
+it creates no mappings, schema, enrollment or migration jobs. `{}`, scheduled
+events, wildcard targets and unknown fields are rejected before connecting.
+
+Configure `COMPETITION_MIGRATION_OPERATORS` with the named operator profile IDs
+in that region's secret, or explicitly on this Lambda. A Lambda environment
+override takes precedence over the shared secret. IAM permission to invoke the
+function is the access boundary; the allowlisted `operator` is the recorded audit
+identity, not proof of a wallet login. Keep invoke permission restricted to the
+approved operations principals. Payloads cannot configure database hosts,
+runtime flags, stage or weaker migration policies.
+
+Before live migration, record the reviewed acceptance through the same Lambda:
+set `action` to `record-environment-acceptance`, supply `environment`, `live: true`,
+`operator`, `reason`, and the full reviewed JSON object in `acceptance`. Omit
+`wave_id` for this environment action. Use the exact fields in
+[the acceptance template](./legacy-competition-migration-acceptance.pending.json),
+replacing pending/null values with real reviewed evidence for the target region.
+The object is submitted inline, so no file path or second CLI is necessary.
+Staging acceptance never satisfies production. Approval validity and the incident
+window remain enforced, and changes to approval reset per-wave parity windows.
+
+Then run or resume a single wave with:
+
+```json
+{
+  "environment": "staging",
+  "action": "migrate",
+  "wave_id": "c3018ba0-14e7-4145-8b9e-9e292c09ac4e",
+  "live": true,
+  "operator": "<allowlisted-profile-id>",
+  "reason": "<reviewed-rollout-reference>",
+  "batch": 25,
+  "auto_continue": true,
+  "max_duration_minutes": 60
+}
+```
+
+For production, invoke the production-region function with
+`"environment": "production"`. The same completed-pilot ordering, seven full
+approved parity windows, capture health, effect drainage and ownership fences
+apply in both remote environments. Negative votes are supported; unsupported
+signed-vote, privileged, oversized and historical shapes retain their stops.
+Nothing in this Lambda fabricates acceptance or waives an exception.
+
+The default invocation slice is 120 seconds (`invocation_seconds` accepts
+30–720), with a 60-second Lambda cleanup reserve. `batch` accepts 1–100.
+`max_duration_minutes` accepts 1–1440 and bounds the entire continuation chain;
+each continuation preserves the initial absolute deadline and the same named
+operator and reason. This deadline starts when the first invocation runs.
+At a clean checkpoint pause the function queues itself asynchronously and
+returns `outcome: "CONTINUING"`, the run ID/deadline and durable wave status.
+`COMPLETE` includes native ownership verification. `PAUSED` means the configured
+overall time limit was reached, the invocation had no usable budget, or automatic
+continuation was disabled. Set `auto_continue: false` to run a bounded slice and
+resume by manually submitting the same migration payload again.
+
+Run one automatic wave migration at a time in each region. The worker has one
+reserved execution; use CloudWatch logs for progress while that execution is
+occupied, since another synchronous status invocation can be throttled.
+
+Only a clean time-budget pause creates another invocation. Gate failures,
+comparison mismatches, unsupported shapes and transport failures stop the run
+with a Lambda function error. AWS function-error retries are disabled for the
+default `$LATEST` invocation. If an operator uses a separately published version
+or alias, configure the same asynchronous retry/age settings for that qualifier
+first; AWS settings are [scoped to the selected function/version/alias](https://docs.aws.amazon.com/lambda/latest/dg/invocation-async-configuring.html).
+A dropped
+or failed continuation does not erase its DB checkpoint: inspect status and
+resubmit the original migration event after resolving the cause. At-least-once
+delivery is protected by the existing transaction/checkpoint fences and one
+reserved Lambda execution. Continuations invoke the same function and qualifier
+as the originating context. There is no broad invocation permission: the added
+execution-role policy covers this migration function and its qualifiers only.
+
+CloudWatch logs at `/aws/lambda/competitionMigrationLoop` report copying stages,
+journal lag, clean-window count and transfer/verification. Lambda error and
+dropped-async-event alarms use the region's existing operations alarm topic.
+For the current durable status, submit:
+
+```json
+{
+  "environment": "staging",
+  "action": "status",
+  "wave_id": "c3018ba0-14e7-4145-8b9e-9e292c09ac4e"
+}
+```
+
+Additional explicit actions are `readiness` and `verify` (read-only),
+`reverse-reconcile`, `rollback`, `record-exception` and `review-repair`.
+All mutations require `live: true`, an allowlisted `operator` and a `reason`.
+Without `live`, `rollback` evaluates rollback gates while other recovery actions
+only inspect status. `reverse-reconcile` processes one bounded batch per manual
+invocation before a separately requested guarded rollback. `record-exception`
+requires a stable uppercase `exception` code; `review-repair` requires an HTTPS
+`evidence` URL and retains native ownership. There is no clear-exceptions action.
+
+## Migrate one wave from a local operator CLI
+
+From the backend checkout, pass the **wave UUID** to the operator command:
+
+```sh
+./bin/6529 run migrate-wave -- <wave-uuid>
+```
+
+This loads `.env.local` and runs a local migration. It resolves the immutable
+legacy primary UUID, prepares additive migration tables/views/capture, selects
+the source cohort, resumes bounded copying and concurrent-write catch-up, compares
+the source independently with native storage, atomically transfers ownership and
+verifies native invariants. Wave/drop URLs and shared chat remain unchanged.
+Frozen reads preserve nullable legacy metadata, every historical winner, retained
+chat/retired leaderboard snapshots and outcome children without a current parent.
+Those retained rows remain shared history; active competition state is native.
+Local read/write DB hosts must both be loopback addresses. Enable
+`FEATURE_UNIFIED_COMPETITION_READS`, `FEATURE_NATIVE_COMPETITION_WRITES` and
+`FEATURE_NATIVE_COMPETITION_EXECUTION` in the local API/worker configuration once,
+then restart those processes. The command checks writer/execution flags; it never
+silently enables a remote runtime or assumes another process shares its flags.
+Local parity uses complete independent snapshots and a final locked comparison;
+it requires neither production attestations nor a prior completed pilot.
+
+Use `--dry-run` for read-only inspection. No tables, capture triggers, mapping,
+enrollment or ownership are changed by inspection. If interrupted, stopped by a
+deadline or disconnected between batches, rerun the same command to resume its
+durable checkpoint. `--batch 25` and `--timeout-minutes 60` are defaults. The
+command reports stages, journal catch-up and comparison progress. Mismatches,
+unsupported shapes and owned exceptions stop it with a reason. Pending effects
+are polled until drained or the deadline expires; no external effect is fabricated
+or automatically undone. Already migrated waves receive verification only.
+
+Staging/production require the one-time release below and a named allowlisted
+operator. Set the explicit target environment and approved DB configuration;
+`NODE_ENV=local` prevents cloud secret loading even through a remote tunnel.
+Set `COMPETITION_MIGRATION_OPERATOR` once for the operator session. Before starting
+the approved rollout window, record one reviewed environment acceptance:
+
+```sh
+./bin/6529 run competition:migrate -- --environment production \
+  --action record-environment-acceptance --acceptance <reviewed-json-path> \
+  --operator <allowlisted-profile-id> --reason <rollout-reference> --live
+```
+
+The acceptance is append-only and scoped to the target database and environment.
+It is reused by each wave within its approved incident window and 24-hour validity;
+new reviews replace the current approval without deleting prior evidence. Staging
+approval cannot satisfy production. Comparisons snapshot that approval for each
+wave; changed evidence starts fresh parity windows before a live transfer.
+Existing per-competition acceptance records
+remain readable for audit; live gates use the explicit environment approval.
+The old `record-acceptance` action also records an environment review so recovery
+scripts retain their interface without letting staging records satisfy production.
+
+```sh
+./bin/6529 run migrate-wave -- <wave-uuid> --environment production --dry-run
+./bin/6529 run migrate-wave -- <wave-uuid> --environment production --live
+```
+
+Remote targets default to read-only inspection unless `--live` is supplied.
+Live production/staging commands require `COMPETITION_MIGRATION_OPERATORS` to
+include the operator. They retain the completed-pilot rollout order, all reviewed
+operational acceptance gates, and seven consecutive full approved parity windows.
+The command samples and waits automatically; operators do not run each batch or
+comparison manually. Active ordinary competitions permitting negative votes are
+supported: signed current/history values transfer unchanged, replacement/sign
+edits charge absolute voting credit, and native credit reduction preserves signs
+without overspending. Signed-vote, complex, privileged/Main Stage and oversized
+sources still require their specific adapters and reviewed release evidence.
+On resume, the command audits retirement of the old
+`NEGATIVE_CREDIT_REVOCATION_ADAPTER` stop for an ordinary unsigned legacy source
+and resets parity. Every other owned exception remains intact.
+
+The commands in the later sections are the low-level recovery/debugging interface.
+Routine remote migration uses the AWS Lambda above. The local operator command
+remains `migrate-wave`.
+
+## Current acceptance ledger
+
+| Gate                                                                       | Current evidence                                                                                   | Execution owner                                              |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Native production Rank and Approve completion with correct effects         | Pending; staging fixtures and production read-only checks do not establish this                    | Named backend/operations operator required before enrollment |
+| GET p95/error baseline, current values and reviewed budgets                | Pending production measurements                                                                    | Named operations operator required                           |
+| Decision lag p95/p99 and approved budgets                                  | Pending production measurements                                                                    | Named operations operator required                           |
+| Backlog, oldest-pending, duplicate-effect/claim and capture-failure alerts | Pending verification links and thresholds                                                          | Named operations operator required                           |
+| Compatible API, decision, leaderboard and TDH runtime revisions            | Must be recorded from deployed versions for the target environment                                 | Release operator                                             |
+| Cohort incident window, rollback rehearsal and old-client acceptance       | Pending per-cohort review                                                                          | Migration operator recorded by enrollment                    |
+| Independent parity                                                         | Collected separately for each enrolled UUID; seven consecutive full zero-mismatch windows required | Migration operator                                           |
+
+These are pending gates, not evidence of a production failure. Do not substitute
+local test URLs, guessed metrics, a deploy success or an adapter comparing with
+itself for reviewed production evidence. `readiness` and `cutover` enforce the
+ledger. No command waives an owned exception.
+
+## Additive rollout with continuous service
+
+Deploy each backend service sequentially and verify success before its dependents.
+No schema, queue, mapping or history is removed. Do not enroll a competition
+while old writer/worker versions remain in service.
+
+1. Deploy `dbMigrationsLoop`. Perform its authorized manual full invocation to
+   synchronize additive migration journal/audit/checkpoint/environment-review, transactional mirror
+   permit and legacy publication-receipt entities, nullable pause source ID and
+   leaderboard ordering fields. The same invocation installs the 12 permanent
+   GET views. Set `COMPETITION_MIGRATION_CAPTURE_ENABLED=true` for the reviewed
+   schema invocation to install 69 triggers across 23 source/content tables.
+   Repeat installation and inspect schema health; scheduled invocations do not
+   install DDL. Schema deployment itself enrolls nothing. Capture installation
+   requires the database TRIGGER privilege and the reviewed RDS parameter
+   `log_bin_trust_function_creators=1` when binary logging requires it. DDL uses
+   a five-second metadata-lock timeout and fails for safe retry under contention;
+   each additive statement commits independently. Verify entity synchronization
+   on the target schema before the maintenance window.
+2. Deploy `waveLeaderboardSnapshotterLoop`, `artCurationNftWatchLoop`, `tdhLoop`,
+   `overRatesRevocationLoop`, `rateEventProcessingLoop`, `delegationsLoop` and
+   `helpBotReplyLoop` (also packages `helpBotDailyActivityCreditLoop`) and
+   `newsletterLoop` (production only) for shared owner-aware voting, maintenance,
+   identity-consolidation and read code. Verify the compatible native message
+   consumers from the prior runtime release (`claimsBuilder` and
+   `pushNotificationsHandler`) are already deployed; this change adds no message
+   shape and does not require redeploying those consumers.
+3. Deploy `waveDecisionExecutionLoop` for transaction ownership checks,
+   retryable legacy publication receipts and native transferred-history execution.
+4. Deploy `api` for the permanent GET facade and old mutation dispatch. Verify
+   deployed SHAs, health, old GET contracts and native commands. Keep native
+   writes/execution enabled consistently wherever a migrated owner will run;
+   disabling those flags is a deliberate activity stop, not a storage rollback.
+5. Only after backend success merge/deploy the frontend compatibility change.
+   Require the related desktop/mobile E2E before further promotion.
+6. Deploy `competitionMigrationLoop` after the compatible backend is verified.
+   This creates the manual function, scoped self-invocation policy and alarms;
+   it neither runs the function nor creates a migration schedule. Configure the
+   regional operator allowlist before any live invocation.
+   Refresh the independent operational monitoring stack and then its source
+   relay/alarms from the generated templates so the new function is allowlisted
+   and its structured errors, failures and throttles are covered. Create the
+   function/log group before installing its source log subscription. Follow
+   [the monitoring rollout runbook](../ops/docs/operations/isolated-operational-monitoring.md)
+   and verify delivery before enrollment; these stacks are separate from the
+   application service deployment workflow.
+7. Collect and review the pending evidence above. Then authorize a separate
+   one-competition rehearsal/pilot. Main Stage stays legacy until its dedicated
+   privileged release review and adapter work are complete.
+
+Confirm service names against `src/config/deploy-services.json`. Shared schema
+and SQL-executor code is bundled by backend services: upgrade any additional
+source writer identified in the environment inventory before enrollment. Retain
+all capture triggers, GET views and receipt tables while any migrated owner
+exists. Reverting to an API/worker version without ownership fences is unsafe.
+
+## Configure an explicit operator environment
+
+The CLI is `./bin/6529 run competition:migrate -- --help` from the backend root.
+It never loads cloud secrets or synchronizes schema. Supply approved write/read
+DB configuration through the normal environment. Keep credentials out of shell
+history and output. Configure `NODE_ENV=local` even for an operator connecting
+through an approved staging/production tunnel; this prevents automatic cloud
+secret loading. `COMPETITION_MIGRATION_ENVIRONMENT` must exactly equal the
+`--environment` argument. A `local` target additionally requires a loopback DB.
+Live commands require the named profile in `COMPETITION_MIGRATION_OPERATORS`.
+
+Obtain the existing `legacy_primary_competition_id` from the authorized hub
+read. Copy that exact UUID and verify it with `status`. A wave ID, native-only
+competition UUID, `all`, creation date or navigation default is not a target.
+
+For the examples below, set only these non-secret task variables:
+
+```sh
+migration_environment=local
+migration_competition='<exact existing legacy competition UUID>'
+migration_operator='<allowlisted operator profile ID>'
+migration_reason='<reviewed cohort / incident reference>'
+```
+
+Replace placeholders before execution; the CLI rejects them. Every invocation
+names one UUID. Omitting `--live` leaves the operation read-only; for enroll,
+backfill, catch-up, comparison and record actions this reports current status
+without rehearsing a mutation. Cutover/rollback dry runs evaluate their gates.
+
+## Rehearse and migrate one competition
+
+1. Inspect without mutation:
+
+   ```sh
+   ./bin/6529 run competition:migrate -- --environment "$migration_environment" \
+     --competition "$migration_competition" --action status
+   ./bin/6529 run competition:migrate -- --environment "$migration_environment" \
+     --competition "$migration_competition" --action readiness
+   ```
+
+2. After enrollment is separately authorized, choose the reviewed cohort:
+
+   ```sh
+   ./bin/6529 run competition:migrate -- --environment "$migration_environment" \
+     --competition "$migration_competition" --action enroll \
+     --cohort COMPLETED_INTERNAL --operator "$migration_operator" \
+     --reason "$migration_reason" --live
+   ```
+
+   Cohort order is completed internal, completed ordinary, active low volume,
+   complex, then privileged/Main Stage. An active transfer requires an earlier
+   completed native migration. Privileged, complex, signed-vote, unsupported
+   rule and high-volume sources receive owned stops. Main Stage also has an
+   explicit final release-review stop. These stops require reviewed adapter
+   development and renewed full evidence; no exception-clearing CLI is provided.
+
+3. Run **one bounded batch per invocation**, inspecting the returned checkpoint:
+
+   ```sh
+   ./bin/6529 run competition:migrate -- --environment "$migration_environment" \
+     --competition "$migration_competition" --action backfill --batch 25 \
+     --operator "$migration_operator" --reason "$migration_reason" --live
+   ```
+
+   Repeat until `state=SHADOWING`. Stage order is configuration, outcomes,
+   entries/content, pauses, decisions, voters, runtime votes, leaderboard,
+   winner awards/history, archived voters. Most stages use stable keyset cursors;
+   one decision/winner is one bounded unit. Ordinary outcome/distribution and
+   winner/award fanout is capped at 100. Full content comparison caps ordinary
+   cohorts at 1,000 entries; relational comparison refuses truncated coverage.
+   Larger shapes stop for an owned adapter. Transactions checkpoint atomically,
+   are idempotent and have a durable minimum 250 ms interval between batches.
+   Reduce batch size or pause invocations if live traffic approaches its budget.
+
+4. Catch concurrent writes through the journal:
+
+   ```sh
+   ./bin/6529 run competition:migrate -- --environment "$migration_environment" \
+     --competition "$migration_competition" --action catch-up --batch 25 \
+     --operator "$migration_operator" --reason "$migration_reason" --live
+   ```
+
+   Repeat while journal lag remains. A fully drained journal starts a bounded
+   derived-data refresh (`BACKFILLING`); finish it with the backfill command.
+   Only after refresh does `applied_watermark` reach its target. Reinspect until
+   source/applied watermarks match. A journal gap is a hard stop. Accepted writes
+   journal in their own transaction, including deletions, voter rekeys and eight
+   child-content tables; rolled-back writes create no capture records.
+
+5. Prepare an acceptance JSON using
+   [the pending template](./legacy-competition-migration-acceptance.pending.json).
+   It deliberately contains null evidence/metrics and is **not a valid acceptance
+   record** until every field has real reviewed evidence. Record six HTTPS
+   evidence links, the recording operator and timestamp, full-window duration,
+   four deployed service SHAs, measurements/budgets and incident-window bounds.
+   All durations/timestamps use milliseconds; error rates are fractions 0..1.
+   The attestation expires after 24 hours.
+
+   ```sh
+   ./bin/6529 run competition:migrate -- --environment "$migration_environment" \
+     --competition "$migration_competition" --action record-acceptance \
+     --acceptance '<reviewed acceptance JSON path>' \
+     --operator "$migration_operator" --reason "$migration_reason" --live
+   ```
+
+6. Run independent comparisons at the approved cadence:
+
+   ```sh
+   ./bin/6529 run competition:migrate -- --environment "$migration_environment" \
+     --competition "$migration_competition" --action compare --window 60000 \
+     --operator "$migration_operator" --reason "$migration_reason" --live
+   ```
+
+   Use the actual approved duration, at least 60,000 ms. The first sample opens
+   a window; a later full sample closes it. Observe every window boundary without
+   exceeding the window-duration sample gap. A partial sample never increments
+   the streak. Mismatch, missing coverage, source credit overspend, catch-up lag,
+   duration change or a gap resets it. Require seven consecutive full windows.
+   Source reads use direct legacy SQL; candidates use native tables/content and
+   all 12 frozen facade relations in one consistent locked snapshot. Reports
+   retain hashes/counts, not private content or signatures. Full comparisons can
+   hold the owner lock longer than a batch; approve their cost on a representative
+   copy before live use and measure actual request/decision latency.
+
+7. Re-run `readiness`, then a dry-run cutover with the same UUID/operator/reason.
+   Require `failures=[]`. A comparison must be fresh within 60 seconds, at the
+   current source watermark, with zero pending native or legacy effects. Retry
+   unfinished legacy publication receipts with `--action retry-effects --live`
+   only in the authorized environment; stable claim/push IDs survive retries.
+
+   ```sh
+   ./bin/6529 run competition:migrate -- --environment "$migration_environment" \
+     --competition "$migration_competition" --action cutover \
+     --operator "$migration_operator" --reason "$migration_reason"
+   ```
+
+   Add `--live` only for the authorized transfer. The command locks the same
+   competition row as APIs/workers, performs a final full independent comparison
+   through its committed watermark, then transfers storage/execution atomically.
+   Legacy discovery is advisory; legacy execution rechecks owner in its actual
+   transaction. The immutable primary and drop deep links do not change.
+
+8. Run `--action verify` and `status`. Require native ownership and no invariant
+   failures. Check frozen old GETs, scoped new reads, supported old submissions,
+   edits/deletion/voting/settings/pauses, chat and native-only competition
+   isolation. Monitor latency/error/decision lag, source/applied lag, per-category
+   hashes, effect backlog/age/attempts and duplicate receipts. Record evidence
+   before selecting another UUID. Audit reports and durations live in
+   `competition_migration_audit`; restricted capture images must not be exported.
+
+## Rollback and repair
+
+Before any new native decision or external effect, run `rollback` without
+`--live` to inspect safety. It will require actual reverse reconciliation:
+
+```sh
+./bin/6529 run competition:migrate -- --environment "$migration_environment" \
+  --competition "$migration_competition" --action reverse-reconcile --batch 25 \
+  --operator "$migration_operator" --reason "$migration_reason" --live
+```
+
+Repeat bounded batches until `reverse_ready=true`. Native ownership remains
+active throughout preparation. Dry-run rollback then performs full independent
+comparison against the reconciled legacy state; intervening writes can require
+another pass. Add `--live` for an authorized atomic rollback. Do not flip storage
+with SQL. Reverse drop copying includes only the migrated primary's entries;
+shared chat and sibling native competition submissions remain untouched. If the
+primary now contains a native-created `COMPETITION` drop, reverse reconciliation
+stops with an owned exception because its immutable source type cannot be
+converted into legacy participation. Retain native ownership and review a reverse
+adapter or owned repair before proceeding. Re-enrollment resets native shadow data in bounded batches, clears old
+acceptance and requires seven fresh windows.
+
+After a native decision, pending publication or completed external effect, live
+rollback refuses transfer and records `ROLLBACK_REQUIRED`. Keep native ownership,
+inspect durable receipts/claim provenance and complete an owned repair using
+reviewed incident evidence. `review-repair --evidence <HTTPS record> --live`
+records that reviewed repair only after pending effects drain and native aggregate
+and orphan checks pass. It does not repair data or undo a claim/announcement.
+Ownership stays native and blind rollback remains guarded.
+
+For a new discovered source limitation, `record-exception --exception <CODE>
+--live` records a stable uppercase code with the operator and resets parity.
+The CLI records `MIGRATION_DATA_SHAPE` after an owned legacy shape failure. A
+native shape failure records `NATIVE_MIGRATION_DATA_SHAPE`, retains native
+ownership and enters `ROLLBACK_REQUIRED` for reviewed repair. Preserve
+history, receipts and journal checkpoints; resolve through reviewed code and
+rehearsal, never by deleting the guard or fabricating acceptance.
+
+## Operator status and alert evidence
+
+`status` is the per-UUID operational view: durable stage/cursor/rate limit,
+source/applied/target watermarks, journal lag, window streak, owned exceptions,
+publication backlog/retries/oldest pending timestamp and the ten most recent
+audited reports (including batch duration and category parity hashes/counts).
+Use these bounded records in the reviewed monitoring collector. Alert integration,
+request latency/error segmentation and decision p95/p99 are external production
+evidence gates; the CLI does not invent measurements or claim alerts are installed.
+
+## Tested boundaries
+
+Disposable MySQL tests exercise repeated schema installation, transactionally
+captured/rolled-back writes, bounded restart/catch-up, content-only edits, voter
+rekeys, independent mismatches and seven-window resets, migrated Rank/Approve
+execution, weighted histories and pauses, old vote retries, pending legacy
+publication leases, permanent native-backed reads, reverse reconciliation,
+atomic rollback and guarded post-decision refusal. Frontend unit and desktop/mobile
+sandbox tests exercise scoped submission rendering from frozen CHAT responses.
+These are implementation tests, not production migration or SLO evidence.

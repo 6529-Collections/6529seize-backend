@@ -1,0 +1,28 @@
+{
+  "nativeRankCompletion": null,
+  "nativeApproveCompletion": null,
+  "operationalAcceptance": null,
+  "compatibilityAcceptance": null,
+  "rollbackRehearsal": null,
+  "alertsVerified": null,
+  "productionEvidenceVerifiedBy": null,
+  "productionEvidenceVerifiedAt": null,
+  "comparisonWindowMs": null,
+  "serviceRevisions": {
+    "api": null,
+    "waveDecisionExecutionLoop": null,
+    "waveLeaderboardSnapshotterLoop": null,
+    "tdhLoop": null
+  },
+  "apiBaselineP95": null,
+  "apiP95": null,
+  "apiBudgetP95": null,
+  "apiBaselineErrorRate": null,
+  "apiErrorRate": null,
+  "decisionBudgetP95": null,
+  "decisionBudgetP99": null,
+  "decisionP95": null,
+  "decisionP99": null,
+  "incidentWindowStartsAt": null,
+  "incidentWindowEndsAt": null
+}

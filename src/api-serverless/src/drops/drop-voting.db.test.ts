@@ -1,5 +1,7 @@
+import { CompetitionRepository } from '@/competitions/competition.repository';
 import 'reflect-metadata';
 import {
+  COMPETITIONS_TABLE,
   DROP_RANK_TABLE,
   DROP_REAL_VOTE_IN_TIME_TABLE,
   DROP_VOTER_STATE_TABLE,
@@ -808,6 +810,106 @@ describeWithSeed(
         voters_count: 2,
         place: 2
       });
+    });
+  }
+);
+
+const cleanupWaves = Array.from({ length: 101 }, (_, index) =>
+  aWave(
+    { type: WaveType.RANK, time_lock_ms: 300000 },
+    {
+      id: `migration-cleanup-${String(index).padStart(3, '0')}`,
+      name: `Disposable cleanup ${index}`,
+      serial_no: index + 1
+    }
+  )
+);
+const nativeCleanupWave = aWave(
+  { type: WaveType.RANK, time_lock_ms: 300000 },
+  {
+    id: 'migration-cleanup-native',
+    name: 'Disposable native cleanup owner',
+    serial_no: 102
+  }
+);
+const allCleanupWaves = [...cleanupWaves, nativeCleanupWave];
+
+describeWithSeed(
+  'owner-aware stale leaderboard maintenance',
+  [
+    withWaves(allCleanupWaves),
+    {
+      table: DROPS_TABLE,
+      rows: allCleanupWaves.map((wave) => ({
+        id: `${wave.id}-drop`,
+        wave_id: wave.id,
+        author_id: 'cleanup-author',
+        created_at: 10,
+        parts_count: 1,
+        drop_type: DropType.CHAT,
+        hide_link_preview: false
+      }))
+    },
+    {
+      table: WAVE_LEADERBOARD_ENTRIES_TABLE,
+      rows: allCleanupWaves.map((wave) => ({
+        drop_id: `${wave.id}-drop`,
+        wave_id: wave.id,
+        vote: 1,
+        timestamp: 100,
+        vote_on_decision_time: 1
+      }))
+    }
+  ],
+  () => {
+    const competitions = new CompetitionRepository();
+    beforeEach(async () => {
+      await competitions.ensureLegacyMappingForWave(nativeCleanupWave, {});
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set storage_mode='NATIVE', execution_mode='ACTIVE' where legacy_wave_id=:waveId`,
+        { waveId: nativeCleanupWave.id }
+      );
+    });
+
+    const remainingWaves = async () =>
+      (
+        await sqlExecutor.execute<{ wave_id: string }>(
+          `select wave_id from ${WAVE_LEADERBOARD_ENTRIES_TABLE} order by wave_id`
+        )
+      ).map((row) => row.wave_id);
+
+    it('drains at most 100 legacy waves and preserves native-owned rows across batches', async () => {
+      await repo.deleteStaleLeaderboardEntries({});
+      expect(await remainingWaves()).toEqual([
+        cleanupWaves[100].id,
+        nativeCleanupWave.id
+      ]);
+      await repo.deleteStaleLeaderboardEntries({});
+      expect(await remainingWaves()).toEqual([nativeCleanupWave.id]);
+    });
+
+    it('cleans only its locked wave while retaining every other legacy/native wave', async () => {
+      const target = cleanupWaves[50];
+      await competitions.ensureLegacyMappingForWave(target, {});
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const locked = await competitions.lockLegacyExecutionOwner(
+            target.id,
+            {
+              connection
+            }
+          );
+          expect(locked?.legacy_wave_id).toBe(target.id);
+          await repo.deleteStaleLeaderboardEntriesForWave(target.id, {
+            connection
+          });
+        }
+      );
+      expect(await remainingWaves()).toEqual(
+        allCleanupWaves
+          .filter((wave) => wave.id !== target.id)
+          .map((wave) => wave.id)
+      );
     });
   }
 );

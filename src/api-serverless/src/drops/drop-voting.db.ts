@@ -1,3 +1,4 @@
+import { CompetitionRepository } from '@/competitions/competition.repository';
 import {
   dbSupplier,
   LazyDbAccessCompatibleService
@@ -5,6 +6,7 @@ import {
 import { RequestContext } from '../../../request.context';
 import {
   DROP_RANK_TABLE,
+  COMPETITIONS_TABLE,
   DROP_REAL_VOTE_IN_TIME_TABLE,
   DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
   DROP_VOTER_STATE_TABLE,
@@ -1791,27 +1793,69 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
   }
 
   async deleteStaleLeaderboardEntries(ctx: RequestContext) {
-    ctx.timer?.start(`${this.constructor.name}->deleteStaleLeaderboardEntries`);
-    const staleLeaderboardEntriesDropIds = await this.db
-      .execute<{
-        drop_id: string;
-      }>(
-        `select d.id as drop_id from ${DROPS_TABLE} d
-      join waves w on d.wave_id = w.id
-      join ${WAVE_LEADERBOARD_ENTRIES_TABLE} lb on lb.drop_id = d.id
-      where d.drop_type <> '${DropType.PARTICIPATORY}' or w.time_lock_ms is null or w.time_lock_ms = 0`,
-        undefined,
+    return this.deleteStaleLeaderboardEntriesInScope(null, ctx);
+  }
+
+  async deleteStaleLeaderboardEntriesForWave(
+    waveId: string,
+    ctx: RequestContext
+  ) {
+    return this.deleteStaleLeaderboardEntriesInScope(waveId, ctx);
+  }
+
+  private async deleteStaleLeaderboardEntriesInScope(
+    waveId: string | null,
+    ctx: RequestContext
+  ) {
+    const timerName = `${this.constructor.name}->deleteStaleLeaderboardEntries`;
+    ctx.timer?.start(timerName);
+    try {
+      const repository = new CompetitionRepository(() => this.db);
+      // Global maintenance drains at most 100 eligible waves per invocation.
+      // A decision already holding an owner lock cleans only its own wave.
+      const waves = await this.db.execute<{ wave_id: string }>(
+        `select distinct lb.wave_id from ${WAVE_LEADERBOARD_ENTRIES_TABLE} lb
+         join ${DROPS_TABLE} d on d.id=lb.drop_id join ${WAVES_TABLE} w on w.id=lb.wave_id
+         left join ${COMPETITIONS_TABLE} c on c.legacy_wave_id=lb.wave_id
+         where (:waveId is null or lb.wave_id=:waveId)
+           and (d.drop_type <> '${DropType.PARTICIPATORY}' or coalesce(w.time_lock_ms,0)=0)
+           and (c.id is null or (c.storage_mode='LEGACY_ADAPTER' and c.execution_mode='ACTIVE'))
+         order by lb.wave_id limit 100`,
+        { waveId },
         { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
-      )
-      .then((res) => res.map((it) => it.drop_id));
-    if (staleLeaderboardEntriesDropIds.length) {
-      await this.db.execute(
-        `delete from ${WAVE_LEADERBOARD_ENTRIES_TABLE} where drop_id in (:dropIds)`,
-        { dropIds: staleLeaderboardEntriesDropIds },
-        { wrappedConnection: ctx.connection }
       );
+      for (const { wave_id: waveId } of waves) {
+        const remove = async (
+          connection: NonNullable<RequestContext['connection']>
+        ) => {
+          const owner = await repository.lockLegacyExecutionOwner(waveId, {
+            ...ctx,
+            connection
+          });
+          if (
+            owner &&
+            (owner.storage_mode !== 'LEGACY_ADAPTER' ||
+              owner.execution_mode !== 'ACTIVE')
+          )
+            // Native saveLeaderboard owns active-entry/orphan cleanup. Frozen
+            // GETs read that table; retained legacy rows are not native inputs.
+            return;
+          await this.db.execute(
+            `delete lb from ${WAVE_LEADERBOARD_ENTRIES_TABLE} lb join ${DROPS_TABLE} d on d.id=lb.drop_id join ${WAVES_TABLE} w on w.id=lb.wave_id
+             where lb.wave_id=:waveId and (d.drop_type <> '${DropType.PARTICIPATORY}' or coalesce(w.time_lock_ms,0)=0)`,
+            { waveId },
+            { wrappedConnection: connection }
+          );
+        };
+        if (ctx.connection) await remove(ctx.connection);
+        else
+          await this.db.executeNativeQueriesInTransaction(remove, {
+            isolationLevel: 'READ COMMITTED'
+          });
+      }
+    } finally {
+      ctx.timer?.stop(timerName);
     }
-    ctx.timer?.stop(`${this.constructor.name}->deleteStaleLeaderboardEntries`);
   }
 
   async deleteDropsLeaderboardEntry(dropId: string, ctx: RequestContext) {

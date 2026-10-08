@@ -11,6 +11,7 @@ import {
   COMPETITION_OUTCOMES_TABLE,
   COMPETITION_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
   COMPETITION_PARITY_OBSERVATIONS_TABLE,
+  COMPETITION_MIGRATIONS_TABLE,
   COMPETITION_PAUSES_TABLE,
   COMPETITION_VOTES_TABLE,
   COMPETITION_WINNER_VOTES_TABLE,
@@ -321,6 +322,22 @@ const LEGACY_CAPABILITY_ENV: ReadonlyArray<{
 ];
 
 export class CompetitionRepository extends LazyDbAccessCompatibleService {
+  /** Execution owns this row until its source writes commit. Discovery is advisory. */
+  public async lockLegacyExecutionOwner(waveId: string, ctx: RequestContext) {
+    if (!ctx.connection)
+      throw new Error('Execution fencing requires a transaction');
+    const name = `${this.constructor.name}->lockLegacyExecutionOwner`;
+    ctx.timer?.start(name);
+    try {
+      return await this.db.oneOrNull<CompetitionRecord>(
+        `select * from ${COMPETITIONS_TABLE} where legacy_wave_id=:waveId for update`,
+        { waveId },
+        dbOptions(ctx)
+      );
+    } finally {
+      ctx.timer?.stop(name);
+    }
+  }
   public constructor(db: () => SqlExecutor = dbSupplier) {
     super(db);
   }
@@ -506,14 +523,19 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
     } else {
       const existing = await this.db.oneOrNull<{
         config_version: number | string;
+        storage_mode: CompetitionStorageMode;
       }>(
-        `select config_version from ${COMPETITIONS_TABLE}
+        `select config_version, storage_mode from ${COMPETITIONS_TABLE}
          where id = :competitionId for update`,
         { competitionId },
         dbOptions(ctx)
       );
       if (!existing) {
         throw new Error(`Legacy competition mapping ${competitionId} missing`);
+      }
+      // The mapping is immutable; a hub edit cannot overwrite native authority.
+      if (existing.storage_mode !== CompetitionStorageMode.LEGACY_ADAPTER) {
+        return false;
       }
       const configVersion = toNumber(existing.config_version) + 1;
       await this.db.execute(
@@ -847,6 +869,26 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
       : null;
   }
 
+  public async findLegacyTransferTime(
+    id: string,
+    ctx: RequestContext
+  ): Promise<number | null> {
+    const timerName = `${this.constructor.name}->findLegacyTransferTime`;
+    ctx.timer?.start(timerName);
+    try {
+      const row = await this.db.oneOrNull<{
+        cutover_at: number | string | null;
+      }>(
+        `select cutover_at from ${COMPETITION_MIGRATIONS_TABLE} where competition_id=:id and state in ('NATIVE','ROLLBACK_REQUIRED')`,
+        { id },
+        dbOptions(ctx)
+      );
+      return row?.cutover_at == null ? null : toNumber(row.cutover_at);
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   public async listNativeLeaderboard(
     competitionId: string,
     request: CompetitionPageRequest,
@@ -863,9 +905,10 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
     const rows = await this.db.execute<NativeLeaderboardRecord>(
       `select lb.* from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} lb
        join ${COMPETITION_ENTRIES_TABLE} e on e.id=lb.entry_id and e.competition_id=lb.competition_id
+       join ${COMPETITIONS_TABLE} c on c.id=lb.competition_id
        where lb.competition_id = :competitionId and ${competitionEntryVisibleSql('e')}
        order by ${orderColumn} ${directionSql(request.direction)},
-                lb.\`rank\` is null asc, lb.\`rank\` asc, lb.entry_id asc
+                lb.\`rank\` is null asc, lb.\`rank\` asc, case when c.legacy_wave_id is null then lb.entry_id else lb.drop_id end asc
        limit :offset, :rowLimit`,
       {
         competitionId,
@@ -1422,6 +1465,7 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
       start_time: number | string;
       end_time: number | string | null;
       reason: string | null;
+      legacy_source_id: number | string | null;
     }>(
       `select * from ${COMPETITION_PAUSES_TABLE}
        where competition_id = :competitionId
@@ -1439,7 +1483,11 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
         id: row.id,
         competition_id: row.competition_id,
         start_time: toNumber(row.start_time),
-        end_time: toNumber(row.end_time),
+        end_time:
+          row.legacy_source_id != null &&
+          Number(row.end_time) === LEGACY_INDEFINITE_PAUSE_END
+            ? null
+            : toNumber(row.end_time),
         reason: row.reason
       })),
       request.limit
