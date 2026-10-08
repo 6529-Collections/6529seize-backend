@@ -4,7 +4,10 @@ import {
   DROP_MEDIA_ALLOWED_EXTENSIONS_BY_MIME_TYPE,
   DROP_MEDIA_ALLOWED_MIME_TYPES
 } from '@/api/media/media-mime-types';
-import { createMediaPrepRequestSchema } from '@/api/media/media-uplodad.validators';
+import {
+  ApiCompleteMultipartUploadRequestSchema,
+  createMediaPrepRequestSchema
+} from '@/api/media/media-uplodad.validators';
 import * as fc from 'fast-check';
 
 describe('media upload validators', () => {
@@ -256,5 +259,32 @@ describe('media upload validators', () => {
     });
 
     expect(error).toBeDefined();
+  });
+});
+
+describe('optional device poster completion contract', () => {
+  const completion = {
+    upload_id: 'pending-upload',
+    key: 'drops/clip.mp4',
+    parts: [{ part_no: 1, etag: 'etag' }]
+  };
+  it('accepts legacy completion and a bounded optional poster', () => {
+    expect(
+      ApiCompleteMultipartUploadRequestSchema.validate(completion).error
+    ).toBeUndefined();
+    expect(
+      ApiCompleteMultipartUploadRequestSchema.validate({
+        ...completion,
+        video_poster_base64: 'cG9zdGVy'
+      }).error
+    ).toBeUndefined();
+  });
+  it('rejects oversized poster payloads before processing', () => {
+    expect(
+      ApiCompleteMultipartUploadRequestSchema.validate({
+        ...completion,
+        video_poster_base64: 'a'.repeat(174765)
+      }).error
+    ).toBeDefined();
   });
 });

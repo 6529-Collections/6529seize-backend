@@ -9,6 +9,9 @@ import {
 } from '@aws-sdk/client-mediaconvert';
 import { buildDropVideoJobSettings } from './video-job-settings';
 import { createHash } from 'node:crypto';
+import { S3Client } from '@aws-sdk/client-s3';
+import { hasDeviceVideoPoster } from './has-device-poster';
+import { getDeviceVideoPosterKey } from '../media/chat-video-poster';
 
 const logger = Logger.get('DROP_VIDEO_CONVERSION_INVOKER_LOOP');
 // Capture once, before shared secrets can overwrite these values, including
@@ -16,6 +19,15 @@ const logger = Logger.get('DROP_VIDEO_CONVERSION_INVOKER_LOOP');
 const configuredTemplate = env.getStringOrNull('MC_DROPS_VIDEO_TEMPLATE_NAME');
 const configuredBucket = env.getStringOrNull('S3_BUCKET');
 const configuredRegion = env.getStringOrNull('BUCKET_REGION');
+// The bucket region is stable for this Lambda process, so one client serves warm runs.
+let devicePosterS3: S3Client | undefined;
+
+function getDevicePosterS3(region: string): S3Client {
+  if (!devicePosterS3) {
+    devicePosterS3 = new S3Client({ region });
+  }
+  return devicePosterS3;
+}
 
 export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const start = Time.now();
@@ -60,12 +72,24 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
       throw new Error(`Drop video template ${template} has no settings`);
     }
     logger.info(`Invoking video conversion for ${fileInput}`);
+    const hasDevicePoster =
+      getDeviceVideoPosterKey(key) !== undefined &&
+      (await hasDeviceVideoPoster(
+        getDevicePosterS3(bucketRegion),
+        bucket,
+        key
+      ));
     await mc.send(
       new CreateJobCommand({
         ClientRequestToken: clientRequestToken,
         Role: roleArn,
         JobTemplate: template,
-        Settings: buildDropVideoJobSettings(jobTemplate.Settings, bucket, key)
+        Settings: buildDropVideoJobSettings(
+          jobTemplate.Settings,
+          bucket,
+          key,
+          !hasDevicePoster
+        )
       })
     );
     logger.info(`Video conversion successfully invoked for ${fileInput}`);

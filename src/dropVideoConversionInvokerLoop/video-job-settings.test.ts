@@ -39,6 +39,25 @@ function template(): JobTemplateSettings {
   };
 }
 
+it('preserves HLS and MP4 encodes while omitting frame capture for a device poster', () => {
+  const source = template();
+  const withPoster = buildDropVideoJobSettings(
+    source,
+    'bucket',
+    'drops/clip.mp4'
+  );
+  const withoutPoster = buildDropVideoJobSettings(
+    source,
+    'bucket',
+    'drops/clip.mp4',
+    false
+  );
+  expect(withoutPoster.OutputGroups).toEqual(
+    withPoster.OutputGroups?.slice(0, 2)
+  );
+  expect(withoutPoster.Inputs).toEqual(withPoster.Inputs);
+});
+
 it.each(['mp4', 'MOV', 'webm', 'avi'])(
   'preserves video encodes and adds bounded first and one-second previews for %s',
   (extension) => {

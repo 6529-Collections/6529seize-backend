@@ -52,6 +52,16 @@ resources:
               Action: mediaconvert:GetJobTemplate
               Resource:
                 Fn::Sub: arn:${AWS::Partition}:mediaconvert:${self:functions.dropVideoConversionInvokerLoop.environment.BUCKET_REGION}:${AWS::AccountId}:jobTemplates/${self:functions.dropVideoConversionInvokerLoop.environment.MC_DROPS_VIDEO_TEMPLATE_NAME}
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+              Resource:
+                Fn::Sub: arn:${AWS::Partition}:s3:::${self:functions.dropVideoConversionInvokerLoop.environment.S3_BUCKET}/renditions/drops/*/poster/*_device.jpg
+            - Effect: Allow
+              Action: s3:ListMultipartUploadParts
+              Resource:
+                Fn::Sub: arn:${AWS::Partition}:s3:::${self:functions.dropVideoConversionInvokerLoop.environment.S3_BUCKET}/drops/*
 
     DropsVideoCreatedRule:
       Type: AWS::Events::Rule

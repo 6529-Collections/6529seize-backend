@@ -30,6 +30,7 @@
     "ethers": "^6.16.0",
     "express": "^4.22.1",
     "image-size": "^2.0.2",
+    "jpeg-js": "^0.4.4",
     "js-sha256": "^0.11.0",
     "jsonwebtoken": "^9.0.3",
     "mcache": "^0.4.0",
