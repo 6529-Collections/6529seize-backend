@@ -794,7 +794,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
               d.id as drop_id,
               rank() over (
                 partition by d.wave_id
-                order by ifnull(r.vote, 0) desc,
+                order by cast(ifnull(r.vote, 0) as signed) desc,
                   ifnull(r.last_increased, d.created_at) asc
               ) as rnk
             from ${DROPS_TABLE} d

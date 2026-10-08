@@ -604,6 +604,31 @@ describeWithSeed(
       });
     });
 
+    it('orders text-backed realtime vote totals numerically in submission badges', async () => {
+      const votes = [9, 12, -2, -5, -14];
+      const dropIds = votes.map((_, index) => `numeric-summary-${index}`);
+      for (let index = 0; index < votes.length; index++) {
+        const vote = votes[index];
+        await insertDrop({
+          id: dropIds[index],
+          waveId: realtimeWave.id,
+          dropType: DropType.PARTICIPATORY,
+          createdAt: 100 + index
+        });
+        await insertDropRank({
+          dropId: dropIds[index],
+          waveId: realtimeWave.id,
+          vote,
+          lastIncreased: 1000 + index
+        });
+      }
+      const result = await repo.getDropV2SubmissionVotingSummaries(
+        dropIds,
+        ctx
+      );
+      expect(dropIds.map((id) => result[id].place)).toEqual([2, 1, 3, 4, 5]);
+    });
+
     it('uses weighted rank and rates for time-locked participatory drops', async () => {
       await insertDrop({
         id: 'weighted-drop-1',

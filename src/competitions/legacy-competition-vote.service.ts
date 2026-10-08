@@ -51,6 +51,11 @@ export async function voteForMigratedLegacyEntry(
     throw new ForbiddenException(
       'Voting is temporarily unavailable. Try again later'
     );
+  // This legacy request has no competition-bound signature envelope.
+  if (competition.voting.signature_required)
+    throw new ForbiddenException(
+      'This competition requires a signed vote; use the competition voting endpoint'
+    );
   if (isCompetitionDecisionPending(competition, now))
     throw new ForbiddenException(
       "Wave has unresolved decisions and votes can't be edited at the moment. Try again later"

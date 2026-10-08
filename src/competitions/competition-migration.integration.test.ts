@@ -9,6 +9,7 @@ import {
 } from './legacy-competition-get-facade';
 import {
   COMPETITION_ENTRIES_TABLE,
+  COMPETITION_ENTRY_RUNTIME_TABLE,
   COMPETITION_LEADERBOARD_ENTRIES_TABLE,
   COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE,
   COMPETITION_VOTES_TABLE,
@@ -349,6 +350,68 @@ describeWithSeed(
         { rating: -5, rank: 5 }
       ]);
       expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
+    });
+    it('preserves absent legacy rank rows for unvoted entries at cutover', async () => {
+      const unvotedDropId = 'unvoted-migration-drop';
+      const zeroDropId = 'zero-migration-drop';
+      for (const dropId of [unvotedDropId, zeroDropId]) {
+        await sqlExecutor.execute(
+          `insert into ${DROPS_TABLE} (id,wave_id,author_id,created_at,parts_count,drop_type,hide_link_preview)
+         values (:dropId,:waveId,'fixture-author',20,1,'PARTICIPATORY',0)`,
+          { dropId, waveId: wave.id }
+        );
+        await sqlExecutor.execute(
+          `insert into ${DROPS_PARTS_TABLE} (drop_id,drop_part_id,content) values (:dropId,1,'unvoted fixture')`,
+          { dropId }
+        );
+      }
+      await sqlExecutor.execute(
+        `insert into ${DROP_RANK_TABLE} (drop_id,wave_id,vote,last_increased) values (:dropId,:waveId,0,0)`,
+        { dropId: zeroDropId, waveId: wave.id }
+      );
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await finishBackfill(service);
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
+      expect(await service.cutover(id, operator, false)).toMatchObject({
+        changed: true,
+        failures: []
+      });
+      expect(
+        await sqlExecutor.execute(
+          `select drop_id from ${COMPETITION_ENTRIES_TABLE} where competition_id=:id order by drop_id`,
+          { id }
+        )
+      ).toEqual([
+        { drop_id: drop.id },
+        { drop_id: unvotedDropId },
+        { drop_id: zeroDropId }
+      ]);
+      expect(
+        await withLegacyCompetitionGetFacade(() =>
+          sqlExecutor.execute(
+            `select drop_id from ${DROP_RANK_TABLE} where wave_id=:waveId order by drop_id`,
+            { waveId: wave.id }
+          )
+        )
+      ).toEqual([{ drop_id: drop.id }, { drop_id: zeroDropId }]);
+      // A first negative native vote must be visible even without an increase.
+      await sqlExecutor.execute(
+        `update ${COMPETITION_ENTRY_RUNTIME_TABLE} set real_time_rating=-2 where entry_id=:entryId`,
+        { entryId: legacyCompetitionEntryId(id, unvotedDropId) }
+      );
+      expect(
+        await withLegacyCompetitionGetFacade(() =>
+          sqlExecutor.execute(
+            `select vote from ${DROP_RANK_TABLE} where drop_id=:dropId`,
+            { dropId: unvotedDropId }
+          )
+        )
+      ).toEqual([{ vote: '-2' }]);
     });
     it('rebuilds derived shadow data on retry after a failed independent comparison', async () => {
       const service = new CompetitionMigrationService(

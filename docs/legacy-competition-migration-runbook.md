@@ -64,6 +64,12 @@ backend deployment, not a missing operator approval.
 
 Compatibility views are installed by `dbMigrationsLoop` under the `full` scope.
 A projection fix must refresh those views before retrying a stopped migration.
+For the sparse-rank and rank-badge corrections, deploy/invoke `dbMigrationsLoop`
+with `full` scope first, then deploy `api`. Unvoted legacy submissions must not
+acquire synthetic zero-score rank rows; an existing zero-score row or a later
+native negative vote remains visible. The migration Lambda already reads these
+views and supports rebuilding a failed shadow checkpoint, so its deployed retry
+version does not need another deployment for this projection-only correction.
 
 The lower-level developer CLI remains available for diagnosis and explicit repair
 or reverse reconciliation. Its historical acceptance commands are not prerequisites
