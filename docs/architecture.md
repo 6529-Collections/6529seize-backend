@@ -1406,6 +1406,24 @@ a failed later quantity page cannot prevent eviction of committed eligibility.
 After successful reset reconciliation, the demonstrated-intent coverage refresh
 also includes removed keys so their projected eligibility is recomputed.
 
+Subscription cache invalidation records post-commit batches in
+`subscription_cache_invalidations` before attempting Redis. Each attempt scans
+subscription response keys once, deletes matching keys individually with bounded
+concurrency, and owns a separate Redis connection that closes at the 1.5-second
+deadline. Failed batches remain durable and are drained by `ownersBalancesLoop`
+on every invocation, including empty balance deltas. The first two known
+timeout/network failures are reported with pending recovery;
+unclassified and later failures require investigation while retries continue.
+The owners loop also opts into transient Redis connection diagnostics: the first
+two known connection errors before readiness are amber, readiness resets the
+counter, and unknown or repeated errors remain red. Other services retain their
+existing connection-alert behavior. Successful attempts delete only their captured
+request IDs, preserving
+concurrent writes. Bookkeeping failures cannot roll back committed balances;
+existing response TTLs remain a fallback, including the small post-commit gap
+before recording a request. Deploy `dbMigrationsLoop` before the retry consumer
+`ownersBalancesLoop`, then the other writers `subscriptionsTopUpLoop` and `api`.
+
 Subscription coverage uses a DB-backed scheduled reconciliation pattern without
 a cross-service dirty-event queue. Top-up, redemption, subscription
 preference/selection, daily finalization, and consolidated eligibility writes

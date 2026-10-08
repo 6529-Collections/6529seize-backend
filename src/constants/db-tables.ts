@@ -291,3 +291,6 @@ export const COMPETITION_CAPABILITY_AUDITS_TABLE =
   'competition_capability_audits';
 export const PUSH_NOTIFICATION_OUTBOX_TABLE =
   'push_notification_outbox_entries';
+
+export const SUBSCRIPTION_CACHE_INVALIDATIONS_TABLE =
+  'subscription_cache_invalidations';

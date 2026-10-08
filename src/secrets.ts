@@ -21,6 +21,7 @@ export async function doInDbContext<T>(
     logger?: Logger;
     syncEntities?: boolean;
     skipRedis?: boolean;
+    reportRedisConnectionRecovery?: boolean;
     databaseSelection?: DbConnectionSelection;
   }
 ): Promise<T> {
@@ -33,7 +34,10 @@ export async function doInDbContext<T>(
     : undefined;
   await loadEnv(opts?.entities ?? [], opts?.syncEntities ?? false, selection);
   try {
-    if (!opts?.skipRedis) await initRedis();
+    if (!opts?.skipRedis)
+      await initRedis({
+        reportConnectionRecovery: opts?.reportRedisConnectionRecovery
+      });
     return await fn();
   } finally {
     logger.info(`[FINISHED IN ${start.diffFromNow().formatAsDuration()}]`);
