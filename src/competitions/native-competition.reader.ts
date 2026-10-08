@@ -26,6 +26,7 @@ import {
 } from '@/competitions/competition.repository';
 import { computeCompetitionPhase } from '@/competitions/competition-phase';
 import { collectCompetitionPages } from '@/competitions/competition-page';
+import { waveMetadataDb } from '@/api/waves/wave-metadata.db';
 
 export class NativeCompetitionReader implements CompetitionReader {
   public constructor(
@@ -58,6 +59,15 @@ export class NativeCompetitionReader implements CompetitionReader {
       this.ctx
     );
     const competition = this.toCompetition(record, capabilities);
+    // Migrated primaries inherit shared wave metadata until native appearance
+    // is explicitly saved. An empty native array intentionally clears it.
+    const presentation =
+      record.legacy_wave_id === record.wave_id &&
+      record.presentation_config == null
+        ? (await waveMetadataDb.listByWaveId(record.wave_id, this.ctx)).map(
+            ({ data_key, data_value }) => ({ data_key, data_value })
+          )
+        : competition.presentation;
     const transferredAt =
       record.legacy_wave_id && !this.migrationShadow
         ? await this.repository.findLegacyTransferTime(record.id, this.ctx)
@@ -68,6 +78,7 @@ export class NativeCompetitionReader implements CompetitionReader {
       competition.decisions.next_decision_time < now;
     return {
       ...competition,
+      presentation,
       legacy_transferred_at: transferredAt,
       ...(needsDecisionPauses
         ? {

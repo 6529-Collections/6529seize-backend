@@ -12,7 +12,8 @@ import {
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVE_OUTCOMES_TABLE,
   WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
-  WAVES_DECISION_PAUSES_TABLE
+  WAVES_DECISION_PAUSES_TABLE,
+  WAVES_METADATA_TABLE
 } from '@/constants';
 import { IDENTITIES_TABLE, RATINGS_TABLE, TDH_NFT_TABLE } from '@/constants';
 import {
@@ -442,6 +443,14 @@ export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleS
       end_time: Numeric | null;
     }>('pauses');
     const nfts = await read<CreditNft>('nfts');
+    const presentation = await this.db.execute<{
+      data_key: string;
+      data_value: string;
+    }>(
+      `select data_key,data_value from ${WAVES_METADATA_TABLE} where wave_id=:waveId order by id asc`,
+      { waveId: record.wave_id },
+      { wrappedConnection: ctx.connection }
+    );
     const activeDrops = drops.filter(
       (drop) => drop.drop_type === DropType.PARTICIPATORY
     );
@@ -452,7 +461,7 @@ export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleS
     return {
       storage_mode: CompetitionStorageMode.LEGACY_ADAPTER,
       config_version: Number(record.config_version ?? 1),
-      configuration: configuration(wave, nfts, now),
+      configuration: { ...configuration(wave, nfts, now), presentation },
       entries: entries(drops, ratings, winners),
       votes_and_credits: voters(votes, spent),
       credit_budgets: await this.creditBudgets(wave, nfts, drops, votes, ctx),

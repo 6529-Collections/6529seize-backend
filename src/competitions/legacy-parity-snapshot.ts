@@ -15,6 +15,7 @@ export function parityConfiguration(competition: Competition) {
   return {
     type: competition.type,
     title: competition.title,
+    presentation: competition.presentation ?? [],
     lifecycle: competition.lifecycle,
     computed_phase: competition.computed_phase,
     participation: competition.participation,

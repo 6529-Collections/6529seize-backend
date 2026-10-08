@@ -71,6 +71,13 @@ native negative vote remains visible. The migration Lambda already reads these
 views and supports rebuilding a failed shadow checkpoint, so its deployed retry
 version does not need another deployment for this projection-only correction.
 
+The inherited appearance correction requires `api`, then
+`competitionMigrationLoop`. It adds presentation metadata to configuration
+comparison and preserves supported appearance keys in new command snapshots.
+Already migrated primaries with null `presentation_config` inherit their retained
+wave metadata after the API deployment. Explicit native arrays, including `[]`,
+override inheritance. No database refresh or frontend deployment is required.
+
 The lower-level developer CLI remains available for diagnosis and explicit repair
 or reverse reconciliation. Its historical acceptance commands are not prerequisites
 for invoking the Lambda. A retry revalidates the source and retires prior legacy data-shape errors and

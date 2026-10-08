@@ -1089,6 +1089,13 @@ its normal native draft fields. Actual data mismatches retain legacy ownership;
 repair-required native ownership is never blindly reversed. Final comparison,
 effect drain and owner transfer occur under the same transaction lock.
 
+Migrated primaries inherit shared wave presentation metadata while
+`presentation_config` is null. Native appearance arrays override that inheritance,
+including an explicit empty array. Independent configuration comparison includes
+the full inherited metadata, and command snapshots, configuration export and
+cloning retain the supported competition appearance keys. This also restores
+appearance for already migrated primaries without rewriting their data.
+
 There is no EventBridge schedule: deployment invokes nothing. Clean time-budget
 pauses queue the same function/qualifier with a generated bounded continuation
 (up to 24 hours overall); a repeated wave ID resumes durable checkpoints or verifies
