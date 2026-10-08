@@ -88,7 +88,7 @@ export function buildDropVideoJobSettings(
                 FrameCaptureSettings: {
                   FramerateNumerator: 1,
                   FramerateDenominator: 1,
-                  MaxCaptures: 1,
+                  MaxCaptures: 2,
                   Quality: 80
                 }
               }
