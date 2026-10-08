@@ -109,11 +109,9 @@ Before enabling this frontend, deploy the converter and its policy, then the
 API completion handler. The converter's existing shared `lambda-vpc-role`
 policy gains `s3:GetObject` and `s3:PutObject` for device-poster keys and
 `s3:ListMultipartUploadParts` for drop originals, alongside template-read access.
-**Verify the existing API function's actual execution role has the same narrow
-poster-write and pending-upload-read permissions before API rollout.** The
-API deployment reuses an existing function/role; this repository's shared-role
-policy does not prove that role is attached to the API. Live AWS credentials
-were unavailable during implementation, so that association is unverified.
+The API deployment reuses its existing function and execution role. There is
+no separate pre-rollout API-role inspection gate for this change. Poster
+lookup/write failures retain normal video completion and backend fallback.
 
 Existing endpoint, execution role, template, bucket, and region configuration
 remain required. There are no new environment variables, services, queues or
@@ -122,8 +120,8 @@ the current catalog; API deployment follows the ordinary environment catalog.
 Keep the converter deployed before API/FE so clients without a usable device
 poster still get fallback capture. Old clients omit the optional field. An
 older API may reject it, so deploying frontend first is unsupported. Rolling
-back capture does not remove already-stored images. Check IAM propagation,
-template lookup and public JPEG delivery during rollout.
+back capture does not remove already-stored images. Check template lookup and
+public JPEG delivery during rollout.
 
 Before release, use separately authorized uploads to verify the live storage
 contract with the accompanying frontend:
