@@ -1,7 +1,10 @@
 import { sqlExecutor } from '@/sql-executor';
 import { Time } from '@/time';
 import { Logger } from '@/logging';
-import { evictSubscriptionCacheBatch } from './subscription-cache-eviction';
+import {
+  evictSubscriptionCacheBatch,
+  SubscriptionCacheEvictionError
+} from './subscription-cache-eviction';
 import {
   invalidateUpcomingSubscriptionCaches,
   retryPendingSubscriptionCacheInvalidations
@@ -11,6 +14,7 @@ jest.mock('@/sql-executor', () => ({
   sqlExecutor: { execute: jest.fn(), bulkInsert: jest.fn() }
 }));
 jest.mock('./subscription-cache-eviction', () => ({
+  ...jest.requireActual('./subscription-cache-eviction'),
   evictSubscriptionCacheBatch: jest.fn()
 }));
 jest.mock('@/logging', () => ({
@@ -32,9 +36,13 @@ const timeout = Object.assign(new Error('Redis deadline exceeded'), {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  evict
-    .mockReset()
-    .mockResolvedValue({ scanned: 10, deleted: 3, elapsed_ms: 1 });
+  evict.mockReset().mockResolvedValue({
+    scanned: 10,
+    deleted: 3,
+    elapsed_ms: 1,
+    complete: true,
+    cursor: '0'
+  });
   execute.mockReset().mockResolvedValue([]);
   insert.mockReset().mockResolvedValue(undefined);
   jest.spyOn(Time.prototype, 'sleep').mockResolvedValue(undefined);
@@ -49,7 +57,7 @@ it('persists deduplicated requests before a single eviction and acknowledges onl
     500, 500, 200
   ]);
   expect(evict).toHaveBeenCalledTimes(1);
-  expect(evict).toHaveBeenCalledWith(keys);
+  expect(evict).toHaveBeenCalledWith(keys, '0');
   expect(insert.mock.invocationCallOrder[0]).toBeLessThan(
     evict.mock.invocationCallOrder[0]
   );
@@ -95,10 +103,10 @@ it('retains failed work and reports one amber diagnostic with the actual error',
 it('drains durable requests independently of a balance change, merging JSON and parsed rows', async () => {
   execute.mockResolvedValueOnce([
     { id: 'old-1', consolidation_keys: '["auto"]', attempts: 1 },
-    { id: 'old-2', consolidation_keys: ['other'], attempts: 0 }
+    { id: 'old-2', consolidation_keys: ['other'], attempts: 1 }
   ]);
   await retryPendingSubscriptionCacheInvalidations();
-  expect(evict).toHaveBeenCalledWith(['auto', 'other']);
+  expect(evict).toHaveBeenCalledWith(['auto', 'other'], '0');
   expect(execute.mock.calls[0][2]).toEqual({ forcePool: 'WRITE' });
   expect(execute.mock.calls[1][1]).toEqual({ ids: ['old-1', 'old-2'] });
 });
@@ -142,4 +150,73 @@ it('retries eviction if acknowledgement fails instead of losing the request', as
   execute.mockRejectedValueOnce(new Error('ack failed')).mockResolvedValue([]);
   await invalidateUpcomingSubscriptionCaches(['auto']);
   expect(execute.mock.calls[1][0]).toContain('UPDATE');
+});
+
+it('keeps fresh and repeatedly failing requests in separate recovery groups', async () => {
+  execute.mockResolvedValueOnce([
+    { id: 'old', consolidation_keys: ['old'], attempts: 2, scan_cursor: '0' },
+    {
+      id: 'fresh',
+      consolidation_keys: ['fresh'],
+      attempts: 0,
+      scan_cursor: '0'
+    }
+  ]);
+  evict.mockRejectedValue(timeout);
+  await retryPendingSubscriptionCacheInvalidations();
+  const calls = jest.mocked(logger.errorWithDiagnostic).mock.calls;
+  expect(calls.map(([diagnostic]) => diagnostic.recovery?.state)).toEqual([
+    'unknown',
+    'pending'
+  ]);
+  expect(execute.mock.calls.slice(1).map(([, params]) => params?.ids)).toEqual([
+    ['old'],
+    ['fresh']
+  ]);
+});
+
+it('parks malformed requests while evicting valid siblings', async () => {
+  execute.mockResolvedValueOnce([
+    { id: 'poison', consolidation_keys: '{bad', attempts: 0 },
+    { id: 'healthy', consolidation_keys: ['auto'], attempts: 0 }
+  ]);
+  await retryPendingSubscriptionCacheInvalidations();
+  expect(execute.mock.calls[0][0]).toContain('parked = 0');
+  expect(execute.mock.calls[1][0]).toContain('parked = 1');
+  expect(evict).toHaveBeenCalledWith(['auto'], '0');
+  expect(execute.mock.calls[2][1]).toEqual({ ids: ['healthy'] });
+});
+
+it('checkpoints healthy continuation without incrementing failures or deleting durable requests', async () => {
+  execute.mockResolvedValueOnce([
+    {
+      id: 'resume',
+      consolidation_keys: ['auto'],
+      attempts: 0,
+      scan_cursor: '18446744073709551610'
+    }
+  ]);
+  evict.mockResolvedValue({
+    scanned: 1000,
+    deleted: 20,
+    elapsed_ms: 1500,
+    complete: false,
+    cursor: '42'
+  });
+  await retryPendingSubscriptionCacheInvalidations();
+  expect(evict).toHaveBeenCalledWith(['auto'], '18446744073709551610');
+  expect(execute.mock.calls[1][0]).toContain('SET scan_cursor = :cursor');
+  expect(execute.mock.calls[1][0]).not.toContain('attempts =');
+  expect(execute.mock.calls[1][1]).toEqual(
+    expect.objectContaining({ ids: ['resume'], cursor: '42' })
+  );
+  expect(logger.errorWithDiagnostic).not.toHaveBeenCalled();
+});
+
+it('preserves the last fully processed page after a later command failure', async () => {
+  evict.mockRejectedValue(new SubscriptionCacheEvictionError(timeout, '42'));
+  await invalidateUpcomingSubscriptionCaches(['auto']);
+  expect(execute.mock.calls[0][1]).toEqual(
+    expect.objectContaining({ cursor: '42' })
+  );
 });

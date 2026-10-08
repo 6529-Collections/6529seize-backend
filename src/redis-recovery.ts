@@ -10,9 +10,16 @@ export function redisFailureCategory(error: unknown): FailureCategory {
   )
     return 'TIMEOUT';
   if (
-    ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ENOTFOUND', 'EAI_AGAIN'].includes(
-      String(code)
-    ) ||
+    (typeof code === 'string' &&
+      [
+        'ECONNRESET',
+        'ECONNREFUSED',
+        'EPIPE',
+        'ENOTFOUND',
+        'EAI_AGAIN',
+        'EHOSTUNREACH',
+        'ENETUNREACH'
+      ].includes(code)) ||
     error.constructor.name === 'SocketClosedUnexpectedlyError'
   )
     return 'NETWORK';

@@ -6,7 +6,10 @@ import { sqlExecutor } from '@/sql-executor';
 import { DbPoolName } from '@/db-query.options';
 import { SUBSCRIPTION_CACHE_INVALIDATIONS_TABLE } from '@/constants';
 import { redisFailureCategory } from '@/redis-recovery';
-import { evictSubscriptionCacheBatch } from './subscription-cache-eviction';
+import {
+  evictSubscriptionCacheBatch,
+  SubscriptionCacheEvictionError
+} from './subscription-cache-eviction';
 
 const logger = Logger.get('SUBSCRIPTION_CACHE');
 const RETRY_DELAY_MS = 60_000;
@@ -18,6 +21,7 @@ interface InvalidationRequest {
   id: string;
   consolidation_keys: string[] | string;
   attempts: number;
+  scan_cursor?: string;
 }
 
 /** Call only after the quantity transaction has committed. */
@@ -73,12 +77,21 @@ export async function invalidateUpcomingSubscriptionCaches(
 export async function retryPendingSubscriptionCacheInvalidations(): Promise<void> {
   try {
     const requests = await sqlExecutor.execute<InvalidationRequest>(
-      `SELECT id, consolidation_keys, attempts FROM ${SUBSCRIPTION_CACHE_INVALIDATIONS_TABLE}
-       WHERE next_attempt_at <= :now ORDER BY next_attempt_at, id LIMIT 20`,
+      `SELECT id, consolidation_keys, attempts, scan_cursor FROM ${SUBSCRIPTION_CACHE_INVALIDATIONS_TABLE}
+       WHERE parked = 0 AND next_attempt_at <= :now ORDER BY next_attempt_at, id LIMIT 20`,
       { now: Date.now() },
       writePool
     );
-    if (requests.length) await attemptEviction(requests, true);
+    const groups = new Map<string, InvalidationRequest[]>();
+    for (const request of requests) {
+      const groupKey = `${request.attempts}:${request.scan_cursor ?? '0'}`;
+      const group = groups.get(groupKey) ?? [];
+      group.push(request);
+      groups.set(groupKey, group);
+    }
+    // Different cursors/history cannot share a pass. Bound parallel owned connections to one.
+    for (const group of Array.from(groups.values()))
+      await attemptEviction(group, true);
   } catch (error) {
     logger.error(
       'Could not read subscription cache invalidation retry work',
@@ -92,20 +105,35 @@ async function attemptEviction(
   durable: boolean
 ): Promise<void> {
   const started = Date.now();
-  const ids = requests.map((request) => request.id);
-  const attempt = Math.max(...requests.map((request) => request.attempts)) + 1;
+  const valid: InvalidationRequest[] = [];
+  const keys: string[] = [];
+  for (const request of requests) {
+    try {
+      keys.push(...parseKeys(request.consolidation_keys));
+      valid.push(request);
+    } catch (error) {
+      await parkRequest(request.id, error, durable);
+    }
+  }
+  if (!valid.length) return;
+  const ids = valid.map((request) => request.id);
+  const attempt = valid[0].attempts + 1;
+  const cursor = valid[0].scan_cursor ?? '0';
   try {
-    const keys = requests.flatMap((request) =>
-      typeof request.consolidation_keys === 'string'
-        ? (JSON.parse(request.consolidation_keys) as string[])
-        : request.consolidation_keys
-    );
     // Allow the read replica to catch up before responses can refill Redis.
     await Time.millis(
       numbers.parseIntOrNull(process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE) ??
         500
     ).sleep();
-    const result = await evictSubscriptionCacheBatch(keys);
+    const result = await evictSubscriptionCacheBatch(keys, cursor);
+    if (!result.complete) {
+      if (durable) await saveProgress(ids, result.cursor);
+      logger.info('Subscription cache scan reached a continuation checkpoint', {
+        ...result,
+        retry_recorded: durable
+      });
+      return;
+    }
     if (durable)
       await sqlExecutor.execute(
         `DELETE FROM ${SUBSCRIPTION_CACHE_INVALIDATIONS_TABLE} WHERE id IN (:ids)`,
@@ -118,7 +146,11 @@ async function attemptEviction(
       ...result
     });
   } catch (error) {
-    await recordFailure(ids, attempt, started, error, durable);
+    const failure =
+      error instanceof SubscriptionCacheEvictionError ? error.failure : error;
+    const resumeCursor =
+      error instanceof SubscriptionCacheEvictionError ? error.cursor : cursor;
+    await recordFailure(ids, attempt, started, failure, durable, resumeCursor);
   }
 }
 
@@ -127,21 +159,19 @@ async function recordFailure(
   attempt: number,
   started: number,
   error: unknown,
-  durable: boolean
+  durable: boolean,
+  cursor: string
 ): Promise<void> {
   const nextAttempt = Date.now() + RETRY_DELAY_MS;
-  const description =
-    error instanceof Error
-      ? `${error.name}: ${error.message}`.slice(0, 2000)
-      : String(error).slice(0, 2000);
+  const description = describeError(error);
   let retryRecorded = durable;
   if (durable) {
     try {
       await sqlExecutor.execute(
         `UPDATE ${SUBSCRIPTION_CACHE_INVALIDATIONS_TABLE}
-         SET attempts = attempts + 1, next_attempt_at = :nextAttempt, last_error = :description
+         SET attempts = attempts + 1, next_attempt_at = :nextAttempt, last_error = :description, scan_cursor = :cursor
          WHERE id IN (:ids)`,
-        { ids, nextAttempt, description },
+        { ids, nextAttempt, description, cursor },
         writePool
       );
     } catch (recordError) {
@@ -179,4 +209,61 @@ async function recordFailure(
       retry_recorded: retryRecorded
     }
   );
+}
+
+/** Reject corrupt rows independently so healthy requests can continue. */
+function parseKeys(value: string[] | string): string[] {
+  const parsed: unknown = typeof value === 'string' ? JSON.parse(value) : value;
+  if (
+    !Array.isArray(parsed) ||
+    !parsed.length ||
+    parsed.some((key) => typeof key !== 'string' || !key.length)
+  )
+    throw new Error('Invalid subscription cache request keys');
+  return parsed as string[];
+}
+
+/** Park invalid data for operator repair rather than consuming every retry window. */
+async function parkRequest(
+  id: string,
+  error: unknown,
+  durable: boolean
+): Promise<void> {
+  if (durable)
+    await sqlExecutor.execute(
+      `UPDATE ${SUBSCRIPTION_CACHE_INVALIDATIONS_TABLE} SET parked = 1, last_error = :description WHERE id = :id`,
+      { id, description: describeError(error) },
+      writePool
+    );
+  logger.errorWithDiagnostic(
+    {
+      operation: 'SUBSCRIPTION_CACHE_REQUEST_INVALID',
+      category: 'VALIDATION',
+      recovery: { state: 'terminal' }
+    },
+    'Malformed subscription cache request parked for investigation',
+    { id, error: describeError(error) }
+  );
+}
+
+/** Checkpoint only fully deleted pages; do not count healthy continuation as a failure. */
+async function saveProgress(ids: string[], cursor: string): Promise<void> {
+  await sqlExecutor.execute(
+    `UPDATE ${SUBSCRIPTION_CACHE_INVALIDATIONS_TABLE}
+     SET scan_cursor = :cursor, next_attempt_at = :nextAttempt, last_error = NULL WHERE id IN (:ids)`,
+    { ids, cursor, nextAttempt: Date.now() + RETRY_DELAY_MS },
+    writePool
+  );
+}
+
+/** Serialize useful error text without Object's default stringification. */
+function describeError(error: unknown): string {
+  if (error instanceof Error)
+    return `${error.name}: ${error.message}`.slice(0, 2000);
+  if (typeof error === 'string') return error.slice(0, 2000);
+  try {
+    return (JSON.stringify(error) ?? 'Unknown failure').slice(0, 2000);
+  } catch {
+    return 'Unserializable failure';
+  }
 }
