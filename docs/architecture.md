@@ -747,8 +747,9 @@ NFT resolution and preview transitions capture a WebSocket outbox event in the
 same database transaction. The post-commit notifier wakes `websocketOutboundHandler`;
 its scheduled fallback recovers a lost wakeup. The worker resolves current NFT
 state, materializes durable recipient jobs, and queues `MEDIA_LINK_UPDATED`
-frames for delivery. A producer deadline no longer discards committed delivery
-intent. See [WebSocket outbound delivery](./websocket-outbound-delivery.md).
+frames for capable clients. Legacy connections retain immediate NFT broadcasts;
+a producer deadline cannot discard capable-client committed delivery intent.
+See [WebSocket outbound delivery](./websocket-outbound-delivery.md).
 
 ### NFT market depth and activity
 
@@ -902,7 +903,14 @@ guards handle at-least-once delivery. Drop events carry compact canonical-fetch
 references. The encrypted FIFO consumer retains failed Gateway sends with
 randomized backoff and a monitored DLQ. Throttling never deletes a live connection.
 Outbox-age/missing-health alarms cover the database-to-queue boundary. Deploy
-`dbMigrationsLoop` before the worker, then client protection and producers. See
+`dbMigrationsLoop` before the worker and capability-aware API/producers. The
+frontend opts into durable delivery with `delivery_capability=durable_updates_v1`
+on every connection, including anonymous sessions. `ws_connections.durable_updates`
+defaults to false and remains fixed across reauthentication. Updated producers
+split legacy immediate Gateway delivery from capable-client outbox delivery;
+older clients and Core builds retain their legacy path until their frontend
+updates. Backend and frontend can therefore roll out independently. Previously
+accepted unmarked work retains its original delivery contract until drained. See
 [WebSocket outbound delivery](./websocket-outbound-delivery.md) for capture
 coverage, mixed-version rollout, limits and rollback.
 

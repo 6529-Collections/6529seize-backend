@@ -44,3 +44,25 @@ it('reuses the durable outbox envelope after an ambiguous acceptance or commit',
   await enqueueWebSocketFrame(frame, undefined, 'outbox:99');
   expect(send.mock.calls[0][0]).toEqual(send.mock.calls[1][0]);
 });
+
+it.each([undefined, 'durable_updates_v1'])(
+  'accepts historical and known capability envelopes: %s',
+  (deliveryCapability) => {
+    const envelope = { ...frame, id: 'event', version: 1, deliveryCapability };
+    expect(parseQueuedWebSocketFrame(JSON.stringify(envelope))).toMatchObject(
+      frame
+    );
+  }
+);
+it('retains unknown capability envelopes as malformed instead of falling back to legacy delivery', () => {
+  expect(() =>
+    parseQueuedWebSocketFrame(
+      JSON.stringify({
+        ...frame,
+        id: 'event',
+        version: 1,
+        deliveryCapability: 'future'
+      })
+    )
+  ).toThrow('Invalid queued WebSocket frame');
+});

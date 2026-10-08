@@ -56,8 +56,8 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       // The inserted connection row provides the same serialization point used
       // by reauthentication, subscription sync and deletion.
       await this.db.execute(
-        `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id) values (:connection_id, :jwt_expiry, :identity_id)`,
-        entity,
+        `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id, durable_updates) values (:connection_id, :jwt_expiry, :identity_id, :durable_updates)`,
+        { ...entity, durable_updates: entity.durable_updates === true },
         { wrappedConnection: transactionContext.connection }
       );
       await this.writeNotificationSubscriptions(
@@ -260,11 +260,15 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     connectionId: string,
     ctx: RequestContext
   ): Promise<WSConnectionEntity | null> {
-    return this.db.oneOrNull<WSConnectionEntity>(
+    const entity = await this.db.oneOrNull<WSConnectionEntity>(
       `select * from ${WS_CONNECTIONS_TABLE} where connection_id = :connectionId`,
       { connectionId },
       { wrappedConnection: ctx.connection }
     );
+    // Raw MySQL queries return BOOLEAN/TINYINT as 0/1 rather than ORM booleans.
+    return entity
+      ? { ...entity, durable_updates: Number(entity.durable_updates) === 1 }
+      : null;
   }
 
   async getCurrentlyOnlineCommunityMemberConnectionIds(
@@ -782,6 +786,23 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
             }
           );
     return row !== null;
+  }
+
+  /** Select one delivery audience without changing identity/subscription authorization. */
+  async filterConnectionIdsByDeliveryMode(
+    connectionIds: readonly string[],
+    durable: boolean,
+    ctx: RequestContext = {}
+  ): Promise<string[]> {
+    if (!connectionIds.length) return [];
+    const rows = await this.db.execute<{ connection_id: string }>(
+      `select distinct connection_id from ${WS_CONNECTIONS_TABLE}
+       where connection_id in (:connectionIds)
+         and durable_updates = :durable`,
+      { connectionIds: Array.from(new Set(connectionIds)), durable },
+      { wrappedConnection: ctx.connection }
+    );
+    return rows.map((row) => row.connection_id);
   }
 
   async findAllConnectionIds(ctx: RequestContext = {}): Promise<string[]> {

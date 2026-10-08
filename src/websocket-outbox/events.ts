@@ -1,5 +1,7 @@
 /** Resource references are resolved after commit; deleted resources retain only routing metadata. */
-export type WebSocketOutboxEvent =
+import { DURABLE_UPDATES_CAPABILITY } from '@/api/ws/ws-shared';
+
+export type WebSocketOutboxEvent = (
   | {
       type: 'drop';
       dropId: string;
@@ -12,4 +14,5 @@ export type WebSocketOutboxEvent =
   | { type: 'delivery'; connectionId: string; message: string }
   | { type: 'media'; uploadId: string }
   | { type: 'attachment'; attachmentId: string }
-  | { type: 'nft'; canonicalId: string };
+  | { type: 'nft'; canonicalId: string }
+) & { deliveryCapability?: typeof DURABLE_UPDATES_CAPABILITY };

@@ -90,6 +90,26 @@ describe('WebSocket outbox publication', () => {
     );
     expect(JSON.stringify(log.mock.calls)).not.toContain('private payload');
   });
+  it('retains an unknown capability rather than publishing or silently deleting it', async () => {
+    const db = database([
+      pending({ ...frame, deliveryCapability: 'future' } as never)
+    ]);
+    const send = jest.fn();
+    expect(
+      await publishWebSocketOutbox(send, db as unknown as SqlExecutor)
+    ).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    expect(
+      db.execute.mock.calls.some(([sql]) => sql.startsWith('delete'))
+    ).toBe(false);
+    expect(Logger.get('WEBSOCKET_OUTBOX').error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: 'decode',
+        code: 'WS_OUTBOX_PUBLISH_FAILED'
+      })
+    );
+  });
+
   it('deletes only after SQS accepts the recipient job', async () => {
     const db = database([pending()]);
     const send = jest.fn().mockResolvedValue(undefined);

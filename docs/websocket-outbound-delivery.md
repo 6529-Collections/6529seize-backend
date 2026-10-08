@@ -18,16 +18,17 @@ business outbox. Authentication and identity-sync acknowledgements remain inline
 Local development retains direct WebSocket delivery rather than accumulating an
 undrained outbox.
 
-Existing post-commit notifiers enqueue a wakeup on `websocket-outbound.fifo`.
+Existing post-commit notifiers enqueue a wakeup on `websocket-outbound.fifo`
+for capable clients and retain immediate Gateway fan-out to legacy clients.
 Failure emits `WS_OUTBOX_WAKEUP_FAILED`; the durable event remains. A one-minute
 EventBridge schedule invokes the same `websocketOutboundHandler` to recover
 missed wakeups and deferred retries. No additional Lambda service is introduced.
 
-The production NFT refresher injects this wakeup into its notifier and returns
-before the notifier's legacy audience lookup or broadcast. The retained
-ten-send concurrency limit and 15-second deadline apply to the local or
-explicitly constructed broadcast path, not to production outbox resolution or
-retry. They cannot discard the NFT delivery intent committed in MySQL.
+The production NFT refresher injects this wakeup into its notifier and then
+broadcasts only to legacy clients. Its ten-send concurrency limit and 15-second
+deadline apply to immediate legacy/local fan-out; producer cancellation also
+reaches the Gateway transport. These limits do not govern capable-client outbox
+resolution or retry and cannot discard that committed delivery intent.
 
 The worker first resolves the resource's current state and permitted audience
 using the writer database, then atomically replaces its resource event with
@@ -91,6 +92,42 @@ receiving another session's queued frames.
 
 ## Client compatibility
 
+The frontend advertises `delivery_capability=durable_updates_v1` in the WebSocket
+connection URL, including anonymous connections and every reconnect. This is a
+public protocol capability, not a credential or authorization grant. JWTs remain
+in the existing authentication message. The API accepts only the exact supported
+value on `$connect`, stores `ws_connections.durable_updates`, and defaults
+missing/unknown values and pre-existing rows to false. Capability is fixed for a
+physical connection; reauthentication and notification identity synchronization
+cannot upgrade or downgrade it. Each tab/desktop connection is classified
+independently, even when multiple sessions belong to the same profile.
+
+New business events carry the capability marker through resource resolution and
+recipient-job materialization. The worker selects only capable connections for
+these jobs; post-commit notifiers select only legacy connections and send their
+existing immediate payloads. The shared sender rechecks the connection mode, so
+legacy fan-out cannot also queue a capable client's update. Typing and other
+non-transactional frames use the same per-connection direct/queued selection;
+authentication control replies remain inline for both modes. Capability never
+bypasses expiry, subscription or resource-access checks. Delayed frames with a
+capability marker are canceled if the current connection is incompatible.
+
+Outbox events and queue frames accepted before this change lack the marker. They
+retain their original audience/delivery contract so deployment does not silently
+discard pending work. Old unmarked media events retain that mode through their
+child events. Unknown non-empty markers are retained as errors, not interpreted
+as legacy. This is a backlog compatibility exception, not a direct-send fallback
+for newly marked work.
+
+Backend and frontend releases no longer require simultaneous client updates.
+After the backend fleet is updated, old browser tabs and old Core versions keep
+immediate legacy delivery with its existing missed-send risk. Updated frontend
+connections opt into durable delivery; Core does so when its normal frontend
+subtree sync and desktop release include this frontend version. No separate Core
+code or activation flag is required. Updated frontend on an older backend also
+works: the older backend ignores the public parameter and uses its legacy path,
+while the frontend's stale/deletion guards remain active.
+
 [Frontend PR #4128](https://github.com/6529-Collections/6529seize-frontend/pull/4128) rejects older full-drop revisions in both live
 state and query caches, remembers observed deletions for the provider lifetime,
 and rechecks asynchronous fetch results before applying them. Older NFT snapshots
@@ -125,15 +162,26 @@ for this repair. The full initial architecture rollout below still applies.
 
 Required service order:
 
-1. `dbMigrationsLoop` creates the new entity/table and indexes via normal schema
-   synchronization. No handwritten migration is required.
+1. `dbMigrationsLoop` creates the outbox entity/table and indexes and adds
+   `ws_connections.durable_updates` with default false via normal schema
+   synchronization. Run it before any binary that reads or writes the capability
+   column, including the API and worker. No handwritten migration is required.
 2. `websocketOutboundHandler` provisions the FIFO queue/DLQ, schedule, alarms and
    publication consumer. Verify database and queue access before producer rollout.
-3. Deploy the companion frontend protection before enabling new producers or
-   redriving old snapshots. It is compatible with the existing wire protocol.
-4. Redeploy `api` (`seizeAPI`), `releaseNotesGenerationLoop`, `helpBotReplyLoop`,
-   `nftLinkRefresherLoop`, `dropMediaSanitizer`, `attachmentsOrchestrator`,
-   `attachmentsProcessor`, and `pushNotificationsHandler`.
+3. Redeploy `api` (`seizeAPI`) for capability-aware connection registration and
+   producer routing, then the remaining producers listed below. Deploy the
+   capability-aware worker before producers emit marked events.
+4. Deploy the companion frontend at any point after its backend prerequisites.
+   Deploying backend first is safe for legacy clients; frontend first against
+   older backend also retains legacy delivery. Keep the frontend protections in
+   place before redriving old snapshots to capable clients.
+
+Producer deployment units: `api` (`seizeAPI`), `releaseNotesGenerationLoop`, `helpBotReplyLoop`,
+`nftLinkRefresherLoop`, `nftLinkMediaPreviewLoop`, `dropMediaSanitizer`, `attachmentsOrchestrator`,
+`attachmentsProcessor`, and `pushNotificationsHandler`. The `helpBotReplyLoop`
+deployment also includes `helpBotDailyActivityCreditLoop`. NFT preview mutations
+capture outbox intent too, so the separately deployable `nftLinkMediaPreviewLoop`
+has the same worker prerequisite as the refresher.
 
 For full transactional capture across background notification producers, also
 redeploy `overRatesRevocationLoop`, `waveDecisionExecutionLoop`, `tdhHistoryLoop`,
@@ -148,8 +196,13 @@ have the new business-transaction guarantee. Old producers that publish through
 the push input are retained by that handoff; other old producers still call API
 Gateway directly. Partial fleet rollout therefore retains the old failure risk
 until those producers are upgraded; it does not intentionally disable their
-sends. Do not add a direct-send fallback to upgraded transactional producers,
-which would duplicate delivery and bypass the retry path.
+sends. A producer binary from the earlier, unnegotiated outbox version can still
+create unmarked work for legacy clients; retained backlog may also reach them
+asynchronously until drained. Complete the capability-aware producer rollout to
+establish the per-client split. Old direct-send producers can still send to
+capable clients during rollout, so the frontend guards must remain active.
+Upgraded producers deliberately split legacy immediate delivery from capable
+outbox delivery; never add an immediate fallback for capable clients.
 
 For rollback, stop or roll back producers first. Retain the outbox table and
 both queues, and explicitly drain or retain pending work before disabling the
@@ -158,6 +211,8 @@ worker. Never drop pending work as a rollback shortcut.
 Validation must exercise real MySQL rollback, failed SQS acceptance, partial
 fan-out rollback, deferred-head ordering, missed-wakeup scheduled recovery,
 SDK 429-to-success, cancellation, authorization revocation, stale/deleted client
-updates, and bounded burst drain. Local synthetic failures do not establish
+updates, mixed legacy/capable sessions of the same profile, anonymous and
+reconnected capability registration, pre-capability backlog, and bounded burst
+drain. Local synthetic failures do not establish
 production load capacity. A controlled staging rollout still needs to verify the
 new table, scheduled recovery and alarms; no deployment is implied by this PR.

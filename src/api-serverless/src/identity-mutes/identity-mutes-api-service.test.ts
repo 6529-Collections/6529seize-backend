@@ -249,7 +249,12 @@ it.each([
     expect(
       events.map((row: { event: string }) => JSON.parse(row.event))
     ).toEqual(
-      waveIds.map((waveId) => ({ type: 'dm', profileIds: ['muter-1'], waveId }))
+      waveIds.map((waveId) => ({
+        type: 'dm',
+        profileIds: ['muter-1'],
+        waveId,
+        deliveryCapability: 'durable_updates_v1'
+      }))
     );
     expect(
       wavesApiDb.incrementDmUnreadStateVersionsForReaderWaves

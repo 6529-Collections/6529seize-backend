@@ -564,7 +564,9 @@
         "nftLinkMediaPreviewLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "nftOwnersLoop",
