@@ -159,7 +159,7 @@ describe('dropVideoConversionInvokerLoop', () => {
     'drops/example-video/mp4/output.mp4',
     'drops/example-image.png',
     'renditions/drops/video/mp4/video_720p.mp4',
-    'renditions/drops/video/poster/video_poster.0000001.jpg',
+    'renditions/drops/video/poster/video_poster.0000000.jpg',
     'nfts/video.mp4'
   ])('does not invoke MediaConvert for skipped key %s', async (key) => {
     await handler(

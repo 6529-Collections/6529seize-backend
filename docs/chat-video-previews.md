@@ -8,9 +8,10 @@ NFT and submission page playback policies are unchanged.
 ## Storage contract
 
 For an original `drops/<author>/<name>.<extension>` in `S3_BUCKET`, the preview
-is `renditions/drops/<author>/<name>/poster/<name>_poster.0000001.jpg` in the
+is `renditions/drops/<author>/<name>/poster/<name>_poster.0000000.jpg` in the
 same bucket and CloudFront distribution. The key uses MediaConvert's first
-frame-capture number and the `_poster` name modifier. No API, database, or
+zero-based frame-capture number and the `_poster` name modifier, confirmed
+against a live conversion output. No API, database, or
 upload response field is added.
 
 The JPEG contains the first video frame at quality 80. Fit without upscaling
