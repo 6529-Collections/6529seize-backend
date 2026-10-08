@@ -89,3 +89,19 @@ again rebuilds the derived shadow stages and compares the complete data again.
 This lets corrected copy logic repair an earlier checkpoint without editing the
 database or bypassing a mismatch. Legacy text-backed vote totals are ranked
 numerically, including negative totals and values with different digit counts.
+
+Migration and reverse reconciliation compare complete histories, including waves
+with more than 10,000 decisions or rows in a compatibility relation. The 10,000-row
+limit applies only to optional shadow samples; it never truncates a migration
+comparison or prevents an otherwise valid wave from transferring. This correction
+requires deploying `competitionMigrationLoop`; no schema, API or frontend change
+is needed.
+
+Existing positive time locks shorter than the current five-minute creation
+minimum are retained during migration. The native weighted voting runtime already
+supports these durations; the migration snapshot validator accepts them without
+relaxing validation for newly created competitions.
+
+The compatibility view preserves absent weighted leaderboard snapshots until
+the native worker produces one. Deploy/invoke `dbMigrationsLoop` with `full` scope
+before the migration Lambda to install this projection correction.

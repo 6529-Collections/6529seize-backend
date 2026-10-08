@@ -16,6 +16,7 @@ import {
   DROPS_PARTS_TABLE,
   WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
   WAVE_OUTCOMES_TABLE,
+  WAVE_LEADERBOARD_ENTRIES_TABLE,
   COMPETITION_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
   COMPETITION_MIGRATION_CHANGES_TABLE,
   COMPETITION_MIGRATIONS_TABLE,
@@ -441,6 +442,62 @@ describeWithSeed(
       expect(await service.cutover(id, operator, true)).toMatchObject({
         failures: []
       });
+    });
+    it('preserves historical time locks below the current creation minimum', async () => {
+      await sqlExecutor.execute(
+        'update waves set time_lock_ms=240000 where id=:waveId',
+        { waveId: wave.id }
+      );
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await finishBackfill(service);
+      expect(
+        (await service.compare(id, operator, 1)).categories
+          .filter(
+            (category) => category.baselineHash !== category.candidateHash
+          )
+          .map((category) => category.category)
+      ).toEqual([]);
+      expect(await service.cutover(id, operator, false)).toMatchObject({
+        changed: true,
+        failures: []
+      });
+      const repository = new CompetitionRepository();
+      const raw = await repository.findCompetitionRecordById(id, {});
+      if (!raw) throw new Error('Missing migrated competition');
+      const record = repository.parseCompetitionRecord(raw);
+      const competition = await new NativeCompetitionReader(
+        new CompetitionRepository(),
+        {}
+      ).getCompetition(record, Date.now());
+      expect(competition.decisions.time_lock_ms).toBe(240000);
+      expect(
+        migrationCommandConfiguration(competition).rules.time_lock_ms
+      ).toBe(240000);
+      expect(
+        await withLegacyCompetitionGetFacade(() =>
+          sqlExecutor.execute(
+            `select drop_id from ${WAVE_LEADERBOARD_ENTRIES_TABLE} where wave_id=:waveId`,
+            { waveId: wave.id }
+          )
+        )
+      ).toEqual([]);
+      await sqlExecutor.execute(
+        `update ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} set updated_at=100 where competition_id=:id`,
+        { id }
+      );
+      expect(
+        await withLegacyCompetitionGetFacade(() =>
+          sqlExecutor.execute(
+            `select drop_id from ${WAVE_LEADERBOARD_ENTRIES_TABLE} where wave_id=:waveId`,
+            { waveId: wave.id }
+          )
+        )
+      ).toEqual([{ drop_id: drop.id }]);
     });
     it('counts seven full consecutive windows, resets on independent mismatch, and refuses a partial window', async () => {
       let clock = 1000000;

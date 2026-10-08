@@ -635,7 +635,7 @@ export class CompetitionMigrationService {
         const now = this.now();
         const baseline = await new LegacyCompetitionBaselineRepository(
           () => db
-        ).getSnapshot(record, now, ctx);
+        ).getSnapshot(record, now, ctx, Number.POSITIVE_INFINITY);
         const candidate = await loadLegacyParityCandidate(
           new NativeCompetitionReader(
             new CompetitionRepository(() => db),
@@ -644,7 +644,8 @@ export class CompetitionMigrationService {
           ),
           record,
           now,
-          ctx
+          ctx,
+          Number.POSITIVE_INFINITY
         );
         const categories = [
           ...PARITY_FIELDS.map((field) => ({
@@ -1035,7 +1036,7 @@ export class CompetitionMigrationService {
       now = this.now();
     const baseline = await new LegacyCompetitionBaselineRepository(
       () => db
-    ).getSnapshot(record, now, ctx);
+    ).getSnapshot(record, now, ctx, Number.POSITIVE_INFINITY);
     const candidate = await loadLegacyParityCandidate(
       new NativeCompetitionReader(
         new CompetitionRepository(() => db),
@@ -1044,7 +1045,8 @@ export class CompetitionMigrationService {
       ),
       record,
       now,
-      ctx
+      ctx,
+      Number.POSITIVE_INFINITY
     );
     const failures = PARITY_FIELDS.filter(
       (field) =>

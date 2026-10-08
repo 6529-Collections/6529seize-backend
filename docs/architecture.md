@@ -1076,6 +1076,14 @@ publication receipts, so pending publication blocks transfer. Native workers
 retain independent aggregate/voter histories and skip already emitted lifecycle
 boundaries. No legacy history is dropped.
 
+Migration comparisons load complete source and candidate histories, including
+relations beyond 10,000 rows. The optional shadow sampler keeps its separate
+10,000-row ceiling and execution budget; migration and reverse reconciliation
+do not apply that sampling limit. Ownership transfer still requires full equality.
+Historical positive time locks below the new-competition minimum remain intact.
+Missing weighted snapshots stay absent in the compatibility projection until a
+native snapshot update, preserving both migration parity and subsequent reads.
+
 `competitionMigrationLoop` accepts `{"wave_id":"<uuid>"}` from an IAM-authorized
 AWS Console/SDK invocation. It derives staging (`eu-west-1`) or production
 (`us-east-1`) from its pinned deployment, loads the regional backend secret without

@@ -389,12 +389,13 @@ export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleS
   public async getSnapshot(
     record: CompetitionRoutingRecord,
     now: number,
-    ctx: RequestContext
+    ctx: RequestContext,
+    rowLimit = LEGACY_PARITY_ROW_LIMIT
   ): Promise<CompetitionSnapshot> {
     const timerName = `${this.constructor.name}->getSnapshot`;
     ctx.timer?.start(timerName);
     try {
-      return await this.load(record, now, ctx);
+      return await this.load(record, now, ctx, rowLimit);
     } finally {
       ctx.timer?.stop(timerName);
     }
@@ -403,22 +404,25 @@ export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleS
   private async rows<T>(
     source: keyof typeof LEGACY_SOURCE_QUERIES,
     waveId: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    rowLimit: number
   ): Promise<T[]> {
     const rows = await this.db.execute<T>(
-      LEGACY_SOURCE_QUERIES[source],
-      { waveId, limit: LEGACY_PARITY_ROW_LIMIT + 1 },
+      Number.isFinite(rowLimit)
+        ? LEGACY_SOURCE_QUERIES[source]
+        : LEGACY_SOURCE_QUERIES[source].replace(/\s+limit :limit$/, ''),
+      { waveId, limit: rowLimit + 1 },
       { wrappedConnection: ctx.connection }
     );
-    if (rows.length > LEGACY_PARITY_ROW_LIMIT)
-      throw new CompetitionRowLimitError();
+    if (rows.length > rowLimit) throw new CompetitionRowLimitError();
     return rows;
   }
 
   private async load(
     record: CompetitionRoutingRecord,
     now: number,
-    ctx: RequestContext
+    ctx: RequestContext,
+    rowLimit: number
   ): Promise<CompetitionSnapshot> {
     const wave = await this.db.oneOrNull<WaveEntity>(
       `select * from ${WAVES_TABLE} where id = :waveId`,
@@ -428,7 +432,7 @@ export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleS
     if (!wave || wave.type === WaveType.CHAT)
       throw new Error('Legacy baseline wave unavailable');
     const read = <T>(source: keyof typeof LEGACY_SOURCE_QUERIES) =>
-      this.rows<T>(source, record.wave_id, ctx);
+      this.rows<T>(source, record.wave_id, ctx, rowLimit);
     const drops = await read<Drop>('drops');
     const ratings = await read<Rating>('ratings');
     const locked = await read<LockedRating>('locked');

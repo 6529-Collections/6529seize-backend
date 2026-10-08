@@ -51,14 +51,10 @@ export async function compareLegacyFacade(
             : 'wave_id=:waveId';
       const rows = async (source: string) => {
         const data = await db.execute<Record<string, unknown>>(
-          `select * from \`${source}\` where ${filter} limit 10001`,
+          `select * from \`${source}\` where ${filter}`,
           { waveId },
           { wrappedConnection: ctx.connection }
         );
-        if (data.length > 10000)
-          throw new Error(
-            `OWNED_EXCEPTION: full compatibility comparison limit exceeded for ${table}`
-          );
         return data
           .map(normalize)
           .map(competitionPayloadHash)
