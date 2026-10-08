@@ -1131,6 +1131,11 @@ do not apply that sampling limit. Ownership transfer still requires full equalit
 Historical positive time locks below the new-competition minimum remain intact.
 Missing weighted snapshots stay absent in the compatibility projection until a
 native snapshot update, preserving both migration parity and subsequent reads.
+Decision batches budget both decision rows and their winners. Ordered catch-up
+rebuilds only captured decision keys; it does not replay unchanged decision history
+when refreshing entries, ranks, awards and archives. The applied watermark remains
+behind until these derived stages finish, and full comparison remains mandatory.
+This lets a large active history converge while recurring decisions continue.
 
 `competitionMigrationLoop` accepts `{"wave_id":"<uuid>"}` from an IAM-authorized
 AWS Console/SDK invocation. It derives staging (`eu-west-1`) or production

@@ -503,15 +503,15 @@ export class CompetitionMigrationService {
               new Set([...migration.completed_stages, migration.stage])
             )
           : migration.completed_stages;
-      const finished =
-        nextOffset === 0 && stageIndex === MIGRATION_STAGES.length - 1;
+      const nextStage = MIGRATION_STAGES.slice(stageIndex + 1).find(
+        (stage) => !completed.includes(stage)
+      );
+      const finished = nextOffset === 0 && nextStage === undefined;
       await repository.update(
         id,
         {
           stage:
-            nextOffset === 0 && !finished
-              ? MIGRATION_STAGES[stageIndex + 1]
-              : migration.stage,
+            nextOffset === 0 ? (nextStage ?? migration.stage) : migration.stage,
           stage_offset: typeof nextOffset === 'number' ? nextOffset : 0,
           stage_cursor: typeof nextOffset === 'string' ? nextOffset : null,
           completed_stages: completed,
@@ -579,7 +579,10 @@ export class CompetitionMigrationService {
                 stage: 'ENTRIES',
                 stage_offset: 0,
                 stage_cursor: null,
-                completed_stages: ['CONFIGURATION', 'OUTCOMES']
+                // Captured decision keys are rebuilt by applyChange. Replaying
+                // the entire history here can never catch an active wave whose
+                // history takes longer to copy than its decision interval.
+                completed_stages: ['CONFIGURATION', 'OUTCOMES', 'DECISIONS']
               }
             : {}),
           consecutive_full_windows: 0,
