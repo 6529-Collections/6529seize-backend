@@ -31,7 +31,7 @@ jest.mock('@aws-sdk/client-lambda', () => ({
 const mockSend = jest.fn().mockResolvedValue({ StatusCode: 202 });
 const mockDestroy = jest.fn();
 const waveId = 'c3018ba0-14e7-4145-8b9e-9e292c09ac4e';
-const event = { environment: 'staging', wave_id: waveId };
+const event = { wave_id: waveId };
 const functionArn =
   'arn:aws:lambda:eu-west-1:987989283142:function:competitionMigrationLoop:12';
 const context = {
@@ -41,8 +41,7 @@ const context = {
 } as Context;
 const handleMigration = createMigrationHandler({
   environment: 'staging',
-  region: 'eu-west-1',
-  operators: 'operator'
+  region: 'eu-west-1'
 });
 
 describe('migration Lambda wiring', () => {
@@ -51,7 +50,7 @@ describe('migration Lambda wiring', () => {
     jest.clearAllMocks();
     process.env.MIGRATION_DEPLOYED_ENVIRONMENT = 'staging';
     process.env.AWS_REGION = 'eu-west-1';
-    process.env.COMPETITION_MIGRATION_OPERATORS = 'operator';
+    delete process.env.COMPETITION_MIGRATION_OPERATORS;
     jest.mocked(doInDbContext).mockImplementation(async (fn) => fn());
     mockSend.mockResolvedValue({ StatusCode: 202 });
   });
@@ -61,7 +60,10 @@ describe('migration Lambda wiring', () => {
   it('rejects absent inputs and the wrong deployment before connecting to the database', async () => {
     await expect(handleMigration({}, context)).rejects.toThrow('input');
     await expect(
-      handleMigration({ ...event, environment: 'production' }, context)
+      createMigrationHandler({
+        environment: 'production',
+        region: 'eu-west-1'
+      })(event, context)
     ).rejects.toThrow('deployment');
     expect(doInDbContext).not.toHaveBeenCalled();
   });
@@ -81,23 +83,14 @@ describe('migration Lambda wiring', () => {
       'staging'
     );
   });
-  it('captures the deployed identity and explicit operator list before shared secrets can overwrite them', async () => {
+  it('captures the deployed identity before shared secrets can overwrite them', async () => {
     jest.mocked(doInDbContext).mockImplementation(async (fn) => {
       process.env.MIGRATION_DEPLOYED_ENVIRONMENT = 'production';
       process.env.AWS_REGION = 'us-east-1';
       process.env.COMPETITION_MIGRATION_OPERATORS = 'attacker';
       return fn();
     });
-    await handleMigration(
-      {
-        ...event,
-        action: 'migrate',
-        live: true,
-        operator: 'operator',
-        reason: 'reviewed pilot'
-      },
-      context
-    );
+    await handleMigration(event, context);
     expect(CompetitionMigrationService).toHaveBeenCalledWith(
       undefined,
       undefined,
@@ -106,16 +99,7 @@ describe('migration Lambda wiring', () => {
     );
     expect(executeMigrationLambdaInput).toHaveBeenCalled();
     // The same warm function still uses its actual staging identity/override.
-    await handleMigration(
-      {
-        ...event,
-        action: 'migrate',
-        live: true,
-        operator: 'operator',
-        reason: 'reviewed pilot'
-      },
-      context
-    );
+    await handleMigration(event, context);
     expect(CompetitionMigrationService).toHaveBeenCalledTimes(2);
     expect(
       jest
@@ -123,39 +107,18 @@ describe('migration Lambda wiring', () => {
         .mock.calls.every((call) => call[3] === 'staging')
     ).toBe(true);
   });
-  it('checks the operator list loaded from regional secrets when no explicit override exists', async () => {
-    const secretConfigured = createMigrationHandler({
-      environment: 'staging',
-      region: 'eu-west-1',
-      operators: undefined
+  it('does not require an application operator allowlist', async () => {
+    await expect(handleMigration(event, context)).resolves.toEqual({
+      outcome: 'COMPLETE'
     });
-    delete process.env.COMPETITION_MIGRATION_OPERATORS;
-    jest.mocked(doInDbContext).mockImplementation(async (fn) => {
-      process.env.COMPETITION_MIGRATION_OPERATORS = 'operator';
-      return fn();
-    });
-    await expect(
-      secretConfigured(
-        {
-          ...event,
-          action: 'migrate',
-          live: true,
-          operator: 'attacker',
-          reason: 'pilot'
-        },
-        context
-      )
-    ).rejects.toThrow('allowlisted');
-    expect(executeMigrationLambdaInput).not.toHaveBeenCalled();
+    expect(executeMigrationLambdaInput).toHaveBeenCalledWith(
+      event,
+      expect.anything(),
+      expect.objectContaining({ environment: 'staging' })
+    );
   });
   it('queues only the same function/version asynchronously and serializes validated inputs', async () => {
-    const input = parseMigrationLambdaInput({
-      ...event,
-      action: 'migrate',
-      live: true,
-      operator: 'operator',
-      reason: 'pilot'
-    });
+    const input = parseMigrationLambdaInput(event);
     await queueMigrationContinuation(input, functionArn, 'eu-west-1');
     const command = mockSend.mock.calls[0][0] as {
       input: { FunctionName: string; InvocationType: string; Payload: Buffer };

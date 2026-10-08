@@ -66,15 +66,6 @@ export async function reconcileAcceptedLegacySettings(
       COMPETITION_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
       COMPETITION_OUTCOMES_TABLE
     ]) {
-      const count = await db.oneOrNull<{ count: number }>(
-        `select count(*) as count from ${table} where competition_id=:id`,
-        { id: record.id },
-        options
-      );
-      if (Number(count?.count ?? 0) > 1000)
-        throw new Error(
-          'OWNED_EXCEPTION: settings command requires a bounded native outcome adapter'
-        );
       await db.execute(
         `delete from ${table} where competition_id=:id`,
         { id: record.id },

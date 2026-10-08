@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { DROPS_TABLE, COMPETITION_ENTRIES_TABLE } from '@/constants';
 import { DropEntity } from '@/entities/IDrop';
 import { SqlExecutor } from '@/sql-executor';
@@ -14,28 +15,35 @@ export async function compareMigrationContent(
   waveId: string,
   ctx: RequestContext
 ) {
-  const drops = await db.execute<DropEntity>(
-    `select * from ${DROPS_TABLE} where wave_id=:waveId and drop_type in ('PARTICIPATORY','WINNER') order by id limit 1001`,
-    { waveId },
-    { wrappedConnection: ctx.connection }
-  );
-  if (drops.length > 1000)
-    throw new Error(
-      'OWNED_EXCEPTION: full native content comparison exceeds bounded ordinary cohort'
-    );
   const repository = new CompetitionEntryRepository(() => db);
-  const baseline = [],
-    candidate = [];
-  for (const drop of drops) {
-    const entryId = legacyCompetitionEntryId(id, drop.id);
-    baseline.push({
-      entryId,
-      hash: competitionPayloadHash(await repository.loadDropContent(drop, ctx))
-    });
-    candidate.push({
-      entryId,
-      hash: competitionPayloadHash(await repository.getContent(entryId, ctx))
-    });
+  const baseline = createHash('sha256');
+  const candidate = createHash('sha256');
+  let cursor = '';
+  let count = 0;
+  while (true) {
+    const drops = await db.execute<DropEntity>(
+      `select * from ${DROPS_TABLE} where wave_id=:waveId and drop_type in ('PARTICIPATORY','WINNER') and id>:cursor order by id limit 100`,
+      { waveId, cursor },
+      { wrappedConnection: ctx.connection }
+    );
+    for (const drop of drops) {
+      const entryId = legacyCompetitionEntryId(id, drop.id);
+      baseline.update(
+        competitionPayloadHash({
+          entryId,
+          content: await repository.loadDropContent(drop, ctx)
+        })
+      );
+      candidate.update(
+        competitionPayloadHash({
+          entryId,
+          content: await repository.getContent(entryId, ctx)
+        })
+      );
+    }
+    count += drops.length;
+    if (drops.length < 100) break;
+    cursor = drops[drops.length - 1].id;
   }
   const extra = await db.oneOrNull<{ count: number }>(
     `select count(*) as count from ${COMPETITION_ENTRIES_TABLE} where competition_id=:id and status in ('ACTIVE','WINNER')`,
@@ -46,12 +54,12 @@ export async function compareMigrationContent(
     {
       category: 'native_entry_content',
       baselineHash: competitionPayloadHash({
-        count: drops.length,
-        content: baseline
+        count,
+        content: baseline.digest('hex')
       }),
       candidateHash: competitionPayloadHash({
         count: Number(extra?.count ?? 0),
-        content: candidate
+        content: candidate.digest('hex')
       })
     }
   ];

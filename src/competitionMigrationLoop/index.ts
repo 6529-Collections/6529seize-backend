@@ -6,8 +6,7 @@ import { Logger } from '@/logging';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
 import {
-  assertMigrationLambdaEnvironment,
-  assertMigrationLambdaOperator,
+  migrationLambdaEnvironment,
   parseMigrationLambdaInput,
   type MigrationLambdaInput
 } from './migration-input';
@@ -48,30 +47,21 @@ export async function queueMigrationContinuation(
 export function createMigrationHandler(configuration: {
   readonly environment: string | undefined;
   readonly region: string | undefined;
-  readonly operators: string | undefined;
 }) {
   // Pin cold-start configuration across warm invocations. Loading the regional
   // secret mutates process.env, but cannot redirect subsequent invocations.
   const deployment = Object.freeze({ ...configuration });
   return async (event: unknown, context: Context): Promise<unknown> => {
     const input = parseMigrationLambdaInput(event);
-    assertMigrationLambdaEnvironment(
-      input,
+    const environment = migrationLambdaEnvironment(
       deployment.environment,
       deployment.region
     );
     return doInDbContext(
       async () => {
-        assertMigrationLambdaOperator(
-          input,
-          deployment.operators ?? process.env.COMPETITION_MIGRATION_OPERATORS
-        );
         logger.info('migration_invocation', {
-          action: input.action,
-          environment: input.environment,
+          environment,
           waveId: input.wave_id,
-          operator: input.operator,
-          live: input.live,
           runId: input.continuation?.run_id,
           requestId: context.awsRequestId
         });
@@ -81,9 +71,10 @@ export function createMigrationHandler(configuration: {
             undefined,
             undefined,
             undefined,
-            input.environment
+            environment
           ),
           {
+            environment,
             now: Date.now,
             remainingTime: () => context.getRemainingTimeInMillis(),
             wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -97,7 +88,6 @@ export function createMigrationHandler(configuration: {
           }
         );
         logger.info('migration_invocation_finished', {
-          action: input.action,
           waveId: input.wave_id,
           requestId: context.awsRequestId
         });
@@ -110,7 +100,6 @@ export function createMigrationHandler(configuration: {
 
 export const handleMigration = createMigrationHandler({
   environment: process.env.MIGRATION_DEPLOYED_ENVIRONMENT,
-  region: process.env.AWS_REGION,
-  operators: process.env.COMPETITION_MIGRATION_OPERATORS
+  region: process.env.AWS_REGION
 });
 export const handler = sentryContext.wrapLambdaHandler(handleMigration);

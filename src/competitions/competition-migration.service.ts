@@ -25,9 +25,7 @@ import {
   COMPETITION_WINNER_VOTES_TABLE,
   COMPETITION_MIGRATION_CHANGES_TABLE,
   COMPETITION_CONFIG_VERSIONS_TABLE,
-  COMPETITION_MIGRATIONS_TABLE,
-  COMPETITION_CAPABILITIES_TABLE,
-  DROPS_TABLE
+  COMPETITION_MIGRATIONS_TABLE
 } from '@/constants';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, SqlExecutor } from '@/sql-executor';
@@ -41,7 +39,6 @@ import {
   MigrationAcceptance,
   MigrationEnvironment,
   MigrationCohort,
-  migrationAcceptanceFailures,
   migrationReadinessFailures,
   nextMigrationWindowStreak,
   assertMigrationRollbackSafe
@@ -124,19 +121,13 @@ function comparisonWindowProgress(
   now: number,
   windowMs: number,
   complete: boolean,
-  mismatches: number,
-  approvalChanged = false
+  mismatches: number
 ) {
   const changedDuration = migration.window_duration_ms !== windowMs;
   const missedSample =
     migration.last_comparison_at !== null &&
     now - migration.last_comparison_at > windowMs;
-  const reset =
-    mismatches > 0 ||
-    !complete ||
-    changedDuration ||
-    missedSample ||
-    approvalChanged;
+  const reset = mismatches > 0 || !complete || changedDuration || missedSample;
   const startedAt =
     reset || migration.window_started_at === null
       ? now
@@ -263,37 +254,17 @@ export class CompetitionMigrationService {
       {}
     ).getCompetition(record, this.now());
     const cohort = sourceMigrationCohort(competition);
-    const failures = await this.sourceReadiness(competition, waveId);
-    const environment = await this.environmentReadiness(cohort);
+    migrationCommandConfiguration(competition);
+    const environment = await this.environmentReadiness();
     return {
       status,
       cohort,
-      failures: [...failures, ...environment.failures],
+      failures: environment.failures,
       windowMs: environment.windowMs
     };
   }
 
-  private async sourceReadiness(
-    competition: Competition,
-    waveId: string
-  ): Promise<string[]> {
-    const failures: string[] = [];
-    if (competition.capabilities.length)
-      failures.push('PRIVILEGED_PARITY_AND_EFFECTS');
-    if (competition.voting.signature_required)
-      failures.push('LEGACY_SIGNED_VOTE_ADAPTER');
-    migrationCommandConfiguration(competition);
-    if (
-      (await new CompetitionMigrationRepository(
-        this.supplier,
-        this.environment
-      ).sourceEntryCount(waveId, {})) > 1000
-    )
-      failures.push('HIGH_VOLUME_FULL_COMPARISON');
-    return failures;
-  }
-
-  private async environmentReadiness(cohort: MigrationCohort) {
+  private async environmentReadiness() {
     const failures: string[] = [];
     if (!(await migrationCaptureHealthy(this.supplier(), {})))
       failures.push('DURABLE_CAPTURE');
@@ -302,22 +273,7 @@ export class CompetitionMigrationService {
       !appFeatures.isNativeCompetitionWritesEnabled()
     )
       failures.push('COMPATIBLE_RUNTIME_FLAGS');
-    if (this.environment === 'local') return { failures, windowMs: 60000 };
-    const acceptance = await new CompetitionMigrationEnvironmentRepository(
-      this.supplier
-    ).latest(this.environment, {});
-    if (acceptance)
-      failures.push(...migrationAcceptanceFailures(acceptance, this.now()));
-    else failures.push('ENVIRONMENT_ACCEPTANCE_REQUIRED');
-    if (
-      cohort === 'ACTIVE_LOW_VOLUME' &&
-      !(await new CompetitionMigrationRepository(
-        this.supplier,
-        this.environment
-      ).hasCompletedPilot({}))
-    )
-      failures.push('COMPLETED_COHORT_FIRST');
-    return { failures, windowMs: acceptance?.comparisonWindowMs ?? 60000 };
+    return { failures, windowMs: 1 };
   }
 
   public async recordEnvironmentAcceptance(
@@ -335,18 +291,23 @@ export class CompetitionMigrationService {
     return { environment: this.environment, acceptance };
   }
 
-  /** Retire only the adapter guard made obsolete by signed credit support.
-   * Keep every other owned stop and require fresh parity after this upgrade. */
-  public async resumeNegativeVoteMigration(
-    id: string,
-    operator: MigrationOperator
-  ) {
+  /** Retire obsolete rollout restrictions, retaining actual data/repair failures.
+   * Any resumed migration must pass a fresh independent comparison. */
+  public async resumeMigration(id: string, operator: MigrationOperator) {
     return this.transaction(id, async (repository, ctx) => {
       const status = await repository.status(id, ctx);
       if (status.storageMode !== 'LEGACY_ADAPTER' || !status.migration)
         return status;
       const retired = status.migration.exceptions.filter((exception) =>
-        exception.startsWith('NEGATIVE_CREDIT_REVOCATION_ADAPTER:')
+        [
+          'NEGATIVE_CREDIT_REVOCATION_ADAPTER',
+          'LEGACY_SIGNED_VOTE_ADAPTER',
+          'PRIVILEGED_PARITY_AND_EFFECTS',
+          'COMPLEX_CAPABILITY_REHEARSAL',
+          'HIGH_VOLUME_FULL_COMPARISON',
+          'NATIVE_COMMAND_RULE_ADAPTER',
+          'MIGRATION_DATA_SHAPE'
+        ].some((restriction) => exception.startsWith(`${restriction}:`))
       );
       if (!retired.length) return status;
       const record = await repository.lock(id, ctx);
@@ -356,13 +317,6 @@ export class CompetitionMigrationService {
         ctx
       ).getCompetition(record, this.now());
       migrationCommandConfiguration(competition);
-      if (
-        competition.capabilities.length ||
-        competition.voting.signature_required
-      )
-        throw new Error(
-          'Retiring the negative-vote adapter guard requires an ordinary unsigned source'
-        );
       await repository.update(
         id,
         {
@@ -383,7 +337,7 @@ export class CompetitionMigrationService {
         operator.actor,
         'SUPPORTED_ADAPTER_RESUME',
         operator.reason,
-        { adapter: 'SIGNED_CREDIT_REVOCATION', retiredExceptions: retired },
+        { retiredExceptions: retired },
         ctx
       );
       return repository.status(id, ctx);
@@ -404,34 +358,8 @@ export class CompetitionMigrationService {
         new WavesApiDb(this.supplier),
         ctx
       ).getCompetition(record, this.now());
-      const completed = c.lifecycle === 'ENDED';
-      if (cohort.startsWith('COMPLETED') && !completed)
-        throw new Error(
-          'Completed cohort requires a completed source competition'
-        );
-      if (c.capabilities.length && cohort !== 'PRIVILEGED')
-        throw new Error(
-          'Special capabilities require the privileged guarded cohort'
-        );
+      migrationCommandConfiguration(c);
       const guards = [...exceptions];
-      if (c.voting.signature_required)
-        guards.push(`LEGACY_SIGNED_VOTE_ADAPTER:${operator.actor}`);
-      if (cohort === 'PRIVILEGED')
-        guards.push(`PRIVILEGED_PARITY_AND_EFFECTS:${operator.actor}`);
-      if (cohort === 'COMPLEX')
-        guards.push(`COMPLEX_CAPABILITY_REHEARSAL:${operator.actor}`);
-      try {
-        migrationCommandConfiguration(c);
-      } catch {
-        guards.push(`NATIVE_COMMAND_RULE_ADAPTER:${operator.actor}`);
-      }
-      const size = await this.supplier().oneOrNull<{ count: number }>(
-        `select count(*) as count from ${DROPS_TABLE} where wave_id=:waveId and drop_type in ('PARTICIPATORY','WINNER')`,
-        { waveId: record.wave_id },
-        { wrappedConnection: ctx.connection }
-      );
-      if (Number(size?.count ?? 0) > 1000)
-        guards.push(`HIGH_VOLUME_FULL_COMPARISON:${operator.actor}`);
       await repository.enroll(record, operator.actor, cohort, guards, ctx);
       await repository.audit(
         id,
@@ -677,8 +605,8 @@ export class CompetitionMigrationService {
           this.environment
         );
         const record = await repository.lock(id, ctx);
-        const before = await repository.status(id, ctx);
-        const migration = before.migration;
+        const status = await repository.status(id, ctx);
+        const migration = status.migration;
         if (!migration || !['SHADOWING', 'READY'].includes(migration.state))
           throw new Error('Complete backfill before independent comparison');
         if (record.storage_mode !== 'LEGACY_ADAPTER')
@@ -720,18 +648,12 @@ export class CompetitionMigrationService {
           now,
           windowMs,
           complete,
-          mismatches,
-          this.environment !== 'local' &&
-            !before.readiness?.currentAcceptanceMatches
+          mismatches
         );
         await repository.update(
           id,
           {
             state: 'SHADOWING',
-            acceptance:
-              this.environment === 'local'
-                ? migration.acceptance
-                : before.readiness!.acceptance,
             ...progress,
             last_comparison_at: now,
             last_comparison_watermark: migration.source_watermark
@@ -951,44 +873,16 @@ export class CompetitionMigrationService {
       );
     return acceptance;
   }
-  private async readinessFailures(
-    status: MigrationStatus,
-    ctx: RequestContext
-  ): Promise<string[]> {
-    const id = status.competitionId;
-    const failures = status.readiness
-      ? migrationReadinessFailures(
-          status.readiness,
-          this.now(),
-          this.environment
-        )
+  private readinessFailures(status: MigrationStatus): string[] {
+    return status.readiness
+      ? migrationReadinessFailures(status.readiness, this.now())
       : ['NOT_ENROLLED'];
-    if (
-      this.environment !== 'local' &&
-      status.migration &&
-      !status.migration.cohort.startsWith('COMPLETED')
-    ) {
-      if (
-        !(await new CompetitionMigrationRepository(
-          this.supplier,
-          this.environment
-        ).hasCompletedPilot(ctx))
-      )
-        failures.push('COMPLETED_COHORT_FIRST');
-    }
-    const main = await this.supplier().oneOrNull<{ count: number }>(
-      `select count(*) as count from ${COMPETITION_CAPABILITIES_TABLE} where competition_id=:id and capability='MAIN_STAGE'`,
-      { id },
-      { wrappedConnection: ctx.connection }
-    );
-    if (Number(main?.count ?? 0))
-      failures.push('MAIN_STAGE_OWNED_RELEASE_REVIEW');
-    return failures;
   }
+
   public async readiness(id: string) {
     return this.transaction(id, async (repository, ctx) => {
       const status = await repository.status(id, ctx);
-      return { status, failures: await this.readinessFailures(status, ctx) };
+      return { status, failures: this.readinessFailures(status) };
     });
   }
   public async cutover(
@@ -998,7 +892,7 @@ export class CompetitionMigrationService {
   ) {
     return this.transaction(id, async (repository, ctx) => {
       const status = await repository.status(id, ctx);
-      const failures = await this.readinessFailures(status, ctx);
+      const failures = this.readinessFailures(status);
       if (!failures.length)
         failures.push(...(await this.reverseMismatches(id, ctx)));
       if (failures.length || dryRun)

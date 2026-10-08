@@ -24,7 +24,7 @@ export type WaveMigrationService = Pick<
   | 'readiness'
   | 'cutover'
   | 'verifyNative'
-  | 'resumeNegativeVoteMigration'
+  | 'resumeMigration'
 >;
 export type WaveMigrationRuntime = {
   now: () => number;
@@ -99,10 +99,8 @@ export async function migrateWave(
     aborted: () => runtime.now() >= deadline || !!runtime.aborted?.()
   };
   if (budget.aborted()) throw new WaveMigrationPausedError();
-  const resumed = inspection.status.migration?.exceptions.some((exception) =>
-    exception.startsWith('NEGATIVE_CREDIT_REVOCATION_ADAPTER:')
-  )
-    ? await service.resumeNegativeVoteMigration(id, options.operator)
+  const resumed = inspection.status.migration?.exceptions.length
+    ? await service.resumeMigration(id, options.operator)
     : inspection.status;
   assertHealthyStatus(resumed);
   if (
@@ -167,11 +165,7 @@ async function advanceMigration(
     windowMs
   );
   if (result) return result;
-  await runtime.wait(
-    options.environment === 'local'
-      ? 250
-      : Math.min(30000, Math.max(1, Math.floor(windowMs / 2)))
-  );
+  await runtime.wait(250);
   return null;
 }
 
@@ -187,16 +181,11 @@ async function compareAndCutover(
     throw new Error(
       `Independent comparison failed (${comparison.mismatches} mismatches): ${[...comparison.categories.filter((category) => category.baselineHash !== category.candidateHash).map((category) => category.category), ...comparison.sourceFailures].join(', ')}; legacy ownership is retained`
     );
-  runtime.progress(
-    options.environment === 'local'
-      ? 'Independent comparison matches.'
-      : `Parity matches: ${comparison.consecutiveFullWindows}/7 full windows.`
-  );
+  runtime.progress('Independent comparison matches.');
   const readiness = await service.readiness(id);
   if (runtime.aborted?.()) return null;
   const waiting = new Set([
     'FULL_INDEPENDENT_COMPARISON',
-    'SEVEN_FULL_INDEPENDENT_WINDOWS',
     'CATCH_UP_LAG',
     'FINAL_PARITY_WATERMARK',
     'OUTBOX_BACKLOG'

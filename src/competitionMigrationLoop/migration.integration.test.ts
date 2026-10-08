@@ -1,4 +1,8 @@
 import { CompetitionMigrationService } from '@/competitions/competition-migration.service';
+import {
+  withLegacyPrimaryMutation,
+  reconcileAcceptedLegacySettings
+} from '@/competitions/legacy-competition-mutation';
 import { CompetitionRepository } from '@/competitions/competition.repository';
 import { installMigrationCapture } from '@/competitions/competition-migration-capture';
 import { legacyCompetitionId } from '@/competitions/competition-id';
@@ -11,12 +15,13 @@ import {
   DROPS_TABLE,
   DROPS_PARTS_TABLE,
   DROP_RANK_TABLE,
-  COMPETITION_ENTRIES_TABLE
+  COMPETITION_ENTRIES_TABLE,
+  COMPETITION_CAPABILITIES_TABLE,
+  COMPETITION_CONFIG_VERSIONS_TABLE,
+  COMPETITIONS_TABLE,
+  COMPETITION_MIGRATIONS_TABLE,
+  WAVES_TABLE
 } from '@/constants';
-import {
-  migrationFixtureAcceptance,
-  migrationFixtureOperator
-} from '@/tests/fixtures/competition-migration.fixture';
 import {
   parseMigrationLambdaInput,
   type MigrationLambdaInput
@@ -97,15 +102,22 @@ describeWithSeed(
     }
   ],
   () => {
+    const originalMainStage = process.env.MAIN_STAGE_WAVE_ID;
     const originalWrites = process.env.FEATURE_NATIVE_COMPETITION_WRITES;
     const originalExecution = process.env.FEATURE_NATIVE_COMPETITION_EXECUTION;
     beforeEach(async () => {
+      if (originalMainStage === undefined)
+        delete process.env.MAIN_STAGE_WAVE_ID;
+      else process.env.MAIN_STAGE_WAVE_ID = originalMainStage;
       process.env.FEATURE_NATIVE_COMPETITION_WRITES = 'true';
       process.env.FEATURE_NATIVE_COMPETITION_EXECUTION = 'true';
       await new CompetitionRepository().ensureLegacyMappingForWave(wave, {});
       await installMigrationCapture(sqlExecutor);
     });
     afterAll(() => {
+      if (originalMainStage === undefined)
+        delete process.env.MAIN_STAGE_WAVE_ID;
+      else process.env.MAIN_STAGE_WAVE_ID = originalMainStage;
       if (originalWrites === undefined)
         delete process.env.FEATURE_NATIVE_COMPETITION_WRITES;
       else process.env.FEATURE_NATIVE_COMPETITION_WRITES = originalWrites;
@@ -113,8 +125,128 @@ describeWithSeed(
         delete process.env.FEATURE_NATIVE_COMPETITION_EXECUTION;
       else process.env.FEATURE_NATIVE_COMPETITION_EXECUTION = originalExecution;
     });
+    it('migrates an active signed Main Stage source with upper-threshold metadata without a prior pilot', async () => {
+      process.env.MAIN_STAGE_WAVE_ID = waveId;
+      await sqlExecutor.execute(
+        `update ${WAVES_TABLE} set type='APPROVE',decisions_strategy=null,next_decision_time=null,
+         participation_period_end=1900000100000,voting_period_end=1900000100000,
+         winning_min_threshold=1,winning_max_threshold=10,winning_threshold_min_duration_ms=0,
+         voting_signature_required=1 where id=:waveId`,
+        { waveId }
+      );
+      const id = legacyCompetitionId(waveId);
+      await sqlExecutor.execute(
+        `insert into ${COMPETITION_CAPABILITIES_TABLE} (competition_id,wave_id,capability,assigned_at)
+         values (:id,:waveId,'MAIN_STAGE',1)`,
+        { id, waveId }
+      );
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        () => 1900000000000,
+        0,
+        'staging'
+      );
+      expect((await service.inspectWave(waveId)).failures).toEqual([]);
+      const result = await executeMigrationLambdaInput(
+        parseMigrationLambdaInput({ wave_id: waveId }),
+        service,
+        {
+          environment: 'staging',
+          now: () => 1900000000000,
+          remainingTime: () => 900000,
+          wait: async () => {
+            throw new Error('No timed waiting expected');
+          },
+          progress: () => undefined,
+          continueMigration: async () => {
+            throw new Error('No continuation expected');
+          }
+        }
+      );
+      expect(result).toMatchObject({
+        outcome: 'COMPLETE',
+        status: { storageMode: 'NATIVE' }
+      });
+      const record = await sqlExecutor.oneOrNull<{
+        decision_config: string;
+        voting_config: string;
+      }>(
+        `select decision_config,voting_config from ${COMPETITIONS_TABLE} where id=:id`,
+        { id }
+      );
+      expect(JSON.parse(record!.decision_config)).toMatchObject({
+        winning_max_threshold: 10
+      });
+      expect(JSON.parse(record!.voting_config)).toMatchObject({
+        signature_required: true
+      });
+      // Existing wave settings must remain editable after this source transfers.
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        (connection) =>
+          withLegacyPrimaryMutation(waveId, { connection }, async (owner) => {
+            if (!owner) throw new Error('Expected native primary owner');
+            await reconcileAcceptedLegacySettings(owner, 'fixture', {
+              connection
+            });
+          }),
+        { isolationLevel: 'READ COMMITTED' }
+      );
+      const snapshot = await sqlExecutor.oneOrNull<{ config: string }>(
+        `select config from ${COMPETITION_CONFIG_VERSIONS_TABLE} where competition_id=:id order by version desc limit 1`,
+        { id }
+      );
+      expect(JSON.parse(snapshot!.config)).toMatchObject({
+        rules: { winning_max_threshold: 10 }
+      });
+    });
+
+    it('retries saved legacy data-shape failures without requiring a manual exception review', async () => {
+      const id = legacyCompetitionId(waveId);
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        () => 1900000000000,
+        0,
+        'staging'
+      );
+      await service.enroll(
+        id,
+        { actor: 'old-operator', reason: 'old runner' },
+        'COMPLETED_ORDINARY'
+      );
+      await sqlExecutor.execute(
+        `update ${COMPETITION_MIGRATIONS_TABLE} set exceptions=:exceptions where competition_id=:id`,
+        {
+          id,
+          exceptions: JSON.stringify([
+            'MIGRATION_DATA_SHAPE:old-operator',
+            'LEGACY_SIGNED_VOTE_ADAPTER:old-operator'
+          ])
+        }
+      );
+      const result = await executeMigrationLambdaInput(
+        parseMigrationLambdaInput({ wave_id: waveId }),
+        service,
+        {
+          environment: 'staging',
+          now: () => 1900000000000,
+          remainingTime: () => 900000,
+          wait: async () => {
+            throw new Error('No timed waiting expected');
+          },
+          progress: () => undefined,
+          continueMigration: async () => {
+            throw new Error('No continuation expected');
+          }
+        }
+      );
+      expect(result).toMatchObject({
+        outcome: 'COMPLETE',
+        status: { storageMode: 'NATIVE', migration: { exceptions: [] } }
+      });
+    });
+
     it.each(['staging', 'production'] as const)(
-      'requires %s acceptance and resumes real durable checkpoints until seven full parity windows pass',
+      'migrates in %s with only a wave ID, no acceptance and no elapsed windows',
       async (environment) => {
         const clock = { value: 1900000000000 };
         const service = new CompetitionMigrationService(
@@ -125,6 +257,7 @@ describeWithSeed(
         );
         const queued: MigrationLambdaInput[] = [];
         const runtime = {
+          environment,
           now: () => clock.value,
           remainingTime: () => 900000,
           wait: async (ms: number) => {
@@ -135,46 +268,7 @@ describeWithSeed(
             queued.push(input);
           }
         };
-        const command = {
-          environment,
-          wave_id: waveId,
-          action: 'migrate',
-          live: true,
-          operator: migrationFixtureOperator.actor,
-          reason: migrationFixtureOperator.reason,
-          invocation_seconds: 120,
-          batch: 1
-        };
-        const inspect = await executeMigrationLambdaInput(
-          parseMigrationLambdaInput({ ...command, live: false }),
-          service,
-          runtime
-        );
-        expect(inspect).toMatchObject({
-          failures: ['ENVIRONMENT_ACCEPTANCE_REQUIRED']
-        });
-        await expect(
-          executeMigrationLambdaInput(
-            parseMigrationLambdaInput(command),
-            service,
-            runtime
-          )
-        ).rejects.toThrow('ENVIRONMENT_ACCEPTANCE_REQUIRED');
-        expect(
-          (await service.status(legacyCompetitionId(waveId))).migration
-        ).toBeNull();
-        await executeMigrationLambdaInput(
-          parseMigrationLambdaInput({
-            environment,
-            action: 'record-environment-acceptance',
-            live: true,
-            operator: migrationFixtureOperator.actor,
-            reason: migrationFixtureOperator.reason,
-            acceptance: migrationFixtureAcceptance(clock.value)
-          }),
-          service,
-          runtime
-        );
+        const command = { wave_id: waveId };
         let input = parseMigrationLambdaInput(command);
         let completed = false;
         for (let invocation = 0; invocation < 6; invocation++) {
@@ -189,16 +283,15 @@ describeWithSeed(
           }
           const status = await service.status(legacyCompetitionId(waveId));
           expect(status.storageMode).toBe('LEGACY_ADAPTER');
-          expect(status.migration?.consecutive_full_windows).toBeLessThan(7);
+
           expect(queued.length).toBe(invocation + 1);
           input = parseMigrationLambdaInput(queued[invocation]);
         }
         expect(completed).toBe(true);
         const status = await service.status(legacyCompetitionId(waveId));
         expect(status.storageMode).toBe('NATIVE');
-        expect(
-          status.migration?.consecutive_full_windows
-        ).toBeGreaterThanOrEqual(7);
+        expect(clock.value).toBe(1900000000000);
+        expect(status.migration?.acceptance).toBeNull();
         expect(
           (await service.verifyNative(legacyCompetitionId(waveId))).failures
         ).toEqual([]);
