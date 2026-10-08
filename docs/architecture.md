@@ -1411,13 +1411,17 @@ Subscription cache invalidation records post-commit batches in
 subscription response keys once, deletes matching keys individually with bounded
 concurrency, and owns a separate Redis connection that closes at the 1.5-second
 deadline. Fully processed SCAN pages are checkpointed using the exact Redis cursor;
-continuations resume there, while partially deleted pages are replayed. A healthy
+continuations are immediately eligible for the next drain and resume there, while
+partially deleted pages are replayed. A healthy
 continuation does not increment failure counts or emit an error alert. Failed
 batches remain durable and are drained by `ownersBalancesLoop` on every invocation,
 including empty balance deltas. Requests with different cursors or retry histories
 are processed separately so a repeatedly failing request does not escalate a fresh
 one. Malformed requests are parked with a terminal diagnostic for operator repair;
-they are excluded from subsequent drains and do not block healthy requests.
+they are excluded from subsequent drains. A failed parking write is reported but
+does not block healthy requests. Checkpoint and acknowledgement write failures
+emit separate bookkeeping diagnostics, preserve existing retry rows, and do not
+increment Redis failure counts.
 The first two known timeout/network failures are reported with pending recovery;
 unclassified and later failures require investigation while retries continue.
 Missing Redis configuration retains work and reports failure; explicit

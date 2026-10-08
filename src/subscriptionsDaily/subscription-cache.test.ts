@@ -149,7 +149,12 @@ it('does not advertise recovery when retry persistence fails or the error is unc
 it('retries eviction if acknowledgement fails instead of losing the request', async () => {
   execute.mockRejectedValueOnce(new Error('ack failed')).mockResolvedValue([]);
   await invalidateUpcomingSubscriptionCaches(['auto']);
-  expect(execute.mock.calls[1][0]).toContain('UPDATE');
+  expect(execute).toHaveBeenCalledTimes(1);
+  expect(logger.errorWithDiagnostic).toHaveBeenCalledWith(
+    expect.objectContaining({ operation: 'SUBSCRIPTION_CACHE_BOOKKEEPING' }),
+    expect.any(String),
+    expect.any(Object)
+  );
 });
 
 it('keeps fresh and repeatedly failing requests in separate recovery groups', async () => {
@@ -218,5 +223,77 @@ it('preserves the last fully processed page after a later command failure', asyn
   await invalidateUpcomingSubscriptionCaches(['auto']);
   expect(execute.mock.calls[0][1]).toEqual(
     expect.objectContaining({ cursor: '42' })
+  );
+});
+
+it('continues healthy siblings and later groups when parking a malformed row fails', async () => {
+  execute
+    .mockResolvedValueOnce([
+      { id: 'poison', consolidation_keys: '{bad', attempts: 0 },
+      { id: 'healthy', consolidation_keys: ['auto'], attempts: 0 },
+      { id: 'later', consolidation_keys: ['other'], attempts: 1 }
+    ])
+    .mockRejectedValueOnce(new Error('park write failed'))
+    .mockResolvedValue([]);
+  await retryPendingSubscriptionCacheInvalidations();
+  expect(evict.mock.calls).toEqual([
+    [['auto'], '0'],
+    [['other'], '0']
+  ]);
+  expect(logger.error).toHaveBeenCalledWith(
+    expect.stringContaining('Could not park'),
+    expect.objectContaining({ id: 'poison' })
+  );
+  expect(execute.mock.calls.slice(2).map(([, params]) => params?.ids)).toEqual([
+    ['healthy'],
+    ['later']
+  ]);
+});
+
+it('reports checkpoint failure separately without incrementing eviction attempts or recording a stale cursor', async () => {
+  execute
+    .mockResolvedValueOnce([
+      {
+        id: 'resume',
+        consolidation_keys: ['auto'],
+        attempts: 0,
+        scan_cursor: '42'
+      }
+    ])
+    .mockRejectedValueOnce(new Error('checkpoint write failed'));
+  evict.mockResolvedValue({
+    scanned: 10,
+    deleted: 2,
+    elapsed_ms: 1500,
+    complete: false,
+    cursor: '84'
+  });
+  await retryPendingSubscriptionCacheInvalidations();
+  expect(execute).toHaveBeenCalledTimes(2);
+  expect(execute.mock.calls[1][1]).toEqual(
+    expect.objectContaining({ cursor: '84' })
+  );
+  expect(execute.mock.calls.every(([sql]) => !sql.includes('attempts ='))).toBe(
+    true
+  );
+  expect(logger.errorWithDiagnostic).toHaveBeenCalledWith(
+    expect.objectContaining({ operation: 'SUBSCRIPTION_CACHE_BOOKKEEPING' }),
+    expect.any(String),
+    expect.objectContaining({ completed_cursor: '84' })
+  );
+});
+
+it('makes healthy continuation eligible immediately rather than applying failure backoff', async () => {
+  jest.spyOn(Date, 'now').mockReturnValue(1000);
+  evict.mockResolvedValue({
+    scanned: 10,
+    deleted: 2,
+    elapsed_ms: 1500,
+    complete: false,
+    cursor: '42'
+  });
+  await invalidateUpcomingSubscriptionCaches(['auto']);
+  expect(execute.mock.calls[0][1]).toEqual(
+    expect.objectContaining({ nextAttempt: 1000 })
   );
 });

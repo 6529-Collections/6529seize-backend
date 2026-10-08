@@ -8,7 +8,8 @@ import { SUBSCRIPTION_CACHE_INVALIDATIONS_TABLE } from '@/constants';
 import { redisFailureCategory } from '@/redis-recovery';
 import {
   evictSubscriptionCacheBatch,
-  SubscriptionCacheEvictionError
+  SubscriptionCacheEvictionError,
+  SubscriptionCacheEvictionResult
 } from './subscription-cache-eviction';
 
 const logger = Logger.get('SUBSCRIPTION_CACHE');
@@ -119,13 +120,33 @@ async function attemptEviction(
   const ids = valid.map((request) => request.id);
   const attempt = valid[0].attempts + 1;
   const cursor = valid[0].scan_cursor ?? '0';
+  let result: SubscriptionCacheEvictionResult;
   try {
     // Allow the read replica to catch up before responses can refill Redis.
     await Time.millis(
       numbers.parseIntOrNull(process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE) ??
         500
     ).sleep();
-    const result = await evictSubscriptionCacheBatch(keys, cursor);
+    result = await evictSubscriptionCacheBatch(keys, cursor);
+  } catch (error) {
+    const failure =
+      error instanceof SubscriptionCacheEvictionError ? error.failure : error;
+    const resumeCursor =
+      error instanceof SubscriptionCacheEvictionError ? error.cursor : cursor;
+    await recordFailure(ids, attempt, started, failure, durable, resumeCursor);
+    return;
+  }
+  await finishEviction(ids, keys.length, result, durable);
+}
+
+/** DB checkpoint/acknowledgement failures retain requests without aging Redis retry history. */
+async function finishEviction(
+  ids: string[],
+  keyCount: number,
+  result: SubscriptionCacheEvictionResult,
+  durable: boolean
+): Promise<void> {
+  try {
     if (!result.complete) {
       if (durable) await saveProgress(ids, result.cursor);
       logger.info('Subscription cache scan reached a continuation checkpoint', {
@@ -142,15 +163,23 @@ async function attemptEviction(
       );
     logger.info('Subscription cache invalidation batch completed', {
       requests: ids.length,
-      consolidation_keys: keys.length,
+      consolidation_keys: keyCount,
       ...result
     });
   } catch (error) {
-    const failure =
-      error instanceof SubscriptionCacheEvictionError ? error.failure : error;
-    const resumeCursor =
-      error instanceof SubscriptionCacheEvictionError ? error.cursor : cursor;
-    await recordFailure(ids, attempt, started, failure, durable, resumeCursor);
+    logger.errorWithDiagnostic(
+      {
+        operation: 'SUBSCRIPTION_CACHE_BOOKKEEPING',
+        category: 'UNKNOWN',
+        recovery: { state: 'unknown' }
+      },
+      'Could not persist subscription cache scan progress or acknowledgement; requests remain eligible for replay',
+      {
+        requests: ids.length,
+        completed_cursor: result.cursor,
+        error: describeError(error)
+      }
+    );
   }
 }
 
@@ -229,12 +258,20 @@ async function parkRequest(
   error: unknown,
   durable: boolean
 ): Promise<void> {
-  if (durable)
-    await sqlExecutor.execute(
-      `UPDATE ${SUBSCRIPTION_CACHE_INVALIDATIONS_TABLE} SET parked = 1, last_error = :description WHERE id = :id`,
-      { id, description: describeError(error) },
-      writePool
+  try {
+    if (durable)
+      await sqlExecutor.execute(
+        `UPDATE ${SUBSCRIPTION_CACHE_INVALIDATIONS_TABLE} SET parked = 1, last_error = :description WHERE id = :id`,
+        { id, description: describeError(error) },
+        writePool
+      );
+  } catch (parkError) {
+    logger.error(
+      'Could not park malformed subscription cache request; continuing healthy requests',
+      { id, error: describeError(parkError) }
     );
+    return;
+  }
   logger.errorWithDiagnostic(
     {
       operation: 'SUBSCRIPTION_CACHE_REQUEST_INVALID',
@@ -251,7 +288,7 @@ async function saveProgress(ids: string[], cursor: string): Promise<void> {
   await sqlExecutor.execute(
     `UPDATE ${SUBSCRIPTION_CACHE_INVALIDATIONS_TABLE}
      SET scan_cursor = :cursor, next_attempt_at = :nextAttempt, last_error = NULL WHERE id IN (:ids)`,
-    { ids, cursor, nextAttempt: Date.now() + RETRY_DELAY_MS },
+    { ids, cursor, nextAttempt: Date.now() },
     writePool
   );
 }
