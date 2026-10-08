@@ -23,10 +23,10 @@ describe('competition v3 OpenAPI contract', () => {
     .map(([route, pathItem]) => ({ route, operation: pathItem.get! }));
 
   it('documents validation and masking responses for every read', () => {
-    // Default navigation adds one read to the twenty native/foundation reads.
+    // Default navigation and vote activity add two foundation reads.
     // Write-only paths are deliberately excluded, while every GET retains the
     // validation and masked-not-found response guarantees.
-    expect(operations).toHaveLength(21);
+    expect(operations).toHaveLength(22);
     for (const { route, operation } of operations) {
       expect({ route, responses: operation.responses }).toMatchObject({
         route,
@@ -50,6 +50,19 @@ describe('competition v3 OpenAPI contract', () => {
     expect(
       ObjectSerializer.serialize(result, 'ApiDefaultCompetition', '')
     ).toEqual(result);
+  });
+
+  it('documents the activity read and structured pagination/masking errors', () => {
+    const operation =
+      openapi.paths[
+        '/v3/waves/{wave_id}/competitions/{competition_id}/activity'
+      ].get!;
+    expect(operation['x-6529-router'].auth).toBe('optional');
+    for (const status of ['400', '404']) {
+      expect(
+        operation.responses[status].content['application/json'].schema
+      ).toEqual({ $ref: '#/components/schemas/ApiCompetitionError' });
+    }
   });
 
   it('uses one direction type with operation-specific defaults', () => {
