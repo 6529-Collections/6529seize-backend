@@ -1,0 +1,82 @@
+# Chat video previews
+
+`dropVideoConversionInvokerLoop` creates one JPEG preview alongside each new
+drop video's existing HLS and MP4 outputs. The frontend uses the preview as
+the chat player poster, without loading or decoding the video before Play.
+NFT and submission page playback policies are unchanged.
+
+## Storage contract
+
+For an original `drops/<author>/<name>.<extension>` in `S3_BUCKET`, the preview
+is `renditions/drops/<author>/<name>/poster/<name>_poster.0000001.jpg` in the
+same bucket and CloudFront distribution. The key uses MediaConvert's first
+frame-capture number and the `_poster` name modifier. No API, database, or
+upload response field is added.
+
+The JPEG contains the first video frame at quality 80. Fit without upscaling
+keeps its proportions within 640 by 640 pixels, including automatic input
+rotation. A black first frame can still produce a black preview. Preview
+availability is asynchronous; the frontend keeps Play available while a
+preview is missing or processing, and retries only within a bounded period
+while visible and active.
+
+## Conversion and deployment
+
+The worker reads `MC_DROPS_VIDEO_TEMPLATE_NAME`, preserves its codec, audio,
+and group settings, preserves input-selector settings except for forcing
+`VideoSelector.Rotate` to `AUTO`, replaces the existing HLS/MP4 destinations,
+and appends a fully specified JPEG group. The existing regular video outputs
+remain in the same job because MediaConvert requires them for frame capture.
+The shared AWS template is not modified. An incompatible/missing template
+fails before job submission and uses the existing Lambda retry/error path.
+The template must contain exactly one nonempty HLS group and one nonempty
+FILE group for MP4 renditions. Additional or duplicate groups are rejected
+before submission rather than sharing output destinations.
+
+The deployed template, bucket, and bucket region are captured before shared
+secret loading and retained for warm invocations.
+`S3_BUCKET`, `BUCKET_REGION`, and `MC_DROPS_VIDEO_TEMPLATE_NAME` must be
+provided by the function's Serverless environment configuration at cold start;
+they must not be moved solely into the shared secret. `MC_ENDPOINT` and
+`MC_ROLE_ARN` continue to come from the existing `prepEnvironment` secret-loading
+path. The template-scoped policy intentionally attaches to the existing shared
+`lambda-vpc-role`; other users of that role also gain read access to this one
+template. The role ARN and policy role name identify the same configured account.
+
+Each EventBridge event ID produces a stable 64-character job request token.
+MediaConvert deduplicates repeat submissions within its one-minute idempotency
+window. Later redelivery can still submit another job; durable deduplication is
+not introduced here. Keys come from the upload service's generated author/upload
+UUID path and sanitized filename, and are passed as opaque S3 keys.
+
+Deploy only `dropVideoConversionInvokerLoop`, including its template-scoped
+`mediaconvert:GetJobTemplate` IAM policy, before the accompanying frontend.
+The existing endpoint, execution role, template, bucket, and region environment
+configuration remain required. No new environment variable, service, API
+deployment, or database migration is needed. Rolling back the worker stops
+preview generation for future uploads; already generated images remain usable.
+The current service catalog permits this shared-media converter only in
+`staging`; its existing bucket and account are shared configuration, not an
+isolated staging media store. This PR does not change that topology. Check IAM
+propagation and template lookup during release verification.
+
+Before release, submit an authorized test upload and verify the job completes,
+the existing video outputs still play, and the documented JPEG key is served
+by CloudFront. Include a portrait/rotated source. Mocked unit tests do not prove
+the account's live template, IAM permissions, or MediaConvert service acceptance.
+
+## Existing videos
+
+Deploying this change does **not** enumerate or backfill existing uploads.
+Their existing video renditions still play. A separate, explicitly authorized
+backfill can replay selected original video keys through the updated worker;
+this re-runs the whole conversion job, replaces the existing video renditions,
+and incurs conversion cost. An authorized backfill needs its own plan for
+protecting existing renditions; replacement is not atomic across the HLS/MP4
+output objects. Do not replay rendition keys or copy/overwrite originals merely
+to generate S3 events. Check for an existing preview first,
+bound the selected originals, and retain submitted job IDs before any retry.
+There is no automatic backfill or scheduled replay in this PR.
+
+Reference: [AWS frame capture outputs](https://docs.aws.amazon.com/mediaconvert/latest/ug/file-group-with-frame-capture-output.html).
+See also [MediaConvert idempotency](https://docs.aws.amazon.com/mediaconvert/latest/apireference/idempotency.html).
