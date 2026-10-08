@@ -97,6 +97,14 @@ comparison or prevents an otherwise valid wave from transferring. This correctio
 requires deploying `competitionMigrationLoop`; no schema, API or frontend change
 is needed.
 
+Historical decisions share each batch's row budget with their winners. Catch-up
+rebuilds the captured decision keys, including moved and deleted keys, instead of
+replaying the full unchanged history after every source update. Remaining derived
+stages must finish before acknowledging their watermark, and the full independent
+comparison still runs before transfer. This prevents recurring decisions from
+continually restarting a large active wave's history. Deploy only
+`competitionMigrationLoop` for this correction; existing checkpoints remain valid.
+
 Existing positive time locks shorter than the current five-minute creation
 minimum are retained during migration. The native weighted voting runtime already
 supports these durations; the migration snapshot validator accepts them without

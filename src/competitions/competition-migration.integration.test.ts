@@ -13,6 +13,9 @@ import {
   COMPETITION_LEADERBOARD_ENTRIES_TABLE,
   COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE,
   COMPETITION_VOTES_TABLE,
+  COMPETITION_DECISIONS_TABLE,
+  WAVES_DECISIONS_TABLE,
+  WAVES_DECISION_WINNER_DROPS_TABLE,
   DROPS_PARTS_TABLE,
   WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
   WAVE_OUTCOMES_TABLE,
@@ -916,6 +919,163 @@ describeWithSeed(
       );
       expect(report.mismatches).toBeGreaterThan(0);
       expect(report.consecutiveFullWindows).toBe(0);
+    });
+    it('copies empty decisions in bounded pages instead of one decision per checkpoint', async () => {
+      await sqlExecutor.execute(
+        `insert into ${WAVES_DECISIONS_TABLE} (wave_id,decision_time) values ${Array.from({ length: 30 }, (_, index) => `(:waveId,${100 + index})`).join(',')}`,
+        { waveId: wave.id }
+      );
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      while ((await service.status(id)).migration?.stage !== 'DECISIONS')
+        await service.backfill(id, operator, 10);
+      await service.backfill(id, operator, 10);
+      expect(
+        await sqlExecutor.oneOrNull(
+          `select count(*) count from ${COMPETITION_DECISIONS_TABLE} where competition_id=:id`,
+          { id }
+        )
+      ).toEqual({ count: 10 });
+      expect((await service.status(id)).migration?.stage_offset).toBe(109);
+      await service.backfill(id, operator, 10);
+      expect(
+        await sqlExecutor.oneOrNull(
+          `select count(*) count from ${COMPETITION_DECISIONS_TABLE} where competition_id=:id`,
+          { id }
+        )
+      ).toEqual({ count: 20 });
+      await finishBackfill(service);
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
+    });
+
+    it('shares the decision batch budget with winners and resumes the unprocessed decision', async () => {
+      await sqlExecutor.execute(
+        `insert into ${WAVES_DECISIONS_TABLE} (wave_id,decision_time) values (:waveId,100),(:waveId,200),(:waveId,300)`,
+        { waveId: wave.id }
+      );
+      await sqlExecutor.execute(
+        `insert into ${WAVES_DECISION_WINNER_DROPS_TABLE} (wave_id,decision_time,drop_id,ranking,final_vote,prizes) values (:waveId,100,:dropId,1,7,'[]'),(:waveId,200,:dropId,1,7,'[]')`,
+        { waveId: wave.id, dropId: drop.id }
+      );
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      while ((await service.status(id)).migration?.stage !== 'DECISIONS')
+        await service.backfill(id, operator, 3);
+      await service.backfill(id, operator, 3);
+      expect(
+        await sqlExecutor.oneOrNull(
+          `select count(*) count from ${COMPETITION_DECISIONS_TABLE} where competition_id=:id`,
+          { id }
+        )
+      ).toEqual({ count: 1 });
+      expect((await service.status(id)).migration?.stage_offset).toBe(100);
+      await service.backfill(id, operator, 3);
+      expect(
+        await sqlExecutor.oneOrNull(
+          `select count(*) count from ${COMPETITION_DECISIONS_TABLE} where competition_id=:id`,
+          { id }
+        )
+      ).toEqual({ count: 3 });
+    });
+
+    it('catches recurring decisions without replaying unchanged history', async () => {
+      await sqlExecutor.execute(
+        `insert into ${WAVES_DECISIONS_TABLE} (wave_id,decision_time) values (:waveId,100),(:waveId,200),(:waveId,300)`,
+        { waveId: wave.id }
+      );
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await finishBackfill(service);
+      await sqlExecutor.execute(
+        `insert into ${WAVES_DECISIONS_TABLE} (wave_id,decision_time) values (:waveId,400)`,
+        { waveId: wave.id }
+      );
+      await service.catchUp(id, operator, 1);
+      let nextDecision = 500;
+      for (let iteration = 0; iteration < 50; iteration++) {
+        const status = await service.status(id);
+        if (status.migration?.state === 'SHADOWING') break;
+        // A decision arrives on every replayed historical page. A full replay
+        // would keep chasing the growing tail instead of acknowledging capture.
+        if (status.migration?.stage === 'DECISIONS') {
+          await sqlExecutor.execute(
+            `insert into ${WAVES_DECISIONS_TABLE} (wave_id,decision_time) values (:waveId,:time)`,
+            { waveId: wave.id, time: nextDecision++ }
+          );
+        }
+        await service.backfill(id, operator, 1);
+      }
+      const status = await service.status(id);
+      expect(status.migration?.state).toBe('SHADOWING');
+      expect(status.migration?.source_watermark).toBe(
+        status.migration?.applied_watermark
+      );
+      expect(
+        await sqlExecutor.oneOrNull(
+          `select count(*) count from ${COMPETITION_DECISIONS_TABLE} where competition_id=:id`,
+          { id }
+        )
+      ).toEqual({ count: 4 });
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
+      await service.cutover(id, operator, false);
+      expect((await service.verifyNative(id)).failures).toEqual([]);
+    });
+
+    it('rebuilds changed and moved decision keys and removes deleted keys before acknowledging capture', async () => {
+      await sqlExecutor.execute(
+        `insert into ${WAVES_DECISIONS_TABLE} (wave_id,decision_time) values (:waveId,100),(:waveId,200),(:waveId,300)`,
+        { waveId: wave.id }
+      );
+      await sqlExecutor.execute(
+        `update ${DROPS_TABLE} set drop_type='WINNER' where id=:dropId`,
+        { dropId: drop.id }
+      );
+      await sqlExecutor.execute(
+        `insert into ${WAVES_DECISION_WINNER_DROPS_TABLE} (wave_id,decision_time,drop_id,ranking,final_vote,prizes) values (:waveId,100,:dropId,1,7,'[]')`,
+        { waveId: wave.id, dropId: drop.id }
+      );
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await finishBackfill(service);
+      await sqlExecutor.execute(
+        `update ${WAVES_DECISION_WINNER_DROPS_TABLE} set decision_time=200,final_vote=9 where wave_id=:waveId and decision_time=100`,
+        { waveId: wave.id }
+      );
+      await sqlExecutor.execute(
+        `update ${WAVES_DECISIONS_TABLE} set decision_time=400 where wave_id=:waveId and decision_time=300`,
+        { waveId: wave.id }
+      );
+      await sqlExecutor.execute(
+        `delete from ${WAVES_DECISIONS_TABLE} where wave_id=:waveId and decision_time=100`,
+        { waveId: wave.id }
+      );
+      for (let page = 0; page < 3; page++)
+        await service.catchUp(id, operator, 1);
+      await finishBackfill(service);
+      expect((await service.status(id)).operations?.journalLag).toBe(0);
+      expect(
+        await sqlExecutor.execute(
+          `select scheduled_at from ${COMPETITION_DECISIONS_TABLE} where competition_id=:id order by scheduled_at`,
+          { id }
+        )
+      ).toEqual([{ scheduled_at: 200 }, { scheduled_at: 400 }]);
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
     });
     it('replays both keys when a legacy voter identity changes during capture', async () => {
       const service = new CompetitionMigrationService(
