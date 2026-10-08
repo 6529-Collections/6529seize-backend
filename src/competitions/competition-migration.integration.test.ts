@@ -1,4 +1,5 @@
 import { withLegacyCompetitionProfileMerge } from './legacy-competition-profile-merge';
+import { appFeatures } from '@/app-features';
 import { DropVotingDb } from '@/api/drops/drop-voting.db';
 import { migrationCommandConfiguration } from './legacy-competition-configuration';
 import { NativeCompetitionReader } from './native-competition.reader';
@@ -176,9 +177,16 @@ describeWithSeed(
   ],
   () => {
     beforeEach(async () => {
+      jest
+        .spyOn(appFeatures, 'isNativeCompetitionExecutionEnabled')
+        .mockReturnValue(true);
+      jest
+        .spyOn(appFeatures, 'isNativeCompetitionWritesEnabled')
+        .mockReturnValue(true);
       await new CompetitionRepository().ensureLegacyMappingForWave(wave, {});
       await installMigrationCapture(sqlExecutor);
     });
+    afterEach(() => jest.restoreAllMocks());
     it('installs repeatably, captures accepted writes atomically, and never captures rolled-back writes', async () => {
       await installMigrationCapture(sqlExecutor);
       expect(await migrationCaptureHealthy(sqlExecutor, {})).toBe(true);
