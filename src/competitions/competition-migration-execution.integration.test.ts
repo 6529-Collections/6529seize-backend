@@ -25,7 +25,8 @@ import {
   WAVES_DECISIONS_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_DECISION_PAUSES_TABLE,
-  WAVES_TABLE
+  WAVES_TABLE,
+  WAVES_METADATA_TABLE
 } from '@/constants';
 import { WaveType } from '@/entities/IWave';
 import { sqlExecutor } from '@/sql-executor';
@@ -60,6 +61,7 @@ import { LEGACY_INDEFINITE_PAUSE_END } from './legacy-competition-settings.repos
 import { voteForMigratedLegacyEntry } from './legacy-competition-vote.service';
 import { CompetitionMigrationBackfill } from './competition-migration-backfill';
 import { migrateWave } from './wave-migration';
+import { NativeCompetitionReader } from '@/competitions/native-competition.reader';
 
 const active = aWave(
   {
@@ -257,6 +259,30 @@ describeWithSeed(
         `update ${WAVES_TABLE} set updated_at=null where id=:waveId`,
         { waveId: active.id }
       );
+      const presentation = [
+        { data_key: 'wave_display.outcomes.visible', data_value: 'false' },
+        {
+          data_key: 'wave_display.proposals.card_recipe',
+          data_value: '{"version":1,"layout":"summary"}'
+        }
+      ];
+      for (const item of presentation)
+        await sqlExecutor.execute(
+          `insert into ${WAVES_METADATA_TABLE} (wave_id,data_key,data_value) values (:waveId,:key,:value)`,
+          { waveId: active.id, key: item.data_key, value: item.data_value }
+        );
+      const sharedMetadata = {
+        data_key: 'legacy-note',
+        data_value: 'Shared wave metadata remains readable'
+      };
+      await sqlExecutor.execute(
+        `insert into ${WAVES_METADATA_TABLE} (wave_id,data_key,data_value) values (:waveId,:key,:value)`,
+        {
+          waveId: active.id,
+          key: sharedMetadata.data_key,
+          value: sharedMetadata.data_value
+        }
+      );
       for (const [suffix, type] of [
         ['retained-chat', 'CHAT'],
         ['historical-winner-1000', 'WINNER'],
@@ -314,6 +340,26 @@ describeWithSeed(
       );
       expect(result.status.storageMode).toBe('NATIVE');
       expect((await service.verifyNative(id)).failures).toEqual([]);
+      const repository = new CompetitionRepository(() => sqlExecutor);
+      const record = (await repository.findCompetitionRecordById(id, {}))!;
+      const reader = new NativeCompetitionReader(repository, {});
+      expect(
+        (await reader.getCompetition(record, clock.value)).presentation
+      ).toEqual([...presentation, sharedMetadata]);
+      expect(
+        (
+          await competitionCommandRepository.getConfiguration<{
+            presentation: unknown;
+          }>(id, Number(record.config_version), {})
+        ).presentation
+      ).toEqual(presentation);
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set presentation_config='[]' where id=:id`,
+        { id }
+      );
+      expect(
+        (await reader.getCompetition(record, clock.value)).presentation
+      ).toEqual([]);
       const query = (sql: string) =>
         withLegacyCompetitionGetFacade(() =>
           sqlExecutor.execute(sql, { waveId: active.id })

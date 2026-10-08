@@ -1,6 +1,9 @@
 import { Competition } from './competition.types';
 import { ApiCompetitionDraftInput } from '@/api/generated/models/ApiCompetitionDraftInput';
-import { CompetitionDraftSchema } from '@/api/competitions/competition-configuration';
+import {
+  CompetitionDraftSchema,
+  competitionPresentationKeys
+} from '@/api/competitions/competition-configuration';
 
 /** Preserve the legacy upper threshold in the immutable migration snapshot.
  * The native decision/winner records retain the original legacy value. */
@@ -72,7 +75,9 @@ export function migrationCommandConfiguration(
           : []
       })
     ),
-    presentation: []
+    presentation: (c.presentation ?? []).filter((item) =>
+      competitionPresentationKeys.includes(item.data_key)
+    )
   };
   const result = CompetitionDraftSchema.validate(value);
   if (result.error)
