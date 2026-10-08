@@ -842,25 +842,40 @@ export class WaveApiService {
     return this.wavesApiDb.executeNativeQueriesInTransaction(callback);
   }
 
+  private async withWaveSettingsTransaction<T>(
+    callback: (
+      connection: NonNullable<RequestContext['connection']>
+    ) => Promise<T>,
+    ctx: RequestContext
+  ): Promise<T> {
+    return ctx.connection
+      ? callback(ctx.connection)
+      : this.wavesApiDb.executeNativeQueriesInTransaction(callback);
+  }
+
   public async createOrUpdateWavePause(
     waveId: string,
     model: ApiUpdateWaveDecisionPause,
-    ctx: RequestContext
+    ctx: RequestContext,
+    reason?: string
   ): Promise<ApiWave> {
     const wave = await this.assertUserAllowedToModifyPauses(ctx, waveId);
     await this.assertProposedPauseValidForAddOrUpdate(wave, model, ctx);
-    await this.wavesApiDb.executeNativeQueriesInTransaction(
-      async (connection) => {
-        if (model.id) {
-          await this.wavesApiDb.deletePause(model.id, connection);
-        }
-        await this.wavesApiDb.insertPause(
-          { startTime: model.start_time, endTime: model.end_time, waveId },
-          connection
-        );
+    await this.withWaveSettingsTransaction(async (connection) => {
+      if (model.id) {
+        await this.wavesApiDb.deletePause(model.id, connection);
       }
-    );
-    await giveReadReplicaTimeToCatchUp();
+      await this.wavesApiDb.insertPause(
+        {
+          startTime: model.start_time,
+          endTime: model.end_time,
+          waveId,
+          ...(reason === undefined ? {} : { reason })
+        },
+        connection
+      );
+    }, ctx);
+    if (!ctx.connection) await giveReadReplicaTimeToCatchUp();
     const actingAsId = ctx.authenticationContext?.getActingAsId();
     if (!actingAsId) {
       throw new ForbiddenException(`User must be authenticated`);
@@ -1002,7 +1017,9 @@ export class WaveApiService {
     if (authContext?.isAuthenticatedAsProxy()) {
       throw new ForbiddenException(`This action can not be done as proxy`);
     }
-    const wave = await this.wavesApiDb.findById(waveId);
+    const wave = ctx.connection
+      ? await this.wavesApiDb.findWaveById(waveId, ctx.connection)
+      : await this.wavesApiDb.findById(waveId);
     if (!wave) {
       throw new NotFoundException(`Wave not found`);
     }
@@ -2244,135 +2261,130 @@ export class WaveApiService {
       await this.userGroupsService.getGroupsUserIsEligibleFor(
         authenticatedProfileId
       );
-    return await this.wavesApiDb.executeNativeQueriesInTransaction(
-      async (connection) => {
-        const ctxWithConnection = { ...ctx, connection };
-        const waveBeforeUpdate = await this.wavesApiDb.findWaveByIdForUpdate(
-          waveId,
-          ctxWithConnection
-        );
-        if (!waveBeforeUpdate) {
-          throw new NotFoundException(`Wave ${waveId} not found`);
-        }
-        const currentMillis = Time.currentMillis();
-        await this.validateWaveUpdateAccessAndConstraints({
-          waveId,
+    return await this.withWaveSettingsTransaction(async (connection) => {
+      const ctxWithConnection = { ...ctx, connection };
+      const waveBeforeUpdate = await this.wavesApiDb.findWaveByIdForUpdate(
+        waveId,
+        ctxWithConnection
+      );
+      if (!waveBeforeUpdate) {
+        throw new NotFoundException(`Wave ${waveId} not found`);
+      }
+      const currentMillis = Time.currentMillis();
+      await this.validateWaveUpdateAccessAndConstraints({
+        waveId,
+        request,
+        waveBeforeUpdate,
+        authenticatedProfileId,
+        groupsUserIsEligibleFor,
+        ctxWithConnection,
+        currentMillis
+      });
+      this.assertMaxVotesPerIdentityToDropCanBeUpdated({
+        request,
+        waveBeforeUpdate
+      });
+      this.assertChangedDecisionStrategyStartsInFuture({
+        request,
+        waveBeforeUpdate,
+        currentMillis
+      });
+      this.assertImmutableWaveUpdateFieldsUnchanged({
+        request,
+        waveBeforeUpdate
+      });
+      await this.validateWaveRelations(
+        request,
+        ctxWithConnection,
+        waveBeforeUpdate
+      );
+      await this.validateWaveParentOnUpdate({
+        waveBeforeUpdate,
+        groupIdsUserIsEligibleFor: groupsUserIsEligibleFor,
+        ctx: ctxWithConnection
+      });
+      await this.wavesApiDb.deleteWave(waveId, ctxWithConnection);
+      const waveUpdateTime = Time.currentMillis();
+      const updatedEntity = await this.waveMappers.createWaveToNewWaveEntity({
+        id: waveId,
+        serial_no: waveBeforeUpdate.serial_no,
+        created_at: waveBeforeUpdate.created_at,
+        updated_at: waveUpdateTime,
+        request,
+        created_by: waveBeforeUpdate.created_by,
+        descriptionDropId: waveBeforeUpdate.description_drop_id,
+        nextDecisionTime: this.getNextDecisionTimeForWaveUpdate({
           request,
           waveBeforeUpdate,
-          authenticatedProfileId,
-          groupsUserIsEligibleFor,
-          ctxWithConnection,
-          currentMillis
-        });
-        this.assertMaxVotesPerIdentityToDropCanBeUpdated({
-          request,
-          waveBeforeUpdate
-        });
-        this.assertChangedDecisionStrategyStartsInFuture({
-          request,
-          waveBeforeUpdate,
-          currentMillis
-        });
-        this.assertImmutableWaveUpdateFieldsUnchanged({
-          request,
-          waveBeforeUpdate
-        });
-        await this.validateWaveRelations(
-          request,
-          ctxWithConnection,
-          waveBeforeUpdate
-        );
-        await this.validateWaveParentOnUpdate({
-          waveBeforeUpdate,
-          groupIdsUserIsEligibleFor: groupsUserIsEligibleFor,
-          ctx: ctxWithConnection
-        });
-        await this.wavesApiDb.deleteWave(waveId, ctxWithConnection);
-        const waveUpdateTime = Time.currentMillis();
-        const updatedEntity = await this.waveMappers.createWaveToNewWaveEntity({
-          id: waveId,
-          serial_no: waveBeforeUpdate.serial_no,
-          created_at: waveBeforeUpdate.created_at,
-          updated_at: waveUpdateTime,
-          request,
-          created_by: waveBeforeUpdate.created_by,
-          descriptionDropId: waveBeforeUpdate.description_drop_id,
-          nextDecisionTime: this.getNextDecisionTimeForWaveUpdate({
-            request,
-            waveBeforeUpdate,
-            waveUpdateTime
-          }),
-          isDirectMessage: waveBeforeUpdate.is_direct_message ?? false,
-          existingSubmissionStrategy: waveBeforeUpdate,
-          existingWaveSettings: waveBeforeUpdate
-        });
+          waveUpdateTime
+        }),
+        isDirectMessage: waveBeforeUpdate.is_direct_message ?? false,
+        existingSubmissionStrategy: waveBeforeUpdate,
+        existingWaveSettings: waveBeforeUpdate
+      });
 
-        await this.wavesApiDb.insertWave(updatedEntity, ctxWithConnection);
+      await this.wavesApiDb.insertWave(updatedEntity, ctxWithConnection);
 
-        if (
-          this.shouldClearApproveThresholdState({
-            request,
-            waveBeforeUpdate
-          })
-        ) {
-          await this.dropVotingService.clearWaveLeaderboardEntriesOverThresholdSinceByWaveId(
-            waveId,
-            ctxWithConnection
-          );
-        }
-        await this.metricsRecorder.recordActiveIdentity(
-          { identityId: authenticatedProfileId },
-          ctxWithConnection
-        );
-        const newVisibilityGroupId = request.visibility.scope.group_id;
-        const oldVisibilityGroupId = waveBeforeUpdate.visibility_group_id;
-        if (newVisibilityGroupId !== oldVisibilityGroupId) {
-          await Promise.all([
-            this.wavesApiDb.updateVisibilityInFeedEntities(
-              { waveId, newVisibilityGroupId },
-              ctxWithConnection
-            ),
-            this.wavesApiDb.updateVisibilityInNotifications(
-              { waveId, newVisibilityGroupId },
-              ctxWithConnection
-            )
-          ]);
-        }
-        const noRightToVote =
-          authenticationContext.isAuthenticatedAsProxy() &&
-          !authenticationContext.activeProxyActions[
-            ProfileProxyActionType.RATE_WAVE_DROP
-          ];
-        const noRightToParticipate =
-          authenticationContext.isAuthenticatedAsProxy() &&
-          !authenticationContext.activeProxyActions[
-            ProfileProxyActionType.CREATE_DROP_TO_WAVE
-          ];
-        const waveEntity = await this.wavesApiDb.findWaveById(
+      if (
+        this.shouldClearApproveThresholdState({
+          request,
+          waveBeforeUpdate
+        })
+      ) {
+        await this.dropVotingService.clearWaveLeaderboardEntriesOverThresholdSinceByWaveId(
           waveId,
-          connection
-        );
-        if (!waveEntity) {
-          throw new NotFoundException(`Wave ${waveId} not found`);
-        }
-        // Evaluate the final roles explicitly; the catalogue query in a
-        // separate transaction cannot observe the uncommitted wave edit.
-        const responseGroupsUserIsEligibleFor =
-          await this.userGroupsService.getGroupsUserIsEligibleForByIds(
-            authenticatedProfileId,
-            waveGroupIds(waveEntity)
-          );
-        return await this.waveMappers.waveEntityToApiWave(
-          {
-            waveEntity,
-            groupIdsUserIsEligibleFor: responseGroupsUserIsEligibleFor,
-            noRightToVote,
-            noRightToParticipate
-          },
           ctxWithConnection
         );
       }
-    );
+      await this.metricsRecorder.recordActiveIdentity(
+        { identityId: authenticatedProfileId },
+        ctxWithConnection
+      );
+      const newVisibilityGroupId = request.visibility.scope.group_id;
+      const oldVisibilityGroupId = waveBeforeUpdate.visibility_group_id;
+      if (newVisibilityGroupId !== oldVisibilityGroupId) {
+        await Promise.all([
+          this.wavesApiDb.updateVisibilityInFeedEntities(
+            { waveId, newVisibilityGroupId },
+            ctxWithConnection
+          ),
+          this.wavesApiDb.updateVisibilityInNotifications(
+            { waveId, newVisibilityGroupId },
+            ctxWithConnection
+          )
+        ]);
+      }
+      const noRightToVote =
+        authenticationContext.isAuthenticatedAsProxy() &&
+        !authenticationContext.activeProxyActions[
+          ProfileProxyActionType.RATE_WAVE_DROP
+        ];
+      const noRightToParticipate =
+        authenticationContext.isAuthenticatedAsProxy() &&
+        !authenticationContext.activeProxyActions[
+          ProfileProxyActionType.CREATE_DROP_TO_WAVE
+        ];
+      const waveEntity = await this.wavesApiDb.findWaveById(waveId, connection);
+      if (!waveEntity) {
+        throw new NotFoundException(`Wave ${waveId} not found`);
+      }
+      // Evaluate the final roles explicitly; the catalogue query in a
+      // separate transaction cannot observe the uncommitted wave edit.
+      const responseGroupsUserIsEligibleFor =
+        await this.userGroupsService.getGroupsUserIsEligibleForByIds(
+          authenticatedProfileId,
+          waveGroupIds(waveEntity)
+        );
+      return await this.waveMappers.waveEntityToApiWave(
+        {
+          waveEntity,
+          groupIdsUserIsEligibleFor: responseGroupsUserIsEligibleFor,
+          noRightToVote,
+          noRightToParticipate
+        },
+        ctxWithConnection
+      );
+    }, ctx);
   }
 
   async setPinnedDrop(

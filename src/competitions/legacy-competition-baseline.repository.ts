@@ -1,3 +1,4 @@
+import { LEGACY_INDEFINITE_PAUSE_END } from './legacy-competition-settings.repository';
 import { legacyCompetitionEntryId } from '@/competitions/competition-id';
 import {
   DROPS_TABLE,
@@ -493,7 +494,10 @@ export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleS
       })),
       pauses: pauses.map((pause) => ({
         start_time: Number(pause.start_time),
-        end_time: numeric(pause.end_time)
+        end_time:
+          Number(pause.end_time) === LEGACY_INDEFINITE_PAUSE_END
+            ? null
+            : numeric(pause.end_time)
       })),
       capabilities: capabilities(record.wave_id)
     };
