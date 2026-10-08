@@ -306,3 +306,5 @@ export * from './ICompetitionEntryContentVersion';
 export * from './ICompetitionCapabilityAudit';
 export { PushNotificationOutboxEntity } from './IPushNotificationOutbox';
 export * from './ICompetitionMigration';
+
+export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalidation';

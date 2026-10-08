@@ -1520,6 +1520,47 @@ a failed later quantity page cannot prevent eviction of committed eligibility.
 After successful reset reconciliation, the demonstrated-intent coverage refresh
 also includes removed keys so their projected eligibility is recomputed.
 
+Subscription cache invalidation records post-commit batches in
+`subscription_cache_invalidations` before attempting Redis. Each attempt scans
+subscription response keys once, deletes matching keys individually with bounded
+concurrency, and owns a separate Redis connection that closes at the 1.5-second
+deadline. Fully processed SCAN pages are checkpointed using the exact Redis cursor;
+continuations are immediately eligible for the next drain and resume there, while
+partially deleted pages are replayed. A healthy
+continuation does not increment failure counts or emit an error alert. Failed
+batches remain durable and are drained by `ownersBalancesLoop` on every invocation,
+including empty balance deltas. Requests with different cursors or retry histories
+are processed separately so a repeatedly failing request does not escalate a fresh
+one. Malformed requests are parked with a terminal diagnostic for operator repair;
+they are excluded from subsequent drains. A failed parking write is reported but
+does not block healthy requests. Checkpoint and acknowledgement write failures
+emit separate bookkeeping diagnostics, preserve existing retry rows, and do not
+increment Redis failure counts.
+The first two known timeout/network failures are reported with pending recovery;
+unclassified and later failures require investigation while retries continue.
+Missing Redis configuration retains work and reports failure; explicit
+`FORCE_AVOID_REDIS=true` skips eviction visibly and acknowledges the requests.
+
+`ownersBalancesLoop/serverless.yaml` already enforces reserved concurrency one,
+serializing the retry drain. Each writer attempts its newly recorded requests
+immediately; their initial retry eligibility is delayed by 60 seconds. The owners
+loop opts into transient Redis connection diagnostics at cold-start initialization;
+its error listener and counter remain installed on the warm shared client. The
+first two known connection errors before readiness are amber, readiness resets the
+counter, and unknown or repeated errors remain red. Other services retain their
+existing connection-alert behavior. Successful attempts delete only their captured
+request IDs, preserving concurrent writes. Bookkeeping failures cannot roll back
+committed balances; existing response TTLs remain a fallback, including the small
+post-commit gap before recording a request.
+
+The rollout order is mandatory: `dbMigrationsLoop` with full schema sync first,
+then `ownersBalancesLoop`, `subscriptionsTopUpLoop`, and `api`. The new entity is
+exported in the full TypeORM entity registry; the deploy workflow invokes the
+migration Lambda with `schema_scope=full` to create the table and its fields. The
+service catalog declares schema sync as an owners-loop dependency. Skipping that
+step causes retry reads/writes to fail and emit red bookkeeping diagnostics;
+balance processing continues, but durable invalidation recovery is unavailable.
+
 Subscription coverage uses a DB-backed scheduled reconciliation pattern without
 a cross-service dirty-event queue. Top-up, redemption, subscription
 preference/selection, daily finalization, and consolidated eligibility writes
