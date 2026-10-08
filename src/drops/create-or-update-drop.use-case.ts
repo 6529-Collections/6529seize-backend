@@ -2256,17 +2256,21 @@ export class CreateOrUpdateDropUseCase {
         connection,
         timer
       ),
-      this.dropVotingDb.upsertWaveLeaderboardEntry(
-        {
-          drop_id: dropId,
-          wave_id: wave.id,
-          vote: 0,
-          vote_on_decision_time: 0,
-          over_threshold_since_ms: null,
-          timestamp: createdAt
-        },
-        { connection, timer }
-      ),
+      // Dedicated native entries initialize their own runtime. A migrated
+      // primary's legacy voting tables must remain frozen for these drops.
+      isNativeEntryContent
+        ? undefined
+        : this.dropVotingDb.upsertWaveLeaderboardEntry(
+            {
+              drop_id: dropId,
+              wave_id: wave.id,
+              vote: 0,
+              vote_on_decision_time: 0,
+              over_threshold_since_ms: null,
+              timestamp: createdAt
+            },
+            { connection, timer }
+          ),
       this.dropsDb.insertDropMedia(
         parts
           .map(
@@ -2316,15 +2320,17 @@ export class CreateOrUpdateDropUseCase {
         },
         { connection, timer }
       ),
-      this.dropVotingDb.saveDropRealVoteInTime(
-        {
-          drop_id: dropId,
-          wave_id: wave.id,
-          timestamp: createdAt,
-          vote: 0
-        },
-        { timer, connection }
-      )
+      isNativeEntryContent
+        ? undefined
+        : this.dropVotingDb.saveDropRealVoteInTime(
+            {
+              drop_id: dropId,
+              wave_id: wave.id,
+              timestamp: createdAt,
+              vote: 0
+            },
+            { timer, connection }
+          )
     ]);
     await this.dropMediaUploadsDb.attachUploadsToDrop({
       mediaUploadIds: parts

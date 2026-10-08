@@ -762,7 +762,7 @@ export class CompetitionMigrationBackfill {
         decision_rating: number;
       }>(
         `with source as (select d.id as drop_id,d.serial_no,d.created_at as submitted_at,
-       if(w.time_lock_ms>0,coalesce(l.vote,0),coalesce(r.vote,0)) as rating,coalesce(r.vote,0) as real_time_rating,
+       cast(if(w.time_lock_ms>0,coalesce(l.vote,0),coalesce(r.vote,0)) as signed) as rating,cast(coalesce(r.vote,0) as signed) as real_time_rating,
        if(w.time_lock_ms>0,coalesce(l.timestamp,d.created_at),coalesce(r.last_increased,d.created_at)) as tie_time,
        coalesce(l.timestamp,d.created_at) as ordering_time,coalesce(l.vote_on_decision_time,coalesce(r.vote,0)) as decision_rating
        from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id=d.wave_id left join ${DROP_RANK_TABLE} r on r.drop_id=d.id left join ${WAVE_LEADERBOARD_ENTRIES_TABLE} l on l.wave_id=d.wave_id and l.drop_id=d.id where d.wave_id=:waveId and d.drop_type='PARTICIPATORY'),

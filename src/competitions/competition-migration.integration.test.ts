@@ -9,6 +9,7 @@ import {
 } from './legacy-competition-get-facade';
 import {
   COMPETITION_ENTRIES_TABLE,
+  COMPETITION_LEADERBOARD_ENTRIES_TABLE,
   COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE,
   COMPETITION_VOTES_TABLE,
   DROPS_PARTS_TABLE,
@@ -293,6 +294,90 @@ describeWithSeed(
           )
         )?.storage_mode
       ).toBe('LEGACY_ADAPTER');
+    });
+    it('ranks text-backed positive and negative legacy totals numerically during backfill', async () => {
+      const votes = [-5, -2, 12, 9];
+      for (let index = 0; index < votes.length; index++) {
+        const vote = votes[index];
+        const params = {
+          dropId: `numeric-migration-drop-${index}`,
+          waveId: wave.id,
+          vote: String(vote),
+          spent: Math.abs(vote),
+          timestamp: 20 + index
+        };
+        await sqlExecutor.execute(
+          `insert into ${DROPS_TABLE} (id,wave_id,author_id,created_at,parts_count,drop_type,hide_link_preview)
+           values (:dropId,:waveId,'fixture-author',:timestamp,1,'PARTICIPATORY',0)`,
+          params
+        );
+        await sqlExecutor.execute(
+          `insert into ${DROPS_PARTS_TABLE} (drop_id,drop_part_id,content) values (:dropId,1,'numeric sorting fixture')`,
+          params
+        );
+        await sqlExecutor.execute(
+          `insert into ${DROP_RANK_TABLE} (drop_id,wave_id,vote,last_increased) values (:dropId,:waveId,:vote,0)`,
+          params
+        );
+        await sqlExecutor.execute(
+          `insert into ${DROP_VOTER_STATE_TABLE} (drop_id,wave_id,voter_id,votes) values (:dropId,:waveId,'fixture-voter',:vote)`,
+          params
+        );
+        await sqlExecutor.execute(
+          `insert into ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} (drop_id,wave_id,voter_id,credit_spent,created_at)
+           values (:dropId,:waveId,'fixture-voter',:spent,:timestamp)`,
+          params
+        );
+      }
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await finishBackfill(service);
+      expect(
+        await sqlExecutor.execute(
+          `select rating,\`rank\` from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id=:id order by \`rank\``,
+          { id }
+        )
+      ).toEqual([
+        { rating: 12, rank: 1 },
+        { rating: 9, rank: 2 },
+        { rating: 7, rank: 3 },
+        { rating: -2, rank: 4 },
+        { rating: -5, rank: 5 }
+      ]);
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
+    });
+    it('rebuilds derived shadow data on retry after a failed independent comparison', async () => {
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await finishBackfill(service);
+      await sqlExecutor.execute(
+        `update ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} set \`rank\`=9 where competition_id=:id`,
+        { id }
+      );
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(1);
+      expect((await service.status(id)).storageMode).toBe('LEGACY_ADAPTER');
+      const resumed = await service.resumeMigration(id, operator);
+      expect(resumed.migration).toMatchObject({
+        state: 'BACKFILLING',
+        stage: 'ENTRIES',
+        stage_offset: 0,
+        source_watermark: 0,
+        applied_watermark: 0,
+        completed_stages: ['CONFIGURATION', 'OUTCOMES']
+      });
+      await finishBackfill(service);
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
+      expect(await service.cutover(id, operator, true)).toMatchObject({
+        failures: []
+      });
     });
     it('counts seven full consecutive windows, resets on independent mismatch, and refuses a partial window', async () => {
       let clock = 1000000;
