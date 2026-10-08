@@ -417,6 +417,10 @@ export class CompetitionDecisionWinnerEntity {
   @PrimaryColumn({ type: 'varchar', length: 36 })
   readonly entry_id!: string;
 
+  // Imported history can outlive a deleted source drop and its entry.
+  @Column({ type: 'varchar', length: 36, nullable: true, default: null })
+  readonly legacy_drop_id!: string | null;
+
   @Column({ type: 'varchar', length: 36, nullable: false })
   @Index()
   readonly competition_id!: string;

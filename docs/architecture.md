@@ -1088,6 +1088,11 @@ rebuilds only captured decision keys; it does not replay unchanged decision hist
 when refreshing entries, ranks, awards and archives. The applied watermark remains
 behind until these derived stages finish, and full comparison remains mandatory.
 This lets a large active history converge while recurring decisions continue.
+Imported decision winners retain a nullable `legacy_drop_id`, preserving source
+history and prizes even when the drop was deleted before migration. Historical
+winner reads do not recreate an entry or its deleted content. Deploy the additive
+column and compatibility view through `dbMigrationsLoop` first, then `api`, then
+`competitionMigrationLoop`. Older workers remain compatible with the nullable column.
 
 `competitionMigrationLoop` accepts `{"wave_id":"<uuid>"}` from an IAM-authorized
 AWS Console/SDK invocation. It derives staging (`eu-west-1`) or production
