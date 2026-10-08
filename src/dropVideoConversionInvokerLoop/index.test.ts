@@ -1,4 +1,8 @@
 const mockSend = jest.fn();
+const mockHasDevicePoster = jest.fn();
+jest.mock('./has-device-poster', () => ({
+  hasDeviceVideoPoster: (...args: unknown[]) => mockHasDevicePoster(...args)
+}));
 const mockPrepEnvironment = jest.fn();
 const mockDoInDbContext = jest.fn();
 const mockLoggerInfo = jest.fn();
@@ -64,6 +68,7 @@ describe('dropVideoConversionInvokerLoop', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockSend.mockReset();
+    mockHasDevicePoster.mockReset().mockResolvedValue(false);
     mockPrepEnvironment.mockResolvedValue(undefined);
     mockSend.mockResolvedValue(undefined).mockResolvedValueOnce({
       JobTemplate: {
@@ -126,6 +131,17 @@ describe('dropVideoConversionInvokerLoop', () => {
       settings?.OutputGroups?.[2].OutputGroupSettings?.FileGroupSettings
         ?.Destination
     ).toBe('s3://6529-test-bucket/renditions/drops/example-video/poster/');
+  });
+
+  it('skips JPEG generation when the API has already stored a validated device poster', async () => {
+    mockHasDevicePoster.mockResolvedValue(true);
+    await handler(
+      { detail: { object: { key: 'drops/clip.mp4' } } },
+      {} as any,
+      jest.fn()
+    );
+    const settings = jest.mocked(CreateJobCommand).mock.calls[0][0].Settings;
+    expect(settings?.OutputGroups).toHaveLength(2);
   });
 
   it('does not submit a partially configured job when the template is unavailable', async () => {

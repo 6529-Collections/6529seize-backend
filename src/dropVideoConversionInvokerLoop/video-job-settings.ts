@@ -38,7 +38,8 @@ function withDestination(group: OutputGroup, destination: string): OutputGroup {
 export function buildDropVideoJobSettings(
   template: JobTemplateSettings,
   bucket: string,
-  key: string
+  key: string,
+  generatePoster = true
 ): JobSettings {
   const groups = template.OutputGroups ?? [];
   const hlsGroups = groups.filter(
@@ -67,35 +68,40 @@ export function buildDropVideoJobSettings(
         VideoSelector: { ...input?.VideoSelector, Rotate: 'AUTO' }
       }
     ],
-    OutputGroups: [
-      ...groups.map((group) => withDestination(group, destination)),
-      {
-        Name: 'Chat poster',
-        OutputGroupSettings: {
-          Type: 'FILE_GROUP_SETTINGS',
-          FileGroupSettings: { Destination: `${destination}/poster/` }
-        },
-        Outputs: [
-          {
-            NameModifier: '_poster',
-            ContainerSettings: { Container: 'RAW' },
-            VideoDescription: {
-              Width: 640,
-              Height: 640,
-              ScalingBehavior: 'FIT_NO_UPSCALE',
-              CodecSettings: {
-                Codec: 'FRAME_CAPTURE',
-                FrameCaptureSettings: {
-                  FramerateNumerator: 1,
-                  FramerateDenominator: 1,
-                  MaxCaptures: 2,
-                  Quality: 80
-                }
+    OutputGroups: groups
+      .map((group) => withDestination(group, destination))
+      .concat(
+        generatePoster
+          ? [
+              {
+                Name: 'Chat poster',
+                OutputGroupSettings: {
+                  Type: 'FILE_GROUP_SETTINGS',
+                  FileGroupSettings: { Destination: `${destination}/poster/` }
+                },
+                Outputs: [
+                  {
+                    NameModifier: '_poster',
+                    ContainerSettings: { Container: 'RAW' },
+                    VideoDescription: {
+                      Width: 640,
+                      Height: 640,
+                      ScalingBehavior: 'FIT_NO_UPSCALE',
+                      CodecSettings: {
+                        Codec: 'FRAME_CAPTURE',
+                        FrameCaptureSettings: {
+                          FramerateNumerator: 1,
+                          FramerateDenominator: 1,
+                          MaxCaptures: 2,
+                          Quality: 80
+                        }
+                      }
+                    }
+                  }
+                ]
               }
-            }
-          }
-        ]
-      }
-    ]
+            ]
+          : []
+      )
   };
 }
