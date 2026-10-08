@@ -5,6 +5,7 @@ import * as claims from '@/waves/claims-builder-publisher';
 import * as pushes from '@/api/push-notifications/push-notifications.service';
 import {
   COMPETITION_DECISIONS_TABLE,
+  COMPETITIONS_TABLE,
   COMPETITION_MIGRATIONS_TABLE,
   COMPETITION_VOTES_TABLE,
   IDENTITIES_TABLE,
@@ -694,6 +695,22 @@ describeWithSeed(
         expect(await replace(9)).toBe(false);
         expect(await replace(7)).toBe(true);
         expect(await replace(7)).toBe(false);
+        await sqlExecutor.execute(
+          `update ${COMPETITIONS_TABLE} set voting_config=json_set(voting_config,'$.signature_required',true) where id=:id`,
+          { id }
+        );
+        await expect(replace(9)).rejects.toThrow('requires a signed vote');
+        await expect(replace(7)).rejects.toThrow('requires a signed vote');
+        expect(
+          await sqlExecutor.execute(
+            `select value from ${COMPETITION_VOTES_TABLE} where competition_id=:id`,
+            { id }
+          )
+        ).toEqual([{ value: 7 }]);
+        await sqlExecutor.execute(
+          `update ${COMPETITIONS_TABLE} set voting_config=json_set(voting_config,'$.signature_required',false) where id=:id`,
+          { id }
+        );
         now.mockRestore();
         expect((await service.status(id)).migration?.source_watermark).toBe(0);
         clock.value = type === 'RANK' ? 3000001 : 2000001;
