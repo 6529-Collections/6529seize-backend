@@ -604,7 +604,7 @@ describeWithSeed(
       });
     });
 
-    it('orders text-backed realtime vote totals numerically in submission badges', async () => {
+    it('orders text-backed realtime vote totals numerically in submission badges and legacy drop ranks', async () => {
       const votes = [9, 12, -2, -5, -14];
       const dropIds = votes.map((_, index) => `numeric-summary-${index}`);
       for (let index = 0; index < votes.length; index++) {
@@ -627,6 +627,11 @@ describeWithSeed(
         ctx
       );
       expect(dropIds.map((id) => result[id].place)).toEqual([2, 1, 3, 4, 5]);
+      const legacyRanks = await repo.getParticipationDropsRealtimeRanks(
+        dropIds,
+        ctx
+      );
+      expect(dropIds.map((id) => legacyRanks[id])).toEqual([2, 1, 3, 4, 5]);
     });
 
     it('uses weighted rank and rates for time-locked participatory drops', async () => {
