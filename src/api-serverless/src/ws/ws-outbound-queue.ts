@@ -1,5 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { sqs } from '@/sqs';
+import { DURABLE_UPDATES_CAPABILITY } from './ws-shared';
 
 export const WS_OUTBOUND_QUEUE = 'websocket-outbound.fifo';
 export interface QueuedWebSocketFrame {
@@ -9,6 +10,7 @@ export interface QueuedWebSocketFrame {
   message: string;
   identityId: string | null;
   jwtExpiry: number;
+  deliveryCapability?: typeof DURABLE_UPDATES_CAPABILITY;
 }
 
 /** Persist a session-bound frame in its connection FIFO group; reject failed acceptance. */
@@ -35,6 +37,8 @@ export function parseQueuedWebSocketFrame(body: string): QueuedWebSocketFrame {
   const frame = JSON.parse(body) as Partial<QueuedWebSocketFrame> | null;
   if (
     frame?.version !== 1 ||
+    (frame.deliveryCapability !== undefined &&
+      frame.deliveryCapability !== DURABLE_UPDATES_CAPABILITY) ||
     typeof frame.id !== 'string' ||
     !frame.id ||
     typeof frame.connectionId !== 'string' ||

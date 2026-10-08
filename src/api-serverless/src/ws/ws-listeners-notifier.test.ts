@@ -75,14 +75,19 @@ describe('WsListenersNotifier', () => {
 
   afterEach(() => jest.restoreAllMocks());
 
-  it('only wakes the outbox for a post-commit production poll update', async () => {
+  it('wakes the outbox and excludes capable clients from immediate poll fan-out', async () => {
     const originalNodeEnvironment = process.env.NODE_ENV;
     process.env.NODE_ENV = 'staging';
     const send = jest.fn();
     const wakeOutbox = jest.fn().mockResolvedValue(undefined);
     const notifier = new WsListenersNotifier(
       { send } as never,
-      {} as never,
+      {
+        getCurrentlyOnlineCommunityMemberConnectionIds: jest
+          .fn()
+          .mockResolvedValue([{ connectionId: 'capable', profileId: 'p' }]),
+        filterConnectionIdsByDeliveryMode: jest.fn().mockResolvedValue([])
+      } as never,
       contentModerationDb,
       wakeOutbox
     );
@@ -104,6 +109,122 @@ describe('WsListenersNotifier', () => {
       else process.env.NODE_ENV = originalNodeEnvironment;
     }
   });
+
+  it.each([
+    'drop',
+    'rating',
+    'reaction',
+    'delete',
+    'identity',
+    'dm',
+    'attachment',
+    'nft'
+  ] as const)(
+    'keeps immediate legacy %s fan-out and excludes capable sessions of the same profile',
+    async (kind) => {
+      const originalNodeEnvironment = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'staging';
+      const send = jest.fn().mockResolvedValue(undefined);
+      const wake = jest.fn().mockResolvedValue(undefined);
+      const ids = ['legacy', 'capable'];
+      const rows = ids.map((connectionId) => ({
+        connectionId,
+        profileId: 'p',
+        wave_id: 'wave-1'
+      }));
+      const repository = {
+        getCurrentlyOnlineCommunityMemberConnectionIds: jest
+          .fn()
+          .mockResolvedValue(rows),
+        getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast: jest
+          .fn()
+          .mockResolvedValue(rows),
+        findNotificationConnectionIdsByIdentityIds: jest
+          .fn()
+          .mockResolvedValue(
+            ids.map((connectionId) => ({ connectionId, identityId: 'p' }))
+          ),
+        filterConnectionIdsByDeliveryMode: jest
+          .fn()
+          .mockResolvedValue(['legacy']),
+        findConnectionIdsByIdentityId: jest.fn().mockResolvedValue(ids),
+        findAllConnectionIds: jest.fn().mockResolvedValue(ids),
+        findWaveVisibilityGroupId: jest.fn().mockResolvedValue(null)
+      };
+      const notifier = new WsListenersNotifier(
+        { send } as never,
+        repository as never,
+        contentModerationDb,
+        wake
+      );
+      const timer = { start: jest.fn(), stop: jest.fn() };
+      const ctx = { timer } as never;
+      try {
+        switch (kind) {
+          case 'drop':
+            await notifier.notifyAboutDropUpdate(createDrop('content'), ctx);
+            break;
+          case 'rating':
+            await notifier.notifyAboutDropRatingUpdate(
+              createDrop('content'),
+              ctx
+            );
+            break;
+          case 'reaction':
+            await notifier.notifyAboutDropReactionUpdate(
+              createDrop('content'),
+              ctx
+            );
+            break;
+          case 'delete':
+            await notifier.notifyAboutDropDelete(
+              { drop_id: 'd', wave_id: 'wave-1', drop_serial: 42 },
+              null,
+              ctx
+            );
+            break;
+          case 'identity':
+            await notifier.notifyAboutIdentityNotificationsChanged(['p']);
+            break;
+          case 'dm':
+            await notifier.notifyAboutDmUnreadStateChanged([
+              { profile_id: 'p', wave_id: 'wave-1', version: 2 }
+            ] as never);
+            break;
+          case 'attachment':
+            await notifier.notifyAboutAttachmentStatusUpdate(
+              {
+                attachment: { id: 'a' },
+                ownerProfileId: 'p',
+                waveIds: ['wave-1']
+              } as never,
+              ctx
+            );
+            break;
+          case 'nft':
+            await notifier.notifyAboutNftLinkUpdate(
+              { canonical_id: 'n' } as never,
+              ctx
+            );
+            break;
+        }
+        expect(wake).toHaveBeenCalledTimes(1);
+        expect(
+          repository.filterConnectionIdsByDeliveryMode
+        ).toHaveBeenCalledWith(ids, false, expect.anything());
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(send).toHaveBeenCalledWith(
+          expect.objectContaining({ connectionId: 'legacy', legacyOnly: true })
+        );
+        expect(timer.stop.mock.calls).toEqual(
+          expect.arrayContaining(timer.start.mock.calls)
+        );
+        expect(timer.stop).toHaveBeenCalledTimes(timer.start.mock.calls.length);
+      } finally {
+        process.env.NODE_ENV = originalNodeEnvironment;
+      }
+    }
+  );
 
   it('resolves wave listeners once and sends every bulk drop deletion in order', async () => {
     const appWebSockets = {

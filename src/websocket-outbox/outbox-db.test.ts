@@ -31,10 +31,31 @@ describe('transactional WebSocket capture', () => {
     expect(transaction).not.toHaveBeenCalled();
     expect(execute).toHaveBeenCalledWith(
       expect.stringContaining('insert into websocket_outbox'),
-      expect.objectContaining({ event: '{"type":"identity","profileId":"p"}' }),
+      expect.objectContaining({
+        event:
+          '{"type":"identity","profileId":"p","deliveryCapability":"durable_updates_v1"}'
+      }),
       { wrappedConnection: connection }
     );
   });
+  it('marks new bulk resource capture but preserves historical child intents during worker materialization', async () => {
+    const bulkInsert = jest.fn().mockResolvedValue(undefined);
+    const executor = { bulkInsert } as unknown as SqlExecutor;
+    const event = {
+      type: 'drop' as const,
+      dropId: 'd',
+      updateType: 'DROP_UPDATE' as const
+    };
+    await recordWebSocketEvents([event], { connection }, executor, 123);
+    expect(JSON.parse(bulkInsert.mock.calls[0][1][0].event)).toEqual({
+      ...event,
+      deliveryCapability: 'durable_updates_v1'
+    });
+    await recordWebSocketEvents([event], { connection }, executor, 123, true);
+    expect(JSON.parse(bulkInsert.mock.calls[1][1][0].event)).toEqual(event);
+    expect(bulkInsert.mock.calls[1][1][0].created_at).toBe(123);
+  });
+
   it('opens one transaction when the mutation has none', async () => {
     await withWebSocketMutation(db, {}, async (ctx) => {
       await db.execute(

@@ -115,6 +115,53 @@ describe('IdentityMutesApiService DM unread synchronization', () => {
     }
   );
 
+  it.each(['muteIdentity', 'unmuteIdentity'] as const)(
+    'waits for the %s commit and sends the incremented writer version',
+    async (method) => {
+      const { ctx, identityMutesDb, service, wavesApiDb, wsListenersNotifier } =
+        createService();
+      let commit!: () => void;
+      let mutationStarted!: () => void;
+      const pendingCommit = new Promise<void>((resolve) => {
+        commit = resolve;
+      });
+      const started = new Promise<void>((resolve) => {
+        mutationStarted = resolve;
+      });
+      let committedVersion = dmUnreadState.version;
+      identityMutesDb[method].mockImplementationOnce(async () => {
+        mutationStarted();
+        await pendingCommit;
+        committedVersion += 1;
+      });
+      wavesApiDb.findDmUnreadConversationStates.mockImplementationOnce(
+        async (...args: unknown[]) => [
+          {
+            ...dmUnreadState,
+            version:
+              args[2] === DbPoolName.WRITE
+                ? committedVersion
+                : dmUnreadState.version
+          }
+        ]
+      );
+      const operation = service[method]('muted-handle', ctx as never);
+      await started;
+      expect(wavesApiDb.findDmUnreadConversationStates).not.toHaveBeenCalled();
+      expect(
+        wsListenersNotifier.notifyAboutDmUnreadStateChanged
+      ).not.toHaveBeenCalled();
+      commit();
+      await operation;
+      expect(
+        wsListenersNotifier.notifyAboutDmUnreadStateChanged
+      ).toHaveBeenCalledWith(
+        [{ ...dmUnreadState, version: dmUnreadState.version + 1 }],
+        [{ connectionId: 'connection-1', identityId: 'muter-1' }]
+      );
+    }
+  );
+
   it('continues synchronizing after the first 500 affected conversations', async () => {
     const { ctx, service, wavesApiDb, wsListenersNotifier } = createService();
     const firstPage = Array.from(
@@ -249,7 +296,12 @@ it.each([
     expect(
       events.map((row: { event: string }) => JSON.parse(row.event))
     ).toEqual(
-      waveIds.map((waveId) => ({ type: 'dm', profileIds: ['muter-1'], waveId }))
+      waveIds.map((waveId) => ({
+        type: 'dm',
+        profileIds: ['muter-1'],
+        waveId,
+        deliveryCapability: 'durable_updates_v1'
+      }))
     );
     expect(
       wavesApiDb.incrementDmUnreadStateVersionsForReaderWaves

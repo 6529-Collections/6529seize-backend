@@ -1,3 +1,4 @@
+import { DURABLE_UPDATES_CAPABILITY } from '@/api/ws/ws-shared';
 import { dbSupplier, SqlExecutor } from '@/sql-executor';
 import { WebSocketOutboxEvent } from './events';
 import { WEBSOCKET_OUTBOX_TABLE } from '@/constants';
@@ -12,6 +13,19 @@ interface PendingEvent {
   created_at: number;
 }
 const logger = Logger.get('WEBSOCKET_OUTBOX');
+
+function decodeEvent(
+  value: WebSocketOutboxEvent | string
+): WebSocketOutboxEvent {
+  const event: WebSocketOutboxEvent =
+    typeof value === 'string' ? JSON.parse(value) : value;
+  if (
+    event.deliveryCapability !== undefined &&
+    event.deliveryCapability !== DURABLE_UPDATES_CAPABILITY
+  )
+    throw new Error('Unsupported WebSocket delivery capability');
+  return event;
+}
 
 /** Retain events until every recipient enqueue succeeds; partial acceptance may replay safely. */
 export async function publishWebSocketOutbox(
@@ -41,8 +55,7 @@ export async function publishWebSocketOutbox(
           await db.execute('SAVEPOINT ws_outbox_publish', {}, options);
           let phase = 'decode';
           try {
-            const event: WebSocketOutboxEvent =
-              typeof row.event === 'string' ? JSON.parse(row.event) : row.event;
+            const event = decodeEvent(row.event);
             if (event.type === 'delivery') {
               phase = 'enqueue';
               await publish(event, String(row.id));
@@ -56,7 +69,8 @@ export async function publishWebSocketOutbox(
                 recipients,
                 { connection },
                 db,
-                Number(row.created_at)
+                Number(row.created_at),
+                true
               );
             }
           } catch (error) {

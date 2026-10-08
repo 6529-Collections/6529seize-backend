@@ -197,7 +197,8 @@ describe('WavesApiDb DM unread state versions', () => {
           event: JSON.stringify({
             type: 'dm',
             profileIds: ['reader-1'],
-            waveId
+            waveId,
+            deliveryCapability: 'durable_updates_v1'
           })
         })
       ),

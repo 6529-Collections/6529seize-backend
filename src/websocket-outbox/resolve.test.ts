@@ -5,11 +5,25 @@ jest.mock('@/api/ws/ws-connection.repository', () => ({
     getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast: jest.fn(),
     findNotificationConnectionIdsByIdentityIds: jest.fn(),
     findConnectionIdsByIdentityId: jest.fn(),
-    findAllConnectionIds: jest.fn()
+    findAllConnectionIds: jest.fn(),
+    filterConnectionIdsByDeliveryMode: jest.fn()
   }
 }));
-jest.mock('@/attachments/attachments.db', () => ({ attachmentsDb: {} }));
-jest.mock('@/nft-links/nft-links.db', () => ({ nftLinksDb: {} }));
+jest.mock('@/attachments/attachments.db', () => ({
+  attachmentsDb: {
+    findAttachmentById: jest.fn(),
+    findAttachmentWaveIds: jest.fn()
+  }
+}));
+jest.mock('@/nft-links/nft-links.db', () => ({
+  nftLinksDb: { findByCanonicalIdForNotification: jest.fn() }
+}));
+jest.mock('@/api/attachments/attachments.mappers', () => ({
+  mapAttachmentToApiAttachment: (value: unknown) => value
+}));
+jest.mock('@/nft-links/nft-link-api.mapper', () => ({
+  mapNftLinkEntityToApiLink: (value: unknown) => value
+}));
 jest.mock('@/api/waves/waves.api.db', () => ({
   wavesApiDb: { findDmUnreadConversationStatesForIdentities: jest.fn() }
 }));
@@ -135,4 +149,97 @@ it('keeps the notification profile from durable intent without rereading a delet
     }
   ]);
   expect(mockDb.oneOrNull).not.toHaveBeenCalled();
+});
+
+// Old and new sessions may belong to the same profile; route by connection, not profile.
+it.each([
+  { type: 'drop' as const, dropId: 'd', updateType: 'DROP_UPDATE' as const },
+  { type: 'drop-delete' as const, dropId: 'd', waveId: 'w', serialNo: 9 },
+  { type: 'identity' as const, profileId: 'p' },
+  { type: 'dm' as const, profileIds: ['p'], waveId: 'w' },
+  { type: 'attachment' as const, attachmentId: 'a' },
+  { type: 'nft' as const, canonicalId: 'n' }
+])(
+  'routes new $type intents only to capable connections of a mixed audience',
+  async (event) => {
+    const ids = ['legacy', 'capable'];
+    mockDb.oneOrNull.mockResolvedValue({
+      id: 'd',
+      wave_id: 'w',
+      author_id: 'p',
+      serial_no: 9
+    });
+    jest.mocked(connections.findWaveVisibilityGroupId).mockResolvedValue(null);
+    jest
+      .mocked(
+        connections.getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast
+      )
+      .mockResolvedValue(
+        ids.map((connectionId) => ({
+          connectionId,
+          profileId: 'p',
+          wave_id: 'w'
+        }))
+      );
+    jest
+      .mocked(connections.findNotificationConnectionIdsByIdentityIds)
+      .mockResolvedValue(
+        ids.map((connectionId) => ({ connectionId, identityId: 'p' }))
+      );
+    jest
+      .mocked(connections.findConnectionIdsByIdentityId)
+      .mockResolvedValue([...ids]);
+    jest.mocked(connections.findAllConnectionIds).mockResolvedValue([...ids]);
+    jest
+      .mocked(connections.filterConnectionIdsByDeliveryMode)
+      .mockResolvedValue(['capable']);
+    jest
+      .mocked(wavesApiDb.findDmUnreadConversationStatesForIdentities)
+      .mockResolvedValue([
+        { profile_id: 'p', wave_id: 'w', version: 2 }
+      ] as never);
+    const { attachmentsDb } = jest.requireMock('@/attachments/attachments.db');
+    attachmentsDb.findAttachmentById.mockResolvedValue({
+      owner_profile_id: 'p'
+    });
+    attachmentsDb.findAttachmentWaveIds.mockResolvedValue([]);
+    const { nftLinksDb } = jest.requireMock('@/nft-links/nft-links.db');
+    nftLinksDb.findByCanonicalIdForNotification.mockResolvedValue({
+      canonical_id: 'n'
+    });
+    const result = await resolveWebSocketEvent(
+      { ...event, deliveryCapability: 'durable_updates_v1' },
+      ctx
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      type: 'delivery',
+      connectionId: 'capable',
+      deliveryCapability: 'durable_updates_v1'
+    });
+    expect(connections.filterConnectionIdsByDeliveryMode).toHaveBeenCalledWith(
+      ids,
+      true,
+      ctx
+    );
+  }
+);
+
+it('carries capability through media expansion so historical and new intents do not change audience', async () => {
+  mockDb.execute.mockResolvedValue([{ drop_id: 'd' }]);
+  for (const deliveryCapability of [undefined, 'durable_updates_v1'] as const) {
+    const children = await resolveWebSocketEvent(
+      { type: 'media', uploadId: 'm', deliveryCapability },
+      ctx
+    );
+    expect(children).toEqual([
+      {
+        type: 'drop',
+        dropId: 'd',
+        updateType: 'DROP_UPDATE',
+        reason: 'MEDIA_STATUS',
+        deliveryCapability
+      }
+    ]);
+  }
 });

@@ -29,7 +29,7 @@ const deliveries = (ids: string[], message: unknown): Delivery[] =>
   }));
 
 /** Resolve current state and audience on the writer; materialize durable recipient jobs atomically. */
-export async function resolveWebSocketEvent(
+async function resolveEvent(
   event: WebSocketOutboxEvent,
   ctx: RequestContext
 ): Promise<WebSocketOutboxEvent[]> {
@@ -134,6 +134,7 @@ export async function resolveWebSocketEvent(
         { wrappedConnection: ctx.connection }
       );
       return rows.map((row) => ({
+        deliveryCapability: event.deliveryCapability,
         type: 'drop',
         dropId: row.drop_id,
         updateType: 'DROP_UPDATE',
@@ -157,4 +158,24 @@ async function waveRecipients(
       ctx
     )
   ).map((r) => r.connectionId);
+}
+
+export async function resolveWebSocketEvent(
+  event: WebSocketOutboxEvent,
+  ctx: RequestContext
+): Promise<WebSocketOutboxEvent[]> {
+  const resolved = await resolveEvent(event, ctx);
+  if (!event.deliveryCapability) return resolved;
+  const allowed = new Set(
+    await connections.filterConnectionIdsByDeliveryMode(
+      resolved.flatMap((job) =>
+        job.type === 'delivery' ? [job.connectionId] : []
+      ),
+      true,
+      ctx
+    )
+  );
+  return resolved
+    .filter((job) => job.type !== 'delivery' || allowed.has(job.connectionId))
+    .map((job) => ({ ...job, deliveryCapability: event.deliveryCapability }));
 }

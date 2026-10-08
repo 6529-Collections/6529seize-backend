@@ -29,7 +29,11 @@ import {
   hasWebSocketSendBudget
 } from '@/api/ws/ws-send-scheduler';
 
-import { ANON_USER_ID, SocketNotAvailableException } from './ws-shared';
+import {
+  ANON_USER_ID,
+  SocketNotAvailableException,
+  DURABLE_UPDATES_CAPABILITY
+} from './ws-shared';
 export { ANON_USER_ID, SocketNotAvailableException } from './ws-shared';
 
 abstract class ClientConnections {
@@ -47,10 +51,12 @@ abstract class ClientConnections {
 
   abstract sendMessage({
     connectionId,
-    message
+    message,
+    abortSignal
   }: {
     connectionId: string;
     message: string;
+    abortSignal?: AbortSignal;
   }): Promise<void>;
   abstract closeClient(
     connectionId: string,
@@ -64,11 +70,14 @@ class WebsocketClientConnections extends ClientConnections {
 
   override async sendMessage({
     connectionId,
-    message
+    message,
+    abortSignal
   }: {
     connectionId: string;
     message: string;
+    abortSignal?: AbortSignal;
   }) {
+    abortSignal?.throwIfAborted();
     const socket = this.sockets[connectionId];
     if (!socket) {
       throw new SocketNotAvailableException();
@@ -121,20 +130,26 @@ class ApiGatewayClientConnections extends ClientConnections {
 
   override async sendMessage({
     connectionId,
-    message
+    message,
+    abortSignal
   }: {
     connectionId: string;
     message: string;
+    abortSignal?: AbortSignal;
   }) {
     try {
-      await this.scheduler.send(connectionId, (abortSignal) =>
+      await this.scheduler.send(connectionId, (deadlineSignal) =>
         this.client
           .send(
             new PostToConnectionCommand({
               ConnectionId: connectionId,
               Data: Buffer.from(message)
             }),
-            { abortSignal }
+            {
+              abortSignal: abortSignal
+                ? AbortSignal.any([deadlineSignal, abortSignal])
+                : deadlineSignal
+            }
           )
           .then(() => undefined)
       );
@@ -207,13 +222,15 @@ export class AppWebSockets {
     private readonly wsConnectionRepository: WsConnectionRepository
   ) {}
 
-  /** Queue application frames; keep local delivery and authentication control replies inline. */
+  /** Queue capable-client frames; keep legacy, local and authentication replies inline. */
   async send(input: {
     connectionId: string;
     message: string;
     skipStaleConnectionCheck?: boolean;
     abortSignal?: AbortSignal;
     outboxId?: string;
+    legacyOnly?: boolean;
+    deliveryCapability?: typeof DURABLE_UPDATES_CAPABILITY;
   }): Promise<void> {
     input.abortSignal?.throwIfAborted();
     // Authentication acknowledgements must follow the control operation inline,
@@ -230,13 +247,24 @@ export class AppWebSockets {
       await this.deregister({ connectionId: input.connectionId });
       return;
     }
+    if (input.legacyOnly && entity.durable_updates === true) return;
+    // New outbox jobs must never switch to direct delivery after capability loss.
+    if (input.deliveryCapability && entity.durable_updates !== true) {
+      this.logger.warn({ code: 'WS_OUTBOUND_SESSION_CHANGED' });
+      return;
+    }
+    if (entity.durable_updates !== true && !input.outboxId)
+      return this.deliver({ ...input, skipStaleConnectionCheck: true });
     try {
       await enqueueWebSocketFrame(
         {
           connectionId: input.connectionId,
           message: input.message,
           identityId: entity.identity_id,
-          jwtExpiry: expiry
+          jwtExpiry: expiry,
+          ...(entity.durable_updates === true
+            ? { deliveryCapability: DURABLE_UPDATES_CAPABILITY }
+            : {})
         },
         input.abortSignal,
         input.outboxId
@@ -260,6 +288,7 @@ export class AppWebSockets {
       return;
     }
     if (
+      (frame.deliveryCapability && entity.durable_updates !== true) ||
       entity.identity_id !== frame.identityId ||
       Number(entity.jwt_expiry) !== frame.jwtExpiry
     ) {
@@ -337,11 +366,13 @@ export class AppWebSockets {
   async deliver({
     connectionId,
     message,
-    skipStaleConnectionCheck = false
+    skipStaleConnectionCheck = false,
+    abortSignal
   }: {
     connectionId: string;
     message: string;
     skipStaleConnectionCheck?: boolean;
+    abortSignal?: AbortSignal;
   }) {
     // An expired invocation goes directly to the sender's reported deadline
     // failure; do not spend the remaining budget looking up unsendable work.
@@ -359,8 +390,13 @@ export class AppWebSockets {
         return;
       }
     }
+    abortSignal?.throwIfAborted();
     try {
-      await ClientConnections.Get().sendMessage({ connectionId, message });
+      await ClientConnections.Get().sendMessage({
+        connectionId,
+        message,
+        abortSignal
+      });
     } catch (err) {
       if (err instanceof SocketNotAvailableException) {
         await this.deregister({ connectionId });
@@ -374,11 +410,13 @@ export class AppWebSockets {
     identityId,
     connectionId,
     jwtExpiry,
+    durableUpdates = false,
     ws
   }: {
     identityId: string;
     connectionId: string;
     jwtExpiry: number;
+    durableUpdates?: boolean;
     ws?: WebSocket;
   }) {
     this.logger.info(
@@ -398,7 +436,8 @@ export class AppWebSockets {
         identity_id: identityId,
         jwt_expiry: jwtExpiry,
         connection_id: connectionId,
-        wave_id: null
+        wave_id: null,
+        durable_updates: durableUpdates
       },
       getAuthenticatedNotificationSubscriptions([{ identityId, jwtExpiry }]),
       {}

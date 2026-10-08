@@ -46,6 +46,7 @@ it('keeps queued failures retryable with headroom, retention and operational ala
     'releaseNotesGenerationLoop',
     'helpBotReplyLoop',
     'nftLinkRefresherLoop',
+    'nftLinkMediaPreviewLoop',
     'dropMediaSanitizer',
     'attachmentsOrchestrator',
     'attachmentsProcessor'

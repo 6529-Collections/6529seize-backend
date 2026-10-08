@@ -1,8 +1,14 @@
 import { webSocketOutboxPartition } from './partition';
+import { DURABLE_UPDATES_CAPABILITY } from '@/api/ws/ws-shared';
 import { ConnectionWrapper, dbSupplier, SqlExecutor } from '@/sql-executor';
 import { RequestContext } from '@/request.context';
 import { WebSocketOutboxEvent } from './events';
 import { WEBSOCKET_OUTBOX_TABLE } from '@/constants';
+
+const capturedEvent = (event: WebSocketOutboxEvent): WebSocketOutboxEvent =>
+  event.type === 'delivery'
+    ? event
+    : { ...event, deliveryCapability: DURABLE_UPDATES_CAPABILITY };
 
 /** The event insert must commit or roll back with the mutation, never in a later transaction. */
 export async function recordWebSocketEvent(
@@ -19,7 +25,7 @@ export async function recordWebSocketEvent(
     `insert into ${WEBSOCKET_OUTBOX_TABLE} (event, partition_key, created_at, available_at, attempts)
      values (:event, :partitionKey, :createdAt, :now, 0)`,
     {
-      event: JSON.stringify(event),
+      event: JSON.stringify(capturedEvent(event)),
       partitionKey: webSocketOutboxPartition(event),
       now,
       createdAt
@@ -47,7 +53,8 @@ export async function recordWebSocketEvents(
   events: WebSocketOutboxEvent[],
   ctx: RequestContext,
   db: SqlExecutor = dbSupplier(),
-  createdAt = Date.now()
+  createdAt = Date.now(),
+  preserveAudience = false
 ): Promise<void> {
   if (process.env.NODE_ENV === 'local' || !events.length) return;
   if (!ctx.connection)
@@ -56,7 +63,7 @@ export async function recordWebSocketEvents(
   await db.bulkInsert(
     WEBSOCKET_OUTBOX_TABLE,
     events.map((event) => ({
-      event: JSON.stringify(event),
+      event: JSON.stringify(preserveAudience ? event : capturedEvent(event)),
       partition_key: webSocketOutboxPartition(event),
       created_at: createdAt,
       available_at: now,

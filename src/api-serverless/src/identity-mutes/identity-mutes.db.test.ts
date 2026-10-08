@@ -131,7 +131,8 @@ it.each(['muteIdentity', 'unmuteIdentity'] as const)(
           event: JSON.stringify({
             type: 'dm',
             profileIds: ['muter-1'],
-            waveId: 'wave-1'
+            waveId: 'wave-1',
+            deliveryCapability: 'durable_updates_v1'
           })
         })
       ],
