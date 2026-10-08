@@ -40,7 +40,7 @@ function template(): JobTemplateSettings {
 }
 
 it.each(['mp4', 'MOV', 'webm', 'avi'])(
-  'preserves video encodes and adds one bounded preview for %s',
+  'preserves video encodes and adds bounded first and one-second previews for %s',
   (extension) => {
     const source = template();
     const before = JSON.stringify(source);
@@ -84,7 +84,7 @@ it.each(['mp4', 'MOV', 'webm', 'avi'])(
             FrameCaptureSettings: {
               FramerateNumerator: 1,
               FramerateDenominator: 1,
-              MaxCaptures: 1,
+              MaxCaptures: 2,
               Quality: 80
             }
           }

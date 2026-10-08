@@ -1,6 +1,6 @@
 # Chat video previews
 
-`dropVideoConversionInvokerLoop` creates one JPEG preview alongside each new
+`dropVideoConversionInvokerLoop` creates up to two JPEG previews alongside each new
 drop video's existing HLS and MP4 outputs. The frontend uses the preview as
 the chat player poster, without loading or decoding the video before Play.
 NFT and submission page playback policies are unchanged.
@@ -8,18 +8,22 @@ NFT and submission page playback policies are unchanged.
 ## Storage contract
 
 For an original `drops/<author>/<name>.<extension>` in `S3_BUCKET`, the preview
-is `renditions/drops/<author>/<name>/poster/<name>_poster.0000000.jpg` in the
-same bucket and CloudFront distribution. The key uses MediaConvert's first
-zero-based frame-capture number and the `_poster` name modifier, confirmed
-against a live conversion output. No API, database, or
+is `renditions/drops/<author>/<name>/poster/<name>_poster.0000001.jpg` in the
+same bucket and CloudFront distribution. MediaConvert captures the first frame
+and a frame at one second with `MaxCaptures: 2` and a one-frame-per-second
+interval. The frontend prefers sequence 1 and falls back to
+`<name>_poster.0000000.jpg` for existing or sub-second videos. No API, database, or
 upload response field is added.
 
-The JPEG contains the first video frame at quality 80. Fit without upscaling
+The JPEGs use quality 80. The later frame avoids a black opening frame when
+the video has visible content by one second. Fit without upscaling
 keeps its proportions within 640 by 640 pixels, including automatic input
-rotation. A black first frame can still produce a black preview. Preview
+rotation. A video still black at one second can still have a black preview. Preview
 availability is asynchronous; the frontend keeps Play available while a
-preview is missing or processing, and retries only within a bounded period
-while visible and active.
+preview is missing or processing. Missing previews get at most 20 checks,
+backing off to one per minute while visible and active; legacy first-frame
+previews get at most four additional checks for a later capture. A successful
+later capture stops probing.
 
 ## Conversion and deployment
 
@@ -75,7 +79,7 @@ this re-runs the whole conversion job, replaces the existing video renditions,
 and incurs conversion cost. An authorized backfill needs its own plan for
 protecting existing renditions; replacement is not atomic across the HLS/MP4
 output objects. Do not replay rendition keys or copy/overwrite originals merely
-to generate S3 events. Check for an existing preview first,
+to generate S3 events. Check for an existing preferred preview first,
 bound the selected originals, and retain submitted job IDs before any retry.
 There is no automatic backfill or scheduled replay in this PR.
 
