@@ -1531,7 +1531,10 @@ describe('WaveApiService wave pause authorization', () => {
         }
         await expect(command).resolves.toEqual({ id: 'wave-1' });
 
-        expect(wavesApiDb.findById).toHaveBeenCalledWith('wave-1', connection);
+        expect(wavesApiDb.findWaveById).toHaveBeenCalledWith(
+          'wave-1',
+          connection
+        );
         expect(wavesApiDb.insertPause).toHaveBeenCalledWith(
           {
             startTime: nextDecisionTime + 1_000,
