@@ -62,6 +62,9 @@ public API contract change, and existing checkpoint/audit rows are preserved.
 A failure due to absent capture or disabled native runtime indicates an incomplete
 backend deployment, not a missing operator approval.
 
+Compatibility views are installed by `dbMigrationsLoop` under the `full` scope.
+A projection fix must refresh those views before retrying a stopped migration.
+
 The lower-level developer CLI remains available for diagnosis and explicit repair
 or reverse reconciliation. Its historical acceptance commands are not prerequisites
 for invoking the Lambda. A retry revalidates the source and retires prior legacy data-shape errors and

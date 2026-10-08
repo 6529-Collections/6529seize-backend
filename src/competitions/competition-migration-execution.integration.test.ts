@@ -266,6 +266,10 @@ describeWithSeed(
           { dropId: suffix, waveId: active.id, type }
         );
       await sqlExecutor.execute(
+        `insert into ${DROP_RANK_TABLE} (drop_id,wave_id,vote,last_increased) values('historical-winner-1000',:waveId,-26,0)`,
+        { waveId: active.id }
+      );
+      await sqlExecutor.execute(
         `insert into ${WAVE_LEADERBOARD_ENTRIES_TABLE} (drop_id,wave_id,timestamp,vote,vote_on_decision_time,over_threshold_since_ms) values('retained-chat',:waveId,10,0,0,null)`,
         { waveId: active.id }
       );
@@ -323,6 +327,13 @@ describeWithSeed(
       ).toEqual([
         { ranking: 1, decision_time: 1000 },
         { ranking: 1, decision_time: 2000 }
+      ]);
+      expect(
+        await query(
+          `select drop_id,vote,last_increased from ${DROP_RANK_TABLE} where wave_id=:waveId and drop_id like 'historical-winner-%' order by drop_id`
+        )
+      ).toEqual([
+        { drop_id: 'historical-winner-1000', vote: '-26', last_increased: 0 }
       ]);
       expect(
         await query(
