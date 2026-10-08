@@ -140,6 +140,29 @@ describe('automated resumable wave migration', () => {
     );
     expect(service.enroll).not.toHaveBeenCalled();
   });
+  it('rebuilds a failed shadow comparison when the same wave is invoked again', async () => {
+    const { service, runtime } = fixture();
+    const failed: MigrationStatus = {
+      ...status(),
+      migration: { ...status().migration!, last_comparison_at: 9999 },
+      readiness: {
+        lastComparisonMatches: false
+      } as NonNullable<MigrationStatus['readiness']>
+    };
+    service.inspectWave.mockResolvedValue({
+      status: failed,
+      cohort: 'ACTIVE_LOW_VOLUME',
+      failures: [],
+      windowMs: 60000
+    });
+    await migrateWave(options, service, runtime);
+    expect(service.resumeMigration).toHaveBeenCalledWith(
+      competitionId,
+      options.operator
+    );
+    expect(service.enroll).not.toHaveBeenCalled();
+    expect(service.compare).toHaveBeenCalled();
+  });
   it('resumes copying and concurrent-write catch-up without reenrollment', async () => {
     const { service, runtime } = fixture();
     service.inspectWave.mockResolvedValue({

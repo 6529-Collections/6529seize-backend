@@ -309,7 +309,11 @@ export class CompetitionMigrationService {
           'MIGRATION_DATA_SHAPE'
         ].some((restriction) => exception.startsWith(`${restriction}:`))
       );
-      if (!retired.length) return status;
+      const failedComparison =
+        status.migration.state === 'SHADOWING' &&
+        status.migration.last_comparison_at !== null &&
+        status.readiness?.lastComparisonMatches === false;
+      if (!retired.length && !failedComparison) return status;
       const record = await repository.lock(id, ctx);
       const competition = await new LegacyCompetitionAdapter(
         new CompetitionRepository(this.supplier),
@@ -323,6 +327,19 @@ export class CompetitionMigrationService {
           exceptions: status.migration.exceptions.filter(
             (exception) => !retired.includes(exception)
           ),
+          ...(failedComparison
+            ? {
+                state: 'BACKFILLING' as const,
+                stage: 'ENTRIES' as const,
+                stage_offset: 0,
+                stage_cursor: null,
+                next_batch_at: null,
+                completed_stages: [
+                  'CONFIGURATION',
+                  'OUTCOMES'
+                ] as MigrationRecord['completed_stages']
+              }
+            : {}),
           consecutive_full_windows: 0,
           window_started_at: null,
           window_samples: 0,
@@ -335,9 +352,11 @@ export class CompetitionMigrationService {
       await repository.audit(
         id,
         operator.actor,
-        'SUPPORTED_ADAPTER_RESUME',
+        failedComparison
+          ? 'FAILED_COMPARISON_RESUME'
+          : 'SUPPORTED_ADAPTER_RESUME',
         operator.reason,
-        { retiredExceptions: retired },
+        { retiredExceptions: retired, rebuildDerivedData: failedComparison },
         ctx
       );
       return repository.status(id, ctx);

@@ -70,3 +70,9 @@ or reverse reconciliation. Its historical acceptance commands are not prerequisi
 for invoking the Lambda. A retry revalidates the source and retires prior legacy data-shape errors and
 obsolete rollout restrictions before a fresh comparison. Native repair-required
 states and explicit developer stops retain their protections.
+
+If an independent comparison failed before cutover, invoking the same wave ID
+again rebuilds the derived shadow stages and compares the complete data again.
+This lets corrected copy logic repair an earlier checkpoint without editing the
+database or bypassing a mismatch. Legacy text-backed vote totals are ranked
+numerically, including negative totals and values with different digit counts.

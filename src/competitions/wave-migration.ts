@@ -99,9 +99,13 @@ export async function migrateWave(
     aborted: () => runtime.now() >= deadline || !!runtime.aborted?.()
   };
   if (budget.aborted()) throw new WaveMigrationPausedError();
-  const resumed = inspection.status.migration?.exceptions.length
-    ? await service.resumeMigration(id, options.operator)
-    : inspection.status;
+  const failedComparison =
+    inspection.status.migration?.last_comparison_at != null &&
+    inspection.status.readiness?.lastComparisonMatches === false;
+  const resumed =
+    inspection.status.migration?.exceptions.length || failedComparison
+      ? await service.resumeMigration(id, options.operator)
+      : inspection.status;
   assertHealthyStatus(resumed);
   if (
     !inspection.status.migration ||
