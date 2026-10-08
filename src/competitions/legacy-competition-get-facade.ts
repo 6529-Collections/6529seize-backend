@@ -300,7 +300,9 @@ function nativeSelects(table: string): {
       };
     case DROP_RANK_TABLE:
       return {
-        from: `${entries} join ${COMPETITION_ENTRY_RUNTIME_TABLE} r on r.entry_id=e.id and r.competition_id=c.id where e.status='ACTIVE'`,
+        // Completed legacy winners can retain rank rows. A null timestamp means
+        // the source winner had no rank row; do not invent one for that history.
+        from: `${entries} join ${COMPETITION_ENTRY_RUNTIME_TABLE} r on r.entry_id=e.id and r.competition_id=c.id where (e.status='ACTIVE' or (e.status='WINNER' and r.last_increased_at is not null))`,
         fields: {
           drop_id: 'e.drop_id',
           wave_id: 'c.wave_id',
