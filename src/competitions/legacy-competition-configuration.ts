@@ -2,16 +2,15 @@ import { Competition } from './competition.types';
 import { ApiCompetitionDraftInput } from '@/api/generated/models/ApiCompetitionDraftInput';
 import { CompetitionDraftSchema } from '@/api/competitions/competition-configuration';
 
-/** Append a native command snapshot at transfer; never rewrite legacy versions
- * or the version associated with an accepted entry. Unsupported legacy rule
- * shapes fail closed and retain their guarded legacy owner. */
+/** Preserve the legacy upper threshold in the immutable migration snapshot.
+ * The native decision/winner records retain the original legacy value. */
 export function migrationCommandConfiguration(
   c: Competition
-): ApiCompetitionDraftInput {
-  if (c.decisions.winning_max_threshold !== null)
-    throw new Error(
-      'OWNED_EXCEPTION: legacy threshold range requires an owned native command adapter'
-    );
+): ApiCompetitionDraftInput & {
+  rules: ApiCompetitionDraftInput['rules'] & {
+    winning_max_threshold: number | null;
+  };
+} {
   const value = {
     title: c.title,
     description: c.description,
@@ -80,5 +79,12 @@ export function migrationCommandConfiguration(
     throw new Error(
       `OWNED_EXCEPTION: legacy rule shape requires an owned native command adapter (${result.error.details.map((detail) => detail.path.join('.')).join(',')})`
     );
-  return result.value as ApiCompetitionDraftInput;
+  const configuration = result.value as ApiCompetitionDraftInput;
+  return {
+    ...configuration,
+    rules: {
+      ...configuration.rules,
+      winning_max_threshold: c.decisions.winning_max_threshold
+    }
+  };
 }

@@ -84,8 +84,7 @@ function nonnegative(value: number | null): value is number {
 
 export function migrationReadinessFailures(
   status: MigrationReadiness,
-  now: number,
-  environment: MigrationEnvironment = 'production'
+  now: number
 ): string[] {
   const failures: string[] = [];
   const add = (condition: boolean, name: string) => {
@@ -100,14 +99,7 @@ export function migrationReadinessFailures(
     MIGRATION_STAGES.every((stage) => status.completedStages.includes(stage)),
     'BACKFILL_INCOMPLETE'
   );
-  add(
-    environment === 'local'
-      ? status.lastComparisonMatches === true
-      : status.consecutiveFullWindows >= 7,
-    environment === 'local'
-      ? 'FULL_INDEPENDENT_COMPARISON'
-      : 'SEVEN_FULL_INDEPENDENT_WINDOWS'
-  );
+  add(status.lastComparisonMatches === true, 'FULL_INDEPENDENT_COMPARISON');
   add(
     status.lastComparisonAt !== null &&
       status.lastComparisonAt <= now &&
@@ -120,21 +112,7 @@ export function migrationReadinessFailures(
   );
   add(status.pendingEffects === 0, 'OUTBOX_BACKLOG');
   add(status.unresolvedExceptions.length === 0, 'OWNED_EXCEPTIONS');
-  if (environment === 'local') {
-    return failures;
-  }
-  add(
-    status.currentAcceptanceMatches === true,
-    'CURRENT_ENVIRONMENT_ACCEPTANCE'
-  );
-  return [
-    ...failures,
-    ...migrationAcceptanceFailures(
-      status.acceptance,
-      now,
-      status.windowDurationMs
-    )
-  ];
+  return failures;
 }
 
 export function migrationAcceptanceFailures(

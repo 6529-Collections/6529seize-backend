@@ -1,4 +1,5 @@
 import { withLegacyCompetitionProfileMerge } from './legacy-competition-profile-merge';
+import { appFeatures } from '@/app-features';
 import { DropVotingDb } from '@/api/drops/drop-voting.db';
 import { migrationCommandConfiguration } from './legacy-competition-configuration';
 import { NativeCompetitionReader } from './native-competition.reader';
@@ -12,6 +13,8 @@ import {
   COMPETITION_VOTES_TABLE,
   DROPS_PARTS_TABLE,
   WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
+  WAVE_OUTCOMES_TABLE,
+  COMPETITION_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
   COMPETITION_MIGRATION_CHANGES_TABLE,
   COMPETITION_MIGRATIONS_TABLE,
   COMPETITIONS_TABLE,
@@ -174,9 +177,16 @@ describeWithSeed(
   ],
   () => {
     beforeEach(async () => {
+      jest
+        .spyOn(appFeatures, 'isNativeCompetitionExecutionEnabled')
+        .mockReturnValue(true);
+      jest
+        .spyOn(appFeatures, 'isNativeCompetitionWritesEnabled')
+        .mockReturnValue(true);
       await new CompetitionRepository().ensureLegacyMappingForWave(wave, {});
       await installMigrationCapture(sqlExecutor);
     });
+    afterEach(() => jest.restoreAllMocks());
     it('installs repeatably, captures accepted writes atomically, and never captures rolled-back writes', async () => {
       await installMigrationCapture(sqlExecutor);
       expect(await migrationCaptureHealthy(sqlExecutor, {})).toBe(true);
@@ -223,7 +233,7 @@ describeWithSeed(
       ).rejects.toThrow('COMPETITION_SOURCE_KEY_MOVE_REQUIRES_REPAIR');
       expect((await service.status(id)).migration?.source_watermark).toBe(1);
     });
-    it('resumes bounded stages, preserves entry identity, and prevents readiness without production evidence', async () => {
+    it('resumes bounded stages, preserves entry identity, and permits transfer after matching data', async () => {
       const service = new CompetitionMigrationService(
         () => sqlExecutor,
         Date.now,
@@ -270,11 +280,10 @@ describeWithSeed(
           )
           .map((category) => category.category)
       ).toEqual([]);
-      expect((await service.readiness(id)).failures).toContain(
-        'EVIDENCE_nativeRankCompletion'
-      );
-      expect(await service.cutover(id, operator, false)).toMatchObject({
-        changed: false
+      expect((await service.readiness(id)).failures).toEqual([]);
+      expect(await service.cutover(id, operator, true)).toMatchObject({
+        changed: false,
+        failures: []
       });
       expect(
         (
@@ -531,9 +540,7 @@ describeWithSeed(
         await finishBackfill(service);
         expect((await service.compare(id, operator, 60000)).mismatches).toBe(0);
         const reenrolled = await service.status(id);
-        expect(reenrolled.migration?.acceptance).toEqual(
-          reenrolled.readiness?.acceptance
-        );
+        expect(reenrolled.migration?.acceptance).toBeNull();
         expect(reenrolled.migration?.consecutive_full_windows).toBe(0);
       } finally {
         for (let i = 0; i < flags.length; i++) {
@@ -613,7 +620,38 @@ describeWithSeed(
           ?.storage_mode
       ).toBe('NATIVE');
     });
-    it('durably records an owned stop when an oversized distribution appears after enrollment', async () => {
+    it('copies a valid outcome distribution spanning multiple pages without a size stop', async () => {
+      await sqlExecutor.execute(
+        `insert into ${WAVE_OUTCOMES_TABLE} (wave_id,wave_outcome_position,type,description)
+         values (:waveId,1,'MANUAL','Paginated migration outcome')`,
+        { waveId: wave.id }
+      );
+      const rows = Array.from(
+        { length: 1001 },
+        (_, index) => `(:waveId,1,${index + 1},'fixture',null)`
+      ).join(',');
+      await sqlExecutor.execute(
+        `insert into ${WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE}
+         (wave_id,wave_outcome_position,wave_outcome_distribution_item_position,description,amount) values ${rows}`,
+        { waveId: wave.id }
+      );
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await finishBackfill(service);
+      expect(
+        await sqlExecutor.oneOrNull<{ count: number }>(
+          `select count(*) as count from ${COMPETITION_OUTCOME_DISTRIBUTION_ITEMS_TABLE} where competition_id=:id`,
+          { id }
+        )
+      ).toEqual({ count: 1001 });
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
+    });
+
+    it('retains oversized orphan distribution history without an artificial size stop', async () => {
       const service = new CompetitionMigrationService(
         () => sqlExecutor,
         Date.now,
@@ -626,30 +664,16 @@ describeWithSeed(
           `insert into ${WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE} (wave_id,wave_outcome_position,wave_outcome_distribution_item_position,description,amount) values (:waveId,1,:position,'fixture',null)`,
           { waveId: wave.id, position }
         );
-      await expect(
-        executeMigrationCommand(
-          parseMigrationOptions([
-            '--environment',
-            'local',
-            '--competition',
-            id,
-            '--action',
-            'backfill',
-            '--operator',
-            operator.actor,
-            '--reason',
-            operator.reason,
-            '--live'
-          ]),
-          service
-        )
-      ).rejects.toThrow('OWNED_EXCEPTION');
+      await service.backfill(id, operator, 100);
       const status = await service.status(id);
-      expect(status.migration?.exceptions).toContain(
-        `MIGRATION_DATA_SHAPE:${operator.actor}`
-      );
-      expect(status.migration?.stage).toBe('OUTCOMES');
       expect(status.storageMode).toBe('LEGACY_ADAPTER');
+      expect(status.migration?.exceptions).toEqual([]);
+      expect(
+        await sqlExecutor.oneOrNull<{ count: number }>(
+          `select count(*) as count from ${WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE} where wave_id=:waveId`,
+          { waveId: wave.id }
+        )
+      ).toEqual({ count: 101 });
     });
     it('captures child edits with a null wave cache, resumes one journal row at a time and detects stored content corruption', async () => {
       const service = new CompetitionMigrationService(

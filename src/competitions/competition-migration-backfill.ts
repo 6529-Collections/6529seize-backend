@@ -31,6 +31,7 @@ import {
 } from '@/constants';
 import { SqlExecutor } from '@/sql-executor';
 import { RequestContext } from '@/request.context';
+import { collectCompetitionPages } from './competition-page';
 import { CompetitionRepository } from '@/competitions/competition.repository';
 import { LegacyCompetitionAdapter } from '@/competitions/legacy-competition.adapter';
 import { WavesApiDb } from '@/api/waves/waves.api.db';
@@ -210,15 +211,6 @@ export class CompetitionMigrationBackfill {
           COMPETITION_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
           COMPETITION_OUTCOMES_TABLE
         ]) {
-          const count = await this.db.oneOrNull<{ count: number }>(
-            `select count(*) as count from ${target} where competition_id=:id`,
-            params,
-            options
-          );
-          if (Number(count?.count ?? 0) > 1000)
-            throw new Error(
-              'OWNED_EXCEPTION: outcome replay exceeds bounded cohort'
-            );
           await this.db.execute(
             `delete from ${target} where competition_id=:id`,
             params,
@@ -260,15 +252,6 @@ export class CompetitionMigrationBackfill {
       ]) {
         const key =
           target === COMPETITION_DECISIONS_TABLE ? 'id' : 'decision_id';
-        const count = await this.db.oneOrNull<{ count: number }>(
-          `select count(*) as count from ${target} where competition_id=:id and ${key}=:decisionId`,
-          { ...params, decisionId },
-          options
-        );
-        if (Number(count?.count ?? 0) > 1000)
-          throw new Error(
-            'OWNED_EXCEPTION: decision replay exceeds bounded cohort'
-          );
         await this.db.execute(
           `delete from ${target} where competition_id=:id and ${key}=:decisionId`,
           { ...params, decisionId },
@@ -283,7 +266,7 @@ export class CompetitionMigrationBackfill {
   private async outcomes(
     record: CompetitionRoutingRecord,
     reader: LegacyCompetitionAdapter,
-    offset: number,
+    _offset: number,
     now: number,
     ctx: RequestContext
   ): Promise<number> {
@@ -294,22 +277,11 @@ export class CompetitionMigrationBackfill {
         ...record,
         storage_mode: CompetitionStorageMode.LEGACY_ADAPTER
       };
-      const page = { offset, limit: 100, direction: 'ASC' as const };
-      const outcomes = await reader.listOutcomes(legacy, {
-        ...page,
-        limit: 100
-      });
-      const totalDistribution = await this.db.oneOrNull<{ count: number }>(
-        `select count(*) as count from ${WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE} where wave_id=:waveId`,
-        { waveId: record.wave_id },
-        { wrappedConnection: ctx.connection }
+      const outcomes = await collectCompetitionPages((page) =>
+        reader.listOutcomes(legacy, page)
       );
-      if (Number(totalDistribution?.count ?? 0) > 100)
-        throw new Error(
-          'OWNED_EXCEPTION: outcome distribution exceeds bounded ordinary cohort'
-        );
       const definitions: object[] = [];
-      for (const outcome of outcomes.data) {
+      for (const outcome of outcomes) {
         await this.upsert(
           COMPETITION_OUTCOMES_TABLE,
           [
@@ -322,18 +294,12 @@ export class CompetitionMigrationBackfill {
           ],
           ctx
         );
-        const distribution = await reader.listDistribution(legacy, outcome.id, {
-          offset: 0,
-          limit: 100,
-          direction: 'ASC'
-        });
-        if (distribution.has_more)
-          throw new Error(
-            'OWNED_EXCEPTION: outcome distribution exceeds 100; preserve legacy ownership'
-          );
+        const distribution = await collectCompetitionPages((page) =>
+          reader.listDistribution(legacy, outcome.id, page)
+        );
         await this.upsert(
           COMPETITION_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
-          distribution.data.map((item) => ({
+          distribution.map((item) => ({
             ...item,
             competition_id: record.id
           })),
@@ -346,22 +312,17 @@ export class CompetitionMigrationBackfill {
           credit: outcome.credit,
           rep_category: outcome.rep_category,
           amount: outcome.amount,
-          distribution: distribution.data.map((item) => ({
+          distribution: distribution.map((item) => ({
             amount: item.amount,
             description: item.description
           }))
         });
       }
-      if (offset === 0 && !outcomes.has_more)
-        await this.db.execute(
-          `update ${COMPETITIONS_TABLE} set outcome_config=:definitions where id=:id`,
-          { id: record.id, definitions: JSON.stringify(definitions) },
-          { wrappedConnection: ctx.connection }
-        );
-      if (outcomes.has_more || offset !== 0)
-        throw new Error(
-          'OWNED_EXCEPTION: outcome configuration exceeds one bounded page'
-        );
+      await this.db.execute(
+        `update ${COMPETITIONS_TABLE} set outcome_config=:definitions where id=:id`,
+        { id: record.id, definitions: JSON.stringify(definitions) },
+        { wrappedConnection: ctx.connection }
+      );
       return 0;
     } finally {
       ctx.timer?.stop(timerName);
@@ -532,15 +493,6 @@ export class CompetitionMigrationBackfill {
         { waveId: record.wave_id, time },
         { wrappedConnection: ctx.connection }
       );
-      const winnerCount = await this.db.oneOrNull<{ count: number }>(
-        `select count(*) as count from ${WAVES_DECISION_WINNER_DROPS_TABLE} where wave_id=:waveId and decision_time=:time`,
-        { waveId: record.wave_id, time },
-        { wrappedConnection: ctx.connection }
-      );
-      if (Number(winnerCount?.count ?? 0) > 100)
-        throw new Error(
-          'OWNED_EXCEPTION: decision winner fanout exceeds bounded ordinary cohort'
-        );
       const decisions = await repository.listLegacyDecisions(
         record,
         { offset: Number(count?.count ?? 0), limit: 1, direction: 'ASC' },
@@ -874,10 +826,6 @@ export class CompetitionMigrationBackfill {
           typeof winner.prizes === 'string'
             ? (JSON.parse(winner.prizes) as Record<string, unknown>[])
             : winner.prizes;
-        if (prizes.length > 100)
-          throw new Error(
-            'OWNED_EXCEPTION: award fanout exceeds bounded ordinary cohort'
-          );
         await this.upsert(
           COMPETITION_OUTCOME_AWARDS_TABLE,
           prizes.map((award, position) => ({

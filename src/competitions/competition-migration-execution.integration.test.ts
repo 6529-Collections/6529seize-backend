@@ -558,7 +558,7 @@ describeWithSeed(
       60000
     );
 
-    it('reuses one production rollout acceptance for multiple waves and isolates staging reviews', async () => {
+    it('migrates completed waves with no shared acceptance or timed sampling', async () => {
       const clock = { value: 10000 };
       const service = new CompetitionMigrationService(
         () => sqlExecutor,
@@ -566,20 +566,7 @@ describeWithSeed(
         0,
         'production'
       );
-      const acceptance = migrationFixtureAcceptance(clock.value);
-      await service.recordEnvironmentAcceptance(operator, acceptance);
-      const staging = new CompetitionMigrationService(
-        () => sqlExecutor,
-        () => clock.value,
-        0,
-        'staging'
-      );
-      await staging.recordEnvironmentAcceptance(operator, {
-        ...acceptance,
-        nativeRankCompletion: 'https://example.test/staging/rank'
-      });
       for (const wave of [completed, secondCompleted]) {
-        const competition = legacyCompetitionId(wave.id);
         const migrated = await migrateWave(
           {
             waveId: wave.id,
@@ -599,72 +586,12 @@ describeWithSeed(
           }
         );
         expect(migrated.status.storageMode).toBe('NATIVE');
-        expect(migrated.status.migration?.consecutive_full_windows).toBe(7);
-        expect(
-          (await service.status(competition)).readiness?.acceptance
-            .nativeRankCompletion
-        ).toBe(acceptance.nativeRankCompletion);
-        expect(
-          (await service.status(competition)).migration?.acceptance
-        ).toEqual(acceptance);
+        expect(migrated.status.migration?.acceptance).toBeNull();
+        expect(clock.value).toBe(10000);
       }
-      await expect(
-        service.recordEnvironmentAcceptance(
-          { actor: 'other', reason: 'mismatch' },
-          acceptance
-        )
-      ).rejects.toThrow('recording operator');
-    }, 60000);
-
-    it('never treats a staging per-wave attestation as production approval and refuses an expired current review', async () => {
-      const clock = { value: 1000000000 };
-      const staging = new CompetitionMigrationService(
-        () => sqlExecutor,
-        () => clock.value,
-        0,
-        'staging'
-      );
-      const production = new CompetitionMigrationService(
-        () => sqlExecutor,
-        () => clock.value,
-        0,
-        'production'
-      );
-      await staging.enroll(prior, operator, 'COMPLETED_ORDINARY');
-      await staging.recordAcceptance(
-        prior,
-        operator,
-        migrationFixtureAcceptance(clock.value)
-      );
-      expect(
-        (await production.status(prior)).migration?.acceptance
-      ).not.toBeNull();
-      expect(
-        (await production.status(prior)).readiness?.acceptance
-          .nativeRankCompletion
-      ).toBeNull();
-      expect((await production.inspectWave(completed.id)).failures).toContain(
-        'ENVIRONMENT_ACCEPTANCE_REQUIRED'
-      );
-      const valid = migrationFixtureAcceptance(clock.value);
-      await production.recordEnvironmentAcceptance(operator, valid);
-      clock.value += 1;
-      await production.recordEnvironmentAcceptance(operator, {
-        ...valid,
-        productionEvidenceVerifiedAt: clock.value - 86400001
-      });
-      expect((await production.inspectWave(completed.id)).failures).toContain(
-        'VERIFIED_PRODUCTION_EVIDENCE'
-      );
-      expect(await production.cutover(prior, operator, false)).toMatchObject({
-        changed: false
-      });
-      expect((await production.status(prior)).storageMode).toBe(
-        'LEGACY_ADAPTER'
-      );
     });
 
-    it('starts fresh production parity windows when the shared rollout review changes', async () => {
+    it('does not let a historical rollout review invalidate a matching data comparison', async () => {
       const clock = { value: 10000 };
       const service = new CompetitionMigrationService(
         () => sqlExecutor,
@@ -674,30 +601,17 @@ describeWithSeed(
       );
       await service.enroll(prior, operator, 'COMPLETED_ORDINARY');
       await finishMigrationFixture(service, prior);
-      await approveMigrationFixture(service, prior, clock);
+      await service.compare(prior, operator, 1);
       expect((await service.readiness(prior)).failures).toEqual([]);
-      clock.value += 1;
-      const replacement = {
-        ...migrationFixtureAcceptance(clock.value),
-        nativeRankCompletion: 'https://example.test/reviewed/new-rank'
-      };
-      await service.recordEnvironmentAcceptance(operator, replacement);
-      expect((await service.readiness(prior)).failures).toContain(
-        'CURRENT_ENVIRONMENT_ACCEPTANCE'
+      await service.recordEnvironmentAcceptance(
+        operator,
+        migrationFixtureAcceptance(clock.value)
       );
+      expect((await service.readiness(prior)).failures).toEqual([]);
       expect(await service.cutover(prior, operator, false)).toMatchObject({
-        changed: false,
-        failures: expect.arrayContaining(['CURRENT_ENVIRONMENT_ACCEPTANCE'])
+        changed: true,
+        failures: []
       });
-      expect(
-        (await service.compare(prior, operator, 60000)).consecutiveFullWindows
-      ).toBe(0);
-      expect((await service.status(prior)).migration?.acceptance).toEqual(
-        replacement
-      );
-      expect((await service.readiness(prior)).failures).toContain(
-        'SEVEN_FULL_INDEPENDENT_WINDOWS'
-      );
     });
 
     it.each(['RANK', 'APPROVE'] as const)(
@@ -717,23 +631,7 @@ describeWithSeed(
         await service.enroll(id, operator, 'ACTIVE_LOW_VOLUME');
         await finishMigrationFixture(service, id);
         await approveMigrationFixture(service, id, clock);
-        expect(await service.cutover(id, operator, true)).toMatchObject({
-          changed: false,
-          failures: ['COMPLETED_COHORT_FIRST']
-        });
-        await service.enroll(prior, operator, 'COMPLETED_INTERNAL');
-        await finishMigrationFixture(service, prior);
-        await approveMigrationFixture(service, prior, clock);
-        expect(await service.cutover(prior, operator, false)).toMatchObject({
-          changed: true
-        });
-        // Re-observe the active source at the final current watermark after the prior cohort.
-        await service.compare(id, operator, 60000);
-        // The missed sampling interval reset its windows; all seven must be rebuilt.
-        for (let window = 0; window < 7; window++) {
-          clock.value += 60000;
-          await service.compare(id, operator, 60000);
-        }
+        // An active wave can be the first migration in this environment.
         expect(await service.cutover(id, operator, false)).toMatchObject({
           changed: true,
           failures: []

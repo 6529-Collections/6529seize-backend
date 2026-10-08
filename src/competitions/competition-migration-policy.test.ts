@@ -19,6 +19,7 @@ function ready(): MigrationReadiness {
     lastComparisonAt: now,
     lastComparisonWatermark: 7,
     currentAcceptanceMatches: true,
+    lastComparisonMatches: true,
     captureHealthy: true,
     compatibilityEnabled: true,
     windowDurationMs: 60000,
@@ -59,84 +60,30 @@ function ready(): MigrationReadiness {
 }
 
 describe('per-competition migration gates', () => {
-  it('uses real local parity without production evidence or elapsed production windows', () => {
-    const local = {
-      ...ready(),
-      consecutiveFullWindows: 0,
-      lastComparisonMatches: true,
-      acceptance: {
-        ...ready().acceptance,
-        productionEvidenceVerifiedBy: null,
-        nativeRankCompletion: null
-      }
-    };
-    expect(migrationReadinessFailures(local, now, 'local')).toEqual([]);
-    expect(migrationReadinessFailures(local, now, 'production')).toEqual(
-      expect.arrayContaining([
-        'SEVEN_FULL_INDEPENDENT_WINDOWS',
-        'VERIFIED_PRODUCTION_EVIDENCE',
-        'EVIDENCE_nativeRankCompletion'
-      ])
-    );
-    expect(
-      migrationReadinessFailures(
-        { ...local, lastComparisonMatches: false },
-        now,
-        'local'
-      )
-    ).toContain('FULL_INDEPENDENT_COMPARISON');
+  it('requires a full matching comparison without acceptance or elapsed windows', () => {
     expect(
       migrationReadinessFailures(
         {
-          ...local,
-          captureHealthy: false,
-          sourceWatermark: 8,
-          pendingEffects: 1
-        },
-        now,
-        'local'
-      )
-    ).toEqual(
-      expect.arrayContaining([
-        'DURABLE_CAPTURE',
-        'CATCH_UP_LAG',
-        'OUTBOX_BACKLOG'
-      ])
-    );
-  });
-  it('requires every production acceptance gate independently', () => {
-    expect(migrationReadinessFailures(ready(), now)).toEqual([]);
-    const missing = ready();
-    expect(
-      migrationReadinessFailures(
-        {
-          ...missing,
+          ...ready(),
+          consecutiveFullWindows: 0,
+          currentAcceptanceMatches: false,
           acceptance: {
-            ...missing.acceptance,
+            ...ready().acceptance,
+            productionEvidenceVerifiedBy: null,
             nativeRankCompletion: null,
-            operationalAcceptance: null,
-            apiBaselineP95: null,
-            decisionBudgetP99: null
+            operationalAcceptance: null
           }
         },
         now
       )
-    ).toEqual(
-      expect.arrayContaining([
-        'EVIDENCE_nativeRankCompletion',
-        'EVIDENCE_operationalAcceptance',
-        'API_P95',
-        'DECISION_P99'
-      ])
-    );
+    ).toEqual([]);
   });
   it.each([
     'STATE',
     'DURABLE_CAPTURE',
     'CATCH_UP_LAG',
     'BACKFILL_INCOMPLETE',
-    'SEVEN_FULL_INDEPENDENT_WINDOWS',
-    'CURRENT_ENVIRONMENT_ACCEPTANCE',
+    'FULL_INDEPENDENT_COMPARISON',
     'FINAL_PARITY_WATERMARK',
     'OUTBOX_BACKLOG',
     'OWNED_EXCEPTIONS'
@@ -146,12 +93,11 @@ describe('per-competition migration gates', () => {
       DURABLE_CAPTURE: { captureHealthy: false },
       CATCH_UP_LAG: { sourceWatermark: 8 },
       BACKFILL_INCOMPLETE: { completedStages: [] },
-      SEVEN_FULL_INDEPENDENT_WINDOWS: { consecutiveFullWindows: 6 },
-      CURRENT_ENVIRONMENT_ACCEPTANCE: { currentAcceptanceMatches: false },
+      FULL_INDEPENDENT_COMPARISON: { lastComparisonMatches: false },
       FINAL_PARITY_WATERMARK: { lastComparisonWatermark: 6 },
       OUTBOX_BACKLOG: { pendingEffects: 1 },
       OWNED_EXCEPTIONS: {
-        unresolvedExceptions: ['owner: privileged cohort not approved']
+        unresolvedExceptions: ['MIGRATION_DATA_SHAPE: damaged archive']
       }
     };
     expect(

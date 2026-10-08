@@ -1115,67 +1115,39 @@ schema → message consumers → workers → API → frontend rollout and the na
 kill switches. No new Lambda or queue is introduced; all new features remain
 disabled by default.
 
-Legacy migration is separately operated one immutable UUID at a time. Additive
-migration entities hold stage/keyset checkpoints, source/applied watermarks,
-owned exceptions and full-window parity state. Append-only environment acceptance
-records share the approved rollout evidence across waves in that database and
-environment; their reviewed validity and incident window still apply. Per-wave
-comparisons snapshot the current review and reset parity when its evidence changes.
-Transactional
-triggers journal accepted competition/content changes under the owner lock;
-there is no asynchronous best-effort capture. Raw source writes after transfer
-refuse the old engine; scoped transactional permits allow native compatibility
-materialization only. APIs, maintenance/identity merges and actual worker decision
-transactions share that ownership row. Legacy decisions commit retryable stable
-claim/push publication receipts before releasing ownership, so a queue handoff
-gap blocks cutover. Native workers retain independent aggregate/voter histories
-and skip already emitted pre-transfer lifecycle boundaries.
+Legacy migration is explicitly invoked one wave UUID at a time. Additive migration
+entities hold durable stage/keyset checkpoints, source/applied watermarks and
+comparison reports. Transactional triggers journal accepted competition/content
+changes under the owner lock; APIs, maintenance/identity merges and actual worker
+decision transactions share that row. Legacy decisions commit stable claim/push
+publication receipts, so pending publication blocks transfer. Native workers
+retain independent aggregate/voter histories and skip already emitted lifecycle
+boundaries. No legacy history is dropped.
 
-The `migrate-wave` operator CLI resolves a wave UUID to its immutable primary,
-resumes bounded copying and catch-up, samples independent comparisons, performs
-the guarded ownership transfer and verifies it. Local setup creates only missing
-migration tables/nullable fields/views/capture and never performs broad schema
-synchronization. Local rehearsals require complete independent parity and final
-locked comparison without production attestations or a completed pilot. Active
-ordinary negative-vote sources are supported by signed history transfer,
-absolute-credit replacement accounting and sign-preserving credit reconciliation.
-Frozen projections preserve nullable legacy metadata and all historical wins.
-Chat/retired leaderboard snapshots and orphaned outcome children remain shared
-retained history, outside the active native leaderboard and outcome definitions.
-For staging/production, independent source SQL, native records/content and frozen
-facade relations must pass seven full consecutive approved windows. Final
-drain/comparison and owner transfer are atomic. Reverse reconciliation materializes native state in bounded
-transactions before a final comparison and atomic rollback; new native decisions
-or effects instead require an owned native repair review. Production lifecycle,
-performance and alert evidence remains a required separate operator attestation.
-Complex, signed-vote, oversized and privileged cohorts receive owned stops; Main
-Stage remains last. See the [migration runbook](./legacy-competition-migration-runbook.md)
-for deployment dependencies, commands, pending gates and rollback boundaries.
-`competitionMigrationLoop` exposes the same migration engine to IAM-authorized
-AWS Console/SDK invocations in staging (`eu-west-1`) and production (`us-east-1`).
-Strict inputs pin the environment to the deployed stage/region and default to
-inspection. Live actions require an allowlisted operator/reason and reuse all
-remote acceptance, completed-pilot and independent-parity gates. The function
-loads the regional backend secret without schema synchronization or Redis.
-Inline acceptance recording and guarded status/verification/rollback/repair
-actions remove the need for operator shell/database access. Ordinary frontend
-permissions do not expose migration controls; no public API contract changes.
+`competitionMigrationLoop` accepts `{"wave_id":"<uuid>"}` from an IAM-authorized
+AWS Console/SDK invocation. It derives staging (`eu-west-1`) or production
+(`us-east-1`) from its pinned deployment, loads the regional backend secret without
+schema synchronization or Redis, and runs bounded copying, concurrent-write catch-up,
+full independent comparison, atomic transfer and native verification. Application
+operators, reasons, shared acceptance records, completed-pilot ordering and seven
+timed comparison windows are not required. Signed voting, special capabilities,
+upper-threshold metadata and paginated large content comparisons are preserved.
+The immutable command snapshot retains legacy upper-threshold metadata alongside
+its normal native draft fields. Actual data mismatches retain legacy ownership;
+repair-required native ownership is never blindly reversed. Final comparison,
+effect drain and owner transfer occur under the same transaction lock.
 
-The Lambda has no EventBridge schedule. Only an explicit live `migrate` request
-starts a run; clean time-budget pauses queue the same function and qualifier
-asynchronously, preserving a bounded overall deadline and existing durable
-per-wave checkpoints. One reserved execution plus transactional ownership and
-checkpoint fences protects redelivery. Gate failures never queue continuation;
-function-error retries are disabled and failed/dropped handoffs require manual
-inspection and resumption. A narrow inline role policy grants self-invocation,
-and regional Lambda-error/dropped-event alarms surface stopped continuations.
-The generated independent monitoring inventory also includes this function's
-structured error subscription and Lambda Errors/Throttles alarms. Refresh the
-monitoring stack and then the source relay after the function/log group exists,
-and verify the new producer before live enrollment.
-Deploy this service after the compatible schema/workers/API; deployment performs
-no invocation, enrollment or cutover. No queue, scheduled migration or
-default-selection policy is added.
+There is no EventBridge schedule: deployment invokes nothing. Clean time-budget
+pauses queue the same function/qualifier with a generated bounded continuation
+(up to 24 hours overall); a repeated wave ID resumes durable checkpoints or verifies
+an already migrated primary without copying it again. One reserved execution and
+transactional fences protect redelivery. Data failures do not queue continuation.
+Function-error retries are disabled. A narrow self-invocation role policy and
+regional error/dropped-event alarms cover the handoff. The independent monitoring
+inventory includes structured errors and Errors/Throttles alarms. Deploy the
+migration service after compatible schema/workers/API. The simplification alone
+requires redeploying `api` (legacy configuration snapshot adapter), then this Lambda; no schema, public API or frontend behavior
+change is introduced. See the [migration runbook](./legacy-competition-migration-runbook.md).
 
 Important API responsibilities:
 

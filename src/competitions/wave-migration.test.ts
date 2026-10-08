@@ -90,7 +90,7 @@ function fixture() {
       return { changed: !dryRun, failures: [] };
     }),
     verifyNative: jest.fn().mockResolvedValue({ failures: [] }),
-    resumeNegativeVoteMigration: jest.fn().mockResolvedValue(status())
+    resumeMigration: jest.fn().mockResolvedValue(status())
   } as unknown as jest.Mocked<WaveMigrationService>;
   const runtime = {
     now: () => now,
@@ -124,19 +124,19 @@ describe('automated resumable wave migration', () => {
     service.inspectWave.mockResolvedValue({
       status: status(),
       cohort: 'ACTIVE_LOW_VOLUME',
-      failures: ['ENVIRONMENT_ACCEPTANCE_REQUIRED'],
+      failures: ['DURABLE_CAPTURE'],
       windowMs: 60000
     });
     expect(
       await migrateWave({ ...options, dryRun: true }, service, runtime)
     ).toMatchObject({
       dryRun: true,
-      failures: ['ENVIRONMENT_ACCEPTANCE_REQUIRED']
+      failures: ['DURABLE_CAPTURE']
     });
     expect(service.enroll).not.toHaveBeenCalled();
     expect(service.cutover).not.toHaveBeenCalled();
     await expect(migrateWave(options, service, runtime)).rejects.toThrow(
-      'ENVIRONMENT_ACCEPTANCE_REQUIRED'
+      'DURABLE_CAPTURE'
     );
     expect(service.enroll).not.toHaveBeenCalled();
   });
