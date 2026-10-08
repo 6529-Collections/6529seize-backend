@@ -33,10 +33,11 @@ export async function loadLegacyParityCandidate(
   reader: CompetitionReader,
   record: CompetitionRoutingRecord,
   now: number,
-  ctx: RequestContext
+  ctx: RequestContext,
+  rowLimit = LEGACY_PARITY_ROW_LIMIT
 ): Promise<CompetitionSnapshot> {
   const collect: typeof collectCompetitionPages = (read, direction) =>
-    collectCompetitionPages(read, direction, LEGACY_PARITY_ROW_LIMIT);
+    collectCompetitionPages(read, direction, rowLimit);
   const competition = await reader.getCompetition(record, now);
   const entries = await collect((page) => reader.listEntries(record, page));
   const voters = await collect((page) => reader.listVoters(record, page));
@@ -90,7 +91,7 @@ export async function loadLegacyParityCandidate(
       competition,
       entries,
       voters,
-      LEGACY_PARITY_ROW_LIMIT,
+      rowLimit,
       ctx
     ),
     leaderboard: leaderboard.map((entry) => ({

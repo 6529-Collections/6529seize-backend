@@ -323,7 +323,7 @@ function nativeSelects(table: string): {
       };
     case WAVE_LEADERBOARD_ENTRIES_TABLE:
       return {
-        from: `${entries} join ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} lb on lb.entry_id=e.id and lb.competition_id=c.id left join ${COMPETITION_ENTRY_RUNTIME_TABLE} r on r.entry_id=e.id and r.competition_id=c.id where e.status='ACTIVE' and (cast(json_unquote(json_extract(c.decision_config,'$.time_lock_ms')) as signed)>0 or exists(select 1 from ${WAVE_LEADERBOARD_ENTRIES_TABLE} original where original.drop_id=e.drop_id and original.wave_id=c.wave_id))`,
+        from: `${entries} join ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} lb on lb.entry_id=e.id and lb.competition_id=c.id left join ${COMPETITION_ENTRY_RUNTIME_TABLE} r on r.entry_id=e.id and r.competition_id=c.id where e.status='ACTIVE' and (exists(select 1 from ${WAVE_LEADERBOARD_ENTRIES_TABLE} original where original.drop_id=e.drop_id and original.wave_id=c.wave_id) or (cast(json_unquote(json_extract(c.decision_config,'$.time_lock_ms')) as signed)>0 and lb.updated_at>e.submitted_at))`,
         fields: {
           drop_id: 'e.drop_id',
           wave_id: 'c.wave_id',

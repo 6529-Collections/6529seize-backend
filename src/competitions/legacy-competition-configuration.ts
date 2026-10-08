@@ -1,9 +1,17 @@
 import { Competition } from './competition.types';
+import type { NumberSchema } from 'joi';
 import { ApiCompetitionDraftInput } from '@/api/generated/models/ApiCompetitionDraftInput';
 import {
   CompetitionDraftSchema,
   competitionPresentationKeys
 } from '@/api/competitions/competition-configuration';
+
+// Historical waves predate the five-minute creation minimum. Native weighted
+// execution supports their positive durations; migration preserves that value.
+const MigrationDraftSchema = CompetitionDraftSchema.fork(
+  ['rules.time_lock_ms'],
+  (schema) => (schema as NumberSchema).min(1)
+);
 
 /** Preserve the legacy upper threshold in the immutable migration snapshot.
  * The native decision/winner records retain the original legacy value. */
@@ -79,7 +87,7 @@ export function migrationCommandConfiguration(
       competitionPresentationKeys.includes(item.data_key)
     )
   };
-  const result = CompetitionDraftSchema.validate(value);
+  const result = MigrationDraftSchema.validate(value);
   if (result.error)
     throw new Error(
       `OWNED_EXCEPTION: legacy rule shape requires an owned native command adapter (${result.error.details.map((detail) => detail.path.join('.')).join(',')})`
