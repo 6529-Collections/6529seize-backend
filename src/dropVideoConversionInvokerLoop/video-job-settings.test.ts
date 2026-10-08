@@ -94,6 +94,28 @@ it.each(['mp4', 'MOV', 'webm', 'avi'])(
   }
 );
 
+// docs/chat-video-previews.md and frontend #4178 share this storage contract.
+// MediaConvert numbers the first frame 0000000 and the one-second frame 0000001.
+// Sub-second inputs can emit only 0000000; the frontend must retain that fallback.
+it('keeps sequence 1 at one second as the preferred chat poster', () => {
+  const job = buildDropVideoJobSettings(
+    template(),
+    'bucket',
+    'drops/video.mp4'
+  );
+  const output = job.OutputGroups?.find((group) => group.Name === 'Chat poster')
+    ?.Outputs?.[0];
+  expect(output?.NameModifier).toBe('_poster');
+  expect(output?.VideoDescription?.CodecSettings).toMatchObject({
+    Codec: 'FRAME_CAPTURE',
+    FrameCaptureSettings: {
+      FramerateNumerator: 1,
+      FramerateDenominator: 1,
+      MaxCaptures: 2
+    }
+  });
+});
+
 it('rejects templates that would remove playable video outputs', () => {
   expect(() =>
     buildDropVideoJobSettings({}, 'bucket', 'drops/video.mp4')
