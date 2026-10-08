@@ -16,6 +16,13 @@ import {
   getDeviceVideoPosterKey,
   MAX_DEVICE_POSTER_BYTES
 } from '@/media/chat-video-poster';
+import { Logger } from '@/logging';
+
+const mockWarn = jest
+  .spyOn(Logger.get('DEVICE_VIDEO_POSTER'), 'warn')
+  .mockImplementation(() => undefined);
+beforeEach(() => mockWarn.mockClear());
+afterAll(() => mockWarn.mockRestore());
 
 const key = 'drops/author_owner/12345678-1234-1234-1234-123456789012/clip.MP4';
 function jpeg(width = 36, height = 64): Buffer {
@@ -206,10 +213,16 @@ describe('video upload completion ordering', () => {
       CompleteMultipartUploadCommand
     ]);
   });
-  it.each(['invalid', 'storage failure'])(
-    'still completes the video when poster preparation fails: %s',
-    async (failure) => {
+  it.each([
+    { failure: 'invalid', stage: 'validation' },
+    { failure: 'lookup failure', stage: 'pending-upload' },
+    { failure: 'storage failure', stage: 'storage' }
+  ])(
+    'still completes the video when poster preparation fails: $failure',
+    async ({ failure, stage }) => {
       const send = jest.fn().mockResolvedValue({ Key: key });
+      if (failure === 'lookup failure')
+        send.mockRejectedValueOnce(new Error('AccessDenied'));
       if (failure === 'storage failure')
         send
           .mockResolvedValueOnce({})
@@ -223,6 +236,15 @@ describe('video upload completion ordering', () => {
       ).resolves.toMatchObject({ media_status: 'ready' });
       expect(send.mock.lastCall?.[0]).toBeInstanceOf(
         CompleteMultipartUploadCommand
+      );
+      if (failure === 'lookup failure') {
+        expect(send.mock.calls.map(([command]) => command.constructor)).toEqual(
+          [ListPartsCommand, CompleteMultipartUploadCommand]
+        );
+      }
+      expect(mockWarn).toHaveBeenCalledWith(
+        'Device poster unavailable; using backend frame capture',
+        { event: 'device_video_poster_fallback', stage }
       );
     }
   );

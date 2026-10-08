@@ -33,6 +33,13 @@ continues with backend capture. The converter reuses its S3 client across warm
 invocations and skips device-poster lookups for legacy drop paths, which cannot
 receive device posters through the API. Those paths use backend capture.
 
+API fallback emits one warning from `DEVICE_VIDEO_POSTER` with event
+`device_video_poster_fallback` and stage `validation`, `pending-upload`, or
+`storage`. These bounded fields distinguish failed image validation, upload
+lookup and image writing without logging JPEG bytes, keys or raw error details.
+Use warning counts by event/stage to investigate device-poster loss; this
+best-effort path does not add a separate metric publisher or fail video posting.
+
 For `drops/<author>/<upload-uuid>/<name>.<extension>`, the API writes
 `renditions/drops/<author>/<upload-uuid>/<name>/poster/<name>_device.jpg`
 with `Content-Type: image/jpeg` and metadata `chat-video-poster: validated-v1`.

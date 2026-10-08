@@ -75,14 +75,17 @@ export async function storeDeviceVideoPoster({
   if (!base64 || !posterKey) {
     return;
   }
+  let stage = 'validation';
   try {
     const bytes = sanitizeDeviceVideoPoster(base64);
     const abortSignal = AbortSignal.timeout(3000);
+    stage = 'pending-upload';
     // A forged/stale upload ID must not let a client replace an existing poster.
     await s3.send(
       new ListPartsCommand({ Bucket: bucket, Key: key, UploadId: uploadId }),
       { abortSignal }
     );
+    stage = 'storage';
     await s3.send(
       new PutObjectCommand({
         Bucket: bucket,
@@ -98,6 +101,9 @@ export async function storeDeviceVideoPoster({
     );
   } catch {
     // Poster capture/validation/storage is best effort; the converter is the fallback.
-    logger.warn('Device poster unavailable; using backend frame capture');
+    logger.warn('Device poster unavailable; using backend frame capture', {
+      event: 'device_video_poster_fallback',
+      stage
+    });
   }
 }
