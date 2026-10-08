@@ -455,33 +455,8 @@ export class CompetitionMigrationBackfill {
             ? Number(source[source.length - 1].id)
             : 0;
         }
-        case 'DECISIONS': {
-          const keys = await this.db.execute<{
-            decision_time: number;
-            winner_count: number;
-          }>(
-            `select d.decision_time,
-              (select count(*) from ${WAVES_DECISION_WINNER_DROPS_TABLE} w where w.wave_id=d.wave_id and w.decision_time=d.decision_time) winner_count
-             from ${WAVES_DECISIONS_TABLE} d where d.wave_id=:waveId and d.decision_time>:offset order by d.decision_time limit :limit`,
-            { waveId: record.wave_id, offset, limit },
-            { wrappedConnection: ctx.connection }
-          );
-          let copied = 0;
-          let units = 0;
-          // Keep one large winner set atomic, as before; otherwise share the
-          // row budget between decisions and winners instead of waiting once
-          // for every empty historical decision.
-          for (const key of keys) {
-            const cost = 1 + Number(key.winner_count);
-            if (copied && units + cost > limit) break;
-            await this.decision(record, Number(key.decision_time), ctx);
-            copied++;
-            units += cost;
-          }
-          return copied && (copied < keys.length || keys.length === limit)
-            ? Number(keys[copied - 1].decision_time)
-            : 0;
-        }
+        case 'DECISIONS':
+          return this.decisionBatch(record, offset, limit, ctx);
         case 'VOTERS':
           return this.voters(record, limit, cursor, ctx);
         case 'VOTES':
@@ -498,6 +473,39 @@ export class CompetitionMigrationBackfill {
     } finally {
       ctx.timer?.stop(timerName);
     }
+  }
+
+  private async decisionBatch(
+    record: CompetitionRoutingRecord,
+    offset: number,
+    limit: number,
+    ctx: RequestContext
+  ): Promise<number> {
+    const keys = await this.db.execute<{
+      decision_time: number;
+      winner_count: number;
+    }>(
+      `select d.decision_time,
+        (select count(*) from ${WAVES_DECISION_WINNER_DROPS_TABLE} w where w.wave_id=d.wave_id and w.decision_time=d.decision_time) winner_count
+       from ${WAVES_DECISIONS_TABLE} d where d.wave_id=:waveId and d.decision_time>:offset order by d.decision_time limit :limit`,
+      { waveId: record.wave_id, offset, limit },
+      { wrappedConnection: ctx.connection }
+    );
+    let copied = 0;
+    let units = 0;
+    // Keep one large winner set atomic, as before; otherwise share the
+    // row budget between decisions and winners instead of waiting once
+    // for every empty historical decision.
+    for (const key of keys) {
+      const cost = 1 + Number(key.winner_count);
+      if (copied && units + cost > limit) break;
+      await this.decision(record, Number(key.decision_time), ctx);
+      copied++;
+      units += cost;
+    }
+    return copied && (copied < keys.length || keys.length === limit)
+      ? Number(keys[copied - 1].decision_time)
+      : 0;
   }
 
   public async decision(
