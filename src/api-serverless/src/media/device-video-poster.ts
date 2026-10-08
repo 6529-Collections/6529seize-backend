@@ -72,11 +72,7 @@ export async function storeDeviceVideoPoster({
 }): Promise<void> {
   const posterKey = getDeviceVideoPosterKey(key);
   // Only generated per-upload drop keys are eligible, never wave/distribution media.
-  if (
-    !base64 ||
-    !posterKey ||
-    !/^drops\/author_[^/]+\/[0-9a-f-]{36}\/[^/]+$/i.test(key)
-  ) {
+  if (!base64 || !posterKey) {
     return;
   }
   try {

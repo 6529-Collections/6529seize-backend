@@ -29,9 +29,9 @@ The poster write deliberately precedes multipart completion: completing first
 could trigger conversion before the device image exists and post a video without
 its preview. Only clients supplying a device JPEG incur these two S3 calls;
 their combined wait is bounded to three seconds, after which video completion
-continues with backend capture. The converter also probes legacy drop paths;
-those cannot receive new device posters through the API and use backend capture
-unless an already validated device image exists.
+continues with backend capture. The converter reuses its S3 client across warm
+invocations and skips device-poster lookups for legacy drop paths, which cannot
+receive device posters through the API. Those paths use backend capture.
 
 For `drops/<author>/<upload-uuid>/<name>.<extension>`, the API writes
 `renditions/drops/<author>/<upload-uuid>/<name>/poster/<name>_device.jpg`

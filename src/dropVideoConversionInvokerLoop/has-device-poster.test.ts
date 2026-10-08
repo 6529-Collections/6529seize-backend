@@ -6,6 +6,7 @@ const valid = {
   ContentLength: 1000,
   Metadata: { 'chat-video-poster': 'validated-v1' }
 };
+const key = 'drops/author_owner/12345678-1234-1234-1234-123456789012/clip.MP4';
 it.each([
   [valid, true],
   [{ ...valid, ContentType: 'text/html' }, false],
@@ -18,15 +19,11 @@ it.each([
   async (head, expected) => {
     const send = jest.fn().mockResolvedValue(head);
     expect(
-      await hasDeviceVideoPoster(
-        { send } as unknown as S3Client,
-        'bucket',
-        'drops/author/clip.MP4'
-      )
+      await hasDeviceVideoPoster({ send } as unknown as S3Client, 'bucket', key)
     ).toBe(expected);
     expect(send.mock.calls[0][0]).toBeInstanceOf(HeadObjectCommand);
     expect(send.mock.calls[0][0].input.Key).toBe(
-      'renditions/drops/author/clip/poster/clip_device.jpg'
+      'renditions/drops/author_owner/12345678-1234-1234-1234-123456789012/clip/poster/clip_device.jpg'
     );
   }
 );
@@ -35,11 +32,22 @@ it.each(['missing', 'network', 'denied'])(
   async (reason) => {
     const send = jest.fn().mockRejectedValue(new Error(reason));
     expect(
-      await hasDeviceVideoPoster(
-        { send } as unknown as S3Client,
-        'bucket',
-        'drops/clip.mp4'
-      )
+      await hasDeviceVideoPoster({ send } as unknown as S3Client, 'bucket', key)
     ).toBe(false);
+    expect(send).toHaveBeenCalledTimes(1);
   }
 );
+
+it.each([
+  'drops/clip.mp4',
+  'drops/author_owner/clip.mp4',
+  'drops/author_owner/not-a-uuid/clip.mp4',
+  key.replace('.MP4', '.jpg'),
+  key.replace('drops/', 'waves/')
+])('does not request a device poster for ineligible key %s', async (key) => {
+  const send = jest.fn();
+  expect(
+    await hasDeviceVideoPoster({ send } as unknown as S3Client, 'bucket', key)
+  ).toBe(false);
+  expect(send).not.toHaveBeenCalled();
+});

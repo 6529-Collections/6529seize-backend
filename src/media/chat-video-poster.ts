@@ -4,9 +4,12 @@ export const MAX_DEVICE_POSTER_BASE64_LENGTH =
 export const DEVICE_POSTER_METADATA_KEY = 'chat-video-poster';
 export const DEVICE_POSTER_METADATA_VALUE = 'validated-v1';
 
-/** Same deterministic storage contract used by the chat frontend. */
+/** Device posters are only written for the upload service's canonical video keys. */
 export function getDeviceVideoPosterKey(key: string): string | undefined {
-  if (!key.startsWith('drops/') || !/\.(mp4|mov|avi|webm)$/i.test(key)) {
+  if (
+    !/^drops\/author_[^/]+\/[0-9a-f-]{36}\/[^/]+$/i.test(key) ||
+    !/\.(mp4|mov|avi|webm)$/i.test(key)
+  ) {
     return undefined;
   }
   const base = key.replace(/\.[^.]+$/, '');

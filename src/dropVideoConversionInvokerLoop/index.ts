@@ -11,6 +11,7 @@ import { buildDropVideoJobSettings } from './video-job-settings';
 import { createHash } from 'node:crypto';
 import { S3Client } from '@aws-sdk/client-s3';
 import { hasDeviceVideoPoster } from './has-device-poster';
+import { getDeviceVideoPosterKey } from '../media/chat-video-poster';
 
 const logger = Logger.get('DROP_VIDEO_CONVERSION_INVOKER_LOOP');
 // Capture once, before shared secrets can overwrite these values, including
@@ -18,6 +19,7 @@ const logger = Logger.get('DROP_VIDEO_CONVERSION_INVOKER_LOOP');
 const configuredTemplate = env.getStringOrNull('MC_DROPS_VIDEO_TEMPLATE_NAME');
 const configuredBucket = env.getStringOrNull('S3_BUCKET');
 const configuredRegion = env.getStringOrNull('BUCKET_REGION');
+let devicePosterS3: S3Client | undefined;
 
 export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const start = Time.now();
@@ -62,11 +64,13 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
       throw new Error(`Drop video template ${template} has no settings`);
     }
     logger.info(`Invoking video conversion for ${fileInput}`);
-    const hasDevicePoster = await hasDeviceVideoPoster(
-      new S3Client({ region: bucketRegion }),
-      bucket,
-      key
-    );
+    const hasDevicePoster =
+      getDeviceVideoPosterKey(key) !== undefined &&
+      (await hasDeviceVideoPoster(
+        (devicePosterS3 ??= new S3Client({ region: bucketRegion })),
+        bucket,
+        key
+      ));
     await mc.send(
       new CreateJobCommand({
         ClientRequestToken: clientRequestToken,

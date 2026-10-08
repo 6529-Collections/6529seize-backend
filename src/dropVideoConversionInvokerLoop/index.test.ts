@@ -64,6 +64,9 @@ import {
 } from '@aws-sdk/client-mediaconvert';
 import { handler } from './index';
 
+const canonicalVideoKey =
+  'drops/author_owner/12345678-1234-1234-1234-123456789012/clip.MP4';
+
 describe('dropVideoConversionInvokerLoop', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -127,6 +130,7 @@ describe('dropVideoConversionInvokerLoop', () => {
       's3://6529-test-bucket/drops/example-video.mp4'
     );
     expect(settings?.OutputGroups).toHaveLength(3);
+    expect(mockHasDevicePoster).not.toHaveBeenCalled();
     expect(
       settings?.OutputGroups?.[2].OutputGroupSettings?.FileGroupSettings
         ?.Destination
@@ -136,12 +140,39 @@ describe('dropVideoConversionInvokerLoop', () => {
   it('skips JPEG generation when the API has already stored a validated device poster', async () => {
     mockHasDevicePoster.mockResolvedValue(true);
     await handler(
-      { detail: { object: { key: 'drops/clip.mp4' } } },
+      { detail: { object: { key: canonicalVideoKey } } },
       {} as any,
       jest.fn()
     );
     const settings = jest.mocked(CreateJobCommand).mock.calls[0][0].Settings;
     expect(settings?.OutputGroups).toHaveLength(2);
+  });
+
+  it('reuses the device-poster client across warm invocations', async () => {
+    const event = { detail: { object: { key: canonicalVideoKey } } };
+    await handler(event, {} as any, jest.fn());
+    // Reuse the same valid template for the next invocation.
+    const settings = jest.mocked(CreateJobCommand).mock.calls[0][0].Settings;
+    mockSend.mockResolvedValueOnce({
+      JobTemplate: {
+        Settings: {
+          ...settings,
+          OutputGroups: settings?.OutputGroups?.slice(0, 2)
+        }
+      }
+    });
+    await handler(event, {} as any, jest.fn());
+    expect(mockHasDevicePoster).toHaveBeenCalledTimes(2);
+    expect(mockHasDevicePoster.mock.calls[0][0]).toBe(
+      mockHasDevicePoster.mock.calls[1][0]
+    );
+    expect(mockHasDevicePoster.mock.calls[0].slice(1)).toEqual([
+      '6529-test-bucket',
+      canonicalVideoKey
+    ]);
+    await expect(
+      mockHasDevicePoster.mock.calls[0][0].config.region()
+    ).resolves.toBe('eu-west-1');
   });
 
   it('does not submit a partially configured job when the template is unavailable', async () => {

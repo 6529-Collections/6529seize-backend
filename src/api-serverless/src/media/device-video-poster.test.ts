@@ -121,6 +121,9 @@ it('does not publish a poster for an invalid pending upload', async () => {
 it.each([
   'waves/author_owner/clip.mp4',
   'distribution/clip.mp4',
+  'drops/clip.mp4',
+  'drops/author_owner/clip.mp4',
+  'drops/author_owner/not-a-uuid/clip.mp4',
   key.replace('.MP4', '.jpg')
 ])('ignores posters for non-drop-video key %s', async (mediaKey) => {
   const send = jest.fn();

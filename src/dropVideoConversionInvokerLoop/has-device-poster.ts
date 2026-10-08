@@ -12,7 +12,7 @@ export async function hasDeviceVideoPoster(
   bucket: string,
   key: string
 ): Promise<boolean> {
-  // Legacy drop keys can be probed too; only canonical upload keys accept API writes.
+  // Legacy keys cannot receive API device posters; skip their guaranteed misses.
   const posterKey = getDeviceVideoPosterKey(key);
   if (!posterKey) return false;
   try {
