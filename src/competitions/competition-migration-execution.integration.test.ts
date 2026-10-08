@@ -50,7 +50,12 @@ import {
   recordLegacyExecutionEffects
 } from './legacy-competition-execution-effects';
 import { withLegacyCompetitionGetFacade } from './legacy-competition-get-facade';
-import { withLegacyPrimaryMutation } from './legacy-competition-mutation';
+import {
+  reconcileAcceptedLegacyPauses,
+  withLegacyPrimaryMutation
+} from './legacy-competition-mutation';
+import { competitionCommandRepository } from './competition-command.repository';
+import { LEGACY_INDEFINITE_PAUSE_END } from './legacy-competition-settings.repository';
 import { voteForMigratedLegacyEntry } from './legacy-competition-vote.service';
 import { CompetitionMigrationBackfill } from './competition-migration-backfill';
 import { migrateWave } from './wave-migration';
@@ -219,7 +224,14 @@ describeWithSeed(
     },
     {
       table: WAVES_DECISION_PAUSES_TABLE,
-      rows: [{ wave_id: active.id, start_time: 0, end_time: 2000000 }]
+      rows: [
+        {
+          wave_id: active.id,
+          start_time: 0,
+          end_time: 2000000,
+          reason: 'Initial review'
+        }
+      ]
     }
   ],
   () => {
@@ -322,6 +334,89 @@ describeWithSeed(
           `select amount from ${WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE} where wave_id=:waveId and wave_outcome_position=99`
         )
       ).toEqual([{ amount: 1 }]);
+    });
+
+    it('preserves pause reasons and indefinite pauses across migration and both command paths', async () => {
+      const clock = { value: 10000 };
+      await sqlExecutor.execute(
+        `update ${WAVES_DECISION_PAUSES_TABLE} set end_time=:end where wave_id=:waveId`,
+        { waveId: active.id, end: LEGACY_INDEFINITE_PAUSE_END }
+      );
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        () => clock.value,
+        0,
+        'local'
+      );
+      const result = await migrateWave(
+        {
+          waveId: active.id,
+          environment: 'local',
+          operator,
+          dryRun: false,
+          batch: 1,
+          timeoutMs: 60000
+        },
+        service,
+        {
+          now: () => clock.value,
+          wait: async (ms) => {
+            clock.value += ms;
+          },
+          progress: () => undefined
+        }
+      );
+      expect(result.status.storageMode).toBe('NATIVE');
+      const pauses = () =>
+        new CompetitionRepository().listNativePauses(
+          id,
+          { offset: 0, limit: 20, direction: 'ASC' },
+          {}
+        );
+      expect((await pauses()).data).toMatchObject([
+        { end_time: null, reason: 'Initial review' }
+      ]);
+      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+        withLegacyPrimaryMutation(active.id, { connection }, async (owner) => {
+          if (!owner) throw new Error('Expected native primary');
+          await sqlExecutor.execute(
+            `update ${WAVES_DECISION_PAUSES_TABLE} set reason='Updated review' where wave_id=:waveId`,
+            { waveId: active.id },
+            { wrappedConnection: connection }
+          );
+          await reconcileAcceptedLegacyPauses(owner, { connection });
+        })
+      );
+      expect((await pauses()).data[0].reason).toBe('Updated review');
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const ctx = { connection };
+          await competitionCommandRepository.resume(id, clock.value, ctx);
+          await competitionCommandRepository.pause(
+            id,
+            clock.value + 1,
+            null,
+            'Native review',
+            ctx
+          );
+        }
+      );
+      expect((await pauses()).data).toMatchObject([
+        { end_time: clock.value, reason: 'Updated review' },
+        { end_time: null, reason: 'Native review' }
+      ]);
+      expect(
+        await withLegacyCompetitionGetFacade(() =>
+          sqlExecutor.execute(
+            `select end_time,reason from ${WAVES_DECISION_PAUSES_TABLE} where wave_id=:waveId order by start_time`,
+            { waveId: active.id }
+          )
+        )
+      ).toEqual([
+        { end_time: clock.value, reason: 'Updated review' },
+        { end_time: LEGACY_INDEFINITE_PAUSE_END, reason: 'Native review' }
+      ]);
+      expect((await service.verifyNative(id)).failures).toEqual([]);
     });
 
     it.each(['WAVE', 'DROP'])(

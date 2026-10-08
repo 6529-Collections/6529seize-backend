@@ -285,7 +285,8 @@ function nativeSelects(table: string): {
           id: 'p.legacy_source_id',
           wave_id: 'c.wave_id',
           start_time: 'p.start_time',
-          end_time: 'p.end_time'
+          end_time: 'p.end_time',
+          reason: 'p.reason'
         }
       };
     case WAVE_VOTING_CREDIT_NFTS_TABLE:

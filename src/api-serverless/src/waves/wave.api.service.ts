@@ -847,14 +847,26 @@ export class WaveApiService {
     return this.wavesApiDb.executeNativeQueriesInTransaction(callback);
   }
 
+  private async withWaveSettingsTransaction<T>(
+    callback: (
+      connection: NonNullable<RequestContext['connection']>
+    ) => Promise<T>,
+    ctx: RequestContext
+  ): Promise<T> {
+    return ctx.connection
+      ? callback(ctx.connection)
+      : this.wavesApiDb.executeNativeQueriesInTransaction(callback);
+  }
+
   public async createOrUpdateWavePause(
     waveId: string,
     model: ApiUpdateWaveDecisionPause,
-    ctx: RequestContext
+    ctx: RequestContext,
+    reason?: string
   ): Promise<ApiWave> {
     const wave = await this.assertUserAllowedToModifyPauses(ctx, waveId);
     await this.assertProposedPauseValidForAddOrUpdate(wave, model, ctx);
-    await this.wavesApiDb.executeNativeQueriesInTransaction(
+    await this.withWaveSettingsTransaction(
       async (connection) =>
         withLegacyPrimaryMutation(
           waveId,
@@ -872,7 +884,12 @@ export class WaveApiService {
               await this.wavesApiDb.deletePause(model.id, connection);
             }
             await this.wavesApiDb.insertPause(
-              { startTime: model.start_time, endTime: model.end_time, waveId },
+              {
+                startTime: model.start_time,
+                endTime: model.end_time,
+                waveId,
+                ...(reason === undefined ? {} : { reason })
+              },
               connection
             );
             if (nativeOwner)
@@ -881,9 +898,10 @@ export class WaveApiService {
                 connection
               });
           }
-        )
+        ),
+      ctx
     );
-    await giveReadReplicaTimeToCatchUp();
+    if (!ctx.connection) await giveReadReplicaTimeToCatchUp();
     const actingAsId = ctx.authenticationContext?.getActingAsId();
     if (!actingAsId) {
       throw new ForbiddenException(`User must be authenticated`);
@@ -900,7 +918,7 @@ export class WaveApiService {
   ): Promise<ApiWave> {
     const wave = await this.assertUserAllowedToModifyPauses(ctx, waveId);
     await this.assertProposedPauseValidForDeletion(wave, pauseId, ctx);
-    await this.wavesApiDb.executeNativeQueriesInTransaction(
+    await this.withWaveSettingsTransaction(
       async (connection) =>
         withLegacyPrimaryMutation(
           waveId,
@@ -921,9 +939,10 @@ export class WaveApiService {
                 connection
               });
           }
-        )
+        ),
+      ctx
     );
-    await giveReadReplicaTimeToCatchUp();
+    if (!ctx.connection) await giveReadReplicaTimeToCatchUp();
     const actingAsId = ctx.authenticationContext?.getActingAsId();
     if (!actingAsId) {
       throw new ForbiddenException(`User must be authenticated`);
@@ -1043,7 +1062,9 @@ export class WaveApiService {
     if (authContext?.isAuthenticatedAsProxy()) {
       throw new ForbiddenException(`This action can not be done as proxy`);
     }
-    const wave = await this.wavesApiDb.findById(waveId, ctx.connection);
+    const wave = ctx.connection
+      ? await this.wavesApiDb.findWaveById(waveId, ctx.connection)
+      : await this.wavesApiDb.findById(waveId);
     if (!wave) {
       throw new NotFoundException(`Wave not found`);
     }
@@ -2285,7 +2306,7 @@ export class WaveApiService {
       await this.userGroupsService.getGroupsUserIsEligibleFor(
         authenticatedProfileId
       );
-    return await this.wavesApiDb.executeNativeQueriesInTransaction(
+    return await this.withWaveSettingsTransaction(
       async (connection) =>
         withLegacyPrimaryMutation(
           waveId,
@@ -2425,7 +2446,8 @@ export class WaveApiService {
               ctxWithConnection
             );
           }
-        )
+        ),
+      ctx
     );
   }
 

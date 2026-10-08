@@ -116,7 +116,12 @@ export async function reconcileAcceptedLegacyPauses(
   const db = dbSupplier(),
     options = { wrappedConnection: ctx.connection };
   const rows = await readLegacyMutationSource(() =>
-    db.execute<{ id: number; start_time: number; end_time: number }>(
+    db.execute<{
+      id: number;
+      start_time: number;
+      end_time: number;
+      reason: string | null;
+    }>(
       `select * from ${WAVES_DECISION_PAUSES_TABLE} where wave_id=:waveId order by id limit 1001`,
       { waveId: record.wave_id },
       options
@@ -133,12 +138,13 @@ export async function reconcileAcceptedLegacyPauses(
   );
   for (const row of rows)
     await db.execute(
-      `insert into ${COMPETITION_PAUSES_TABLE} (id,competition_id,start_time,end_time,reason,legacy_source_id) values (:id,:competitionId,:start,:end,null,:sourceId)`,
+      `insert into ${COMPETITION_PAUSES_TABLE} (id,competition_id,start_time,end_time,reason,legacy_source_id) values (:id,:competitionId,:start,:end,:reason,:sourceId)`,
       {
         id: legacyCompetitionPauseId(record.id, row.id),
         competitionId: record.id,
         start: Number(row.start_time),
         end: Number(row.end_time),
+        reason: row.reason,
         sourceId: row.id
       },
       options

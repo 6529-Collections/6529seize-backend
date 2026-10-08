@@ -466,8 +466,9 @@ export class CompetitionMigrationBackfill {
             id: number;
             start_time: number;
             end_time: number;
+            reason: string | null;
           }>(
-            `select id,start_time,end_time from ${WAVES_DECISION_PAUSES_TABLE} where wave_id=:waveId and id>:offset order by id limit :limit`,
+            `select id,start_time,end_time,reason from ${WAVES_DECISION_PAUSES_TABLE} where wave_id=:waveId and id>:offset order by id limit :limit`,
             { waveId: record.wave_id, offset, limit },
             { wrappedConnection: ctx.connection }
           );
@@ -479,7 +480,7 @@ export class CompetitionMigrationBackfill {
               competition_id: record.id,
               start_time: Number(row.start_time),
               end_time: Number(row.end_time),
-              reason: null
+              reason: row.reason
             })),
             ctx
           );

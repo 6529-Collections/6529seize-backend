@@ -1,4 +1,5 @@
 import { withNativeLegacyMirror } from './legacy-competition-mirror';
+import { LEGACY_INDEFINITE_PAUSE_END } from './legacy-competition-settings.repository';
 import { legacyCompetitionPauseId } from './competition-id';
 import { WAVES_DECISION_PAUSES_TABLE } from '@/constants';
 import { randomUUID } from 'node:crypto';
@@ -412,11 +413,11 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
       if (primary?.legacy_wave_id) {
         if (!ctx.connection)
           throw new Error('Migrated pause requires a pinned transaction');
-        endsAt = endsAt ?? Number.MAX_SAFE_INTEGER;
+        endsAt = endsAt ?? LEGACY_INDEFINITE_PAUSE_END;
         await withNativeLegacyMirror(this.db, competitionId, ctx, async () => {
           await this.db.execute(
-            `insert into ${WAVES_DECISION_PAUSES_TABLE} (wave_id,start_time,end_time) values (:waveId,:startsAt,:endsAt)`,
-            { waveId: primary.legacy_wave_id, startsAt, endsAt },
+            `insert into ${WAVES_DECISION_PAUSES_TABLE} (wave_id,start_time,end_time,reason) values (:waveId,:startsAt,:endsAt,:reason)`,
+            { waveId: primary.legacy_wave_id, startsAt, endsAt, reason },
             options(ctx)
           );
           legacyId = Number(
