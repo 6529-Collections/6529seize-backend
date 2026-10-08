@@ -25,6 +25,14 @@ the converter remains the fallback. Oversized request fields are rejected by the
 request validator. Device posters are restricted to generated per-upload drop
 video keys; wave media, distributions and attachments do not use this flow.
 
+The poster write deliberately precedes multipart completion: completing first
+could trigger conversion before the device image exists and post a video without
+its preview. Only clients supplying a device JPEG incur these two S3 calls;
+their combined wait is bounded to three seconds, after which video completion
+continues with backend capture. The converter also probes legacy drop paths;
+those cannot receive new device posters through the API and use backend capture
+unless an already validated device image exists.
+
 For `drops/<author>/<upload-uuid>/<name>.<extension>`, the API writes
 `renditions/drops/<author>/<upload-uuid>/<name>/poster/<name>_device.jpg`
 with `Content-Type: image/jpeg` and metadata `chat-video-poster: validated-v1`.

@@ -1,6 +1,7 @@
 import { decode, encode } from 'jpeg-js';
 import {
   CompleteMultipartUploadCommand,
+  CreateMultipartUploadCommand,
   ListPartsCommand,
   PutObjectCommand,
   S3Client
@@ -11,7 +12,10 @@ import {
 } from './device-video-poster';
 import { UploadMediaService } from './upload-media.service';
 import { DropMediaUploadsDb } from '@/drops/drop-media-uploads.db';
-import { MAX_DEVICE_POSTER_BYTES } from '@/media/chat-video-poster';
+import {
+  getDeviceVideoPosterKey,
+  MAX_DEVICE_POSTER_BYTES
+} from '@/media/chat-video-poster';
 
 const key = 'drops/author_owner/12345678-1234-1234-1234-123456789012/clip.MP4';
 function jpeg(width = 36, height = 64): Buffer {
@@ -150,6 +154,43 @@ describe('video upload completion ordering', () => {
     parts: [{ etag: 'etag', part_no: 1 }],
     authenticatedProfileId: 'owner'
   };
+  it('publishes a device poster for the real drop-upload key and completes that upload', async () => {
+    const send = jest.fn().mockResolvedValue({ UploadId: 'active-upload' });
+    const uploads = service(send);
+    const started = await uploads.getDropMediaMultipartUploadKeyAndUploadId({
+      author_id: 'owner',
+      content_type: 'video/mp4',
+      file_name: 'My holiday.MP4'
+    });
+    expect(send.mock.calls[0][0]).toBeInstanceOf(CreateMultipartUploadCommand);
+    expect(started.key).toMatch(
+      /^drops\/author_owner\/[0-9a-f-]{36}\/My-holiday\.MP4$/
+    );
+    send.mockClear();
+    send.mockResolvedValue({ Key: started.key });
+    await uploads.completeMultipartUpload({
+      ...request,
+      key: started.key,
+      upload_id: started.upload_id,
+      video_poster_base64: jpeg().toString('base64')
+    });
+    expect(send.mock.calls.map(([command]) => command.constructor)).toEqual([
+      ListPartsCommand,
+      PutObjectCommand,
+      CompleteMultipartUploadCommand
+    ]);
+    expect(send.mock.calls[0][0].input).toMatchObject({
+      Key: started.key,
+      UploadId: started.upload_id
+    });
+    expect(send.mock.calls[1][0].input.Key).toBe(
+      getDeviceVideoPosterKey(started.key)
+    );
+    expect(send.mock.calls[2][0].input).toMatchObject({
+      Key: started.key,
+      UploadId: started.upload_id
+    });
+  });
   it('stores the poster before completing the video and triggering conversion', async () => {
     const send = jest.fn().mockResolvedValue({ Key: key });
     await service(send).completeMultipartUpload({
