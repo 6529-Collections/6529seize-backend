@@ -19,7 +19,15 @@ const logger = Logger.get('DROP_VIDEO_CONVERSION_INVOKER_LOOP');
 const configuredTemplate = env.getStringOrNull('MC_DROPS_VIDEO_TEMPLATE_NAME');
 const configuredBucket = env.getStringOrNull('S3_BUCKET');
 const configuredRegion = env.getStringOrNull('BUCKET_REGION');
+// The bucket region is stable for this Lambda process, so one client serves warm runs.
 let devicePosterS3: S3Client | undefined;
+
+function getDevicePosterS3(region: string): S3Client {
+  if (!devicePosterS3) {
+    devicePosterS3 = new S3Client({ region });
+  }
+  return devicePosterS3;
+}
 
 export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const start = Time.now();
@@ -67,7 +75,7 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
     const hasDevicePoster =
       getDeviceVideoPosterKey(key) !== undefined &&
       (await hasDeviceVideoPoster(
-        (devicePosterS3 ??= new S3Client({ region: bucketRegion })),
+        getDevicePosterS3(bucketRegion),
         bucket,
         key
       ));
