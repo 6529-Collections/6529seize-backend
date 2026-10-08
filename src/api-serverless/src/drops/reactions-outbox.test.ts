@@ -87,7 +87,8 @@ it.each([
       expect(JSON.parse(events[0][1].event)).toEqual({
         type: 'drop',
         dropId: 'drop',
-        updateType: 'DROP_REACTION_UPDATE'
+        updateType: 'DROP_REACTION_UPDATE',
+        deliveryCapability: 'durable_updates_v1'
       });
       expect(events[0][2]).toEqual({ wrappedConnection: connection });
     }

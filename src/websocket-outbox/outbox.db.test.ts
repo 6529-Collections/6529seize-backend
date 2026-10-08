@@ -204,7 +204,8 @@ describeWithSeed('WebSocket outbox MySQL transaction boundary', [], () => {
     expect(typeof event === 'string' ? JSON.parse(event) : event).toEqual({
       type: 'drop',
       dropId: 'd',
-      updateType: 'DROP_REACTION_UPDATE'
+      updateType: 'DROP_REACTION_UPDATE',
+      deliveryCapability: 'durable_updates_v1'
     });
     await expect(
       reactions.addReaction('p', 'd', 'w', 'love', {})

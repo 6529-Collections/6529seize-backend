@@ -76,6 +76,10 @@ SQS retains frames for four days and moves failures after 100 receives to a
 14-day FIFO DLQ. DLQ handling requires investigation; it is not successful
 delivery. Redrive can reorder old frames relative to newer acknowledged frames,
 so reconcile client state when old snapshots are no longer appropriate.
+Structurally invalid notification/DM frames, including a missing target profile,
+remain reported batch failures and reach the DLQ for investigation and recovery.
+They are never acknowledged as a subscription cancellation: an invalid payload
+does not establish that the recipient unsubscribed.
 
 At delivery, the worker verifies the captured identity/JWT generation, current
 notification subscriptions, wave/parent permissions, and attachment access.

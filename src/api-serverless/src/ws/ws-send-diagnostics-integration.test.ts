@@ -607,6 +607,51 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
     expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
   });
 
+  it.each(['IDENTITY_NOTIFICATIONS_CHANGED', 'DM_UNREAD_STATE_CHANGED'])(
+    'reports and retains a malformed %s frame instead of acknowledging lost delivery',
+    async (type) => {
+      const body = JSON.stringify({
+        version: 1,
+        id: 'malformed',
+        connectionId: 'synthetic',
+        message: JSON.stringify({ type, data: {} }),
+        identityId: 'profile',
+        jwtExpiry: 2000000000
+      });
+      const batch = {
+        Records: [
+          { messageId: 'malformed', body },
+          { messageId: 'unprocessed', body }
+        ]
+      } as SQSEvent;
+      const reportFailure = jest.fn();
+      const deferRetry = jest.fn().mockResolvedValue(undefined);
+      expect(
+        await processWebSocketBatch(
+          batch,
+          (frame) => sockets.deliverQueued(frame),
+          reportFailure,
+          deferRetry
+        )
+      ).toEqual({
+        batchItemFailures: [
+          { itemIdentifier: 'malformed' },
+          { itemIdentifier: 'unprocessed' }
+        ]
+      });
+      expect(reportFailure).toHaveBeenCalledTimes(1);
+      expect(deferRetry).toHaveBeenCalledTimes(1);
+      expect(deferRetry).toHaveBeenCalledWith(batch.Records[0]);
+      expect(mockHandle).not.toHaveBeenCalled();
+      expect(
+        repository.findNotificationConnectionIdsByIdentityIds
+      ).not.toHaveBeenCalled();
+      expect(repository.canIdentityReadQueuedResource).not.toHaveBeenCalled();
+      expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+      expect(mockWarn).not.toHaveBeenCalled();
+    }
+  );
+
   it('does not deliver queued notification data after its subscription is removed', async () => {
     repository.findNotificationConnectionIdsByIdentityIds.mockResolvedValue([]);
     await sockets.deliverQueued({

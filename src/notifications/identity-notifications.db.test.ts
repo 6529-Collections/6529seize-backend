@@ -238,7 +238,11 @@ describe('IdentityNotificationsDb', () => {
       'websocket_outbox',
       ['recipient-1', 'recipient-2'].map((profileId) =>
         expect.objectContaining({
-          event: JSON.stringify({ type: 'identity', profileId })
+          event: JSON.stringify({
+            type: 'identity',
+            profileId,
+            deliveryCapability: 'durable_updates_v1'
+          })
         })
       ),
       expect.any(Array),
@@ -261,7 +265,11 @@ describe('IdentityNotificationsDb', () => {
     expect(db.execute).toHaveBeenCalledWith(
       expect.stringContaining('insert into websocket_outbox'),
       expect.objectContaining({
-        event: JSON.stringify({ type: 'identity', profileId: 'recipient-1' })
+        event: JSON.stringify({
+          type: 'identity',
+          profileId: 'recipient-1',
+          deliveryCapability: 'durable_updates_v1'
+        })
       }),
       { wrappedConnection: connection }
     );
