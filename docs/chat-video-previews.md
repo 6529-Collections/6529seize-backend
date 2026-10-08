@@ -42,6 +42,15 @@ the backend preview instead. The two image paths are independent and cannot
 overwrite each other. The uploaded original video is immediately playable;
 HLS/MP4 renditions still arrive asynchronously.
 
+Fallback is selected from S3 state when the conversion job is submitted. A
+successful HEAD with the validation marker omits backend JPEG capture for that
+job; S3 existence does not prove public CloudFront delivery. A later CDN error
+can therefore leave this video without a visible poster until public delivery
+is repaired. The frontend's bounded retries do not request backend regeneration.
+This follows the device-first design and avoids generating duplicate previews
+for successful device uploads. Verify public device-JPEG delivery during rollout;
+persistent delivery failures require repair of the CDN/object access path.
+
 The backend fallback captures the first frame and a frame at one second with
 `MaxCaptures: 2` and a one-frame-per-second interval. Its keys are
 `<name>_poster.0000000.jpg` and `<name>_poster.0000001.jpg` in the same poster
