@@ -152,6 +152,8 @@ import { ApiModerationActionRequest } from '@/api/generated/models/ApiModeration
 import { ApiModerationCheckDetail } from '@/api/generated/models/ApiModerationCheckDetail';
 import { ApiModerationCheckPage } from '@/api/generated/models/ApiModerationCheckPage';
 import { ApiModerationCounts } from '@/api/generated/models/ApiModerationCounts';
+import { ApiMonitoringAccess } from '@/api/generated/models/ApiMonitoringAccess';
+import { ApiMonitoringSentryOverview } from '@/api/generated/models/ApiMonitoringSentryOverview';
 import { ApiNftActivityPage } from '@/api/generated/models/ApiNftActivityPage';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
 import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
@@ -1685,6 +1687,34 @@ export type GetMemeCardDropMappingRequest = Request<
   ApiResponse<GetMemeCardDropMappingResponse>,
   never,
   GetMemeCardDropMappingQuery,
+  Record<string, never>
+>;
+
+export type GetMonitoringAccessPathParams = Record<string, never>;
+
+export type GetMonitoringAccessQuery = Record<string, never>;
+
+export type GetMonitoringAccessResponse = ApiMonitoringAccess;
+
+export type GetMonitoringAccessRequest = Request<
+  GetMonitoringAccessPathParams,
+  ApiResponse<GetMonitoringAccessResponse>,
+  never,
+  GetMonitoringAccessQuery,
+  Record<string, never>
+>;
+
+export type GetMonitoringSentryPathParams = Record<string, never>;
+
+export type GetMonitoringSentryQuery = Record<string, never>;
+
+export type GetMonitoringSentryResponse = ApiMonitoringSentryOverview;
+
+export type GetMonitoringSentryRequest = Request<
+  GetMonitoringSentryPathParams,
+  ApiResponse<GetMonitoringSentryResponse>,
+  never,
+  GetMonitoringSentryQuery,
   Record<string, never>
 >;
 

@@ -327,6 +327,10 @@ The API package's `dev` script runs with `NODE_ENV=local`. Staging and
 production API processes are built and deployed through the repository
 workflows.
 
+The local API defaults to port `3000`. If another project uses that port,
+set `API_PORT=3002` in the repo-root `.env.local`. Point the local frontend's
+`API_ENDPOINT` and `WS_ENDPOINT` at the same port.
+
 ### 2.5 RUN USING PM2
 
 ```bash

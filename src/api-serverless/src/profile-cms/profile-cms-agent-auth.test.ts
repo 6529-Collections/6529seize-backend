@@ -1,5 +1,5 @@
 import express, { NextFunction, Request, Response } from 'express';
-import * as passport from 'passport';
+import passport from 'passport';
 import { Strategy, ExtractJwt } from 'passport-jwt';
 import { sign } from 'jsonwebtoken';
 import { randomBytes } from 'node:crypto';
@@ -11,13 +11,6 @@ import {
   cmsAgentErrorMiddleware,
   validateCmsAgentRawBody
 } from './profile-cms-agent.http';
-
-jest.mock('passport', () => {
-  const actual = jest.requireActual<typeof import('passport')>('passport');
-  // Preserve inherited Passport methods through ts-jest's namespace interop.
-  Object.defineProperty(actual, '__esModule', { value: true });
-  return actual;
-});
 
 jest.mock('@/api/identities/identity.fetcher', () => ({ identityFetcher: {} }));
 jest.mock('@/api/proxies/proxy.api.service', () => ({

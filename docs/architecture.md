@@ -809,6 +809,47 @@ It makes no upstream or cache request, including for missing or empty queries.
 The removed search wrapper has no remaining callers; ingestion, ownership
 queries, and token metadata continue using their existing supported endpoints.
 
+### Team monitoring entry
+
+`GET /api/monitoring/access` uses the saved Dev Team eligibility check shared
+with content moderation. A central guard mounted before all monitoring
+handlers requires wallet authentication and rejects non-members and proxies.
+The generated endpoint returns only `{ access: true }`; all section responses
+use `Cache-Control: private, no-store`. Membership lookup failures deny access
+with HTTP 503.
+
+`GET /api/monitoring/sentry` shares the same guard and returns a bounded 24-hour
+Sentry snapshot grouped by project: each project has up to five newly seen error
+issues and five unresolved issues ranked by window event count. Separate project
+summaries keep high-volume frontend errors from hiding backend failures.
+The API only exposes issue identifiers, titles, project slugs, window
+counts/timestamps and canonical Sentry links. It never
+returns provider credentials or raw event payloads. Two bounded, parallel Sentry
+requests per project use explicit projects and environment tag filters, an
+eight-second timeout and a response-size limit. Failed collection returns
+sanitized HTTP 503; missing
+configuration returns `not_configured` rather than an empty healthy snapshot.
+
+The summary is cached in Redis for five minutes; its key hashes configuration
+including the token so scope or credential changes cannot reuse another
+snapshot. Concurrent requests in one process share collection. Membership and
+proxy checks run before the cache on every request. No background worker or
+persisted monitoring table is added.
+
+Configure `MONITORING_SENTRY_TOKEN` (Sentry `event:read`),
+`MONITORING_SENTRY_ORG`, `MONITORING_SENTRY_PROJECTS` (explicit IDs or slugs,
+semicolon-separated), and optional `MONITORING_SENTRY_ENVIRONMENT` (defaults to
+`production`, also used as the display label). Optional
+`MONITORING_SENTRY_ENVIRONMENT_FILTERS` accepts semicolon-separated exact names
+or `*_suffix` patterns and defaults to the display environment. For the frontend
+and backend production overview, configure projects `6529-frontend;seize-backend`
+and filters `production;*_prod`. The explicit `tags[environment]` search supports
+suffix wildcards, unlike the environment URL parameter. This automatically
+includes all backend services following the `<service>_prod` convention and
+excludes staging/local events. Local values live in the root `.env.local`;
+Lambda values use the existing regional `prod/lambdas` secret. All keys are
+server-only.
+
 ### Content moderation
 
 See [Content moderation](./content-moderation.md) for the complete feature

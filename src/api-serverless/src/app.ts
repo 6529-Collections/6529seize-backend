@@ -25,6 +25,7 @@ import lightDropsRoutes from './drops/light-drops.routes';
 import feedRoutes from './feed/feed.routes';
 import gasRoutes from './gas/gas.routes';
 import generatedOpenApiRoutes from './generated/routes/openapi-generated.routes';
+import monitoringAccessRoutes from '@/api/monitoring/monitoring-access.routes';
 import { validateDocumentationRawJson } from '@/artwork-documentation/artwork-documentation.raw-json';
 import { documentationErrorMiddleware } from '@/api/artwork-documentation/artwork-documentation.http';
 import { marketErrorMiddleware } from '@/api/marketplace/marketplace.http';
@@ -67,7 +68,7 @@ import { shouldCaptureRawBody } from './raw-body-paths';
 import * as Sentry from '@sentry/serverless';
 import { NextFunction, Request, Response } from 'express';
 import * as Joi from 'joi';
-import * as passport from 'passport';
+import passport from 'passport';
 import {
   ExtractJwt,
   Strategy as JwtStrategy,
@@ -184,7 +185,7 @@ const multer = require('multer');
 const requestLogger = Logger.get('API_REQUEST');
 const logger = Logger.get('API');
 
-const API_PORT = 3000;
+const DEFAULT_API_PORT = 3000;
 const SENTRY_ALLOWED_SKEW_SECONDS = 300;
 const SENTRY_WEBHOOK_DEDUPE_TTL_SECONDS = 86400;
 const GH_WEBHOOK_DEDUPE_TTL_SECONDS = 86400;
@@ -718,6 +719,10 @@ async function loadApi() {
 
 async function initializeApp() {
   await loadApi();
+  const apiPort = Number(process.env.API_PORT || DEFAULT_API_PORT);
+  if (!Number.isInteger(apiPort) || apiPort < 1 || apiPort > 65535) {
+    throw new Error('API_PORT must be an integer between 1 and 65535');
+  }
   logger.info(
     `[DB HOST ${process.env.DB_HOST_READ}] [API PASSWORD ACTIVE ${process.env.ACTIVATE_API_PASSWORD}] [LOAD SECRETS ENABLED ${process.env.API_LOAD_SECRETS}]`
   );
@@ -1653,6 +1658,7 @@ async function initializeApp() {
     });
   });
 
+  apiRouter.use(`/monitoring`, monitoringAccessRoutes);
   apiRouter.use(`/boosted-drops`, boostedDropsRoutes);
   apiRouter.use(`/curated-profile-wave-drops`, curatedProfileWaveDropsRoutes);
   apiRouter.use(`/drop-ids`, dropIdsRoutes);
@@ -1915,13 +1921,13 @@ async function initializeApp() {
       }
     });
 
-    httpServer.listen(API_PORT, () => {
-      logger.info(`[CONFIG local] [LOCAL DEV SERVER + WS on port ${API_PORT}]`);
+    httpServer.listen(apiPort, () => {
+      logger.info(`[CONFIG local] [LOCAL DEV SERVER + WS on port ${apiPort}]`);
     });
   } else {
-    app.listen(API_PORT, function () {
+    app.listen(apiPort, function () {
       logger.info(
-        `[CONFIG ${process.env.NODE_ENV}] [SERVER RUNNING ON PORT ${API_PORT}] WARNING! Websockets are not set up in expressjs level. This is ok if they are set up in some other layer or if you don't care about websockets.`
+        `[CONFIG ${process.env.NODE_ENV}] [SERVER RUNNING ON PORT ${apiPort}] WARNING! Websockets are not set up in expressjs level. This is ok if they are set up in some other layer or if you don't care about websockets.`
       );
     });
   }

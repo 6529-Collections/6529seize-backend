@@ -2,7 +2,7 @@ import { Logger } from '../../../logging';
 import * as process from 'node:process';
 import WebSocket from 'ws';
 import type { APIGatewayEvent } from 'aws-lambda';
-import * as passport from 'passport';
+import passport from 'passport';
 import {
   wsConnectionRepository,
   WsConnectionRepository
