@@ -40,6 +40,7 @@ export async function competitionDropVoteSummary(
     realtime_rating: totals.total,
     rating_prediction: entry.status === 'WINNER' ? rating : totals.total,
     raters_count: totals.count,
+    voters_count_available: totals.voters_count_available,
     user_vote: totals.user_vote,
     rank: score?.rank ?? entry.rank,
     top_raters: voters
