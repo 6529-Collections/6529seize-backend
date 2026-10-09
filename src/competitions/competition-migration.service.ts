@@ -54,6 +54,7 @@ import {
   CompetitionSnapshot
 } from '@/competitions/competition.types';
 import { compareLegacyFacade } from '@/competitions/legacy-competition-facade-parity';
+import { CompetitionLifecycle } from '@/entities/ICompetition';
 
 const SHADOW_TABLES = [
   COMPETITION_DECISION_WINNERS_TABLE,
@@ -87,6 +88,16 @@ function sourceCreditOverspent(snapshot: CompetitionSnapshot): boolean {
     (budget: { spent: number; available: number }) =>
       budget.spent > budget.available
   );
+}
+function sourceConsistencyFailures(snapshot: CompetitionSnapshot): string[] {
+  const configuration = snapshot.configuration as Pick<
+    Competition,
+    'lifecycle'
+  >;
+  // Completed source data is historical evidence, including old budget or
+  // aggregate discrepancies. Copy fidelity is still checked independently.
+  if (configuration.lifecycle === CompetitionLifecycle.ENDED) return [];
+  return sourceCreditOverspent(snapshot) ? ['SOURCE_CREDIT_OVERSPENT'] : [];
 }
 type MigrationRecord = NonNullable<MigrationStatus['migration']>;
 function sourceMigrationCohort(competition: Competition): MigrationCohort {
@@ -662,10 +673,11 @@ export class CompetitionMigrationService {
         const mismatches = categories.filter(
           (category) => category.baselineHash !== category.candidateHash
         ).length;
+        const sourceFailures = sourceConsistencyFailures(baseline);
         const complete =
           migration.completed_stages.length === MIGRATION_STAGES.length &&
           migration.source_watermark === migration.applied_watermark &&
-          !sourceCreditOverspent(baseline);
+          sourceFailures.length === 0;
         const progress = comparisonWindowProgress(
           migration,
           now,
@@ -687,9 +699,7 @@ export class CompetitionMigrationService {
           source: 'direct-legacy-sql-vs-native-tables-v1',
           independent: true,
           complete,
-          sourceFailures: sourceCreditOverspent(baseline)
-            ? ['SOURCE_CREDIT_OVERSPENT']
-            : [],
+          sourceFailures,
           watermark: migration.source_watermark,
           mismatches,
           consecutiveFullWindows: progress.consecutive_full_windows,
@@ -710,12 +720,24 @@ export class CompetitionMigrationService {
   }
   private async nativeInvariantFailures(
     id: string,
+    status: MigrationStatus,
     ctx: RequestContext
   ): Promise<string[]> {
     const failures: string[] = [];
+    const record = await new CompetitionMigrationRepository(this.supplier).lock(
+      id,
+      ctx
+    );
+    // Ended-at comes from the copied source. A later native completion must
+    // continue validating its live aggregate, rather than its old source copy.
+    const preservesCompletedSource =
+      record.lifecycle === CompetitionLifecycle.ENDED &&
+      Number(record.ended_at) <= (status.migration?.cutover_at ?? this.now());
+    if (preservesCompletedSource && status.storageMode === 'NATIVE')
+      failures.push(...(await this.reverseMismatches(id, ctx)));
     const mismatch = await this.supplier().oneOrNull<{ count: number }>(
-      `select count(*) as count from ${COMPETITION_ENTRIES_TABLE} e left join ${COMPETITION_ENTRY_RUNTIME_TABLE} r on r.entry_id=e.id and r.competition_id=e.competition_id where e.competition_id=:id and e.status='ACTIVE' and (r.entry_id is null or coalesce(r.real_time_rating,0)<>(select coalesce(sum(value),0) from ${COMPETITION_VOTES_TABLE} where competition_id=e.competition_id and entry_id=e.id))`,
-      { id },
+      `select count(*) as count from ${COMPETITION_ENTRIES_TABLE} e left join ${COMPETITION_ENTRY_RUNTIME_TABLE} r on r.entry_id=e.id and r.competition_id=e.competition_id where e.competition_id=:id and e.status='ACTIVE' and (r.entry_id is null or (:requireConsistentAggregate=1 and coalesce(r.real_time_rating,0)<>(select coalesce(sum(value),0) from ${COMPETITION_VOTES_TABLE} where competition_id=e.competition_id and entry_id=e.id)))`,
+      { id, requireConsistentAggregate: preservesCompletedSource ? 0 : 1 },
       { wrappedConnection: ctx.connection }
     );
     if (Number(mismatch?.count ?? 0))
@@ -731,7 +753,7 @@ export class CompetitionMigrationService {
   public async verifyNative(id: string) {
     return this.transaction(id, async (repository, ctx) => {
       const status = await repository.status(id, ctx);
-      const failures = await this.nativeInvariantFailures(id, ctx);
+      const failures = await this.nativeInvariantFailures(id, status, ctx);
       if (status.storageMode !== 'NATIVE' || status.executionMode !== 'ACTIVE')
         failures.push('NATIVE_OWNER');
       if (!status.readiness?.captureHealthy) failures.push('CAPTURE_SCHEMA');
@@ -765,7 +787,11 @@ export class CompetitionMigrationService {
         throw new Error(
           'Drain pending native effects before recording repair review'
         );
-      const invariantFailures = await this.nativeInvariantFailures(id, ctx);
+      const invariantFailures = await this.nativeInvariantFailures(
+        id,
+        status,
+        ctx
+      );
       if (invariantFailures.length)
         throw new Error(
           'Repair review refused: native invariants remain invalid'
@@ -918,6 +944,8 @@ export class CompetitionMigrationService {
       const failures = this.readinessFailures(status);
       if (!failures.length)
         failures.push(...(await this.reverseMismatches(id, ctx)));
+      if (!failures.length)
+        failures.push(...(await this.nativeInvariantFailures(id, status, ctx)));
       if (failures.length || dryRun)
         return {
           changed: false,
@@ -1062,7 +1090,7 @@ export class CompetitionMigrationService {
     ];
     return [
       ...failures,
-      ...(sourceCreditOverspent(baseline) ? ['SOURCE_CREDIT_OVERSPENT'] : []),
+      ...sourceConsistencyFailures(baseline),
       ...relations
         .filter((item) => item.baselineHash !== item.candidateHash)
         .map((item) => item.category)
