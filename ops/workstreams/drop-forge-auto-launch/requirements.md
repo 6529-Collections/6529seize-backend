@@ -3,6 +3,8 @@
 Status: requirements proposal, 2026-10-09. This PR changes documentation only.
 No signer, schedule, endpoint, schema, mention group, or deployment is created.
 
+Companion: [frontend requirements PR #4207](https://github.com/6529-Collections/6529seize-frontend/pull/4207).
+
 ## Purpose and confirmed scope
 
 Allow a prepared Drop Forge claim to launch through its configured phases
