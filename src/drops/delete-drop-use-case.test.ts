@@ -224,6 +224,15 @@ describe('DeleteDropUseCase', () => {
       }),
       { timer: undefined, connection }
     );
+    expect(websocketOutbox.recordWebSocketEvent).toHaveBeenCalledWith(
+      {
+        type: 'drop-delete',
+        dropId: 'drop-1',
+        waveId: 'wave-1',
+        serialNo: 7
+      },
+      { timer: undefined, connection }
+    );
   });
 
   it('still requires a deleter identity for user-initiated deletes', async () => {
