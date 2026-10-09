@@ -1,3 +1,10 @@
+jest.mock('@/competitions/legacy-competition-mutation', () => ({
+  withLegacyPrimaryMutation: jest.fn(
+    (_wave: string, _ctx: unknown, action: (owner: null) => unknown) =>
+      action(null)
+  ),
+  readLegacyMutationSource: (action: () => unknown) => action()
+}));
 import { dropVotingDb } from '@/api-serverless/src/drops/drop-voting.db';
 import { userNotifier } from '@/notifications/user.notifier';
 import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';

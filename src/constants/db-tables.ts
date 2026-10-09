@@ -293,3 +293,13 @@ export const COMPETITION_CAPABILITY_AUDITS_TABLE =
   'competition_capability_audits';
 export const PUSH_NOTIFICATION_OUTBOX_TABLE =
   'push_notification_outbox_entries';
+export const COMPETITION_MIGRATIONS_TABLE = 'competition_migrations';
+export const COMPETITION_MIGRATION_CHANGES_TABLE =
+  'competition_migration_changes';
+export const COMPETITION_MIGRATION_AUDIT_TABLE = 'competition_migration_audits';
+export const COMPETITION_MIGRATION_ENVIRONMENTS_TABLE =
+  'competition_migration_environments';
+export const COMPETITION_LEGACY_MIRROR_PERMITS_TABLE =
+  'competition_legacy_mirror_permits';
+export const COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE =
+  'competition_legacy_execution_effects';

@@ -30,6 +30,8 @@ import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { metricsRecorder, MetricsRecorder } from '../metrics/MetricsRecorder';
 import { isApproveWaveClosed } from '@/waves/wave-approve.helpers';
 import { sumWaveVotingCreditNftValues } from '@/waves/wave-voting-credit-nfts';
+import { competitionRepository } from '@/competitions/competition.repository';
+import { voteForMigratedLegacyEntry } from '@/competitions/legacy-competition-vote.service';
 
 export class VoteForDropUseCase {
   constructor(
@@ -57,9 +59,20 @@ export class VoteForDropUseCase {
             { voter_id, drop_id, wave_id, votes, proxy_id },
             { ...ctx, connection }
           );
-        }
+        },
+        { isolationLevel: 'READ COMMITTED' }
       );
     }
+    const owner = await competitionRepository.lockLegacyExecutionOwner(
+      wave_id,
+      ctx
+    );
+    if (owner?.storage_mode === 'NATIVE')
+      return voteForMigratedLegacyEntry(
+        owner,
+        { voter_id, drop_id, wave_id, votes, proxy_id },
+        ctx
+      );
     await this.votingDb.lockDropsCurrentRealVote(drop_id, ctx);
     const now = Time.now();
     const wave = await this.wavesDb.findById(wave_id, ctx.connection);

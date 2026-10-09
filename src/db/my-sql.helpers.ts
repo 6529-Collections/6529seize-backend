@@ -7,6 +7,10 @@ import { Logger } from '../logging';
 import { DbPoolName, DbQueryOptions } from '@/db-query.options';
 import { SqlOperationTiming } from '@/db/sql-operation-timing';
 import {
+  isLegacyCompetitionGetFacadeScope,
+  LEGACY_GET_BOOLEAN_FIELDS
+} from '@/competitions/legacy-competition-get-facade';
+import {
   executeBudgetedSqlTransaction,
   withSqlBudgetQueryOptions,
   SqlExecutionBudgetExceededError
@@ -44,8 +48,16 @@ const TinyIntToBooleanCaster: TypeCast = function castField(field, next) {
   return next();
 };
 
-export const CustomTypeCaster: TypeCast = (field, next) =>
-  TinyIntToBooleanCaster(field, () => BigIntToNumberCaster(field, next));
+export const CustomTypeCaster: TypeCast = (field, next) => {
+  if (
+    isLegacyCompetitionGetFacadeScope() &&
+    LEGACY_GET_BOOLEAN_FIELDS.has(field.name)
+  ) {
+    const value = field.string();
+    return value === null ? null : value === '1' || value === 'true';
+  }
+  return TinyIntToBooleanCaster(field, () => BigIntToNumberCaster(field, next));
+};
 
 type PrivateQueryFamily =
   | 'artwork documentation'
