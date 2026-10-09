@@ -36,8 +36,9 @@ export class CompetitionDropVotesDb extends LazyDbAccessCompatibleService {
       total: number;
       count: number;
       user_vote: number;
+      snapshot_rows: number;
     }>(
-      `select coalesce(sum(value),0) as total, count(nullif(value,0)) as count,
+      `select coalesce(sum(value),0) as total, count(nullif(value,0)) as count, count(*) as snapshot_rows,
        coalesce(max(case when voter_profile_id=:viewer then value end),0) as user_vote
        from ${table} where competition_id=:competitionId and entry_id=:entryId ${filter}`,
       { ...this.params(entry), viewer },
@@ -46,7 +47,9 @@ export class CompetitionDropVotesDb extends LazyDbAccessCompatibleService {
     return {
       total: Number(rows[0].total),
       count: Number(rows[0].count),
-      user_vote: Number(rows[0].user_vote)
+      user_vote: Number(rows[0].user_vote),
+      voters_count_available:
+        entry.status !== 'WINNER' || Number(rows[0].snapshot_rows) > 0
     };
   }
   async score(entry: CompetitionEntry, ctx: RequestContext) {

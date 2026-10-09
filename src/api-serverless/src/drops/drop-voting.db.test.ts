@@ -782,6 +782,46 @@ describeWithSeed(
       ).toBeNull();
     });
 
+    it.each([false, true])(
+      'distinguishes absent winner history from saved zero votes (saved=%s)',
+      async (saved) => {
+        const dropId = 'winner-with-zero-voters';
+        await insertDrop({
+          id: dropId,
+          waveId: winnerWave.id,
+          dropType: DropType.WINNER,
+          createdAt: 100
+        });
+        await sqlExecutor.execute(
+          `insert into ${WAVES_DECISION_WINNER_DROPS_TABLE} (decision_time,drop_id,wave_id,ranking,final_vote,prizes) values (1000,:dropId,:waveId,1,42,'[]')`,
+          { dropId, waveId: winnerWave.id }
+        );
+        // Current allocations must not be presented as the missing frozen decision snapshot.
+        await insertVoteState({
+          voterId: 'current-voter',
+          dropId,
+          waveId: winnerWave.id,
+          votes: 42
+        });
+        if (saved)
+          await sqlExecutor.execute(
+            `insert into ${WINNER_DROP_VOTER_VOTES_TABLE} (voter_id,drop_id,wave_id,votes) values ('saved-voter',:dropId,:waveId,0)`,
+            { dropId, waveId: winnerWave.id }
+          );
+        const result = await repo.getDropV2SubmissionVotingSummaries(
+          [dropId],
+          ctx
+        );
+        expect(result[dropId]).toMatchObject({
+          current_calculated_vote: 42,
+          voters_count: 0,
+          voters_count_available: saved
+        });
+        const counts = await repo.getWinningDropsRatersCount([dropId], ctx);
+        expect(counts[dropId]).toBe(saved ? 0 : undefined);
+      }
+    );
+
     it('returns final voting summary for winner drops', async () => {
       await insertDrop({
         id: 'winner-drop-1',
@@ -838,6 +878,7 @@ describeWithSeed(
         current_calculated_vote: 25,
         predicted_final_vote: 25,
         voters_count: 2,
+        voters_count_available: true,
         place: 2
       });
     });
