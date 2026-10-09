@@ -42,9 +42,10 @@ live migration retains those native aggregate checks.
 The legacy leaderboard snapshot worker leaves completed-wave snapshots unchanged,
 including global stale-entry maintenance. Active/open-ended waves and pending final
 decisions continue to refresh; explicit decision cleanup remains scoped to its wave.
-Completion is rechecked under the execution lock before a worker writes. This
-correction requires only `waveLeaderboardSnapshotterLoop`, with no schema, API or
-frontend deployment.
+Completion is rechecked under the execution lock before a worker writes. Deploy
+`waveLeaderboardSnapshotterLoop`, then `waveDecisionExecutionLoop`, which also
+refreshes weighted entries before its APPROVE pass. No schema, API or frontend
+deployment is needed.
 
 This verification correction requires only `competitionMigrationLoop`. No schema,
 API or frontend deployment is needed. Reinvoking an already transferred completed
