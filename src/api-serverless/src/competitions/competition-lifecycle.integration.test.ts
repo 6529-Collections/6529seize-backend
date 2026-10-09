@@ -12,7 +12,8 @@ import {
   COMPETITION_CAPABILITY_AUDITS_TABLE,
   COMPETITION_CONFIG_VERSIONS_TABLE,
   COMPETITION_OUTCOMES_TABLE,
-  COMPETITION_VOTE_HISTORY_TABLE
+  COMPETITION_VOTE_HISTORY_TABLE,
+  WAVES_METADATA_TABLE
 } from '@/constants';
 import { CompetitionCapability } from '@/entities/ICompetition';
 import { sqlExecutor } from '@/sql-executor';
@@ -237,6 +238,46 @@ describeWithSeed(
       expect(
         await sqlExecutor.execute(`SELECT id FROM ${COMPETITIONS_TABLE}`)
       ).toHaveLength(1);
+    });
+
+    it('inherits migrated wave appearance for configuration and clones until explicitly cleared', async () => {
+      const first = await draft();
+      const presentation = [
+        {
+          data_key: 'wave_display.approve.tabs.approved_label',
+          data_value: 'Chosen'
+        }
+      ];
+      await sqlExecutor.execute(
+        `insert into ${WAVES_METADATA_TABLE} (wave_id,data_key,data_value) values (:waveId,:key,:value)`,
+        {
+          waveId: wave.id,
+          key: presentation[0].data_key,
+          value: presentation[0].data_value
+        }
+      );
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set legacy_wave_id=wave_id,presentation_config=null,lifecycle='ENDED' where id=:id`,
+        { id: first.id }
+      );
+      expect(
+        (await service.configuration(wave.id, first.id, ctx)).presentation
+      ).toEqual(presentation);
+      const clone = await service.action(
+        wave.id,
+        first.id,
+        'clone',
+        { idempotency_key: randomUUID(), config_version: first.config_version },
+        ctx
+      );
+      expect(clone.presentation).toEqual(presentation);
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set presentation_config='[]' where id=:id`,
+        { id: first.id }
+      );
+      expect(
+        (await service.configuration(wave.id, first.id, ctx)).presentation
+      ).toEqual([]);
     });
 
     it('freezes published type, freezes rules after activity, and versions presentation without changing decision progress', async () => {

@@ -1,3 +1,10 @@
+jest.mock('@/competitions/legacy-competition-mutation', () => ({
+  withLegacyPrimaryMutation: jest.fn(
+    (_wave: string, _ctx: unknown, action: (owner: null) => unknown) =>
+      action(null)
+  ),
+  readLegacyMutationSource: (action: () => unknown) => action()
+}));
 import { identityFetcher } from '@/api-serverless/src/identities/identity.fetcher';
 jest.mock('@/competitions/competition-entry-drop-hooks');
 import { userGroupsService } from '@/api-serverless/src/community-members/user-groups.service';
