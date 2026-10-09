@@ -112,6 +112,9 @@ policy gains `s3:GetObject` and `s3:PutObject` for device-poster keys and
 The API deployment reuses its existing function and execution role. There is
 no separate pre-rollout API-role inspection gate for this change. Poster
 lookup/write failures retain normal video completion and backend fallback.
+During IAM propagation, a failed converter HEAD can temporarily generate backend
+JPEGs alongside an existing device poster. The frontend still prefers the device
+poster; this safe fallback does not block uploads or require a new rollout gate.
 
 Existing endpoint, execution role, template, bucket, and region configuration
 remain required. There are no new environment variables, services, queues or
