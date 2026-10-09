@@ -707,6 +707,34 @@ describeWithSeed(
         )
       ).toEqual([{ drop_id: 'cleanup-closing-drop', vote: 9 }]);
     });
+
+    it('retains a wave that completes between the fenced check and delete', async () => {
+      const wave = snapshotWaves[4];
+      await insertDrop({
+        id: 'cleanup-delete-boundary-drop',
+        waveId: wave.id,
+        dropType: DropType.WINNER,
+        createdAt: 1
+      });
+      await insertLeaderboardEntry({
+        dropId: 'cleanup-delete-boundary-drop',
+        waveId: wave.id,
+        vote: 9,
+        timestamp: 2000,
+        voteOnDecisionTime: 9
+      });
+      jest
+        .spyOn(Time, 'now')
+        .mockReturnValueOnce(Time.millis(2000))
+        .mockReturnValueOnce(Time.millis(2000))
+        .mockReturnValue(Time.millis(3000));
+      await repo.deleteStaleLeaderboardEntries(ctx);
+      expect(
+        await sqlExecutor.execute(
+          `select drop_id,vote from ${WAVE_LEADERBOARD_ENTRIES_TABLE}`
+        )
+      ).toEqual([{ drop_id: 'cleanup-delete-boundary-drop', vote: 9 }]);
+    });
   }
 );
 

@@ -1876,8 +1876,10 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
             return;
           await this.db.execute(
             `delete lb from ${WAVE_LEADERBOARD_ENTRIES_TABLE} lb join ${DROPS_TABLE} d on d.id=lb.drop_id join ${WAVES_TABLE} w on w.id=lb.wave_id
-             where lb.wave_id=:waveId and (d.drop_type <> '${DropType.PARTICIPATORY}' or coalesce(w.time_lock_ms,0)=0)`,
-            { waveId },
+             where lb.wave_id=:waveId
+               and (:globalMaintenance = 0 or ${ONGOING_LEGACY_LEADERBOARD_WAVE_SQL})
+               and (d.drop_type <> '${DropType.PARTICIPATORY}' or coalesce(w.time_lock_ms,0)=0)`,
+            { waveId, globalMaintenance, now: Time.now().toMillis() },
             { wrappedConnection: connection }
           );
         };
