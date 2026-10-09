@@ -201,14 +201,9 @@ async function compareAndCutover(
       runtime.progress('Waiting for pending publication receipts to complete.');
     return null;
   }
-  const dryRun = await service.cutover(id, options.operator, true);
-  const dryRunStops = dryRun.failures.filter(
-    (failure) => !waiting.has(failure)
-  );
-  if (dryRunStops.length)
-    throw new Error(`Final comparison is blocked: ${dryRunStops.join(', ')}`);
-  if (dryRun.failures.length) return null;
-  if (runtime.aborted?.()) return null;
+  // Live cutover runs the full comparison and invariants under its ownership
+  // lock before changing storage. A duplicate dry run can expire a large copy's
+  // comparison even though it matches and its watermark has not changed.
   runtime.progress('Final comparison and atomic ownership transfer.');
   const cutover = await service.cutover(id, options.operator, false);
   const cutoverStops = cutover.failures.filter(
