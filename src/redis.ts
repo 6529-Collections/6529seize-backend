@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { Logger } from './logging';
 import { numbers } from './numbers';
 import { Time } from './time';
+import { redisFailureCategory } from '@/redis-recovery';
 
 let redis: Redis;
 let redisReadyEvents = 0;
@@ -301,7 +302,7 @@ export async function evictRedisCacheForPathWithTimeout({
 
 const logger = Logger.get('REDIS_CLIENT');
 
-export async function initRedis() {
+export async function initRedis(opts?: { reportConnectionRecovery?: boolean }) {
   if (process.env.FORCE_AVOID_REDIS === 'true') {
     logger.warn(`Redis is disabled with FORCE_AVOID_REDIS env`);
     return;
@@ -332,12 +333,33 @@ export async function initRedis() {
     },
     password: password
   });
-  redis.on('error', (error: Error) =>
-    logger.error('Error connecting to Redis: ' + error)
-  );
+  let connectionFailures = 0;
+  redis.on('error', (error: Error) => {
+    connectionFailures++;
+    if (!opts?.reportConnectionRecovery) {
+      logger.error('Error connecting to Redis: ' + error);
+      return;
+    }
+    const category = redisFailureCategory(error);
+    const pending = category !== 'UNKNOWN' && connectionFailures < 3;
+    logger.errorWithDiagnostic(
+      {
+        operation: 'REDIS_CONNECT',
+        category,
+        recovery: {
+          state: pending ? 'pending' : 'unknown',
+          attempt: connectionFailures,
+          maxAttempts: 3
+        }
+      },
+      'Redis connection failed; client is reconnecting',
+      { error: error.message, consecutive_failures: connectionFailures }
+    );
+  });
   redis.on('connect', () => logger.info('Redis connected!'));
   redis.on('ready', () => {
     redisReadyEvents++;
+    connectionFailures = 0;
   });
   redis.on('reconnecting', () => {
     redisReconnectEvents++;
