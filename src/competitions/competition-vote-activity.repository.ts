@@ -37,8 +37,11 @@ export class CompetitionVoteActivityRepository extends LazyDbAccessCompatibleSer
     // an excluded row already has that many rows ahead of it in its own source.
     // Legacy DATETIME values are UTC; compare a UTC literal rather than the
     // session-timezone-dependent FROM_UNIXTIME conversion.
-    return this.db.execute<CompetitionVoteActivity>(
-      `SELECT activity.* FROM (
+    const timerName = `${this.constructor.name}->listTransferred`;
+    try {
+      ctx.timer?.start(timerName);
+      return await this.db.execute<CompetitionVoteActivity>(
+        `SELECT activity.* FROM (
         (SELECT 1 AS source_order, history.sequence, entry.drop_id, history.voter_profile_id,
           entry.submitter_id, history.previous_value, history.value,
           history.occurred_at, NULL AS legacy_id, NULL AS legacy_contents,
@@ -63,20 +66,23 @@ export class CompetitionVoteActivityRepository extends LazyDbAccessCompatibleSer
       ORDER BY activity.occurred_at DESC, activity.source_order DESC,
         activity.sequence DESC, activity.legacy_id DESC
       LIMIT :offset, :limit`,
-      {
-        competitionId,
-        waveId,
-        transferredAtUtc: new Date(transferredAt)
-          .toISOString()
-          .slice(0, 23)
-          .replace('T', ' '),
-        logType: ProfileActivityLogType.DROP_VOTE_EDIT,
-        candidateLimit: offset + limit,
-        offset,
-        limit
-      },
-      { wrappedConnection: ctx.connection }
-    );
+        {
+          competitionId,
+          waveId,
+          transferredAtUtc: new Date(transferredAt)
+            .toISOString()
+            .slice(0, 23)
+            .replace('T', ' '),
+          logType: ProfileActivityLogType.DROP_VOTE_EDIT,
+          candidateLimit: offset + limit,
+          offset,
+          limit
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
   }
 
   public async list(
