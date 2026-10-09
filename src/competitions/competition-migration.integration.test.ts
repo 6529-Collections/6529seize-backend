@@ -33,7 +33,8 @@ import {
   DROP_VOTER_STATE_TABLE,
   DROPS_TABLE,
   DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
-  PROFILES_ACTIVITY_LOGS_TABLE
+  PROFILES_ACTIVITY_LOGS_TABLE,
+  WAVES_TABLE
 } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
@@ -234,6 +235,144 @@ describeWithSeed(
       // while native activity dates are serialized by the HTTP response.
       expect(JSON.parse(JSON.stringify(after))).toEqual(before);
     });
+    it('copies completed historical aggregate and credit discrepancies without repairing them', async () => {
+      await sqlExecutor.execute(
+        `update ${DROP_RANK_TABLE} set vote=6 where drop_id=:dropId`,
+        { dropId: drop.id }
+      );
+      await sqlExecutor.execute(
+        `update ${IDENTITIES_TABLE} set tdh=0 where profile_id='fixture-voter'`
+      );
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await finishBackfill(service);
+      expect(await service.compare(id, operator, 1)).toMatchObject({
+        complete: true,
+        mismatches: 0,
+        sourceFailures: []
+      });
+      expect(await service.cutover(id, operator, true)).toMatchObject({
+        changed: false,
+        failures: []
+      });
+      expect(await service.cutover(id, operator, false)).toMatchObject({
+        changed: true,
+        failures: []
+      });
+      const nativeRecord = await sqlExecutor.execute(
+        `select * from ${COMPETITIONS_TABLE} where id=:id`,
+        { id }
+      );
+      const sourceWave = await sqlExecutor.execute(
+        `select * from ${WAVES_TABLE} where id=:waveId`,
+        { waveId: wave.id }
+      );
+      expect(nativeRecord).toMatchObject([
+        { legacy_wave_id: wave.id, lifecycle: 'ENDED' }
+      ]);
+      expect(sourceWave).toMatchObject([
+        {
+          participation_period_end: 1000,
+          voting_period_end: 1000,
+          next_decision_time: null
+        }
+      ]);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        expect((await service.verifyNative(id)).failures).toEqual([]);
+        expect(
+          await sqlExecutor.execute(
+            `select * from ${COMPETITIONS_TABLE} where id=:id`,
+            { id }
+          )
+        ).toEqual(nativeRecord);
+        expect(
+          await sqlExecutor.execute(
+            `select * from ${WAVES_TABLE} where id=:waveId`,
+            { waveId: wave.id }
+          )
+        ).toEqual(sourceWave);
+      }
+
+      expect(
+        await sqlExecutor.execute(
+          `select r.real_time_rating, v.value, v.credit_spent from ${COMPETITION_ENTRY_RUNTIME_TABLE} r join ${COMPETITION_VOTES_TABLE} v on v.entry_id=r.entry_id and v.competition_id=r.competition_id where r.competition_id=:id`,
+          { id }
+        )
+      ).toMatchObject([{ real_time_rating: 6, value: 7, credit_spent: 7 }]);
+      expect(
+        await sqlExecutor.execute(
+          `select vote from ${DROP_RANK_TABLE} where drop_id=:dropId`,
+          { dropId: drop.id }
+        )
+      ).toMatchObject([{ vote: '6' }]);
+      expect(
+        await sqlExecutor.execute(
+          `select votes from ${DROP_VOTER_STATE_TABLE} where drop_id=:dropId`,
+          { dropId: drop.id }
+        )
+      ).toMatchObject([{ votes: 7 }]);
+    });
+    it('blocks a completed copy altered after comparison before dry-run or live transfer', async () => {
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await finishBackfill(service);
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
+      await sqlExecutor.execute(
+        `update ${COMPETITION_ENTRY_RUNTIME_TABLE} set real_time_rating=8 where competition_id=:id`,
+        { id }
+      );
+      for (const dryRun of [true, false]) {
+        const result = await service.cutover(id, operator, dryRun);
+        expect(result.changed).toBe(false);
+        expect(result.failures).toContain('frozen_relation:drop_ranks');
+        expect((await service.status(id)).storageMode).toBe('LEGACY_ADAPTER');
+      }
+    });
+    it.each([
+      [
+        'score',
+        `update ${COMPETITION_ENTRY_RUNTIME_TABLE} set real_time_rating=8 where competition_id=:id`
+      ],
+      [
+        'vote',
+        `update ${COMPETITION_VOTES_TABLE} set value=8 where competition_id=:id`
+      ],
+      [
+        'missing runtime',
+        `delete from ${COMPETITION_ENTRY_RUNTIME_TABLE} where competition_id=:id`
+      ],
+      [
+        'orphan vote',
+        `update ${COMPETITION_VOTES_TABLE} set entry_id='missing-entry' where competition_id=:id`
+      ]
+    ])(
+      'rejects a migration-introduced completed %s discrepancy',
+      async (_kind, mutation) => {
+        const service = new CompetitionMigrationService(
+          () => sqlExecutor,
+          Date.now,
+          0
+        );
+        await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+        await finishBackfill(service);
+        await service.compare(id, operator, 1);
+        await service.cutover(id, operator, false);
+        expect((await service.verifyNative(id)).failures).toEqual([]);
+        await sqlExecutor.execute(mutation, { id });
+        expect(
+          (await service.verifyNative(id)).failures.length
+        ).toBeGreaterThan(0);
+        expect((await service.status(id)).storageMode).toBe('NATIVE');
+      }
+    );
     it('installs repeatably, captures accepted writes atomically, and never captures rolled-back writes', async () => {
       await installMigrationCapture(sqlExecutor);
       expect(await migrationCaptureHealthy(sqlExecutor, {})).toBe(true);
@@ -574,13 +713,17 @@ describeWithSeed(
       expect(mismatch.consecutiveFullWindows).toBe(0);
     });
     it('does not count complete windows while transferred votes exceed the live source credit budget', async () => {
+      await sqlExecutor.execute(
+        `update ${WAVES_TABLE} set participation_period_end=null,voting_period_end=null,next_decision_time=2000000 where id=:waveId`,
+        { waveId: wave.id }
+      );
       let clock = 1000000;
       const service = new CompetitionMigrationService(
         () => sqlExecutor,
         () => clock,
         0
       );
-      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await service.enroll(id, operator, 'ACTIVE_LOW_VOLUME');
       await finishBackfill(service);
       await sqlExecutor.execute(
         `update ${IDENTITIES_TABLE} set tdh=0 where profile_id='fixture-voter'`
