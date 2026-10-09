@@ -1,3 +1,5 @@
+import { IdentityMutesDb } from './identity-mutes.db';
+import { SqlExecutor } from '@/sql-executor';
 import { DbPoolName } from '@/db-query.options';
 import { IdentityMutesApiService } from './identity-mutes.api.service';
 
@@ -94,7 +96,7 @@ describe('IdentityMutesApiService DM unread synchronization', () => {
       );
       expect(
         wavesApiDb.incrementDmUnreadStateVersionsForReaderWaves
-      ).toHaveBeenCalledWith({ readerId: 'muter-1', waveIds: ['wave-1'] }, ctx);
+      ).not.toHaveBeenCalled();
       expect(wavesApiDb.findDmUnreadConversationStates).toHaveBeenCalledWith(
         {
           identityId: 'muter-1',
@@ -108,6 +110,53 @@ describe('IdentityMutesApiService DM unread synchronization', () => {
         wsListenersNotifier.notifyAboutDmUnreadStateChanged
       ).toHaveBeenCalledWith(
         [dmUnreadState],
+        [{ connectionId: 'connection-1', identityId: 'muter-1' }]
+      );
+    }
+  );
+
+  it.each(['muteIdentity', 'unmuteIdentity'] as const)(
+    'waits for the %s commit and sends the incremented writer version',
+    async (method) => {
+      const { ctx, identityMutesDb, service, wavesApiDb, wsListenersNotifier } =
+        createService();
+      let commit!: () => void;
+      let mutationStarted!: () => void;
+      const pendingCommit = new Promise<void>((resolve) => {
+        commit = resolve;
+      });
+      const started = new Promise<void>((resolve) => {
+        mutationStarted = resolve;
+      });
+      let committedVersion = dmUnreadState.version;
+      identityMutesDb[method].mockImplementationOnce(async () => {
+        mutationStarted();
+        await pendingCommit;
+        committedVersion += 1;
+      });
+      wavesApiDb.findDmUnreadConversationStates.mockImplementationOnce(
+        async (...args: unknown[]) => [
+          {
+            ...dmUnreadState,
+            version:
+              args[2] === DbPoolName.WRITE
+                ? committedVersion
+                : dmUnreadState.version
+          }
+        ]
+      );
+      const operation = service[method]('muted-handle', ctx as never);
+      await started;
+      expect(wavesApiDb.findDmUnreadConversationStates).not.toHaveBeenCalled();
+      expect(
+        wsListenersNotifier.notifyAboutDmUnreadStateChanged
+      ).not.toHaveBeenCalled();
+      commit();
+      await operation;
+      expect(
+        wsListenersNotifier.notifyAboutDmUnreadStateChanged
+      ).toHaveBeenCalledWith(
+        [{ ...dmUnreadState, version: dmUnreadState.version + 1 }],
         [{ connectionId: 'connection-1', identityId: 'muter-1' }]
       );
     }
@@ -140,13 +189,13 @@ describe('IdentityMutesApiService DM unread synchronization', () => {
     );
     expect(
       wavesApiDb.incrementDmUnreadStateVersionsForReaderWaves
-    ).toHaveBeenCalledTimes(2);
+    ).not.toHaveBeenCalled();
     expect(
       wsListenersNotifier.notifyAboutDmUnreadStateChanged
     ).toHaveBeenCalledTimes(2);
   });
 
-  it('versions affected conversations without aggregating unread state when the reader is offline', async () => {
+  it('leaves transactional versioning to the mutation repository when the reader is offline', async () => {
     const { ctx, service, wavesApiDb, wsListenersNotifier } = createService();
     wsListenersNotifier.findConnectedNotificationRecipients.mockResolvedValue(
       []
@@ -156,7 +205,7 @@ describe('IdentityMutesApiService DM unread synchronization', () => {
 
     expect(
       wavesApiDb.incrementDmUnreadStateVersionsForReaderWaves
-    ).toHaveBeenCalledWith({ readerId: 'muter-1', waveIds: ['wave-1'] }, ctx);
+    ).not.toHaveBeenCalled();
     expect(wavesApiDb.findDmUnreadConversationStates).not.toHaveBeenCalled();
     expect(
       wsListenersNotifier.notifyAboutDmUnreadStateChanged
@@ -189,4 +238,161 @@ describe('IdentityMutesApiService DM unread synchronization', () => {
       wsListenersNotifier.notifyAboutDmUnreadStateChanged
     ).not.toHaveBeenCalled();
   });
+});
+
+it.each([
+  ['muteIdentity', false],
+  ['unmuteIdentity', false],
+  ['muteIdentity', true],
+  ['unmuteIdentity', true]
+] as const)(
+  '%s versions and captures all 501 reader waves through the real repository (online=%s)',
+  async (method, online) => {
+    const { service, identityMutesDb, wsListenersNotifier, wavesApiDb, ctx } =
+      createService();
+    const connection = { connection: {} };
+    const waveIds = Array.from(
+      { length: 501 },
+      (_, index) => `wave-${String(index).padStart(3, '0')}`
+    );
+    const execute = jest.fn(async (sql: string) =>
+      sql.includes('select r.wave_id')
+        ? waveIds.map((wave_id) => ({ wave_id }))
+        : []
+    );
+    const bulkInsert = jest.fn().mockResolvedValue(undefined);
+    const repository = new IdentityMutesDb(
+      () => ({ execute, bulkInsert }) as unknown as SqlExecutor
+    );
+    identityMutesDb[method].mockImplementation((pair, context) =>
+      repository[method](pair, context)
+    );
+    if (!online)
+      wsListenersNotifier.findConnectedNotificationRecipients.mockResolvedValue(
+        []
+      );
+    wavesApiDb.findDmWaveIdsForReaderWithDropsByAuthor
+      .mockResolvedValueOnce(waveIds.slice(0, 500))
+      .mockResolvedValueOnce(waveIds.slice(500));
+    await service[method]('muted-handle', { ...ctx, connection } as never);
+    const increments = execute.mock.calls.filter(([sql]) =>
+      sql.includes('set unread_state_version = unread_state_version + 1')
+    );
+    expect(increments).toHaveLength(1);
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('wave_id in (:waveIds)'),
+      { readerId: 'muter-1', waveIds },
+      { wrappedConnection: connection }
+    );
+    const captureQuery = execute.mock.calls.find(([sql]) =>
+      sql.includes('select r.wave_id')
+    )![0];
+    expect(captureQuery.toLowerCase()).not.toContain('limit');
+    expect(bulkInsert).toHaveBeenCalledTimes(1);
+    const [table, events, , context, options] = bulkInsert.mock.calls[0];
+    expect(table).toBe('websocket_outbox');
+    expect(context.connection).toBe(connection);
+    expect(options.connection).toBe(connection);
+    expect(
+      events.map((row: { event: string }) => JSON.parse(row.event))
+    ).toEqual(
+      waveIds.map((waveId) => ({
+        type: 'dm',
+        profileIds: ['muter-1'],
+        waveId,
+        deliveryCapability: 'durable_updates_v1'
+      }))
+    );
+    expect(
+      wavesApiDb.incrementDmUnreadStateVersionsForReaderWaves
+    ).not.toHaveBeenCalled();
+    expect(
+      wavesApiDb.findDmWaveIdsForReaderWithDropsByAuthor
+    ).toHaveBeenCalledTimes(2);
+    expect(
+      wsListenersNotifier.notifyAboutDmUnreadStateChanged
+    ).toHaveBeenCalledTimes(online ? 2 : 0);
+  }
+);
+
+it.each(['muteIdentity', 'unmuteIdentity'] as const)(
+  '%s waits for commit before reading and notifying online unread versions',
+  async (method) => {
+    const { service, identityMutesDb, wsListenersNotifier, wavesApiDb, ctx } =
+      createService();
+    const connection = { connection: {} };
+    let pendingVersion = 4;
+    let committedVersion = 4;
+    let releaseCommit!: () => void;
+    let reachedCommit!: () => void;
+    const commitGate = new Promise<void>((resolve) => {
+      releaseCommit = resolve;
+    });
+    const committing = new Promise<void>((resolve) => {
+      reachedCommit = resolve;
+    });
+    const execute = jest.fn(async (sql: string) => {
+      if (sql.includes('select r.wave_id')) return [{ wave_id: 'wave-1' }];
+      if (sql.includes('set unread_state_version = unread_state_version + 1'))
+        pendingVersion++;
+      return [];
+    });
+    const transaction = jest.fn(async (work) => {
+      const result = await work(connection);
+      reachedCommit();
+      await commitGate;
+      committedVersion = pendingVersion;
+      return result;
+    });
+    const repository = new IdentityMutesDb(
+      () =>
+        ({
+          execute,
+          bulkInsert: jest.fn().mockResolvedValue(undefined),
+          executeNativeQueriesInTransaction: transaction
+        }) as unknown as SqlExecutor
+    );
+    identityMutesDb[method].mockImplementation((pair, context) =>
+      repository[method](pair, context)
+    );
+    wavesApiDb.findDmUnreadConversationStates.mockImplementation(async () => [
+      { ...dmUnreadState, version: committedVersion }
+    ]);
+    const update = service[method]('muted-handle', ctx as never);
+    try {
+      await committing;
+      expect(wavesApiDb.findDmUnreadConversationStates).not.toHaveBeenCalled();
+      expect(
+        wsListenersNotifier.notifyAboutDmUnreadStateChanged
+      ).not.toHaveBeenCalled();
+    } finally {
+      releaseCommit();
+    }
+    await update;
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(wavesApiDb.findDmUnreadConversationStates).toHaveBeenCalledWith(
+      {
+        identityId: 'muter-1',
+        eligibleGroups: ['visible-dm-group'],
+        waveIds: ['wave-1']
+      },
+      ctx,
+      DbPoolName.WRITE
+    );
+    expect(
+      wsListenersNotifier.notifyAboutDmUnreadStateChanged
+    ).toHaveBeenCalledWith(
+      [{ ...dmUnreadState, version: 5 }],
+      [{ connectionId: 'connection-1', identityId: 'muter-1' }]
+    );
+  }
+);
+
+const originalNodeEnvironment = process.env.NODE_ENV;
+beforeEach(() => {
+  process.env.NODE_ENV = 'test';
+});
+afterEach(() => {
+  if (originalNodeEnvironment === undefined) delete process.env.NODE_ENV;
+  else process.env.NODE_ENV = originalNodeEnvironment;
 });

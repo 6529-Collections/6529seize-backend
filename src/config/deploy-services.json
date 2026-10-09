@@ -19,7 +19,8 @@
       "validation_profile": "api-health",
       "default_dependencies": [
         "dbMigrationsLoop",
-        "artworkDocumentationProcessor"
+        "artworkDocumentationProcessor",
+        "websocketOutboundHandler"
       ]
     },
     {
@@ -54,7 +55,9 @@
         "attachmentsOrchestrator"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "attachmentsProcessor",
@@ -71,7 +74,9 @@
         "attachmentsProcessor"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "artCurationNftWatchLoop",
@@ -105,7 +110,9 @@
         "claimsBuilder"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "claimsMediaArweaveUploader",
@@ -122,7 +129,9 @@
         "claimsMediaArweaveUploader"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "competitionMigrationLoop",
@@ -263,7 +272,9 @@
         "dropMediaSanitizer"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "dropVideoConversionInvokerLoop",
@@ -348,7 +359,9 @@
         "helpBotDailyActivityCreditLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "marketStatsLoop",
@@ -555,7 +568,9 @@
         "nftLinkRefresherLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "nftLinkMediaPreviewLoop",
@@ -572,7 +587,9 @@
         "nftLinkMediaPreviewLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "nftOwnersLoop",
@@ -606,7 +623,9 @@
         "nftsLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "overRatesRevocationLoop",
@@ -623,7 +642,9 @@
         "overRatesRevocationLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "ownersBalancesLoop",
@@ -677,7 +698,8 @@
       ],
       "validation_profile": "lambda-version",
       "default_dependencies": [
-        "dbMigrationsLoop"
+        "dbMigrationsLoop",
+        "websocketOutboundHandler"
       ]
     },
     {
@@ -711,7 +733,9 @@
         "releaseNotesGenerationLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "refreshEnsLoop",
@@ -781,7 +805,9 @@
         "s3Uploader"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "subscriptionsDaily",
@@ -805,7 +831,8 @@
         "ownersBalancesLoop",
         "pushNotificationsHandler",
         "subscriptionsTopUpLoop",
-        "transactionsProcessingLoop"
+        "transactionsProcessingLoop",
+        "websocketOutboundHandler"
       ]
     },
     {
@@ -824,7 +851,8 @@
       ],
       "validation_profile": "lambda-version",
       "default_dependencies": [
-        "dbMigrationsLoop"
+        "dbMigrationsLoop",
+        "websocketOutboundHandler"
       ]
     },
     {
@@ -859,7 +887,9 @@
         "tdhHistoryLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "tdhLoop",
@@ -877,7 +907,8 @@
       ],
       "validation_profile": "lambda-version",
       "default_dependencies": [
-        "xTdhLoop"
+        "xTdhLoop",
+        "websocketOutboundHandler"
       ]
     },
     {
@@ -950,7 +981,9 @@
         "waveDecisionExecutionLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "websocketOutboundHandler"
+      ]
     },
     {
       "name": "waveLeaderboardSnapshotterLoop",
@@ -1052,6 +1085,25 @@
       "validation_profile": "lambda-version",
       "default_dependencies": [
         "artworkDocumentationStorage",
+        "dbMigrationsLoop"
+      ]
+    },
+    {
+      "name": "websocketOutboundHandler",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "websocketOutboundHandler"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": [
         "dbMigrationsLoop"
       ]
     }

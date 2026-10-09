@@ -1,0 +1,149 @@
+import {
+  recordWebSocketEvent,
+  recordWebSocketEvents,
+  withWebSocketMutation
+} from './outbox.db';
+import { ConnectionWrapper, SqlExecutor } from '@/sql-executor';
+import { webSocketOutboxPartition } from './partition';
+
+describe('transactional WebSocket capture', () => {
+  const connection: ConnectionWrapper<unknown> = { connection: {} };
+  const execute = jest.fn().mockResolvedValue([]);
+  const transaction = jest.fn(async (work) => work(connection));
+  const db = {
+    execute,
+    executeNativeQueriesInTransaction: transaction
+  } as unknown as SqlExecutor;
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.NODE_ENV = 'test';
+  });
+  it('rejects capture outside the business transaction', async () => {
+    await expect(
+      recordWebSocketEvent({ type: 'identity', profileId: 'p' }, {}, db)
+    ).rejects.toThrow('mutation transaction');
+    expect(execute).not.toHaveBeenCalled();
+  });
+  it('reuses the caller transaction for the event insert', async () => {
+    await withWebSocketMutation(db, { connection }, (ctx) =>
+      recordWebSocketEvent({ type: 'identity', profileId: 'p' }, ctx, db)
+    );
+    expect(transaction).not.toHaveBeenCalled();
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('insert into websocket_outbox'),
+      expect.objectContaining({
+        event:
+          '{"type":"identity","profileId":"p","deliveryCapability":"durable_updates_v1"}'
+      }),
+      { wrappedConnection: connection }
+    );
+  });
+  it('marks new bulk resource capture but preserves historical child intents during worker materialization', async () => {
+    const bulkInsert = jest.fn().mockResolvedValue(undefined);
+    const executor = { bulkInsert } as unknown as SqlExecutor;
+    const event = {
+      type: 'drop' as const,
+      dropId: 'd',
+      updateType: 'DROP_UPDATE' as const
+    };
+    await recordWebSocketEvents([event], { connection }, executor, 123);
+    expect(JSON.parse(bulkInsert.mock.calls[0][1][0].event)).toEqual({
+      ...event,
+      deliveryCapability: 'durable_updates_v1'
+    });
+    await recordWebSocketEvents([event], { connection }, executor, 123, true);
+    expect(JSON.parse(bulkInsert.mock.calls[1][1][0].event)).toEqual(event);
+    expect(bulkInsert.mock.calls[1][1][0].created_at).toBe(123);
+  });
+
+  it('opens one transaction when the mutation has none', async () => {
+    await withWebSocketMutation(db, {}, async (ctx) => {
+      await db.execute(
+        'business mutation',
+        {},
+        { wrappedConnection: ctx.connection }
+      );
+      await recordWebSocketEvent({ type: 'identity', profileId: 'p' }, ctx, db);
+    });
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls.map((call) => call[2])).toEqual([
+      { wrappedConnection: connection },
+      { wrappedConnection: connection }
+    ]);
+  });
+  it('propagates persistence failure so the caller cannot commit successfully', async () => {
+    execute.mockRejectedValueOnce(new Error('outbox unavailable'));
+    await expect(
+      withWebSocketMutation(db, {}, (ctx) =>
+        recordWebSocketEvent({ type: 'identity', profileId: 'p' }, ctx, db)
+      )
+    ).rejects.toThrow('outbox unavailable');
+  });
+  it('chunks bulk capture on the mutation connection and propagates a later chunk failure', async () => {
+    const executor = Object.assign(Object.create(SqlExecutor.prototype), {
+      execute,
+      executeNativeQueriesInTransaction: transaction
+    }) as SqlExecutor;
+    const events = Array.from({ length: 1001 }, (_, index) => ({
+      type: 'identity' as const,
+      profileId: `p-${index}`
+    }));
+    execute
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error('second chunk unavailable'));
+    await expect(
+      withWebSocketMutation(executor, {}, (ctx) =>
+        recordWebSocketEvents(events, ctx, executor, 123)
+      )
+    ).rejects.toThrow('second chunk unavailable');
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(2);
+    for (const [sql, , options] of execute.mock.calls) {
+      expect(sql).toContain('websocket_outbox');
+      expect(options.wrappedConnection).toBe(connection);
+    }
+    expect(execute.mock.calls[0][0]).toContain('p-999');
+    expect(execute.mock.calls[0][0]).not.toContain('p-1000');
+    expect(execute.mock.calls[1][0]).toContain('p-1000');
+  });
+  it('skips empty and local-only bulk capture consistently with single capture', async () => {
+    await recordWebSocketEvents([], {}, db);
+    process.env.NODE_ENV = 'local';
+    await recordWebSocketEvents([{ type: 'identity', profileId: 'p' }], {}, db);
+    expect(execute).not.toHaveBeenCalled();
+  });
+  it('keeps all frame types for one connection in one partition', () => {
+    expect(
+      webSocketOutboxPartition({
+        type: 'delivery',
+        connectionId: 'c',
+        message: 'one'
+      })
+    ).toBe(
+      webSocketOutboxPartition({
+        type: 'delivery',
+        connectionId: 'c',
+        message: 'two'
+      })
+    );
+    expect(
+      webSocketOutboxPartition({
+        type: 'drop',
+        dropId: 'd',
+        updateType: 'DROP_UPDATE'
+      })
+    ).toBe(
+      webSocketOutboxPartition({
+        type: 'drop-delete',
+        dropId: 'd',
+        waveId: 'w',
+        serialNo: 1
+      })
+    );
+  });
+});
+
+const originalNodeEnvironment = process.env.NODE_ENV;
+afterEach(() => {
+  process.env.NODE_ENV = originalNodeEnvironment;
+});

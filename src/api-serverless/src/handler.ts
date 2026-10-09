@@ -30,6 +30,11 @@ import {
   WebSocketControlOperation
 } from '@/api/ws/ws-control-failure';
 
+import {
+  DELIVERY_CAPABILITY_QUERY,
+  supportsDurableUpdates
+} from '@/api/ws/ws-shared';
+
 const serverlessHttp = require('serverless-http');
 const logger = Logger.get('API_HANDLER');
 const SET_COOKIE_HEADER = 'set-cookie';
@@ -215,7 +220,10 @@ async function wsHandler(
         await appWebSockets.register({
           identityId,
           connectionId: connectionId!,
-          jwtExpiry
+          jwtExpiry,
+          durableUpdates: supportsDurableUpdates(
+            event.queryStringParameters?.[DELIVERY_CAPABILITY_QUERY]
+          )
         });
         return { statusCode: 200, body: 'Connected' };
       } catch (e) {

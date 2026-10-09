@@ -1,3 +1,4 @@
+import { recordWebSocketEvent } from '@/websocket-outbox/outbox.db';
 import type { CompetitionRoutingRecord } from '@/competitions/competition.types';
 import {
   COMPETITION_VOTES_TABLE,
@@ -1050,6 +1051,10 @@ export class CreateOrUpdateDropUseCase {
         { timer, connection }
       );
     }
+    await recordWebSocketEvent(
+      { type: 'drop', dropId, updateType: 'DROP_UPDATE' },
+      { connection, timer }
+    );
     return {
       drop_id: dropId,
       pending_push_notification_ids: pendingPushNotificationIds,

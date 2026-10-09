@@ -1,3 +1,4 @@
+import { wakeWebSocketOutbox } from '@/websocket-outbox/wakeup';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import { ANON_USER_ID, appWebSockets, AppWebSockets } from './ws';
 import {
@@ -43,6 +44,7 @@ import { AuthenticationContext } from '@/auth-context';
 import { NotFoundException, UnauthorisedException } from '@/exceptions';
 import { isExpectedClientError } from '@/operational-errors';
 import { typingFailureDetails } from './ws-typing-failure';
+import { forEachWebSocketRecipient } from '@/api/ws/ws-send-scheduler';
 
 const scalarForLog = (value: unknown): string =>
   typeof value === 'string' ||
@@ -283,8 +285,50 @@ export class WsListenersNotifier {
     private readonly moderationDb: Pick<
       ContentModerationDb,
       'getViewerContextsForDrop'
-    > = contentModerationDb
+    > = contentModerationDb,
+    private readonly wakeOutbox?: () => Promise<void>
   ) {}
+
+  private get usesOutbox(): boolean {
+    return !!this.wakeOutbox && process.env.NODE_ENV !== 'local';
+  }
+
+  private async legacyConnectionIds(
+    ids: readonly string[],
+    ctx: RequestContext = {}
+  ): Promise<string[]> {
+    return this.usesOutbox
+      ? this.wsConnectionRepository.filterConnectionIdsByDeliveryMode(
+          ids,
+          false,
+          ctx
+        )
+      : [...ids];
+  }
+
+  private async legacyRecipients<T extends { connectionId: string }>(
+    rows: readonly T[],
+    ctx: RequestContext = {}
+  ): Promise<T[]> {
+    if (!this.usesOutbox) return [...rows];
+    const allowed = new Set(
+      await this.legacyConnectionIds(
+        rows.map((row) => row.connectionId),
+        ctx
+      )
+    );
+    return rows.filter((row) => allowed.has(row.connectionId));
+  }
+
+  private sendLegacyNotification(input: {
+    connectionId: string;
+    message: string;
+  }): Promise<void> {
+    return this.appWebSockets.send({
+      ...input,
+      ...(this.usesOutbox ? { legacyOnly: true } : {})
+    });
+  }
 
   async notifyAboutCompetitionUpdate(
     event: {
@@ -334,6 +378,8 @@ export class WsListenersNotifier {
   async notifyAboutIdentityNotificationsChanged(
     inputProfileIds: string[]
   ): Promise<void> {
+    if (this.usesOutbox) await this.wakeOutbox!();
+
     const profileIds = Array.from(
       new Set(inputProfileIds.filter((profileId) => !!profileId))
     );
@@ -341,19 +387,20 @@ export class WsListenersNotifier {
       return;
     }
     try {
-      const recipients =
+      const recipients = await this.legacyRecipients(
         await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
           profileIds
-        );
-      await Promise.all(
-        recipients.map(({ connectionId, identityId }) =>
-          this.appWebSockets.send({
+        )
+      );
+      await forEachWebSocketRecipient(
+        recipients,
+        ({ connectionId, identityId }) =>
+          this.sendLegacyNotification({
             connectionId,
             message: JSON.stringify(
               identityNotificationsChangedMessage(identityId)
             )
           })
-        )
       );
     } catch (error) {
       this.logger.error(
@@ -367,6 +414,8 @@ export class WsListenersNotifier {
     states: ApiDmUnreadConversationState[],
     resolvedRecipients?: readonly NotificationConnectionRecipient[]
   ): Promise<void> {
+    if (this.usesOutbox) await this.wakeOutbox!();
+
     const statesByProfileId = states.reduce((acc, state) => {
       const profileStates = acc.get(state.profile_id) ?? [];
       profileStates.push(state);
@@ -378,20 +427,26 @@ export class WsListenersNotifier {
     }
     const profileIds = Array.from(statesByProfileId.keys());
     try {
-      const recipients =
+      const recipients = await this.legacyRecipients(
         resolvedRecipients ??
-        (await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
-          profileIds
-        ));
-      await Promise.all(
-        recipients.flatMap(({ connectionId, identityId }) =>
-          (statesByProfileId.get(identityId) ?? []).map((state) =>
-            this.appWebSockets.send({
-              connectionId,
-              message: JSON.stringify(dmUnreadStateChangedMessage(state))
-            })
-          )
-        )
+          (await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
+            profileIds
+          ))
+      );
+      // Each frame is independent: a failed conversation must not skip later
+      // states for the same recipient. Generate lazily to keep fan-out bounded.
+      const frames = function* () {
+        for (const { connectionId, identityId } of recipients) {
+          for (const state of statesByProfileId.get(identityId) ?? []) {
+            yield { connectionId, state };
+          }
+        }
+      };
+      await forEachWebSocketRecipient(frames(), ({ connectionId, state }) =>
+        this.sendLegacyNotification({
+          connectionId,
+          message: JSON.stringify(dmUnreadStateChangedMessage(state))
+        })
       );
     } catch (error) {
       this.logger.error(
@@ -431,23 +486,29 @@ export class WsListenersNotifier {
       useSystemBroadcastAudience = false
     }: { reason?: string; useSystemBroadcastAudience?: boolean } = {}
   ): Promise<void> {
+    if (this.usesOutbox) await this.wakeOutbox!();
+
     ctx.timer?.start(`${this.constructor.name}->notifyAboutDrop`);
     try {
-      const onlineProfiles = useSystemBroadcastAudience
-        ? await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast(
-            {
-              groupId: inputDrop.wave.visibility_group_id,
-              waveId: inputDrop.wave.id
-            },
-            ctx
-          )
-        : await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
-            {
-              groupId: inputDrop.wave.visibility_group_id,
-              waveId: inputDrop.wave.id
-            },
-            ctx
-          );
+      const onlineProfiles = await this.legacyRecipients(
+        useSystemBroadcastAudience
+          ? await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast(
+              {
+                groupId: inputDrop.wave.visibility_group_id,
+                waveId: inputDrop.wave.id
+              },
+              ctx
+            )
+          : await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
+              {
+                groupId: inputDrop.wave.visibility_group_id,
+                waveId: inputDrop.wave.id
+              },
+              ctx
+            ),
+        ctx
+      );
+      if (!onlineProfiles.length) return;
 
       const creditLefts = await this.getCreditLeftsForOnlineProfiles(
         onlineProfiles,
@@ -463,8 +524,9 @@ export class WsListenersNotifier {
         },
         ctx.connection
       );
-      await Promise.all(
-        onlineProfiles.map(({ connectionId, profileId }) => {
+      await forEachWebSocketRecipient(
+        onlineProfiles,
+        ({ connectionId, profileId }) => {
           const recipientDrop = applyGlobalModerationForRecipient(
             inputDrop,
             profileId
@@ -476,7 +538,7 @@ export class WsListenersNotifier {
                   author_blocked: false,
                   drop_hidden: false
                 });
-          return this.appWebSockets.send({
+          return this.sendLegacyNotification({
             connectionId,
             message: serializeDropUpdateForRecipient(
               recipientDrop,
@@ -484,29 +546,34 @@ export class WsListenersNotifier {
               reason
             )
           });
-        })
+        }
       );
     } catch (e) {
       logDropNotificationFailure(this.logger, 'DROP_UPDATE', inputDrop, e);
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->notifyAboutDrop`);
     }
-
-    ctx.timer?.stop(`${this.constructor.name}->notifyAboutDrop`);
   }
 
   async notifyAboutDropRatingUpdate(
     drop: ApiDrop,
     ctx: RequestContext
   ): Promise<void> {
+    if (this.usesOutbox) await this.wakeOutbox!();
+
     ctx.timer?.start(`${this.constructor.name}->notifyAboutDropRatingUpdate`);
     try {
-      const onlineProfiles =
+      const onlineProfiles = await this.legacyRecipients(
         await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
           {
             groupId: drop.wave.visibility_group_id,
             waveId: drop.wave.id
           },
           ctx
-        );
+        ),
+        ctx
+      );
+      if (!onlineProfiles.length) return;
       const creditLefts = await this.getCreditLeftsForOnlineProfiles(
         onlineProfiles,
         drop
@@ -521,8 +588,9 @@ export class WsListenersNotifier {
         },
         ctx.connection
       );
-      await Promise.all(
-        onlineProfiles.map(({ connectionId, profileId }) => {
+      await forEachWebSocketRecipient(
+        onlineProfiles,
+        ({ connectionId, profileId }) => {
           const recipientDrop = applyGlobalModerationForRecipient(
             drop,
             profileId
@@ -534,36 +602,41 @@ export class WsListenersNotifier {
                   author_blocked: false,
                   drop_hidden: false
                 });
-          return this.appWebSockets.send({
+          return this.sendLegacyNotification({
             connectionId,
             message: serializeDropRatingUpdateForRecipient(
               recipientDrop,
               profileId === null ? 0 : (creditLefts[profileId] ?? 0)
             )
           });
-        })
+        }
       );
     } catch (e) {
       logDropNotificationFailure(this.logger, 'DROP_RATING_UPDATE', drop, e);
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->notifyAboutDropRatingUpdate`);
     }
-
-    ctx.timer?.stop(`${this.constructor.name}->notifyAboutDropRatingUpdate`);
   }
 
   async notifyAboutDropReactionUpdate(
     drop: ApiDrop,
     ctx: RequestContext
   ): Promise<void> {
+    if (this.usesOutbox) await this.wakeOutbox!();
+
     ctx.timer?.start(`${this.constructor.name}->notifyAboutDropReactionUpdate`);
     try {
-      const onlineProfiles =
+      const onlineProfiles = await this.legacyRecipients(
         await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
           {
             groupId: drop.wave.visibility_group_id,
             waveId: drop.wave.id
           },
           ctx
-        );
+        ),
+        ctx
+      );
+      if (!onlineProfiles.length) return;
       const creditLefts = await this.getCreditLeftsForOnlineProfiles(
         onlineProfiles,
         drop
@@ -578,8 +651,9 @@ export class WsListenersNotifier {
         },
         ctx.connection
       );
-      await Promise.all(
-        onlineProfiles.map(({ connectionId, profileId }) => {
+      await forEachWebSocketRecipient(
+        onlineProfiles,
+        ({ connectionId, profileId }) => {
           const recipientDrop = applyGlobalModerationForRecipient(
             drop,
             profileId
@@ -591,17 +665,21 @@ export class WsListenersNotifier {
                   author_blocked: false,
                   drop_hidden: false
                 });
-          return this.appWebSockets.send({
+          return this.sendLegacyNotification({
             connectionId,
             message: serializeDropReactionUpdateForRecipient(
               recipientDrop,
               profileId === null ? 0 : (creditLefts[profileId] ?? 0)
             )
           });
-        })
+        }
       );
     } catch (e) {
       logDropNotificationFailure(this.logger, 'DROP_REACTION_UPDATE', drop, e);
+    } finally {
+      ctx.timer?.stop(
+        `${this.constructor.name}->notifyAboutDropReactionUpdate`
+      );
     }
   }
 
@@ -683,19 +761,17 @@ export class WsListenersNotifier {
       };
       const now = Time.currentMillis();
       stage = 'delivery';
-      await Promise.all(
-        connectionIds.map((connectionId: string) =>
-          this.appWebSockets.send({
-            connectionId,
-            message: JSON.stringify(
-              userIsTypingMessage({
-                wave_id: waveId,
-                timestamp: now,
-                profile: profile
-              })
-            )
-          })
-        )
+      await forEachWebSocketRecipient(connectionIds, (connectionId: string) =>
+        this.appWebSockets.send({
+          connectionId,
+          message: JSON.stringify(
+            userIsTypingMessage({
+              wave_id: waveId,
+              timestamp: now,
+              profile: profile
+            })
+          )
+        })
       );
     } catch (error) {
       if (!isExpectedClientError(error)) {
@@ -760,20 +836,25 @@ export class WsListenersNotifier {
     visibility_group_id: string | null,
     ctx: RequestContext
   ): Promise<void> {
+    if (this.usesOutbox) await this.wakeOutbox!();
+
     if (!dropInfos.length) {
       return;
     }
     const timerName = `${this.constructor.name}->notifyAboutDropDeletes`;
     ctx.timer?.start(timerName);
     try {
-      const onlineClients =
+      const onlineClients = await this.legacyRecipients(
         await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
           {
             groupId: visibility_group_id,
             waveId: dropInfos[0]!.wave_id
           },
           ctx
-        );
+        ),
+        ctx
+      );
+      if (!onlineClients.length) return;
       const connectionIds = onlineClients.map((it) => it.connectionId);
       let pendingSends: Promise<void>[] = [];
       const sendFailures: unknown[] = [];
@@ -789,7 +870,9 @@ export class WsListenersNotifier {
       for (const dropInfo of dropInfos) {
         const message = JSON.stringify(dropDeleteMessage(dropInfo));
         for (const connectionId of connectionIds) {
-          pendingSends.push(this.appWebSockets.send({ connectionId, message }));
+          pendingSends.push(
+            this.sendLegacyNotification({ connectionId, message })
+          );
           if (pendingSends.length === DROP_DELETE_NOTIFICATION_BATCH_SIZE) {
             await flushPendingSends();
           }
@@ -816,6 +899,8 @@ export class WsListenersNotifier {
     },
     ctx: RequestContext
   ): Promise<void> {
+    if (this.usesOutbox) await this.wakeOutbox!();
+
     ctx.timer?.start(
       `${this.constructor.name}->notifyAboutAttachmentStatusUpdate`
     );
@@ -847,19 +932,22 @@ export class WsListenersNotifier {
           }
         )
       );
-      const uniqueConnectionIds = Array.from(
-        new Set([...ownerConnectionIds, ...waveConnectionIdLists.flat()])
+      const uniqueConnectionIds = await this.legacyConnectionIds(
+        Array.from(
+          new Set([...ownerConnectionIds, ...waveConnectionIdLists.flat()])
+        ),
+        ctx
       );
       if (!uniqueConnectionIds.length) {
         return;
       }
-      await Promise.all(
-        uniqueConnectionIds.map((connectionId: string) =>
-          this.appWebSockets.send({
+      await forEachWebSocketRecipient(
+        uniqueConnectionIds,
+        (connectionId: string) =>
+          this.sendLegacyNotification({
             connectionId,
             message
           })
-        )
       );
     } catch (e) {
       this.logger.error(
@@ -877,19 +965,21 @@ export class WsListenersNotifier {
     nftLinkData: ApiNftLinkData,
     ctx: RequestContext
   ) {
+    if (this.usesOutbox) await this.wakeOutbox!();
+
     ctx.timer?.start(`${this.constructor.name}->notifyAboutNftLinkUpdate`);
     const message = JSON.stringify(nftLinkUpdatedMessage(nftLinkData));
     try {
-      const connections =
-        await this.wsConnectionRepository.findAllConnectionIds();
+      const connections = await this.legacyConnectionIds(
+        await this.wsConnectionRepository.findAllConnectionIds(),
+        ctx
+      );
       if (connections.length) {
-        await Promise.all(
-          connections.map((connectionId: string) =>
-            this.appWebSockets.send({
-              connectionId,
-              message
-            })
-          )
+        await forEachWebSocketRecipient(connections, (connectionId: string) =>
+          this.sendLegacyNotification({
+            connectionId,
+            message
+          })
         );
       }
     } catch (e) {
@@ -905,5 +995,7 @@ export class WsListenersNotifier {
 
 export const wsListenersNotifier = new WsListenersNotifier(
   appWebSockets,
-  wsConnectionRepository
+  wsConnectionRepository,
+  contentModerationDb,
+  wakeWebSocketOutbox
 );

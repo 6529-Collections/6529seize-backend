@@ -1,3 +1,5 @@
+import { nftLinkRefreshNotifierDb } from '@/nftLinkRefresherLoop/nft-link-refresh-notifier.db';
+import { appWebSockets } from '@/api/ws/ws';
 import { NftLinkRefreshNotifier } from '@/nftLinkRefresherLoop/nft-link-refresh-notifier';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 import { withNftLinkResolutionBudget } from '@/nft-links/resolution-budget';
@@ -26,7 +28,35 @@ describe('NFT link refresh notifications', () => {
     jest.restoreAllMocks();
   });
 
-  it('aborts stalled sends and stops dequeuing recipients after 15 seconds', async () => {
+  it('wakes durable NFT delivery while sending the default production broadcast only to legacy recipients', async () => {
+    const originalEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'staging';
+    const recipients = jest
+      .spyOn(nftLinkRefreshNotifierDb, 'findActiveRecipients')
+      .mockResolvedValue([recipient(1)]);
+    const send = jest.spyOn(appWebSockets, 'send').mockResolvedValue(undefined);
+    const wake = jest.fn().mockResolvedValue(undefined);
+    try {
+      await new NftLinkRefreshNotifier(
+        undefined,
+        undefined,
+        wake
+      ).notifyAboutNftLinkUpdate(data);
+      expect(wake).toHaveBeenCalledTimes(1);
+      expect(recipients).toHaveBeenCalledWith({}, true);
+      expect(send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          connectionId: 'connection-1',
+          legacyOnly: true
+        })
+      );
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      process.env.NODE_ENV = originalEnv;
+    }
+  });
+
+  it('aborts stalled enqueues and stops dequeuing recipients after 15 seconds', async () => {
     const signals: AbortSignal[] = [];
     const send = jest.fn(
       (_id: string, _message: string, signal: AbortSignal) => {
@@ -75,10 +105,10 @@ describe('NFT link refresh notifications', () => {
     expect(jest.getTimerCount()).toBe(0);
   });
 
-  it('continues past disconnected clients, respects JWT expiry, and clears timers on success', async () => {
+  it('continues past failed enqueues, respects JWT expiry, and clears timers', async () => {
     const send = jest
       .fn()
-      .mockRejectedValueOnce(new Error('GoneException'))
+      .mockRejectedValueOnce(new Error('SQS unavailable'))
       .mockResolvedValue(undefined);
     const expired = {
       ...recipient(3),

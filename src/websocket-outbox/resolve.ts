@@ -1,0 +1,203 @@
+import { dbSupplier } from '@/sql-executor';
+import { RequestContext } from '@/request.context';
+import { DROPS_TABLE, DROP_MEDIA_TABLE } from '@/constants';
+import { DropEntity } from '@/entities/IDrop';
+import { wsConnectionRepository as connections } from '@/api/ws/ws-connection.repository';
+import {
+  attachmentStatusUpdateMessage,
+  dmUnreadStateChangedMessage,
+  dropDeleteMessage,
+  dropUpdateRefMessage,
+  identityNotificationsChangedMessage,
+  nftLinkUpdatedMessage,
+  DropUpdateRefType
+} from '@/api/ws/ws-message';
+import { attachmentsDb } from '@/attachments/attachments.db';
+import { mapAttachmentToApiAttachment } from '@/api/attachments/attachments.mappers';
+import { nftLinksDb } from '@/nft-links/nft-links.db';
+import { mapNftLinkEntityToApiLink } from '@/nft-links/nft-link-api.mapper';
+import { wavesApiDb } from '@/api/waves/waves.api.db';
+import { DbPoolName } from '@/db-query.options';
+import { WebSocketOutboxEvent } from './events';
+
+type Delivery = Extract<WebSocketOutboxEvent, { type: 'delivery' }>;
+type RawDrop = Pick<DropEntity, 'id' | 'wave_id' | 'author_id'> & {
+  readonly serial_no: unknown;
+};
+
+/** The loop's TypeORM adapter returns BIGINT strings; the client wire contract requires numbers. */
+function dropSerialNumber(value: unknown): number {
+  const serial =
+    typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value)
+      ? Number(value)
+      : value;
+  if (
+    typeof serial !== 'number' ||
+    !Number.isSafeInteger(serial) ||
+    serial < 0
+  ) {
+    // Fail resolution so the publisher retains the intent and reports its failure.
+    throw new RangeError('Invalid WebSocket drop serial number');
+  }
+  return serial;
+}
+
+const deliveries = (ids: string[], message: unknown): Delivery[] =>
+  Array.from(new Set(ids)).map((connectionId) => ({
+    type: 'delivery',
+    connectionId,
+    message: JSON.stringify(message)
+  }));
+
+/** Resolve current state and audience on the writer; materialize durable recipient jobs atomically. */
+async function resolveEvent(
+  event: WebSocketOutboxEvent,
+  ctx: RequestContext
+): Promise<WebSocketOutboxEvent[]> {
+  switch (event.type) {
+    case 'drop': {
+      const drop = await dbSupplier().oneOrNull<RawDrop>(
+        `select * from ${DROPS_TABLE} where id = :id`,
+        { id: event.dropId },
+        { wrappedConnection: ctx.connection }
+      );
+      if (!drop) return [];
+      const serialNo = dropSerialNumber(drop.serial_no);
+      const recipients = await waveRecipients(drop.wave_id, ctx);
+      return deliveries(
+        recipients,
+        dropUpdateRefMessage({
+          drop_id: drop.id,
+          wave_id: drop.wave_id,
+          author_id: drop.author_id,
+          serial_no: serialNo,
+          update_type: event.updateType as DropUpdateRefType,
+          reason: event.reason
+        })
+      );
+    }
+    case 'drop-delete':
+      return deliveries(
+        await waveRecipients(event.waveId, ctx),
+        dropDeleteMessage({
+          drop_id: event.dropId,
+          wave_id: event.waveId,
+          drop_serial: dropSerialNumber(event.serialNo)
+        })
+      );
+    case 'identity': {
+      const recipients =
+        await connections.findNotificationConnectionIdsByIdentityIds(
+          [event.profileId],
+          ctx
+        );
+      return deliveries(
+        recipients.map((r) => r.connectionId),
+        identityNotificationsChangedMessage(event.profileId)
+      );
+    }
+    case 'dm': {
+      const states =
+        await wavesApiDb.findDmUnreadConversationStatesForIdentities(
+          { identityIds: event.profileIds, waveIds: [event.waveId] },
+          ctx,
+          DbPoolName.WRITE
+        );
+      const recipients =
+        await connections.findNotificationConnectionIdsByIdentityIds(
+          event.profileIds,
+          ctx
+        );
+      return states.flatMap((state) =>
+        deliveries(
+          recipients
+            .filter((r) => r.identityId === state.profile_id)
+            .map((r) => r.connectionId),
+          dmUnreadStateChangedMessage(state)
+        )
+      );
+    }
+    case 'attachment': {
+      const attachment = await attachmentsDb.findAttachmentById(
+        event.attachmentId,
+        ctx.connection
+      );
+      if (!attachment) return [];
+      const ids = await connections.findConnectionIdsByIdentityId(
+        attachment.owner_profile_id,
+        ctx
+      );
+      for (const waveId of await attachmentsDb.findAttachmentWaveIds(
+        event.attachmentId,
+        ctx.connection
+      ))
+        ids.push(...(await waveRecipients(waveId, ctx)));
+      return deliveries(
+        ids,
+        attachmentStatusUpdateMessage(mapAttachmentToApiAttachment(attachment))
+      );
+    }
+    case 'nft': {
+      const nft = await nftLinksDb.findByCanonicalIdForNotification(
+        event.canonicalId,
+        ctx
+      );
+      return nft
+        ? deliveries(
+            await connections.findAllConnectionIds(ctx),
+            nftLinkUpdatedMessage(mapNftLinkEntityToApiLink(nft))
+          )
+        : [];
+    }
+    case 'media': {
+      const rows = await dbSupplier().execute<{ drop_id: string }>(
+        `select distinct drop_id from ${DROP_MEDIA_TABLE} where media_upload_id = :id`,
+        { id: event.uploadId },
+        { wrappedConnection: ctx.connection }
+      );
+      return rows.map((row) => ({
+        deliveryCapability: event.deliveryCapability,
+        type: 'drop',
+        dropId: row.drop_id,
+        updateType: 'DROP_UPDATE',
+        reason: 'MEDIA_STATUS'
+      }));
+    }
+    case 'delivery':
+      throw new Error('Recipient jobs must be enqueued, not resolved');
+  }
+}
+
+async function waveRecipients(
+  waveId: string,
+  ctx: RequestContext
+): Promise<string[]> {
+  const groupId = await connections.findWaveVisibilityGroupId(waveId, ctx);
+  if (groupId === undefined) return [];
+  return (
+    await connections.getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast(
+      { waveId, groupId },
+      ctx
+    )
+  ).map((r) => r.connectionId);
+}
+
+export async function resolveWebSocketEvent(
+  event: WebSocketOutboxEvent,
+  ctx: RequestContext
+): Promise<WebSocketOutboxEvent[]> {
+  const resolved = await resolveEvent(event, ctx);
+  if (!event.deliveryCapability) return resolved;
+  const allowed = new Set(
+    await connections.filterConnectionIdsByDeliveryMode(
+      resolved.flatMap((job) =>
+        job.type === 'delivery' ? [job.connectionId] : []
+      ),
+      true,
+      ctx
+    )
+  );
+  return resolved
+    .filter((job) => job.type !== 'delivery' || allowed.has(job.connectionId))
+    .map((job) => ({ ...job, deliveryCapability: event.deliveryCapability }));
+}

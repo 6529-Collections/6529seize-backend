@@ -1,3 +1,7 @@
+jest.mock('@/api/ws/ws-outbound-queue', () => ({
+  ...jest.requireActual('@/api/ws/ws-outbound-queue'),
+  enqueueWebSocketFrame: jest.fn()
+}));
 const mockHandle = jest.fn();
 const mockError = jest.fn();
 const mockWarn = jest.fn();
@@ -42,9 +46,21 @@ jest.mock('@aws-sdk/client-apigatewaymanagementapi', () => {
   };
 });
 
+import type { SQSEvent } from 'aws-lambda';
+import { processWebSocketBatch } from '@/websocketOutboundHandler/processor';
+import { deferWebSocketRetry } from '@/websocketOutboundHandler/retry';
+import { SQSClient, ChangeMessageVisibilityCommand } from '@aws-sdk/client-sqs';
+import { enqueueWebSocketFrame } from './ws-outbound-queue';
 import { HttpResponse } from '@smithy/protocol-http';
-import { AppWebSockets } from '@/api/ws/ws';
+import { NftLinkRefreshNotifier } from '@/nftLinkRefresherLoop/nft-link-refresh-notifier';
+import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
+import { AppWebSockets, appWebSockets } from '@/api/ws/ws';
 import { WsConnectionRepository } from '@/api/ws/ws-connection.repository';
+import { withLambdaRemainingTime } from '@/lambda-deadline';
+import {
+  WebSocketSendScheduler,
+  WebSocketSendLimitError
+} from './ws-send-scheduler';
 
 const response = (statusCode: number, errorType?: string) => ({
   response: new HttpResponse({
@@ -63,9 +79,13 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
   const originalNodeEnv = process.env.NODE_ENV;
   const repository = {
     getByConnectionId: jest.fn(async () => ({
-      jwt_expiry: Math.floor(Date.now() / 1000) + 600
+      identity_id: 'profile',
+      durable_updates: true,
+      jwt_expiry: 2000000000
     })),
-    deleteByConnectionId: jest.fn(async () => undefined)
+    deleteByConnectionId: jest.fn(async () => undefined),
+    findNotificationConnectionIdsByIdentityIds: jest.fn(),
+    canIdentityReadQueuedResource: jest.fn()
   };
   const sockets = new AppWebSockets(
     repository as unknown as WsConnectionRepository
@@ -73,6 +93,7 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
   afterAll(() => {
     process.env.NODE_ENV = originalNodeEnv;
   });
+  afterEach(() => jest.restoreAllMocks());
 
   beforeEach(() => {
     process.env.NODE_ENV = 'test';
@@ -80,7 +101,673 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
     mockError.mockClear();
     mockWarn.mockClear();
     mockAttempts.length = 0;
+    (enqueueWebSocketFrame as jest.Mock).mockReset();
     repository.deleteByConnectionId.mockClear();
+    repository.getByConnectionId.mockClear();
+    repository.findNotificationConnectionIdsByIdentityIds.mockReset();
+    repository.canIdentityReadQueuedResource.mockReset();
+  });
+
+  it('sends legacy frames immediately without enqueueing and still reports throttling', async () => {
+    repository.getByConnectionId.mockResolvedValueOnce({
+      identity_id: 'profile',
+      durable_updates: false,
+      jwt_expiry: 2000000000
+    });
+    mockHandle.mockResolvedValue(response(200));
+    await sockets.send({ connectionId: 'synthetic', message: '{}' });
+    expect(mockHandle).toHaveBeenCalledTimes(1);
+    expect(enqueueWebSocketFrame).not.toHaveBeenCalled();
+    repository.getByConnectionId.mockResolvedValueOnce({
+      identity_id: 'profile',
+      durable_updates: false,
+      jwt_expiry: 2000000000
+    });
+    mockHandle.mockResolvedValue(response(429, 'LimitExceededException'));
+    await expect(
+      sockets.send({ connectionId: 'synthetic', message: '{}' })
+    ).rejects.toThrow();
+    expect(mockError).toHaveBeenCalled();
+    expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+  });
+
+  it('does not duplicate a capable-client update through legacy fan-out', async () => {
+    await sockets.send({
+      connectionId: 'synthetic',
+      message: '{}',
+      legacyOnly: true
+    });
+    expect(mockHandle).not.toHaveBeenCalled();
+    expect(enqueueWebSocketFrame).not.toHaveBeenCalled();
+  });
+
+  it('keeps pre-capability accepted recipient jobs on the queue for legacy clients', async () => {
+    repository.getByConnectionId.mockResolvedValueOnce({
+      identity_id: 'profile',
+      durable_updates: false,
+      jwt_expiry: 2000000000
+    });
+    await sockets.send({
+      connectionId: 'synthetic',
+      message: '{}',
+      outboxId: 'old-job'
+    });
+    expect(enqueueWebSocketFrame).toHaveBeenCalledWith(
+      {
+        connectionId: 'synthetic',
+        message: '{}',
+        identityId: 'profile',
+        jwtExpiry: 2000000000
+      },
+      undefined,
+      'old-job'
+    );
+    expect(mockHandle).not.toHaveBeenCalled();
+  });
+
+  it('delivers previously accepted unmarked frames to legacy clients without requeueing', async () => {
+    repository.getByConnectionId.mockResolvedValueOnce({
+      identity_id: 'profile',
+      durable_updates: false,
+      jwt_expiry: 2000000000
+    });
+    mockHandle.mockResolvedValue(response(200));
+    await sockets.deliverQueued({
+      version: 1,
+      id: 'old',
+      connectionId: 'synthetic',
+      identityId: 'profile',
+      jwtExpiry: 2000000000,
+      message: '{}'
+    });
+    expect(mockHandle).toHaveBeenCalledTimes(1);
+    expect(enqueueWebSocketFrame).not.toHaveBeenCalled();
+  });
+
+  it('does not deliver a capability-marked queued frame to an incompatible session or delete it as stale', async () => {
+    repository.getByConnectionId.mockResolvedValueOnce({
+      identity_id: 'profile',
+      durable_updates: false,
+      jwt_expiry: 2000000000
+    });
+    await sockets.deliverQueued({
+      version: 1,
+      id: 'new',
+      connectionId: 'synthetic',
+      identityId: 'profile',
+      jwtExpiry: 2000000000,
+      message: '{}',
+      deliveryCapability: 'durable_updates_v1'
+    });
+    expect(mockHandle).not.toHaveBeenCalled();
+    expect(mockWarn).toHaveBeenCalledWith({
+      code: 'WS_OUTBOUND_SESSION_CHANGED'
+    });
+    expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+  });
+
+  it('cancels an in-flight legacy Gateway send when the producer aborts', async () => {
+    const controller = new AbortController();
+    repository.getByConnectionId.mockResolvedValueOnce({
+      identity_id: 'profile',
+      durable_updates: false,
+      jwt_expiry: 2000000000
+    });
+    let started!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    mockHandle.mockImplementationOnce(
+      (_request: unknown, options: { abortSignal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          options.abortSignal.addEventListener(
+            'abort',
+            () => reject(new Error('Aborted')),
+            { once: true }
+          );
+          started();
+        })
+    );
+    const operation = sockets.send({
+      connectionId: 'synthetic',
+      message: '{}',
+      abortSignal: controller.signal
+    });
+    await ready;
+    controller.abort();
+    await expect(operation).rejects.toThrow();
+    expect(repository.getByConnectionId).toHaveBeenCalledTimes(1);
+    expect(enqueueWebSocketFrame).not.toHaveBeenCalled();
+    expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+  });
+
+  it('persists production sends without attempting transport, even with low invocation budget', async () => {
+    await withLambdaRemainingTime(
+      () => 900,
+      () => sockets.send({ connectionId: 'synthetic', message: '{}' })
+    );
+    expect(enqueueWebSocketFrame).toHaveBeenCalledWith(
+      {
+        connectionId: 'synthetic',
+        message: '{}',
+        identityId: 'profile',
+        jwtExpiry: 2000000000,
+        deliveryCapability: 'durable_updates_v1'
+      },
+      undefined,
+      undefined
+    );
+    expect(mockHandle).not.toHaveBeenCalled();
+  });
+
+  it('queues the NFT refresher default producer and delivers its public media payload through the worker', async () => {
+    jest
+      .spyOn(appWebSockets, 'send')
+      .mockImplementation((input) => sockets.send(input));
+    const data = { canonical_id: 'synthetic-link' } as ApiNftLinkData;
+    const notifier = new NftLinkRefreshNotifier(async () => [
+      {
+        connection_id: 'synthetic',
+        jwt_expiry: 2000000000
+      }
+    ]);
+    await notifier.notifyAboutNftLinkUpdate(data);
+    const [frame, signal] = (enqueueWebSocketFrame as jest.Mock).mock.calls[0];
+    expect(frame).toMatchObject({
+      connectionId: 'synthetic',
+      identityId: 'profile',
+      jwtExpiry: 2000000000
+    });
+    expect(JSON.parse(frame.message)).toMatchObject({
+      type: 'MEDIA_LINK_UPDATED',
+      data
+    });
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(mockHandle).not.toHaveBeenCalled();
+    mockHandle.mockResolvedValueOnce(response(200));
+    await sockets.deliverQueued({ ...frame, version: 1, id: 'nft-frame' });
+    expect(mockHandle).toHaveBeenCalledTimes(1);
+    expect(repository.canIdentityReadQueuedResource).not.toHaveBeenCalled();
+  });
+
+  it('does not enqueue or delete a connection when cancellation occurs during the session read', async () => {
+    const controller = new AbortController();
+    repository.getByConnectionId.mockImplementationOnce(async () => {
+      controller.abort();
+      return {
+        identity_id: 'profile',
+        durable_updates: false,
+        jwt_expiry: 2000000000
+      };
+    });
+    await expect(
+      sockets.send({
+        connectionId: 'synthetic',
+        message: '{}',
+        abortSignal: controller.signal
+      })
+    ).rejects.toThrow();
+    expect(enqueueWebSocketFrame).not.toHaveBeenCalled();
+    expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+    expect(mockHandle).not.toHaveBeenCalled();
+  });
+
+  it('surfaces queue persistence failures without exposing provider payloads', async () => {
+    (enqueueWebSocketFrame as jest.Mock).mockRejectedValueOnce(
+      new Error('PRIVATE_PROVIDER_DATA')
+    );
+    await expect(
+      sockets.send({ connectionId: 'synthetic', message: '{}' })
+    ).rejects.toThrow('WebSocket queue persistence failed');
+    expect(mockError).toHaveBeenCalledWith({
+      code: 'WS_OUTBOUND_ENQUEUE_FAILED'
+    });
+    expect(JSON.stringify(mockError.mock.calls)).not.toContain(
+      'PRIVATE_PROVIDER_DATA'
+    );
+    expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['missing session', null],
+    ['expired session', { identity_id: 'profile', jwt_expiry: 1 }],
+    ['renewed credentials', { identity_id: 'profile', jwt_expiry: 2000000001 }]
+  ])('does not POST queued data after %s', async (_label, session) => {
+    repository.getByConnectionId.mockResolvedValueOnce(session as never);
+    mockHandle.mockResolvedValue(response(204));
+    const batch = {
+      Records: [
+        {
+          messageId: 'revoked',
+          body: JSON.stringify({
+            version: 1,
+            id: 'revoked',
+            connectionId: 'synthetic',
+            message: '{}',
+            identityId: 'profile',
+            jwtExpiry: 2000000000
+          })
+        }
+      ]
+    } as SQSEvent;
+    expect(
+      await processWebSocketBatch(
+        batch,
+        (frame) => sockets.deliverQueued(frame),
+        jest.fn()
+      )
+    ).toEqual({ batchItemFailures: [] });
+    expect(
+      mockHandle.mock.calls.filter(([request]) => request.method === 'POST')
+    ).toHaveLength(0);
+  });
+
+  it.each([
+    [
+      'DROP_UPDATE',
+      { wave: { id: 'private-wave' } },
+      { waveId: 'private-wave' }
+    ],
+    [
+      'DROP_UPDATE_REF',
+      { wave_id: 'private-wave' },
+      { waveId: 'private-wave' }
+    ],
+    ['DROP_DELETE', { wave_id: 'private-wave' }, { waveId: 'private-wave' }],
+    [
+      'ATTACHMENT_STATUS_UPDATE',
+      { attachment_id: 'attachment' },
+      { attachmentId: 'attachment' }
+    ]
+  ])(
+    'cancels delayed %s after resource access is revoked',
+    async (type, data, resource) => {
+      repository.canIdentityReadQueuedResource.mockResolvedValue(false);
+      const batch = {
+        Records: [
+          {
+            messageId: 'private',
+            body: JSON.stringify({
+              version: 1,
+              id: 'private',
+              connectionId: 'synthetic',
+              message: JSON.stringify({ type, data }),
+              identityId: 'profile',
+              jwtExpiry: 2000000000
+            })
+          }
+        ]
+      } as SQSEvent;
+      expect(
+        await processWebSocketBatch(
+          batch,
+          (frame) => sockets.deliverQueued(frame),
+          jest.fn()
+        )
+      ).toEqual({ batchItemFailures: [] });
+      expect(repository.canIdentityReadQueuedResource).toHaveBeenCalledWith(
+        'profile',
+        resource
+      );
+      expect(mockWarn).toHaveBeenCalledWith({
+        code: 'WS_OUTBOUND_ACCESS_CHANGED'
+      });
+      expect(mockHandle).not.toHaveBeenCalled();
+      expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+    }
+  );
+
+  it('retains the frame when authorization lookup fails instead of treating failure as revocation', async () => {
+    repository.canIdentityReadQueuedResource.mockRejectedValue(
+      new Error('database unavailable')
+    );
+    const batch = {
+      Records: [
+        {
+          messageId: 'retry-access',
+          body: JSON.stringify({
+            version: 1,
+            id: 'retry-access',
+            connectionId: 'synthetic',
+            message: JSON.stringify({
+              type: 'DROP_UPDATE_REF',
+              data: { wave_id: 'private-wave' }
+            }),
+            identityId: 'profile',
+            jwtExpiry: 2000000000
+          })
+        }
+      ]
+    } as SQSEvent;
+    expect(
+      await processWebSocketBatch(
+        batch,
+        (frame) => sockets.deliverQueued(frame),
+        jest.fn()
+      )
+    ).toEqual({ batchItemFailures: [{ itemIdentifier: 'retry-access' }] });
+    expect(mockHandle).not.toHaveBeenCalled();
+    expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+  });
+
+  it('does not replay a frame after the connection has switched identity', async () => {
+    await sockets.deliverQueued({
+      version: 1,
+      id: 'frame',
+      connectionId: 'synthetic',
+      message: '{}',
+      identityId: 'previous-profile',
+      jwtExpiry: 2000000000
+    });
+    expect(mockHandle).not.toHaveBeenCalled();
+    expect(mockWarn).toHaveBeenCalledWith({
+      code: 'WS_OUTBOUND_SESSION_CHANGED'
+    });
+    expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+  });
+
+  it('retries a durably queued frame after three 429s and acknowledges its later success', async () => {
+    const frame = {
+      version: 1 as const,
+      id: 'frame',
+      connectionId: 'synthetic',
+      message: '{}',
+      identityId: 'profile',
+      jwtExpiry: 2000000000
+    };
+    mockHandle.mockResolvedValue(response(429, 'LimitExceededException'));
+    await expect(sockets.deliverQueued(frame)).rejects.toBeDefined();
+    expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+    mockHandle.mockResolvedValue(response(204));
+    await expect(sockets.deliverQueued(frame)).resolves.toBeUndefined();
+    expect(mockHandle).toHaveBeenCalledTimes(4);
+    expect(enqueueWebSocketFrame).not.toHaveBeenCalled();
+  });
+
+  it('retains an SDK-exhausted 429 at the SQS boundary, defers it, and acknowledges redelivery', async () => {
+    const batch = {
+      Records: [
+        {
+          messageId: 'durable-frame',
+          receiptHandle: 'test-receipt',
+          attributes: { ApproximateReceiveCount: '1' },
+          body: JSON.stringify({
+            version: 1,
+            id: 'durable-frame',
+            connectionId: 'synthetic',
+            message: '{}',
+            identityId: 'profile',
+            jwtExpiry: 2000000000
+          })
+        }
+      ]
+    } as SQSEvent;
+    const originalQueueUrl = process.env.WS_OUTBOUND_QUEUE_URL;
+    process.env.WS_OUTBOUND_QUEUE_URL =
+      'https://sqs.synthetic.invalid/test.fifo';
+    const visibility = jest
+      .spyOn(SQSClient.prototype, 'send')
+      .mockResolvedValue({} as never);
+    const report = jest.fn();
+    const consume = () =>
+      processWebSocketBatch(
+        batch,
+        (frame) => sockets.deliverQueued(frame),
+        report,
+        deferWebSocketRetry
+      );
+    try {
+      mockHandle.mockResolvedValue(response(429, 'LimitExceededException'));
+      expect(await consume()).toEqual({
+        batchItemFailures: [{ itemIdentifier: 'durable-frame' }]
+      });
+      expect(mockHandle).toHaveBeenCalledTimes(3);
+      expect(report).toHaveBeenCalledTimes(1);
+      expect(visibility).toHaveBeenCalledTimes(1);
+      const command = visibility.mock
+        .calls[0][0] as ChangeMessageVisibilityCommand;
+      expect(command.input).toMatchObject({
+        QueueUrl: process.env.WS_OUTBOUND_QUEUE_URL,
+        ReceiptHandle: 'test-receipt'
+      });
+      expect(command.input.VisibilityTimeout).toBeGreaterThanOrEqual(1);
+      expect(command.input.VisibilityTimeout).toBeLessThanOrEqual(2);
+      mockHandle.mockResolvedValue(response(204));
+      batch.Records[0]!.attributes.ApproximateReceiveCount = '2';
+      expect(await consume()).toEqual({ batchItemFailures: [] });
+      expect(mockHandle).toHaveBeenCalledTimes(4);
+      expect(visibility).toHaveBeenCalledTimes(1);
+      expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+    } finally {
+      if (originalQueueUrl === undefined)
+        delete process.env.WS_OUTBOUND_QUEUE_URL;
+      else process.env.WS_OUTBOUND_QUEUE_URL = originalQueueUrl;
+    }
+  });
+
+  it('retains a worker deadline failure and delivers the same record on the next invocation', async () => {
+    const batch = {
+      Records: [
+        {
+          messageId: 'deadline-frame',
+          body: JSON.stringify({
+            version: 1,
+            id: 'deadline-frame',
+            connectionId: 'synthetic',
+            message: '{}',
+            identityId: 'profile',
+            jwtExpiry: 2000000000
+          })
+        }
+      ]
+    } as SQSEvent;
+    const consume = () =>
+      processWebSocketBatch(
+        batch,
+        (frame) => sockets.deliverQueued(frame),
+        jest.fn()
+      );
+    expect(await withLambdaRemainingTime(() => 900, consume)).toEqual({
+      batchItemFailures: [{ itemIdentifier: 'deadline-frame' }]
+    });
+    expect(mockHandle).not.toHaveBeenCalled();
+    mockHandle.mockResolvedValue(response(204));
+    expect(await consume()).toEqual({ batchItemFailures: [] });
+    expect(mockHandle).toHaveBeenCalledTimes(1);
+    expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+  });
+
+  it('permits duplicate delivery when an acknowledgement is lost; it does not promise exactly once', async () => {
+    const batch = {
+      Records: [
+        {
+          messageId: 'replayed-frame',
+          body: JSON.stringify({
+            version: 1,
+            id: 'replayed-frame',
+            connectionId: 'synthetic',
+            message: '{}',
+            identityId: 'profile',
+            jwtExpiry: 2000000000
+          })
+        }
+      ]
+    } as SQSEvent;
+    mockHandle.mockResolvedValue(response(204));
+    for (let delivery = 0; delivery < 2; delivery++) {
+      expect(
+        await processWebSocketBatch(
+          batch,
+          (frame) => sockets.deliverQueued(frame),
+          jest.fn()
+        )
+      ).toEqual({ batchItemFailures: [] });
+    }
+    expect(mockHandle).toHaveBeenCalledTimes(2);
+    expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+  });
+
+  it.each(['IDENTITY_NOTIFICATIONS_CHANGED', 'DM_UNREAD_STATE_CHANGED'])(
+    'reports and retains a malformed %s frame instead of acknowledging lost delivery',
+    async (type) => {
+      const body = JSON.stringify({
+        version: 1,
+        id: 'malformed',
+        connectionId: 'synthetic',
+        message: JSON.stringify({ type, data: {} }),
+        identityId: 'profile',
+        jwtExpiry: 2000000000
+      });
+      const batch = {
+        Records: [
+          { messageId: 'malformed', body },
+          { messageId: 'unprocessed', body }
+        ]
+      } as SQSEvent;
+      const reportFailure = jest.fn();
+      const deferRetry = jest.fn().mockResolvedValue(undefined);
+      expect(
+        await processWebSocketBatch(
+          batch,
+          (frame) => sockets.deliverQueued(frame),
+          reportFailure,
+          deferRetry
+        )
+      ).toEqual({
+        batchItemFailures: [
+          { itemIdentifier: 'malformed' },
+          { itemIdentifier: 'unprocessed' }
+        ]
+      });
+      expect(reportFailure).toHaveBeenCalledTimes(1);
+      expect(deferRetry).toHaveBeenCalledTimes(1);
+      expect(deferRetry).toHaveBeenCalledWith(batch.Records[0]);
+      expect(mockHandle).not.toHaveBeenCalled();
+      expect(
+        repository.findNotificationConnectionIdsByIdentityIds
+      ).not.toHaveBeenCalled();
+      expect(repository.canIdentityReadQueuedResource).not.toHaveBeenCalled();
+      expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+      expect(mockWarn).not.toHaveBeenCalled();
+    }
+  );
+
+  it('does not deliver queued notification data after its subscription is removed', async () => {
+    repository.findNotificationConnectionIdsByIdentityIds.mockResolvedValue([]);
+    await sockets.deliverQueued({
+      version: 1,
+      id: 'frame',
+      connectionId: 'synthetic',
+      message: JSON.stringify({
+        type: 'DM_UNREAD_STATE_CHANGED',
+        data: { profile_id: 'other', wave_id: 'private-wave' }
+      }),
+      identityId: 'profile',
+      jwtExpiry: 2000000000
+    });
+    expect(mockHandle).not.toHaveBeenCalled();
+    expect(mockWarn).toHaveBeenCalledWith({
+      code: 'WS_OUTBOUND_SUBSCRIPTION_CHANGED'
+    });
+  });
+
+  it('checks private-wave access for the subscribed DM profile before retrying', async () => {
+    repository.findNotificationConnectionIdsByIdentityIds.mockResolvedValue([
+      { connectionId: 'synthetic', identityId: 'other' }
+    ]);
+    repository.canIdentityReadQueuedResource.mockResolvedValue(false);
+    await sockets.deliverQueued({
+      version: 1,
+      id: 'frame',
+      connectionId: 'synthetic',
+      message: JSON.stringify({
+        type: 'DM_UNREAD_STATE_CHANGED',
+        data: { profile_id: 'other', wave_id: 'private-wave' }
+      }),
+      identityId: 'profile',
+      jwtExpiry: 2000000000
+    });
+    expect(repository.canIdentityReadQueuedResource).toHaveBeenCalledWith(
+      'other',
+      { waveId: 'private-wave' }
+    );
+    expect(mockHandle).not.toHaveBeenCalled();
+    expect(mockWarn).toHaveBeenCalledWith({
+      code: 'WS_OUTBOUND_ACCESS_CHANGED'
+    });
+  });
+
+  it('reports an exhausted invocation budget without transport, database lookup or deregistration', async () => {
+    await expect(
+      withLambdaRemainingTime(
+        () => 900,
+        () =>
+          sockets.deliver({
+            connectionId: 'private-connection',
+            message: '{"type":"DROP_DELETE"}'
+          })
+      )
+    ).rejects.toMatchObject({ reason: 'DEADLINE_EXCEEDED' });
+    expect(mockHandle).not.toHaveBeenCalled();
+    expect(repository.getByConnectionId).not.toHaveBeenCalled();
+    expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+    expect(mockError).toHaveBeenCalledTimes(1);
+    expect(mockError.mock.calls[0][0]).toMatchObject({
+      code: 'WS_OUTBOUND_SEND_FAILED',
+      delivery_failure: 'DEADLINE_EXCEEDED',
+      sdk_attempts: null,
+      frame_type: 'DROP_DELETE',
+      connection_hash: expect.stringMatching(/^[a-f0-9]{24}$/)
+    });
+    expect(JSON.stringify(mockError.mock.calls)).not.toContain(
+      'private-connection'
+    );
+  });
+
+  it('reports bounded queue overflow once and retains the connection', async () => {
+    jest
+      .spyOn(WebSocketSendScheduler.prototype, 'send')
+      .mockRejectedValueOnce(new WebSocketSendLimitError('QUEUE_FULL'));
+    await expect(
+      sockets.deliver({
+        connectionId: 'private-connection',
+        message: '{"type":"DROP_UPDATE"}'
+      })
+    ).rejects.toMatchObject({ reason: 'QUEUE_FULL' });
+    expect(mockHandle).not.toHaveBeenCalled();
+    expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+    expect(mockError).toHaveBeenCalledTimes(1);
+    expect(mockError.mock.calls[0][0]).toMatchObject({
+      delivery_failure: 'QUEUE_FULL'
+    });
+  });
+
+  it('aborts active SDK transport at the invocation budget without deleting the connection', async () => {
+    mockHandle.mockImplementation(
+      (_request, { abortSignal }) =>
+        new Promise((_resolve, reject) => {
+          const abort = () =>
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+          if (abortSignal.aborted) abort();
+          else abortSignal.addEventListener('abort', abort, { once: true });
+        })
+    );
+    await expect(
+      withLambdaRemainingTime(
+        () => 2_000,
+        () =>
+          sockets.deliver({
+            connectionId: 'synthetic',
+            message: '{"type":"DROP_UPDATE"}'
+          })
+      )
+    ).rejects.toMatchObject({ reason: 'DEADLINE_EXCEEDED' });
+    expect(mockHandle).toHaveBeenCalledTimes(1);
+    expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+    expect(mockError).toHaveBeenCalledTimes(1);
+    expect(mockError.mock.calls[0][0]).toMatchObject({
+      delivery_failure: 'DEADLINE_EXCEEDED'
+    });
   });
 
   it('already retries two 429 responses and succeeds on SDK attempt three', async () => {
@@ -89,7 +776,7 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
       .mockResolvedValueOnce(response(429, 'LimitExceededException'))
       .mockResolvedValueOnce(response(204));
     await expect(
-      sockets.send({
+      sockets.deliver({
         connectionId: 'synthetic',
         message: '{"type":"USER_IS_TYPING"}'
       })
@@ -104,15 +791,15 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
     expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
   });
 
-  it('exhausted 429 delivery still resolves normally, logs attempt metadata and keeps the live connection', async () => {
+  it('exhausted 429 delivery rejects for durable retry, logs metadata and keeps the connection', async () => {
     mockHandle.mockResolvedValue(response(429, 'LimitExceededException'));
     await expect(
-      sockets.send({
+      sockets.deliver({
         connectionId: 'synthetic',
         message: '{"type":"AUTHENTICATED"}',
         skipStaleConnectionCheck: true
       })
-    ).resolves.toBeUndefined();
+    ).rejects.toBeDefined();
     expect(mockHandle).toHaveBeenCalledTimes(3);
     expect(mockError).toHaveBeenCalledTimes(1);
     expect(mockError.mock.calls[0][0]).toMatchObject({
@@ -126,16 +813,16 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
       expect.any(Number)
     );
     expect(JSON.stringify(mockError.mock.calls[0][0])).not.toMatch(
-      /synthetic|fixed|secret|connection/
+      /synthetic|fixed|secret|connectionId/
     );
     expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
   });
 
-  it('permanent 403 is not retried but is also swallowed without deleting the connection', async () => {
+  it('403 rejects for queue retention without deleting the connection', async () => {
     mockHandle.mockResolvedValue(response(403, 'ForbiddenException'));
     await expect(
-      sockets.send({ connectionId: 'synthetic', message: '{}' })
-    ).resolves.toBeUndefined();
+      sockets.deliver({ connectionId: 'synthetic', message: '{}' })
+    ).rejects.toBeDefined();
     expect(mockHandle).toHaveBeenCalledTimes(1);
     expect(mockError).toHaveBeenCalledTimes(1);
     expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
@@ -146,7 +833,7 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
       .mockResolvedValueOnce(response(410, 'GoneException'))
       .mockResolvedValueOnce(response(204));
     await expect(
-      sockets.send({ connectionId: 'synthetic', message: '{}' })
+      sockets.deliver({ connectionId: 'synthetic', message: '{}' })
     ).resolves.toBeUndefined();
     expect(mockHandle.mock.calls.map(([request]) => request.method)).toEqual([
       'POST',
@@ -159,23 +846,23 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
     expect(mockError).not.toHaveBeenCalled();
   });
 
-  it('a throwing error logger does not delete a live throttled connection or reject its caller', async () => {
+  it('a throwing error logger still propagates the send failure for retry', async () => {
     mockHandle.mockResolvedValue(response(429, 'LimitExceededException'));
     mockError.mockImplementationOnce(() => {
       throw new Error('synthetic logger failure');
     });
     await expect(
-      sockets.send({
+      sockets.deliver({
         connectionId: 'synthetic',
         message: '{"type":"USER_IS_TYPING"}'
       })
-    ).resolves.toBeUndefined();
+    ).rejects.toBeDefined();
     expect(mockHandle).toHaveBeenCalledTimes(3);
     expect(mockError).toHaveBeenCalledTimes(1);
     expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
   });
 
-  it('twenty application sends can reach the SDK transport concurrently without an application limiter', async () => {
+  it('twenty application sends are drained with at most sixteen concurrent SDK operations', async () => {
     let inflight = 0;
     let peak = 0;
     mockHandle.mockImplementation(async () => {
@@ -187,10 +874,10 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
     });
     await Promise.all(
       Array.from({ length: 20 }, (_, index) =>
-        sockets.send({ connectionId: `synthetic-${index}`, message: '{}' })
+        sockets.deliver({ connectionId: `synthetic-${index}`, message: '{}' })
       )
     );
     expect(mockHandle).toHaveBeenCalledTimes(20);
-    expect(peak).toBe(20);
+    expect(peak).toBe(16);
   });
 });

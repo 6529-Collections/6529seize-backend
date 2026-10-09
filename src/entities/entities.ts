@@ -296,6 +296,7 @@ export { PushInstallationEntity } from './IPushInstallation';
 export { PushDeviceLogoutFenceEntity } from './IPushDeviceLogoutFence';
 
 export { PushNotificationCancellationEntity } from './IPushNotificationCancellation';
+export { WebSocketOutboxEntity } from './IWebSocketOutbox';
 
 export * from './ICompetitionRuntime';
 

@@ -91,6 +91,37 @@ describe('handler websocket auth', () => {
   });
 
   it.each([
+    [undefined, false],
+    ['', false],
+    ['unknown', false],
+    ['durable_updates_v1', true],
+    ['DURABLE_UPDATES_V1', false]
+  ])(
+    'records only the exact public connection capability %s',
+    async (capability, durableUpdates) => {
+      const response = await handler(
+        {
+          httpMethod: 'GET',
+          requestContext: { routeKey: '$connect', connectionId: 'c' },
+          queryStringParameters:
+            capability === undefined
+              ? null
+              : { delivery_capability: capability }
+        } as unknown as APIGatewayEvent,
+        {} as Context,
+        jest.fn()
+      );
+      expect(response).toMatchObject({ statusCode: 200 });
+      expect(appWebSocketsMock.register).toHaveBeenCalledWith({
+        connectionId: 'c',
+        identityId: 'stale-identity',
+        jwtExpiry: 100,
+        durableUpdates
+      });
+    }
+  );
+
+  it.each([
     WsMessageType.AUTHENTICATE,
     WsMessageType.SYNC_NOTIFICATION_IDENTITIES
   ])(
