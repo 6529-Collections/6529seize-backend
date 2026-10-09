@@ -25,16 +25,41 @@ export async function prepareDistributionPhase(
   auth: string,
   ctx: RequestContext = {}
 ): Promise<PhasePreparationResult> {
+  const key = JSON.stringify([plan, phase]);
+  const cachedResult = await dropForgePreparationRepository.findResult(
+    contract,
+    claim,
+    key,
+    ctx
+  );
+  let phaseInput: {
+    name: string;
+    rows: Awaited<ReturnType<typeof fetchPhaseResults>>;
+  } | null = null;
+  if (!cachedResult) {
+    // Network work must not hold the claim's preparation lock. Recheck the
+    // cache and freeze state under the lock before publishing any DB writes.
+    const valid = await validateDistribution(auth, plan, phase);
+    if (!valid.valid)
+      throw new LaunchSafetyError(
+        valid.statusText ?? 'EMMA distribution is not valid'
+      );
+    if (phase !== 'public') {
+      const [name, rows] = await Promise.all([
+        fetchPhaseName(auth, plan, phase),
+        fetchPhaseResults(auth, plan, phase)
+      ]);
+      phaseInput = { name, rows };
+    }
+  }
   const result = await dropForgePreparationRepository.run(
     contract,
     claim,
     async (cached, txCtx) => {
-      const key = JSON.stringify([plan, phase]);
       if (cached[key]) return cached[key];
-      const valid = await validateDistribution(auth, plan, phase);
-      if (!valid.valid)
+      if (cachedResult)
         throw new LaunchSafetyError(
-          valid.statusText ?? 'EMMA distribution is not valid'
+          'Preparation was reset during result retrieval; retry the request'
         );
       let result: PhasePreparationResult;
       if (phase === 'public') {
@@ -50,10 +75,9 @@ export async function prepareDistributionPhase(
           allowlists: []
         };
       } else {
-        const [name, rows] = await Promise.all([
-          fetchPhaseName(auth, plan, phase),
-          fetchPhaseResults(auth, plan, phase)
-        ]);
+        if (!phaseInput)
+          throw new LaunchSafetyError('EMMA phase input missing');
+        const { name, rows } = phaseInput;
         if (Object.values(cached).some((it) => it.phase === name))
           throw new LaunchSafetyError(
             'A different preparation already used this phase name; reset explicitly before replacing it'

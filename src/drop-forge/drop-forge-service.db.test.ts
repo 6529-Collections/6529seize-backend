@@ -3,24 +3,30 @@ import { JsonRpcProvider } from 'ethers';
 import * as rpc from '@/ethereum-rpc/ethereum-rpc-provider';
 import { EthereumLaunchChain } from '@/drop-forge/drop-forge.chain';
 import * as configuration from '@/drop-forge/drop-forge.config';
+import * as reporting from '@/drop-forge/drop-forge.reporting-access';
 import {
   dropForgeRepository,
   launchId
 } from '@/drop-forge/drop-forge.repository';
 import { dropForgePreparationRepository } from '@/drop-forge/drop-forge.preparation.repository';
 import { controlLaunch, mapLaunch } from '@/drop-forge/drop-forge.service';
-import { LaunchRevisionConflict } from '@/drop-forge/drop-forge.types';
+import {
+  LaunchRevisionConflict,
+  LaunchSafetyError
+} from '@/drop-forge/drop-forge.types';
 import {
   testConfig,
   testLaunchData,
   testSource
 } from '@/drop-forge/drop-forge.test-fixtures';
 import { clearDropForgeTestTables } from '@/drop-forge/drop-forge.db-test-fixtures';
+import { sqlExecutor } from '@/sql-executor';
 
 describe('Drop Forge operator controls', () => {
   beforeEach(clearDropForgeTestTables);
   const id = launchId(testConfig.chainId, testConfig.creator, 1);
   beforeEach(async () => {
+    jest.spyOn(reporting, 'validateForgeReporting').mockResolvedValue('bot');
     jest
       .spyOn(rpc, 'getEthereumRpcProvider')
       .mockReturnValue({} as JsonRpcProvider);
@@ -58,6 +64,61 @@ describe('Drop Forge operator controls', () => {
         {}
       )
     ).rejects.toThrow('frozen');
+  });
+  it('rejects pausing a draft so resume cannot bypass arming', async () => {
+    const draft = (await dropForgeRepository.find(id, {}))!;
+    await expect(
+      controlLaunch(
+        testConfig.creator,
+        1,
+        { revision: draft.revision, operation: ControlOperation.Pause },
+        {}
+      )
+    ).rejects.toThrow('Control is not valid');
+    await expect(
+      controlLaunch(
+        testConfig.creator,
+        1,
+        { revision: draft.revision, operation: ControlOperation.Resume },
+        {}
+      )
+    ).rejects.toThrow('Control is not valid');
+    expect((await dropForgeRepository.find(id, {}))!.state).toBe('DRAFT');
+  });
+  it('sees concurrent arming after a preparation job established its snapshot', async () => {
+    const draft = (await dropForgeRepository.find(id, {}))!;
+    await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+      const ctx = { connection };
+      expect((await dropForgeRepository.find(id, ctx))!.state).toBe('DRAFT');
+      await controlLaunch(
+        testConfig.creator,
+        1,
+        { revision: draft.revision, operation: ControlOperation.Arm },
+        {}
+      );
+      const publish = jest.fn().mockResolvedValue(undefined);
+      await expect(
+        dropForgePreparationRepository.run(testConfig.creator, 1, publish, ctx)
+      ).rejects.toThrow('frozen');
+      expect(publish).not.toHaveBeenCalled();
+    });
+  });
+  it('refuses arming when the reporting bot cannot post', async () => {
+    jest
+      .spyOn(reporting, 'validateForgeReporting')
+      .mockRejectedValue(
+        new LaunchSafetyError('Reporting bot cannot read or post to the wave')
+      );
+    const draft = (await dropForgeRepository.find(id, {}))!;
+    await expect(
+      controlLaunch(
+        testConfig.creator,
+        1,
+        { revision: draft.revision, operation: ControlOperation.Arm },
+        {}
+      )
+    ).rejects.toThrow('Reporting bot cannot');
+    expect((await dropForgeRepository.find(id, {}))!.state).toBe('DRAFT');
   });
   it('rejects changed source data and leaves the draft intact', async () => {
     jest

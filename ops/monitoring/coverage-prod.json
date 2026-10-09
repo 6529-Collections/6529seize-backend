@@ -702,6 +702,18 @@
         "lambda-errors",
         "lambda-throttles"
       ]
+    },
+    {
+      "service": "dropForgeLaunchLoop",
+      "region": "us-east-1",
+      "functions": [
+        "dropForgeLaunchLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
     }
   ],
   "supplementalSource": "ops/monitoring/platform-functions.json",

@@ -99,8 +99,9 @@ async function apiCall<T>(fn: () => Promise<T>): Promise<T> {
     if (
       error instanceof Error &&
       'code' in error &&
+      typeof error.code === 'string' &&
       ['NETWORK_ERROR', 'TIMEOUT', 'SERVER_ERROR', 'CALL_EXCEPTION'].includes(
-        String(error.code)
+        error.code
       )
     )
       throw new CustomApiCompliantException(
@@ -159,6 +160,10 @@ export async function controlDropForgeLaunch(
   });
 }
 function mapJob(job: DropForgeJobEntity): ApiDropForgeJob {
+  let resultJson: string | null = null;
+  if (job.result)
+    resultJson =
+      typeof job.result === 'string' ? job.result : JSON.stringify(job.result);
   return {
     id: job.id,
     contract: job.contract,
@@ -166,11 +171,7 @@ function mapJob(job: DropForgeJobEntity): ApiDropForgeJob {
     kind: job.kind as ApiDropForgeJob['kind'],
     status: job.status as ApiDropForgeJob['status'],
     error: job.error,
-    result_json: job.result
-      ? typeof job.result === 'string'
-        ? job.result
-        : JSON.stringify(job.result)
-      : null,
+    result_json: resultJson,
     updated_at: Number(job.updated_at)
   };
 }

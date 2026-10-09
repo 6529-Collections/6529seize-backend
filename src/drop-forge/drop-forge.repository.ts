@@ -184,7 +184,7 @@ export class DropForgeRepository {
         async (connection) => {
           const ctx = { ...parentCtx, connection };
           await sqlExecutor.execute(
-            `INSERT IGNORE INTO ${DROP_FORGE_SIGNERS_TABLE} (id) VALUES (:id)`,
+            `INSERT INTO ${DROP_FORGE_SIGNERS_TABLE} (id) VALUES (:id) ON DUPLICATE KEY UPDATE id = :id`,
             { id },
             { wrappedConnection: connection }
           );
@@ -334,6 +334,13 @@ export function setLaunchState(
   message: string
 ): void {
   if (record.state === state && record.error === message) return;
+  if (record.state === 'COMPLETED' || record.state === 'CANCELLED') {
+    // Reconciliation can still discover a failure after cancellation, but it
+    // must never reopen the terminal ledger for RESUME.
+    if (!record.data.events.some((event) => event.content === message))
+      addLaunchEvent(record, message, state === 'BLOCKED');
+    return;
+  }
   record.state = state;
   record.error = state === 'BLOCKED' ? message : null;
   addLaunchEvent(record, message, state === 'BLOCKED');

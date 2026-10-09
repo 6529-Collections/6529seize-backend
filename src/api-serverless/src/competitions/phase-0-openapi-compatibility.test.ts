@@ -15,7 +15,9 @@ const ACCEPTED_ADDITIVE_ENUM_EXTENSIONS: Readonly<Record<string, string[]>> = {
     'COMPETITION_LIFECYCLE'
   ],
   'schema ApiProfileCmsPointerEvent.properties.event_type.enum': ['unpublish'],
-  'schema ApiPushNotificationSettings.required': ['subscription_coverage']
+  'schema ApiPushNotificationSettings.required': ['subscription_coverage'],
+  // The explicitly configured Drop Forge alert shortcut extends existing groups.
+  'schema ApiDropGroupMention.enum': ['DROP_FORGERS_6529']
 };
 
 const ACCEPTED_NULLABLE_REFERENCE_EXTENSIONS = new Set([

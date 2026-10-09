@@ -420,6 +420,8 @@ export async function insertDistributions(
   }
 
   if (distributions.length > 500) {
+    // Keep batches sequential on the shared transaction connection and bound
+    // each statement's parameters rather than queueing concurrent SQL writes.
     for (let offset = 0; offset < distributions.length; offset += 500)
       await insertDistributions(
         distributions.slice(offset, offset + 500),

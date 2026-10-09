@@ -149,11 +149,19 @@ cannot prevent a previously broadcast airdrop from mining late.
 Wave drop creation and acknowledgement commit together; a reporting retry does
 not repost a committed event. Push delivery after that commit is best effort.
 Before reserving the next action, the worker waits for prior wave reports. An
-outstanding intent still proceeds through signing/receipt reconciliation; wave
-delivery failures do not cause replacement transactions. Missing wave/profile permissions require
-operator correction. CloudWatch invocation-error alarms cover worker/config
-failures when wave delivery cannot report an error. No live KMS key, funded
-wallet, EMMA service token, or production wave was exercised in local validation.
+unsigned RESERVED intent waits for its pending wave reports before signing.
+Already-signed intent continues receipt reconciliation during a reporting outage;
+wave delivery failures do not cause replacement transactions. Each reporting pass
+drains up to five events per launch, and the worker runs reporting both before and
+after transaction work. Canonicality is rechecked against the latest confirmed
+action; serialized actions share the same chain ancestry. Missing wave/profile
+permissions require operator correction. CloudWatch invocation-error alarms cover
+worker/config failures when wave delivery cannot report an error. Arming checks
+the reporting bot's chat/visibility access and recipient visibility; actual
+posting still passes the ordinary drop creation checks. Action reports
+include chain-specific transaction links, batch counts and UTC phase windows.
+No live KMS key, funded wallet, EMMA service token, or production wave was
+exercised in local validation.
 
 ## Future rollout order
 
@@ -164,6 +172,8 @@ consumers `subscriptionsDaily`, `subscriptionsTopUpLoop`,
 `mintAnnouncementsLoop`, and `waveDecisionExecutionLoop` so the new configured mention group resolves
 consistently. Supply the recipient configuration to those services too. These
 consumers can deploy after entity sync/API and before enabling the new worker.
+Apply the generated monitoring stack updates and deploy frontend mention
+compatibility before enablement.
 No data migration is introduced. Enable and exercise a manually configured
 Sepolia launch before a separately authorized mainnet rollout. No deployment is
 part of this PR implementation request.

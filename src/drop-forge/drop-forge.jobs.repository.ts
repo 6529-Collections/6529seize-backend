@@ -105,7 +105,7 @@ export class DropForgeJobsRepository {
           let result: object | null = null;
           try {
             result = await process(job, txCtx);
-          } catch (failure) {
+          } catch (error_) {
             await sqlExecutor.execute(
               'ROLLBACK TO SAVEPOINT drop_forge_job',
               undefined,
@@ -113,8 +113,8 @@ export class DropForgeJobsRepository {
             );
             status = 'FAILED';
             error =
-              failure instanceof LaunchSafetyError
-                ? failure.message
+              error_ instanceof LaunchSafetyError
+                ? error_.message
                 : 'Preparation failed or timed out; retry with a new request ID after checking EMMA and source data';
           }
           await sqlExecutor.execute(

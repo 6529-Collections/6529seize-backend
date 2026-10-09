@@ -50,7 +50,7 @@ function integer(
   return value;
 }
 export function getDropForgeConfig(): DropForgeConfig {
-  const chainId = integer('DROP_FORGE_CHAIN_ID', 11155111, 1, 11155111);
+  const chainId = Number(process.env.DROP_FORGE_CHAIN_ID ?? 11155111);
   if (chainId !== 1 && chainId !== 11155111)
     throw new LaunchSafetyError('Drop Forge supports mainnet and Sepolia only');
   const { waveId, botId, recipientIds } = getDropForgeReportingConfig();

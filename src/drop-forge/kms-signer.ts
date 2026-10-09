@@ -4,7 +4,7 @@ import {
   KMSClient,
   SignCommand
 } from '@aws-sdk/client-kms';
-import { createPublicKey } from 'crypto';
+import { createPublicKey } from 'node:crypto';
 import {
   computeAddress,
   getBytes,
@@ -39,7 +39,7 @@ export function decodeKmsSignature(der: Uint8Array): { r: string; s: string } {
   const r = parseInteger(4, rLength);
   let s = parseInteger(sOffset + 2, sLength);
   if (s > CURVE_ORDER / BigInt(2)) s = CURVE_ORDER - s;
-  const padded = (value: bigint) => `0x${value.toString(16).padStart(64, '0')}`;
+  const padded = (value: bigint) => '0x' + value.toString(16).padStart(64, '0');
   return { r: padded(r), s: padded(s) };
 }
 

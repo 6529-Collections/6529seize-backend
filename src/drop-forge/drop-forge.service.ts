@@ -21,6 +21,7 @@ import {
 import { ForbiddenException, NotFoundException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
 import { dropForgePreparationRepository } from '@/drop-forge/drop-forge.preparation.repository';
+import { validateForgeReporting } from '@/drop-forge/drop-forge.reporting-access';
 
 export function mapLaunch(record: LaunchRecord): ApiDropForgeLaunch {
   return {
@@ -146,6 +147,10 @@ export async function controlLaunch(
           return;
         }
         if (request.operation === 'PAUSE') {
+          if (!['ARMED', 'RUNNING', 'BLOCKED'].includes(record.state))
+            throw new LaunchSafetyError(
+              'Control is not valid for the current launch state'
+            );
           setLaunchState(
             record,
             'PAUSED',
@@ -196,6 +201,7 @@ export async function controlLaunch(
       controlCtx
     );
   if (request.operation === 'ARM') {
+    await validateForgeReporting(config, ctx);
     await dropForgePreparationRepository.run(
       contract,
       claim,

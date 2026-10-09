@@ -2,7 +2,8 @@ import { Transaction } from 'ethers';
 import { DropForgeWorker } from '@/drop-forge/drop-forge.worker';
 import {
   DropForgeRepository,
-  launchId
+  launchId,
+  setLaunchState
 } from '@/drop-forge/drop-forge.repository';
 import { LaunchChain } from '@/drop-forge/drop-forge.chain';
 import {
@@ -61,8 +62,22 @@ describe('Drop Forge durable worker', () => {
   });
   afterEach(() => jest.restoreAllMocks());
   const read = () => repository.find(id, {});
-  it('persists before broadcast and retries the identical hash after an ambiguous timeout', async () => {
+  const acknowledgeReports = () =>
+    repository.change(
+      id,
+      async (record) => {
+        for (const event of record.data.events)
+          event.drop_id = 'reported-' + event.id;
+      },
+      {}
+    );
+  const start = async () => {
     await worker.tick();
+    await acknowledgeReports();
+    await worker.tick();
+  };
+  it('persists before broadcast and retries the identical hash after an ambiguous timeout', async () => {
+    await start();
     const saved = (await read())!;
     expect(saved.data.actions[0].state).toBe('SIGNED');
     expect(saved.data.actions[0].signed_tx).toBe(
@@ -76,6 +91,8 @@ describe('Drop Forge durable worker', () => {
     expect(chain.prepare).toHaveBeenCalledTimes(1);
   });
   it('serializes overlapping invocations to one nonce and one persisted broadcast transaction', async () => {
+    await Promise.all([worker.tick(), worker.tick()]);
+    await acknowledgeReports();
     await Promise.all([worker.tick(), worker.tick()]);
     expect(chain.prepare).toHaveBeenCalledTimes(1);
     expect(
@@ -94,7 +111,7 @@ describe('Drop Forge durable worker', () => {
           throw new Error('DB commit failed');
         return original(record, ctx);
       });
-    await expect(worker.tick()).rejects.toThrow('DB commit failed');
+    await expect(start()).rejects.toThrow('DB commit failed');
     expect(chain.broadcast).not.toHaveBeenCalled();
     expect((await read())!.data.actions[0].state).toBe('RESERVED');
     save.mockRestore();
@@ -110,7 +127,7 @@ describe('Drop Forge durable worker', () => {
     expect(signer.sign).not.toHaveBeenCalled();
   });
   it('reconciles confirmations while paused and submits no further action', async () => {
-    await worker.tick();
+    await start();
     await repository.change(
       id,
       async (record) => {
@@ -132,7 +149,7 @@ describe('Drop Forge durable worker', () => {
     expect(signer.sign).toHaveBeenCalledTimes(1);
   });
   it('does not replay a reverted transaction', async () => {
-    await worker.tick();
+    await start();
     chain.receipt.mockResolvedValue({
       status: 0,
       blockNumber: 100,
@@ -146,11 +163,119 @@ describe('Drop Forge durable worker', () => {
     expect(signer.sign).toHaveBeenCalledTimes(1);
   });
   it('holds the signer on unknown nonce consumption instead of choosing another nonce', async () => {
-    await worker.tick();
+    await start();
     chain.nonce.mockResolvedValue(1);
     await worker.tick();
     expect((await read())!.error).toContain('nonce was consumed');
     expect(chain.broadcast).toHaveBeenCalledTimes(1);
+  });
+  it('keeps a reserved intent unsigned while its report is unavailable', async () => {
+    await worker.tick();
+    await worker.tick();
+    expect((await read())!.data.actions[0].state).toBe('RESERVED');
+    expect(signer.sign).not.toHaveBeenCalled();
+    await acknowledgeReports();
+    await worker.tick();
+    expect(signer.sign).toHaveBeenCalledTimes(1);
+  });
+  it('does not reopen a cancelled launch when signing fails', async () => {
+    await worker.tick();
+    await acknowledgeReports();
+    signer.sign.mockImplementation(async () => {
+      await repository.change(
+        id,
+        async (record) => {
+          setLaunchState(record, 'CANCELLED', 'Cancelled during signing');
+        },
+        {}
+      );
+      throw new Error('KMS unavailable');
+    });
+    await worker.tick();
+    await worker.tick();
+    expect((await read())!.state).toBe('CANCELLED');
+    expect((await read())!.data.actions[0].state).toBe('PENDING');
+    expect(chain.broadcast).not.toHaveBeenCalled();
+  });
+  it('preserves cancellation while recording a reverted outstanding receipt', async () => {
+    await start();
+    await repository.change(
+      id,
+      async (record) => {
+        setLaunchState(record, 'CANCELLED', 'Cancelled');
+      },
+      {}
+    );
+    chain.receipt.mockResolvedValue({
+      status: 0,
+      blockNumber: 100,
+      blockHash: 'block',
+      confirmations: 12
+    });
+    await worker.tick();
+    const saved = (await read())!;
+    expect(saved.state).toBe('CANCELLED');
+    expect(saved.data.actions[0].state).toBe('FAILED');
+    expect(
+      saved.data.events.some(
+        (event) => event.error && event.content.includes('reverted')
+      )
+    ).toBe(true);
+  });
+  it('rechecks receipt when inclusion races the signer nonce read', async () => {
+    await start();
+    chain.receipt.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      status: 1,
+      blockNumber: 100,
+      blockHash: 'block',
+      confirmations: 12
+    });
+    chain.nonce.mockResolvedValue(1);
+    await worker.tick();
+    expect((await read())!.state).toBe('RUNNING');
+    expect((await read())!.data.actions[0].state).toBe('CONFIRMED');
+    expect(chain.broadcast).toHaveBeenCalledTimes(1);
+  });
+  it('checks one chain descendant instead of all historical batch receipts', async () => {
+    await repository.change(
+      id,
+      async (record) => {
+        const template = record.data.actions[0];
+        record.data.actions = Array.from({ length: 200 }, (_, index) => ({
+          ...template,
+          id: 'batch-' + index,
+          state: 'CONFIRMED' as const,
+          hash: 'hash-' + index,
+          block_hash: 'block'
+        }));
+      },
+      {}
+    );
+    chain.receipt.mockResolvedValue({
+      status: 1,
+      blockNumber: 100,
+      blockHash: 'block',
+      confirmations: 12
+    });
+    await worker.tick();
+    expect(chain.receipt).toHaveBeenCalledTimes(1);
+    expect(chain.receipt).toHaveBeenCalledWith('hash-199');
+    expect((await read())!.state).toBe('COMPLETED');
+  });
+  it('blocks a reorg of the latest confirmed action before reserving another', async () => {
+    await start();
+    chain.receipt.mockResolvedValue({
+      status: 1,
+      blockNumber: 100,
+      blockHash: 'block',
+      confirmations: 12
+    });
+    await worker.tick();
+    await acknowledgeReports();
+    chain.receipt.mockResolvedValue(null);
+    await worker.tick();
+    expect((await read())!.state).toBe('BLOCKED');
+    expect(signer.sign).toHaveBeenCalledTimes(1);
   });
   it('requires wave reporting before starting new transactions', async () => {
     await repository.change(

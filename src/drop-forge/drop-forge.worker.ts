@@ -56,7 +56,10 @@ export class DropForgeWorker {
       {}
     );
     if (!work) return;
-    if (work.action.state === 'RESERVED') await this.sign(walletId, work);
+    if (work.action.state === 'RESERVED') {
+      if (work.record.data.events.some((event) => !event.drop_id)) return;
+      await this.sign(walletId, work);
+    }
     await this.reconcile(walletId, work.record.id);
   }
 
@@ -84,9 +87,13 @@ export class DropForgeWorker {
   }
 
   private async assertCanonical(record: LaunchRecord): Promise<void> {
-    for (const previous of record.data.actions.filter(
+    const confirmed = record.data.actions.filter(
       (it) => it.state === 'CONFIRMED'
-    )) {
+    );
+    // Actions confirm serially on one chain. A reorg removing an earlier
+    // receipt also removes its latest confirmed descendant's block.
+    const previous = confirmed[confirmed.length - 1];
+    if (previous) {
       const receipt = await this.chain.receipt(previous.hash!);
       if (
         !receipt ||
@@ -177,7 +184,7 @@ export class DropForgeWorker {
     } catch (error) {
       await this.repository.change(
         work.record.id,
-        async (record) => {
+        (record) => {
           setLaunchState(
             record,
             'BLOCKED',
@@ -185,6 +192,7 @@ export class DropForgeWorker {
               ? error.message
               : 'KMS signing failed; review configuration before resuming'
           );
+          return Promise.resolve();
         },
         {}
       );
@@ -234,6 +242,15 @@ export class DropForgeWorker {
         if (receipt || !runnable(record)) return null;
         const nonce = Transaction.from(action.signed_tx!).nonce;
         if ((await this.chain.nonce(record.data.signer, false)) > nonce) {
+          // Inclusion may happen between the first receipt and nonce reads.
+          const included = await this.chain.receipt(action.hash!);
+          if (included) {
+            if (included.confirmations >= this.config.confirmations) {
+              this.applyReceipt(record, action, included, pending);
+              await this.repository.save(record, ctx);
+            }
+            return null;
+          }
           setLaunchState(
             record,
             'BLOCKED',

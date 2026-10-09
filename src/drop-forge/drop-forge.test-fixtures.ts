@@ -1,7 +1,10 @@
 import { Wallet } from 'ethers';
 import { DropForgeConfig } from '@/drop-forge/drop-forge.config';
-import { LaunchSource, buildLaunchPlan } from '@/drop-forge/drop-forge.plan';
-import { LaunchPlanInput } from '@/drop-forge/drop-forge.plan';
+import {
+  LaunchSource,
+  buildLaunchPlan,
+  LaunchPlanInput
+} from '@/drop-forge/drop-forge.plan';
 
 // Public, disposable test key. Never used by the runtime signer.
 export const testWallet = new Wallet('0x' + '11'.repeat(32));

@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { createHash } from 'node:crypto';
 import { getAddress, ZeroHash } from 'ethers';
 import { computeAllowlistMerkle } from '@/api/minting-claims/allowlist-merkle';
 import { DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES } from '@/airdrop-phases';
@@ -186,8 +186,7 @@ function deriveAirdropRecipients(
   const recipients = new Map<string, number>();
   for (const row of rows) {
     const selected =
-      !automaticPhases.has(row.phase) ||
-      categories.some((category) => category === row.phase);
+      !automaticPhases.has(row.phase) || categories.includes(row.phase);
     const amount = Number(row.count_airdrop);
     if (!Number.isSafeInteger(amount) || amount < 0)
       throw new LaunchSafetyError('Invalid distribution amount');

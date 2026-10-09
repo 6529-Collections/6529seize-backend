@@ -1,5 +1,3 @@
-import { wavesApiDb } from '@/api/waves/waves.api.db';
-import { userGroupsService } from '@/api/community-members/user-groups.service';
 import { RequestContext } from '@/request.context';
 import { dropForgeJobsRepository } from '@/drop-forge/drop-forge.jobs.repository';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
@@ -9,8 +7,9 @@ import { DropForgeRepository } from '@/drop-forge/drop-forge.repository';
 import { createOrUpdateDrop } from '@/drops/create-or-update-drop.use-case';
 import { dropsDb } from '@/drops/drops.db';
 import { DropType } from '@/entities/IDrop';
-import { identitiesDb } from '@/identities/identities.db';
 import { Logger } from '@/logging';
+import { formatLaunchReport } from '@/drop-forge/drop-forge.reports';
+import { validateForgeReporting } from '@/drop-forge/drop-forge.reporting-access';
 
 const logger = Logger.get('DROP_FORGE_REPORTING');
 export async function reportLaunchEvents(
@@ -30,7 +29,7 @@ export async function reportLaunchEvents(
             const { drop_id, pending_push_notification_ids } =
               await postForgeReport(
                 config,
-                `Drop Forge ${record.data.contract} / claim ${record.data.claim_id}\n${event.content}`,
+                formatLaunchReport(record.data, event),
                 event.error,
                 ctx
               );
@@ -62,45 +61,8 @@ export async function postForgeReport(
   error: boolean,
   ctx: RequestContext
 ): Promise<{ drop_id: string; pending_push_notification_ids: number[] }> {
-  const identity = await identitiesDb.getIdentityByProfileId(
-    config.botId,
-    ctx.connection
-  );
-  const recipients = await identitiesDb.getIdentitiesByIds(
-    config.recipientIds,
-    ctx.connection
-  );
-  if (!identity || recipients.length !== config.recipientIds.length)
-    throw new Error('Reporting profiles are not available');
-  const wave = await wavesApiDb.findWaveById(config.waveId, ctx.connection);
-  if (!wave) throw new Error('Reporting wave is not available');
-  const parent = wave.parent_wave_id
-    ? await wavesApiDb.findWaveById(wave.parent_wave_id, ctx.connection)
-    : null;
-  const groups = Array.from(
-    new Set(
-      [wave.visibility_group_id, parent?.visibility_group_id].filter(
-        (group): group is string => Boolean(group)
-      )
-    )
-  );
-  if (groups.length) {
-    const memberships = await userGroupsService.findIdentityGroupMemberships(
-      { groupIds: groups, profileIds: config.recipientIds },
-      ctx
-    );
-    const eligible = new Set(
-      memberships.map((member) => `${member.profileId}:${member.groupId}`)
-    );
-    if (
-      config.recipientIds.some((profile) =>
-        groups.some((group) => !eligible.has(`${profile}:${group}`))
-      )
-    )
-      throw new Error('Alert recipients cannot read the reporting wave');
-  }
-  const author = identity.handle ?? identity.primary_address;
-  if (!author) throw new Error('Reporting profile has no identity');
+  const author = await validateForgeReporting(config, ctx);
+  const alert = error ? '\n\n' + DROP_FORGERS_6529_MENTION : '';
   const { drop_id, pending_push_notification_ids } =
     await createOrUpdateDrop.execute(
       {
@@ -110,7 +72,7 @@ export async function postForgeReport(
         title: null,
         parts: [
           {
-            content: `${message}${error ? `\n\n${DROP_FORGERS_6529_MENTION}` : ''}`,
+            content: message + alert,
             quoted_drop: null,
             media: []
           }
@@ -145,16 +107,15 @@ export async function reportPreparationJob(
   config: DropForgeReportingConfig
 ): Promise<boolean> {
   try {
-    const pushes = await dropForgeJobsRepository.reportOne(
-      (job, ctx) =>
-        postForgeReport(
-          config,
-          `Drop Forge preparation ${job.id}: ${job.kind} ${job.contract} / claim ${job.claim_id} ${job.status}${job.error ? `\n${job.error}` : ''}`,
-          job.status === 'FAILED',
-          ctx
-        ),
-      {}
-    );
+    const pushes = await dropForgeJobsRepository.reportOne((job, ctx) => {
+      const detail = job.error ? '\n' + job.error : '';
+      return postForgeReport(
+        config,
+        `Drop Forge preparation ${job.id}: ${job.kind} ${job.contract} / claim ${job.claim_id} ${job.status}${detail}`,
+        job.status === 'FAILED',
+        ctx
+      );
+    }, {});
     try {
       await sendIdentityPushNotifications(pushes);
     } catch {

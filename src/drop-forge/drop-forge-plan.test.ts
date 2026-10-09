@@ -1,3 +1,4 @@
+import { formatLaunchReport } from '@/drop-forge/drop-forge.reports';
 import {
   buildLaunchPlan,
   hashLaunchSource
@@ -88,5 +89,23 @@ describe('Drop Forge launch planning', () => {
         0
       )
     ).toThrow('transition gaps');
+  });
+  it('reports batch quantities and descriptive links on the correct chain', () => {
+    const data = buildLaunchPlan(testConfig, 1, testPlan, testSource, 0);
+    const hash = '0x' + 'aa'.repeat(32);
+    const event = {
+      id: 'event',
+      content: 'Confirmed airdrop-0: ' + hash,
+      at: 1,
+      error: false
+    };
+    const sepolia = formatLaunchReport(data, event);
+    expect(sepolia).toContain(
+      '[Transaction](https://sepolia.etherscan.io/tx/' + hash + ')'
+    );
+    expect(sepolia).toContain('recipient wallets: 1; tokens: 1');
+    expect(formatLaunchReport({ ...data, chain_id: 1 }, event)).toContain(
+      '[Transaction](https://etherscan.io/tx/'
+    );
   });
 });

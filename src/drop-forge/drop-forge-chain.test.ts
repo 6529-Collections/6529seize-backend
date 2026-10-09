@@ -12,6 +12,7 @@ describe('Drop Forge transaction boundary', () => {
         .fn()
         .mockResolvedValue(claimAbi.getError('ClaimNotInitialized')!.selector),
       getTransactionCount: jest.fn().mockResolvedValue(0),
+      getTransactionReceipt: jest.fn().mockResolvedValue(null),
       getFeeData: jest.fn().mockResolvedValue({
         maxFeePerGas: BigInt(100),
         maxPriorityFeePerGas: BigInt(1)
@@ -92,6 +93,69 @@ describe('Drop Forge transaction boundary', () => {
     await expect(chain.verify(data, data.actions[0])).resolves.toBeUndefined();
     rejected.data = '0xdeadbeef';
     await expect(chain.verify(data, data.actions[0])).rejects.toBe(rejected);
+  });
+  it('rejects a receipt from a block removed by a reorg', async () => {
+    const { chain, provider } = setup();
+    const confirmations = jest.fn().mockResolvedValue(12);
+    provider.getTransactionReceipt.mockResolvedValue({
+      status: 1,
+      blockNumber: 100,
+      blockHash: 'old-block',
+      confirmations
+    });
+    provider.getBlock.mockResolvedValue({
+      timestamp: Math.floor(Date.now() / 1000),
+      hash: 'new-block'
+    });
+    expect(await chain.receipt('tx')).toBeNull();
+    expect(confirmations).not.toHaveBeenCalled();
+    provider.getBlock.mockResolvedValue({
+      timestamp: Math.floor(Date.now() / 1000),
+      hash: 'old-block'
+    });
+    expect(await chain.receipt('tx')).toEqual({
+      status: 1,
+      blockNumber: 100,
+      blockHash: 'old-block',
+      confirmations: 12
+    });
+  });
+  it('requires exactly the previously confirmed batch supply before the next airdrop', async () => {
+    const { chain, provider } = setup();
+    jest.restoreAllMocks();
+    const data = testLaunchData();
+    const phase = data.phases[0];
+    const first = data.actions[1];
+    const second = { ...first, id: 'airdrop-2', state: 'PENDING' as const };
+    first.state = 'CONFIRMED';
+    data.actions.splice(2, 0, second);
+    const claim = [
+      1,
+      data.edition_size,
+      0,
+      phase.start,
+      phase.end,
+      2,
+      phase.root,
+      data.metadata,
+      data.claim_id,
+      phase.price_wei,
+      data.receiver,
+      ZeroAddress,
+      ZeroAddress
+    ];
+    provider.call.mockImplementation(({ data: calldata }: { data: string }) =>
+      Promise.resolve(
+        calldata.startsWith(claimAbi.getFunction('getClaim')!.selector)
+          ? claimAbi.encodeFunctionResult('getClaim', [claim])
+          : '0x' + '0'.repeat(63) + '1'
+      )
+    );
+    await expect(chain.verify(data, second)).resolves.toBeUndefined();
+    claim[0] = 2;
+    await expect(chain.verify(data, second)).rejects.toThrow('supply changed');
+    claim[0] = 0;
+    await expect(chain.verify(data, second)).rejects.toThrow('supply changed');
   });
   it('rejects initialization adoption and a token ID different from the prepared card', async () => {
     const { chain, provider } = setup();
