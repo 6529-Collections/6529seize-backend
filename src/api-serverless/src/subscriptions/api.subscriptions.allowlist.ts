@@ -1,3 +1,5 @@
+import { RequestContext } from '@/request.context';
+import { resetDistributionPreparation } from '@/drop-forge/drop-forge.preparation.repository';
 import { Request } from 'express';
 import fetch from 'node-fetch';
 import { DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES } from '@/airdrop-phases';
@@ -84,8 +86,10 @@ export async function fetchDistributionOperations(
   auth: string,
   allowlistId: string
 ): Promise<ALOperationsResponse[]> {
-  const url = `${process.env.ALLOWLIST_API_ENDPOINT}/allowlists/${allowlistId}/operations`;
+  const url = `${process.env.ALLOWLIST_API_ENDPOINT}/allowlists/${encodeURIComponent(allowlistId)}/operations`;
   const response = await fetch(url, {
+    timeout: 20000,
+    size: 32 * 1024 * 1024,
     headers: {
       accept: 'application/json',
       Authorization: auth
@@ -103,8 +107,10 @@ export async function fetchPhaseName(
   allowlistId: string,
   phaseId: string
 ): Promise<string> {
-  const url = `${process.env.ALLOWLIST_API_ENDPOINT}/allowlists/${allowlistId}/phases/${phaseId}`;
+  const url = `${process.env.ALLOWLIST_API_ENDPOINT}/allowlists/${encodeURIComponent(allowlistId)}/phases/${encodeURIComponent(phaseId)}`;
   const response = await fetch(url, {
+    timeout: 20000,
+    size: 32 * 1024 * 1024,
     headers: {
       accept: 'application/json',
       Authorization: auth
@@ -122,8 +128,10 @@ export async function fetchPhaseResults(
   allowlistId: string,
   phaseId: string
 ): Promise<ALResultsResponse[]> {
-  const url = `${process.env.ALLOWLIST_API_ENDPOINT}/allowlists/${allowlistId}/results/phases/${phaseId}`;
+  const url = `${process.env.ALLOWLIST_API_ENDPOINT}/allowlists/${encodeURIComponent(allowlistId)}/results/phases/${encodeURIComponent(phaseId)}`;
   const response = await fetch(url, {
+    timeout: 20000,
+    size: 32 * 1024 * 1024,
     headers: {
       accept: 'application/json',
       Authorization: auth
@@ -161,7 +169,8 @@ function buildSubscriptionMaps(filteredSubscriptions: NFTFinalSubscription[]): {
 async function buildAirdropsAndUpdateSubscriptions(
   filteredSubscriptions: NFTFinalSubscription[],
   subscriptionRanks: Map<string, number>,
-  phaseName: string
+  phaseName: string,
+  ctx: RequestContext = {}
 ): Promise<ResultsResponse[]> {
   const phaseSubscriptions = filteredSubscriptions.length;
   const airdrops: ResultsResponse[] = [];
@@ -195,7 +204,9 @@ async function buildAirdropsAndUpdateSubscriptions(
         END
       WHERE id IN (${filteredSubscriptions.map((_, i) => `:id_${i}`).join(', ')})
     `;
-    await sqlExecutor.execute(batchUpdateQuery, updateParams);
+    await sqlExecutor.execute(batchUpdateQuery, updateParams, {
+      wrappedConnection: ctx.connection
+    });
   }
 
   return airdrops;
@@ -250,7 +261,8 @@ export async function splitAllowlistResults(
   contract: string,
   tokenId: number,
   phaseName: string,
-  results: ALResultsResponse[]
+  results: ALResultsResponse[],
+  ctx: RequestContext = {}
 ): Promise<{
   airdrops: ResultsResponse[];
   airdrops_unconsolidated: ResultsResponse[];
@@ -263,8 +275,8 @@ export async function splitAllowlistResults(
   }
 
   const [subscriptions, walletMintingDelegations] = await Promise.all([
-    fetchAllNftFinalSubscriptionsForContractAndToken(contract, tokenId),
-    fetchProcessedDelegations(MEMES_CONTRACT, USE_CASE_MINTING)
+    fetchAllNftFinalSubscriptionsForContractAndToken(contract, tokenId, ctx),
+    fetchProcessedDelegations(MEMES_CONTRACT, USE_CASE_MINTING, undefined, ctx)
   ]);
 
   const filteredSubscriptions = filterSubscriptions(wallets, subscriptions);
@@ -274,7 +286,8 @@ export async function splitAllowlistResults(
   const airdrops = await buildAirdropsAndUpdateSubscriptions(
     filteredSubscriptions,
     subscriptionRanks,
-    phaseName
+    phaseName,
+    ctx
   );
   const allowlists = buildAllowlists(
     results,
@@ -294,14 +307,16 @@ export async function splitAllowlistResults(
 
 export async function getPublicSubscriptions(
   contract: string,
-  tokenId: number
+  tokenId: number,
+  ctx: RequestContext = {}
 ): Promise<{
   airdrops: ResultsResponse[];
 }> {
   const publicSubscriptions =
     await fetchAllPublicFinalSubscriptionsForContractAndToken(
       contract,
-      tokenId
+      tokenId,
+      ctx
     );
 
   const subscriptionRanks = new Map<string, number>();
@@ -342,7 +357,9 @@ export async function getPublicSubscriptions(
         END
       WHERE id IN (${publicSubscriptions.map((_, i) => `:id_${i}`).join(', ')})
     `;
-    await sqlExecutor.execute(batchUpdateQuery, updateParams);
+    await sqlExecutor.execute(batchUpdateQuery, updateParams, {
+      wrappedConnection: ctx.connection
+    });
   }
 
   const mergedAirDrops = mergeDuplicateWallets(airdrops);
@@ -363,8 +380,10 @@ function filterSubscriptions(
 
 export async function resetAllowlist(contract: string, tokenId: number) {
   const contractLower = contract.toLowerCase();
-  await sqlExecutor.executeNativeQueriesInTransaction(
-    async (wrappedConnection) => {
+  await resetDistributionPreparation(
+    contract,
+    tokenId,
+    async ({ connection: wrappedConnection }) => {
       const updateQuery = `
         UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
         SET 

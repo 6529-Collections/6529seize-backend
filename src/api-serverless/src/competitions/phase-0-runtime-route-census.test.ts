@@ -32,7 +32,13 @@ const HAND_WRITTEN_ROUTE_SOURCE_LINE_DRIFT = 250;
 // The address-only Alchemy migration retains this route as an uncached 410.
 // Keep checking its mount/auth and every other baseline cache expectation.
 const ACCEPTED_ROUTE_CACHE_CHANGES = new Map<string, ManifestRoute['cache']>([
-  ['/alchemy-proxy/collections', 'uncached']
+  ['/alchemy-proxy/collections', 'uncached'],
+  // Durable preparation results replace HTTP caching so access and reset/freeze
+  // checks still execute on every replay of a completed allowlist preparation.
+  [
+    '/api/subscriptions/allowlists/:contract/:token_id/:allowlist_id/:phase_id',
+    'uncached'
+  ]
 ]);
 
 const ACCEPTED_ROUTE_SOURCE_MOVES = new Map<string, string>([

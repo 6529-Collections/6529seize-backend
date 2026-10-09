@@ -306,3 +306,5 @@ export * from './ICompetitionCapabilityAudit';
 export { PushNotificationOutboxEntity } from './IPushNotificationOutbox';
 export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalidation';
 export * from './ICompetitionMigration';
+
+export * from './IDropForgeLaunch';

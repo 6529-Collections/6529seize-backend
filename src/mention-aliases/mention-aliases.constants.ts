@@ -24,6 +24,7 @@ export const RESERVED_MENTION_ALIASES = new Set([
   'developer',
   'developers',
   '6529devs',
+  'dropforgers6529',
   DEVS_6529_MENTION_TOKEN
 ]);
 

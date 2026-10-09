@@ -1,0 +1,45 @@
+service: dropForgeLaunchLoop
+package:
+  artifact: dist/index.zip
+provider:
+  name: aws
+  runtime: nodejs22.x
+  memorySize: 2048
+  timeout: 300
+  architecture: arm64
+  logRetentionInDays: 60
+functions:
+  dropForgeLaunchLoop:
+    handler: index.handler
+    name: dropForgeLaunchLoop
+    description: ${env:VERSION_DESCRIPTION}
+    reservedConcurrency: 1
+    role: ${env:DROP_FORGE_WORKER_ROLE_ARN}
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: dropForgeLaunchLoop_${opt:stage, self:provider.stage}
+    events:
+      - schedule: rate(1 minute)
+resources:
+  Resources:
+    DropForgeLaunchErrorAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-dropForgeLaunchLoop-errors'
+        AlarmDescription: Drop Forge invocation or configuration failed; inspect the durable launch ledger
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: dropForgeLaunchLoop
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
