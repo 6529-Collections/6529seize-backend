@@ -29,6 +29,14 @@ import { WinnerDropVoterVoteEntity } from '../../../entities/IWinnerDropVoterVot
 import { WaveType } from '@/entities/IWave';
 import mysql from 'mysql';
 
+// A pending decision still needs its final snapshot, even after voting ends.
+const ONGOING_LEGACY_LEADERBOARD_WAVE_SQL = `(
+  w.next_decision_time is not null
+  or (w.participation_period_end is null and w.voting_period_end is null)
+  or w.participation_period_end > :now
+  or w.voting_period_end > :now
+)`;
+
 type MergedDropRealVoterVoteChange = {
   id: number;
   original_drop_id: string;
@@ -1544,13 +1552,27 @@ from (select d.drop_id, d.wave_id as wave_id, w.time_lock_ms as time_lock_ms, w.
                     on w.id = d.wave_id and w.time_lock_ms is not null and w.time_lock_ms > 0
                join ${DROPS_TABLE} dr on d.drop_id = dr.id
                where dr.drop_type = '${DropType.PARTICIPATORY}'
+                 and ${ONGOING_LEGACY_LEADERBOARD_WAVE_SQL}
       group by 1, 2, 3, 4, 5, 6) lvc
          left join ${WAVE_LEADERBOARD_ENTRIES_TABLE} lb
                    on lvc.drop_id = lb.drop_id and lvc.wave_id = lb.wave_id
 where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
-      undefined,
+      { now: Time.now().toMillis() },
       { wrappedConnection: ctx.connection }
     );
+  }
+
+  async isLegacyLeaderboardWaveOngoing(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const row = await this.db.oneOrNull<{ id: string }>(
+      `select w.id from ${WAVES_TABLE} w where w.id=:waveId
+       and ${ONGOING_LEGACY_LEADERBOARD_WAVE_SQL}`,
+      { waveId, now: Time.now().toMillis() },
+      { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
+    );
+    return row !== null;
   }
 
   async getWaveLeaderboardEntryThresholdStateForUpdate(
@@ -1813,6 +1835,7 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
     ctx.timer?.start(timerName);
     try {
       const repository = new CompetitionRepository(() => this.db);
+      const globalMaintenance = waveId === null;
       // Global maintenance drains at most 100 eligible waves per invocation.
       // A decision already holding an owner lock cleans only its own wave.
       const waves = await this.db.execute<{ wave_id: string }>(
@@ -1820,10 +1843,11 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
          join ${DROPS_TABLE} d on d.id=lb.drop_id join ${WAVES_TABLE} w on w.id=lb.wave_id
          left join ${COMPETITIONS_TABLE} c on c.legacy_wave_id=lb.wave_id
          where (:waveId is null or lb.wave_id=:waveId)
+           and (:waveId is not null or ${ONGOING_LEGACY_LEADERBOARD_WAVE_SQL})
            and (d.drop_type <> '${DropType.PARTICIPATORY}' or coalesce(w.time_lock_ms,0)=0)
            and (c.id is null or (c.storage_mode='LEGACY_ADAPTER' and c.execution_mode='ACTIVE'))
          order by lb.wave_id limit 100`,
-        { waveId },
+        { waveId, now: Time.now().toMillis() },
         { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
       );
       for (const { wave_id: waveId } of waves) {
@@ -1841,6 +1865,14 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
           )
             // Native saveLeaderboard owns active-entry/orphan cleanup. Frozen
             // GETs read that table; retained legacy rows are not native inputs.
+            return;
+          if (
+            globalMaintenance &&
+            !(await this.isLegacyLeaderboardWaveOngoing(waveId, {
+              ...ctx,
+              connection
+            }))
+          )
             return;
           await this.db.execute(
             `delete lb from ${WAVE_LEADERBOARD_ENTRIES_TABLE} lb join ${DROPS_TABLE} d on d.id=lb.drop_id join ${WAVES_TABLE} w on w.id=lb.wave_id
