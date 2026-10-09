@@ -26,11 +26,13 @@ import {
 } from '@/competitions/competition.repository';
 import { computeCompetitionPhase } from '@/competitions/competition-phase';
 import { collectCompetitionPages } from '@/competitions/competition-page';
+import { waveMetadataDb } from '@/api/waves/wave-metadata.db';
 
 export class NativeCompetitionReader implements CompetitionReader {
   public constructor(
     private readonly repository: CompetitionRepository,
-    private readonly ctx: RequestContext
+    private readonly ctx: RequestContext,
+    private readonly migrationShadow = false
   ) {}
 
   public async getCompetition(
@@ -41,21 +43,43 @@ export class NativeCompetitionReader implements CompetitionReader {
       routingRecord.id,
       this.ctx
     );
-    if (raw?.storage_mode !== CompetitionStorageMode.NATIVE) {
+    if (
+      !raw ||
+      (raw.storage_mode !== CompetitionStorageMode.NATIVE &&
+        !this.migrationShadow)
+    ) {
       throw new Error(`Native competition ${routingRecord.id} not found`);
     }
-    const record = this.repository.parseCompetitionRecord(raw);
+    const record = this.repository.parseCompetitionRecord({
+      ...raw,
+      storage_mode: CompetitionStorageMode.NATIVE
+    });
     const capabilities = await this.repository.findCapabilities(
       record.id,
       this.ctx
     );
     const competition = this.toCompetition(record, capabilities);
+    // Migrated primaries inherit shared wave metadata until native appearance
+    // is explicitly saved. An empty native array intentionally clears it.
+    const presentation =
+      record.legacy_wave_id === record.wave_id &&
+      record.presentation_config == null
+        ? (await waveMetadataDb.listByWaveId(record.wave_id, this.ctx)).map(
+            ({ data_key, data_value }) => ({ data_key, data_value })
+          )
+        : competition.presentation;
+    const transferredAt =
+      record.legacy_wave_id && !this.migrationShadow
+        ? await this.repository.findLegacyTransferTime(record.id, this.ctx)
+        : null;
     const needsDecisionPauses =
       competition.type === CompetitionType.RANK &&
       competition.decisions.next_decision_time !== null &&
       competition.decisions.next_decision_time < now;
     return {
       ...competition,
+      presentation,
+      legacy_transferred_at: transferredAt,
       ...(needsDecisionPauses
         ? {
             decision_pauses: await collectCompetitionPages((page) =>
@@ -216,6 +240,7 @@ export class NativeCompetitionReader implements CompetitionReader {
   ): Omit<Competition, 'computed_phase'> {
     const parsed = this.repository.parseCompetitionRecord(record);
     return {
+      legacy_origin: record.legacy_wave_id !== null,
       id: parsed.id,
       wave_id: parsed.wave_id,
       storage_mode: parsed.storage_mode,

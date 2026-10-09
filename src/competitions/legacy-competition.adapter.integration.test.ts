@@ -386,6 +386,47 @@ describeWithSeed(
       ).toEqual([]);
     });
 
+    it('compares complete migration history beyond the shadow sampling limit', async () => {
+      const extra = Array.from({ length: 13_001 }, (_, index) => ({
+        wave_id: wave.id,
+        decision_time: 4_000 + index
+      }));
+      await sqlExecutor.bulkInsert(
+        WAVES_DECISIONS_TABLE,
+        extra,
+        ['wave_id', 'decision_time'],
+        {}
+      );
+      const { record, reader } = await adapter();
+      const baseline = await new LegacyCompetitionBaselineRepository(
+        () => sqlExecutor
+      ).getSnapshot(record, 20_000, {}, Number.POSITIVE_INFINITY);
+      const candidate = await loadLegacyParityCandidate(
+        reader,
+        record,
+        20_000,
+        {},
+        Number.POSITIVE_INFINITY
+      );
+      expect(baseline.decisions_and_winners).toHaveLength(13_004);
+      expect(candidate.decisions_and_winners).toEqual(
+        baseline.decisions_and_winners
+      );
+      const decisions = candidate.decisions_and_winners as {
+        scheduled_at: number;
+      }[];
+      expect(decisions[decisions.length - 1]).toMatchObject({
+        scheduled_at: 17_000
+      });
+      await expect(
+        new LegacyCompetitionBaselineRepository(() => sqlExecutor).getSnapshot(
+          record,
+          20_000,
+          {}
+        )
+      ).rejects.toBeInstanceOf(CompetitionRowLimitError);
+    });
+
     it('rejects duplicate voter state pairs so spending cannot be counted twice', async () => {
       await expect(
         sqlExecutor.execute(

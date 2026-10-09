@@ -118,6 +118,13 @@ export class WaveLeaderboardCalculationService {
     await this.dropVotingDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
+        if (
+          !(await this.executionRouter.shouldUseLegacyWaveExecution(
+            waveId,
+            ctxWithConnection
+          ))
+        )
+          return;
         const shouldTrackOverThreshold =
           winningMinThreshold !== null &&
           (winningThresholdMinDurationMs ?? 0) > 0;
