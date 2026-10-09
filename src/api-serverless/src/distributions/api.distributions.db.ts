@@ -1,3 +1,4 @@
+import { RequestContext } from '@/request.context';
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   DISTRIBUTION_NORMALIZED_TABLE,
@@ -340,8 +341,10 @@ function safeParseJson<T>(jsonString: string): T | null {
 }
 
 export async function fetchWalletTdhData(
-  wallets: string[]
+  wallets: string[],
+  ctx: RequestContext = {}
 ): Promise<Map<string, WalletTdhData>> {
+  if (!wallets.length) return new Map();
   const tdhResult: {
     wallets: string;
     boosted_tdh: number;
@@ -349,7 +352,9 @@ export async function fetchWalletTdhData(
     unique_memes: number;
     gradients_balance: number;
   }[] = await sqlExecutor.execute(
-    `SELECT wallets, boosted_tdh, memes_balance, unique_memes, gradients_balance FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}`
+    `SELECT wallets, boosted_tdh, memes_balance, unique_memes, gradients_balance FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE JSON_OVERLAPS(wallets, :wallets)`,
+    { wallets: JSON.stringify(wallets.map((wallet) => wallet.toLowerCase())) },
+    { wrappedConnection: ctx.connection }
   );
 
   const tdhWalletMap = new Map<string, WalletTdhData>();
@@ -411,6 +416,15 @@ export async function insertDistributions(
   wrappedConnection?: any
 ): Promise<void> {
   if (distributions.length === 0) {
+    return;
+  }
+
+  if (distributions.length > 500) {
+    for (let offset = 0; offset < distributions.length; offset += 500)
+      await insertDistributions(
+        distributions.slice(offset, offset + 500),
+        wrappedConnection
+      );
     return;
   }
 

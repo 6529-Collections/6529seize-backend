@@ -1752,6 +1752,50 @@ Typical deployment order when schema or generated API contracts change:
 
 For a documentation-only change, no Lambda redeploy is required.
 
+## Drop Forge Automated Launch
+
+`dropForgeLaunchLoop` receives an EventBridge invocation every minute. Runtime
+flags independently enable launch execution and EMMA preparation; both default
+to disabled. The API saves a revisioned draft from published claim metadata and
+prepared distribution rows, then an authorized administrator explicitly arms it.
+
+```mermaid
+flowchart LR
+  Admin[Claims administrator] --> API[Launch and job APIs]
+  API --> DB[Launch, signer, preparation and job tables]
+  EventBridge --> Worker[dropForgeLaunchLoop]
+  Worker --> DB
+  Worker --> KMS[AWS KMS secp256k1]
+  KMS --> Worker
+  Worker --> Chain[Creator and lazy claim contracts]
+  Worker --> Wave[Durable wave reports]
+  Wave --> Alerts[Configured dropforgers6529 profiles]
+```
+
+The worker reserves an unsigned intent under a signer row lock, persists its
+signed bytes and hash in another commit, and only then broadcasts. Pending
+receipts reconcile across pause/cancel, with configurable confirmations and no
+automatic transaction replacement. Each subsequent action checks prior
+canonical receipts, the frozen source hash, claim configuration, creator-admin
+permission, nonce availability, and gas budgets. Confirmation is distinct from a
+scheduled mint window becoming active. Already-signed transactions cannot be
+revoked or guaranteed to mine before a deadline.
+
+EMMA phase results, subscription assignments, distribution rows, and Merkle
+proofs commit together with a replayable result. Finalization uses the same
+preparation lock and chunked normalized-row inserts. A queued job returns its
+request ID immediately; a database savepoint rolls back partial preparation
+before persisting a failure. The legacy synchronous endpoints retain their
+response shapes and can still outlive an HTTP timeout; the job API is the path
+for removing that wait from the client request.
+
+Reporting drops and outbox acknowledgements share a DB transaction. Push
+transport runs after commit. `@dropforgers6529` resolves configured profile IDs
+through existing visibility and notification rules. Initial wave reporting is
+required before new launch signing; receipt reconciliation continues separately.
+See [configuration and recovery](drop-forge-auto-launch.md). The creator owner
+still grants/revokes on-chain admins, and Pay Artist remains outside automation.
+
 ## Architecture Notes
 
 ### Private artwork documentation archive

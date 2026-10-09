@@ -1,7 +1,10 @@
 # Drop Forge Auto Launch — Backend Requirements Analysis
 
-Status: requirements proposal, 2026-10-09. This PR changes documentation only.
-No signer, schedule, endpoint, schema, mention group, or deployment is created.
+Status: original requirements analysis, 2026-10-09, retained as design context.
+The backend implementation now accompanies this analysis. Confirmed choices and
+remaining rollout boundaries are in [the operational guide](../../../docs/drop-forge-auto-launch.md).
+AWS KMS signing is approved; automation and preparation workers default to disabled.
+Frontend operator controls remain future work. No deployment has occurred.
 
 Companion: [frontend requirements PR #4207](https://github.com/6529-Collections/6529seize-frontend/pull/4207).
 

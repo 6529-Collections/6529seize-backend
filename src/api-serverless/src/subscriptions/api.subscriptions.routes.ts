@@ -1,3 +1,4 @@
+import { prepareDistributionPhase } from '@/drop-forge/drop-forge.preparation';
 import { Request, Response } from 'express';
 import * as Joi from 'joi';
 import { fetchEns } from '@/db-api';
@@ -18,7 +19,6 @@ import { Logger } from '@/logging';
 import { getPage, getPageSize, returnCSVResult } from '@/api/api-helpers';
 import { asyncRouter } from '@/api/async.router';
 import { getWalletOrThrow, needsAuthenticatedUser } from '@/api/auth/auth';
-import { populateDistribution } from '@/api/distributions/api.distributions.service';
 import { ApiUpcomingMemeSubscriptionStatus } from '@/api/generated/models/ApiUpcomingMemeSubscriptionStatus';
 import { NFTFinalSubscription } from '@/api/generated/models/NFTFinalSubscription';
 import { NFTSubscription } from '@/api/generated/models/NFTSubscription';
@@ -32,11 +32,7 @@ import { cacheRequest } from '@/api/request-cache';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import {
   authenticateSubscriptionsAdmin,
-  fetchPhaseName,
-  fetchPhaseResults,
-  getPublicSubscriptions,
   resetAllowlist,
-  splitAllowlistResults,
   validateDistribution
 } from '@/api/subscriptions/api.subscriptions.allowlist';
 import {
@@ -783,7 +779,6 @@ router.get(
 router.get(
   `/allowlists/:contract/:token_id/:allowlist_id/:phase_id`,
   needsAuthenticatedUser(),
-  cacheRequest(),
   async function (
     req: Request<
       {
@@ -826,66 +821,20 @@ router.get(
       );
     }
 
-    allowlistTimer.start('validateDistribution');
-    const validate = await validateDistribution(auth, allowlistId, phaseId);
-    allowlistTimer.stop('validateDistribution');
-    allowlistLogger.info(
-      `[GET_VALIDATE_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [${allowlistTimer.getReport()}]`
+    const prepared = await prepareDistributionPhase(
+      contract,
+      tokenId,
+      allowlistId,
+      phaseId,
+      auth,
+      { timer: allowlistTimer }
     );
-    if (!validate.valid) {
-      return res.status(400).send(validate);
-    }
-
-    if (phaseId === 'public') {
-      allowlistTimer.start('getPublicSubscriptions');
-      const results = await getPublicSubscriptions(contract, tokenId);
-      allowlistTimer.stop('getPublicSubscriptions');
-      allowlistLogger.info(
-        `[GET_PUBLIC_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [${allowlistTimer.getReport()}]`
-      );
-      return res.json(results);
-    } else {
-      allowlistTimer.start('fetchPhaseResultsAndName');
-      const [phaseResults, phaseName] = await Promise.all([
-        fetchPhaseResults(auth, allowlistId, phaseId),
-        fetchPhaseName(auth, allowlistId, phaseId)
-      ]);
-      allowlistTimer.stop('fetchPhaseResultsAndName');
-      allowlistLogger.info(
-        `[GET_PHASE_FETCH_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [phase_name ${phaseName}] [results_count ${
-          phaseResults.length
-        }] [${allowlistTimer.getReport()}]`
-      );
-
-      allowlistTimer.start('splitAllowlistResults');
-      const results = await splitAllowlistResults(
-        contract,
-        tokenId,
-        phaseName,
-        phaseResults
-      );
-      allowlistTimer.stop('splitAllowlistResults');
-      allowlistLogger.info(
-        `[GET_SPLIT_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [phase_name ${phaseName}] [airdrops ${
-          results.airdrops.length
-        }] [allowlists ${results.allowlists.length}] [${allowlistTimer.getReport()}]`
-      );
-
-      allowlistTimer.start('populateDistribution');
-      await populateDistribution(contract, tokenId, phaseName, results);
-      allowlistTimer.stop('populateDistribution');
-      allowlistLogger.info(
-        `[GET_POPULATE_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [phase_name ${phaseName}] [${allowlistTimer.getReport()}]`
-      );
-
-      allowlistTimer.start('invalidateMintingClaimsPhaseCache');
-      await invalidateMintingClaimsPhaseCache(contract, tokenId);
-      allowlistTimer.stop('invalidateMintingClaimsPhaseCache');
-      allowlistLogger.info(
-        `[GET_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [phase_id ${phaseId}] [phase_name ${phaseName}] [${allowlistTimer.getReport()}]`
-      );
-      return res.json(results);
-    }
+    if (phaseId === 'public') return res.json({ airdrops: prepared.airdrops });
+    return res.json({
+      airdrops: prepared.airdrops,
+      airdrops_unconsolidated: prepared.airdrops_unconsolidated,
+      allowlists: prepared.allowlists
+    });
   }
 );
 

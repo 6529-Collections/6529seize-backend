@@ -108,6 +108,11 @@ import { ApiDmUnreadSnapshot } from '@/api/generated/models/ApiDmUnreadSnapshot'
 import { ApiDropAndWave } from '@/api/generated/models/ApiDropAndWave';
 import { ApiDropBoostV2 } from '@/api/generated/models/ApiDropBoostV2';
 import { ApiDropCompetitionContext } from '@/api/generated/models/ApiDropCompetitionContext';
+import { ApiDropForgeControlRequest } from '@/api/generated/models/ApiDropForgeControlRequest';
+import { ApiDropForgeJob } from '@/api/generated/models/ApiDropForgeJob';
+import { ApiDropForgeJobRequest } from '@/api/generated/models/ApiDropForgeJobRequest';
+import { ApiDropForgeLaunch } from '@/api/generated/models/ApiDropForgeLaunch';
+import { ApiDropForgePlanRequest } from '@/api/generated/models/ApiDropForgePlanRequest';
 import { ApiDropMetadataV2 } from '@/api/generated/models/ApiDropMetadataV2';
 import { ApiDropPartV2 } from '@/api/generated/models/ApiDropPartV2';
 import { ApiDropPollsPage } from '@/api/generated/models/ApiDropPollsPage';
@@ -1389,6 +1394,90 @@ export type GetDmUnreadSnapshotRequest = Request<
   ApiResponse<GetDmUnreadSnapshotResponse>,
   never,
   GetDmUnreadSnapshotQuery,
+  Record<string, never>
+>;
+
+export interface CreateDropForgeDistributionJobPathParams {
+  "contract": string;
+  "claim_id": number;
+}
+
+export type CreateDropForgeDistributionJobQuery = Record<string, never>;
+
+export type CreateDropForgeDistributionJobResponse = ApiDropForgeJob;
+
+export type CreateDropForgeDistributionJobRequest = Request<
+  CreateDropForgeDistributionJobPathParams,
+  ApiResponse<CreateDropForgeDistributionJobResponse>,
+  ApiDropForgeJobRequest,
+  CreateDropForgeDistributionJobQuery,
+  Record<string, never>
+>;
+
+export interface GetDropForgeDistributionJobPathParams {
+  "job_id": string;
+}
+
+export type GetDropForgeDistributionJobQuery = Record<string, never>;
+
+export type GetDropForgeDistributionJobResponse = ApiDropForgeJob;
+
+export type GetDropForgeDistributionJobRequest = Request<
+  GetDropForgeDistributionJobPathParams,
+  ApiResponse<GetDropForgeDistributionJobResponse>,
+  never,
+  GetDropForgeDistributionJobQuery,
+  Record<string, never>
+>;
+
+export interface GetDropForgeLaunchPathParams {
+  "contract": string;
+  "claim_id": number;
+}
+
+export type GetDropForgeLaunchQuery = Record<string, never>;
+
+export type GetDropForgeLaunchResponse = ApiDropForgeLaunch;
+
+export type GetDropForgeLaunchRequest = Request<
+  GetDropForgeLaunchPathParams,
+  ApiResponse<GetDropForgeLaunchResponse>,
+  never,
+  GetDropForgeLaunchQuery,
+  Record<string, never>
+>;
+
+export interface PutDropForgeLaunchPathParams {
+  "contract": string;
+  "claim_id": number;
+}
+
+export type PutDropForgeLaunchQuery = Record<string, never>;
+
+export type PutDropForgeLaunchResponse = ApiDropForgeLaunch;
+
+export type PutDropForgeLaunchRequest = Request<
+  PutDropForgeLaunchPathParams,
+  ApiResponse<PutDropForgeLaunchResponse>,
+  ApiDropForgePlanRequest,
+  PutDropForgeLaunchQuery,
+  Record<string, never>
+>;
+
+export interface ControlDropForgeLaunchPathParams {
+  "contract": string;
+  "claim_id": number;
+}
+
+export type ControlDropForgeLaunchQuery = Record<string, never>;
+
+export type ControlDropForgeLaunchResponse = ApiDropForgeLaunch;
+
+export type ControlDropForgeLaunchRequest = Request<
+  ControlDropForgeLaunchPathParams,
+  ApiResponse<ControlDropForgeLaunchResponse>,
+  ApiDropForgeControlRequest,
+  ControlDropForgeLaunchQuery,
   Record<string, never>
 >;
 

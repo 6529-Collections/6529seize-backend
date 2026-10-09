@@ -1,3 +1,4 @@
+import { RequestContext } from '@/request.context';
 import {
   DELEGATIONS_TABLE,
   DELEGATION_ALL_ADDRESS,
@@ -44,7 +45,8 @@ export async function fetchAirdropAddressForConsolidationKey(
 export async function fetchProcessedDelegations(
   collection: string,
   useCase: number,
-  wallets?: string[]
+  wallets?: string[],
+  ctx: RequestContext = {}
 ): Promise<Delegation[]> {
   const results = await sqlExecutor.execute(
     `
@@ -80,7 +82,8 @@ export async function fetchProcessedDelegations(
       anyCollection: DELEGATION_ALL_ADDRESS,
       expiry: Date.now() / 1000,
       wallets: wallets?.map((w) => w.toLowerCase())
-    }
+    },
+    { wrappedConnection: ctx.connection }
   );
   return results;
 }
