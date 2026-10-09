@@ -17,7 +17,11 @@ export async function listCompetitionVoteActivity(
   ctx: RequestContext
 ): Promise<ApiWaveLog[]> {
   // The competition service masks invisible waves, drafts and mismatched children.
-  await competitionService.getCompetition(waveId, competitionId, ctx);
+  const competition = await competitionService.getCompetition(
+    waveId,
+    competitionId,
+    ctx
+  );
   const record = await competitionRepository.findCompetitionRecordById(
     competitionId,
     ctx
@@ -39,29 +43,49 @@ export async function listCompetitionVoteActivity(
       ctx
     );
   }
-  const rows = await competitionVoteActivityRepository.list(
-    competitionId,
-    offset,
-    limit,
-    ctx
-  );
+  const transferredAt = competition.legacy_transferred_at;
+  const rows =
+    record.legacy_wave_id === waveId && transferredAt != null
+      ? await competitionVoteActivityRepository.listTransferred(
+          competitionId,
+          waveId,
+          transferredAt,
+          offset,
+          limit,
+          ctx
+        )
+      : await competitionVoteActivityRepository.list(
+          competitionId,
+          offset,
+          limit,
+          ctx
+        );
   const profiles = await identityFetcher.getOverviewsByIds(
     Array.from(
-      new Set(rows.flatMap((row) => [row.voter_profile_id, row.submitter_id]))
+      new Set(
+        rows.flatMap((row) =>
+          [row.voter_profile_id, row.submitter_id, row.proxy_id].filter(
+            (id): id is string => !!id
+          )
+        )
+      )
     ),
     ctx
   );
   return rows.map((row) => ({
-    id: `${competitionId}:${Number(row.sequence)}`,
+    id: row.legacy_id ?? `${competitionId}:${Number(row.sequence)}`,
     action: 'DROP_VOTE_EDIT',
     wave_id: waveId,
     drop_id: row.drop_id,
     invoker: profiles[row.voter_profile_id],
-    drop_author: profiles[row.submitter_id],
+    drop_author: row.submitter_id ? profiles[row.submitter_id] : undefined,
+    invoker_proxy: row.proxy_id ? profiles[row.proxy_id] : undefined,
     created_at: new Date(Number(row.occurred_at)),
-    contents: {
-      oldVote: Number(row.previous_value),
-      newVote: Number(row.value)
-    }
+    contents: row.legacy_id
+      ? JSON.parse(row.legacy_contents!)
+      : {
+          oldVote: Number(row.previous_value),
+          newVote: Number(row.value)
+        }
   }));
 }
