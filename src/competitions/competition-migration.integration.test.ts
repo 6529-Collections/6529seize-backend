@@ -3,6 +3,7 @@ import { appFeatures } from '@/app-features';
 import { DropVotingDb } from '@/api/drops/drop-voting.db';
 import { migrationCommandConfiguration } from './legacy-competition-configuration';
 import { NativeCompetitionReader } from './native-competition.reader';
+import { listCompetitionVoteActivity } from '@/api/competitions/competition-vote-activity.service';
 import {
   LEGACY_GET_SOURCE_TABLES,
   withLegacyCompetitionGetFacade
@@ -31,7 +32,8 @@ import {
   IDENTITIES_TABLE,
   DROP_VOTER_STATE_TABLE,
   DROPS_TABLE,
-  DROPS_VOTES_CREDIT_SPENDINGS_TABLE
+  DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
+  PROFILES_ACTIVITY_LOGS_TABLE
 } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
@@ -194,6 +196,44 @@ describeWithSeed(
       await installMigrationCapture(sqlExecutor);
     });
     afterEach(() => jest.restoreAllMocks());
+    it('preserves historical vote activity and adjustment metadata through a real ownership transfer', async () => {
+      jest
+        .spyOn(appFeatures, 'isUnifiedCompetitionReadsEnabled')
+        .mockReturnValue(true);
+      await sqlExecutor.execute(
+        `insert into ${PROFILES_ACTIVITY_LOGS_TABLE}
+          (id,profile_id,target_id,additional_data_1,additional_data_2,type,contents,created_at)
+         values ('historical-vote-log','fixture-voter',:dropId,'fixture-author',:waveId,
+          'DROP_VOTE_EDIT',:contents,'2025-08-09 12:14:22')`,
+        {
+          dropId: drop.id,
+          waveId: wave.id,
+          contents: JSON.stringify({
+            reason: 'CREDIT_OVERSPENT',
+            oldVote: '85192',
+            newVote: 555
+          })
+        }
+      );
+      const before = await listCompetitionVoteActivity(wave.id, id, 0, 50, {});
+      expect(before).toHaveLength(1);
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await finishBackfill(service);
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
+      expect(await service.cutover(id, operator, false)).toMatchObject({
+        changed: true,
+        failures: []
+      });
+      const after = await listCompetitionVoteActivity(wave.id, id, 0, 50, {});
+      // Compare the wire representation: the legacy reader returns ISO strings,
+      // while native activity dates are serialized by the HTTP response.
+      expect(JSON.parse(JSON.stringify(after))).toEqual(before);
+    });
     it('installs repeatably, captures accepted writes atomically, and never captures rolled-back writes', async () => {
       await installMigrationCapture(sqlExecutor);
       expect(await migrationCaptureHealthy(sqlExecutor, {})).toBe(true);

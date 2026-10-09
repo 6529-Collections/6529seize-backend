@@ -1000,6 +1000,12 @@ history; the request-scoped SQL read boundary excludes native v3 APIs and writes
 hub therefore remains a contract-valid `CHAT` wave to those clients, and adding
 another competition cannot change a legacy Rank/Approve projection.
 
+The migrated primary's vote Activity feed combines retained pre-transfer wave logs
+with native vote history in one chronologically paginated query. It preserves original
+log JSON and proxy attribution; separate native competitions never inherit those
+wave logs. This read repair requires only an API deployment, without schema changes
+or remigrating transferred waves.
+
 Competition storage and execution ownership are explicit per competition.
 Legacy-primary mappings keep existing decision and leaderboard workers active;
 native execution additionally requires its global kill switch and is disabled
