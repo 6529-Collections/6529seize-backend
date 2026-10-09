@@ -67,6 +67,7 @@ export interface DropSubmissionVotingSummary {
   current_calculated_vote: number;
   predicted_final_vote: number;
   voters_count: number;
+  voters_count_available?: boolean;
   place: number;
   forbid_negative_votes: boolean;
 }
@@ -775,10 +776,9 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
           group by 1
         ),
         winner_voter_counts as (
-          select drop_id, count(*) as voters_count
+          select drop_id, count(nullif(votes, 0)) as voters_count
           from ${WINNER_DROP_VOTER_VOTES_TABLE}
           where drop_id in (:dropIds)
-            and votes <> 0
           group by 1
         ),
         decision_counts as (
@@ -871,6 +871,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
             when t.drop_type = '${DropType.WINNER}' then coalesce(wvc.voters_count, 0)
             else coalesce(vc.voters_count, 0)
           end as voters_count,
+          (t.drop_type <> '${DropType.WINNER}' or wvc.drop_id is not null) as voters_count_available,
           case
             when t.drop_type = '${DropType.WINNER}' then coalesce(wd.ranking, 0)
             else coalesce(wr.rnk, rr.rnk, 0)
@@ -919,6 +920,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
             current_calculated_vote: Number(row.current_calculated_vote),
             predicted_final_vote: Number(row.predicted_final_vote),
             voters_count: Number(row.voters_count),
+            voters_count_available: Boolean(Number(row.voters_count_available)),
             place: Number(row.place)
           };
           return acc;
@@ -1354,7 +1356,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       return {};
     }
     ctx.timer?.start(`${this.constructor.name}->getWinningDropsRatersCount`);
-    const sql = `select drop_id, count(*) as raters_count from ${WINNER_DROP_VOTER_VOTES_TABLE} where drop_id in (:dropIds) and votes <> 0 group by 1`;
+    const sql = `select drop_id, count(nullif(votes, 0)) as raters_count from ${WINNER_DROP_VOTER_VOTES_TABLE} where drop_id in (:dropIds) group by 1`;
     const results = await this.db.execute<{
       drop_id: string;
       raters_count: number;

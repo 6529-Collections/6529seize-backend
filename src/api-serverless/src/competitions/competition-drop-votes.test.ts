@@ -42,9 +42,12 @@ beforeEach(() => {
   jest
     .mocked(competitionEntryService.getDropContext)
     .mockResolvedValue({ entry, competition } as never);
-  jest
-    .mocked(competitionDropVotesDb.totals)
-    .mockResolvedValue({ total: 39, count: 1, user_vote: 39 });
+  jest.mocked(competitionDropVotesDb.totals).mockResolvedValue({
+    total: 39,
+    count: 1,
+    user_vote: 39,
+    voters_count_available: true
+  });
   jest
     .mocked(competitionDropVotesDb.score)
     .mockResolvedValue({ rating: 0, rank: 1, over_threshold_since: 1234 });
@@ -122,4 +125,28 @@ it('shows actual vote changes in the existing log format', async () => {
       voter: { id: 'viewer' }
     }
   ]);
+});
+
+it('distinguishes missing winner history from a zero count while preserving the final score', async () => {
+  const winner = { ...entry, status: 'WINNER' } as CompetitionEntry;
+  jest.mocked(competitionDropVotesDb.totals).mockResolvedValue({
+    total: 0,
+    count: 0,
+    user_vote: 0,
+    voters_count_available: false
+  });
+  jest.mocked(competitionDropVotesDb.score).mockResolvedValue({
+    rating: 83321,
+    rank: 3,
+    over_threshold_since: null
+  });
+  jest.mocked(competitionDropVotesDb.voters).mockResolvedValue([]);
+  expect(
+    await competitionDropVoteSummary(competition, winner, {})
+  ).toMatchObject({
+    rating: 83321,
+    raters_count: 0,
+    voters_count_available: false,
+    top_raters: []
+  });
 });
