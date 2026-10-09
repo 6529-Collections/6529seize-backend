@@ -22,6 +22,20 @@ under the ownership lock and transfers ownership atomically. Wave and drop URLs
 are preserved. Signed voting, special capabilities and existing upper-threshold
 metadata are retained; large content comparisons use pagination.
 
+The Activity feed of a transferred primary combines its retained historical
+`DROP_VOTE_EDIT` wave logs (up to transfer time) with new native vote history.
+Original log IDs, timestamps, vote values, system-adjustment reasons and proxy
+attribution are retained. These historical logs are scoped to the original
+primary; other competitions in the same wave cannot read them. The API fix also
+restores activity on already migrated waves without rerunning migration.
+
+For a migration smoke check, compare the legacy `/waves/{wave_id}/logs` endpoint
+filtered to `log_types=DROP_VOTE_EDIT` with the primary competition's
+`/v3/waves/{wave_id}/competitions/{competition_id}/activity` before and after
+transfer, including pages beyond the first. Check the frontend Votes → Activity
+view as well as entries, scores, winners and awards. The 22 migration comparison
+categories alone do not verify this feed.
+
 The Lambda performs all checks and the switch. Nothing needs a human approval.
 The response reports `COMPLETE`, `CONTINUING` or `PAUSED`. Large migrations queue
 the same function automatically when an invocation runs out of its work budget;
