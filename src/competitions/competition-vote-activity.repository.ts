@@ -33,9 +33,13 @@ export class CompetitionVoteActivityRepository extends LazyDbAccessCompatibleSer
     // Keep the original log IDs, JSON and proxy attribution. Historical wave
     // logs belong only to the transferred legacy primary, never its siblings.
     // Apply pagination once, after combining both histories chronologically.
+    // Each source's first offset+limit rows contain the global first offset+limit:
+    // an excluded row already has that many rows ahead of it in its own source.
+    // Legacy DATETIME values are UTC; compare a UTC literal rather than the
+    // session-timezone-dependent FROM_UNIXTIME conversion.
     return this.db.execute<CompetitionVoteActivity>(
       `SELECT activity.* FROM (
-        (SELECT history.sequence, entry.drop_id, history.voter_profile_id,
+        (SELECT 1 AS source_order, history.sequence, entry.drop_id, history.voter_profile_id,
           entry.submitter_id, history.previous_value, history.value,
           history.occurred_at, NULL AS legacy_id, NULL AS legacy_contents,
           NULL AS proxy_id
@@ -45,7 +49,7 @@ export class CompetitionVoteActivityRepository extends LazyDbAccessCompatibleSer
         WHERE history.competition_id = :competitionId AND ${competitionEntryVisibleSql('entry')}
         ORDER BY history.occurred_at DESC, history.sequence DESC LIMIT :candidateLimit)
         UNION ALL
-        (SELECT 0 AS sequence, log.target_id AS drop_id,
+        (SELECT 0 AS source_order, 0 AS sequence, log.target_id AS drop_id,
           log.profile_id AS voter_profile_id, log.additional_data_1 AS submitter_id,
           0 AS previous_value, 0 AS value,
           TIMESTAMPDIFF(MICROSECOND, '1970-01-01', log.created_at) / 1000 AS occurred_at,
@@ -53,15 +57,19 @@ export class CompetitionVoteActivityRepository extends LazyDbAccessCompatibleSer
           log.proxy_id
         FROM ${PROFILES_ACTIVITY_LOGS_TABLE} log
         WHERE log.additional_data_2 = :waveId AND log.type = :logType
-          AND log.created_at <= FROM_UNIXTIME(:transferredAt / 1000)
+          AND log.created_at <= :transferredAtUtc
         ORDER BY log.created_at DESC, log.id DESC LIMIT :candidateLimit)
       ) activity
-      ORDER BY activity.occurred_at DESC, activity.sequence DESC, activity.legacy_id DESC
+      ORDER BY activity.occurred_at DESC, activity.source_order DESC,
+        activity.sequence DESC, activity.legacy_id DESC
       LIMIT :offset, :limit`,
       {
         competitionId,
         waveId,
-        transferredAt,
+        transferredAtUtc: new Date(transferredAt)
+          .toISOString()
+          .slice(0, 23)
+          .replace('T', ' '),
         logType: ProfileActivityLogType.DROP_VOTE_EDIT,
         candidateLimit: offset + limit,
         offset,

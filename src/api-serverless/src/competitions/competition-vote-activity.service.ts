@@ -81,6 +81,8 @@ export async function listCompetitionVoteActivity(
     drop_author: row.submitter_id ? profiles[row.submitter_id] : undefined,
     invoker_proxy: row.proxy_id ? profiles[row.proxy_id] : undefined,
     created_at: new Date(Number(row.occurred_at)),
+    // The retained contents column is NOT NULL JSON, validated by MySQL.
+    // Preserve its complete original payload, as the legacy log API does.
     contents: row.legacy_id
       ? JSON.parse(row.legacy_contents!)
       : {
