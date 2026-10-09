@@ -278,33 +278,36 @@ describeWithSeed(
         expect((await service.status(id)).storageMode).toBe('LEGACY_ADAPTER');
       }
     });
-    it('keeps aggregate checks after a migrated live competition later ends', async () => {
-      const clock = { value: 10000 };
-      const service = new CompetitionMigrationService(
-        () => sqlExecutor,
-        () => clock.value,
-        0
-      );
-      await service.enroll(id, operator, 'ACTIVE_LOW_VOLUME');
-      await finishMigrationFixture(service, id);
-      await service.compare(id, operator, 1);
-      expect(await service.cutover(id, operator, false)).toMatchObject({
-        changed: true,
-        failures: []
-      });
-      clock.value += 1000;
-      await sqlExecutor.execute(
-        `update ${COMPETITIONS_TABLE} set lifecycle='ENDED',ended_at=:endedAt where id=:id`,
-        { id, endedAt: clock.value }
-      );
-      await sqlExecutor.execute(
-        `update ${COMPETITION_VOTES_TABLE} set value=8 where competition_id=:id`,
-        { id }
-      );
-      expect((await service.verifyNative(id)).failures).toContain(
-        'NATIVE_AGGREGATE_INVARIANT'
-      );
-    });
+    it.each([1000, 11000])(
+      'keeps aggregate checks after a migrated live competition ends at %s',
+      async (endedAt) => {
+        const clock = { value: 10000 };
+        const service = new CompetitionMigrationService(
+          () => sqlExecutor,
+          () => clock.value,
+          0
+        );
+        await service.enroll(id, operator, 'ACTIVE_LOW_VOLUME');
+        await finishMigrationFixture(service, id);
+        await service.compare(id, operator, 1);
+        expect(await service.cutover(id, operator, false)).toMatchObject({
+          changed: true,
+          failures: []
+        });
+        clock.value += 1000;
+        await sqlExecutor.execute(
+          `update ${COMPETITIONS_TABLE} set lifecycle='ENDED',ended_at=:endedAt where id=:id`,
+          { id, endedAt }
+        );
+        await sqlExecutor.execute(
+          `update ${COMPETITION_VOTES_TABLE} set value=8 where competition_id=:id`,
+          { id }
+        );
+        expect((await service.verifyNative(id)).failures).toContain(
+          'NATIVE_AGGREGATE_INVARIANT'
+        );
+      }
+    );
     it('preserves nullable wave metadata, retained chat snapshots, orphaned outcomes and historical winners', async () => {
       const clock = { value: 10000 };
       await sqlExecutor.execute(

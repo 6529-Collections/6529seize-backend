@@ -25,7 +25,8 @@ import {
   COMPETITION_WINNER_VOTES_TABLE,
   COMPETITION_MIGRATION_CHANGES_TABLE,
   COMPETITION_CONFIG_VERSIONS_TABLE,
-  COMPETITION_MIGRATIONS_TABLE
+  COMPETITION_MIGRATIONS_TABLE,
+  WAVES_TABLE
 } from '@/constants';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, SqlExecutor } from '@/sql-executor';
@@ -728,11 +729,22 @@ export class CompetitionMigrationService {
       id,
       ctx
     );
-    // Ended-at comes from the copied source. A later native completion must
-    // continue validating its live aggregate, rather than its old source copy.
+    // Use retained source scheduling at the transfer time. A later native
+    // completion (including an overdue decision) is still a live import.
+    const source = await this.supplier().oneOrNull<{ completed: number }>(
+      `select ((participation_period_end is not null or voting_period_end is not null)
+        and (participation_period_end is null or participation_period_end<=:cutoverAt)
+        and (voting_period_end is null or voting_period_end<=:cutoverAt)
+        and next_decision_time is null) as completed from ${WAVES_TABLE} where id=:waveId`,
+      {
+        waveId: record.legacy_wave_id,
+        cutoverAt: status.migration?.cutover_at ?? this.now()
+      },
+      { wrappedConnection: ctx.connection }
+    );
     const preservesCompletedSource =
       record.lifecycle === CompetitionLifecycle.ENDED &&
-      Number(record.ended_at) <= (status.migration?.cutover_at ?? this.now());
+      Number(source?.completed ?? 0) === 1;
     if (preservesCompletedSource && status.storageMode === 'NATIVE')
       failures.push(...(await this.reverseMismatches(id, ctx)));
     const mismatch = await this.supplier().oneOrNull<{ count: number }>(
