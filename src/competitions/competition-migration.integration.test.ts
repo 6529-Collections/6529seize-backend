@@ -47,6 +47,7 @@ import {
   legacyCompetitionEntryId
 } from './competition-id';
 import { CompetitionMigrationService } from './competition-migration.service';
+import { LegacyCompetitionBaselineRepository } from './legacy-competition-baseline.repository';
 import {
   installMigrationCapture,
   migrationCaptureHealthy
@@ -336,6 +337,48 @@ describeWithSeed(
         expect((await service.status(id)).storageMode).toBe('LEGACY_ADAPTER');
       }
     });
+    it.each([0, 60_001])(
+      'measures freshness after a slow comparison and retains the age limit (delay %i)',
+      async (delay) => {
+        let now = Date.now();
+        const service = new CompetitionMigrationService(
+          () => sqlExecutor,
+          () => now,
+          0
+        );
+        await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+        await finishBackfill(service);
+        const getSnapshot =
+          LegacyCompetitionBaselineRepository.prototype.getSnapshot;
+        jest
+          .spyOn(LegacyCompetitionBaselineRepository.prototype, 'getSnapshot')
+          .mockImplementation(async function (
+            this: LegacyCompetitionBaselineRepository,
+            ...args: Parameters<typeof getSnapshot>
+          ) {
+            const snapshot = await getSnapshot.apply(this, args);
+            now += 70_000;
+            return snapshot;
+          });
+        expect(await service.compare(id, operator, 1)).toMatchObject({
+          complete: true,
+          mismatches: 0,
+          sourceFailures: []
+        });
+        expect((await service.status(id)).migration?.last_comparison_at).toBe(
+          now
+        );
+        now += delay;
+        const result = await service.cutover(id, operator, false);
+        expect(result.changed).toBe(delay === 0);
+        expect(result.failures).toEqual(
+          delay === 0 ? [] : ['FINAL_PARITY_FRESHNESS']
+        );
+        expect((await service.status(id)).storageMode).toBe(
+          delay === 0 ? 'NATIVE' : 'LEGACY_ADAPTER'
+        );
+      }
+    );
     it.each([
       [
         'score',

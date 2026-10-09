@@ -113,10 +113,12 @@ describe('automated resumable wave migration', () => {
       options.operator,
       'ACTIVE_LOW_VOLUME'
     );
-    expect(service.cutover.mock.calls.map((call) => call[2])).toEqual([
-      true,
+    expect(service.cutover).toHaveBeenCalledTimes(1);
+    expect(service.cutover).toHaveBeenCalledWith(
+      competitionId,
+      options.operator,
       false
-    ]);
+    );
     expect(service.verifyNative).toHaveBeenCalledWith(competitionId);
   });
   it('keeps inspection read-only and reports environment blockers', async () => {
@@ -139,6 +141,26 @@ describe('automated resumable wave migration', () => {
       'DURABLE_CAPTURE'
     );
     expect(service.enroll).not.toHaveBeenCalled();
+  });
+  it('retains legacy ownership when the locked final comparison rejects the copy', async () => {
+    const { service, runtime } = fixture();
+    service.cutover.mockResolvedValue({
+      changed: false,
+      failures: ['frozen_relation:drop_ranks']
+    } as Awaited<ReturnType<WaveMigrationService['cutover']>>);
+    await expect(migrateWave(options, service, runtime)).rejects.toThrow(
+      'Final transfer is blocked: frozen_relation:drop_ranks'
+    );
+    expect(service.cutover).toHaveBeenCalledTimes(1);
+    expect(service.cutover).toHaveBeenCalledWith(
+      competitionId,
+      options.operator,
+      false
+    );
+    expect(service.verifyNative).not.toHaveBeenCalled();
+    expect((await service.status(competitionId)).storageMode).toBe(
+      'LEGACY_ADAPTER'
+    );
   });
   it('rebuilds a failed shadow comparison when the same wave is invoked again', async () => {
     const { service, runtime } = fixture();

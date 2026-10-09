@@ -22,6 +22,14 @@ under the ownership lock and transfers ownership atomically. Wave and drop URLs
 are preserved. Signed voting, special capabilities and existing upper-threshold
 metadata are retained; large content comparisons use pagination.
 
+Comparison freshness is measured when the independent comparison finishes.
+After readiness passes, the Lambda calls live cutover once; that transaction
+performs the final comparison and invariants under the ownership lock before any
+ownership change. It does not repeat the same expensive check in a separate dry
+run. The 60-second comparison age limit, watermark checks and mismatch rejection
+remain in force. Deploy only `competitionMigrationLoop` for this correction;
+an interrupted legacy-owned copy can resume from its existing checkpoint.
+
 Completed waves preserve historical data exactly, including existing differences
 between stored scores and individual votes or historical credits that exceed a
 voter's current budget. Verification compares the native copy against the retained
