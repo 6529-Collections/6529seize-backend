@@ -344,6 +344,12 @@ export class CompetitionVoteEntity {
   'entry_id'
 ])
 export class CompetitionLeaderboardEntryEntity {
+  @Column({ type: 'bigint', nullable: true }) readonly ordering_time!:
+    | number
+    | null;
+  @Column({ type: 'bigint', nullable: true }) readonly decision_rating!:
+    | number
+    | null;
   @PrimaryColumn({ type: 'varchar', length: 36 })
   readonly competition_id!: string;
 
@@ -410,6 +416,10 @@ export class CompetitionDecisionWinnerEntity {
 
   @PrimaryColumn({ type: 'varchar', length: 36 })
   readonly entry_id!: string;
+
+  // Imported history can outlive a deleted source drop and its entry.
+  @Column({ type: 'varchar', length: 36, nullable: true, default: null })
+  readonly legacy_drop_id!: string | null;
 
   @Column({ type: 'varchar', length: 36, nullable: false })
   @Index()
@@ -507,6 +517,10 @@ export class CompetitionPauseEntity {
 
   @Column({ type: 'varchar', length: 36, nullable: false })
   readonly competition_id!: string;
+
+  @Column({ type: 'bigint', nullable: true }) readonly legacy_source_id!:
+    | number
+    | null;
 
   @Column({ type: 'bigint', nullable: false })
   readonly start_time!: number;

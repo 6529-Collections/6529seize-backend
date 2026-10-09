@@ -36,6 +36,7 @@ import { dropCreationService } from '@/api/drops/drop-creation.api.service';
 import { NotFoundException } from '@/exceptions';
 import { competitionVotingService } from './competition-voting.service';
 import { createOrUpdateDrop } from '@/drops/create-or-update-drop.use-case';
+import { installMigrationCapture } from '@/competitions/competition-migration-capture';
 import * as pushNotifications from '@/api/push-notifications/push-notifications.service';
 
 const actor = 'entry-author';
@@ -263,6 +264,61 @@ describeWithSeed(
       else process.env.API_BASE_URL = originalApiBaseUrl;
     });
 
+    it('creates native submissions after legacy cutover without touching frozen vote tables', async () => {
+      await sqlExecutor.execute(
+        `update ${tables.COMPETITIONS_TABLE} set legacy_wave_id=:waveId where id=:id`,
+        { waveId: wave.id, id: competitionId }
+      );
+      await sqlExecutor.execute(
+        `insert into ${tables.COMPETITION_MIGRATIONS_TABLE}
+         (competition_id,wave_id,state,cohort,owner,stage,completed_stages,exceptions,updated_at)
+         values (:id,:waveId,'NATIVE','ACTIVE_LOW_VOLUME','fixture','ARCHIVE_VOTERS','[]','[]',1)`,
+        { waveId: wave.id, id: competitionId }
+      );
+      await installMigrationCapture(sqlExecutor);
+      const entry = await service.create(
+        wave.id,
+        competitionId,
+        request(),
+        ctx
+      );
+      expect(await dropsDb.findDropById(entry.drop_id)).toMatchObject({
+        drop_type: DropType.COMPETITION
+      });
+      for (const table of [
+        tables.WAVE_LEADERBOARD_ENTRIES_TABLE,
+        tables.DROP_REAL_VOTE_IN_TIME_TABLE
+      ]) {
+        expect(
+          await sqlExecutor.execute(
+            `select * from ${table} where wave_id=:waveId`,
+            {
+              waveId: wave.id
+            }
+          )
+        ).toEqual([]);
+      }
+      expect(
+        await competitionVotingService.vote(
+          wave.id,
+          competitionId,
+          entry.id,
+          {
+            idempotency_key: randomUUID(),
+            config_version: 1,
+            value: 7
+          },
+          ctx
+        )
+      ).toMatchObject({ current_vote: 7 });
+      await expect(
+        sqlExecutor.execute(
+          `insert into ${tables.WAVE_LEADERBOARD_ENTRIES_TABLE} (drop_id,wave_id,vote,timestamp)
+           values (:dropId,:waveId,0,1)`,
+          { dropId: entry.drop_id, waveId: wave.id }
+        )
+      ).rejects.toThrow('COMPETITION_NATIVE_OWNER_RETRY');
+    });
     it('masks cross-wave content routes and a private parent from anonymous readers', async () => {
       const entry = await service.create(
         wave.id,
