@@ -21,6 +21,27 @@ import { DbPoolName } from '@/db-query.options';
 import { WebSocketOutboxEvent } from './events';
 
 type Delivery = Extract<WebSocketOutboxEvent, { type: 'delivery' }>;
+type RawDrop = Pick<DropEntity, 'id' | 'wave_id' | 'author_id'> & {
+  readonly serial_no: unknown;
+};
+
+/** The loop's TypeORM adapter returns BIGINT strings; the client wire contract requires numbers. */
+function dropSerialNumber(value: unknown): number {
+  const serial =
+    typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value)
+      ? Number(value)
+      : value;
+  if (
+    typeof serial !== 'number' ||
+    !Number.isSafeInteger(serial) ||
+    serial < 0
+  ) {
+    // Fail resolution so the publisher retains the intent and reports its failure.
+    throw new RangeError('Invalid WebSocket drop serial number');
+  }
+  return serial;
+}
+
 const deliveries = (ids: string[], message: unknown): Delivery[] =>
   Array.from(new Set(ids)).map((connectionId) => ({
     type: 'delivery',
@@ -35,12 +56,13 @@ async function resolveEvent(
 ): Promise<WebSocketOutboxEvent[]> {
   switch (event.type) {
     case 'drop': {
-      const drop = await dbSupplier().oneOrNull<DropEntity>(
+      const drop = await dbSupplier().oneOrNull<RawDrop>(
         `select * from ${DROPS_TABLE} where id = :id`,
         { id: event.dropId },
         { wrappedConnection: ctx.connection }
       );
       if (!drop) return [];
+      const serialNo = dropSerialNumber(drop.serial_no);
       const recipients = await waveRecipients(drop.wave_id, ctx);
       return deliveries(
         recipients,
@@ -48,7 +70,7 @@ async function resolveEvent(
           drop_id: drop.id,
           wave_id: drop.wave_id,
           author_id: drop.author_id,
-          serial_no: drop.serial_no,
+          serial_no: serialNo,
           update_type: event.updateType as DropUpdateRefType,
           reason: event.reason
         })
@@ -60,7 +82,7 @@ async function resolveEvent(
         dropDeleteMessage({
           drop_id: event.dropId,
           wave_id: event.waveId,
-          drop_serial: event.serialNo
+          drop_serial: dropSerialNumber(event.serialNo)
         })
       );
     case 'identity': {

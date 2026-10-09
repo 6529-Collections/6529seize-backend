@@ -37,6 +37,14 @@ for one recipient does not require republishing the entire audience. Drop
 updates use `DROP_UPDATE_REF`, causing the client to fetch canonical content;
 deletions preserve their routing metadata after the drop row disappears.
 
+The worker normalizes raw database drop serials to safe, nonnegative JSON
+numbers before building update references and deletion frames. Its TypeORM
+adapter returns MySQL `BIGINT` columns as strings, unlike the API adapter; raw
+entity type annotations do not convert those values. The client rejects
+string-valued update cursors before canonical refetch. Invalid or unsafe
+serials fail resolution, retain the outbox intent and report
+`WS_OUTBOX_PUBLISH_FAILED` rather than sending an unusable hint.
+
 A recipient job is deleted only after SQS accepts its session-bound frame.
 Unknown acceptance/commit outcomes may retry the same job. Its stable envelope ID
 supports FIFO deduplication within SQS's deduplication interval; consumers must

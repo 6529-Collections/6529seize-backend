@@ -33,6 +33,103 @@ import { wavesApiDb } from '@/api/waves/waves.api.db';
 const mockDb = { oneOrNull: jest.fn(), execute: jest.fn() };
 const ctx = { connection: { connection: {} } };
 beforeEach(() => jest.clearAllMocks());
+
+function setDropAudience() {
+  jest.mocked(connections.findWaveVisibilityGroupId).mockResolvedValue(null);
+  jest
+    .mocked(
+      connections.getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast
+    )
+    .mockResolvedValue([{ connectionId: 'c', profileId: 'p', wave_id: 'w' }]);
+}
+
+it.each(['DROP_UPDATE', 'DROP_RATING_UPDATE', 'DROP_REACTION_UPDATE'] as const)(
+  'serializes TypeORM BIGINT strings as numeric cursors for %s',
+  async (updateType) => {
+    setDropAudience();
+    for (const serial of [
+      0,
+      '0',
+      '79493',
+      Number.MAX_SAFE_INTEGER,
+      '9007199254740991'
+    ]) {
+      mockDb.oneOrNull.mockResolvedValue({
+        id: 'd',
+        wave_id: 'w',
+        author_id: 'a',
+        serial_no: serial
+      });
+      const [job] = await resolveWebSocketEvent(
+        { type: 'drop', dropId: 'd', updateType },
+        ctx
+      );
+      expect(job).toMatchObject({ type: 'delivery', connectionId: 'c' });
+      if (job.type !== 'delivery') throw new Error('Expected recipient job');
+      expect(JSON.parse(job.message)).toEqual({
+        type: 'DROP_UPDATE_REF',
+        data: {
+          drop_id: 'd',
+          wave_id: 'w',
+          author_id: 'a',
+          serial_no: Number(serial),
+          update_type: updateType
+        }
+      });
+    }
+  }
+);
+
+it.each([
+  null,
+  undefined,
+  true,
+  {},
+  '',
+  ' ',
+  '1.5',
+  '1e3',
+  '0x10',
+  '-1',
+  ' 9',
+  '9 ',
+  '9007199254740992',
+  -1,
+  1.5,
+  NaN,
+  Infinity,
+  Number.MAX_SAFE_INTEGER + 1
+])('rejects invalid drop cursors during resolution: %s', async (serial) => {
+  mockDb.oneOrNull.mockResolvedValue({
+    id: 'd',
+    wave_id: 'w',
+    author_id: 'a',
+    serial_no: serial
+  });
+  await expect(
+    resolveWebSocketEvent(
+      { type: 'drop', dropId: 'd', updateType: 'DROP_UPDATE' },
+      ctx
+    )
+  ).rejects.toThrow('Invalid WebSocket drop serial number');
+  expect(connections.findWaveVisibilityGroupId).not.toHaveBeenCalled();
+});
+
+it('normalizes serials in historical deletion intents to the numeric wire contract', async () => {
+  setDropAudience();
+  const [job] = await resolveWebSocketEvent(
+    JSON.parse(
+      '{"type":"drop-delete","dropId":"gone","waveId":"w","serialNo":"79493"}'
+    ),
+    ctx
+  );
+  if (job.type !== 'delivery') throw new Error('Expected recipient job');
+  expect(JSON.parse(job.message)).toEqual({
+    type: 'DROP_DELETE',
+    data: { drop_id: 'gone', wave_id: 'w', drop_serial: 79493 }
+  });
+});
+
 it.each([undefined, 'POLL_RESPONSE', 'FUTURE_REASON'])(
   'turns current drop state into a canonical-fetch hint for reason %s',
   async (reason) => {

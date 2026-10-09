@@ -124,6 +124,40 @@ describe('WebSocket outbox publication', () => {
       send.mock.invocationCallOrder[0]!
     );
   });
+  it('retains and reports an intent whose drop cursor cannot be resolved safely', async () => {
+    const db = database([
+      {
+        ...pending(),
+        event: { type: 'drop', dropId: 'd', updateType: 'DROP_UPDATE' }
+      }
+    ]);
+    jest
+      .mocked(resolveWebSocketEvent)
+      .mockRejectedValueOnce(
+        new RangeError('Invalid WebSocket drop serial number')
+      );
+    const send = jest.fn();
+    expect(
+      await publishWebSocketOutbox(send, db as unknown as SqlExecutor)
+    ).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    expect(db.bulkInsert).not.toHaveBeenCalled();
+    expect(
+      db.execute.mock.calls.some(([sql]) => sql.startsWith('delete'))
+    ).toBe(false);
+    expect(db.execute).toHaveBeenCalledWith(
+      expect.stringContaining('attempts = attempts + 1'),
+      expect.objectContaining({ id: 1 }),
+      expect.anything()
+    );
+    expect(Logger.get('WEBSOCKET_OUTBOX').error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'WS_OUTBOX_PUBLISH_FAILED',
+        phase: 'resolve',
+        error_class: 'RangeError'
+      })
+    );
+  });
   it('materializes fan-out atomically before acknowledging its domain event', async () => {
     const db = database([
       { ...pending(), event: { type: 'identity', profileId: 'p' } }
