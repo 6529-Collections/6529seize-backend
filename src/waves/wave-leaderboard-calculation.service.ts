@@ -125,6 +125,14 @@ export class WaveLeaderboardCalculationService {
           ))
         )
           return;
+        // Discovery may precede completion or wait behind a migration lock.
+        if (
+          !(await this.dropVotingDb.isLegacyLeaderboardWaveOngoing(
+            waveId,
+            ctxWithConnection
+          ))
+        )
+          return;
         const shouldTrackOverThreshold =
           winningMinThreshold !== null &&
           (winningThresholdMinDurationMs ?? 0) > 0;
