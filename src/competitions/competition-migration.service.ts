@@ -44,7 +44,10 @@ import {
   nextMigrationWindowStreak,
   assertMigrationRollbackSafe
 } from '@/competitions/competition-migration-policy';
-import { CompetitionRepository } from '@/competitions/competition.repository';
+import {
+  CompetitionRecord,
+  CompetitionRepository
+} from '@/competitions/competition.repository';
 import { LegacyCompetitionBaselineRepository } from '@/competitions/legacy-competition-baseline.repository';
 import { NativeCompetitionReader } from '@/competitions/native-competition.reader';
 import { loadLegacyParityCandidate } from '@/competitions/legacy-parity-snapshot';
@@ -202,7 +205,8 @@ export class CompetitionMigrationService {
     id: string,
     action: (
       repository: CompetitionMigrationRepository,
-      ctx: RequestContext
+      ctx: RequestContext,
+      record: CompetitionRecord
     ) => Promise<T>
   ): Promise<T> {
     const db = this.supplier();
@@ -213,8 +217,8 @@ export class CompetitionMigrationService {
           () => db,
           this.environment
         );
-        await repository.lock(id, ctx);
-        return action(repository, ctx);
+        const record = await repository.lock(id, ctx);
+        return action(repository, ctx, record);
       },
       { isolationLevel: 'READ COMMITTED' }
     );
@@ -722,13 +726,10 @@ export class CompetitionMigrationService {
   private async nativeInvariantFailures(
     id: string,
     status: MigrationStatus,
+    record: CompetitionRecord,
     ctx: RequestContext
   ): Promise<string[]> {
     const failures: string[] = [];
-    const record = await new CompetitionMigrationRepository(this.supplier).lock(
-      id,
-      ctx
-    );
     // Use retained source scheduling at the transfer time. A later native
     // completion (including an overdue decision) is still a live import.
     const source = await this.supplier().oneOrNull<{ completed: number }>(
@@ -746,7 +747,7 @@ export class CompetitionMigrationService {
       record.lifecycle === CompetitionLifecycle.ENDED &&
       Number(source?.completed ?? 0) === 1;
     if (preservesCompletedSource && status.storageMode === 'NATIVE')
-      failures.push(...(await this.reverseMismatches(id, ctx)));
+      failures.push(...(await this.reverseMismatches(id, record, ctx)));
     const mismatch = await this.supplier().oneOrNull<{ count: number }>(
       `select count(*) as count from ${COMPETITION_ENTRIES_TABLE} e left join ${COMPETITION_ENTRY_RUNTIME_TABLE} r on r.entry_id=e.id and r.competition_id=e.competition_id where e.competition_id=:id and e.status='ACTIVE' and (r.entry_id is null or (:requireConsistentAggregate=1 and coalesce(r.real_time_rating,0)<>(select coalesce(sum(value),0) from ${COMPETITION_VOTES_TABLE} where competition_id=e.competition_id and entry_id=e.id)))`,
       { id, requireConsistentAggregate: preservesCompletedSource ? 0 : 1 },
@@ -763,9 +764,14 @@ export class CompetitionMigrationService {
     return failures;
   }
   public async verifyNative(id: string) {
-    return this.transaction(id, async (repository, ctx) => {
+    return this.transaction(id, async (repository, ctx, record) => {
       const status = await repository.status(id, ctx);
-      const failures = await this.nativeInvariantFailures(id, status, ctx);
+      const failures = await this.nativeInvariantFailures(
+        id,
+        status,
+        record,
+        ctx
+      );
       if (status.storageMode !== 'NATIVE' || status.executionMode !== 'ACTIVE')
         failures.push('NATIVE_OWNER');
       if (!status.readiness?.captureHealthy) failures.push('CAPTURE_SCHEMA');
@@ -788,7 +794,7 @@ export class CompetitionMigrationService {
   ) {
     if (!/^https:\/\/[^\s]+$/.test(evidence) || evidence.length > 2000)
       throw new Error('A reviewed repair evidence URL is required');
-    return this.transaction(id, async (repository, ctx) => {
+    return this.transaction(id, async (repository, ctx, record) => {
       const status = await repository.status(id, ctx);
       if (
         status.migration?.state !== 'ROLLBACK_REQUIRED' ||
@@ -802,6 +808,7 @@ export class CompetitionMigrationService {
       const invariantFailures = await this.nativeInvariantFailures(
         id,
         status,
+        record,
         ctx
       );
       if (invariantFailures.length)
@@ -951,20 +958,21 @@ export class CompetitionMigrationService {
     operator: MigrationOperator,
     dryRun: boolean
   ) {
-    return this.transaction(id, async (repository, ctx) => {
+    return this.transaction(id, async (repository, ctx, record) => {
       const status = await repository.status(id, ctx);
       const failures = this.readinessFailures(status);
       if (!failures.length)
-        failures.push(...(await this.reverseMismatches(id, ctx)));
+        failures.push(...(await this.reverseMismatches(id, record, ctx)));
       if (!failures.length)
-        failures.push(...(await this.nativeInvariantFailures(id, status, ctx)));
+        failures.push(
+          ...(await this.nativeInvariantFailures(id, status, record, ctx))
+        );
       if (failures.length || dryRun)
         return {
           changed: false,
           failures,
           finalWatermark: status.migration?.source_watermark ?? null
         };
-      const record = await repository.lock(id, ctx);
       const config = migrationCommandConfiguration(
         await new NativeCompetitionReader(
           new CompetitionRepository(this.supplier),
@@ -1072,10 +1080,10 @@ export class CompetitionMigrationService {
   }
   private async reverseMismatches(
     id: string,
+    record: CompetitionRecord,
     ctx: RequestContext
   ): Promise<string[]> {
     const db = this.supplier(),
-      record = await new CompetitionMigrationRepository(() => db).lock(id, ctx),
       now = this.now();
     const baseline = await new LegacyCompetitionBaselineRepository(
       () => db
@@ -1113,7 +1121,7 @@ export class CompetitionMigrationService {
     operator: MigrationOperator,
     dryRun: boolean
   ) {
-    return this.transaction(id, async (repository, ctx) => {
+    return this.transaction(id, async (repository, ctx, record) => {
       const status = await repository.status(id, ctx);
       if (status.migration?.state !== 'NATIVE' || !status.readiness)
         throw new Error('Competition is not NATIVE');
@@ -1139,7 +1147,7 @@ export class CompetitionMigrationService {
           repairRequired: false,
           failures: ['REVERSE_RECONCILIATION_INCOMPLETE']
         };
-      const failures = await this.reverseMismatches(id, ctx);
+      const failures = await this.reverseMismatches(id, record, ctx);
       if (failures.length) {
         if (!dryRun) {
           await repository.update(

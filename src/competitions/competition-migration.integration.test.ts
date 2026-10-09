@@ -263,8 +263,40 @@ describeWithSeed(
         changed: true,
         failures: []
       });
-      expect((await service.verifyNative(id)).failures).toEqual([]);
-      expect((await service.verifyNative(id)).failures).toEqual([]);
+      const nativeRecord = await sqlExecutor.execute(
+        `select * from ${COMPETITIONS_TABLE} where id=:id`,
+        { id }
+      );
+      const sourceWave = await sqlExecutor.execute(
+        `select * from ${WAVES_TABLE} where id=:waveId`,
+        { waveId: wave.id }
+      );
+      expect(nativeRecord).toMatchObject([
+        { legacy_wave_id: wave.id, lifecycle: 'ENDED' }
+      ]);
+      expect(sourceWave).toMatchObject([
+        {
+          participation_period_end: 1000,
+          voting_period_end: 1000,
+          next_decision_time: null
+        }
+      ]);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        expect((await service.verifyNative(id)).failures).toEqual([]);
+        expect(
+          await sqlExecutor.execute(
+            `select * from ${COMPETITIONS_TABLE} where id=:id`,
+            { id }
+          )
+        ).toEqual(nativeRecord);
+        expect(
+          await sqlExecutor.execute(
+            `select * from ${WAVES_TABLE} where id=:waveId`,
+            { waveId: wave.id }
+          )
+        ).toEqual(sourceWave);
+      }
+
       expect(
         await sqlExecutor.execute(
           `select r.real_time_rating, v.value, v.credit_spent from ${COMPETITION_ENTRY_RUNTIME_TABLE} r join ${COMPETITION_VOTES_TABLE} v on v.entry_id=r.entry_id and v.competition_id=r.competition_id where r.competition_id=:id`,
@@ -283,6 +315,26 @@ describeWithSeed(
           { dropId: drop.id }
         )
       ).toMatchObject([{ votes: 7 }]);
+    });
+    it('blocks a completed copy altered after comparison before dry-run or live transfer', async () => {
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await finishBackfill(service);
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
+      await sqlExecutor.execute(
+        `update ${COMPETITION_ENTRY_RUNTIME_TABLE} set real_time_rating=8 where competition_id=:id`,
+        { id }
+      );
+      for (const dryRun of [true, false]) {
+        const result = await service.cutover(id, operator, dryRun);
+        expect(result.changed).toBe(false);
+        expect(result.failures).toContain('frozen_relation:drop_ranks');
+        expect((await service.status(id)).storageMode).toBe('LEGACY_ADAPTER');
+      }
     });
     it.each([
       [
