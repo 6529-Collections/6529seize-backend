@@ -85,6 +85,31 @@ describe('Drop Forge operator controls', () => {
     ).rejects.toThrow('Control is not valid');
     expect((await dropForgeRepository.find(id, {}))!.state).toBe('DRAFT');
   });
+  it('pauses and resumes an armed launch without changing its plan', async () => {
+    const draft = (await dropForgeRepository.find(id, {}))!;
+    const armed = await controlLaunch(
+      testConfig.creator,
+      1,
+      { revision: draft.revision, operation: ControlOperation.Arm },
+      {}
+    );
+    const paused = await controlLaunch(
+      testConfig.creator,
+      1,
+      { revision: armed.revision, operation: ControlOperation.Pause },
+      {}
+    );
+    expect(paused.state).toBe('PAUSED');
+    const resumed = await controlLaunch(
+      testConfig.creator,
+      1,
+      { revision: paused.revision, operation: ControlOperation.Resume },
+      {}
+    );
+    expect(resumed.state).toBe('RUNNING');
+    expect(resumed.data.distribution_hash).toBe(draft.data.distribution_hash);
+    expect(resumed.data.actions).toEqual(draft.data.actions);
+  });
   it('sees concurrent arming after a preparation job established its snapshot', async () => {
     const draft = (await dropForgeRepository.find(id, {}))!;
     await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {

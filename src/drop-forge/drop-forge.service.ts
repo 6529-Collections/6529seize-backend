@@ -116,6 +116,17 @@ export async function putLaunch(
     ctx
   );
 }
+function pauseLaunch(record: LaunchRecord): void {
+  if (!['ARMED', 'RUNNING', 'BLOCKED'].includes(record.state))
+    throw new LaunchSafetyError(
+      'Control is not valid for the current launch state'
+    );
+  setLaunchState(
+    record,
+    'PAUSED',
+    'Launch paused; previously signed transactions may still mine and will be reconciled.'
+  );
+}
 export async function controlLaunch(
   contract: string,
   claim: number,
@@ -147,15 +158,7 @@ export async function controlLaunch(
           return;
         }
         if (request.operation === 'PAUSE') {
-          if (!['ARMED', 'RUNNING', 'BLOCKED'].includes(record.state))
-            throw new LaunchSafetyError(
-              'Control is not valid for the current launch state'
-            );
-          setLaunchState(
-            record,
-            'PAUSED',
-            'Launch paused; previously signed transactions may still mine and will be reconciled.'
-          );
+          pauseLaunch(record);
           return;
         }
         const arming = request.operation === 'ARM';

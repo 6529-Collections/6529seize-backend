@@ -81,6 +81,12 @@ describe('KMS transaction signer', () => {
     ).rejects.toThrow('does not match');
     expect(send).toHaveBeenCalledTimes(1);
   });
+  it('encodes small signature integers as exactly 32 bytes', () => {
+    expect(decodeKmsSignature(der(BigInt(1), BigInt(2)))).toEqual({
+      r: '0x' + '0'.repeat(63) + '1',
+      s: '0x' + '0'.repeat(63) + '2'
+    });
+  });
   it.each([
     Buffer.from([]),
     Buffer.from([0x30, 0, 2, 32]),
