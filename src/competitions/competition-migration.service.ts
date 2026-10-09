@@ -695,7 +695,7 @@ export class CompetitionMigrationService {
           {
             state: 'SHADOWING',
             ...progress,
-            last_comparison_at: now,
+            last_comparison_at: this.now(),
             last_comparison_watermark: migration.source_watermark
           },
           ctx

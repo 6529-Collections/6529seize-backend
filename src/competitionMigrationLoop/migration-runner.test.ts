@@ -105,10 +105,7 @@ describe('automatic wave migration', () => {
     ).toMatchObject({ outcome: 'COMPLETE', status: { storageMode: 'NATIVE' } });
     expect(runtime.wait).not.toHaveBeenCalled();
     expect(runtime.continueMigration).not.toHaveBeenCalled();
-    expect(service.cutover.mock.calls.map((call) => call[2])).toEqual([
-      true,
-      false
-    ]);
+    expect(service.cutover.mock.calls.map((call) => call[2])).toEqual([false]);
   });
   it('continues from saved checkpoints with the original deadline', async () => {
     const { service, runtime, advance } = fixture();
