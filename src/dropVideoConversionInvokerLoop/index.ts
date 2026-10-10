@@ -4,10 +4,30 @@ import { env, prepEnvironment } from '../env';
 import { Time } from '../time';
 import {
   CreateJobCommand,
+  GetJobTemplateCommand,
   MediaConvertClient
 } from '@aws-sdk/client-mediaconvert';
+import { buildDropVideoJobSettings } from './video-job-settings';
+import { createHash } from 'node:crypto';
+import { S3Client } from '@aws-sdk/client-s3';
+import { hasDeviceVideoPoster } from './has-device-poster';
+import { getDeviceVideoPosterKey } from '../media/chat-video-poster';
 
 const logger = Logger.get('DROP_VIDEO_CONVERSION_INVOKER_LOOP');
+// Capture once, before shared secrets can overwrite these values, including
+// subsequent invocations in the same warm Lambda process.
+const configuredTemplate = env.getStringOrNull('MC_DROPS_VIDEO_TEMPLATE_NAME');
+const configuredBucket = env.getStringOrNull('S3_BUCKET');
+const configuredRegion = env.getStringOrNull('BUCKET_REGION');
+// The bucket region is stable for this Lambda process, so one client serves warm runs.
+let devicePosterS3: S3Client | undefined;
+
+function getDevicePosterS3(region: string): S3Client {
+  if (!devicePosterS3) {
+    devicePosterS3 = new S3Client({ region });
+  }
+  return devicePosterS3;
+}
 
 export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const start = Time.now();
@@ -16,51 +36,60 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
     await prepEnvironment();
     const endpoint = env.getStringOrThrow('MC_ENDPOINT');
     const roleArn = env.getStringOrThrow('MC_ROLE_ARN');
-    const template = env.getStringOrThrow('MC_DROPS_VIDEO_TEMPLATE_NAME');
-    const bucket = env.getStringOrThrow('S3_BUCKET');
-    const bucketRegion = env.getStringOrThrow('BUCKET_REGION');
+    const template =
+      configuredTemplate ??
+      env.getStringOrThrow('MC_DROPS_VIDEO_TEMPLATE_NAME');
+    const bucket = configuredBucket ?? env.getStringOrThrow('S3_BUCKET');
+    const bucketRegion =
+      configuredRegion ?? env.getStringOrThrow('BUCKET_REGION');
     const exts = ['mp4', 'mov', 'avi', 'webm'];
     const key = event.detail.object.key;
-    if (key.includes('/hls/') || key.includes('/mp4/')) return;
+    if (
+      !key.startsWith('drops/') ||
+      key.includes('/hls/') ||
+      key.includes('/mp4/')
+    )
+      return;
     const ext = key.split('.').pop()!.toLowerCase();
     if (!exts.includes(ext)) return; // ignore pictures, etc.
-    const base = key.replace(/\.[^.]+$/i, '');
 
     const mc = new MediaConvertClient({ region: bucketRegion, endpoint });
     const fileInput = `s3://${bucket}/${key}`;
+    // UploadMediaService generates the author/upload UUID path and slugged name.
+    // S3 keys are opaque; do not normalize or decode them into a different key.
+    const clientRequestToken =
+      typeof event.id === 'string'
+        ? createHash('sha256')
+            .update(JSON.stringify([bucket, key, event.id]))
+            .digest('hex')
+        : undefined;
+    // Expand the template before adding an output: do not rely on merging
+    // differently sized OutputGroups arrays or replace its video/audio codecs.
+    const { JobTemplate: jobTemplate } = await mc.send(
+      new GetJobTemplateCommand({ Name: template })
+    );
+    if (!jobTemplate?.Settings) {
+      throw new Error(`Drop video template ${template} has no settings`);
+    }
     logger.info(`Invoking video conversion for ${fileInput}`);
+    const hasDevicePoster =
+      getDeviceVideoPosterKey(key) !== undefined &&
+      (await hasDeviceVideoPoster(
+        getDevicePosterS3(bucketRegion),
+        bucket,
+        key
+      ));
     await mc.send(
       new CreateJobCommand({
+        ClientRequestToken: clientRequestToken,
         Role: roleArn,
         JobTemplate: template,
-        Settings: {
-          Inputs: [
-            {
-              FileInput: fileInput,
-              VideoSelector: {
-                Rotate: 'AUTO'
-              }
-            }
-          ],
-          OutputGroups: [
-            {
-              OutputGroupSettings: {
-                Type: 'HLS_GROUP_SETTINGS',
-                HlsGroupSettings: {
-                  Destination: `s3://${bucket}/renditions/${base}/hls/`
-                }
-              }
-            },
-            {
-              OutputGroupSettings: {
-                Type: 'FILE_GROUP_SETTINGS',
-                FileGroupSettings: {
-                  Destination: `s3://${bucket}/renditions/${base}/mp4/`
-                }
-              }
-            }
-          ]
-        }
+        Settings: buildDropVideoJobSettings(
+          jobTemplate.Settings,
+          bucket,
+          key,
+          !hasDevicePoster
+        )
       })
     );
     logger.info(`Video conversion successfully invoked for ${fileInput}`);
