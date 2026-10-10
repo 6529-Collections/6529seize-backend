@@ -62,7 +62,7 @@ export function handleGetCollectCapabilities(
         };
       const enabled =
         action === ApiCollectCapabilityActionEnum.TdhScenario ||
-        (Boolean(process.env.ALCHEMY_API_KEY) &&
+        (Boolean(process.env.ETHEREUM_RPC_URL) &&
           (action === ApiCollectCapabilityActionEnum.Cancel ||
             (Boolean(process.env.OPENSEA_API_KEY) &&
               (process.env.MARKETPLACE_TRADING_ENABLED ?? 'true') === 'true')));

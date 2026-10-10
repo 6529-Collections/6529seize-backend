@@ -46,7 +46,7 @@ describe('SIWE wallet auth', () => {
     process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS =
       '6529.io,staging.6529.io,example.com:8443';
     process.env.AUTH_SIGNATURE_ALLOWED_AUDIENCES = 'api.example.com:8443';
-    process.env.ALCHEMY_API_KEY = 'test-key';
+    process.env.ETHEREUM_RPC_URL = 'https://rpc.example.test';
     getRedisClientMock.mockReturnValue(null);
     clearSiweWalletAuthReplayCacheForTests();
   });
@@ -55,7 +55,7 @@ describe('SIWE wallet auth', () => {
     process.env.NODE_ENV = originalNodeEnv;
     delete process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS;
     delete process.env.AUTH_SIGNATURE_ALLOWED_AUDIENCES;
-    delete process.env.ALCHEMY_API_KEY;
+    delete process.env.ETHEREUM_RPC_URL;
     jest.useRealTimers();
     jest.restoreAllMocks();
   });

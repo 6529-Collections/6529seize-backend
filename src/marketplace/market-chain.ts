@@ -1,5 +1,5 @@
 import { Interface, isError, JsonRpcProvider } from 'ethers';
-import { getRpcUrl } from '@/alchemy';
+import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
 import {
   marketGasFitsEnvelope,
   reviewedMarketGas
@@ -331,14 +331,14 @@ export class MarketChain {
 let instance: MarketChain | undefined;
 export function marketChain(): MarketChain {
   if (!instance) {
-    if (!process.env.ALCHEMY_API_KEY)
+    if (!process.env.ETHEREUM_RPC_URL)
       throw new MarketValidationError(
         'PROVIDER_UNAVAILABLE',
         'The chain connection is not configured.'
       );
-    instance = new MarketChain(
-      new JsonRpcProvider(getRpcUrl(1), 1, { staticNetwork: true })
-    );
+    // Retain chain verification even for marketplace reads: a configurable URL
+    // must not be trusted as mainnet via staticNetwork. Reuse the shared provider.
+    instance = new MarketChain(getEthereumRpcProvider());
   }
   return instance;
 }

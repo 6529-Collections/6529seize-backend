@@ -3,8 +3,10 @@ import { UUID_REGEX, WALLET_REGEX } from '@/constants';
 import { cicDb, CicDb } from '@/cic/cic.db';
 import { collections } from '@/collections';
 import { ratingsDb, RatingsDb } from '@/rates/ratings.db';
-import { Alchemy } from '@/alchemy-sdk';
-import { getAlchemyInstance } from '../../../alchemy';
+import {
+  EthereumRpcClient,
+  getEthereumRpcClient
+} from '@/ethereum-rpc/ethereum-rpc-client';
 import { IdentityEntity } from '../../../entities/IIdentity';
 import { RequestContext } from '../../../request.context';
 import { ApiDropResolvedIdentityProfile } from '../generated/models/ApiDropResolvedIdentityProfile';
@@ -45,7 +47,7 @@ export class IdentityFetcher {
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly cicDb: CicDb,
     private readonly ratingsDb: RatingsDb,
-    private readonly supplyAlchemy: () => Alchemy
+    private readonly supplyRpc: () => Pick<EthereumRpcClient, 'resolveName'>
   ) {}
 
   private resolveApiProfileClassification(
@@ -511,7 +513,7 @@ export class IdentityFetcher {
     query: string,
     ctx: RequestContext
   ): Promise<ApiIdentity | null> {
-    const wallet = await this.supplyAlchemy().core.resolveName(query);
+    const wallet = await this.supplyRpc().resolveName(query);
     if (!wallet) {
       return null;
     }
@@ -1015,5 +1017,5 @@ export const identityFetcher = new IdentityFetcher(
   identitySubscriptionsDb,
   cicDb,
   ratingsDb,
-  getAlchemyInstance
+  getEthereumRpcClient
 );

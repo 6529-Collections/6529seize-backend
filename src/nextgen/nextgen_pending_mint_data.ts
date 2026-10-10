@@ -13,7 +13,7 @@ import {
 } from './nextgen_constants';
 import { NEXTGEN_CORE_ABI } from '../abis/nextgen';
 import { NextGenTokenTrait } from '../entities/INextGen';
-import { getRpcUrlFromNetwork } from '../alchemy';
+import { getRpcProvider } from '@/rpc-provider';
 
 const logger = Logger.get('NEXTGEN_PENDING_MINT_DATA');
 
@@ -28,8 +28,7 @@ export async function processMissingMintData(entityManager: EntityManager) {
   logger.info(`[FOUND ${missingData.length} MISSING TOKEN DATA]`);
 
   const network = getNextgenNetwork();
-  const rpcUrl = getRpcUrlFromNetwork(network);
-  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const provider = getRpcProvider(network);
 
   const contract = new ethers.Contract(
     NEXTGEN_CORE_CONTRACT[network],

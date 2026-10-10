@@ -25,7 +25,7 @@ describe('structured wallet signatures', () => {
   beforeEach(() => {
     clearStructuredWalletSignatureReplayCacheForTests();
     process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS = 'example.com';
-    process.env.ALCHEMY_API_KEY = 'test-key';
+    process.env.ETHEREUM_RPC_URL = 'https://rpc.example.test';
     delete process.env.AUTH_STRUCTURED_SIGNATURES_REQUIRED;
     delete process.env.AUTH_SIGNATURE_ALLOWED_AUDIENCES;
     delete process.env.AUTH_SIGNATURE_ALLOWED_DOMAIN_SUFFIXES;
@@ -40,7 +40,7 @@ describe('structured wallet signatures', () => {
     delete process.env.AUTH_SIGNATURE_ALLOWED_AUDIENCES;
     delete process.env.AUTH_SIGNATURE_ALLOWED_DOMAIN_SUFFIXES;
     delete process.env.AUTH_WEB_CREDENTIAL_ORIGINS;
-    delete process.env.ALCHEMY_API_KEY;
+    delete process.env.ETHEREUM_RPC_URL;
     delete process.env.AUTH_STRUCTURED_SIGNATURES_REQUIRED;
     delete process.env.WEB_APP_ADDITIONAL_ORIGINS;
     delete process.env.WEB_APP_ORIGIN;

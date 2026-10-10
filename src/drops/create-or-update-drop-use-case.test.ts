@@ -8,12 +8,8 @@ jest.mock('@/competitions/legacy-competition-mutation', () => ({
 const mockResolveName = jest.fn();
 jest.mock('@/competitions/competition-entry-drop-hooks');
 
-jest.mock('@/alchemy', () => ({
-  getAlchemyInstance: jest.fn(() => ({
-    core: {
-      resolveName: mockResolveName
-    }
-  }))
+jest.mock('@/ethereum-rpc/ethereum-rpc-client', () => ({
+  getEthereumRpcClient: jest.fn(() => ({ resolveName: mockResolveName }))
 }));
 
 import { identitiesDb } from '@/identities/identities.db';
