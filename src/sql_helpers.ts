@@ -28,7 +28,9 @@ export function getConsolidationsSql() {
       LOWER(wallet1) AS wallet1,
       LOWER(wallet2) AS wallet2,
       block,
-      created_at
+      created_at,
+      wallet1_registered_at,
+      wallet2_registered_at
     FROM ${CONSOLIDATIONS_TABLE}
     WHERE confirmed = true
       AND (
@@ -44,7 +46,7 @@ export function getConsolidationsSql() {
           SELECT wallet2 FROM wallet_cluster
         )
       )
-    ORDER BY block DESC;
+    ORDER BY block DESC, LOWER(wallet1), LOWER(wallet2);
   `;
 }
 

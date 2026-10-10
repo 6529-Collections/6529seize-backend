@@ -344,9 +344,12 @@ possessive multi-wallet target, regardless of which appears first. Wallet-limit
 questions are routed to consolidation use cases when they combine a wallet or
 address subject with either strong limit language or quantity language plus a
 counting, setup, or consolidation relationship. The answer distinguishes
-registration capacity from the effective metrics group: more than three
-addresses can have consolidation records, but only the last three count for
-consolidation purposes. Removal and unlinking wording with explicit
+registration capacity from the effective metrics group: any number of
+addresses can have consolidation records, but at most four count as one
+consolidation, every pair must be linked both ways, and a fourth address counts
+only when its links were registered from 2026-10-15 00:00 UTC. Counts above
+`CONSOLIDATIONS_LIMIT` (four) use the over-limit routing; four-wallet setup
+questions route like other setup questions. Removal and unlinking wording with explicit
 multi-wallet or consolidation context routes to consolidation revoke guidance,
 while replacement and swapping wording with that context routes to update
 guidance. Bare singular requests such as removing or replacing "a wallet"
@@ -732,7 +735,6 @@ These requests use only `about.6529-apps` and its authored `brief_answer` and va
 footer. Missing or incomplete app knowledge fails closed; product facts remain in
 the frontend corpus. This route runs before Desktop scope inheritance and never
 needs a generated answer or a public-data query.
-
 
 ### Progressive Desktop reconciliation
 

@@ -58,6 +58,19 @@ const getDelegationDetails = async (txHash: string) => {
   return null;
 };
 
+// The fourth-wallet gate compares these timestamps with the activation time.
+async function attachBlockTimestamps(events: ConsolidationEvent[]) {
+  const blockNumbers = Array.from(new Set(events.map((e) => e.block)));
+  const timestamps = new Map<number, number>();
+  for (const blockNumber of blockNumbers) {
+    const block = await alchemy.core.getBlock(blockNumber);
+    timestamps.set(blockNumber, block.timestamp);
+  }
+  for (const event of events) {
+    event.timestamp = timestamps.get(event.block);
+  }
+}
+
 const getNetwork = () => {
   if (DELEGATION_CONTRACT.chain_id == sepolia.id) {
     return Network.ETH_SEPOLIA;
@@ -164,6 +177,9 @@ export const findDelegationTransactions = async (
       }
     })
   );
+
+  // Filled in after collection so consolidation events keep their log order.
+  await attachBlockTimestamps(consolidations);
 
   return {
     latestBlock: latestBlock,

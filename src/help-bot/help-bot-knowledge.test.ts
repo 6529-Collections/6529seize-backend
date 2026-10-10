@@ -227,7 +227,7 @@ describe('FrontendHelpBotKnowledgeSource', () => {
     expect(match).toBeNull();
   });
 
-  it('routes wallet consolidation questions to consolidation records', async () => {
+  it('routes over-limit wallet consolidation questions to consolidation use cases', async () => {
     const source = new FrontendHelpBotKnowledgeSource(async () =>
       response({
         schema_version: 1,
@@ -266,7 +266,69 @@ describe('FrontendHelpBotKnowledgeSource', () => {
             aliases: ['consolidation use cases'],
             keywords: ['consolidation', 'wallet'],
             facts: [
-              '6529 recognizes up to three addresses as one consolidation group.'
+              '6529 recognizes up to four addresses as one consolidation group.'
+            ]
+          }
+        ]
+      })
+    );
+
+    const matches = await source.findMatches(
+      "i have five wallets i'd like to consolidate. how do i do that?",
+      4
+    );
+
+    const matchIds = matches.map((match) => match.record.id);
+    expect(matchIds[0]).toBe('delegation.consolidation-use-cases');
+    expect(new Set(matchIds)).toEqual(
+      new Set([
+        'delegation.register-consolidation-doc',
+        'delegation.register-consolidation',
+        'delegation.wallet-architecture',
+        'delegation.consolidation-use-cases'
+      ])
+    );
+  });
+  it('routes four-wallet consolidation questions to the setup guide', async () => {
+    const source = new FrontendHelpBotKnowledgeSource(async () =>
+      response({
+        schema_version: 1,
+        generated_at: '2026-06-19T00:00:00.000Z',
+        commit_sha: 'test',
+        base_url: 'https://6529.io',
+        records: [
+          {
+            id: 'delegation.wallet-architecture',
+            title: 'Wallet Architecture',
+            canonical_path: '/delegation/wallet-architecture',
+            aliases: ['wallet architecture'],
+            keywords: ['wallet', 'architecture', 'vault'],
+            facts: ['Separate vault, transaction, and minting wallets.']
+          },
+          {
+            id: 'delegation.register-consolidation-doc',
+            title: 'Register Consolidation Guide',
+            canonical_path: '/delegation/delegation-faq/register-consolidation',
+            aliases: ['register consolidation guide'],
+            keywords: ['register', 'consolidation'],
+            facts: ['Register Consolidation connects wallets you control.']
+          },
+          {
+            id: 'delegation.register-consolidation',
+            title: 'Register Consolidation',
+            canonical_path: '/delegation/register-consolidation',
+            aliases: ['register consolidation'],
+            keywords: ['register', 'consolidation'],
+            facts: ['Use the Register Consolidation form.']
+          },
+          {
+            id: 'delegation.consolidation-use-cases',
+            title: 'Consolidation Use Cases',
+            canonical_path: '/delegation/consolidation-use-cases',
+            aliases: ['consolidation use cases'],
+            keywords: ['consolidation', 'wallet'],
+            facts: [
+              '6529 recognizes up to four addresses as one consolidation group.'
             ]
           }
         ]
@@ -279,7 +341,7 @@ describe('FrontendHelpBotKnowledgeSource', () => {
     );
 
     const matchIds = matches.map((match) => match.record.id);
-    expect(matchIds[0]).toBe('delegation.consolidation-use-cases');
+    expect(matchIds[0]).toBe('delegation.register-consolidation-doc');
     expect(new Set(matchIds)).toEqual(
       new Set([
         'delegation.register-consolidation-doc',
@@ -341,7 +403,7 @@ describe('FrontendHelpBotKnowledgeSource', () => {
             aliases: ['consolidation use cases'],
             keywords: ['consolidation', 'wallet'],
             facts: [
-              '6529 recognizes up to three addresses as one consolidation group.'
+              '6529 recognizes up to four addresses as one consolidation group.'
             ]
           }
         ]
@@ -396,7 +458,7 @@ describe('FrontendHelpBotKnowledgeSource', () => {
             aliases: ['consolidation use cases'],
             keywords: ['consolidation', 'wallet', 'limit'],
             facts: [
-              '6529 recognizes up to three addresses as one consolidation group.'
+              '6529 recognizes up to four addresses as one consolidation group.'
             ]
           },
           {
@@ -595,7 +657,7 @@ describe('FrontendHelpBotKnowledgeSource', () => {
             canonical_path: '/delegation/consolidation-use-cases',
             aliases: ['wallet consolidation limit'],
             keywords: ['consolidation', 'wallet', 'limit'],
-            facts: ['Only the last three addresses count.']
+            facts: ['Only four addresses count.']
           },
           {
             id: 'delegation.manage-revoke-doc',
@@ -804,7 +866,7 @@ describe('StaticHelpBotKnowledgeSource', () => {
           aliases: ['consolidation use cases'],
           keywords: ['consolidation', 'wallet', 'limit'],
           facts: [
-            '6529 recognizes up to three addresses as one consolidation group.'
+            '6529 recognizes up to four addresses as one consolidation group.'
           ],
           relatedPaths: [],
           tags: ['delegation'],
@@ -1018,7 +1080,7 @@ describe('StaticHelpBotKnowledgeSource', () => {
             aliases: ['consolidation use cases'],
             keywords: ['consolidation', 'wallet', 'limit'],
             facts: [
-              '6529 recognizes up to three addresses as one consolidation group.'
+              '6529 recognizes up to four addresses as one consolidation group.'
             ],
             relatedPaths: ['/delegation/wallet-architecture'],
             tags: ['delegation', 'wallet'],

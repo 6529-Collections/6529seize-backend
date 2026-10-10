@@ -12,6 +12,8 @@ import {
   ObjectLiteral
 } from 'typeorm';
 import { consolidationTools } from './consolidation-tools';
+import { formatConsolidationDisplay } from './consolidation-display';
+import { planConsolidationEvent } from './consolidation-row-plan';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   ARTISTS_TABLE,
@@ -41,7 +43,6 @@ import {
   ConsolidationEvent,
   Delegation,
   DelegationEvent,
-  EventType,
   NFTDelegationBlock,
   WalletConsolidationKey
 } from './entities/IDelegation';
@@ -438,7 +439,9 @@ export async function retrieveConsolidationsForWallets(
     SELECT DISTINCT
       LOWER(wallet1) AS wallet1,
       LOWER(wallet2) AS wallet2,
-      block
+      block,
+      wallet1_registered_at,
+      wallet2_registered_at
     FROM ${CONSOLIDATIONS_TABLE}
     WHERE confirmed = true
       AND (
@@ -454,7 +457,7 @@ export async function retrieveConsolidationsForWallets(
           SELECT wallet2 FROM wallet_cluster
         )
       )
-    ORDER BY block DESC;
+    ORDER BY block DESC, LOWER(wallet1), LOWER(wallet2);
   `;
 
   const consolidations = await sqlExecutor.execute<Consolidation>(
@@ -652,15 +655,6 @@ export async function fetchAllTDH(block: number, wallets?: string[]) {
   return results.map(parseTdhDataFromDB);
 }
 
-function shortFormatIfAddress(address: string): string {
-  if (!address || !ethTools.isEthAddress(address)) {
-    return address;
-  }
-  return `${address.substring(0, 5)}...${address.substring(
-    address.length - 3
-  )}`;
-}
-
 export async function fetchConsolidationDisplay(
   myWallets: string[]
 ): Promise<string> {
@@ -678,10 +672,12 @@ export async function fetchConsolidationDisplay(
     }
   });
 
-  if (displayArray.length == 1) {
-    return displayArray[0];
-  }
-  return displayArray.map((d) => shortFormatIfAddress(d)).join(' - ');
+  return formatConsolidationDisplay(
+    myWallets.map((wallet, index) => ({
+      wallet,
+      display: displayArray[index]
+    }))
+  );
 }
 
 export async function fetchConsolidationDisplays(
@@ -715,14 +711,12 @@ export async function fetchConsolidationDisplays(
   }
   return consolidationKeys.reduce(
     (acc, key) => {
-      const displays = key
-        .split('-')
-        .map((wallet) => allRelatedDisplays[wallet.toLowerCase()]!);
-      if (displays.length === 1) {
-        acc[key] = displays[0];
-      } else {
-        acc[key] = displays.map((it) => shortFormatIfAddress(it)).join(' - ');
-      }
+      acc[key] = formatConsolidationDisplay(
+        key.split('-').map((wallet) => ({
+          wallet,
+          display: allRelatedDisplays[wallet.toLowerCase()]!
+        }))
+      );
       return acc;
     },
     {} as Record<string, string>
@@ -1531,73 +1525,30 @@ export async function persistConsolidations(
   }
 
   for (const consolidation of consolidations) {
-    if (consolidation.type == EventType.REGISTER) {
-      const r = await repo.findOne({
-        where: {
-          wallet1: consolidation.wallet1,
-          wallet2: consolidation.wallet2
-        }
-      });
-      if (r) {
-        // do nothing
-      } else {
-        const r2 = await repo.findOne({
+    const sameDirection = await repo.findOne({
+      where: {
+        wallet1: consolidation.wallet1,
+        wallet2: consolidation.wallet2
+      }
+    });
+    const reverseDirection = sameDirection
+      ? null
+      : await repo.findOne({
           where: {
             wallet1: consolidation.wallet2,
             wallet2: consolidation.wallet1
           }
         });
-        if (r2) {
-          await repo.remove(r2);
-          const updatedConsolidation = new Consolidation();
-          updatedConsolidation.block = consolidation.block;
-          updatedConsolidation.wallet1 = consolidation.wallet2;
-          updatedConsolidation.wallet2 = consolidation.wallet1;
-          updatedConsolidation.confirmed = true;
-          await repo.save(updatedConsolidation);
-        } else {
-          const newConsolidation = new Consolidation();
-          newConsolidation.block = consolidation.block;
-          newConsolidation.wallet1 = consolidation.wallet1;
-          newConsolidation.wallet2 = consolidation.wallet2;
-          await repo.save(newConsolidation);
-        }
-      }
-    } else if (consolidation.type == EventType.REVOKE) {
-      const r = await repo.findOne({
-        where: {
-          wallet1: consolidation.wallet1,
-          wallet2: consolidation.wallet2
-        }
-      });
-      if (r) {
-        if (r.confirmed) {
-          await repo.remove(r);
-          const newConsolidation = new Consolidation();
-          newConsolidation.block = consolidation.block;
-          newConsolidation.wallet1 = consolidation.wallet2;
-          newConsolidation.wallet2 = consolidation.wallet1;
-          await repo.save(newConsolidation);
-        } else {
-          await repo.remove(r);
-        }
-      } else {
-        const r2 = await repo.findOne({
-          where: {
-            wallet1: consolidation.wallet2,
-            wallet2: consolidation.wallet1
-          }
-        });
-        if (r2) {
-          await repo.remove(r2);
-          const updatedConsolidation = new Consolidation();
-          updatedConsolidation.block = consolidation.block;
-          updatedConsolidation.wallet1 = consolidation.wallet2;
-          updatedConsolidation.wallet2 = consolidation.wallet1;
-          updatedConsolidation.confirmed = false;
-          await repo.save(updatedConsolidation);
-        }
-      }
+    const plan = planConsolidationEvent(
+      consolidation,
+      sameDirection,
+      reverseDirection
+    );
+    if (plan.remove.length) {
+      await repo.remove(plan.remove);
+    }
+    if (plan.save.length) {
+      await repo.save(plan.save);
     }
   }
 
