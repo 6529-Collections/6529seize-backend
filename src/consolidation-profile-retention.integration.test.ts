@@ -177,3 +177,22 @@ describeWithSeed(
     });
   }
 );
+
+describeWithSeed(
+  'Mature primary-address lookup at the maturity boundary',
+  [
+    withPrimaryAddressDelegations([
+      { from: '0x1', to: '0x1', block: MATURE_BLOCK + 1 }
+    ]),
+    withLatestProcessedDelegationBlock
+  ],
+  () => {
+    it('treats a delegation one block short of maturity as recent', async () => {
+      await expect(
+        getDelegationPrimaryAddressForConsolidation('0x1-0x2', {
+          matureOnly: true
+        })
+      ).resolves.toBeNull();
+    });
+  }
+);
