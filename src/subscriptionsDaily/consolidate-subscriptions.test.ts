@@ -257,4 +257,55 @@ describe('consolidateSubscriptions', () => {
     );
     expect(finalUpdate?.params).toEqual(['0xa-0xd', '0xa-0xb', 77]);
   });
+
+  it('rolls back only the consolidation whose move fails', async () => {
+    const executor = new MockSqlExecutor(
+      [
+        { consolidation_key: '0xa-0xb', balance: 3 },
+        { consolidation_key: '0xc', balance: 7 }
+      ],
+      { '0xa-0xd': 100, '0xb': 50 }
+    );
+    setSqlExecutor(executor);
+    fakeManager.query.mockImplementation(
+      async (sql: string, params?: any[]): Promise<any[]> => {
+        managerQueries.push({ sql, params });
+        if (
+          sql.includes('UPDATE subscriptions_nfts') &&
+          !sql.includes('subscriptions_nfts_final') &&
+          sql.includes('updated_at = updated_at') &&
+          params?.[1] === '0xa-0xb'
+        ) {
+          throw new Error('deadlock');
+        }
+        if (sql.includes('SUM(balance)')) {
+          return [{ total_balance: 7 }];
+        }
+        if (sql.includes('automatic_count')) {
+          return [{ automatic_count: 0 }];
+        }
+        return [];
+      }
+    );
+
+    await expect(
+      consolidateSubscriptions(new Set(['0xd']))
+    ).resolves.toBeUndefined();
+
+    const statements = managerQueries.map((q) => q.sql.trim());
+    expect(statements).toContain(
+      'ROLLBACK TO SAVEPOINT consolidate_subscriptions_0'
+    );
+    expect(statements).not.toContain(
+      'RELEASE SAVEPOINT consolidate_subscriptions_0'
+    );
+    expect(statements).toContain(
+      'RELEASE SAVEPOINT consolidate_subscriptions_1'
+    );
+    const balanceInserts = managerQueries.filter(
+      (q) =>
+        q.sql.includes('INSERT INTO') && q.sql.includes('balance') && q.params
+    );
+    expect(balanceInserts.map((q) => q.params?.[0])).toEqual(['0xc']);
+  });
 });

@@ -541,7 +541,7 @@ async function moveUpcomingSubscriptions(
   newKey: string
 ) {
   const conflicts: UpcomingSubscriptionConflict[] = await manager.query(
-    `SELECT
+    `SELECT DISTINCT
         surviving.id AS surviving_id,
         surviving.subscribed AS surviving_subscribed,
         surviving.automatic_subscription AS surviving_automatic_subscription,
@@ -602,7 +602,7 @@ async function moveFinalSubscriptions(
 ) {
   const conflicts: { id: number; contract: string; token_id: number }[] =
     await manager.query(
-      `SELECT merged.id AS id, merged.contract AS contract,
+      `SELECT DISTINCT merged.id AS id, merged.contract AS contract,
           merged.token_id AS token_id
         FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} merged
         JOIN ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} surviving
@@ -689,99 +689,98 @@ export async function consolidateSubscriptions(addresses: Set<string>) {
     }
   }
 
-  const replaceTable = async (
-    table: string,
-    newKey: string,
-    oldKey: string,
-    replace: () => Promise<unknown>
-  ) => {
-    try {
-      await replace();
-    } catch (e) {
-      logger.error(
-        `Error updating ${table} for old key: ${oldKey} and new key: ${newKey}`,
-        e
-      );
-    }
-  };
-
+  // Each merged consolidation is all-or-nothing: if any of its moves fails,
+  // its own changes are rolled back to the savepoint and logged, and the
+  // other consolidations still commit, so one bad key cannot leave half-moved
+  // rows or stop the delegations loop.
   await getDataSource().transaction(async (manager) => {
-    for (const oldKey of Array.from(replaceConsolidations.keys())) {
-      const newKey = replaceConsolidations.get(oldKey);
-      if (!newKey || newKey === oldKey) {
-        continue;
-      }
-      await replaceTable(SUBSCRIPTIONS_NFTS_TABLE, newKey, oldKey, () =>
-        moveUpcomingSubscriptions(manager, oldKey, newKey)
-      );
-      await replaceTable(SUBSCRIPTIONS_NFTS_FINAL_TABLE, newKey, oldKey, () =>
-        moveFinalSubscriptions(manager, oldKey, newKey)
-      );
-      for (const table of [
-        SUBSCRIPTIONS_LOGS_TABLE,
-        SUBSCRIPTIONS_REDEEMED_TABLE
-      ]) {
-        await replaceTable(table, newKey, oldKey, () =>
-          manager.query(
-            `UPDATE ${table}
-              SET consolidation_key = ?
-              WHERE consolidation_key = ?`,
-            [newKey, oldKey]
-          )
-        );
-      }
-    }
-
     const uniqueValuesWithKeys = collections.getMapWithKeysAndValuesSwitched(
       replaceConsolidations
     );
-    for (const value of Array.from(uniqueValuesWithKeys.keys())) {
-      const keys = uniqueValuesWithKeys.get(value);
-      if (!keys) {
-        logger.error(`No keys found for value: ${value}`);
+    const newKeys = Array.from(uniqueValuesWithKeys.keys());
+    for (let index = 0; index < newKeys.length; index++) {
+      const newKey = newKeys[index];
+      const oldKeys = uniqueValuesWithKeys.get(newKey);
+      if (!oldKeys) {
+        logger.error(`No keys found for value: ${newKey}`);
         continue;
       }
-
-      const balanceQuery = `
-            SELECT SUM(balance) as total_balance 
-            FROM ${SUBSCRIPTIONS_BALANCES_TABLE}
-            WHERE consolidation_key IN (${keys.map(() => '?').join(',')})
-        `;
-      const balanceResult = await manager.query(balanceQuery, keys);
-      const totalBalance = balanceResult[0]?.total_balance;
-
-      const isSubscribedQuery = `
-            SELECT COUNT(*) as automatic_count
-            FROM ${SUBSCRIPTIONS_MODE_TABLE}
-            WHERE consolidation_key IN (${keys.map(() => '?').join(',')})
-            AND automatic = true
-        `;
-      const isSubscribedResult = await manager.query(isSubscribedQuery, keys);
-      const isSubscribed = isSubscribedResult[0]?.automatic_count > 0;
-
-      for (const key of keys) {
-        await manager.query(
-          `DELETE FROM ${SUBSCRIPTIONS_BALANCES_TABLE}
-                WHERE consolidation_key = ?`,
-          [key]
-        );
-        await manager.query(
-          `DELETE FROM ${SUBSCRIPTIONS_MODE_TABLE}
-                WHERE consolidation_key = ?`,
-          [key]
+      const savepoint = `consolidate_subscriptions_${index}`;
+      await manager.query(`SAVEPOINT ${savepoint}`);
+      try {
+        await mergeSubscriptionsIntoKey(manager, newKey, oldKeys);
+        await manager.query(`RELEASE SAVEPOINT ${savepoint}`);
+      } catch (e) {
+        await manager.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+        logger.error(
+          `[SUBSCRIPTION MERGE ROLLED BACK] [${oldKeys.join(', ')} -> ${newKey}]`,
+          e
         );
       }
-
-      await manager.query(
-        `INSERT INTO ${SUBSCRIPTIONS_BALANCES_TABLE} (consolidation_key, balance)
-            VALUES (?, ?)`,
-        [value, totalBalance]
-      );
-      await manager.query(
-        `INSERT INTO ${SUBSCRIPTIONS_MODE_TABLE} (consolidation_key, automatic)
-            VALUES (?, ?)`,
-        [value, isSubscribed]
-      );
     }
   });
+}
+
+async function mergeSubscriptionsIntoKey(
+  manager: QueryRunner,
+  newKey: string,
+  oldKeys: string[]
+) {
+  for (const oldKey of oldKeys.filter((key) => key !== newKey)) {
+    await moveUpcomingSubscriptions(manager, oldKey, newKey);
+    await moveFinalSubscriptions(manager, oldKey, newKey);
+    for (const table of [
+      SUBSCRIPTIONS_LOGS_TABLE,
+      SUBSCRIPTIONS_REDEEMED_TABLE
+    ]) {
+      await manager.query(
+        `UPDATE ${table}
+          SET consolidation_key = ?
+          WHERE consolidation_key = ?`,
+        [newKey, oldKey]
+      );
+    }
+  }
+
+  const placeholders = oldKeys.map(() => '?').join(',');
+  const balanceResult = await manager.query(
+    `SELECT SUM(balance) as total_balance
+      FROM ${SUBSCRIPTIONS_BALANCES_TABLE}
+      WHERE consolidation_key IN (${placeholders})`,
+    oldKeys
+  );
+  const totalBalance = balanceResult[0]?.total_balance;
+
+  const isSubscribedResult = await manager.query(
+    `SELECT COUNT(*) as automatic_count
+      FROM ${SUBSCRIPTIONS_MODE_TABLE}
+      WHERE consolidation_key IN (${placeholders})
+      AND automatic = true`,
+    oldKeys
+  );
+  const isSubscribed = isSubscribedResult[0]?.automatic_count > 0;
+
+  for (const key of oldKeys) {
+    await manager.query(
+      `DELETE FROM ${SUBSCRIPTIONS_BALANCES_TABLE}
+        WHERE consolidation_key = ?`,
+      [key]
+    );
+    await manager.query(
+      `DELETE FROM ${SUBSCRIPTIONS_MODE_TABLE}
+        WHERE consolidation_key = ?`,
+      [key]
+    );
+  }
+
+  await manager.query(
+    `INSERT INTO ${SUBSCRIPTIONS_BALANCES_TABLE} (consolidation_key, balance)
+      VALUES (?, ?)`,
+    [newKey, totalBalance]
+  );
+  await manager.query(
+    `INSERT INTO ${SUBSCRIPTIONS_MODE_TABLE} (consolidation_key, automatic)
+      VALUES (?, ?)`,
+    [newKey, isSubscribed]
+  );
 }

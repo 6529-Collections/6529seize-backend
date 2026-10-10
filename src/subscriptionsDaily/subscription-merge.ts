@@ -13,7 +13,8 @@ export interface UpcomingSubscriptionState {
  * - The count is the larger of the subscribed rows' counts. Eligibility (full
  *   Meme sets) only grows when wallets merge, so this never exceeds it;
  *   automatic rows are re-synced to eligibility afterwards anyway.
- * - A manual choice wins over an automatic one.
+ * - A manual choice wins over an automatic one. Only subscribed rows count,
+ *   so the mode of an unsubscribed row is discarded.
  * - The earlier priority timestamp of the subscribed rows is kept.
  *
  * When neither row is subscribed the surviving row is left as it was.
