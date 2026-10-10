@@ -257,12 +257,19 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
       .sort((a, b) => a.localeCompare(b))[0];
   }
 
-  private async getActiveDelegatedPrimaryAddress(
+  // Only a primary address delegated at least
+  // PRIMARY_ADDRESS_RETENTION_MATURITY_BLOCKS ago decides retention, so a
+  // delegation registered just before a split cannot redirect the profile.
+  // Without one, the highest-TDH part keeps it; TDH accrues over held days, so
+  // it cannot be moved into a wallet quickly.
+  private async getMatureDelegatedPrimaryAddress(
     consolidationKey: string
   ): Promise<string | null> {
     const { getDelegationPrimaryAddressForConsolidation } =
       await import('./delegationsLoop/db.delegations');
-    return await getDelegationPrimaryAddressForConsolidation(consolidationKey);
+    return await getDelegationPrimaryAddressForConsolidation(consolidationKey, {
+      matureOnly: true
+    });
   }
 
   private async applyExplicitProfileRetention(
@@ -293,7 +300,7 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
       }
 
       const delegatedPrimaryAddress =
-        await this.getActiveDelegatedPrimaryAddress(
+        await this.getMatureDelegatedPrimaryAddress(
           originalIdentity.consolidation_key
         );
       const retainedConsolidationKey = this.selectProfileRetentionConsolidation(
